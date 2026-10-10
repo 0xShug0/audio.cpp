@@ -16,7 +16,7 @@ namespace engine::models::sanotts {
 namespace {
 
 // Weights repacked once so the inner loops read one sequential stream.
-//   wt: [cin * K][co4]           (K > 1 only: output channels side by side)
+//   wt: [co4 / 4][cin * K][4]    (K > 1 only: one 4-channel block after another)
 //   wb: [co4 / 4][cin][4]        (K == 1 only: one 4-channel block after another)
 struct PackedConv {
     int cin = 0;
@@ -49,12 +49,15 @@ PackedConv pack_conv(const float * w, const float * b, int cin, int cout, int ke
         }
         return c;
     }
+    // K > 1: [co4 / 4][cin * K][4], so one output block's weights are read as one sequential stream
     const int rows = cin * kernel;
     c.wt.assign(static_cast<size_t>(rows) * c.co4, 0.0F);
-    for (int r = 0; r < rows; ++r) {
-        float * dst = c.wt.data() + static_cast<size_t>(r) * c.co4;
-        for (int o = 0; o < cout; ++o) {
-            dst[o] = w[static_cast<size_t>(o) * rows + r];
+    float * dst = c.wt.data();
+    for (int ob = 0; ob < c.co4 / 4; ++ob) {
+        for (int r = 0; r < rows; ++r, dst += 4) {
+            for (int j = 0; j < 4 && ob * 4 + j < cout; ++j) {
+                dst[j] = w[static_cast<size_t>(ob * 4 + j) * rows + r];
+            }
         }
     }
     return c;
@@ -104,6 +107,29 @@ void split_range(int n, int tid, int nt, int & lo, int & hi) {
     acc[2][2] = vfmaq_laneq_f32(acc[2][2], xq2, wv, 2); acc[2][3] = vfmaq_laneq_f32(acc[2][3], xq3, wv, 2); \
     acc[3][0] = vfmaq_laneq_f32(acc[3][0], xq0, wv, 3); acc[3][1] = vfmaq_laneq_f32(acc[3][1], xq1, wv, 3); \
     acc[3][2] = vfmaq_laneq_f32(acc[3][2], xq2, wv, 3); acc[3][3] = vfmaq_laneq_f32(acc[3][3], xq3, wv, 3);
+
+// Writes one 4-channel x 16-frame result block: channel-major (out[o * T + t]) or, with
+// rows_ld > 0, frame rows (out[t * rows_ld + o]). Only the first m frames / no channels are real.
+inline void store_block(const float32x4_t (&acc)[4][4], float * out, int rows_ld, int T, int t0, int m,
+                        int o0, int no) {
+    float tmp[4][16];
+    for (int j = 0; j < 4; ++j) {
+        for (int q = 0; q < 4; ++q) {
+            vst1q_f32(tmp[j] + 4 * q, acc[j][q]);
+        }
+    }
+    if (rows_ld > 0) {
+        for (int t = 0; t < m; ++t) {
+            for (int j = 0; j < no; ++j) {
+                out[static_cast<size_t>(t0 + t) * rows_ld + o0 + j] = tmp[j][t];
+            }
+        }
+    } else {
+        for (int j = 0; j < no; ++j) {
+            std::memcpy(out + static_cast<size_t>(o0 + j) * T + t0, tmp[j], sizeof(float) * m);
+        }
+    }
+}
 
 inline float32x4_t exp4(float32x4_t x) {
     x = vmaxq_f32(x, vdupq_n_f32(-87.0F));
@@ -186,7 +212,8 @@ struct SanoTtsNeonDecoder::Impl {
 };
 
 // This thread's share of conv c over input rows src (cin, T) -> out (cout, T), or, with
-// rows_ld > 0, frame rows out[t * rows_ld + o]. Starts and ends with a barrier.
+// rows_ld > 0, frame rows out[t * rows_ld + o]. Threads split the 16-frame blocks; ends with a
+// barrier (K > 1 also waits once after packing its padded input rows).
 void SanoTtsNeonDecoder::Impl::conv_part(const PackedConv & c, const float * src, float * out,
                                          int rows_ld, int tid, int nt, Barrier & bar) {
     const int T = frames;
@@ -196,44 +223,34 @@ void SanoTtsNeonDecoder::Impl::conv_part(const PackedConv & c, const float * src
     const int co4 = c.co4;
     float * xp = xpk.data();
     int lo = 0, hi = 0;
-    // 1. pack the input: K == 1 -> [16-frame block][cin][16]; K > 1 -> zero-padded rows of `padded`
     if (K == 1) {
+        // Threads split the FRAMES: each packs its own 16-frame blocks and computes every output
+        // channel for a block while that block (cin x 16 floats) is still in L1. With the
+        // channel split, every thread re-read the whole packed input (3.4 MB for heart's pw2 on a
+        // 1500-frame chunk, more than the A72's 1 MB L2) once per channel block.
         split_range(frames16 / 16, tid, nt, lo, hi);
         for (int tb = lo; tb < hi; ++tb) {
+            const int t0 = tb * 16;
+            const int m = std::min(16, T - t0);
+            float * blk = xp + static_cast<size_t>(tb) * cin * 16;
             for (int ci = 0; ci < cin; ++ci) {
-                float * dst = xp + (static_cast<size_t>(tb) * cin + ci) * 16;
-                const int t0 = tb * 16;
-                const int m = std::min(16, T - t0);
+                float * dst = blk + static_cast<size_t>(ci) * 16;
                 std::memcpy(dst, src + static_cast<size_t>(ci) * T + t0, sizeof(float) * m);
                 if (m < 16) {
                     std::memset(dst + m, 0, sizeof(float) * (16 - m));
                 }
             }
-        }
-    } else {
-        split_range(cin, tid, nt, lo, hi);
-        for (int ci = lo; ci < hi; ++ci) {
-            float * row = xp + static_cast<size_t>(ci) * padded;
-            std::memset(row, 0, sizeof(float) * padded);
-            std::memcpy(row + pad, src + static_cast<size_t>(ci) * T, sizeof(float) * T);
-        }
-    }
-    bar.wait();
-    // 2. this thread's 4-channel output blocks
-    split_range(co4 / 4, tid, nt, lo, hi);
-    for (int ob = lo; ob < hi; ++ob) {
-        const int o0 = ob * 4;
-        const int no = std::min(4, c.cout - o0);
-        for (int t0 = 0; t0 < T; t0 += 16) {
-            float32x4_t acc[4][4];
-            for (int j = 0; j < 4; ++j) {
-                const float32x4_t bj = vdupq_n_f32(c.bias[o0 + j]);
-                for (int q = 0; q < 4; ++q) {
-                    acc[j][q] = bj;
+            for (int ob = 0; ob < co4 / 4; ++ob) {
+                const int o0 = ob * 4;
+                const int no = std::min(4, c.cout - o0);
+                float32x4_t acc[4][4];
+                for (int j = 0; j < 4; ++j) {
+                    const float32x4_t bj = vdupq_n_f32(c.bias[o0 + j]);
+                    for (int q = 0; q < 4; ++q) {
+                        acc[j][q] = bj;
+                    }
                 }
-            }
-            if (K == 1) {
-                const float * xq = xp + static_cast<size_t>(t0 / 16) * cin * 16;
+                const float * xq = blk;
                 const float * wq = c.wb.data() + static_cast<size_t>(ob) * cin * 4;
                 for (int ci = 0; ci < cin; ++ci, xq += 16, wq += 4) {
                     const float32x4_t wv = vld1q_f32(wq);
@@ -241,36 +258,47 @@ void SanoTtsNeonDecoder::Impl::conv_part(const PackedConv & c, const float * src
                     const float32x4_t x2 = vld1q_f32(xq + 8), x3 = vld1q_f32(xq + 12);
                     SANOTTS_FMA16(x0, x1, x2, x3, wv)
                 }
-            } else {
-                const float * wp = c.wt.data() + o0;
-                for (int ci = 0; ci < cin; ++ci) {
-                    const float * xc = xp + static_cast<size_t>(ci) * padded + t0;
-                    for (int k = 0; k < K; ++k, wp += co4) {
-                        const float32x4_t wv = vld1q_f32(wp);
-                        const float32x4_t x0 = vld1q_f32(xc + k), x1 = vld1q_f32(xc + k + 4);
-                        const float32x4_t x2 = vld1q_f32(xc + k + 8), x3 = vld1q_f32(xc + k + 12);
-                        SANOTTS_FMA16(x0, x1, x2, x3, wv)
-                    }
-                }
+                store_block(acc, out, rows_ld, T, t0, m, o0, no);
             }
-            const int m = std::min(16, T - t0);
-            float tmp[4][16];
+        }
+        bar.wait();
+        return;
+    }
+    // K > 1: every thread packs some zero-padded input rows (width `padded`), then all wait
+    split_range(cin, tid, nt, lo, hi);
+    for (int ci = lo; ci < hi; ++ci) {
+        float * row = xp + static_cast<size_t>(ci) * padded;
+        std::memset(row, 0, sizeof(float) * padded);
+        std::memcpy(row + pad, src + static_cast<size_t>(ci) * T, sizeof(float) * T);
+    }
+    bar.wait();
+    // 2. K > 1: threads split the 16-frame blocks; each computes every output-channel block for its
+    //    frames, so the inputs it touches (cin rows x (16 + K - 1) floats) stay in L1.
+    split_range(frames16 / 16, tid, nt, lo, hi);
+    for (int tb = lo; tb < hi; ++tb) {
+        const int t0 = tb * 16;
+        const int m = std::min(16, T - t0);
+        for (int ob = 0; ob < co4 / 4; ++ob) {
+            const int o0 = ob * 4;
+            const int no = std::min(4, c.cout - o0);
+            float32x4_t acc[4][4];
             for (int j = 0; j < 4; ++j) {
+                const float32x4_t bj = vdupq_n_f32(c.bias[o0 + j]);
                 for (int q = 0; q < 4; ++q) {
-                    vst1q_f32(tmp[j] + 4 * q, acc[j][q]);
+                    acc[j][q] = bj;
                 }
             }
-            if (rows_ld > 0) {
-                for (int t = 0; t < m; ++t) {
-                    for (int j = 0; j < no; ++j) {
-                        out[static_cast<size_t>(t0 + t) * rows_ld + o0 + j] = tmp[j][t];
-                    }
-                }
-            } else {
-                for (int j = 0; j < no; ++j) {
-                    std::memcpy(out + static_cast<size_t>(o0 + j) * T + t0, tmp[j], sizeof(float) * m);
+            const float * wp = c.wt.data() + static_cast<size_t>(ob) * cin * K * 4;
+            for (int ci = 0; ci < cin; ++ci) {
+                const float * xc = xp + static_cast<size_t>(ci) * padded + t0;
+                for (int kk = 0; kk < K; ++kk, wp += 4) {
+                    const float32x4_t wv = vld1q_f32(wp);
+                    const float32x4_t x0 = vld1q_f32(xc + kk), x1 = vld1q_f32(xc + kk + 4);
+                    const float32x4_t x2 = vld1q_f32(xc + kk + 8), x3 = vld1q_f32(xc + kk + 12);
+                    SANOTTS_FMA16(x0, x1, x2, x3, wv)
                 }
             }
+            store_block(acc, out, rows_ld, T, t0, m, o0, no);
         }
     }
     bar.wait();
