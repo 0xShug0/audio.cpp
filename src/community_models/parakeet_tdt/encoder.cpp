@@ -1,5 +1,4 @@
 #include "engine/community_models/parakeet_tdt/encoder.h"
-#include "engine/community_models/parakeet_tdt/graph_precision.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
@@ -413,14 +412,6 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
         return;
     }
 
-    if (assets_->config.force_f32_matmul && assets_->config.token_duration_word_timestamps &&
-        execution_context_->backend_type() == engine::core::BackendType::Vulkan) {
-        // A mismatched cached graph will never be used again. Release its
-        // allocation before building the replacement instead of overlapping
-        // both full activation/position buffers at the allocation peak.
-        graph_.reset();
-    }
-
     const auto build_start = Clock::now();
     const auto & config = assets_->config;
     const auto & enc = config.encoder;
@@ -547,8 +538,6 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     const auto opt_backend = graph_optimizer_backend_for(execution_context_->backend_type());
     const auto pos_opt_report = engine::runtime::optimize_graph(*graph->pos_graph, opt_backend);
     const auto opt_report = engine::runtime::optimize_graph(*graph->graph, opt_backend);
-    configure_matmul_precision(graph->pos_graph, assets_->config.force_f32_matmul);
-    configure_matmul_precision(graph->graph, assets_->config.force_f32_matmul);
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_before", opt_report.nodes_before);
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_after", opt_report.nodes_after);
     (void)pos_opt_report;
@@ -586,15 +575,6 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
         ggml_backend_tensor_copy(graph->projected_pos_emb_computed[i].tensor, graph->projected_pos_emb[i].tensor);
     }
     debug::timing_log_scalar("parakeet_tdt.encoder.pos_copy_ms", engine::debug::elapsed_ms(pos_copy_start, Clock::now()));
-
-    if (assets_->config.force_f32_matmul && assets_->config.token_duration_word_timestamps &&
-        execution_context_->backend_type() == engine::core::BackendType::Vulkan) {
-        // Position projections now live in the main graph's persistent inputs.
-        // Their one-shot producer allocation is redundant for warm inference.
-        ggml_gallocr_free(graph->pos_gallocr);
-        graph->pos_gallocr = nullptr;
-        graph->pos_graph = nullptr;
-    }
 
     graph_ = std::move(graph);
     const double build_ms = engine::debug::elapsed_ms(build_start, Clock::now());

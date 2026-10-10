@@ -13,9 +13,6 @@ namespace json = engine::io::json;
 namespace {
 
 void validate_config(const ParakeetConfig & config) {
-    if (!std::isfinite(config.encoder.batch_norm_variance_floor) || config.encoder.batch_norm_variance_floor < 0) {
-        throw std::runtime_error("Parakeet TDT invalid batch_norm_variance_floor");
-    }
     if (config.model_type != "parakeet_tdt") {
         throw std::runtime_error("Parakeet TDT expects model_type=parakeet_tdt");
     }
@@ -67,38 +64,30 @@ ParakeetConfig parse_config(const assets::ResourceBundle & resources) {
     config.decoder_hidden_size = json::require_i64(config_root, "decoder_hidden_size");
     config.decoder_layers = json::require_i64(config_root, "num_decoder_layers");
     config.max_symbols_per_step = json::require_i64(config_root, "max_symbols_per_step");
-    if (config_root.find("audiocpp_matmul_precision") != nullptr) {
-        const auto precision = json::require_string(config_root, "audiocpp_matmul_precision");
-        if (precision != "default" && precision != "f32") {
-            throw std::runtime_error("Parakeet TDT audiocpp_matmul_precision must be default or f32");
-        }
-        config.force_f32_matmul = precision == "f32";
+
+    // Old development packages used unscaled projections and special runtime
+    // precision controls. Reject them instead of silently applying the normal
+    // loader's sqrt(hidden_size) fold to incompatible weights.
+    const auto & enc_config = config_root.require("encoder_config");
+    if (config_root.find("audiocpp_matmul_precision") ||
+        config_root.find("audiocpp_cpu_matmul_weight_type") ||
+        enc_config.find("subsampling_input_scale") || enc_config.find("batch_norm_variance_floor")) {
+        throw std::runtime_error("Phonon development package uses removed precision/scaling controls; reconvert with the current convert_phonon2.py");
     }
-    if (config_root.find("audiocpp_cpu_matmul_weight_type") != nullptr) {
-        const auto type = json::require_string(config_root, "audiocpp_cpu_matmul_weight_type");
-        if (type != "native" && type != "f32") {
-            throw std::runtime_error("Parakeet TDT audiocpp_cpu_matmul_weight_type must be native or f32");
-        }
-        config.cpu_f32_matmul_weights = type == "f32";
-    }
-    if (config_root.find("audiocpp_word_timestamp_mode") != nullptr) {
-        const auto mode = json::require_string(config_root, "audiocpp_word_timestamp_mode");
-        if (mode != "default" && mode != "token_duration") {
-            throw std::runtime_error("Parakeet TDT audiocpp_word_timestamp_mode must be default or token_duration");
-        }
-        config.token_duration_word_timestamps = mode == "token_duration";
+    if (config_root.find("word_timestamp_mode")) {
+        config.word_timestamp_mode = json::require_string(config_root, "word_timestamp_mode");
+        if (config.word_timestamp_mode != "default" && config.word_timestamp_mode != "token_duration")
+            throw std::runtime_error("Parakeet TDT word_timestamp_mode must be default or token_duration");
     }
     if (const auto * ids = config_root.find("audiocpp_punctuation_token_ids")) {
         for (const auto & value : ids->as_array()) {
             const auto number = value.as_number();
-            if (!std::isfinite(number) || number < 0 || number >= config.vocab_size ||
-                std::floor(number) != number) {
+            if (!std::isfinite(number) || number < 0 || number >= config.vocab_size || std::floor(number) != number)
                 throw std::runtime_error("Parakeet TDT punctuation token id out of range");
-            }
             config.punctuation_token_ids.push_back(static_cast<int32_t>(number));
         }
         std::sort(config.punctuation_token_ids.begin(), config.punctuation_token_ids.end());
-    } else if (config.token_duration_word_timestamps) {
+    } else if (config.word_timestamp_mode == "token_duration") {
         throw std::runtime_error("Parakeet TDT token_duration timestamps require punctuation token metadata");
     }
 
@@ -121,15 +110,6 @@ ParakeetConfig parse_config(const assets::ResourceBundle & resources) {
     config.encoder.subsampling_kernel = json::require_i64(encoder, "subsampling_conv_kernel_size");
     config.encoder.subsampling_stride = json::require_i64(encoder, "subsampling_conv_stride");
     config.encoder.max_position_embeddings = json::require_i64(encoder, "max_position_embeddings");
-    if (encoder.find("batch_norm_variance_floor") != nullptr) {
-        config.encoder.batch_norm_variance_floor = json::require_f32(encoder, "batch_norm_variance_floor");
-    }
-    if (encoder.find("subsampling_input_scale") != nullptr) {
-        config.encoder.subsampling_input_scale = json::require_f32(encoder, "subsampling_input_scale");
-        if (!std::isfinite(config.encoder.subsampling_input_scale) || config.encoder.subsampling_input_scale <= 0) {
-            throw std::runtime_error("Parakeet TDT invalid subsampling_input_scale");
-        }
-    }
 
     // processor_config.json is genuinely optional (not every model directory
     // layout provides it), so fall back to the ParakeetFrontendConfig

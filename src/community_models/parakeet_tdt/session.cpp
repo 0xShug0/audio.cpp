@@ -289,7 +289,7 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
     if (const auto value = runtime::find_option(request.options, {"keep_language_tags"})) {
         opts.keep_language_tags = runtime::parse_bool_option(*value, "keep_language_tags");
     }
-    const bool phonon = assets_->config.force_f32_matmul && assets_->config.token_duration_word_timestamps;
+    const bool phonon = assets_->config.word_timestamp_mode == "token_duration";
     auto hotwords = runtime::find_option(request.options, {"hotwords"});
     const auto array = request.option_arrays.find("hotwords");
     if (!hotwords && array == request.option_arrays.end() && phonon && request.text_input)
@@ -1028,7 +1028,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {
                                 std::shared_ptr<const ParakeetTDTAssets> assets,
                                 std::shared_ptr<const engine::model_spec::ModelContract> contract) {
         if (task.mode == runtime::RunMode::Streaming) {
-            if (assets->config.force_f32_matmul && assets->config.token_duration_word_timestamps) {
+            if (assets->config.word_timestamp_mode == "token_duration") {
                 return std::unique_ptr<runtime::IVoiceTaskSession>(std::make_unique<PhononStreamingSession>(
                     task, options, std::move(assets), std::move(contract)));
             }

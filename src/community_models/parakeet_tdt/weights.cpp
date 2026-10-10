@@ -1,5 +1,4 @@
 #include "engine/community_models/parakeet_tdt/weights.h"
-#include "engine/community_models/parakeet_tdt/graph_precision.h"
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/weight_binding.h"
@@ -73,9 +72,7 @@ ParakeetSubsamplingWeights load_subsampling(
     // the encoder input. sqrt(1024) = 32 exactly, so this is bit-exact; see
     // scaled_f32. Both weight and bias must be scaled, since the scale was
     // applied after the linear.
-    const float xscale = enc.subsampling_input_scale > 0.0f
-                             ? enc.subsampling_input_scale
-                             : std::sqrt(static_cast<float>(enc.hidden_size));
+    const float xscale = std::sqrt(static_cast<float>(enc.hidden_size));
     w.linear.weight = store.make_from_f32(
         engine::core::TensorShape::from_dims({enc.hidden_size, C * ff}),
         matmul_st,
@@ -88,7 +85,7 @@ ParakeetSubsamplingWeights load_subsampling(
 
 std::pair<std::vector<float>, std::vector<float>> fold_bn(
     const engine::assets::TensorSource & source, const std::string & dw_pfx, const std::string & bn_pfx,
-    int64_t d_model, int64_t K, float variance_floor) {
+    int64_t d_model, int64_t K) {
     auto bn_w = source.require_f32(bn_pfx + ".weight", {d_model});
     auto bn_b = source.require_f32(bn_pfx + ".bias", {d_model});
     auto bn_m = source.require_f32(bn_pfx + ".running_mean", {d_model});
@@ -105,7 +102,7 @@ std::pair<std::vector<float>, std::vector<float>> fold_bn(
     std::vector<float> dw_b(static_cast<size_t>(d_model), 0.f);
     const float eps = 1e-5f;
     for (int64_t c = 0; c < d_model; ++c) {
-        float s = bn_w[static_cast<size_t>(c)] / std::sqrt(std::max(bn_v[static_cast<size_t>(c)], variance_floor) + eps);
+        float s = bn_w[static_cast<size_t>(c)] / std::sqrt(std::max(bn_v[static_cast<size_t>(c)], eps) + eps);
         for (int64_t ki = 0; ki < K; ++ki)
             w_f[static_cast<size_t>(ki + c * K)] *= s;
         dw_b[static_cast<size_t>(c)] = -bn_m[static_cast<size_t>(c)] * s + bn_b[static_cast<size_t>(c)];
@@ -163,8 +160,7 @@ ParakeetFastConformerLayerWeights load_encoder_layer(
     // in the conv bucket silently excludes ~3*h^2 params/layer from matmul quantization.
     layer.conv_pw1 = {store.load_tensor_as_shape(source, p + ".conv.pointwise_conv1.weight", matmul_st, {2*h, h, 1}, engine::core::TensorShape::from_dims({2*h, h})), std::nullopt};
     layer.conv_pw2 = {store.load_tensor_as_shape(source, p + ".conv.pointwise_conv2.weight", matmul_st, {h, h, 1}, engine::core::TensorShape::from_dims({h, h})), std::nullopt};
-    auto [fd_w, fd_b] = fold_bn(source, p + ".conv.depthwise_conv", p + ".conv.norm", h, enc.conv_kernel,
-                              enc.batch_norm_variance_floor);
+    auto [fd_w, fd_b] = fold_bn(source, p + ".conv.depthwise_conv", p + ".conv.norm", h, enc.conv_kernel);
     layer.conv_dw_weight = store.make_from_f32(engine::core::TensorShape::from_dims({h, 1, enc.conv_kernel}), engine::assets::TensorStorageType::F32, std::move(fd_w));
     layer.conv_dw_bias = store.make_f32(engine::core::TensorShape::from_dims({h}), std::move(fd_b));
     layer.norm_ff2 = binding::norm_from_source(store, source, p + ".norm_feed_forward2", h);
@@ -218,15 +214,6 @@ std::shared_ptr<const ParakeetWeights> load_parakeet_weights(
     const ParakeetTDTAssets & assets, ggml_backend_t backend, engine::core::BackendType backend_type,
     engine::assets::TensorStorageType matmul_st, engine::assets::TensorStorageType conv_st, size_t ctx_bytes) {
     if (!assets.source) throw std::runtime_error("Parakeet TDT requires a tensor source");
-    if (backend_type == engine::core::BackendType::Cuda) {
-        configure_cuda_matmul_precision(backend, assets.config.force_f32_matmul);
-    }
-    if (backend_type == engine::core::BackendType::Cpu && assets.config.cpu_f32_matmul_weights &&
-        matmul_st == engine::assets::TensorStorageType::Native) {
-        // This package opts out of CPU quantized activation dot products.
-        // File weights stay Q8; explicit session storage overrides win.
-        matmul_st = engine::assets::TensorStorageType::F32;
-    }
     const auto t0 = Clock::now();
     auto w = std::make_shared<ParakeetWeights>();
     w->store = std::make_shared<engine::core::BackendWeightStore>(backend, backend_type, "parakeet_tdt.weights", ctx_bytes);

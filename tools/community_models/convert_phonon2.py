@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert the official Phonon-2 container to an exact, dense Parakeet package.
+"""Convert the official Phonon-2 container to a dense package for the existing Parakeet loader.
 
 Requires numpy, safetensors, and zstandard (no PyTorch or NeMo). The packed
 archive and the original Parakeet config/tokenizer must already be downloaded.
@@ -189,10 +189,33 @@ def validate_sidecars(reference: Path, source_config: dict) -> None:
 
 def configure_timestamps(config: dict, tokenizer_path: Path) -> None:
     vocabulary = json.loads(tokenizer_path.read_text(encoding="utf-8"))["model"]["vocab"]
-    config["audiocpp_word_timestamp_mode"] = "token_duration"
+    config["word_timestamp_mode"] = "token_duration"
     # Match Phonon's Unicode-aware rule: punctuation has no letter/digit.
     config["audiocpp_punctuation_token_ids"] = sorted(
         i for piece, i in vocabulary.items() if not any(ch.isalnum() for ch in piece))
+
+
+def compensate_projection(name: str, value: np.ndarray) -> np.ndarray:
+    """Cancel the existing 1024-wide Parakeet loader's sqrt(hidden_size) fold."""
+    if name not in ("encoder.subsampling.linear.weight", "encoder.subsampling.linear.bias"):
+        return value
+    adjusted = np.ascontiguousarray(value / np.float32(32), dtype=np.float32)
+    if not np.array_equal(adjusted * np.float32(32), value):
+        raise ValueError(f"projection scaling is not exactly reversible: {name}")
+    return adjusted
+
+
+def compensate_batch_norm(name: str, value: np.ndarray, tensors: dict) -> np.ndarray:
+    """Preserve reference BN scaling when the normal loader floors variance."""
+    if not name.endswith(".conv.norm.weight"):
+        return value
+    variance = np.asarray(tensors[name[:-6] + "running_var"], dtype=np.float32)
+    if variance.shape != value.shape or np.any(variance < 0):
+        raise ValueError(f"invalid BatchNorm variance: {name}")
+    epsilon = np.float64(1e-5)
+    scale = np.sqrt((np.maximum(variance.astype(np.float64), epsilon) + epsilon) /
+                    (variance.astype(np.float64) + epsilon))
+    return np.ascontiguousarray(value * scale, dtype=np.float32)
 
 
 def convert(source: Path, reference: Path, output: Path) -> Path:
@@ -227,26 +250,24 @@ def convert(source: Path, reference: Path, output: Path) -> Path:
                 raise ValueError(f"non-finite inference tensor: {name}")
             if arr.ndim == 2 and re.search(r"\.conv\.pointwise_conv[12]\.weight$", name):
                 arr = arr[:, :, None]
+            source_hash = hashlib.sha256(arr.tobytes()).hexdigest()
+            arr = compensate_projection(name, arr)
+            arr = compensate_batch_norm(name, arr, tensors)
             tensors[name] = np.ascontiguousarray(arr, dtype=np.float32)
             manifest.append({"name": name, "shape": list(arr.shape), "dtype": "F32",
-                             "sha256": hashlib.sha256(tensors[name].tobytes()).hexdigest()})
+                             "sha256": hashlib.sha256(tensors[name].tobytes()).hexdigest(),
+                             "source_sha256": source_hash,
+                             "conversion_scale": 1 / 32 if "encoder.subsampling.linear." in name else 1})
         staged = temp / "package"
         staged.mkdir()
         save_file(tensors, str(staged / "model.safetensors"), metadata={
             "format": "pt", "source_repo": SOURCE_REPO, "source_revision": SOURCE_REVISION,
-            "conversion": "exact F32 reconstruction of the trained five-value/int6/fp16 records"})
+            "conversion": "F32 expansion with documented projection and BatchNorm compensation"})
         for name in SIDECARS:
             shutil.copyfile(reference / name, staged / name)
-        # The existing Parakeet loader floors BN variance at epsilon before
-        # adding epsilon. Phonon has two trained variances below that floor;
-        # its reference uses sqrt(variance + epsilon). Opt in via this package
-        # only, without changing either its tensors or other Parakeet variants.
+        # Preserve the normal loader's arithmetic and backend precision. The
+        # projection compensation above replaces the old runtime scale override.
         runtime_config = json.loads((staged / "config.json").read_text(encoding="utf-8"))
-        runtime_config["encoder_config"]["batch_norm_variance_floor"] = 0.0
-        # The HF reference's encoder_config.scale_input is false. Keep the
-        # established NeMo scaling as the loader default for other packages.
-        runtime_config["encoder_config"]["subsampling_input_scale"] = 1.0
-        runtime_config["audiocpp_matmul_precision"] = "f32"
         configure_timestamps(runtime_config, staged / "tokenizer.json")
         (staged / "config.json").write_text(json.dumps(runtime_config, indent=2) + "\n", encoding="utf-8")
         for name in LICENSES:
@@ -255,7 +276,7 @@ def convert(source: Path, reference: Path, output: Path) -> Path:
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
         spec.update(display_name="Phonon-2 (dense F32)", status="experimental", languages=["en"],
                     modes=["offline", "streaming"], packages=[],
-                    description="Fermion Research Phonon-2 English ASR. Exact F32 weight reconstruction; "
+                    description="Fermion Research Phonon-2 English ASR. F32 expansion with loader-compatible projection and BatchNorm compensation; "
                                 "uses the native Parakeet TDT runtime, without packed five-value kernels.")
         spec.pop("package_defaults", None)
         spec["ui"].pop("recommended_package", None)
@@ -268,10 +289,9 @@ def convert(source: Path, reference: Path, output: Path) -> Path:
                       "base_repo": BASE_REPO, "base_revision": BASE_REVISION,
                       "weights_license": "CC-BY-4.0", "family": "parakeet_tdt", "language": "en",
                       "storage": "F32", "records": len(records), "tensors": len(tensors),
-                      "runtime_config_overrides": {"encoder_config.batch_norm_variance_floor": 0.0,
-                                                   "encoder_config.subsampling_input_scale": 1.0,
-                                                   "audiocpp_matmul_precision": "f32",
-                                                   "audiocpp_word_timestamp_mode": "token_duration"},
+                      "runtime_config_overrides": {"word_timestamp_mode": "token_duration"},
+                      "conversion_projection_scale": 1 / 32,
+                      "conversion_batch_norm": "gamma compensated for the normal loader's 1e-5 variance floor",
                       "dropped_training_counters": counters,
                       "sidecar_sha256": {name: sha256(reference / name) for name in SIDECARS},
                       "output_sidecar_sha256": {name: sha256(staged / name) for name in SIDECARS}}
@@ -291,8 +311,6 @@ def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> Non
             shutil.copyfile(staged / name, metadata / name)
         config = json.loads((metadata / "config.json").read_text(encoding="utf-8"))
         configure_timestamps(config, metadata / "tokenizer.json")
-        if storage == "q8_0":
-            config["audiocpp_cpu_matmul_weight_type"] = "f32"
         (metadata / "config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
         if storage == "orig":
             shutil.copyfile(staged / "tensor_manifest.json", metadata / "tensor_manifest.json")
@@ -301,7 +319,7 @@ def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> Non
             spec = json.loads((staged / "model_spec.json").read_text(encoding="utf-8"))
             spec["display_name"] = f"Phonon-2 (dense {label})"
             spec["description"] = (f"Fermion Research Phonon-2 English ASR. {label}-rounded derivative "
-                                   "of the exact F32 reconstruction; uses the native Parakeet TDT "
+                                   "of the loader-compatible F32 expansion; uses the native Parakeet TDT "
                                    "runtime, without packed five-value kernels.")
             (metadata / "model_spec.json").write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
             provenance = json.loads((staged / "provenance.json").read_text(encoding="utf-8"))
@@ -310,9 +328,8 @@ def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> Non
                               conversion=f"audiocpp_gguf --type {storage}; weights rounded from exact F32 staging")
             (metadata / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
         provenance = json.loads((metadata / "provenance.json").read_text(encoding="utf-8"))
-        provenance["runtime_config_overrides"]["audiocpp_word_timestamp_mode"] = "token_duration"
+        provenance["runtime_config_overrides"]["word_timestamp_mode"] = "token_duration"
         if storage == "q8_0":
-            provenance["runtime_config_overrides"]["audiocpp_cpu_matmul_weight_type"] = "f32"
             provenance["preserved_f32_tensors"] = ["joint.head.weight", "joint.head.bias"]
             provenance["conversion"] += "; --keep-type joint.head.*=orig (duration-sensitive output head)"
         provenance["output_sidecar_sha256"]["config.json"] = sha256(metadata / "config.json")
@@ -320,6 +337,8 @@ def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> Non
         command = [str(converter.resolve()), "--input", str(staged / "model.safetensors"),
                    "--root", str(metadata), "--family", "parakeet_tdt", "--model-spec",
                    str(metadata / "model_spec.json"), "--type", storage, "--output", str(output.resolve())]
+        if storage != "orig":
+            command += ["--keep-type", "encoder.subsampling.linear.*=orig"]
         if storage == "q8_0":
             # The joint head predicts both text and duration. Preserve its
             # original scale products: quantization can change duration ends

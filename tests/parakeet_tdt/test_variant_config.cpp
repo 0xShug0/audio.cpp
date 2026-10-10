@@ -1,5 +1,4 @@
 #include "engine/community_models/parakeet_tdt/assets.h"
-#include "engine/community_models/parakeet_tdt/graph_precision.h"
 #include "engine/community_models/parakeet_tdt/word_timestamps.h"
 #include "engine/framework/io/safetensors.h"
 #include "engine/framework/model_spec/package.h"
@@ -40,59 +39,23 @@ void test_config(const std::filesystem::path & root) {
         std::filesystem::path(ENGINE_REPO_ROOT) / "model_specs/parakeet_tdt.json", root);
     write(root / "config.json", config());
     auto base = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
-    engine::test::require_close(base->config.encoder.batch_norm_variance_floor, 1e-5f, 0.f, "legacy BN floor");
-    engine::test::require_close(base->config.encoder.subsampling_input_scale, 0.f, 0.f, "legacy scale sentinel");
-    engine::test::require(!base->config.force_f32_matmul, "legacy matmul policy unchanged");
-    engine::test::require(!base->config.cpu_f32_matmul_weights, "legacy CPU storage unchanged");
-    engine::test::require(!base->config.token_duration_word_timestamps, "legacy word timing unchanged");
-
-    write(root / "config.json", config(
-        ",\"batch_norm_variance_floor\":0,\"subsampling_input_scale\":1", ",\"audiocpp_matmul_precision\":\"f32\""));
-    auto phonon = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
-    engine::test::require_close(phonon->config.encoder.batch_norm_variance_floor, 0.f, 0.f, "reference BN floor");
-    engine::test::require_close(phonon->config.encoder.subsampling_input_scale, 1.f, 0.f, "reference scale");
-    engine::test::require(phonon->config.force_f32_matmul, "Phonon matmul policy");
-    write(root / "config.json", config("", ",\"audiocpp_cpu_matmul_weight_type\":\"f32\""));
-    auto quantized = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
-    engine::test::require(quantized->config.cpu_f32_matmul_weights, "Q8 CPU F32 compute storage");
-    write(root / "config.json", config("", ",\"audiocpp_word_timestamp_mode\":\"token_duration\",\"audiocpp_punctuation_token_ids\":[1,0]"));
+    engine::test::require_eq(base->config.word_timestamp_mode, std::string("default"), "stock timestamp policy unchanged");
+    write(root / "config.json", config("", ",\"word_timestamp_mode\":\"token_duration\",\"audiocpp_punctuation_token_ids\":[1,0]"));
     auto timed = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
-    engine::test::require(timed->config.token_duration_word_timestamps, "Phonon token duration policy");
+    engine::test::require_eq(timed->config.word_timestamp_mode, std::string("token_duration"), "Phonon timestamp policy");
     engine::test::require_eq(timed->config.punctuation_token_ids.front(), int32_t(0), "punctuation ids sorted");
-
-    for (const auto & bad : {config(",\"batch_norm_variance_floor\":-1"),
-                            config(",\"subsampling_input_scale\":0"),
-                            config(",\"subsampling_input_scale\":-1"),
-                            config("", ",\"audiocpp_matmul_precision\":\"half\""),
-                            config("", ",\"audiocpp_cpu_matmul_weight_type\":\"q8_0\""),
-                            config("", ",\"audiocpp_word_timestamp_mode\":\"token_duration\""),
-                            config("", ",\"audiocpp_word_timestamp_mode\":\"rounded\""),
+    for (const auto & bad : {config("", ",\"word_timestamp_mode\":\"token_duration\""),
+                            config("", ",\"word_timestamp_mode\":\"rounded\""),
                             config("", ",\"audiocpp_punctuation_token_ids\":[3]"),
-                            config("", ",\"audiocpp_punctuation_token_ids\":[0.5]")}) {
+                            config("", ",\"audiocpp_punctuation_token_ids\":[0.5]"),
+                            config("", ",\"audiocpp_matmul_precision\":\"f32\""),
+                            config(",\"subsampling_input_scale\":1")}) {
         write(root / "config.json", bad);
         bool rejected = false;
         try { (void)engine::community_models::parakeet_tdt::load_parakeet_assets(root); }
         catch (const std::runtime_error &) { rejected = true; }
-        engine::test::require(rejected, "invalid precision/normalization policy rejected");
+        engine::test::require(rejected, "invalid or obsolete package policy rejected");
     }
-}
-
-void test_graph_precision() {
-    auto * ctx = ggml_init({1024 * 1024, nullptr, true});
-    if (!ctx) throw std::runtime_error("test graph allocation failed");
-    auto * graph = ggml_new_graph(ctx);
-    auto * weight = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 4);
-    auto * input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 2);
-    auto * mm = ggml_mul_mat(ctx, weight, input);
-    auto * activation = ggml_relu(ctx, mm);
-    const auto activation_op = activation->op;
-    ggml_build_forward_expand(graph, activation);
-    engine::community_models::parakeet_tdt::configure_matmul_precision(graph, false);
-    engine::test::require_eq(mm->op_params[0], int32_t(GGML_PREC_DEFAULT), "legacy graph policy unchanged");
-    engine::community_models::parakeet_tdt::configure_matmul_precision(graph, true);
-    engine::test::require_eq(mm->op_params[0], int32_t(GGML_PREC_F32), "Phonon graph accumulation");
-    engine::test::require_eq(activation->op, activation_op, "non-matmul graph node unchanged");
-    ggml_free(ctx);
 }
 
 void test_token_duration_timestamps() {
@@ -117,7 +80,6 @@ int main() {
     if (!std::filesystem::create_directory(root)) return 1;
     try {
         test_config(root);
-        test_graph_precision();
         test_token_duration_timestamps();
         std::filesystem::remove_all(root);
         std::cout << "PASS: legacy defaults and Phonon variant policies\n";

@@ -33,18 +33,10 @@ struct ParakeetFastConformerConfig {
     int64_t subsampling_kernel = 3;
     int64_t subsampling_stride = 2;
     int64_t max_position_embeddings = 5000;
-    // Preserve the existing Parakeet behavior unless a converted variant
-    // explicitly requests the reference BatchNorm formula (floor = 0).
-    float batch_norm_variance_floor = 1e-5f;
-    // Zero retains the original sqrt(hidden_size) scaling. Phonon's HF
-    // reference uses scale_input=false and explicitly requests scale = 1.
-    float subsampling_input_scale = 0.0f;
 };
 
 struct ParakeetConfig {
-    bool force_f32_matmul = false;
-    bool cpu_f32_matmul_weights = false;
-    bool token_duration_word_timestamps = false;
+    std::string word_timestamp_mode = "default";
     std::vector<int32_t> punctuation_token_ids;
     std::string model_type;
     int64_t vocab_size = 8193;

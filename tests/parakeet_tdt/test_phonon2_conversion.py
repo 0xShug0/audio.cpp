@@ -22,8 +22,25 @@ class PhononConversionTests(unittest.TestCase):
                 "\u2581\u4e2d": 4, "\u2014": 5, "123": 6, "\u2581\u0661": 7}}}), encoding="utf-8")
             config = {}
             converter.configure_timestamps(config, path)
-            self.assertEqual(config["audiocpp_word_timestamp_mode"], "token_duration")
+            self.assertEqual(config["word_timestamp_mode"], "token_duration")
             self.assertEqual(config["audiocpp_punctuation_token_ids"], [0, 2, 5])
+
+    def test_projection_compensation_cancels_default_loader_scale(self):
+        values = np.array([[-.03125, 0, .125, 17.375]], dtype=np.float32)
+        for name in ("encoder.subsampling.linear.weight", "encoder.subsampling.linear.bias"):
+            adjusted = converter.compensate_projection(name, values)
+            np.testing.assert_array_equal(adjusted * np.float32(32), values)
+        np.testing.assert_array_equal(converter.compensate_projection("joint.head.weight", values), values)
+
+    def test_batch_norm_compensation_preserves_reference_fold(self):
+        gamma = np.array([.5, 2, -.25], dtype=np.float32)
+        variance = np.array([0, .000001, .125], dtype=np.float32)
+        adjusted = converter.compensate_batch_norm("encoder.layers.0.conv.norm.weight", gamma,
+            {"encoder.layers.0.conv.norm.running_var": variance})
+        loaded = adjusted / np.sqrt(np.maximum(variance, np.float32(1e-5)) + np.float32(1e-5))
+        reference = gamma / np.sqrt(variance + np.float32(1e-5))
+        np.testing.assert_allclose(loaded, reference, rtol=2e-7)
+        self.assertEqual(adjusted[2], gamma[2])
 
     def test_five_values_row_padding_and_nonzero_bit_order(self):
         # Six columns force a second trit byte. High/low bits are packed over
