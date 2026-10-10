@@ -27,7 +27,7 @@ runtime::ModelMetadata metadata(const HiggsAssets &) {
 runtime::CapabilitySet capabilities(const HiggsAssets &) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
-        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     out.supports_speaker_reference = true;
     out.languages = {"Auto"};
@@ -45,6 +45,8 @@ runtime::ModelCliInterface cli(const HiggsAssets &) {
         {"seed", "n", "Torch RNG seed."},
         {"text_chunk_size", "n", "Long-form text chunk size; default 1024."},
         {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode."},
+        {"stream_frames_per_event", "n", "Streaming chunk frame cap; default 32."},
+        {"stream_chunk_policy", "grow|fixed", "Streaming chunk schedule; default grow."},
     };
     out.session_options = {
         {"higgs_audio_tts.weight_type", "native|f32|f16|bf16|q8_0", "AR and codec weight storage type."},
@@ -70,7 +72,7 @@ public:
     runtime::CapabilitySet advertised_capabilities() const override {
         runtime::CapabilitySet out;
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
         return out;
@@ -134,8 +136,8 @@ const runtime::CapabilitySet & HiggsTTSLoadedModel::capabilities() const noexcep
 std::unique_ptr<runtime::IVoiceTaskSession> HiggsTTSLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Higgs TTS only supports offline sessions");
+    if (task.mode != runtime::RunMode::Offline && task.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("Higgs TTS supports offline and streaming sessions");
     }
     if (task.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("Higgs TTS only supports the Tts task");

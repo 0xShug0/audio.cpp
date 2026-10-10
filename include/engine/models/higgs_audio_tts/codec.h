@@ -7,6 +7,7 @@
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/streaming_audio.h"
 #include "engine/models/higgs_audio_tts/assets.h"
 
 #include <cstddef>
@@ -115,6 +116,13 @@ public:
         int64_t codebooks) const;
     void release_encode_graph();
     void release_runtime_graphs();
+    runtime::AudioBuffer decode_streaming_window(
+        const runtime::StreamingAudioWindow<int32_t> & window,
+        size_t frames_per_chunk,
+        bool generation_complete) const;
+
+    // Exact receptive-field radius of the non-causal waveform decoder, in codec frames.
+    static constexpr size_t streaming_context_frames = 10;
 
 private:
     HiggsCodecDecodeOutput decode_codes_impl(
@@ -131,6 +139,8 @@ private:
     std::shared_ptr<const HiggsCodecWeights> weights_;
     mutable std::unique_ptr<HiggsCodecEncodeGraph> encode_graph_;
     mutable std::unique_ptr<HiggsCodecDecodeGraph> decode_graph_;
+    mutable std::unique_ptr<HiggsCodecDecodeGraph> stream_initial_graph_;
+    mutable std::unique_ptr<HiggsCodecDecodeGraph> stream_decode_graph_;
 };
 
 HiggsCodecWeights load_higgs_codec_decode_weights(
