@@ -59,6 +59,22 @@
   "options": {
     "request": [
       {
+        "name": "stream_chunk_policy",
+        "type": "enum",
+        "values": ["grow", "fixed"],
+        "default": "grow",
+        "description": "Streaming vocoder chunk schedule: grow starts with one latent frame and doubles to stream_frames_per_event; fixed uses that size throughout. Ignored offline.",
+        "required": false
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "min": 1,
+        "default": 12,
+        "description": "Maximum latent frames per streaming vocoder chunk. Denoising completes before vocoder streaming begins. Ignored offline.",
+        "required": false
+      },
+      {
         "name": "voice_id",
         "type": "enum",
         "values": [

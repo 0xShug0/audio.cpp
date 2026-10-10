@@ -115,6 +115,25 @@
         "required": false
       },
       {
+        "name": "stream_chunk_policy",
+        "type": "enum",
+        "description": "Streaming decoder cadence: grow emits one patch first, then doubles toward stream_frames_per_event; fixed uses the configured size. Ignored offline.",
+        "required": false,
+        "values": [
+          "grow",
+          "fixed"
+        ],
+        "default": "grow"
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Maximum generated latent patches per streaming decoder event. Set to 1 for one-patch emission. Ignored offline.",
+        "required": false,
+        "min": 1,
+        "default": 4
+      },
+      {
         "name": "stream_left_context",
         "type": "int",
         "description": "Previous patches decoded as streaming left context.",

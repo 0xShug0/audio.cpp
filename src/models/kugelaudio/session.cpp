@@ -4,6 +4,7 @@
 #include "engine/models/kugelaudio/generator.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 
@@ -14,7 +15,7 @@ namespace {
 
 class Session final : public runtime::RuntimeSessionBase,
                       public runtime::IOfflineVoiceTaskSession,
-                      public runtime::IStreamingVoiceTaskSession {
+                      public runtime::StreamingTtsSessionBase {
 public:
     Session(runtime::TaskSpec task, const runtime::SessionOptions & options,
             std::shared_ptr<const ModelAssets> assets,
@@ -47,35 +48,13 @@ public:
         return synthesize(request, false);
     }
 
-    runtime::StreamingPolicy streaming_policy() const override {
-        runtime::StreamingPolicy policy;
-        policy.input = runtime::StreamingInputKind::None;
-        policy.output = runtime::StreamingOutputKind::FinalResult;
-        return policy;
-    }
-
-    void start_stream(const runtime::TaskRequest & request) override {
-        if (task_.mode != runtime::RunMode::Streaming) {
-            throw std::runtime_error("KugelAudio start_stream requires a streaming session");
-        }
-        reset();
-        stream_result_ = synthesize(request, true);
-    }
-    void set_stream_event_sink(runtime::StreamEventCallback sink) override { sink_ = std::move(sink); }
-    void reset() override { stream_result_.reset(); }
-    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk &) override {
-        throw std::runtime_error("KugelAudio streaming accepts text, not audio input");
-    }
-    runtime::TaskResult finalize() override {
-        if (!stream_result_) {
-            throw std::runtime_error("KugelAudio stream has not completed");
-        }
-        auto result = std::move(*stream_result_);
-        reset();
-        return result;
-    }
-
 private:
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override {
+        return synthesize(request, true);
+    }
+
+    void reset_stream_state() override {}
+
     runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming) {
         require_prepared("KugelAudio synthesis");
         const auto begin = std::chrono::steady_clock::now();
@@ -121,10 +100,10 @@ private:
         std::function<void(const std::vector<float> &)> on_audio;
         if (streaming) {
             on_audio = [this](const std::vector<float> & samples) {
-                if (sink_) {
+                if (stream_event_sink()) {
                     runtime::StreamEvent event;
                     event.audio_output = runtime::AudioBuffer{24000, 1, samples};
-                    sink_(event);
+                    stream_event_sink()(event);
                 }
             };
         }
@@ -143,8 +122,6 @@ private:
     std::shared_ptr<const ModelAssets> assets_;
     std::shared_ptr<const model_spec::ModelContract> contract_;
     std::unique_ptr<Generator> generator_;
-    runtime::StreamEventCallback sink_;
-    std::optional<runtime::TaskResult> stream_result_;
 };
 
 }  // namespace

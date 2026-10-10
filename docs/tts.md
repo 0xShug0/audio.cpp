@@ -668,6 +668,8 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `seed` | integer >= 0 | `1234` | Sampling seed. |
 | `cfm_noise_file` | path | not set | Precomputed flow noise file. |
 | `stream_left_context` | integer >= 0 | `3` | Previous patches decoded as streaming left context. |
+| `stream_chunk_policy` | `grow`, `fixed` | `grow` | Streaming only. Grow emits one patch first, then doubles toward `stream_frames_per_event`; fixed waits for the configured patch count. |
+| `stream_frames_per_event` | integer >= 1 | `4` | Maximum generated latent patches per streaming audio event. Set to `1` for the original one-patch cadence. Ignored offline. |
 | `prompt_text` | text | not set | Transcript for continuation prompt audio, distinct from the base voice reference. |
 | `chunk_strategy` | `continuation`, `stateless` | `continuation` | Long-form continuation or independent generation per chunk. |
 | `text_chunk_size` | integer | `2048` | Framework long-form text chunk size. |
@@ -911,6 +913,11 @@ Streaming output:
 audiocpp_cli --task tts --family supertonic --model /path/to/supertonic-3 --backend cuda --mode streaming --language en --text "Hello from Supertonic." --voice-id M1 --out out.wav
 ```
 
+Each text chunk is denoised in full before the causal vocoder starts emitting
+incremental audio. The default vocoder schedule grows from one latent frame to
+`stream_frames_per_event`, preserving left context between windows. This does
+not make the diffusion denoiser autoregressive.
+
 ### Common Options (use directly)
 
 | Option | Values | Default | Meaning |
@@ -929,6 +936,8 @@ audiocpp_cli --task tts --family supertonic --model /path/to/supertonic-3 --back
 | `voice_id` | `M1`, `M2`, `M3`, `M4`, `M5`, `F1`, `F2`, `F3`, `F4`, `F5` | `M1` | Built-in voice preset; --voice-id takes precedence. |
 | `num_inference_steps` | integer >= 1 | `8` | Flow denoising steps. |
 | `speed` | float | `1.05` | Positive speech speed multiplier; voice.style.speaking_rate takes precedence. |
+| `stream_chunk_policy` | `grow`, `fixed` | `grow` | Streaming-only vocoder chunk schedule. |
+| `stream_frames_per_event` | integer >= 1 | `12` | Maximum latent frames per vocoder event; ignored offline. |
 | `seed` | integer >= 0 | `1234` | Noise seed. |
 | `text_chunk_size` | integer | not set | Framework text chunk size; defaults to 120 for Korean/Japanese, otherwise 300. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |

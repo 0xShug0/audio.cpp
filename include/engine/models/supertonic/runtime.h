@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/streaming_audio.h"
 #include "engine/models/supertonic/assets.h"
 #include "engine/models/supertonic/session.h"
 
@@ -23,7 +24,9 @@ public:
     runtime::AudioBuffer synthesize(
         const std::string & text,
         const SupertonicGenerationOptions & options,
-        const SupertonicTextTokenizer & tokenizer);
+        const SupertonicTextTokenizer & tokenizer,
+        const runtime::StreamingAudioConfig * stream_config = nullptr,
+        runtime::StreamEventCallback sink = {});
 
 private:
     struct State;

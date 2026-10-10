@@ -39,6 +39,7 @@ namespace {
 namespace json = engine::io::json;
 namespace core = engine::core;
 namespace modules = engine::modules;
+constexpr std::array<int, 10> kVocoderDilations = {1, 2, 4, 1, 2, 4, 1, 1, 1, 1};
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
@@ -581,9 +582,11 @@ public:
         }
     }
 
-    SupertonicTensorOutput run(const SupertonicLatentTensor & latent) {
+    SupertonicTensorOutput run(const SupertonicLatentTensor & latent, bool streaming = false) {
         const auto total_start = std::chrono::steady_clock::now();
-        CachedGraph & graph = graph_for(latent.shape);
+        auto & cache = streaming ? stream_graphs_ : graphs_;
+        auto * cached = cache.find(latent.shape);
+        CachedGraph & graph = cached ? **cached : prepare(latent.shape, cache);
         auto timing_start = std::chrono::steady_clock::now();
         upload(graph, latent);
         engine::debug::timing_log_scalar(
@@ -639,14 +642,9 @@ private:
         ggml_cgraph * graph = nullptr;
     };
 
-    CachedGraph & graph_for(const std::vector<int64_t> & input_shape) {
-        if (auto * found = graphs_.find(input_shape)) {
-            return **found;
-        }
-        return prepare(input_shape);
-    }
+    using GraphCache = runtime::CacheSlots<std::vector<int64_t>, std::unique_ptr<CachedGraph>>;
 
-    CachedGraph & prepare(const std::vector<int64_t> & input_shape) {
+    CachedGraph & prepare(const std::vector<int64_t> & input_shape, GraphCache & cache) {
         const auto build_start = std::chrono::steady_clock::now();
         auto prepared = std::make_unique<CachedGraph>();
         prepared->input_shape = input_shape;
@@ -681,11 +679,11 @@ private:
             !ggml_gallocr_alloc_graph(prepared->gallocr, prepared->graph)) {
             throw std::runtime_error("failed to allocate Supertonic vocoder backend graph buffer");
         }
-        graphs_.put(input_shape, std::move(prepared));
+        cache.put(input_shape, std::move(prepared));
         engine::debug::timing_log_scalar(
             "supertonic.vocoder.prepare_ms",
             engine::debug::elapsed_ms(build_start));
-        auto * cached = graphs_.find(input_shape);
+        auto * cached = cache.find(input_shape);
         if (cached == nullptr) {
             throw std::runtime_error("Supertonic vocoder graph cache insert failed");
         }
@@ -722,9 +720,8 @@ private:
             1,
             true,
         }).build(ctx, x, {weights_.embed_weight, weights_.embed_bias});
-        constexpr std::array<int, 10> kDilations = {1, 2, 4, 1, 2, 4, 1, 1, 1, 1};
         for (size_t i = 0; i < weights_.blocks.size(); ++i) {
-            x = vocoder_block(ctx, x, weights_.blocks[i], kDilations[i]);
+            x = vocoder_block(ctx, x, weights_.blocks[i], kVocoderDilations[i]);
         }
         x = batch_norm_eval(ctx, x, weights_);
         x = edge_pad_time(ctx, x, 2, 0);
@@ -764,7 +761,9 @@ private:
     SupertonicConfig config_;
     size_t arena_bytes_ = 0;
     int threads_ = 1;
-    runtime::CacheSlots<std::vector<int64_t>, std::unique_ptr<CachedGraph>> graphs_{kSupertonicLargeGraphCacheSlots};
+    GraphCache graphs_{kSupertonicLargeGraphCacheSlots};
+    // Retain growing-window shapes across text chunks without evicting the steady window.
+    GraphCache stream_graphs_{8};
 };
 
 class SupertonicNetwork {
@@ -2307,7 +2306,10 @@ SupertonicChunkOutput synthesize_supertonic_chunk(
     const std::vector<int64_t> & style_ttl_shape,
     const std::vector<float> & style_dp,
     const std::vector<int64_t> & style_dp_shape,
-    NumpyMt19937Normal & rng) {
+    NumpyMt19937Normal & rng,
+    runtime::StreamingAudioController<float> & stream,
+    const runtime::StreamingAudioConfig * stream_config,
+    runtime::StreamEventCallback sink) {
     const auto chunk_start = std::chrono::steady_clock::now();
     auto timing_start = std::chrono::steady_clock::now();
     const auto text_inputs = tokenizer.encode(text, options.language);
@@ -2359,12 +2361,48 @@ SupertonicChunkOutput synthesize_supertonic_chunk(
     engine::debug::timing_log_scalar("supertonic.chunk.vector_total_ms", engine::debug::elapsed_ms(timing_start));
 
     timing_start = std::chrono::steady_clock::now();
-    auto wav = vocoder_model.run(make_latent_tensor({1, latent_channels, latent_length}, latent));
-    engine::debug::timing_log_scalar("supertonic.chunk.vocoder_ms", engine::debug::elapsed_ms(timing_start));
     SupertonicChunkOutput out;
-    out.audio.sample_rate = config.sample_rate;
-    out.audio.channels = 1;
-    out.audio.samples = std::move(wav.values);
+    if (stream_config) {
+        auto streaming = *stream_config;
+        streaming.frame_width = static_cast<size_t>(latent_channels);
+        // Causal embedding, ten dilated ConvNeXt blocks, then the output head.
+        const int64_t receptive_left = 6 + 6 * std::accumulate(
+            kVocoderDilations.begin(), kVocoderDilations.end(), 0) + 2;
+        streaming.left_context_frames = static_cast<size_t>(
+            (receptive_left + config.chunk_compress_factor - 1) / config.chunk_compress_factor);
+        std::vector<float> frame_major(latent.size());
+        for (int64_t t = 0; t < latent_length; ++t) {
+            for (int64_t c = 0; c < latent_channels; ++c) {
+                frame_major[t * latent_channels + c] = latent[c * latent_length + t];
+            }
+        }
+        stream.begin(streaming, [&](const runtime::StreamingAudioWindow<float> & window) {
+            const auto frames = window.frames();
+            std::vector<float> channel_major(frames * latent_channels);
+            for (size_t t = 0; t < frames; ++t) {
+                for (size_t c = 0; c < static_cast<size_t>(latent_channels); ++c) {
+                    channel_major[c * frames + t] = window.data[t * latent_channels + c];
+                }
+            }
+            auto decoded = vocoder_model.run(make_latent_tensor(
+                {1, latent_channels, static_cast<int64_t>(frames)}, channel_major), true);
+            const size_t begin = window.left_frames * chunk_size;
+            const size_t position = window.first_frame * chunk_size;
+            const size_t remaining = position < static_cast<size_t>(wav_length)
+                ? static_cast<size_t>(wav_length) - position : 0;
+            const size_t count = std::min(window.new_frames * chunk_size, remaining);
+            return runtime::AudioBuffer{config.sample_rate, 1,
+                std::vector<float>(decoded.values.begin() + begin, decoded.values.begin() + begin + count)};
+        }, std::move(sink));
+        stream.push(frame_major);
+        out.audio = stream.finish();
+    } else {
+        auto wav = vocoder_model.run(make_latent_tensor({1, latent_channels, latent_length}, latent));
+        out.audio.sample_rate = config.sample_rate;
+        out.audio.channels = 1;
+        out.audio.samples = std::move(wav.values);
+    }
+    engine::debug::timing_log_scalar("supertonic.chunk.vocoder_ms", engine::debug::elapsed_ms(timing_start));
     out.duration_seconds = duration.values[0];
     engine::debug::trace_log_scalar("supertonic.chunk.latent_length", latent_length);
     engine::debug::trace_log_scalar("supertonic.chunk.wav_length", wav_length);
@@ -2483,6 +2521,7 @@ struct SupertonicRuntime::State {
     std::unique_ptr<SupertonicVocoderRuntime> vocoder_model;
     runtime::CacheSlots<std::string, Style> styles;
     Style uncached_style;
+    runtime::StreamingAudioController<float> stream;
 };
 
 SupertonicRuntime::SupertonicRuntime(
@@ -2497,7 +2536,9 @@ SupertonicRuntime::~SupertonicRuntime() = default;
 runtime::AudioBuffer SupertonicRuntime::synthesize(
     const std::string & text,
     const SupertonicGenerationOptions & options,
-    const SupertonicTextTokenizer & tokenizer) {
+    const SupertonicTextTokenizer & tokenizer,
+    const runtime::StreamingAudioConfig * stream_config,
+    runtime::StreamEventCallback sink) {
     const auto total_start = std::chrono::steady_clock::now();
     auto timing_start = std::chrono::steady_clock::now();
     const auto & style = state_->style(options.voice);
@@ -2519,7 +2560,10 @@ runtime::AudioBuffer SupertonicRuntime::synthesize(
         style.ttl_shape,
         style.dp,
         style.dp_shape,
-        rng);
+        rng,
+        state_->stream,
+        stream_config,
+        std::move(sink));
     runtime::AudioBuffer out = std::move(chunk_audio.audio);
     const size_t trim = std::min(
         out.samples.size(),

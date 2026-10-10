@@ -52,13 +52,20 @@ audiocpp_cli --task tts --family kokoro_tts \
   --out out_zh.wav
 ```
 
-## Model
+## Streaming
 
+Use `--mode streaming` to emit each synthesized text chunk immediately. Text
+chunking uses the same `text_chunk_size` and `text_chunk_mode` controls as offline
+generation; it does not split an already generated waveform into fake streaming
+events. A short input that fits in one chunk produces one audio event. Longer
+inputs produce incremental, non-cumulative audio chunks and a final merged WAV.
+
+## Model
 | Field | Value |
 |---|---|
 | Family | `kokoro_tts` |
 | Task | `tts` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Default package | `kokoro_82m_q8_0` |
 | Other package | `kokoro_82m_bf16` |
 | Model file | `models/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf` |

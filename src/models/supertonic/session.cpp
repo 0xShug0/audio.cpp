@@ -7,6 +7,7 @@
 #include "engine/models/supertonic/runtime.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -121,70 +122,24 @@ runtime::TaskResult SupertonicSession::run(const runtime::TaskRequest & request)
     return result;
 }
 
-runtime::StreamingPolicy SupertonicSession::streaming_policy() const {
-    runtime::StreamingPolicy policy;
-    policy.input = runtime::StreamingInputKind::None;
-    policy.output = runtime::StreamingOutputKind::PullEvents;
-    return policy;
-}
-
-void SupertonicSession::start_stream(const runtime::TaskRequest & request) {
+runtime::TaskResult SupertonicSession::generate_stream(const runtime::TaskRequest & request) {
     require_prepared("Supertonic streaming");
-    if (task_.mode != runtime::RunMode::Streaming) {
-        throw std::runtime_error("Supertonic start_stream requires a streaming session");
-    }
-    reset();
-    stream_chunk_requests_ = build_chunk_requests(request);
-    stream_started_ = true;
-}
-
-std::optional<runtime::StreamEvent> SupertonicSession::next_stream_event() {
-    if (!stream_started_) {
-        throw std::runtime_error("Supertonic streaming has not been started");
-    }
-    if (stream_chunk_index_ >= stream_chunk_requests_.size()) {
-        return std::nullopt;
-    }
-    const std::size_t chunk_index = stream_chunk_index_++;
-    auto chunk_audio = synthesize_chunk(stream_chunk_requests_[chunk_index]);
-    runtime::append_audio_buffer(stream_merged_audio_, chunk_audio);
-    runtime::StreamEvent event;
-    event.named_audio_outputs.push_back({
-        "chunk_" + std::to_string(chunk_index),
-        std::move(chunk_audio),
-        {},
-    });
-    return event;
-}
-
-void SupertonicSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
-    (void)sink;
-}
-
-runtime::TaskResult SupertonicSession::finish_stream() {
-    if (!stream_started_) {
-        throw std::runtime_error("Supertonic streaming has not been started");
+    const auto start = std::chrono::steady_clock::now();
+    runtime::StreamingAudioConfig config;
+    config.frames_per_chunk = static_cast<size_t>(runtime::parse_positive_i64_option(
+        request.options, {"stream_frames_per_event"}, 12));
+    config.policy = runtime::parse_streaming_audio_chunk_policy(
+        runtime::find_option(request.options, {"stream_chunk_policy"}).value_or("grow"));
+    runtime::AudioBuffer audio;
+    for (const auto & chunk : build_chunk_requests(request)) {
+        runtime::append_audio_buffer(audio, runtime_->synthesize(
+            chunk.text_input->text, generation_options_from_request(chunk), tokenizer_,
+            &config, stream_event_sink()));
     }
     runtime::TaskResult result;
-    result.audio_output = std::move(stream_merged_audio_);
-    reset();
+    result.audio_output = std::move(audio);
+    debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(start));
     return result;
-}
-
-void SupertonicSession::reset() {
-    stream_chunk_requests_.clear();
-    stream_merged_audio_ = runtime::AudioBuffer{};
-    stream_chunk_index_ = 0;
-    stream_started_ = false;
-}
-
-runtime::StreamEvent SupertonicSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
-    (void)chunk;
-    throw std::runtime_error("Supertonic streaming does not consume audio chunks");
-}
-
-runtime::TaskResult SupertonicSession::finalize() {
-    return finish_stream();
 }
 
 SupertonicGenerationOptions SupertonicSession::generation_options_from_request(const runtime::TaskRequest & request) const {
