@@ -50,8 +50,8 @@ KokoroTTSSession::KokoroTTSSession(
     if (task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("Kokoro TTS only supports tts tasks");
     }
-    if (task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Kokoro TTS only supports offline sessions");
+    if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("Kokoro TTS only supports offline and streaming sessions");
     }
     const auto & session_options = RuntimeSessionBase::options().options;
     using T = engine::assets::TensorStorageType;
@@ -566,6 +566,17 @@ void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & reques
 }
 
 runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) {
+    if (task_.mode != runtime::RunMode::Offline) {
+        throw std::runtime_error("Kokoro TTS run requires an offline session");
+    }
+    return synthesize(request, false);
+}
+
+runtime::TaskResult KokoroTTSSession::generate_stream(const runtime::TaskRequest & request) {
+    return synthesize(request, true);
+}
+
+runtime::TaskResult KokoroTTSSession::synthesize(const runtime::TaskRequest & request, bool streaming) {
     require_prepared("Kokoro TTS run()");
     if (!request.text_input.has_value()) {
         throw std::runtime_error("Kokoro TTS run requires text_input");
@@ -696,7 +707,13 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
                 audio.size(),
                 static_cast<int64_t>(merged_audio.samples.size()));
         }
-        runtime::append_audio_buffer(merged_audio, runtime::AudioBuffer{24000, 1, std::move(audio)});
+        runtime::AudioBuffer chunk_audio{24000, 1, std::move(audio)};
+        runtime::append_audio_buffer(merged_audio, chunk_audio);
+        if (streaming && stream_event_sink()) {
+            runtime::StreamEvent event;
+            event.audio_output = std::move(chunk_audio);
+            stream_event_sink()(event);
+        }
     }
 
     runtime::TaskResult result;

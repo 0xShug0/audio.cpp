@@ -6,10 +6,10 @@
   "category": "tts",
   "status": "community",
   "tasks": ["tts"],
-  "modes": ["offline"],
+  "modes": ["offline", "streaming"],
   "languages": ["en-us", "en-gb", "es", "fr-fr", "hi", "it", "ja", "pt-br", "zh"],
   "runtime": {
-    "tags": ["gguf"]
+    "tags": ["gguf", "stream"]
   },
   "capabilities": {
     "tts": ["built_in_voices", "long_form"]

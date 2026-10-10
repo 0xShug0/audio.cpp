@@ -2,6 +2,7 @@
 
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/models/kokoro_tts/assets.h"
 
 #include <cstddef>
@@ -46,7 +47,8 @@ void append_kokoro_word_timings(
 struct KokoroSynthesisInput;
 class KokoroTTSSession final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::StreamingTtsSessionBase {
 public:
     KokoroTTSSession(
         runtime::TaskSpec task,
@@ -62,6 +64,10 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override {}
+
     struct DecoderCapacityContract {
         int64_t decoder_frame_capacity = 0;
         int64_t conditioning_sample_capacity = 0;

@@ -1164,14 +1164,13 @@
     },
     {
       "id": "neutts_streaming_longform_chunks",
-      "coverage": "NeuTTS-2E streaming pull-events path, long-form chunking, named segment audio, and final merged audio",
+      "coverage": "NeuTTS-2E incremental AR-code streaming, codec context windows, long-form chunking, and final merged audio",
       "family": "neutts",
       "model": "models/NeuTTS-2E-GGUF/neutts-2e-orig.gguf",
       "task": "tts",
       "mode": "streaming",
       "outputs": [
-        "audio",
-        "named_audio"
+        "audio"
       ],
       "requests": [
         {
@@ -1316,12 +1315,11 @@
     },
     {
       "id": "voxcpm2_streaming_voice_design",
-      "coverage": "VoxCPM2 streaming text-to-speech path with text-embedded voice design, MiniCPM streaming generation, diffusion feature generation, and AudioVAE chunk decode",
+      "coverage": "VoxCPM2 streaming voice design with growing AudioVAE windows and incremental audio emission",
       "family": "voxcpm2",
       "model": "models/VoxCPM2",
       "task": "tts",
       "mode": "streaming",
-      "chunk_size": 512,
       "outputs": [
         "audio"
       ],
@@ -1335,6 +1333,30 @@
           "num_inference_steps": 10,
           "options": {
             "retry_badcase": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "voxcpm2_streaming_clone_fixed",
+      "coverage": "VoxCPM2 reference voice streaming with fixed AudioVAE windows and left-context trimming",
+      "family": "voxcpm2",
+      "model": "models/VoxCPM2",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "streaming_clone_fixed",
+          "text": "This VoxCPM2 path test clones the reference speaker for a short review sentence.",
+          "voice_ref": "resources/sample.wav",
+          "seed": 1234,
+          "guidance_scale": 2.0,
+          "num_inference_steps": 10,
+          "options": {
+            "retry_badcase": false,
+            "stream_chunk_policy": "fixed",
+            "stream_frames_per_event": 4
           }
         }
       ]
@@ -2679,6 +2701,24 @@
           "top_k": 25,
           "top_p": 0.8,
           "num_inference_steps": 32
+        }
+      ]
+    },
+    {
+      "id": "kokoro_streaming_text_chunks",
+      "coverage": "Kokoro text-chunk streaming and final merged audio",
+      "family": "kokoro_tts",
+      "model": "models/Kokoro-82M-GGUF/kokoro-82m-bf16.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "first",
+          "text": "The station clock strikes nine as the first passengers arrive. A conductor checks the schedule and welcomes everyone aboard.",
+          "voice_id": "af_heart",
+          "text_chunk_size": 60,
+          "seed": 42
         }
       ]
     },
