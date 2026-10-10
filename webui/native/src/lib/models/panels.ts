@@ -61,7 +61,12 @@ export const modelStudioPanels = {
   }
 };
 
-export function modelStudioPanelFor(family?: string) {
+// A panel entry with a tasks list covers only those tasks of its family;
+// one without covers them all.
+export function modelStudioPanelFor(family?: string, task?: string) {
   if (!family) return undefined;
-  return modelStudioPanels[family as keyof typeof modelStudioPanels];
+  const panel = modelStudioPanels[family as keyof typeof modelStudioPanels];
+  const tasks = (panel as { tasks?: readonly string[] } | undefined)?.tasks;
+  if (tasks && !tasks.includes(task || '')) return undefined;
+  return panel;
 }

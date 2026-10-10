@@ -218,6 +218,106 @@ export async function runTask(body: Record<string, unknown>, signal?: AbortSigna
   }, signal);
 }
 
+export class TaskStreamClosedError extends Error {
+  constructor(message = 'The connection closed before the run finished.') {
+    super(message);
+    this.name = 'TaskStreamClosedError';
+  }
+}
+
+export type TaskStreamMessage =
+  | { type: 'task.stream.event'; event: Record<string, unknown> }
+  | { type: 'task.stream.done'; result: Record<string, unknown> };
+
+function sseData(message: string): string {
+  if (message.startsWith('data: ') && !message.includes('\n')) return message.slice(6);
+  return message.split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(line.startsWith('data: ') ? 6 : 5))
+    .join('\n');
+}
+
+// POSTs to /v1/tasks/stream with "stream_format": "sse" and yields each event
+// as the server sends it, then the result. An error message from the server
+// is thrown with its text. A stream that ends before task.stream.done throws
+// TaskStreamClosedError.
+export async function* taskStreamEvents(
+  body: Record<string, unknown>,
+  signal?: AbortSignal
+): AsyncGenerator<TaskStreamMessage> {
+  const response = await fetch(apiUrl('/v1/tasks/stream'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, stream_format: 'sse' }),
+    signal
+  });
+  if (!response.ok) throw await errorFrom(response);
+  if (!response.body) throw new Error('This browser cannot read a streamed response.');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  // A message ends at a blank line. The done message repeats the whole reply
+  // and comes in many reads, so the pieces of an unfinished message are kept
+  // apart and joined once, when it ends.
+  let parts: string[] = [];
+  let endsInNewline = false;
+  let sawDone = false;
+  let sawEnd = false;
+  let eof = false;
+  try {
+    while (!eof) {
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        if ((error as Error)?.name === 'AbortError') throw error;
+        break;
+      }
+      eof = chunk.done;
+      const text = chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true });
+      if (!text || sawEnd) continue;
+      const messages: string[] = [];
+      let from = 0;
+      if (endsInNewline && text.startsWith('\n')) {
+        const joined = parts.join('');
+        messages.push(joined.slice(0, -1));
+        parts = [];
+        from = 1;
+      }
+      for (let end = text.indexOf('\n\n', from); end >= 0; end = text.indexOf('\n\n', from)) {
+        parts.push(text.slice(from, end));
+        messages.push(parts.join(''));
+        parts = [];
+        from = end + 2;
+      }
+      if (from < text.length) {
+        const rest = text.slice(from);
+        parts.push(rest);
+        endsInNewline = rest.endsWith('\n');
+      } else {
+        endsInNewline = false;
+      }
+      for (const message of messages) {
+        const data = sseData(message);
+        if (!data) continue;
+        if (data === '[DONE]') {
+          // Read on to the end, so that the connection closes cleanly.
+          sawEnd = true;
+          break;
+        }
+        const parsed = JSON.parse(data);
+        if (parsed?.type === 'error') throw new Error(parsed.error?.message || 'The stream failed.');
+        if (parsed?.type === 'task.stream.event' || parsed?.type === 'task.stream.done') {
+          if (parsed.type === 'task.stream.done') sawDone = true;
+          yield parsed as TaskStreamMessage;
+        }
+      }
+    }
+  } finally {
+    if (!eof) await reader.cancel().catch(() => undefined);
+  }
+  if (!sawDone) throw new TaskStreamClosedError();
+}
+
 export function base64AudioUrl(data: string): string {
   const binary = atob(data);
   const bytes = new Uint8Array(binary.length);
