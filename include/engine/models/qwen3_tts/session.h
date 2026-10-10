@@ -2,6 +2,8 @@
 
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_audio.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/models/qwen3_tts/assets.h"
 #include "engine/models/qwen3_tts/prompt_tts_voice_clone.h"
 #include "engine/models/qwen3_tts/speaker_encoder.h"
@@ -20,7 +22,8 @@ namespace engine::models::qwen3_tts {
 
 class Qwen3TTSSession final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::StreamingTtsSessionBase {
 public:
     Qwen3TTSSession(
         runtime::TaskSpec task,
@@ -34,6 +37,9 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override;
+
     struct VoicePromptCacheKey {
         std::string reference_text;
         Qwen3VoiceCloneMode mode = Qwen3VoiceCloneMode::Icl;
@@ -52,6 +58,15 @@ private:
     };
 
     Qwen3TTSRequest make_request(const runtime::TaskRequest & request) const;
+    runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);
+    runtime::AudioBuffer generate_audio(
+        const Qwen3TalkerPrefill & prefill,
+        const Qwen3TTSGenerationOptions & options,
+        const Qwen3SpeechCodes * reference_codes,
+        int64_t stream_frames,
+        runtime::StreamingAudioChunkPolicy stream_policy,
+        double & talker_ms,
+        double & decoder_ms);
     const Qwen3VoiceClonePrompt & resolve_voice_prompt(
         const Qwen3VoiceCloneInput & input,
         const Qwen3TTSVoiceClonePromptBuilder & prompt_builder);
@@ -84,6 +99,7 @@ private:
     std::unique_ptr<Qwen3TTSEcapaTdnnEncoderRuntime> speaker_encoder_;
     runtime::CacheSlots<VoicePromptCacheKey, VoicePromptCacheEntry, VoicePromptCacheKeyEqual> voice_prompt_cache_;
     std::optional<VoicePromptCacheEntry> uncached_voice_prompt_;
+    runtime::StreamingAudioController<int32_t> stream_audio_;
 };
 
 }  // namespace engine::models::qwen3_tts

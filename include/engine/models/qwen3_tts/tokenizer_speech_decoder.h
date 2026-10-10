@@ -23,6 +23,7 @@ class Qwen3SpeechTokenizerDecoderGraph;
 
 class Qwen3SpeechTokenizerDecoderRuntime {
 public:
+    static constexpr int64_t kLeftContextFrames = 25;
     Qwen3SpeechTokenizerDecoderRuntime(
         std::shared_ptr<const Qwen3TTSAssets> assets,
         core::ExecutionContext & execution_context,
@@ -37,6 +38,10 @@ public:
     runtime::AudioBuffer decode_and_trim_reference(
         const Qwen3SpeechCodes & reference_codes,
         const Qwen3SpeechCodes & generated_codes) const;
+    runtime::AudioBuffer decode_stream_chunk(
+        const Qwen3SpeechCodes & codec_codes,
+        int64_t context_frames,
+        int64_t frames_per_chunk) const;
 
 private:
     std::shared_ptr<const Qwen3TTSAssets> assets_;
@@ -46,6 +51,8 @@ private:
     Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
     std::unique_ptr<core::ConstantTensorCache> constants_;
     mutable std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph> graph_;
+    mutable std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph> stream_graph_;
+    mutable std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph> stream_initial_graph_;
     // Always present to keep this public class layout identical when the private
     // Strix Halo compile definition differs between translation units.
     mutable std::array<std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph>, 2> optimized_graphs_;

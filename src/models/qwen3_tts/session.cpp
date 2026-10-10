@@ -337,9 +337,6 @@ Qwen3TTSSession::Qwen3TTSSession(
         speech_decoder_weight_storage_type_,
         conv_weight_storage_type_,
         perf_mode_);
-    if (task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Qwen3 TTS currently supports offline sessions");
-    }
     if (assets_->config.variant == Qwen3TTSVariant::Base && task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("Qwen3 base TTS model only supports the Tts task");
     }
@@ -383,8 +380,77 @@ void Qwen3TTSSession::prepare(const runtime::SessionPreparationRequest & request
 }
 
 runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
+    if (task_.mode != runtime::RunMode::Offline) {
+        throw std::runtime_error("Qwen3 TTS run requires an offline session");
+    }
+    return synthesize(request, false);
+}
+
+runtime::TaskResult Qwen3TTSSession::generate_stream(const runtime::TaskRequest & request) {
+    return synthesize(request, true);
+}
+
+void Qwen3TTSSession::reset_stream_state() {
+    stream_audio_.reset();
+}
+
+runtime::AudioBuffer Qwen3TTSSession::generate_audio(
+    const Qwen3TalkerPrefill & prefill,
+    const Qwen3TTSGenerationOptions & options,
+    const Qwen3SpeechCodes * reference_codes,
+    int64_t stream_frames,
+    runtime::StreamingAudioChunkPolicy stream_policy,
+    double & talker_ms,
+    double & decoder_ms) {
+    if (stream_frames == 0) {
+        const auto talker_start = Clock::now();
+        const auto codes = talker_step_->generate(prefill, options, options.repetition_penalty);
+        talker_ms += engine::debug::elapsed_ms(talker_start);
+        const auto decoder_start = Clock::now();
+        auto audio = reference_codes != nullptr
+            ? speech_decoder_->decode_and_trim_reference(*reference_codes, codes.generated_codes)
+            : speech_decoder_->decode(codes.generated_codes);
+        decoder_ms += engine::debug::elapsed_ms(decoder_start);
+        return audio;
+    }
+
+    runtime::StreamingAudioConfig config;
+    config.policy = stream_policy;
+    config.frames_per_chunk = static_cast<size_t>(stream_frames);
+    config.frame_width = static_cast<size_t>(assets_->config.talker.num_code_groups);
+    config.left_context_frames = Qwen3SpeechTokenizerDecoderRuntime::kLeftContextFrames;
+    stream_audio_.begin(config,
+        [&](const runtime::StreamingAudioWindow<int32_t> & window) {
+            Qwen3SpeechCodes codes;
+            codes.code_groups = static_cast<int64_t>(window.frame_width);
+            codes.frames = static_cast<int64_t>(window.frames());
+            codes.codes.assign(window.data, window.data + window.frames() * window.frame_width);
+            return speech_decoder_->decode_stream_chunk(codes, window.left_frames, stream_frames);
+        }, stream_event_sink(), reference_codes ? reference_codes->codes : std::vector<int32_t>{});
+    const auto talker_start = Clock::now();
+    talker_step_->generate(prefill, options, options.repetition_penalty,
+        [&](const std::vector<int32_t> & frame) { stream_audio_.push(frame); });
+    talker_ms += engine::debug::elapsed_ms(talker_start) - stream_audio_.decode_ms() - stream_audio_.publish_ms();
+    auto audio = stream_audio_.finish();
+    decoder_ms += stream_audio_.decode_ms();
+    if (audio.samples.empty()) {
+        throw std::runtime_error("Qwen3 TTS generated no audio frames");
+    }
+    return audio;
+}
+
+runtime::TaskResult Qwen3TTSSession::synthesize(const runtime::TaskRequest & request, bool streaming) {
     require_prepared("Qwen3 TTS run");
     const auto wall_start = Clock::now();
+    const int64_t stream_frames = streaming
+        ? runtime::parse_int_option(request.options, {"stream_frames_per_event"}).value_or(12) : 0;
+    if (streaming && stream_frames <= 0) {
+        throw std::runtime_error("Qwen3 TTS stream_frames_per_event must be positive");
+    }
+    const auto stream_policy = streaming
+        ? runtime::parse_streaming_audio_chunk_policy(
+              runtime::find_option(request.options, {"stream_chunk_policy"}).value_or("grow"))
+        : runtime::StreamingAudioChunkPolicy::Grow;
     TalkerCachedStepReleaseGuard release_talker_cached_step_graph(talker_step_.get(), mem_saver_);
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
@@ -403,17 +469,9 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
             const auto prefill_start = Clock::now();
             const auto prefill = prompt_builder.build_prefill(qwen_request);
             prefill_ms += engine::debug::elapsed_ms(prefill_start, Clock::now());
-            const auto talker_start = Clock::now();
-            const auto codes = talker_step_->generate(
-                prefill,
-                qwen_request.generation,
-                qwen_request.generation.repetition_penalty);
-            talker_ms += engine::debug::elapsed_ms(talker_start, Clock::now());
-            const auto decoder_start = Clock::now();
             runtime::append_audio_buffer(
                 merged_audio,
-                speech_decoder_->decode(codes.generated_codes));
-            decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
+                generate_audio(prefill, qwen_request.generation, nullptr, stream_frames, stream_policy, talker_ms, decoder_ms));
         }
         release_talker_cached_step_graph.release();
         runtime::TaskResult result;
@@ -438,17 +496,9 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
             const auto prefill_start = Clock::now();
             const auto prefill = prompt_builder.build_prefill(qwen_request);
             prefill_ms += engine::debug::elapsed_ms(prefill_start, Clock::now());
-            const auto talker_start = Clock::now();
-            const auto codes = talker_step_->generate(
-                prefill,
-                qwen_request.generation,
-                qwen_request.generation.repetition_penalty);
-            talker_ms += engine::debug::elapsed_ms(talker_start, Clock::now());
-            const auto decoder_start = Clock::now();
             runtime::append_audio_buffer(
                 merged_audio,
-                speech_decoder_->decode(codes.generated_codes));
-            decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
+                generate_audio(prefill, qwen_request.generation, nullptr, stream_frames, stream_policy, talker_ms, decoder_ms));
         }
         release_talker_cached_step_graph.release();
         runtime::TaskResult result;
@@ -484,20 +534,11 @@ runtime::TaskResult Qwen3TTSSession::run(const runtime::TaskRequest & request) {
         const auto prefill_start = Clock::now();
         const auto prefill = prompt_builder.build_prefill(qwen_request, voice_prompt);
         prefill_ms += engine::debug::elapsed_ms(prefill_start, Clock::now());
-        const auto talker_start = Clock::now();
-        const auto codes = talker_step_->generate(
-            prefill,
-            qwen_request.generation,
-            qwen_request.generation.repetition_penalty);
-        talker_ms += engine::debug::elapsed_ms(talker_start, Clock::now());
-        const auto decoder_start = Clock::now();
-        runtime::AudioBuffer decoded = voice_prompt.reference_codes.has_value()
-            ? speech_decoder_->decode_and_trim_reference(
-                  *voice_prompt.reference_codes,
-                  codes.generated_codes)
-            : speech_decoder_->decode(codes.generated_codes);
+        auto decoded = generate_audio(
+            prefill, qwen_request.generation,
+            voice_prompt.reference_codes ? &*voice_prompt.reference_codes : nullptr,
+            stream_frames, stream_policy, talker_ms, decoder_ms);
         runtime::append_audio_buffer(merged_audio, decoded);
-        decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
     }
     release_talker_cached_step_graph.release();
     runtime::TaskResult result;

@@ -3391,6 +3391,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME audio_chunking_test COMMAND audio_chunking_test)
         add_engine_unittest(partial_text_test tests/unittests/test_partial_text.cpp)
         add_test(NAME partial_text_test COMMAND partial_text_test)
+        add_engine_unittest(streaming_audio_test tests/unittests/test_streaming_audio.cpp)
+        add_test(NAME streaming_audio_test COMMAND streaming_audio_test)
 
         add_engine_unittest(wav_writer_formats_test tests/unittests/test_wav_writer_formats.cpp)
         add_test(NAME wav_writer_formats_test COMMAND wav_writer_formats_test)

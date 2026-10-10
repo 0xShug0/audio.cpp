@@ -45,7 +45,7 @@ namespace binding = modules::binding;
 constexpr int64_t kSampleRate = 24000;
 constexpr int64_t kDecodeSamplesPerCode = 1920;
 constexpr int64_t kChunkCodes = 300;
-constexpr int64_t kLeftContextCodes = 25;
+constexpr int64_t kLeftContextCodes = Qwen3SpeechTokenizerDecoderRuntime::kLeftContextFrames;
 constexpr std::array<int64_t, 2> kStrixHaloCachedChunkFrames{300, 105};
 #if defined(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
 constexpr bool kStrixHaloGraphCacheEnabled = true;
@@ -1263,6 +1263,42 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
     debug::timing_log_scalar("qwen3_tts.speech_decoder.output_read_ms", output_read_ms);
     debug::timing_log_scalar("qwen3_tts.speech_decoder.total_ms", engine::debug::elapsed_ms(total_start, Clock::now()));
     return runtime::AudioBuffer{kSampleRate, 1, std::move(samples)};
+}
+
+runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode_stream_chunk(
+    const Qwen3SpeechCodes & codec_codes,
+    int64_t context_frames,
+    int64_t frames_per_chunk) const {
+    if (frames_per_chunk <= 0 || context_frames < 0 || context_frames > kLeftContextCodes ||
+        codec_codes.frames <= context_frames || codec_codes.frames - context_frames > frames_per_chunk ||
+        codec_codes.code_groups != weights_->config.num_quantizers ||
+        static_cast<int64_t>(codec_codes.codes.size()) != codec_codes.frames * codec_codes.code_groups) {
+        throw std::runtime_error("Qwen3 streaming speech decoder received invalid codec shape");
+    }
+    const auto begin = Clock::now();
+    const bool initial = context_frames == 0;
+    const int64_t capacity = initial ? codec_codes.frames : kLeftContextCodes + frames_per_chunk;
+    auto & graph = initial ? stream_initial_graph_ : stream_graph_;
+    const int threads = std::max(1, execution_context_->config().threads);
+    const bool rebuild = graph == nullptr ||
+        !graph->matches(*weights_, capacity, execution_context_->backend(), threads);
+    if (rebuild) {
+        graph.reset();
+        graph = std::make_unique<Qwen3SpeechTokenizerDecoderGraph>(
+            weights_, capacity, *execution_context_, *constants_, graph_arena_bytes_, perf_mode_);
+    }
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.graph.rebuilds", static_cast<int64_t>(rebuild));
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.graph.build_ms", engine::debug::elapsed_ms(begin));
+    // All decoder layers are causal. Right padding allows the initial and final
+    // short chunks to use the same graph without changing their valid samples.
+    auto decoded = graph->run(codec_codes.codes.data(), codec_codes.codes.size());
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.graph.compute_ms", graph->last_graph_compute_ms());
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.input_upload_ms", graph->last_input_upload_ms());
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.output_read_ms", graph->last_output_read_ms());
+    decoded.resize(static_cast<size_t>(codec_codes.frames * kDecodeSamplesPerCode));
+    decoded.erase(decoded.begin(), decoded.begin() + context_frames * kDecodeSamplesPerCode);
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.total_ms", engine::debug::elapsed_ms(begin));
+    return runtime::AudioBuffer{kSampleRate, 1, std::move(decoded)};
 }
 
 runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode_and_trim_reference(

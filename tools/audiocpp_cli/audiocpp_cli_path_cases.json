@@ -855,6 +855,61 @@
       ]
     },
     {
+      "id": "qwen3_tts_custom_voice_streaming",
+      "coverage": "Qwen3 CustomVoice incremental codec decoding during AR generation and final partial audio flush",
+      "family": "qwen3_tts",
+      "model": "models/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "custom_stream",
+        "text": "The lighthouse keeper records a detailed morning report about the tide, the lantern, and the ships crossing the horizon.",
+        "language": "English",
+        "speaker": "Ryan",
+        "seed": 1234,
+        "max_tokens": 256,
+        "options": {"stream_chunk_policy": "fixed"}
+      }]
+    },
+    {
+      "id": "qwen3_tts_base_voice_clone_streaming",
+      "coverage": "Qwen3 Base streaming with reference codec context and reference audio excluded from emitted chunks",
+      "family": "qwen3_tts",
+      "model": "models/Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "clone_stream",
+        "text": "The lighthouse keeper records a detailed morning report about the tide, the lantern, and the ships crossing the horizon.",
+        "language": "English",
+        "voice_ref": "resources/a.wav",
+        "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+        "seed": 1234,
+        "max_tokens": 256,
+        "options": {"stream_chunk_policy": "fixed"}
+      }]
+    },
+    {
+      "id": "qwen3_tts_voice_design_streaming",
+      "coverage": "Qwen3 VoiceDesign streaming instruction path with a smaller audio event size",
+      "family": "qwen3_tts",
+      "model": "models/Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf",
+      "task": "vdes",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "design_stream",
+        "text": "This designed voice should sound cheerful and clear while keeping every word easy to recognize.",
+        "language": "English",
+        "instruct": "A cheerful young woman with a bright studio voice.",
+        "seed": 1234,
+        "max_tokens": 192,
+        "options": {"stream_frames_per_event": 4, "stream_chunk_policy": "fixed"}
+      }]
+    },
+    {
       "id": "qwen3_tts_custom_voice",
       "coverage": "Qwen3 TTS custom voice variant speaker selection path",
       "family": "qwen3_tts",
