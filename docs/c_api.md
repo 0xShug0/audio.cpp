@@ -15,6 +15,13 @@ must be installed on the host. The server-only Colab bundle is unchanged.
 Dynamic backend plugins are discovered beside the C API library on Linux,
 macOS, and Windows, independently of the application's working directory.
 
+CUDA libraries for Linux (12.8 and 13.3) and Windows use a separate matching
+`audio-<tag>-cudart-<platform>-cuda<version>` archive. Extract its contents into
+the library package's `libs/` directory, or make that runtime directory available
+to the system loader. The NVIDIA driver is not bundled.
+Windows Vulkan also has a separate baseline `vulkan-portable` package for CPUs
+without AVX/AVX2; the existing Vulkan package is unchanged.
+
 ```bash
 cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON
 cmake --build build --target audiocpp
