@@ -118,7 +118,9 @@ audiocpp_cli --task tts --family sanotts \
   with hand-written AArch64 NEON kernels instead of the GGML graph (see
   Performance). Durations, the token stage, the iSTFT and the DC block are
   unchanged. Builds without AArch64 NEON reject `neon`; piperlite voices
-  ignore the option.
+  ignore the option. GGUF packages converted before this option existed embed
+  an older model spec and reject it as unknown; re-download or re-convert the
+  package, or pass `--model-spec-override <audio.cpp>/model_specs/sanotts.json`.
 
 ## Determinism and parity
 

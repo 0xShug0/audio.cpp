@@ -62,6 +62,15 @@ void validate_session_options(
         if (key.rfind(family_prefix, 0) == 0 &&
             contract.session_option_keys.find(key) ==
                 contract.session_option_keys.end()) {
+            if (key == "sanotts.cpu_decoder") {
+                // Newer than the model spec embedded in GGUF packages converted
+                // before it existed; without this hint the error reads as if the
+                // documented option does not exist.
+                throw std::runtime_error(
+                    "sanotts.cpu_decoder is not in this model package's embedded model spec "
+                    "(the package predates the option). Re-download or re-convert the "
+                    "package, or pass --model-spec-override <audio.cpp>/model_specs/sanotts.json");
+            }
             throw std::runtime_error("unknown sanoTTS session option: " + key);
         }
     }
