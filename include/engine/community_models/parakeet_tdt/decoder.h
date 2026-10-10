@@ -5,6 +5,7 @@
 #include "engine/community_models/parakeet_tdt/assets.h"
 #include "engine/community_models/parakeet_tdt/encoder.h"
 #include "engine/community_models/parakeet_tdt/weights.h"
+#include "engine/community_models/parakeet_tdt/hotwords.h"
 
 #include <cstdint>
 #include <functional>
@@ -17,6 +18,8 @@ namespace engine::community_models::parakeet_tdt {
 struct ParakeetDecodeOptions {
     int64_t max_tokens = 0;
     bool keep_language_tags = false;
+    int64_t audio_end_sample = -1;
+    std::shared_ptr<const PhononHotwordAutomaton> hotwords;
 };
 
 struct ParakeetDecodedText {
@@ -76,6 +79,9 @@ private:
     int32_t pending_input_token_ = 0;
     bool predictor_cache_valid_ = false;
     bool state_initialized_ = false;
+    std::shared_ptr<const PhononHotwordAutomaton> hotwords_;
+    int32_t hotword_state_ = 0;
+    int32_t select_token();
 
     void ensure_step_graph();
     void ensure_joint_graph();
@@ -84,7 +90,8 @@ private:
         const std::vector<int32_t> & token_ids,
         const std::vector<int32_t> & token_frame_indices,
         const std::vector<int32_t> & durations,
-        int64_t audio_end_frame) const;
+        int64_t audio_end_frame,
+        int64_t audio_end_sample) const;
 };
 
 }  // namespace engine::community_models::parakeet_tdt

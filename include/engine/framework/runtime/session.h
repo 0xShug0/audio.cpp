@@ -230,6 +230,9 @@ struct StreamEvent {
     std::vector<WordTimestamp> word_timestamps;
     std::vector<VoiceArtifact> output_artifacts;
     bool is_final = false;
+    // Revisable whole-transcript hypothesis; clients replace their provisional
+    // display. partial_text remains append-only committed text. Opt-in only.
+    std::optional<Transcript> partial_text_snapshot = std::nullopt;
 };
 
 enum class StreamingInputKind {

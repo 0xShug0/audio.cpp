@@ -36,6 +36,9 @@ struct ParakeetFastConformerConfig {
 };
 
 struct ParakeetConfig {
+    std::string variant;
+    std::string word_timestamp_mode = "default";
+    std::vector<int32_t> punctuation_token_ids;
     std::string model_type;
     int64_t vocab_size = 8193;
     int64_t blank_token_id = 8192;

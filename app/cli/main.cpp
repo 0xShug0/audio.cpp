@@ -550,6 +550,9 @@ void run_streaming(
     minitts::cli::PartialTextRenderer partial_renderer(stdout_is_terminal());
     const minitts::app::StreamEventSink sink =
         [&](const engine::runtime::StreamEvent & event) {
+            if (event.partial_text_snapshot.has_value()) {
+                std::cout << partial_renderer.render_snapshot(event.partial_text_snapshot->text) << std::flush;
+            }
             if (event.partial_text.has_value()) {
                 // Flushed so a live source's partials appear as they are produced rather than
                 // when the stdio buffer happens to fill.

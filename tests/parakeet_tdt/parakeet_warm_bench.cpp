@@ -262,13 +262,8 @@ int main(int argc, char ** argv) {
             }
         }
 
-        // NOTE: these env vars are not actually read by the logging subsystem
-        // (engine::debug::configure_logging() below is what wires it up);
-        // kept for parity with the timing-file convention other warm_bench
-        // tools advertise via --help / env, not because anything consumes them.
-        setenv("ENGINE_TRACE_ENABLED", "0", 1);
-        setenv("ENGINE_TIMING_ENABLED", "1", 1);
-        setenv("ENGINE_TIMING_FILE", timing_path.c_str(), 1);
+        // Configure logging directly. The old setenv calls were unused by
+        // the logger and prevented this benchmark from building with MSVC.
         engine::debug::configure_logging(engine::debug::LoggingConfig{true, timing_path.string()});
 
         auto registry = engine::runtime::make_default_registry();

@@ -669,6 +669,7 @@ std::string live_speech_timing_json(double request_start_to_first_audio_ms, doub
 
 bool stream_event_has_output(const engine::runtime::StreamEvent & event) {
     return (event.partial_text.has_value() && !event.partial_text->text.empty()) ||
+        (event.partial_text_snapshot.has_value() && !event.partial_text_snapshot->text.empty()) ||
         event.audio_output.has_value() ||
         !event.named_audio_outputs.empty();
 }
@@ -967,6 +968,11 @@ std::string stream_event_json(const engine::runtime::StreamEvent & event, bool d
         out << "{\"text\":" << json_quote(event.partial_text->text)
             << ",\"language\":" << json_quote(event.partial_text->language)
             << "}";
+    }
+    if (event.partial_text_snapshot.has_value()) {
+        field("partial_text_snapshot");
+        out << "{\"text\":" << json_quote(event.partial_text_snapshot->text)
+            << ",\"language\":" << json_quote(event.partial_text_snapshot->language) << "}";
     }
     if (event.audio_output.has_value()) {
         const auto wav = encode_pcm16_wav(*event.audio_output);
@@ -3162,6 +3168,10 @@ HttpResponse ServerState::run_transcription_stream(
                     }
                     return;
                 }
+                if (event.partial_text_snapshot.has_value()) {
+                    write_sse(writer, "{\"type\":\"transcript.text.partial\",\"text\":" +
+                        json_quote(event.partial_text_snapshot->text) + "}");
+                }
                 if (!event.partial_text.has_value() || event.partial_text->text.empty()) {
                     return;
                 }
@@ -3456,6 +3466,10 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
                             write_sse(writer, diarization_event_json(event.speaker_turns, sample_rate, false));
                         }
                         return;
+                    }
+                    if (event.partial_text_snapshot.has_value()) {
+                        write_sse(writer, "{\"type\":\"transcript.text.partial\",\"text\":" +
+                            json_quote(event.partial_text_snapshot->text) + "}");
                     }
                     if (!event.partial_text.has_value() || event.partial_text->text.empty()) {
                         return;

@@ -27,6 +27,11 @@ native cache-aware streaming.
 
 ## Architecture
 
+The same runtime can load the [Phonon-2 English ASR variant](phonon2.md) after
+exact reconstruction of its custom five-value container into a dense F32
+package. The Phonon package declares English-only offline support; it does
+not inherit this base checkpoint's 25-language claims.
+
 ```
 Frontend: 16kHz -> 128 mel bins, preemphasis=0.97, NeMo per-feature normalization
 Encoder:  3-stage Conv2D subsampling (8x) -> 24-layer FastConformer -> 1024-dim

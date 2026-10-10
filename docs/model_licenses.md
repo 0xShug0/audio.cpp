@@ -107,6 +107,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `outetts` | [OuteAI/Llama-OuteTTS-1.0-1B](https://huggingface.co/OuteAI/Llama-OuteTTS-1.0-1B) | CC-BY-NC-SA-4.0 | No | | 2026-09-21 |
 | `parakeet_tdt` | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | CC-BY-4.0 | Yes | | 2026-09-21 |
 | `parakeet_tdt` | [oruk/orukeet](https://huggingface.co/oruk/orukeet) | CC-BY-SA-4.0 | Yes | The Orukeet r3 weight variant. | 2026-09-21 |
+| `parakeet_tdt` | [FermionResearch/Phonon-2](https://huggingface.co/FermionResearch/Phonon-2) | CC-BY-4.0 | Yes | English-only weight variant; retain upstream NOTICE and attribution when converting/distributing. | 2026-10-09 |
 | `personaplex` | [nvidia/personaplex-7b-v1](https://huggingface.co/nvidia/personaplex-7b-v1) | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | Yes | | 2026-09-21 |
 | `piper_tts` | [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/lessac/medium) (`en_US-lessac-medium`) | MIT | Unclear | The voice's model card points to the [Lessac Blizzard 2013 dataset license](https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/), which allows non-commercial use only. | 2026-09-21 |
 | `pocket_tts` | [kyutai/pocket-tts](https://huggingface.co/kyutai/pocket-tts) | CC-BY-4.0 | Yes | | 2026-09-21 |
