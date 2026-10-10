@@ -5,7 +5,22 @@ facade over `engine::runtime` and adds no behaviour of its own: every call maps
 onto `ModelRegistry` → `ILoadedVoiceModel` → `IVoiceTaskSession`, the same
 surfaces `audiocpp_cli` uses.
 
-It is off by default.
+It is off by default in source builds. Releases provide separate
+`audio-<tag>-lib-<platform>-<backend>` archives, alongside the existing binary
+archives. Each library archive contains `include/audiocpp.h`, `libs/`, and the
+license. Windows archives include `audiocpp.lib` for linking. Choose the archive
+for your platform and backend: CPU, CUDA, Vulkan, or Metal. Keep bundled shared
+dependencies beside the library in `libs/`; GPU drivers and the Vulkan loader
+must be installed on the host. The server-only Colab bundle is unchanged.
+Dynamic backend plugins are discovered beside the C API library on Linux,
+macOS, and Windows, independently of the application's working directory.
+
+CUDA libraries for Linux (12.8 and 13.3) and Windows use a separate matching
+`audio-<tag>-cudart-<platform>-cuda<version>` archive. Extract its contents into
+the library package's `libs/` directory, or make that runtime directory available
+to the system loader. The NVIDIA driver is not bundled.
+Windows Vulkan also has a separate baseline `vulkan-portable` package for CPUs
+without AVX/AVX2; the existing Vulkan package is unchanged.
 
 ```bash
 cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON
