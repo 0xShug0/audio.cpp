@@ -2795,6 +2795,8 @@
               catalogEntries={activeCatalog}
               {loadedModels}
               {server}
+              modelId={selected.id}
+              setPanelRunner={registerPanelRunner}
               modelPathFor={selectedModelPath}
               sessionOptionsFor={mergedSessionOptions}
               refreshModels={selected.family === 'yue2' && !server?.ui_management
@@ -2805,6 +2807,7 @@
               {localizedParameterText}
               {setParameterValue}
               {sourceFile}
+              clearSource={clearSourceFile}
               sourceRecording={recordingTarget === 'source'}
               sourceRecordingBlocked={Boolean(recorder) || liveRecording}
               setSourceFile={(file: File | null) => sourceFile = file}
