@@ -34,17 +34,17 @@ runtime::CapabilitySet capabilities(const Qwen3TTSAssets & assets) {
     runtime::CapabilitySet out;
     if (assets.config.variant == Qwen3TTSVariant::Base) {
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
     } else if (assets.config.variant == Qwen3TTSVariant::VoiceDesign) {
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::VoiceDesign, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::VoiceDesign, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_style_condition = true;
     } else if (assets.config.variant == Qwen3TTSVariant::CustomVoice) {
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_style_condition = true;
     }
@@ -71,8 +71,8 @@ public:
     runtime::CapabilitySet advertised_capabilities() const override {
         runtime::CapabilitySet out;
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-            {runtime::VoiceTaskKind::VoiceDesign, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+            {runtime::VoiceTaskKind::VoiceDesign, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
         out.supports_style_condition = true;
@@ -134,9 +134,6 @@ const runtime::CapabilitySet & Qwen3TTSLoadedModel::capabilities() const noexcep
 std::unique_ptr<runtime::IVoiceTaskSession> Qwen3TTSLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Qwen3 TTS only supports offline sessions");
-    }
     if (assets_->config.variant == Qwen3TTSVariant::Base && task.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("Qwen3 base TTS model only supports the Tts task");
     }

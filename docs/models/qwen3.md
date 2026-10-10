@@ -11,7 +11,7 @@ Qwen3 TTS Base is the voice-clone TTS path. It needs reference audio and can use
 | Family | `qwen3_tts` |
 | Model directory | `models/Qwen3-TTS-12Hz-1.7B-Base` |
 | Task | `tts` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Voice input | Reference WAV through `--voice-ref` |
 | Transcript | Optional `--reference-text` |
 
@@ -39,7 +39,7 @@ Qwen3 VoiceDesign creates a voice from an instruction. It does not require a spe
 | Family | `qwen3_tts` |
 | Model directory | `models/Qwen3-TTS-12Hz-1.7B-VoiceDesign` |
 | Task | `vdes` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Voice input | Instruction text through `--instruct` |
 | Reference audio | Not required |
 
@@ -66,7 +66,7 @@ Qwen3 CustomVoice uses speaker ids packaged with the model. The CLI passes the s
 | Family | `qwen3_tts` |
 | Model directory | `models/Qwen3-TTS-12Hz-1.7B-CustomVoice` |
 | Task | `tts` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Voice input | Built-in speaker id through `--speaker` |
 | Style control | Optional instruction through `--instruct` |
 | External voice WAV | Not used by this path |
@@ -85,6 +85,31 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Cu
 | `--language` | language code | empty string | Text language hint. |
 | `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
 | `--max-tokens` | integer | `8192` | Maximum generated speech tokens per chunk. |
+
+## Qwen3 TTS Streaming
+
+All three TTS variants accept `--mode streaming`. Audio is decoded and emitted
+while speech tokens are still being generated, rather than after the complete
+utterance. The first audio chunk contains one codec frame (80 milliseconds at
+24 kHz). Subsequent chunks double up to the configured `stream_frames_per_event`
+maximum: with the default 12, the sequence is 1, 2, 4, 8, 12, 12, and so on.
+These are audio durations, not latency guarantees.
+Set `stream_chunk_policy=fixed` to use `stream_frames_per_event` from the first
+event instead; the last event may contain fewer frames. A fixed size of 1 emits
+one frame at a time. The default policy is `grow`.
+
+Streaming retains 25 codec frames of left context and reuses a fixed-capacity
+decoder graph, with a separate cached graph for the first frame. The final
+partial chunk is flushed at end of generation. The
+final audio is exactly the concatenation of the emitted chunks. Streaming uses
+smaller codec windows than offline decoding, so waveform differences are expected;
+the offline decoding path is unchanged.
+
+For the server, configure the model with `"mode": "streaming"` and request
+`"stream_format": "sse"` from `/v1/audio/speech` (streaming defaults to PCM).
+Audio arrives through the existing `speech.audio.delta`
+events. Base models still require reference audio, VoiceDesign still requires
+an instruction, and CustomVoice still requires a packaged speaker.
 
 ## Qwen3 TTS Sampling
 
@@ -110,6 +135,8 @@ These sampling controls are shared by the Qwen3 TTS Base, VoiceDesign, and Custo
 | `subtalker_top_k` | integer | `50` | Subtalker top-k. |
 | `subtalker_top_p` | float | `1.0` | Subtalker top-p. |
 | `x_vector_only_mode` | bool | `false` | Base voice cloning using only the reference speaker embedding, without ICL reference codec prompting. |
+| `stream_frames_per_event` | positive integer | `12` | Codec frames per fixed event, or the maximum for growing events. Smaller values reduce chunk latency but increase decoding overhead. Ignored offline. |
+| `stream_chunk_policy` | `grow` or `fixed` | `grow` | Grow from one frame to the configured maximum, or emit fixed-size chunks. Ignored offline. |
 
 ### Session Options (use with `--session-option`)
 

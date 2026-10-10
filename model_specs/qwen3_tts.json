@@ -10,7 +10,8 @@
     "design"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "zh",
@@ -34,6 +35,25 @@
   },
   "options": {
     "request": [
+      {
+        "name": "stream_chunk_policy",
+        "type": "enum",
+        "description": "Streaming codec chunk schedule: grow starts with one frame and doubles to stream_frames_per_event; fixed uses that size throughout. Ignored offline.",
+        "required": false,
+        "default": "grow",
+        "values": [
+          "grow",
+          "fixed"
+        ]
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Codec frames per fixed streaming event, or the maximum for growing events. Smaller values reduce chunk latency but increase decoding overhead. Ignored in offline mode.",
+        "required": false,
+        "default": 12,
+        "min": 1
+      },
       {
         "name": "language",
         "type": "string",

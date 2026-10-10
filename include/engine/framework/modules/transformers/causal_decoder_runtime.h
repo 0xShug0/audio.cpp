@@ -78,6 +78,10 @@ public:
     CausalDecoderPrefillIntoDecodeResult prefill_tokens_into_decode_cache(
         const std::vector<int32_t> & token_ids,
         int64_t required_cache_steps);
+    CausalDecoderPrefillIntoDecodeResult prefill_embeddings_into_decode_cache(
+        const std::vector<float> & embeddings,
+        int64_t steps,
+        int64_t required_cache_steps);
 
     // Prefill bounded blocks directly into the token-decode cache on the backend.
     // No host KV export/import; subsequent decode_token calls continue this state.
