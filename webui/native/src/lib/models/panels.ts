@@ -1,4 +1,5 @@
 import AuKPanel from './auk/AuKPanel.svelte';
+import Lfm2AudioPanel from './lfm2_audio/Lfm2AudioPanel.svelte';
 import LiveAvatarPanel from './liveavatar/LiveAvatarPanel.svelte';
 import Yue2Panel from './yue2/Yue2Panel.svelte';
 
@@ -26,6 +27,23 @@ export const modelStudioPanels = {
       seed: false,
       duration: true,
       params: true,
+      advancedJson: false
+    }
+  },
+  lfm2_audio: {
+    component: Lfm2AudioPanel,
+    // Only speech-to-speech: ASR and TTS keep the generic controls.
+    tasks: ['s2s'],
+    requestMode: 'panel',
+    blocksRunWhileUploading: false,
+    replacesGenericControls: {
+      packageButtons: false,
+      text: false,
+      genSource: false,
+      language: false,
+      seed: false,
+      duration: false,
+      params: false,
       advancedJson: false
     }
   },
@@ -61,7 +79,12 @@ export const modelStudioPanels = {
   }
 };
 
-export function modelStudioPanelFor(family?: string) {
+// A panel entry with a tasks list covers only those tasks of its family;
+// one without covers them all.
+export function modelStudioPanelFor(family?: string, task?: string) {
   if (!family) return undefined;
-  return modelStudioPanels[family as keyof typeof modelStudioPanels];
+  const panel = modelStudioPanels[family as keyof typeof modelStudioPanels];
+  const tasks = (panel as { tasks?: readonly string[] } | undefined)?.tasks;
+  if (tasks && !tasks.includes(task || '')) return undefined;
+  return panel;
 }

@@ -35,6 +35,7 @@
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
   import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
+  import type { PanelRunner } from '$lib/models/panel_runner';
   import { prepareLiveAvatarOutput } from '$lib/models/liveavatar/video';
   import Arena from './Arena.svelte';
   import Configuration from './Configuration.svelte';
@@ -127,6 +128,7 @@
   let settingsReloadRequired = false;
   let logs: string[] = [];
   let aborter: AbortController | null = null;
+  let panelRunner: PanelRunner | null = null;
   let longText = true;
   let chunkBudget = defaultChunkBudget(selected?.family || '');
   let savedVoices: SavedVoice[] = [];
@@ -482,10 +484,11 @@
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
     modelMatchesSelectedPackage(model, selected));
-  $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family);
+  $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family, selected?.task);
   $: modelStudioPanel = modelStudioPanelConfig?.component;
   $: replacesGenericControls = modelStudioPanelConfig?.replacesGenericControls || noGenericControlReplacements;
   $: usesYue2Request = modelStudioPanelConfig?.requestMode === 'yue2';
+  $: usesPanelRequest = modelStudioPanelConfig?.requestMode === 'panel';
   $: modelPanelUploading = modelStudioPanelConfig?.blocksRunWhileUploading === true && loraUploading;
   $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
     selected?.id === 'firered-audio-acoustic-edit';
@@ -1940,6 +1943,64 @@
     status = liveChunkNumber ? `Live transcription stopped after ${liveChunkNumber} chunks.` : 'Live transcription stopped.';
   }
 
+  function registerPanelRunner(runner: PanelRunner) {
+    panelRunner = runner;
+    return () => {
+      if (panelRunner === runner) panelRunner = null;
+    };
+  }
+
+  // ensureLoadedMode for a panel's request. As ensureLoaded does, it first
+  // reloads an entry that is resident with another package, or with
+  // imported settings that differ.
+  async function ensurePanelLoadedMode(mode: string) {
+    if (server?.ui_management && (!isLoaded || settingsReloadRequired)) {
+      if (settingsReloadRequired && loadedModels.some((model) => model.id === selectedId && model.loaded)) {
+        await unloadModel(selectedId);
+        await refresh();
+      }
+      await doLoad(mode);
+      await refresh();
+      settingsReloadRequired = false;
+    }
+    await ensureLoadedMode(mode);
+  }
+
+  // A panel with requestMode 'panel' runs the request itself. It is called
+  // before anything is awaited, so that it still runs inside the Run click
+  // or key press, which a browser asks for before it plays audio.
+  async function runPanelRequest(resolvedSeed: number, started: number, signal: AbortSignal) {
+    const runner = panelRunner;
+    const modelId = selected.id;
+    if (!runner) {
+      if (tab !== 'studio') throw new StatusWarning('Open the Studio tab to run this entry.');
+      throw new Error(`${selected.display_name} is not ready.`);
+    }
+    if (recordingTarget === 'source') throw new StatusWarning('Stop the recording first.');
+    const question = sourceFile;
+    if (!question) throw new StatusWarning('Record or choose source audio first.');
+    const outcome = await runner({
+      modelId,
+      question,
+      seed: resolvedSeed,
+      maxTokens: supportsMaxTokens(selected) ? maxTokens : undefined,
+      language: language.trim(),
+      options: requestOptions(),
+      signal,
+      setStatus: (text) => { status = text; },
+      ensureLoadedMode: ensurePanelLoadedMode
+    });
+    clearOutput();
+    if (outcome.audio) outputAudio = [{ id: 'reply', url: URL.createObjectURL(outcome.audio) }];
+    outputText = outcome.text;
+    outputJson = outcome.json;
+    outputModelId = modelId;
+    warningStatus = '';
+    errorStatus = '';
+    status = tr('status.completeIn', { seconds: ((performance.now() - started) / 1000).toFixed(2) });
+    log(status);
+  }
+
   async function run() {
     if (running || modelPanelUploading || restoringHistory) return;
     if (!selectedId) {
@@ -1974,6 +2035,10 @@
     const liveAvatarDrivingAudio = selected.family === 'liveavatar' ? sourceFile : null;
     try {
       const resolvedSeed = resolveRequestSeed(seed);
+      if (usesPanelRequest) {
+        await runPanelRequest(resolvedSeed, started, aborter.signal);
+        return;
+      }
       if (referenceVoiceRequired && !voiceFile) {
         throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires a reference voice.`);
       }
@@ -2730,6 +2795,8 @@
               catalogEntries={activeCatalog}
               {loadedModels}
               {server}
+              modelId={selected.id}
+              setPanelRunner={registerPanelRunner}
               modelPathFor={selectedModelPath}
               sessionOptionsFor={mergedSessionOptions}
               refreshModels={selected.family === 'yue2' && !server?.ui_management
@@ -2740,6 +2807,7 @@
               {localizedParameterText}
               {setParameterValue}
               {sourceFile}
+              clearSource={clearSourceFile}
               sourceRecording={recordingTarget === 'source'}
               sourceRecordingBlocked={Boolean(recorder) || liveRecording}
               setSourceFile={(file: File | null) => sourceFile = file}

@@ -94,6 +94,14 @@ liquid-audio's system prompt. A package installed before audio.cpp had
 LFM2-Audio TTS holds only the backbone and mmproj GGUFs; TTS and S2S then name
 the missing files, and installing it again with `--overwrite` brings all four.
 
+The WebUI's speech-to-speech page holds a conversation: each Run sends the
+recorded or chosen question to `/v1/tasks/stream` with the earlier turns, as
+[Conversations](#conversations) describes, plays the reply as it streams in
+and adds the turn to a list, and New conversation starts over. With
+`--ui-management` the page loads the entry in streaming mode itself. With a
+config file, live playback needs the entry in `"mode": "streaming"`; an
+offline entry gives each reply when it is done.
+
 ## Run
 
 ```bash

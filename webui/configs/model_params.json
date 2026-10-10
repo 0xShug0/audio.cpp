@@ -257,12 +257,16 @@
 
   "lfm2-audio-s2s": [
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Audio code sampling temperature; 0 is greedy."},
-    {"name": "top_k", "type": "number", "label": "top_k", "default": 4, "minimum": 0, "step": 1, "precision": 0}
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 4, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "text_temperature", "type": "slider", "label": "text_temperature", "default": 0.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Text token sampling temperature; 0 picks the most likely token, as liquid-audio does."},
+    {"name": "text_top_k", "type": "number", "label": "text_top_k", "default": 0, "minimum": 0, "step": 1, "precision": 0, "info_en": "With text_temperature above 0, sample text tokens from the k most likely; 0 keeps all."}
   ],
 
   "lfm2-audio-jp-s2s": [
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Audio code sampling temperature; 0 is greedy."},
-    {"name": "top_k", "type": "number", "label": "top_k", "default": 4, "minimum": 0, "step": 1, "precision": 0}
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 4, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "text_temperature", "type": "slider", "label": "text_temperature", "default": 0.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Text token sampling temperature; 0 picks the most likely token, as liquid-audio does."},
+    {"name": "text_top_k", "type": "number", "label": "text_top_k", "default": 0, "minimum": 0, "step": 1, "precision": 0, "info_en": "With text_temperature above 0, sample text tokens from the k most likely; 0 keeps all."}
   ],
 
   "lfm2_audio": [
