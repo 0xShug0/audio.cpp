@@ -43,6 +43,17 @@ std::filesystem::path session_path(
         : std::filesystem::path(found->second);
 }
 
+SanoTtsCpuDecoder cpu_decoder_option(const runtime::SessionOptions & options) {
+    const auto found = options.options.find("sanotts.cpu_decoder");
+    if (found == options.options.end() || found->second == "ggml") {
+        return SanoTtsCpuDecoder::Ggml;
+    }
+    if (found->second == "neon") {
+        return SanoTtsCpuDecoder::Neon;
+    }
+    throw std::runtime_error("sanoTTS cpu_decoder must be ggml or neon");
+}
+
 void validate_session_options(
     const runtime::SessionOptions & options,
     const engine::model_spec::ModelContract & contract) {
@@ -133,7 +144,8 @@ SanoTtsSession::SanoTtsSession(
             session_path(options, "sanotts.espeak_library_path"),
             session_path(options, "sanotts.espeak_data_path"),
             assets_->config.duration_max_tokens);
-        runtime_ = std::make_unique<SanoTtsNativeRuntime>(assets_, options.backend);
+        runtime_ = std::make_unique<SanoTtsNativeRuntime>(
+            assets_, options.backend, cpu_decoder_option(options));
     } else {
         piper_frontend_ = std::make_unique<SanoTtsPiperFrontend>(
             session_path(options, "sanotts.espeak_library_path"),
