@@ -6,6 +6,9 @@ changes and CUDA precision dependency [PR #861](https://github.com/0xShug0/audio
 Earlier before-fix measurements used upstream `6c3ab9ad`. Standard serial
 server; full-context inference.
 
+Subsequent Vulkan changes are measured separately in
+[the optimization follow-up](phonon2_vulkan_optimization.md).
+
 ## Cause and changes
 
 The earlier ten-clip pass had three failing combinations: F32 CUDA and Q8

@@ -74,6 +74,11 @@ quantization are disabled through existing kernels/cuBLAS. The shared CUDA
 backend has an opt-in instance policy; its default behavior and kernel bodies
 are unchanged. Vulkan kernel bodies are unchanged.
 
+The Vulkan path keeps decoder state on the device and releases
+unused encoder buffers. See the [optimization measurements and regression
+checks](../reports/phonon2_vulkan_optimization.md) for comparison with the
+initial integration build.
+
 Phonon packages also select `audiocpp_word_timestamp_mode=token_duration`:
 word ends follow the last token's predicted duration, punctuation attaches to
 the preceding word, bare word markers retain their time, and ends clamp to the

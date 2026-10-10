@@ -1,0 +1,808 @@
+{
+  "status": "Phonon PR Vulkan optimization follow-up",
+  "baseline_integration_commit": "37c8a2b7",
+  "hardware": "Windows RTX 3090, Ryzen 7950X3D, 8 threads",
+  "changes": [
+    "resident Vulkan predictor state",
+    "release superseded encoder graph before replacement",
+    "release one-shot position-projection buffers"
+  ],
+  "source_sha256": {
+    "src/community_models/parakeet_tdt/decoder.cpp": "dc9f48ba4d93a8a8cf9bcdf12c3422a2b4a4dfa67a6d414da758d3d180d56eed",
+    "src/community_models/parakeet_tdt/encoder.cpp": "03c741d4531b54ccd3ba905088edce45913cebdff50340c308d0df4b60e2cef3"
+  },
+  "http": [
+    {
+      "storage": "f32",
+      "runs": [
+        {
+          "label": "baseline",
+          "trial": 0,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.0763227001298219,
+            0.07066019997000694,
+            0.0675985999405384,
+            0.07079849997535348,
+            0.06742369988933206,
+            0.06589010008610785,
+            0.06884379987604916,
+            0.06601789989508688,
+            0.06593139981850982
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "baseline",
+          "trial": 0,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.13148460001684725,
+            0.13851670012809336,
+            0.14171299990266562,
+            0.14019679999910295,
+            0.15879309992305934,
+            0.14043729985132813,
+            0.14994630008004606,
+            0.17506849998608232,
+            0.14137229998596013
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 1,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.055685299914330244,
+            0.050669100135564804,
+            0.05537289986386895,
+            0.05281680007465184,
+            0.055831899866461754,
+            0.052329600090160966,
+            0.05294679990038276,
+            0.05023769987747073,
+            0.05226919986307621
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 1,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.10232959990389645,
+            0.1024001999758184,
+            0.10069860005751252,
+            0.10182409989647567,
+            0.10185179999098182,
+            0.1000938001088798,
+            0.10475419997237623,
+            0.10111139994114637,
+            0.10370570002123713
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "baseline",
+          "trial": 2,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.06492900010198355,
+            0.0664033000357449,
+            0.06637190002948046,
+            0.0635619000531733,
+            0.06514890003018081,
+            0.06341249984689057,
+            0.06460789986886084,
+            0.06464889994822443,
+            0.06604749988764524
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "baseline",
+          "trial": 2,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.12646469986066222,
+            0.13129579997621477,
+            0.13357429997995496,
+            0.1349649999756366,
+            0.16186950006522238,
+            0.13960430002771318,
+            0.14122530003078282,
+            0.1375014998484403,
+            0.1436334999743849
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 3,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.0553058001678437,
+            0.051279200008139014,
+            0.05519989994354546,
+            0.0503632000181824,
+            0.05392220010980964,
+            0.05237599997781217,
+            0.052903200034052134,
+            0.051994599867612123,
+            0.057441100012511015
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 3,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.10422160010784864,
+            0.11575789982452989,
+            0.10328259994275868,
+            0.10602320008911192,
+            0.10161440004594624,
+            0.10104680014774203,
+            0.09975229995325208,
+            0.09965050010941923,
+            0.10234709992073476
+          ],
+          "exact_text_and_words": true
+        }
+      ],
+      "comparisons": [
+        {
+          "fixture": "movie_12s",
+          "baseline_median_ms": 66.03269989136606,
+          "optimized_median_ms": 52.860000054351985,
+          "time_reduction_percent": 19.948752449445795
+        },
+        {
+          "fixture": "video_30s",
+          "baseline_median_ms": 140.31704992521554,
+          "optimized_median_ms": 102.09069994743913,
+          "time_reduction_percent": 27.242840409023582
+        }
+      ]
+    },
+    {
+      "storage": "bf16",
+      "runs": [
+        {
+          "label": "baseline",
+          "trial": 0,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.06943589984439313,
+            0.0640215000603348,
+            0.05979750002734363,
+            0.061904000118374825,
+            0.06077550002373755,
+            0.059408299857750535,
+            0.063461699988693,
+            0.05880840006284416,
+            0.06285059987567365
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "baseline",
+          "trial": 0,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.12770429998636246,
+            0.12902479991316795,
+            0.13161849998869002,
+            0.13524420000612736,
+            0.13218329986557364,
+            0.12968629994429648,
+            0.12930890009738505,
+            0.15049239993095398,
+            0.13217110000550747
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 1,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.05950860003940761,
+            0.05755340005271137,
+            0.05789369996637106,
+            0.054725700058043,
+            0.04770329990424216,
+            0.050040500005707145,
+            0.04782139998860657,
+            0.04784710006788373,
+            0.0499271999578923
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 1,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.0994061001110822,
+            0.10061510000377893,
+            0.1009541000239551,
+            0.10265429993160069,
+            0.10679220012389123,
+            0.10383719997480512,
+            0.09913510014303029,
+            0.10185250011272728,
+            0.10185570013709366
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "baseline",
+          "trial": 2,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.07375909993425012,
+            0.07827479997649789,
+            0.07257449999451637,
+            0.06044299993664026,
+            0.05863619991578162,
+            0.0596386999823153,
+            0.0586584999691695,
+            0.05856940010562539,
+            0.061055000172927976
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "baseline",
+          "trial": 2,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.1318139999639243,
+            0.13291219994425774,
+            0.1381897998508066,
+            0.1321715998928994,
+            0.13243760005570948,
+            0.13305419986136258,
+            0.13476300006732345,
+            0.13277280004695058,
+            0.12969700014218688
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 3,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.05411110003478825,
+            0.0493582000490278,
+            0.054518100107088685,
+            0.04940530005842447,
+            0.052102900110185146,
+            0.051425499841570854,
+            0.05103430012241006,
+            0.04974879999645054,
+            0.052909200079739094
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 3,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.10052269999869168,
+            0.10101049998775125,
+            0.10189519985578954,
+            0.10978300007991493,
+            0.11024930002167821,
+            0.10801750002428889,
+            0.10079930000938475,
+            0.10238769999705255,
+            0.10999889997765422
+          ],
+          "exact_text_and_words": true
+        }
+      ],
+      "comparisons": [
+        {
+          "fixture": "movie_12s",
+          "baseline_median_ms": 60.91525009833276,
+          "optimized_median_ms": 51.22989998199046,
+          "time_reduction_percent": 15.899713291347695
+        },
+        {
+          "fixture": "video_30s",
+          "baseline_median_ms": 132.17744987923652,
+          "optimized_median_ms": 101.8754499964416,
+          "time_reduction_percent": 22.925241718977208
+        }
+      ]
+    },
+    {
+      "storage": "q8_0",
+      "runs": [
+        {
+          "label": "baseline",
+          "trial": 0,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.07008810015395284,
+            0.067637600004673,
+            0.068851999938488,
+            0.07012479985132813,
+            0.06618650001473725,
+            0.06697220006026328,
+            0.06814899994060397,
+            0.0649293998721987,
+            0.06672520004212856
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "baseline",
+          "trial": 0,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.12923769978806376,
+            0.1277159999590367,
+            0.1305630998685956,
+            0.13571460009552538,
+            0.13701039995066822,
+            0.13694190001115203,
+            0.1365507000591606,
+            0.13960450002923608,
+            0.139484099810943
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 1,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.055589500116184354,
+            0.057159299962222576,
+            0.051065800013020635,
+            0.052159199956804514,
+            0.048464400228112936,
+            0.05042200000025332,
+            0.050234900088980794,
+            0.05043870001100004,
+            0.05190950003452599
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 1,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.09412640007212758,
+            0.09493310004472733,
+            0.09790269983932376,
+            0.0973089998587966,
+            0.09758979990147054,
+            0.09981000004336238,
+            0.10084760002791882,
+            0.10293460008688271,
+            0.10204130015335977
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "baseline",
+          "trial": 2,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.06302340002730489,
+            0.06604110007174313,
+            0.06438210001215339,
+            0.06412950018420815,
+            0.06254870002157986,
+            0.06315319985151291,
+            0.06507749995216727,
+            0.06236520013771951,
+            0.061279899906367064
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "baseline",
+          "trial": 2,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.1251272999215871,
+            0.12698239996097982,
+            0.12847879994660616,
+            0.1288403000216931,
+            0.13232229999266565,
+            0.13565479987300932,
+            0.13193019991740584,
+            0.13351080007851124,
+            0.1340795001015067
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 3,
+          "fixture": "movie_12s",
+          "samples_s": [
+            0.0516011998988688,
+            0.05514950002543628,
+            0.04960349993780255,
+            0.051280600018799305,
+            0.04779739980585873,
+            0.047840100014582276,
+            0.04968029982410371,
+            0.04910459998063743,
+            0.05060700001195073
+          ],
+          "exact_text_and_words": true
+        },
+        {
+          "label": "optimized",
+          "trial": 3,
+          "fixture": "video_30s",
+          "samples_s": [
+            0.09660990000702441,
+            0.09569459990598261,
+            0.09711179998703301,
+            0.09982299990952015,
+            0.10601790016517043,
+            0.09745670016855001,
+            0.09892820008099079,
+            0.10130949993617833,
+            0.1027778999414295
+          ],
+          "exact_text_and_words": true
+        }
+      ],
+      "comparisons": [
+        {
+          "fixture": "movie_12s",
+          "baseline_median_ms": 65.5593000119552,
+          "optimized_median_ms": 50.522850011475384,
+          "time_reduction_percent": 22.9356475705778
+        },
+        {
+          "fixture": "video_30s",
+          "baseline_median_ms": 132.91655003558844,
+          "optimized_median_ms": 98.41544996015728,
+          "time_reduction_percent": 25.956963272213653
+        }
+      ]
+    }
+  ],
+  "tracked_memory": [
+    {
+      "storage": "f32",
+      "scope": "Vulkan tracked device buffer allocations, weights included; driver/other applications excluded",
+      "before_peak_mib": 2949.12,
+      "after_peak_mib": 2744.32
+    },
+    {
+      "storage": "q8_0",
+      "scope": "Vulkan tracked device buffer allocations, weights included; driver/other applications excluded",
+      "before_peak_mib": 2222.08,
+      "after_peak_mib": 2027.52
+    }
+  ],
+  "vulkan_reference_counts": [
+    {
+      "storage": "f32",
+      "text_matches": 20,
+      "timestamps_match": 20,
+      "exact_repeats": 20,
+      "upload_endpoint_match": true
+    },
+    {
+      "storage": "bf16",
+      "text_matches": 20,
+      "timestamps_match": 19,
+      "exact_repeats": 20,
+      "upload_endpoint_match": true
+    },
+    {
+      "storage": "q8_0",
+      "text_matches": 20,
+      "timestamps_match": 20,
+      "exact_repeats": 20,
+      "upload_endpoint_match": true
+    }
+  ],
+  "warm_memory": [
+    {
+      "storage": "f32",
+      "backend": "vulkan",
+      "exact_repeats": 12,
+      "samples": [
+        {
+          "request": 0,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 278.40625
+        },
+        {
+          "request": 1,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 280.6015625
+        },
+        {
+          "request": 2,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 280.7421875
+        },
+        {
+          "request": 3,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 280.9375
+        },
+        {
+          "request": 4,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 280.9921875
+        },
+        {
+          "request": 5,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 280.98046875
+        },
+        {
+          "request": 6,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 281.10546875
+        },
+        {
+          "request": 7,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 281.109375
+        },
+        {
+          "request": 8,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 281.0859375
+        },
+        {
+          "request": 9,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 281.19921875
+        },
+        {
+          "request": 10,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 281.23046875
+        },
+        {
+          "request": 11,
+          "vram_mib": 3407.80078125,
+          "rss_mib": 281.1953125
+        }
+      ],
+      "post_warm_vram_range_mib": 0.0,
+      "post_warm_rss_range_mib": 0.48828125,
+      "bounded_64mib": true
+    },
+    {
+      "storage": "bf16",
+      "backend": "vulkan",
+      "exact_repeats": 12,
+      "samples": [
+        {
+          "request": 0,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 276.5
+        },
+        {
+          "request": 1,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 278.33203125
+        },
+        {
+          "request": 2,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 278.81640625
+        },
+        {
+          "request": 3,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 279.4765625
+        },
+        {
+          "request": 4,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 279.6875
+        },
+        {
+          "request": 5,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 279.7265625
+        },
+        {
+          "request": 6,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 279.74609375
+        },
+        {
+          "request": 7,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 279.01171875
+        },
+        {
+          "request": 8,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 279.03125
+        },
+        {
+          "request": 9,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 279.17578125
+        },
+        {
+          "request": 10,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 279.12890625
+        },
+        {
+          "request": 11,
+          "vram_mib": 2748.36328125,
+          "rss_mib": 279.875
+        }
+      ],
+      "post_warm_vram_range_mib": 0.0,
+      "post_warm_rss_range_mib": 1.05859375,
+      "bounded_64mib": true
+    },
+    {
+      "storage": "q8_0",
+      "backend": "vulkan",
+      "exact_repeats": 12,
+      "samples": [
+        {
+          "request": 0,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 281.46484375
+        },
+        {
+          "request": 1,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 283.41796875
+        },
+        {
+          "request": 2,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 282.80859375
+        },
+        {
+          "request": 3,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 282.99609375
+        },
+        {
+          "request": 4,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 283.0546875
+        },
+        {
+          "request": 5,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 283.109375
+        },
+        {
+          "request": 6,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 283.109375
+        },
+        {
+          "request": 7,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 283.2109375
+        },
+        {
+          "request": 8,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 283.23828125
+        },
+        {
+          "request": 9,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 283.265625
+        },
+        {
+          "request": 10,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 283.30078125
+        },
+        {
+          "request": 11,
+          "vram_mib": 2690.42578125,
+          "rss_mib": 284.05078125
+        }
+      ],
+      "post_warm_vram_range_mib": 0.0,
+      "post_warm_rss_range_mib": 1.2421875,
+      "bounded_64mib": true
+    }
+  ],
+  "regressions": [
+    {
+      "case": "five_minute_q8_long_form",
+      "exact_text_and_words": true,
+      "words": 817,
+      "text_sha256": "7831bce293bcb6118b98ef5f4099cf6abd27f3fa3a86b4646353f6b21bbb908b",
+      "baseline_cold_process_s": 7.254023600136861,
+      "optimized_cold_process_s": 6.881767900194973
+    },
+    {
+      "case": "stock_parakeet_vulkan_full_context",
+      "exact_text_and_words": true
+    },
+    {
+      "case": "stock_parakeet_vulkan_long_form",
+      "exact_text_and_words": true
+    }
+  ],
+  "cuda_comparator": [
+    {
+      "fixture": "movie_12s",
+      "backend": "cuda",
+      "storage": "q8_0",
+      "warm_median_ms": 48.15425002016127,
+      "samples_s": [
+        0.050829000072553754,
+        0.0481288000009954,
+        0.04985739989206195,
+        0.04788470012135804,
+        0.051891000010073185,
+        0.048179700039327145,
+        0.04912270000204444,
+        0.047181700123474,
+        0.048910100013017654,
+        0.04630979988723993,
+        0.049212299985811114,
+        0.04719670000486076,
+        0.046738999895751476,
+        0.04914530017413199,
+        0.04701390000991523,
+        0.047554400051012635,
+        0.047758499858900905,
+        0.048988700145855546
+      ],
+      "exact_vulkan_text_and_words": true
+    },
+    {
+      "fixture": "video_30s",
+      "backend": "cuda",
+      "storage": "q8_0",
+      "warm_median_ms": 108.56660001445562,
+      "samples_s": [
+        0.10855610016733408,
+        0.1079382998868823,
+        0.1274027000181377,
+        0.10857709986157715,
+        0.11549389990977943,
+        0.11059840000234544,
+        0.10477470001205802,
+        0.10447989986278117,
+        0.1063413000665605,
+        0.1026014001108706,
+        0.1027569998987019,
+        0.10333349998109043,
+        0.1076697998214513,
+        0.11023820005357265,
+        0.11458540009334683,
+        0.10940479999408126,
+        0.11421220004558563,
+        0.11112460005097091
+      ],
+      "exact_vulkan_text_and_words": true
+    }
+  ],
+  "ctest": {
+    "variant_and_duration_passed": 2
+  },
+  "baseline_model_pr_commit": "eade12606935ad94d75dcda765b2b286e32ec617"
+}
