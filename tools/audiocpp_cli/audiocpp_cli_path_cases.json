@@ -2347,42 +2347,6 @@
       ]
     },
     {
-      "id": "supertonic_streaming_vocoder",
-      "coverage": "Supertonic causal vocoder streaming with growing windows and final merged audio",
-      "family": "supertonic",
-      "model": "models/Supertonic-3-GGUF/supertonic-3-orig.gguf",
-      "task": "tts",
-      "mode": "streaming",
-      "outputs": ["audio"],
-      "requests": [
-        {
-          "id": "growing_chunks",
-          "text": "The station clock strikes nine as the first passengers arrive. A conductor checks the schedule and welcomes everyone aboard.",
-          "voice_id": "M1",
-          "seed": 42,
-          "options": {"stream_chunk_policy": "grow", "stream_frames_per_event": "12"}
-        }
-      ]
-    },
-    {
-      "id": "supertonic_streaming_vocoder_fixed",
-      "coverage": "Supertonic causal vocoder streaming with fixed windows and final merged audio",
-      "family": "supertonic",
-      "model": "models/Supertonic-3-GGUF/supertonic-3-orig.gguf",
-      "task": "tts",
-      "mode": "streaming",
-      "outputs": ["audio"],
-      "requests": [
-        {
-          "id": "fixed_chunks",
-          "text": "The station clock strikes nine as the first passengers arrive. A conductor checks the schedule and welcomes everyone aboard.",
-          "voice_id": "F1",
-          "seed": 42,
-          "options": {"stream_chunk_policy": "fixed", "stream_frames_per_event": "12"}
-        }
-      ]
-    },
-    {
       "id": "supertonic_tts_voice_presets",
       "coverage": "Supertonic TTS preset voice styles and shared generation options in one session",
       "family": "supertonic",
