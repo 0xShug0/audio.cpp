@@ -668,6 +668,8 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `seed` | integer >= 0 | `1234` | Sampling seed. |
 | `cfm_noise_file` | path | not set | Precomputed flow noise file. |
 | `stream_left_context` | integer >= 0 | `3` | Previous patches decoded as streaming left context. |
+| `stream_chunk_policy` | `grow`, `fixed` | `grow` | Streaming only. Grow emits one patch first, then doubles toward `stream_frames_per_event`; fixed waits for the configured patch count. |
+| `stream_frames_per_event` | integer >= 1 | `4` | Maximum generated latent patches per streaming audio event. Set to `1` for the original one-patch cadence. Ignored offline. |
 | `prompt_text` | text | not set | Transcript for continuation prompt audio, distinct from the base voice reference. |
 | `chunk_strategy` | `continuation`, `stateless` | `continuation` | Long-form continuation or independent generation per chunk. |
 | `text_chunk_size` | integer | `2048` | Framework long-form text chunk size. |

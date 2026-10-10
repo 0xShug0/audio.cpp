@@ -42,4 +42,13 @@ ModelRegistry make_registry_from_config(
     const std::vector<std::shared_ptr<IVoiceModelLoader>> & available_loaders);
 ModelRegistry make_default_registry(const std::optional<std::filesystem::path> & config_path = std::nullopt);
 
+/**
+ * Close the load-progress bracket opened by ModelRegistry::load: emit
+ * ``runtime.load.phase loaded`` and the final upload_progress curve point.
+ * Hosts call this once the task session is built — that is when the weight
+ * stores have actually uploaded — not when the registry load returns.
+ * Safe (no-op) when the load was never traced or was already closed.
+ */
+void finish_model_load_trace();
+
 }  // namespace engine::runtime

@@ -2,6 +2,8 @@
 
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
+#include "engine/framework/runtime/streaming_audio.h"
 #include "engine/models/neutts/ar.h"
 #include "engine/models/neutts/assets.h"
 #include "engine/models/neutts/codec.h"
@@ -26,7 +28,7 @@ struct NeuTTSRequest {
 class NeuTTSSession final
     : public runtime::RuntimeSessionBase,
       public runtime::IOfflineVoiceTaskSession,
-      public runtime::IStreamingVoiceTaskSession {
+      public runtime::StreamingTtsSessionBase {
 public:
     NeuTTSSession(
         runtime::TaskSpec task,
@@ -40,18 +42,12 @@ public:
     runtime::RunMode run_mode() const override;
     void prepare(const runtime::SessionPreparationRequest & request) override;
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
-    runtime::StreamingPolicy streaming_policy() const override;
-    void start_stream(const runtime::TaskRequest & request) override;
-    std::optional<runtime::StreamEvent> next_stream_event() override;
-    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
-    runtime::TaskResult finish_stream() override;
-    void reset() override;
-    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
-    runtime::TaskResult finalize() override;
 
 private:
     NeuTTSRequest parse_request(const runtime::TaskRequest & request) const;
-    runtime::AudioBuffer synthesize(const NeuTTSRequest & request);
+    runtime::AudioBuffer synthesize(const NeuTTSRequest & request, bool streaming = false);
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override { stream_audio_.reset(); }
 
     runtime::TaskSpec task_;
     std::shared_ptr<const NeuTTSAssets> assets_;
@@ -59,9 +55,7 @@ private:
     NeuTTSPromptBuilder prompt_builder_;
     std::unique_ptr<NeuTTSQwen3ARRuntime> ar_;
     std::unique_ptr<NeuTTSNeuCodecDecoderRuntime> codec_;
-    std::vector<NeuTTSRequest> streaming_requests_;
-    std::vector<runtime::AudioBuffer> streaming_chunks_;
-    size_t streaming_index_ = 0;
+    runtime::StreamingAudioController<int32_t> stream_audio_;
 };
 
 }  // namespace engine::models::neutts

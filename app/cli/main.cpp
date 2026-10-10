@@ -12,6 +12,7 @@
 
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/conversion.h"
+#include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/registry.h"
@@ -67,6 +68,8 @@ void print_task_list_help() {
         << "    --weight <id>\n"
         << "    --log  Stream framework progress and timing logs to stdout\n"
         << "    --log-file <path>  Stream framework progress and timing logs to a file\n"
+        << "    --load-progress 0|1  with --log/--log-file, emit model-load progress keys\n"
+        << "                (runtime.load.phase, <store>.weights.upload_progress); default 0\n"
         << "    --metrics  Print compact wall time, audio duration, and RTF summary after offline generation\n"
         << "    --load-option key=value\n"
         << "    --session-option key=value\n"
@@ -648,6 +651,15 @@ int audiocpp_cli_main(int argc, char ** argv) {
             has_arg(argc, argv, "--log") || log_file.has_value(),
             log_file,
         });
+        // Opt-in model-load progress reporting (runtime.load.phase,
+        // <store>.weights.upload_progress). Default off so the log for
+        // existing downstream pipelines is unchanged.
+        if (const auto load_progress = find_arg(argc, argv, "--load-progress")) {
+            if (*load_progress != "0" && *load_progress != "1") {
+                throw std::runtime_error("--load-progress expects 0 or 1");
+            }
+            engine::core::set_load_progress_enabled(*load_progress == "1");
+        }
         const bool metrics_requested = has_arg(argc, argv, "--metrics");
         if (has_arg(argc, argv, "--version")) {
             minitts::app::print_build_info(std::cout);
@@ -846,6 +858,9 @@ int audiocpp_cli_main(int argc, char ** argv) {
         const auto wav_options = wav_write_options_from_cli(argc, argv);
         auto model = registry.load(load_request);
         auto session = model->create_task_session(task_spec, session_options);
+        // The weight stores uploaded during session construction: close the
+        // load-progress bracket opened by registry.load (see finish_model_load_trace).
+        engine::runtime::finish_model_load_trace();
         const auto voice_state_out = optional_path_arg(argc, argv, "--voice-state-out");
         const auto text_out = optional_path_arg(argc, argv, "--text-out");
         const auto words_out = optional_path_arg(argc, argv, "--words-out");

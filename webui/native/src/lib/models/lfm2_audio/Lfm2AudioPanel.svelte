@@ -4,7 +4,9 @@
   import { runTask, taskStreamEvents, TaskStreamClosedError, uploadWav } from '$lib/api';
   import type { PanelRunContext, PanelRunOutcome, RegisterPanelRunner } from '$lib/models/panel_runner';
   import type { CatalogEntry, LoadedModel, ParamSpec, ServerHealth } from '$lib/types';
-  import { clearConversation, conversation, keptTurns, releaseTurn, type ReplyArtifact, type Turn } from './conversation';
+  import {
+    addTurn, clearConversation, completeTurn, conversation, keptTurns, updateTurn, type ReplyArtifact, type Turn
+  } from './conversation';
   import { base64Bytes, readPcm16Wav, StreamPlayer } from './stream_audio';
 
   export let modelId = '';
@@ -14,13 +16,12 @@
   export let catalogEntries: CatalogEntry[] = [];
   export let paramSpecs: ParamSpec[] = [];
   export let sourceFile: File | null = null;
+  export let sourceRecording = false;
   export let clearSource: () => void = () => {};
   export let log: (message: string) => void = () => {};
   export let setPanelRunner: RegisterPanelRunner = () => () => {};
 
   const player = new StreamPlayer();
-  let turns: Turn[] = conversation.turns;
-  let conversationModelId = conversation.modelId;
   let liveAudio = true;
   let playing = false;
   let blocked = false;
@@ -31,8 +32,12 @@
 
   player.onchange = () => { playing = player.playing; };
 
-  $: keptCount = turns.filter((turn) => turn.state === 'done' && turn.reply && !turn.leftOut).length;
-  $: otherModel = turns.length > 0 && conversationModelId !== '' && conversationModelId !== modelId;
+  $: turns = $conversation.turns;
+  $: conversationModelId = $conversation.modelId;
+  $: otherModel = turns.length > 0 && conversationModelId !== modelId;
+  // Turns with another entry do not go with a question for this one.
+  $: keptCount = otherModel ? 0 : keptTurns(turns).length;
+  $: followEnd($conversation);
   // An entry whose id is not the catalog's gets the family's parameters,
   // which are the ASR ones.
   $: familySpecs = paramSpecs.some((spec) => spec.name === 'audio_chunk_mode');
@@ -46,11 +51,10 @@
     return catalogEntries.find((entry) => entry.id === id)?.display_name || id;
   }
 
-  function refresh() {
-    const follow = !list || list.scrollTop + list.clientHeight >= list.scrollHeight - 24;
-    turns = conversation.turns;
-    conversationModelId = conversation.modelId;
-    if (follow) tick().then(() => { if (list) list.scrollTop = list.scrollHeight; });
+  // A list that is at its end stays there when the conversation changes.
+  function followEnd(_: unknown) {
+    if (!list || list.scrollTop + list.clientHeight < list.scrollHeight - 24) return;
+    tick().then(() => { if (list) list.scrollTop = list.scrollHeight; });
   }
 
   function checkAborted(signal: AbortSignal) {
@@ -71,12 +75,7 @@
 
   // The new question goes in as its upload path; each earlier turn goes with
   // it as its question's path and its reply artifact as returned.
-  function requestBody(context: PanelRunContext, path: string, history: Turn[]) {
-    const options: Record<string, unknown> = { ...context.options, return_codes: true };
-    // An entry whose id is not the catalog's gets the family's ASR
-    // parameters: S2S turns their chunking options away, and their
-    // max_tokens would clash with the request's Max tokens.
-    if (familySpecs) for (const spec of paramSpecs) delete options[spec.name];
+  function requestBody(context: PanelRunContext, options: Record<string, unknown>, path: string, history: Turn[]) {
     const request: Record<string, unknown> = { audio: path, seed: context.seed, options };
     if (context.maxTokens !== undefined) request.max_tokens = context.maxTokens;
     if (context.language) request.language = context.language;
@@ -89,52 +88,53 @@
     return { model: context.modelId, request };
   }
 
-  function finishTurn(turn: Turn, result: Record<string, unknown>) {
-    if (typeof result.text === 'string') turn.replyText = result.text;
+  function finishTurn(entryId: string, turn: Turn, result: Record<string, unknown>) {
+    const changes: Partial<Turn> = {};
+    if (typeof result.text === 'string') changes.replyText = result.text;
     let audio: Blob | null = null;
     if (typeof result.audio === 'string') {
       audio = new Blob([base64Bytes(result.audio)], { type: 'audio/wav' });
-      turn.replyUrl = URL.createObjectURL(audio);
+      changes.replyUrl = URL.createObjectURL(audio);
     }
     const artifact = (Array.isArray(result.artifacts) ? result.artifacts : []).find(isReplyArtifact);
     if (artifact) {
-      turn.reply = { id: artifact.id, kind: artifact.kind, payload: artifact.payload };
-      if (artifact.meta) turn.reply.meta = artifact.meta;
-      turn.cut = artifact.meta?.ended === 'false';
-      turn.steps = artifact.meta?.steps || '';
+      changes.reply = { id: artifact.id, kind: artifact.kind, payload: artifact.payload };
+      if (artifact.meta) changes.reply.meta = artifact.meta;
+      changes.cut = artifact.meta?.ended === 'false';
+      changes.steps = artifact.meta?.steps || '';
     } else {
-      turn.message = 'The server returned no reply artifact, so this turn does not go with the next question.';
+      changes.message = 'The server returned no reply artifact, so this turn does not go with the next question.';
     }
+    if (completeTurn(entryId, turn, changes)) log(`New LFM2.5-Audio conversation with ${displayName(entryId)}.`);
     return audio;
   }
 
   async function runTurn(context: PanelRunContext): Promise<PanelRunOutcome> {
+    if (sourceRecording) throw context.warning('Stop the recording first.');
+    const question = sourceFile;
+    if (!question) throw context.warning('Record or choose source audio first.');
     // Before anything is awaited, so that it is still inside the Run click
     // or key press: a browser starts audio only then.
     player.beginTurn(liveAudio);
+    // A server with a config file keeps the entry in its configured mode.
+    const live = server?.ui_management === true ||
+      loadedModels.some((model) => model.id === context.modelId && model.mode === 'streaming');
+    // A reply that plays as it streams in is not heard over another player,
+    // such as an earlier turn's or the Result column's.
+    if (live && liveAudio && !player.unavailable) {
+      document.querySelectorAll<HTMLMediaElement>('audio, video').forEach((media) => media.pause());
+    }
     unavailable = player.unavailable;
     blocked = false;
     const started = performance.now();
-
-    if (conversation.modelId && conversation.modelId !== context.modelId) {
-      clearConversation();
-      log(`New LFM2.5-Audio conversation with ${displayName(context.modelId)}.`);
-    }
-    conversation.modelId = context.modelId;
-    // A failed or stopped turn is not part of the conversation; this Run
-    // takes its place.
-    for (const turn of conversation.turns) {
-      if (turn.state === 'failed' || turn.state === 'stopped') releaseTurn(turn);
-    }
-    conversation.turns = conversation.turns.filter((turn) => turn.state !== 'failed' && turn.state !== 'stopped');
-    const history = keptTurns();
-    const turn: Turn = {
-      key: conversation.nextKey++, state: server?.ui_management ? 'loading' : 'uploading', seed: context.seed,
-      questionPath: '', questionUrl: '', replyText: '', replyUrl: '', reply: null, cut: false, steps: '',
-      leftOut: false, live: true, firstAudioMs: null, message: ''
-    };
-    conversation.turns = [...conversation.turns, turn];
-    refresh();
+    // Taken now, for this turn's entry: by the time the request is built the
+    // parameters may be those of another entry the user selected.
+    const options: Record<string, unknown> = { ...context.options, return_codes: true };
+    // An entry whose id is not the catalog's gets the family's ASR
+    // parameters: S2S turns their chunking options away, and their
+    // max_tokens would clash with the request's Max tokens.
+    if (familySpecs) for (const spec of paramSpecs) delete options[spec.name];
+    const { turn, history } = addTurn(context.modelId, server?.ui_management ? 'loading' : 'uploading', context.seed);
 
     const controller = new AbortController();
     const abort = () => controller.abort();
@@ -144,37 +144,28 @@
     const signal = controller.signal;
     let stage: 'load' | 'read' | 'upload' | 'run' = 'load';
     try {
-      if (server?.ui_management) {
-        await context.ensureLoadedMode('streaming');
-        checkAborted(signal);
-        if (modelId !== context.modelId) throw new Error('The model changed while it loaded; press Run again.');
-      } else {
-        const registered = loadedModels.find((model) => model.id === context.modelId);
-        if (!registered) throw new Error(`This server does not list ${context.modelId}.`);
-        turn.live = registered.mode === 'streaming';
-      }
+      await context.ensureLoaded('streaming');
+      checkAborted(signal);
 
       stage = 'read';
-      turn.state = 'uploading';
+      updateTurn(turn, { state: 'uploading', live });
       context.setStatus('Uploading the question…');
-      refresh();
-      const wav = await browserDecodeToWav(context.question);
+      const wav = await browserDecodeToWav(question);
       checkAborted(signal);
       stage = 'upload';
       const path = await uploadWav(wav, signal);
       checkAborted(signal);
-      turn.questionPath = path;
-      turn.questionUrl = URL.createObjectURL(wav);
 
       stage = 'run';
-      const body = requestBody(context, path, history);
-      turn.state = 'waiting';
-      context.setStatus(turn.live ? 'Waiting for the reply…'
+      const body = requestBody(context, options, path, history);
+      updateTurn(turn, { state: 'waiting', questionPath: path, questionUrl: URL.createObjectURL(wav) });
+      context.setStatus(live ? 'Waiting for the reply…'
         : 'Waiting for the whole reply: this server runs the entry offline, so the reply does not stream.');
-      refresh();
-      let result: Record<string, unknown> | null = null;
-      if (turn.live) {
+      // Set by the stream's last message: without it taskStreamEvents throws.
+      let result!: Record<string, unknown>;
+      if (live) {
         let streamed = 0;
+        let playable = true;
         for await (const message of taskStreamEvents(body, signal)) {
           if (message.type === 'task.stream.done') {
             result = message.result;
@@ -182,44 +173,58 @@
           }
           const event = message.event;
           const partial = event.partial_text as { text?: unknown } | undefined;
-          if (typeof partial?.text === 'string') turn.replyText += partial.text;
-          if (typeof event.audio === 'string') {
-            const chunk = readPcm16Wav(base64Bytes(event.audio));
-            streamed += chunk.samples.length / chunk.sampleRate;
-            const delay = player.push(chunk.samples, chunk.sampleRate);
-            if (turn.firstAudioMs === null) {
-              turn.firstAudioMs = performance.now() - started + (delay ?? 0) * 1000;
-              blocked = player.blocked;
-              // Queued chunks would wait for the browser and play late.
-              if (blocked) player.stop();
+          const text = typeof partial?.text === 'string' ? partial.text : '';
+          let firstAudioMs = turn.firstAudioMs;
+          if (playable && typeof event.audio === 'string') {
+            try {
+              const chunk = readPcm16Wav(base64Bytes(event.audio));
+              streamed += chunk.samples.length / chunk.sampleRate;
+              const delay = player.push(chunk.samples, chunk.sampleRate);
+              if (firstAudioMs === null) {
+                firstAudioMs = performance.now() - started + (delay ?? 0) * 1000;
+                blocked = player.blocked;
+                // Queued chunks would wait for the browser and play late.
+                if (blocked) player.stop();
+              }
+            } catch (error) {
+              // Playing the stream is an extra: the result brings the whole
+              // reply, so the turn goes on without it.
+              playable = false;
+              player.stop();
+              if (liveAudio) {
+                unavailable = true;
+                log(`Live playback stopped: ${error instanceof Error ? error.message : String(error)}`);
+              }
             }
           }
-          turn.state = 'streaming';
-          context.setStatus(`Streaming the reply: ${streamed.toFixed(1)} s`);
-          refresh();
+          // An event comes for each 80 ms of the reply, several times faster
+          // than it plays. The turn is drawn again only for what it shows,
+          // and the status line for each whole second.
+          if (turn.state !== 'streaming' || text || firstAudioMs !== turn.firstAudioMs) {
+            updateTurn(turn, { state: 'streaming', replyText: turn.replyText + text, firstAudioMs });
+          }
+          context.setStatus(playable ? `Streaming the reply: ${Math.floor(streamed)} s` : 'Streaming the reply…');
         }
       } else {
         result = await runTask(body, signal);
       }
       checkAborted(signal);
-      if (!result) throw new TaskStreamClosedError();
-      if (!conversation.turns.includes(turn)) throw new DOMException('The conversation was reset.', 'AbortError');
-      const audio = finishTurn(turn, result);
-      turn.state = 'done';
+      const audio = finishTurn(context.modelId, turn, result);
       // A question recorded while the reply played stays for the next turn.
-      if (sourceFile === context.question) clearSource();
+      if (sourceFile === question) clearSource();
       return { audio, text: turn.replyText, json: resultJson(result) };
     } catch (error) {
       player.stop();
       if (signal.aborted || (error as Error)?.name === 'AbortError') {
-        turn.state = 'stopped';
-        turn.message = 'Stopped before the reply finished; this turn is not part of the conversation.';
+        updateTurn(turn, {
+          state: 'stopped', message: 'Stopped before the reply finished; this turn is not part of the conversation.'
+        });
         throw (error as Error)?.name === 'AbortError' ? error : new DOMException('The turn was stopped.', 'AbortError');
       }
       if (error instanceof TaskStreamClosedError) {
-        turn.state = 'stopped';
-        turn.message = 'The connection closed before the reply finished; this turn is not part of the conversation.';
-        throw new Error(turn.message);
+        const message = 'The connection closed before the reply finished; this turn is not part of the conversation.';
+        updateTurn(turn, { state: 'stopped', message });
+        throw new Error(message);
       }
       let message = error instanceof Error ? error.message : String(error);
       if (stage === 'read') message = `Could not read the question: ${message}`;
@@ -228,14 +233,12 @@
         message += ' The server no longer has the questions this conversation uploaded, as after a restart;' +
           ' start a new conversation.';
       }
-      turn.state = 'failed';
-      turn.message = message;
+      updateTurn(turn, { state: 'failed', message });
       throw new Error(message);
     } finally {
       context.signal.removeEventListener('abort', abort);
       if (current === controller) current = null;
       player.endTurn();
-      refresh();
     }
   }
 
@@ -243,13 +246,11 @@
     if (busy) return;
     player.stop();
     clearConversation();
-    refresh();
   }
 
   function toggleLeftOut(turn: Turn) {
-    if (busy) return;
-    turn.leftOut = !turn.leftOut;
-    refresh();
+    if (busy || otherModel) return;
+    updateTurn(turn, { leftOut: !turn.leftOut });
   }
 
   function stopAudio() {
@@ -280,6 +281,9 @@
   });
 </script>
 
+<!-- Any player on the page, the Result column's too, stops the reply that plays as it streams in. -->
+<svelte:document on:play|capture={stopAudio} />
+
 <section class="lfm2-conversation" aria-label="Conversation">
   <div class="conversation-head">
     <div>
@@ -309,7 +313,7 @@
             <span class="badge" class:bad={turn.state === 'failed' || turn.state === 'stopped'} aria-live="polite">{badge(turn)}</span>
             <small>{details(turn)}</small>
             {#if turn.state === 'done' && turn.reply}
-              <button type="button" disabled={busy} on:click={() => toggleLeftOut(turn)}
+              <button type="button" disabled={busy || otherModel} on:click={() => toggleLeftOut(turn)}
                 aria-label={`${turn.leftOut ? 'Include' : 'Leave out'} turn ${index + 1}`}>
                 {turn.leftOut ? 'Include' : 'Leave out'}
               </button>
@@ -318,7 +322,7 @@
           <div class="turn-row">
             <span>You</span>
             {#if turn.questionUrl}
-              <audio controls src={turn.questionUrl} on:play={stopAudio} aria-label={`Turn ${index + 1} question`}></audio>
+              <audio controls src={turn.questionUrl} aria-label={`Turn ${index + 1} question`}></audio>
             {:else}
               <small>…</small>
             {/if}
@@ -329,7 +333,7 @@
               <p>{turn.replyText || (turn.state === 'done' ? '(no text)' : '…')}</p>
               {#if turn.replyUrl}
                 <div class="reply-audio">
-                  <audio controls src={turn.replyUrl} on:play={stopAudio} aria-label={`Turn ${index + 1} reply`}></audio>
+                  <audio controls src={turn.replyUrl} aria-label={`Turn ${index + 1} reply`}></audio>
                   <a href={turn.replyUrl} download={`${conversationModelId}-turn-${index + 1}-reply.wav`}>Save WAV</a>
                 </div>
               {/if}
@@ -348,7 +352,7 @@
     <span></span>Play replies as they stream in
   </label>
   {#if unavailable}
-    <small class="note">This browser cannot play the stream; each reply is in its player when it finishes.</small>
+    <small class="note">Live playback is not available; each reply is in its player when it finishes.</small>
   {:else if blocked}
     <small class="note">The browser did not let live audio start; each reply is in its player when it finishes.</small>
   {/if}

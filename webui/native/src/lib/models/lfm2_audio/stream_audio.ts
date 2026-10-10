@@ -141,11 +141,7 @@ export class StreamPlayer {
     const had = this.sources.size > 0;
     for (const source of this.sources) {
       source.onended = null;
-      try {
-        source.stop();
-      } catch {
-        // Not started yet.
-      }
+      source.stop();
       source.disconnect();
     }
     this.sources.clear();

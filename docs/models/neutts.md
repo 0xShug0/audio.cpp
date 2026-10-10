@@ -19,13 +19,18 @@ audiocpp_cli --task tts --family neutts \
   --out out.wav
 ```
 
-Streaming mode emits generated audio chunks and a final merged WAV:
+Streaming mode decodes speech tokens while AR generation is still running,
+emitting incremental audio and a final merged WAV. Codec windows emit 25 frames
+(500 ms), with 51 frames of left context, five frames of look-ahead, and a
+two-frame crossfade. The built-in reference codes seed the left context. Windowed
+decoding can differ from offline decoding because the codec uses non-causal
+attention. Long-form text chunking remains available in both modes.
 
 ```bash
 audiocpp_cli --task tts --mode streaming --family neutts \
   --model models/NeuTTS-2E-GGUF/neutts-2e-orig.gguf \
   --backend cuda \
-  --text "This longer request is split into generated segments and returned through the streaming pull-event path." \
+  --text "This request starts returning audio while the remaining speech tokens are still being generated." \
   --request-option voice_id=paul \
   --request-option emotion=happy \
   --out stream.wav \

@@ -247,7 +247,7 @@ NeuTTSRequest NeuTTSSession::parse_request(const runtime::TaskRequest & request)
     return out;
 }
 
-runtime::AudioBuffer NeuTTSSession::synthesize(const NeuTTSRequest & request) {
+runtime::AudioBuffer NeuTTSSession::synthesize(const NeuTTSRequest & request, bool streaming) {
     const auto start = Clock::now();
     auto timing_start = Clock::now();
     const auto prompt = prompt_builder_.build(request.text, request.speaker, request.emotion);
@@ -262,21 +262,58 @@ runtime::AudioBuffer NeuTTSSession::synthesize(const NeuTTSRequest & request) {
     debug::trace_log_scalar("neutts.generation.top_k", request.generation.top_k);
     debug::trace_log_scalar("neutts.generation.seed", request.generation.seed);
 
+    std::function<void(int32_t)> on_speech_code;
+    std::vector<float> overlap;
+    if (streaming) {
+        runtime::StreamingAudioConfig config;
+        config.policy = runtime::StreamingAudioChunkPolicy::Fixed;
+        config.frames_per_chunk = 25;
+        config.left_context_frames = 51;
+        config.right_context_frames = 5;
+        std::vector<int32_t> reference;
+        for (const auto token : prompt.token_ids) {
+            if (token >= prompt.speech_token_start && token <= prompt.speech_token_end) {
+                reference.push_back(token - prompt.speech_token_start);
+            }
+        }
+        stream_audio_.begin(config, [&](const runtime::StreamingAudioWindow<int32_t> & window) {
+            const auto hop = static_cast<size_t>(assets_->codec.hop_length);
+            auto decoded = codec_->decode_audio(std::vector<int32_t>(window.data, window.data + window.frames()));
+            const size_t begin = window.left_frames * hop;
+            const size_t count = window.new_frames * hop;
+            const size_t blend = std::min(overlap.size(), count);
+            for (size_t i = 0; i < blend; ++i) {
+                const float alpha = blend > 1 ? static_cast<float>(i) / static_cast<float>(blend - 1) : 1.0F;
+                decoded[begin + i] = overlap[i] * (1.0F - alpha) + decoded[begin + i] * alpha;
+            }
+            const size_t tail = std::min(size_t{2}, window.right_frames) * hop;
+            overlap.assign(decoded.begin() + begin + count, decoded.begin() + begin + count + tail);
+            return runtime::AudioBuffer{static_cast<int>(assets_->codec.output_sample_rate), 1,
+                std::vector<float>(decoded.begin() + begin, decoded.begin() + begin + count)};
+        }, stream_event_sink(), reference);
+        on_speech_code = [this](int32_t code) { stream_audio_.push({code}); };
+    }
+
     timing_start = Clock::now();
     auto codes = ar_->generate(
         prompt.token_ids,
         prompt.speech_token_start,
         prompt.speech_token_end,
         prompt.speech_generation_end,
-        request.generation);
-    debug::timing_log_scalar("neutts.ar.total_ms", engine::debug::elapsed_ms(timing_start));
+        request.generation,
+        on_speech_code);
+    const double ar_total_ms = engine::debug::elapsed_ms(timing_start);
+    debug::timing_log_scalar("neutts.ar.total_ms", streaming
+        ? ar_total_ms - stream_audio_.decode_ms() - stream_audio_.publish_ms()
+        : ar_total_ms);
     if (codes.speech_codes.empty()) {
         throw std::runtime_error("NeuTTS generated no speech codes");
     }
 
     timing_start = Clock::now();
-    auto audio = codec_->decode_audio(codes.speech_codes);
-    debug::timing_log_scalar("neutts.codec.total_ms", engine::debug::elapsed_ms(timing_start));
+    auto audio = streaming ? stream_audio_.finish().samples : codec_->decode_audio(codes.speech_codes);
+    debug::timing_log_scalar("neutts.codec.total_ms", streaming
+        ? stream_audio_.decode_ms() : engine::debug::elapsed_ms(timing_start));
     runtime::AudioBuffer out;
     out.sample_rate = static_cast<int>(assets_->codec.output_sample_rate);
     out.channels = 1;
@@ -309,74 +346,26 @@ runtime::TaskResult NeuTTSSession::run(const runtime::TaskRequest & request) {
     return result;
 }
 
-runtime::StreamingPolicy NeuTTSSession::streaming_policy() const {
-    runtime::StreamingPolicy policy;
-    policy.input = runtime::StreamingInputKind::None;
-    policy.output = runtime::StreamingOutputKind::PullEvents;
-    return policy;
-}
-
-void NeuTTSSession::start_stream(const runtime::TaskRequest & request) {
+runtime::TaskResult NeuTTSSession::generate_stream(const runtime::TaskRequest & request) {
     require_prepared("NeuTTS streaming");
-    if (task_.mode != runtime::RunMode::Streaming) {
-        throw std::runtime_error("NeuTTS start_stream requires a streaming session");
-    }
-    reset();
+    const auto start = Clock::now();
     const auto chunk_requests = split_neutts_request(request);
-    streaming_requests_.reserve(chunk_requests.size());
+    runtime::AudioBuffer audio;
     for (size_t i = 0; i < chunk_requests.size(); ++i) {
         auto parsed = parse_request(chunk_requests[i]);
         if (i > 0) {
             parsed.generation.seed += static_cast<uint64_t>(i);
         }
-        streaming_requests_.push_back(std::move(parsed));
+        runtime::append_audio_buffer(audio, synthesize(parsed, true));
     }
-    if (streaming_requests_.empty()) {
+    if (chunk_requests.empty()) {
         throw std::runtime_error("NeuTTS streaming text chunking produced no segments");
     }
-    debug::trace_log_scalar("neutts.streaming.chunk_count", static_cast<int64_t>(streaming_requests_.size()));
-}
-
-std::optional<runtime::StreamEvent> NeuTTSSession::next_stream_event() {
-    if (streaming_index_ >= streaming_requests_.size()) {
-        return std::nullopt;
-    }
-    auto audio = synthesize(streaming_requests_[streaming_index_]);
-    streaming_chunks_.push_back(audio);
-    runtime::StreamEvent event;
-    event.named_audio_outputs.push_back({
-        "segment_" + std::to_string(streaming_index_),
-        std::move(audio),
-        {},
-    });
-    ++streaming_index_;
-    return event;
-}
-
-void NeuTTSSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
-    (void)sink;
-}
-
-runtime::TaskResult NeuTTSSession::finish_stream() {
+    debug::trace_log_scalar("neutts.streaming.chunk_count", static_cast<int64_t>(chunk_requests.size()));
     runtime::TaskResult result;
-    result.audio_output = merge_chunks(streaming_chunks_);
-    reset();
+    result.audio_output = std::move(audio);
+    debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(start));
     return result;
-}
-
-void NeuTTSSession::reset() {
-    streaming_requests_.clear();
-    streaming_chunks_.clear();
-    streaming_index_ = 0;
-}
-
-runtime::StreamEvent NeuTTSSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
-    (void)chunk;
-    throw std::runtime_error("NeuTTS streaming does not accept audio chunks");
-}
-
-runtime::TaskResult NeuTTSSession::finalize() {
-    return finish_stream();
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_neutts_loader() {
