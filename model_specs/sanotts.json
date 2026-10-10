@@ -91,13 +91,14 @@
       {
         "name": "cpu_decoder",
         "type": "enum",
-        "description": "Code that runs the nano-lineage frame stage and decoder on the CPU backend: ggml (default, every platform) or neon (hand-written AArch64 NEON kernels, faster on ARM boards such as the Raspberry Pi; output matches ggml to float rounding). Piperlite voices ignore it.",
+        "description": "Nano-lineage frame-stage and decoder implementation. auto selects NEON on AArch64 CPU sessions when available, otherwise GGML. ggml explicitly uses the existing graph; neon requires an AArch64 NEON build and the CPU backend. Piperlite voices ignore the selection.",
         "values": [
+          "auto",
           "ggml",
           "neon"
         ],
         "required": false,
-        "default": "ggml"
+        "default": "auto"
       }
     ],
     "load": []

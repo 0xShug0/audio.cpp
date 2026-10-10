@@ -477,6 +477,12 @@ SanoTtsNativeRuntime::SanoTtsNativeRuntime(
     core::BackendConfig backend_config,
     SanoTtsCpuDecoder cpu_decoder)
     : state_(std::make_unique<State>(std::move(assets), backend_config)) {
+    if (cpu_decoder == SanoTtsCpuDecoder::Auto) {
+        cpu_decoder = state_->backend_type == core::BackendType::Cpu &&
+                SanoTtsNeonDecoder::available()
+            ? SanoTtsCpuDecoder::Neon
+            : SanoTtsCpuDecoder::Ggml;
+    }
     if (cpu_decoder == SanoTtsCpuDecoder::Neon) {
         if (state_->backend_type != core::BackendType::Cpu) {
             throw std::runtime_error("sanoTTS cpu_decoder=neon needs the CPU backend");

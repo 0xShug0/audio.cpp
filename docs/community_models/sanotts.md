@@ -113,14 +113,18 @@ audiocpp_cli --task tts --family sanotts \
 - `text_chunk_size` (request, default 280) — maximum codepoints per long-form
   chunk; chunks split on sentence punctuation first, and a chunk that
   phonemizes past the voice's token limit is bisected at whitespace.
-- `sanotts.cpu_decoder` (session, `ggml` or `neon`, default `ggml`) — nano
-  voices on the CPU backend only: `neon` runs the frame stage and decoder
+- `sanotts.cpu_decoder` (session, `auto`, `ggml` or `neon`, default `auto`) —
+  for nano voices, `auto` selects NEON when the resolved backend is CPU and
+  the build supports AArch64 NEON; otherwise it uses GGML. Set `ggml` to
+  explicitly retain the original graph. `neon` runs the frame stage and decoder
   with hand-written AArch64 NEON kernels instead of the GGML graph (see
   Performance). Durations, the token stage, the iSTFT and the DC block are
-  unchanged. Builds without AArch64 NEON reject `neon`; piperlite voices
-  ignore the option. GGUF packages converted before this option existed embed
-  an older model spec and reject it as unknown; re-download or re-convert the
-  package, or pass `--model-spec-override <audio.cpp>/model_specs/sanotts.json`.
+  unchanged. Explicit `neon` requires CPU and an AArch64 NEON build; failures
+  are not retried with GGML. Piperlite voices ignore the selection.
+  Existing GGUFs accept this option without conversion or a spec override.
+  Model-specific `--family sanotts --model <path> --help` lists session options
+  from the loaded spec; older embedded specs may omit this entry even though
+  the runtime accepts it.
 
 ## Determinism and parity
 

@@ -21,7 +21,8 @@ struct SanoTtsGenerationOptions {
 /** Which code runs the frame stage + decoder on a CPU backend
  *  (session option sanotts.cpu_decoder). */
 enum class SanoTtsCpuDecoder {
-    Ggml,   // the GGML graph (default, every platform and backend)
+    Auto,   // NEON on supported AArch64 CPU sessions, otherwise GGML
+    Ggml,   // the GGML graph (every platform and backend)
     Neon,   // hand-written ARM NEON kernels (AArch64 CPU backend only)
 };
 
@@ -30,7 +31,7 @@ public:
     SanoTtsNativeRuntime(
         std::shared_ptr<const SanoTtsAssets> assets,
         core::BackendConfig backend_config,
-        SanoTtsCpuDecoder cpu_decoder = SanoTtsCpuDecoder::Ggml);
+        SanoTtsCpuDecoder cpu_decoder = SanoTtsCpuDecoder::Auto);
     ~SanoTtsNativeRuntime();
 
     runtime::AudioBuffer synthesize(
