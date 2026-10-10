@@ -283,8 +283,18 @@ runtime::TaskResult BreezeTTSSession::run(const runtime::TaskRequest & request) 
         request.voice->speaker->audio.has_value()) {
         reference_codes = resolve_reference_codes(*request.voice->speaker->audio);
     }
+    const bool anchor_voice = chunks.size() > 1 && !reference_codes.has_value();
     for (size_t index = 0; index < chunks.size(); ++index) {
-        runtime::append_audio_buffer(merged, generator_->generate(build_generation_request(chunks[index], reference_codes, index)));
+        auto generation = build_generation_request(chunks[index], reference_codes, index);
+        if (anchor_voice && index > 0) {
+            generation.reference_text = chunks.front().text_input->text;
+        }
+        BreezeSpeechCodes first_codes;
+        runtime::append_audio_buffer(merged, generator_->generate(
+            generation, anchor_voice && index == 0 ? &first_codes : nullptr));
+        if (anchor_voice && index == 0) {
+            reference_codes = std::move(first_codes);
+        }
     }
     runtime::TaskResult result;
     result.audio_output = std::move(merged);
@@ -331,9 +341,18 @@ runtime::TaskResult BreezeTTSSession::generate_stream(const runtime::TaskRequest
         "breeze_tts.streaming.frames_per_event", frames_per_event);
     engine::debug::trace_log_scalar("breeze_tts.streaming.lookahead_margin", lookahead);
     runtime::AudioBuffer merged{24000, 1, {}};
+    const bool anchor_voice = chunks.size() > 1 && !reference_codes.has_value();
     for (size_t index = 0; index < chunks.size(); ++index) {
+        auto generation = build_generation_request(chunks[index], reference_codes, index);
+        if (anchor_voice && index > 0) {
+            generation.reference_text = chunks.front().text_input->text;
+        }
+        BreezeSpeechCodes first_codes;
         runtime::append_audio_buffer(merged, generator_->generate_stream(
-            build_generation_request(chunks[index], reference_codes, index), config, stream_event_sink()));
+            generation, config, stream_event_sink(), anchor_voice && index == 0 ? &first_codes : nullptr));
+        if (anchor_voice && index == 0) {
+            reference_codes = std::move(first_codes);
+        }
     }
     runtime::TaskResult result;
     result.audio_output = std::move(merged);

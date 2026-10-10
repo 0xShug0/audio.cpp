@@ -1210,7 +1210,10 @@ struct BreezeGeneratorRuntime::Impl {
     runtime::AudioBuffer generate_stream(
         const BreezeGenerationRequest & request,
         runtime::StreamingAudioConfig config,
-        runtime::StreamEventCallback sink) {
+        runtime::StreamEventCallback sink,
+        BreezeSpeechCodes * generated_codes) {
+        BreezeSpeechCodes captured;
+        captured.code_groups = assets->config.num_codebooks;
         try {
             begin_stream(request);
             config.frame_width = static_cast<size_t>(assets->config.num_codebooks);
@@ -1232,11 +1235,20 @@ struct BreezeGeneratorRuntime::Impl {
             while (!stream_->done) {
                 int status;
                 stream_->ar_total_ms += engine::debug::measure_ms([&] { status = step_frame_once(); });
-                if (status == 0) stream_audio_.push(stream_->codes);
+                if (status == 0) {
+                    stream_audio_.push(stream_->codes);
+                    if (generated_codes != nullptr) {
+                        captured.codes.insert(captured.codes.end(), stream_->codes.begin(), stream_->codes.end());
+                        ++captured.frames;
+                    }
+                }
             }
             auto audio = stream_audio_.finish();
             stream_->codec_decode_ms = stream_audio_.decode_ms();
             end_stream();
+            if (generated_codes != nullptr) {
+                *generated_codes = std::move(captured);
+            }
             return audio;
         } catch (...) {
             end_stream();
@@ -1259,7 +1271,7 @@ struct BreezeGeneratorRuntime::Impl {
         stream_.reset();
     }
 
-    runtime::AudioBuffer generate(const BreezeGenerationRequest & request) {
+    runtime::AudioBuffer generate(const BreezeGenerationRequest & request, BreezeSpeechCodes * generated_codes) {
         if (request.text.empty()) {
             throw std::runtime_error("BreezeTTS requires text");
         }
@@ -1447,6 +1459,9 @@ struct BreezeGeneratorRuntime::Impl {
         for (float & sample : audio.samples) {
             sample = std::clamp(sample, -1.0F, 1.0F);
         }
+        if (generated_codes != nullptr) {
+            *generated_codes = std::move(speech_codes);
+        }
         return audio;
     }
 
@@ -1494,9 +1509,10 @@ BreezeGeneratorRuntime::BreezeGeneratorRuntime(
 
 BreezeGeneratorRuntime::~BreezeGeneratorRuntime() = default;
 
-engine::runtime::AudioBuffer BreezeGeneratorRuntime::generate(const BreezeGenerationRequest & request) {
+engine::runtime::AudioBuffer BreezeGeneratorRuntime::generate(
+    const BreezeGenerationRequest & request, BreezeSpeechCodes * generated_codes) {
     const auto start = Clock::now();
-    auto audio = impl_->generate(request);
+    auto audio = impl_->generate(request, generated_codes);
     engine::debug::timing_log_scalar("breeze_tts.generate.total_ms", engine::debug::elapsed_ms(start));
     return audio;
 }
@@ -1508,8 +1524,9 @@ BreezeSpeechCodes BreezeGeneratorRuntime::encode_reference(const engine::runtime
 engine::runtime::AudioBuffer BreezeGeneratorRuntime::generate_stream(
     const BreezeGenerationRequest & request,
     engine::runtime::StreamingAudioConfig config,
-    engine::runtime::StreamEventCallback sink) {
-    return impl_->generate_stream(request, config, std::move(sink));
+    engine::runtime::StreamEventCallback sink,
+    BreezeSpeechCodes * generated_codes) {
+    return impl_->generate_stream(request, config, std::move(sink), generated_codes);
 }
 
 void BreezeGeneratorRuntime::end_stream() {

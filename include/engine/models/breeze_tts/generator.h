@@ -53,12 +53,15 @@ public:
         Bf16ActivationMode bf16_activations = Bf16ActivationMode::Auto);
     ~BreezeGeneratorRuntime();
 
-    engine::runtime::AudioBuffer generate(const BreezeGenerationRequest & request);
+    engine::runtime::AudioBuffer generate(
+        const BreezeGenerationRequest & request,
+        BreezeSpeechCodes * generated_codes = nullptr);
     BreezeSpeechCodes encode_reference(const engine::runtime::AudioBuffer & audio) const;
     engine::runtime::AudioBuffer generate_stream(
         const BreezeGenerationRequest & request,
         engine::runtime::StreamingAudioConfig config,
-        engine::runtime::StreamEventCallback sink);
+        engine::runtime::StreamEventCallback sink,
+        BreezeSpeechCodes * generated_codes = nullptr);
     void end_stream();
 
 private:

@@ -101,6 +101,13 @@ audiocpp_cli \
 | `breeze_tts.bf16_activations` | `auto`, `on`, `off` | `auto` | Reference bf16 activation rounding (and, on Metal, the bf16 KV cache). `auto` is on for CUDA/HIP/Vulkan and off on Metal; see [Metal and the reference bf16 path](#metal-and-the-reference-bf16-path). |
 | `weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Weight storage type; quantized types convert at load time from the BF16 package. |
 
+For long-form generation without reference audio, the first text chunk's generated
+audio codes and text serve as a fixed voice reference for subsequent chunks. This
+applies to offline and streaming generation, preserves the instruction, and avoids
+independently selecting a voice at every text boundary. Single-chunk requests and
+requests with supplied reference audio are unchanged. The reference lasts only for
+the current request; later chunks have additional reference-prefill work.
+
 BreezeTTS streaming is incremental by default. It emits audio events from the
 generated codec-frame stream instead of waiting for a whole text chunk. For the
 OpenAI-compatible speech endpoint, pass streaming options inside the request
