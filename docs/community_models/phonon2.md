@@ -23,11 +23,13 @@ python tools/community_models/convert_phonon2.py \
   --reference-dir models/Phonon-2-source/parakeet-reference \
   --output-dir models/Phonon-2-Parakeet-F32 \
   --converter build/bin/audiocpp_gguf \
-  --gguf-output models/Phonon-2-Parakeet-GGUF/phonon-2-f32.gguf
+  --gguf-type mixed-f16 \
+  --gguf-output models/Phonon-2-Parakeet-GGUF/phonon-2-mixed-f16.gguf
 ```
 
-For a new conversion choose `--gguf-type bf16` or `q8_0` and distinct output
-paths. F32 expands the published trained checkpoint; it is not a pre-quantization
+The example selects the lossless mixed-F16 package described below. For F32,
+BF16 or Q8 derivatives, choose `--gguf-type orig`, `bf16` or `q8_0` and distinct
+output paths. F32 expands the published trained checkpoint; it is not a pre-quantization
 FP32 checkpoint. The converter verifies the container, retains attribution,
 expands 699 inference tensors and omits 24 training-only counters. It compensates
 the projection by 1/32 to cancel the normal loader's input-scale fold and adjusts
@@ -40,6 +42,32 @@ scale compensation; Q8 also keeps the duration-sensitive joint head in F32.
 The dense packages are approximately 2.51/1.26/0.94 GB, not the original 164 MB
 packed package. No public download/package-manager URL is advertised here.
 
+`--gguf-type mixed-f16` offers lossless storage of the staged values: tensors
+use F16 only when conversion back to F32 is exact. Other tensors, normalization
+and compensated projections stay F32. The package is about 1.30 GB. It does
+not override backend precision policy; different storage types can select
+different native kernels, so exact weights do not guarantee identical duration
+decisions. To reproduce the F32 package's runtime weight types,
+use existing session options `parakeet_tdt.matmul_weight_type=f32` and
+`parakeet_tdt.conv_weight_type=f32`; this restores its working weight memory.
+
+`--gguf-type mixed-q8` creates `phonon-2-mixed-q8.gguf` (about 1.18 GB).
+It keeps feed-forward and pointwise matrices in exact F16, normalization and
+non-F16-representable values in F32, and quantizes the remaining matrices to
+Q8_0. It is a mixed-precision, rounded derivative, not lossless whole-model
+storage. Across the 21 local clips on each of CPU, CUDA and Vulkan, all 63
+transcripts match the dense reference, with 60/63 word timestamp matches
+versus 51/63 for the previous Q8. One CPU clip acquires a 240 ms end shift;
+the sampled improvement does not establish full timestamp parity or corpus
+WER equivalence. See the [mixed-storage validation](../reports/phonon2_validation.md#mixed-gguf-storage-follow-up).
+The original `q8_0` conversion remains available with its previous policy.
+
+TDT timestamps advance on an 80 ms grid. Small score differences can change
+blank/token selection or the predicted duration, producing whole-frame shifts
+even when the final transcript matches. See the
+[duration investigation](../reports/phonon2_validation.md#duration-diagnostics) for
+decoder replays, reference-mask checks and conversion tradeoffs.
+
 Earlier development packages used unscaled projections and special runtime
 precision controls. Reconvert them; the loader rejects their obsolete metadata
 with an actionable error rather than silently applying incompatible scaling.
@@ -48,7 +76,7 @@ with an actionable error rather than silently applying incompatible scaling.
 
 ```bash
 audiocpp_cli --task asr --family parakeet_tdt \
-  --model models/Phonon-2-Parakeet-GGUF/phonon-2-q8_0.gguf \
+  --model models/Phonon-2-Parakeet-GGUF/phonon-2-mixed-f16.gguf \
   --backend cuda --device 0 --threads 8 --audio recording.wav \
   --request-option 'hotwords=["Ada Lovelace","CUDA"]' \
   --request-option hotword_lambda=2

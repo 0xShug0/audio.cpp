@@ -3,8 +3,9 @@
 
 Requires numpy, safetensors, and zstandard (no PyTorch or NeMo). The packed
 archive and the original Parakeet config/tokenizer must already be downloaded.
-F32 is intentional: the int6 row-scale products cannot all be represented in
-F16. This is not a second quantization of Phonon's trained five-value weights.
+F32 staging is intentional: int6 row-scale products cannot all be represented
+in F16. Orig/mixed-f16 retain exact staged values; rounded derivatives are
+explicit conversion choices.
 The format follows Fermion Research's Apache-2.0 fermion_container.py:
 https://huggingface.co/FermionResearch/Phonon-2/blob/main/fermion_container.py
 """
@@ -301,10 +302,56 @@ def convert(source: Path, reference: Path, output: Path) -> Path:
     return output
 
 
+def lossless_f16_tensors(staged: Path) -> tuple[list[str], list[dict]]:
+    """Use half storage only when reconstructing it gives the exact F32 values.
+
+    Phonon's trained five-value levels are F16, while int6 row-scale products
+    often need F32. Preserve normalization and compensated projection tensors
+    in F32 as well; this selects storage, not a backend arithmetic policy.
+    """
+    from safetensors import safe_open
+    manifest = json.loads((staged / "tensor_manifest.json").read_text(encoding="utf-8"))
+    preserved = []
+    with safe_open(str(staged / "model.safetensors"), framework="np") as weights:
+        if set(weights.keys()) != {t["name"] for t in manifest}:
+            raise ValueError("staging manifest tensor inventory differs from weights")
+        for tensor in manifest:
+            name = tensor["name"]
+            values = weights.get_tensor(name)
+            if values.dtype != np.float32 or not np.isfinite(values).all():
+                raise ValueError(f"expected finite F32 staging tensor: {name}")
+            with np.errstate(over="ignore", under="ignore"):
+                half = values.astype(np.float16)
+            normalization = name.startswith("encoder.layers.") and (
+                ".norm_" in name or ".conv.norm." in name)
+            keep_f32 = normalization or name.startswith("encoder.subsampling.linear.") or not np.array_equal(
+                values, half.astype(np.float32))
+            if keep_f32:
+                preserved.append(name)
+            tensor["reconstructed_f32_sha256"] = hashlib.sha256(values.tobytes()).hexdigest()
+            tensor["dtype"] = "F32" if keep_f32 else "F16"
+            tensor["sha256"] = hashlib.sha256((values if keep_f32 else half).tobytes()).hexdigest()
+    return sorted(preserved), manifest
+
+
+def mixed_q8_tensors(staged: Path) -> tuple[list[str], list[str]]:
+    """Keep sensitive feed-forward/pointwise matrices exact; quantize the rest.
+
+    Non-F16-representable tensors and normalization/projection compensation
+    retain F32. Attention matrices still use ordinary, rounded Q8_0 storage.
+    This is a mixed-precision derivative, not a lossless whole-model format.
+    """
+    preserved, manifest = lossless_f16_tensors(staged)
+    half = [t["name"] for t in manifest if t["dtype"] == "F16" and
+            t["name"].endswith(".weight") and t["name"].startswith("encoder.layers.") and
+            (".feed_forward" in t["name"] or ".conv.pointwise_conv" in t["name"])]
+    return preserved, sorted(half)
+
+
 def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    # Reduced precision is a rounded derivative of exact F32 staging. Do not
-    # embed its F32 tensor hashes or describe the derivative as lossless.
+    # BF16/Q8 are rounded derivatives: omit their staging-only tensor hashes.
+    # Mixed F16 has an exact-value manifest with the actual storage dtypes.
     with tempfile.TemporaryDirectory(prefix="phonon2-gguf-") as temp:
         metadata = Path(temp)
         for name in SIDECARS + LICENSES + ("model_spec.json", "provenance.json"):
@@ -312,20 +359,44 @@ def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> Non
         config = json.loads((metadata / "config.json").read_text(encoding="utf-8"))
         configure_timestamps(config, metadata / "tokenizer.json")
         (metadata / "config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        preserved, mixed_manifest = lossless_f16_tensors(staged) if storage == "mixed-f16" else ([], [])
+        half = []
+        if storage == "mixed-q8":
+            preserved, half = mixed_q8_tensors(staged)
         if storage == "orig":
             shutil.copyfile(staged / "tensor_manifest.json", metadata / "tensor_manifest.json")
+        elif storage == "mixed-f16":
+            (metadata / "tensor_manifest.json").write_text(json.dumps(mixed_manifest, indent=2) + "\n", encoding="utf-8")
         if storage != "orig":
             label = storage.upper()
             spec = json.loads((staged / "model_spec.json").read_text(encoding="utf-8"))
             spec["display_name"] = f"Phonon-2 (dense {label})"
-            spec["description"] = (f"Fermion Research Phonon-2 English ASR. {label}-rounded derivative "
-                                   "of the loader-compatible F32 expansion; uses the native Parakeet TDT "
-                                   "runtime, without packed five-value kernels.")
+            spec["description"] = (
+                "Fermion Research Phonon-2 English ASR. Lossless mixed F16/F32 storage of the "
+                "loader-compatible F32 expansion; native Parakeet TDT runtime."
+                if storage == "mixed-f16" else
+                "Fermion Research Phonon-2 English ASR. Mixed Q8_0/F16/F32 derivative: "
+                "feed-forward and pointwise weights retain exact F16 values; non-representable "
+                "weights, normalization and compensated projections retain F32; other matrices "
+                "use rounded Q8_0 storage and the native Parakeet TDT runtime."
+                if storage == "mixed-q8" else
+                f"Fermion Research Phonon-2 English ASR. {label}-rounded derivative of the loader-compatible "
+                "F32 expansion; uses the native Parakeet TDT runtime, without packed five-value kernels.")
             (metadata / "model_spec.json").write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
             provenance = json.loads((staged / "provenance.json").read_text(encoding="utf-8"))
             provenance.update(storage=label, exact_official_weights=False,
                               source_f32_safetensors_sha256=sha256(staged / "model.safetensors"),
                               conversion=f"audiocpp_gguf --type {storage}; weights rounded from exact F32 staging")
+            if storage == "mixed-f16":
+                provenance.update(exact_staged_values=True, preserved_f32_tensors=preserved,
+                                  conversion="audiocpp_gguf --type f16; non-representable, normalization and "
+                                             "compensated projection tensors kept F32; no additional weight rounding")
+            elif storage == "mixed-q8":
+                provenance.update(exact_staged_values=False, preserved_f32_tensors=preserved,
+                                  preserved_f16_tensors=half,
+                                  conversion="audiocpp_gguf --type q8_0; feed-forward and pointwise "
+                                             "matrices kept in exact F16; non-representable, normalization "
+                                             "and compensated projection tensors kept F32; other matrices rounded")
             (metadata / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
         provenance = json.loads((metadata / "provenance.json").read_text(encoding="utf-8"))
         provenance["runtime_config_overrides"]["word_timestamp_mode"] = "token_duration"
@@ -336,7 +407,9 @@ def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> Non
         (metadata / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
         command = [str(converter.resolve()), "--input", str(staged / "model.safetensors"),
                    "--root", str(metadata), "--family", "parakeet_tdt", "--model-spec",
-                   str(metadata / "model_spec.json"), "--type", storage, "--output", str(output.resolve())]
+                   str(metadata / "model_spec.json"), "--type",
+                   "f16" if storage == "mixed-f16" else "q8_0" if storage == "mixed-q8" else storage,
+                   "--output", str(output.resolve())]
         if storage != "orig":
             command += ["--keep-type", "encoder.subsampling.linear.*=orig"]
         if storage == "q8_0":
@@ -344,6 +417,11 @@ def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> Non
             # original scale products: quantization can change duration ends
             # even when text and subsequent word starts remain identical.
             command += ["--keep-type", "joint.head.*=orig"]
+        if storage in ("mixed-f16", "mixed-q8"):
+            for name in preserved:
+                command += ["--keep-type", name + "=orig"]
+        for name in half:
+            command += ["--keep-type", name + "=f16"]
         subprocess.run(command, check=True, **({"creationflags": subprocess.CREATE_NO_WINDOW}
                                               if hasattr(subprocess, "CREATE_NO_WINDOW") else {}))
 
@@ -355,8 +433,8 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True, help="new dense staging directory")
     parser.add_argument("--converter", type=Path, help="optional path to audiocpp_gguf")
     parser.add_argument("--gguf-output", type=Path, help="optional standalone GGUF output")
-    parser.add_argument("--gguf-type", choices=("orig", "bf16", "q8_0"), default="orig",
-                        help="orig preserves exact F32 weights; bf16/q8_0 reduce storage with rounding")
+    parser.add_argument("--gguf-type", choices=("orig", "mixed-f16", "mixed-q8", "bf16", "q8_0"), default="orig",
+                        help="orig/mixed-f16 preserve exact staged values; mixed-q8/bf16/q8_0 use some rounded storage")
     args = parser.parse_args()
     if bool(args.converter) != bool(args.gguf_output):
         parser.error("--converter and --gguf-output must be provided together")

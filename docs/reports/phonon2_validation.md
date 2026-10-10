@@ -138,3 +138,88 @@ preserved in its `pre-bn-compensation/` directory. No user audio is uploaded.
 RTX 5090, Metal/HIP/MUSA runtime coverage is absent; removing the failing API path
 does not constitute a verified RTX 5090 fix. Original WebSocket protocol and
 packed kernels remain outside this PR.
+
+## Mixed GGUF storage follow-up
+
+Opt-in `mixed-f16` preserves all 699 staged tensor values exactly (327 F16,
+372 F32 tensors). `mixed-q8` keeps sensitive feed-forward/pointwise weights in
+exact F16 and non-F16-representable, normalization and compensated projection
+values in F32, with ordinary rounded Q8_0 for the remaining matrices (120 Q8_0,
+144 F16, 435 F32 tensors). It is not lossless whole-model storage. Both use
+the normal Parakeet runtime; existing `orig`, `bf16`, `q8_0` defaults and shared
+backends are unchanged. Mixed-FP16 is not a new BF16 package.
+
+The 21-input follow-up adds the maintainer's 28 s WAV to the existing ten original
+and ten holdout clips. Reference is the published dense Python FP32 route.
+Timing counts below require every word in a clip to match within 1 ms.
+Native FP32 GPU results also have reference differences; this does not claim
+that either mixed package improves every timestamp or surpasses FP32 accuracy.
+
+| Package | GB (decimal) | Exact transcript | Exact word-timing clip | Exact repeat |
+|---|---:|---:|---:|---:|
+| FP32 | 2.510 | 63/63 | 61/63 | 63/63 |
+| Old BF16 | 1.264 | 62/63 | 56/63 | 63/63 |
+| Old Q8 | 0.944 | 59/63 | 51/63 | 63/63 |
+| Mixed-FP16 | 1.302 | 63/63 | 59/63 | 63/63 |
+| Mixed-Q8 | 1.184 | 63/63 | 60/63 | 63/63 |
+
+Mixed-FP16 is 48.1% smaller than FP32. Mixed-Q8 is 52.8% smaller than FP32,
+25.5% larger than old Q8 and 9.1% smaller than mixed-FP16. All mixed-Q8 final
+tensor payloads/types match the tested candidate; all 63 final request pairs
+repeat exactly. Converter/timestamp Python: **16/16**; targeted CTest: **4/4**.
+SHA256 mixed-FP16: `3ca25f950f46ab66f5b09ad806610ad0ff826c0d0cf0360fc87d4d704eb104c7`;
+mixed-Q8: `238f4d03628ae7d594fe6345535cadba4f8576331ff5d7572c838add583ca25d`. These are file/storage comparisons, not VRAM
+measurements. Existing optional F32 weight-loading session settings reproduce
+the corresponding native FP32 package for mixed-FP16, using its working memory.
+
+Recorded loaded-model request times for the same 28 s input, in seconds:
+
+| Backend | FP32 | Old BF16 | Old Q8 | Mixed-FP16 | Mixed-Q8 |
+|---|---:|---:|---:|---:|---:|
+| CPU | 2.831 | 2.823 | 2.416 | 3.002 | 2.506 |
+| CUDA | 0.120 | 0.109 | 0.111 | 0.116 | 0.104 |
+| VULKAN | 0.211 | 0.187 | 0.191 | 0.199 | 0.185 |
+
+These are single HTTP request measurements from separate validation passes,
+excluding model loading, on Ryzen 7950X3D / RTX 3090 with 4 threads. They are
+not alternating controlled speed trials and establish no general speedup.
+Earlier timing tables use a different clip/thread setting; do not combine them.
+
+Selected word-end offsets from Python FP32 on the maintainer WAV (milliseconds):
+
+| Backend | Word | Native FP32 | Old BF16 | Old Q8 | Mixed-FP16 | Mixed-Q8 |
+|---|---|---:|---:|---:|---:|---:|
+| CPU | solar | 0 | 0 | +160 | 0 | 0 |
+| CPU | sunrise. | 0 | +320 | 0 | 0 | 0 |
+| CPU | spare | 0 | +80 | 0 | +80 | 0 |
+| CUDA | solar | 0 | 0 | +160 | 0 | 0 |
+| CUDA | sunrise. | 0 | +320 | 0 | 0 | 0 |
+| CUDA | spare | 0 | +80 | 0 | +80 | +80 |
+| VULKAN | solar | 0 | 0 | 0 | 0 | 0 |
+| VULKAN | sunrise. | +320 | +320 | +320 | +320 | +320 |
+| VULKAN | spare | +80 | +80 | +80 | +80 | +80 |
+
+Reference ends: solar 3.84 s, sunrise. 14.56 s, spare 18.80 s. Other words on
+this input match for these configurations. On `movie_offset_240_12s`, mixed-Q8
+CPU introduces `to` start +80/end +240 ms and `improve` start/end +80 ms, where
+old Q8 matches. Mixed-FP16 has other CPU/CUDA timing differences as recorded in
+the portable JSON. Corpus WER and RTX 5090/Metal/HIP/MUSA remain untested.
+
+## Duration diagnostics
+
+One encoder frame is 80 ms (160-sample hop, 8x subsampling, 16 kHz). Scores near
+ties can change blank/token choice or duration while preserving final text.
+On the maintainer WAV, Python's period beats blank by 0.003579 score units;
+duration 1 beats 2 by 0.001392. The Vulkan +320 ms `sunrise.` shift combines
+later punctuation emission with a longer duration; it is not a clock error.
+
+The same Python encoder output replayed through native FP32 decoders gives
+identical IDs/frames/durations for all 166 retained tokens on CPU/CUDA/Vulkan.
+FP32 encoder relative L2 on 350 valid rows is 8.77e-7 / 5.39e-4 / 5.03e-3;
+the unused 351st capacity row is excluded. Encoder and decoder rounding can
+reinforce or cancel differences. The original Fermion CPU wrapper also marks
+2801 feature frames valid versus the dense route's 2800. A mask-only crossover
+removes its word-time differences on this WAV, not a claim about every input.
+No timestamp offsets, fitted duration choices or mandatory backend precision
+controls were introduced. Raw captures remain in the follow-up artifact folders
+listed in the existing portable JSON; user audio is not uploaded.

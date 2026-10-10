@@ -14,6 +14,53 @@ spec.loader.exec_module(converter)
 
 
 class PhononConversionTests(unittest.TestCase):
+    def test_mixed_q8_preserves_sensitive_values_without_silently_rounding_to_half(self):
+        from safetensors.numpy import save_file
+        values = {
+            "encoder.layers.0.feed_forward1.linear1.weight": np.array([[.5, -.25]], dtype=np.float32),
+            "encoder.layers.0.feed_forward2.linear1.weight": np.array([[1e-9, .5]], dtype=np.float32),
+            "encoder.layers.0.conv.pointwise_conv1.weight": np.array([[[.5]]], dtype=np.float32),
+            "encoder.layers.0.self_attn.q_proj.weight": np.array([[.5]], dtype=np.float32),
+            "joint.head.weight": np.array([[np.float32(np.float16(.10004)) * 31]], dtype=np.float32),
+            "encoder.layers.0.norm_out.weight": np.array([.5], dtype=np.float32),
+            "encoder.subsampling.linear.weight": np.array([[.5]], dtype=np.float32),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            staged = Path(tmp)
+            save_file(values, str(staged / "model.safetensors"))
+            (staged / "tensor_manifest.json").write_text(json.dumps([
+                {"name": name, "dtype": "F32"} for name in values]), encoding="utf-8")
+            preserved, half = converter.mixed_q8_tensors(staged)
+            self.assertEqual(set(half), {"encoder.layers.0.feed_forward1.linear1.weight",
+                                        "encoder.layers.0.conv.pointwise_conv1.weight"})
+            self.assertEqual(set(preserved), {"encoder.layers.0.feed_forward2.linear1.weight",
+                "joint.head.weight", "encoder.layers.0.norm_out.weight", "encoder.subsampling.linear.weight"})
+            for name in half:
+                np.testing.assert_array_equal(values[name].astype(np.float16).astype(np.float32), values[name])
+
+    def test_mixed_half_storage_reconstructs_every_value_exactly(self):
+        from safetensors.numpy import save_file
+        values = {
+            "encoder.layers.0.feed_forward1.linear1.weight": np.array([[-.5, 0, .25, 1]], dtype=np.float32),
+            "encoder_projector.weight": np.array([[np.float32(np.float16(.10004)) * 31, 1e-9, 1e5]], dtype=np.float32),
+            "encoder.layers.0.norm_out.weight": np.array([.5, 1], dtype=np.float32),
+            "encoder.subsampling.linear.bias": np.array([.5], dtype=np.float32),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            staged = Path(tmp)
+            save_file(values, str(staged / "model.safetensors"))
+            (staged / "tensor_manifest.json").write_text(json.dumps([
+                {"name": name, "dtype": "F32"} for name in values]), encoding="utf-8")
+            preserved, manifest = converter.lossless_f16_tensors(staged)
+            self.assertNotIn("encoder.layers.0.feed_forward1.linear1.weight", preserved)
+            self.assertIn("encoder_projector.weight", preserved)
+            self.assertIn("encoder.layers.0.norm_out.weight", preserved)
+            self.assertIn("encoder.subsampling.linear.bias", preserved)
+            for tensor in manifest:
+                original = values[tensor["name"]]
+                stored = original.astype(np.float16 if tensor["dtype"] == "F16" else np.float32)
+                np.testing.assert_array_equal(stored.astype(np.float32), original)
+
     def test_timestamp_metadata_unicode_punctuation_and_word_markers(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "tokenizer.json"
