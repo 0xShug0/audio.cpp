@@ -59,7 +59,7 @@ audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-V
 
 ## Qwen3 TTS CustomVoice
 
-Qwen3 CustomVoice uses speaker ids packaged with the model. The CLI passes the speaker name with `--speaker`; examples use `Vivian` and `Ryan`.
+Qwen3 CustomVoice uses speaker ids packaged with the model. Use `--request-option voice_id=Vivian` to select one; legacy `--speaker Vivian` remains accepted. Examples use `Vivian` and `Ryan`.
 
 | Field | Value |
 |---|---|
@@ -131,6 +131,7 @@ These sampling controls are shared by the Qwen3 TTS Base, VoiceDesign, and Custo
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `subtalker_do_sample` | bool | `true` | Enable subtalker sampling for the remaining audio codebooks. |
+| `voice_id` | packaged speaker name | unset | CustomVoice preset selection. Legacy `speaker` remains accepted. An explicit request option takes precedence over the structured voice's cached id. |
 | `subtalker_temperature` | float | `0.9` | Subtalker sampling temperature. |
 | `subtalker_top_k` | integer | `50` | Subtalker top-k. |
 | `subtalker_top_p` | float | `1.0` | Subtalker top-p. |
@@ -258,7 +259,7 @@ those projects use architecture-specific tensor names and metadata.
 With word timestamps:
 
 ```bash
-audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --language English --text "" --text-out transcript.txt --words-out words.json --session-option qwen3_asr.forced_aligner_path=models/Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf --session-option qwen3_asr.vad_path=assets/framework/models/silero_vad
+audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --language English --text "" --text-out transcript.txt --words-out words.json --session-option qwen3_asr.forced_aligner_path=models/Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf --session-option qwen3_asr.vad_model_path=assets/framework/models/silero_vad
 ```
 
 ### QwenCleo-ASR (Egyptian Arabic)
@@ -321,7 +322,7 @@ through request options `language`, `max_tokens`, `audio_chunk_mode`, and
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `qwen3_asr.forced_aligner_path` | model path | not set | Qwen3 Forced Aligner model used to generate word timestamps after ASR. |
-| `qwen3_asr.vad_path` | model directory | `assets/framework/models/silero_vad` | Optional internal VAD model override for timestamp-safe chunking. |
+| `qwen3_asr.vad_model_path` | model directory | `assets/framework/models/silero_vad` | Optional internal VAD model override for timestamp-safe chunking. Legacy `qwen3_asr.vad_path` remains accepted. |
 | `qwen3_asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Text decoder weight storage fallback. |
 | `qwen3_asr.audio_encoder_weight_type` | `native`, `f32`, `f16` | `native` | Audio encoder weight storage. |
 | `qwen3_asr.text_decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit text decoder weight storage override. |
@@ -353,7 +354,7 @@ defaults, including `language`, in `default_request_options`, not `session_optio
   "mode": "offline",
   "session_options": {
     "qwen3_asr.forced_aligner_path": "/path/to/qwen3-forced-aligner-0.6b-q8_0.gguf",
-    "qwen3_asr.vad_path": "/path/to/assets/framework/models/silero_vad"
+    "qwen3_asr.vad_model_path": "/path/to/assets/framework/models/silero_vad"
   },
   "default_request_options": {
     "language": "English",

@@ -209,7 +209,7 @@ Qwen3ASRSession::Qwen3ASRSession(
           thinker_weight_storage_type_),
       prompt_builder_(tokenizer_),
       postprocessor_(tokenizer_),
-      vad_model_path_(runtime::find_option(options.options, {"qwen3_asr.vad_path", "qwen3_asr.vad_model_path"}).value_or(default_vad_model_path().string())) {
+      vad_model_path_(runtime::find_option(options.options, {"qwen3_asr.vad_model_path", "qwen3_asr.vad_path"}).value_or(default_vad_model_path().string())) {
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Qwen3 ASR only supports VoiceTaskKind::Asr");
     }

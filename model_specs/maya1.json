@@ -29,7 +29,7 @@
   "options": {
     "request": [
       {
-        "name": "instruct",
+        "name": "instruction",
         "type": "string",
         "description": "Natural-language description of the voice, accent, timbre, age, and delivery.",
         "required": true

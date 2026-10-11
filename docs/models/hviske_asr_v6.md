@@ -31,14 +31,17 @@ longer than 30 seconds are split at silence boundaries into chunks of at most
 | `num_beams` | `2` | Beam-search width; `1` selects greedy decoding. |
 | `length_penalty` | `1.0` | Beam-score length-normalization exponent. |
 | `cased` | Unset | Request cased or lowercase output. |
-| `punctuated` | Unset | Request or suppress punctuation. |
+| `punc` | Unset | Request or suppress punctuation only. `punctuated` and `punctuation` remain accepted aliases. |
 
-Set both `cased` and `punctuated` to override automatic formatting. With either
+**Behavior difference:** unlike Canary, Cohere and original Hviske, `punc`
+does not control capitalization. Hviske v6 uses the separate `cased` control.
+
+Set both `cased` and `punc` to override automatic formatting. With either
 option omitted, the model selects formatting from the audio, matching upstream.
 These are model conditioning tokens, not post-processing guarantees.
 
 ```bash
---request-option cased=true --request-option punctuated=true
+--request-option cased=true --request-option punc=true
 ```
 
 ## Session Options

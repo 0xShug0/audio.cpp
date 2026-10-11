@@ -19,6 +19,25 @@
    "style_condition"
   ]
  },
+ "options": {
+  "request": [
+   {
+    "name": "instruction",
+    "type": "string",
+    "required": false,
+    "description": "Voice description: timbre, age, pace, emotion."
+   },
+   {
+    "name": "text_temperature",
+    "type": "float",
+    "required": false,
+    "default": 1.5,
+    "description": "Text-token sampling temperature."
+   }
+  ],
+  "session": [],
+  "load": []
+ },
  "runtime": {
   "tags": [
    "gguf"

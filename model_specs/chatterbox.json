@@ -78,7 +78,7 @@
         "default": 1
       },
       {
-        "name": "s3gen_cfg_rate",
+        "name": "flow_guidance_scale",
         "type": "float",
         "description": "S3Gen flow guidance scale.",
         "required": false,
@@ -98,13 +98,6 @@
         "description": "Enable sampling.",
         "required": false,
         "default": true
-      },
-      {
-        "name": "greedy",
-        "type": "bool",
-        "description": "When true, override do_sample and use greedy decoding.",
-        "required": false,
-        "default": false
       },
       {
         "name": "stop_on_eos",

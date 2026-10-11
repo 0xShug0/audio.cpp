@@ -232,8 +232,8 @@ std::string HviskeASRSession::language_for_request(
 }
 
 bool HviskeASRSession::punctuation_for_request(const std::unordered_map<std::string, std::string> & options) const {
-    if (const auto value = runtime::find_option(options, {"punctuation"})) {
-        return runtime::parse_bool_option(*value, "punctuation");
+    if (const auto value = runtime::find_option(options, {"punc", "punctuation"})) {
+        return runtime::parse_bool_option(*value, "punc");
     }
     return true;
 }
@@ -368,7 +368,10 @@ std::vector<HviskeASRSession::Segment> HviskeASRSession::prepare_segments(
 runtime::TaskResult HviskeASRSession::run(const runtime::TaskRequest & request) {
     require_prepared("Hviske ASR run()");
     auto request_options = normalize_request_options(request.options);
-    runtime::validate_spec_backed_request_options(request_options, *contract_, "Hviske ASR");
+    auto validation_options = request_options;
+    validation_options.erase("punc");
+    validation_options.erase("punctuation");
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "Hviske ASR");
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("Hviske ASR run() requires audio_input");
     }

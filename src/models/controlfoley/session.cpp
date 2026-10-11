@@ -94,13 +94,20 @@ engine::runtime::RunMode ControlFoleySession::run_mode() const {
 }
 
 void ControlFoleySession::prepare(const engine::runtime::SessionPreparationRequest & request) {
-    engine::runtime::validate_spec_backed_request_options(request.options, *contract_, "ControlFoley");
+    auto validation_options = request.options;
+    validation_options.erase("video_file");
+    validation_options.erase("video");
+    (void)engine::runtime::find_option(request.options, {"video_file", "video"});
+    engine::runtime::validate_spec_backed_request_options(validation_options, *contract_, "ControlFoley");
     mark_prepared();
 }
 
 engine::runtime::TaskResult ControlFoleySession::run(const engine::runtime::TaskRequest & request) {
     require_prepared("ControlFoley run");
-    engine::runtime::validate_spec_backed_request_options(request.options, *contract_, "ControlFoley");
+    auto validation_options = request.options;
+    validation_options.erase("video_file");
+    validation_options.erase("video");
+    engine::runtime::validate_spec_backed_request_options(validation_options, *contract_, "ControlFoley");
     engine::runtime::TaskResult result;
     result.audio_output = pipeline_->run(request);
     return result;

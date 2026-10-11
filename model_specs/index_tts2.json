@@ -135,7 +135,7 @@
         "default": 1500
       },
       {
-        "name": "duration_factor",
+        "name": "duration_scale",
         "type": "float",
         "description": "IndexTTS2.5 output duration multiplier; greater than one is slower.",
         "required": false,

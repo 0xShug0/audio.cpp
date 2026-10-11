@@ -63,7 +63,7 @@ Add `--words-out words.json` to enable and save word timestamps. Add
 Word timestamps come from decoder token emission frames, not forced alignment.
 
 For VAD-based segmentation, set `--request-option audio_chunk_mode=vad` and
-`--session-option vad_model_path=/path/to/vad-model`. The selected
+`--session-option gigaam_asr.vad_model_path=/path/to/vad-model`. The selected
 VAD must support the input sample rate. For example, the bundled Silero weights
 are in `assets/framework/models/silero_vad` and require 16 kHz input. The VAD is
 loaded only when requested. This uses the framework VAD chunker; it does not
@@ -102,7 +102,7 @@ JSON request above to select timestamp or chunking options.
 | Option | Default | Meaning |
 |---|---|---|
 | `weight_type` | `native` | Weight storage override. |
-| `vad_model_path` | Empty | Offline VAD model path, required only for `audio_chunk_mode=vad`. |
+| `gigaam_asr.vad_model_path` | Empty | Offline VAD model path, required only for `audio_chunk_mode=vad`. Legacy unprefixed `vad_model_path` remains accepted. |
 
 Translation, speaker labels, and live audio streaming are not
 exposed by this port.

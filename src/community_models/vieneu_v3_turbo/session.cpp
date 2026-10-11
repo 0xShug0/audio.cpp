@@ -267,8 +267,8 @@ VieNeuTTSGenerationOptions generation_options_from_request(
     if (const auto value = runtime::parse_int_option(request.options, {"repetition_window"})) {
         options.repetition_window = *value;
     }
-    if (const auto value = runtime::find_option(request.options, {"frame_cap"})) {
-        options.frame_cap = runtime::parse_bool_option(*value, "frame_cap");
+    if (const auto value = runtime::find_option(request.options, {"auto_frame_cap", "frame_cap"})) {
+        options.frame_cap = runtime::parse_bool_option(*value, "auto_frame_cap");
     }
     if (const auto value = runtime::parse_int_option(request.options, {"babble_retries"})) {
         options.babble_retries = std::max<int64_t>(0, *value);
@@ -453,6 +453,7 @@ VieNeuTTSSession::VieNeuTTSSession(
     for (const auto & [key, _] : options.options) {
         if (key.rfind("vieneu_v3_turbo.", 0) == 0 &&
             key != "vieneu_v3_turbo.g2p_dict" &&
+            key != "vieneu_v3_turbo.g2p_dict_file" &&
             key != "vieneu_v3_turbo.g2p_library" &&
             key != "vieneu_v3_turbo.talker_graph_arena_mb" &&
             key != "vieneu_v3_turbo.speech_encoder_graph_arena_mb" &&
@@ -511,7 +512,7 @@ VieNeuTTSSession::VieNeuTTSSession(
     }
     // A text front end only when asked for: without it the family behaves exactly
     // as before and `--text` carries phonemes.
-    const auto g2p_dictionary = option_path(options.options, {"vieneu_v3_turbo.g2p_dict", "g2p_dict"});
+    const auto g2p_dictionary = option_path(options.options, {"vieneu_v3_turbo.g2p_dict_file", "vieneu_v3_turbo.g2p_dict", "g2p_dict"});
     if (!g2p_dictionary.empty()) {
         text_frontend_ = std::make_unique<TextFrontend>(
             option_path(options.options, {"vieneu_v3_turbo.g2p_library", "g2p_library"}),
@@ -593,7 +594,7 @@ runtime::TaskResult VieNeuTTSSession::run(const runtime::TaskRequest & request) 
     // pair, so the pauses below can be the ones the model was measured to leave
     // on its own (see orchestration.h).
     const int64_t min_chunk_chars =
-        runtime::parse_int_option(request.options, {"text_chunk_min"}).value_or(kDefaultTextChunkMin);
+        runtime::parse_int_option(request.options, {"text_chunk_min_size", "text_chunk_min"}).value_or(kDefaultTextChunkMin);
     // With a front end the request carries text; without one it already carries
     // phonemes, which is what the model reads either way.
     std::string phonemes = request.text_input.has_value() ? request.text_input->text : std::string();

@@ -14,6 +14,20 @@
     "en"
   ],
   "capabilities": {},
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated tokens; legacy max_new_tokens remains accepted.",
+        "required": false,
+        "min": 0,
+        "default": 1000
+      }
+    ],
+    "session": [],
+    "load": []
+  },
   "runtime": {
     "tags": [
       "gguf"

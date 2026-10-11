@@ -96,7 +96,7 @@ TextFrontend::TextFrontend(const std::filesystem::path & library, const std::fil
             std::to_string(kExpectedAbiVersion));
     }
     if (dictionary.empty()) {
-        throw std::runtime_error("sea-g2p needs its dictionary; set vieneu_v3_turbo.g2p_dict to sea_g2p.bin");
+        throw std::runtime_error("sea-g2p needs its dictionary; set vieneu_v3_turbo.g2p_dict_file to sea_g2p.bin");
     }
     impl_->handle = impl_->open(dictionary.string().c_str());
     if (impl_->handle == nullptr) {

@@ -30,9 +30,9 @@ runtime::CapabilitySet capabilities(const MioTTSAssets &) {
 runtime::ModelCliInterface cli(const MioTTSAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"miotts.best_of_n", "n", "Generate n candidates for this request and select by ASR scoring."},
-        {"miotts.best_of_n_enabled", "true|false", "Enable best-of-N candidate selection for this request."},
-        {"miotts.best_of_n_language", "auto|en|ja", "Language used when scoring best-of-N candidates."},
+        {"best_of_n", "n", "Generate n candidates for this request and select by ASR scoring."},
+        {"best_of_n_enabled", "true|false", "Enable best-of-N candidate selection for this request."},
+        {"best_of_n_language", "auto|en|ja", "Language used when scoring best-of-N candidates."},
     };
     out.session_options = {
         {"miotts.codec_model_path", "dir", "MioCodec model directory used by MioTTS acoustic decoding."},

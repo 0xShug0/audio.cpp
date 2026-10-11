@@ -67,7 +67,7 @@
         "default": 1
       },
       {
-        "name": "sampler",
+        "name": "sampler_mode",
         "type": "enum",
         "description": "Stable Audio 3 supports pingpong/euler; Foundation supports euler/dpmpp-2m/dpmpp-3m-sde.",
         "required": false,

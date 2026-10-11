@@ -57,7 +57,7 @@
         "required": false
       },
       {
-        "name": "length_adjust",
+        "name": "duration_scale",
         "type": "float",
         "description": "Output duration multiplier; must be positive, default 1.0.",
         "required": false,
@@ -111,7 +111,7 @@
         "min": 0
       },
       {
-        "name": "noise_path",
+        "name": "noise_file",
         "type": "path",
         "description": "Optional raw f32 noise file for deterministic V1/V2 diffusion noise and XLSR/HiFT source excitation.",
         "required": false

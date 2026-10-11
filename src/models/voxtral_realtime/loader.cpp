@@ -30,7 +30,7 @@ runtime::CapabilitySet capabilities(const VoxtralRealtimeAssets & assets) {
 runtime::ModelCliInterface cli(const VoxtralRealtimeAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"max_new_tokens", "n", "Maximum generated transcript tokens."},
+        {"max_tokens", "n", "Maximum generated transcript tokens."},
         {"do_sample", "bool", "Enable sampling instead of greedy decode."},
         {"temperature", "float", "Sampling temperature."},
         {"top_p", "float", "Nucleus sampling limit."},

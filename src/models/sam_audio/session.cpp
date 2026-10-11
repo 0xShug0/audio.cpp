@@ -60,15 +60,19 @@ public:
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
         require_prepared("SAM Audio run");
-        runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "SAM Audio");
+        auto validation_options = request.options;
+        for (const auto * key : {"reference_image_file", "reference_image_path", "reference_video_file", "reference_video_path"}) {
+            validation_options.erase(key);
+        }
+        runtime::validate_spec_backed_request_options(validation_options, request.option_arrays, *contract_, "SAM Audio");
         if (!request.audio_input || !request.text_input)
             throw std::runtime_error("SAM Audio requires audio and a text description");
         const int steps = runtime::parse_int_option(request.options, {"num_inference_steps"}).value_or(16);
         const int64_t requested_seed = runtime::parse_i64_option(request.options, {"seed"}).value_or(42);
-        const auto image_path = runtime::find_option(request.options, {"reference_image_path"});
-        const auto video_path = runtime::find_option(request.options, {"reference_video_path"});
+        const auto image_path = runtime::find_option(request.options, {"reference_image_file", "reference_image_path"});
+        const auto video_path = runtime::find_option(request.options, {"reference_video_file", "reference_video_path"});
         if (image_path && video_path)
-            throw std::runtime_error("SAM Audio accepts either reference_image_path or reference_video_path, not both");
+            throw std::runtime_error("SAM Audio accepts either reference_image_file or reference_video_file, not both");
         if (steps <= 0 || requested_seed < -1 || requested_seed > UINT32_MAX)
             throw std::runtime_error("SAM Audio requires positive steps and a seed from -1 through 4294967295");
         const uint32_t seed = requested_seed == -1 ? runtime::random_u32_seed() : static_cast<uint32_t>(requested_seed);

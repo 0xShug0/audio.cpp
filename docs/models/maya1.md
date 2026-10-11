@@ -20,7 +20,7 @@ audiocpp_cli --task tts --family maya1 \
   --model models/Maya1-GGUF/maya1-orig.gguf \
   --backend cuda \
   --text "Welcome back. <laugh> Today is going to be interesting." \
-  --request-option 'instruct=Warm female voice in her 30s with an American accent and conversational pacing.' \
+  --request-option 'instruction=Warm female voice in her 30s with an American accent and conversational pacing.' \
   --out maya1.wav
 ```
 
@@ -32,7 +32,7 @@ full prompt and emotion-tag guidance.
 
 | Option | Values | Default | Description |
 |---|---|---:|---|
-| `instruct` | text | required | Natural-language voice, accent, timbre, age, and delivery description. |
+| `instruction` | text | required | Natural-language voice, accent, timbre, age, and delivery description. Legacy `instruct` remains accepted. |
 | `max_tokens` | positive integer | `2048` | Maximum generated audio-token count per text chunk. |
 | `min_tokens` | non-negative integer | `28` | Minimum token count before EOS may stop generation. |
 | `temperature` | positive float | `0.4` | Autoregressive sampling temperature. |

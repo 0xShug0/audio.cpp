@@ -92,7 +92,7 @@ inside the native audio.cpp process.
 
 | Option | Range | Default | Meaning |
 |---|---:|---:|---|
-| `speaking_rate` | `0.5`–`2.0` | `1.0` | Inflect speed multiplier; larger values shorten the output. |
+| `speed` | `0.5`–`2.0` | `1.0` | Inflect speed multiplier; larger values shorten the output. Legacy `speaking_rate` remains accepted with the same meaning. |
 | `variation` | `0.0`–`1.0` | `0.667` | Scale of the seed-based Gaussian latent variation. |
 | `seed` | non-negative integer | `0` | Latent noise seed. Long-form chunks use `seed + chunk_index`. |
 | `text_chunk_mode` | `word_budget` | `word_budget` | Long-form splitting mode. |

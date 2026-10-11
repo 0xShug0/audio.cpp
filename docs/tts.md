@@ -125,10 +125,10 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 | `repetition_penalty` | float | `1.2` | T3 repetition penalty. |
 | `min_p` | float | `0.05` | Minimum sampling probability. |
 | `top_p` | float | `1` | Nucleus sampling probability. |
-| `s3gen_cfg_rate` | float | `0.7` | S3Gen flow guidance scale. |
+| `flow_guidance_scale` | float | `0.7` | S3Gen flow guidance scale; legacy `s3gen_cfg_rate` remains accepted. |
 | `max_tokens` | integer >= 1 | `384` | Maximum generated speech tokens. |
 | `do_sample` | bool | `true` | Enable sampling. |
-| `greedy` | bool | `false` | When true, override do_sample and use greedy decoding. |
+| `greedy` (legacy) | bool | `false` | When true, override `do_sample` and use greedy decoding. Use `do_sample` for new integrations. |
 | `stop_on_eos` | bool | `true` | Stop token generation on EOS. |
 | `num_inference_steps` | integer >= 1 | `10` | Voice conversion flow steps; max_steps is also accepted. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
@@ -519,18 +519,20 @@ audiocpp_cli --task tts --family pocket_tts \
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `frames_after_eos` | integer >= -1 | `-1` | Extra frames after EOS; -1 uses the model-derived value. |
-| `max_steps` | integer >= 0 | `0` | Maximum generated audio frames; zero estimates the cap from text length. Captured from the first request during session preparation. |
-| `max_tokens` | integer >= 1 | `50` | Tokenizer tokens per text chunk. Captured from the first request during session preparation. |
+| `max_frames` | integer >= 0 | `0` | Maximum generated audio frames; zero estimates the cap from text length. Captured from the first request during session preparation. Legacy `max_steps` remains accepted. |
+| `text_chunk_tokens` | integer >= 1 | `50` | Tokenizer tokens per text chunk, not generated tokens. Legacy `max_tokens` retains this input-token meaning. |
 | `temperature` | float | model default | Positive flow noise temperature; defaults to the model configuration. Captured from the first request during session preparation. |
 | `seed` | integer >= 0 | random | Noise seed; omitted chooses a random seed. Captured from the first request during session preparation. |
 | `noise_clamp` | float | `-1` | Noise clamp; a negative value disables clamping. Captured from the first request during session preparation. |
 | `eos_threshold` | float | `-4` | EOS detection threshold. Captured from the first request during session preparation. |
 | `noise_file` | path | not set | Precomputed noise schedule file. Captured from the first request during session preparation. |
-| `voice_embedding_path` | path | not set | Precomputed voice-state embedding path. Captured from the first request during session preparation. |
-| `voice_clone_text` | text | not set | Accepted clone transcript field; currently stored but not consumed by voice encoding. Requires clone audio. |
+| `voice_embedding_file` | path | not set | Precomputed voice-state embedding file. Captured from the first request during session preparation. Legacy `voice_embedding_path` remains accepted. |
 | `truncate_clone_audio` | bool | `false` | Truncate voice clone audio. Captured from the first request during session preparation. |
 | `text_chunk_size` | integer | not set | Optional per-request character chunk size; otherwise use sentence/token budgeting. |
-| `export_voice_state_path` | path | not set | Export the prepared voice state during session preparation. |
+| `export_voice_state_file` | path | not set | Export the prepared voice state during session preparation. Legacy `export_voice_state_path` remains accepted. |
+
+PocketTTS cloning does not use a reference transcript. Legacy `voice_clone_text`
+remains accepted with clone audio but does not affect voice encoding.
 
 ### Session Options (use with `--session-option`)
 
@@ -548,11 +550,11 @@ audiocpp_cli --task tts --family pocket_tts \
 | `pocket_tts.mimi_encoder_weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
 | `pocket_tts.mimi_decoder_weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
 | `pocket_tts.flow_weights_view_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `pocket_tts.flow_step_graph_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_encoder_graph_context_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_conv_graph_context_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_transformer_graph_context_mb` | integer >= 1 | `96` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_tail_graph_context_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
+| `pocket_tts.flow_step_graph_arena_mb` | integer >= 1 | `256` | Host graph-metadata arena; legacy `flow_step_graph_context_mb` accepted with the same family prefix. |
+| `pocket_tts.mimi_encoder_graph_arena_mb` | integer >= 1 | `512` | Host graph-metadata arena; legacy `mimi_encoder_graph_context_mb` accepted with the same family prefix. |
+| `pocket_tts.mimi_conv_graph_arena_mb` | integer >= 1 | `32` | Host graph-metadata arena; legacy `mimi_conv_graph_context_mb` accepted with the same family prefix. |
+| `pocket_tts.mimi_transformer_graph_arena_mb` | integer >= 1 | `96` | Host graph-metadata arena; legacy `mimi_transformer_graph_context_mb` accepted with the same family prefix. |
+| `pocket_tts.mimi_tail_graph_arena_mb` | integer >= 1 | `512` | Host graph-metadata arena; legacy `mimi_tail_graph_context_mb` accepted with the same family prefix. |
 | `pocket_tts.mimi_full_chunk_frames` | integer >= 1 | `90` | Full-sequence decoder chunk frames. |
 | `pocket_tts.mimi_stage2_chunk_frames` | integer >= 1 | `900` | Second-stage decoder chunk frames. |
 | `pocket_tts.use_full_mimi` | bool | `true` | Use full-sequence Mimi decoding. |
@@ -694,14 +696,14 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `voxcpm2.prompt_cache_slots` | integer >= 0 | `1` | Cached encoded prompt slots; zero disables reuse. |
 | `voxcpm2.mem_saver` | bool | `true` | Release staged runtime graphs. |
 | `voxcpm2.weight_context_mb` | integer >= 1 | `3072` | Context or graph arena size in MiB. |
-| `voxcpm2.text_embedding_graph_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
-| `voxcpm2.lm_step_graph_context_mb` | integer >= 1 | `1024` | Context or graph arena size in MiB. |
-| `voxcpm2.projection_graph_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `voxcpm2.local_encoder_graph_context_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
-| `voxcpm2.dit_graph_context_mb` | integer >= 1 | `1024` | Context or graph arena size in MiB. |
+| `voxcpm2.text_embedding_graph_arena_mb` | integer >= 1 | `64` | Host graph-metadata arena size in MiB; legacy `text_embedding_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.lm_step_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `lm_step_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.projection_graph_arena_mb` | integer >= 1 | `256` | Host graph-metadata arena size in MiB; legacy `projection_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.local_encoder_graph_arena_mb` | integer >= 1 | `512` | Host graph-metadata arena size in MiB; legacy `local_encoder_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.dit_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `dit_graph_context_mb` accepted with the same family prefix. |
 | `voxcpm2.audiovae_weight_context_mb` | integer >= 1 | `768` | Context or graph arena size in MiB. |
-| `voxcpm2.audiovae_graph_context_mb` | integer >= 1 | `1024` | Context or graph arena size in MiB. |
-| `voxcpm2.audiovae_encoder_graph_context_mb` | integer >= 1 | `1024` | Context or graph arena size in MiB. |
+| `voxcpm2.audiovae_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.audiovae_encoder_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_encoder_graph_context_mb` accepted with the same family prefix. |
 | `voxcpm2.audiovae_latent_capacity` | integer >= 1 | not set | Optional reserved latent frame capacity; omitted selects automatically. |
 | `voxcpm2.audiovae_encoder_sample_capacity` | integer >= 1 | `240000` | Reserved encoder sample capacity. |
 

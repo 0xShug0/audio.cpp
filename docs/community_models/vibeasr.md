@@ -208,7 +208,8 @@ metrics.rtf=0.36652
 ```
 
 Request options: `output_format` (`text` | `json`), `context` (a string folded
-into the prompt to bias recognition), `max_new_tokens` (default 1024). Session
+into the prompt to bias recognition), `max_tokens` (default 1024; legacy
+`max_new_tokens` remains accepted). Session
 options: `vibeasr.encoder_graph_arena_mb` (64),
 `vibeasr.prefill_graph_arena_mb` (256), `vibeasr.decode_graph_arena_mb` (256).
 

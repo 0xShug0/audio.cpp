@@ -27,6 +27,33 @@
       "gguf"
     ]
   },
+  "options": {
+    "request": [
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Target duration in seconds; a non-positive value leaves duration selection to the planner. Legacy duration_seconds remains accepted.",
+        "required": false,
+        "default": -1.0
+      },
+      {
+        "name": "lm_guidance_scale",
+        "type": "float",
+        "description": "Planner CFG scale, independent of diffusion guidance. Legacy lm_cfg_scale remains accepted.",
+        "required": false,
+        "default": 2.0
+      },
+      {
+        "name": "enable_thinking",
+        "type": "bool",
+        "description": "Enable planner thinking when supported by the checkpoint. Legacy thinking remains accepted.",
+        "required": false,
+        "default": true
+      }
+    ],
+    "session": [],
+    "load": []
+  },
   "ui": {
     "recommended_package": "ace_step_turbo_bf16",
     "tags": [

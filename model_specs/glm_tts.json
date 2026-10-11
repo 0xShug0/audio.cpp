@@ -85,13 +85,13 @@
         "min": 0.0
       },
       {
-        "name": "flow_noise_path",
+        "name": "flow_noise_file",
         "type": "path",
         "description": "Optional raw float32 initial Flow noise for parity tests.",
         "required": false
       },
       {
-        "name": "hift_source_random_path",
+        "name": "hift_source_random_file",
         "type": "path",
         "description": "Optional raw float32 HiFT phase-uniform and Gaussian values for parity tests.",
         "required": false

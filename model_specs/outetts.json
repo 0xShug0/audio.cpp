@@ -176,7 +176,7 @@
         "default": 1536
       },
       {
-        "name": "aligner_path",
+        "name": "forced_aligner_path",
         "type": "path",
         "description": "Optional Qwen3 Forced Aligner override. Cloning automatically uses the aligner embedded in a standalone OuteTTS GGUF when present.",
         "required": false

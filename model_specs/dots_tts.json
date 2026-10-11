@@ -76,12 +76,6 @@
         "required": false
       },
       {
-        "name": "instruct",
-        "type": "string",
-        "description": "Alias for instruction for CLI compatibility.",
-        "required": false
-      },
-      {
         "name": "source_text",
         "type": "string",
         "description": "Optional source transcript override for DotTTS Edit. If omitted, it is rendered from instruction tags.",

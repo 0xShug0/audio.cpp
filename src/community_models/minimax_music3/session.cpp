@@ -147,7 +147,7 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"minimax_music3.language_model_gguf", "string", "Language model component GGUF file relative to the model root.", false, "language_model_q4_0.gguf"},
         {"minimax_music3.rvq_depth_decoder_gguf", "string", "RVQ depth decoder component GGUF file relative to the model root. q4_k measures ~-24% depth-stage time at instrument-panel-clean quality.", false, "rvq_depth_decoder_q8_0.gguf"},
         {"minimax_music3.flow_transformer_gguf", "string", "Flow transformer component GGUF file relative to the model root.", false, "transformer_q4_0.gguf"},
-        {"minimax_music3.graph_context_mb", "int", "Runtime graph arena size in MiB.", false, "32", "1"},
+        {"minimax_music3.graph_arena_mb", "int", "Host graph-metadata arena size in MiB, not device workspace.", false, "32", "1"},
         {"minimax_music3.weight_context_mb", "int", "Weight context size in MiB.", false, "32", "1"},
         {"minimax_music3.mem_saver", "bool", "Load large generation stages only while they are needed to reduce peak VRAM.", false, "true"},
         {"minimax_music3.pipeline_overlap", "bool", "Overlap AR decoding with per-chunk condition/flow/vocoder work on a second backend stream. Requires mem_saver=false; output is validated to stay identical to the sequential pipeline (automatic sequential fallback otherwise).", false, "false"},
@@ -182,7 +182,7 @@ MiniMaxMusic3Session::MiniMaxMusic3Session(
     }
     const size_t graph_arena_bytes = runtime::parse_size_mb_option(
         this->options().options,
-        {"minimax_music3.graph_context_mb"},
+        {"minimax_music3.graph_arena_mb", "minimax_music3.graph_context_mb"},
         kDefaultGraphArenaBytes);
     const size_t weight_context_bytes = runtime::parse_size_mb_option(
         this->options().options,

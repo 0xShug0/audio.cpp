@@ -85,6 +85,127 @@ void test_audio_only_language_is_request_option() {
     engine::test::require_eq(request.options.at("language"), std::string("en"), "audio-only language request option");
 }
 
+void test_normalized_request_option_aliases() {
+    using engine::runtime::find_option;
+    using engine::test::require;
+    using engine::test::require_eq;
+    const std::vector<std::pair<std::string, std::string>> aliases = {
+        {"instruction", "instruct"},
+        {"speed", "speaking_rate"},
+        {"max_tokens", "max_new_tokens"},
+        {"max_tokens", "max_text_tokens"},
+        {"num_beams", "beam_size"},
+        {"duration_frames", "tokens"},
+        {"text_temperature", "moss_tts_v15.text_temperature"},
+        {"text_temperature", "moss_ttsd.text_temperature"},
+        {"text_temperature", "moss_voicegen.text_temperature"},
+        {"duration_scale", "duration_factor"},
+        {"duration_scale", "length_adjust"},
+        {"reference_duration_sec", "max_ref_sec"},
+        {"max_speech_duration_sec", "max_speech_duration_s"},
+        {"mem_saver", "memory_saver"},
+        {"punc", "pnc"},
+        {"punc", "punctuation"},
+        {"punc", "punctuated"},
+        {"sampler_mode", "sampler"},
+        {"flow_guidance_scale", "s3gen_cfg_rate"},
+        {"max_frames", "max_steps"},
+        {"text_chunk_tokens", "max_tokens"},
+        {"max_duration_sec", "max_seconds"},
+        {"min_duration_sec", "min_seconds"},
+        {"reference_duration_sec", "ref_seconds"},
+        {"duration_sec", "target_duration_seconds"},
+        {"reference_duration_sec", "reference_duration_seconds"},
+        {"max_audio_steps", "max_new_audio_steps"},
+        {"min_audio_steps", "min_new_audio_steps"},
+        {"max_text_tokens", "max_new_text_tokens"},
+        {"audio_chunk_duration_sec", "audio_chunk_seconds"},
+        {"lfm2_audio.max_pass_duration_sec", "lfm2_audio.max_pass_seconds"},
+        {"video_file", "video"},
+        {"vieneu_v3_turbo.g2p_dict_file", "vieneu_v3_turbo.g2p_dict"},
+        {"vieneu_v3_turbo.g2p_dict_file", "g2p_dict"},
+        {"language", "lang"},
+        {"shift", "t_shift"},
+        {"zipvoice.shift", "zipvoice.t_shift"},
+        {"auto_frame_cap", "frame_cap"},
+        {"text_chunk_min_size", "text_chunk_min"},
+        {"voice_id", "speaker"},
+        {"duration_sec", "duration_seconds"},
+        {"lm_guidance_scale", "lm_cfg_scale"},
+        {"enable_thinking", "thinking"},
+        {"gigaam_asr.vad_model_path", "vad_model_path"},
+        {"qwen3_asr.vad_model_path", "qwen3_asr.vad_path"},
+        {"noise_file", "noise_path"},
+        {"flow_noise_file", "flow_noise_path"},
+        {"hift_source_random_file", "hift_source_random_path"},
+        {"speaker_embedding_file", "speaker_embedding_path"},
+        {"voice_embedding_file", "voice_embedding_path"},
+        {"voice_embedding_file", "pocket_tts.voice_embedding_path"},
+        {"export_voice_state_file", "export_voice_state_path"},
+        {"export_voice_state_file", "pocket_tts.export_voice_state_path"},
+        {"pitch_file", "pitch_path"},
+        {"retrieval_index_file", "retrieval_index_path"},
+        {"reference_image_file", "reference_image_path"},
+        {"reference_image_file", "ref_image"},
+        {"reference_video_file", "reference_video_path"},
+        {"outetts.forced_aligner_path", "outetts.aligner_path"},
+        {"kokoro_tts.predictor_duration_graph_arena_mb", "kokoro_tts.predictor_duration_graph_mb"},
+        {"kokoro_tts.predictor_text_graph_arena_mb", "kokoro_tts.predictor_text_graph_mb"},
+        {"kokoro_tts.predictor_tail_graph_arena_mb", "kokoro_tts.predictor_tail_graph_mb"},
+        {"minimax_music3.graph_arena_mb", "minimax_music3.graph_context_mb"},
+        {"pocket_tts.flow_step_graph_arena_mb", "pocket_tts.flow_step_graph_context_mb"},
+        {"pocket_tts.mimi_encoder_graph_arena_mb", "pocket_tts.mimi_encoder_graph_context_mb"},
+        {"pocket_tts.mimi_conv_graph_arena_mb", "pocket_tts.mimi_conv_graph_context_mb"},
+        {"pocket_tts.mimi_transformer_graph_arena_mb", "pocket_tts.mimi_transformer_graph_context_mb"},
+        {"pocket_tts.mimi_tail_graph_arena_mb", "pocket_tts.mimi_tail_graph_context_mb"},
+        {"vevo2.ar_prefill_graph_arena_mb", "vevo2.ar_prefill_graph_context_mb"},
+        {"vevo2.ar_decode_graph_arena_mb", "vevo2.ar_decode_graph_context_mb"},
+        {"vevo2.tokenizer_graph_arena_mb", "vevo2.tokenizer_graph_context_mb"},
+        {"vevo2.whisper_graph_arena_mb", "vevo2.whisper_graph_context_mb"},
+        {"vevo2.fm_graph_arena_mb", "vevo2.fm_graph_context_mb"},
+        {"vevo2.vocoder_graph_arena_mb", "vevo2.vocoder_graph_context_mb"},
+        {"voxcpm1.text_embedding_graph_arena_mb", "voxcpm1.text_embedding_graph_context_mb"},
+        {"voxcpm1.lm_step_graph_arena_mb", "voxcpm1.lm_step_graph_context_mb"},
+        {"voxcpm1.projection_graph_arena_mb", "voxcpm1.projection_graph_context_mb"},
+        {"voxcpm1.local_encoder_graph_arena_mb", "voxcpm1.local_encoder_graph_context_mb"},
+        {"voxcpm1.dit_graph_arena_mb", "voxcpm1.dit_graph_context_mb"},
+        {"voxcpm1.audiovae_graph_arena_mb", "voxcpm1.audiovae_graph_context_mb"},
+        {"voxcpm1.audiovae_encoder_graph_arena_mb", "voxcpm1.audiovae_encoder_graph_context_mb"},
+        {"voxcpm2.text_embedding_graph_arena_mb", "voxcpm2.text_embedding_graph_context_mb"},
+        {"voxcpm2.lm_step_graph_arena_mb", "voxcpm2.lm_step_graph_context_mb"},
+        {"voxcpm2.projection_graph_arena_mb", "voxcpm2.projection_graph_context_mb"},
+        {"voxcpm2.local_encoder_graph_arena_mb", "voxcpm2.local_encoder_graph_context_mb"},
+        {"voxcpm2.dit_graph_arena_mb", "voxcpm2.dit_graph_context_mb"},
+        {"voxcpm2.audiovae_graph_arena_mb", "voxcpm2.audiovae_graph_context_mb"},
+        {"voxcpm2.audiovae_encoder_graph_arena_mb", "voxcpm2.audiovae_encoder_graph_context_mb"},
+    };
+    for (const auto & [canonical, legacy] : aliases) {
+        require(!find_option({}, {canonical, legacy}), "absent aliases retain model defaults");
+        for (const auto & key : {canonical, legacy}) {
+            const std::string option = key + "=2";
+            const char * argv[] = {"audiocpp_cli", "--task", "tts", "--request-option", option.c_str()};
+            const auto request = minitts::cli::build_request_from_cli(5, const_cast<char **>(argv));
+            const auto parsed = find_option(request.options, {canonical, legacy});
+            require(parsed.has_value(), "CLI preserves option " + key);
+            require_eq(*parsed, std::string("2"), "alias value " + key);
+        }
+        const std::unordered_map<std::string, std::string> matching{{canonical, "2"}, {legacy, "2"}};
+        require_eq(*find_option(matching, {canonical, legacy}), std::string("2"), "matching aliases");
+        bool rejected = false;
+        try {
+            (void)find_option({{canonical, "2"}, {legacy, "3"}}, {canonical, legacy});
+        } catch (const std::runtime_error & error) {
+            rejected = std::string(error.what()).find("conflicting option values") != std::string::npos;
+        }
+        require(rejected, "conflicting aliases rejected: " + canonical + "/" + legacy);
+    }
+    // This same-value speed alias is for Inflect, not sanoTTS's reciprocal control.
+    require_eq(*engine::runtime::parse_finite_float_option({{"speaking_rate", "1.5"}},
+                   {"speed", "speaking_rate"}), 1.5F, "legacy Inflect speed");
+    require_eq(*engine::runtime::parse_finite_float_option({{"speed", "1.5"}},
+                   {"speed", "speaking_rate"}), 1.5F, "normalized Inflect speed");
+}
+
 void test_out_format_selects_wav_sample_format() {
     const char * no_flag[] = {"audiocpp_cli", "--task", "gen"};
     const auto defaults = minitts::cli::wav_write_options_from_cli(3, const_cast<char **>(no_flag));
@@ -258,6 +379,7 @@ int main() {
     test_float_numbers_keep_json_formatting();
     test_unsafe_integer_numbers_are_not_silently_rounded();
     test_audio_only_language_is_request_option();
+    test_normalized_request_option_aliases();
     test_out_format_selects_wav_sample_format();
     test_request_json_artifacts();
     std::cout << "cli_request_options_test passed\n";

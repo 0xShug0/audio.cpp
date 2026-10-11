@@ -109,7 +109,7 @@ audiocpp_cli --task tts --family outetts \
 | `--reference-text` | text | none | Exact transcript of `--voice-ref`; required for voice cloning. |
 | `--request-option reference_language=<code>` | language code | `en` | Language used by the optional reference aligner. |
 | `--session-option outetts.weight_type=native\|f32\|f16\|bf16\|q8_0` | enum | `native` | Language-model weight storage type. For CUDA voice cloning, quantized weights remain compact in the GGUF but are expanded to F32 in VRAM to avoid generation divergence over long reference-codec prompts. Normal TTS and CPU cloning keep the selected type. |
-| `--session-option outetts.aligner_path=<path>` | model path | embedded aligner | Optional external Qwen3 Forced Aligner override, required only for safetensors packages and older GGUFs without the embedded aligner. |
+| `--session-option outetts.forced_aligner_path=<path>` | model path | embedded aligner | Optional external Qwen3 Forced Aligner override, required only for safetensors packages and older GGUFs without the embedded aligner. Legacy `outetts.aligner_path` remains accepted. |
 
 The legacy session keys `outetts.aligner_model_path` and
 `outetts.dac_graph_context_mb` remain accepted for backward compatibility.

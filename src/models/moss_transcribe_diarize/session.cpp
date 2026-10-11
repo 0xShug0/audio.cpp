@@ -46,13 +46,16 @@ public:
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
         require_prepared("MOSS-Transcribe-Diarize run");
-        runtime::validate_spec_backed_request_options(request.options, *contract_, "MOSS-Transcribe-Diarize");
+        auto validation_options = request.options;
+        validation_options.erase("instruction");
+        validation_options.erase("instruct");
+        runtime::validate_spec_backed_request_options(validation_options, *contract_, "MOSS-Transcribe-Diarize");
         if (!request.audio_input) {
             throw std::runtime_error("MOSS-Transcribe-Diarize requires audio_input");
         }
         const auto started = std::chrono::steady_clock::now();
         const auto max_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens"}, default_max_tokens_);
-        const auto instruction = runtime::find_option(request.options, {"instruct"}).value_or("");
+        const auto instruction = runtime::find_option(request.options, {"instruction", "instruct"}).value_or("");
         const auto text = io::trim_ascii_whitespace(model_->transcribe(*request.audio_input, instruction, max_tokens));
         auto result = parse_result(text, request.audio_input->sample_rate);
         debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(started));
@@ -71,13 +74,16 @@ public:
         if (mode_ != runtime::RunMode::Streaming) {
             throw std::runtime_error("MOSS-Transcribe-Diarize start_stream requires streaming mode");
         }
-        runtime::validate_spec_backed_request_options(request.options, *contract_, "MOSS-Transcribe-Diarize");
+        auto validation_options = request.options;
+        validation_options.erase("instruction");
+        validation_options.erase("instruct");
+        runtime::validate_spec_backed_request_options(validation_options, *contract_, "MOSS-Transcribe-Diarize");
         if (!request.audio_input) {
             throw std::runtime_error("MOSS-Transcribe-Diarize streaming requires complete audio_input");
         }
         reset();
         const auto max_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens"}, default_max_tokens_);
-        const auto instruction = runtime::find_option(request.options, {"instruct"}).value_or("");
+        const auto instruction = runtime::find_option(request.options, {"instruction", "instruct"}).value_or("");
         model_->start(*request.audio_input, instruction, max_tokens);
         stream_sample_rate_ = request.audio_input->sample_rate;
         stream_started_ = true;

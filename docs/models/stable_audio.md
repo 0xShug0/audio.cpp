@@ -89,7 +89,7 @@ audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-medi
 | `num_inference_steps` | integer >= 1 | `8` | Diffusion steps. |
 | `guidance_scale` | float | `1` | Classifier-free guidance scale. |
 | `apg_scale` | float | `1` | Adaptive projected guidance scale. |
-| `sampler` | `pingpong`, `euler`, `dpmpp-2m`, `dpmpp-3m-sde` | not set | Diffusion sampler for Stable Audio 3. The foundation/medium path also accepts the DPM++ samplers. |
+| `sampler_mode` | `pingpong`, `euler`, `dpmpp-2m`, `dpmpp-3m-sde` | not set | Stable Audio 3 (including Medium) accepts `pingpong`/`euler`; Foundation also accepts the DPM++ samplers. Legacy `sampler` remains accepted. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
 | `duration_padding_sec` | seconds | `6` | Extra generated padding before truncation. |
 | `truncate_output_to_duration` | bool | `true` | Trim decoded audio to requested duration. |

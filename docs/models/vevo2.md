@@ -249,7 +249,25 @@ audiocpp_cli --task svc --family vevo2 --model models/Vevo2 --backend cuda --tas
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `duration_sec` | float | unset | Flow-matching target duration hint. Legacy `target_duration_seconds` remains accepted. |
+| `reference_duration_sec` | float | unset | Trim target voice reference before conditioning. Legacy `reference_duration_seconds` remains accepted. |
+| `fm_noise_file` | path | unset | Optional flow-matching noise tensor for reproducibility. |
 | `audio_chunk_duration_sec` | float | `0` | Opt-in source-audio chunking for `style_preserved_vc` and `style_preserved_svc`. `0` keeps the existing one-shot path. |
 | `cross_fade_duration_sec` | float | `1.0` with source-audio chunking | Source chunk overlap and output crossfade duration when source-audio chunking is enabled. Must be smaller than `audio_chunk_duration_sec`. |
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model models/VeVo2 --family vevo2`.
+
+## Session Graph Arenas
+
+These `--session-option` controls size host graph metadata in MiB, not device
+workspace. Each retains its former `*_graph_context_mb` alias with the same
+`vevo2.` prefix. Weight-context controls are separate and unchanged.
+
+| Option | Default MiB |
+|---|---:|
+| `vevo2.ar_prefill_graph_arena_mb` | `512` |
+| `vevo2.ar_decode_graph_arena_mb` | `512` |
+| `vevo2.tokenizer_graph_arena_mb` | `768` |
+| `vevo2.whisper_graph_arena_mb` | `512` |
+| `vevo2.fm_graph_arena_mb` | `1024` |
+| `vevo2.vocoder_graph_arena_mb` | `768` |

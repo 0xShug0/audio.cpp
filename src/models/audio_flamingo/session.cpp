@@ -47,7 +47,11 @@ public:
     }
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
         require_prepared("Audio Flamingo run");
-        runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "Audio Flamingo");
+        // Parse these aliases locally, independent of the embedded spec's spelling.
+        auto validation_options = request.options;
+        validation_options.erase("instruction");
+        validation_options.erase("instruct");
+        runtime::validate_spec_backed_request_options(validation_options, request.option_arrays, *contract_, "Audio Flamingo");
         if (!request.audio_input) {
             throw std::runtime_error("Audio Flamingo requires audio input");
         }
@@ -61,7 +65,7 @@ public:
         if (const auto sample = runtime::find_option(request.options, {"do_sample"})) {
             generation.do_sample = runtime::parse_bool_option(*sample, "do_sample");
         }
-        const auto instruction = runtime::find_option(request.options, {"instruct"}).value_or(
+        const auto instruction = runtime::find_option(request.options, {"instruction", "instruct"}).value_or(
             request.text_input && !request.text_input->text.empty() ? request.text_input->text : "Transcribe the input speech.");
         const auto started = std::chrono::steady_clock::now();
         auto stage = started;

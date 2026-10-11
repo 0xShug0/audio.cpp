@@ -160,9 +160,9 @@ StableAudioRequest parse_stable_audio_request(const runtime::TaskRequest & reque
         }
         out.num_inference_steps = *value;
     }
-    if (const auto value = runtime::find_option(request.options, {"sampler"})) {
+    if (const auto value = runtime::find_option(request.options, {"sampler_mode", "sampler"})) {
         if (*value != "pingpong" && *value != "euler") {
-            throw std::runtime_error("Stable Audio sampler must be pingpong or euler");
+            throw std::runtime_error("Stable Audio sampler_mode must be pingpong or euler");
         }
         out.sampler = *value;
     }

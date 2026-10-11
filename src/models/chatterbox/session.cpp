@@ -56,7 +56,7 @@ ChatterboxVoiceCloneConfig make_voice_clone_config(
     config.top_p = runtime::parse_float_option(options, {"top_p"}).value_or(config.top_p);
     config.s3gen_cfg_rate = runtime::parse_float_option(
         options,
-        {"s3gen_cfg_rate"})
+        {"flow_guidance_scale", "s3gen_cfg_rate"})
         .value_or(config.s3gen_cfg_rate);
     config.max_new_tokens = runtime::parse_positive_i64_option(
         options,
@@ -83,7 +83,7 @@ ChatterboxVoiceConversionConfig make_voice_conversion_config(
     ChatterboxVoiceConversionConfig config;
     config.s3gen_cfg_rate = runtime::parse_float_option(
         options,
-        {"s3gen_cfg_rate"})
+        {"flow_guidance_scale", "s3gen_cfg_rate"})
         .value_or(config.s3gen_cfg_rate);
     config.num_inference_steps = runtime::parse_positive_i64_option(
         options,

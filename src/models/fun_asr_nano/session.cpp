@@ -160,7 +160,7 @@ void validate_request_options(
   for (const auto &[key, value] : options) {
     (void)value;
     if (key != "language" && key != "enable_itn" && key != "max_tokens" &&
-        key != "audio_chunk_mode" && key != "audio_chunk_seconds" &&
+        key != "audio_chunk_mode" && key != "audio_chunk_duration_sec" && key != "audio_chunk_seconds" &&
         key != "audio_chunk_duration_seconds" &&
         key != "audio_chunk_duration") {
       throw std::runtime_error("unknown Fun-ASR-Nano request option: " + key);
@@ -329,18 +329,18 @@ FunAsrNanoSession::audio_chunk_plan(const runtime::TaskRequest &request) const {
           .value_or(kDefaultChunkSeconds);
   if (!std::isfinite(seconds) || !(seconds > 0.0F)) {
     throw std::runtime_error(
-        "Fun-ASR-Nano audio_chunk_seconds must be positive");
+        "Fun-ASR-Nano audio_chunk_duration_sec must be positive");
   }
   const double sample_count =
       static_cast<double>(seconds) * static_cast<double>(audio.sample_rate);
   if (sample_count >=
       static_cast<double>(std::numeric_limits<int64_t>::max())) {
-    throw std::runtime_error("Fun-ASR-Nano audio_chunk_seconds is too large");
+    throw std::runtime_error("Fun-ASR-Nano audio_chunk_duration_sec is too large");
   }
   const int64_t samples = static_cast<int64_t>(std::llround(sample_count));
   if (samples <= 0) {
     throw std::runtime_error(
-        "Fun-ASR-Nano audio_chunk_seconds produced an empty chunk");
+        "Fun-ASR-Nano audio_chunk_duration_sec produced an empty chunk");
   }
   const auto chunks = engine::audio::plan_audio_chunks(
       frames, {samples, samples, engine::audio::AudioChunkPadMode::Zero,

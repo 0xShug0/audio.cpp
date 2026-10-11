@@ -47,15 +47,15 @@
         "default": true
       },
       {
-        "name": "speaker_embedding_path",
+        "name": "speaker_embedding_file",
         "type": "path",
         "description": "Speaker Inversion embedding (*.speaker.safetensors written by Irodori-TTS training) used as the speaker condition instead of reference audio; use it with the base checkpoint it was trained on. Cannot be combined with reference audio or no_ref=true.",
         "required": false
       },
       {
-        "name": "max_ref_sec",
+        "name": "reference_duration_sec",
         "type": "float",
-        "description": "Trim reference audio to its first max_ref_sec before encoding it, as Python Irodori-TTS does; default is the checkpoint's ref_max_seconds (30 when it has none); 0 keeps the whole reference.",
+        "description": "Trim reference audio to its first reference_duration_sec seconds before encoding it, as Python Irodori-TTS does; default is the checkpoint's ref_max_seconds (30 when it has none); 0 keeps the whole reference.",
         "required": false,
         "min": 0.0
       },

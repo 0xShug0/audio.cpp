@@ -21,7 +21,7 @@ build/debug/bin/audiocpp_cli \
   --load-option "liveavatar.denoiser_gguf=models/unet/Qwen 2SV/Wan2.2-S2V-14B-NVFP4-LORA.gguf" \
   --session-option liveavatar.denoiser_weight_streaming=true \
   --request-option generation_mode=liveavatar \
-  --request-option reference_image_path=/path/to/reference.jpg \
+  --request-option reference_image_file=/path/to/reference.jpg \
   --request-option height=720 \
   --request-option width=1280 \
   --request-option seed=420 \
@@ -75,13 +75,14 @@ Request options (use with `--request-option`):
 | Option | Default | Notes |
 |---|---:|---|
 | `generation_mode` | `offline` | Use `liveavatar` for blockwise audio-driven generation. |
-| `reference_image_path` | required | Reference image used for identity and appearance. |
+| `reference_image_file` | required | Reference image used for identity and appearance. Legacy `reference_image_path` and `ref_image` remain accepted. |
 | `height` / `width` | `704` / `1024` | Output frame dimensions. |
 | `num_frames` | `48` | Frames generated per LiveAvatar segment. |
 | `num_clips` | `1` | Maximum number of audio-driven clips to generate. |
 | `num_inference_steps` | `4` | Euler denoising steps; the LiveAvatar adapter is designed for four steps. |
 | `guidance_scale` | `0` | LiveAvatar blockwise generation requires zero guidance. |
 | `seed` | `420` | Generation seed. |
+| `mem_saver` | `true` | Reuse immutable condition data and temporary denoiser graph storage between blocks. Legacy `memory_saver` and `liveavatar.memory_saver` remain accepted. |
 | `denoiser_layerwise` | `false` | Required by denoiser weight streaming. |
 | `denoiser_layerwise_batch` | `16` | Number of denoiser layers staged and evaluated together. |
 | `target_cache_blocks` | `0` | Target KV cache window; `1` keeps one block. |

@@ -99,7 +99,7 @@
         "default": 1.0
       },
       {
-        "name": "sampler",
+        "name": "sampler_mode",
         "type": "enum",
         "description": "Joint DiT sampler: euler, res_multistep, dpmpp_2m, or unipc.",
         "values": [

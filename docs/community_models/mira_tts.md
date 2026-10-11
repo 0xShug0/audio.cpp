@@ -60,6 +60,17 @@ with the same audio do not rerun the speaker encoder. Increase the bounded cache
 with `--session-option reference_cache_slots=<n>`, or set it to `0` to disable
 reference reuse.
 
+## Session weight options
+
+Use these with `--session-option`; storage is selected at session creation.
+The legacy unprefixed names remain accepted.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `mira_tts.backbone_weight_type` | `native` | Language-model weight storage. |
+| `mira_tts.linear_weight_type` | `native` | Codec linear weight storage. |
+| `mira_tts.conv_weight_type` | `f32` | Codec convolution weight storage. |
+
 ## Validation status
 
 - Official checkpoint conversion: validated.

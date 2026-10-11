@@ -23,7 +23,7 @@
   "options": {
     "request": [
       {
-        "name": "instruct",
+        "name": "instruction",
         "type": "string",
         "default": "describe the audio",
         "required": false,

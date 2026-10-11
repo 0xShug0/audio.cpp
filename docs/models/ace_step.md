@@ -175,7 +175,9 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `audio_cover_strength` | float | `1.0` | Cover strength for cover/edit-style conditioning. |
 | `cover_noise_strength` | float | `0.0` | Noise strength for cover conditioning. |
 | `lm_temperature` | float | `0.85` | Planner sampling temperature. |
-| `lm_cfg_scale` | float | `2.0` | Planner CFG scale. |
+| `lm_guidance_scale` | float | `2.0` | Planner CFG scale. Legacy `lm_cfg_scale` remains accepted. |
+| `duration_sec` | float | `-1.0` | Target duration; non-positive leaves selection to the planner. Legacy `duration_seconds` remains accepted. |
+| `enable_thinking` | bool | `true` | Enable planner thinking when supported by the checkpoint. Legacy `thinking` remains accepted. |
 | `lm_top_k` | integer | `0` | Planner top-k; `0` disables top-k. |
 | `lm_top_p` | float | `0.9` | Planner top-p. |
 | `lm_repetition_penalty` | float | `1.0` | Planner repetition penalty. |

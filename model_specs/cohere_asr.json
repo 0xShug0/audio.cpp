@@ -39,7 +39,7 @@
         "default": "en"
       },
       {
-        "name": "pnc",
+        "name": "punc",
         "type": "bool",
         "description": "Generate punctuation and capitalization.",
         "required": false,

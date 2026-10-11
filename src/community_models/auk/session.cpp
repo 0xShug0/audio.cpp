@@ -166,13 +166,20 @@ runtime::VoiceTaskKind AukSession::task_kind() const { return task_.task; }
 runtime::RunMode AukSession::run_mode() const { return task_.mode; }
 
 void AukSession::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "AuK");
+    auto validation_options = request.options;
+    validation_options.erase("instruction");
+    validation_options.erase("instruct");
+    (void)runtime::find_option(request.options, {"instruction", "instruct"});
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "AuK");
     mark_prepared();
 }
 
 runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
     require_prepared("AuK run");
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "AuK");
+    auto validation_options = request.options;
+    validation_options.erase("instruction");
+    validation_options.erase("instruct");
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "AuK");
     const auto session_started = std::chrono::steady_clock::now();
     if (!request.text_input || request.text_input->text.empty()) {
         throw std::runtime_error("AuK requires a text instruction");
@@ -219,9 +226,9 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
     const uint64_t seed = requested_seed == -1 ? runtime::random_u64_seed() : static_cast<uint64_t>(requested_seed);
     std::string instruction = request.text_input->text;
     // Without a voice description, text carries the complete upstream instruction.
-    if (const auto description = runtime::find_option(request.options, {"instruct"})) {
+    if (const auto description = runtime::find_option(request.options, {"instruction", "instruct"})) {
         if (task_.task != runtime::VoiceTaskKind::Tts) {
-            throw std::runtime_error("AuK editing takes its instruction in text; instruct is for TTS");
+            throw std::runtime_error("AuK editing takes its instruction in text; the instruction option is for TTS");
         }
         instruction = "Generate speech based on the following description: \"" + *description +
             "\". The content to speak is: \"" + request.text_input->text + "\".";

@@ -84,15 +84,13 @@
         "required": false,
         "min": 32,
         "default": 200
-      }
-    ],
-    "load": [
+      },
       {
         "name": "backbone_weight_type",
         "type": "enum",
         "preset": "weight_type_full",
         "required": false,
-        "default": "native",
+        "default": "f32",
         "description": "Storage type for the Qwen3 LM backbone weights."
       },
       {
@@ -100,7 +98,7 @@
         "type": "enum",
         "preset": "weight_type_conv",
         "required": false,
-        "default": "native",
+        "default": "f32",
         "description": "Storage type for the Vocos decoder weights."
       }
     ]

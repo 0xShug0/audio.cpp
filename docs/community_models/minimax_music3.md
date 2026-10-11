@@ -104,9 +104,9 @@ Common session options:
 | Option | Default | Notes |
 |---|---:|---|
 | `minimax_music3.language_model_gguf` | `language_model_q4_0.gguf` | Language model component file relative to the model root. |
-| `minimax_music3.rvq_depth_decoder_gguf` | `rvq_depth_decoder_bf16.gguf` | RVQ depth decoder component file relative to the model root. |
+| `minimax_music3.rvq_depth_decoder_gguf` | `rvq_depth_decoder_q8_0.gguf` | RVQ depth decoder component file relative to the model root. |
 | `minimax_music3.flow_transformer_gguf` | `transformer_q4_0.gguf` | Flow transformer component file relative to the model root. |
-| `minimax_music3.graph_context_mb` | `32` | Runtime graph arena size in MiB. |
+| `minimax_music3.graph_arena_mb` | `32` | Host graph-metadata arena size in MiB, not device workspace; legacy `minimax_music3.graph_context_mb` remains accepted. |
 | `minimax_music3.weight_context_mb` | `32` | Weight context size in MiB. |
 | `minimax_music3.mem_saver` | `true` | Load large generation stages only while needed to reduce peak VRAM. |
 

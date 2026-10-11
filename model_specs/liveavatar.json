@@ -30,7 +30,7 @@
   "options": {
     "request": [
       {
-        "name": "reference_image_path",
+        "name": "reference_image_file",
         "type": "string",
         "description": "Reference image path used as the identity/appearance condition.",
         "required": true
@@ -109,7 +109,7 @@
         "default": true
       },
       {
-        "name": "memory_saver",
+        "name": "mem_saver",
         "type": "bool",
         "description": "Reuse immutable condition data and temporary denoiser graph storage across sequential blocks.",
         "required": false,

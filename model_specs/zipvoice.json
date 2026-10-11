@@ -71,7 +71,7 @@
         "default": 8
       },
       {
-        "name": "t_shift",
+        "name": "shift",
         "type": "float",
         "description": "Shift timesteps toward low SNR (smaller = stronger shift); default 0.5.",
         "required": false,
@@ -115,7 +115,7 @@
         "default": 666
       },
       {
-        "name": "lang",
+        "name": "language",
         "type": "string",
         "description": "espeak language for phonemization; default en-us.",
         "required": false,
@@ -148,7 +148,7 @@
         "default": 8
       },
       {
-        "name": "t_shift",
+        "name": "shift",
         "type": "float",
         "description": "Default timestep shift for requests that do not set it.",
         "required": false,

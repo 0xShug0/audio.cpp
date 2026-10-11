@@ -85,7 +85,7 @@ audiocpp_cli --task tts --family index_tts2 \
 | `num_beams` | integer >= 1 | `3` | Beam search width. |
 | `repetition_penalty` | float | `10` | Sampling repetition penalty. |
 | `max_tokens` | integer >= 1 | `1500` | Maximum generated mel tokens. |
-| `duration_factor` | positive float | `1` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Matches the official IndexTTS2.5 `duration_factor`; also accepted for the v2 variant. |
+| `duration_scale` | positive float | `1` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Legacy `duration_factor` remains accepted; also accepted for the v2 variant. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
 | `text_chunk_size` | integer | not set | Optional framework long-form text chunk size; omitted keeps the full input together. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
@@ -236,7 +236,7 @@ or commercial use.
 | `num_beams` | integer | `3` | GPT beam count. |
 | `repetition_penalty` | float | `10` | Sampling repetition penalty. |
 | `max_tokens` | integer >= 1 | `1500` | Maximum generated mel tokens. |
-| `duration_factor` | positive float | `1` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Matches the official IndexTTS2.5 `duration_factor`. |
+| `duration_scale` | positive float | `1` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Matches the official IndexTTS2.5 `duration_factor`, retained as an alias. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
 | `text_chunk_size` | integer | not set | Optional framework long-form text chunk size; omitted keeps the full input together. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |

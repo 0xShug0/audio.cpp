@@ -92,12 +92,12 @@ int64_t frame_count(const runtime::AudioBuffer & audio) {
 }
 
 // A limit under kMinChunkSeconds would turn away even the shortest chunks
-// audio_chunk_seconds allows; the spec's min matches.
+// audio_chunk_duration_sec allows; the spec's min matches.
 double parse_max_pass_seconds(const runtime::SessionOptions & options) {
     const auto value =
-        runtime::parse_finite_float_option(options.options, {"lfm2_audio.max_pass_seconds"}).value_or(kDefaultMaxPassSeconds);
+        runtime::parse_finite_float_option(options.options, {"lfm2_audio.max_pass_duration_sec", "lfm2_audio.max_pass_seconds"}).value_or(kDefaultMaxPassSeconds);
     if (value < kMinChunkSeconds) {
-        throw std::runtime_error("lfm2_audio.max_pass_seconds must be at least 1");
+        throw std::runtime_error("lfm2_audio.max_pass_duration_sec must be at least 1");
     }
 
     return value;
@@ -139,7 +139,7 @@ void require_one_pass(int64_t frames, int sample_rate, double limit, const std::
     if (frames > std::llround(limit * sample_rate)) {
         const auto tenths = (frames * 10 + sample_rate - 1) / sample_rate;
         throw runtime::CapacityError("LFM2-Audio encodes at most " + seconds_text(limit) +
-                                     " s of audio in one pass (lfm2_audio.max_pass_seconds), and " + what + " " +
+                                     " s of audio in one pass (lfm2_audio.max_pass_duration_sec), and " + what + " " +
                                      seconds_text(static_cast<double>(tenths) / 10) + " s; " + remedy);
     }
 }
@@ -160,7 +160,10 @@ runtime::SessionOptions validate_session_setup(
                                                                        : "LFM2-Audio s2s runs offline or streaming");
     }
 
-    runtime::validate_spec_backed_session_options(options, contract, kFamily, kModelName);
+    auto validation_options = options;
+    validation_options.options.erase("lfm2_audio.max_pass_duration_sec");
+    validation_options.options.erase("lfm2_audio.max_pass_seconds");
+    runtime::validate_spec_backed_session_options(validation_options, contract, kFamily, kModelName);
     return options;
 }
 
@@ -368,7 +371,10 @@ void Lfm2AudioSession::prepare(const runtime::SessionPreparationRequest & reques
 }
 
 Lfm2AudioSession::RequestOptions Lfm2AudioSession::parse_request_options(const runtime::TaskRequest & request) const {
-    runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), kModelName);
+    auto validation_options = request.options;
+    validation_options.erase("audio_chunk_duration_sec");
+    validation_options.erase("audio_chunk_seconds");
+    runtime::validate_spec_backed_request_options(validation_options, require_contract(contract_), kModelName);
     reject_options(request,
         {"temperature", "top_k", "seed", "text_temperature", "text_top_k", "text_chunk_mode", "text_chunk_size", "stream_frames_per_event",
          "return_codes"},
@@ -415,15 +421,15 @@ std::vector<runtime::TimeSpan> Lfm2AudioSession::plan_chunks(
     const auto requested = audio::parse_audio_chunk_seconds_override(request.options);
     const double seconds = requested ? *requested : std::min<double>(kDefaultChunkSeconds, max_pass_seconds_);
     if (!std::isfinite(seconds) || seconds < kMinChunkSeconds) {
-        throw std::runtime_error("LFM2-Audio audio_chunk_seconds must be at least 1");
+        throw std::runtime_error("LFM2-Audio audio_chunk_duration_sec must be at least 1");
     }
 
     const auto chunk_samples = static_cast<int64_t>(std::llround(seconds * kSampleRate));
     // Before any chunk is planned or encoded, so vad is held to the setting
     // rather than to its spans. fixed can make the last chunk up to a second
     // longer (a shorter tail joins it), which the limit lets through.
-    require_one_pass(std::min(total, chunk_samples), kSampleRate, max_pass_seconds_, "audio_chunk_seconds allows chunks of up to",
-                     "lower audio_chunk_seconds, or raise the limit");
+    require_one_pass(std::min(total, chunk_samples), kSampleRate, max_pass_seconds_, "audio_chunk_duration_sec allows chunks of up to",
+                     "lower audio_chunk_duration_sec, or raise the limit");
     if (mode == audio::AudioChunkMode::Auto && total <= chunk_samples) {
         return {{0, total}};
     }
@@ -578,8 +584,8 @@ Lfm2AudioTtsSession::RequestOptions Lfm2AudioTtsSession::parse_request(const run
         throw std::runtime_error("LFM2-Audio TTS requires text_input");
     }
 
+    reject_options(request, {"audio_chunk_mode", "audio_chunk_duration_sec", "audio_chunk_seconds", "text_temperature", "text_top_k", "return_codes"}, "TTS");
     runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), kModelName);
-    reject_options(request, {"audio_chunk_mode", "audio_chunk_seconds", "text_temperature", "text_top_k", "return_codes"}, "TTS");
     reject_history(request, "TTS");
 
     std::string language = request.text_input->language;
@@ -862,8 +868,8 @@ void Lfm2AudioChatSession::prepare(const runtime::SessionPreparationRequest & re
 }
 
 Lfm2AudioChatSession::RequestOptions Lfm2AudioChatSession::parse_request(const runtime::TaskRequest & request) const {
+    reject_options(request, {"audio_chunk_mode", "audio_chunk_duration_sec", "audio_chunk_seconds", "text_chunk_mode", "text_chunk_size"}, "s2s");
     runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), kModelName);
-    reject_options(request, {"audio_chunk_mode", "audio_chunk_seconds", "text_chunk_mode", "text_chunk_size"}, "s2s");
 
     if (const auto language = runtime::find_option(request.options, {"language"});
         language.has_value() && *language != "auto" && *language != language_) {

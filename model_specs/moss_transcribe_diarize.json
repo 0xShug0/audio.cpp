@@ -38,7 +38,7 @@
         "description": "Maximum generated transcript tokens."
       },
       {
-        "name": "instruct",
+        "name": "instruction",
         "type": "string",
         "required": false,
         "description": "Transcription instruction; empty uses the upstream diarization prompt."

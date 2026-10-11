@@ -70,13 +70,13 @@
       {
         "name": "cased",
         "type": "bool",
-        "description": "Request casing. Both cased and punctuated must be provided to override automatic formatting.",
+        "description": "Request casing separately from punctuation. Both cased and punc must be provided to override automatic formatting.",
         "required": false
       },
       {
-        "name": "punctuated",
+        "name": "punc",
         "type": "bool",
-        "description": "Request punctuation. Both cased and punctuated must be provided to override automatic formatting.",
+        "description": "Request punctuation only, unlike the combined punctuation/casing control in Canary, Cohere and original Hviske. Both cased and punc must be provided to override automatic formatting.",
         "required": false
       }
     ],
