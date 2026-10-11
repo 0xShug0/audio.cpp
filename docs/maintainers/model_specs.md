@@ -235,7 +235,7 @@ the dependency is needed when **any** row matches.
       "family": "silero_vad",
       "path": "assets/framework/models/silero_vad",
       "scope": "session",
-      "option": "vad_path",
+      "option": "vad_model_path",
       "required": false,
       "required_when": [
         {

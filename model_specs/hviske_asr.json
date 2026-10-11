@@ -40,9 +40,9 @@
         "default": "da"
       },
       {
-        "name": "punctuation",
+        "name": "punc",
         "type": "bool",
-        "description": "Enable or disable punctuation tokens in the decoder prompt; default true.",
+        "description": "Request punctuation and capitalization together through decoder prompt tokens; default true.",
         "required": false,
         "default": true
       },

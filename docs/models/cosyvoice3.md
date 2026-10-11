@@ -89,3 +89,7 @@ audiocpp_cli \
 |---|---|---:|---|
 | `cosyvoice3.reference_cache_slots` | integer >= 0 | `4` | Prepared reference-audio cache slots. |
 | `cosyvoice3.mem_saver` | bool | `false` | Release cached runtime graphs after request phases. |
+
+Legacy `cosyvoice3.conv_weight_type` remains accepted but has no consumer and
+does not change convolution storage. The implementation uses the shared
+`cosyvoice3.weight_type` setting with its existing component storage rules.

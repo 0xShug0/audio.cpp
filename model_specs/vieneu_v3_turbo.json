@@ -25,6 +25,26 @@
       "gguf"
     ]
   },
+  "options": {
+    "request": [
+      {
+        "name": "auto_frame_cap",
+        "type": "bool",
+        "description": "Cap the generation budget using the chunk's phoneme count. Legacy frame_cap remains accepted.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "text_chunk_min_size",
+        "type": "int",
+        "description": "Phoneme-string chunks shorter than this character count join a neighbour. Legacy text_chunk_min remains accepted.",
+        "required": false,
+        "default": 20
+      }
+    ],
+    "session": [],
+    "load": []
+  },
   "ui": {
     "recommended_package": "vieneu_v3_turbo_q8_0",
     "tags": [

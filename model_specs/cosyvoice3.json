@@ -137,14 +137,6 @@
         "default": "native"
       },
       {
-        "name": "conv_weight_type",
-        "type": "enum",
-        "description": "CosyVoice3 convolution weight storage type; default native.",
-        "preset": "weight_type_conv",
-        "required": false,
-        "default": "native"
-      },
-      {
         "name": "graph_arena_mb",
         "type": "int",
         "description": "Reusable runtime graph arena size in MiB; default 1024.",

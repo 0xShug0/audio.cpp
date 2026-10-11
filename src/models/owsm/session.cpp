@@ -66,7 +66,11 @@ public:
     }
 
     void prepare(const runtime::SessionPreparationRequest & request) override {
-        runtime::validate_spec_backed_request_options(request.options, *contract_, "OWSM v4");
+        auto validation_options = request.options;
+        validation_options.erase("num_beams");
+        validation_options.erase("beam_size");
+        (void)runtime::find_option(request.options, {"num_beams", "beam_size"});
+        runtime::validate_spec_backed_request_options(validation_options, *contract_, "OWSM v4");
         mark_prepared();
     }
 
@@ -77,7 +81,10 @@ public:
 private:
     runtime::TaskResult transcribe(const runtime::TaskRequest & request, bool streaming) {
         require_prepared("OWSM v4 run");
-        runtime::validate_spec_backed_request_options(request.options, *contract_, "OWSM v4");
+        auto validation_options = request.options;
+        validation_options.erase("num_beams");
+        validation_options.erase("beam_size");
+        runtime::validate_spec_backed_request_options(validation_options, *contract_, "OWSM v4");
         if (!request.audio_input) {
             throw std::runtime_error("OWSM v4 requires audio input");
         }
@@ -95,9 +102,9 @@ private:
             runtime::find_option(request.options, {"condition_on_previous_text"}).value_or("false"),
             "condition_on_previous_text");
         const auto max_tokens = runtime::parse_i64_option(request.options, {"max_tokens"}).value_or(0);
-        const auto beam_size = runtime::parse_i64_option(request.options, {"beam_size"}).value_or(1);
+        const auto beam_size = runtime::parse_i64_option(request.options, {"num_beams", "beam_size"}).value_or(1);
         if (beam_size < 1 || beam_size > assets_->config.vocabulary_size) {
-            throw std::runtime_error("OWSM v4 beam_size must be positive and no larger than the vocabulary");
+            throw std::runtime_error("OWSM v4 num_beams must be positive and no larger than the vocabulary");
         }
         if (max_tokens < 0 || max_tokens > assets_->config.max_decode_tokens) {
             throw std::runtime_error("OWSM v4 max_tokens must be between 0 and 374");

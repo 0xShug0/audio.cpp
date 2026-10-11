@@ -168,9 +168,20 @@
         "required": false
       },
       {
-        "name": "speaker",
-        "type": "string",
-        "description": "Named preset speaker from the CustomVoice checkpoint, such as Vivian or Ryan.",
+        "name": "voice_id",
+        "type": "enum",
+        "description": "Named preset speaker from the CustomVoice checkpoint. These are the official checkpoint's presets; available names are determined by the loaded checkpoint. Legacy speaker remains accepted.",
+        "values": [
+          "aiden",
+          "dylan",
+          "eric",
+          "ono_anna",
+          "ryan",
+          "serena",
+          "sohee",
+          "uncle_fu",
+          "vivian"
+        ],
         "required": false
       },
       {

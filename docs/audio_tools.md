@@ -271,7 +271,7 @@ audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backe
 User RVC checkpoint with a matching FAISS retrieval index:
 
 ```bash
-audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backend cuda --audio source.wav --out converted.wav --request-option voice_model_path=/path/to/voice.pth --request-option retrieval_index_path=/path/to/voice.index --request-option retrieval_blend=0.5
+audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backend cuda --audio source.wav --out converted.wav --request-option voice_model_path=/path/to/voice.pth --request-option retrieval_index_file=/path/to/voice.index --request-option retrieval_blend=0.5
 ```
 
 | Option | Values | Default | Meaning |
@@ -279,8 +279,8 @@ audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backe
 | `--request-option voice_id=<id>` | `default`, `manthos`, `chocola`, `fraise` | `default` | Packaged RVC voice id. Ignored when `voice_model_path` is set. |
 | `--request-option voice_model_path=<path>` | `.pth` or `.pt` path | unset | User RVC checkpoint path. |
 | `--request-option pitch_extractor=rmvpe` | `rmvpe` | `rmvpe` | Pitch extractor for F0-enabled voices. |
-| `--request-option pitch_path=<path>` | CSV path | unset | Optional F0 override file with `time,Hz` rows sorted by time. |
-| `--request-option retrieval_index_path=<path>` | FAISS `.index` path | unset | User retrieval index used when `retrieval_blend` is greater than 0 for a user checkpoint. |
+| `--request-option pitch_file=<path>` | CSV file | unset | Optional F0 override file with `time,Hz` rows sorted by time. Legacy `pitch_path` remains accepted. |
+| `--request-option retrieval_index_file=<path>` | FAISS `.index` file | unset | User retrieval index used when `retrieval_blend` is greater than 0 for a user checkpoint. Legacy `retrieval_index_path` remains accepted. |
 | `--request-option retrieval_blend=<rate>` | `0.0` to `1.0` | `0.0` | IVF retrieval feature blend rate. `0` disables retrieval. |
 | `--request-option semitone_shift=<n>` | integer | `0` | Semitone pitch shift before synthesis. |
 | `--request-option pitch_filter_radius=<n>` | integer >= 0 | `3` | Median filter radius for F0 smoothing; values greater than 2 enable filtering. |

@@ -44,20 +44,20 @@ runtime::CapabilitySet capabilities(const StableAudioAssets &) {
 runtime::ModelCliInterface cli(const StableAudioAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"duration_seconds", "seconds[,seconds...]", "Target duration per prompt."},
+        {"duration_sec", "seconds[,seconds...]", "Target duration per prompt."},
         {"num_inference_steps", "n", "RF diffusion steps."},
         {"guidance_scale", "float", "Classifier-free guidance scale."},
-        {"sampler", "pingpong|euler|dpmpp-2m|dpmpp-3m-sde", "Diffusion sampler."},
+        {"sampler_mode", "pingpong|euler|dpmpp-2m|dpmpp-3m-sde", "Diffusion sampler."},
         {"apg_scale", "float", "Adaptive projected guidance scale."},
         {"negative_prompt", "text", "Negative prompt text."},
         {"batch_size", "n", "Prompt batch size."},
-        {"duration_padding_seconds", "seconds", "Extra generated padding before truncation."},
+        {"duration_padding_sec", "seconds", "Extra generated padding before truncation."},
         {"truncate_output_to_duration", "bool", "Trim decoded audio to requested duration."},
         {"chunked_decode", "bool", "Decode the vocoder in chunks."},
         {"init_noise_level", "float", "Strength for audio-conditioned generation."},
         {"audio_input_kind", "init_audio|inpaint_audio", "How to use request audio input."},
-        {"inpaint_mask_start_seconds", "seconds[,seconds...]", "Inpaint region start times."},
-        {"inpaint_mask_end_seconds", "seconds[,seconds...]", "Inpaint region end times."},
+        {"inpaint_mask_start_sec", "seconds[,seconds...]", "Inpaint region start times."},
+        {"inpaint_mask_end_sec", "seconds[,seconds...]", "Inpaint region end times."},
         {"seed", "n", "Torch RNG seed."},
     };
     out.session_options = {

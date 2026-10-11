@@ -41,7 +41,7 @@ To transcribe French without punctuation and capitalization:
 audiocpp_cli --task asr --family cohere_asr \
   --model models/Cohere-Transcribe-GGUF/cohere-transcribe-03-2026-bf16.gguf \
   --backend cuda --audio french.wav \
-  --request-option language=fr --request-option pnc=false \
+  --request-option language=fr --request-option punc=false \
   --text-out transcript.txt --log
 ```
 
@@ -50,7 +50,7 @@ audiocpp_cli --task asr --family cohere_asr \
 | Option | Default | Meaning |
 |---|---|---|
 | `language` | `en` | `en`, `fr`, `de`, `es`, `it`, `pt`, `nl`, `pl`, `el`, `ar`, `ja`, `zh`, `vi`, or `ko`. |
-| `pnc` | `true` | Request punctuation and capitalization. |
+| `punc` | `true` | Request punctuation and capitalization together. Legacy `pnc` remains accepted. |
 | `audio_chunk_mode` | `auto` | `auto` and `quiet_energy` use quiet boundaries; `fixed` uses equal-length chunks; `none` requires at most 35 seconds. |
 | `audio_chunk_duration_sec` | `35` | Maximum audio chunk length, from 0.04 to 35 seconds. |
 | `max_tokens` | `256` | Maximum generated tokens per chunk, up to 1014. Increase if generation reaches the limit before EOS. |

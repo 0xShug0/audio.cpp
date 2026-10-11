@@ -29,6 +29,11 @@ audiocpp_cli --task tts --family moss_ttsd --model /path/to/MOSS-TTSD-GGUF \
 
 ## Cloning the speakers
 
+`--request-option instruction=<text>` supplies an optional instruction; legacy
+`instruct` remains accepted. `--request-option text_temperature=<float>` controls
+text-stream sampling (default 1.5); legacy `moss_ttsd.text_temperature` remains
+accepted.
+
 Pass one reference recording per speaker, comma separated and positional, and
 the transcript of what those recordings say:
 

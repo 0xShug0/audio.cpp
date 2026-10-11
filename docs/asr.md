@@ -196,7 +196,7 @@ completed GGUF can therefore be moved, renamed, and passed directly to `--model`
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. |
 | `--language` | language code | `da` | Recognition language; can be omitted for the Danish model path. |
-| `--request-option punctuation=true\|false` | bool | model default | Enable punctuation tokens in the decoder prompt. |
+| `--request-option punc=true\|false` | bool | model default | Request punctuation and capitalization together. Legacy `punctuation` remains accepted. |
 | `--max-tokens` | integer | model default | Maximum generated transcript tokens. |
 | `--num-beams` | integer | `1` | Beam-search beam count; `1` uses greedy or sampling decode. |
 | `--request-option length_penalty=<float>` | float | model default | Beam-search length penalty. |

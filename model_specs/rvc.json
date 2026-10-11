@@ -52,13 +52,13 @@
         "default": "rmvpe"
       },
       {
-        "name": "pitch_path",
+        "name": "pitch_file",
         "type": "path",
         "description": "Optional CSV F0 override file with time,Hz rows sorted by time.",
         "required": false
       },
       {
-        "name": "retrieval_index_path",
+        "name": "retrieval_index_file",
         "type": "path",
         "description": "Optional user FAISS .index retrieval path used when retrieval_blend is greater than 0 for a user voice model.",
         "required": false

@@ -79,7 +79,7 @@ audiocpp_cli --task vad --family silero_vad --model assets/framework/models/sile
 | `--request-option min_speech_duration_ms=<n>` | integer ms | `250` | Minimum speech duration. |
 | `--request-option min_silence_duration_ms=<n>` | integer ms | `100` | Minimum silence duration. |
 | `--request-option speech_pad_ms=<n>` | integer ms | `30` | Padding around speech segments. |
-| `--request-option max_speech_duration_s=<float>` | seconds | `1000000000` | Maximum speech segment length. |
+| `--request-option max_speech_duration_sec=<float>` | seconds | `1000000000` | Maximum speech segment length. Legacy `max_speech_duration_s` remains accepted. |
 
 ## MarbleNet VAD
 

@@ -32,7 +32,8 @@ runtime::CapabilitySet capabilities() {
 runtime::ModelCliInterface cli() {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"instruct", "<text>", "Voice description: timbre, age, pace, emotion."},
+        {"instruction", "<text>", "Voice description: timbre, age, pace, emotion."},
+        {"text_temperature", "<float>", "Text-token sampling temperature."},
         {"language", "English|Chinese", "Full language name; the model does not understand codes like 'en'."},
         {"seed", "<int>", "Reproduces a take exactly. Note that it does not carry a voice across different text."},
         {"temperature", "<float>", "Audio sampling temperature (default 1.5)."},

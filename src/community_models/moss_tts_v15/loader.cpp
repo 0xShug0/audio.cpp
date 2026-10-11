@@ -36,8 +36,9 @@ runtime::CapabilitySet capabilities() {
 runtime::ModelCliInterface cli() {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"instruct", "<text>", "Voice description. Followed only loosely on this checkpoint; a reference recording is far more reliable."},
-        {"tokens", "<int>", "Duration budget in codec frames at 12.5/s, the model's own '- Tokens:' field."},
+        {"instruction", "<text>", "Voice description. Followed only loosely on this checkpoint; a reference recording is far more reliable."},
+        {"duration_frames", "<int>", "Duration budget in codec frames at 12.5/s, the model's own '- Tokens:' field."},
+        {"text_temperature", "<float>", "Text-token sampling temperature."},
         {"language", "English|Chinese", "Full language name; the model does not understand codes like 'en'."},
         {"seed", "<int>", "Reproduces a take exactly. Note that it does not carry a voice across different text."},
         {"temperature", "<float>", "Audio sampling temperature (default 1.5)."},

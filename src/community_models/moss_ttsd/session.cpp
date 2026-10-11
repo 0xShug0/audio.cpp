@@ -390,7 +390,7 @@ runtime::TaskResult MossTtsdSession::run(const runtime::TaskRequest & request) {
 
     decoders::MossTtsDelaySamplingOptions sampling;
     sampling.text_temperature =
-        option_float(request.options, {"moss_ttsd.text_temperature"}, sampling.text_temperature);
+        option_float(request.options, {"text_temperature", "moss_ttsd.text_temperature"}, sampling.text_temperature);
     sampling.audio_temperature = option_float(request.options, {"temperature"}, sampling.audio_temperature);
     sampling.audio_top_p = option_float(request.options, {"top_p"}, sampling.audio_top_p);
     sampling.audio_top_k = option_int(request.options, {"top_k"}, sampling.audio_top_k);

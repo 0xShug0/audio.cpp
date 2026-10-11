@@ -103,8 +103,11 @@ audiocpp_cli --task tts --family sanotts \
 
 ## Options
 
-- `speaking_rate` (request, 0.5..2.0, default 1.0) — duration multiplier on
-  the voice's tuned length scale; larger is slower.
+- `speed` (request, 0.5..2.0, default 1.0) — larger is faster; its reciprocal
+  multiplies the voice's tuned length scale before duration rounding and clamping.
+  Legacy `speaking_rate` remains a duration multiplier: larger is slower.
+  For example, `speed=2` is equivalent to `speaking_rate=0.5`. When both
+  names are supplied, their values must be reciprocals.
 - `seed` (request, default 0) — nano voices only: the decoder is noise-fed,
   so a given seed picks one of many valid renderings. `0` derives the seed
   from each text chunk as `sha256(text)[:8]`, which is what the reference

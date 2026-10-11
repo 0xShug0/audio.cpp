@@ -42,15 +42,6 @@
         "default": "UNK"
       },
       {
-        "name": "cfg_strength",
-        "type": "float",
-        "description": "Classifier-free guidance strength; default 2.0.",
-        "required": false,
-        "min": 0.0,
-        "max": 10.0,
-        "default": 2.0
-      },
-      {
         "name": "sway_sampling_coef",
         "type": "float",
         "description": "Sway sampling coefficient for inference timesteps; default -1.0.",

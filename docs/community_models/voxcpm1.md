@@ -112,6 +112,22 @@ Measured on Ubuntu 24.04 with OpenMP optimization (CPU backend):
 
 ---
 
+### Session Graph Arenas
+
+Use these names with `--session-option`. They size host graph metadata in MiB,
+not device workspace. The old `*_graph_context_mb` aliases remain accepted with
+the same `voxcpm1.` prefix. Weight-context controls are separate and unchanged.
+
+| Option | Default MiB |
+|---|---:|
+| `voxcpm1.text_embedding_graph_arena_mb` | `64` |
+| `voxcpm1.lm_step_graph_arena_mb` | `1024` |
+| `voxcpm1.projection_graph_arena_mb` | `256` |
+| `voxcpm1.local_encoder_graph_arena_mb` | `512` |
+| `voxcpm1.dit_graph_arena_mb` | `1024` |
+| `voxcpm1.audiovae_graph_arena_mb` | `1024` |
+| `voxcpm1.audiovae_encoder_graph_arena_mb` | `1024` |
+
 ## 🔧 Architecture Notes
 
 - **Base LM**: 24-layer MiniCPM transformer (1024 hidden, 73,448 vocab)

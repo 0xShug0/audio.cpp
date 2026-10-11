@@ -45,7 +45,7 @@
       {
         "name": "template_name",
         "type": "enum",
-        "description": "FireRedAudio template: asr, understand, tts_clone, voice_design, semantic_edit, or acoustic_edit.",
+        "description": "Request template. When omitted, defaults to asr for ASR/understanding sessions and tts_clone for generation sessions. Use understand explicitly for audio questions.",
         "required": false,
         "values": [
           "tts_clone",
@@ -54,8 +54,7 @@
           "acoustic_edit",
           "asr",
           "understand"
-        ],
-        "default": "tts_clone"
+        ]
       },
       {
         "name": "reference_text",
@@ -66,7 +65,7 @@
       {
         "name": "instruction",
         "type": "string",
-        "description": "Voice design instruction.",
+        "description": "Voice/delivery conditioning for generation. ASR/understanding uses the text input as its task prompt, not this option.",
         "required": false
       },
       {
@@ -93,7 +92,7 @@
         "default": 2.0
       },
       {
-        "name": "max_new_audio_steps",
+        "name": "max_audio_steps",
         "type": "int",
         "description": "Maximum generated RedAE latent patches.",
         "required": false,
@@ -101,7 +100,7 @@
         "default": 750
       },
       {
-        "name": "min_new_audio_steps",
+        "name": "min_audio_steps",
         "type": "int",
         "description": "Minimum generated RedAE latent patches before eosp can stop generation.",
         "required": false,
@@ -109,7 +108,7 @@
         "default": 6
       },
       {
-        "name": "max_new_text_tokens",
+        "name": "max_text_tokens",
         "type": "int",
         "description": "Maximum text-mode tokens before audio mode.",
         "required": false,
@@ -117,7 +116,7 @@
         "default": 512
       },
       {
-        "name": "max_new_tokens",
+        "name": "max_tokens",
         "type": "int",
         "description": "Maximum generated text tokens for ASR/understanding.",
         "required": false,
@@ -181,14 +180,6 @@
         "required": false,
         "min": 1,
         "default": 1024
-      },
-      {
-        "name": "helper_graph_arena_mb",
-        "type": "int",
-        "description": "Helper graph arena size in MiB; default 256.",
-        "required": false,
-        "min": 1,
-        "default": 256
       },
       {
         "name": "weight_context_mb",

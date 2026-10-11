@@ -77,7 +77,7 @@ Common request options:
 | `num_frames` | `124` | Target video frame count before H3 alignment. MiniMax-H3 video is 24 fps. |
 | `guidance_scale` | `1.0` | Classifier-free guidance scale. |
 | `negative_prompt` | `" "` | Negative prompt used when guidance is active. |
-| `sampler` | `euler` | One of `euler`, `res_multistep`, `dpmpp_2m`, or `unipc`. |
+| `sampler_mode` | `euler` | One of `euler`, `res_multistep`, `dpmpp_2m`, or `unipc`. Legacy `sampler` and `minimax_h3.sampler` remain accepted. |
 | `flow_shift` | `12.0` | Video FlowMatch scheduler shift. |
 | `audio_flow_shift` | `3.0` | Audio FlowMatch scheduler shift. |
 | `return_video` | `false` | Decode RGB24 video frames in addition to audio. |

@@ -123,7 +123,10 @@ public:
             run_mode_ != runtime::RunMode::Streaming) {
             throw std::runtime_error("ZipVoice supports offline and streaming sessions only");
         }
-        runtime::validate_spec_backed_session_options(options, *contract_, kFamily, "ZipVoice");
+        auto validation_options = options;
+        validation_options.options.erase("zipvoice.shift");
+        validation_options.options.erase("zipvoice.t_shift");
+        runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, "ZipVoice");
         // Vocos resolution order (f5_tts pattern):
         //   1. zipvoice.vocos_path session option
         //   2. bundled "vocos" namespace in the GGUF checkpoint
@@ -155,7 +158,7 @@ public:
         if (const auto v = runtime::find_option(options.options, {"zipvoice.guidance_scale", "guidance_scale"})) {
             guidance_scale_ = std::stof(*v);
         }
-        if (const auto v = runtime::find_option(options.options, {"zipvoice.t_shift", "t_shift"})) {
+        if (const auto v = runtime::find_option(options.options, {"zipvoice.shift", "shift", "zipvoice.t_shift", "t_shift"})) {
             t_shift_ = std::stof(*v);
         }
         if (const auto v = runtime::find_option(options.options, {"zipvoice.espeak_data_path", "espeak_data_path"})) {
@@ -310,7 +313,7 @@ private:
         req.tokenizer = "emilia";  // fixed frontend: zh/en/mixed via the Emilia pipeline
         req.espeak_library_path = espeak_library_path_;
         req.espeak_data_path = espeak_data_path_;
-        if (const auto v = runtime::find_option(request.options, {"lang"})) req.lang = *v;
+        if (const auto v = runtime::find_option(request.options, {"language", "lang"})) req.lang = *v;
         req.num_steps = num_steps_;
         req.guidance_scale = guidance_scale_;
         req.t_shift = t_shift_;
@@ -320,7 +323,7 @@ private:
         if (const auto v = runtime::find_option(request.options, {"guidance_scale", "cfg_strength"})) {
             req.guidance_scale = std::stof(*v);
         }
-        if (const auto v = runtime::find_option(request.options, {"t_shift"})) {
+        if (const auto v = runtime::find_option(request.options, {"shift", "t_shift"})) {
             req.t_shift = std::stof(*v);
         }
         if (const auto v = runtime::find_option(request.options, {"speed"})) {

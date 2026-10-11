@@ -201,7 +201,7 @@
         "default": false
       },
       {
-        "name": "beam_size",
+        "name": "num_beams",
         "type": "int",
         "description": "Decoder beam width; one selects greedy decoding.",
         "required": false,

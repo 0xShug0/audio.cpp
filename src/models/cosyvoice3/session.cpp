@@ -84,7 +84,10 @@ CosyVoice3Session::CosyVoice3Session(
       assets_(require_assets(std::move(assets))),
       contract_(require_contract(std::move(contract))),
       tokenizer_(std::make_unique<CosyVoice3TextTokenizer>(assets_)) {
-    runtime::validate_spec_backed_session_options(options, *contract_, kFamily, kModelName);
+    auto validation_options = options;
+    // This previously advertised option never selected convolution storage.
+    validation_options.options.erase("cosyvoice3.conv_weight_type");
+    runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
     if (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("CosyVoice3 supports tts and clone tasks");
     }

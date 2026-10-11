@@ -389,7 +389,7 @@ load_speaker_embedding(const std::filesystem::path &path,
   return out;
 }
 
-// The request's Speaker Inversion embedding, if any: the speaker_embedding_path
+// The request's Speaker Inversion embedding, if any: the speaker_embedding_file
 // option, or a cached voice id naming <model dir>/embeddings/<id>.safetensors
 // (the layout GET /v1/audio/voices lists). A voice id without such a file is
 // ignored, as before, so clients that always send an OpenAI voice name keep
@@ -398,11 +398,11 @@ std::optional<std::filesystem::path>
 resolve_speaker_embedding_path(const runtime::TaskRequest &request,
                                const std::filesystem::path &model_dir) {
   if (const auto value =
-          runtime::find_option(request.options, {"speaker_embedding_path"})) {
+          runtime::find_option(request.options, {"speaker_embedding_file", "speaker_embedding_path"})) {
     const std::filesystem::path path(*value);
     if (!std::filesystem::is_regular_file(path)) {
       throw std::runtime_error(
-          "Irodori-TTS speaker_embedding_path does not exist: " + *value);
+          "Irodori-TTS speaker_embedding_file does not exist: " + *value);
     }
     return path;
   }
@@ -615,14 +615,10 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
     validation_options.erase("instruction");
   }
   // Likewise for packages whose embedded contract predates speaker embeddings.
-  if (contract_->request_option_keys.find("speaker_embedding_path") ==
-      contract_->request_option_keys.end()) {
-    validation_options.erase("speaker_embedding_path");
-  }
-  if (contract_->request_option_keys.find("max_ref_sec") ==
-      contract_->request_option_keys.end()) {
-    validation_options.erase("max_ref_sec");
-  }
+  validation_options.erase("speaker_embedding_file");
+  validation_options.erase("speaker_embedding_path");
+  validation_options.erase("reference_duration_sec");
+  validation_options.erase("max_ref_sec");
   runtime::validate_spec_backed_request_options(
       validation_options, *contract_, "Irodori-TTS");
   const auto wall_start = Clock::now();
@@ -887,10 +883,10 @@ IrodoriTTSSession::make_request(const runtime::TaskRequest &request) const {
   }
   out.max_ref_sec = assets_->config.ref_max_seconds;
   if (const auto value = runtime::parse_finite_float_option(
-          request.options, {"max_ref_sec"})) {
+          request.options, {"reference_duration_sec", "max_ref_sec"})) {
     if (*value < 0.0F) {
       throw std::runtime_error(
-          "Irodori-TTS max_ref_sec must be non-negative");
+          "Irodori-TTS reference_duration_sec must be non-negative");
     }
     out.max_ref_sec = *value;
   }

@@ -63,8 +63,8 @@ runtime::ModelCliInterface cli(const VieNeuTTSAssets &) {
         {"repetition_penalty", "<float>", "Penalty on codes seen in the recent window of each codebook (default 1.2)."},
         {"repetition_window", "<int>", "Frames each codebook remembers for the penalty (default 64; 0 = unbounded)."},
         {"babble_retries", "<int>", "Re-generations for a short chunk that kept talking past its text (default 2; 0 disables the guard)."},
-        {"text_chunk_min", "<int>", "Chunks shorter than this many characters join a neighbour (default 20)."},
-        {"frame_cap", "true|false", "Cap max_tokens by the phoneme count of the chunk (default true)."},
+        {"text_chunk_min_size", "<int>", "Chunks shorter than this many characters join a neighbour (default 20)."},
+        {"auto_frame_cap", "true|false", "Cap max_tokens by the phoneme count of the chunk (default true)."},
         {"subtalker_temperature", "<float>", "Acoustic decoder temperature override (defaults to temperature)."},
         {"subtalker_top_k", "<int>", "Acoustic decoder top-k override (defaults to top_k)."},
         {"subtalker_top_p", "<float>", "Acoustic decoder top-p override (defaults to top_p)."},
@@ -74,7 +74,7 @@ runtime::ModelCliInterface cli(const VieNeuTTSAssets &) {
         {"codes_dump_file", "<path>", "Append prompt ids, reference codes and generated codes as text (parity debugging)."},
     };
     out.session_options = {
-        {"vieneu_v3_turbo.g2p_dict", "<path>", "sea_g2p.bin; with it, --text is Vietnamese/English text instead of phonemes."},
+        {"vieneu_v3_turbo.g2p_dict_file", "<path>", "sea_g2p.bin; with it, --text is Vietnamese/English text instead of phonemes."},
         {"vieneu_v3_turbo.g2p_library", "<path>", "The sea-g2p shared library built with --features capi; found by name when unset."},
         {"vieneu_v3_turbo.mem_saver", "true|false", "Release the talker cached-step graph after each request; default false."},
         {"vieneu_v3_turbo.voice_prompt_cache_slots", "n", "Voice prompt cache slots; default 1."},

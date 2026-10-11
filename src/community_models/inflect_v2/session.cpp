@@ -125,11 +125,11 @@ InflectV2GenerationOptions InflectV2Session::generation_options(
     InflectV2GenerationOptions out;
     if (const auto value = runtime::parse_finite_float_option(
             request.options,
-            {"speaking_rate"})) {
+            {"speed", "speaking_rate"})) {
         out.speaking_rate = *value;
     }
     if (out.speaking_rate < 0.5F || out.speaking_rate > 2.0F) {
-        throw std::runtime_error("Inflect v2 speaking_rate must be between 0.5 and 2.0");
+        throw std::runtime_error("Inflect v2 speed must be between 0.5 and 2.0");
     }
     if (const auto value = runtime::parse_finite_float_option(
             request.options,

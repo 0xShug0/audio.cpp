@@ -65,7 +65,7 @@ build/bin/audiocpp_cli \
 ```
 
 `--task clon` works the same way. The reference is resampled to 24 kHz, cropped at a pause near
-`ref_seconds`, and level-normalised before the speaker and semantic encoders see it. That
+`reference_duration_sec`, and level-normalised before the speaker and semantic encoders see it. That
 normalisation is boost-only and peak-guarded (sopro 2.2): a reference already at or above the
 −19.8 dB prompt level is passed through untouched, and a boost is never large enough to push
 the peak past 0.95. The output gain is fixed by the level the reference ends up at: it maps that
@@ -106,19 +106,19 @@ Streaming is not a re-cut of the offline output: it solves with chunk-limited at
 own noise draws, as the Python package does, so the two modes differ for the same `seed`. On an
 8-core Apple M-series CPU at 6 threads the first chunk arrives about 1.6–1.8 s after the request
 starts (reference encoding ~0.3–0.45 s, prompt solve ~0.8–0.95 s, first chunk ~0.4–0.5 s for a
-10 s reference), and each later 0.68 s chunk takes about 0.2 s. `ref_seconds` scales the prompt
+10 s reference), and each later 0.68 s chunk takes about 0.2 s. `reference_duration_sec` scales the prompt
 solve.
 
 ### Voice cache
 
 `sopro_tts.voice_cache_slots=<n>` (off by default) keeps the last `n` prepared voices, keyed by
-the clip and `ref_seconds`, together with each streamed voice's solved prompt, like reusing a
+the clip and `reference_duration_sec`, together with each streamed voice's solved prompt, like reusing a
 `prepare_reference` result upstream. A repeated voice skips the encoders and the prompt solve,
 which brought the first chunk down from ~1.8 s to ~0.4–0.5 s in the setup above. A streamed
 10 s voice holds about 60 MB.
 
 To prepare a voice without generating anything, pass `audiocpp_session_prepare` a request that
-carries only the voice audio (plus `ref_seconds` or `num_inference_steps` if the requests that
+carries only the voice audio (plus `reference_duration_sec` or `num_inference_steps` if the requests that
 follow set them).
 
 The cache never changes the audio: the draws a voice needs for itself (room tone for a clip
@@ -133,9 +133,9 @@ without a usable pause, the prompt noise) are seeded from the clip rather than t
 | `top_p` | float | 0.9 | Nucleus threshold, applied after top-k renormalisation |
 | `top_k` | int | 25 | Top-k truncation; `0` disables |
 | `num_inference_steps` | int | 2 | Acoustic rectified-flow Euler steps |
-| `max_seconds` | float | 30.0 | Audio cap per segment; long text is split, so total length is unbounded |
-| `min_seconds` | float | 0.4 | Minimum audio before the semantic LM may emit EOS |
-| `ref_seconds` | float | 10.0 | Reference window used for cloning |
+| `max_duration_sec` | float | 30.0 | Audio cap per segment; long text is split, so total length is unbounded. Legacy `max_seconds` remains accepted. |
+| `min_duration_sec` | float | 0.4 | Minimum audio before the semantic LM may emit EOS. Legacy `min_seconds` remains accepted. |
+| `reference_duration_sec` | float | 10.0 | Reference window used for cloning. Legacy `ref_seconds` remains accepted. |
 | `text_chunk_size` | int | 300 | Max codepoints per synthesis segment |
 | `seed` | int | *(random)* | Seeds semantic sampling and the acoustic noise prior |
 

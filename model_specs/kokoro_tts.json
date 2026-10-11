@@ -85,25 +85,25 @@
         "default": 512
       },
       {
-        "name": "predictor_duration_graph_mb",
+        "name": "predictor_duration_graph_arena_mb",
         "type": "int",
-        "description": "Predictor duration graph arena size in MiB; default 384.",
+        "description": "Predictor duration host graph-metadata arena size in MiB, not device workspace; default 384.",
         "required": false,
         "min": 1,
         "default": 384
       },
       {
-        "name": "predictor_text_graph_mb",
+        "name": "predictor_text_graph_arena_mb",
         "type": "int",
-        "description": "Predictor text graph arena size in MiB; default 256.",
+        "description": "Predictor text host graph-metadata arena size in MiB, not device workspace; default 256.",
         "required": false,
         "min": 1,
         "default": 256
       },
       {
-        "name": "predictor_tail_graph_mb",
+        "name": "predictor_tail_graph_arena_mb",
         "type": "int",
-        "description": "Predictor tail graph arena size in MiB; default 640.",
+        "description": "Predictor tail host graph-metadata arena size in MiB, not device workspace; default 640.",
         "required": false,
         "min": 1,
         "default": 640

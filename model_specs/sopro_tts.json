@@ -74,7 +74,7 @@
         "default": 2
       },
       {
-        "name": "max_seconds",
+        "name": "max_duration_sec",
         "type": "float",
         "description": "Cap on generated audio per segment; long text is split into segments so total length is unbounded. Default 30.",
         "required": false,
@@ -83,7 +83,7 @@
         "default": 30.0
       },
       {
-        "name": "min_seconds",
+        "name": "min_duration_sec",
         "type": "float",
         "description": "Minimum audio per segment before the semantic LM may emit EOS; default 0.4.",
         "required": false,
@@ -92,7 +92,7 @@
         "default": 0.4
       },
       {
-        "name": "ref_seconds",
+        "name": "reference_duration_sec",
         "type": "float",
         "description": "Reference audio window used for cloning; default 10.",
         "required": false,

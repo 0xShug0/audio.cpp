@@ -78,13 +78,13 @@
   "options": {
     "request": [
       {
-        "name": "instruct",
+        "name": "instruction",
         "type": "string",
         "required": false,
         "description": "Voice description. Followed only loosely on this checkpoint; a reference recording is far more reliable."
       },
       {
-        "name": "tokens",
+        "name": "duration_frames",
         "type": "int",
         "min": 1,
         "required": false,
@@ -101,6 +101,13 @@
         "type": "int",
         "required": false,
         "description": "Reproduces a take exactly."
+      },
+      {
+        "name": "text_temperature",
+        "type": "float",
+        "required": false,
+        "default": 1.5,
+        "description": "Text-token sampling temperature."
       },
       {
         "name": "temperature",

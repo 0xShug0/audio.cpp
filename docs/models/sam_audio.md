@@ -35,8 +35,8 @@ include padding to the next 40 ms codec frame.
 
 | Option | Values | Default | Meaning |
 |---|---|---|---|
-| `reference_image_path` | image path | not set | Masked RGB image of the target sound source, held constant throughout the recording. |
-| `reference_video_path` | video path | not set | Masked video of the target sound source, aligned to audio by frame timestamps. |
+| `reference_image_file` | image file | not set | Masked RGB image of the target sound source, held constant throughout the recording. Legacy `reference_image_path` remains accepted. |
+| `reference_video_file` | video file | not set | Masked video of the target sound source, aligned to audio by frame timestamps. Legacy `reference_video_path` remains accepted. |
 | `seed` | integer, `-1` for random | `42` | Random seed. Also accepts the common `--seed` flag. |
 | `num_inference_steps` | positive integer | `16` | Midpoint solver steps; each step evaluates the denoiser twice. |
 | `anchors` | JSON array | not set | Positive (`+`) or negative (`-`) time spans in seconds. |
@@ -51,12 +51,12 @@ from 3 to 4 seconds:
 Spans require `0 <= start < end`. For overlapping spans, the later entry takes
 precedence. The recording is processed as a whole; memory use grows with its length.
 
-For a static visual prompt, add `--request-option reference_image_path=masked.png`.
+For a static visual prompt, add `--request-option reference_image_file=masked.png`.
 Mask unwanted regions in the image before supplying it. The model does not create
 the mask. Vision weights load on the first visual request and remain available
 for later requests in the same session.
 
-For a moving visual prompt, use `--request-option reference_video_path=masked.mp4`
+For a moving visual prompt, use `--request-option reference_video_file=masked.mp4`
 instead. Video decoding uses FFmpeg/libav runtime libraries; no FFmpeg command-line
 process is launched. Audio still comes from `--audio`, and should share the video's
 time origin. Use either the image or video option, not both. Frames are selected by

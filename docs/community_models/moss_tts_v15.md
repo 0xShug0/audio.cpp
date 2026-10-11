@@ -44,8 +44,9 @@ request, not once per text chunk.
 | option | meaning |
 |---|---|
 | `--voice-ref <wav>` | Reference recording to clone. |
-| `--tokens <int>` | Duration budget in codec frames at 12.5 a second — the model's own `- Tokens:` field. 40 tokens is about 3.2 s. |
-| `--instruct <text>` | Voice description. **See the limitation below.** |
+| `--request-option duration_frames=<int>` | Duration budget in codec frames at 12.5 a second — the model's own `- Tokens:` field. 40 frames is about 3.2 s. Legacy `tokens` remains accepted. |
+| `--request-option instruction=<text>` | Voice description. Legacy `instruct` remains accepted. **See the limitation below.** |
+| `--request-option text_temperature=<float>` | Text-stream sampling temperature; default 1.5. Legacy `moss_tts_v15.text_temperature` remains accepted. |
 | `--language <name>` | Full language name; the model does not understand codes like `en`. |
 | `--seed`, `--temperature`, `--top_p`, `--top_k`, `--repetition_penalty` | Sampling. |
 | `moss_tts_v15.weight_type` | `native`, `f32`, `bf16` (default) or `q8_0`. |
@@ -56,7 +57,7 @@ family and is the same on `moss_voicegen`.
 
 ## ⚠ Limitation: voice-attribute instructions are not reliably followed
 
-`--instruct` is accepted, but on this checkpoint a description of the *speaker* is
+`instruction` is accepted, but on this checkpoint a description of the *speaker* is
 followed only loosely. Measured on the reference implementation, four prompts
 differing only in the requested speaker, median F0 of the result:
 

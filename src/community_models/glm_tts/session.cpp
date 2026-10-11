@@ -492,7 +492,7 @@ runtime::TaskResult GlmTTSSession::run(
     const size_t flow_noise_count = static_cast<size_t>(
         flow_frames * assets_->config.flow.mel_dim);
     flow_input.initial_noise = optional_f32_values(
-        request, {"flow_noise_path", "flow_noise_file"}, "Flow noise");
+        request, {"flow_noise_file", "flow_noise_path"}, "Flow noise");
     if (flow_input.initial_noise.empty()) {
         flow_input.initial_noise =
             normal_noise(flow_noise_count, seed + 1);
@@ -513,7 +513,7 @@ runtime::TaskResult GlmTTSSession::run(
         mel.mel, mel.frames, assets_->config.flow.mel_dim);
     const auto hift_source_random = optional_f32_values(
         request,
-        {"hift_source_random_path", "hift_source_random_file"},
+        {"hift_source_random_file", "hift_source_random_path"},
         "HiFT source-random");
     const auto * hift_source_random_ptr =
         hift_source_random.empty()

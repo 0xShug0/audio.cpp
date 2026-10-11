@@ -42,7 +42,7 @@
         "default": ""
       },
       {
-        "name": "max_new_tokens",
+        "name": "max_tokens",
         "type": "int",
         "description": "Cap on decoded tokens for one request.",
         "required": false,

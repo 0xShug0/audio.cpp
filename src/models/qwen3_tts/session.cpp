@@ -657,7 +657,7 @@ Qwen3TTSRequest Qwen3TTSSession::make_request(const runtime::TaskRequest & reque
         out.voice_design = std::move(voice_design);
     } else if (assets_->config.variant == Qwen3TTSVariant::CustomVoice) {
         Qwen3CustomVoiceInput custom_voice;
-        custom_voice.speaker = runtime::find_option(request.options, {"speaker"}).value_or("");
+        custom_voice.speaker = runtime::find_option(request.options, {"voice_id", "speaker"}).value_or("");
         if (custom_voice.speaker.empty() && request.voice.has_value() && request.voice->speaker.has_value()) {
             custom_voice.speaker = request.voice->speaker->cached_voice_id.value_or("");
         }

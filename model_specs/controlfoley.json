@@ -124,7 +124,7 @@
         "description": "Negative text prompt used for the unconditional guidance text branch."
       },
       {
-        "name": "video",
+        "name": "video_file",
         "type": "path",
         "required": false,
         "description": "Optional video path for video-conditioned Foley generation."

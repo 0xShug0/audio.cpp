@@ -77,8 +77,8 @@ const RvcVoiceModel & select_packaged_voice(const RvcAssets & assets, const runt
 RvcInferenceConfig request_config(const runtime::TaskRequest & request) {
     RvcInferenceConfig config;
     config.pitch_extractor = runtime::find_option(request.options, {"pitch_extractor"}).value_or("rmvpe");
-    config.pitch_path = runtime::find_option(request.options, {"pitch_path"}).value_or("");
-    config.retrieval_index_path = runtime::find_option(request.options, {"retrieval_index_path"}).value_or("");
+    config.pitch_path = runtime::find_option(request.options, {"pitch_file", "pitch_path"}).value_or("");
+    config.retrieval_index_path = runtime::find_option(request.options, {"retrieval_index_file", "retrieval_index_path"}).value_or("");
     config.semitone_shift = runtime::parse_int_option(request.options, {"semitone_shift"}).value_or(0);
     config.retrieval_blend = runtime::parse_float_option(request.options, {"retrieval_blend"}).value_or(0.0F);
     config.pitch_filter_radius = runtime::parse_int_option(request.options, {"pitch_filter_radius"}).value_or(3);
@@ -140,7 +140,11 @@ void RvcSession::prepare(const runtime::SessionPreparationRequest & request) {
 
 runtime::TaskResult RvcSession::run(const runtime::TaskRequest & request) {
     require_prepared("RVC run()");
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "RVC");
+    auto validation_options = request.options;
+    for (const auto * key : {"pitch_file", "pitch_path", "retrieval_index_file", "retrieval_index_path"}) {
+        validation_options.erase(key);
+    }
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "RVC");
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("RVC run() requires audio_input");
     }

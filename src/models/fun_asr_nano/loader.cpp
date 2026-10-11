@@ -38,7 +38,7 @@ runtime::ModelCliInterface cli() {
        "1"},
       {"audio_chunk_mode", "auto|fixed|none", "Audio chunking mode.", false,
        "auto"},
-      {"audio_chunk_seconds", "seconds", "Fixed audio chunk duration.", false,
+      {"audio_chunk_duration_sec", "seconds", "Fixed audio chunk duration.", false,
        "30", "0"},
   };
   result.session_options = {

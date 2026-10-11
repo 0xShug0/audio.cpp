@@ -48,7 +48,7 @@ audiocpp_cli \
   --text "What is happening in this audio?" \
   --request-option template_name=understand \
   --request-option enable_thinking=true \
-  --request-option max_new_tokens=1024 \
+  --request-option max_tokens=1024 \
   --text-out answer.txt
 ```
 
@@ -86,16 +86,16 @@ audiocpp_cli \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `template_name` | `asr`, `understand`, `tts_clone`, `voice_design`, `semantic_edit`, `acoustic_edit` | path-dependent | Request template. |
+| `template_name` | `asr`, `understand`, `tts_clone`, `voice_design`, `semantic_edit`, `acoustic_edit` | task-dependent | Defaults to `asr` for ASR and `tts_clone` for generation. Select `understand` explicitly for audio questions. |
 | `language` | language tag | `zh` | Generation or text-path language tag. |
 | `reference_text` | text | empty | Transcript for the prompt audio. |
-| `instruction` | text | required for design/edit | Voice design or edit instruction. |
+| `instruction` | text | required for design/edit | Generation voice/delivery instruction. ASR and understanding instead use the text input as their task prompt. |
 | `num_inference_steps` | integer > 0 | `10` | FireRedAudio DiT flow steps per latent patch. |
 | `guidance_scale` | float >= 0 | `2.0` | FireRedAudio DiT CFG scale. |
-| `max_new_audio_steps` | integer > 0 | `750` | Maximum generated RedAE latent patches. |
-| `min_new_audio_steps` | integer >= 0 | `6` | Minimum audio patches before stop may be accepted. |
-| `max_new_text_tokens` | integer > 0 | `512` | Text-mode token budget before audio mode. |
-| `max_new_tokens` | integer > 0 | `300` | ASR/understanding text token budget. |
+| `max_audio_steps` | integer > 0 | `750` | Maximum generated RedAE latent patches. Legacy `max_new_audio_steps` remains accepted. |
+| `min_audio_steps` | integer >= 0 | `6` | Minimum audio patches before stop may be accepted. Legacy `min_new_audio_steps` remains accepted. |
+| `max_text_tokens` | integer > 0 | `512` | Text-mode token budget before audio mode. Legacy `max_new_text_tokens` remains accepted. |
+| `max_tokens` | integer > 0 | `300` | ASR/understanding text token budget. Legacy `max_new_tokens` remains accepted. |
 | `enable_thinking` | bool | `false` | Enable open thinking block for `understand`; invalid for plain `asr`. |
 | `top_k` | integer >= 0 | `20` | Understanding top-k sampling. |
 | `top_p` | `0..1` | `0.8` | Understanding nucleus sampling. |
@@ -109,3 +109,6 @@ audiocpp_cli \
 | `firered_audio.reference_cache_slots` | integer >= 0 | `2` | Prepared reference-audio cache slots. |
 | `firered_audio.mem_saver` | bool | `false` | Release runtime graphs after request phases. |
 | `firered_audio.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
+
+Legacy `firered_audio.helper_graph_arena_mb` remains accepted but has no effect
+on allocation; it is not a memory control.

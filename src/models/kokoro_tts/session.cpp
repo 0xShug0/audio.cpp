@@ -46,7 +46,17 @@ KokoroTTSSession::KokoroTTSSession(
     if (contract_ == nullptr) {
         throw std::runtime_error("Kokoro TTS session requires a model contract");
     }
-    runtime::validate_spec_backed_session_options(RuntimeSessionBase::options(), *contract_, kFamily, kModelName);
+    auto validation_options = RuntimeSessionBase::options();
+    // Arena aliases are parsed below, independently of the embedded spec version.
+    for (const auto * key : {"kokoro_tts.predictor_duration_graph_arena_mb",
+                            "kokoro_tts.predictor_duration_graph_mb",
+                            "kokoro_tts.predictor_text_graph_arena_mb",
+                            "kokoro_tts.predictor_text_graph_mb",
+                            "kokoro_tts.predictor_tail_graph_arena_mb",
+                            "kokoro_tts.predictor_tail_graph_mb"}) {
+        validation_options.options.erase(key);
+    }
+    runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
     if (task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("Kokoro TTS only supports tts tasks");
     }
@@ -71,15 +81,15 @@ KokoroTTSSession::KokoroTTSSession(
         weight_context_bytes_);
     predictor_duration_graph_bytes_ = runtime::parse_size_mb_option(
         session_options,
-        {"kokoro_tts.predictor_duration_graph_mb"},
+        {"kokoro_tts.predictor_duration_graph_arena_mb", "kokoro_tts.predictor_duration_graph_mb"},
         predictor_duration_graph_bytes_);
     predictor_text_graph_bytes_ = runtime::parse_size_mb_option(
         session_options,
-        {"kokoro_tts.predictor_text_graph_mb"},
+        {"kokoro_tts.predictor_text_graph_arena_mb", "kokoro_tts.predictor_text_graph_mb"},
         predictor_text_graph_bytes_);
     predictor_tail_graph_bytes_ = runtime::parse_size_mb_option(
         session_options,
-        {"kokoro_tts.predictor_tail_graph_mb"},
+        {"kokoro_tts.predictor_tail_graph_arena_mb", "kokoro_tts.predictor_tail_graph_mb"},
         predictor_tail_graph_bytes_);
     weights_ = load_kokoro_backend_weights(
         *assets_,

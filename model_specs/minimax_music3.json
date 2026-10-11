@@ -110,7 +110,7 @@
         "type": "string",
         "description": "RVQ depth decoder component GGUF file relative to the model root.",
         "required": false,
-        "default": "rvq_depth_decoder_bf16.gguf"
+        "default": "rvq_depth_decoder_q8_0.gguf"
       },
       {
         "name": "flow_transformer_gguf",
@@ -120,9 +120,9 @@
         "default": "transformer_q4_0.gguf"
       },
       {
-        "name": "graph_context_mb",
+        "name": "graph_arena_mb",
         "type": "int",
-        "description": "Runtime graph arena size in MiB.",
+        "description": "Host graph-metadata arena size in MiB, not device workspace; legacy graph_context_mb remains accepted.",
         "required": false,
         "min": 1,
         "default": 32

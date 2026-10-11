@@ -11,6 +11,9 @@ audio end to end. Custom voice cloning is not supported. This family lives under
 model tree because it does not yet have the CUDA/Vulkan/Metal runtime test coverage core models
 carry.
 
+`--request-option max_tokens=<int>` caps generated speech tokens (default 1000).
+Legacy `max_new_tokens` remains accepted with the same meaning.
+
 ## Packaging: audio.cpp-native, self-contained GGUF
 
 Resemble AI has not published Chatterbox Turbo weights in a format audio.cpp can convert

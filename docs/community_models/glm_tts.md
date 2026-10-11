@@ -105,8 +105,8 @@ audiocpp_cli --task clon --family glm_tts \
 | `--seed` | integer | `0` | Seed used by token sampling, Flow noise, and HiFT. |
 | `--request-option num_inference_steps=<n>` | integer | `10` | Flow Euler integration steps. |
 | `--request-option flow_guidance_scale=<float>` | float | `0.7` | Flow classifier-free guidance rate. |
-| `--request-option flow_noise_path=<path>` | raw F32 path | none | Optional exact initial Flow noise for parity tests. |
-| `--request-option hift_source_random_path=<path>` | raw F32 path | none | Optional exact HiFT phase-uniform and Gaussian values for parity tests. |
+| `--request-option flow_noise_file=<path>` | raw F32 file | none | Optional exact initial Flow noise for parity tests. Legacy `flow_noise_path` remains accepted. |
+| `--request-option hift_source_random_file=<path>` | raw F32 file | none | Optional exact HiFT phase-uniform and Gaussian values for parity tests. Legacy `hift_source_random_path` remains accepted. |
 | `--request-option hift_prior_noise_count=<n>` | integer | `0` | Torch RNG offset before normal HiFT source generation. |
 
 The legacy GLM-TTS request keys `flow_steps`, `cfg_rate`, `flow_noise_file`,

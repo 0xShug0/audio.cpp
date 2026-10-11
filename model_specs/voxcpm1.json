@@ -140,33 +140,33 @@
         "required": false
       },
       {
-        "name": "text_embedding_graph_context_mb",
+        "name": "text_embedding_graph_arena_mb",
         "type": "int",
-        "description": "Text embedding graph context size in MB.",
+        "description": "Text embedding host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
-        "name": "lm_step_graph_context_mb",
+        "name": "lm_step_graph_arena_mb",
         "type": "int",
-        "description": "LM step graph context size in MB.",
+        "description": "LM step host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
-        "name": "projection_graph_context_mb",
+        "name": "projection_graph_arena_mb",
         "type": "int",
-        "description": "Projection graph context size in MB.",
+        "description": "Projection host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
-        "name": "local_encoder_graph_context_mb",
+        "name": "local_encoder_graph_arena_mb",
         "type": "int",
-        "description": "Local encoder graph context size in MB.",
+        "description": "Local encoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
-        "name": "dit_graph_context_mb",
+        "name": "dit_graph_arena_mb",
         "type": "int",
-        "description": "DiT estimator graph context size in MB.",
+        "description": "DiT estimator host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
@@ -176,15 +176,15 @@
         "required": false
       },
       {
-        "name": "audiovae_graph_context_mb",
+        "name": "audiovae_graph_arena_mb",
         "type": "int",
-        "description": "AudioVAE decoder graph context size in MB.",
+        "description": "AudioVAE decoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
-        "name": "audiovae_encoder_graph_context_mb",
+        "name": "audiovae_encoder_graph_arena_mb",
         "type": "int",
-        "description": "AudioVAE encoder graph context size in MB.",
+        "description": "AudioVAE encoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {

@@ -30,7 +30,7 @@ ChatterboxTurboGenerateConfig make_generate_config(const std::unordered_map<std:
     if (const auto value = runtime::parse_u32_option(options, {"top_k"})) {
         config.top_k = *value;
     }
-    if (const auto value = runtime::parse_u32_option(options, {"max_new_tokens"})) {
+    if (const auto value = runtime::parse_u32_option(options, {"max_tokens", "max_new_tokens"})) {
         config.max_new_tokens = *value;
     }
     if (const auto value = runtime::parse_u32_option(options, {"seed"})) {

@@ -133,6 +133,14 @@ package.
 |---|---|---:|---|
 | `kokoro_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Matmul weight storage type. |
 | `kokoro_tts.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage type. |
+| `kokoro_tts.predictor_duration_graph_arena_mb` | positive integer MiB | `384` | Duration predictor host graph-metadata arena. |
+| `kokoro_tts.predictor_text_graph_arena_mb` | positive integer MiB | `256` | Text predictor host graph-metadata arena. |
+| `kokoro_tts.predictor_tail_graph_arena_mb` | positive integer MiB | `640` | Tail predictor host graph-metadata arena. |
+
+The graph-arena controls do not size device workspace. Their former
+`predictor_duration_graph_mb`, `predictor_text_graph_mb`, and
+`predictor_tail_graph_mb` names remain accepted with the `kokoro_tts.` prefix,
+including with older embedded specs.
 
 ## Conversion
 
