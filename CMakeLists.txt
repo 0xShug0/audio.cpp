@@ -3354,6 +3354,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             src/community_models/whistle_asr/graph.cpp
             src/community_models/whistle_asr/runtime.cpp)
         target_link_libraries(whistle_assets_test PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(whistle_assets_test PRIVATE OpenMP::OpenMP_CXX)
+        endif()
         set(AUDIOCPP_WHISTLE_TEST_MODEL "" CACHE FILEPATH "Locally converted Whistle GGUF for integration tests")
         if (AUDIOCPP_WHISTLE_TEST_MODEL)
             add_test(NAME whistle_asr_integration COMMAND whistle_assets_test

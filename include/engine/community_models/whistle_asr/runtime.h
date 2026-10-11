@@ -44,11 +44,9 @@ public:
 private:
     std::shared_ptr<const WhistleAssets> assets_;
     WhistleEncoderRuntime encoder_;
-    // The decoder step graph runs on one CPU thread regardless of the session
-    // backend; see decoder.h.
-    std::unique_ptr<core::ExecutionContext> decoder_context_;
     WhistleDecoderRuntime decoder_;
     WhistleFrontend frontend_;
+    int threads_;
 };
 
 }  // namespace engine::community_models::whistle_asr

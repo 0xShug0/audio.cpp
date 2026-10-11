@@ -14,12 +14,6 @@ runtime::SessionOptions require_supported_session(
     if (task.task != runtime::VoiceTaskKind::Asr || task.mode != runtime::RunMode::Offline) {
         throw std::invalid_argument("Whistle currently supports offline ASR only");
     }
-    // The encoder graph is validated against the reference dumps on these backends only;
-    // the decoder step graph always runs on a CPU context of its own.
-    if (options.backend.type != engine::core::BackendType::Cpu &&
-        options.backend.type != engine::core::BackendType::Metal) {
-        throw std::invalid_argument("Whistle currently supports the CPU and Metal backends only");
-    }
     if (!contract) {
         throw std::invalid_argument("Whistle needs a model specification");
     }

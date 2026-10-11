@@ -1,56 +1,102 @@
 #include "engine/community_models/whistle_asr/decoder.h"
 
-#include "engine/community_models/whistle_asr/graph.h"
-#include "engine/framework/core/backend.h"
-#include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/debug/profiler.h"
-#include "engine/framework/debug/trace.h"
-#include "engine/framework/modules/optimizations/fast_kv_modules.h"
-#include "engine/framework/modules/transformers/causal_decoder.h"
-#include "engine/framework/runtime/kv_cache.h"
-
-#include <ggml-alloc.h>
-#include <ggml-backend.h>
-#include <ggml.h>
+#include "engine/community_models/whistle_asr/encoder.h"
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
-#include <cstddef>
-#include <cstring>
+#include <cstdint>
 #include <limits>
-#include <optional>
 #include <stdexcept>
 #include <string>
-#include <tuple>
+#include <unordered_map>
 #include <utility>
+#include <vector>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace engine::community_models::whistle_asr {
 namespace {
 
-using Clock = std::chrono::steady_clock;
-using core::TensorShape;
-using core::TensorValue;
+// Portable host decoder restored from PR #824 (16eee39c); the encoder stays a GGML graph.
+// Decoder weights stay on the host: the autoregressive decoder runs one token at a
+// time on the CPU, while the encoder weights live in the backend weight store.
+class HostDecoderWeights {
+public:
+    explicit HostDecoderWeights(const assets::TensorSource & source) {
+        for (const auto & metadata : source.tensors()) {
+            if (metadata.dtype != "f32" && metadata.dtype != "F32" &&
+                metadata.dtype != "float32") {
+                throw std::runtime_error("Whistle currently requires FP32 checkpoint tensors");
+            }
+            if (!is_decoder_tensor(metadata.name)) {
+                continue;
+            }
+            auto values = source.require_f32(metadata.name, metadata.shape);
+            tensors_.emplace(metadata.name, Tensor{metadata.shape, std::move(values)});
+        }
+    }
 
-constexpr size_t kGraphNodes = 16384;
-// BOS, the language token and up to the text-token limit.
-constexpr int64_t kCacheSteps = 2 + static_cast<int64_t>(kWhistleMaximumTextTokens);
-// The projection history keeps two leading zero slots, so the step at position p
-// writes slot p + 2 and reads the two previous steps from slots p + 1 and p.
-constexpr int64_t kHistorySlots = kCacheSteps + 2;
-constexpr int64_t kQueryWidth = kWhistleHeads * kWhistleQkDim;
-constexpr int64_t kKeyWidth = kWhistleKvHeads * kWhistleQkDim;
-constexpr int64_t kValueWidth = kWhistleKvHeads * kWhistleVDim;
-// One raw self-attention projection row: [query | key | value] before tap mixing.
-constexpr int64_t kRawWidth = kQueryWidth + kKeyWidth + kValueWidth;
-constexpr int kProjectionTaps = 3;
-constexpr int kEngramSites = 2;
-constexpr int64_t kEngramTaps = 4;
-constexpr int64_t kEngramSources = 4;
-constexpr int64_t kEngramBuckets = 18432;
-constexpr int64_t kEngramWidth = 128;
-constexpr const char * kBlock = "stack/layers/block/";
+    struct View {
+        const float * values;
+        std::vector<int64_t> shape;
+    };
+
+    [[nodiscard]] View get(const std::string & name, int layer = -1) const {
+        const auto it = tensors_.find(name);
+        if (it == tensors_.end()) {
+            throw std::runtime_error("Missing Whistle tensor: " + name);
+        }
+        const auto & tensor = it->second;
+        if (layer < 0) {
+            return {tensor.values.data(), tensor.shape};
+        }
+        if (tensor.shape.empty() || tensor.shape.front() != 8 || layer >= 8) {
+            throw std::runtime_error("Invalid Whistle layer tensor: " + name);
+        }
+        const size_t stride = tensor.values.size() / 8;
+        return {tensor.values.data() + layer * stride,
+            {tensor.shape.begin() + 1, tensor.shape.end()}};
+    }
+
+private:
+    static bool is_decoder_tensor(const std::string & name) {
+        static constexpr std::array<const char *, 3> kEncoderOwned = {
+            "stack/layers/block/cross_attn/k_proj/kernel",
+            "stack/layers/block/cross_attn/k_norm/scale",
+            "stack/layers/block/cross_attn/v_proj/kernel",
+        };
+        if (std::find(kEncoderOwned.begin(), kEncoderOwned.end(), name) != kEncoderOwned.end()) {
+            return false;
+        }
+        return name.rfind("stack/", 0) == 0 || name.rfind("embedding/", 0) == 0 ||
+            name.rfind("engrams_", 0) == 0;
+    }
+
+    struct Tensor {
+        std::vector<int64_t> shape;
+        std::vector<float> values;
+    };
+    std::unordered_map<std::string, Tensor> tensors_;
+};
+
+constexpr size_t kDimension = 512;
+constexpr size_t kLanes = 4;
+constexpr int kLayers = 8;
+using View = HostDecoderWeights::View;
+using Rows = std::vector<float>;
+
+
+View require(const HostDecoderWeights & weights, const std::string & name,
+             std::initializer_list<int64_t> shape, int layer = -1) {
+    auto result = weights.get(name, layer);
+    if (result.shape != std::vector<int64_t>(shape)) {
+        throw std::runtime_error("Whistle tensor has unexpected shape: " + name);
+    }
+    return result;
+}
 
 float sigmoid(float value) {
     return value >= 0
@@ -58,567 +104,588 @@ float sigmoid(float value) {
         : std::exp(value) / (1.0f + std::exp(value));
 }
 
-struct DecoderLayerWeights {
-    WhistleMhcWeights mhc;
-    modules::NormWeights attn_norm;
-    // Query, key and value projections stacked into one [608, 512] matrix.
-    modules::LinearWeights qkv_proj;
-    // Tap weights [3, 608]: row 0 scales the current projection, rows 1 and 2 the
-    // projections of the previous two steps.
-    TensorValue taps;
-    modules::NormWeights q_norm;
-    modules::NormWeights k_norm;
-    modules::LinearWeights self_gate_proj;
-    modules::LinearWeights self_out_proj;
-    modules::NormWeights post_attn_norm;
-    float attn_gate = 0.0f;
-    modules::NormWeights cross_norm;
-    modules::LinearWeights cross_q_proj;
-    modules::NormWeights cross_q_norm;
-    modules::LinearWeights cross_gate_proj;
-    modules::LinearWeights cross_out_proj;
-    modules::NormWeights post_cross_norm;
-    float cross_gate = 0.0f;
-    modules::NormWeights pre_hada_norm;
-    WhistleHadamardWeights hadamard;
-};
+void softmax(float * values, size_t count) {
+    const float peak = *std::max_element(values, values + count);
+    float sum = 0.0f;
+    for (size_t index = 0; index < count; ++index) {
+        values[index] = std::exp(values[index] - peak);
+        sum += values[index];
+    }
+    for (size_t index = 0; index < count; ++index) {
+        values[index] /= sum;
+    }
+}
 
-struct EngramWeights {
-    modules::LinearWeights key_proj;
-    modules::LinearWeights value_proj;
-    TensorValue taps;
-};
-
-struct DecoderWeights {
-    std::array<DecoderLayerWeights, kWhistleLayers> layers;
-    // Tied input embedding and output projection, ggml [512, 8199].
-    TensorValue embedding;
-    modules::NormWeights final_norm;
-    std::array<EngramWeights, kEngramSites> engrams;
-    WhistleGraphConstants constants;
-};
-
-modules::LinearWeights stacked_projection(WhistleWeightLoader & loader, int layer) {
-    const std::string prefix = std::string(kBlock) + "self_attn/";
-    const std::array<std::pair<const char *, int64_t>, 3> parts = {{
-        {"q_proj", kQueryWidth}, {"k_proj", kKeyWidth}, {"v_proj", kValueWidth}}};
-    std::vector<float> weight;
-    weight.reserve(static_cast<size_t>(kRawWidth * kWhistleDimension));
-    for (const auto & [name, out] : parts) {
-        const auto source = loader.values(prefix + name + "/kernel", {kWhistleDimension, out}, layer);
-        for (int64_t col = 0; col < out; ++col) {
-            for (int64_t row = 0; row < kWhistleDimension; ++row) {
-                weight.push_back(source[static_cast<size_t>(row * out + col)]);
+Rows linear(const Rows & input, size_t rows, size_t width, View weight) {
+    if (weight.shape.size() != 2 || weight.shape[0] != static_cast<int64_t>(width) ||
+        input.size() != rows * width) {
+        throw std::runtime_error("Whistle linear projection shape mismatch");
+    }
+    const size_t output_width = static_cast<size_t>(weight.shape[1]);
+    Rows output(rows * output_width, 0.0f);
+#ifdef _OPENMP
+#pragma omp parallel for if(rows > 8)
+#endif
+    for (int64_t row = 0; row < static_cast<int64_t>(rows); ++row) {
+        const float * in = input.data() + static_cast<size_t>(row) * width;
+        float * out = output.data() + static_cast<size_t>(row) * output_width;
+        for (size_t col = 0; col < width; ++col) {
+            const float scale = in[col];
+            const float * weights = weight.values + col * output_width;
+            for (size_t output_col = 0; output_col < output_width; ++output_col) {
+                out[output_col] += scale * weights[output_col];
             }
         }
     }
-    return {loader.store().make_f32(TensorShape::from_dims({kRawWidth, kWhistleDimension}), std::move(weight)),
-        std::nullopt};
+    return output;
 }
 
-TensorValue stacked_taps(WhistleWeightLoader & loader, int layer) {
-    const std::string prefix = std::string(kBlock) + "self_attn/";
-    const std::array<std::tuple<const char *, int64_t, int64_t>, 3> parts = {{
-        {"q_taps", kQueryWidth, 0}, {"k_taps", kKeyWidth, kQueryWidth}, {"v_taps", kValueWidth, kQueryWidth + kKeyWidth}}};
-    std::vector<float> taps(static_cast<size_t>(kProjectionTaps * kRawWidth));
-    for (const auto & [name, width, offset] : parts) {
-        const auto source = loader.values(prefix + name, {kProjectionTaps, width}, layer);
-        for (int64_t tap = 0; tap < kProjectionTaps; ++tap) {
-            std::copy_n(source.begin() + static_cast<std::ptrdiff_t>(tap * width), width,
-                taps.begin() + static_cast<std::ptrdiff_t>(tap * kRawWidth + offset));
+void normalize(Rows & values, size_t rows, size_t width, const float * scale = nullptr) {
+    if (values.size() != rows * width) {
+        throw std::runtime_error("Whistle normalization shape mismatch");
+    }
+#ifdef _OPENMP
+#pragma omp parallel for if(rows > 8)
+#endif
+    for (int64_t row = 0; row < static_cast<int64_t>(rows); ++row) {
+        float * data = values.data() + static_cast<size_t>(row) * width;
+        double energy = 0.0;
+        for (size_t col = 0; col < width; ++col) {
+            energy += static_cast<double>(data[col]) * data[col];
+        }
+        const float norm = static_cast<float>(1.0 / std::sqrt(energy / width + 1.0e-6));
+        for (size_t col = 0; col < width; ++col) {
+            data[col] *= norm * (scale == nullptr ? 1.0f : 1.0f + scale[col]);
         }
     }
-    return loader.store().make_f32(TensorShape::from_dims({kProjectionTaps, kRawWidth}), std::move(taps));
 }
 
-DecoderWeights load_weights(core::BackendWeightStore & store, const WhistleAssets & assets) {
-    WhistleWeightLoader loader(store, *assets.weights);
-    const std::string block = kBlock;
-    DecoderWeights weights;
-    for (int layer = 0; layer < kWhistleLayers; ++layer) {
-        auto & target = weights.layers[static_cast<size_t>(layer)];
-        target.mhc = loader.mhc("stack/mhc_", layer);
-        target.attn_norm = loader.norm(block + "ZCRMSNorm_0", kWhistleDimension, layer);
-        target.qkv_proj = stacked_projection(loader, layer);
-        target.taps = stacked_taps(loader, layer);
-        target.q_norm = loader.norm(block + "self_attn/q_norm", kWhistleQkDim, layer);
-        target.k_norm = loader.norm(block + "self_attn/k_norm", kWhistleQkDim, layer);
-        target.self_gate_proj = loader.linear(block + "self_attn/gate_proj", kWhistleDimension, kWhistleDimension, layer);
-        target.self_out_proj = loader.linear(block + "self_attn/out_proj", kWhistleDimension, kWhistleDimension, layer);
-        target.post_attn_norm = loader.norm(block + "post_attn_norm", kWhistleDimension, layer);
-        target.attn_gate = sigmoid(loader.scalar(block + "attn_gate", layer));
-        target.cross_norm = loader.norm(block + "cross_norm", kWhistleDimension, layer);
-        target.cross_q_proj = loader.linear(block + "cross_attn/q_proj", kWhistleDimension, kQueryWidth, layer);
-        target.cross_q_norm = loader.norm(block + "cross_attn/q_norm", kWhistleQkDim, layer);
-        target.cross_gate_proj = loader.linear(block + "cross_attn/gate_proj", kWhistleDimension, kWhistleDimension, layer);
-        target.cross_out_proj = loader.linear(block + "cross_attn/out_proj", kWhistleDimension, kWhistleDimension, layer);
-        target.post_cross_norm = loader.norm(block + "post_cross_norm", kWhistleDimension, layer);
-        target.cross_gate = sigmoid(loader.scalar(block + "cross_gate", layer));
-        target.pre_hada_norm = loader.norm(block + "pre_hada_norm", kWhistleDimension, layer);
-        target.hadamard = loader.hadamard(block + "hadamard_mlp/", layer);
+void add(Rows & destination, const Rows & source, float factor = 1.0f) {
+    if (destination.size() != source.size()) {
+        throw std::runtime_error("Whistle residual shape mismatch");
     }
-    // The [8199, 512] checkpoint layout is already ggml [512, 8199], so it streams
-    // straight from the model file without a staged host copy.
-    weights.embedding = store.load_tensor(*assets.weights, "embedding/embedding",
-        assets::TensorStorageType::F32, {kWhistleVocabulary, kWhistleDimension});
-    weights.final_norm = loader.norm("stack/final_norm", kWhistleDimension);
-    for (int site = 0; site < kEngramSites; ++site) {
-        const std::string prefix = "engrams_" + std::to_string(site) + "/";
-        auto & target = weights.engrams[static_cast<size_t>(site)];
-        target.key_proj = loader.linear(prefix + "key_proj", kWhistleDimension, kWhistleDimension);
-        target.value_proj = loader.linear(prefix + "value_proj", kWhistleDimension, kWhistleDimension);
-        target.taps = store.make_f32(
-            TensorShape::from_dims({kEngramTaps, kWhistleDimension}),
-            loader.values(prefix + "taps", {kEngramTaps, kWhistleDimension}));
+    for (size_t index = 0; index < destination.size(); ++index) {
+        destination[index] += factor * source[index];
     }
-    weights.constants = loader.constants(assets, 1);
-    store.upload();
-    return weights;
 }
 
-// Gathers the hashed n-gram rows for the newest token: tap t looks at the token
-// 3 * t steps back, and each of the four sources hashes a bigram or trigram ending
-// there into its own bucket table. Missing history leaves the slot at zero.
-void engram_features(const std::vector<int32_t> & tokens, const std::vector<std::byte> & table, std::vector<float> & feature) {
-    feature.assign(static_cast<size_t>(kEngramTaps * kWhistleDimension), 0.0f);
+void kronecker(const float * input, const float * left, const float * right, float * output) {
+    std::array<float, kDimension> intermediate{};
+    for (size_t source_row = 0; source_row < 16; ++source_row) {
+        for (size_t dest_row = 0; dest_row < 16; ++dest_row) {
+            const float scale = left[source_row * 16 + dest_row];
+            for (size_t column = 0; column < 32; ++column) {
+                intermediate[dest_row * 32 + column] +=
+                    scale * input[source_row * 32 + column];
+            }
+        }
+    }
+    std::fill(output, output + kDimension, 0.0f);
+    for (size_t row = 0; row < 16; ++row) {
+        for (size_t source_col = 0; source_col < 32; ++source_col) {
+            const float scale = intermediate[row * 32 + source_col];
+            for (size_t dest_col = 0; dest_col < 32; ++dest_col) {
+                output[row * 32 + dest_col] +=
+                    scale * right[source_col * 32 + dest_col];
+            }
+        }
+    }
+}
+
+Rows hadamard(const Rows & input, size_t frames, const HostDecoderWeights & weights,
+              const WhistleAssets & assets, const std::string & prefix, int layer) {
+    const auto d1 = require(weights, prefix + "d1", {512}, layer);
+    const auto d2 = require(weights, prefix + "d2", {512}, layer);
+    const auto d3 = require(weights, prefix + "d3", {512}, layer);
+    const auto d4 = require(weights, prefix + "d4", {512}, layer);
+    const auto b2 = require(weights, prefix + "b2", {512}, layer);
+    const auto cond_v = require(weights, prefix + "cond_v", {512, 8}, layer);
+    const auto cond_u = require(weights, prefix + "cond_u", {8, 512}, layer);
+    const auto w1a = require(weights, prefix + "w1a", {16, 16}, layer);
+    const auto w1b = require(weights, prefix + "w1b", {32, 32}, layer);
+    const auto w2a = require(weights, prefix + "w2a", {16, 16}, layer);
+    const auto w2b = require(weights, prefix + "w2b", {32, 32}, layer);
+    const auto w3a = require(weights, prefix + "w3a", {16, 16}, layer);
+    const auto w3b = require(weights, prefix + "w3b", {32, 32}, layer);
+    Rows result(input.size());
+#ifdef _OPENMP
+#pragma omp parallel for if(frames > 8)
+#endif
+    for (int64_t frame = 0; frame < static_cast<int64_t>(frames); ++frame) {
+        const float * x = input.data() + static_cast<size_t>(frame) * kDimension;
+        std::array<float, 8> cond_weights{};
+        for (size_t index = 0; index < kDimension; ++index) {
+            for (size_t hidden = 0; hidden < 8; ++hidden) {
+                cond_weights[hidden] += x[index] * cond_v.values[index * 8 + hidden];
+            }
+        }
+        softmax(cond_weights.data(), cond_weights.size());
+        std::array<float, kDimension> z{};
+        std::array<float, kDimension> next{};
+        for (size_t index = 0; index < kDimension; ++index) {
+            z[index] = x[index] * d1.values[index];
+        }
+        kronecker(z.data(), w1a.values, w1b.values, next.data());
+        for (size_t index = 0; index < kDimension; ++index) {
+            float condition = 1.0f;
+            for (size_t hidden = 0; hidden < 8; ++hidden) {
+                condition += cond_weights[hidden] * cond_u.values[hidden * kDimension + index];
+            }
+            const float value = next[assets.hadamard_permutations[0][index]];
+            z[index] = d2.values[index] * condition * value + b2.values[index];
+            z[index] *= sigmoid(z[index]);
+        }
+        kronecker(z.data(), w2a.values, w2b.values, next.data());
+        for (size_t index = 0; index < kDimension; ++index) {
+            z[index] = d3.values[index] * next[assets.hadamard_permutations[1][index]];
+        }
+        kronecker(z.data(), w3a.values, w3b.values,
+            result.data() + static_cast<size_t>(frame) * kDimension);
+        for (size_t index = 0; index < kDimension; ++index) {
+            result[static_cast<size_t>(frame) * kDimension + index] *= d4.values[index];
+        }
+    }
+    return result;
+}
+
+void sinkhorn(std::array<float, 16> & logits) {
+    for (int iteration = 0; iteration < 20; ++iteration) {
+        for (size_t row = 0; row < 4; ++row) {
+            const float peak = *std::max_element(logits.begin() + row * 4, logits.begin() + row * 4 + 4);
+            float sum = 0.0f;
+            for (size_t col = 0; col < 4; ++col) {
+                sum += std::exp(logits[row * 4 + col] - peak);
+            }
+            const float log_sum = peak + std::log(sum);
+            for (size_t col = 0; col < 4; ++col) {
+                logits[row * 4 + col] -= log_sum;
+            }
+        }
+        for (size_t col = 0; col < 4; ++col) {
+            float peak = -std::numeric_limits<float>::infinity();
+            for (size_t row = 0; row < 4; ++row) {
+                peak = std::max(peak, logits[row * 4 + col]);
+            }
+            float sum = 0.0f;
+            for (size_t row = 0; row < 4; ++row) {
+                sum += std::exp(logits[row * 4 + col] - peak);
+            }
+            const float log_sum = peak + std::log(sum);
+            for (size_t row = 0; row < 4; ++row) {
+                logits[row * 4 + col] -= log_sum;
+            }
+        }
+    }
+    for (auto & value : logits) {
+        value = std::exp(value);
+    }
+}
+
+template<typename Block>
+Rows mhc(const Rows & state, size_t frames, const HostDecoderWeights & weights,
+         const std::string & prefix, int layer, Block block) {
+    const auto a_pre = require(weights, prefix + "a_pre", {}, layer).values[0];
+    const auto a_post = require(weights, prefix + "a_post", {}, layer).values[0];
+    const auto a_res = require(weights, prefix + "a_res", {}, layer).values[0];
+    const auto b_pre = require(weights, prefix + "b_pre", {4}, layer);
+    const auto b_post = require(weights, prefix + "b_post", {4}, layer);
+    const auto b_res = require(weights, prefix + "b_res", {4, 4}, layer);
+    const auto phi_pre = require(weights, prefix + "phi_pre", {2048, 4}, layer);
+    const auto phi_post = require(weights, prefix + "phi_post", {2048, 4}, layer);
+    const auto phi_res = require(weights, prefix + "phi_res", {2048, 16}, layer);
+    if (state.size() != frames * kLanes * kDimension) {
+        throw std::runtime_error("Whistle mHC state has the wrong shape");
+    }
+    Rows mixed(frames * kDimension, 0.0f);
+    Rows hposts(frames * kLanes);
+    Rows hres(frames * kLanes * kLanes);
+#ifdef _OPENMP
+#pragma omp parallel for if(frames > 8)
+#endif
+    for (int64_t row = 0; row < static_cast<int64_t>(frames); ++row) {
+        const float * st = state.data() + static_cast<size_t>(row) * kLanes * kDimension;
+        std::array<float, kLanes * kDimension> nx{};
+        std::copy_n(st, nx.size(), nx.begin());
+        double energy = 0.0;
+        for (float value : nx) {
+            energy += static_cast<double>(value) * value;
+        }
+        const float scale = static_cast<float>(1.0 / std::sqrt(energy / nx.size() + 1.0e-6));
+        for (auto & value : nx) {
+            value *= scale;
+        }
+        std::array<float, 4> pre{};
+        std::array<float, 4> post{};
+        std::array<float, 16> residual{};
+        for (size_t index = 0; index < nx.size(); ++index) {
+            for (size_t lane = 0; lane < 4; ++lane) {
+                pre[lane] += nx[index] * phi_pre.values[index * 4 + lane];
+                post[lane] += nx[index] * phi_post.values[index * 4 + lane];
+            }
+            for (size_t element = 0; element < 16; ++element) {
+                residual[element] += nx[index] * phi_res.values[index * 16 + element];
+            }
+        }
+        for (size_t lane = 0; lane < 4; ++lane) {
+            const bool active = lane == static_cast<size_t>(layer % 4);
+            const float hpre = sigmoid(a_pre * pre[lane] + b_pre.values[lane] + (active ? 4.0f : -4.0f));
+            hposts[static_cast<size_t>(row) * 4 + lane] =
+                2.0f * sigmoid(a_post * post[lane] + b_post.values[lane] + (active ? 0.0f : -4.0f));
+            for (size_t col = 0; col < kDimension; ++col) {
+                mixed[static_cast<size_t>(row) * kDimension + col] +=
+                    hpre * st[lane * kDimension + col];
+            }
+        }
+        for (size_t index = 0; index < 16; ++index) {
+            residual[index] = a_res * residual[index] + b_res.values[index];
+        }
+        sinkhorn(residual);
+        std::copy(residual.begin(), residual.end(), hres.begin() + static_cast<size_t>(row) * 16);
+    }
+    Rows delta = block(mixed);
+    if (delta.size() != mixed.size()) {
+        throw std::runtime_error("Whistle mHC block output has the wrong shape");
+    }
+    Rows next(state.size());
+    for (size_t row = 0; row < frames; ++row) {
+        for (size_t lane = 0; lane < 4; ++lane) {
+            const float hpost = hposts[row * 4 + lane];
+            for (size_t col = 0; col < kDimension; ++col) {
+                float value = hpost * (delta[row * kDimension + col] - mixed[row * kDimension + col]);
+                for (size_t source = 0; source < 4; ++source) {
+                    value += hres[row * 16 + lane * 4 + source] *
+                        state[row * 4 * kDimension + source * kDimension + col];
+                }
+                next[row * 4 * kDimension + lane * kDimension + col] = value;
+            }
+        }
+    }
+    return next;
+}
+
+void apply_rope(Rows & values, size_t frames, size_t heads, size_t offset = 0) {
+    const float theta = static_cast<float>(-std::log(100000.0) / 48.0);
+    for (size_t frame = 0; frame < frames; ++frame) {
+        for (size_t index = 0; index < heads; ++index) {
+            float * head = values.data() + (frame * heads + index) * 48;
+            for (size_t dim = 0; dim < 24; ++dim) {
+                const float angle = static_cast<float>(frame + offset) * std::exp(2.0f * dim * theta);
+                const float co = std::cos(angle);
+                const float si = std::sin(angle);
+                const float a = head[dim];
+                const float b = head[dim + 24];
+                head[dim] = a * co - b * si;
+                head[dim + 24] = b * co + a * si;
+            }
+        }
+    }
+}
+
+struct DecoderLayerState {
+    std::array<float, 2 * 608> previous{};
+    Rows keys;
+    Rows values;
+};
+
+struct EngramOutput {
+    Rows key;
+    Rows value;
+};
+
+std::array<EngramOutput, 2> lookup_engrams(const std::vector<int32_t> & tokens,
+                                           const HostDecoderWeights & weights) {
     const int64_t current = static_cast<int64_t>(tokens.size()) - 1;
-    for (int64_t tap = 0; tap < kEngramTaps; ++tap) {
-        const int64_t position = current - 3 * tap;
-        if (position < 0) {
-            continue;
-        }
-        for (int64_t source = 0; source < kEngramSources; ++source) {
-            const int order = source < 2 ? 2 : 3;
-            if (position < order - 1) {
+    std::array<EngramOutput, 2> result;
+    for (int site = 0; site < 2; ++site) {
+        const std::string prefix = "engrams_" + std::to_string(site) + "/";
+        const auto table = require(weights, prefix + "embedding", {4, 18432, 128});
+        Rows feature(4 * 512, 0.0f);
+        for (int tap = 0; tap < 4; ++tap) {
+            const int64_t position = current - 3 * tap;
+            if (position < 0) {
                 continue;
             }
-            uint32_t hash = 0x9E3779B9u * static_cast<uint32_t>(source + 1);
-            for (int history = 0; history < order; ++history) {
-                const auto at = position - history;
-                hash = (hash ^ static_cast<uint32_t>(at >= 0 ? tokens[static_cast<size_t>(at)] : 0)) * 0x01000193u;
+            for (int source = 0; source < 4; ++source) {
+                const int order = source < 2 ? 2 : 3;
+                if (position < order - 1) {
+                    continue;
+                }
+                uint32_t hash = 0x9E3779B9u * static_cast<uint32_t>(source + 1);
+                for (int history = 0; history < order; ++history) {
+                    const auto at = position - history;
+                    hash = (hash ^ static_cast<uint32_t>(at >= 0 ? tokens[static_cast<size_t>(at)] : 0)) *
+                        0x01000193u;
+                }
+                hash ^= hash >> 15;
+                const size_t row = (static_cast<size_t>(source) * 18432 + hash % 18432) * 128;
+                std::copy_n(table.values + row, 128,
+                    feature.begin() + static_cast<size_t>(tap * 512 + source * 128));
             }
-            hash ^= hash >> 15;
-            const size_t row = (static_cast<size_t>(source) * kEngramBuckets + hash % kEngramBuckets) * kEngramWidth;
-            std::memcpy(feature.data() + tap * kWhistleDimension + source * kEngramWidth,
-                table.data() + row * sizeof(float), kEngramWidth * sizeof(float));
+        }
+        result[site].key = linear(Rows(feature.begin(), feature.begin() + 512), 1, 512,
+            require(weights, prefix + "key_proj/kernel", {512, 512}));
+        const Rows projected = linear(feature, 4, 512,
+            require(weights, prefix + "value_proj/kernel", {512, 512}));
+        const auto taps = require(weights, prefix + "taps", {4, 512});
+        result[site].value.assign(512, 0.0f);
+        for (size_t tap = 0; tap < 4; ++tap) {
+            for (size_t index = 0; index < 512; ++index) {
+                result[site].value[index] +=
+                    projected[tap * 512 + index] * taps.values[tap * 512 + index];
+            }
         }
     }
+    return result;
 }
 
-struct GgmlContextDeleter {
-    void operator()(ggml_context * ctx) const noexcept { ggml_free(ctx); }
-};
+Rows decoder_self_attention(const Rows & input, const HostDecoderWeights & weights,
+                            int layer, size_t position, DecoderLayerState & state) {
+    const std::string prefix = "stack/layers/block/self_attn/";
+    const Rows q = linear(input, 1, 512,
+        require(weights, prefix + "q_proj/kernel", {512, 384}, layer));
+    const Rows k = linear(input, 1, 512,
+        require(weights, prefix + "k_proj/kernel", {512, 96}, layer));
+    const Rows v = linear(input, 1, 512,
+        require(weights, prefix + "v_proj/kernel", {512, 128}, layer));
+    std::array<float, 608> current{};
+    std::copy(q.begin(), q.end(), current.begin());
+    std::copy(k.begin(), k.end(), current.begin() + 384);
+    std::copy(v.begin(), v.end(), current.begin() + 480);
+    const auto q_taps = require(weights, prefix + "q_taps", {3, 384}, layer);
+    const auto k_taps = require(weights, prefix + "k_taps", {3, 96}, layer);
+    const auto v_taps = require(weights, prefix + "v_taps", {3, 128}, layer);
+    Rows query(384);
+    Rows key(96);
+    Rows value(128);
+    const auto tap = [&](View weights_view, size_t width, size_t start, Rows & output) {
+        for (size_t index = 0; index < width; ++index) {
+            output[index] =
+                current[start + index] * weights_view.values[index] +
+                state.previous[608 + start + index] * weights_view.values[width + index] +
+                state.previous[start + index] * weights_view.values[2 * width + index];
+        }
+    };
+    tap(q_taps, 384, 0, query);
+    tap(k_taps, 96, 384, key);
+    tap(v_taps, 128, 480, value);
+    std::copy_n(state.previous.begin() + 608, 608, state.previous.begin());
+    std::copy(current.begin(), current.end(), state.previous.begin() + 608);
+    normalize(query, 8, 48,
+        require(weights, prefix + "q_norm/scale", {48}, layer).values);
+    normalize(key, 2, 48,
+        require(weights, prefix + "k_norm/scale", {48}, layer).values);
+    apply_rope(query, 1, 8, position);
+    apply_rope(key, 1, 2, position);
+    state.keys.insert(state.keys.end(), key.begin(), key.end());
+    state.values.insert(state.values.end(), value.begin(), value.end());
+    const size_t steps = state.keys.size() / 96;
+    Rows context(512, 0.0f);
+    for (size_t head = 0; head < 8; ++head) {
+        const size_t kv = head / 4;
+        std::vector<float> scores(steps);
+        for (size_t step = 0; step < steps; ++step) {
+            float dot = 0.0f;
+            for (size_t index = 0; index < 48; ++index) {
+                dot += query[head * 48 + index] * state.keys[step * 96 + kv * 48 + index];
+            }
+            scores[step] = dot * (1.0f / std::sqrt(48.0f));
+        }
+        softmax(scores.data(), steps);
+        for (size_t step = 0; step < steps; ++step) {
+            for (size_t index = 0; index < 64; ++index) {
+                context[head * 64 + index] +=
+                    scores[step] * state.values[step * 128 + kv * 64 + index];
+            }
+        }
+    }
+    const Rows gates = linear(input, 1, 512,
+        require(weights, prefix + "gate_proj/kernel", {512, 512}, layer));
+    for (size_t index = 0; index < 512; ++index) {
+        context[index] *= sigmoid(gates[index]);
+    }
+    return linear(context, 1, 512,
+        require(weights, prefix + "out_proj/kernel", {512, 512}, layer));
+}
 
-struct BackendBufferDeleter {
-    void operator()(ggml_backend_buffer_t buffer) const noexcept { ggml_backend_buffer_free(buffer); }
-};
+Rows decoder_cross_attention(const Rows & input, const HostDecoderWeights & weights,
+                             const WhistleEncoderOutput & encoder, int layer) {
+    const std::string prefix = "stack/layers/block/cross_attn/";
+    Rows query = linear(input, 1, 512,
+        require(weights, prefix + "q_proj/kernel", {512, 384}, layer));
+    normalize(query, 8, 48,
+        require(weights, prefix + "q_norm/scale", {48}, layer).values);
+    Rows context(512, 0.0f);
+    const Rows & keys = encoder.cross_k[layer];
+    const Rows & values = encoder.cross_v[layer];
+    for (size_t head = 0; head < 8; ++head) {
+        std::vector<float> scores(encoder.frames);
+        for (size_t frame = 0; frame < encoder.frames; ++frame) {
+            float dot = 0.0f;
+            for (size_t col = 0; col < 48; ++col) {
+                dot += query[head * 48 + col] * keys[(frame * 8 + head) * 48 + col];
+            }
+            scores[frame] = dot * (1.0f / std::sqrt(48.0f));
+        }
+        softmax(scores.data(), encoder.frames);
+        for (size_t frame = 0; frame < encoder.frames; ++frame) {
+            for (size_t col = 0; col < 64; ++col) {
+                context[head * 64 + col] +=
+                    scores[frame] * values[(frame * 8 + head) * 64 + col];
+            }
+        }
+    }
+    const Rows gates = linear(input, 1, 512,
+        require(weights, prefix + "gate_proj/kernel", {512, 512}, layer));
+    for (size_t index = 0; index < 512; ++index) {
+        context[index] *= sigmoid(gates[index]);
+    }
+    return linear(context, 1, 512,
+        require(weights, prefix + "out_proj/kernel", {512, 512}, layer));
+}
 
-struct GallocrDeleter {
-    void operator()(ggml_gallocr * galloc) const noexcept { ggml_gallocr_free(galloc); }
-};
+Rows decoder_block(const Rows & input, const HostDecoderWeights & weights,
+                   const WhistleAssets & assets, const WhistleEncoderOutput & encoder,
+                   const std::array<EngramOutput, 2> & engram, int layer,
+                   size_t position, DecoderLayerState & state) {
+    const std::string prefix = "stack/layers/block/";
+    Rows h = input;
+    if (layer == 3 || layer == 7) {
+        const auto & slot = engram[layer == 3 ? 0 : 1];
+        Rows normalized = h;
+        Rows key = slot.key;
+        normalize(normalized, 1, 512);
+        normalize(key, 1, 512);
+        float dot = 0.0f;
+        for (size_t index = 0; index < 512; ++index) {
+            dot += normalized[index] * key[index];
+        }
+        add(h, slot.value, sigmoid(dot * (1.0f / std::sqrt(512.0f))));
+    }
+    Rows self_input = h;
+    normalize(self_input, 1, 512,
+        require(weights, prefix + "ZCRMSNorm_0/scale", {512}, layer).values);
+    Rows self = decoder_self_attention(self_input, weights, layer, position, state);
+    normalize(self, 1, 512,
+        require(weights, prefix + "post_attn_norm/scale", {512}, layer).values);
+    add(h, self, sigmoid(require(weights, prefix + "attn_gate", {}, layer).values[0]));
+    Rows cross_input = h;
+    normalize(cross_input, 1, 512,
+        require(weights, prefix + "cross_norm/scale", {512}, layer).values);
+    Rows cross = decoder_cross_attention(cross_input, weights, encoder, layer);
+    normalize(cross, 1, 512,
+        require(weights, prefix + "post_cross_norm/scale", {512}, layer).values);
+    add(h, cross, sigmoid(require(weights, prefix + "cross_gate", {}, layer).values[0]));
+    Rows ff_input = h;
+    normalize(ff_input, 1, 512,
+        require(weights, prefix + "pre_hada_norm/scale", {512}, layer).values);
+    add(h, hadamard(ff_input, 1, weights, assets,
+        prefix + "hadamard_mlp/", layer));
+    return h;
+}
 
-ggml_tensor * column(ggml_context * ctx, ggml_tensor * matrix, int64_t index) {
-    return ggml_view_2d(ctx, matrix, matrix->ne[0], 1, matrix->nb[1], static_cast<size_t>(index) * matrix->nb[1]);
+Rows decoder_step(int32_t token, size_t position, const HostDecoderWeights & weights,
+                  const WhistleAssets & assets, const WhistleEncoderOutput & encoder,
+                  const std::array<EngramOutput, 2> & engram,
+                  std::array<DecoderLayerState, 8> & cache) {
+    const auto embedding = require(weights, "embedding/embedding", {8199, 512});
+    Rows x(512);
+    for (size_t index = 0; index < 512; ++index) {
+        x[index] = embedding.values[static_cast<size_t>(token) * 512 + index] *
+            std::sqrt(512.0f);
+    }
+    Rows state(4 * 512);
+    for (size_t lane = 0; lane < 4; ++lane) {
+        std::copy(x.begin(), x.end(), state.begin() + lane * 512);
+    }
+    for (int layer = 0; layer < kLayers; ++layer) {
+        state = mhc(state, 1, weights, "stack/mhc_", layer,
+            [&](const Rows & mixed) {
+                return decoder_block(mixed, weights, assets, encoder,
+                    engram, layer, position, cache[layer]);
+            });
+    }
+    Rows h(512, 0.0f);
+    for (size_t lane = 0; lane < 4; ++lane) {
+        for (size_t index = 0; index < 512; ++index) {
+            h[index] += state[lane * 512 + index] / 4.0f;
+        }
+    }
+    normalize(h, 1, 512,
+        require(weights, "stack/final_norm/scale", {512}).values);
+    Rows logits(8199);
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+    for (int64_t id = 0; id < 8199; ++id) {
+        float score = 0.0f;
+        for (size_t index = 0; index < 512; ++index) {
+            score += h[index] * embedding.values[static_cast<size_t>(id) * 512 + index];
+        }
+        logits[static_cast<size_t>(id)] = score;
+    }
+    return logits;
 }
 
 }  // namespace
 
-class WhistleDecoderRuntime::Graph {
-public:
-    Graph(std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context)
-        : assets_(std::move(assets)),
-          execution_context_(&execution_context),
-          backend_(execution_context.backend()),
-          weight_store_(
-              execution_context.backend(), execution_context.backend_type(),
-              "Whistle decoder weights", 8ull * 1024ull * 1024ull) {
-        if (!assets_ || !assets_->weights) {
-            throw std::invalid_argument("Whistle decoder needs verified model assets");
-        }
-        weights_ = load_weights(weight_store_, *assets_);
-        // The runtime only accepts FP32 checkpoints, so the raw bytes are the f32
-        // table; keeping them avoids a second full-size converted copy.
-        for (int site = 0; site < kEngramSites; ++site) {
-            auto table = assets_->weights->require_tensor_data("engrams_" + std::to_string(site) + "/embedding");
-            if (table.metadata.shape != std::vector<int64_t>{kEngramSources, kEngramBuckets, kEngramWidth} ||
-                table.bytes.size() != static_cast<size_t>(kEngramSources * kEngramBuckets * kEngramWidth) * sizeof(float)) {
-                throw std::runtime_error("Whistle engram table has an unexpected shape");
-            }
-            engram_tables_[static_cast<size_t>(site)] = std::move(table.bytes);
-        }
-        allocate_state();
-        build_graph();
-    }
+struct WhistleDecoderRuntime::Impl {
+    explicit Impl(std::shared_ptr<const WhistleAssets> input)
+        : assets(std::move(input)), weights(*assets->weights) {}
 
-    ~Graph() {
-        core::release_backend_graph_resources(backend_, graph_);
-        plan_.reset();
-        galloc_.reset();
-    }
-
-    Graph(const Graph &) = delete;
-    Graph & operator=(const Graph &) = delete;
-
-    void start(const WhistleEncoderOutput & encoder) {
-        const auto started = Clock::now();
-        const auto frames = static_cast<int64_t>(encoder.frames);
-        if (frames <= 0 || frames > kWhistleMaximumFrames) {
-            throw std::invalid_argument("Whistle decoder needs between 1 and 375 encoder frames");
-        }
-        // Cross-attention keys arrive as [frame][head][48] and values as
-        // [frame][head][64]. The step graph reads keys head-major, [head][frame][48],
-        // and values with frames innermost, [head][64][frame], so no per-step copies
-        // are needed. Frames past the end stay zero and are masked out.
-        for (int layer = 0; layer < kWhistleLayers; ++layer) {
-            const auto & keys = encoder.cross_k[static_cast<size_t>(layer)];
-            const auto & values = encoder.cross_v[static_cast<size_t>(layer)];
-            if (keys.size() != static_cast<size_t>(frames * kQueryWidth) ||
-                values.size() != static_cast<size_t>(frames * kWhistleHeads * kWhistleVDim)) {
-                throw std::invalid_argument("Whistle encoder cross-attention output has the wrong shape");
-            }
-            std::fill(cross_scratch_.begin(), cross_scratch_.end(), 0.0f);
-            for (int64_t frame = 0; frame < frames; ++frame) {
-                for (int64_t head = 0; head < kWhistleHeads; ++head) {
-                    std::copy_n(keys.begin() + static_cast<std::ptrdiff_t>((frame * kWhistleHeads + head) * kWhistleQkDim),
-                        kWhistleQkDim,
-                        cross_scratch_.begin() +
-                            static_cast<std::ptrdiff_t>((head * kWhistleMaximumFrames + frame) * kWhistleQkDim));
-                }
-            }
-            ggml_backend_tensor_set(cross_keys_[static_cast<size_t>(layer)], cross_scratch_.data(), 0,
-                ggml_nbytes(cross_keys_[static_cast<size_t>(layer)]));
-            std::fill(cross_scratch_.begin(), cross_scratch_.end(), 0.0f);
-            for (int64_t frame = 0; frame < frames; ++frame) {
-                for (int64_t head = 0; head < kWhistleHeads; ++head) {
-                    for (int64_t col = 0; col < kWhistleVDim; ++col) {
-                        cross_scratch_[static_cast<size_t>((head * kWhistleVDim + col) * kWhistleMaximumFrames + frame)] =
-                            values[static_cast<size_t>((frame * kWhistleHeads + head) * kWhistleVDim + col)];
-                    }
-                }
-            }
-            ggml_backend_tensor_set(cross_values_[static_cast<size_t>(layer)], cross_scratch_.data(), 0,
-                ggml_nbytes(cross_values_[static_cast<size_t>(layer)]));
-        }
-        std::vector<ggml_fp16_t> cross_mask(static_cast<size_t>(kWhistleMaximumFrames),
-            ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
-        std::fill_n(cross_mask.begin(), frames, ggml_fp32_to_fp16(0.0f));
-        ggml_backend_tensor_set(cross_mask_, cross_mask.data(), 0, ggml_nbytes(cross_mask_));
-        // Stale rows would be masked out anyway; clearing keeps every request starting
-        // from the same backend state.
-        kv_cache_.clear_on_backend();
-        upload_ms_ = 0.0;
-        compute_ms_ = 0.0;
-        read_ms_ = 0.0;
-        steps_ = 0;
-        start_ms_ = debug::elapsed_ms(started);
-    }
-
-    const std::vector<float> & step(const std::vector<int32_t> & tokens) {
-        if (tokens.empty()) {
-            throw std::invalid_argument("Whistle decoder needs at least one input token");
-        }
-        const int64_t position = static_cast<int64_t>(tokens.size()) - 1;
-        if (position != kv_cache_.current_end() || position >= kCacheSteps) {
-            throw std::runtime_error("Whistle decoder positions must be consecutive and within the token limit");
-        }
-        const int32_t token = tokens.back();
-        if (token < 0 || token >= kWhistleVocabulary) {
-            throw std::invalid_argument("Whistle decoder token is outside the vocabulary");
-        }
-        const auto upload_started = Clock::now();
-        const auto slot = static_cast<int32_t>(position);
-        const std::array<int32_t, 3> history = {slot + 2, slot + 1, slot};
-        ggml_backend_tensor_set(token_, &token, 0, sizeof(token));
-        ggml_backend_tensor_set(position_, &slot, 0, sizeof(slot));
-        ggml_backend_tensor_set(history_index_, history.data(), 0, sizeof(history));
-        modules::write_decoder_cached_step_mask(self_mask_, mask_scratch_, kCacheSteps, position, position);
-        for (int site = 0; site < kEngramSites; ++site) {
-            engram_features(tokens, engram_tables_[static_cast<size_t>(site)], feature_scratch_);
-            ggml_backend_tensor_set(engram_features_[static_cast<size_t>(site)], feature_scratch_.data(), 0,
-                feature_scratch_.size() * sizeof(float));
-        }
-        upload_ms_ += debug::elapsed_ms(upload_started);
-
-        const auto compute_started = Clock::now();
-        if (core::compute_graph(*execution_context_, graph_, plan_, "whistle_asr.decoder.step") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Failed to compute the Whistle decoder step graph");
-        }
-        ggml_backend_synchronize(backend_);
-        compute_ms_ += debug::elapsed_ms(compute_started);
-        kv_cache_.advance_after_direct_append(1);
-
-        const auto read_started = Clock::now();
-        core::read_tensor_f32_into(logits_, logits_values_);
-        read_ms_ += debug::elapsed_ms(read_started);
-        ++steps_;
-        return logits_values_;
-    }
-
-    void log_timings() const {
-        debug::timing_log_scalar("whistle_asr.decode_graph_nodes", static_cast<int64_t>(graph_nodes_));
-        debug::timing_log_scalar("whistle_asr.decode_start_ms", start_ms_);
-        debug::timing_log_scalar("whistle_asr.decode_step_count", steps_);
-        debug::timing_log_scalar("whistle_asr.decode_step_upload_ms", upload_ms_);
-        debug::timing_log_scalar("whistle_asr.decode_step_compute_ms", compute_ms_);
-        debug::timing_log_scalar("whistle_asr.decode_step_read_ms", read_ms_);
-    }
-
-private:
-    void allocate_state() {
-        ggml_init_params params{};
-        params.mem_size = ggml_tensor_overhead() * 128;
-        params.no_alloc = true;
-        state_ctx_.reset(ggml_init(params));
-        if (!state_ctx_) {
-            throw std::runtime_error("Failed to initialize the Whistle decoder state context");
-        }
-        ggml_context * ctx = state_ctx_.get();
-        token_ = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
-        position_ = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
-        history_index_ = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, kProjectionTaps);
-        self_mask_ = ggml_new_tensor_1d(ctx, GGML_TYPE_F16, kCacheSteps);
-        cross_mask_ = ggml_new_tensor_1d(ctx, GGML_TYPE_F16, kWhistleMaximumFrames);
-        for (auto & feature : engram_features_) {
-            feature = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, kWhistleDimension, kEngramTaps);
-        }
-        std::vector<TensorValue> keys;
-        std::vector<TensorValue> values;
-        for (int layer = 0; layer < kWhistleLayers; ++layer) {
-            keys.push_back(core::wrap_tensor(
-                ggml_new_tensor_4d(ctx, GGML_TYPE_F32, kWhistleQkDim, kWhistleKvHeads, kCacheSteps, 1),
-                TensorShape::from_dims({1, kCacheSteps, kWhistleKvHeads, kWhistleQkDim}), GGML_TYPE_F32));
-            values.push_back(core::wrap_tensor(
-                ggml_new_tensor_4d(ctx, GGML_TYPE_F32, kWhistleVDim, kWhistleKvHeads, kCacheSteps, 1),
-                TensorShape::from_dims({1, kCacheSteps, kWhistleKvHeads, kWhistleVDim}), GGML_TYPE_F32));
-            history_[static_cast<size_t>(layer)] =
-                ggml_new_tensor_4d(ctx, GGML_TYPE_F32, kRawWidth, 1, kHistorySlots, 1);
-            cross_keys_[static_cast<size_t>(layer)] =
-                ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kWhistleQkDim, kWhistleMaximumFrames, kWhistleHeads);
-            cross_values_[static_cast<size_t>(layer)] =
-                ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kWhistleMaximumFrames, kWhistleVDim, kWhistleHeads);
-        }
-        state_buffer_.reset(ggml_backend_alloc_ctx_tensors(ctx, backend_));
-        if (state_buffer_ == nullptr) {
-            throw std::runtime_error("Failed to allocate the Whistle decoder state tensors");
-        }
-        // Masked attention entries get probability zero, which only stays zero when
-        // the rows behind them are finite; the two leading history slots must be zero.
-        ggml_backend_buffer_clear(state_buffer_.get(), 0);
-        // Key rows are 96 wide and value rows 128 wide. The cache's host import and
-        // export paths assume one row width, so the graph writes the rows itself and
-        // the cache only tracks the position and clears the backend buffers.
-        runtime::TransformerKVCacheOptions options;
-        options.lazy_import_scratch = true;
-        kv_cache_ = runtime::TransformerKVCache(kCacheSteps, kKeyWidth, std::move(keys), std::move(values), options);
-        cross_scratch_.resize(static_cast<size_t>(kWhistleMaximumFrames * kWhistleHeads * kWhistleVDim));
-        mask_scratch_.resize(static_cast<size_t>(kCacheSteps));
-    }
-
-    void build_graph() {
-        ggml_init_params params{};
-        params.mem_size = ggml_tensor_overhead() * kGraphNodes + ggml_graph_overhead_custom(kGraphNodes, false);
-        params.no_alloc = true;
-        graph_ctx_.reset(ggml_init(params));
-        if (!graph_ctx_) {
-            throw std::runtime_error("Failed to initialize the Whistle decoder graph context");
-        }
-        core::ModuleBuildContext ctx{graph_ctx_.get(), "whistle_asr_decoder", execution_context_->backend_type()};
-        WhistleGraphOps ops(ctx, weights_.constants);
-        ggml_context * g = ctx.ggml;
-
-        std::array<Engram, kEngramSites> engrams{};
-        for (int site = 0; site < kEngramSites; ++site) {
-            engrams[static_cast<size_t>(site)] = engram(ops, site);
-        }
-        ggml_tensor * x = ggml_scale(g, ggml_get_rows(g, weights_.embedding.tensor, token_), std::sqrt(512.0f));
-        ggml_tensor * state = ggml_reshape_2d(g,
-            ggml_repeat_4d(g, ggml_reshape_3d(g, x, kWhistleDimension, 1, 1), kWhistleDimension, kWhistleLanes, 1, 1),
-            kWhistleLanes * kWhistleDimension, 1);
-        for (int layer = 0; layer < kWhistleLayers; ++layer) {
-            const auto & w = weights_.layers[static_cast<size_t>(layer)];
-            state = ops.mhc(state, w.mhc, [&](ggml_tensor * mixed) {
-                return block(ops, mixed, layer, w, engrams);
-            });
-        }
-        ggml_tensor * h = ops.gemma_norm(ops.lane_mean(state), weights_.final_norm, kWhistleDimension);
-        logits_ = ggml_mul_mat(g, weights_.embedding.tensor, h);
-        ggml_set_output(logits_);
-
-        graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
-        ggml_build_forward_expand(graph_, logits_);
-        core::validate_backend_graph_supported(backend_, graph_, "Whistle decoder");
-        galloc_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
-        if (!galloc_ || !ggml_gallocr_reserve(galloc_.get(), graph_) || !ggml_gallocr_alloc_graph(galloc_.get(), graph_)) {
-            throw std::runtime_error("Failed to allocate the Whistle decoder step graph");
-        }
-        core::prepare_host_graph_plan(*execution_context_, graph_, plan_);
-        graph_nodes_ = ggml_graph_n_nodes(graph_);
-        logits_values_.reserve(static_cast<size_t>(kWhistleVocabulary));
-    }
-
-    struct Engram {
-        ggml_tensor * key = nullptr;
-        ggml_tensor * value = nullptr;
-    };
-
-    // key = key_proj(feature of tap 0); value = sum over taps of taps[t] * value_proj(feature[t]).
-    Engram engram(WhistleGraphOps & ops, int site) {
-        ggml_context * g = ops.context().ggml;
-        const auto & w = weights_.engrams[static_cast<size_t>(site)];
-        ggml_tensor * feature = engram_features_[static_cast<size_t>(site)];
-        Engram result;
-        result.key = ops.linear(column(g, feature, 0), w.key_proj, kWhistleDimension, kWhistleDimension);
-        ggml_tensor * weighted = ggml_mul(g,
-            ops.linear(feature, w.value_proj, kWhistleDimension, kWhistleDimension), w.taps.tensor);
-        ggml_tensor * value = column(g, weighted, 0);
-        for (int64_t tap = 1; tap < kEngramTaps; ++tap) {
-            value = ggml_add(g, value, column(g, weighted, tap));
-        }
-        result.value = value;
-        return result;
-    }
-
-    // h += sigmoid(<rms(h), rms(key)> / sqrt(512)) * value
-    static ggml_tensor * inject(WhistleGraphOps & ops, ggml_tensor * h, const Engram & engram) {
-        ggml_context * g = ops.context().ggml;
-        ggml_tensor * dot = ggml_mul_mat(g,
-            ops.rms_norm(h, kWhistleDimension), ops.rms_norm(engram.key, kWhistleDimension));
-        ggml_tensor * gate = ops.sigmoid(ggml_scale(g, dot, 1.0f / std::sqrt(512.0f)));
-        return ggml_add(g, h, ggml_mul(g, engram.value, gate));
-    }
-
-    // Causal self-attention over the cached steps. The query, key and value of this
-    // step mix the raw projections of this step and the two before it.
-    ggml_tensor * self_attention(WhistleGraphOps & ops, ggml_tensor * input, int layer, const DecoderLayerWeights & w) {
-        core::ModuleBuildContext & ctx = ops.context();
-        ggml_context * g = ctx.ggml;
-        const modules::FastKVSetRowsModule set_rows;
-
-        ggml_tensor * current = ops.linear(input, w.qkv_proj, kWhistleDimension, kRawWidth);
-        const auto history = set_rows.build(ctx,
-            core::wrap_tensor(history_[static_cast<size_t>(layer)],
-                TensorShape::from_dims({1, kHistorySlots, 1, kRawWidth}), GGML_TYPE_F32),
-            core::wrap_tensor(current, TensorShape::from_dims({1, 1, 1, kRawWidth}), GGML_TYPE_F32),
-            core::wrap_tensor(ggml_view_1d(g, history_index_, 1, 0), TensorShape::from_dims({1}), GGML_TYPE_I32));
-        // [608, 3]: this step, the previous step, the step before that.
-        ggml_tensor * window = ggml_get_rows(g,
-            ggml_reshape_2d(g, history.tensor, kRawWidth, kHistorySlots), history_index_);
-        ggml_tensor * weighted = ggml_mul(g, window, w.taps.tensor);
-        ggml_tensor * mixed = ggml_add(g, ggml_add(g, column(g, weighted, 0), column(g, weighted, 1)), column(g, weighted, 2));
-
-        ggml_tensor * query = ggml_view_1d(g, mixed, kQueryWidth, 0);
-        ggml_tensor * key = ggml_view_1d(g, mixed, kKeyWidth, kQueryWidth * sizeof(float));
-        ggml_tensor * value = ggml_view_1d(g, mixed, kValueWidth, (kQueryWidth + kKeyWidth) * sizeof(float));
-        const auto q = ops.rope(ops.head_norm(query, kWhistleHeads, w.q_norm), kWhistleHeads, position_);
-        const auto k = ops.rope(ops.head_norm(key, kWhistleKvHeads, w.k_norm), kWhistleKvHeads, position_);
-        const auto slot = core::wrap_tensor(position_, TensorShape::from_dims({1}), GGML_TYPE_I32);
-        const auto keys = set_rows.build(ctx, kv_cache_.key_tensor(static_cast<size_t>(layer)), k, slot);
-        const auto values = set_rows.build(ctx, kv_cache_.value_tensor(static_cast<size_t>(layer)),
-            core::wrap_tensor(ggml_reshape_4d(g, value, kWhistleVDim, kWhistleKvHeads, 1, 1),
-                TensorShape::from_dims({1, 1, kWhistleKvHeads, kWhistleVDim}), GGML_TYPE_F32),
-            slot);
-
-        // Eight query heads over two key/value heads: ggml_mul_mat broadcasts key
-        // head h / 4 to query head h, matching the grouping of the checkpoint.
-        ggml_tensor * key_heads = ggml_permute(g,
-            ggml_reshape_3d(g, keys.tensor, kWhistleQkDim, kWhistleKvHeads, kCacheSteps), 0, 2, 1, 3);
-        ggml_tensor * scores = ggml_mul_mat(g, key_heads, ggml_reshape_3d(g, q.tensor, kWhistleQkDim, 1, kWhistleHeads));
-        ggml_tensor * probabilities = ggml_soft_max_ext(
-            g, scores, self_mask_, 1.0f / std::sqrt(static_cast<float>(kWhistleQkDim)), 0.0f);
-        ggml_tensor * value_heads = ggml_cont(g, ggml_permute(g,
-            ggml_reshape_3d(g, values.tensor, kWhistleVDim, kWhistleKvHeads, kCacheSteps), 1, 2, 0, 3));
-        ggml_tensor * context = ggml_reshape_2d(g, ggml_mul_mat(g, value_heads, probabilities), kWhistleDimension, 1);
-        ggml_tensor * gate = ops.sigmoid(ops.linear(input, w.self_gate_proj, kWhistleDimension, kWhistleDimension));
-        return ops.linear(ggml_mul(g, context, gate), w.self_out_proj, kWhistleDimension, kWhistleDimension);
-    }
-
-    // Attention over the encoder frames of this request, eight heads, no grouping.
-    ggml_tensor * cross_attention(WhistleGraphOps & ops, ggml_tensor * input, int layer, const DecoderLayerWeights & w) {
-        ggml_context * g = ops.context().ggml;
-        ggml_tensor * query = ops.head_norm(
-            ops.linear(input, w.cross_q_proj, kWhistleDimension, kQueryWidth), kWhistleHeads, w.cross_q_norm);
-        ggml_tensor * scores = ggml_mul_mat(g, cross_keys_[static_cast<size_t>(layer)],
-            ggml_reshape_3d(g, query, kWhistleQkDim, 1, kWhistleHeads));
-        ggml_tensor * probabilities = ggml_soft_max_ext(
-            g, scores, cross_mask_, 1.0f / std::sqrt(static_cast<float>(kWhistleQkDim)), 0.0f);
-        ggml_tensor * context = ggml_reshape_2d(g,
-            ggml_mul_mat(g, cross_values_[static_cast<size_t>(layer)], probabilities), kWhistleDimension, 1);
-        ggml_tensor * gate = ops.sigmoid(ops.linear(input, w.cross_gate_proj, kWhistleDimension, kWhistleDimension));
-        return ops.linear(ggml_mul(g, context, gate), w.cross_out_proj, kWhistleDimension, kWhistleDimension);
-    }
-
-    ggml_tensor * block(WhistleGraphOps & ops, ggml_tensor * input, int layer, const DecoderLayerWeights & w,
-                        const std::array<Engram, kEngramSites> & engrams) {
-        ggml_context * g = ops.context().ggml;
-        ggml_tensor * h = input;
-        if (layer == 3 || layer == 7) {
-            h = inject(ops, h, engrams[layer == 3 ? 0 : 1]);
-        }
-        ggml_tensor * self = self_attention(ops, ops.gemma_norm(h, w.attn_norm, kWhistleDimension), layer, w);
-        self = ops.gemma_norm(self, w.post_attn_norm, kWhistleDimension);
-        h = ggml_add(g, h, ggml_scale(g, self, w.attn_gate));
-        ggml_tensor * cross = cross_attention(ops, ops.gemma_norm(h, w.cross_norm, kWhistleDimension), layer, w);
-        cross = ops.gemma_norm(cross, w.post_cross_norm, kWhistleDimension);
-        h = ggml_add(g, h, ggml_scale(g, cross, w.cross_gate));
-        // The decoder adds its single Hadamard MLP at full weight.
-        return ggml_add(g, h, ops.hadamard(ops.gemma_norm(h, w.pre_hada_norm, kWhistleDimension), w.hadamard));
-    }
-
-    std::shared_ptr<const WhistleAssets> assets_;
-    core::ExecutionContext * execution_context_ = nullptr;
-    ggml_backend_t backend_ = nullptr;
-    core::BackendWeightStore weight_store_;
-    DecoderWeights weights_;
-    // Raw little-endian f32 rows of the two [4, 18432, 128] engram tables.
-    std::array<std::vector<std::byte>, kEngramSites> engram_tables_;
-
-    std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
-    std::unique_ptr<ggml_backend_buffer, BackendBufferDeleter> state_buffer_;
-    ggml_tensor * token_ = nullptr;
-    ggml_tensor * position_ = nullptr;
-    ggml_tensor * history_index_ = nullptr;
-    ggml_tensor * self_mask_ = nullptr;
-    ggml_tensor * cross_mask_ = nullptr;
-    std::array<ggml_tensor *, kEngramSites> engram_features_{};
-    std::array<ggml_tensor *, kWhistleLayers> history_{};
-    std::array<ggml_tensor *, kWhistleLayers> cross_keys_{};
-    std::array<ggml_tensor *, kWhistleLayers> cross_values_{};
-    runtime::TransformerKVCache kv_cache_;
-
-    std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx_;
-    std::unique_ptr<ggml_gallocr, GallocrDeleter> galloc_;
-    core::HostGraphPlan plan_;
-    ggml_cgraph * graph_ = nullptr;
-    ggml_tensor * logits_ = nullptr;
-
-    std::vector<float> logits_values_;
-    std::vector<float> cross_scratch_;
-    std::vector<float> feature_scratch_;
-    std::vector<ggml_fp16_t> mask_scratch_;
-    double start_ms_ = 0.0;
-    double upload_ms_ = 0.0;
-    double compute_ms_ = 0.0;
-    double read_ms_ = 0.0;
-    int64_t steps_ = 0;
-    int graph_nodes_ = 0;
+    std::shared_ptr<const WhistleAssets> assets;
+    HostDecoderWeights weights;
+    WhistleEncoderOutput encoder;
+    std::array<DecoderLayerState, kLayers> cache;
+    Rows logits;
+    size_t next_position = 0;
+    bool started = false;
 };
 
-WhistleDecoderRuntime::WhistleDecoderRuntime(
-    std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context)
-    : graph_(std::make_unique<Graph>(std::move(assets), execution_context)) {}
+WhistleDecoderRuntime::WhistleDecoderRuntime(std::shared_ptr<const WhistleAssets> assets) {
+    if (!assets || !assets->weights) {
+        throw std::invalid_argument("Whistle decoder needs verified model assets");
+    }
+    impl_ = std::make_unique<Impl>(std::move(assets));
+}
 
 WhistleDecoderRuntime::~WhistleDecoderRuntime() = default;
 
-void WhistleDecoderRuntime::start(const WhistleEncoderOutput & encoder) {
-    graph_->start(encoder);
+void WhistleDecoderRuntime::start(WhistleEncoderOutput encoder) {
+    if (encoder.frames == 0 || encoder.frames > kWhistleMaximumFrames) {
+        throw std::invalid_argument("Whistle decoder needs between 1 and 375 encoder frames");
+    }
+    for (int layer = 0; layer < kLayers; ++layer) {
+        if (encoder.cross_k[layer].size() != encoder.frames * 8 * 48 ||
+            encoder.cross_v[layer].size() != encoder.frames * 8 * 64) {
+            throw std::invalid_argument("Whistle encoder cross-attention output has the wrong shape");
+        }
+    }
+    auto & state = *impl_;
+    encoder.memory = {};
+    state.encoder = std::move(encoder);
+    state.cache = {};
+    state.logits.clear();
+    state.next_position = 0;
+    state.started = true;
 }
 
 const std::vector<float> & WhistleDecoderRuntime::step(const std::vector<int32_t> & tokens) {
-    return graph_->step(tokens);
-}
-
-void WhistleDecoderRuntime::log_timings() const {
-    graph_->log_timings();
+    auto & state = *impl_;
+    if (!state.started || tokens.empty()) {
+        throw std::invalid_argument("Whistle decoder needs start() and at least one input token");
+    }
+    const size_t position = tokens.size() - 1;
+    if (position != state.next_position || position >= kWhistleMaximumTextTokens + 2) {
+        throw std::runtime_error("Whistle decoder positions must be consecutive and within the token limit");
+    }
+    if (tokens.back() < 0 || tokens.back() >= kWhistleVocabulary) {
+        throw std::invalid_argument("Whistle decoder token is outside the vocabulary");
+    }
+    const auto engram = lookup_engrams(tokens, state.weights);
+    state.logits = decoder_step(tokens.back(), position, state.weights, *state.assets,
+                                state.encoder, engram, state.cache);
+    ++state.next_position;
+    return state.logits;
 }
 
 }  // namespace engine::community_models::whistle_asr

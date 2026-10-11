@@ -2,8 +2,8 @@
 
 The `whistle_asr` family runs [Cactus Compute Whistle](https://huggingface.co/Cactus-Compute/whistle)
 locally through audio.cpp. The current implementation supports **offline**
-transcription of 16 kHz mono WAV files up to 30 seconds on the CPU and Metal
-backends. It detects one of the
+transcription of 16 kHz mono WAV files up to 30 seconds. The encoder uses the
+selected backend and the decoder runs on the host CPU. It detects one of the
 model's seven languages (English, German, French, Spanish, Italian, Dutch, or
 Polish); `--language en`, `de`, `fr`, `es`, `it`, `nl`, or `pl` forces a language.
 These are supported language codes, not seven-language validation evidence.
@@ -72,30 +72,24 @@ framework `Conv2dModule`, `DepthwiseConv2dModule`, `DepthwiseConv1dModule`,
 `SigmoidModule`, `SoftmaxModule`, and `GLUModule`. The stem does not use the shared
 `DepthwiseConvSubsamplingModule` because that module hardcodes ReLU and Whistle's
 stem uses SiLU. Whistle-specific math stays model-local in `graph.cpp`, shared by
-the encoder and decoder graphs: the four-lane manifold hyper-connection mixing with
+the encoder graph: the four-lane manifold hyper-connection mixing with
 its Sinkhorn normalization, the conditioned Kronecker-factored Hadamard MLP with its
 two fixed permutations, and the per-head RMS norm and rotary embedding over 48-wide
 heads. Checkpoint tensors are JAX `[in, out]` kernels; the loader transposes them
 once into the backend weight store.
 
-The autoregressive decoder runs as one persistent GGML step graph. It has its own
-CPU backend with one thread, whatever backend the session uses. Each step feeds
-one token. A step is 4738 small graph nodes, so its cost is per-node overhead
-rather than arithmetic. On the 14 s sample the 42 decoder steps took 134 to 140 ms
-on one CPU thread, 550 to 560 ms on Metal, and 1014 to 1111 ms with two CPU
-threads, because each node synchronizes the threads.
+The autoregressive decoder uses the original host implementation from PR #824,
+with OpenMP workers bounded by `--threads`. Its weights are retained across
+requests; self-attention caches and three-tap projection history reset for each
+recording. The encoder graph computes cross-attention keys and values, which
+are transferred to the host decoder once per request. Grouped-query and
+cross-attention preserve the model's 48-wide queries/keys and 64-wide values.
+Engram lookup, projections, gates and greedy argmax also run on the host.
 
-Self-attention keys and values stay on the decoder backend in a
-`TransformerKVCache` written with `FastKVSetRowsModule`. A per-layer history of
-raw query/key/value projections feeds the three-tap mixing with the previous two
-steps. Grouped-query and cross-attention use 48-wide queries/keys and 64-wide
-values. The shared attention modules cannot express this because they assume one
-head size. The encoder graph computes the cross-attention keys and values. The
-decoder copies them to its own backend tensors once per request.
-
-The n-gram engram tables stay on the host because their lookup hashes the token
-history. Each step uploads the gathered rows, and the graph applies the engram
-projections and gates. The argmax over the logits also runs on the host.
+This avoids thousands of small GGML decoder nodes per token. Four-thread CPU
+and Metal sessions benefit on the tested M4 Pro; one-thread decoding is slower
+than the previous one-thread GGML graph. See the
+[host decoder A/B report](../reports/whistle_host_decoder.md).
 
 ## Build and request options
 
@@ -114,10 +108,11 @@ On macOS the Metal helper configures the same model set:
 scripts/build_metal.sh --build-dir build/whistle --build-type Release --openmp auto --with-tests --deployment-build --model-set custom --models whistle_asr --target audiocpp_cli --target audiocpp_gguf
 ```
 
-Use `--backend cpu` or `--backend metal`. `--threads` sets the ggml CPU backend
-thread count for the encoder graph; the runtime accepts 1 to 64. The decoder step
-graph always runs on one CPU thread (see above). Use `--backend cpu --threads 1`
-for a portable inference baseline. The spec exposes only the optional `language`
+Use `--backend` to select an available backend; CPU and Metal have been validated.
+`--threads` sets the CPU encoder's
+thread count and bounds the host decoder's OpenMP workers; the runtime accepts
+1 to 64. Build with OpenMP enabled for parallel host decoding. Without OpenMP,
+the host decoder runs serially. The spec exposes only the optional `language`
 request option, no model-specific session or load options. Use `--language de` or
 `--request-option language=de` to force German. Omit the language option for model
 language selection. Decoding is greedy, with at most 320 text tokens. The model
