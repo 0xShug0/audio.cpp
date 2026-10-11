@@ -789,19 +789,13 @@ runtime::StreamingPolicy ParakeetTDTStreamingSession::streaming_policy() const {
     return policy;
 }
 
-void ParakeetTDTStreamingSession::start_stream(const runtime::TaskRequest& request) {
-    reset();
+void ParakeetTDTStreamingSession::begin_stream(const runtime::TaskRequest& request) {
     auto normalized_request = request;
     normalized_request.options = normalize_request_options(request.options, *contract_);
     streaming_decode_options_ = decode_options_for_request(normalized_request);
 }
 
-void ParakeetTDTStreamingSession::set_stream_event_sink(
-    runtime::StreamEventCallback sink) {
-    stream_event_sink_ = std::move(sink);
-}
-
-void ParakeetTDTStreamingSession::reset() {
+void ParakeetTDTStreamingSession::reset_stream_state() {
     require_prepared("Parakeet TDT buffered streaming reset()");
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Parakeet TDT reset() requires a streaming session");
@@ -819,10 +813,7 @@ void ParakeetTDTStreamingSession::reset() {
     token_ids_.clear();
     token_frame_indices_.clear();
     token_durations_.clear();
-    partials_.reset();
     decoder_->reset_state();
-    stream_started_ = true;
-    finalized_ = false;
 }
 
 ParakeetDecodedText ParakeetTDTStreamingSession::merged_decode() const {
@@ -914,7 +905,7 @@ bool ParakeetTDTStreamingSession::process_center_window(
     return true;
 }
 
-runtime::StreamEvent ParakeetTDTStreamingSession::process_ready_windows(bool flush_tail) {
+ParakeetDecodedText ParakeetTDTStreamingSession::process_ready_windows(bool flush_tail) {
     bool changed = false;
     while (next_center_start_sample_ < received_samples_) {
         const int64_t center_end = std::min(
@@ -940,45 +931,23 @@ runtime::StreamEvent ParakeetTDTStreamingSession::process_ready_windows(bool flu
         buffer_start_sample_ = keep_from;
     }
 
-    runtime::StreamEvent event;
+    ParakeetDecodedText decoded;
+    if (changed || flush_tail) decoded = merged_decode();
     if (changed && !token_ids_.empty()) {
-        auto decoded = merged_decode();
-        // A partial is the text decoded since the last one: the CLI appends
-        // them into a scrolling transcript and the server forwards each as a
-        // transcript.text.delta. merged_decode() re-renders the whole
-        // transcript from every token so far, so publishing it unchanged made
-        // an appending client build "Some call meSome call me nature".
-        std::string delta = partials_.publish(decoded.text);
-        if (!delta.empty()) {
-            event.partial_text = runtime::Transcript{std::move(delta), ""};
-        }
-        // word_timestamps stays cumulative, deliberately. It is not a delta
-        // field: it is the finalized set so far, which is why the provisional
-        // last word is dropped below rather than carried. So the two fields in
-        // this event have different shapes on purpose -- partial_text is what
-        // is new, word_timestamps is everything settled -- because each matches
-        // its own contract rather than each other.
-        event.word_timestamps = std::move(decoded.word_timestamps);
+        auto words = decoded.word_timestamps;
         // The last word has no following word boundary yet, so it remains
         // provisional and is withheld from the finalized timestamp list.
-        if (!event.word_timestamps.empty()) {
-            event.word_timestamps.pop_back();
+        if (!words.empty()) {
+            words.pop_back();
         }
-        if (stream_event_sink_) {
-            stream_event_sink_(event);
-            return {};
-        }
+        publish_transcript({decoded.text, ""}, std::move(words));
     }
-    return event;
+    return decoded;
 }
 
-runtime::StreamEvent ParakeetTDTStreamingSession::process_audio_chunk(
+void ParakeetTDTStreamingSession::consume_audio(
     const runtime::AudioChunk& chunk) {
     require_prepared("Parakeet TDT buffered streaming process_audio_chunk()");
-    if (!stream_started_ || finalized_) {
-        throw std::runtime_error(
-            "Parakeet TDT buffered streaming chunk received outside an active stream");
-    }
     if (chunk.sample_rate != assets_->config.frontend.sample_rate ||
         chunk.channels != 1) {
         throw std::runtime_error(
@@ -993,28 +962,18 @@ runtime::StreamEvent ParakeetTDTStreamingSession::process_audio_chunk(
         chunk.samples.begin(),
         chunk.samples.end());
     received_samples_ += static_cast<int64_t>(chunk.samples.size());
-    return process_ready_windows(false);
+    process_ready_windows(false);
 }
 
-runtime::TaskResult ParakeetTDTStreamingSession::finalize() {
+void ParakeetTDTStreamingSession::complete_stream(runtime::TaskResult & result) {
     require_prepared("Parakeet TDT buffered streaming finalize()");
-    if (!stream_started_ || finalized_) {
-        throw std::runtime_error(
-            "Parakeet TDT buffered streaming finalize() requires an active stream");
-    }
     if (received_samples_ == 0) {
         throw std::runtime_error(
             "Parakeet TDT buffered streaming finalize() requires streamed audio");
     }
-    auto event = process_ready_windows(true);
-    (void)event;
-    auto decoded = merged_decode();
-    runtime::TaskResult result;
-    result.text_output = runtime::Transcript{decoded.text, ""};
+    auto decoded = process_ready_windows(true);
+    result.text_output = runtime::Transcript{std::move(decoded.text), ""};
     result.word_timestamps = std::move(decoded.word_timestamps);
-    finalized_ = true;
-    stream_started_ = false;
-    return result;
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {

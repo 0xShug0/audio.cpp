@@ -3,7 +3,6 @@
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
-#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
@@ -54,44 +53,6 @@ int64_t audio_frame_count(const runtime::AudioBuffer & audio) {
         throw std::runtime_error("Higgs Audio STT audio samples must be divisible by channel count");
     }
     return static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels));
-}
-
-void emit_transcript_delta(
-    const runtime::StreamEventCallback & sink,
-    const runtime::Transcript & transcript,
-    runtime::PartialTextPublisher & partials) {
-    if (!sink || transcript.text.empty()) {
-        return;
-    }
-    std::string delta = partials.publish(transcript.text);
-    if (delta.empty()) {
-        return;
-    }
-    runtime::StreamEvent event;
-    event.partial_text = runtime::Transcript{std::move(delta), transcript.language};
-    sink(event);
-}
-
-std::string append_streaming_transcript(
-    runtime::TaskResult & total,
-    const runtime::Transcript & chunk) {
-    if (!total.text_output.has_value()) {
-        total.text_output = runtime::Transcript{"", chunk.language};
-    }
-    if (!chunk.language.empty()) {
-        total.text_output->language = chunk.language;
-    }
-    if (chunk.text.empty()) {
-        return "";
-    }
-    std::string delta;
-    if (!total.text_output->text.empty()) {
-        total.text_output->text.push_back(' ');
-        delta.push_back(' ');
-    }
-    total.text_output->text += chunk.text;
-    delta += chunk.text;
-    return delta;
 }
 
 runtime::SessionOptions normalize_session_options(
@@ -276,12 +237,8 @@ runtime::StreamingPolicy HiggsAudioSTTSession::streaming_policy() const {
     return policy;
 }
 
-void HiggsAudioSTTSession::start_stream(const runtime::TaskRequest & request) {
+void HiggsAudioSTTSession::begin_stream(const runtime::TaskRequest & request) {
     require_prepared("Higgs Audio STT start_stream()");
-    if (task_.mode != runtime::RunMode::Streaming) {
-        throw std::runtime_error("Higgs Audio STT start_stream called on non-streaming session");
-    }
-    reset();
     streaming_request_ = request;
     streaming_request_.options = normalize_request_options(request.options);
     runtime::validate_spec_backed_request_options(
@@ -289,34 +246,20 @@ void HiggsAudioSTTSession::start_stream(const runtime::TaskRequest & request) {
         *contract_,
         "Higgs Audio STT");
     streaming_request_.audio_input = std::nullopt;
-    streaming_result_ = runtime::TaskResult{};
-    stream_started_ = true;
     streaming_chunks_processed_ = 0;
 }
 
-void HiggsAudioSTTSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
-    stream_event_sink_ = std::move(sink);
-}
-
-void HiggsAudioSTTSession::reset() {
+void HiggsAudioSTTSession::reset_stream_state() {
     require_prepared("Higgs Audio STT reset()");
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Higgs Audio STT reset called on non-streaming session");
     }
     streaming_request_ = runtime::TaskRequest{};
-    streaming_result_ = runtime::TaskResult{};
-    stream_started_ = false;
     streaming_chunks_processed_ = 0;
 }
 
-runtime::StreamEvent HiggsAudioSTTSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
+void HiggsAudioSTTSession::consume_audio(const runtime::AudioChunk & chunk) {
     require_prepared("Higgs Audio STT process_audio_chunk()");
-    if (task_.mode != runtime::RunMode::Streaming) {
-        throw std::runtime_error("Higgs Audio STT process_audio_chunk called on non-streaming session");
-    }
-    if (!stream_started_) {
-        throw std::runtime_error("Higgs Audio STT process_audio_chunk requires start_stream");
-    }
     runtime::AudioBuffer audio;
     audio.sample_rate = chunk.sample_rate;
     audio.channels = chunk.channels;
@@ -324,48 +267,23 @@ runtime::StreamEvent HiggsAudioSTTSession::process_audio_chunk(const runtime::Au
 
     auto request = streaming_request_;
     request.audio_input = std::move(audio);
-    runtime::StreamEventCallback saved_sink;
-    saved_sink.swap(stream_event_sink_);
-    runtime::TaskResult result;
-    try {
-        result = run_single(make_request(request));
-        saved_sink.swap(stream_event_sink_);
-    } catch (...) {
-        saved_sink.swap(stream_event_sink_);
-        throw;
-    }
+    auto result = run_single(make_request(request));
     ++streaming_chunks_processed_;
 
-    runtime::StreamEvent event;
     if (result.text_output.has_value()) {
-        const std::string delta = append_streaming_transcript(streaming_result_, *result.text_output);
-        if (!delta.empty()) {
-            event.partial_text = runtime::Transcript{delta, streaming_result_.text_output->language};
+        auto & transcript = *result.text_output;
+        if (!transcript.text.empty() && !committed_transcript().text.empty()) {
+            transcript.text.insert(0, " ");
         }
+        append_transcript(std::move(transcript));
     }
-    event.is_final = false;
-    return event;
 }
 
-runtime::TaskResult HiggsAudioSTTSession::finish_stream() {
-    return finalize();
-}
-
-runtime::TaskResult HiggsAudioSTTSession::finalize() {
+void HiggsAudioSTTSession::complete_stream(runtime::TaskResult &) {
     require_prepared("Higgs Audio STT finalize()");
-    if (task_.mode != runtime::RunMode::Streaming) {
-        throw std::runtime_error("Higgs Audio STT finalize called on non-streaming session");
-    }
-    if (!stream_started_) {
-        throw std::runtime_error("Higgs Audio STT finalize requires start_stream");
-    }
     if (streaming_chunks_processed_ == 0) {
         throw std::runtime_error("Higgs Audio STT finalize requires streamed audio");
     }
-    if (!streaming_result_.text_output.has_value()) {
-        streaming_result_.text_output = runtime::Transcript{};
-    }
-    return streaming_result_;
 }
 
 runtime::TaskResult HiggsAudioSTTSession::run_single(const HiggsAudioSTTRequest & asr_request) {
@@ -380,27 +298,10 @@ runtime::TaskResult HiggsAudioSTTSession::run_single(const HiggsAudioSTTRequest 
     const auto audio_embeddings = audio_encoder_.encode(features);
     const auto encoder_end = Clock::now();
     const auto text_decoder_start = Clock::now();
-    runtime::PartialTextPublisher partials;
-    HiggsAudioSTTTokenCallback token_callback;
-    if (task_.mode == runtime::RunMode::Streaming && stream_event_sink_ != nullptr) {
-        token_callback = [&](const HiggsAudioSTTGeneratedTokens & partial_tokens) {
-            const auto partial = postprocessor_.decode(partial_tokens, asr_request);
-            emit_transcript_delta(
-                stream_event_sink_,
-                runtime::Transcript{partial.text, partial.language},
-                partials);
-        };
-    }
-    const auto tokens = text_decoder_.generate(prompt, audio_embeddings, asr_request.generation, token_callback);
+    const auto tokens = text_decoder_.generate(prompt, audio_embeddings, asr_request.generation);
     const auto text_decoder_end = Clock::now();
     const auto postprocess_start = Clock::now();
     const auto decoded = postprocessor_.decode(tokens, asr_request);
-    if (task_.mode == runtime::RunMode::Streaming && stream_event_sink_ != nullptr) {
-        emit_transcript_delta(
-            stream_event_sink_,
-            runtime::Transcript{decoded.text, decoded.language},
-            partials);
-    }
     const auto postprocess_end = Clock::now();
 
     runtime::TaskResult result;

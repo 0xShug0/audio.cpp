@@ -69,3 +69,54 @@ does not define a new server schema or replace `StreamingPolicy`.
 
 This helper does not make noncausal generation incremental. A model still needs
 an explicit, correct partial-decoding boundary. LFM and PocketTTS are unchanged.
+
+## Incremental ASR Sessions
+
+`StreamingAsrSessionBase` provides one incoming-audio lifecycle for Parakeet TDT,
+Phonon, SenseVoice, Higgs Audio STT, and Kroko ASR. Implement four hooks:
+
+- `begin_stream(request)` configures a new request after the base resets it.
+- `consume_audio(chunk)` processes incoming samples and submits recognition updates.
+- `complete_stream(result)` flushes pending audio and attaches final-only metadata
+  to the base-owned result, which already contains the committed transcript.
+- `reset_stream_state()` clears request state while retaining reusable graphs
+  and weights.
+
+The base owns the accumulated result, UTF-8-safe delta publication, pending
+events, active-stream checks, sink registration, and `session.wall_ms`.
+`finish_stream()` and `finalize()` share the same completion path. A successful
+finalization closes the stream; start another request before feeding more audio.
+Sink registration survives reset. Exceptions propagate; a model must reset its
+state before rethrowing if inference failure leaves it unusable. Validation
+before mutation can leave the request active so the caller can retry a chunk.
+
+Models use these publication methods without inspecting the sink:
+
+- `publish_transcript(transcript, words, metadata)` submits the cumulative committed
+  transcript and cumulative timestamps. The existing `PartialTextPublisher`
+  derives the text delta; cumulative timestamp updates replace the pending list.
+- `append_transcript(segment, words, include_snapshot)` submits newly committed
+  text and disjoint word spans. The base accumulates the final result. The model
+  supplies any separator appropriate to its text; the base does not guess language
+  or punctuation rules. The optional snapshot includes the committed transcript.
+- `publish_hypothesis(transcript)` replaces the provisional hypothesis without
+  committing it or adding it to the final transcript.
+- `publish_metadata(metadata)` delivers ASR metadata such as voice activity or
+  an end-of-stream marker. `AsrStreamMetadata` cannot carry text or waveform
+  outputs, so it cannot bypass transcript publication.
+
+With a sink installed, updates are delivered immediately and the feed returns
+an empty event. Otherwise the base combines committed deltas, retains the latest
+snapshot, and collects metadata into the returned event. Models do not duplicate
+this collection logic. Models can inspect `committed_transcript()` but cannot
+mutate the accumulator during a feed. `complete_stream(result)` flushes through
+the same publication methods and can finalize timestamps or attach model-specific
+metadata. The base moves the complete result to the caller, without a copy.
+
+`partial_text` contains append-only committed text. `partial_text_snapshot`
+contains a revisable hypothesis; retain that distinction when a decoder revises
+uncommitted words. Buffering, context windows, decoder caches, timestamp
+publication, and commitment policy remain model-local. This base introduces no
+new HTTP schema and does not make a noncausal encoder causal. Existing streaming
+implementations are regression baselines, not proof that their chunking or event
+behavior is correct.
