@@ -101,7 +101,8 @@
         "default": "f32",
         "description": "Storage type for the Vocos decoder weights."
       }
-    ]
+    ],
+    "load": []
   },
   "package_defaults": {
     "download": {

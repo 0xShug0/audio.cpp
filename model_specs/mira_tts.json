@@ -143,7 +143,8 @@
         "default": "f32",
         "description": "Storage type for speaker and processor convolution weights. The DAC transposed-convolution decoder remains F32 for CUDA compatibility."
       }
-    ]
+    ],
+    "load": []
   },
   "packages": [],
   "dependencies": [],
