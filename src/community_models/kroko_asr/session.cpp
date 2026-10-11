@@ -599,21 +599,13 @@ runtime::StreamingPolicy KrokoASRSession::streaming_policy() const {
     return policy;
 }
 
-void KrokoASRSession::start_stream(
+void KrokoASRSession::begin_stream(
     const runtime::TaskRequest & request) {
-    reset();
     streaming_language_ = request_language(request);
     configure_request(request);
-    stream_start_ = Clock::now();
-    stream_started_ = true;
 }
 
-void KrokoASRSession::set_stream_event_sink(
-    runtime::StreamEventCallback sink) {
-    stream_event_sink_ = std::move(sink);
-}
-
-void KrokoASRSession::reset() {
+void KrokoASRSession::reset_stream_state() {
     require_prepared("Kroko ASR reset");
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error(
@@ -627,7 +619,6 @@ void KrokoASRSession::reset() {
     endpoint_segments_.clear();
     processed_feature_offset_ = 0;
     streaming_total_samples_ = 0;
-    streaming_partials_.reset();
     streaming_source_offset_ = 0;
     streaming_source_frames_ = 0;
     streaming_next_output_sample_ = 0;
@@ -639,7 +630,6 @@ void KrokoASRSession::reset() {
     streaming_source_sample_rate_ = 0;
     streaming_source_channels_ = 0;
     streaming_received_audio_ = false;
-    stream_started_ = false;
     subsampling_.reset();
     zipformer_.reset();
     decoder_.reset();
@@ -805,12 +795,13 @@ void KrokoASRSession::flush_streaming_resampler() {
     streaming_total_samples_ = target_samples;
 }
 
-runtime::StreamEvent KrokoASRSession::process_streaming_audio(
+void KrokoASRSession::process_streaming_audio(
     bool final) {
-    runtime::StreamEvent event;
+    runtime::AsrStreamMetadata event;
     event.is_final = final;
     if (streaming_audio_.samples.empty()) {
-        return event;
+        publish_metadata(std::move(event));
+        return;
     }
     const auto frontend_audio =
         final ? with_tail_padding(streaming_audio_) : streaming_audio_;
@@ -900,72 +891,42 @@ runtime::StreamEvent KrokoASRSession::process_streaming_audio(
     }
     if (processed || final) {
         const auto decoded = combined_decoded();
-        const auto result = make_result(
+        auto result = make_result(
             decoded,
             streaming_total_samples_,
             streaming_language_);
-        // A partial is the text decoded since the last one, not the whole
-        // transcript re-rendered: combined_decoded() restates everything
-        // decoded so far, so an appending consumer built it up quadratically.
-        // word_timestamps stays cumulative -- it is the finalized set, not a
-        // delta -- so the two fields differ on purpose.
         if (result.text_output.has_value()) {
-            std::string delta =
-                streaming_partials_.publish(
-                    result.text_output->text);
-            if (!delta.empty()) {
-                event.partial_text = runtime::Transcript{
-                    std::move(delta),
-                    result.text_output->language};
-            }
+            publish_transcript(std::move(*result.text_output),
+                std::move(result.word_timestamps), std::move(event));
+            return;
         }
-        event.word_timestamps = result.word_timestamps;
     }
-    return event;
+    publish_metadata(std::move(event));
 }
 
-runtime::StreamEvent KrokoASRSession::process_audio_chunk(
+void KrokoASRSession::consume_audio(
     const runtime::AudioChunk & chunk) {
     require_prepared("Kroko ASR process_audio_chunk");
-    if (task_.mode != runtime::RunMode::Streaming ||
-        !stream_started_) {
-        throw std::runtime_error(
-            "Kroko ASR streaming has not been started");
-    }
     append_streaming_chunk(chunk);
     streaming_peak_buffer_values_ = std::max(
         streaming_peak_buffer_values_,
         streaming_audio_.samples.size());
-    return process_streaming_audio(false);
+    process_streaming_audio(false);
 }
 
-runtime::TaskResult KrokoASRSession::finalize() {
+void KrokoASRSession::complete_stream(runtime::TaskResult & result) {
     require_prepared("Kroko ASR finalize");
-    if (task_.mode != runtime::RunMode::Streaming ||
-        !stream_started_) {
-        throw std::runtime_error(
-            "Kroko ASR streaming has not been started");
-    }
     if (!streaming_received_audio_) {
         throw std::runtime_error(
             "Kroko ASR finalize() requires streamed audio");
     }
     flush_streaming_resampler();
-    auto event = process_streaming_audio(true);
-    if (stream_event_sink_) {
-        stream_event_sink_(event);
-    }
-    // Built from the combined decode, not from event.partial_text. The partial
-    // is the increment since the last one now, so reusing it here would report
-    // only the final window as the transcript -- this read the whole transcript
-    // out of the partial only because the partial restated it every time.
-    runtime::TaskResult result = make_result(
-        combined_decoded(),
-        streaming_total_samples_,
-        streaming_language_);
+    process_streaming_audio(true);
+    result.text_output->language = streaming_language_;
+    result.speech_segments = endpoint_segments_;
     engine::debug::timing_log_scalar(
         "kroko_asr.session_ms",
-        engine::debug::elapsed_ms(stream_start_, Clock::now()));
+        stream_wall_ms());
     engine::debug::trace_log_scalar(
         "kroko_asr.streaming.encoder_chunks",
         streaming_encoder_chunks_);
@@ -978,12 +939,6 @@ runtime::TaskResult KrokoASRSession::finalize() {
     engine::debug::trace_log_scalar(
         "kroko_asr.streaming.total_samples",
         streaming_total_samples_);
-    stream_started_ = false;
-    return result;
-}
-
-runtime::TaskResult KrokoASRSession::finish_stream() {
-    return finalize();
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_kroko_asr_loader() {

@@ -1,7 +1,8 @@
 #pragma once
 
+#include "engine/framework/runtime/streaming_asr_session.h"
+
 #include "engine/framework/model_spec/metadata.h"
-#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/community_models/parakeet_tdt/assets.h"
 #include "engine/community_models/parakeet_tdt/decoder.h"
@@ -90,7 +91,7 @@ private:
 
 class ParakeetTDTStreamingSession final
     : public ParakeetTDTSessionBase
-    , public runtime::IStreamingVoiceTaskSession {
+    , public runtime::StreamingAsrSessionBase {
 public:
     ParakeetTDTStreamingSession(
         runtime::TaskSpec task,
@@ -103,14 +104,13 @@ public:
     runtime::RunMode run_mode() const override;
     void prepare(const runtime::SessionPreparationRequest & request) override;
     runtime::StreamingPolicy streaming_policy() const override;
-    void start_stream(const runtime::TaskRequest & request) override;
-    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
-    void reset() override;
-    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
-    runtime::TaskResult finalize() override;
 
 private:
-    runtime::StreamEvent process_ready_windows(bool flush_tail);
+    void begin_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override;
+    void consume_audio(const runtime::AudioChunk & chunk) override;
+    void complete_stream(runtime::TaskResult & result) override;
+    ParakeetDecodedText process_ready_windows(bool flush_tail);
     bool process_center_window(int64_t center_end_sample, bool flush_tail);
     ParakeetDecodedText merged_decode() const;
 
@@ -126,12 +126,6 @@ private:
     std::vector<int32_t> token_ids_;
     std::vector<int32_t> token_frame_indices_;
     std::vector<int32_t> token_durations_;
-    runtime::StreamEventCallback stream_event_sink_;
-    // merged_decode() returns the whole transcript each time; this turns it
-    // back into the increment a partial is contracted to be.
-    runtime::PartialTextPublisher partials_;
-    bool stream_started_ = false;
-    bool finalized_ = false;
 };
 
 }  // namespace engine::community_models::parakeet_tdt

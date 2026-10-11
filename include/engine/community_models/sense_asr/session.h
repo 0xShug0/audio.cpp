@@ -7,8 +7,8 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_asr_session.h"
 
-#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -30,7 +30,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_sense_asr_loader();
 
 class SenseAsrSession final : public runtime::RuntimeSessionBase,
                               public runtime::IOfflineVoiceTaskSession,
-                              public runtime::IStreamingVoiceTaskSession {
+                              public runtime::StreamingAsrSessionBase {
 public:
   SenseAsrSession(
       runtime::TaskSpec task, runtime::SessionOptions options,
@@ -44,15 +44,12 @@ public:
   void prepare(const runtime::SessionPreparationRequest &request) override;
   runtime::TaskResult run(const runtime::TaskRequest &request) override;
   runtime::StreamingPolicy streaming_policy() const override;
-  void start_stream(const runtime::TaskRequest &request) override;
-  void set_stream_event_sink(runtime::StreamEventCallback sink) override;
-  void reset() override;
-  runtime::StreamEvent
-  process_audio_chunk(const runtime::AudioChunk &chunk) override;
-  runtime::TaskResult finish_stream() override;
-  runtime::TaskResult finalize() override;
 
 private:
+  void begin_stream(const runtime::TaskRequest &request) override;
+  void reset_stream_state() override;
+  void consume_audio(const runtime::AudioChunk &chunk) override;
+  void complete_stream(runtime::TaskResult & result) override;
   struct AudioChunkPlan {
     runtime::TimeSpan source_span;
   };
@@ -67,9 +64,8 @@ private:
   audio_chunk_plan(const runtime::TaskRequest &request);
   runtime::IOfflineVoiceTaskSession &vad_session();
   runtime::TaskResult run_single(const AsrRequest &request);
-  runtime::StreamEvent process_available_stream_chunks(bool final);
-  runtime::StreamEvent
-  process_one_stream_chunk(const runtime::AudioBuffer &audio);
+  void process_available_stream_chunks(bool final);
+  void process_one_stream_chunk(const runtime::AudioBuffer &audio);
 
   runtime::TaskSpec task_;
   std::shared_ptr<const SenseAsrAssets> assets_;
@@ -83,15 +79,9 @@ private:
   std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
   std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
   runtime::TaskRequest streaming_request_;
-  runtime::TaskResult streaming_result_;
   runtime::AudioBuffer streaming_audio_;
   size_t streaming_audio_offset_values_ = 0;
-  std::string streaming_text_;
-  size_t streaming_published_bytes_ = 0;
   int64_t streaming_windows_processed_ = 0;
-  runtime::StreamEventCallback stream_event_sink_;
-  bool stream_started_ = false;
-  std::chrono::steady_clock::time_point stream_wall_start_{};
 };
 
 } // namespace engine::community_models::sense_asr
