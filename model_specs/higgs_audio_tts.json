@@ -109,6 +109,17 @@
     ],
     "session": [
       {
+        "name": "reference_prefill_mode",
+        "type": "enum",
+        "description": "Cached-reference prefill attention. auto preserves existing behavior. Try exact if repeated voice-cloning requests produce excessive repetition or unexpectedly long, mostly silent output. May increase prefill time; not a general generation-quality fix. Full-prompt prefill and AR decoding are unchanged.",
+        "required": false,
+        "values": [
+          "auto",
+          "exact"
+        ],
+        "default": "auto"
+      },
+      {
         "name": "weight_type",
         "type": "enum",
         "description": "Weight storage type.",

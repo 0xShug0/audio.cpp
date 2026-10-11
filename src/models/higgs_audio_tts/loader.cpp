@@ -49,6 +49,7 @@ runtime::ModelCliInterface cli(const HiggsAssets &) {
         {"stream_chunk_policy", "grow|fixed", "Streaming chunk schedule; default grow."},
     };
     out.session_options = {
+        {"higgs_audio_tts.reference_prefill_mode", "auto|exact", "Cached-reference prefill attention; default auto preserves existing behavior. Try exact for excessive repetition or long, mostly silent continuations; may increase prefill time."},
         {"higgs_audio_tts.weight_type", "native|f32|f16|bf16|q8_0", "AR and codec weight storage type."},
         {"higgs_audio_tts.ar_weight_type", "native|f32|f16|bf16|q8_0", "Autoregressive decoder weight storage type."},
         {"higgs_audio_tts.codec_weight_type", "native|f32|f16|bf16|q8_0", "Codec weight storage type."},
