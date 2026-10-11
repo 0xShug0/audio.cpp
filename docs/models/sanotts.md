@@ -223,6 +223,10 @@ A 806-character German paragraph through `sanotts_de_orig` on the same host:
 
 ### ARM: NEON decoder
 
+The existing local NEON implementation remains the default build. Opt in to the
+shared NEON library with `-DENGINE_ENABLE_NEON=ON`; this preserves the same
+decoder selection contract.
+
 Select it with `--session-option 'sanotts.exec_plan={"decoder":{"impl":"neon"}}'`.
 
 Raspberry Pi 400 (Cortex-A72, 4 GB), CPU backend, `--threads 3` pinned to

@@ -52,6 +52,13 @@
     ],
     "session": [
       {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON component execution plans. Component decoder accepts impl default/ggml/neon and optional backend. Default retains GGML on the session backend; neon requires ENGINE_ENABLE_NEON=ON and an AArch64 NEON CPU session. No artifacts or params are used.",
+        "required": false,
+        "default": "{}"
+      },
+      {
         "name": "weight_type",
         "type": "enum",
         "description": "Shared matmul weight storage type. Omitted uses native, except the CPU encoder with hidden size 620, 10 layers and decoder hidden size 512 uses f16. The decoder defaults to native unless explicitly overridden.",
