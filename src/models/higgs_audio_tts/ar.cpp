@@ -61,7 +61,10 @@ modules::DecoderStackConfig make_higgs_qwen3_stack_config(
     if (allow_flash_attention) {
         out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
         out.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
-        out.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::FlashWithPrefix;
+        // Reuse the reference KV, but avoid flash attention over the cached
+        // prefix: that path can produce an incorrect audio-code continuation.
+        // Full-prompt prefill and autoregressive decoding remain flash-enabled.
+        out.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::Exact;
     } else {
         out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
         out.runtime.attention.static_mode = modules::DecoderAttentionMode::ManualRepeat;
