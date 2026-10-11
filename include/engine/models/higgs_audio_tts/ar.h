@@ -46,7 +46,8 @@ public:
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type,
-        core::AttentionPreference attention_preference = core::AttentionPreference::Auto);
+        core::AttentionPreference attention_preference = core::AttentionPreference::Auto,
+        bool exact_reference_prefill = false);
 
     const HiggsAssets & assets() const noexcept;
     const HiggsQwen3ARWeights & weights() const noexcept;
@@ -55,6 +56,7 @@ public:
     int device() const noexcept;
     int threads() const noexcept;
     bool allow_flash_attention() const noexcept;
+    bool exact_reference_prefill() const noexcept { return exact_reference_prefill_; }
 
 private:
     std::shared_ptr<const HiggsAssets> assets_;
@@ -63,6 +65,7 @@ private:
     int device_ = 0;
     int threads_ = 1;
     bool allow_flash_attention_ = true;
+    bool exact_reference_prefill_ = false;
     std::shared_ptr<const HiggsQwen3ARWeights> weights_;
 };
 

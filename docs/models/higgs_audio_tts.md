@@ -79,8 +79,17 @@ the request's `options` object. They are not applied to offline generation.
 
 ## Session Options (use with `--session-option`)
 
+Try `--session-option higgs_audio_tts.reference_prefill_mode=exact` for excessive
+repetition or unexpectedly long, mostly silent output on repeated voice-cloning
+requests. In server configuration, set
+`"session_options": {"higgs_audio_tts.reference_prefill_mode": "exact"}` on the model entry.
+This preserves reference-KV reuse and leaves full-prompt prefill and AR decoding
+unchanged. It may increase prefill time and is not a general generation-quality fix.
+The mode is fixed for the session and applies to offline and streaming generation.
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `higgs_audio_tts.reference_prefill_mode` | `auto`, `exact` | `auto` | Cached-reference prefill attention; `auto` preserves existing behavior, `exact` enables the workaround described above. |
 | `higgs_audio_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared AR and codec weight storage type. |
 | `higgs_audio_tts.ar_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Autoregressive decoder weight storage override. |
 | `higgs_audio_tts.codec_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Audio codec weight storage override. |

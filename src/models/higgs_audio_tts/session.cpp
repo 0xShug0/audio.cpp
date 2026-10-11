@@ -189,6 +189,7 @@ HiggsTTSSession::HiggsTTSSession(
             key != "higgs_audio_tts.codec_encode_graph_arena_mb" &&
             key != "higgs_audio_tts.reference_cache_slots" &&
             key != "higgs_audio_tts.attention" &&
+            key != "higgs_audio_tts.reference_prefill_mode" &&
             key != "higgs_audio_tts.weight_type" &&
             key != "higgs_audio_tts.ar_weight_type" &&
             key != "higgs_audio_tts.codec_weight_type") {
@@ -197,13 +198,19 @@ HiggsTTSSession::HiggsTTSSession(
     }
 
     const auto attention_preference = resolve_attention_preference(options);
+    const auto reference_prefill_mode =
+        runtime::find_option(options.options, {"higgs_audio_tts.reference_prefill_mode"}).value_or("auto");
+    if (reference_prefill_mode != "auto" && reference_prefill_mode != "exact") {
+        throw std::runtime_error("higgs_audio_tts.reference_prefill_mode must be auto or exact");
+    }
     trace_attention_preference(attention_preference);
     ar_ = std::make_shared<HiggsQwen3ARRuntime>(
         assets_,
         execution_context(),
         ar_weight_context_bytes_,
         ar_weight_storage_type_,
-        attention_preference);
+        attention_preference,
+        reference_prefill_mode == "exact");
     codec_ = std::make_shared<HiggsCodecRuntime>(
         assets_,
         execution_context(),
