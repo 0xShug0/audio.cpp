@@ -124,7 +124,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/mms_forced_aligner.md",
+      "docs/models/mms_forced_aligner.md",
       "docs/speech_analysis.md",
       "docs/gguf.md"
     ]

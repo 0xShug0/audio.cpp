@@ -210,7 +210,7 @@ combination is marked P, not proof of every such interleaving. Preserve D/P/U
 labels when linking a broader fixture. The
 [validation procedure](parallel_model_validation.md) defines future model admission
 and output quality; the [adapter guide](parallel_sessions.md) describes ownership
-interfaces. Historical [self-audit](../reports/parallel_runtime_self_audit.md) and
-[separation](../reports/parallel_runtime_separation.md) reports retain their tested
+interfaces. Historical [self-audit](../archive/parallel_runtime_self_audit.md) and
+[separation](../archive/parallel_runtime_separation.md) reports retain their tested
 revision/scope and cannot override this contract. For each behavior change,
 update the relevant matrix, linked regression and coverage label together.

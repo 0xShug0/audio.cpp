@@ -190,7 +190,9 @@
       "TTS",
       "Clone"
     ],
-    "docs": []
+  "docs": [
+    "docs/models/audio8_tts.md"
+  ]
   },
   "package_defaults": {
     "download": {

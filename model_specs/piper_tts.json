@@ -131,7 +131,7 @@
     ],
     "docs": [
       "docs/tts.md",
-      "docs/community_models/piper_tts.md",
+      "docs/models/piper_tts.md",
       "docs/gguf.md"
     ]
   },

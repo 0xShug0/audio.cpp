@@ -1,7 +1,7 @@
 # R2T2 ASR verification
 
 These files verify the `confucius4_r2t2` family against the macOS MPS reference
-implementation in the Confucius4-R2T2 repository (see `docs/community_models/r2t2.md`).
+implementation in the Confucius4-R2T2 repository (see `docs/models/r2t2.md`).
 
 ## Files
 
@@ -54,7 +54,7 @@ stream, every per-chunk committed `fixed_text`, and the final streaming
 transcript. Metadata-only rollback prefixes are filtered from the unmodified
 reference goldens before comparing committed text; `language` fragments must
 not appear in the emitted deltas. See the results table in
-`docs/community_models/r2t2.md` for what is exact and the two documented internal
+`docs/models/r2t2.md` for what is exact and the two documented internal
 (non-observable) differences on the English clip.
 
 The same binary can dump the family tokenizer for diffing against Hugging Face:

@@ -356,7 +356,7 @@
     ],
     "docs": [
       "docs/tts.md",
-      "docs/community_models/sanotts.md",
+      "docs/models/sanotts.md",
       "docs/gguf.md"
     ]
   },

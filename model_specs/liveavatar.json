@@ -292,6 +292,8 @@
       "GGUF",
       "Stream"
     ],
-    "docs": []
+  "docs": [
+    "docs/models/liveavatar.md"
+  ]
   }
 }

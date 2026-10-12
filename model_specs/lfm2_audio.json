@@ -353,7 +353,7 @@
     ],
     "recommended_package": "lfm2_audio_1_5b_q8_0",
     "docs": [
-      "docs/community_models/lfm2_audio.md"
+      "docs/models/lfm2_audio.md"
     ],
     "summary": "LFM2.5-Audio transcription, speech and spoken chat (English and Japanese checkpoints) from Liquid's published GGUFs.",
     "builtin_voices": [

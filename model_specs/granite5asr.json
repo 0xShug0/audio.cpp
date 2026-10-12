@@ -95,6 +95,7 @@
       "Stream"
     ],
     "docs": [
+      "docs/models/granite5asr.md",
       "docs/asr.md",
       "docs/gguf.md"
     ],

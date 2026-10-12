@@ -166,7 +166,7 @@ authorization and validation; the equivalence results below do not cover it.
 ### Usage Documentation
 
 - [x] Updated the usage tables for all 33 families in this numeric checklist, including shared [TTS](../tts.md), [music](../music_generation.md), and [speech analysis](../speech_analysis.md) guides: positive/exclusive bounds, conditional constraints, allocation minima, seed behavior, and the F5 frame-budget default.
-- [x] Added missing Audio8/Fish allocation controls, MOSS-TTSD sampling controls, and LiveAvatar shift. Corrected [Music3 CFG semantics](../community_models/minimax_music3.md), [Seed-VC V2's duration no-op](../models/seed_vc.md), and the [general seed guidance](../usage.md).
+- [x] Added missing Audio8/Fish allocation controls, MOSS-TTSD sampling controls, and LiveAvatar shift. Corrected [Music3 CFG semantics](../models/minimax_music3.md), [Seed-VC V2's duration no-op](../models/seed_vc.md), and the [general seed guidance](../usage.md).
 
 ### Remaining Discovery Corrections
 

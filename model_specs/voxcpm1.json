@@ -230,6 +230,7 @@
       "Stream"
     ],
     "docs": [
+      "docs/models/voxcpm1.md",
       "docs/tts.md",
       "docs/gguf.md"
     ]

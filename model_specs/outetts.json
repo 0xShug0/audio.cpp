@@ -309,7 +309,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/outetts.md",
+      "docs/models/outetts.md",
       "docs/reports/outetts_validation.md",
       "docs/gguf.md"
     ]

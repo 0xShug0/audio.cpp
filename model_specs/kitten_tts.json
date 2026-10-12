@@ -175,7 +175,7 @@
     ],
     "default_voice": "Leo",
     "docs": [
-      "docs/community_models/kitten_tts.md",
+      "docs/models/kitten_tts.md",
       "docs/tts.md",
       "docs/gguf.md"
     ]

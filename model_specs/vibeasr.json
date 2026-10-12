@@ -115,7 +115,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/vibeasr.md"
+      "docs/models/vibeasr.md"
     ],
     "summary": "INT8 encoder plus ternary Qwen2 decoder transcription on CPU."
   },

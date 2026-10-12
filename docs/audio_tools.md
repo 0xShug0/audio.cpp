@@ -6,7 +6,7 @@
 | Smart Turn v3.2 | `smart_turn` | `turn` completion detection | [Smart Turn](models/smart_turn.md) |
 | Apollo | `apollo` | `s2s` music restoration | [Apollo](models/apollo.md) |
 | SAM Audio | `sam_audio` | `s2s` prompt-conditioned separation | [SAM Audio](models/sam_audio.md) |
-| RE-USE | `reuse` | `s2s` speech restoration | [RE-USE](community_models/reuse.md) |
+| RE-USE | `reuse` | `s2s` speech restoration | [RE-USE](models/reuse.md) |
 | Sidon | `sidon` | `s2s` single-speaker speech restoration | [Sidon](models/sidon.md) |
 | AudioSR | `audiosr` | `s2s` audio super-resolution | [AudioSR](#audiosr) |
 | UniverSR | `universr` | `s2s` audio/speech super-resolution | [UniverSR](models/universr.md) |
@@ -15,7 +15,7 @@
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
 | Tone Color VC | `tone_color_vc` | `vc` | [Tone Color VC](models/tone_color_vc.md) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
-| LFM2.5-Audio | `lfm2_audio` | `s2s` spoken chat (also `asr`, `tts`) | [LFM2.5-Audio](community_models/lfm2_audio.md) |
+| LFM2.5-Audio | `lfm2_audio` | `s2s` spoken chat (also `asr`, `tts`) | [LFM2.5-Audio](models/lfm2_audio.md) |
 | PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
 | RVC | `rvc` | `vc` | [RVC](#rvc) |
 | Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |

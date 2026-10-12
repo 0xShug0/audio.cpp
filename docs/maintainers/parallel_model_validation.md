@@ -172,6 +172,6 @@ nor authorize publication.
 
 See the [authoritative behavior contract](parallel_server_behavior_contract.md),
 [adapter guide](parallel_sessions.md),
-[framework report](../reports/common_slot_framework.md), and
-[scheduler regression](../reports/scheduler_busy_timeout.md) for existing scope
+[framework report](../archive/common_slot_framework.md), and archived
+[scheduler regression](../archive/scheduler_busy_timeout.md) for existing scope
 and reproduction. Historical passes do not certify every requirement here.

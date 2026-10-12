@@ -153,7 +153,7 @@
       "Stream"
     ],
     "docs": [
-      "docs/community_models/sense_asr.md"
+      "docs/models/sense_asr.md"
     ],
     "summary": "SenseVoice-Small transcription with event/emotion tags and ITN."
   },

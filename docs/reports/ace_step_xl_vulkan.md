@@ -21,7 +21,7 @@ This validates Vulkan one-session generation/conditioning on these Q8-DiT packag
 
 ## Local evidence
 
-- `ace_step_xl_vulkan.json` (checked into this report directory; original local name `xl-vulkan-summary.json`): timings, memory, comparison counts and exact executable SHA-256s.
+- [`ace_step_xl_vulkan.json`](../../tests/ace_step/ace_step_xl_vulkan.json) (original local name `xl-vulkan-summary.json`): timings, memory, comparison counts and exact executable SHA-256s.
 - `vulkan-original-model-manifest.json`: original model source revision and executable hash.
 - `test_xl_vulkan.py`: full server matrix and probe invocations.
 - `probe-vulkan-xl-turbo-q8dit.log`, `probe-vulkan-xl-sft-q8dit.log`: all 20 conditioning histories.

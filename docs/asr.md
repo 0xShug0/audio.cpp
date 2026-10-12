@@ -8,11 +8,11 @@
 | CrisperWhisper 2.0 Large | `crisperwhisper` | offline, streaming | [CrisperWhisper 2.0](models/crisperwhisper.md) |
 | GigaAM v3 / Multilingual | `gigaam_asr` | offline | [GigaAM ASR](models/gigaam_asr.md) |
 | Fun-ASR-Nano | `fun_asr_nano` | offline | [Fun-ASR-Nano](#fun-asr-nano) |
-| Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](community_models/granite5asr.md) |
-| LFM2.5-Audio | `lfm2_audio` | offline | [LFM2.5-Audio](community_models/lfm2_audio.md) |
+| Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](models/granite5asr.md) |
+| LFM2.5-Audio | `lfm2_audio` | offline | [LFM2.5-Audio](models/lfm2_audio.md) |
 | Qwen3 ASR | `qwen3_asr` | offline, streaming | [Qwen3 ASR](#qwen3-asr) |
 | SAMSONE | `samsone` | offline | [SAMSONE](models/samsone.md) |
-| Confucius4-R2T2 | `confucius4_r2t2` | offline, streaming | [Confucius4-R2T2](community_models/r2t2.md) |
+| Confucius4-R2T2 | `confucius4_r2t2` | offline, streaming | [Confucius4-R2T2](models/r2t2.md) |
 | Citrinet ASR | `citrinet_asr` | offline | [Citrinet ASR](#citrinet-asr) |
 | Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
 | Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](models/higgs_audio_stt.md) |
@@ -26,9 +26,9 @@
 | VibeVoice ASR | `vibevoice_asr` | offline | [VibeVoice ASR](models/vibevoice_asr.md#vibevoice-asr) |
 | VibeVoice ASR Streaming 7B/1.5B | `vibevoice_asr_streaming` | offline, streaming | [VibeVoice ASR Streaming](models/vibevoice_asr.md#vibevoice-asr-streaming-7b) |
 | Voxtral Realtime | `voxtral_realtime` | offline, streaming | [Voxtral Realtime](models/voxtral_realtime.md) |
-| Whistle (experimental) | `whistle_asr` | offline | [Whistle ASR](community_models/whistle_asr.md) |
+| Whistle (experimental) | `whistle_asr` | offline | [Whistle ASR](models/whistle_asr.md) |
 
-This page covers ASR models. Detailed Qwen3 ASR and forced-alignment notes live in [Qwen3 models](models/qwen3.md).
+This page covers ASR models. Detailed Qwen3 transcription notes live in the [Qwen3 ASR guide](models/qwen3_asr.md); forced alignment has a [separate guide](models/qwen3_forced_aligner.md).
 
 Common CLI shape:
 
@@ -58,7 +58,7 @@ and server details.
 
 ## Qwen3 ASR
 
-Qwen3 ASR transcribes speech and can be paired with Qwen3 Forced Aligner when timestamps are needed. Streaming mode accepts live audio chunks and emits buffered transcript deltas; timestamp output remains an offline path. See [Qwen3 models](models/qwen3.md) for the full ASR and alignment manual.
+Qwen3 ASR transcribes speech and can be paired with Qwen3 Forced Aligner when timestamps are needed. Streaming mode accepts live audio chunks and emits buffered transcript deltas; timestamp output remains an offline path. See the [Qwen3 ASR guide](models/qwen3_asr.md) and [forced-aligner guide](models/qwen3_forced_aligner.md).
 
 ```bash
 audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --text-out transcript.txt
@@ -87,7 +87,7 @@ audiocpp_cli --task asr --mode streaming --family confucius4_r2t2 \
 ```
 
 Streaming emits append-only partial text; the final transcript is returned when
-the stream ends. See the [Confucius4-R2T2 model guide](community_models/r2t2.md) for the
+the stream ends. See the [Confucius4-R2T2 model guide](models/r2t2.md) for the
 session options, the LSP state machine, and the MPS golden verification recipe.
 
 ## Citrinet ASR
@@ -155,7 +155,7 @@ python .\tools\model_manager_v2.py install kroko_asr_community_q8_0 --models-roo
 
 Standalone Q8 GGUF is supported in offline and stateful streaming modes. Partial
 transcripts and word timestamps are exposed.
-See [Kroko Community ASR](community_models/kroko_asr.md) for package selection,
+See [Kroko Community ASR](models/kroko_asr.md) for package selection,
 conversion, GGUF, decoding options, parity, performance, and limitation details.
 
 ## Higgs Audio STT
@@ -379,7 +379,7 @@ audiocpp_cli --task asr --family parakeet_tdt \
 ```
 
 Use `parakeet_tdt_f16` for the F16 GGUF variant. See
-[Parakeet-TDT 0.6B v3](community_models/parakeet_tdt.md) for long-form,
+[Parakeet-TDT 0.6B v3](models/parakeet_tdt.md) for long-form,
 streaming, conversion, options, validation, and performance details.
 
 ## SenseVoice-Small
@@ -404,7 +404,7 @@ audiocpp_cli --task asr --mode streaming --family sense_asr \
   --request-option audio_chunk_duration_sec=5 --text-out transcript.txt
 ```
 
-See [SenseVoice-Small](community_models/sense_asr.md) for language tags,
+See [SenseVoice-Small](models/sense_asr.md) for language tags,
 chunking, server usage, and validation notes.
 
 ## VibeVoice ASR

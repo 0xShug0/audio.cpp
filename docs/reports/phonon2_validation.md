@@ -101,7 +101,7 @@ process; the separate optimization report uses alternating timing trials.
 
 ## Reproduce
 
-Use [conversion and CLI/server examples](../community_models/phonon2.md).
+Use the [Phonon-2 section in the Parakeet guide](../models/parakeet_tdt.md#phonon-2-parakeet-tdt-variant).
 Actual build commands use Ninja Release, `AUDIOCPP_MODEL_SET=custom`,
 `ENGINE_BUILD_TESTS=ON`, `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF` and
 `AUDIOCPP_BUILD_SERVER_FRONTENDS=OFF`. The combined build enables CUDA/Vulkan,
@@ -143,7 +143,7 @@ python tests/parakeet_tdt/validate_phonon2_hotwords.py \
 
 `validate_phonon2.py` audits weights and numerical bounds; exact text/timing is
 diagnostic unless `--require-exact-reference` is supplied for the controlled CPU
-F32 run. The [portable JSON](phonon2_validation.json) includes source/model hashes,
+F32 run. The [portable JSON](../../tests/parakeet_tdt/phonon2_validation.json) includes source/model hashes,
 all matrix summaries and differing fixture IDs. Raw commands/configs/outputs are
 under `outputs/phonon2-review-20261010/`; earlier pre-compensation evidence is
 preserved in its `pre-bn-compensation/` directory. No user audio is uploaded.

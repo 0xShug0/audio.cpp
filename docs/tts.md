@@ -2,7 +2,7 @@
 
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
-| AuK (experimental) | `auk` | `tts`, `gen` editing | [AuK](community_models/auk.md) |
+| AuK (experimental) | `auk` | `tts`, `gen` editing | [AuK](models/auk.md) |
 | Qwen3 TTS | `qwen3_tts` | `tts`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
 | BreezeTTS 2 | `breeze_tts` | `tts`, `clon` | [BreezeTTS 2](models/breeze_tts.md) |
 | Chatterbox | `chatterbox` | `clon`, `vc` | [Chatterbox](#chatterbox) |
@@ -10,13 +10,13 @@
 | CosyVoice3 | `cosyvoice3` | `tts`, `clon` | [CosyVoice3](models/cosyvoice3.md) |
 | DramaBox | `dramabox` | `tts`, `clon` | [DramaBox](#dramabox) |
 | DotTTS | `dots_tts` | `tts`, `clon` | [DotTTS](#dottts) |
-| F5-TTS | `f5_tts` | `tts`, `clon` | [F5-TTS](community_models/f5_tts.md) |
+| F5-TTS | `f5_tts` | `tts`, `clon` | [F5-TTS](models/f5_tts.md) |
 | MioTTS | `miotts` | `tts` | [MioTTS](models/miotts.md) |
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
 | MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
-| MOSS-TTS-v1.5 | `moss_tts_v15` | `tts`, `clon` | [MOSS-TTS-v1.5](community_models/moss_tts_v15.md) |
-| MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](community_models/moss_voicegen.md) |
-| MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](community_models/minimax_h3.md) |
+| MOSS-TTS-v1.5 | `moss_tts_v15` | `tts`, `clon` | [MOSS-TTS-v1.5](models/moss_tts_v15.md) |
+| MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](models/moss_voicegen.md) |
+| MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](models/minimax_h3.md) |
 | MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
 | Maya1 | `maya1` | `tts` | [Maya1](models/maya1.md) |
 | NeuTTS | `neutts` | `tts` | [NeuTTS](#neutts) |
@@ -28,25 +28,25 @@
 | Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
 | FireRedTTS3 | `fireredtts3` | `tts`, `clon`, `vdes` | [FireRedTTS3](models/fireredtts3.md) |
 | FireRedAudio | `firered_audio` | `asr`, `tts`, `clon`, `vdes` | [FireRedAudio](models/firered_audio.md) |
-| IndexTTS2 | `index_tts2` | `tts` | [IndexTTS](models/index_tts.md) |
-| IndexTTS2.5 | `index_tts2` (variant `2.5`) | `tts` | [IndexTTS](models/index_tts.md) |
+| IndexTTS2 | `index_tts2` | `tts` | [IndexTTS](models/index_tts2.md) |
+| IndexTTS2.5 | `index_tts2` (variant `2.5`) | `tts` | [IndexTTS](models/index_tts2.md) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
 | Kokoro 82M | `kokoro_tts` | `tts` | [Kokoro 82M](models/kokoro_tts.md) |
 | KugelAudio-0-Open | `kugelaudio` | `tts` | [KugelAudio](models/kugelaudio.md) |
 | Voxtral 4B TTS | `voxtral_tts` | `tts` | [Voxtral TTS](models/voxtral_tts.md) |
-| KittenTTS Mini 0.8 | `kitten_tts` | `tts` | [KittenTTS](community_models/kitten_tts.md) |
-| Kitten TTS 2 | `kitten_tts2` | `tts`, `clon` | [Kitten TTS 2](community_models/kitten_tts2.md) |
-| LFM2.5-Audio | `lfm2_audio` | `asr`, `tts`, `s2s` | [LFM2.5-Audio](community_models/lfm2_audio.md) |
+| KittenTTS Mini 0.8 | `kitten_tts` | `tts` | [KittenTTS](models/kitten_tts.md) |
+| Kitten TTS 2 | `kitten_tts2` | `tts`, `clon` | [Kitten TTS 2](models/kitten_tts2.md) |
+| LFM2.5-Audio | `lfm2_audio` | `asr`, `tts`, `s2s` | [LFM2.5-Audio](models/lfm2_audio.md) |
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
-| Piper TTS | `piper_tts` | `tts` | [Piper TTS](community_models/piper_tts.md) |
+| Piper TTS | `piper_tts` | `tts` | [Piper TTS](models/piper_tts.md) |
 | sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
-| VieNeu-TTS v3 Turbo | `vieneu_v3_turbo` (alias `vietneu_tts`) | `tts`, `clon` | [VieNeu-TTS v3 Turbo](community_models/vieneu_v3_turbo.md) |
+| VieNeu-TTS v3 Turbo | `vieneu_v3_turbo` (alias `vietneu_tts`) | `tts`, `clon` | [VieNeu-TTS v3 Turbo](models/vieneu_v3_turbo.md) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
 
-This page covers speech TTS-style families. MiniMax-H3 appears here for prompt-driven dialogue audio, but it uses the generation route (`--task gen`) rather than the normal speech route (`--task tts`). Detailed route manuals live under `docs/models/` or `docs/community_models/` when a model needs more space.
+This page covers speech TTS-style families. MiniMax-H3 appears here for prompt-driven dialogue audio, but it uses the generation route (`--task gen`) rather than the normal speech route (`--task tts`). Detailed route manuals live under `docs/models/` or `docs/models/` when a model needs more space.
 
 Common CLI shape:
 
@@ -68,7 +68,7 @@ Common options:
 
 ## Qwen3 TTS
 
-Qwen3 TTS supports reference voice cloning, voice design, and packaged custom voices. See [Qwen3 models](models/qwen3.md) for the full Base, VoiceDesign, CustomVoice, ASR, and forced-alignment manual.
+Qwen3 TTS supports reference voice cloning, voice design, and packaged custom voices. See the [Qwen3 TTS guide](models/qwen3_tts.md) for Base, VoiceDesign, CustomVoice, sampling, and streaming details.
 
 ```bash
 audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Base --backend cuda --text "Hello from Qwen3 TTS." --voice-ref assets/resources/b.wav --out out.wav
@@ -152,7 +152,7 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 
 ## Chatterbox Turbo
 
-Chatterbox Turbo is a [community model](community_models/chatterbox_turbo.md): Resemble AI's
+Chatterbox Turbo is a [community model](models/chatterbox_turbo.md): Resemble AI's
 distilled 350M-parameter sibling of Chatterbox, with a GPT2-style T3 backbone (vs. the base
 model's 0.5B Llama-style backbone), a GPT2 BPE tokenizer with 19 built-in emotion/style tags
 (`[laugh]`, `[sigh]`, ...), and a 2-step meanflow-distilled S3Gen decoder (vs. the base model's
@@ -323,7 +323,7 @@ for dependencies, commands, and options.
 
 ## MOSS-TTS-Local
 
-MOSS-TTS-Local is the larger local-transformer MOSS TTS path. It supports text-only speech and optional zero-shot voice cloning through the framework speaker-reference interface. See [MOSS-TTS](models/moss_tts.md) for tokenizer layout, sampling options, cache options, and Nano details.
+MOSS-TTS-Local is the larger local-transformer MOSS TTS path. It supports text-only speech and optional zero-shot voice cloning through the framework speaker-reference interface. See [MOSS-TTS-Local](models/moss_tts_local.md) for tokenizer layout, sampling options, and cache options.
 
 | Field | Value |
 |---|---|
@@ -350,7 +350,7 @@ audiocpp_cli --task clon --family moss_tts_local --model /path/to/MOSS-TTS-Local
 
 ## MOSS-TTS-Nano
 
-MOSS-TTS-Nano is the smaller MOSS TTS path. It supports text-only continuation generation and voice cloning through the framework speaker-reference interface. See [MOSS-TTS](models/moss_tts.md) for tokenizer layout, sampling options, cache options, and Local details.
+MOSS-TTS-Nano is the smaller MOSS TTS path. It supports text-only continuation generation and voice cloning through the framework speaker-reference interface. See [MOSS-TTS-Nano](models/moss_tts_nano.md) for tokenizer layout, sampling options, streaming, and cache options.
 
 | Field | Value |
 |---|---|
@@ -757,7 +757,7 @@ python3 tools/model_manager_v2.py install --models-root models fish_audio_s2_pro
 ## IndexTTS2
 
 IndexTTS2 is a Chinese and English TTS model with voice cloning and expressive
-emotion controls. See the dedicated [IndexTTS guide](models/index_tts.md) for
+emotion controls. See the dedicated [IndexTTS guide](models/index_tts2.md) for
 IndexTTS2, IndexTTS2.5, text normalization notes, conversion, and the full
 option list.
 
@@ -781,7 +781,7 @@ audiocpp_cli --task clon --family index_tts2 --model /path/to/IndexTTS-2 --backe
 
 IndexTTS2.5 is the multilingual `index_tts2` variant selected from model
 config. It adds Japanese, Spanish, and Arabic on top of Chinese and English.
-See the dedicated [IndexTTS guide](models/index_tts.md) for variant details,
+See the dedicated [IndexTTS guide](models/index_tts2.md) for variant details,
 language notes, conversion, and the full option list.
 
 | Field | Value |
@@ -834,7 +834,7 @@ audiocpp_cli --task clon --family outetts \
   --max-tokens 1024 --out cloned.wav
 ```
 
-See [OuteTTS community model usage](community_models/outetts.md) for cloning notes, GGUF packing, all options, and validation details.
+See [OuteTTS community model usage](models/outetts.md) for cloning notes, GGUF packing, all options, and validation details.
 
 ## GLM-TTS
 
@@ -853,7 +853,7 @@ audiocpp_cli --task clon --family glm_tts \
   --seed 0 --out glm_tts.wav
 ```
 
-See the [GLM-TTS community model guide](community_models/glm_tts.md) for
+See the [GLM-TTS community model guide](models/glm_tts.md) for
 standalone GGUF packaging, controls, and validation results.
 
 ## Inflect v2
@@ -874,7 +874,7 @@ audiocpp_cli --task tts --family inflect_v2 \
   --seed 0 --out inflect.wav
 ```
 
-See the [Inflect v2 community model guide](community_models/inflect_v2.md) for
+See the [Inflect v2 community model guide](models/inflect_v2.md) for
 eSpeak-ng paths, long-form behavior, source/conversion instructions, and
 limitations.
 
@@ -898,7 +898,7 @@ audiocpp_cli --task tts --family sanotts \
   --out sanotts.wav
 ```
 
-See the [sanoTTS community model guide](community_models/sanotts.md) for
+See the [sanoTTS community model guide](models/sanotts.md) for
 eSpeak-ng paths, seed semantics, parity evidence, and performance numbers.
 
 ## Supertonic

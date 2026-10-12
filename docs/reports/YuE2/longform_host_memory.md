@@ -55,7 +55,7 @@ D:\a\audio.cpp\audio.cpp\external\ggml\src\ggml.c:1685: GGML_ASSERT(ctx->mem_buf
 === EXIT code=3221226505 (0xC0000409) ===
 ```
 
-Full log: [longform_host_memory_crash.log](longform_host_memory_crash.log).
+Full log: [longform_host_memory_crash.log](../../../tests/yue2/longform_host_memory_crash.log).
 
 ## Default host contexts are over-provisioned
 
@@ -92,7 +92,7 @@ the same machine:
 
 Result: full 207.2 s stereo 48 kHz song, `session.wall_ms` 113,158 (RTF 0.55), NAR
 compute buffer 339,615,744 bytes, sampled VRAM ~6.2 GiB mid-run. Full log:
-[longform_host_memory_success.log](longform_host_memory_success.log).
+[longform_host_memory_success.log](../../../tests/yue2/longform_host_memory_success.log).
 
 ## Inconsistent failure handling
 

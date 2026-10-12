@@ -43,7 +43,7 @@ server-wide value.
 AuK Base and AuK-Flash use separate GGUFs for the generator, Qwen conditioner,
 and VAE, plus config and tokenizer sidecars. F16 and Q8_0 components have smoke
 coverage, but full Python parity was measured only for the earlier combined
-GGUF with FP32 inference. See [AuK](community_models/auk.md) for CLI usage.
+GGUF with FP32 inference. See [AuK](models/auk.md) for CLI usage.
 
 Status labels:
 

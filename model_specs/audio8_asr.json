@@ -97,7 +97,7 @@
     ],
     "docs": [
       "docs/asr.md",
-      "docs/community_models/audio8_asr.md"
+      "docs/models/audio8_asr.md"
     ],
     "summary": "Audio8-ASR-0.1B compact multilingual offline transcription."
   },

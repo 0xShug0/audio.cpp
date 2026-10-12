@@ -230,7 +230,7 @@ buffers. These are regenerated at runtime rather than shipped in the GGUF.
 | `reference_duration_sec` | float | 15.0 | Trim the speaker reference to at most this many seconds before encoding. Shorter references are cheaper and often clone better; upstream's guidance favours around 10 s. Defaults to 15 s. Values above the trained maximum of 297.1 s are clamped. Set per request, or as a session default from CLI or server config. Must be positive. |
 | `max_duration_sec` | float | — | Cap the generation window, in seconds (up to 29.7215 s, the trained maximum; larger values are clamped to it). Quantised down to a whole latent frame of 46.44 ms. Left unset, the window is estimated per chunk from text length and widened automatically if the utterance does not finish inside it, which is substantially cheaper for short text. Must be positive; rounded to at least one latent frame. |
 | `mem_saver` | bool | false | Release Fish S1-DAC decode graph state when prior to and encode graph state after encoding reference speaker audio to reduce peak VRAM usage and steady-state VRAM usage when speakers are already cached.
-| `guidance_interval` | int | 1 | Refresh the two unconditional CFG lanes only every Nth guided step. 1 reproduces upstream exactly. See [performance notes](echo_tts_performance.md). |
+| `guidance_interval` | int | 1 | Refresh the two unconditional CFG lanes only every Nth guided step. 1 reproduces upstream exactly. See [performance notes](../community_models/echo_tts_performance.md). |
 
 Session options are `echo_tts.reference_duration_sec`,
 `echo_tts.reference_cache_slots`, and `echo_tts.mem_saver`.
@@ -402,6 +402,6 @@ converter handles:
   construction, so they are not stored.
 
 That leaves roughly 1.57 GB of codec weights on top of the 4.76 GB DiT.
-`docs/community_models/echo_tts_autoencoder_reuse.md` covers how the two
+`docs/archive/echo_tts_autoencoder_reuse.md` covers how the two
 families share the codec implementation and where the seam sits in
 `src/framework/codecs/fish_dac_codec_runtime.cpp`.

@@ -246,7 +246,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/glm_tts.md",
+      "docs/models/glm_tts.md",
       "docs/reports/glm_tts_validation.md",
       "docs/gguf.md"
     ]

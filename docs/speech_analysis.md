@@ -12,7 +12,7 @@
 | Sortformer Diarization v2.1 | `sortformer_diar_v2` | `diar` | [Sortformer Diarization v2.1](#sortformer-diarization-v21) |
 | Nemotron 3 Diarization | `nemotron_3_diar` | `diar` | [Model guide](models/nemotron_3_diar.md) |
 | MMS Forced Aligner | `mms_forced_aligner` | `align` | [MMS Forced Aligner](#mms-forced-aligner) |
-| Qwen3 Forced Aligner | `qwen3_forced_aligner` | `align` | [Qwen3 Forced Aligner](models/qwen3.md#qwen3-forced-aligner) |
+| Qwen3 Forced Aligner | `qwen3_forced_aligner` | `align` | [Qwen3 Forced Aligner](models/qwen3_forced_aligner.md) |
 
 This page covers audio classification, VAD, diarization, and forced-aligner models. ASR models are documented in [ASR models](asr.md).
 
@@ -174,7 +174,7 @@ unchanged.
 
 The checkpoint is local-use only pending NVIDIA Open Model License
 redistribution approval. Convert it with
-[`tools/community_models/convert_sortformer_v2_1.py`](community_models/sortformer_diar_v2.md#local-conversion).
+[`tools/community_models/convert_sortformer_v2_1.py`](models/sortformer_diar_v2.md#local-conversion).
 
 ```bash
 audiocpp_cli --task diar --family sortformer_diar_v2 --mode streaming \
@@ -184,7 +184,7 @@ audiocpp_cli --task diar --family sortformer_diar_v2 --mode streaming \
 
 Use request options `speaker_threshold`, `speaker_min_frames`, and
 `speaker_pad_frames` for decoding controls.
-See the [community-model guide](community_models/sortformer_diar_v2.md) for
+See the [community-model guide](models/sortformer_diar_v2.md) for
 conversion commands, weight profiles, streaming geometry, and validation
 limits. CUDA offline F32 execution is memory-heavy; streaming is the supported
 path for long recordings.
@@ -219,5 +219,5 @@ audiocpp_cli --task align --family mms_forced_aligner --model models/mms-300m-11
 | `--words-out` | JSON path | not set | Write per-word timestamps. |
 
 The checkpoint is CC-BY-NC-4.0 and GGUF conversion is local-only. See the
-[full model guide](community_models/mms_forced_aligner.md) for install,
+[full model guide](models/mms_forced_aligner.md) for install,
 conversion, licensing, and boundary-parity evidence.
