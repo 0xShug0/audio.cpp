@@ -412,7 +412,8 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
         return;
     }
 
-    if (execution_context_->backend_type() == engine::core::BackendType::Vulkan) {
+    if (execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
+        execution_context_->backend_type() == engine::core::BackendType::Cuda) {
         // A mismatched cached graph will never be used again. Release its
         // allocation before building the replacement instead of overlapping
         // both full activation/position buffers at the allocation peak.
@@ -583,7 +584,8 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     }
     debug::timing_log_scalar("parakeet_tdt.encoder.pos_copy_ms", engine::debug::elapsed_ms(pos_copy_start, Clock::now()));
 
-    if (execution_context_->backend_type() == engine::core::BackendType::Vulkan) {
+    if (execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
+        execution_context_->backend_type() == engine::core::BackendType::Cuda) {
         // Position projections now live in the main graph's persistent inputs.
         // Their one-shot producer allocation is redundant for warm inference.
         ggml_gallocr_free(graph->pos_gallocr);

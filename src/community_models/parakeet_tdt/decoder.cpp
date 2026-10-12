@@ -35,7 +35,7 @@ int32_t argmax_dur(const std::vector<float>& v, int64_t vocab_sz, int64_t n_dur)
 }  // namespace
 
 struct ParakeetTDTDecoderRuntime::StepGraph {
-    // The Vulkan decoder path keeps predictor state on the device.
+    // The CUDA/Vulkan decoder path keeps predictor state on the device.
     // These tensors have independent storage: the graph allocator must never
     // recycle them as temporary activations between decoder steps.
     std::unique_ptr<ggml_context, GgmlDeleter> state_ggml;
@@ -81,7 +81,9 @@ void ParakeetTDTDecoderRuntime::ensure_step_graph() {
     g->ggml.reset(ggml_init(p));
     engine::core::ModuleBuildContext ctx{g->ggml.get(), "parakeet.decoder", execution_context_->backend_type()};
 
-    const bool resident_state = execution_context_->backend_type() == engine::core::BackendType::Vulkan;
+    const bool resident_state =
+        execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
+        execution_context_->backend_type() == engine::core::BackendType::Cuda;
     if (resident_state) {
         g->state_ggml.reset(ggml_init({65536, nullptr, true}));
         if (!g->state_ggml) throw std::runtime_error("decoder state context allocation failed");
