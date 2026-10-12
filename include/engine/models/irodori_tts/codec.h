@@ -12,6 +12,7 @@
 #include <ggml-backend.h>
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -85,7 +86,9 @@ public:
   ~IrodoriCodec();
 
   runtime::AudioBuffer decode(const std::vector<float> &latent,
-                              int64_t latent_steps, int64_t target_samples);
+                              int64_t latent_steps, int64_t target_samples,
+                              const std::function<void(const runtime::AudioBuffer &)> &on_audio = {},
+                              int64_t stream_frames = 0);
   std::vector<float> encode_reference(const runtime::AudioBuffer &audio,
                                       int64_t &latent_steps_out);
   // Decode in fixed-size windows of chunk_steps latent frames plus

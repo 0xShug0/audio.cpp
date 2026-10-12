@@ -217,3 +217,49 @@ Both single-slot and parallel server runtimes use the existing generic options
 path.
 
 Reference: [upstream RF sampler](https://github.com/Aratako/Irodori-TTS/blob/main/irodori_tts/rf.py).
+
+## Streaming through audiocpp_server
+
+Configure the model with `"mode": "streaming"`. Existing GGUF files may embed
+an older offline-only model spec; use `model_spec_override` to select this
+updated spec without reconverting the weights. Example model entry (paths are
+relative to the server config file):
+
+```json
+{
+  "id": "irodori-tts",
+  "family": "irodori_tts",
+  "task": "tts",
+  "mode": "streaming",
+  "path": "./models/irodori-tts-v4-small-q8_0.gguf",
+  "model_spec_override": "./model_specs/irodori_tts.json"
+}
+```
+
+Request incremental PCM (signed 16-bit little-endian, mono, at the codec's
+sample rate; standard Irodori-TTS is 48000 Hz):
+
+```bash
+curl -N http://127.0.0.1:8080/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"irodori-tts","input":"こんにちは。音声合成のテストです。",
+       "stream":true,"stream_format":"audio","response_format":"pcm",
+       "options":{"no_ref":true,"t_schedule_mode":"sway","sway_coeff":-1.0,
+                  "num_inference_steps":24,"stream_frames_per_event":12}}' \
+  --output speech.pcm
+```
+
+Use `"stream_format":"sse"` for base64 `speech.audio.delta` events followed by
+`speech.audio.done`. Model-specific settings belong inside `options`.
+`stream_frames_per_event` is a positive integer (default 12, about 0.48 seconds
+at 25 latent frames/second). Streaming uses this window size and the existing
+`irodori_tts.codec_decode_overlap_steps` session setting (default 16); the
+context samples are discarded before each chunk is sent. Duration and tail
+trimming are applied before transmission, and text chunks are emitted in order.
+
+The DiT sampling for each text chunk must finish before its codec decoding
+begins. Each decoded window is then sent immediately, before the following
+windows or text chunks finish. This follows the windowed codec approach
+[described in speech.cpp](https://nyosegawa.com/posts/speech-cpp/); window sizes
+here are fixed rather than dynamically selected. Windowed decoding can differ
+slightly from whole-sequence decoding. It does not emit unfinished DiT latents.

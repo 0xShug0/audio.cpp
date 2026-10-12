@@ -529,14 +529,15 @@ IrodoriTTSSession::IrodoriTTSSession(
           runtime::find_option(this->options().options, {"irodori_tts.mem_saver"})) {
     mem_saver_ = runtime::parse_bool_option(*value, "irodori_tts.mem_saver");
   }
-  if (task_.mode != runtime::RunMode::Offline) {
-    throw std::runtime_error("Irodori-TTS only supports offline sessions");
+  if (task_.mode != runtime::RunMode::Offline &&
+      task_.mode != runtime::RunMode::Streaming) {
+    throw std::runtime_error("Irodori-TTS supports offline and streaming sessions");
   }
   if (task_.task != runtime::VoiceTaskKind::Tts &&
       task_.task != runtime::VoiceTaskKind::VoiceCloning &&
       task_.task != runtime::VoiceTaskKind::VoiceDesign) {
     throw std::runtime_error(
-        "Irodori-TTS supports only TTS, voice-cloning, and voice-design offline tasks");
+        "Irodori-TTS supports only TTS, voice-cloning, and voice-design tasks");
   }
   const auto codec_backend = parse_codec_backend(this->options());
   engine::core::ExecutionContext * codec_execution = &execution_context();
@@ -616,6 +617,16 @@ void IrodoriTTSSession::prepare(
 
 runtime::TaskResult
 IrodoriTTSSession::run(const runtime::TaskRequest &request) {
+  return synthesize(request, false);
+}
+
+runtime::TaskResult
+IrodoriTTSSession::generate_stream(const runtime::TaskRequest &request) {
+  return synthesize(request, true);
+}
+
+runtime::TaskResult
+IrodoriTTSSession::synthesize(const runtime::TaskRequest &request, bool streaming) {
   require_prepared("Irodori-TTS run");
   auto normalized_request = request;
   normalized_request.options = normalize_request_options(request.options);
@@ -639,6 +650,23 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   // Sampling options are validated by the runtime even for older embedded specs.
   validation_options.erase("t_schedule_mode");
   validation_options.erase("sway_coeff");
+  // Older embedded contracts predate codec streaming.
+  validation_options.erase("stream_frames_per_event");
+  const int64_t stream_frames = streaming
+      ? runtime::parse_int_option(normalized_request.options, {"stream_frames_per_event"}).value_or(12)
+      : 0;
+  if (streaming && stream_frames <= 0) {
+    throw runtime::InvalidRequestError("Irodori-TTS stream_frames_per_event must be positive");
+  }
+  const std::function<void(const runtime::AudioBuffer &)> publish = streaming
+      ? std::function<void(const runtime::AudioBuffer &)>([&](const runtime::AudioBuffer &audio) {
+          if (stream_event_sink()) {
+            runtime::StreamEvent event;
+            event.audio_output = audio;
+            stream_event_sink()(event);
+          }
+        })
+      : std::function<void(const runtime::AudioBuffer &)>{};
   runtime::validate_spec_backed_request_options(
       validation_options, *contract_, "Irodori-TTS");
   const auto wall_start = Clock::now();
@@ -811,7 +839,8 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
     runtime::append_audio_buffer(merged_audio,
                                  codec_->decode(sample.latent,
                                                 sample.latent_steps,
-                                                sample.target_samples));
+                                                sample.target_samples,
+                                                publish, stream_frames));
     decode_ms += debug::elapsed_ms(decode_start);
     if (mem_saver_) {
       codec_->release_graphs();

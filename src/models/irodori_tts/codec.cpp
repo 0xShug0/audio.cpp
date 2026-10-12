@@ -610,10 +610,13 @@ public:
   }
 
   runtime::AudioBuffer decode(const std::vector<float> &latent,
-                              int64_t latent_steps, int64_t target_samples) {
-    const int64_t window = decode_chunk_steps_ + 2 * decode_overlap_steps_;
-    if (decode_chunk_steps_ > 0 && latent_steps > window) {
-      return decode_chunked(latent, latent_steps, target_samples, window);
+                              int64_t latent_steps, int64_t target_samples,
+                              const std::function<void(const runtime::AudioBuffer &)> &on_audio,
+                              int64_t stream_frames) {
+    const int64_t chunk_steps = stream_frames > 0 ? stream_frames : decode_chunk_steps_;
+    const int64_t window = std::min(latent_steps, chunk_steps + 2 * decode_overlap_steps_);
+    if (chunk_steps > 0 && (stream_frames > 0 || latent_steps > window)) {
+      return decode_chunked(latent, latent_steps, target_samples, window, chunk_steps, on_audio);
     }
     const bool graph_rebuild =
         graph_ == nullptr || graph_->latent_steps() != latent_steps;
@@ -623,7 +626,9 @@ public:
     }
     debug::trace_log_scalar("irodori_tts.codec_decode.graph_rebuild",
                              graph_rebuild);
-    return graph_->run(latent, target_samples);
+    auto audio = graph_->run(latent, target_samples);
+    if (on_audio && !audio.samples.empty()) on_audio(audio);
+    return audio;
   }
 
   std::vector<float> encode_reference(const runtime::AudioBuffer &audio,
@@ -724,7 +729,9 @@ private:
 
   runtime::AudioBuffer decode_chunked(const std::vector<float> &latent,
                                       int64_t latent_steps,
-                                      int64_t target_samples, int64_t window) {
+                                      int64_t target_samples, int64_t window,
+                                      int64_t chunk_steps,
+                                      const std::function<void(const runtime::AudioBuffer &)> &on_audio) {
     const int64_t latent_dim = assets_->config.latent_dim;
     if (static_cast<int64_t>(latent.size()) != latent_steps * latent_dim) {
       throw std::runtime_error("Irodori-TTS codec latent size mismatch");
@@ -741,8 +748,8 @@ private:
     std::vector<float> window_latent(static_cast<size_t>(window * latent_dim));
     int64_t hop = 0;
     for (int64_t start = 0; start < latent_steps;
-         start += decode_chunk_steps_) {
-      const int64_t end = std::min(start + decode_chunk_steps_, latent_steps);
+         start += chunk_steps) {
+      const int64_t end = std::min(start + chunk_steps, latent_steps);
       const int64_t window_start =
           chunk_window_start(start, decode_overlap_steps_, latent_steps, window);
       std::copy(latent.begin() + window_start * latent_dim,
@@ -758,9 +765,19 @@ private:
         hop = static_cast<int64_t>(decoded.samples.size()) / window;
         samples.reserve(static_cast<size_t>(latent_steps * hop));
       }
-      samples.insert(samples.end(),
-                     decoded.samples.begin() + (start - window_start) * hop,
-                     decoded.samples.begin() + (end - window_start) * hop);
+      // Crop context and the duration/trim-tail limit BEFORE publishing: sent
+      // PCM cannot be retracted when the final result is assembled.
+      const int64_t limit = target_samples > 0 ? target_samples : latent_steps * hop;
+      const int64_t count = std::min(end * hop, limit) - start * hop;
+      if (count <= 0) break;
+      const auto first = decoded.samples.begin() + (start - window_start) * hop;
+      samples.insert(samples.end(), first, first + count);
+      if (on_audio) {
+        runtime::AudioBuffer chunk{assets_->codec.sample_rate, 1,
+                                    std::vector<float>(first, first + count)};
+        on_audio(chunk);
+      }
+      if (end * hop >= limit) break;
     }
     if (target_samples > 0 &&
         static_cast<int64_t>(samples.size()) > target_samples) {
@@ -947,8 +964,10 @@ IrodoriCodec::~IrodoriCodec() = default;
 
 runtime::AudioBuffer IrodoriCodec::decode(const std::vector<float> &latent,
                                           int64_t latent_steps,
-                                          int64_t target_samples) {
-  return impl_->decode(latent, latent_steps, target_samples);
+                                          int64_t target_samples,
+                                          const std::function<void(const runtime::AudioBuffer &)> &on_audio,
+                                          int64_t stream_frames) {
+  return impl_->decode(latent, latent_steps, target_samples, on_audio, stream_frames);
 }
 
 std::vector<float>

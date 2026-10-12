@@ -11,7 +11,8 @@
     "design"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "ja"
@@ -26,6 +27,14 @@
   },
   "options": {
     "request": [
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Codec latent frames per streaming audio event; default 12 (0.48 seconds at 25 Hz).",
+        "required": false,
+        "min": 1,
+        "default": 12
+      },
       {
         "name": "language",
         "type": "string",
