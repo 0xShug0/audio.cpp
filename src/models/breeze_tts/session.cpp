@@ -119,7 +119,7 @@ void validate_request_options(
 std::size_t reference_cache_slots_from_options(const runtime::SessionOptions & options) {
     const int64_t slots = runtime::parse_i64_option(
         options.options,
-        {"reference_cache_slots"})
+        {"breeze_tts.reference_cache_slots", "reference_cache_slots"})
         .value_or(kDefaultReferenceCacheSlots);
     if (slots < 0) {
         throw std::runtime_error("breeze_tts.reference_cache_slots must be non-negative");
@@ -180,18 +180,20 @@ BreezeTTSSession::BreezeTTSSession(
         throw std::runtime_error("BreezeTTS supports offline and streaming sessions");
     }
     using T = engine::assets::TensorStorageType;
+    const auto storage_option = runtime::find_option_match(
+        options.options, {"breeze_tts.weight_type", "weight_type"});
     const auto storage_type = runtime::parse_tensor_storage_option(
         options.options,
-        "weight_type",
+        storage_option ? storage_option->key : "breeze_tts.weight_type",
         T::Native,
         {T::Native, T::F32, T::F16, T::BF16, T::Q8_0, T::Q4_0, T::Q4_K});
     const auto graph_arena_bytes = runtime::parse_size_mb_option(
         options.options,
-        {"graph_arena_mb"},
+        {"breeze_tts.graph_arena_mb", "graph_arena_mb"},
         32ull * 1024ull * 1024ull);
     const auto weight_context_bytes = runtime::parse_size_mb_option(
         options.options,
-        {"weight_context_mb"},
+        {"breeze_tts.weight_context_mb", "weight_context_mb"},
         4ull * 1024ull * 1024ull);
     const auto attention_preference = attention_preference_from_options(options);
     trace_attention_preference(attention_preference);

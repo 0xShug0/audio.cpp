@@ -79,7 +79,14 @@ private:
         };
         DetectionOptions result;
         const auto threshold = values.find("threshold");
-        result.threshold = threshold == values.end() ? (runtime_.causal() ? 0.5 : 0.4) : std::stod(threshold->second);
+        result.threshold = runtime_.causal() ? 0.5 : 0.4;
+        if (threshold != values.end()) {
+            size_t consumed = 0;
+            result.threshold = std::stod(threshold->second, &consumed);
+            if (consumed != threshold->second.size()) {
+                throw std::runtime_error("threshold must be a number");
+            }
+        }
         result.min_speech_frames = ms_frames("min_speech_duration_ms", runtime_.causal() ? 8 : 20);
         result.smooth_window_frames = ms_frames("smooth_window_ms", 5);
         result.max_speech_frames = sec_frames("max_speech_duration_sec", 2000);

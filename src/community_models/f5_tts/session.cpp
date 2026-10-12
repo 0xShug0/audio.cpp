@@ -189,6 +189,9 @@ runtime::TaskResult F5TTSSession::run(const runtime::TaskRequest & request) {
     if (const auto v = runtime::find_option(request.options, {"num_inference_steps"})) {
         req.steps = std::stoi(*v);
     }
+    if (req.steps <= 0) {
+        throw std::runtime_error("num_inference_steps must be positive");
+    }
     if (const auto v = runtime::find_option(request.options, {"cfg_strength", "guidance_scale"})) {
         req.cfg_strength = std::stof(*v);
     }

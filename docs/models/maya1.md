@@ -47,7 +47,7 @@ full prompt and emotion-tag guidance.
 |---|---|---:|---|
 | `weight_type` | framework-supported storage type | `native` | Shared AR and SNAC decoder storage type. |
 | `ar_weight_type` | same as above | `weight_type` | AR backbone storage override. |
-| `codec_weight_type` | same as above | `weight_type` | SNAC decoder storage override. |
+| `codec_weight_type` | `native`, `f32` | `weight_type` | SNAC decoder storage override. Set `maya1.codec_weight_type=f32` when the shared `weight_type` is neither `native` nor `f32`; AR storage remains independently configurable. |
 
 ## Convert
 
