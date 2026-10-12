@@ -461,6 +461,8 @@ MossTTSNanoGlobalTransformerRuntime::MossTTSNanoGlobalTransformerRuntime(
     weights_ = std::make_shared<Weights>();
     const auto & source = *assets_->model_weights;
     const auto & config = assets_->config.global_transformer;
+    const auto weight_storage =
+        resolve_transformer_weight_storage(execution_context_.backend_type(), source, "transformer.h.0.attn.c_attn.weight", weight_storage_type);
     weights_->store = std::make_shared<core::BackendWeightStore>(
         execution_context_.backend(),
         execution_context_.backend_type(),
@@ -469,14 +471,14 @@ MossTTSNanoGlobalTransformerRuntime::MossTTSNanoGlobalTransformerRuntime(
     weights_->text_embedding = weights_->store->load_tensor(
         source,
         "transformer.wte.weight",
-        weight_storage_type,
+        weight_storage,
         {config.vocab_size, config.hidden_size});
     weights_->audio_embeddings.reserve(static_cast<size_t>(assets_->config.n_vq));
     for (int64_t q = 0; q < assets_->config.n_vq; ++q) {
         weights_->audio_embeddings.push_back(weights_->store->load_tensor(
             source,
             "audio_embeddings." + std::to_string(q) + ".weight",
-            weight_storage_type,
+            weight_storage,
             {assets_->config.audio_codebook_sizes.at(static_cast<size_t>(q)), config.hidden_size}));
     }
     weights_->layers.reserve(static_cast<size_t>(config.num_hidden_layers));
@@ -485,12 +487,12 @@ MossTTSNanoGlobalTransformerRuntime::MossTTSNanoGlobalTransformerRuntime(
         TransformerLayerWeights w;
         w.ln1_weight = weights_->store->load_f32_tensor(source, prefix + ".ln_1.weight", {config.hidden_size});
         w.ln1_bias = weights_->store->load_f32_tensor(source, prefix + ".ln_1.bias", {config.hidden_size});
-        w.c_attn = modules::binding::linear_from_source(*weights_->store, source, prefix + ".attn.c_attn", weight_storage_type, config.hidden_size * 3, config.hidden_size, true);
-        w.c_proj = modules::binding::linear_from_source(*weights_->store, source, prefix + ".attn.c_proj", weight_storage_type, config.hidden_size, config.hidden_size, true);
+        w.c_attn = modules::binding::linear_from_source(*weights_->store, source, prefix + ".attn.c_attn", weight_storage, config.hidden_size * 3, config.hidden_size, true);
+        w.c_proj = modules::binding::linear_from_source(*weights_->store, source, prefix + ".attn.c_proj", weight_storage, config.hidden_size, config.hidden_size, true);
         w.ln2_weight = weights_->store->load_f32_tensor(source, prefix + ".ln_2.weight", {config.hidden_size});
         w.ln2_bias = weights_->store->load_f32_tensor(source, prefix + ".ln_2.bias", {config.hidden_size});
-        w.fc_in = modules::binding::linear_from_source(*weights_->store, source, prefix + ".mlp.fc_in", weight_storage_type, config.intermediate_size, config.hidden_size, true);
-        w.fc_out = modules::binding::linear_from_source(*weights_->store, source, prefix + ".mlp.fc_out", weight_storage_type, config.hidden_size, config.intermediate_size, true);
+        w.fc_in = modules::binding::linear_from_source(*weights_->store, source, prefix + ".mlp.fc_in", weight_storage, config.intermediate_size, config.hidden_size, true);
+        w.fc_out = modules::binding::linear_from_source(*weights_->store, source, prefix + ".mlp.fc_out", weight_storage, config.hidden_size, config.intermediate_size, true);
         weights_->layers.push_back(std::move(w));
     }
     weights_->final_norm_weight = weights_->store->load_f32_tensor(source, "transformer.ln_f.weight", {config.hidden_size});
@@ -510,20 +512,17 @@ void MossTTSNanoGlobalTransformerRuntime::begin_generation(int64_t max_positions
         throw std::runtime_error("MOSS global generation requires loaded weights");
     }
     const auto & config = assets_->config.global_transformer;
-    // 2 tensors (K and V) per layer covering `max_positions` steps of `hidden_size` f32.
+    // 2 tensors (K and V) per layer covering `max_positions` steps of `hidden_size` f32. The K/V
+    // data lives in its own backend buffer (ggml_backend_alloc_ctx_tensors inside DecodeGraph);
+    // the graph arena only ever holds tensor metadata and graph nodes, so it does not bound the
+    // cache size and must not be checked against it.
     const int64_t cache_bytes =
         2 * config.num_hidden_layers * max_positions * config.hidden_size * static_cast<int64_t>(sizeof(float));
     engine::debug::trace_log_scalar("moss_tts_nano.global.decode.rows", max_positions);
     engine::debug::trace_log_scalar("moss_tts_nano.global.decode.kv_cache_bytes", cache_bytes);
-    engine::debug::trace_log_scalar("moss_tts_nano.global.decode.arena_bytes", static_cast<int64_t>(decode_graph_arena_bytes_));
     // Already large enough: keep the graph and its cache so the new prompt can reuse its prefix.
     if (decode_ != nullptr && decode_->cache_steps() >= max_positions) {
         return;
-    }
-    if (static_cast<size_t>(cache_bytes) > decode_graph_arena_bytes_) {
-        throw std::runtime_error(
-            "MOSS global decode arena is too small for the requested K/V cache (need " +
-            std::to_string(cache_bytes) + " bytes, have " + std::to_string(decode_graph_arena_bytes_) + ")");
     }
     decode_ = std::make_unique<DecodeGraph>(
         assets_,

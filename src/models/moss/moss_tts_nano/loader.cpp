@@ -45,9 +45,9 @@ runtime::ModelCliInterface cli(const MossTTSNanoAssets &) {
         {"text_chunk_size", "int", "Framework long-form text chunk size. Default: 256.", false, "256", "1"},
     };
     out.session_options = {
-        {"moss_tts_nano.weight_type", "native|f32|f16|bf16|q8_0", "Global and local-frame weight storage type."},
-        {"moss_tts_nano.global_weight_type", "native|f32|f16|bf16|q8_0", "Global transformer weight storage type."},
-        {"moss_tts_nano.local_frame_weight_type", "native|f32|f16|bf16|q8_0", "Local frame decoder weight storage type."},
+        {"moss_tts_nano.weight_type", "native|f32|f16|bf16|q8_0", "Global and local-frame weight storage type. On CUDA/HIP backends a quantized resolution is upgraded to f16: single-row decode and batched prefill select numerically different quantized kernels there, which corrupts incremental generation."},
+        {"moss_tts_nano.global_weight_type", "native|f32|f16|bf16|q8_0", "Global transformer weight storage type (same CUDA/HIP f16 upgrade as moss_tts_nano.weight_type)."},
+        {"moss_tts_nano.local_frame_weight_type", "native|f32|f16|bf16|q8_0", "Local frame decoder weight storage type (same CUDA/HIP f16 upgrade as moss_tts_nano.weight_type)."},
         {"moss_tts_nano.global_prefill_graph_arena_mb", "n", "Global transformer prefill graph arena size."},
         {"moss_tts_nano.global_decode_graph_arena_mb", "n", "Global transformer decode graph arena size."},
         {"moss_tts_nano.global_weight_context_mb", "n", "Global transformer weight context size."},

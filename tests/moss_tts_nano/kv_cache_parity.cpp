@@ -18,7 +18,14 @@
  * grossly different hidden states.
  *
  *   moss_tts_nano_kv_cache_parity --model <model.gguf> [--threads 8] [--weight-type native]
- *                                  [--tolerance 0.001] [--rows 24] [--frames 8]
+ *                                  [--tolerance auto] [--rows 24] [--frames 8]
+ *                                  [--backend cpu|cuda|vulkan]
+ *
+ * Tolerance defaults to "auto": 0.001 on CPU with unquantized weights (the incremental path is
+ * bitwise-exact there), 0.05 on CPU with quantized weights (per-row dots stay exact for the decode
+ * step, but re-batching the prefill shifts quantized GEMM tilings by a few percent), and 0.02 on
+ * GPU backends (kernel selection depends on the batch shape; quantized storage is upgraded to f16
+ * by the runtimes there, leaving ~1% cublas/GEMV-vs-GEMM batching residual).
  */
 
 #include "engine/models/moss/moss_tts_nano/assets.h"
@@ -28,6 +35,8 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
+
+#include <ggml.h>
 
 #include <algorithm>
 #include <cmath>
@@ -147,14 +156,15 @@ int main(int argc, char ** argv) {
         const std::string model_path = arg_value(argc, argv, "--model", "");
         if (model_path.empty()) {
             std::cerr << "usage: moss_tts_nano_kv_cache_parity --model <model.gguf> "
-                         "[--threads 8] [--weight-type native] [--tolerance 0.001] "
-                         "[--rows 24] [--frames 8]\n";
+                         "[--threads 8] [--weight-type native] [--tolerance auto] "
+                         "[--rows 24] [--frames 8] [--backend cpu|cuda|vulkan]\n";
             return 2;
         }
         const auto weight_type = parse_weight_type(arg_value(argc, argv, "--weight-type", "native"));
-        const float tolerance = std::stof(arg_value(argc, argv, "--tolerance", "0.001"));
+        const std::string tolerance_arg = arg_value(argc, argv, "--tolerance", "auto");
         const int64_t rows_wanted = std::stoll(arg_value(argc, argv, "--rows", "24"));
         const int64_t frames = std::stoll(arg_value(argc, argv, "--frames", "8"));
+        const std::string backend_name = arg_value(argc, argv, "--backend", "cpu");
 
         const auto assets = nano::load_moss_tts_nano_assets(model_path);
         if (assets == nullptr) {
@@ -170,12 +180,32 @@ int main(int argc, char ** argv) {
         const int64_t rows = rows_wanted;
         const int64_t split = rows / 2;
         const int64_t budget = rows + frames + 8;
+        float tolerance = 0.0F;
+        if (tolerance_arg != "auto") {
+            tolerance = std::stof(tolerance_arg);
+        } else {
+            const auto resolved_type = engine::assets::resolve_tensor_storage_type(
+                *assets->model_weights, "transformer.h.0.attn.c_attn.weight", weight_type);
+            const bool quantized = ggml_is_quantized(engine::assets::ggml_type_for_tensor_storage(resolved_type));
+            tolerance = backend_name == "cpu" ? (quantized ? 0.05F : 0.001F) : 0.02F;
+        }
         std::cout << "rows=" << rows << " split=" << split << " codebooks=" << config.n_vq
                   << " budget=" << budget << " weight_type=" << arg_value(argc, argv, "--weight-type", "native")
-                  << "\n";
+                  << " backend=" << backend_name << " tolerance=" << tolerance << "\n";
 
+        engine::core::BackendType backend_type = engine::core::BackendType::Cpu;
+        if (backend_name == "cpu") {
+            backend_type = engine::core::BackendType::Cpu;
+        } else if (backend_name == "cuda") {
+            backend_type = engine::core::BackendType::Cuda;
+        } else if (backend_name == "vulkan") {
+            backend_type = engine::core::BackendType::Vulkan;
+        } else {
+            std::cerr << "FAIL: unsupported --backend " << backend_name << "\n";
+            return 2;
+        }
         engine::core::BackendConfig backend_config;
-        backend_config.type = engine::core::BackendType::Cpu;
+        backend_config.type = backend_type;
         backend_config.device = 0;
         backend_config.threads = std::stoi(arg_value(argc, argv, "--threads", "8"));
         engine::core::ExecutionContext execution_context(backend_config);
