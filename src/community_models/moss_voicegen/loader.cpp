@@ -34,7 +34,7 @@ runtime::ModelCliInterface cli() {
     out.request_options = {
         {"min_frames", "<int>", "Minimum generated audio frames per text chunk; nonpositive values derive a text-length-based floor.", false, "0"},
         {"max_frames", "<int>", "Generated audio-frame ceiling per text chunk; nonpositive values derive a text-length-based ceiling. Runtime raises it to at least the effective min_frames plus the number of codebooks.", false, "0"},
-        {"instruction", "<text>", "Voice description: timbre, age, pace, emotion."},
+        {"instruct", "<text>", "Voice description: timbre, age, pace, emotion."},
         {"text_temperature", "float", "Text-token sampling temperature. Must be finite and positive when sampling. Default: 1.5.", false, "1.5"},
         {"language", "English|Chinese", "Full language name; the model does not understand codes like 'en'."},
         {"seed", "int", "Generation seed; later text chunks add their chunk index. Parsed as signed 32-bit integer then converted to uint32; negative values wrap. Default: 0.", false, "0"},

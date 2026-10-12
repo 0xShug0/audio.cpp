@@ -22,7 +22,7 @@ audiocpp_cli \
   --text "Please read this line in a clear and natural voice." \
   --voice-ref assets/resources/b.wav \
   --reference-text "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years." \
-  --request-option instruction="Speak clearly and naturally." \
+  --request-option instruct="Speak clearly and naturally." \
   --out breeze_tts_clone.wav
 ```
 
@@ -35,7 +35,7 @@ audiocpp_cli \
   --model models/Breeze-TTS-2-GGUF/breeze-tts-2-q8_0.gguf \
   --backend cuda \
   --text "Welcome to the local voice demo." \
-  --request-option instruction="A warm female narrator with calm pacing and studio clarity." \
+  --request-option instruct="A warm female narrator with calm pacing and studio clarity." \
   --out breeze_tts_design.wav
 ```
 
@@ -49,7 +49,7 @@ audiocpp_cli \
   --model models/Breeze-TTS-2-GGUF/breeze-tts-2-q8_0.gguf \
   --backend cuda \
   --text "Welcome to the BreezeTTS 2 streaming demo." \
-  --request-option instruction="A confident product demo narrator with steady pacing." \
+  --request-option instruct="A confident product demo narrator with steady pacing." \
   --request-option stream_frames_per_event=16 \
   --out breeze_tts_stream.wav \
   --out-dir breeze_tts_stream_chunks
@@ -78,7 +78,7 @@ audiocpp_cli \
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `reference_text` | text | empty | Request-option alias for the prompt-audio transcript. |
-| `instruction` | text | `Speak clearly and naturally.` | Voice or style instruction. |
+| `instruct` | text | `Speak clearly and naturally.` | Voice or style instruction. Legacy `instruction` remains accepted. |
 | `text_chunk_size` | integer > 0 | `600` | Long-form text chunk size. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
 | `max_tokens` | integer > 0 | `1500` | Maximum generated acoustic frames. |
@@ -121,7 +121,7 @@ OpenAI-compatible speech endpoint, pass streaming options inside the request
   "stream_format": "sse",
   "response_format": "pcm",
   "options": {
-    "instruction": "A confident product demo narrator with steady pacing.",
+    "instruct": "A confident product demo narrator with steady pacing.",
     "stream_frames_per_event": "16",
     "stream_chunk_policy": "grow",
     "stream_lookahead_margin": "0"

@@ -107,7 +107,7 @@ The SSE stream emits `speech.audio.delta` events followed by `speech.audio.done`
 | `--guidance-scale` | float | `2.0` | Decoder CFG strength. |
 | `--seed` | unsigned 32-bit integer | random session RNG | Generation seed; omitted requests continue the session RNG state. |
 
-The corresponding request-option names are `reference_text`, `instruction`,
+The corresponding request-option names are `reference_text`, `instruct`,
 `language`, `text_chunk_size`, `text_chunk_mode`, `num_inference_steps`,
 `guidance_scale`, and `seed`.
 

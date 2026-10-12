@@ -42,7 +42,7 @@
   "options": {
     "request": [
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "description": "TTS voice description. Without it, text carries the complete upstream instruction; editing instructions always go in text.",
         "required": false

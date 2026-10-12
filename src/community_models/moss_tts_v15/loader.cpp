@@ -38,7 +38,7 @@ runtime::ModelCliInterface cli() {
     out.request_options = {
         {"min_frames", "<int>", "Minimum generated audio frames per text chunk; nonpositive values derive a text-length-based floor. Separate from duration_frames conditioning.", false, "0"},
         {"max_frames", "<int>", "Generated audio-frame ceiling per text chunk; nonpositive values derive a text-length-based ceiling. Runtime raises it to at least the effective min_frames plus the number of codebooks.", false, "0"},
-        {"instruction", "<text>", "Voice description. Followed only loosely on this checkpoint; a reference recording is far more reliable."},
+        {"instruct", "<text>", "Voice description. Followed only loosely on this checkpoint; a reference recording is far more reliable."},
         {"duration_frames", "int", "Duration budget in codec frames at 12.5 a second, the model's own '- Tokens:' field. Nonpositive values disable duration conditioning."},
         {"text_temperature", "float", "Text-token sampling temperature. Must be finite and positive when sampling. Default: 1.5.", false, "1.5"},
         {"language", "English|Chinese", "Full language name; the model does not understand codes like 'en'."},

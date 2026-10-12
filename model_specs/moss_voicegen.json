@@ -36,7 +36,7 @@
     "description": "Generated audio-frame ceiling per text chunk; nonpositive values derive a text-length-based ceiling. Runtime raises it to at least the effective min_frames plus the number of codebooks."
    },
    {
-    "name": "instruction",
+    "name": "instruct",
     "type": "string",
     "required": false,
     "description": "Voice description: timbre, age, pace, emotion."

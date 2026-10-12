@@ -123,7 +123,7 @@ audiocpp_cli --task tts --family dots_tts \
 | `reference_duration_sec` | seconds | not set | Trim prompt audio before reference conditioning. |
 | `template_name` | `tts`, `instruction_tts`, `text_to_audio`, `tts_interleave`, `edit` | `tts` | Synthesis template. Use `edit` with the DotTTS Edit package. |
 | `source_audio` | WAV path | not set | Source audio for `template_name=edit`. |
-| `instruction` / `instruct` | text | request text | Structured DotTTS Edit instruction. |
+| `instruct` / `instruction` | text | request text | Structured DotTTS Edit instruction. |
 | `source_text` | text | derived | Optional source transcript override for DotTTS Edit. |
 | `target_text` | text | derived | Edit target transcript override. When omitted, explicit instruction plus text input uses that text; otherwise the target is rendered from instruction tags. |
 | `use_xvector` | `auto`, `on`, `off` | `auto` | Speaker-guidance control for DotTTS Edit. |

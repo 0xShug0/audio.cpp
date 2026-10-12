@@ -34,9 +34,9 @@
         "default": "ja"
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
-        "description": "Natural-language voice or style instruction describing target voice identity, style, or emotion; supported only by caption-conditioned checkpoints. Legacy caption is accepted as an alias.",
+        "description": "Natural-language voice or style instruction describing target voice identity, style, or emotion; supported only by caption-conditioned checkpoints. Legacy instruction and caption are accepted as aliases.",
         "required": false
       },
       {

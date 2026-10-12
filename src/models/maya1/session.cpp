@@ -173,11 +173,7 @@ runtime::VoiceTaskKind Maya1Session::task_kind() const {
 runtime::RunMode Maya1Session::run_mode() const { return task_.mode; }
 
 void Maya1Session::prepare(const runtime::SessionPreparationRequest &request) {
-  auto validation_options = request.options;
-  validation_options.erase("instruction");
-  validation_options.erase("instruct");
-  (void)runtime::find_option(request.options, {"instruction", "instruct"});
-  runtime::validate_spec_backed_request_options(validation_options, *contract_,
+  runtime::validate_spec_backed_request_options(request.options, *contract_,
                                                 "Maya1");
   mark_prepared();
 }
@@ -185,17 +181,14 @@ void Maya1Session::prepare(const runtime::SessionPreparationRequest &request) {
 runtime::TaskResult Maya1Session::run(const runtime::TaskRequest &request) {
   const auto wall_start = Clock::now();
   require_prepared("Maya1 run");
-  auto validation_options = request.options;
-  validation_options.erase("instruction");
-  validation_options.erase("instruct");
-  runtime::validate_spec_backed_request_options(validation_options, *contract_,
+  runtime::validate_spec_backed_request_options(request.options, *contract_,
                                                 "Maya1");
   if (!request.text_input.has_value() || request.text_input->text.empty()) {
     throw std::runtime_error("Maya1 requires non-empty text");
   }
-  const auto instruct = runtime::find_option(request.options, {"instruction", "instruct"});
+  const auto instruct = runtime::find_option(request.options, {"instruct"});
   if (!instruct.has_value() || instruct->empty()) {
-    throw std::runtime_error("Maya1 requires an instruction voice description");
+    throw std::runtime_error("Maya1 requires an instruct voice description");
   }
   auto options = generation_options(request, assets_->generation);
   debug::trace_log_scalar("maya1.instruct", *instruct);

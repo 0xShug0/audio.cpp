@@ -34,7 +34,7 @@ runtime::ModelCliInterface cli(const OmniVoiceAssets &) {
         {"text_chunk_mode", "word_budget|tag_aware|japanese|endline", "Text chunking mode; default tag_aware.", false, "tag_aware"},
         {"language", "string", "Synthesis language code or label; omitted uses automatic language selection."},
         {"reference_text", "string", "Transcript for speaker reference audio used in voice cloning."},
-        {"instruction", "string", "Voice-design instruction such as speaker attributes, accent, style, or delivery."},
+        {"instruct", "string", "Voice-design instruction such as speaker attributes, accent, style, or delivery."},
         {"seed", "int", "Generation seed for reproducible output; omitted value keeps the session RNG state.", false, std::nullopt, "0", "4294967295"},
         {"num_inference_steps", "int", "Diffusion language-model inference steps; default 32.", false, "32", "1"},
         {"guidance_scale", "float", "Classifier-free guidance scale; default 2.0.", false, "2"},

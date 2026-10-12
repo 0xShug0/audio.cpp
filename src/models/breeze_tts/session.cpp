@@ -105,6 +105,9 @@ void validate_request_options(
     const std::unordered_map<std::string, std::string> & options,
     const engine::model_spec::ModelContract & contract) {
     auto validation_options = options;
+    validation_options.erase("instruct");
+    validation_options.erase("instruction");
+    (void)runtime::find_option(options, {"instruct", "instruction"});
     for (const char * key : {"stream_frames_per_event", "stream_lookahead_margin", "stream_chunk_policy"}) {
         if (contract.request_option_keys.find(key) == contract.request_option_keys.end()) {
             validation_options.erase(key);
@@ -370,7 +373,7 @@ BreezeGenerationRequest BreezeTTSSession::build_generation_request(
     size_t chunk_index) const {
     BreezeGenerationRequest generation;
     generation.text = request.text_input->text;
-    generation.instruction = runtime::find_option(request.options, {"instruction"}).value_or("");
+    generation.instruction = runtime::find_option(request.options, {"instruct", "instruction"}).value_or("");
     generation.reference_text = runtime::find_option(request.options, {"reference_text"}).value_or("");
     generation.guidance_scale = runtime::parse_finite_float_option(request.options, {"guidance_scale"}).value_or(generation.guidance_scale);
     if (generation.guidance_scale < 0.0F) {

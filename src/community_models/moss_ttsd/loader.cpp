@@ -41,7 +41,7 @@ runtime::ModelCliInterface cli() {
         {"reference_text", "<text>",
          "What the reference recordings say, speaker-tagged. Prepended to the text so the continuation carries on from a transcript it has already spoken."},
         {"language", "English|Chinese", "Full language name; the model does not understand codes like 'en'."},
-        {"instruction", "<text>", "Free-text direction for the delivery."},
+        {"instruct", "<text>", "Free-text direction for the delivery."},
         {"text_temperature", "float", "Text-token sampling temperature. Must be finite and positive when sampling. Default: 1.5.", false, "1.5"},
         {"seed", "int", "Reproduces a take exactly. Parsed as signed 32-bit integer then converted to uint32; negative values wrap."},
         {"temperature", "<float>", "Audio sampling temperature; must be > 0, default 1.5.", false, std::nullopt, "0"},

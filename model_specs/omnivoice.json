@@ -39,7 +39,7 @@
         "required": false
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "description": "Voice-design instruction such as speaker attributes, accent, style, or delivery.",
         "required": false

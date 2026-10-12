@@ -23,12 +23,12 @@ MOSS-VoiceGenerator-GGUF/
 
 ```bash
 audiocpp_cli --family moss_voicegen --model <model-dir> --task vdes \
-  --request-option "instruction=A warm male radio voice in his fifties, calm, never shrill." \
+  --request-option "instruct=A warm male radio voice in his fifties, calm, never shrill." \
   --text "Good evening, and welcome back to the late show." \
   --language English --out out.wav
 ```
 
-`instruction` describes the speaker: timbre, age, pace, emotion. Legacy `instruct`
+`instruct` describes the speaker: timbre, age, pace, emotion. Legacy `instruction`
 remains accepted. `text_temperature` controls text-stream sampling (default 1.5),
 with `moss_voicegen.text_temperature` retained as an alias. `--language` takes the full
 language name the model was trained on — "English", not "en".

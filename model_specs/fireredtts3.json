@@ -100,7 +100,7 @@
         "required": false
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "description": "FireRedTTS3 instruction for voice design or edit tasks.",
         "required": false

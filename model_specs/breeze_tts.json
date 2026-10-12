@@ -38,7 +38,7 @@
   "options": {
     "request": [
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "description": "BreezeTTS generation instruction.",
         "required": false,

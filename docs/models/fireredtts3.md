@@ -54,7 +54,7 @@ audiocpp_cli \
   --language Chinese \
   --text "今天天气很好，我们一起去公园散步吧。" \
   --request-option template_name=voice_design \
-  --request-option instruction="一个年轻女性的温柔嗓音，语速稍慢，带一点俏皮。" \
+  --request-option instruct="一个年轻女性的温柔嗓音，语速稍慢，带一点俏皮。" \
   --out fireredtts3_design.wav
 ```
 
@@ -74,9 +74,9 @@ audiocpp_cli \
 | `template_name` | Task | Inputs |
 |---|---|---|
 | `instruct_tts` | `tts` or `clon` | `--text`, `--voice-ref`, `--reference-text` |
-| `voice_design` | `vdes` | `--text`, `--request-option instruction=<text>` |
-| `semantic_edit` | `tts` | `--audio`, `--request-option instruction=<text>` |
-| `acoustic_edit` | `tts` | `--audio`, `--request-option instruction=<text>` |
+| `voice_design` | `vdes` | `--text`, `--request-option instruct=<text>` |
+| `semantic_edit` | `tts` | `--audio`, `--request-option instruct=<text>` |
+| `acoustic_edit` | `tts` | `--audio`, `--request-option instruct=<text>` |
 
 ## Common Options (use directly)
 
@@ -93,7 +93,7 @@ audiocpp_cli \
 | `language` | official FireRedTTS3 language or dialect tag | `Chinese` | Generation language tag. |
 | `reference_text` | text | empty | Transcript for the prompt audio. |
 | `template_name` | `instruct_tts`, `voice_design`, `semantic_edit`, `acoustic_edit` | see description | Instruct template; defaults to acoustic_edit with input audio, otherwise instruct_tts. |
-| `instruction` | text | required for design/edit | Voice design or edit instruction. |
+| `instruct` | text | required for design/edit | Voice design or edit instruction. Legacy `instruction` remains accepted. |
 | `text_chunk_size` | integer > 0 | `600` | Long-form text chunk size. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
 | `num_inference_steps` | integer > 0 | `10` | FireRed DiT flow steps per latent patch. |

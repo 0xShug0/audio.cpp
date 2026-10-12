@@ -37,7 +37,7 @@
         "description": "Maximum generated transcript tokens. Defaults to checkpoint generation_config.max_new_tokens; must be positive."
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "required": false,
         "description": "Transcription instruction; empty uses the upstream diarization prompt."

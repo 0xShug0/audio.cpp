@@ -60,7 +60,7 @@
         "required": false
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "description": "Instruction text for instruct mode.",
         "required": false

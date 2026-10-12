@@ -63,7 +63,7 @@
         "required": false
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "description": "Voice/delivery conditioning for generation. ASR/understanding uses the text input as its task prompt, not this option.",
         "required": false

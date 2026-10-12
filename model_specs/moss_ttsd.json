@@ -97,7 +97,7 @@
         "description": "Full language name; the model does not understand codes like 'en'."
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "required": false,
         "description": "Free-text direction for the delivery."

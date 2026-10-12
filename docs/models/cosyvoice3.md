@@ -38,7 +38,7 @@ audiocpp_cli \
   --voice-ref assets/resources/b.wav \
   --reference-text "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years." \
   --request-option template_name=instruct \
-  --request-option instruction="Speak warmly with clear articulation." \
+  --request-option instruct="Speak warmly with clear articulation." \
   --out cosyvoice3_instruct.wav
 ```
 
@@ -74,7 +74,7 @@ audiocpp_cli \
 |---|---|---:|---|
 | `reference_text` | text | empty | Transcript for prompt audio. |
 | `template_name` | `zero_shot`, `cross_lingual`, `instruct` | `zero_shot` | Request template. |
-| `instruction` | text | empty | Instruction text for `instruct` mode. |
+| `instruct` | text | empty | Instruction text for `instruct` mode. Legacy `instruction` remains accepted. |
 | `text_chunk_size` | integer > 0 | `600` | Long-form text chunk size. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
 | `max_tokens` | `-1` or integer > 0 | `-1` | Automatic maximum: 20 times the target text token count. |

@@ -17,12 +17,12 @@ build/debug/bin/audiocpp_cli \
   --task asr --family audio_flamingo \
   --model /path/to/audio-flamingo-next-bf16.gguf \
   --backend cuda --audio input.wav \
-  --request-option "instruction=Describe the sounds in this recording." \
+  --request-option "instruct=Describe the sounds in this recording." \
   --request-option max_tokens=512 \
   --text-out response.txt --log
 ```
 
-For transcription, use `instruction=Transcribe the input speech.`. For music, ask a
+For transcription, use `instruct=Transcribe the input speech.`. For music, ask a
 specific question, such as `Describe the instruments and tempo.`. Instructions
 requesting speaker labels or timestamps produce model-generated text, not structured
 diarization or forced-alignment results.
@@ -57,7 +57,7 @@ Use these as ordinary CLI flags.
 | Option | Values | Description |
 | --- | --- | --- |
 | `--audio` | Audio file | Input recording. Audio is mixed to mono and resampled to 16 kHz. |
-| `--text` | Text | Instruction when neither `instruction` nor legacy `instruct` is supplied. |
+| `--text` | Text | Instruction when `instruct` is not supplied. |
 | `--text-out` | File path | Save the response as text. |
 
 ## Request Options
@@ -66,7 +66,7 @@ Use these with `--request-option key=value`.
 
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
-| `instruction` | Text | `Transcribe the input speech.` | Question or instruction about the audio. Legacy `instruct` remains accepted. |
+| `instruct` | Text | `Transcribe the input speech.` | Question or instruction about the audio. |
 | `max_tokens` | Positive integer | see description | Maximum generated response tokens. Defaults to checkpoint generation configuration (2048 fallback); prompt plus output budget must fit model positions. |
 | `do_sample` | Boolean | `false` | Enable sampling instead of greedy decoding. |
 | `temperature` | Positive number | `1` | Sampling temperature. Used only when do_sample=true; must be positive when sampling. |

@@ -46,14 +46,11 @@ public:
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
         require_prepared("SAMSONE run");
-        auto validation_options = request.options;
-        validation_options.erase("instruction");
-        validation_options.erase("instruct");
-        runtime::validate_spec_backed_request_options(validation_options, *contract_, "SAMSONE");
+        runtime::validate_spec_backed_request_options(request.options, *contract_, "SAMSONE");
         if (!request.audio_input.has_value()) {
             throw std::runtime_error("SAMSONE requires audio input");
         }
-        const std::string instruction = runtime::find_option(request.options, {"instruction", "instruct"}).value_or(kDefaultInstruction);
+        const std::string instruction = runtime::find_option(request.options, {"instruct"}).value_or(kDefaultInstruction);
         const int64_t max_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens"}, 100);
         const auto started = std::chrono::steady_clock::now();
         runtime::TaskResult result;

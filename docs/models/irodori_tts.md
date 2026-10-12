@@ -49,7 +49,7 @@ audiocpp_cli --task vdes --family irodori_tts \
   --model models/Irodori-TTS-v4-Small-GGUF/irodori-tts-v4-small-q8_0.gguf \
   --backend cuda --language ja \
   --text "本日はお越しいただき、誠にありがとうございます。" \
-  --request-option instruction="落ち着いた大人の男性。深く響く声で丁寧に話している。" \
+  --request-option instruct="落ち着いた大人の男性。深く響く声で丁寧に話している。" \
   --request-option no_ref=true \
   --request-option guidance_scale=3 \
   --out out.wav
@@ -98,7 +98,7 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `language` | `ja` | `ja` | Text language code; Irodori-TTS is Japanese-only. |
-| `instruction` | text | empty | Voice-design instruction; only useful on caption-conditioned checkpoints. Legacy `caption` is accepted as an alias. |
+| `instruct` | text | empty | Voice-design instruction; only useful on caption-conditioned checkpoints. Legacy `instruction` and `caption` are accepted as aliases. |
 | `no_ref` | bool | `true` unless a reference is provided | Use no-reference generation. Set `false` with `--voice-ref` for reference conditioning. |
 | `speaker_embedding_file` | path | unset | Speaker Inversion embedding (`*.speaker.safetensors`) used instead of reference audio. Legacy `speaker_embedding_path` remains accepted. See [Speaker Inversion Embeddings](#speaker-inversion-embeddings). |
 | `reference_duration_sec` | seconds | checkpoint | Trim reference audio to this length before encoding it; `0` keeps the whole reference. Legacy `max_ref_sec` remains accepted. See [Reference Length](#reference-length). |
@@ -165,7 +165,8 @@ The runtime accepts the old option names below for existing local scripts and ol
 
 | Legacy option | v1 option |
 |---|---|
-| `caption` | `instruction` |
+| `caption` | `instruct` |
+| `instruction` | `instruct` |
 | `duration_seconds` | `duration_sec` |
 | `min_seconds` | `min_duration_sec` |
 | `max_seconds` | `max_duration_sec` |

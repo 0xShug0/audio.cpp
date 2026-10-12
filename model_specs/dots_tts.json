@@ -70,7 +70,7 @@
         "required": false
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "description": "Structured DotTTS Edit instruction. If omitted with template_name=edit, the request text is used as the instruction.",
         "required": false

@@ -37,18 +37,18 @@ separate download. Model details and instruction examples are available from [Te
 ## Speech Generation
 
 For instruction TTS, pass the words in `--text` and a voice description in
-`instruction` (legacy `instruct` remains accepted):
+`instruct`:
 
 ```bash
 audiocpp_cli --task tts --family auk \
   --model models/AuK-Base-and-Flash-GGUF --backend cuda \
   --text "The next train leaves in ten minutes." \
-  --request-option "instruction=A warm male voice speaking clear English." \
+  --request-option "instruct=A warm male voice speaking clear English." \
   --request-option duration_sec=4 --seed 42 --out speech.wav
 ```
 
 For zero-shot TTS, provide reference speech with `--voice-ref`. Without
-`instruction` or `instruct`, `--text` must contain the complete upstream instruction, not
+`instruct`, `--text` must contain the complete upstream instruction, not
 just the words to speak.
 
 ## Audio Editing
@@ -67,7 +67,7 @@ audiocpp_cli --task gen --family auk \
 The same route accepts speech-content, lyric, pitch, speed, volume, emotion,
 timbre, de-accent, nonverbal and whisper edits, speech enhancement, speech
 and music separation, and target-speaker extraction. Use the upstream
-cookbook for task-specific instructions. Do not pass `instruction` or `instruct` for editing.
+cookbook for task-specific instructions. Do not pass `instruct` for editing.
 
 ## Common Options (use directly)
 
@@ -79,7 +79,7 @@ cookbook for task-specific instructions. Do not pass `instruction` or `instruct`
 
 | Option | Default | Meaning |
 |---|---|---|
-| `instruction` | Unset | TTS voice description; wraps `text` in the upstream instruction. Legacy `instruct` remains accepted. |
+| `instruct` | Unset | TTS voice description; wraps `text` in the upstream instruction. |
 | `duration_sec` | Reference duration | Positive output duration in seconds; required without reference audio. |
 | `num_inference_steps` | `32` | Base Euler steps; AuK-Flash always uses four. |
 | `guidance_scale` | `2` | Base guidance strength; AuK-Flash always uses zero. |

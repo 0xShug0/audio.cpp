@@ -162,7 +162,7 @@
         "default": false
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "description": "Natural-language voice or style instruction for VoiceDesign and CustomVoice variants.",
         "required": false

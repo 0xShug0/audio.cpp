@@ -70,9 +70,9 @@ audiocpp_cli \
 | `asr` | `asr` | `--audio`, optional prompt through `--text` |
 | `understand` | `asr` | `--audio`, question through `--text` |
 | `tts_clone` | `clon` | `--text`, `--voice-ref`, `--reference-text` |
-| `voice_design` | `vdes` | `--text`, `--request-option instruction=<text>` |
-| `semantic_edit` | `gen` | `--audio`, `--request-option instruction=<text>` |
-| `acoustic_edit` | `gen` | `--audio`, `--request-option instruction=<text>` |
+| `voice_design` | `vdes` | `--text`, `--request-option instruct=<text>` |
+| `semantic_edit` | `gen` | `--audio`, `--request-option instruct=<text>` |
+| `acoustic_edit` | `gen` | `--audio`, `--request-option instruct=<text>` |
 
 ## Common Options (use directly)
 
@@ -89,7 +89,7 @@ audiocpp_cli \
 | `template_name` | `asr`, `understand`, `tts_clone`, `voice_design`, `semantic_edit`, `acoustic_edit` | see description | Defaults to voice_design for design, acoustic_edit for generation with input audio, tts_clone for other generation, and asr for ASR. |
 | `language` | language tag | `zh` | Generation or text-path language tag. |
 | `reference_text` | text | empty | Transcript for the prompt audio. |
-| `instruction` | text | required for design/edit | Generation voice/delivery instruction. ASR and understanding instead use the text input as their task prompt. |
+| `instruct` | text | required for design/edit | Generation voice/delivery instruction. Legacy `instruction` remains accepted. ASR and understanding instead use the text input as their task prompt. |
 | `num_inference_steps` | integer > 0 | `10` | FireRedAudio DiT flow steps per latent patch. |
 | `guidance_scale` | float > 0 | `2.0` | FireRedAudio DiT CFG scale. |
 | `max_audio_steps` | integer > 0 | `750` | Maximum generated RedAE latent patches. Legacy `max_new_audio_steps` remains accepted. |

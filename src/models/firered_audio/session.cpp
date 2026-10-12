@@ -81,7 +81,7 @@ FireRedAudioGenerationRequest make_generation_request(
         if (!request.text_input.has_value() || request.text_input->text.empty()) {
             throw std::runtime_error("FireRedAudio voice design requires text input");
         }
-        const auto instruction = runtime::find_option(request.options, {"instruction"}).value_or("");
+        const auto instruction = runtime::find_option(request.options, {"instruct", "instruction"}).value_or("");
         if (instruction.empty()) {
             throw std::runtime_error("FireRedAudio voice design requires instruction");
         }
@@ -93,7 +93,7 @@ FireRedAudioGenerationRequest make_generation_request(
         if (!request.audio_input.has_value()) {
             throw std::runtime_error("FireRedAudio edit requires input audio");
         }
-        const auto instruction = runtime::find_option(request.options, {"instruction"}).value_or("");
+        const auto instruction = runtime::find_option(request.options, {"instruct", "instruction"}).value_or("");
         if (instruction.empty()) {
             throw std::runtime_error("FireRedAudio edit requires instruction");
         }
@@ -281,7 +281,8 @@ runtime::RunMode FireRedAudioSession::run_mode() const {
 
 void FireRedAudioSession::prepare(const runtime::SessionPreparationRequest & request) {
     auto validation_options = request.options;
-    for (const auto * key : {"max_tokens", "max_new_tokens", "max_text_tokens", "max_new_text_tokens",
+    (void)runtime::find_option(request.options, {"instruct", "instruction"});
+    for (const auto * key : {"instruct", "instruction", "max_tokens", "max_new_tokens", "max_text_tokens", "max_new_text_tokens",
                             "max_audio_steps", "max_new_audio_steps", "min_audio_steps", "min_new_audio_steps"}) {
         validation_options.erase(key);
     }
@@ -295,7 +296,8 @@ void FireRedAudioSession::prepare(const runtime::SessionPreparationRequest & req
 runtime::TaskResult FireRedAudioSession::run(const runtime::TaskRequest & request) {
     const auto wall_start = std::chrono::steady_clock::now();
     auto validation_options = request.options;
-    for (const auto * key : {"max_tokens", "max_new_tokens", "max_text_tokens", "max_new_text_tokens",
+    (void)runtime::find_option(request.options, {"instruct", "instruction"});
+    for (const auto * key : {"instruct", "instruction", "max_tokens", "max_new_tokens", "max_text_tokens", "max_new_text_tokens",
                             "max_audio_steps", "max_new_audio_steps", "min_audio_steps", "min_new_audio_steps"}) {
         validation_options.erase(key);
     }

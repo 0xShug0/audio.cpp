@@ -1,8 +1,9 @@
 | Model | Option / area | Before | After |
 |---|---|---|---|
 | All renamed options below | Compatibility | Existing spellings | Legacy spellings remain accepted; discovery uses canonical names. |
-| Audio Flamingo, AuK, Maya1, MOSS-Transcribe-Diarize, SAMSONE | Instruction | `instruct` | `instruction`; task-specific meaning unchanged. |
-| MOSS-TTS v1.5, MOSS-TTSD, MOSS-VoiceGen, DotTTS | Instruction discovery | Legacy or duplicate instruction names | Advertise only `instruction`. |
+| BreezeTTS, CosyVoice3, FireRed Audio, FireRedTTS3 | Instruction | `instruction` | Advertise `instruct`; retain `instruction` as a model-local alias with existing embedded specs. |
+| Irodori TTS | Instruction | `instruction`, legacy `caption` | Advertise `instruct`; retain both existing spellings. |
+| Qwen3 TTS, OmniVoice, DotTTS, MOSS-TTS v1.5, MOSS-TTSD, MOSS-VoiceGen | Instruction discovery | Legacy or duplicate instruction names | Advertise only `instruct`; existing parser aliases remain accepted. |
 | Inflect v2 | Speaking speed | `speaking_rate` | `speed`; larger values remain faster. |
 | sanoTTS | Speaking speed | `speaking_rate` multiplies duration | `speed` uses the reciprocal: `speed=2` equals legacy `speaking_rate=0.5`. Legacy behavior unchanged. |
 | Chatterbox Turbo, VibeASR | Generated-token limit | `max_new_tokens` | `max_tokens` |
@@ -187,6 +188,13 @@ packages are labeled explicitly. Unchecked rows retain missing coverage.
 Output quality is separate from this refactor check: a pass means old/new names
 reach the same consumers and behave consistently, not that generation quality
 or pre-existing model behavior is correct.
+
+Instruction naming correction: `instruct` is canonical. The instruction-only
+runtime changes to Audio Flamingo, AuK, Maya1, MOSS-Transcribe-Diarize, and SAMSONE
+were reverted to main; their earlier alias runs below describe the superseded
+implementation. Newly added `instruct` aliases for BreezeTTS, CosyVoice3,
+FireRed Audio, FireRedTTS3, and Irodori require fresh runtime validation; earlier
+checks do not establish coverage for this correction.
 
 | Done | Model | Runtime validation requirement |
 |---|---|---|
