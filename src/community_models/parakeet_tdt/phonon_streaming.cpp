@@ -1,4 +1,5 @@
 #include "engine/community_models/parakeet_tdt/phonon_streaming.h"
+#include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
@@ -50,7 +51,15 @@ void PhononStreamingSession::reset_stream_state() {
 
 void PhononStreamingSession::begin_stream(const runtime::TaskRequest & request) {
     try {
-        runtime::validate_spec_backed_request_options(request.options, *contract_, "Phonon");
+        auto validation_options = request.options;
+        if (const auto value = runtime::find_option(request.options, {"return_timestamps"})) {
+            (void)runtime::parse_bool_option(*value, "return_timestamps");
+        }
+        // Older GGUF specs omit this CLI compatibility option.
+        if (contract_->request_option_keys.find("return_timestamps") == contract_->request_option_keys.end()) {
+            validation_options.erase("return_timestamps");
+        }
+        runtime::validate_spec_backed_request_options(validation_options, *contract_, "Phonon");
         options_ = decode_options_for_request(request);
     } catch (...) { reset(); throw; }
 }
