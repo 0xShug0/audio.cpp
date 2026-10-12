@@ -9,6 +9,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/io/binary.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/lookup_modules.h"
@@ -689,6 +690,7 @@ struct Vevo2DiffLlamaConditionGraph {
 
         graph = ggml_new_graph_custom(ctx.get(), 65536, false);
         ggml_build_forward_expand(graph, cond_output);
+        engine::debug::timing_log_context_reservation("vevo2.fm.condition.graph", ctx.get());
         gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
         if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
             throw std::runtime_error("failed to allocate Vevo2 FM graph");
@@ -886,6 +888,8 @@ struct Vevo2DiffLlamaStepGraph {
         graph = ggml_new_graph_custom(ctx.get(), 524288, false);
         ggml_build_forward_expand(graph, output);
         input_buffer = ggml_backend_alloc_ctx_tensors(input_ctx.get(), backend);
+        engine::debug::timing_log_context_reservation("vevo2.fm.step.graph", ctx.get());
+        engine::debug::timing_log_context_reservation("vevo2.fm.inputs", input_ctx.get());
         gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
         if (input_buffer == nullptr || gallocr == nullptr ||
             !ggml_gallocr_reserve(gallocr, graph) ||

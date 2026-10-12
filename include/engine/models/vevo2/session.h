@@ -82,7 +82,7 @@ private:
     std::shared_ptr<const Vevo2Assets> assets_;
     size_t ar_weight_context_bytes_ = 2ull * 1024ull * 1024ull * 1024ull;
     size_t ar_prefill_graph_context_bytes_ = 4ull * 1024ull * 1024ull;
-    size_t ar_decode_graph_context_bytes_ = 512ull * 1024ull * 1024ull;
+    size_t ar_decode_graph_context_bytes_ = 4ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType ar_weight_storage_type_;
     engine::core::ExecutionContext reference_execution_context_;
     size_t whisper_weight_context_bytes_ = 256ull * 1024ull * 1024ull;
@@ -94,11 +94,11 @@ private:
     engine::assets::TensorStorageType tokenizer_matmul_weight_storage_type_;
     engine::assets::TensorStorageType tokenizer_conv_weight_storage_type_;
     size_t fm_weight_context_bytes_ = 2ull * 1024ull * 1024ull * 1024ull;
-    size_t fm_graph_context_bytes_ = 1024ull * 1024ull * 1024ull;
+    size_t fm_graph_context_bytes_ = 32ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType fm_matmul_weight_storage_type_;
     engine::assets::TensorStorageType fm_conv_weight_storage_type_;
     size_t vocoder_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
-    size_t vocoder_graph_context_bytes_ = 768ull * 1024ull * 1024ull;
+    size_t vocoder_graph_context_bytes_ = 4ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType vocoder_matmul_weight_storage_type_;
     engine::assets::TensorStorageType vocoder_conv_weight_storage_type_;
     engine::modules::WhisperFrontendComponent whisper_frontend_;

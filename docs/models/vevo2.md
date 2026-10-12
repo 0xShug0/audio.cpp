@@ -273,8 +273,8 @@ workspace. Each retains its former `*_graph_context_mb` alias with the same
 | Option | Default MiB |
 |---|---:|
 | `vevo2.ar_prefill_graph_arena_mb` | `4` |
-| `vevo2.ar_decode_graph_arena_mb` | `512` |
+| `vevo2.ar_decode_graph_arena_mb` | `4` |
 | `vevo2.tokenizer_graph_arena_mb` | `4` |
 | `vevo2.whisper_graph_arena_mb` | `4` |
-| `vevo2.fm_graph_arena_mb` | `1024` |
-| `vevo2.vocoder_graph_arena_mb` | `768` |
+| `vevo2.fm_graph_arena_mb` | `32` |
+| `vevo2.vocoder_graph_arena_mb` | `4` |

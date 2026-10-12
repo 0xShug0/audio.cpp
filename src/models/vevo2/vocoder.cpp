@@ -1,4 +1,5 @@
 #include "engine/models/vevo2/vocoder.h"
+#include "engine/framework/debug/trace.h"
 
 #include "engine/framework/audio/fft.h"
 #include "engine/framework/assets/tensor_source.h"
@@ -314,6 +315,7 @@ struct Vevo2VocosGraph {
 
         graph = ggml_new_graph_custom(ctx.get(), 65536, false);
         ggml_build_forward_expand(graph, output);
+        engine::debug::timing_log_context_reservation("vevo2.vocoder.graph", ctx.get());
         gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
         if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
             throw std::runtime_error("failed to allocate Vevo2 vocoder graph");
