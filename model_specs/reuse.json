@@ -105,7 +105,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/reuse.md",
+      "docs/models/reuse.md",
       "docs/audio_tools.md",
       "docs/gguf.md"
     ]

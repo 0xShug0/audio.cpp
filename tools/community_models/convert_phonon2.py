@@ -282,7 +282,7 @@ def convert(source: Path, reference: Path, output: Path) -> Path:
                                 "uses the native Parakeet TDT runtime, without packed five-value kernels.")
         spec.pop("package_defaults", None)
         spec["ui"].pop("recommended_package", None)
-        spec["ui"]["docs"] = ["docs/community_models/phonon2.md"]
+        spec["ui"]["docs"] = ["docs/models/parakeet_tdt.md"]
         spec["runtime"]["tags"] = ["gguf", "stream"]
         spec["capabilities"]["asr"] = ["word_timestamps", "partial_results"]
         (staged / "model_spec.json").write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")

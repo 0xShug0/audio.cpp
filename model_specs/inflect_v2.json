@@ -118,7 +118,7 @@
     ],
     "docs": [
       "docs/tts.md",
-      "docs/community_models/inflect_v2.md",
+      "docs/models/inflect_v2.md",
       "docs/gguf.md"
     ]
   },

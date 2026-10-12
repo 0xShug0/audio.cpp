@@ -119,7 +119,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/sortformer_diar_v2.md",
+      "docs/models/sortformer_diar_v2.md",
       "docs/speech_analysis.md",
       "docs/gguf.md"
     ]

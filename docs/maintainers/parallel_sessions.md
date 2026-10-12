@@ -133,5 +133,5 @@ cover concurrent copying/scalar reads while mapped storage is released.
 
 The common cross-platform server lifecycle workflow builds and runs these
 backend-neutral checks. Real concurrent streaming/native-batch adapters still
-need model-specific validation. See [the split validation report](../reports/common_slot_framework.md)
-and [the scheduler regression report](../reports/scheduler_busy_timeout.md).
+need model-specific validation. See the archived [split validation report](../archive/common_slot_framework.md)
+and [scheduler regression report](../archive/scheduler_busy_timeout.md).

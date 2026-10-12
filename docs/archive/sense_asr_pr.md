@@ -19,7 +19,7 @@ Closes the porting track for
 | Headers | `include/engine/community_models/sense_asr/` (`assets.h`, `frontend.h`, `encoder.h`, `session.h`, `loader.h`, `types.h`) |
 | Catalog | `model_specs/sense_asr.json` (family `sense_asr`, status `community`, package `sensevoice_small_q8`) |
 | Build | `CMakeLists.txt` — `audiocpp_add_model(sense_asr ...)` with `engine::community_models::sense_asr::make_sense_asr_loader` |
-| Docs | `docs/community_models/sense_asr.md` (+ rows in `docs/community_models/models.md`, `README.md`) |
+| Docs | `docs/models/sense_asr.md` (+ rows in `README.md`) |
 | WebUI | Native catalog entry in `webui/configs/models_catalog.json`; controls are driven by model-spec metadata |
 
 The port adapts the engine (80-mel Kaldi-compatible filterbank + LFR, the

@@ -12,7 +12,7 @@ Commands below use POSIX-shell `\` line continuations. In PowerShell, join
 the lines or replace those continuations with backticks. Environment-variable
 setup is shown separately for both shells.
 
-Build per the [model guide](../../docs/community_models/kitten_tts2.md), adding
+Build per the [model guide](../../docs/models/kitten_tts2.md), adding
 `-DENGINE_BUILD_TESTS=ON`. Build `kitten_tts2_session_probe`,
 `kitten_tts2_components_probe`, and `model_spec_system_test`.
 The [validation record](validation.md)

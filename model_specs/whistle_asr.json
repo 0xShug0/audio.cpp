@@ -28,7 +28,7 @@
   "dependencies": [],
   "ui": {
     "tags": ["ASR", "GGUF"],
-    "docs": ["docs/community_models/whistle_asr.md"]
+    "docs": ["docs/models/whistle_asr.md"]
   },
   "sources": [
     {

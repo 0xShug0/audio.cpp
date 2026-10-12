@@ -16,7 +16,7 @@ speaker-turn output when the model produces timestamps.
 
 A fully quantized port of the same model — INT8 activations through the encoder,
 ternary BitNet weights in the decoder — lives under community models as
-`vibeasr`: see [VibeASR](../community_models/vibeasr.md). It is not a separate
+`vibeasr`: see [VibeASR](vibeasr.md). It is not a separate
 model, only a CPU-only alternative numeric pipeline for the same weights.
 
 | Field | Value |

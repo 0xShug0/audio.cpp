@@ -62,7 +62,7 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 
 ## MiniMax-H3
 
-MiniMax-H3 generates prompt-conditioned audio and optional video. It can be used for music-like audio, dialogue-style audio, and text-to-video experiments through the same `gen` route. See [MiniMax-H3](community_models/minimax_h3.md) for component GGUF package layout, conversion, options, and performance notes.
+MiniMax-H3 generates prompt-conditioned audio and optional video. It can be used for music-like audio, dialogue-style audio, and text-to-video experiments through the same `gen` route. See [MiniMax-H3](models/minimax_h3.md) for component GGUF package layout, conversion, options, and performance notes.
 
 Audio-only prompt:
 
@@ -85,7 +85,7 @@ Set `--request-option return_video=true` and provide `--out-dir` when you also w
 ## MiniMax Music 3
 
 MiniMax Music 3 generates songs from a detailed music caption plus lyrics. See
-[MiniMax Music 3](community_models/minimax_music3.md) for package layout,
+[MiniMax Music 3](models/minimax_music3.md) for package layout,
 component GGUF selection, options, and current performance/memory notes.
 
 ```bash

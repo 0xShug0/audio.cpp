@@ -271,7 +271,7 @@
     ],
     "default_voice": "Bruno",
     "docs": [
-      "docs/community_models/kitten_tts2.md"
+      "docs/models/kitten_tts2.md"
     ]
   },
   "sources": [

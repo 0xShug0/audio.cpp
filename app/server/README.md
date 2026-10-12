@@ -502,7 +502,7 @@ Models with revisable hypotheses, currently Phonon-2, may additionally emit
 `{"type":"transcript.text.partial","text":"..."}`. This is a whole provisional
 transcript to replace in the display, never append to the committed deltas.
 For these models, deltas contain finalized segments only. Other models retain
-their existing event behavior. See [Phonon-2](../../docs/community_models/phonon2.md).
+their existing event behavior. See [Phonon-2](../../docs/models/parakeet_tdt.md#phonon-2-parakeet-tdt-variant).
 
 Note that `stream=true` streams the *output* of an already-uploaded file: the whole recording is sent first, and the deltas describe decoding it. It shortens time-to-first-token on long audio, but nothing can appear while the speaker is still talking. For that, use the live endpoint below.
 

@@ -172,7 +172,9 @@
       "Clone",
       "GGUF"
     ],
-    "docs": []
+  "docs": [
+    "docs/models/echo_tts.md"
+  ]
   },
   "sources": [
     {

@@ -194,7 +194,7 @@
       "Stream"
     ],
     "docs": [
-      "docs/models/qwen3.md",
+      "docs/models/qwen3_asr.md",
       "docs/asr.md",
       "docs/gguf.md"
     ]

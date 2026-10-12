@@ -13,7 +13,7 @@ Affected areas are `src/community_models/whistle_asr/`,
 `CMakeLists.txt`, `README.md`, and ASR/community/licensing documentation.
 
 Preparation follows [CONTRIBUTING.md](../../CONTRIBUTING.md), the
-[community guidance](../../docs/community_models/models.md), and
+[community guidance](../../CONTRIBUTING.md#new-model-prs), and
 [issue #54](https://github.com/0xShug0/audio.cpp/issues/54).
 
 ## Model setup and build
@@ -191,7 +191,7 @@ Original cached inputs remain unchanged under
 
 See [provenance](../../tools/community_models/whistle_asr/PROVENANCE.md),
 [license table](../../docs/model_licenses.md), and
-[model guide](../../docs/community_models/whistle_asr.md).
+[model guide](../../docs/models/whistle_asr.md).
 The converter preserves the pinned upstream `LICENSE` inside the GGUF.
 The repository license does not license the weights or extracted assets.
 The contributor confirms that no code was copied or adapted from reference implementations.
