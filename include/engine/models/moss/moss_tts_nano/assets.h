@@ -1,12 +1,15 @@
 #pragma once
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/module.h"
 #include "engine/models/moss/moss_tts_nano/types.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::models::moss_tts_nano {
@@ -72,5 +75,17 @@ struct MossTTSNanoAssets {
 };
 
 std::shared_ptr<const MossTTSNanoAssets> load_moss_tts_nano_assets(const std::filesystem::path & model_path);
+
+// Resolves the storage type the transformer weights are actually loaded as. On CUDA/HIP the
+// incremental decode forwards single rows (batch 1) while the prompt prefill runs batched, and for
+// quantized weights those batch shapes select numerically different ggml kernels (mmvq vs mmq,
+// measured ~5% per-step hidden-state drift that compounds into corrupted audio), so quantized
+// storage is upgraded to F16 there. `probe_weight_name` must exist in the weight source and is used
+// to resolve what a Native request actually maps to.
+[[nodiscard]] assets::TensorStorageType resolve_transformer_weight_storage(
+    core::BackendType backend_type,
+    const assets::TensorSource & source,
+    std::string_view probe_weight_name,
+    assets::TensorStorageType requested);
 
 }  // namespace engine::models::moss_tts_nano

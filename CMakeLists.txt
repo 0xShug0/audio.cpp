@@ -4013,6 +4013,16 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_link_libraries(moss_tts_delay_backbone_parity PRIVATE OpenMP::OpenMP_CXX)
         endif()
 
+        # Incremental decode parity: chunked prefill / decode step / cross-utterance prefix reuse
+        # against a one-shot prefill, plus frame-cache independence for the local decoder.
+        add_executable(moss_tts_nano_kv_cache_parity
+            tests/moss_tts_nano/kv_cache_parity.cpp
+        )
+        target_link_libraries(moss_tts_nano_kv_cache_parity PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(moss_tts_nano_kv_cache_parity PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
         add_executable(moss_tts_v15_prompt_parity
             tests/moss_tts_v15/prompt_parity.cpp
             src/community_models/moss_tts_v15/prompt.cpp

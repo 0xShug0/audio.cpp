@@ -22,6 +22,11 @@ public:
 private:
     MossTTSNanoGlobalTransformerRuntime & global_transformer_;
     MossTTSNanoLocalFrameDecoderRuntime & local_frame_decoder_;
+    // Previous prompt, kept so the (identical) template prefix K/V can be reused instead of
+    // being forwarded again on the next utterance.
+    std::vector<int32_t> previous_prompt_ids_;
+    int64_t previous_prompt_rows_ = 0;
+    int64_t previous_row_width_ = 0;
 };
 
 }  // namespace engine::models::moss_tts_nano
