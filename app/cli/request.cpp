@@ -585,7 +585,7 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
     set_option_from_arg(argc, argv, "--num-inference-steps", "num_inference_steps", request.options);
     set_option_from_arg(argc, argv, "--text-chunk-size", "text_chunk_size", request.options);
     set_option_from_arg(argc, argv, "--text-chunk-mode", "text_chunk_mode", request.options);
-    set_option_from_arg(argc, argv, "--audio-chunk-seconds", "audio_chunk_seconds", request.options);
+    set_option_from_arg(argc, argv, "--audio-chunk-seconds", "audio_chunk_duration_sec", request.options);
     set_option_from_arg(argc, argv, "--audio-chunk-mode", "audio_chunk_mode", request.options);
     set_option_from_arg(argc, argv, "--use-prosody-code", "use_prosody_code", request.options);
     set_option_from_arg(argc, argv, "--predict-target-prosody", "predict_target_prosody", request.options);

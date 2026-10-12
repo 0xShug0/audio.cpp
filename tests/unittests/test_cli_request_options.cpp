@@ -85,6 +85,20 @@ void test_audio_only_language_is_request_option() {
     engine::test::require_eq(request.options.at("language"), std::string("en"), "audio-only language request option");
 }
 
+void test_audio_chunk_shortcut_uses_canonical_name() {
+    const char * argv[] = {"audiocpp_cli", "--audio-chunk-seconds", "5"};
+    const auto request = minitts::cli::build_request_from_cli(3, const_cast<char **>(argv));
+    engine::test::require_eq(request.options.at("audio_chunk_duration_sec"), std::string("5"),
+                            "audio chunk shortcut uses canonical option");
+    engine::test::require(request.options.count("audio_chunk_seconds") == 0,
+                          "audio chunk shortcut does not emit legacy key");
+
+    const char * legacy_argv[] = {"audiocpp_cli", "--request-option", "audio_chunk_seconds=5"};
+    const auto legacy = minitts::cli::build_request_from_cli(3, const_cast<char **>(legacy_argv));
+    engine::test::require_eq(legacy.options.at("audio_chunk_seconds"), std::string("5"),
+                            "explicit legacy options remain available to model compatibility handling");
+}
+
 void test_normalized_request_option_aliases() {
     using engine::runtime::find_option;
     using engine::test::require;
@@ -379,6 +393,7 @@ int main() {
     test_float_numbers_keep_json_formatting();
     test_unsafe_integer_numbers_are_not_silently_rounded();
     test_audio_only_language_is_request_option();
+    test_audio_chunk_shortcut_uses_canonical_name();
     test_normalized_request_option_aliases();
     test_out_format_selects_wav_sample_format();
     test_request_json_artifacts();

@@ -16,6 +16,7 @@
 | Chatterbox | Flow guidance | `s3gen_cfg_rate` | `flow_guidance_scale`; separate from T3 `guidance_scale`. |
 | Chatterbox | Sampling discovery | Both `greedy` and `do_sample` | Advertise `do_sample`; legacy `greedy=true` still overrides sampling. |
 | FunASR Nano, LFM2 Audio | ASR chunk duration | `audio_chunk_seconds` | `audio_chunk_duration_sec` |
+| CLI | `--audio-chunk-seconds` request mapping | Emits `audio_chunk_seconds` | Emits `audio_chunk_duration_sec`; flag spelling unchanged |
 | LFM2 Audio | Session one-pass audio limit | `lfm2_audio.max_pass_seconds` | `lfm2_audio.max_pass_duration_sec`; unchanged 120-second default. |
 | Sopro TTS | Generation duration / reference crop | `min_seconds`, `max_seconds`, `ref_seconds` | `min_duration_sec`, `max_duration_sec`, `reference_duration_sec` |
 | Vevo2 | Target duration / reference trim | `target_duration_seconds`, `reference_duration_seconds` | `duration_sec`, `reference_duration_sec` |
