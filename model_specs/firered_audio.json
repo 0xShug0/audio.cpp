@@ -45,7 +45,7 @@
       {
         "name": "template_name",
         "type": "enum",
-        "description": "Request template. When omitted, defaults to asr for ASR/understanding sessions and tts_clone for generation sessions. Use understand explicitly for audio questions.",
+        "description": "Defaults to voice_design for design, acoustic_edit for generation with input audio, tts_clone for other generation, and asr for ASR.",
         "required": false,
         "values": [
           "tts_clone",
@@ -118,10 +118,9 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated text tokens for ASR/understanding.",
+        "description": "Output token budget; defaults to 300, or 1024 for understand with enable_thinking=true.",
         "required": false,
-        "min": 1,
-        "default": 300
+        "min": 1
       },
       {
         "name": "enable_thinking",
@@ -150,9 +149,9 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Text sampling temperature for understanding.",
+        "description": "Text sampling temperature for understanding. Understanding-mode sampling requires a positive value; zero does not select greedy decoding.",
         "required": false,
-        "min": 0.0,
+        "min": 0,
         "default": 0.7
       },
       {

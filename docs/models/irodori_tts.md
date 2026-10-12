@@ -103,19 +103,19 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | `speaker_embedding_file` | path | unset | Speaker Inversion embedding (`*.speaker.safetensors`) used instead of reference audio. Legacy `speaker_embedding_path` remains accepted. See [Speaker Inversion Embeddings](#speaker-inversion-embeddings). |
 | `reference_duration_sec` | seconds | checkpoint | Trim reference audio to this length before encoding it; `0` keeps the whole reference. Legacy `max_ref_sec` remains accepted. See [Reference Length](#reference-length). |
 | `num_inference_steps` | integer | `40` | RF diffusion steps. |
-| `duration_sec` | seconds | unset | Explicit output duration; omitted uses predicted duration. |
+| `duration_sec` | seconds | unset | Target duration in seconds; omitted or nonpositive values select predicted duration. |
 | `duration_scale` | float > 0 | `1.0` | Multiplier for predicted duration. |
 | `min_duration_sec` | seconds > 0 | `0.5` | Minimum generated duration; must not exceed `max_duration_sec`. |
 | `max_duration_sec` | seconds > 0 | `30` | Maximum generated duration; must be at least `min_duration_sec`. |
-| `text_chunk_mode` | `japanese`, `endline` | `endline` | Long-form chunking mode. |
+| `text_chunk_mode` | `word_budget`, `tag_aware`, `japanese`, `endline` | `endline` | Text chunk policy; word_budget also accepts the legacy spelling default. |
 | `text_chunk_size` | integer | model text window | Maximum characters per outer chunk. |
-| `text_guidance_scale` | float | `3.0` | Text CFG strength. |
-| `speaker_guidance_scale` | float | `5.0` | Speaker CFG strength. |
-| `caption_guidance_scale` | float | `3.0` | Caption CFG strength. |
-| `guidance_scale` | float | unset | Override all CFG strengths when set. |
+| `text_guidance_scale` | float | `3.0` | Text classifier-free guidance scale; default 3.0. Nonpositive values disable the corresponding CFG branch. |
+| `speaker_guidance_scale` | float | `5.0` | Speaker classifier-free guidance scale; default 5.0. Nonpositive values disable the corresponding CFG branch. |
+| `caption_guidance_scale` | float | `3.0` | Caption classifier-free guidance scale; default 3.0. Nonpositive values disable the corresponding CFG branch. |
+| `guidance_scale` | float | unset | Override all classifier-free guidance scales when set. Nonpositive values disable the corresponding CFG branch. |
 | `guidance_mode` | `independent`, `joint`, `alternating` | `independent` | CFG combination mode. |
-| `guidance_min_t` | float | `0.5` | Minimum diffusion timestep where guidance is active. |
-| `guidance_max_t` | float | `1.0` | Maximum diffusion timestep where guidance is active. |
+| `guidance_min_t` | float | `0.5` | Minimum diffusion timestep value where guidance is active; default 0.5. The parser does not enforce a nonnegative bound. |
+| `guidance_max_t` | float | `1.0` | Maximum diffusion timestep value where guidance is active; default 1.0. The parser does not enforce a nonnegative bound. |
 | `seed` | integer | random | Generation seed. |
 | `trim_tail` | bool | `true` | Trim trailing silence-like samples. |
 

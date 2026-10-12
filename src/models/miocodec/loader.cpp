@@ -64,6 +64,14 @@ public:
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
         const auto assets = load_miocodec_assets(request.model_path);
         runtime::ModelInspection inspection;
+        inspection.cli.session_options = {
+            {"miocodec.weight_type", "native|f32|f16|bf16|q8_0", "Weight storage type. Default: f32.", false, "f32"},
+            {"miocodec.weight_context_mb", "int", "Context or graph arena size in MiB. Default: 256.", false, "256", "1"},
+            {"miocodec.constant_context_mb", "int", "Context or graph arena size in MiB. Default: 256.", false, "256", "1"},
+            {"miocodec.content_graph_arena_mb", "int", "Context or graph arena size in MiB. Default: 512.", false, "512", "1"},
+            {"miocodec.global_graph_arena_mb", "int", "Context or graph arena size in MiB. Default: 256.", false, "256", "1"},
+            {"miocodec.wave_graph_arena_mb", "int", "Context or graph arena size in MiB. Default: 512.", false, "512", "1"},
+        };
         inspection.model_root = assets->resources.model_root();
         inspection.metadata = metadata(*assets);
         inspection.capabilities = capabilities(*assets);

@@ -53,7 +53,7 @@
       {
         "name": "top_k",
         "type": "int",
-        "description": "Audio-token top-k sampling limit; default 50.",
+        "description": "Audio-token top-k sampling limit; default 50. Must not exceed the active audio vocabulary size.",
         "required": false,
         "min": 1,
         "default": 50

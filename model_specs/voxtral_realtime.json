@@ -32,7 +32,7 @@
         "name": "max_tokens",
         "type": "int",
         "min": 1,
-        "description": "Maximum generated transcript tokens; omitted uses the audio-derived limit.",
+        "description": "Maximum generated transcript tokens; omitted uses the audio-derived limit. Offline decoding only; ignored by live streaming.",
         "required": false
       },
       {
@@ -168,7 +168,7 @@
         "type": "int",
         "min": 1,
         "default": 512,
-        "description": "Decoder prefill graph arena in MiB.",
+        "description": "Decoder prefill graph arena in MiB. Decoder uses the maximum of prefill and decode arena settings.",
         "required": false
       },
       {
@@ -176,7 +176,7 @@
         "type": "int",
         "min": 1,
         "default": 512,
-        "description": "Decoder step graph arena in MiB.",
+        "description": "Decoder step graph arena in MiB. Decoder uses the maximum of prefill and decode arena settings.",
         "required": false
       },
       {
@@ -191,7 +191,7 @@
         "name": "stream_decode_cache_steps",
         "type": "int",
         "default": 1024,
-        "description": "Streaming decoder cache capacity in 80 ms steps.",
+        "description": "Streaming decoder cache capacity in 80 ms steps. Must be positive and no greater than checkpoint sliding_window.",
         "required": false
       },
       {

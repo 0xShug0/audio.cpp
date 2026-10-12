@@ -85,10 +85,9 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Request-level chunk duration in seconds for fixed or VAD offline chunking. Falls back to the session chunk duration when omitted.",
+        "description": "VAD maximum chunk duration; omitted inherits the session duration. Fixed/long_form windows use the session setting, not this request override.",
         "required": false,
-        "min": 0.001,
-        "default": 2.0
+        "min": 0.001
       },
       {
         "name": "hotwords",
@@ -165,26 +164,26 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Center-region duration for buffered streaming in seconds; default 2. Fixed context windows are re-encoded rather than cache-aware.",
+        "description": "Center-region duration for buffered streaming in seconds; default 2. Fixed context windows are re-encoded rather than cache-aware. Also sizes offline fixed/long_form windows.",
         "required": false,
         "min": 0.001,
-        "default": 2.0
+        "default": 2
       },
       {
         "name": "left_context_sec",
         "type": "float",
-        "description": "Past context included when re-encoding each buffered-streaming window in seconds; default 10.",
+        "description": "Past context included when re-encoding each buffered-streaming window in seconds; default 10. Also applies to offline fixed/long_form windows.",
         "required": false,
-        "min": 0.0,
-        "default": 10.0
+        "min": 0,
+        "default": 10
       },
       {
         "name": "right_context_sec",
         "type": "float",
-        "description": "Future lookahead included when re-encoding each buffered-streaming window in seconds; default 2 and adds equivalent partial-result latency.",
+        "description": "Future lookahead included when re-encoding each buffered-streaming window in seconds; default 2 and adds equivalent partial-result latency. Also applies to offline fixed/long_form windows.",
         "required": false,
-        "min": 0.0,
-        "default": 2.0
+        "min": 0,
+        "default": 2
       },
       {
         "name": "streaming_attention_mode",

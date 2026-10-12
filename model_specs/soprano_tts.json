@@ -47,18 +47,16 @@
       {
         "name": "top_p",
         "type": "float",
-        "description": "Nucleus sampling probability; default 0.95.",
+        "description": "Nucleus sampling probability; default 0.95. Values >=1 disable nucleus filtering.",
         "required": false,
-        "min": 0.0,
-        "max": 1.0,
+        "min": 0,
         "default": 0.95
       },
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "Repetition penalty applied to the LM head; default 1.2.",
+        "description": "Repetition penalty applied to the LM head; default 1.2. Must be positive; values below 1 are accepted.",
         "required": false,
-        "min": 1.0,
         "default": 1.2
       },
       {
@@ -82,7 +80,7 @@
         "type": "int",
         "description": "Maximum codepoints per sentence chunk before the model generates and decodes separately. Smaller values keep prompts short (more reliable EOS) but increase overhead. Default 200.",
         "required": false,
-        "min": 32,
+        "min": 1,
         "default": 200
       },
       {

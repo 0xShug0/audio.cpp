@@ -33,9 +33,9 @@ runtime::CapabilitySet capabilities(const FishAudioAssets &) {
 runtime::ModelCliInterface cli(const FishAudioAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"reference_text", "TEXT", "Reference transcript used with speaker reference audio."},
+        {"reference_text", "string", "Reference transcript; required with inline reference audio."},
         {"multi_reference_cond", "JSON", "Ordered Fish Audio reference conditioning pairs: [{\"audio\":\"ref.wav\",\"text\":\"transcript\"}, ...]."},
-        {"max_tokens", "N", "Maximum Fish Audio semantic tokens to generate; default 1024, 0 uses the default."},
+        {"max_tokens", "int", "Maximum Fish Audio semantic tokens to generate; default 1024. Zero selects the default token budget.", false, "1024", "0"},
         {"text_chunk_size", "N", "Long-form text chunk size; default 200."},
         {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode."},
         {"top_p", "FLOAT", "Top-p sampling value in (0, 1]; default 0.8.", false, std::nullopt, "0", "1"},
@@ -48,6 +48,10 @@ runtime::ModelCliInterface cli(const FishAudioAssets &) {
         {"fish_audio.reference_cache_slots", "n", "Prepared reference-audio cache slots; default 1."},
         {"fish_audio.weight_type", "native|f32|f16|bf16|q8_0", "AR matmul weight storage type; default native."},
         {"fish_audio.codec_weight_type", "native|f32|f16|q8_0", "Codec conv/matmul weight storage type; default native."},
+        {"fish_audio.ar_graph_arena_mb", "int", "AR runtime graph arena size in MiB; default 512.", false, "512", "1"},
+        {"fish_audio.ar_weight_context_mb", "int", "AR weight context size in MiB; default 32.", false, "32", "1"},
+        {"fish_audio.codec_graph_arena_mb", "int", "Codec encode/decode graph arena size in MiB; default 512.", false, "512", "1"},
+        {"fish_audio.codec_weight_context_mb", "int", "Codec weight context size in MiB; default 32.", false, "32", "1"},
     };
     return out;
 }

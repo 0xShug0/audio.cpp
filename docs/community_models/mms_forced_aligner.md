@@ -84,7 +84,7 @@ Request options:
 
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
-| `language` | `nl`, `nld`, `en`, `eng` (latin); any code (pre_romanized) | — | Transcript language, canonicalized to ISO 639-3 |
+| `language` | `nl`, `nld`, `en`, `eng` (latin); any code (pre_romanized) | — | Language code. Built-in normalization supports nl/nld and en/eng; pre_romanized accepts any nonempty code. |
 | `text_normalization` | `latin`, `pre_romanized` | `latin` | Native Latin normalization or caller-supplied romanization |
 | `star_frequency` | `segment`, `edges` | `segment` | Virtual `<star>` target placement (per-word prefix vs transcript edges) |
 | `merge_threshold_sec` | float >= 0 | `0.0` | Merge words whose gap is at or below this many seconds |

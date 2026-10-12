@@ -93,9 +93,8 @@
         "name": "duration_sec",
         "type": "float",
         "required": false,
-        "default": 8.0,
+        "default": 8,
         "min": 0.64,
-        "max": 60.0,
         "description": "Target temporal budget."
       },
       {
@@ -104,7 +103,6 @@
         "required": false,
         "default": 25,
         "min": 1,
-        "max": 200,
         "description": "Euler flow inference steps."
       },
       {
@@ -112,9 +110,8 @@
         "type": "float",
         "required": false,
         "default": 4.5,
-        "min": 0.0,
-        "max": 20.0,
-        "description": "Classifier-free guidance strength. Must be > 0."
+        "min": 0,
+        "description": "Classifier-free guidance strength. Must be > 0. Values strictly between 0 and 1 bypass CFG and negative-prompt conditioning."
       },
       {
         "name": "negative_prompt",
@@ -142,7 +139,7 @@
         "required": false,
         "default": 42,
         "min": 0,
-        "max": 2147483647,
+        "max": 4294967295,
         "description": "Generation seed."
       }
     ],

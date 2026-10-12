@@ -29,7 +29,7 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Chunk duration in seconds; zero processes the whole recording. When enabled, the chunk sample count must exceed sample_rate/50. Chunking changes bidirectional and normalization context.",
+        "description": "Chunk duration in seconds; zero processes the whole recording. When enabled, the chunk sample count must exceed sample_rate/50. Chunking changes bidirectional and normalization context. Native batching requires zero; positive chunk durations are supported only for single requests.",
         "min": 0,
         "default": 0,
         "required": false
@@ -37,7 +37,7 @@
       {
         "name": "audio_chunk_overlap_sec",
         "type": "float",
-        "description": "Hann-weighted overlap in seconds, shorter than the chunk duration.",
+        "description": "Hann-weighted overlap in seconds, shorter than the chunk duration. Applies only to single-request chunking; native batching ignores this setting.",
         "min": 0,
         "default": 1,
         "required": false

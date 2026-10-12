@@ -49,10 +49,10 @@
       {
         "name": "duration_sec",
         "type": "float",
-        "description": "Explicit target duration in seconds; default 0 uses the prompt-duration estimator.",
+        "description": "Explicit target duration in seconds; default 0 uses the prompt-duration estimator. Above audio_chunk_threshold_sec, long-form generation uses estimated per-chunk durations instead of this explicit target.",
         "required": false,
-        "min": 0.0,
-        "default": 0.0
+        "min": 0,
+        "default": 0
       },
       {
         "name": "num_inference_steps",
@@ -65,25 +65,22 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Classifier-free guidance scale; default comes from config.json, 2.5 in the current package. Values greater than 1 enable CFG.",
+        "description": "Classifier-free guidance scale; default comes from config.json, 2.5 in the current package. Values greater than 1 enable CFG. Negative values disable this guidance branch.",
         "required": false,
-        "min": 0.0,
         "default": 2.5
       },
       {
         "name": "spatio_temporal_guidance_scale",
         "type": "float",
-        "description": "Spatio-temporal guidance scale; default comes from config.json, 1.5 in the current package. Values greater than 0 enable STG.",
+        "description": "Spatio-temporal guidance scale; default comes from config.json, 1.5 in the current package. Values greater than 0 enable STG. Negative values disable this guidance branch.",
         "required": false,
-        "min": 0.0,
         "default": 1.5
       },
       {
         "name": "duration_scale",
         "type": "float",
-        "description": "Multiplier applied to the estimated prompt duration when duration_sec is 0; default comes from config.json, 1.1 in the current package.",
+        "description": "Multiplier applied to the estimated prompt duration when duration_sec is 0; default comes from config.json, 1.1 in the current package. The resulting duration has a 3-second floor.",
         "required": false,
-        "min": 0.0,
         "default": 1.1
       },
       {
@@ -97,7 +94,7 @@
       {
         "name": "guidance_rescale",
         "type": "string",
-        "description": "Guidance rescale value. The default auto mode derives a rescale value from guidance_scale; a numeric string requests an explicit value.",
+        "description": "Guidance rescale: auto or any negative value derives it from guidance_scale; nonnegative numeric values select an explicit rescale.",
         "required": false,
         "default": "auto"
       },
@@ -120,9 +117,9 @@
       {
         "name": "cross_fade_duration_sec",
         "type": "float",
-        "description": "Equal-power cross-fade between long-form chunks in seconds; default 0.05.",
+        "description": "Equal-power cross-fade between long-form chunks in seconds; default 0.05. Zero still overlaps one sample.",
         "required": false,
-        "min": 0.0,
+        "min": 0,
         "default": 0.05
       },
       {

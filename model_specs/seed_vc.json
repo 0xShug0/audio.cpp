@@ -75,25 +75,22 @@
       {
         "name": "inference_guidance_scale",
         "type": "float",
-        "description": "V1 classifier-free guidance scale; default 0.7.",
+        "description": "V1 classifier-free guidance scale; default 0.7. Any finite value is accepted; V1 disables CFG for nonpositive values.",
         "required": false,
-        "min": 0.0,
         "default": 0.7
       },
       {
         "name": "intelligibility_guidance_scale",
         "type": "float",
-        "description": "V2 classifier-free guidance scale for source-content intelligibility; default 0.7.",
+        "description": "V2 classifier-free guidance scale for source-content intelligibility; default 0.7. Any finite value is accepted and used in V2 guidance arithmetic.",
         "required": false,
-        "min": 0.0,
         "default": 0.7
       },
       {
         "name": "similarity_guidance_scale",
         "type": "float",
-        "description": "V2 classifier-free guidance scale for target-speaker similarity; default 0.7.",
+        "description": "V2 classifier-free guidance scale for target-speaker similarity; default 0.7. Any finite value is accepted and used in V2 guidance arithmetic.",
         "required": false,
-        "min": 0.0,
         "default": 0.7
       },
       {

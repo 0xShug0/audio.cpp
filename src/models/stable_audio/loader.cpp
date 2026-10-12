@@ -44,26 +44,27 @@ runtime::CapabilitySet capabilities(const StableAudioAssets &) {
 runtime::ModelCliInterface cli(const StableAudioAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"duration_sec", "seconds[,seconds...]", "Target duration per prompt."},
-        {"num_inference_steps", "n", "RF diffusion steps."},
-        {"guidance_scale", "float", "Classifier-free guidance scale."},
-        {"sampler_mode", "pingpong|euler|dpmpp-2m|dpmpp-3m-sde", "Diffusion sampler."},
-        {"apg_scale", "float", "Adaptive projected guidance scale."},
-        {"negative_prompt", "text", "Negative prompt text."},
-        {"batch_size", "n", "Prompt batch size."},
-        {"duration_padding_sec", "seconds", "Extra generated padding before truncation."},
-        {"truncate_output_to_duration", "bool", "Trim decoded audio to requested duration."},
-        {"chunked_decode", "bool", "Decode the vocoder in chunks."},
-        {"init_noise_level", "float", "Audio-conditioned generation strength in [0, 1]. Must be > 0 for Stable Audio Foundation with init audio and a k-diffusion sampler.", false, std::nullopt, "0", "1"},
-        {"audio_input_kind", "init_audio|inpaint_audio", "How to use request audio input."},
-        {"inpaint_mask_start_sec", "seconds[,seconds...]", "Inpaint region start times."},
-        {"inpaint_mask_end_sec", "seconds[,seconds...]", "Inpaint region end times."},
-        {"seed", "n", "Torch RNG seed."},
+        {"duration_sec", "float", "Positive duration in seconds; batch requests also accept a comma-separated string matching the prompt count, not a JSON array. Default: 120.", false, "120"},
+        {"num_inference_steps", "int", "Diffusion steps. Default: 8.", false, "8", "1"},
+        {"guidance_scale", "float", "Classifier-free guidance scale. Default: 1.", false, "1"},
+        {"sampler_mode", "pingpong|euler", "Stable Audio 3 diffusion sampler."},
+        {"apg_scale", "float", "Adaptive projected guidance scale. Default: 1.", false, "1"},
+        {"negative_prompt", "string", "Negative prompt; pipe separates batch prompts."},
+        {"batch_size", "int", "Prompt batch size. Default: 1.", false, "1", "1"},
+        {"duration_padding_sec", "float", "Generated padding before truncation. Default: 6.", false, "6", "0"},
+        {"truncate_output_to_duration", "bool", "Trim decoded audio to requested duration. Default: true.", false, "true"},
+        {"chunked_decode", "bool", "Decode audio in chunks. Default: true.", false, "true"},
+        {"init_noise_level", "float", "Audio-conditioned generation strength in [0, 1]. Default: 1.", false, "1", "0", "1"},
+        {"audio_input_kind", "init_audio|inpaint_audio", "How to use audio_input. Default: init_audio.", false, "init_audio"},
+        {"inpaint_mask_start_sec", "string", "Comma-separated inpaint region starts in seconds."},
+        {"inpaint_mask_end_sec", "string", "Comma-separated inpaint region ends in seconds."},
+        {"seed", "int", "Sampling seed; omitted chooses a random seed.", false, std::nullopt, "0"},
+        {"prompt", "string", "Fallback text prompt when text_input is absent; pipe separates batch prompts."},
     };
     out.session_options = {
-        {"stable_audio.max_batch", "n", "Maximum prompt batch size; default 1."},
-        {"stable_audio.weight_type", "native|f32|f16|bf16|q8_0", "Stable Audio weight storage type."},
-        {"stable_audio.mem_saver", "true|false", "Release staged runtime graphs after each request; default false."},
+        {"stable_audio.max_batch", "int", "Maximum prompt batch size. Default: 1.", false, "1", "1"},
+        {"stable_audio.weight_type", "native|f32|f16|bf16|q8_0", "Weight storage type; defaults to native."},
+        {"stable_audio.mem_saver", "bool", "Release staged runtime graphs after each request. Default: false.", false, "false"},
     };
     return out;
 }

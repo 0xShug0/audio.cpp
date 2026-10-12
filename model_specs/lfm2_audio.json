@@ -118,7 +118,7 @@
         "type": "int",
         "description": "TTS: maximum Unicode codepoints per text chunk, each spoken as its own turn.",
         "required": false,
-        "min": 32,
+        "min": 1,
         "default": 200
       },
       {
@@ -155,14 +155,14 @@
       {
         "name": "vocoder_gguf",
         "type": "string",
-        "description": "TTS: vocoder GGUF (depthformer), relative to the model directory. Defaults to vocoder-<backbone GGUF name>, or else the directory's only vocoder GGUF.",
+        "description": "TTS/S2S vocoder GGUF (depthformer), relative to the model directory. Defaults to vocoder-<backbone GGUF name>, or the directory's only vocoder GGUF.",
         "required": false,
         "default": ""
       },
       {
         "name": "detokenizer_gguf",
         "type": "string",
-        "description": "TTS: audio detokenizer GGUF, relative to the model directory. Defaults to tokenizer-<backbone GGUF name>, or else the directory's only tokenizer GGUF.",
+        "description": "TTS/S2S audio detokenizer GGUF, relative to the model directory. Defaults to tokenizer-<backbone GGUF name>, or the directory's only tokenizer GGUF.",
         "required": false,
         "default": ""
       },

@@ -67,7 +67,7 @@
       {
         "name": "lookahead_tokens",
         "type": "int",
-        "description": "Chunk-limited encoder right context in 80 ms frames; supported values and the default come from processor_config (0, 3, 6 or 13; default 3 for the published model).",
+        "description": "Chunk-limited encoder right context in 80 ms frames; supported values and the default come from processor_config (0, 3, 6 or 13; default 3 for the published model). In masked speaker mode, omission derives lookahead from diarizer geometry (13 fallback).",
         "required": false,
         "min": 0
       },
@@ -89,7 +89,7 @@
       {
         "name": "return_timestamps",
         "type": "bool",
-        "description": "Return token timestamps; set by the CLI for --words-out. Token timestamps are always computed.",
+        "description": "Compatibility/advisory flag; false does not suppress decoder token timestamps.",
         "required": false,
         "default": false
       },
@@ -139,10 +139,9 @@
       {
         "name": "speaker_segment_max_sec",
         "type": "float",
-        "description": "Streaming only: force-close a speaker-turn event after this many seconds; the final result keeps the full segments. Default 10.",
+        "description": "Streaming only: force-close a speaker-turn event after this many seconds; the final result keeps the full segments. Default 10. Must be positive.",
         "required": false,
-        "min": 0.001,
-        "default": 10.0
+        "default": 10
       }
     ],
     "session": [

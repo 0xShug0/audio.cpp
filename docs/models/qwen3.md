@@ -174,9 +174,10 @@ Streaming mode accepts live audio chunks and emits buffered transcript deltas.
 Timestamp output remains offline-only because word alignment runs after the full
 transcript is known.
 
-`audio_chunk_mode=auto` is the default. For transcript-only ASR, Qwen3 ASR uses
+Offline `audio_chunk_mode=auto` is the default. For transcript-only ASR, Qwen3 ASR uses
 fixed chunks. When word timestamps are requested, it uses bundled Silero VAD
 internally to choose speech-aware chunks before running ASR and alignment.
+Streaming uses duration-based windows regardless of `audio_chunk_mode`.
 
 | Field | Value |
 |---|---|
@@ -313,7 +314,7 @@ through request options `language`, `max_tokens`, `audio_chunk_mode`, and
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `return_timestamps` | bool | `false` | Run the configured forced aligner after ASR. CLI `--words-out` enables this automatically; server requests must enable it explicitly or through `default_request_options`. |
+| `return_timestamps` | bool | `false` | Offline only: run the configured forced aligner after ASR. Streaming rejects true, even with an aligner configured. CLI `--words-out` enables this automatically; server requests must enable it explicitly or through `default_request_options`. |
 | `clamp_timestamps_to_audio` | bool | `false` | Opt-in guard for `--words-out`: keep repaired forced-aligner word spans inside each local audio chunk. Default preserves existing timestamp repair behavior. |
 | `preserve_punctuation` | bool | `false` | Preserve ASR punctuation in timestamped, chunked transcript text instead of rebuilding text from aligned words. Legacy `qwen3_asr.preserve_punctuation` remains accepted. |
 

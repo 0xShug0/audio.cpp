@@ -230,14 +230,14 @@
       {
         "name": "mem_saver",
         "type": "bool",
-        "description": "Release staged runtime graphs after request phases; default false.",
+        "description": "Release staged runtime graphs after request phases; default false. Cannot be combined with perf_mode=flash_attention.",
         "required": false,
         "default": false
       },
       {
         "name": "perf_mode",
         "type": "enum",
-        "description": "Generator performance mode; default off keeps the exact-safe attention path.",
+        "description": "Generator performance mode; default off keeps the exact-safe attention path. flash_attention requires mem_saver=false.",
         "preset": "perf_mode_flash_attention",
         "required": false,
         "default": "off"

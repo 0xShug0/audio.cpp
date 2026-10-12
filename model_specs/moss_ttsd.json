@@ -106,15 +106,14 @@
         "name": "seed",
         "type": "int",
         "required": false,
-        "min": 0,
-        "description": "Reproduces a take exactly."
+        "description": "Reproduces a take exactly. Parsed as signed 32-bit integer then converted to uint32; negative values wrap."
       },
       {
         "name": "text_temperature",
         "type": "float",
         "required": false,
         "default": 1.5,
-        "description": "Text-token sampling temperature."
+        "description": "Text-token sampling temperature. Must be finite and positive when sampling."
       },
       {
         "name": "temperature",
@@ -136,9 +135,8 @@
         "name": "top_k",
         "type": "int",
         "required": false,
-        "min": 0,
         "default": 50,
-        "description": "Audio top-k."
+        "description": "Audio top-k. Nonpositive values disable filtering."
       },
       {
         "name": "repetition_penalty",
@@ -152,8 +150,7 @@
         "name": "max_frames",
         "type": "int",
         "required": false,
-        "min": 0,
-        "description": "Ceiling on generated codec frames at 12.5/s; 0 derives one from the dialogue length."
+        "description": "Ceiling on generated codec frames at 12.5/s; 0 derives one from the dialogue length. Nonpositive values derive an automatic ceiling."
       }
     ],
     "session": [

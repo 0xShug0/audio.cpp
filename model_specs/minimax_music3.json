@@ -80,6 +80,45 @@
         "required": false,
         "min": 0,
         "default": 0
+      },
+      {
+        "name": "flow_uncond_interval",
+        "type": "int",
+        "description": "Evaluate unconditional flow CFG every N-th step, reusing the guidance delta between evaluations. One evaluates both branches every step.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "flow_uncond_warmup",
+        "type": "int",
+        "description": "Initial flow steps that evaluate both CFG branches before guidance-delta reuse.",
+        "required": false,
+        "default": 2
+      },
+      {
+        "name": "ensemble_takes",
+        "type": "int",
+        "description": "Independent takes in a batched AR pass using consecutive seeds; flow/vocoder decode each take. Returns named outputs take_01 through take_NN.",
+        "required": false,
+        "min": 1,
+        "max": 16,
+        "default": 1
+      },
+      {
+        "name": "ensemble_prefix_frames",
+        "type": "int",
+        "description": "Shared intro frames before ensemble takes fork, approximately 25 frames per second. Zero disables intro locking.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "flow_chunk_hop_frames",
+        "type": "int",
+        "description": "Flow chunk hop in AR frames, approximately 25 per second. Zero uses checkpoint configuration; positive values must satisfy the flow chunk geometry.",
+        "required": false,
+        "min": 0,
+        "default": 0
       }
     ],
     "session": [
@@ -141,6 +180,13 @@
         "description": "Load large generation stages only while they are needed to reduce peak VRAM.",
         "required": false,
         "default": true
+      },
+      {
+        "name": "pipeline_overlap",
+        "type": "bool",
+        "description": "Overlap AR decoding with condition/flow/vocoder work on a second backend stream. Requires mem_saver=false; mem_saver=true is an error. Long requests and nondefault chunk hops use sequential execution.",
+        "required": false,
+        "default": false
       }
     ],
     "load": []

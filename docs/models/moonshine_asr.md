@@ -61,7 +61,7 @@ audiocpp_cli --task asr --mode streaming \
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. |
-| `--max-tokens` | integer | audio-duration derived | Maximum generated transcript tokens. |
+| `--max-tokens` | integer | audio-duration derived | Maximum generated transcript tokens. Defaults to audio-duration derived limit. Nonpositive values select the automatic budget. |
 | `--request-option audio_chunk_mode=...` | `auto`, `fixed`, `vad`, `none` | `auto` | Long-form audio chunking policy. |
 | `--request-option audio_chunk_duration_sec=...` | seconds | `60` | Maximum chunk duration for `auto`, `fixed`, and `vad`. |
 | `--text-out` | TXT path | not set | Transcript output. |

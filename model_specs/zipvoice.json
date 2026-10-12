@@ -55,11 +55,10 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Guidance scale; inherits the session default (3.0 for both variants). ZipVoice-Distill uses a guidance-scale embedding; ZipVoice uses batched CFG. Zero disables guidance.",
+        "description": "Guidance scale; inherits the session default (3.0 for both variants). ZipVoice-Distill uses a guidance-scale embedding; ZipVoice uses batched CFG. Zero disables guidance. Any finite nonnegative value is accepted.",
         "required": false,
-        "min": 0.0,
-        "max": 10.0,
-        "default": 3.0
+        "min": 0,
+        "default": 3
       },
       {
         "name": "num_inference_steps",
@@ -73,37 +72,29 @@
       {
         "name": "shift",
         "type": "float",
-        "description": "Shift timesteps toward low SNR (smaller = stronger shift); default 0.5.",
+        "description": "Shift timesteps toward low SNR (smaller = stronger shift); default 0.5. Must be finite and positive.",
         "required": false,
-        "min": 0.05,
-        "max": 1.0,
         "default": 0.5
       },
       {
         "name": "speed",
         "type": "float",
-        "description": "Speech speed multiplier applied through the prompt-duration ratio; default 1.0.",
+        "description": "Speech speed multiplier applied through the prompt-duration ratio; default 1.0. Must be finite and positive.",
         "required": false,
-        "min": 0.5,
-        "max": 2.0,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "feat_scale",
         "type": "float",
-        "description": "Feature scale applied to log-mel features; default 0.1 (reference default).",
+        "description": "Feature scale applied to log-mel features; default 0.1 (reference default). Must be finite and positive.",
         "required": false,
-        "min": 0.01,
-        "max": 1.0,
         "default": 0.1
       },
       {
         "name": "target_rms",
         "type": "float",
-        "description": "Target RMS for prompt loudness normalization; 0 disables. Default 0.1.",
+        "description": "Target RMS for prompt loudness normalization; 0 disables. Default 0.1. Negative values disable normalization; values above 1 are accepted.",
         "required": false,
-        "min": 0.0,
-        "max": 1.0,
         "default": 0.1
       },
       {

@@ -74,8 +74,8 @@ this is output streaming, not incremental text input.
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--voice-ref` | WAV path | not set | Reference speaker audio for voice cloning. |
-| `--reference-text` | text | empty string | Transcript for reference audio. |
-| `--max-new-tokens` | integer | `1024` | Maximum generated semantic tokens per chunk. `0` uses the default. |
+| `--reference-text` | text | empty string | Reference transcript; required with inline reference audio. |
+| `--max-tokens` | integer | `1024` | Maximum generated semantic tokens per chunk. `0` uses the default. |
 | `--text-chunk-size` | integer chars | `200` | Long-form chunk size. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 | `--temperature` | `(0, 2)` | `0.8` | Sampling temperature. |

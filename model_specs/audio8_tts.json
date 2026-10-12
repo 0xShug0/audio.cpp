@@ -109,6 +109,12 @@
         "description": "Sampling seed for reproducible output; omitted uses a random seed.",
         "required": false,
         "min": 0
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Language hint for Chinese-script normalization; Cantonese/yue preserves Traditional characters. Inherits structured transcript or voice language when provided.",
+        "required": false
       }
     ],
     "session": [

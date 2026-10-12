@@ -125,8 +125,8 @@ build/bin/audiocpp_cli --task tts --mode streaming --family soprano_tts \
 |---|---|---:|---|
 | `--request-option max_tokens=<n>` | integer | `512` | Maximum generated audio frames per chunk. |
 | `--temperature` / `--request-option temperature=<f>` | float > 0 | `0.3` | AR sampling temperature; zero is rejected, not a default sentinel. |
-| `--top-p` / `--request-option top_p=<f>` | float | `0.95` | Nucleus sampling threshold. |
-| `--repetition-penalty` / `--request-option repetition_penalty=<f>` | float | `1.2` | Repetition penalty. |
+| `--top-p` / `--request-option top_p=<f>` | float | `0.95` | Nucleus sampling probability; default 0.95. Values >=1 disable nucleus filtering. |
+| `--repetition-penalty` / `--request-option repetition_penalty=<f>` | float | `1.2` | Repetition penalty applied to the LM head; default 1.2. Must be positive; values below 1 are accepted. |
 | `--request-option eos_bias=<f>` | float | `0.0` | Additive bias on EOS logit; positive stops sooner. |
 | `--seed` / `--request-option seed=<n>` | integer | random | AR sampling seed. |
 

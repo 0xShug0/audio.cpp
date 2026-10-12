@@ -19,23 +19,22 @@
       {
         "name": "language",
         "type": "string",
-        "description": "Text language code; defaults to the selected voice prefix.",
+        "description": "Language must be supplied through structured transcript/style input (CLI --language); a language entry in the request option map is not consumed.",
         "required": false
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Decoder noise seed; omitted requests choose a random seed.",
+        "description": "Decoder noise seed; omitted requests choose a random seed. Consumed during preparation, not subsequent run() calls on the prepared session.",
         "required": false,
         "min": 0
       },
       {
         "name": "speed",
         "type": "float",
-        "description": "Speech speed multiplier; default 1.0.",
+        "description": "Speech speed multiplier; default 1.0. Must be finite and positive.",
         "required": false,
-        "min": 0.01,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "phonemes",
@@ -48,7 +47,7 @@
         "type": "int",
         "description": "Maximum codepoints per text chunk before synthesis. Default 240.",
         "required": false,
-        "min": 32,
+        "min": 1,
         "default": 240
       },
       {

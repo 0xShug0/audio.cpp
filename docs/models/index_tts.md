@@ -54,11 +54,11 @@ audiocpp_cli --task tts --family index_tts2 \
 | `--audio` | WAV path | not set | Emotion-reference audio. |
 | `--language` | `zh`, `en` | empty | Text language label. |
 | `--emotion` | text | not set | Emotion-text conditioning through the framework style field. |
-| `--text-chunk-size` | characters | not set | Optional framework outer text chunk size. When omitted, IndexTTS2 keeps its internal tokenizer segmentation. |
+| `--text-chunk-size` | characters | not set | Optional framework long-form text chunk size; omitted keeps the full input together. Must be positive. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework chunking mode used only when `--text-chunk-size` is set. |
 | `--max-tokens` | integer | model default | Maximum generated GPT mel tokens. |
-| `--temperature` | float | model default | GPT sampling temperature. |
-| `--top-p` | float | model default | GPT nucleus sampling limit. |
+| `--temperature` | float | model default | Sampling temperature. Must be positive. |
+| `--top-p` | float | model default | Nucleus sampling probability. Must be in (0, 1]. |
 | `--top-k` | integer | model default | GPT top-k sampling limit. |
 | `--repetition-penalty` | float | model default | GPT repetition penalty. |
 | `--do-sample` | `true`, `false` | model default | Enable stochastic GPT sampling. |
@@ -78,16 +78,16 @@ audiocpp_cli --task tts --family index_tts2 \
 | `use_random_emotion` | bool | `false` | Use random emotion weights in the emotion mixer. |
 | `interval_silence_ms` | milliseconds | `200` | Silence inserted between generated text chunks. |
 | `do_sample` | bool | `true` | Enable sampling. |
-| `top_p` | float | `0.8` | Nucleus sampling probability. |
+| `top_p` | float | `0.8` | Nucleus sampling probability. Must be in (0, 1]. |
 | `top_k` | integer >= 1 | `30` | Top-k sampling limit. |
-| `temperature` | float | `0.8` | Sampling temperature. |
+| `temperature` | float | `0.8` | Sampling temperature. Must be positive. |
 | `length_penalty` | float | `0` | GPT beam-search length penalty. |
 | `num_beams` | integer >= 1 | `3` | Beam search width. |
 | `repetition_penalty` | float | `10` | Sampling repetition penalty. |
 | `max_tokens` | integer >= 1 | `1500` | Maximum generated mel tokens. |
-| `duration_scale` | positive float | `1` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Legacy `duration_factor` remains accepted; also accepted for the v2 variant. |
+| `duration_scale` | positive float | `1` | Positive waveform duration rescaling, supported by both IndexTTS2 and IndexTTS2.5. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
-| `text_chunk_size` | integer | not set | Optional framework long-form text chunk size; omitted keeps the full input together. |
+| `text_chunk_size` | integer | not set | Optional framework long-form text chunk size; omitted keeps the full input together. Must be positive. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 
 ### IndexTTS2 Session Options (use with `--session-option`)
@@ -206,11 +206,11 @@ or commercial use.
 | `--voice-ref` | WAV path | required | Reference speaker audio. |
 | `--audio` | WAV path | not set | Emotion-reference audio. |
 | `--emotion` | text | not set | Emotion-text conditioning through the framework style field. |
-| `--text-chunk-size` | characters | not set | Optional framework outer text chunk size. When omitted, IndexTTS2.5 keeps its internal tokenizer segmentation. |
+| `--text-chunk-size` | characters | not set | Optional framework long-form text chunk size; omitted keeps the full input together. Must be positive. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework chunking mode used only when `--text-chunk-size` is set. |
 | `--max-tokens` | integer | `1500` | Maximum generated GPT mel tokens. |
-| `--temperature` | float | `0.8` | GPT sampling temperature. |
-| `--top-p` | float | `0.8` | GPT nucleus sampling limit. |
+| `--temperature` | float | `0.8` | Sampling temperature. Must be positive. |
+| `--top-p` | float | `0.8` | Nucleus sampling probability. Must be in (0, 1]. |
 | `--top-k` | integer | `30` | GPT top-k sampling limit. |
 | `--repetition-penalty` | float | `10.0` | GPT repetition penalty. |
 | `--do-sample` | `true`, `false` | `true` | Enable stochastic GPT sampling. |
@@ -229,16 +229,16 @@ or commercial use.
 | `use_random_emotion` | bool | `false` | Use random emotion weights in the emotion mixer. |
 | `interval_silence_ms` | milliseconds | `200` | Silence inserted between generated text chunks. |
 | `do_sample` | bool | `true` | Enable sampling. |
-| `top_p` | float | `0.8` | Nucleus sampling probability. |
+| `top_p` | float | `0.8` | Nucleus sampling probability. Must be in (0, 1]. |
 | `top_k` | integer >= 1 | `30` | Top-k sampling limit. |
-| `temperature` | float | `0.8` | Sampling temperature. |
+| `temperature` | float | `0.8` | Sampling temperature. Must be positive. |
 | `length_penalty` | float | `0` | GPT beam-search length penalty. |
 | `num_beams` | integer | `3` | GPT beam count. |
 | `repetition_penalty` | float | `10` | Sampling repetition penalty. |
 | `max_tokens` | integer >= 1 | `1500` | Maximum generated mel tokens. |
-| `duration_scale` | positive float | `1` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Matches the official IndexTTS2.5 `duration_factor`, retained as an alias. |
+| `duration_scale` | positive float | `1` | Positive waveform duration rescaling, supported by both IndexTTS2 and IndexTTS2.5. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
-| `text_chunk_size` | integer | not set | Optional framework long-form text chunk size; omitted keeps the full input together. |
+| `text_chunk_size` | integer | not set | Optional framework long-form text chunk size; omitted keeps the full input together. Must be positive. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 
 ### IndexTTS2.5 Session Options (use with `--session-option`)

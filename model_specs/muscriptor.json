@@ -83,7 +83,7 @@
       {
         "name": "num_beams",
         "type": "int",
-        "description": "Beam-search width; 1 disables beam search, default 1.",
+        "description": "Beam-search width; 1 disables beam search, default 1. Beam search requires guidance_scale=1, do_sample=false, and an actual graph batch of one.",
         "required": false,
         "min": 1,
         "default": 1
@@ -98,9 +98,8 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Sampling seed; default 0.",
+        "description": "Sampling seed; default 0. Parsed as int64 and converted to uint64; negative values wrap.",
         "required": false,
-        "min": 0,
         "default": 0
       }
     ],

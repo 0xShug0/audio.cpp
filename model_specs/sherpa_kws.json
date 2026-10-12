@@ -47,9 +47,9 @@
       {
         "name": "keywords_score",
         "type": "float",
-        "description": "Default context score added for each matched keyword token.",
+        "description": "Default context score added for each matched keyword token. Negative values are accepted but token scores are clamped to at least zero.",
         "required": false,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "keywords_threshold",
@@ -63,7 +63,7 @@
       {
         "name": "num_trailing_blanks",
         "type": "int",
-        "description": "Number of trailing blank frames required before a keyword triggers.",
+        "description": "Emit after strictly more than this many trailing blank frames; 1 requires 2 blanks, 0 requires 1.",
         "required": false,
         "default": 1,
         "min": 0

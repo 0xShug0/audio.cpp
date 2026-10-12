@@ -83,7 +83,7 @@
       {
         "name": "weight_type",
         "type": "enum",
-        "description": "Default storage type for all model weights; default f32.",
+        "description": "Default storage type for all model weights; default f32. With bf16/q8_0, also set conv_weight_type explicitly to native/f32/f16; convolution storage cannot inherit bf16/q8_0.",
         "preset": "weight_type_full",
         "required": false,
         "default": "f32"

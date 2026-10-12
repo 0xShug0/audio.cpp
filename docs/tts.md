@@ -542,13 +542,13 @@ remains accepted with clone audio but does not affect voice encoding.
 | `pocket_tts.offline_graph_capacity_mode` | `fixed`, `double`, `tiered`, `grow` | not set | Offline graph capacity policy; CPU/Metal default tiered, other backends double. |
 | `pocket_tts.prompt_graph_capacity` | integer >= 1 | not set | Optional reserved prompt capacity. |
 | `pocket_tts.generation_graph_capacity` | integer >= 1 | not set | Optional reserved generation capacity. |
-| `pocket_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `pocket_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Shared matmul weight storage; component matmul settings inherit it. Convolution storage remains independently native unless overridden. |
 | `pocket_tts.matmul_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
 | `pocket_tts.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage. |
 | `pocket_tts.weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
-| `pocket_tts.flow_weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_encoder_weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_decoder_weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
+| `pocket_tts.flow_weight_context_mb` | integer >= 1 | see description | Flow weight context in MiB; inherits pocket_tts.weight_context_mb when omitted. |
+| `pocket_tts.mimi_encoder_weight_context_mb` | integer >= 1 | see description | Mimi encoder weight context in MiB; inherits pocket_tts.weight_context_mb when omitted. |
+| `pocket_tts.mimi_decoder_weight_context_mb` | integer >= 1 | see description | Mimi decoder weight context in MiB; inherits pocket_tts.weight_context_mb when omitted. |
 | `pocket_tts.flow_weights_view_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
 | `pocket_tts.flow_step_graph_arena_mb` | integer >= 1 | `256` | Host graph-metadata arena; legacy `flow_step_graph_context_mb` accepted with the same family prefix. |
 | `pocket_tts.mimi_encoder_graph_arena_mb` | integer >= 1 | `512` | Host graph-metadata arena; legacy `mimi_encoder_graph_context_mb` accepted with the same family prefix. |
@@ -649,7 +649,7 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 Streaming output:
 
 ```bash
-audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --mode streaming --text "Hello from VoxCPM2." --out out.wav
+audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --mode streaming --request-option retry_badcase=false --text "Hello from VoxCPM2." --out out.wav
 ```
 
 ### Common Options (use directly)
@@ -660,39 +660,39 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `--voice-ref` | WAV path | not set | Reference speaker audio. |
 | `--reference-text` | text | empty string | Transcript for ultimate-clone style prompting. |
 | `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode. |
-| `--text-chunk-size` | integer chars | `2048` | Long-form chunk size. |
-| `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Long-form chunking mode; keeps style/tag controls attached to chunks by default. |
-| `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
-| `--num-inference-steps` | integer | `10` | Flow matching steps. |
-| `--guidance-scale` | float | `2.0` | CFG strength. |
+| `--text-chunk-size` | integer chars | `2048` | Framework long-form text chunk size. Offline only. |
+| `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode. Offline only. |
+| `--max-tokens` | integer | `4096` | Maximum generated audio tokens. Zero resolves to model max_length; requires min_tokens <= resolved max_tokens <= model limit. |
+| `--num-inference-steps` | integer | `10` | Flow sampling steps. Must be positive. |
+| `--guidance-scale` | float | `2.0` | Classifier-free guidance scale. Must be nonnegative. |
 
 ### Request Options (use with `--request-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `min_tokens` | integer >= 0 | `2` | Minimum generated audio tokens. |
-| `max_tokens` | integer >= 0 | `4096` | Maximum generated audio tokens. |
-| `num_inference_steps` | integer | `10` | Flow sampling steps. |
-| `guidance_scale` | float | `2` | Classifier-free guidance scale. |
-| `retry_badcase` | bool | `true` | Retry detected bad generations. |
-| `retry_badcase_max_times` | integer | `3` | Maximum bad-case retries. |
-| `retry_badcase_ratio_threshold` | float | `6` | Bad-case audio/text length ratio threshold. |
+| `max_tokens` | integer >= 0 | `4096` | Maximum generated audio tokens. Zero resolves to model max_length; requires min_tokens <= resolved max_tokens <= model limit. |
+| `num_inference_steps` | integer | `10` | Flow sampling steps. Must be positive. |
+| `guidance_scale` | float | `2` | Classifier-free guidance scale. Must be nonnegative. |
+| `retry_badcase` | bool | `true` | Retry detected bad generations. Offline only; streaming requires false. |
+| `retry_badcase_max_times` | integer | `3` | Total attempts including the initial attempt, not extra retries; must be positive. |
+| `retry_badcase_ratio_threshold` | float | `6` | Bad-case audio/text length ratio threshold. Must be positive. |
 | `seed` | integer >= 0 | `1234` | Sampling seed. |
 | `cfm_noise_file` | path | not set | Precomputed flow noise file. |
 | `stream_left_context` | integer >= 0 | `3` | Previous patches decoded as streaming left context. |
 | `stream_chunk_policy` | `grow`, `fixed` | `grow` | Streaming only. Grow emits one patch first, then doubles toward `stream_frames_per_event`; fixed waits for the configured patch count. |
 | `stream_frames_per_event` | integer >= 1 | `4` | Maximum generated latent patches per streaming audio event. Set to `1` for the original one-patch cadence. Ignored offline. |
 | `prompt_text` | text | not set | Transcript for continuation prompt audio, distinct from the base voice reference. |
-| `chunk_strategy` | `continuation`, `stateless` | `continuation` | Long-form continuation or independent generation per chunk. |
-| `text_chunk_size` | integer | `2048` | Framework long-form text chunk size. |
-| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode. |
+| `chunk_strategy` | `continuation`, `stateless` | `continuation` | Long-form continuation or independent generation per chunk. Offline only. |
+| `text_chunk_size` | integer | `2048` | Framework long-form text chunk size. Offline only. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode. Offline only. |
 
 ### Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `voxcpm2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
-| `voxcpm2.audiovae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `voxcpm2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Language-model weight storage; does not override AudioVAE storage. |
+| `voxcpm2.audiovae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | AudioVAE weight storage; defaults independently to native, not the shared weight_type. |
 | `voxcpm2.prompt_cache_slots` | integer >= 0 | `1` | Cached encoded prompt slots; zero disables reuse. |
 | `voxcpm2.mem_saver` | bool | `true` | Release staged runtime graphs. |
 | `voxcpm2.weight_context_mb` | integer >= 1 | `3072` | Context or graph arena size in MiB. |

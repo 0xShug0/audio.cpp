@@ -36,7 +36,7 @@ audiocpp_cli --task asr --family higgs_audio_stt --model models/higgs-audio-v3-s
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. |
 | `--text` | text | empty string | Prompt/context text for the ASR request. |
-| `--language` | language code | model default (`en`) | Recognition language hint. |
+| `--language` | language code | model default (`en`) | Output transcript language label; does not condition recognition. |
 | `--mode` | `offline`, `streaming` | `offline` | Full-context or streaming session. |
 | `--max-tokens` | integer | model default | Maximum generated transcript tokens. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `none` | `auto` | Long-audio chunking mode. `auto` uses fixed chunks. |
@@ -60,7 +60,7 @@ audiocpp_cli --task asr --family higgs_audio_stt --model models/higgs-audio-v3-s
 | `higgs_audio_stt.audio_encoder_graph_arena_mb` | integer MiB >= 1 | `512` | Audio encoder graph arena size. |
 | `higgs_audio_stt.text_decoder_prefill_graph_arena_mb` | integer MiB >= 1 | `512` | Text decoder prefill graph arena size. |
 | `higgs_audio_stt.text_decoder_decode_graph_arena_mb` | integer MiB >= 1 | `256` | Text decoder cached-step graph arena size. |
-| `higgs_audio_stt.text_decoder_weight_context_mb` | integer MiB >= 1 | `4096` | Text decoder weight context arena size. |
+| `higgs_audio_stt.text_decoder_weight_context_mb` | integer MiB >= 1 | see description | Text decoder weight context in MiB; omitted uses 4096 on 64-bit builds or 1024 on 32-bit builds. |
 
 ## Compatibility
 

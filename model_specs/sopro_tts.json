@@ -34,80 +34,59 @@
       {
         "name": "language",
         "type": "string",
-        "description": "Language tag prepended to the prompt (en, pt, fr, de). Optional; helps pronunciation on ambiguous text.",
-        "required": false,
-        "default": ""
+        "description": "Language tag (en, pt, fr, de); omitted inherits transcript language, then the session default.",
+        "required": false
       },
       {
         "name": "temperature",
         "type": "float",
-        "description": "Semantic LM sampling temperature; default 0.8.",
-        "required": false,
-        "min": 0.0,
-        "max": 2.0,
-        "default": 0.8
+        "description": "Semantic sampling temperature; nonpositive selects greedy decoding. Omitted uses checkpoint generation.temperature.",
+        "required": false
       },
       {
         "name": "top_p",
         "type": "float",
-        "description": "Nucleus sampling threshold for the semantic LM; default 0.9.",
-        "required": false,
-        "min": 0.0,
-        "max": 1.0,
-        "default": 0.9
+        "description": "Semantic nucleus cutoff; values outside [0,1] are disabled/clamped by the sampler. Omitted uses checkpoint generation.top_p.",
+        "required": false
       },
       {
         "name": "top_k",
         "type": "int",
-        "description": "Top-k truncation for the semantic LM; 0 disables. Default 25.",
-        "required": false,
-        "min": 0,
-        "default": 25
+        "description": "Semantic top-k; nonpositive disables filtering. Omitted uses checkpoint generation.top_k.",
+        "required": false
       },
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Acoustic rectified-flow Euler steps; default 2.",
+        "description": "Positive acoustic sampling steps; omitted uses checkpoint generation.steps.",
         "required": false,
-        "min": 1,
-        "max": 32,
-        "default": 2
+        "min": 1
       },
       {
         "name": "max_duration_sec",
         "type": "float",
-        "description": "Cap on generated audio per segment; long text is split into segments so total length is unbounded. Default 30.",
-        "required": false,
-        "min": 1.0,
-        "max": 60.0,
-        "default": 30.0
+        "description": "Positive maximum segment duration; must be >= min_duration_sec. Omitted uses checkpoint generation.max_seconds.",
+        "required": false
       },
       {
         "name": "min_duration_sec",
         "type": "float",
-        "description": "Minimum audio per segment before the semantic LM may emit EOS; default 0.4.",
+        "description": "Nonnegative minimum duration; must be <= max_duration_sec. Omitted uses checkpoint generation.min_seconds.",
         "required": false,
-        "min": 0.0,
-        "max": 10.0,
-        "default": 0.4
+        "min": 0
       },
       {
         "name": "reference_duration_sec",
         "type": "float",
-        "description": "Reference audio window used for cloning; default 10.",
-        "required": false,
-        "min": 1.0,
-        "max": 30.0,
-        "default": 10.0
+        "description": "Positive reference window in seconds; omitted uses checkpoint generation.ref_seconds.",
+        "required": false
       },
       {
         "name": "text_chunk_size",
         "type": "int",
-        "description": "Maximum codepoints per synthesis segment; default 300 (config.json generation.max_segment_chars).",
+        "description": "Positive codepoint budget per segment; omitted uses checkpoint generation.max_segment_chars.",
         "required": false,
-        "min": 20,
-        "max": 2000,
-        "default": 300
+        "min": 1
       },
       {
         "name": "seed",

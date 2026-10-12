@@ -137,8 +137,8 @@ Arena and weight-context sizes are in MiB.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `omnivoice.mem_saver` | bool | `false` | Release staged generator and audio-tokenizer runtime graphs after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
-| `omnivoice.perf_mode` | `off`, `flash_attention` | `off` | Opt-in generator attention mode. `off` keeps the exact-safe path; `flash_attention` can improve CUDA throughput with small output drift. |
+| `omnivoice.mem_saver` | bool | `false` | Release staged runtime graphs after request phases; default false. Cannot be combined with perf_mode=flash_attention. |
+| `omnivoice.perf_mode` | `off`, `flash_attention` | `off` | Generator performance mode; default off keeps the exact-safe attention path. flash_attention requires mem_saver=false. |
 | `omnivoice.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Generator weight storage fallback. |
 | `omnivoice.generator_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit generator weight storage override. |
 | `omnivoice.audio_tokenizer_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for audio tokenizer weights. |

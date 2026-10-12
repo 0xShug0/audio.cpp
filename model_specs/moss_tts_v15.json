@@ -100,9 +100,8 @@
       {
         "name": "duration_frames",
         "type": "int",
-        "min": 1,
         "required": false,
-        "description": "Duration budget in codec frames at 12.5 a second, the model's own '- Tokens:' field."
+        "description": "Duration budget in codec frames at 12.5 a second, the model's own '- Tokens:' field. Nonpositive values disable duration conditioning."
       },
       {
         "name": "language",
@@ -114,20 +113,20 @@
         "name": "seed",
         "type": "int",
         "required": false,
-        "description": "Reproduces a take exactly."
+        "description": "Reproduces a take exactly. Parsed as signed 32-bit integer then converted to uint32; negative values wrap."
       },
       {
         "name": "text_temperature",
         "type": "float",
         "required": false,
         "default": 1.5,
-        "description": "Text-token sampling temperature."
+        "description": "Text-token sampling temperature. Must be finite and positive when sampling."
       },
       {
         "name": "temperature",
         "type": "float",
         "required": false,
-        "description": "Audio sampling temperature."
+        "description": "Audio sampling temperature. Must be finite and positive when sampling."
       },
       {
         "name": "top_p",
@@ -145,7 +144,7 @@
         "name": "repetition_penalty",
         "type": "float",
         "required": false,
-        "description": "Audio repetition penalty."
+        "description": "Audio repetition penalty. Must be finite and positive when history is nonempty."
       },
       {
         "name": "text_chunk_size",
@@ -158,14 +157,15 @@
       {
         "name": "text_chunk_mode",
         "type": "enum",
-        "description": "Framework text chunking mode.",
+        "description": "Text chunking policy; word_budget also accepts default.",
         "values": [
-          "default",
+          "word_budget",
           "tag_aware",
+          "japanese",
           "endline"
         ],
         "required": false,
-        "default": "default"
+        "default": "word_budget"
       }
     ],
     "session": [

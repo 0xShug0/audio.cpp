@@ -39,7 +39,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated AR tokens; zero uses the default.",
+        "description": "Maximum generated AR tokens; zero uses the default. Must not exceed the configured context length.",
         "required": false,
         "min": 0,
         "default": 2048
@@ -47,14 +47,14 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "AR sampling temperature.",
+        "description": "AR sampling temperature. Must be positive.",
         "required": false,
         "default": 0.8
       },
       {
         "name": "top_p",
         "type": "float",
-        "description": "AR nucleus sampling probability.",
+        "description": "AR nucleus sampling probability. Must be positive.",
         "required": false,
         "default": 0.8
       },
@@ -63,12 +63,13 @@
         "type": "int",
         "description": "AR top-k sampling limit.",
         "required": false,
-        "default": 30
+        "default": 30,
+        "min": 0
       },
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "Accepted for Python API compatibility; audio sampling does not consume this value.",
+        "description": "Accepted for Python API compatibility; audio sampling does not consume this value. Compatibility-only, but must be finite and positive.",
         "required": false,
         "default": 1.1
       },
@@ -91,7 +92,8 @@
         "type": "int",
         "description": "Framework long-form text chunk size.",
         "required": false,
-        "default": 1024
+        "default": 1024,
+        "min": 1
       },
       {
         "name": "text_chunk_mode",

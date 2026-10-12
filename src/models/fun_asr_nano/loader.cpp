@@ -38,8 +38,8 @@ runtime::ModelCliInterface cli() {
        "1"},
       {"audio_chunk_mode", "auto|fixed|none", "Audio chunking mode.", false,
        "auto"},
-      {"audio_chunk_duration_sec", "seconds", "Fixed audio chunk duration.", false,
-       "30", "0"},
+      {"audio_chunk_duration_sec", "seconds", "Fixed audio chunk duration; must be finite and positive, rounding to at least one input sample.", false,
+       "30"},
   };
   result.session_options = {
       {"fun_asr_nano.weight_type", "native|f32|f16|bf16|q8_0",

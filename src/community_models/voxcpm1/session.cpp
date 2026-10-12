@@ -862,15 +862,16 @@ runtime::ModelCliInterface cli_v1(const VoxCPM1Assets &) {
   out.request_options = {
       {"text_chunk_mode", "word_budget|tag_aware|japanese|endline", "Text chunking mode; default tag_aware.", false, "tag_aware"},
       {"seed", "int", "Random seed for MiniCPM and diffusion sampling.", false},
-      {"max_tokens", "int", "Maximum MiniCPM output tokens; default 4096.", false, "4096"},
+      {"max_tokens", "int", "Maximum MiniCPM output tokens; default 4096. Zero selects model max_length; negative counts are rejected.", false, "4096"},
       {"min_tokens", "int", "Minimum MiniCPM output tokens before an EOS stop is honored; default 2.", false, "2"},
-      {"num_inference_steps", "int", "CFM diffusion sampling steps; default 10.", false, "10"},
-      {"guidance_scale", "float", "CFM classifier-free guidance rate.", false, "2"},
+      {"num_inference_steps", "int", "CFM diffusion sampling steps; default 10. Must be positive.", false, "10"},
+      {"guidance_scale", "float", "CFM classifier-free guidance rate. Must be nonnegative. Default: 2.", false, "2"},
       {"retry_badcase", "bool", "Retry when generation is detected as a bad case; defaults to true offline and false in streaming. Streaming ignores an explicit true value with a warning.", false},
-      {"retry_badcase_max_times", "int", "Maximum total generation attempts including the initial attempt; default 3.", false, "3"},
-      {"retry_badcase_ratio_threshold", "float", "Bad-case ratio threshold for retry decisions.", false},
+      {"retry_badcase_max_times", "int", "Maximum total generation attempts when retrying bad cases, including the initial attempt; default 3. Must be positive.", false, "3"},
+      {"retry_badcase_ratio_threshold", "float", "Bad-case ratio threshold for retry decisions. Must be positive."},
       {"prompt_text", "string", "Text prompt for prompt-continuation voice cloning.", false},
       {"reference_text", "string", "Alias for prompt_text; text prompt for prompt-continuation voice cloning.", false},
+      {"text_chunk_size", "int", "Maximum characters per offline text chunk; must be positive. Does not control streaming chunk cadence. Default: 2048.", false, "2048", "1"},
   };
   out.session_options = {
       {"voxcpm1.mem_saver", "bool", "Use tighter graph workspaces and release request runtime graphs; default false.", false, "false"},

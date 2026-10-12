@@ -149,8 +149,7 @@
         "name": "audio_chunk_duration_sec",
         "required": false,
         "type": "float",
-        "description": "Duration of each encoder window in seconds.",
-        "min": 0.02,
+        "description": "Duration of each encoder window in seconds. Must be positive and greater than overlap.",
         "max": 30,
         "default": 30
       },
@@ -158,7 +157,7 @@
         "name": "audio_chunk_overlap_sec",
         "required": false,
         "type": "float",
-        "description": "Audio overlap between continuation windows in seconds.",
+        "description": "Audio overlap between continuation windows in seconds. Must be smaller than chunk duration.",
         "min": 0,
         "default": 4
       },
@@ -185,9 +184,8 @@
         "name": "max_tokens",
         "required": false,
         "type": "int",
-        "description": "Maximum generated tokens per window.",
+        "description": "Maximum generated tokens per window. Positive budget, additionally bounded by remaining checkpoint text positions after the prompt.",
         "min": 1,
-        "max": 439,
         "default": 256
       }
     ],

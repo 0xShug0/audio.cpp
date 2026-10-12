@@ -101,10 +101,10 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Seed for text and audio token sampling; default 42424242.",
+        "description": "uint32 seed. Session RNG starts at 42424242; explicit values reseed it, while omission on later conversations continues RNG state.",
         "required": false,
         "min": 0,
-        "default": 42424242
+        "max": 4294967295
       }
     ],
     "session": [

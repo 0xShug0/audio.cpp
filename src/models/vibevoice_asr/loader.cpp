@@ -41,11 +41,12 @@ runtime::ModelCliInterface cli(const VibeVoiceASRAssets &) {
         {"temperature", "float", "Sampling temperature; 0 uses deterministic decoding."},
         {"top_p", "float", "Nucleus sampling probability."},
         {"top_k", "n", "Top-k sampling limit; 0 disables top-k filtering."},
-        {"num_beams", "n", "Beam count for deterministic beam search."},
+        {"num_beams", "n", "Beam count for the offline checkpoint; ignored by the streaming checkpoint."},
         {"repetition_penalty", "float", "Generation repetition penalty."},
         {"seed", "n", "Acoustic latent sampling seed."},
-        {"audio_chunk_mode", "auto|fixed|vad|none", "Audio chunking mode; default auto uses fixed chunks."},
-        {"audio_chunk_duration_sec", "seconds", "Audio chunk duration; default 1200."},
+        {"audio_chunk_mode", "auto|fixed|vad|none", "Offline checkpoint chunk mode; default auto uses fixed chunks. Ignored by the streaming checkpoint in both task modes."},
+        {"audio_chunk_duration_sec", "seconds", "Offline checkpoint chunk duration; default 1200. Ignored by the streaming checkpoint in both task modes."},
+        {"context", "string", "Context hint; context_info is also accepted."},
     };
     out.session_options = {
         {"vibevoice_asr.weight_type", "native|f32|f16|bf16|q8_0", "Tokenizer, connector, and decoder weight storage type."},
@@ -60,6 +61,11 @@ runtime::ModelCliInterface cli(const VibeVoiceASRAssets &) {
         {"vibevoice_asr_streaming.tokenizer_weight_type", "native|f32|f16|bf16|q8_0", "Speech tokenizer weight storage type."},
         {"vibevoice_asr_streaming.connector_weight_type", "native|f32|f16|bf16|q8_0", "Acoustic and semantic connector weight storage type."},
         {"vibevoice_asr_streaming.decoder_weight_type", "native|f32|f16|bf16|q8_0", "Text decoder weight storage type."},
+        {"vibevoice_asr_streaming.tokenizer_weight_context_mb", "int", "Speech tokenizer weight context in MiB; default 512; must be positive.", false, "512", "1"},
+        {"vibevoice_asr_streaming.connector_weight_context_mb", "int", "Connector weight context in MiB; default 128; must be positive.", false, "128", "1"},
+        {"vibevoice_asr_streaming.decoder_weight_context_mb", "int", "Decoder weight context in MiB; default 4096 on 64-bit builds, 1024 on 32-bit builds; must be positive.", false, std::nullopt, "1"},
+        {"vibevoice_asr_streaming.max_history_steps", "int", "Retained decoder history; 0 uses checkpoint position capacity and positive values cannot exceed it.", false, "0", "0"},
+        {"vibevoice_asr.max_history_steps", "int", "Maximum retained decoder history; zero uses the model limit. Cannot exceed checkpoint position capacity; zero uses that capacity. Default: 0.", false, "0", "0"},
     };
     return out;
 }

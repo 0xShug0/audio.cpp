@@ -33,9 +33,8 @@
         "name": "max_tokens",
         "type": "int",
         "min": 1,
-        "default": 5120,
         "required": false,
-        "description": "Maximum generated transcript tokens."
+        "description": "Maximum generated transcript tokens. Defaults to checkpoint generation_config.max_new_tokens; must be positive."
       },
       {
         "name": "instruction",

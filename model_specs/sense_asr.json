@@ -69,10 +69,11 @@
       {
         "name": "audio_chunk_mode",
         "type": "enum",
-        "description": "Audio chunking mode: auto, fixed, or none.",
+        "description": "Offline chunk mode: auto, fixed, vad, or none. Streaming always uses fixed-duration windows.",
         "values": [
           "auto",
           "fixed",
+          "vad",
           "none"
         ],
         "required": false,
@@ -81,9 +82,8 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Fixed chunk duration in seconds when not using VAD segmentation.",
+        "description": "Positive duration rounding to at least one sample; sets fixed windows and the VAD maximum chunk length.",
         "required": false,
-        "min": 0.001,
         "default": 30
       }
     ],
@@ -101,7 +101,7 @@
         "type": "int",
         "description": "Encoder graph arena size in MB.",
         "required": false,
-        "min": 64,
+        "min": 1,
         "default": 1024
       },
       {

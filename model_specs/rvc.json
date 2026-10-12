@@ -82,17 +82,15 @@
       {
         "name": "pitch_filter_radius",
         "type": "int",
-        "description": "Median filter radius for F0 smoothing; values greater than 2 enable filtering, default 3.",
+        "description": "Pitch median-filter switch: values >2 enable a radius-1 filter; values <=2 disable it.",
         "required": false,
-        "min": 0,
         "default": 3
       },
       {
         "name": "output_sample_rate",
         "type": "int",
-        "description": "Output sample rate in Hz; default 0 keeps the selected voice model sample rate.",
+        "description": "Output sample rate in Hz; default 0 keeps the selected voice model sample rate. Nonpositive values preserve the voice sample rate.",
         "required": false,
-        "min": 0,
         "default": 0
       },
       {

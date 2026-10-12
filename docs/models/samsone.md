@@ -25,7 +25,7 @@ Use these with `--request-option key=value`.
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
 | `instruction` | English text | `describe the audio` | Question or instruction about the audio. Legacy `instruct` remains accepted. |
-| `max_tokens` | `1` to `512` | `100` | Maximum response tokens. |
+| `max_tokens` | `1` to `512` | `100` | Maximum response tokens. Must be positive; audio/prompt tokens plus this budget must fit checkpoint max_position_embeddings. |
 
 The upstream repository does not currently publish a license file. Review the upstream terms before redistributing converted weights.
 

@@ -30,7 +30,7 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Reference transcript used with speaker reference audio.",
+        "description": "Reference transcript; required with inline reference audio.",
         "required": false
       },
       {
@@ -42,9 +42,9 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum Fish Audio semantic tokens to generate; default 1024.",
+        "description": "Maximum Fish Audio semantic tokens to generate; default 1024. Zero selects the default token budget.",
         "required": false,
-        "min": 1,
+        "min": 0,
         "default": 1024
       },
       {

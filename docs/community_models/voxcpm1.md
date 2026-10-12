@@ -103,9 +103,9 @@ Measured on Ubuntu 24.04 with OpenMP optimization (CPU backend):
 | `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode; streaming does not retry bad cases. |
 | `--session-option voxcpm1.mem_saver` | `true`, `false` | `false` | Use tighter graph workspaces and release request runtime graphs to reduce resident VRAM. |
 | `--session-option voxcpm1.prompt_cache_slots` | integer | `1` | Prompt and prompt-audio embedding cache slots. Set `0` to disable prompt caching. |
-| `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
-| `--num-inference-steps` | integer | `10` | CFM flow-matching diffusion steps. |
-| `--guidance-scale` | float | `2.0` | CFG strength. |
+| `--max-tokens` | integer | `4096` | Maximum MiniCPM output tokens; default 4096. Zero selects model max_length; negative counts are rejected. |
+| `--num-inference-steps` | integer | `10` | CFM diffusion sampling steps; default 10. Must be positive. |
+| `--guidance-scale` | float | `2.0` | CFM classifier-free guidance rate. Must be nonnegative. |
 | `--request-option retry_badcase` | `true`, `false` | offline: `true`; streaming: `false` | Auto-retry when generation is detected as a bad case. Streaming ignores explicit true with a warning. |
 | `--request-option retry_badcase_max_times` | integer | `3` | Maximum total generation attempts, including the initial attempt. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Long-form text chunking strategy. |

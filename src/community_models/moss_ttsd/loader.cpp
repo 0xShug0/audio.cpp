@@ -42,13 +42,13 @@ runtime::ModelCliInterface cli() {
          "What the reference recordings say, speaker-tagged. Prepended to the text so the continuation carries on from a transcript it has already spoken."},
         {"language", "English|Chinese", "Full language name; the model does not understand codes like 'en'."},
         {"instruction", "<text>", "Free-text direction for the delivery."},
-        {"text_temperature", "<float>", "Text-token sampling temperature."},
-        {"seed", "<int>", "Reproduces a take exactly."},
+        {"text_temperature", "float", "Text-token sampling temperature. Must be finite and positive when sampling. Default: 1.5.", false, "1.5"},
+        {"seed", "int", "Reproduces a take exactly. Parsed as signed 32-bit integer then converted to uint32; negative values wrap."},
         {"temperature", "<float>", "Audio sampling temperature; must be > 0, default 1.5.", false, std::nullopt, "0"},
         {"top_p", "<float>", "Audio nucleus sampling cutoff (default 0.6)."},
-        {"top_k", "<int>", "Audio top-k (default 50)."},
+        {"top_k", "int", "Audio top-k. Nonpositive values disable filtering. Default: 50.", false, "50"},
         {"repetition_penalty", "<float>", "Audio repetition penalty; must be > 0. Checked when token history is present; default 1.1.", false, std::nullopt, "0"},
-        {"max_frames", "<int>", "Ceiling on generated codec frames at 12.5/s. 0 derives one from the text length."},
+        {"max_frames", "int", "Ceiling on generated codec frames at 12.5/s; 0 derives one from the dialogue length. Nonpositive values derive an automatic ceiling."},
     };
     out.session_options = {
         {"moss_ttsd.weight_type", "native|f32|bf16|q8_0",

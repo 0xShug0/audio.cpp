@@ -69,13 +69,11 @@
       {
         "name": "sampler_mode",
         "type": "enum",
-        "description": "Stable Audio 3 supports pingpong/euler; Foundation supports euler/dpmpp-2m/dpmpp-3m-sde.",
+        "description": "Stable Audio 3 diffusion sampler.",
         "required": false,
         "values": [
           "pingpong",
-          "euler",
-          "dpmpp-2m",
-          "dpmpp-3m-sde"
+          "euler"
         ]
       },
       {
@@ -110,7 +108,7 @@
       {
         "name": "init_noise_level",
         "type": "float",
-        "description": "Audio-conditioned generation strength in [0, 1]. Must be > 0 for Stable Audio Foundation with init audio and a k-diffusion sampler.",
+        "description": "Audio-conditioned generation strength in [0, 1].",
         "required": false,
         "min": 0,
         "max": 1,
@@ -138,24 +136,6 @@
         "type": "string",
         "description": "Comma-separated inpaint region ends in seconds.",
         "required": false
-      },
-      {
-        "name": "sigma_min",
-        "type": "float",
-        "description": "Foundation sampler minimum noise level.",
-        "required": false
-      },
-      {
-        "name": "sigma_max",
-        "type": "float",
-        "description": "Foundation sampler maximum noise level.",
-        "required": false
-      },
-      {
-        "name": "rho",
-        "type": "float",
-        "description": "Foundation sampler noise schedule exponent.",
-        "required": false
       }
     ],
     "session": [
@@ -177,7 +157,7 @@
       {
         "name": "mem_saver",
         "type": "bool",
-        "description": "Stable Audio 3: release staged runtime graphs; not used by Foundation.",
+        "description": "Release staged runtime graphs after each request.",
         "required": false,
         "default": false
       }
@@ -379,24 +359,6 @@
       },
       "tensors": {
         "model_weights": "model:model.safetensors",
-        "t5_weights": "t5:model.safetensors"
-      }
-    },
-    {
-      "format": "safetensors",
-      "roots": {
-        "model": ".",
-        "t5": "../t5-base"
-      },
-      "files": {
-        "model_config": "model:model_config.json",
-        "t5_config": "t5:config.json",
-        "t5_tokenizer_json": "t5:tokenizer.json",
-        "t5_tokenizer_model": "t5:spiece.model",
-        "t5_tokenizer_config": "t5:config.json"
-      },
-      "tensors": {
-        "model_weights": "model:Foundation_1.safetensors",
         "t5_weights": "t5:model.safetensors"
       }
     }

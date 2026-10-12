@@ -34,24 +34,24 @@ audiocpp_cli --task tts --family higgs_audio_tts --model models/Higgs-Audio-v3-T
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--voice-ref` | WAV path | required | Reference speaker audio. |
+| `--voice-ref` | WAV path | optional | Reference speaker audio for cloning; generation without a reference is also supported. |
 | `--reference-text` | text | empty string | Transcript for reference audio. |
 | `--text-chunk-size` | integer chars | `1024` | Long-form chunk size. |
-| `--max-tokens` | integer | `2048` | Maximum generated AR tokens per chunk. |
-| `--temperature` | float | `0.8` | AR sampling temperature. |
+| `--max-tokens` | integer | `2048` | Maximum generated AR tokens; zero uses the default. Must not exceed the configured context length. |
+| `--temperature` | float | `0.8` | AR sampling temperature. Must be positive. |
 | `--top-k` | integer | `30` | AR top-k sampling limit. The narrower default is less prone to premature EOC than the Python client's `50`. |
-| `--top-p` | float | `0.8` | AR nucleus sampling limit. The Python client's unfiltered equivalent is `1.0`. |
-| `--repetition-penalty` | float | `1.1` | Accepted for Python API compatibility; Higgs audio-code sampling does not consume it. |
+| `--top-p` | float | `0.8` | AR nucleus sampling probability. Must be positive. |
+| `--repetition-penalty` | float | `1.1` | Accepted for Python API compatibility; audio sampling does not consume this value. Compatibility-only, but must be finite and positive. |
 
 ## Request Options (use with `--request-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `max_tokens` | integer >= 0 | `2048` | Maximum generated AR tokens; zero uses the default. |
-| `temperature` | float | `0.8` | AR sampling temperature. |
-| `top_p` | float | `0.8` | AR nucleus sampling probability. |
+| `max_tokens` | integer >= 0 | `2048` | Maximum generated AR tokens; zero uses the default. Must not exceed the configured context length. |
+| `temperature` | float | `0.8` | AR sampling temperature. Must be positive. |
+| `top_p` | float | `0.8` | AR nucleus sampling probability. Must be positive. |
 | `top_k` | integer | `30` | AR top-k sampling limit. |
-| `repetition_penalty` | float | `1.1` | Accepted for Python API compatibility; audio sampling does not consume this value. |
+| `repetition_penalty` | float | `1.1` | Accepted for Python API compatibility; audio sampling does not consume this value. Compatibility-only, but must be finite and positive. |
 | `seed` | integer >= 0 | random | Torch sampling seed; omitted chooses a random seed. |
 | `reference_text` | text | empty string | Transcript accompanying reference audio. |
 | `text_chunk_size` | integer | `1024` | Framework long-form text chunk size. |

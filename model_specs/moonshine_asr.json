@@ -25,9 +25,8 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated transcript tokens. Defaults to audio-duration derived limit.",
+        "description": "Maximum generated transcript tokens. Defaults to audio-duration derived limit. Nonpositive values select the automatic budget.",
         "required": false,
-        "min": 0,
         "default": 0
       },
       {
@@ -46,9 +45,8 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Maximum duration of each audio chunk in seconds.",
+        "description": "Maximum duration of each audio chunk in seconds. Must be positive and round to a nonempty sample count.",
         "required": false,
-        "min": 0.02,
         "default": 60
       }
     ],

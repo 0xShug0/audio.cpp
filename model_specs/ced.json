@@ -55,7 +55,15 @@
         "description": "Weight storage override; native preserves packaged tensor types.",
         "required": false,
         "default": "native",
-        "preset": "weight_type_full"
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_k"
+        ]
       }
     ],
     "load": []

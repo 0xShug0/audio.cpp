@@ -158,9 +158,10 @@
       {
         "name": "max_history_steps",
         "type": "int",
-        "description": "Maximum retained decoder history; zero uses the model limit.",
+        "description": "Maximum retained decoder history; zero uses the model limit. Cannot exceed checkpoint position capacity; zero uses that capacity.",
         "required": false,
-        "default": 0
+        "default": 0,
+        "min": 0
       },
       {
         "name": "vad_model_path",

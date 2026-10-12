@@ -128,15 +128,15 @@ without a usable pause, the prompt noise) are seeded from the clip rather than t
 
 | Request option | Type | Default | Meaning |
 |---|---|---|---|
-| `language` | string | *(empty)* | Prepends `<\|lang_xx\|>`; one of `en`, `pt`, `fr`, `de`. Optional, helps on ambiguous text |
-| `temperature` | float | 0.8 | Semantic LM sampling temperature; `0` selects arg-max |
-| `top_p` | float | 0.9 | Nucleus threshold, applied after top-k renormalisation |
-| `top_k` | int | 25 | Top-k truncation; `0` disables |
-| `num_inference_steps` | int | 2 | Acoustic rectified-flow Euler steps |
-| `max_duration_sec` | float | 30.0 | Audio cap per segment; long text is split, so total length is unbounded. Legacy `max_seconds` remains accepted. |
-| `min_duration_sec` | float | 0.4 | Minimum audio before the semantic LM may emit EOS. Legacy `min_seconds` remains accepted. |
-| `reference_duration_sec` | float | 10.0 | Reference window used for cloning. Legacy `ref_seconds` remains accepted. |
-| `text_chunk_size` | int | 300 | Max codepoints per synthesis segment |
+| `language` | string | see description | Language tag (en, pt, fr, de); omitted inherits transcript language, then the session default. |
+| `temperature` | float | see description | Semantic sampling temperature; nonpositive selects greedy decoding. Omitted uses checkpoint generation.temperature. |
+| `top_p` | float | see description | Semantic nucleus cutoff; values outside [0,1] are disabled/clamped by the sampler. Omitted uses checkpoint generation.top_p. |
+| `top_k` | int | see description | Semantic top-k; nonpositive disables filtering. Omitted uses checkpoint generation.top_k. |
+| `num_inference_steps` | int | see description | Positive acoustic sampling steps; omitted uses checkpoint generation.steps. |
+| `max_duration_sec` | float | see description | Positive maximum segment duration; must be >= min_duration_sec. Omitted uses checkpoint generation.max_seconds. |
+| `min_duration_sec` | float | see description | Nonnegative minimum duration; must be <= max_duration_sec. Omitted uses checkpoint generation.min_seconds. |
+| `reference_duration_sec` | float | see description | Positive reference window in seconds; omitted uses checkpoint generation.ref_seconds. |
+| `text_chunk_size` | int | see description | Positive codepoint budget per segment; omitted uses checkpoint generation.max_segment_chars. |
 | `seed` | int | *(random)* | Seeds semantic sampling and the acoustic noise prior |
 
 | Session option | Default | Meaning |
@@ -146,8 +146,9 @@ without a usable pause, the prompt noise) are seeded from the clip rather than t
 | `sopro_tts.matmul_weight_type` | `f32` | Storage type for matmul weights (`native`, `f32`, `f16`, `bf16`, `q8_0`) |
 | `sopro_tts.conv_weight_type` | `f32` | Storage type for convolution weights (`native`, `f32`, `f16`) |
 
-Every request-option default comes from the checkpoint's `config.json` `generation` block, so a
-retrained variant picks up its own values without a code change.
+Numeric generation defaults come from the checkpoint's `config.json` `generation` block, so a
+retrained variant picks up its own values without a code change. Language inherits the transcript
+language, then the session default; an omitted seed is random.
 
 ## Architecture notes
 

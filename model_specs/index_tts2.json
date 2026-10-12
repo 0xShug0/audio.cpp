@@ -85,7 +85,7 @@
       {
         "name": "top_p",
         "type": "float",
-        "description": "Nucleus sampling probability.",
+        "description": "Nucleus sampling probability. Must be in (0, 1].",
         "required": false,
         "default": 0.8
       },
@@ -100,7 +100,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Sampling temperature.",
+        "description": "Sampling temperature. Must be positive.",
         "required": false,
         "default": 0.8
       },
@@ -137,7 +137,7 @@
       {
         "name": "duration_scale",
         "type": "float",
-        "description": "IndexTTS2.5 output duration multiplier; greater than one is slower.",
+        "description": "Positive waveform duration rescaling, supported by both IndexTTS2 and IndexTTS2.5.",
         "required": false,
         "default": 1
       },
@@ -152,7 +152,7 @@
       {
         "name": "text_chunk_size",
         "type": "int",
-        "description": "Optional framework long-form text chunk size; omitted keeps the full input together.",
+        "description": "Optional framework long-form text chunk size; omitted keeps the full input together. Must be positive.",
         "required": false
       },
       {

@@ -69,25 +69,22 @@
       {
         "name": "height",
         "type": "int",
-        "description": "Target video canvas height used by the joint T2VA latent layout.",
+        "description": "Target video canvas height used by the joint T2VA latent layout. Nonpositive values use configuration defaults; smaller positive sizes are rounded up to the supported geometry.",
         "required": false,
-        "min": 32,
         "default": 768
       },
       {
         "name": "width",
         "type": "int",
-        "description": "Target video canvas width used by the joint T2VA latent layout.",
+        "description": "Target video canvas width used by the joint T2VA latent layout. Nonpositive values use configuration defaults; smaller positive sizes are rounded up to the supported geometry.",
         "required": false,
-        "min": 32,
         "default": 1344
       },
       {
         "name": "num_frames",
         "type": "int",
-        "description": "Target video frame count before H3 alignment. MiniMax-H3 video is 24 fps.",
+        "description": "Target video frame count before H3 alignment. MiniMax-H3 video is 24 fps. Nonpositive values use configuration defaults; positive counts are rounded to the supported temporal geometry.",
         "required": false,
-        "min": 5,
         "default": 124
       },
       {
@@ -95,8 +92,7 @@
         "type": "float",
         "description": "Classifier-free guidance scale; 1.0 matches the baseline T2VA audio run.",
         "required": false,
-        "min": 0.0,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "sampler_mode",
@@ -180,7 +176,7 @@
       {
         "name": "dit_acceleration",
         "type": "string",
-        "description": "Optional DiT acceleration mode: none, first_block_cache, or spectrum.",
+        "description": "Optional DiT acceleration mode: none, first_block_cache, or spectrum. Requires dit_layerwise=false and sampler_mode=euler; Spectrum additionally requires guidance_scale=1.",
         "required": false,
         "default": "none"
       },

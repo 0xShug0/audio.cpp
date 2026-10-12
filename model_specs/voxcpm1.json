@@ -44,7 +44,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum MiniCPM output tokens; default 4096.",
+        "description": "Maximum MiniCPM output tokens; default 4096. Zero selects model max_length; negative counts are rejected.",
         "required": false,
         "default": 4096
       },
@@ -58,16 +58,16 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "CFM diffusion sampling steps; default 10.",
+        "description": "CFM diffusion sampling steps; default 10. Must be positive.",
         "required": false,
         "default": 10
       },
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "CFM classifier-free guidance rate.",
+        "description": "CFM classifier-free guidance rate. Must be nonnegative.",
         "required": false,
-        "default": 2.0
+        "default": 2
       },
       {
         "name": "retry_badcase",
@@ -78,14 +78,14 @@
       {
         "name": "retry_badcase_max_times",
         "type": "int",
-        "description": "Maximum total generation attempts when retrying bad cases, including the initial attempt; default 3.",
+        "description": "Maximum total generation attempts when retrying bad cases, including the initial attempt; default 3. Must be positive.",
         "required": false,
         "default": 3
       },
       {
         "name": "retry_badcase_ratio_threshold",
         "type": "float",
-        "description": "Bad-case ratio threshold for retry decisions.",
+        "description": "Bad-case ratio threshold for retry decisions. Must be positive.",
         "required": false
       },
       {
@@ -98,6 +98,20 @@
         "name": "reference_text",
         "type": "string",
         "description": "Alias for prompt_text; text prompt for prompt-continuation voice cloning.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per offline text chunk; must be positive. Does not control streaming chunk cadence.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Language hint for Chinese-script normalization; Cantonese/yue preserves Traditional characters. Inherits structured transcript or voice language when provided.",
         "required": false
       }
     ],

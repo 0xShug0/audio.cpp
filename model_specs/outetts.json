@@ -102,7 +102,8 @@
         "type": "int",
         "description": "Sampling seed; cloning defaults to 4099 for native weights and 42 for quantized weights.",
         "required": false,
-        "min": 0
+        "min": 0,
+        "max": 4294967295
       },
       {
         "name": "reference_text",
@@ -139,9 +140,25 @@
         "name": "weight_type",
         "type": "enum",
         "description": "Language-model weight storage type. Quantized CUDA voice cloning is expanded to F32 in memory for generation correctness.",
-        "preset": "weight_type_full",
         "required": false,
-        "default": "native"
+        "default": "native",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_1",
+          "q5_0",
+          "q5_1",
+          "q2_k",
+          "q3_k",
+          "q4_k",
+          "q5_k",
+          "q6_k",
+          "nvfp4"
+        ]
       },
       {
         "name": "llama_weight_context_mb",

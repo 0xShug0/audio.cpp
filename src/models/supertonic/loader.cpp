@@ -38,6 +38,7 @@ runtime::ModelCliInterface cli(const SupertonicAssets &) {
         {"speed", "float", "Speech speed multiplier, default 1.05."},
         {"seed", "n", "Noise seed, default 1234."},
         {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode."},
+        {"text_chunk_size", "int", "Framework text chunk size; defaults to 120 for Korean/Japanese, otherwise 300."},
     };
     out.session_options = {
         {"supertonic.weight_type", "native|f32|f16|bf16|q8_0", "Supertonic weight storage type."},

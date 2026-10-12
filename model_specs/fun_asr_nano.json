@@ -57,9 +57,8 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Fixed chunk duration in seconds.",
+        "description": "Fixed chunk duration in seconds. Must be finite and positive, rounding to at least one input sample.",
         "required": false,
-        "min": 0.001,
         "default": 30
       }
     ],
@@ -71,6 +70,67 @@
         "preset": "weight_type_full",
         "required": false,
         "default": "native"
+      },
+      {
+        "name": "encoder_weight_type",
+        "type": "enum",
+        "description": "Encoder matmul storage; inherits weight_type when omitted.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "adaptor_weight_type",
+        "type": "enum",
+        "description": "Adaptor matmul storage; inherits weight_type when omitted.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "decoder_weight_type",
+        "type": "enum",
+        "description": "Decoder matmul storage. Without an explicit override, CUDA promotes shared native/f16/q8_0 storage to bf16; other backends inherit weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Encoder graph metadata arena. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "adaptor_graph_arena_mb",
+        "type": "int",
+        "description": "Adaptor graph metadata arena. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "decoder_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder prefill graph metadata arena. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "decoder_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder cached-step graph metadata arena. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "decoder_weight_context_mb",
+        "type": "int",
+        "description": "Decoder weight metadata context. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 32
       }
     ],
     "load": []

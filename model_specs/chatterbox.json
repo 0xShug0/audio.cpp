@@ -38,56 +38,56 @@
       {
         "name": "exaggeration",
         "type": "float",
-        "description": "Emotion exaggeration.",
+        "description": "Emotion exaggeration. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "default": 0.5
       },
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "T3 classifier-free guidance scale.",
+        "description": "T3 classifier-free guidance scale. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "default": 0.5
       },
       {
         "name": "temperature",
         "type": "float",
-        "description": "T3 sampling temperature.",
+        "description": "T3 sampling temperature. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "default": 0.8
       },
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "T3 repetition penalty.",
+        "description": "T3 repetition penalty. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "default": 1.2
       },
       {
         "name": "min_p",
         "type": "float",
-        "description": "Minimum sampling probability.",
+        "description": "Minimum sampling probability. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "default": 0.05
       },
       {
         "name": "top_p",
         "type": "float",
-        "description": "Nucleus sampling probability.",
+        "description": "Nucleus sampling probability. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "default": 1
       },
       {
         "name": "flow_guidance_scale",
         "type": "float",
-        "description": "S3Gen flow guidance scale.",
+        "description": "S3Gen flow guidance scale. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "default": 0.7
       },
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated speech tokens.",
+        "description": "Maximum generated speech tokens. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "min": 1,
         "default": 384
@@ -95,14 +95,14 @@
       {
         "name": "do_sample",
         "type": "bool",
-        "description": "Enable sampling.",
+        "description": "Enable sampling. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "default": true
       },
       {
         "name": "stop_on_eos",
         "type": "bool",
-        "description": "Stop token generation on EOS.",
+        "description": "Stop token generation on EOS. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "default": true
       },
@@ -117,7 +117,7 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Sampling seed; omitted chooses a random seed.",
+        "description": "Sampling seed; omitted chooses a random seed. Captured during clone preparation; changing it on the same prepared session is rejected.",
         "required": false,
         "min": 0,
         "max": 4294967295
@@ -186,7 +186,7 @@
       {
         "name": "encoder_condition_samples",
         "type": "int",
-        "description": "Speaker/tokenizer reference sample limit at 16 kHz.",
+        "description": "Maximum reference samples for the T3 tokenizer; the voice encoder still consumes the full 16 kHz reference.",
         "required": false,
         "default": 96000
       },

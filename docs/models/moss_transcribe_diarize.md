@@ -62,7 +62,7 @@ Use `--backend cpu --threads 8` for CPU inference or `--backend vulkan` for Vulk
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `instruction` | text | upstream instruction | Replace the transcription instruction. Legacy `instruct` remains accepted. |
-| `max_tokens` | integer > 0 | `5120` | Maximum generated transcript tokens. |
+| `max_tokens` | integer > 0 | see description | Maximum generated transcript tokens. Defaults to checkpoint generation_config.max_new_tokens; must be positive. |
 
 Increase `max_tokens` if a long recording reaches the output-token limit.
 

@@ -70,9 +70,8 @@
       {
         "name": "duration_sec",
         "type": "float",
-        "description": "Explicit output duration in seconds; must be positive when set, otherwise predicted duration is used.",
-        "required": false,
-        "min": 0.0
+        "description": "Target duration in seconds; omitted or nonpositive values select predicted duration.",
+        "required": false
       },
       {
         "name": "duration_scale",
@@ -85,8 +84,10 @@
       {
         "name": "text_chunk_mode",
         "type": "enum",
-        "description": "Text chunking mode; default endline.",
+        "description": "Text chunk policy; word_budget also accepts the legacy spelling default.",
         "values": [
+          "word_budget",
+          "tag_aware",
           "japanese",
           "endline"
         ],
@@ -119,33 +120,29 @@
       {
         "name": "text_guidance_scale",
         "type": "float",
-        "description": "Text classifier-free guidance scale; default 3.0.",
+        "description": "Text classifier-free guidance scale; default 3.0. Nonpositive values disable the corresponding CFG branch.",
         "required": false,
-        "min": 0.0,
-        "default": 3.0
+        "default": 3
       },
       {
         "name": "speaker_guidance_scale",
         "type": "float",
-        "description": "Speaker classifier-free guidance scale; default 5.0.",
+        "description": "Speaker classifier-free guidance scale; default 5.0. Nonpositive values disable the corresponding CFG branch.",
         "required": false,
-        "min": 0.0,
-        "default": 5.0
+        "default": 5
       },
       {
         "name": "caption_guidance_scale",
         "type": "float",
-        "description": "Caption classifier-free guidance scale; default 3.0.",
+        "description": "Caption classifier-free guidance scale; default 3.0. Nonpositive values disable the corresponding CFG branch.",
         "required": false,
-        "min": 0.0,
-        "default": 3.0
+        "default": 3
       },
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Override all classifier-free guidance scales when set.",
-        "required": false,
-        "min": 0.0
+        "description": "Override all classifier-free guidance scales when set. Nonpositive values disable the corresponding CFG branch.",
+        "required": false
       },
       {
         "name": "guidance_mode",
@@ -162,18 +159,16 @@
       {
         "name": "guidance_min_t",
         "type": "float",
-        "description": "Minimum diffusion timestep value where guidance is active; default 0.5.",
+        "description": "Minimum diffusion timestep value where guidance is active; default 0.5. The parser does not enforce a nonnegative bound.",
         "required": false,
-        "min": 0.0,
         "default": 0.5
       },
       {
         "name": "guidance_max_t",
         "type": "float",
-        "description": "Maximum diffusion timestep value where guidance is active; default 1.0.",
+        "description": "Maximum diffusion timestep value where guidance is active; default 1.0. The parser does not enforce a nonnegative bound.",
         "required": false,
-        "min": 0.0,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "seed",

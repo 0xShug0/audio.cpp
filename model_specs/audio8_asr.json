@@ -48,33 +48,33 @@
       {
         "name": "encoder_graph_arena_mb",
         "type": "int",
-        "description": "Audio encoder graph arena size in MB.",
+        "description": "Audio encoder graph arena size in MB. Must be positive; sufficient capacity depends on the graph.",
         "required": false,
-        "min": 64,
+        "min": 1,
         "default": 128
       },
       {
         "name": "projector_graph_arena_mb",
         "type": "int",
-        "description": "Adapter (MLP tower + pooling + projector) graph arena size in MB.",
+        "description": "Adapter (MLP tower + pooling + projector) graph arena size in MB. Must be positive; sufficient capacity depends on the graph.",
         "required": false,
-        "min": 64,
+        "min": 1,
         "default": 256
       },
       {
         "name": "prefill_graph_arena_mb",
         "type": "int",
-        "description": "Decoder prefill graph arena size in MB.",
+        "description": "Decoder prefill graph arena size in MB. Must be positive; sufficient capacity depends on the graph.",
         "required": false,
-        "min": 64,
+        "min": 1,
         "default": 256
       },
       {
         "name": "decode_graph_arena_mb",
         "type": "int",
-        "description": "Decoder step decode graph arena size in MB.",
+        "description": "Decoder step decode graph arena size in MB. Must be positive; sufficient capacity depends on the graph.",
         "required": false,
-        "min": 64,
+        "min": 1,
         "default": 256
       }
     ],

@@ -46,10 +46,81 @@
     "type": "float",
     "required": false,
     "default": 1.5,
-    "description": "Text-token sampling temperature."
+    "description": "Text-token sampling temperature. Must be finite and positive when sampling."
+   },
+   {
+    "name": "language",
+    "type": "string",
+    "description": "Optional full language name, such as English or Chinese; not an ISO language code.",
+    "required": false
+   },
+   {
+    "name": "seed",
+    "type": "int",
+    "description": "Generation seed; later text chunks add their chunk index. Parsed as signed 32-bit integer then converted to uint32; negative values wrap.",
+    "required": false,
+    "default": 0
+   },
+   {
+    "name": "temperature",
+    "type": "float",
+    "description": "Audio-token sampling temperature. Must be finite and positive when sampling.",
+    "required": false,
+    "default": 1.5
+   },
+   {
+    "name": "top_p",
+    "type": "float",
+    "description": "Audio-token nucleus sampling cutoff.",
+    "required": false,
+    "default": 0.6
+   },
+   {
+    "name": "top_k",
+    "type": "int",
+    "description": "Audio-token top-k sampling limit.",
+    "required": false,
+    "default": 50
+   },
+   {
+    "name": "repetition_penalty",
+    "type": "float",
+    "description": "Audio-token repetition penalty. Must be finite and positive when history is nonempty.",
+    "required": false,
+    "default": 1.1
+   },
+   {
+    "name": "text_chunk_size",
+    "type": "int",
+    "description": "Maximum characters per generated text chunk; must be positive.",
+    "required": false,
+    "min": 1,
+    "default": 200
+   },
+   {
+    "name": "text_chunk_mode",
+    "type": "enum",
+    "description": "Text chunking policy.",
+    "required": false,
+    "preset": "text_chunk_mode_full",
+    "default": "word_budget"
    }
   ],
-  "session": [],
+  "session": [
+   {
+    "name": "weight_type",
+    "type": "enum",
+    "description": "Backbone weight storage. f16 is not supported.",
+    "required": false,
+    "values": [
+     "native",
+     "f32",
+     "bf16",
+     "q8_0"
+    ],
+    "default": "bf16"
+   }
+  ],
   "load": []
  },
  "runtime": {

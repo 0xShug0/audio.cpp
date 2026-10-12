@@ -233,9 +233,8 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Maximum duration of each audio window.",
+        "description": "Maximum duration of each audio window. Must be positive.",
         "required": false,
-        "min": 0.2,
         "max": 30,
         "default": 30
       }

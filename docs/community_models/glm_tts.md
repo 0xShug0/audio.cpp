@@ -98,10 +98,10 @@ audiocpp_cli --task clon --family glm_tts \
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--reference-text` | text | required | Exact transcript of `--voice-ref`. |
-| `--max-tokens` | integer | automatic | Maximum generated speech-token count. |
-| `--temperature` | float | `1.0` | Speech-token sampling temperature. |
-| `--top-k` | integer | `25` | Speech-token top-k limit. |
-| `--top-p` | float | `0.8` | Speech-token nucleus threshold. |
+| `--max-tokens` | integer | automatic | Maximum generated speech tokens; otherwise the official 2x-to-20x text-token bounds are used. Nonpositive values select the automatic text-derived budget. |
+| `--temperature` | float | `1.0` | Speech-token temperature; official default 1.0. Nonpositive values select greedy decoding. |
+| `--top-k` | integer | `25` | Speech-token top-k; official default 25. Nonpositive values disable top-k filtering. |
+| `--top-p` | float | `0.8` | Speech-token nucleus threshold; official default 0.8. Out-of-range values are not rejected by the parser. |
 | `--seed` | integer | `0` | Seed used by token sampling, Flow noise, and HiFT. |
 | `--request-option num_inference_steps=<n>` | integer | `10` | Flow Euler integration steps. |
 | `--request-option flow_guidance_scale=<float>` | float | `0.7` | Flow classifier-free guidance rate. |

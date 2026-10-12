@@ -144,7 +144,7 @@
       {
         "name": "weight_type",
         "type": "enum",
-        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "description": "Shared matmul weight storage; component matmul settings inherit it. Convolution storage remains independently native unless overridden.",
         "required": false,
         "preset": "weight_type_full"
       },
@@ -174,26 +174,23 @@
       {
         "name": "flow_weight_context_mb",
         "type": "int",
-        "description": "Context or graph arena size in MiB.",
+        "description": "Flow weight context in MiB; inherits pocket_tts.weight_context_mb when omitted.",
         "required": false,
-        "min": 1,
-        "default": 64
+        "min": 1
       },
       {
         "name": "mimi_encoder_weight_context_mb",
         "type": "int",
-        "description": "Context or graph arena size in MiB.",
+        "description": "Mimi encoder weight context in MiB; inherits pocket_tts.weight_context_mb when omitted.",
         "required": false,
-        "min": 1,
-        "default": 64
+        "min": 1
       },
       {
         "name": "mimi_decoder_weight_context_mb",
         "type": "int",
-        "description": "Context or graph arena size in MiB.",
+        "description": "Mimi decoder weight context in MiB; inherits pocket_tts.weight_context_mb when omitted.",
         "required": false,
-        "min": 1,
-        "default": 64
+        "min": 1
       },
       {
         "name": "flow_weights_view_context_mb",

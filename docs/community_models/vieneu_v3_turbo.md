@@ -166,7 +166,7 @@ Defaults follow `Vieneu.infer()` in the Python package. Use `--request-option na
 | `auto_frame_cap` | `true` | Also cap the budget by the phoneme count of the chunk (Python `max_expected_frames`), which stops runaway generation when EOS is missed. Legacy `frame_cap` remains accepted. |
 | `seed` | random | Sampling seed. |
 | `reference_codes_file` / `speaker_embedding_file` / `speaker_embedding` | — | Voice inputs, see above. |
-| `x_vector_only_mode` | `false` | Ignore reference codes and clone from the speaker embedding alone. |
+| `x_vector_only_mode` | input-dependent | Defaults to true for embedding-only input; otherwise false. Ignore reference codes and clone from the speaker embedding alone. |
 | `encode_reference_only` | `false` | Encode `--voice-ref` into reference codes, return them as an artifact and generate nothing. |
 | `text_chunk_size` | `200` | Character budget per chunk of the phoneme string. The cut follows paragraphs, then sentences, then minor punctuation, then whitespace. |
 | `text_chunk_min_size` | `20` | Chunks shorter than this join a neighbour — alone they read as a stutter. Legacy `text_chunk_min` remains accepted. |
