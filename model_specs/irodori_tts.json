@@ -11,7 +11,8 @@
     "design"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "ja"
@@ -26,6 +27,14 @@
   },
   "options": {
     "request": [
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Codec latent frames per streaming audio event; default 12 (0.48 seconds at 25 Hz).",
+        "required": false,
+        "min": 1,
+        "default": 12
+      },
       {
         "name": "language",
         "type": "string",
@@ -58,6 +67,20 @@
         "description": "Trim reference audio to its first reference_duration_sec seconds before encoding it, as Python Irodori-TTS does; default is the checkpoint's ref_max_seconds (30 when it has none); 0 keeps the whole reference.",
         "required": false,
         "min": 0.0
+      },
+      {
+        "name": "t_schedule_mode",
+        "type": "string",
+        "description": "RF Euler timestep schedule: linear or sway; default linear.",
+        "required": false,
+        "default": "linear"
+      },
+      {
+        "name": "sway_coeff",
+        "type": "float",
+        "description": "Sway Sampling coefficient; must be finite and produce strictly decreasing timesteps. Default -1.0.",
+        "required": false,
+        "default": -1.0
       },
       {
         "name": "num_inference_steps",

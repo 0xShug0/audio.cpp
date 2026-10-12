@@ -4,6 +4,7 @@
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/models/irodori_tts/assets.h"
 #include "engine/models/irodori_tts/tokenizer_text.h"
 #include "engine/models/irodori_tts/types.h"
@@ -23,7 +24,8 @@ class IrodoriConditionEncoder;
 class IrodoriRfSampler;
 
 class IrodoriTTSSession final : public runtime::RuntimeSessionBase,
-                                public runtime::IOfflineVoiceTaskSession {
+                                public runtime::IOfflineVoiceTaskSession,
+                                public runtime::StreamingTtsSessionBase {
 public:
   IrodoriTTSSession(runtime::TaskSpec task, runtime::SessionOptions options,
                     std::shared_ptr<const IrodoriTTSAssets> assets,
@@ -37,6 +39,9 @@ public:
   runtime::TaskResult run(const runtime::TaskRequest &request) override;
 
 private:
+  runtime::TaskResult generate_stream(const runtime::TaskRequest &request) override;
+  void reset_stream_state() override {}
+  runtime::TaskResult synthesize(const runtime::TaskRequest &request, bool streaming);
   IrodoriRequest make_request(const runtime::TaskRequest &request) const;
 
   struct ReferenceAudioCacheKey {

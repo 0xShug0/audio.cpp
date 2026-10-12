@@ -11,6 +11,8 @@ namespace engine::models::irodori_tts {
 
 struct IrodoriGenerationOptions {
   int64_t num_inference_steps = 40;
+  std::string t_schedule_mode = "linear";
+  float sway_coeff = -1.0F;
   float text_guidance_scale = 3.0F;
   float caption_guidance_scale = 3.0F;
   float speaker_guidance_scale = 5.0F;
