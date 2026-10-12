@@ -122,7 +122,9 @@
         "min": 0.001,
         "default": 1200
       }
-    ]
+    ],
+    "session": [],
+    "load": []
   },
   "runtime": {
     "tags": [

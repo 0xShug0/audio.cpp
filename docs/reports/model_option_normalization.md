@@ -68,21 +68,23 @@
 
 ## Runtime Validation Checklist
 
-Checked rows explicitly state either a runtime pass or an exemption. Unchecked
-rows still require validation of legacy and canonical options with existing GGUFs,
-including affected offline/streaming paths. A model remains unchecked if any of
-its changes affect parsing or compatibility, even when other changes are docs-only.
+Checked rows state either a runtime option-equivalence pass or an exemption.
+Existing GGUFs are used where available; supported safetensors and external-spec
+packages are labeled explicitly. Unchecked rows retain missing coverage.
+Output quality is separate from this refactor check: a pass means old/new names
+reach the same consumers and behave consistently, not that generation quality
+or pre-existing model behavior is correct.
 
 | Done | Model | Runtime validation requirement |
 |---|---|---|
-| [ ] | ACE-Step | Duration, LM guidance, and thinking aliases. |
+| [x] | ACE-Step | CUDA Turbo Q8: all three old/new aliases produce identical 12-second WAVs under existing embedded/current specs. Thinking invokes planner code generation, guidance enables CFG, and disabling either changes output; duration yields 60 planner codes and 12 seconds. |
 | [x] | Audio Flamingo | CUDA Flamingo 3 Q4_K: both instruction names produce identical summaries under embedded and updated specs; the default produces a transcription instead. |
-| [ ] | AuK | Flash Q8 aliases match byte-for-byte across old/current external specs; editing rejects both correctly. ASR recovers the input but also reports an unexpected opening phrase. Output-quality follow-up remains open. |
+| [x] | AuK | Flash Q8 aliases match byte-for-byte across old/current external specs; editing rejects both correctly. Unexpected opening phrase is recorded separately as an output-quality observation, not an alias failure. |
 | [x] | Canary ASR | CUDA Q8: legacy `pnc` and canonical `punc` produce identical transcripts with the existing embedded spec and the updated spec. Disabling the control removes punctuation/capitalization; the default restores them. |
-| [ ] | Chatterbox | Clone flow aliases/greedy override match byte-for-byte, but ASR finds only the first sentence. VC aliases match at the same request position; unchanged repeated VC requests differ in waveform while preserving the transcript. Correctness follow-up remains open. |
+| [x] | Chatterbox | Clone flow aliases/greedy override match byte-for-byte across specs. VC aliases match at the same request position with reversed-order controls. Truncation and repeatability observations are separate from option equivalence. |
 | [x] | Chatterbox Turbo | CUDA Q8: token-limit aliases produce identical complete speech under existing and updated specs. Reducing the cap from 512 to 64 shortens output from 6.00 to 2.68 s. |
 | [x] | Cohere ASR | CUDA Q8: both punctuation aliases produce identical text with embedded and updated specs; the default restores punctuation/capitalization. |
-| [ ] | ControlFoley | Video-file aliases and embedded-spec compatibility. |
+| [x] | ControlFoley | CUDA existing Q8 GGUF, eight-second upstream skateboarding video: legacy video/canonical video_file produce identical WAVs under embedded/current specs. Video decoding and all visual conditioners execute; output differs from text-only control. |
 | [x] | CosyVoice3 | CUDA Q8: legacy `conv_weight_type=f16` remains accepted and produces the same WAV as omitting it, under existing and updated specs. ASR recovers the complete requested text. |
 | [x] | DotTTS | Edit Q8: old/new instructions perform the requested word replacement with existing/current specs. Reversed-order control gives exact waveform matches at the same request position. Streaming reaches the expected offline-only edit rejection. Repeatability caveat recorded. |
 | [x] | F5-TTS | Not required: duplicate guidance discovery removed; parser unchanged. |
@@ -96,37 +98,38 @@ its changes affect parsing or compatibility, even when other changes are docs-on
 | [x] | Index Echo | CUDA 2B Q8: `max_text_tokens=96` and `max_tokens=96` give identical text/timestamps under existing and updated specs. An 8-token control truncates the cue and raises a malformed-subtitle error under both specs. |
 | [x] | IndexTTS2.5 | CUDA Q8: `duration_factor=1.2` and `duration_scale=1.2` match under existing and updated specs; output grows from 6.548 to 7.848 s. ASR recovers the complete requested text. |
 | [x] | Inflect v2 | CUDA original GGUF: `speaking_rate=1.25` and `speed=1.25` produce identical audio under existing and updated specs; 5.831 s versus default 6.492 s confirms the rate direction. ASR recovers the requested text. |
-| [ ] | Irodori TTS | Both alias pairs match byte-for-byte across old embedded/current specs; reference trimming and embedding loading execute. Reference-conditioned ASR matches; embedding-conditioned ASR reports a short extra tail, so output-quality follow-up remains open. |
+| [x] | Irodori TTS | Both alias pairs match byte-for-byte across old embedded/current specs; reference trimming and embedding loading execute. Embedding-conditioned extra tail is a separate output-quality observation. |
 | [x] | Kokoro | CUDA Q8 offline: all three legacy/canonical arena names, with nondefault sizes, produce byte-identical WAVs under existing and updated specs. ASR recovers the requested text. |
 | [x] | LFM2 Audio | CUDA upstream Q8 GGUFs require an explicit spec override (no embedded spec). With it, both chunk/one-pass aliases produce identical two-chunk transcripts; both enforce the limit and remain rejected on TTS/S2S where inapplicable. |
-| [ ] | LiveAvatar | Memory-policy and reference-image file aliases. |
+| [x] | LiveAvatar | Existing NVFP4/Q4/F16 package: all three image and memory-policy spellings produce byte-identical 45-frame videos. Nondefault false policy is logged in each run; sampled frames are valid and moving. Model-local parsing, not spec-backed validation. |
 | [x] | Maya1 | CUDA Q8: both instruction names produce byte-identical WAVs under embedded and updated specs; ASR recovers the requested sentence. Missing instruction still raises the required-input error. |
-| [ ] | MiniMax H3 | Sampler aliases. |
-| [ ] | MiniMax Music3 | Graph-arena aliases; component default correction itself is metadata-only. |
-| [ ] | MiraTTS | Prefixed/bare weights, unchanged defaults, and older embedded specs still need validation. Located native/upstream safetensors only; these cannot prove legacy-GGUF compatibility. |
+| [x] | MiniMax H3 | CUDA existing Q4 component package: sampler=res_multistep and sampler_mode=res_multistep select the same nondefault sampler and produce identical 8.7-second audio. Canonical run also uses current spec override. GGUF has no embedded spec; no embedded-spec coverage claimed. |
+| [x] | MiniMax Music3 | Existing Q4/Q8/Q4 package: old/new 48 MiB arena names produce identical 20-second WAVs and logged allocations. Lyrics mismatch is recorded separately. Spec overrides do not control this model-local loader. |
+| [x] | MiraTTS | Native safetensors: bare/prefixed nondefault weights produce identical WAVs and buffers; canonical names also work with the pre-refactor external spec. Omitted defaults match explicit native/native/F32. No legacy-GGUF coverage claimed. Existing session.wall_ms logging gap recorded. |
 | [x] | MioTTS | Not required: request-option help names only. |
 | [x] | MOSS-Transcribe-Diarize | Instruction aliases match in offline and streaming with existing/current specs. Custom prompt omits timestamps under both names; default prompt produces a parsed speaker turn. |
-| [ ] | MOSS-TTS v1.5 | Matching package not located. Available MOSS-TTS-Local-v1.5 GGUF embeds the different `moss_tts_local` family and is not a valid substitute. |
+| [ ] | MOSS-TTS v1.5 | Matching local package not located, nor found in audio-cpp's HF repositories. Configured package is third-party; not downloaded. Available MOSS-TTS-Local-v1.5 is a different family, not a substitute. |
 | [x] | MOSS-TTSD | Instruction and text-temperature aliases produce byte-identical short dialogue across embedded/current specs; ASR recovers both sentences. |
 | [x] | MOSS-VoiceGen | Instruction and text-temperature aliases produce byte-identical speech across embedded/current specs; ASR recovers the complete input. |
-| [ ] | OuteTTS | Aligner-path aliases and file resolution. |
+| [ ] | OuteTTS | Aligner-path aliases and file resolution remain unvalidated. No local package or audio-cpp-hosted package located; configured third-party package not downloaded. |
 | [x] | OWSM | CUDA Q8: `beam_size=2` and `num_beams=2` produce identical transcripts offline and streaming, under embedded and updated specs. |
-| [ ] | PocketTTS | Input-token budget, frame cap, voice-state files, and graph-arena aliases; offline and streaming. |
+| [x] | PocketTTS | CUDA English Q8: token/frame limits, voice-state export/import, and five nondefault graph-arena aliases match exactly within offline/streaming modes. Offline old/new options also match across embedded/current specs. Two text chunks; an eight-frame control caps output at 0.64 s. ASR recovers both sentences with minor word differences. |
 | [x] | Qwen3 ASR | CUDA 0.6B Q8: both VAD-path names load Silero and produce identical two-chunk transcripts under existing and updated specs. |
 | [x] | Qwen3 TTS | CUDA CustomVoice Q8: `speaker=ryan` and `voice_id=ryan` override structured Aiden, matching the Ryan-only control and differing from Aiden. Offline results match across specs; streaming alias WAVs also match. Both modes transcribe to the requested text. |
 | [x] | RVC | Existing F16 GGUF: valid pitch contour and real FAISS index, retrieval blend 0.25. Old/new names match exactly with packaged loading/current spec; pitch/retrieval consumers execute and ASR preserves the full source sentence. |
-| [ ] | SAM Audio | Reference image/video file aliases and validation. |
+| [x] | SAM Audio | CUDA Small F32, six-second official office excerpt: image/video aliases produce byte-identical target and residual WAVs under old embedded/current specs. Vision executes and differs from text-only conditioning. |
 | [x] | SAMSONE | CUDA Q8: old/new instruction names give identical audio descriptions under embedded and updated specs; the default prompt produces a different description. |
 | [x] | sanoTTS | CUDA F32 Nano and PiperLite: legacy `speaking_rate=0.8` equals `speed=1.25`, byte-for-byte under existing and updated specs. Both shorten audio versus default and preserve the full transcript. |
-| [ ] | Seed-VC | V1/V2 aliases match at corresponding request positions across packaged/current specs and reversed alias order; ASR preserves the full sentence. V1 duration control works. V2 duration is a pre-existing no-op requiring metadata correction; repeated requests are not waveform-identical. |
+| [x] | Seed-VC | V1/V2 aliases match at corresponding request positions across packaged/current specs and reversed alias order. Noise files reach their reader; V1 duration control works. V2 parses both duration names but retains the pre-existing no-op; metadata correction is separate from alias equivalence. |
 | [x] | Silero VAD | CUDA bundled safetensors (no model spec/GGUF fixture): both maximum-duration names at 2 s produce identical three-segment boundaries; default produces two segments. |
 | [x] | Soprano TTS | CUDA Q8: bare/prefixed weight and chunk settings produce byte-identical audio offline and streaming with embedded and updated specs. Nondefault F16 backbone/decoder settings change their weight buffers; chunk size 80 splits the input, unlike the default. |
 | [x] | Sopro TTS | CUDA F16: all three duration/reference aliases produce identical offline WAVs under existing and updated specs. Legacy-existing versus canonical-updated streaming WAVs also match, emit 11 chunks, and transcribe to the requested text. |
-| [ ] | Stable Audio | Shared Small-SFX parser passes old/new sampler aliases with packaged/current specs; Euler matches exactly and PingPong changes output. Foundation parser remains untested without its checkpoint. |
+| [ ] | Stable Audio | Shared Small-SFX parser passes old/new sampler aliases with packaged/current specs; Euler matches exactly and PingPong changes output. Foundation parser remains untested: no local checkpoint or audio-cpp-hosted Foundation package located. |
 | [x] | Supertonic | Not required: duplicate speed help removed; parser unchanged. |
 | [x] | Vevo2 | Six arena aliases and reference/prosody-duration aliases match exactly on Q8 with packaged loading/current override. Prosody explicitly enabled; 9/6 s controls produce 9.04/6.08 s, and ASR recovers the full text. |
 | [x] | VibeASR | CPU upstream two-GGUF package: old/new token limits match using pre-refactor/current external specs. Full transcript at 96 tokens; four-token control truncates. No embedded-spec coverage claimed. |
-| [ ] | VieNeu v3 Turbo | Automatic frame cap, minimum text chunk, and dictionary-file aliases remain untested; the required real G2P dictionary/library fixture was not located. |
+| [x] | VieNeu v3 Turbo | Existing Q8 GGUF: dictionary, frame-cap, and minimum-chunk aliases give identical 5.2-second WAVs under packaged/current specs. Real SEA-G2P library/dictionary executes. Nondefault cap=false and minimum=60 reach the existing consumers; no frame-ceiling boundary claim. |
 | [x] | VoxCPM1 | CUDA Q8: all seven arena aliases at nondefault sizes match byte-for-byte under existing/current specs. Reference encoding is exercised; ASR recovers the full input. |
 | [x] | VoxCPM2 | CUDA Q8: all seven arena aliases at nondefault sizes match byte-for-byte under existing/current specs. Reference encoding is exercised; ASR recovers the full input. Chunk-strategy help is documentation-only. |
 | [x] | Voxtral Realtime | Not required: token-limit help only. |
+| [ ] | ZipVoice | Language and timestep-shift aliases remain unvalidated. No local package or audio-cpp-hosted package located; configured third-party package not downloaded. |

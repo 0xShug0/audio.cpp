@@ -37,7 +37,9 @@
         "required": false,
         "default": false
       }
-    ]
+    ],
+    "session": [],
+    "load": []
   },
   "runtime": {
     "tags": [
