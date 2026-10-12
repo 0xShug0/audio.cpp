@@ -578,7 +578,12 @@ runtime::AudioBuffer EchoTtsSession::synthesize_chunk(
 
 runtime::TaskResult EchoTtsSession::run(const runtime::TaskRequest & request) {
     require_prepared("Echo-TTS run");
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "Echo-TTS");
+    auto validation_options = request.options;
+    // Older embedded specs omit this control; the chunk parser validates its value.
+    if (contract_->request_option_keys.find("text_chunk_size") == contract_->request_option_keys.end()) {
+        validation_options.erase("text_chunk_size");
+    }
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "Echo-TTS");
 
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("Echo-TTS requires text input");
