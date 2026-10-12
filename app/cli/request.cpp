@@ -567,7 +567,7 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
     set_option_from_arg(argc, argv, "--lyrics", "lyrics", request.options);
     set_option_from_arg(argc, argv, "--track-name", "track_name", request.options);
     set_option_from_arg(argc, argv, "--speaker", "speaker", request.options);
-    set_option_from_arg(argc, argv, "--duration-seconds", "duration_seconds", request.options);
+    set_option_from_arg(argc, argv, "--duration-seconds", "duration_sec", request.options);
     set_option_from_arg(argc, argv, "--repaint-start", "repainting_start", request.options);
     set_option_from_arg(argc, argv, "--repaint-end", "repainting_end", request.options);
     set_option_from_arg(argc, argv, "--repaint-mode", "repaint_mode", request.options);
