@@ -112,7 +112,7 @@ package.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--language` | language code | voice prefix | Language must be supplied through structured transcript/style input (CLI --language); a language entry in the request option map is not consumed. |
+| `--language` | language code | voice prefix | Language selection precedence: voice-style language, transcript language (CLI --language), request-option language, then voice prefix. Must match the selected voice. |
 | `--voice-id` | voice ID listed above | `af_heart` | Built-in voice pack. |
 | `--seed` | integer | random | Decoder noise seed for the current request; omitted requests choose a fresh random seed. |
 | `--speaking-rate` | positive float | `1.0` | Speech speed multiplier. |
@@ -125,7 +125,7 @@ package.
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `voice_id` | packaged voice ID | `af_heart` | Built-in voice pack, also selectable with `--voice-id`. |
-| `language` | language code | voice prefix | Language must be supplied through structured transcript/style input (CLI --language); a language entry in the request option map is not consumed. |
+| `language` | language code | voice prefix | Language selection precedence: voice-style language, transcript language (CLI --language), request-option language, then voice prefix. Must match the selected voice. |
 | `seed` | integer | random | Decoder noise seed for the current request; omitted requests choose a fresh random seed. |
 | `speed` | positive float | `1.0` | Speech speed multiplier; default 1.0. Must be finite and positive. |
 | `text_chunk_size` | integer chars | `240` | Long-form chunk size. |

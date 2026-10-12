@@ -26,7 +26,7 @@
       {
         "name": "language",
         "type": "string",
-        "description": "Language must be supplied through structured transcript/style input (CLI --language); a language entry in the request option map is not consumed.",
+        "description": "Language selection precedence: voice-style language, transcript language (CLI --language), request-option language, then voice prefix. Must match the selected voice.",
         "required": false
       },
       {

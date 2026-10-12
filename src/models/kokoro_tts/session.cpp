@@ -384,10 +384,12 @@ bool request_return_timestamps(const std::unordered_map<std::string, std::string
 
 std::optional<runtime::VoiceCondition> voice_with_request_options(
     const std::optional<runtime::VoiceCondition> & voice,
+    const std::optional<runtime::Transcript> & text,
     const std::unordered_map<std::string, std::string> & options) {
     const auto rate = runtime::parse_positive_finite_float_option(options, {"speed", "speaking_rate"});
     const auto voice_id = runtime::find_option(options, {"voice_id"});
-    if (!rate.has_value() && !voice_id.has_value()) {
+    const auto language = runtime::find_option(options, {"language"});
+    if (!rate.has_value() && !voice_id.has_value() && !language.has_value()) {
         return voice;
     }
     auto resolved = voice.value_or(runtime::VoiceCondition{});
@@ -398,6 +400,11 @@ std::optional<runtime::VoiceCondition> voice_with_request_options(
     if (rate.has_value() && (!resolved.style.has_value() || !resolved.style->speaking_rate.has_value())) {
         if (!resolved.style.has_value()) resolved.style = runtime::StyleCondition{};
         resolved.style->speaking_rate = *rate;
+    }
+    if (language.has_value() && (!text.has_value() || text->language.empty()) &&
+        (!resolved.style.has_value() || !resolved.style->language.has_value())) {
+        if (!resolved.style.has_value()) resolved.style = runtime::StyleCondition{};
+        resolved.style->language = *language;
     }
     return resolved;
 }
@@ -532,7 +539,7 @@ void append_kokoro_word_timings(
 
 void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
     validate_request_options(request.options, request.option_arrays, *contract_);
-    const auto voice = voice_with_request_options(request.voice, request.options);
+    const auto voice = voice_with_request_options(request.voice, request.text, request.options);
     auto adapter = make_graph_capacity_adapter();
     int64_t request_size = 0;
     const auto & prepare_phonemes = require_phoneme_chunks(request.option_arrays);
@@ -592,7 +599,7 @@ runtime::TaskResult KokoroTTSSession::synthesize(const runtime::TaskRequest & re
         throw std::runtime_error("Kokoro TTS run requires text_input");
     }
     validate_request_options(request.options, request.option_arrays, *contract_);
-    const auto voice = voice_with_request_options(request.voice, request.options);
+    const auto voice = voice_with_request_options(request.voice, request.text_input, request.options);
 
     rng_seed_ = runtime::parse_u64_option(request.options, {"seed"}).value_or(runtime::random_u64_seed());
     if (prepared_decoder_) prepared_decoder_->set_seed(rng_seed_);
