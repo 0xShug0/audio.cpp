@@ -54,7 +54,7 @@ runtime::ModelCliInterface cli(const StableAudioAssets &) {
         {"duration_padding_sec", "seconds", "Extra generated padding before truncation."},
         {"truncate_output_to_duration", "bool", "Trim decoded audio to requested duration."},
         {"chunked_decode", "bool", "Decode the vocoder in chunks."},
-        {"init_noise_level", "float", "Strength for audio-conditioned generation."},
+        {"init_noise_level", "float", "Audio-conditioned generation strength in [0, 1]. Must be > 0 for Stable Audio Foundation with init audio and a k-diffusion sampler.", false, std::nullopt, "0", "1"},
         {"audio_input_kind", "init_audio|inpaint_audio", "How to use request audio input."},
         {"inpaint_mask_start_sec", "seconds[,seconds...]", "Inpaint region start times."},
         {"inpaint_mask_end_sec", "seconds[,seconds...]", "Inpaint region end times."},

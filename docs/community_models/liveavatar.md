@@ -76,10 +76,11 @@ Request options (use with `--request-option`):
 |---|---:|---|
 | `generation_mode` | `offline` | Use `liveavatar` for blockwise audio-driven generation. |
 | `reference_image_file` | required | Reference image used for identity and appearance. Legacy `reference_image_path` and `ref_image` remain accepted. |
-| `height` / `width` | `704` / `1024` | Output frame dimensions. |
-| `num_frames` | `48` | Frames generated per LiveAvatar segment. |
+| `height` / `width` | `704` / `1024` | Output frame dimensions; each must be a positive multiple of 16. |
+| `num_frames` | `48` | Positive frame count per segment; must be a multiple of 4 in blockwise mode (streaming or `generation_mode=liveavatar`). |
 | `num_clips` | `1` | Maximum number of audio-driven clips to generate. |
 | `num_inference_steps` | `4` | Euler denoising steps; the LiveAvatar adapter is designed for four steps. |
+| `shift` | `3` | Euler flow scheduler shift; must be > 0. |
 | `guidance_scale` | `0` | LiveAvatar blockwise generation requires zero guidance. |
 | `seed` | `420` | Generation seed. |
 | `mem_saver` | `true` | Reuse immutable condition data and temporary denoiser graph storage between blocks. Legacy `memory_saver` and `liveavatar.memory_saver` remain accepted. |
@@ -87,7 +88,7 @@ Request options (use with `--request-option`):
 | `denoiser_layerwise_batch` | `16` | Number of denoiser layers staged and evaluated together. |
 | `target_cache_blocks` | `0` | Target KV cache window; `1` keeps one block. |
 | `vae_encoder_chunk_size` | `16` | VAE encoder chunk size. |
-| `vae_decoder_tile_size` | `0` | VAE decoder tile size; zero disables tiling. |
+| `vae_decoder_tile_size` | `0` | VAE decoder tile size; zero disables tiling. Enabled sizes must be multiples of 8 and greater than the 64-pixel overlap. |
 
 Session options (use with `--session-option`):
 

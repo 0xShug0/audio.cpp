@@ -49,7 +49,7 @@
       {
         "name": "height",
         "type": "int",
-        "description": "Generated frame height.",
+        "description": "Generated frame height; must be a positive multiple of 16.",
         "required": false,
         "min": 16,
         "default": 704
@@ -57,7 +57,7 @@
       {
         "name": "width",
         "type": "int",
-        "description": "Generated frame width.",
+        "description": "Generated frame width; must be a positive multiple of 16.",
         "required": false,
         "min": 16,
         "default": 1024
@@ -65,7 +65,7 @@
       {
         "name": "num_frames",
         "type": "int",
-        "description": "Frames generated per LiveAvatar segment.",
+        "description": "Frames generated per LiveAvatar segment; must be positive and a multiple of 4 in blockwise mode (streaming or generation_mode=liveavatar).",
         "required": false,
         "min": 1,
         "default": 48
@@ -141,7 +141,7 @@
       {
         "name": "vae_decoder_tile_size",
         "type": "int",
-        "description": "VAE decoder spatial tile size; 0 disables tiling.",
+        "description": "Opt-in VAE decoder spatial tile size for large outputs; 0 disables tiling. Enabled tile sizes must be multiples of 8 and larger than the 64-pixel overlap.",
         "required": false,
         "min": 0,
         "default": 0
@@ -164,7 +164,7 @@
       {
         "name": "shift",
         "type": "float",
-        "description": "Euler flow scheduler shift.",
+        "description": "Euler flow scheduler shift. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 3.0

@@ -94,10 +94,14 @@ Common request options:
 | `lyrics` | required | Lyrics to sing. Tags such as `[verse]`, `[chorus]`, `[bridge]`, and `[outro]` can be used in the text. |
 | `duration_sec` | `20` | AR frame budget expressed in seconds. It affects maximum length, performance, and memory use, but is not a hard final audio duration. |
 | `num_inference_steps` | `30` | Flow matching Euler steps per chunk. Lower values are faster. |
-| `guidance_scale` | `1.7` | Flow transformer CFG scale. Set `0` for the non-CFG flow path. |
-| `ar_guidance_scale` | `1.5` | Semantic/depth AR CFG scale. Set `0` for the non-CFG AR path. |
+| `guidance_scale` | `1.7` | Flow transformer CFG scale; must be > 0. Set `1` to use the conditional prediction without guidance amplification. |
+| `ar_guidance_scale` | `1.5` | Semantic/depth AR CFG scale; must be > 0. Set `1` to use conditional logits without guidance amplification. |
 | `top_k` | `50` | Top-k sampling for semantic and residual code sampling. |
 | `seed` | `0` | Generation seed. Try several seeds for diffusion-style music generation. |
+
+Both scales use `uncond + scale * (cond - uncond)`. Setting both to `1`
+removes CFG's effect, but the runtime still computes the unconditional branches;
+this does not select a faster conditional-only path. Zero is rejected.
 
 Common session options:
 

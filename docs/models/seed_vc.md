@@ -48,7 +48,7 @@ audiocpp_cli --task vc --family seed_vc --model models/SeedVC-MLX --backend cuda
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `duration_scale` | float | `1.0` | Stretch or compress generated duration. Legacy `length_adjust` remains accepted. |
+| `duration_scale` | float > 0 | `1.0` | Currently parsed and validated but does not affect V2 duration. Legacy `length_adjust` remains accepted. |
 | `intelligibility_guidance_scale` | float | `0.7` | CFG strength for source-content intelligibility. |
 | `similarity_guidance_scale` | float | `0.7` | CFG strength for target-speaker similarity. |
 | `voice_anonymization` | bool | `false` | Use randomized voice conditioning instead of target-speaker conditioning. |
@@ -82,7 +82,7 @@ audiocpp_cli --task vc --family seed_vc --model models/SeedVC-MLX --backend cuda
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `duration_scale` | float | `1.0` | Stretch or compress generated duration. Legacy `length_adjust` remains accepted. |
+| `duration_scale` | float > 0 | `1.0` | Stretch or compress generated duration. Legacy `length_adjust` remains accepted. |
 | `inference_guidance_scale` | float | `0.7` | V1 CFM guidance strength. |
 
 ## V1 XLSR + HiFT Voice Conversion
@@ -113,7 +113,7 @@ audiocpp_cli --task vc --family seed_vc --model models/SeedVC-MLX --backend cuda
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `duration_scale` | float | `1.0` | Stretch or compress generated duration. Legacy `length_adjust` remains accepted. |
+| `duration_scale` | float > 0 | `1.0` | Stretch or compress generated duration. Legacy `length_adjust` remains accepted. |
 | `inference_guidance_scale` | float | `0.7` | V1 CFM guidance strength. |
 
 ## V1 Singing Voice Conversion
@@ -144,7 +144,7 @@ audiocpp_cli --task svc --family seed_vc --model models/SeedVC-MLX --backend cud
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `duration_scale` | float | `1.0` | Stretch or compress generated duration. Legacy `length_adjust` remains accepted. |
+| `duration_scale` | float > 0 | `1.0` | Stretch or compress generated duration. Legacy `length_adjust` remains accepted. |
 | `inference_guidance_scale` | float | `0.7` | V1 CFM guidance strength. |
 | `f0_condition` | bool | `true` | Enable F0-conditioned conversion. |
 | `auto_f0_adjust` | bool | `false` | Automatically adjust F0 when F0 conditioning is enabled. |

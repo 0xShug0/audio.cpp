@@ -47,7 +47,7 @@
         "type": "float",
         "min": 0,
         "default": 1,
-        "description": "Positive sampling temperature.",
+        "description": "Sampling temperature; must be > 0.",
         "required": false
       },
       {

@@ -29,7 +29,7 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Chunk duration in seconds; zero selects upstream whole-file inference.",
+        "description": "Chunk duration in seconds; zero selects upstream whole-file inference. When enabled, the chunk sample count must exceed n_fft/2.",
         "min": 0,
         "default": 0,
         "required": false

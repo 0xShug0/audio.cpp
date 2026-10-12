@@ -72,9 +72,9 @@ engine::runtime::ModelCliInterface make_cli() {
     };
     out.request_options = {
         {"reference_image_file", "path", "Reference image file used as the identity/appearance condition.", true},
-        {"height", "n", "Generated frame height."},
-        {"width", "n", "Generated frame width."},
-        {"num_frames", "n", "Frames generated per LiveAvatar segment."},
+        {"height", "n", "Generated frame height; must be a positive multiple of 16.", false, std::nullopt, "16"},
+        {"width", "n", "Generated frame width; must be a positive multiple of 16.", false, std::nullopt, "16"},
+        {"num_frames", "n", "Frames generated per LiveAvatar segment; must be positive and a multiple of 4 in blockwise mode (streaming or generation_mode=liveavatar).", false, std::nullopt, "1"},
         {"num_clips", "n", "Maximum LiveAvatar clips to generate from the input audio."},
         {"num_inference_steps", "n", "Flow denoising steps."},
         {"generation_mode", "offline|liveavatar", "Use whole-clip generation or LiveAvatar blockwise generation."},
@@ -85,10 +85,10 @@ engine::runtime::ModelCliInterface make_cli() {
         {"denoiser_layerwise", "true|false", "Run the denoiser in explicit layerwise mode."},
         {"denoiser_layerwise_batch", "n", "Denoiser layer group size when denoiser_layerwise=true."},
         {"vae_encoder_chunk_size", "n", "Cached VAE encoder chunk size."},
-        {"vae_decoder_tile_size", "n", "Opt-in VAE decoder spatial tile size for large outputs."},
+        {"vae_decoder_tile_size", "n", "Opt-in VAE decoder spatial tile size for large outputs; 0 disables tiling. Enabled tile sizes must be multiples of 8 and larger than the 64-pixel overlap.", false, std::nullopt, "0"},
         {"target_cache_blocks", "n", "Target KV cache window in block units; 0 keeps the full clip cache."},
         {"vae_cache_f16", "true|false", "Store cached VAE encoder state in F16."},
-        {"shift", "float", "Flow scheduler shift."},
+        {"shift", "float", "Euler flow scheduler shift. Must be > 0.", false, std::nullopt, "0"},
         {"seed", "n", "Generation seed."},
         {"negative_prompt", "text", "Negative prompt for classifier-free guidance."},
     };

@@ -148,7 +148,7 @@
         "type": "int",
         "description": "AR runtime graph arena size in MiB; default 512.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 512
       },
       {
@@ -156,7 +156,7 @@
         "type": "int",
         "description": "AR weight context size in MiB; default 512.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 512
       },
       {
@@ -164,7 +164,7 @@
         "type": "int",
         "description": "Codec encode/decode graph arena size in MiB; default 512.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 512
       },
       {
@@ -172,7 +172,7 @@
         "type": "int",
         "description": "Codec weight context size in MiB; default 512.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 512
       }
     ],

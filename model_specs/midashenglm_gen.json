@@ -60,17 +60,17 @@
         "type": "int",
         "description": "Minimum generated steps before accepting stop.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "max": 4096,
         "default": 5
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Generation seed; -1 selects a random seed.",
+        "description": "Unsigned 32-bit generation seed; default 0 is a fixed seed. Negative values are not accepted.",
         "required": false,
-        "min": -1,
-        "max": 2147483647,
+        "min": 0,
+        "max": 4294967295,
         "default": 0
       }
     ],

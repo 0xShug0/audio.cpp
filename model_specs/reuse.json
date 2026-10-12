@@ -29,7 +29,7 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Chunk duration in seconds; zero processes the whole recording. Chunking changes bidirectional and normalization context.",
+        "description": "Chunk duration in seconds; zero processes the whole recording. When enabled, the chunk sample count must exceed sample_rate/50. Chunking changes bidirectional and normalization context.",
         "min": 0,
         "default": 0,
         "required": false

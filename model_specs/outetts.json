@@ -84,7 +84,7 @@
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "Positive windowed repetition penalty; default 1.1.",
+        "description": "Windowed repetition penalty; must be > 0, default 1.1.",
         "required": false,
         "min": 0.0,
         "default": 1.1

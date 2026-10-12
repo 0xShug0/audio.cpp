@@ -104,9 +104,9 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | `reference_duration_sec` | seconds | checkpoint | Trim reference audio to this length before encoding it; `0` keeps the whole reference. Legacy `max_ref_sec` remains accepted. See [Reference Length](#reference-length). |
 | `num_inference_steps` | integer | `40` | RF diffusion steps. |
 | `duration_sec` | seconds | unset | Explicit output duration; omitted uses predicted duration. |
-| `duration_scale` | float | `1.0` | Multiplier for predicted duration. |
-| `min_duration_sec` | seconds | `0.5` | Minimum generated duration. |
-| `max_duration_sec` | seconds | `30` | Maximum generated duration. |
+| `duration_scale` | float > 0 | `1.0` | Multiplier for predicted duration. |
+| `min_duration_sec` | seconds > 0 | `0.5` | Minimum generated duration; must not exceed `max_duration_sec`. |
+| `max_duration_sec` | seconds > 0 | `30` | Maximum generated duration; must be at least `min_duration_sec`. |
 | `text_chunk_mode` | `japanese`, `endline` | `endline` | Long-form chunking mode. |
 | `text_chunk_size` | integer | model text window | Maximum characters per outer chunk. |
 | `text_guidance_scale` | float | `3.0` | Text CFG strength. |
@@ -127,16 +127,16 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | `irodori_tts.codec_weight_type` | `native`, `f32`, `f16`, `q8_0` | `native` | DACVAE codec weight storage type. |
 | `irodori_tts.mem_saver` | bool | `true` | Release staged runtime graphs after request phases. |
 | `irodori_tts.reference_cache_slots` | integer | `1` | Prepared reference-speaker cache slots; use `0` to disable reuse. |
-| `irodori_tts.condition_graph_arena_mb` | MiB | `256` | Condition encoder graph arena size. |
-| `irodori_tts.rf_graph_arena_mb` | MiB | `768` | RF sampler graph arena size. |
-| `irodori_tts.codec_graph_arena_mb` | MiB | `512` | DACVAE codec graph arena size. |
+| `irodori_tts.condition_graph_arena_mb` | integer MiB >= 1 | `256` | Condition encoder graph arena size. |
+| `irodori_tts.rf_graph_arena_mb` | integer MiB >= 1 | `768` | RF sampler graph arena size. |
+| `irodori_tts.codec_graph_arena_mb` | integer MiB >= 1 | `512` | DACVAE codec graph arena size. |
 | `irodori_tts.codec_decode_chunk_steps` | integer | `0` | Decode the latent in windows of this many latent frames (25 per second); `0` decodes the whole sequence at once. See [Bounding codec memory](#bounding-codec-memory). |
 | `irodori_tts.codec_decode_overlap_steps` | integer | `16` | Latent frames of context decoded on each side of a decode window and discarded. |
 | `irodori_tts.codec_encode_chunk_steps` | integer | `0` | Encode reference audio in windows of this many latent frames; `0` encodes the whole reference at once. |
 | `irodori_tts.codec_encode_overlap_steps` | integer | `16` | Latent frames of reference audio encoded as context on each side of an encode window and discarded. |
-| `irodori_tts.condition_weight_context_mb` | MiB | `32` | Condition encoder weight metadata context size. |
-| `irodori_tts.rf_weight_context_mb` | MiB | `32` | RF sampler weight metadata context size. |
-| `irodori_tts.codec_weight_context_mb` | MiB | `32` | DACVAE codec weight metadata context size. |
+| `irodori_tts.condition_weight_context_mb` | integer MiB >= 1 | `32` | Condition encoder weight metadata context size. |
+| `irodori_tts.rf_weight_context_mb` | integer MiB >= 1 | `32` | RF sampler weight metadata context size. |
+| `irodori_tts.codec_weight_context_mb` | integer MiB >= 1 | `32` | DACVAE codec weight metadata context size. |
 
 ### Bounding codec memory
 

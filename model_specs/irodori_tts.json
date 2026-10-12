@@ -77,7 +77,7 @@
       {
         "name": "duration_scale",
         "type": "float",
-        "description": "Predicted-duration multiplier; must be positive when set; default 1.0.",
+        "description": "Predicted-duration multiplier; must be > 0 when set; default 1.0.",
         "required": false,
         "min": 0.0,
         "default": 1.0
@@ -103,7 +103,7 @@
       {
         "name": "min_duration_sec",
         "type": "float",
-        "description": "Minimum generated duration in seconds; must be positive and no greater than max_duration_sec; default 0.5.",
+        "description": "Minimum generated duration in seconds; must be > 0 and no greater than max_duration_sec; default 0.5.",
         "required": false,
         "min": 0.0,
         "default": 0.5
@@ -111,7 +111,7 @@
       {
         "name": "max_duration_sec",
         "type": "float",
-        "description": "Maximum generated duration in seconds; must be at least min_duration_sec; default 30.",
+        "description": "Maximum generated duration in seconds; must be at least min_duration_sec; default 30. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 30.0
@@ -223,7 +223,7 @@
         "type": "int",
         "description": "Condition encoder graph arena size in MiB; default 256.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 256
       },
       {
@@ -231,7 +231,7 @@
         "type": "int",
         "description": "RF sampler graph arena size in MiB; default 768.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 768
       },
       {
@@ -239,7 +239,7 @@
         "type": "int",
         "description": "DACVAE codec graph arena size in MiB; default 512.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 512
       },
       {
@@ -279,7 +279,7 @@
         "type": "int",
         "description": "Condition encoder weight context size in MiB; default 32.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 32
       },
       {
@@ -287,7 +287,7 @@
         "type": "int",
         "description": "RF sampler weight context size in MiB; default 32.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 32
       },
       {
@@ -295,7 +295,7 @@
         "type": "int",
         "description": "DACVAE codec weight context size in MiB; default 32.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 32
       },
       {

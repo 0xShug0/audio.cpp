@@ -42,7 +42,7 @@ Top-level fields:
 | `languages` | Family-level language scope, such as `en`, `zh`, `ja`, `multilingual`, or `language_agnostic`. | No |
 | `runtime` | Runtime tags such as `gguf` or `stream`. | No |
 | `capabilities` | Stable task-keyed capability tags. | No |
-| `options` | Typed request/session/load options. | Yes, otherwise new code needs compatibility mapping for old embedded specs |
+| `options` | Typed request/session/load options. | For runtime contract changes; description/default/bound metadata corrections alone do not require reconversion |
 | `package_defaults` | Optional shared package metadata, such as a common download source. | No |
 | `packages` | Installable model packages and download metadata. | No |
 | `dependencies` | Runtime peer models or bundled model assets needed for optional features. | No, but loader/session behavior must support the dependency |
@@ -62,9 +62,13 @@ is available, but the model weights and runtime execution remain valid.
 Fields that can affect runtime behavior are `sources`, `options`, and
 `dependencies`. Changing `sources` changes where files or tensors are resolved
 and requires refreshing any standalone GGUF package that relies on the embedded
-spec. Changing `options` changes the typed runtime contract; either regenerate
-standalone GGUF packages with the updated embedded spec, or add explicit
-compatibility mapping in code for packages that still carry the old spec.
+spec. Changing option names or scopes can change accepted keys in the typed
+runtime contract; either refresh the embedded spec or provide explicit
+compatibility mapping for packages that still carry the old keys. Correcting
+option descriptions, advertised defaults, or numeric bounds is a metadata-only
+change: it does not change parser defaults, runtime value checks, or inference.
+An older embedded spec may still report the old help until its metadata is
+refreshed or overridden.
 Changing `dependencies` must be reviewed with the loader/session behavior that
 consumes it.
 
@@ -84,7 +88,20 @@ used before the model is loaded. Each row has a stable name, typed value,
 explicit `required` flag, and description. Optional rows should include
 `default` when production behavior has a stable literal default. Numeric rows
 should include `min` and/or `max` when the runtime enforces or documents a
-range.
+range. These bounds are read-only discovery metadata, not runtime validation
+rules. The spec schema checks metadata consistency, including `min <= max` and
+whether a declared numeric default lies within those inclusive bounds. Actual
+option values are checked by model parsers and consumers.
+
+Keep useful numeric boundaries and explain endpoint inclusion in `description`:
+`> 0` excludes zero, `(0, 2)` excludes both endpoints, and `(0, 1]` includes 1
+but excludes 0. For conditional constraints, name the controlling option, such
+as "must be > 0 when do_sample=true; ignored when do_sample=false." The current
+schema has no positive numeric type, exclusive-bound fields, or conditional
+numeric bounds. Do not introduce an arbitrary epsilon to express positivity.
+Keep existing handwritten `ModelCliInterface` entries consistent with spec
+metadata without adding runtime spec reads to those tables.
+
 Shared option names carry framework-level contracts: for example `top_k` is an
 integer top-k control, `top_p` is a float nucleus-sampling control, and `route`
 must be an enum. Repeated enum domains should use a preset instead of copying

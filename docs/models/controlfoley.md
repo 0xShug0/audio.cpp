@@ -74,7 +74,7 @@ audiocpp_cli \
 | `video_file` | video path | optional | Video conditioning source. Legacy `video` remains accepted. |
 | `duration_sec` | float | `8` | Target temporal budget. |
 | `num_inference_steps` | integer > 0 | `25` | Euler flow inference steps. |
-| `guidance_scale` | float | `4.5` | Classifier-free guidance scale. |
+| `guidance_scale` | float > 0 | `4.5` | Classifier-free guidance scale. |
 | `negative_prompt` | text | empty | Negative text branch for CFG. |
 | `mask_away_clip` | bool | `false` | Disable OpenCLIP video conditioning while keeping visual and sync conditioning. |
 | `seed` | integer >= 0 | `42` | Sampler seed. |

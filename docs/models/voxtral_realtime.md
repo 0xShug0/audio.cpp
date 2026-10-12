@@ -190,8 +190,8 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 | `--input-channels` | integer | `1` | Channel count of raw PCM read from stdin. Ignored for file input. |
 | `--mode` | `offline`, `streaming` | `offline` | Full-context or streaming session. |
 | `--do-sample` | bool | `false` | Enable sampling instead of greedy decode. |
-| `--temperature` | float | `1.0` | Sampling temperature. |
-| `--top-p` | float | `1.0` | Nucleus sampling limit. |
+| `--temperature` | float > 0 | `1.0` | Sampling temperature. |
+| `--top-p` | `(0, 1]` | `1.0` | Nucleus sampling limit. |
 | `--top-k` | integer | `50` | Top-k sampling limit; `0` disables top-k. |
 | `--seed` | integer | `1234` | Sampling seed. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
@@ -202,8 +202,8 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 |---|---|---:|---|
 | `max_tokens` | integer | not set | Maximum generated transcript tokens. |
 | `do_sample` | bool | `false` | Sample rather than greedily decode. |
-| `temperature` | float | `1` | Positive sampling temperature. |
-| `top_p` | float | `1` | Nucleus sampling probability in (0, 1]. |
+| `temperature` | float > 0 | `1` | Positive sampling temperature. |
+| `top_p` | `(0, 1]` | `1` | Nucleus sampling probability in (0, 1]. |
 | `top_k` | integer >= 0 | `50` | Top-k sampling limit; zero disables filtering. |
 | `seed` | integer >= 0 | `1234` | Sampling seed. |
 

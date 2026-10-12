@@ -42,7 +42,7 @@ audiocpp_cli --task tts --mode streaming --family neutts \
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--max-tokens` | integer | `0` | Maximum generated speech tokens; `0` uses the remaining context. |
-| `--temperature` | float | `1.0` | AR sampling temperature. |
+| `--temperature` | float > 0 | `1.0` | AR sampling temperature. |
 | `--top-k` | integer | `50` | AR top-k sampling limit. |
 | `--seed` | integer | random | Sampling seed. |
 | `--text-chunk-size` | chars | `600` | Long-form chunk size. |

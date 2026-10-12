@@ -44,10 +44,10 @@ runtime::ModelCliInterface cli() {
         {"instruction", "<text>", "Free-text direction for the delivery."},
         {"text_temperature", "<float>", "Text-token sampling temperature."},
         {"seed", "<int>", "Reproduces a take exactly."},
-        {"temperature", "<float>", "Audio sampling temperature (default 1.5)."},
+        {"temperature", "<float>", "Audio sampling temperature; must be > 0, default 1.5.", false, std::nullopt, "0"},
         {"top_p", "<float>", "Audio nucleus sampling cutoff (default 0.6)."},
         {"top_k", "<int>", "Audio top-k (default 50)."},
-        {"repetition_penalty", "<float>", "Audio repetition penalty (default 1.1)."},
+        {"repetition_penalty", "<float>", "Audio repetition penalty; must be > 0. Checked when token history is present; default 1.1.", false, std::nullopt, "0"},
         {"max_frames", "<int>", "Ceiling on generated codec frames at 12.5/s. 0 derives one from the text length."},
     };
     out.session_options = {

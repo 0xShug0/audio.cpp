@@ -78,9 +78,9 @@ this is output streaming, not incremental text input.
 | `--max-new-tokens` | integer | `1024` | Maximum generated semantic tokens per chunk. `0` uses the default. |
 | `--text-chunk-size` | integer chars | `200` | Long-form chunk size. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
-| `--temperature` | float | `0.8` | Sampling temperature. |
+| `--temperature` | `(0, 2)` | `0.8` | Sampling temperature. |
 | `--top-k` | integer | `30` | Top-k sampling limit. |
-| `--top-p` | float | `0.8` | Nucleus sampling limit. |
+| `--top-p` | `(0, 1]` | `0.8` | Nucleus sampling limit. |
 | `--seed` | integer | random when omitted | Sampling seed for reproducible output. |
 
 ## Request Options (use with `--request-option`)
@@ -97,6 +97,10 @@ this is output streaming, not incremental text input.
 | `fish_audio.reference_cache_slots` | integer | `1` | Prepared reference-audio cache slots. |
 | `fish_audio.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | AR matmul weight storage type. |
 | `fish_audio.codec_weight_type` | `native`, `f32`, `f16`, `q8_0` | `native` | Codec conv/matmul weight storage type. |
+| `fish_audio.ar_graph_arena_mb` | integer MiB >= 1 | `512` | AR graph arena size. |
+| `fish_audio.ar_weight_context_mb` | integer MiB >= 1 | `32` | AR weight context size. |
+| `fish_audio.codec_graph_arena_mb` | integer MiB >= 1 | `512` | Codec graph arena size. |
+| `fish_audio.codec_weight_context_mb` | integer MiB >= 1 | `32` | Codec weight context size. |
 
 ## Multi-Reference Conditioning
 

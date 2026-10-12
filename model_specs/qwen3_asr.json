@@ -89,7 +89,7 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Maximum audio chunk duration in seconds; default 30 for transcription and 15 when timestamps or VAD chunking are used.",
+        "description": "Maximum audio chunk duration in seconds; must be > 0 when chunking or streaming. Ignored with audio_chunk_mode=none offline. Default 30 for streaming and offline transcription, or 15 for offline timestamps/VAD chunking.",
         "required": false,
         "min": 0
       },

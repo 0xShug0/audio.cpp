@@ -35,7 +35,7 @@ runtime::ModelCliInterface cli() {
         {"max_tokens", "int", "Maximum generated transcript tokens; omitted uses the checkpoint generation_config.json (512 when absent).", false, std::nullopt, "1"},
         {"return_timestamps", "bool", "Return word-level timestamps by running Qwen3 ForcedAligner after ASR; default false and requires forced_aligner_path when enabled.", false, "false"},
         {"audio_chunk_mode", "auto|fixed|vad|none", "Audio chunking mode; default auto uses fixed chunks normally and VAD chunks when timestamps are requested.", false, "auto"},
-        {"audio_chunk_duration_sec", "float", "Maximum audio chunk duration in seconds; default 30 for transcription and 15 when timestamps or VAD chunking are used.", false, std::nullopt, "0"},
+        {"audio_chunk_duration_sec", "float", "Maximum audio chunk duration in seconds; must be > 0 when chunking or streaming. Ignored with audio_chunk_mode=none offline. Default 30 for streaming and offline transcription, or 15 for offline timestamps/VAD chunking.", false, std::nullopt, "0"},
         {"clamp_timestamps_to_audio", "bool", "Opt-in guard for word timestamp output: keep repaired forced-aligner word spans inside the local audio chunk. Defaults to false to preserve existing timestamp repair behavior.", false, "false"},
         {"preserve_punctuation", "bool", "Opt-in text output mode for timestamped chunked ASR: preserve ASR punctuation in text_output instead of rebuilding text from aligned words.", false, "false"},
     };

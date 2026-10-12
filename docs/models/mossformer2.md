@@ -30,7 +30,7 @@ and audio is resampled to the checkpoint sample rate.
 | Option | Default | Description |
 | --- | --- | --- |
 | `audio_chunk_duration_sec` | `2` | Separation window duration; `0` processes the whole recording. |
-| `audio_chunk_overlap_sec` | `0.5` | Overlap in seconds; recommended 25% of the chunk duration, matching official Python settings. Must be non-negative and smaller than the chunk duration. Overlapping edges are trimmed rather than averaged. Ignored for whole-file inference. |
+| `audio_chunk_overlap_sec` | `0.5` | Overlap in seconds; recommended 25% of the chunk duration, matching official Python settings. Must be non-negative and, when chunking is enabled, smaller than the chunk duration. Overlapping edges are trimmed rather than averaged. Ignored for whole-file inference. |
 | `normalize_output` | `true` | Match each trimmed track's RMS to the input, following ClearVoice's NumPy interface. |
 
 ## Long Recordings

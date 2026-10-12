@@ -47,7 +47,10 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 
 ## Common Generation Options
 
-Omit these unless you need explicit control. If `--seed` is omitted, models that sample use a random seed.
+Omit these unless you need explicit control. Seed defaults are model-specific:
+some models choose a random seed when omitted, while others use a fixed default
+(for example, AudioSR uses 42 and MiDashengLM uses 0). Neither `0` nor `-1` is a
+universal random-seed sentinel; check the model's usage page.
 
 | Option | Values | Meaning |
 |---|---|---|

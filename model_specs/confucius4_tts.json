@@ -52,7 +52,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "T2S sampling temperature; must be positive, default 0.8.",
+        "description": "T2S sampling temperature; must be > 0, default 0.8.",
         "required": false,
         "min": 0.0,
         "default": 0.8
@@ -85,7 +85,7 @@
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "T2S repetition penalty; must be positive, default 10.0.",
+        "description": "T2S repetition penalty; must be > 0, default 10.0.",
         "required": false,
         "min": 0.0,
         "default": 10.0

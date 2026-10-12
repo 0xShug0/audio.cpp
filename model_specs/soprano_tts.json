@@ -39,7 +39,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Autoregressive sampling temperature; default 0.3 (0 selects the framework default and clamps to a small positive value).",
+        "description": "Autoregressive sampling temperature; must be > 0, default 0.3.",
         "required": false,
         "min": 0.0,
         "default": 0.3

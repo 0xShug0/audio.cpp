@@ -110,7 +110,7 @@
       {
         "name": "init_noise_level",
         "type": "float",
-        "description": "Audio-conditioned generation strength.",
+        "description": "Audio-conditioned generation strength in [0, 1]. Must be > 0 for Stable Audio Foundation with init audio and a k-diffusion sampler.",
         "required": false,
         "min": 0,
         "max": 1,

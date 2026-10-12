@@ -32,8 +32,8 @@ runtime::ModelCliInterface cli(const VoxtralRealtimeAssets &) {
     out.request_options = {
         {"max_tokens", "n", "Maximum generated transcript tokens."},
         {"do_sample", "bool", "Enable sampling instead of greedy decode."},
-        {"temperature", "float", "Sampling temperature."},
-        {"top_p", "float", "Nucleus sampling limit."},
+        {"temperature", "float", "Sampling temperature; must be > 0.", false, std::nullopt, "0"},
+        {"top_p", "float", "Nucleus sampling probability in (0, 1].", false, std::nullopt, "0", "1"},
         {"top_k", "n", "Top-k sampling limit; 0 disables top-k."},
         {"seed", "n", "Sampling seed."},
     };

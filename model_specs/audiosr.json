@@ -66,7 +66,7 @@
       {
         "name": "audio_chunk_overlap_sec",
         "type": "float",
-        "description": "Long-audio chunk overlap.",
+        "description": "Long-audio chunk overlap; must be smaller than audio_chunk_duration_sec, including after rounding to samples.",
         "required": false,
         "min": 0.0,
         "max": 60.0,
@@ -75,9 +75,8 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Generation seed; -1 selects a random seed.",
+        "description": "Generation seed; omitted or negative values use the fixed seed 42, not a random seed. Zero is a fixed seed.",
         "required": false,
-        "min": -1,
         "max": 2147483647,
         "default": 42
       }

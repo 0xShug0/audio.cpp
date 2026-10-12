@@ -114,7 +114,7 @@
         "default": 4.5,
         "min": 0.0,
         "max": 20.0,
-        "description": "Classifier-free guidance strength."
+        "description": "Classifier-free guidance strength. Must be > 0."
       },
       {
         "name": "negative_prompt",

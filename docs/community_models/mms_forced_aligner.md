@@ -93,8 +93,8 @@ Session options:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `mms_forced_aligner.emission_window_sec` | `30.0` | Center window length for long waveforms |
-| `mms_forced_aligner.emission_context_sec` | `2.0` | Left/right context per window; must be < window |
+| `mms_forced_aligner.emission_window_sec` | `30.0` | Center window length in `(0, 3600]` seconds; rounded 16 kHz sample count must be divisible by 320 (20 ms). |
+| `mms_forced_aligner.emission_context_sec` | `2.0` | Left/right context in `[0, 3600]` seconds, strictly below the window; rounded 16 kHz sample count must be divisible by 320 (20 ms). |
 | `mms_forced_aligner.max_alignment_cells` | `50000000` | Hard cap on Viterbi cells (frames x states); fails before allocation |
 | `mms_forced_aligner.max_target_tokens` | `8192` | Hard cap on flattened CTC targets per request |
 | `mms_forced_aligner.weight_type` | `native` | Weight storage: `native`, `f32`, `f16` |

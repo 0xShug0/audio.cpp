@@ -64,7 +64,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Audio token sampling temperature; default 0.8.",
+        "description": "Audio token sampling temperature; must be nonnegative, and positive when do_sample=true. Ignored when do_sample=false; default 0.8.",
         "required": false,
         "min": 0.0,
         "default": 0.8
@@ -72,7 +72,7 @@
       {
         "name": "text_temperature",
         "type": "float",
-        "description": "Text token sampling temperature; default follows temperature.",
+        "description": "Text token sampling temperature; must be nonnegative, and positive when do_sample=true. Ignored when do_sample=false; default follows temperature.",
         "required": false,
         "min": 0.0
       },

@@ -94,7 +94,7 @@ audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-medi
 | `duration_padding_sec` | seconds | `6` | Extra generated padding before truncation. |
 | `truncate_output_to_duration` | bool | `true` | Trim decoded audio to requested duration. |
 | `chunked_decode` | bool | `true` | Decode the autoencoder in chunks. |
-| `init_noise_level` | `0..1` | `1` | Strength for audio-conditioned generation. |
+| `init_noise_level` | `[0, 1]` | `1` | Strength for audio-conditioned generation; must be > 0 for Foundation with init audio and a k-diffusion sampler. |
 | `audio_input_kind` | `init_audio`, `inpaint_audio` | `init_audio` | How the model uses input audio. |
 | `inpaint_mask_start_sec` | comma-separated seconds | not set | Inpaint region start times. |
 | `inpaint_mask_end_sec` | comma-separated seconds | not set | Inpaint region end times. |

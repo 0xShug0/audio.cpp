@@ -89,7 +89,7 @@
       {
         "name": "reference_duration_sec",
         "type": "float",
-        "description": "Reference voice crop/repeat duration in seconds; default comes from config.json, 10.0 in the current package.",
+        "description": "Reference voice crop/repeat duration in seconds; default comes from config.json, 10.0 in the current package. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 10.0
@@ -104,7 +104,7 @@
       {
         "name": "audio_chunk_threshold_sec",
         "type": "float",
-        "description": "Estimated duration threshold that switches a request to long-form chunking; default 45.0 seconds.",
+        "description": "Estimated duration threshold that switches a request to long-form chunking; default 45.0 seconds. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 45.0
@@ -112,7 +112,7 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Target estimated duration for each long-form chunk; default 37.0 seconds.",
+        "description": "Target estimated duration for each long-form chunk; default 37.0 seconds. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 37.0

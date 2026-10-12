@@ -83,7 +83,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Autoregressive sampling temperature; must be positive, default 1.0.",
+        "description": "Autoregressive sampling temperature; must be > 0, default 1.0.",
         "required": false,
         "min": 0.0,
         "default": 1.0

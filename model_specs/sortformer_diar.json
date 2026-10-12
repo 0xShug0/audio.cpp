@@ -68,7 +68,7 @@
       {
         "name": "session_len_sec",
         "type": "float",
-        "description": "Base offline graph context length in seconds; must be positive, default 20.",
+        "description": "Base offline graph context length in seconds; must be > 0, default 20.",
         "required": false,
         "min": 0.0,
         "default": 20.0

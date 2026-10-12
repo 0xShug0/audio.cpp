@@ -83,10 +83,10 @@ audiocpp_cli \
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
 | `max_tokens` | integer > 0 | `1500` | Maximum generated acoustic frames. |
 | `guidance_scale` | float >= 0 | `1.0` | Classifier-free guidance scale. |
-| `temperature` | float >= 0 | `0.9` | Backbone sampling temperature. |
-| `depth_temperature` | float >= 0 | `0.9` | Depth decoder sampling temperature. |
+| `temperature` | float > 0 | `0.9` | Backbone sampling temperature. |
+| `depth_temperature` | float > 0 | `0.9` | Depth decoder sampling temperature. |
 | `top_k` | integer >= 0 | `50` | Top-k sampling limit; `0` disables top-k filtering. |
-| `top_p` | `0..1` | `1.0` | Top-p sampling limit. |
+| `top_p` | `(0, 1]` | `1.0` | Top-p sampling limit. |
 | `seed` | integer >= 0 | `0` | Generation seed. |
 | `stream_frames_per_event` | integer > 0 | `16` | Maximum codec frames per audio event, or fixed event size with `stream_chunk_policy=fixed`. |
 | `stream_chunk_policy` | `grow`, `fixed` | `grow` | Emit 1, 2, 4, ... frames up to the configured maximum, or use the fixed size from the first event. |

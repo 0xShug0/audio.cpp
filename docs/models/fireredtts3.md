@@ -97,7 +97,7 @@ audiocpp_cli \
 | `text_chunk_size` | integer > 0 | `600` | Long-form text chunk size. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
 | `num_inference_steps` | integer > 0 | `10` | FireRed DiT flow steps per latent patch. |
-| `guidance_scale` | float >= 0 | `2.0` | FireRed DiT CFG scale. |
+| `guidance_scale` | float > 0 | `2.0` | FireRed DiT CFG scale. |
 | `stop_threshold` | `0..1` | `0.5` | AR stop probability threshold. |
 | `seed` | integer >= 0 | `1234` | Generation seed. |
 

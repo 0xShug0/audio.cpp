@@ -131,7 +131,7 @@ audiocpp_cli --task diar --family sortformer_diar --model models/Sortformer-Diar
 | `--session-option sortformer_diar.speaker_threshold=<float>` | float | `0.5` | Default speaker activation threshold. |
 | `--session-option sortformer_diar.speaker_min_frames=<n>` | integer | `0` | Default minimum speaker segment frames. |
 | `--session-option sortformer_diar.speaker_pad_frames=<n>` | integer | `0` | Default padding around speaker turns. |
-| `--session-option sortformer_diar.session_len_sec=<float>` | seconds | `20.0` | Diarization graph window length. |
+| `--session-option sortformer_diar.session_len_sec=<float>` | seconds > 0 | `20.0` | Diarization graph window length. |
 | `--session-option sortformer_diar.graph_capacity_mode=<mode>` | `fixed`, `tiered`, `grow`, `double` | backend default | Offline graph capacity policy. |
 | `--session-option sortformer_diar.graph_arena_mb=<n>` | MB | `512` | Inference graph arena size. |
 | `--session-option sortformer_diar.weight_context_mb=<n>` | MB | `128` | Weight context size. |

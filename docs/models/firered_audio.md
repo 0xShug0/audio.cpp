@@ -91,7 +91,7 @@ audiocpp_cli \
 | `reference_text` | text | empty | Transcript for the prompt audio. |
 | `instruction` | text | required for design/edit | Generation voice/delivery instruction. ASR and understanding instead use the text input as their task prompt. |
 | `num_inference_steps` | integer > 0 | `10` | FireRedAudio DiT flow steps per latent patch. |
-| `guidance_scale` | float >= 0 | `2.0` | FireRedAudio DiT CFG scale. |
+| `guidance_scale` | float > 0 | `2.0` | FireRedAudio DiT CFG scale. |
 | `max_audio_steps` | integer > 0 | `750` | Maximum generated RedAE latent patches. Legacy `max_new_audio_steps` remains accepted. |
 | `min_audio_steps` | integer >= 0 | `6` | Minimum audio patches before stop may be accepted. Legacy `min_new_audio_steps` remains accepted. |
 | `max_text_tokens` | integer > 0 | `512` | Text-mode token budget before audio mode. Legacy `max_new_text_tokens` remains accepted. |

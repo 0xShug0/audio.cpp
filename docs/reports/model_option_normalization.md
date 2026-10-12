@@ -66,6 +66,106 @@
 | MioTTS | Request selection help | `miotts.best_of_n`, `miotts.best_of_n_enabled`, `miotts.best_of_n_language` | Advertise unprefixed request names; session defaults remain family-prefixed. |
 | VoxCPM2 | Request chunk-strategy help | `voxcpm2.chunk_strategy` | Advertise `chunk_strategy`; prefixed alias retained. |
 
+## Numeric Metadata Correction Checklist
+
+Specs and existing handwritten inspection entries were updated together where
+those entries exist. Spec-backed inspection continues using spec metadata.
+Useful local descriptions and additional options are retained; no new runtime
+spec reads were introduced.
+
+Numeric `min`/`max` boundaries are retained for discovery. Descriptions state
+whether each endpoint is included: `> 0` excludes zero, `(0, 2)` excludes both
+endpoints, and `(0, 1]` includes only the upper endpoint. Conditional descriptions
+identify the mode in which a stricter bound applies; zero-valid greedy, disabled,
+and whole-file behavior is preserved.
+
+The current [CLI metadata](../../include/engine/framework/runtime/model.h#L43)
+and [spec conversion](../../src/framework/model_spec/metadata.cpp#L169) only carry
+inclusive scalar bounds. Those fields alone therefore do not encode the complete
+acceptance predicate: clients must not treat a displayed minimum of 0 as a
+promise that zero is accepted in every mode. Runtime checks remain authoritative.
+No positive type, exclusive-bound fields, arbitrary epsilon, or conditional
+schema extension was added. Integer bounds were corrected directly.
+
+### Scalar Boundary Clarifications
+
+Scope is request unless marked session. `> 0` below means finite and positive
+where the consumer uses the positive-finite parser. Grouped options share the
+stated issue, not necessarily their defaults or upper bounds.
+
+| Done | Model / option | Previous metadata / spec | Runtime consumer / actual constraint | Fix |
+|---|---|---|---|---|
+| [x] | Qwen3 TTS `repetition_penalty` | Minimum 0 ([spec](../../model_specs/qwen3_tts.json#L104)) | Must be positive ([session](../../src/models/qwen3_tts/session.cpp#L76)). | Retained minimum 0 as a boundary; explicitly described `> 0` (zero excluded), with default unchanged. |
+| [x] | Qwen3 TTS `temperature`, `subtalker_temperature` | Minimum 0; prose already describes sampling conditions ([spec](../../model_specs/qwen3_tts.json#L79), [subtalker](../../model_specs/qwen3_tts.json#L119)) | Positive when the corresponding `do_sample`/`subtalker_do_sample` is true ([session](../../src/models/qwen3_tts/session.cpp#L67)). | Retained minimum 0; named `do_sample` / `subtalker_do_sample` in the `> 0` conditions and documented greedy-mode behavior. |
+| [x] | Qwen3 ASR `audio_chunk_duration_sec` | Minimum 0 ([spec](../../model_specs/qwen3_asr.json#L90)) | Positive in chunking and streaming paths ([offline](../../src/models/qwen3_asr/session.cpp#L675), [streaming](../../src/models/qwen3_asr/session.cpp#L558)). | Retained minimum 0; documented `> 0` when chunking/streaming, offline `none` behavior, and mode-specific defaults. |
+| [x] | Audio8 TTS `top_p`, `temperature` | `[0,1]`, `[0,2]` ([spec](../../model_specs/audio8_tts.json#L81)) | `(0,1]`, `(0,2)` ([session](../../src/community_models/audio8_tts/session.cpp#L149)). | Retained numeric boundaries and existing exact `(0,1]` / `(0,2)` descriptions. No scalar spec change needed; zero and temperature 2 are explicitly excluded in prose. |
+| [x] | Fish Audio `top_p`, `temperature` | `[0,1]`, `[0,2]` ([spec](../../model_specs/fish_audio.json#L67)) | `(0,1]`, `(0,2)` ([session](../../src/models/fish_audio/session.cpp#L136)). | Retained numeric boundaries and exact `(0,1]` / `(0,2)` descriptions; copied those intervals into local help. |
+| [x] | BreezeTTS `temperature`, `depth_temperature`, `top_p` | Minimum 0 ([spec](../../model_specs/breeze_tts.json#L91)) | Positive-finite parser ([session](../../src/models/breeze_tts/session.cpp#L379)). | Retained bounds; documented temperatures `> 0` and top-p `(0,1]`. |
+| [x] | Confucius4 TTS `temperature`, `top_p`, `repetition_penalty` | Minimum 0 ([spec](../../model_specs/confucius4_tts.json#L53)) | Temperature `> 0`, top-p `(0,1]` ([request](../../src/models/confucius4_tts/request.cpp#L62)); penalty `> 0` ([T2S](../../src/models/confucius4_tts/t2s.cpp#L415)). | Retained bounds; made temperature/penalty `> 0` explicit and retained top-p `(0,1]`. |
+| [x] | ControlFoley `guidance_scale` | Minimum 0 ([spec](../../model_specs/controlfoley.json#L111)) | Positive parser ([pipeline](../../src/models/controlfoley/pipeline.cpp#L176)). | Retained bounds; documented guidance `> 0`. |
+| [x] | DramaBox `reference_duration_sec`, `audio_chunk_threshold_sec`, `audio_chunk_duration_sec` | Minimum 0 ([spec](../../model_specs/dramabox.json#L90)) | All must be positive ([session](../../src/models/dramabox/session.cpp#L148)). | Retained bounds; documented all three as `> 0`, leaving crossfade unchanged. |
+| [x] | FireRed Audio `guidance_scale` | Minimum 0 ([spec](../../model_specs/firered_audio.json#L87)) | Positive parser ([session](../../src/models/firered_audio/session.cpp#L121)). | Retained minimum 0; documented guidance `> 0`. |
+| [x] | FireRedTTS3 `guidance_scale` | Minimum 0 ([spec](../../model_specs/fireredtts3.json#L146)) | Positive parser in base and instruct paths ([session](../../src/models/fireredtts3/session.cpp#L95)). | Retained minimum 0; documented guidance `> 0` for the shared option. |
+| [x] | HeartMuLa `duration_sec`, `temperature`, `guidance_scale`, `codec_duration_sec`, `codec_guidance_scale` | Minimum 0 ([spec](../../model_specs/heartmula.json#L38)) | Positive parsers ([session](../../src/models/heartmula/session.cpp#L73)). | Retained bounds; explicitly described all five values as `> 0`. |
+| [x] | Higgs Audio STT `audio_chunk_duration_sec` | Minimum 0 ([spec](../../model_specs/higgs_audio_stt.json#L56)) | Must be positive ([session](../../src/models/higgs_audio_stt/session.cpp#L340)). | Retained minimum 0; explicitly described duration `> 0`. |
+| [x] | Irodori TTS `duration_scale`, `min_duration_sec`, `max_duration_sec` | Minimum 0 ([spec](../../model_specs/irodori_tts.json#L78)) | Scale and minimum duration positive; maximum at least minimum ([session](../../src/models/irodori_tts/session.cpp#L894)). | Retained bounds; explicitly described scale/minimum `> 0` and retained `max_duration_sec >= min_duration_sec`. Reference duration unchanged. |
+| [x] | LiveAvatar `shift` | Minimum 0 ([spec](../../model_specs/liveavatar.json#L165)) | Must be positive ([pipeline state](../../src/community_models/liveavatar/pipeline_state.cpp#L419)). | Retained minimum 0; documented shift `> 0`. |
+| [x] | Maya1 `temperature`, `top_p`, `repetition_penalty` | Minimum 0 ([spec](../../model_specs/maya1.json#L54)) | Positive; top-p also at most 1 ([session](../../src/models/maya1/session.cpp#L97)). | Retained bounds; documented temperature/penalty `> 0` and top-p `(0,1]`. |
+| [x] | MiniMax Music3 `guidance_scale`, `ar_guidance_scale` | Minimum 0 ([spec](../../model_specs/minimax_music3.json#L53)) | Both must be positive ([pipeline](../../src/community_models/minimax_music3/pipeline.cpp#L157)). | Retained both minima; documented both guidance scales `> 0`. |
+| [x] | NeuTTS `temperature` | Minimum 0 ([spec](../../model_specs/neutts.json#L84)) | Positive parser ([session](../../src/models/neutts/session.cpp#L99)). | Retained minimum 0; explicitly described temperature `> 0`. |
+| [x] | OuteTTS `repetition_penalty` | Minimum 0 ([spec](../../model_specs/outetts.json#L85)) | Nonpositive values throw ([decoder](../../src/community_models/outetts/llama.cpp#L781)). | Retained minimum 0; explicitly described penalty `> 0`; greedy temperature unchanged. |
+| [x] | PersonaPlex `temperature`, `text_temperature` | Minimum 0 ([spec](../../model_specs/personaplex.json#L65)) | Positive when `do_sample=true` ([request](../../src/models/personaplex/request.cpp#L106)). | Retained minimum 0; documented nonnegativity, sampling-only `> 0`, and greedy behavior. |
+| [x] | Seed-VC `duration_scale` | Minimum 0 ([spec](../../model_specs/seed_vc.json#L60)) | Must be positive ([session](../../src/models/seed_vc/session.cpp#L332)). | Retained minimum 0; explicitly described scale `> 0`; V2 behavior unchanged. |
+| [x] | Sortformer session `session_len_sec` | Minimum 0 ([spec](../../model_specs/sortformer_diar.json#L69)) | Must be positive ([postprocess](../../src/models/sortformer_diar/postprocess.cpp#L284)). | Retained minimum 0; explicitly described session length `> 0`; Sortformer v2 unchanged. |
+| [x] | Soprano TTS `temperature` | Minimum 0; prose claims zero selects a default ([spec](../../model_specs/soprano_tts.json#L40)) | Explicitly rejects `<= 0` ([session](../../src/community_models/soprano_tts/session.cpp#L53)). | Retained minimum 0; removed the false zero/default claim and documented temperature `> 0`. |
+| [x] | Voxtral Realtime `temperature`, `top_p` | Minimum 0 ([spec](../../model_specs/voxtral_realtime.json#L46)) | Temperature `> 0`, top-p `(0,1]` ([session](../../src/models/voxtral_realtime/session.cpp#L71)). | Retained bounds; explicitly described temperature `> 0` and retained top-p `(0,1]`, including local help. |
+| [x] | MOSS-TTSD `temperature`, `repetition_penalty` | Minimum 0 ([spec](../../model_specs/moss_ttsd.json#L120)) | Passed to HF sampling ([decoder](../../src/framework/decoders/moss_tts_delay/delay_decoder.cpp#L102)); sampled temperature must be positive ([sampler](../../src/framework/sampling/hf_sampler.cpp#L381)), penalty must be positive when history is present ([sampler](../../src/framework/sampling/hf_sampler.cpp#L200)). | Retained bounds; documented temperature/penalty `> 0` and history-dependent penalty checking. |
+| [x] | MiDashengLM `min_stop_step` | Minimum 0 ([spec](../../model_specs/midashenglm_gen.json#L59)) | Positive integer parser ([session](../../src/models/midashenglm_gen/session.cpp#L175)). | Changed integer minimum to 1. |
+
+### Session Allocation Bounds
+
+All entries below previously advertised minimum 0 but use `parse_size_mb_option`,
+which rejects nonpositive sizes ([shared parser](../../src/framework/runtime/options.cpp#L272)).
+Names omit their canonical session family prefix for readability.
+
+| Done | Model | Options | Spec | Consumer | Fix |
+|---|---|---|---|---|---|
+| [x] | Audio8 TTS | `ar_graph_arena_mb`, `ar_weight_context_mb`, `codec_graph_arena_mb`, `codec_weight_context_mb` | [spec](../../model_specs/audio8_tts.json#L147) | [session](../../src/community_models/audio8_tts/session.cpp#L403) | Changed integer minimum to 1 MiB for every listed option; retained defaults. |
+| [x] | Fish Audio | `ar_graph_arena_mb`, `ar_weight_context_mb`, `codec_graph_arena_mb`, `codec_weight_context_mb` | [spec](../../model_specs/fish_audio.json#L133) | [session](../../src/models/fish_audio/session.cpp#L325) | Changed integer minimum to 1 MiB for every listed option; retained defaults. |
+| [x] | Higgs Audio STT | `audio_encoder_graph_arena_mb`, `text_decoder_prefill_graph_arena_mb`, `text_decoder_decode_graph_arena_mb`, `text_decoder_weight_context_mb` | [spec](../../model_specs/higgs_audio_stt.json#L89) | [session](../../src/models/higgs_audio_stt/session.cpp#L117) | Changed integer minimum to 1 MiB for every listed option; retained defaults. |
+| [x] | Irodori TTS | `condition_graph_arena_mb`, `rf_graph_arena_mb`, `codec_graph_arena_mb`, `condition_weight_context_mb`, `rf_weight_context_mb`, `codec_weight_context_mb` | [arenas](../../model_specs/irodori_tts.json#L222), [weight contexts](../../model_specs/irodori_tts.json#L278) | [session](../../src/models/irodori_tts/session.cpp#L474) | Changed integer minimum to 1 MiB for every listed option; retained defaults. |
+
+### Sentinels And Coupled Constraints
+
+The first three rows are direct advertised-behavior mismatches. Remaining rows
+are missing conditional, divisibility, or cross-option constraints, not evidence
+that every advertised scalar zero is invalid.
+
+| Done | Model / option | Previous metadata / spec | Actual consumer behavior | Fix |
+|---|---|---|---|---|
+| [x] | F5-TTS session `frame_budget` | Default/minimum 0; zero described as 2048 ([spec](../../model_specs/f5_tts.json#L110)) | Explicit values must be in `[256,8192]`; explicit zero throws ([session](../../src/community_models/f5_tts/session.cpp#L132)). | Set minimum 256, maximum 8192, and effective default 2048; documented that explicit zero is rejected. Internal omitted-value sentinel unchanged. |
+| [x] | AudioSR `seed` | `-1` described as random ([spec](../../model_specs/audiosr.json#L76)) | Every negative value maps to fixed seed 42; zero is an ordinary seed ([pipeline](../../src/models/audiosr/pipeline.cpp#L35)). | Removed the false random claim and minimum -1; documented that all negative inputs and omission use fixed seed 42. Zero remains an ordinary seed. |
+| [x] | MiDashengLM `seed` | `-1` described as random, minimum -1, maximum 2147483647 ([spec](../../model_specs/midashenglm_gen.json#L68)) | Unsigned 32-bit parsing rejects -1; omitted seed is 0 ([session](../../src/models/midashenglm_gen/session.cpp#L176)). | Set range `[0,4294967295]`; retained default 0 and documented fixed unsigned seed semantics. Downstream seed is uint32_t, widened to uint64_t for flow sampling. |
+| [x] | LiveAvatar `height`, `width`, `num_frames` | Independent minimum values ([spec](../../model_specs/liveavatar.json#L50)) | Dimensions must be multiples of 16; blockwise frame count must be a multiple of 4 ([pipeline state](../../src/community_models/liveavatar/pipeline_state.cpp#L810)). | Documented multiples of 16 for dimensions and the multiple-of-4 frame constraint only for blockwise generation. |
+| [x] | LiveAvatar `vae_decoder_tile_size` | Minimum 0, zero disables tiling ([spec](../../model_specs/liveavatar.json#L142)) | Enabled tiles must be multiples of 8 and larger than overlap ([VAE](../../src/community_models/liveavatar/pipeline_vae.cpp#L1143)). | Documented enabled tiles as multiples of 8 greater than the 64-pixel overlap; retained zero-disable. |
+| [x] | MMS forced aligner session `emission_window_sec`, `emission_context_sec` | Missing upper/alignment constraints ([spec](../../model_specs/mms_forced_aligner.json#L71)) | Window positive, context nonnegative, both at most 3600 s; rounded 16 kHz sample counts must be divisible by 320 ([emissions](../../src/community_models/mms_forced_aligner/emissions.cpp#L176)). | Added maximum 3600 for both; documented rounded 16 kHz sample counts divisible by 320, preserving context zero and the context/window relation. |
+| [x] | TFGridNet `audio_chunk_duration_sec`, `audio_chunk_overlap_sec` | Independent nonnegative bounds ([spec](../../model_specs/tf_gridnet.json#L30)) | Enabled chunk length must exceed `n_fft/2` samples; overlap must be positive and smaller than the chunk ([session](../../src/models/tf_gridnet/session.cpp#L119)). | Retained numeric bounds; documented nonnegativity, sample-based chunk/overlap constraints, and strictly positive overlap only when chunking. Whole-file duration zero retained. |
+| [x] | Apollo `audio_chunk_duration_sec`, `audio_chunk_overlap_sec` | Independent nonnegative bounds; prose already states the half-chunk overlap limit ([spec](../../model_specs/apollo.json#L30)) | Enabled chunk length must exceed `n_fft/2` samples; overlap may not exceed half the chunk ([session](../../src/models/apollo/session.cpp#L67)). | Added the enabled chunk's sample-based minimum; retained existing half-chunk overlap prose and zero behavior. |
+| [x] | RE-USE `audio_chunk_duration_sec`, `audio_chunk_overlap_sec` | Independent nonnegative bounds; prose already states overlap must be shorter ([spec](../../model_specs/reuse.json#L30)) | Enabled chunk length must exceed `sample_rate/50` samples; overlap smaller than chunk ([session](../../src/community_models/reuse/session.cpp#L63)). | Added the enabled chunk's sample-based minimum; retained existing overlap relation and zero behavior. |
+| [x] | MossFormer2 `audio_chunk_duration_sec`, `audio_chunk_overlap_sec` | Independent nonnegative bounds ([spec](../../model_specs/mossformer2.json#L30)) | When chunking is enabled, overlap must be smaller than duration ([session](../../src/models/mossformer2/session.cpp#L46)). | Documented overlap smaller than duration when chunking; retained whole-file duration zero. |
+| [x] | AudioSR chunk duration/overlap | Independent bounds ([spec](../../model_specs/audiosr.json#L67)) | Overlap must be smaller than duration, including after sample rounding ([pipeline](../../src/models/audiosr/pipeline.cpp#L456)). | Documented overlap smaller than duration, including after sample rounding. |
+| [x] | Stable Audio Foundation `init_noise_level` | `[0,1]` ([spec](../../model_specs/stable_audio.json#L111)) | With init audio and k-diffusion, this becomes `sampler_sigma_max`, which must be positive ([assignment](../../src/models/stable_audio/foundation/session.cpp#L281), [check](../../src/models/stable_audio/foundation/session.cpp#L158)). | Documented the Foundation/init-audio/k-diffusion positivity condition; retained `[0,1]` for the shared option. |
+
+Seed semantics remain model-specific. F5-TTS's default and the AudioSR/MiDashengLM
+seed descriptions now reflect existing behavior; no new zero-default or random
+sentinel was implemented. Any future runtime semantics change needs separate
+authorization and validation; the equivalence results below do not cover it.
+
+### Usage Documentation
+
+- [x] Updated the usage tables for all 33 families in this numeric checklist, including shared [TTS](../tts.md), [music](../music_generation.md), and [speech analysis](../speech_analysis.md) guides: positive/exclusive bounds, conditional constraints, allocation minima, seed behavior, and the F5 frame-budget default.
+- [x] Added missing Audio8/Fish allocation controls, MOSS-TTSD sampling controls, and LiveAvatar shift. Corrected [Music3 CFG semantics](../community_models/minimax_music3.md), [Seed-VC V2's duration no-op](../models/seed_vc.md), and the [general seed guidance](../usage.md).
+
 ## Runtime Validation Checklist
 
 Checked rows state either a runtime option-equivalence pass or an exemption.

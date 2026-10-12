@@ -120,10 +120,10 @@ These sampling controls are shared by the Qwen3 TTS Base, VoiceDesign, and Custo
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--do-sample` | `true`, `false` | `true` | Enable sampling. |
-| `--temperature` | float | `0.9` | Main talker temperature. |
+| `--temperature` | float | `0.9` | Main talker temperature; must be > 0 when `--do-sample=true`, ignored when false. |
 | `--top-k` | integer | `50` | Main talker top-k. |
 | `--top-p` | float | `1.0` | Main talker top-p. |
-| `--repetition-penalty` | float | `1.05` | Main talker repetition penalty. |
+| `--repetition-penalty` | float > 0 | `1.05` | Main talker repetition penalty. |
 | `--seed` | integer | random if omitted | Sampling seed. |
 
 ### Request Options (use with `--request-option`)
@@ -132,7 +132,7 @@ These sampling controls are shared by the Qwen3 TTS Base, VoiceDesign, and Custo
 |---|---|---:|---|
 | `subtalker_do_sample` | bool | `true` | Enable subtalker sampling for the remaining audio codebooks. |
 | `voice_id` | packaged speaker name | unset | CustomVoice preset selection. Legacy `speaker` remains accepted. An explicit request option takes precedence over the structured voice's cached id. |
-| `subtalker_temperature` | float | `0.9` | Subtalker sampling temperature. |
+| `subtalker_temperature` | float | `0.9` | Must be > 0 when `subtalker_do_sample=true`; ignored when false. |
 | `subtalker_top_k` | integer | `50` | Subtalker top-k. |
 | `subtalker_top_p` | float | `1.0` | Subtalker top-p. |
 | `x_vector_only_mode` | bool | `false` | Base voice cloning using only the reference speaker embedding, without ICL reference codec prompting. |
@@ -300,7 +300,7 @@ audiocpp_gguf --input models/QwenCleo-ASR/model.safetensors --root models/QwenCl
 | `--text` | text | empty string | Context prompt. |
 | `--language` | language code | empty string | Recognition language hint. |
 | `--max-tokens` | integer | `512` | Maximum decode tokens. |
-| `--audio-chunk-seconds` | float seconds | `30`, or `15` with `--words-out` | Target/max chunk length used before ASR inference. |
+| `--audio-chunk-seconds` | seconds | `30` for streaming/transcription; `15` for offline timestamps/VAD | Target/max chunk length; must be > 0 when chunking or streaming. Ignored with `audio_chunk_mode=none` offline. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Let the model choose, force fixed chunks, force internal VAD chunks, or disable model-side chunking. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
 | `--words-out` | JSON path | not set | Word timestamp output. Requires `qwen3_asr.forced_aligner_path`. |

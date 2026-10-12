@@ -102,7 +102,7 @@ audiocpp_cli --task tts --family outetts \
 | `--top-k` | integer | `40` | Top-k sampling limit. |
 | `--top-p` | float | `0.9` | Nucleus sampling limit. |
 | `--request-option min_p=<float>` | float | `0.05` | Minimum probability relative to the most likely token. |
-| `--repetition-penalty` | float | `1.1` | Repetition penalty over the latest 64 tokens. |
+| `--repetition-penalty` | float > 0 | `1.1` | Repetition penalty over the latest 64 tokens. |
 | `--request-option seed=<n>` | integer | native clone: `4099`; quantized clone: `42` | Deterministic sampling seed. The defaults were separately verified for the native and Q8 cloning paths. |
 | `--text-chunk-size` | characters | `256` | Initial framework long-form text chunk size. Each chunk is split further when needed to fit `max_tokens`, generated and decoded in the same loaded session, then appended to the output WAV. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |

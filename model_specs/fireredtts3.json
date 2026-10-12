@@ -145,7 +145,7 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "FireRed DiT classifier-free guidance scale.",
+        "description": "FireRed DiT classifier-free guidance scale. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 2.0

@@ -38,9 +38,9 @@ runtime::ModelCliInterface cli(const FishAudioAssets &) {
         {"max_tokens", "N", "Maximum Fish Audio semantic tokens to generate; default 1024, 0 uses the default."},
         {"text_chunk_size", "N", "Long-form text chunk size; default 200."},
         {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode."},
-        {"top_p", "FLOAT", "Top-p sampling value."},
+        {"top_p", "FLOAT", "Top-p sampling value in (0, 1]; default 0.8.", false, std::nullopt, "0", "1"},
         {"top_k", "N", "Top-k sampling value."},
-        {"temperature", "FLOAT", "Sampling temperature."},
+        {"temperature", "FLOAT", "Semantic-token sampling temperature in (0, 2); default 0.8.", false, std::nullopt, "0", "2"},
         {"seed", "N", "Sampling seed for reproducible output; omitted uses a random seed."},
     };
     out.session_options = {

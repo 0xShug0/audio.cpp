@@ -229,11 +229,11 @@ audiocpp_cli --task clon --family confucius4_tts --model models/Confucius4-TTS-G
 |---|---|---:|---|
 | `--voice-ref` | WAV path | required | Reference speaker audio for cloning. |
 | `--language` | language code | `zh` | Target synthesis language code. |
-| `--temperature` | float | `0.8` | T2S sampling temperature. |
-| `--top-p` | float | `0.8` | T2S nucleus sampling probability. |
+| `--temperature` | float > 0 | `0.8` | T2S sampling temperature. |
+| `--top-p` | `(0, 1]` | `0.8` | T2S nucleus sampling probability. |
 | `--top-k` | integer | `30` | T2S top-k sampling limit. |
 | `--num-beams` | integer | `3` | T2S beam count; use `1` for single-beam sampling. |
-| `--repetition-penalty` | float | `10.0` | T2S repetition penalty. |
+| `--repetition-penalty` | float > 0 | `10.0` | T2S repetition penalty. |
 | `--max-tokens` | integer | `1520` | Maximum T2S semantic sequence length including prompt tokens. |
 | `--num-inference-steps` | integer | `25` | S2A flow-matching step count. |
 | `--guidance-scale` | float | `0.7` | S2A classifier-free guidance scale. |
@@ -283,10 +283,10 @@ Older prebuilts that reject `--task clon` can use `--task tts --voice-ref ...`; 
 | `--guidance-scale` | float | `2.5` | Classifier-free guidance scale. Values greater than `1` enable CFG. |
 | `--request-option spatio_temporal_guidance_scale=<float>` | float | `1.5` | Spatio-temporal guidance scale. Values greater than `0` enable STG. |
 | `--request-option duration_scale=<float>` | float | `1.1` | Multiplier applied to the estimated prompt duration when `duration_sec` is `0`. |
-| `--request-option reference_duration_sec=<seconds>` | seconds | `10.0` | Reference voice crop/repeat duration. |
+| `--request-option reference_duration_sec=<seconds>` | seconds > 0 | `10.0` | Reference voice crop/repeat duration. |
 | `--request-option guidance_rescale=auto\|<number>` | string | `auto` | Guidance rescale mode or explicit numeric value. |
-| `--request-option audio_chunk_threshold_sec=<seconds>` | seconds | `45.0` | Estimated duration threshold that switches to long-form chunking. |
-| `--request-option audio_chunk_duration_sec=<seconds>` | seconds | `37.0` | Target estimated duration for each long-form chunk. |
+| `--request-option audio_chunk_threshold_sec=<seconds>` | seconds > 0 | `45.0` | Estimated duration threshold that switches to long-form chunking. |
+| `--request-option audio_chunk_duration_sec=<seconds>` | seconds > 0 | `37.0` | Target estimated duration for each long-form chunk. |
 | `--request-option cross_fade_duration_sec=<seconds>` | seconds | `0.05` | Equal-power cross-fade between long-form chunks. |
 | `--seed` | integer | `42` | Torch-compatible CUDA noise seed for diffusion sampling. |
 | `--session-option dramabox.perf_mode=off\|flash_attention` | enum | `off` | Attention implementation mode. `off` keeps the exact reference-query attention path; `flash_attention` enables the optimized path. |
