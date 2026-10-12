@@ -28,6 +28,13 @@
   "options": {
     "request": [
       {
+        "name": "voice_id",
+        "type": "string",
+        "description": "Built-in voice ID or package alias; structured voice input (CLI --voice-id) takes precedence.",
+        "required": false,
+        "default": "expr-voice-5-m"
+      },
+      {
         "name": "speed",
         "type": "float",
         "description": "Speech speed multiplier; larger values produce faster speech. Must be finite and positive.",

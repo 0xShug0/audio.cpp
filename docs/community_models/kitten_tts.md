@@ -29,8 +29,11 @@ Available voices are `Bella`, `Jasper`, `Luna`, `Bruno`, `Rosie`, `Hugo`,
 
 ### Request options (use with `--request-option`)
 
+`--voice-id` takes precedence over `--request-option voice_id=...`.
+
 | Option | Range | Default | Description |
 |---|---:|---:|---|
+| `voice_id` | packaged voice ID or alias | `expr-voice-5-m` | Built-in voice, also selectable with `--voice-id`. |
 | `speed` | positive float | `1.0` | Speech speed multiplier; larger values produce faster speech. Must be finite and positive. |
 | `seed` | non-negative integer | random | Decoder noise seed; omitted requests choose a random seed. Seeds retained decoder state during preparation, not subsequent run() calls on that prepared session. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |

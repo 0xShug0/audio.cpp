@@ -348,13 +348,15 @@ void validate_request_options(
     const bool old_speed = contract.request_option_keys.find("speed") == contract.request_option_keys.end();
     const bool old_speaking_rate = contract.request_option_keys.find("speaking_rate") == contract.request_option_keys.end();
     const bool old_timestamps = contract.request_option_keys.find(kTimestampsOption) == contract.request_option_keys.end();
-    if (!old_phonemes && !old_speed && !old_speaking_rate && !old_timestamps) {
+    const bool old_voice_id = contract.request_option_keys.find("voice_id") == contract.request_option_keys.end();
+    if (!old_phonemes && !old_speed && !old_speaking_rate && !old_timestamps && !old_voice_id) {
         runtime::validate_spec_backed_request_options(options, option_arrays, contract, kModelName);
         return;
     }
     std::unordered_map<std::string, std::string> validation_options;
     for (const auto & [key, _] : options) {
         if ((key == "speed" && old_speed) || (key == "speaking_rate" && old_speaking_rate) ||
+            (key == "voice_id" && old_voice_id) ||
             (key == kTimestampsOption && old_timestamps)) continue;
         validation_options.emplace(key, std::string{});
     }
@@ -380,17 +382,23 @@ bool request_return_timestamps(const std::unordered_map<std::string, std::string
     return value.has_value() && runtime::parse_bool_option(*value, kTimestampsOption);
 }
 
-std::optional<runtime::VoiceCondition> voice_with_request_rate(
+std::optional<runtime::VoiceCondition> voice_with_request_options(
     const std::optional<runtime::VoiceCondition> & voice,
     const std::unordered_map<std::string, std::string> & options) {
     const auto rate = runtime::parse_positive_finite_float_option(options, {"speed", "speaking_rate"});
-    if (!rate.has_value() || (voice.has_value() && voice->style.has_value() &&
-                              voice->style->speaking_rate.has_value())) {
+    const auto voice_id = runtime::find_option(options, {"voice_id"});
+    if (!rate.has_value() && !voice_id.has_value()) {
         return voice;
     }
     auto resolved = voice.value_or(runtime::VoiceCondition{});
-    if (!resolved.style.has_value()) resolved.style = runtime::StyleCondition{};
-    resolved.style->speaking_rate = *rate;
+    if (voice_id.has_value() && (!resolved.speaker.has_value() || !resolved.speaker->cached_voice_id.has_value())) {
+        if (!resolved.speaker.has_value()) resolved.speaker = runtime::VoiceReference{};
+        resolved.speaker->cached_voice_id = *voice_id;
+    }
+    if (rate.has_value() && (!resolved.style.has_value() || !resolved.style->speaking_rate.has_value())) {
+        if (!resolved.style.has_value()) resolved.style = runtime::StyleCondition{};
+        resolved.style->speaking_rate = *rate;
+    }
     return resolved;
 }
 
@@ -524,7 +532,7 @@ void append_kokoro_word_timings(
 
 void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
     validate_request_options(request.options, request.option_arrays, *contract_);
-    const auto voice = voice_with_request_rate(request.voice, request.options);
+    const auto voice = voice_with_request_options(request.voice, request.options);
     if (const auto seed = runtime::parse_u64_option(request.options, {"seed"})) {
         if (rng_seed_ != *seed) {
             rng_seed_ = *seed;
@@ -592,7 +600,7 @@ runtime::TaskResult KokoroTTSSession::synthesize(const runtime::TaskRequest & re
         throw std::runtime_error("Kokoro TTS run requires text_input");
     }
     validate_request_options(request.options, request.option_arrays, *contract_);
-    const auto voice = voice_with_request_rate(request.voice, request.options);
+    const auto voice = voice_with_request_options(request.voice, request.options);
 
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);

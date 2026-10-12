@@ -120,8 +120,11 @@ package.
 
 ## Request Options (use with `--request-option`)
 
+`--voice-id` takes precedence over `--request-option voice_id=...`.
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `voice_id` | packaged voice ID | `af_heart` | Built-in voice pack, also selectable with `--voice-id`. |
 | `language` | language code | voice prefix | Language must be supplied through structured transcript/style input (CLI --language); a language entry in the request option map is not consumed. |
 | `seed` | integer | random | Decoder noise seed; omitted requests choose a random seed. Consumed during preparation, not subsequent run() calls on the prepared session. |
 | `speed` | positive float | `1.0` | Speech speed multiplier; default 1.0. Must be finite and positive. |

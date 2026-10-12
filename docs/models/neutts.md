@@ -14,7 +14,7 @@ audiocpp_cli --task tts --family neutts \
   --model models/NeuTTS-2E-GGUF/neutts-2e-orig.gguf \
   --backend cuda \
   --text "The release checklist is almost complete, and the baseline run looks healthy." \
-  --request-option voice_id=emily \
+  --voice-id emily \
   --request-option emotion=neutral \
   --out out.wav
 ```
@@ -49,6 +49,9 @@ audiocpp_cli --task tts --mode streaming --family neutts \
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 
 ## Request Options (use with `--request-option`)
+
+`--voice-id` also selects a built-in speaker and takes precedence over
+`--request-option voice_id=...`.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|

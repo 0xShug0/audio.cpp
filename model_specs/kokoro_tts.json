@@ -17,6 +17,13 @@
   "options": {
     "request": [
       {
+        "name": "voice_id",
+        "type": "string",
+        "description": "Built-in voice ID; structured voice input (CLI --voice-id) takes precedence.",
+        "required": false,
+        "default": "af_heart"
+      },
+      {
         "name": "language",
         "type": "string",
         "description": "Language must be supplied through structured transcript/style input (CLI --language); a language entry in the request option map is not consumed.",
