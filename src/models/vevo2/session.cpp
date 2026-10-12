@@ -635,19 +635,19 @@ Vevo2Session::Vevo2Session(
       task_(task),
       assets_(require_assets(std::move(assets))),
       ar_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.ar_weight_context_mb"}, 2048ull * 1024ull * 1024ull)),
-      ar_prefill_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.ar_prefill_graph_arena_mb", "vevo2.ar_prefill_graph_context_mb"}, 512ull * 1024ull * 1024ull)),
+      ar_prefill_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.ar_prefill_graph_arena_mb", "vevo2.ar_prefill_graph_context_mb"}, 4ull * 1024ull * 1024ull)),
       ar_decode_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.ar_decode_graph_arena_mb", "vevo2.ar_decode_graph_context_mb"}, 512ull * 1024ull * 1024ull)),
       ar_weight_storage_type_(
           resolve_matmul_weight_type(options, "vevo2.ar_weight_type", engine::assets::TensorStorageType::F32)),
       reference_execution_context_(options.backend),
       whisper_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.whisper_weight_context_mb"}, 256ull * 1024ull * 1024ull)),
-      whisper_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.whisper_graph_arena_mb", "vevo2.whisper_graph_context_mb"}, 512ull * 1024ull * 1024ull)),
+      whisper_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.whisper_graph_arena_mb", "vevo2.whisper_graph_context_mb"}, 4ull * 1024ull * 1024ull)),
       whisper_matmul_weight_storage_type_(
           resolve_matmul_weight_type(options, "vevo2.whisper_weight_type", engine::assets::TensorStorageType::Native)),
       whisper_conv_weight_storage_type_(
           resolve_conv_weight_type(options, "vevo2.whisper_conv_weight_type", engine::assets::TensorStorageType::Native)),
       tokenizer_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.tokenizer_weight_context_mb"}, 768ull * 1024ull * 1024ull)),
-      tokenizer_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.tokenizer_graph_arena_mb", "vevo2.tokenizer_graph_context_mb"}, 768ull * 1024ull * 1024ull)),
+      tokenizer_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.tokenizer_graph_arena_mb", "vevo2.tokenizer_graph_context_mb"}, 4ull * 1024ull * 1024ull)),
       tokenizer_matmul_weight_storage_type_(
           resolve_matmul_weight_type(options, "vevo2.tokenizer_weight_type", engine::assets::TensorStorageType::Native)),
       tokenizer_conv_weight_storage_type_(
