@@ -32,6 +32,8 @@ runtime::CapabilitySet capabilities() {
 runtime::ModelCliInterface cli() {
     runtime::ModelCliInterface out;
     out.request_options = {
+        {"min_frames", "<int>", "Minimum generated audio frames per text chunk; nonpositive values derive a text-length-based floor.", false, "0"},
+        {"max_frames", "<int>", "Generated audio-frame ceiling per text chunk; nonpositive values derive a text-length-based ceiling. Runtime raises it to at least the effective min_frames plus the number of codebooks.", false, "0"},
         {"instruction", "<text>", "Voice description: timbre, age, pace, emotion."},
         {"text_temperature", "<float>", "Text-token sampling temperature."},
         {"language", "English|Chinese", "Full language name; the model does not understand codes like 'en'."},

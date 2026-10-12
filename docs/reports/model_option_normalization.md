@@ -166,6 +166,18 @@ authorization and validation; the equivalence results below do not cover it.
 - [x] Updated the usage tables for all 33 families in this numeric checklist, including shared [TTS](../tts.md), [music](../music_generation.md), and [speech analysis](../speech_analysis.md) guides: positive/exclusive bounds, conditional constraints, allocation minima, seed behavior, and the F5 frame-budget default.
 - [x] Added missing Audio8/Fish allocation controls, MOSS-TTSD sampling controls, and LiveAvatar shift. Corrected [Music3 CFG semantics](../community_models/minimax_music3.md), [Seed-VC V2's duration no-op](../models/seed_vc.md), and the [general seed guidance](../usage.md).
 
+### Remaining Discovery Corrections
+
+| Done | Model / control | Fix |
+|---|---|---|
+| [x] | Echo-TTS text chunk size | Added canonical `text_chunk_size` to the spec with minimum 1 and default 300, allowing it through request-key validation to the existing consumer. Added a contract regression check and usage documentation. |
+| [x] | MMS forced aligner audio chunking | Removed standalone audio-chunk flags from this model's alignment help; other alignment families retain their existing help. |
+| [x] | MOSS-TTS-v1.5 / VoiceGenerator generation bounds | Added `min_frames` and `max_frames` to specs, local CLI tables, and usage docs. Documented automatic nonpositive values and the runtime-adjusted ceiling. |
+| [x] | MiniMax-H3 cache window | Advertised 10%/95% progress controls; removed false literal sigma defaults and documented paired sigma overrides. Updated usage docs. |
+| [x] | MOSS-TTS-v1.5 weight format | Corrected local help and the usage table to default native, preserving packaged quantization. |
+| [x] | VoxCPM1 automatic retries | Removed the unconditional metadata default; documented true offline, false streaming, and streaming's warning/ignore behavior for explicit true. |
+| [x] | Music3 ensemble takes | Added maximum 16 to local CLI metadata and documented the inclusive 1-16 range. |
+
 ## Runtime Validation Checklist
 
 Checked rows state either a runtime option-equivalence pass or an exemption.

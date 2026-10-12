@@ -1150,6 +1150,16 @@ void test_option_name_mapping_from_production_spec() {
     engine::test::require(!vibevoice_cli.has_value(), "legacy vibevoice spec should not expose CLI metadata");
 }
 
+void test_echo_text_chunk_size_contract() {
+    const auto specs = std::filesystem::path(AUDIOCPP_SOURCE_DIR) / "model_specs";
+    const engine::model_spec::ScopedSpecOverride spec_override(specs);
+    const auto contract = engine::model_spec::model_contract("echo_tts");
+    engine::test::require(contract.has_value(), "Echo-TTS contract exists");
+    engine::test::require(
+        contract->request_option_keys.count("text_chunk_size") == 1,
+        "Echo-TTS validation must allow its text chunk size consumer");
+}
+
 void test_schema_v1_metadata_projection() {
     const auto root = make_temp_root();
     write_text(root, "toy_model.json", schema_v1_spec_with_options(R"JSON({
@@ -1494,6 +1504,7 @@ int main() {
         test_dependency_option_mapping_from_production_spec();
         test_options_schema();
         test_option_name_mapping_from_production_spec();
+        test_echo_text_chunk_size_contract();
         test_schema_v1_metadata_projection();
         test_contract_projection_ignores_package_metadata_validation();
         test_legacy_spec_contract_behavior_unchanged();

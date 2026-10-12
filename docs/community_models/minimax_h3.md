@@ -100,8 +100,10 @@ Advanced options:
 | `dit_mlp_chunk_tokens` | `0` | Token chunk size for high-resolution layerwise MLP. Zero disables chunking. |
 | `dit_acceleration` | `none` | Optional acceleration mode: `none`, `first_block_cache`, or `spectrum`. |
 | `first_block_cache_threshold` | `0.1` | First-block cache residual-difference threshold. |
-| `first_block_cache_start_sigma` | `0.95` | Largest video sigma where first-block cache may be used. |
-| `first_block_cache_end_sigma` | `0.1` | Smallest video sigma where first-block cache may be used. |
+| `first_block_cache_start_percent` | `0.1` | Start caching at 10% denoising progress; fractions must satisfy `0 <= start < end <= 1`. |
+| `first_block_cache_end_percent` | `0.95` | Stop caching at 95% denoising progress; used with the schedule to derive the default sigma window. |
+| `first_block_cache_start_sigma` | derived from progress/schedule | Optional largest video sigma for caching; must be supplied together with `first_block_cache_end_sigma`. |
+| `first_block_cache_end_sigma` | derived from progress/schedule | Optional smallest video sigma for caching; must be supplied together with `first_block_cache_start_sigma`. Explicit sigma endpoints override the derived window. |
 | `first_block_cache_max_consecutive` | `2` | Maximum consecutive cache hits before forcing a full DiT step. |
 | `spectrum_warmup_steps` | `1` | Full DiT warmup steps before spectrum forecasting. |
 | `spectrum_initial_window` | `2.0` | Initial spectrum forecast scheduling window. |

@@ -193,18 +193,34 @@
         "default": 0.1
       },
       {
+        "name": "first_block_cache_start_percent",
+        "type": "float",
+        "description": "Denoising progress fraction where first-block caching begins; must be below end_percent. Used to derive the sigma window when explicit sigma endpoints are omitted.",
+        "required": false,
+        "min": 0,
+        "max": 1,
+        "default": 0.1
+      },
+      {
+        "name": "first_block_cache_end_percent",
+        "type": "float",
+        "description": "Denoising progress fraction where first-block caching ends; must exceed start_percent. Used to derive the sigma window when explicit sigma endpoints are omitted.",
+        "required": false,
+        "min": 0,
+        "max": 1,
+        "default": 0.95
+      },
+      {
         "name": "first_block_cache_start_sigma",
         "type": "float",
-        "description": "Largest video sigma where first-block cache may be used.",
-        "required": false,
-        "default": 0.95
+        "description": "Largest video sigma where first-block cache may be used. Supply together with first_block_cache_end_sigma; otherwise both endpoints are derived from the denoising progress fractions and schedule.",
+        "required": false
       },
       {
         "name": "first_block_cache_end_sigma",
         "type": "float",
-        "description": "Smallest video sigma where first-block cache may be used.",
-        "required": false,
-        "default": 0.1
+        "description": "Smallest video sigma where first-block cache may be used. Supply together with first_block_cache_start_sigma; otherwise both endpoints are derived from the denoising progress fractions and schedule.",
+        "required": false
       },
       {
         "name": "first_block_cache_max_consecutive",

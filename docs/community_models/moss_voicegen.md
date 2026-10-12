@@ -33,6 +33,11 @@ remains accepted. `text_temperature` controls text-stream sampling (default 1.5)
 with `moss_voicegen.text_temperature` retained as an alias. `--language` takes the full
 language name the model was trained on — "English", not "en".
 
+Use `--request-option min_frames=<int>` and `--request-option max_frames=<int>`
+to override generated audio-frame bounds per text chunk. Both default to 0;
+nonpositive values derive bounds from text length. The runtime raises the
+ceiling to at least the effective minimum plus the number of codebooks.
+
 For safetensors, the upstream voice generator and audio tokenizer are separate Hugging Face
 repositories. Place the tokenizer snapshot under `audio_tokenizer/` inside the voice
 generator root:

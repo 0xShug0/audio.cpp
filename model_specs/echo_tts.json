@@ -27,6 +27,14 @@
   "options": {
     "request": [
       {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per text chunk; must be positive, default 300.",
+        "required": false,
+        "min": 1,
+        "default": 300
+      },
+      {
         "name": "text_guidance_scale",
         "type": "float",
         "description": "Classifier-free guidance scale on the text condition.",

@@ -15,6 +15,13 @@ autoencoder: [jordand/fish-s1-dac-min](https://huggingface.co/jordand/fish-s1-da
 | Sample rate | 44 100 Hz |
 | Model directory | `models/echo-tts` |
 
+## Text Chunk Size
+
+Use `--text-chunk-size 300` or `--request-option text_chunk_size=300` to set the
+maximum Unicode codepoints per text chunk. The default is 300; explicit values
+must be positive. Each chunk is generated separately within the model's fixed
+audio window.
+
 ## Status
 
 **Work in progress.** Every stage is *implemented*; the open question is how much of it is

@@ -138,7 +138,7 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"seed", "int", "Generation seed.", false, "0", "0"},
         {"flow_uncond_interval", "int", "Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between (measured flow -25..-40% at mel-L1 ~0.3 dB for 2-3). Default 1 keeps the exact reference trajectory.", false, "1", "1"},
         {"flow_uncond_warmup", "int", "Number of initial flow steps that always evaluate both CFG branches when delta reuse is enabled.", false, "2", "0"},
-        {"ensemble_takes", "int", "Decode N independent takes of the same prompt in one batched AR pass (seeds seed..seed+N-1); flow and vocoder run per take. Outputs are returned as named audio (take_01..take_NN) for --out-dir.", false, "1", "1"},
+        {"ensemble_takes", "int", "Decode 1-16 independent takes of the same prompt in one batched AR pass (seeds seed..seed+N-1); flow and vocoder run per take. Outputs are returned as named audio (take_01..take_NN) for --out-dir.", false, "1", "1", "16"},
         {"ensemble_prefix_frames", "int", "Intro-lock for ensembles: decode the first N frames once as a shared master trajectory (~25 frames per second), then fork the takes (take_01 continues the master exactly). 0 disables.", false, "0", "0"},
         {"flow_chunk_hop_frames", "int", "Flow chunk hop in AR frames (~25/sec). Default 0 keeps the model config (100, 50% chunk overlap). 150 measures flow ~-35% with consistently rederived crops/carry.", false, "0", "0"},
     };

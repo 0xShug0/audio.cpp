@@ -72,9 +72,8 @@
       {
         "name": "retry_badcase",
         "type": "bool",
-        "description": "Retry the request when generation is detected as a bad case.",
-        "required": false,
-        "default": true
+        "description": "Retry when generation is detected as a bad case; defaults to true offline and false in streaming. Streaming ignores an explicit true value with a warning.",
+        "required": false
       },
       {
         "name": "retry_badcase_max_times",

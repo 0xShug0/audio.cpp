@@ -100,13 +100,13 @@ Measured on Ubuntu 24.04 with OpenMP optimization (CPU backend):
 |---|---|---:|---|
 | `--voice-ref` | WAV path | not set | Reference speaker audio for voice cloning. |
 | `--reference-text` | text | empty | Transcript of the reference audio (for clone prompting). |
-| `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode; streaming requires `retry_badcase=false`. |
+| `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode; streaming does not retry bad cases. |
 | `--session-option voxcpm1.mem_saver` | `true`, `false` | `false` | Use tighter graph workspaces and release request runtime graphs to reduce resident VRAM. |
 | `--session-option voxcpm1.prompt_cache_slots` | integer | `1` | Prompt and prompt-audio embedding cache slots. Set `0` to disable prompt caching. |
 | `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
 | `--num-inference-steps` | integer | `10` | CFM flow-matching diffusion steps. |
 | `--guidance-scale` | float | `2.0` | CFG strength. |
-| `--request-option retry_badcase` | `true`, `false` | `true` | Auto-retry when generation is detected as a bad case. |
+| `--request-option retry_badcase` | `true`, `false` | offline: `true`; streaming: `false` | Auto-retry when generation is detected as a bad case. Streaming ignores explicit true with a warning. |
 | `--request-option retry_badcase_max_times` | integer | `2` | Maximum retry count. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Long-form text chunking strategy. |
 
@@ -153,7 +153,7 @@ The converter stages the OpenBMB PyTorch checkpoint as audio.cpp tensor names, f
 |---|---|---|
 | **Offline TTS** | ✅ Works | "This is a test run for the fix" → transcribes as **"This is a test."** (SenseVoice) |
 | **Voice Clone** | ✅ Works | 6/6 target sentences transcribe exactly via SenseVoice; continuation-mode with reference audio + transcript |
-| **Streaming** | ✅ Works | SSE PCM chunks at native 16 kHz; requires `retry_badcase=false`. On CPU, CUDA, HIP and Vulkan each patch is decoded with the AudioVAE's causal-convolution state carried over from the previous patch, so patch boundaries closely match the offline decode. Metal remains on the per-patch fallback and is expected to show the same boundary artifacts; it was not tested. |
+| **Streaming** | ✅ Works | SSE PCM chunks at native 16 kHz; retries default to false, and an explicit true is ignored with a warning. On CPU, CUDA, HIP and Vulkan each patch is decoded with the AudioVAE's causal-convolution state carried over from the previous patch, so patch boundaries closely match the offline decode. Metal remains on the per-patch fallback and is expected to show the same boundary artifacts; it was not tested. |
 | **Reference-only clone** | ⚠️ Limited | `ref_start`/`ref_end` fails identically in the golden `VoxCPM.cpp` — model-level limitation |
 
 **Regression guard**: VoxCPM2 path is untouched (`config.v1` default `false`); still generates 48 kHz speech with byte-identical output.

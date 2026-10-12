@@ -866,7 +866,7 @@ runtime::ModelCliInterface cli_v1(const VoxCPM1Assets &) {
       {"min_tokens", "int", "Minimum MiniCPM output tokens before an EOS stop is honored.", false, "0"},
       {"num_inference_steps", "int", "CFM diffusion sampling steps.", false, "50"},
       {"guidance_scale", "float", "CFM classifier-free guidance rate.", false, "2"},
-      {"retry_badcase", "bool", "Retry the request when generation is detected as a bad case.", false, "true"},
+      {"retry_badcase", "bool", "Retry when generation is detected as a bad case; defaults to true offline and false in streaming. Streaming ignores an explicit true value with a warning.", false},
       {"retry_badcase_max_times", "int", "Maximum bad-case retry count.", false, "2"},
       {"retry_badcase_ratio_threshold", "float", "Bad-case ratio threshold for retry decisions.", false},
       {"prompt_text", "string", "Text prompt for prompt-continuation voice cloning.", false},
