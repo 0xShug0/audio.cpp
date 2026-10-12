@@ -150,7 +150,7 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"minimax_music3.graph_arena_mb", "int", "Host graph-metadata arena size in MiB, not device workspace.", false, "32", "1"},
         {"minimax_music3.weight_context_mb", "int", "Weight context size in MiB.", false, "32", "1"},
         {"minimax_music3.mem_saver", "bool", "Load large generation stages only while they are needed to reduce peak VRAM.", false, "true"},
-        {"minimax_music3.pipeline_overlap", "bool", "Overlap AR decoding with per-chunk condition/flow/vocoder work on a second backend stream. Requires mem_saver=false; output is validated to stay identical to the sequential pipeline (automatic sequential fallback otherwise).", false, "false"},
+        {"minimax_music3.pipeline_overlap", "bool", "Overlap AR decoding with per-chunk condition/flow/vocoder work on a second backend stream. Requires mem_saver=false; combining with mem_saver=true is an error. Long requests and nondefault chunk hops use the sequential pipeline.", false, "false"},
     };
     return out;
 }

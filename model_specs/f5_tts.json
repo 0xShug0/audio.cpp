@@ -53,7 +53,7 @@
       {
         "name": "speed",
         "type": "float",
-        "description": "Speech speed multiplier applied via the F5 fix_duration parameter; default 1.0.",
+        "description": "Speech speed multiplier for duration estimation; default 1.0. Generated text chunks shorter than 10 characters use 0.3 instead.",
         "required": false,
         "min": 0.5,
         "max": 2.0,
@@ -62,10 +62,9 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Non-negative noise seed; default 0.",
+        "description": "Non-negative noise seed; omitted selects a random seed. Explicit zero is deterministic.",
         "required": false,
-        "min": 0,
-        "default": 0
+        "min": 0
       },
       {
         "name": "num_inference_steps",

@@ -100,10 +100,14 @@ default): `tokenizer` is no longer a session option. Session options: `zipvoice.
 `zipvoice.espeak_data_path`, `zipvoice.num_inference_steps`, `zipvoice.guidance_scale`,
 `zipvoice.shift` (legacy `zipvoice.t_shift` remains accepted). Requests accept `reference_text` (required), `guidance_scale`,
 `num_inference_steps`, `shift` (legacy `t_shift`), `speed`, `feat_scale`, `target_rms`, `seed`, `language` (legacy `lang`; espeak
-voice for English segments), `text_chunk_size`, `text_chunk_mode`, and
-`token_ids`/`prompt_token_ids` to bypass the frontend entirely
-(direct API callers can also still select the espeak/simple frontends through
-`ZipVoiceSynthesisRequest::tokenizer`).
+voice for English segments), `text_chunk_size`, and `text_chunk_mode`.
+Only the direct synthesis API accepts `token_ids`/`prompt_token_ids` to bypass
+the frontend; these are not CLI/server request options. Direct API callers can
+also select the espeak/simple frontends through
+`ZipVoiceSynthesisRequest::tokenizer`.
+
+The audio.cpp session defaults are `guidance_scale=3` and `num_inference_steps=8`
+for both ZipVoice and ZipVoice-Distill. Request values override the session defaults.
 
 ## Frontend details (emilia mode)
 

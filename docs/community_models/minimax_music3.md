@@ -134,7 +134,7 @@ Session options:
 
 | Option | Default | Notes |
 |---|---:|---|
-| `minimax_music3.pipeline_overlap` | `false` | Overlap AR decoding with per-chunk denoise/vocode on a second, lower-priority CUDA stream. Requires `mem_saver=false` (all stages stay resident). |
+| `minimax_music3.pipeline_overlap` | `false` | Overlap AR decoding with per-chunk denoise/vocode on a second, lower-priority CUDA stream. Combining with `mem_saver=true` is an error. Long requests and nondefault chunk hops use sequential execution. |
 
 Optional component GGUFs: `rvq_depth_decoder_q4_k.gguf` (the depth stage is
 weight-bandwidth-bound; measures depth about -24% against `q8_0` with no

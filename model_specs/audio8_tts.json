@@ -56,9 +56,9 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum semantic tokens to generate; default 1024.",
+        "description": "Maximum semantic tokens to generate; default 1024. Zero selects the default.",
         "required": false,
-        "min": 1,
+        "min": 0,
         "default": 1024
       },
       {
@@ -80,28 +80,28 @@
       {
         "name": "top_p",
         "type": "float",
-        "description": "Top-p sampling value in (0, 1]; default 0.9.",
+        "description": "Top-p sampling value in (0, 1]; default 0.8.",
         "required": false,
         "min": 0.0,
         "max": 1.0,
-        "default": 0.9
+        "default": 0.8
       },
       {
         "name": "top_k",
         "type": "int",
-        "description": "Top-k sampling value; default 50.",
+        "description": "Top-k sampling value; default 30.",
         "required": false,
         "min": 1,
-        "default": 50
+        "default": 30
       },
       {
         "name": "temperature",
         "type": "float",
-        "description": "Semantic-token sampling temperature in (0, 2); default 0.7.",
+        "description": "Semantic-token sampling temperature in (0, 2); default 0.8.",
         "required": false,
         "min": 0.0,
         "max": 2.0,
-        "default": 0.7
+        "default": 0.8
       },
       {
         "name": "seed",

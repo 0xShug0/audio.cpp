@@ -34,9 +34,9 @@
       {
         "name": "language",
         "type": "string",
-        "description": "ASR language label.",
+        "description": "ASR language label; empty unless provided in the request.",
         "required": false,
-        "default": "auto"
+        "default": ""
       },
       {
         "name": "context",
@@ -73,10 +73,10 @@
       {
         "name": "top_k",
         "type": "int",
-        "description": "Top-k sampling limit; 0 disables top-k filtering.",
+        "description": "Top-k sampling limit; default 50. Zero disables top-k filtering.",
         "required": false,
         "min": 0,
-        "default": 0
+        "default": 50
       },
       {
         "name": "num_beams",
@@ -97,9 +97,9 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Acoustic latent sampling seed.",
+        "description": "Acoustic latent sampling seed; default 1234.",
         "required": false,
-        "default": 42
+        "default": 1234
       },
       {
         "name": "audio_chunk_mode",

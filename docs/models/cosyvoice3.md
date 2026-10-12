@@ -77,8 +77,8 @@ audiocpp_cli \
 | `instruction` | text | empty | Instruction text for `instruct` mode. |
 | `text_chunk_size` | integer > 0 | `600` | Long-form text chunk size. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
-| `max_tokens` | integer > 0 | `1600` | Maximum generated speech tokens. |
-| `min_tokens` | integer >= 0 | `0` | Minimum generated tokens before stop is accepted. |
+| `max_tokens` | `-1` or integer > 0 | `-1` | Automatic maximum: 20 times the target text token count. |
+| `min_tokens` | `-1` or integer >= 0 | `-1` | Automatic minimum: twice the target text token count; must not exceed the resolved maximum. |
 | `top_k` | integer > 0 | `25` | AR speech-token top-k sampling limit. |
 | `num_inference_steps` | integer > 0 | `10` | Flow decoder Euler steps. |
 | `seed` | integer >= 0 | `1986` | Generation seed. |

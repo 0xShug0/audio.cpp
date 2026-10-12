@@ -52,7 +52,7 @@
         "description": "Generated frame height; must be a positive multiple of 16.",
         "required": false,
         "min": 16,
-        "default": 704
+        "default": 480
       },
       {
         "name": "width",
@@ -60,7 +60,7 @@
         "description": "Generated frame width; must be a positive multiple of 16.",
         "required": false,
         "min": 16,
-        "default": 1024
+        "default": 832
       },
       {
         "name": "num_frames",
@@ -81,7 +81,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Euler denoising steps; the LiveAvatar DMD adapter is designed for 4 steps.",
+        "description": "Denoising steps; offline generation uses UniPC, blockwise generation uses Euler. The LiveAvatar DMD adapter is designed for 4 steps.",
         "required": false,
         "min": 1,
         "default": 4
@@ -118,7 +118,7 @@
       {
         "name": "denoiser_layerwise",
         "type": "bool",
-        "description": "Run the denoiser in layerwise mode.",
+        "description": "Run the denoiser in layerwise mode. Offline generation requires fused_cfg=true and guidance_scale > 1.",
         "required": false,
         "default": false
       },
@@ -164,7 +164,7 @@
       {
         "name": "shift",
         "type": "float",
-        "description": "Euler flow scheduler shift. Must be > 0.",
+        "description": "Flow scheduler shift; must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 3.0

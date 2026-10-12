@@ -104,9 +104,10 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Decoder sampling seed; random if omitted.",
+        "description": "Decoder sampling seed; default 0.",
         "required": false,
-        "min": 0
+        "min": 0,
+        "default": 0
       },
       {
         "name": "audio_chunk_mode",

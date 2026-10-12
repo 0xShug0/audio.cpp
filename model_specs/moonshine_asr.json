@@ -56,10 +56,13 @@
       {
         "name": "weight_type",
         "type": "enum",
-        "description": "Shared matmul weight storage type.",
-        "preset": "weight_type_full",
-        "required": false,
-        "default": "native"
+        "description": "Shared matmul weight storage type. Omitted uses native, except the CPU encoder with hidden size 620, 10 layers and decoder hidden size 512 uses f16. The decoder defaults to native unless explicitly overridden.",
+        "values": [
+          "native",
+          "f32",
+          "f16"
+        ],
+        "required": false
       },
       {
         "name": "conv_weight_type",
@@ -71,8 +74,12 @@
       {
         "name": "decoder_weight_type",
         "type": "enum",
-        "description": "Decoder matmul weight storage type.",
-        "preset": "weight_type_full",
+        "description": "Decoder matmul weight storage type; inherits an explicit weight_type setting, otherwise native.",
+        "values": [
+          "native",
+          "f32",
+          "f16"
+        ],
         "required": false
       },
       {

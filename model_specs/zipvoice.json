@@ -55,7 +55,7 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Classifier-free guidance scale; default 3.0 for ZipVoice-Distill (guidance-scale embedding), 1.0 for ZipVoice (batched CFG). 0 disables guidance.",
+        "description": "Guidance scale; inherits the session default (3.0 for both variants). ZipVoice-Distill uses a guidance-scale embedding; ZipVoice uses batched CFG. Zero disables guidance.",
         "required": false,
         "min": 0.0,
         "max": 10.0,
@@ -64,7 +64,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Euler ODE steps; default 8 for ZipVoice-Distill, 16 for ZipVoice.",
+        "description": "Euler ODE steps; inherits the session default (8 for both variants).",
         "required": false,
         "min": 1,
         "max": 64,

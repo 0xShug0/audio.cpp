@@ -107,7 +107,7 @@ Measured on Ubuntu 24.04 with OpenMP optimization (CPU backend):
 | `--num-inference-steps` | integer | `10` | CFM flow-matching diffusion steps. |
 | `--guidance-scale` | float | `2.0` | CFG strength. |
 | `--request-option retry_badcase` | `true`, `false` | offline: `true`; streaming: `false` | Auto-retry when generation is detected as a bad case. Streaming ignores explicit true with a warning. |
-| `--request-option retry_badcase_max_times` | integer | `2` | Maximum retry count. |
+| `--request-option retry_badcase_max_times` | integer | `3` | Maximum total generation attempts, including the initial attempt. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Long-form text chunking strategy. |
 
 ---
