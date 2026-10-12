@@ -860,14 +860,38 @@ runtime::CapabilitySet capabilities_v1(const VoxCPM1Assets &) {
 runtime::ModelCliInterface cli_v1(const VoxCPM1Assets &) {
   runtime::ModelCliInterface out;
   out.request_options = {
-      {"text_chunk_mode", "default|tag_aware|japanese|endline",
-       "Text chunking mode; default tag_aware."},
+      {"text_chunk_mode", "word_budget|tag_aware|japanese|endline", "Text chunking mode; default tag_aware.", false, "tag_aware"},
+      {"seed", "int", "Random seed for MiniCPM and diffusion sampling.", false},
+      {"max_tokens", "int", "Maximum MiniCPM output tokens.", false, "1024"},
+      {"min_tokens", "int", "Minimum MiniCPM output tokens before an EOS stop is honored.", false, "0"},
+      {"num_inference_steps", "int", "CFM diffusion sampling steps.", false, "50"},
+      {"guidance_scale", "float", "CFM classifier-free guidance rate.", false, "2"},
+      {"retry_badcase", "bool", "Retry the request when generation is detected as a bad case.", false, "true"},
+      {"retry_badcase_max_times", "int", "Maximum bad-case retry count.", false, "2"},
+      {"retry_badcase_ratio_threshold", "float", "Bad-case ratio threshold for retry decisions.", false},
+      {"prompt_text", "string", "Text prompt for prompt-continuation voice cloning.", false},
+      {"reference_text", "string", "Alias for prompt_text; text prompt for prompt-continuation voice cloning.", false},
   };
   out.session_options = {
-      {"voxcpm1.mem_saver", "true|false",
-       "Use tighter graph workspaces and release request runtime graphs; default false."},
-      {"voxcpm1.prompt_cache_slots", "n",
-       "Prompt and prompt-audio embedding cache slots; default 1."},
+      {"voxcpm1.mem_saver", "bool", "Use tighter graph workspaces and release request runtime graphs; default false.", false, "false"},
+      {"voxcpm1.prompt_cache_slots", "int", "Prompt and prompt-audio embedding cache slots; default 1.", false, "1"},
+      {"voxcpm1.weight_type", "native|f32|f16|bf16|q8_0", "Model weight storage type.", false, "native"},
+      {"voxcpm1.audiovae_weight_type", "native|f32|f16|bf16|q8_0", "AudioVAE weight storage type.", false, "native"},
+      {"voxcpm1.weight_context_mb", "int", "Model weight graph context size in MB.", false},
+      {"voxcpm1.text_embedding_graph_arena_mb", "int", "Text embedding host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.lm_step_graph_arena_mb", "int", "LM step host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.projection_graph_arena_mb", "int", "Projection host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.local_encoder_graph_arena_mb", "int", "Local encoder host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.dit_graph_arena_mb", "int", "DiT estimator host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.audiovae_weight_context_mb", "int", "AudioVAE weight graph context size in MB.", false},
+      {"voxcpm1.audiovae_graph_arena_mb", "int", "AudioVAE decoder host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.audiovae_encoder_graph_arena_mb", "int", "AudioVAE encoder host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.audiovae_latent_capacity", "int", "AudioVAE decoder latent frame capacity.", false},
+      {"voxcpm1.audiovae_encoder_sample_capacity", "int", "AudioVAE encoder sample capacity.", false},
+  };
+  out.load_options = {
+      {"voxcpm1.weight_type", "native|f32|f16|bf16|q8_0", "Model weight storage type selected at load time.", false, "native"},
+      {"voxcpm1.audiovae_weight_type", "native|f32|f16|bf16|q8_0", "AudioVAE weight storage type selected at load time.", false, "native"},
   };
   return out;
 }

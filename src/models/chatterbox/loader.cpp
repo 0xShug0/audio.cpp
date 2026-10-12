@@ -32,22 +32,32 @@ runtime::ModelMetadata metadata(const ChatterboxAssets & assets) {
 
 runtime::ModelCliInterface cli(const ChatterboxAssets &) {
     runtime::ModelCliInterface out;
+    out.request_options = {
+        {"exaggeration", "float", "Emotion exaggeration.", false, "0.5"},
+        {"guidance_scale", "float", "T3 classifier-free guidance scale.", false, "0.5"},
+        {"temperature", "float", "T3 sampling temperature.", false, "0.8"},
+        {"repetition_penalty", "float", "T3 repetition penalty.", false, "1.2"},
+        {"min_p", "float", "Minimum sampling probability.", false, "0.05"},
+        {"top_p", "float", "Nucleus sampling probability.", false, "1"},
+        {"flow_guidance_scale", "float", "S3Gen flow guidance scale.", false, "0.7"},
+        {"max_tokens", "int", "Maximum generated speech tokens.", false, "384", "1"},
+        {"do_sample", "bool", "Enable sampling.", false, "true"},
+        {"stop_on_eos", "bool", "Stop token generation on EOS.", false, "true"},
+        {"num_inference_steps", "int", "Voice conversion flow steps; max_steps is also accepted.", false, "10", "1"},
+        {"seed", "int", "Sampling seed; omitted chooses a random seed.", false, std::nullopt, "0", "4294967295"},
+        {"source_audio", "audio_path", "Voice conversion source WAV path; overrides audio_input.", false},
+        {"target_voice", "audio_path", "Voice conversion target WAV path; overrides the speaker reference.", false},
+        {"text_chunk_size", "int", "Framework long-form text chunk size.", false, "128"},
+    };
     out.session_options = {
-        {
-            "chatterbox.conditionals_cache_slots",
-            "n",
-            "Prepared voice-condition cache slots; default 1, set 0 to disable.",
-        },
-        {
-            "chatterbox.mem_saver",
-            "true|false",
-            "Free non-conditional runtime graphs after each request chunk; default false.",
-        },
-        {
-            "chatterbox.multilingual_t3",
-            "v2|v3",
-            "Multilingual T3 checkpoint for non-English TTS; default v2.",
-        },
+        {"chatterbox.weight_type", "native|f32|f16|bf16|q8_0", "Weight storage type; defaults to native.", false},
+        {"chatterbox.t3_weight_type", "native|f32|f16|bf16|q8_0", "T3 weight storage; inherits weight_type.", false},
+        {"chatterbox.multilingual_t3", "v2|v3", "Multilingual T3 checkpoint for non-English TTS; default v2.", false, "v2"},
+        {"chatterbox.conditionals_cache_slots", "int", "Prepared voice-condition cache slots; default 1, set 0 to disable.", false, "1", "0"},
+        {"chatterbox.mem_saver", "bool", "Free non-conditional runtime graphs after each request chunk; default false.", false, "false"},
+        {"chatterbox.encoder_condition_samples", "int", "Speaker/tokenizer reference sample limit at 16 kHz.", false, "96000"},
+        {"chatterbox.decoder_condition_samples", "int", "S3Gen reference sample limit at 24 kHz.", false, "240000"},
+        {"chatterbox.t3_speech_cond_prompt_len", "int", "T3 reference speech prompt token limit.", false, "150"},
     };
     return out;
 }

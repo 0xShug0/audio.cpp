@@ -52,7 +52,7 @@ runtime::ModelCliInterface cli(const AceStepAssets &) {
     out.request_options = {
         {"route", "text2music|complete|lego|extract|cover|cover-nofsq|repaint", "ACE-Step operation; also exposed as --task-route."},
         {"lyrics", "text", "Vocal lyrics."},
-        {"duration_sec", "seconds", "Target duration; also exposed as --duration-seconds."},
+        {"duration_sec", "float", "Target duration in seconds; a non-positive value leaves duration selection to the planner. Also exposed as --duration-seconds; legacy duration_seconds remains accepted.", false, "-1"},
         {"language", "code", "Vocal language for lyrics; also exposed as --language."},
         {"track_name", "text", "Track name used by lego and extract routes; also exposed as --track-name."},
         {"complete_track_classes", "a,b", "Track classes for complete route."},
@@ -71,7 +71,8 @@ runtime::ModelCliInterface cli(const AceStepAssets &) {
         {"audio_cover_strength", "float", "Cover strength for cover/edit-style conditioning."},
         {"cover_noise_strength", "float", "Noise strength for cover conditioning."},
         {"lm_temperature", "float", "Planner sampling temperature."},
-        {"lm_guidance_scale", "float", "Planner CFG scale."},
+        {"lm_guidance_scale", "float", "Planner CFG scale, independent of diffusion guidance. Legacy lm_cfg_scale remains accepted.", false, "2"},
+        {"enable_thinking", "bool", "Enable planner thinking when supported by the checkpoint. Legacy thinking remains accepted.", false, "true"},
         {"lm_top_k", "n", "Planner top-k; 0 disables top-k."},
         {"lm_top_p", "float", "Planner top-p."},
         {"lm_repetition_penalty", "float", "Planner repetition penalty."},

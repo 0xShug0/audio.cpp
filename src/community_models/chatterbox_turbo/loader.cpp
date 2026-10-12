@@ -30,6 +30,14 @@ runtime::ModelMetadata metadata(const ChatterboxTurboAssets & assets) {
     return out;
 }
 
+runtime::ModelCliInterface cli() {
+    runtime::ModelCliInterface out;
+    out.request_options = {
+        {"max_tokens", "int", "Maximum generated tokens; legacy max_new_tokens remains accepted.", false, "1000", "0"},
+    };
+    return out;
+}
+
 class ChatterboxTurboLoader final : public runtime::IVoiceModelLoader {
 public:
     std::string family() const override {
@@ -62,6 +70,7 @@ public:
         inspection.model_root = assets->resources.model_root();
         inspection.metadata = metadata(*assets);
         inspection.capabilities = capabilities(*assets);
+        inspection.cli = cli();
         const auto spec_path = engine::model_spec::default_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
