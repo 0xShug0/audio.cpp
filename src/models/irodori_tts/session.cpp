@@ -7,6 +7,7 @@
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/irodori_tts/codec.h"
+#include "engine/models/irodori_tts/schedule.h"
 #include "engine/models/irodori_tts/condition_encoder.h"
 #include "engine/models/irodori_tts/rf_dit.h"
 
@@ -136,11 +137,24 @@ generation_options_from_request(const runtime::TaskRequest &request) {
   if (const auto value =
           runtime::parse_int_option(request.options, {"num_inference_steps"})) {
     if (*value <= 0) {
-      throw std::runtime_error(
+      throw runtime::InvalidRequestError(
           "Irodori-TTS num_inference_steps must be positive");
     }
     options.num_inference_steps = *value;
   }
+  if (const auto value = runtime::find_option(request.options, {"t_schedule_mode"})) {
+    options.t_schedule_mode = *value;
+  }
+  try {
+    if (const auto value = runtime::parse_float_option(request.options, {"sway_coeff"})) {
+      options.sway_coeff = *value;
+    }
+  } catch (const std::runtime_error &error) {
+    throw runtime::InvalidRequestError(error.what());
+  }
+  // Validate before expensive conditioning/codec work, including older GGUF contracts.
+  make_irodori_rf_schedule(options.num_inference_steps, options.t_schedule_mode,
+                           options.sway_coeff);
   if (const auto value = runtime::parse_float_option(request.options,
                                                      {"text_guidance_scale"})) {
     options.text_guidance_scale = *value;
@@ -622,6 +636,9 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   validation_options.erase("speaker_embedding_path");
   validation_options.erase("reference_duration_sec");
   validation_options.erase("max_ref_sec");
+  // Sampling options are validated by the runtime even for older embedded specs.
+  validation_options.erase("t_schedule_mode");
+  validation_options.erase("sway_coeff");
   runtime::validate_spec_backed_request_options(
       validation_options, *contract_, "Irodori-TTS");
   const auto wall_start = Clock::now();

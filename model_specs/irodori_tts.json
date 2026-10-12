@@ -60,6 +60,20 @@
         "min": 0.0
       },
       {
+        "name": "t_schedule_mode",
+        "type": "string",
+        "description": "RF Euler timestep schedule: linear or sway; default linear.",
+        "required": false,
+        "default": "linear"
+      },
+      {
+        "name": "sway_coeff",
+        "type": "float",
+        "description": "Sway Sampling coefficient; must be finite and produce strictly decreasing timesteps. Default -1.0.",
+        "required": false,
+        "default": -1.0
+      },
+      {
         "name": "num_inference_steps",
         "type": "int",
         "description": "RF diffusion steps; default 40.",

@@ -102,7 +102,9 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | `no_ref` | bool | `true` unless a reference is provided | Use no-reference generation. Set `false` with `--voice-ref` for reference conditioning. |
 | `speaker_embedding_file` | path | unset | Speaker Inversion embedding (`*.speaker.safetensors`) used instead of reference audio. Legacy `speaker_embedding_path` remains accepted. See [Speaker Inversion Embeddings](#speaker-inversion-embeddings). |
 | `reference_duration_sec` | seconds | checkpoint | Trim reference audio to this length before encoding it; `0` keeps the whole reference. Legacy `max_ref_sec` remains accepted. See [Reference Length](#reference-length). |
-| `num_inference_steps` | integer | `40` | RF diffusion steps. |
+| `num_inference_steps` | positive integer | `40` | RF diffusion steps. |
+| `t_schedule_mode` | `linear`, `sway` | `linear` | Euler timestep schedule. |
+| `sway_coeff` | finite float | `-1.0` | Sway coefficient; grid must strictly decrease. |
 | `duration_sec` | seconds | unset | Target duration in seconds; omitted or nonpositive values select predicted duration. |
 | `duration_scale` | float > 0 | `1.0` | Multiplier for predicted duration. |
 | `min_duration_sec` | seconds > 0 | `0.5` | Minimum generated duration; must not exceed `max_duration_sec`. |
@@ -172,3 +174,46 @@ The runtime accepts the old option names below for existing local scripts and ol
 | `max_seconds` | `max_duration_sec` |
 | `mem_saver` | `irodori_tts.mem_saver` |
 | `reference_cache_slots` | `irodori_tts.reference_cache_slots` |
+
+## RF Sampling: Linear and Sway
+
+The Euler solver supports the same timestep schedules as upstream Irodori-TTS:
+`linear` (default) and `sway`. Sway changes the time grid, not the ODE solver.
+`num_inference_steps` defaults to 40; `sway_coeff` defaults to -1.0 and only
+changes the grid when `t_schedule_mode=sway`. Negative coefficients place more
+steps near the initial noise. Zero gives the linear grid. Coefficients must be
+finite and the resulting timesteps must strictly decrease; invalid combinations
+are rejected instead of silently producing an invalid trajectory.
+
+CLI example (the model path must point to your downloaded weights):
+
+```bash
+audiocpp_cli --task tts --family irodori_tts \
+  --model models/Irodori-TTS-v4-Small-GGUF/irodori-tts-v4-small-q8_0.gguf \
+  --text "こんにちは。音声合成のテストです。" \
+  --request-option no_ref=true \
+  --request-option t_schedule_mode=sway \
+  --request-option sway_coeff=-1.0 \
+  --request-option num_inference_steps=24 \
+  --out sway.wav
+```
+
+The model-specific request options are `t_schedule_mode=sway`,
+`sway_coeff=-1.0`, and `num_inference_steps=24`. These also work with existing
+GGUF packages whose embedded option definitions predate Sway support.
+
+For a running `audiocpp_server`, use the registered model id in `/v1/audio/speech`:
+
+```bash
+curl http://localhost:8080/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"irodori","input":"こんにちは。", "options":{"no_ref":true,
+       "t_schedule_mode":"sway","sway_coeff":-1.0,"num_inference_steps":24}}' \
+  --output sway.wav
+```
+
+Place these settings inside `options` in server requests and CLI batch JSON.
+Both single-slot and parallel server runtimes use the existing generic options
+path.
+
+Reference: [upstream RF sampler](https://github.com/Aratako/Irodori-TTS/blob/main/irodori_tts/rf.py).
