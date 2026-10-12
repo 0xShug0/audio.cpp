@@ -298,12 +298,9 @@ void print_model_common_options(const engine::runtime::ModelInspection & inspect
             << "    --batch-audio-dir <dir>\n"
             << "    --text <text>\n"
             << "    --language <code>\n"
-            << "    --text-chunk-size <chars>\n";
-        if (inspection.metadata.family != "mms_forced_aligner") {
-            std::cout
-                << "    --audio-chunk-seconds <float>\n"
-                << "    --audio-chunk-mode auto|fixed|none\n";
-        }
+            << "    --text-chunk-size <chars>\n"
+            << "    --audio-chunk-seconds <float>\n"
+            << "    --audio-chunk-mode auto|fixed|none\n";
     }
 }
 
