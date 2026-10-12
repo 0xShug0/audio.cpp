@@ -231,14 +231,6 @@ void KittenTTSSession::prepare(const runtime::SessionPreparationRequest &request
     validation_options.erase("voice_id");
     runtime::validate_spec_backed_request_options(validation_options, request.option_arrays, *contract_, kModelName);
     const auto voice = voice_with_request_options(request.voice, request.options);
-    if (const auto seed = runtime::parse_u64_option(request.options, {"seed"})) {
-        if (rng_seed_ != *seed) {
-            rng_seed_ = *seed;
-            prepared_decoder_.reset();
-            prepared_decoder_capacity_ = 0;
-            prepared_decoder_context_ = {};
-        }
-    }
     auto adapter = make_graph_capacity_adapter();
     int64_t request_size = 0;
     if (request.text.has_value()) {
@@ -271,6 +263,10 @@ runtime::TaskResult KittenTTSSession::run(const runtime::TaskRequest &request) {
     validation_options.erase("voice_id");
     runtime::validate_spec_backed_request_options(validation_options, request.option_arrays, *contract_, kModelName);
     const auto voice = voice_with_request_options(request.voice, request.options);
+
+    rng_seed_ = runtime::parse_u64_option(request.options, {"seed"}).value_or(runtime::random_u64_seed());
+    if (prepared_decoder_) prepared_decoder_->set_seed(rng_seed_);
+    engine::debug::trace_log_scalar("kitten.generation.seed", rng_seed_);
 
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);

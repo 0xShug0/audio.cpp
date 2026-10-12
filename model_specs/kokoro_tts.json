@@ -32,7 +32,7 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Decoder noise seed; omitted requests choose a random seed. Consumed during preparation, not subsequent run() calls on the prepared session.",
+        "description": "Decoder noise seed for the current request; omitted requests choose a fresh random seed.",
         "required": false,
         "min": 0
       },

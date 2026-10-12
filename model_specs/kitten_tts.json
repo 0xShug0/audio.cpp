@@ -44,7 +44,7 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Decoder noise seed; omitted requests choose a random seed. Seeds retained decoder state during preparation, not subsequent run() calls on that prepared session.",
+        "description": "Decoder noise seed for the current request; omitted requests choose a fresh random seed.",
         "required": false,
         "min": 0
       },

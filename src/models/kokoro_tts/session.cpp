@@ -533,14 +533,6 @@ void append_kokoro_word_timings(
 void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
     validate_request_options(request.options, request.option_arrays, *contract_);
     const auto voice = voice_with_request_options(request.voice, request.options);
-    if (const auto seed = runtime::parse_u64_option(request.options, {"seed"})) {
-        if (rng_seed_ != *seed) {
-            rng_seed_ = *seed;
-            prepared_decoder_.reset();
-            prepared_decoder_capacity_ = 0;
-            prepared_decoder_context_ = {};
-        }
-    }
     auto adapter = make_graph_capacity_adapter();
     int64_t request_size = 0;
     const auto & prepare_phonemes = require_phoneme_chunks(request.option_arrays);
@@ -601,6 +593,10 @@ runtime::TaskResult KokoroTTSSession::synthesize(const runtime::TaskRequest & re
     }
     validate_request_options(request.options, request.option_arrays, *contract_);
     const auto voice = voice_with_request_options(request.voice, request.options);
+
+    rng_seed_ = runtime::parse_u64_option(request.options, {"seed"}).value_or(runtime::random_u64_seed());
+    if (prepared_decoder_) prepared_decoder_->set_seed(rng_seed_);
+    engine::debug::trace_log_scalar("kokoro.generation.seed", rng_seed_);
 
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
