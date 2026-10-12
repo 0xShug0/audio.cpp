@@ -88,6 +88,13 @@ std::unordered_map<std::string, std::string> normalize_request_options(
         contract.request_option_keys.end()) {
         validation_options.erase("audio_chunk_duration_sec");
     }
+    // The CLI injects this for --words-out; Parakeet already produces timestamps.
+    if (const auto value = runtime::find_option(options, {"return_timestamps"})) {
+        (void)runtime::parse_bool_option(*value, "return_timestamps");
+    }
+    if (contract.request_option_keys.find("return_timestamps") == contract.request_option_keys.end()) {
+        validation_options.erase("return_timestamps");
+    }
     runtime::validate_spec_backed_request_options(
         validation_options,
         contract,

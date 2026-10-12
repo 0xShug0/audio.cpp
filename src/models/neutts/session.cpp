@@ -60,6 +60,10 @@ std::string request_text(const runtime::TaskRequest & request) {
 }
 
 std::string request_speaker(const runtime::TaskRequest & request) {
+    if (request.voice.has_value() && request.voice->speaker.has_value() &&
+        request.voice->speaker->cached_voice_id.has_value()) {
+        return *request.voice->speaker->cached_voice_id;
+    }
     return runtime::find_option(request.options, {"voice_id"}).value_or("emily");
 }
 

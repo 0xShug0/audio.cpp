@@ -95,9 +95,6 @@ Session options (use with `--session-option`):
 | Option | Default | Notes |
 |---|---:|---|
 | `liveavatar.denoiser_weight_streaming` | `false` | Stream denoiser block weights and keep the completed condition KV cache in host memory. |
-| `support_gguf` | `Wan2.2-S2V-Support-Q4_K_S-F16.gguf` | Support component containing the text and audio encoders. |
-| `vae_gguf` | `Wan2.2-S2V-VAE-F16.gguf` | Video VAE component. |
-| `denoiser_gguf` | `Wan2.2-S2V-14B-NVFP4-LORA.gguf` | Denoiser component. |
 
 Load options (use with `--load-option`):
 

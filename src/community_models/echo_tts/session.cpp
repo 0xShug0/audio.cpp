@@ -251,6 +251,9 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
         sampler.truncation_factor = *truncation;
     }
     if (const auto kv_scale = runtime::parse_float_option(options, {"speaker_kv_scale"})) {
+        if (*kv_scale == 0.0F) {
+            throw std::runtime_error("speaker_kv_scale must be nonzero");
+        }
         // 1.0 is the documented "disabled" value, not a scale to apply.
         if (*kv_scale != 1.0F) {
             sampler.speaker_kv_scale = *kv_scale;

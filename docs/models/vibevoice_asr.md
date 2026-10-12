@@ -246,8 +246,8 @@ ffmpeg -hide_banner -loglevel error -i input.wav -f s16le -ac 1 -ar 16000 - \
 | `--top-k` | integer | `0` | Top-k sampling limit; `0` disables top-k filtering. |
 | `--num-beams` | integer | `1` | Beam count for deterministic beam search. |
 | `--repetition-penalty` | float | `1` | Generation repetition penalty. |
-| `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Offline audio chunking mode. |
-| `--audio-chunk-seconds` | float seconds | `1200` | Offline chunk duration for fixed and VAD chunking. |
+| `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Ignored by this checkpoint in both offline and streaming modes; processor chunk/lookahead settings determine segmentation. |
+| `--audio-chunk-seconds` | float seconds | `1200` | Ignored by this checkpoint in both offline and streaming modes. |
 
 ### Request Options (use with `--request-option`)
 

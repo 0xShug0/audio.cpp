@@ -213,24 +213,7 @@
         "required": false
       }
     ],
-    "load": [
-      {
-        "name": "weight_type",
-        "type": "enum",
-        "description": "Model weight storage type selected at load time.",
-        "preset": "weight_type_full",
-        "required": false,
-        "default": "native"
-      },
-      {
-        "name": "audiovae_weight_type",
-        "type": "enum",
-        "description": "AudioVAE weight storage type selected at load time.",
-        "preset": "weight_type_full",
-        "required": false,
-        "default": "native"
-      }
-    ]
+    "load": []
   },
   "runtime": {
     "tags": [

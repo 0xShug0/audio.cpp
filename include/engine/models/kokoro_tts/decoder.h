@@ -29,6 +29,7 @@ public:
     KokoroIstftNetDecoderRuntime & operator=(const KokoroIstftNetDecoderRuntime &) = delete;
 
     void prepare(KokoroIstftNetDecoderCapacityContract contract);
+    void set_seed(uint64_t seed);
 
     std::vector<float> decode(
         const PredictorOutputs & predictor,

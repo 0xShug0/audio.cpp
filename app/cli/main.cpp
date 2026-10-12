@@ -209,7 +209,7 @@ bool model_supports_task(const engine::runtime::ModelInspection & inspection, en
 }
 
 void print_model_common_options(const engine::runtime::ModelInspection & inspection) {
-    std::cout << "  Available input options:\n";
+    std::cout << "  Common input options (not all options apply to every model; see the model-specific documentation):\n";
     if (model_supports_task(inspection, engine::runtime::VoiceTaskKind::AudioGeneration)) {
         std::cout
             << "    --text <text>\n"

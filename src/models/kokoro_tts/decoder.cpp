@@ -1308,6 +1308,10 @@ KokoroIstftNetDecoderRuntime::KokoroIstftNetDecoderRuntime(
 
 KokoroIstftNetDecoderRuntime::~KokoroIstftNetDecoderRuntime() = default;
 
+void KokoroIstftNetDecoderRuntime::set_seed(uint64_t seed) {
+    impl_->rng_seed = seed;
+}
+
 void KokoroIstftNetDecoderRuntime::prepare(KokoroIstftNetDecoderCapacityContract contract) {
     impl_->prepare(contract);
 }

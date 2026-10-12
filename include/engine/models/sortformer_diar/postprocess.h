@@ -5,11 +5,14 @@
 #include "engine/models/sortformer_diar/types.h"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::models::sortformer_diar {
 
-SortformerPostprocessConfig parse_sortformer_postprocess_config(const runtime::SessionOptions & options);
+SortformerPostprocessConfig parse_sortformer_postprocess_config(
+    const std::unordered_map<std::string, std::string> & options,
+    SortformerPostprocessConfig config = {});
 
 SortformerFixedContextContract parse_sortformer_fixed_context_contract(
     const runtime::SessionOptions & options,

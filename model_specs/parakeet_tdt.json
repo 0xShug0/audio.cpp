@@ -55,6 +55,12 @@
   "options": {
     "request": [
       {
+        "name": "return_timestamps",
+        "type": "bool",
+        "description": "Accepted for CLI --words-out compatibility. Word timestamps are always returned, including when false or omitted.",
+        "required": false
+      },
+      {
         "name": "max_tokens",
         "type": "int",
         "description": "Maximum TDT generated tokens; 0 or omitted uses the model-derived limit.",

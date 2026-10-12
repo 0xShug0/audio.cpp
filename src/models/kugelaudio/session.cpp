@@ -26,7 +26,7 @@ public:
             throw std::runtime_error("KugelAudio supports TTS with preset voices, not voice cloning");
         }
         const auto storage = assets::parse_tensor_storage_type(
-            runtime::find_option(options.options, {"weight_type"}).value_or("native"));
+            runtime::find_option(options.options, {"kugelaudio.weight_type", "weight_type"}).value_or("native"));
         generator_ = std::make_unique<Generator>(*assets_->weights,
             assets_->resources.require_file("tokenizer_json").parent_path(), execution_context(), storage,
             assets_->config.ar, assets_->config.diffusion, assets_->config.codec);

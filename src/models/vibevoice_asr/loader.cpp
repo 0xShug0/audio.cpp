@@ -33,7 +33,7 @@ runtime::ModelMetadata metadata(const VibeVoiceASRAssets & assets) {
     return out;
 }
 
-runtime::ModelCliInterface cli(const VibeVoiceASRAssets &) {
+runtime::ModelCliInterface cli(const VibeVoiceASRAssets & assets) {
     runtime::ModelCliInterface out;
     out.request_options = {
         {"language", "code", "ASR language label."},
@@ -56,7 +56,6 @@ runtime::ModelCliInterface cli(const VibeVoiceASRAssets &) {
         {"vibevoice_asr.tokenizer_weight_context_mb", "mb", "Speech tokenizer weight context arena size."},
         {"vibevoice_asr.connector_weight_context_mb", "mb", "Acoustic and semantic connector weight context arena size."},
         {"vibevoice_asr.decoder_weight_context_mb", "mb", "Text decoder weight context arena size."},
-        {"vibevoice_asr.vad_model_path", "path", "Silero VAD model path used by audio_chunk_mode=vad."},
         {"vibevoice_asr_streaming.weight_type", "native|f32|f16|bf16|q8_0", "Tokenizer, connector, and decoder weight storage type."},
         {"vibevoice_asr_streaming.tokenizer_weight_type", "native|f32|f16|bf16|q8_0", "Speech tokenizer weight storage type."},
         {"vibevoice_asr_streaming.connector_weight_type", "native|f32|f16|bf16|q8_0", "Acoustic and semantic connector weight storage type."},
@@ -67,6 +66,10 @@ runtime::ModelCliInterface cli(const VibeVoiceASRAssets &) {
         {"vibevoice_asr_streaming.max_history_steps", "int", "Retained decoder history; 0 uses checkpoint position capacity and positive values cannot exceed it.", false, "0", "0"},
         {"vibevoice_asr.max_history_steps", "int", "Maximum retained decoder history; zero uses the model limit. Cannot exceed checkpoint position capacity; zero uses that capacity. Default: 0.", false, "0", "0"},
     };
+    if (assets.family != "vibevoice_asr_streaming") {
+        out.session_options.push_back(
+            {"vibevoice_asr.vad_model_path", "path", "Silero VAD model path used by audio_chunk_mode=vad."});
+    }
     return out;
 }
 

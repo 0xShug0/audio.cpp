@@ -24,7 +24,7 @@ audiocpp_cli --task tts --family magpie_tts \
   --backend cuda \
   --language en \
   --text "The production coordinator reviewed the overnight audio report and sent one clear update." \
-  --request-option voice_id=Sofia \
+  --voice-id Sofia \
   --out out.wav
 ```
 
@@ -61,7 +61,8 @@ That tokenizer path has not been ported to the native C++ frontend yet, so
 `ja` is intentionally not listed as supported here.
 
 `voice_id` accepts either a baked speaker name from the package speaker map or a
-numeric speaker index.
+numeric speaker index. `--voice-id` takes precedence over
+`--request-option voice_id=...`; both forms select the same baked voices.
 
 ## Common Options (use directly)
 

@@ -890,10 +890,6 @@ runtime::ModelCliInterface cli_v1(const VoxCPM1Assets &) {
       {"voxcpm1.audiovae_latent_capacity", "int", "AudioVAE decoder latent frame capacity.", false},
       {"voxcpm1.audiovae_encoder_sample_capacity", "int", "AudioVAE encoder sample capacity.", false},
   };
-  out.load_options = {
-      {"voxcpm1.weight_type", "native|f32|f16|bf16|q8_0", "Model weight storage type selected at load time.", false, "native"},
-      {"voxcpm1.audiovae_weight_type", "native|f32|f16|bf16|q8_0", "AudioVAE weight storage type selected at load time.", false, "native"},
-  };
   return out;
 }
 

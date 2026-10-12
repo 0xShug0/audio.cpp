@@ -28,7 +28,7 @@ public:
             throw std::runtime_error("GigaAM requires an offline ASR session");
         }
         const auto type = assets::parse_tensor_storage_type(
-            runtime::find_option(options.options, {"weight_type"}).value_or("native"));
+            runtime::find_option(options.options, {"gigaam_asr.weight_type", "weight_type"}).value_or("native"));
         weights_ = load_gigaam_weights(*assets_, execution_context(), type);
         runtime_ = std::make_unique<GigaAMRuntime>(*assets_, *weights_, execution_context());
     }

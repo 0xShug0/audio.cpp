@@ -155,23 +155,10 @@
       {
         "name": "codec_weight_type",
         "type": "enum",
-        "description": "SNAC decoder weight storage type; defaults to weight_type.",
+        "description": "SNAC decoder weight storage type; only native or f32 is supported. Inherits weight_type when omitted; set codec_weight_type=f32 explicitly when using another shared weight_type.",
         "values": [
           "native",
-          "f32",
-          "f16",
-          "bf16",
-          "q4_0",
-          "q4_1",
-          "q5_0",
-          "q5_1",
-          "q2_k",
-          "q3_k",
-          "q4_k",
-          "q5_k",
-          "q6_k",
-          "q8_0",
-          "nvfp4"
+          "f32"
         ],
         "required": false
       }

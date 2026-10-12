@@ -191,27 +191,6 @@
         "description": "Keep denoiser transformer blocks in host memory and stage layer groups on the accelerator.",
         "required": false,
         "default": false
-      },
-      {
-        "name": "support_gguf",
-        "type": "string",
-        "description": "Support GGUF containing text_encoder/audio_encoder tensors and the embedded tokenizer sidecar.",
-        "required": false,
-        "default": "Wan2.2-S2V-Support-Q4_K_S-F16.gguf"
-      },
-      {
-        "name": "vae_gguf",
-        "type": "string",
-        "description": "Wan video VAE component GGUF file relative to the model root.",
-        "required": false,
-        "default": "Wan2.2-S2V-VAE-F16.gguf"
-      },
-      {
-        "name": "denoiser_gguf",
-        "type": "string",
-        "description": "Denoiser DiT GGUF file relative to the model root.",
-        "required": false,
-        "default": "Wan2.2-S2V-14B-NVFP4-LORA.gguf"
       }
     ],
     "load": [

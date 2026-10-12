@@ -192,6 +192,7 @@ Request options are bare names. Session options use the
 |---|---|---|---|
 | `max_tokens` | request | integer >= 0; `0` | TDT token limit; `0` uses the model-derived limit |
 | `keep_language_tags` | request | boolean; `false` | Preserve language-tag tokens in decoded text |
+| `return_timestamps` | request | boolean; optional | Accepted for CLI `--words-out` compatibility. Word timestamps remain present when false or omitted. |
 | `audio_chunk_mode` | request | `auto`, `fixed`, `vad`, `none`; `auto` | Offline chunking mode; `vad` skips silent spans with Silero VAD |
 | `audio_chunk_duration_sec` | request | see description | VAD maximum chunk duration; omitted inherits the session duration. Fixed/long_form windows use the session setting, not this request override. |
 | `weight_type` | session | `native`, `f32`, `f16`, `bf16`, `q8_0`; `native` | Fallback storage type for matmul weights |
