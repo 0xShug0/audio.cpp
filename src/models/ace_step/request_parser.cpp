@@ -122,6 +122,9 @@ AceStepRequest ace_step_parse_request(const runtime::TaskRequest &request) {
     AceStepRequest out;
     out.prompt = request.text_input->text;
     out.vocal_language = request.text_input->language.empty() ? "en" : request.text_input->language;
+    if (const auto language = runtime::find_option(request.options, {"language"}); language.has_value()) {
+        out.vocal_language = *language;
+    }
     out.source_audio = request.audio_input;
     if (const auto lyrics = runtime::find_option(request.options, {"lyrics"}); lyrics.has_value()) {
         out.lyrics = *lyrics;

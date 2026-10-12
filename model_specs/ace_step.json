@@ -29,30 +29,48 @@
   },
   "options": {
     "request": [
-      {
-        "name": "duration_sec",
-        "type": "float",
-        "description": "Target duration in seconds; a non-positive value leaves duration selection to the planner. Legacy duration_seconds remains accepted.",
-        "required": false,
-        "default": -1.0
-      },
-      {
-        "name": "lm_guidance_scale",
-        "type": "float",
-        "description": "Planner CFG scale, independent of diffusion guidance. Legacy lm_cfg_scale remains accepted.",
-        "required": false,
-        "default": 2.0
-      },
-      {
-        "name": "enable_thinking",
-        "type": "bool",
-        "description": "Enable planner thinking when supported by the checkpoint. Legacy thinking remains accepted.",
-        "required": false,
-        "default": true
-      }
+      {"name": "route", "type": "enum", "values": ["text2music", "complete", "lego", "extract", "cover", "cover-nofsq", "repaint"], "description": "Generation or editing route.", "required": false, "default": "text2music"},
+      {"name": "lyrics", "type": "string", "description": "Vocal lyrics.", "required": false},
+      {"name": "language", "type": "string", "description": "Vocal language; falls back to text input language, then en.", "required": false},
+      {"name": "duration_sec", "type": "float", "description": "Target seconds; non-positive lets the planner choose. Source-locked routes use source duration.", "required": false, "default": -1.0},
+      {"name": "seed", "type": "int", "description": "Unsigned 32-bit generation seed; random when omitted.", "required": false},
+      {"name": "negative_prompt", "type": "string", "description": "Negative prompt.", "required": false, "default": "NO USER INPUT"},
+      {"name": "bpm", "type": "int", "description": "Override planner BPM metadata.", "required": false},
+      {"name": "keyscale", "type": "string", "description": "Override planner musical key metadata.", "required": false},
+      {"name": "timesignature", "type": "string", "description": "Override planner time signature metadata.", "required": false},
+      {"name": "num_inference_steps", "type": "int", "description": "Denoising steps; turbo checkpoints cap this at 8.", "required": false, "default": 8},
+      {"name": "guidance_scale", "type": "float", "description": "Diffusion CFG; default 1, or 7 for extract. Ignored by turbo checkpoints.", "required": false},
+      {"name": "sampler_mode", "type": "enum", "values": ["euler", "heun"], "description": "Diffusion sampler.", "required": false, "default": "euler"},
+      {"name": "shift", "type": "float", "description": "Diffusion schedule shift; default 1, or 3 for extract.", "required": false},
+      {"name": "enable_thinking", "type": "bool", "description": "Enable planner thinking where the route and checkpoint support it.", "required": false, "default": true},
+      {"name": "lm_temperature", "type": "float", "description": "Planner sampling temperature.", "required": false, "default": 0.85},
+      {"name": "lm_guidance_scale", "type": "float", "description": "Planner CFG, independent of diffusion guidance.", "required": false, "default": 2.0},
+      {"name": "lm_top_k", "type": "int", "description": "Planner top-k; 0 disables it.", "required": false, "default": 0},
+      {"name": "lm_top_p", "type": "float", "description": "Planner nucleus sampling threshold.", "required": false, "default": 0.9},
+      {"name": "lm_repetition_penalty", "type": "float", "description": "Planner repetition penalty.", "required": false, "default": 1.0},
+      {"name": "track_name", "type": "string", "description": "Target track for lego or extract.", "required": false},
+      {"name": "complete_track_classes", "type": "string", "description": "Track class or JSON array of classes for complete.", "required": false},
+      {"name": "repainting_start", "type": "float", "description": "Repaint start in seconds; required by repaint route.", "required": false},
+      {"name": "repainting_end", "type": "float", "description": "Repaint end in seconds; required by repaint route.", "required": false},
+      {"name": "repaint_mode", "type": "enum", "values": ["balanced", "conservative", "aggressive"], "description": "Repaint blend preset; balanced when only strength is supplied.", "required": false},
+      {"name": "repaint_strength", "type": "float", "description": "Balanced repaint strength, clamped to 0..1; default 0.5 when a preset is supplied.", "required": false},
+      {"name": "audio_cover_strength", "type": "float", "description": "Cover conditioning strength.", "required": false, "default": 1.0},
+      {"name": "cover_noise_strength", "type": "float", "description": "Cover conditioning noise strength.", "required": false, "default": 0.0},
+      {"name": "retake_seed", "type": "int", "description": "Optional retake seed; -1 clears it.", "required": false},
+      {"name": "retake_variance", "type": "float", "description": "Retake noise mixing strength.", "required": false, "default": 0.0},
+      {"name": "audio_codes", "type": "string", "description": "ACE semantic code text to bypass planner generation.", "required": false}
     ],
-    "session": [],
-    "load": []
+    "session": [
+      {"name": "weight_type", "type": "enum", "preset": "weight_type_full", "description": "Shared weight storage type.", "required": false, "default": "native"},
+      {"name": "dit_weight_type", "type": "enum", "preset": "weight_type_full", "description": "DiT override of weight_type; f16 is promoted to bf16.", "required": false},
+      {"name": "planner_weight_type", "type": "enum", "preset": "weight_type_full", "description": "Planner override of weight_type.", "required": false},
+      {"name": "text_encoder_weight_type", "type": "enum", "preset": "weight_type_full", "description": "Text encoder override of weight_type.", "required": false},
+      {"name": "vae_weight_type", "type": "enum", "preset": "weight_type_full", "description": "VAE override of weight_type.", "required": false},
+      {"name": "mem_saver", "type": "bool", "description": "Release staged graphs and caches between phases; later requests may rebuild them.", "required": false, "default": false}
+    ],
+    "load": [
+      {"name": "dit_model_path", "type": "enum", "values": ["acestep-v15-turbo", "acestep-v15-base", "acestep-v15-xl-turbo", "acestep-v15-xl-sft"], "description": "DiT variant in the package; must be installed.", "required": false, "default": "acestep-v15-turbo"}
+    ]
   },
   "ui": {
     "recommended_package": "ace_step_turbo_bf16",

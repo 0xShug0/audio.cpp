@@ -249,7 +249,7 @@ audiocpp_cli --task svc --family vevo2 --model models/Vevo2 --backend cuda --tas
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `duration_sec` | float | unset | Flow-matching target duration hint. Legacy `target_duration_seconds` remains accepted. |
+| `duration_sec` | float | unset | Rescale prosody-code conditioning duration where used by the route; not a general output-length limit. Legacy `target_duration_seconds` remains accepted. |
 | `reference_duration_sec` | float | unset | Trim target voice reference before conditioning. Legacy `reference_duration_seconds` remains accepted. |
 | `fm_noise_file` | path | unset | Optional flow-matching noise tensor for reproducibility. |
 | `audio_chunk_duration_sec` | float | `0` | Opt-in source-audio chunking for `style_preserved_vc` and `style_preserved_svc`. `0` keeps the existing one-shot path. |
@@ -259,15 +259,22 @@ For backend weight-type controls, use `audiocpp_cli --inspect --model models/VeV
 
 ## Session Graph Arenas
 
+The compact spec lists user-facing request controls, shared session storage
+overrides (`vevo2.weight_type`, `vevo2.conv_weight_type`), and the load option
+`vevo2.whisper_model_path`. Per-component storage and arena settings remain
+available through CLI help but are omitted from the spec to limit its size.
+The explicit `fm_noise_file` control is also omitted; `predict_target_prosody`
+is not implemented and is not advertised.
+
 These `--session-option` controls size host graph metadata in MiB, not device
 workspace. Each retains its former `*_graph_context_mb` alias with the same
 `vevo2.` prefix. Weight-context controls are separate and unchanged.
 
 | Option | Default MiB |
 |---|---:|
-| `vevo2.ar_prefill_graph_arena_mb` | `512` |
-| `vevo2.ar_decode_graph_arena_mb` | `512` |
-| `vevo2.tokenizer_graph_arena_mb` | `768` |
-| `vevo2.whisper_graph_arena_mb` | `512` |
-| `vevo2.fm_graph_arena_mb` | `1024` |
-| `vevo2.vocoder_graph_arena_mb` | `768` |
+| `vevo2.ar_prefill_graph_arena_mb` | `4` |
+| `vevo2.ar_decode_graph_arena_mb` | `4` |
+| `vevo2.tokenizer_graph_arena_mb` | `4` |
+| `vevo2.whisper_graph_arena_mb` | `4` |
+| `vevo2.fm_graph_arena_mb` | `32` |
+| `vevo2.vocoder_graph_arena_mb` | `4` |
