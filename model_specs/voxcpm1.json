@@ -212,7 +212,8 @@
         "description": "AudioVAE encoder sample capacity.",
         "required": false
       }
-    ]
+    ],
+    "load": []
   },
   "runtime": {
     "tags": [

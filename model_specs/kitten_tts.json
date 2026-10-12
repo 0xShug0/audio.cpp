@@ -29,7 +29,8 @@
     "request": [
       {
         "name": "voice_id",
-        "type": "string",
+        "type": "enum",
+        "values": ["Bella","Bruno","Hugo","Jasper","Kiki","Leo","Luna","Rosie","expr-voice-2-f","expr-voice-2-m","expr-voice-3-f","expr-voice-3-m","expr-voice-4-f","expr-voice-4-m","expr-voice-5-f","expr-voice-5-m"],
         "description": "Built-in voice ID or package alias; structured voice input (CLI --voice-id) takes precedence.",
         "required": false,
         "default": "expr-voice-5-m"
