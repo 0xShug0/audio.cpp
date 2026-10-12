@@ -13,6 +13,7 @@
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/registry.h"
 
 #include <atomic>
 #include <cstdint>
@@ -90,6 +91,12 @@ private:
         // Release the loaded model and session from memory (frees VRAM on GPU backends).
         // The next request will trigger a reload via ensure_model_loaded_locked().
         void unload();
+    };
+
+    // Controlled runtime tests suppy loaders and barriers without production flags.
+    friend class ServerRuntimeTestAccess;
+    std::function<engine::runtime::ModelRegistry()> registry_factory_ = [] {
+        return engine::runtime::make_default_registry();
     };
 
     // Acquire the model's run guard. `request_timeout_ms` is the caller-supplied

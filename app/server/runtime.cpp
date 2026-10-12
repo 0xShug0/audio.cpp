@@ -1939,7 +1939,7 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
         // That is acceptable: the 503 tells the client to retry later.
     }
     ensure_model_fits_memory(model.config);
-    auto registry = engine::runtime::make_default_registry();
+    auto registry = registry_factory_();
 
     engine::runtime::ModelLoadRequest load_request;
     load_request.model_path = model.config.path;
