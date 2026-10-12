@@ -59,7 +59,7 @@ audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-V
 
 ## Qwen3 TTS CustomVoice
 
-Qwen3 CustomVoice uses speaker ids packaged with the model. The CLI passes the speaker name with `--speaker`; examples use `Vivian` and `Ryan`.
+Qwen3 CustomVoice uses speaker ids packaged with the model. Use `--request-option voice_id=Vivian` to select one; legacy `--speaker Vivian` remains accepted. Examples use `Vivian` and `Ryan`.
 
 | Field | Value |
 |---|---|
@@ -120,10 +120,10 @@ These sampling controls are shared by the Qwen3 TTS Base, VoiceDesign, and Custo
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--do-sample` | `true`, `false` | `true` | Enable sampling. |
-| `--temperature` | float | `0.9` | Main talker temperature. |
+| `--temperature` | float | `0.9` | Main talker temperature; must be > 0 when `--do-sample=true`, ignored when false. |
 | `--top-k` | integer | `50` | Main talker top-k. |
 | `--top-p` | float | `1.0` | Main talker top-p. |
-| `--repetition-penalty` | float | `1.05` | Main talker repetition penalty. |
+| `--repetition-penalty` | float > 0 | `1.05` | Main talker repetition penalty. |
 | `--seed` | integer | random if omitted | Sampling seed. |
 
 ### Request Options (use with `--request-option`)
@@ -131,7 +131,8 @@ These sampling controls are shared by the Qwen3 TTS Base, VoiceDesign, and Custo
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `subtalker_do_sample` | bool | `true` | Enable subtalker sampling for the remaining audio codebooks. |
-| `subtalker_temperature` | float | `0.9` | Subtalker sampling temperature. |
+| `voice_id` | packaged speaker name | unset | CustomVoice preset selection. Legacy `speaker` remains accepted. An explicit request option takes precedence over the structured voice's cached id. |
+| `subtalker_temperature` | float | `0.9` | Must be > 0 when `subtalker_do_sample=true`; ignored when false. |
 | `subtalker_top_k` | integer | `50` | Subtalker top-k. |
 | `subtalker_top_p` | float | `1.0` | Subtalker top-p. |
 | `x_vector_only_mode` | bool | `false` | Base voice cloning using only the reference speaker embedding, without ICL reference codec prompting. |
@@ -173,9 +174,10 @@ Streaming mode accepts live audio chunks and emits buffered transcript deltas.
 Timestamp output remains offline-only because word alignment runs after the full
 transcript is known.
 
-`audio_chunk_mode=auto` is the default. For transcript-only ASR, Qwen3 ASR uses
+Offline `audio_chunk_mode=auto` is the default. For transcript-only ASR, Qwen3 ASR uses
 fixed chunks. When word timestamps are requested, it uses bundled Silero VAD
 internally to choose speech-aware chunks before running ASR and alignment.
+Streaming uses duration-based windows regardless of `audio_chunk_mode`.
 
 | Field | Value |
 |---|---|
@@ -258,7 +260,7 @@ those projects use architecture-specific tensor names and metadata.
 With word timestamps:
 
 ```bash
-audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --language English --text "" --text-out transcript.txt --words-out words.json --session-option qwen3_asr.forced_aligner_path=models/Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf --session-option qwen3_asr.vad_path=assets/framework/models/silero_vad
+audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --language English --text "" --text-out transcript.txt --words-out words.json --session-option qwen3_asr.forced_aligner_path=models/Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf --session-option qwen3_asr.vad_model_path=assets/framework/models/silero_vad
 ```
 
 ### QwenCleo-ASR (Egyptian Arabic)
@@ -299,7 +301,7 @@ audiocpp_gguf --input models/QwenCleo-ASR/model.safetensors --root models/QwenCl
 | `--text` | text | empty string | Context prompt. |
 | `--language` | language code | empty string | Recognition language hint. |
 | `--max-tokens` | integer | `512` | Maximum decode tokens. |
-| `--audio-chunk-seconds` | float seconds | `30`, or `15` with `--words-out` | Target/max chunk length used before ASR inference. |
+| `--audio-chunk-seconds` | seconds | `30` for streaming/transcription; `15` for offline timestamps/VAD | Target/max chunk length; must be > 0 when chunking or streaming. Ignored with `audio_chunk_mode=none` offline. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Let the model choose, force fixed chunks, force internal VAD chunks, or disable model-side chunking. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
 | `--words-out` | JSON path | not set | Word timestamp output. Requires `qwen3_asr.forced_aligner_path`. |
@@ -312,7 +314,7 @@ through request options `language`, `max_tokens`, `audio_chunk_mode`, and
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `return_timestamps` | bool | `false` | Run the configured forced aligner after ASR. CLI `--words-out` enables this automatically; server requests must enable it explicitly or through `default_request_options`. |
+| `return_timestamps` | bool | `false` | Offline only: run the configured forced aligner after ASR. Streaming rejects true, even with an aligner configured. CLI `--words-out` enables this automatically; server requests must enable it explicitly or through `default_request_options`. |
 | `clamp_timestamps_to_audio` | bool | `false` | Opt-in guard for `--words-out`: keep repaired forced-aligner word spans inside each local audio chunk. Default preserves existing timestamp repair behavior. |
 | `preserve_punctuation` | bool | `false` | Preserve ASR punctuation in timestamped, chunked transcript text instead of rebuilding text from aligned words. Legacy `qwen3_asr.preserve_punctuation` remains accepted. |
 
@@ -321,7 +323,7 @@ through request options `language`, `max_tokens`, `audio_chunk_mode`, and
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `qwen3_asr.forced_aligner_path` | model path | not set | Qwen3 Forced Aligner model used to generate word timestamps after ASR. |
-| `qwen3_asr.vad_path` | model directory | `assets/framework/models/silero_vad` | Optional internal VAD model override for timestamp-safe chunking. |
+| `qwen3_asr.vad_model_path` | model directory | `assets/framework/models/silero_vad` | Optional internal VAD model override for timestamp-safe chunking. Legacy `qwen3_asr.vad_path` remains accepted. |
 | `qwen3_asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Text decoder weight storage fallback. |
 | `qwen3_asr.audio_encoder_weight_type` | `native`, `f32`, `f16` | `native` | Audio encoder weight storage. |
 | `qwen3_asr.text_decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit text decoder weight storage override. |
@@ -353,7 +355,7 @@ defaults, including `language`, in `default_request_options`, not `session_optio
   "mode": "offline",
   "session_options": {
     "qwen3_asr.forced_aligner_path": "/path/to/qwen3-forced-aligner-0.6b-q8_0.gguf",
-    "qwen3_asr.vad_path": "/path/to/assets/framework/models/silero_vad"
+    "qwen3_asr.vad_model_path": "/path/to/assets/framework/models/silero_vad"
   },
   "default_request_options": {
     "language": "English",

@@ -100,20 +100,27 @@ public:
     runtime::RunMode run_mode() const override { return task_.mode; }
 
     void prepare(const runtime::SessionPreparationRequest & request) override {
-        runtime::validate_spec_backed_request_options(request.options, *contract_, "Index-Echo");
+        auto validation_options = request.options;
+        validation_options.erase("max_tokens");
+        validation_options.erase("max_text_tokens");
+        (void)runtime::find_option(request.options, {"max_tokens", "max_text_tokens"});
+        runtime::validate_spec_backed_request_options(validation_options, *contract_, "Index-Echo");
         mark_prepared();
     }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
         const auto started = std::chrono::steady_clock::now();
         require_prepared("Index-Echo run");
-        runtime::validate_spec_backed_request_options(request.options, *contract_, "Index-Echo");
+        auto validation_options = request.options;
+        validation_options.erase("max_tokens");
+        validation_options.erase("max_text_tokens");
+        runtime::validate_spec_backed_request_options(validation_options, *contract_, "Index-Echo");
         if (!request.audio_input.has_value()) {
             throw std::runtime_error("Index-Echo-S2TT requires audio input");
         }
         const auto language = runtime::find_option(request.options, {"target_language"}).value_or("en");
         const auto glossary = runtime::find_option(request.options, {"glossary"}).value_or("");
-        const auto max_tokens = runtime::parse_positive_i64_option(request.options, {"max_text_tokens"}, 2000);
+        const auto max_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens", "max_text_tokens"}, 2000);
         const float temperature = runtime::parse_finite_float_option(request.options, {"temperature"}).value_or(0.0F);
         const int64_t seed = runtime::parse_i64_option(request.options, {"seed"}).value_or(0);
         if (temperature < 0.0F || temperature > 2.0F || seed < 0 || seed > INT32_MAX) {

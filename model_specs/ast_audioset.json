@@ -49,9 +49,17 @@
         "name": "weight_type",
         "type": "enum",
         "description": "Weight storage override; native preserves the packaged tensor types.",
-        "preset": "weight_type_full",
         "required": false,
-        "default": "native"
+        "default": "native",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_k"
+        ]
       }
     ],
     "load": []

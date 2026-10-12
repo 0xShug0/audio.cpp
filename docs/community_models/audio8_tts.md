@@ -104,16 +104,20 @@ Multiple ordered references can be conditioned through one request option:
 |---|---:|---|
 | `--voice-ref <wav>` | none | Speaker-reference audio for cloning. |
 | `--reference-text <text>` | none | Exact transcript of the reference audio. |
-| `--request-option temperature=<f>` | `0.7` | Semantic-token sampling temperature. |
-| `--request-option top_p=<f>` | `0.9` | Nucleus threshold. |
-| `--request-option top_k=<n>` | `50` | Top-k limit. |
+| `--request-option temperature=<f>` | `0.8` | Semantic-token sampling temperature in `(0, 2)`; both endpoints excluded. |
+| `--request-option top_p=<f>` | `0.8` | Nucleus threshold in `(0, 1]`; zero excluded, one included. |
+| `--request-option top_k=<n>` | `30` | Top-k limit. |
 | `--request-option seed=<n>` | random | Sampling seed for reproducible output. |
-| `--request-option max_tokens=<n>` | `1024` | Maximum semantic steps per chunk. |
+| `--request-option max_tokens=<n>` | `1024` | Maximum semantic steps per chunk; zero selects the default. |
 | `--request-option text_chunk_size=<n>` | `200` | Word-budget chunk size in characters. |
 | `--session-option audio8_tts.weight_type=<mode>` | `native` | AR matmul weight storage type. |
 | `--session-option audio8_tts.codec_weight_type=<mode>` | `native` | Codec weight storage type. |
 | `--session-option audio8_tts.mem_saver=<bool>` | `false` | Release cached AR graphs after each request. |
 | `--session-option audio8_tts.reference_cache_slots=<n>` | `1` | Prepared reference cache slots. |
+| `--session-option audio8_tts.ar_graph_arena_mb=<n>` | `512` | AR graph arena size; integer MiB >= 1. |
+| `--session-option audio8_tts.ar_weight_context_mb=<n>` | `512` | AR weight context size; integer MiB >= 1. |
+| `--session-option audio8_tts.codec_graph_arena_mb=<n>` | `512` | Codec graph arena size; integer MiB >= 1. |
+| `--session-option audio8_tts.codec_weight_context_mb=<n>` | `512` | Codec weight context size; integer MiB >= 1. |
 
 ## Architecture
 

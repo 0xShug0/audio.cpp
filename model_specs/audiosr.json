@@ -30,7 +30,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "DDIM inference steps.",
+        "description": "DDIM inference steps. The uniform DDIM schedule must produce exactly this many timesteps; not every count is valid (e.g. 51 fails with 1000 diffusion timesteps).",
         "required": false,
         "min": 1,
         "max": 1000,
@@ -39,20 +39,17 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Classifier-free guidance scale.",
+        "description": "Classifier-free guidance scale. Any finite value is accepted.",
         "required": false,
-        "min": 0.0,
-        "max": 20.0,
         "default": 3.5
       },
       {
         "name": "ddim_eta",
         "type": "float",
-        "description": "DDIM eta; 1.0 matches the official AudioSR default.",
+        "description": "DDIM eta; 1.0 matches the official AudioSR default. Must be nonnegative; there is no runtime upper bound.",
         "required": false,
-        "min": 0.0,
-        "max": 10.0,
-        "default": 1.0
+        "min": 0,
+        "default": 1
       },
       {
         "name": "audio_chunk_duration_sec",
@@ -60,24 +57,21 @@
         "description": "Long-audio chunk duration.",
         "required": false,
         "min": 0.001,
-        "max": 600.0,
-        "default": 15.0
+        "default": 15
       },
       {
         "name": "audio_chunk_overlap_sec",
         "type": "float",
-        "description": "Long-audio chunk overlap.",
+        "description": "Long-audio chunk overlap; must be smaller than audio_chunk_duration_sec, including after rounding to samples.",
         "required": false,
-        "min": 0.0,
-        "max": 60.0,
-        "default": 2.0
+        "min": 0,
+        "default": 2
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Generation seed; -1 selects a random seed.",
+        "description": "Generation seed; omitted or negative values use the fixed seed 42, not a random seed. Zero is a fixed seed.",
         "required": false,
-        "min": -1,
         "max": 2147483647,
         "default": 42
       }

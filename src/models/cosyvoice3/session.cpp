@@ -46,7 +46,7 @@ std::string reference_text(const runtime::TaskRequest & request) {
 }
 
 std::string instruction_text(const runtime::TaskRequest & request) {
-    return runtime::find_option(request.options, {"instruction"}).value_or("");
+    return runtime::find_option(request.options, {"instruct", "instruction"}).value_or("");
 }
 
 std::vector<runtime::TaskRequest> split_request(const runtime::TaskRequest & request) {
@@ -84,7 +84,10 @@ CosyVoice3Session::CosyVoice3Session(
       assets_(require_assets(std::move(assets))),
       contract_(require_contract(std::move(contract))),
       tokenizer_(std::make_unique<CosyVoice3TextTokenizer>(assets_)) {
-    runtime::validate_spec_backed_session_options(options, *contract_, kFamily, kModelName);
+    auto validation_options = options;
+    // This previously advertised option never selected convolution storage.
+    validation_options.options.erase("cosyvoice3.conv_weight_type");
+    runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
     if (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("CosyVoice3 supports tts and clone tasks");
     }
@@ -156,13 +159,21 @@ runtime::RunMode CosyVoice3Session::run_mode() const {
 }
 
 void CosyVoice3Session::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
+    auto validation_options = request.options;
+    validation_options.erase("instruct");
+    validation_options.erase("instruction");
+    (void)runtime::find_option(request.options, {"instruct", "instruction"});
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, kModelName);
     mark_prepared();
 }
 
 runtime::TaskResult CosyVoice3Session::run(const runtime::TaskRequest & request) {
     const auto wall_start = std::chrono::steady_clock::now();
-    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
+    auto validation_options = request.options;
+    validation_options.erase("instruct");
+    validation_options.erase("instruction");
+    (void)runtime::find_option(request.options, {"instruct", "instruction"});
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, kModelName);
     require_prepared("CosyVoice3 run");
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("CosyVoice3 requires text input");

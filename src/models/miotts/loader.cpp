@@ -30,9 +30,12 @@ runtime::CapabilitySet capabilities(const MioTTSAssets &) {
 runtime::ModelCliInterface cli(const MioTTSAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"miotts.best_of_n", "n", "Generate n candidates for this request and select by ASR scoring."},
-        {"miotts.best_of_n_enabled", "true|false", "Enable best-of-N candidate selection for this request."},
-        {"miotts.best_of_n_language", "auto|en|ja", "Language used when scoring best-of-N candidates."},
+        {"best_of_n", "n", "Generate n candidates for this request and select by ASR scoring."},
+        {"best_of_n_enabled", "true|false", "Enable best-of-N candidate selection for this request."},
+        {"best_of_n_language", "auto|en|ja", "Language used when scoring best-of-N candidates."},
+        {"presence_penalty", "float", "Generation control; defaults to the checkpoint config.", false, std::nullopt, "0", "1"},
+        {"frequency_penalty", "float", "Generation control; defaults to the checkpoint config.", false, std::nullopt, "0", "1"},
+        {"text_chunk_size", "int", "Framework long-form text chunk size; inherits the session setting.", false, std::nullopt, "1"},
     };
     out.session_options = {
         {"miotts.codec_model_path", "dir", "MioCodec model directory used by MioTTS acoustic decoding."},
@@ -42,6 +45,14 @@ runtime::ModelCliInterface cli(const MioTTSAssets &) {
         {"miotts.best_of_n_language", "auto|en|ja", "Default language used when scoring best-of-N candidates."},
         {"miotts.best_of_n_asr_model_path", "dir", "Qwen3-ASR model directory used by best-of-N scoring."},
         {"miotts.weight_type", "native|f32|f16|bf16|q8_0", "MioTTS language-model matmul weight storage type."},
+        {"miotts.text_chunk_size", "int", "Default framework text chunk size.", false, "180"},
+        {"miotts.prefill_graph_arena_mb", "int", "Context or graph arena size in MiB. Default: 1024.", false, "1024", "1"},
+        {"miotts.decode_graph_arena_mb", "int", "Context or graph arena size in MiB. Default: 1024.", false, "1024", "1"},
+        {"miotts.weight_context_mb", "int", "Context or graph arena size in MiB. Default: 512.", false, "512", "1"},
+        {"miotts.codec_weight_context_mb", "int", "Context or graph arena size in MiB. Default: 256.", false, "256", "1"},
+        {"miotts.codec_constant_context_mb", "int", "Context or graph arena size in MiB. Default: 256.", false, "256", "1"},
+        {"miotts.global_graph_arena_mb", "int", "Context or graph arena size in MiB. Default: 256.", false, "256", "1"},
+        {"miotts.wave_graph_arena_mb", "int", "Context or graph arena size in MiB. Default: 512.", false, "512", "1"},
     };
     return out;
 }

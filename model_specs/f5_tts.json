@@ -42,44 +42,34 @@
         "default": "UNK"
       },
       {
-        "name": "cfg_strength",
-        "type": "float",
-        "description": "Classifier-free guidance strength; default 2.0.",
-        "required": false,
-        "min": 0.0,
-        "max": 10.0,
-        "default": 2.0
-      },
-      {
         "name": "sway_sampling_coef",
         "type": "float",
-        "description": "Sway sampling coefficient for inference timesteps; default -1.0.",
+        "description": "Sway sampling coefficient for inference timesteps; default -1.0. Advertised bounds are recommended settings, not parser-enforced limits.",
         "required": false,
-        "min": -5.0,
-        "max": 5.0,
-        "default": -1.0
+        "min": -5,
+        "max": 5,
+        "default": -1
       },
       {
         "name": "speed",
         "type": "float",
-        "description": "Speech speed multiplier applied via the F5 fix_duration parameter; default 1.0.",
+        "description": "Speech speed multiplier for duration estimation; default 1.0. Generated text chunks shorter than 10 characters use 0.3 instead. Advertised bounds are recommended settings, not parser-enforced limits.",
         "required": false,
         "min": 0.5,
-        "max": 2.0,
-        "default": 1.0
+        "max": 2,
+        "default": 1
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Non-negative noise seed; default 0.",
+        "description": "Non-negative noise seed; omitted selects a random seed. Explicit zero is deterministic.",
         "required": false,
-        "min": 0,
-        "default": 0
+        "min": 0
       },
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "CFM Euler steps (NFE); default 32.",
+        "description": "CFM Euler steps (NFE); default 32. Use a positive count; the parser does not enforce this bound.",
         "required": false,
         "min": 1,
         "default": 32
@@ -87,11 +77,11 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Classifier-free guidance strength; default 2.0.",
+        "description": "Classifier-free guidance strength; default 2.0. Advertised bounds are recommended settings, not parser-enforced limits.",
         "required": false,
-        "min": 0.0,
-        "max": 10.0,
-        "default": 2.0
+        "min": 0,
+        "max": 10,
+        "default": 2
       },
       {
         "name": "strip_diacritics",
@@ -118,10 +108,11 @@
       {
         "name": "frame_budget",
         "type": "int",
-        "description": "Total mel frames per CFM pass (ref + generated); larger budgets allow sentence-scale chunks at higher VRAM. 0 = default 2048.",
+        "description": "Total mel frames per CFM pass (ref + generated); larger budgets allow sentence-scale chunks at higher VRAM. Must be in [256, 8192]; omitted uses 2048. Explicit zero is not accepted.",
         "required": false,
-        "min": 0,
-        "default": 0
+        "min": 256,
+        "max": 8192,
+        "default": 2048
       }
     ],
     "load": []

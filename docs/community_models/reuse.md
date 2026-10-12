@@ -65,8 +65,8 @@ Use with **`--request-option name=value`**.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `audio_chunk_duration_sec` | seconds >= 0 | `0` | Chunk duration; `0` processes the whole recording. |
-| `audio_chunk_overlap_sec` | seconds >= 0 | `1` | Hann-weighted overlap, shorter than the chunk duration. |
+| `audio_chunk_duration_sec` | seconds >= 0 | `0` | Chunk duration in seconds; zero processes the whole recording. When enabled, the chunk sample count must exceed sample_rate/50. Chunking changes bidirectional and normalization context. Native batching requires zero; positive chunk durations are supported only for single requests. |
+| `audio_chunk_overlap_sec` | seconds >= 0 | `1` | Hann-weighted overlap in seconds, shorter than the chunk duration. Applies only to single-request chunking; native batching ignores this setting. |
 
 For long recordings, add these options to bound per-chunk graph memory:
 

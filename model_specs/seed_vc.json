@@ -57,9 +57,9 @@
         "required": false
       },
       {
-        "name": "length_adjust",
+        "name": "duration_scale",
         "type": "float",
-        "description": "Output duration multiplier; must be positive, default 1.0.",
+        "description": "Output duration multiplier; must be > 0, default 1.0.",
         "required": false,
         "min": 0.0,
         "default": 1.0
@@ -75,25 +75,22 @@
       {
         "name": "inference_guidance_scale",
         "type": "float",
-        "description": "V1 classifier-free guidance scale; default 0.7.",
+        "description": "V1 classifier-free guidance scale; default 0.7. Any finite value is accepted; V1 disables CFG for nonpositive values.",
         "required": false,
-        "min": 0.0,
         "default": 0.7
       },
       {
         "name": "intelligibility_guidance_scale",
         "type": "float",
-        "description": "V2 classifier-free guidance scale for source-content intelligibility; default 0.7.",
+        "description": "V2 classifier-free guidance scale for source-content intelligibility; default 0.7. Any finite value is accepted and used in V2 guidance arithmetic.",
         "required": false,
-        "min": 0.0,
         "default": 0.7
       },
       {
         "name": "similarity_guidance_scale",
         "type": "float",
-        "description": "V2 classifier-free guidance scale for target-speaker similarity; default 0.7.",
+        "description": "V2 classifier-free guidance scale for target-speaker similarity; default 0.7. Any finite value is accepted and used in V2 guidance arithmetic.",
         "required": false,
-        "min": 0.0,
         "default": 0.7
       },
       {
@@ -111,7 +108,7 @@
         "min": 0
       },
       {
-        "name": "noise_path",
+        "name": "noise_file",
         "type": "path",
         "description": "Optional raw f32 noise file for deterministic V1/V2 diffusion noise and XLSR/HiFT source excitation.",
         "required": false

@@ -84,7 +84,7 @@ Request options:
 
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
-| `language` | `nl`, `nld`, `en`, `eng` (latin); any code (pre_romanized) | — | Transcript language, canonicalized to ISO 639-3 |
+| `language` | `nl`, `nld`, `en`, `eng` (latin); any code (pre_romanized) | — | Language code. Built-in normalization supports nl/nld and en/eng; pre_romanized accepts any nonempty code. |
 | `text_normalization` | `latin`, `pre_romanized` | `latin` | Native Latin normalization or caller-supplied romanization |
 | `star_frequency` | `segment`, `edges` | `segment` | Virtual `<star>` target placement (per-word prefix vs transcript edges) |
 | `merge_threshold_sec` | float >= 0 | `0.0` | Merge words whose gap is at or below this many seconds |
@@ -93,8 +93,8 @@ Session options:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `mms_forced_aligner.emission_window_sec` | `30.0` | Center window length for long waveforms |
-| `mms_forced_aligner.emission_context_sec` | `2.0` | Left/right context per window; must be < window |
+| `mms_forced_aligner.emission_window_sec` | `30.0` | Center window length in `(0, 3600]` seconds; rounded 16 kHz sample count must be divisible by 320 (20 ms). |
+| `mms_forced_aligner.emission_context_sec` | `2.0` | Left/right context in `[0, 3600]` seconds, strictly below the window; rounded 16 kHz sample count must be divisible by 320 (20 ms). |
 | `mms_forced_aligner.max_alignment_cells` | `50000000` | Hard cap on Viterbi cells (frames x states); fails before allocation |
 | `mms_forced_aligner.max_target_tokens` | `8192` | Hard cap on flattened CTC targets per request |
 | `mms_forced_aligner.weight_type` | `native` | Weight storage: `native`, `f32`, `f16` |

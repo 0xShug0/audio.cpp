@@ -59,7 +59,8 @@
         "description": "Non-negative generation seed.",
         "required": false,
         "min": 0,
-        "default": 1234
+        "default": 1234,
+        "max": 4294967295
       },
       {
         "name": "text_chunk_mode",

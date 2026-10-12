@@ -40,9 +40,9 @@
   "options": {
     "request": [
       {
-        "name": "speaking_rate",
+        "name": "speed",
         "type": "float",
-        "description": "Duration multiplier on the voice's tuned length scale; larger is slower. Applied before the per-token clamp.",
+        "description": "Speech speed multiplier; larger is faster. Its reciprocal scales the voice's tuned length scale before the per-token clamp.",
         "required": false,
         "min": 0.5,
         "max": 2.0,

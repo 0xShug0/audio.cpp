@@ -164,6 +164,15 @@ public:
             request.model_path,
             default_spec_path());
         runtime::ModelInspection inspection;
+        inspection.cli.request_options = {
+            {"audio_chunk_mode", "auto|fixed|vad|none", "Offline audio chunking mode: auto, fixed, vad, or none. VAD requires a regular model file; otherwise the planner uses fixed chunks. Default: auto.", false, "auto"},
+            {"audio_chunk_duration_sec", "float", "Positive maximum audio chunk duration for fixed and VAD chunking. Default: 30.", false, "30", "0.001"},
+        };
+        inspection.cli.session_options = {
+            {"granite5asr.weight_type", "native|f32|f16|bf16|q8_0", "Shared model weight storage type. Default: native.", false, "native"},
+            {"granite5asr.encoder_graph_arena_mb", "int", "Encoder graph arena size in MB. Positive MiB allocation; invalid/nonpositive values resolve to 1024 MiB. Default: 1024.", false, "1024", "1"},
+            {"granite5asr.vad_model_path", "string", "Path to a Silero VAD model file, not a directory; VAD runs only when this path is a regular file."},
+        };
         inspection.model_root = resources.model_root();
         inspection.metadata.family = family();
         inspection.metadata.variant = "470m-turboctc";

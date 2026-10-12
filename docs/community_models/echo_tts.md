@@ -15,6 +15,13 @@ autoencoder: [jordand/fish-s1-dac-min](https://huggingface.co/jordand/fish-s1-da
 | Sample rate | 44 100 Hz |
 | Model directory | `models/echo-tts` |
 
+## Text Chunk Size
+
+Use `--text-chunk-size 300` or `--request-option text_chunk_size=300` to set the
+maximum Unicode codepoints per text chunk. The default is 300; explicit values
+must be positive. Each chunk is generated separately within the model's fixed
+audio window.
+
 ## Status
 
 **Work in progress.** Every stage is *implemented*; the open question is how much of it is
@@ -214,14 +221,14 @@ buffers. These are regenerated at runtime rather than shipped in the GGUF.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `text_guidance_scale` | float | 3.0 | Guidance scale on the text condition. |
-| `speaker_guidance_scale` | float | 8.0 | Guidance scale on the speaker condition. |
+| `text_guidance_scale` | float | 3.0 | Classifier-free guidance scale on the text condition. Advertised range is recommended, not enforced by the parser. |
+| `speaker_guidance_scale` | float | 8.0 | Classifier-free guidance scale on the speaker condition. Advertised range is recommended, not enforced by the parser. |
 | `num_inference_steps` | int | 40 | Euler sampler steps. |
-| `truncation_factor` | float | 0.8 | Initial-noise truncation. |
-| `speaker_kv_scale` | float | 1.0 | Force-speaker KV scaling; 1.5 is upstream's default when enabled. Raise only if the model drifts to a different speaker on out-of-distribution text. |
-| `seed` | int | 0 | RNG seed for the initial latent. |
-| `reference_duration_sec` | float | 15.0 | Trim the speaker reference before encoding. Also available as a session default. |
-| `max_duration_sec` | float | — | Cap the generation window (up to 29.7215 s). Quantised down to a 46.44 ms latent frame; larger values clamp. Unset, the window is estimated per chunk. |
+| `truncation_factor` | float | 0.8 | Initial-noise truncation factor. Advertised range is recommended, not enforced by the parser. |
+| `speaker_kv_scale` | float | 1.0 | Force-speaker KV scaling. 1.0 disables; 1.5 is the upstream default when enabled. Advertised range is recommended, not parser-enforced; zero is invalid for reciprocal scaling. |
+| `seed` | int | 0 | RNG seed for the initial latent. Negative signed-integer values are treated as zero. |
+| `reference_duration_sec` | float | 15.0 | Trim the speaker reference to at most this many seconds before encoding. Shorter references are cheaper and often clone better; upstream's guidance favours around 10 s. Defaults to 15 s. Values above the trained maximum of 297.1 s are clamped. Set per request, or as a session default from CLI or server config. Must be positive. |
+| `max_duration_sec` | float | — | Cap the generation window, in seconds (up to 29.7215 s, the trained maximum; larger values are clamped to it). Quantised down to a whole latent frame of 46.44 ms. Left unset, the window is estimated per chunk from text length and widened automatically if the utterance does not finish inside it, which is substantially cheaper for short text. Must be positive; rounded to at least one latent frame. |
 | `mem_saver` | bool | false | Release Fish S1-DAC decode graph state when prior to and encode graph state after encoding reference speaker audio to reduce peak VRAM usage and steady-state VRAM usage when speakers are already cached.
 | `guidance_interval` | int | 1 | Refresh the two unconditional CFG lanes only every Nth guided step. 1 reproduces upstream exactly. See [performance notes](echo_tts_performance.md). |
 

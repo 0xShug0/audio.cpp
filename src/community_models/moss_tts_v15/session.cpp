@@ -342,7 +342,7 @@ runtime::TaskResult MossTtsV15Session::run(const runtime::TaskRequest & request)
     bounds_override.max_frames = option_int(request.options, {"max_frames"}, 0);
 
     // The family's own duration field, in codec frames at 12.5 a second.
-    const int64_t requested_frames = option_int(request.options, {"tokens", "moss_tts_v15.tokens"}, 0);
+    const int64_t requested_frames = option_int(request.options, {"duration_frames", "tokens", "moss_tts_v15.tokens"}, 0);
 
     // A reference recording is what this checkpoint has that voice design does not.
     // It is encoded once per request and reused for every text chunk, so a long text
@@ -354,7 +354,7 @@ runtime::TaskResult MossTtsV15Session::run(const runtime::TaskRequest & request)
     }
 
     decoders::MossTtsDelaySamplingOptions sampling;
-    sampling.text_temperature = option_float(request.options, {"moss_tts_v15.text_temperature"}, sampling.text_temperature);
+    sampling.text_temperature = option_float(request.options, {"text_temperature", "moss_tts_v15.text_temperature"}, sampling.text_temperature);
     sampling.audio_temperature = option_float(request.options, {"temperature"}, sampling.audio_temperature);
     sampling.audio_top_p = option_float(request.options, {"top_p"}, sampling.audio_top_p);
     sampling.audio_top_k = option_int(request.options, {"top_k"}, sampling.audio_top_k);

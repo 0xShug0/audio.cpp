@@ -156,7 +156,7 @@ at `max_tokens`. A request can also carry the turns before it; see
 [Conversations](#conversations).
 
 The question goes through the encoder in one pass, as in liquid-audio, so it
-can be at most `lfm2_audio.max_pass_seconds` long (120 s by default; see
+can be at most `lfm2_audio.max_pass_duration_sec` long (120 s by default; see
 [Long audio](#long-audio)): a longer one is rejected before it is encoded.
 
 The server takes the same directory and session options:
@@ -251,7 +251,7 @@ reply cut off at `max_tokens` streams as it does offline, with the same
 warning; a character left open at the cut is dropped in both. A stream
 finished before its reply is over returns the text its events carried and,
 with `return_codes`, the reply's steps so far.
-A question longer than `lfm2_audio.max_pass_seconds` fails as soon as that
+A question longer than `lfm2_audio.max_pass_duration_sec` fails as soon as that
 much of it has come, without waiting for the rest.
 The server's live route, `/v1/audio/speech/live`, takes the question as
 chunked raw PCM. Without `input` the reply uses liquid-audio's system prompt;
@@ -340,7 +340,7 @@ the system prompt, the earlier turns, the new question and the request
 options, seed included: on a backend, the same request gives the same bytes
 whatever ran before it. A turn with earlier turns prefills in blocks of
 256 steps, so its attention never holds more than 256 scores per prompt step
-and head. Each earlier question is held to `lfm2_audio.max_pass_seconds`, as
+and head. Each earlier question is held to `lfm2_audio.max_pass_duration_sec`, as
 the new one is.
 
 So that a turn does not run the whole conversation again, an S2S session keeps
@@ -526,7 +526,7 @@ model from its files when it loads, so it does not count that memory.
 | `language` | all | The checkpoint's | `en` or `ja`; must match the checkpoint. |
 | `max_tokens` | all | `512`; S2S `1024` | ASR: transcript tokens per audio chunk. TTS: 80 ms audio frames per text chunk. S2S: text tokens and audio frames of the reply together. A transcript, a text chunk's speech or a reply that reaches it is cut off there and kept, as liquid-audio keeps it, and a warning goes to stderr; the other chunks go on. Text tokens need not end on a character boundary, so a cut can fall inside a character: liquid-audio then shows U+FFFD for the partial character, while audio.cpp drops it and ends the transcript or reply at the last whole character. On the CPU, `max_tokens` can change an output at a near-tie even where it is not reached, so a cut transcript, speech or reply is not always the start of the uncut one: the decode cache's length follows `max_tokens`, and ggml's CPU flash attention splits a cache of 512 steps or more into one piece per thread. |
 | `audio_chunk_mode` | ASR | `auto` | `auto`, `vad`, `fixed` or `none`; see [Long audio](#long-audio). |
-| `audio_chunk_seconds` | ASR | `30`, or `lfm2_audio.max_pass_seconds` if lower | Longest chunk in seconds, at least 1. |
+| `audio_chunk_duration_sec` | ASR | `30`, or `lfm2_audio.max_pass_duration_sec` if lower | Longest chunk in seconds, at least 1. Legacy `audio_chunk_seconds` remains accepted. |
 | `temperature` | TTS, S2S | `0.8`; S2S `1.0` | Audio code sampling temperature; 0 is greedy. |
 | `top_k` | TTS, S2S | `64`; S2S `4` | Sample from the k most likely codes; 0 keeps all, 1 is greedy. |
 | `text_temperature` | S2S | `0` | Text token sampling temperature; 0 is greedy, as in liquid-audio's README and demo. |
@@ -548,7 +548,7 @@ Each task rejects the options it does not take.
 | `lfm2_audio.vocoder_gguf` | `vocoder-<backbone file>`, else the only vocoder | TTS depthformer GGUF, relative to the model directory. |
 | `lfm2_audio.detokenizer_gguf` | `tokenizer-<backbone file>`, else the only tokenizer | TTS audio detokenizer GGUF, relative to the model directory. |
 | `lfm2_audio.vad_model_path` | `assets/framework/models/silero_vad` | Silero VAD model used to split long audio. |
-| `lfm2_audio.max_pass_seconds` | `120` | Most audio, in seconds, the encoder takes in one pass: an ASR chunk (the whole input with `audio_chunk_mode=none`) or the S2S question; at least 1. Longer audio is rejected before it is encoded; see [Long audio](#long-audio). |
+| `lfm2_audio.max_pass_duration_sec` | `120` | Most audio, in seconds, the encoder takes in one pass: an ASR chunk (the whole input with `audio_chunk_mode=none`) or the S2S question; at least 1. Longer audio is rejected before it is encoded; see [Long audio](#long-audio). Legacy `lfm2_audio.max_pass_seconds` remains accepted. |
 | `lfm2_audio.conversation_cache_slots` | `4` | S2S: how many conversations a session keeps the earlier questions' encoder output and prefill blocks of, for their next turns; the least recently used is dropped first, and `0` keeps none. Output never depends on it; see [Conversations](#conversations). |
 | `lfm2_audio.cpu_repack` | `true` | On the CPU, multiply the matrices with the kernels of ggml's CPU extra buffer types where those take the weight's type and shape: the repacked ones take Q4_0 on x86 with AVX2 and Q4_0, Q8_0 and Q6_K on Arm; where ggml's AMX buffer is built, it comes first and also takes F16, Q8_0 and K-quants. Where the token embedding's type is taken, the text head gets a copy of it. `false` keeps every weight in the plain CPU buffer. Other backends ignore it; see [CPU](#cpu). |
 
@@ -562,10 +562,10 @@ short input whole and splits longer input:
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Input up to `audio_chunk_seconds` is transcribed whole, as liquid-audio does. Longer input is split at pauses found by the bundled Silero VAD, and silence between speech is skipped. Without the VAD model, it falls back to `fixed`. |
+| `auto` | Input up to `audio_chunk_duration_sec` is transcribed whole, as liquid-audio does. Longer input is split at pauses found by the bundled Silero VAD, and silence between speech is skipped. Without the VAD model, it falls back to `fixed`. |
 | `vad` | Always splits at pauses; fails without the VAD model. |
-| `fixed` | Cuts every `audio_chunk_seconds`; a last piece shorter than 1 s joins the previous chunk. |
-| `none` | One pass over the whole input, as liquid-audio does; input longer than `lfm2_audio.max_pass_seconds` is rejected. |
+| `fixed` | Cuts every `audio_chunk_duration_sec`; a last piece shorter than 1 s joins the previous chunk. |
+| `none` | One pass over the whole input, as liquid-audio does; input longer than `lfm2_audio.max_pass_duration_sec` is rejected. |
 
 Each chunk is transcribed on its own, and the transcripts are joined with a
 space between English words and without one in Japanese text. Audio the VAD
@@ -576,13 +576,13 @@ came back empty). A split can also land on a short pause inside a sentence,
 and the model may then leave out the words that open the next chunk (1 of 12
 such sentences in the Japanese tests below).
 
-No pass takes more than `lfm2_audio.max_pass_seconds` of audio, 120 s by
+No pass takes more than `lfm2_audio.max_pass_duration_sec` of audio, 120 s by
 default, except that `fixed`, and `auto` without the VAD model, can make the
 last chunk up to 1 s longer, from a short tail it absorbs. `none` rejects
-longer input. The other modes reject an `audio_chunk_seconds` above the limit
+longer input. The other modes reject an `audio_chunk_duration_sec` above the limit
 on input longer than the limit, before any chunk is planned or encoded, so
 `vad` is refused on the setting even when its spans would be shorter; a request
-that leaves `audio_chunk_seconds` unset gets chunks of the limit when that is
+that leaves `audio_chunk_duration_sec` unset gets chunks of the limit when that is
 under 30 s. One pass is of little use past 120 s: `none` is at 29% WER on the
 120 s English files below, and Japanese loses sentences from about 41 to 45 s.
 The encoder's buffer grows linearly, at about 6.46 MB per second of audio, up

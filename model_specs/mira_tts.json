@@ -42,9 +42,8 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Sampling temperature; default 0.8.",
+        "description": "Sampling temperature; default 0.8. Must be positive.",
         "required": false,
-        "min": 0.000001,
         "default": 0.8
       },
       {
@@ -58,10 +57,9 @@
       {
         "name": "top_p",
         "type": "float",
-        "description": "Nucleus sampling probability; default 0.95.",
+        "description": "Nucleus sampling probability; default 0.95. Must be positive.",
         "required": false,
-        "min": 0.000001,
-        "max": 1.0,
+        "max": 1,
         "default": 0.95
       },
       {
@@ -118,9 +116,7 @@
         "required": false,
         "min": 0,
         "default": 1
-      }
-    ],
-    "load": [
+      },
       {
         "name": "backbone_weight_type",
         "type": "enum",
@@ -140,12 +136,18 @@
       {
         "name": "conv_weight_type",
         "type": "enum",
-        "preset": "weight_type_conv",
         "required": false,
         "default": "f32",
-        "description": "Storage type for speaker and processor convolution weights. The DAC transposed-convolution decoder remains F32 for CUDA compatibility."
+        "description": "Storage type for speaker and processor convolution weights. The DAC transposed-convolution decoder remains F32 for CUDA compatibility. Applies to the speaker encoder/acoustic processor; waveform decoder remains f32.",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16"
+        ]
       }
-    ]
+    ],
+    "load": []
   },
   "packages": [],
   "dependencies": [],

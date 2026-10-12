@@ -31,7 +31,7 @@ audiocpp_cli \
   --model models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf \
   --backend cuda \
   --text "skateboarding" \
-  --request-option video=/path/to/video.mp4 \
+  --request-option video_file=/path/to/video.mp4 \
   --request-option duration_sec=8 \
   --request-option num_inference_steps=25 \
   --request-option guidance_scale=4.5 \
@@ -47,7 +47,7 @@ audiocpp_cli \
 | Mode | `offline` |
 | Packages | `controlfoley-large-44k-f32.gguf`, `controlfoley-large-44k-q8_0.gguf` |
 | Text input | Optional prompt through `--text` |
-| Video input | Optional video path through `--request-option video=<path>` |
+| Video input | Optional video path through `--request-option video_file=<path>` |
 | Audio input | Optional reference WAV through `--audio` |
 
 ## Paths
@@ -55,10 +55,10 @@ audiocpp_cli \
 | Path | Required inputs |
 |---|---|
 | T2A | `--text` |
-| TV2A | `--text`, `--request-option video=<path>` |
-| TC-V2A | `--text`, `--request-option video=<path>`, `--request-option mask_away_clip=true` |
-| AC-V2A | `--audio`, `--request-option video=<path>` |
-| V2A | `--request-option video=<path>` |
+| TV2A | `--text`, `--request-option video_file=<path>` |
+| TC-V2A | `--text`, `--request-option video_file=<path>`, `--request-option mask_away_clip=true` |
+| AC-V2A | `--audio`, `--request-option video_file=<path>` |
+| V2A | `--request-option video_file=<path>` |
 
 ## Common Options (use directly)
 
@@ -71,10 +71,10 @@ audiocpp_cli \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `video` | video path | optional | Video conditioning source. |
+| `video_file` | video path | optional | Video conditioning source. Legacy `video` remains accepted. |
 | `duration_sec` | float | `8` | Target temporal budget. |
 | `num_inference_steps` | integer > 0 | `25` | Euler flow inference steps. |
-| `guidance_scale` | float | `4.5` | Classifier-free guidance scale. |
+| `guidance_scale` | float > 0 | `4.5` | Classifier-free guidance strength. Must be > 0. Values strictly between 0 and 1 bypass CFG and negative-prompt conditioning. |
 | `negative_prompt` | text | empty | Negative text branch for CFG. |
 | `mask_away_clip` | bool | `false` | Disable OpenCLIP video conditioning while keeping visual and sync conditioning. |
 | `seed` | integer >= 0 | `42` | Sampler seed. |

@@ -53,7 +53,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Autoregressive sampling temperature; default 0.4.",
+        "description": "Autoregressive sampling temperature; default 0.4. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 0.4
@@ -61,7 +61,7 @@
       {
         "name": "top_p",
         "type": "float",
-        "description": "Autoregressive nucleus sampling probability; default 0.9.",
+        "description": "Autoregressive nucleus sampling probability; must be in (0, 1], default 0.9.",
         "required": false,
         "min": 0.0,
         "max": 1.0,
@@ -70,7 +70,7 @@
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "Autoregressive repetition penalty; default 1.1.",
+        "description": "Autoregressive repetition penalty; default 1.1. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 1.1

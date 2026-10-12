@@ -70,15 +70,9 @@
         "required": false
       },
       {
-        "name": "instruction",
-        "type": "string",
-        "description": "Structured DotTTS Edit instruction. If omitted with template_name=edit, the request text is used as the instruction.",
-        "required": false
-      },
-      {
         "name": "instruct",
         "type": "string",
-        "description": "Alias for instruction for CLI compatibility.",
+        "description": "Structured DotTTS Edit instruction. If omitted with template_name=edit, the request text is used as the instruction.",
         "required": false
       },
       {
@@ -90,7 +84,7 @@
       {
         "name": "target_text",
         "type": "string",
-        "description": "Optional target transcript override for DotTTS Edit. If omitted, it is rendered from instruction tags.",
+        "description": "Edit target transcript override. When omitted, explicit instruction plus text input uses that text; otherwise the target is rendered from instruction tags.",
         "required": false
       },
       {
@@ -151,7 +145,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated audio patch count per generated segment; default 500.",
+        "description": "Maximum generated audio patch count per generated segment; default 500. In Edit mode source patches consume this budget; it must exceed the source-patch count.",
         "required": false,
         "min": 1,
         "default": 500

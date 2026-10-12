@@ -149,7 +149,7 @@
       {
         "name": "lora_scale",
         "type": "float",
-        "description": "Session adapter scale override; omitted uses lora_alpha / r.",
+        "description": "Session adapter scale override; omitted uses lora_alpha / r. Must be strictly positive when an adapter is supplied.",
         "required": false
       }
     ],
@@ -163,7 +163,7 @@
       {
         "name": "lora_scale",
         "type": "float",
-        "description": "LoRA scale override; omitted uses lora_alpha / r.",
+        "description": "LoRA scale override; omitted uses lora_alpha / r. Must be strictly positive when an adapter is supplied.",
         "required": false
       }
     ]

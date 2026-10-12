@@ -43,7 +43,7 @@ SileroVADConfig silero_config_from_options(
     if (const auto value = runtime::parse_int_option(options, {"speech_pad_ms"})) {
         config.speech_pad_ms = *value;
     }
-    if (const auto value = runtime::parse_float_option(options, {"max_speech_duration_s"})) {
+    if (const auto value = runtime::parse_float_option(options, {"max_speech_duration_sec", "max_speech_duration_s"})) {
         config.max_speech_duration_s = *value;
     }
     if (const auto value = runtime::parse_float_option(options, {"neg_threshold"})) {

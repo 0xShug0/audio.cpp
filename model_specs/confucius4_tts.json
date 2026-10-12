@@ -52,7 +52,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "T2S sampling temperature; must be positive, default 0.8.",
+        "description": "T2S sampling temperature; must be > 0, default 0.8.",
         "required": false,
         "min": 0.0,
         "default": 0.8
@@ -85,7 +85,7 @@
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "T2S repetition penalty; must be positive, default 10.0.",
+        "description": "T2S repetition penalty; must be > 0, default 10.0.",
         "required": false,
         "min": 0.0,
         "default": 10.0
@@ -109,9 +109,8 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "S2A classifier-free guidance scale; default 0.7.",
+        "description": "S2A classifier-free guidance scale; default 0.7. Negative values select the no-CFG path.",
         "required": false,
-        "min": 0.0,
         "default": 0.7
       },
       {
@@ -125,7 +124,7 @@
       {
         "name": "text_chunk_mode",
         "type": "enum",
-        "description": "Framework text chunking mode; default uses the standard word-budget chunker.",
+        "description": "word_budget/default selects model-local official_segments. Other modes use the framework splitter with a codepoint budget.",
         "values": [
           "default",
           "tag_aware",
@@ -146,17 +145,17 @@
       {
         "name": "edge_fade_duration_sec",
         "type": "float",
-        "description": "Fade duration applied at segment edges in seconds; default 0.1.",
+        "description": "Fade duration applied at segment edges in seconds; default 0.1. Currently validated but not applied to generated audio.",
         "required": false,
-        "min": 0.0,
+        "min": 0,
         "default": 0.1
       },
       {
         "name": "edge_pad_duration_sec",
         "type": "float",
-        "description": "Silence padding applied at segment edges in seconds; default 0.1.",
+        "description": "Silence padding applied at segment edges in seconds; default 0.1. Currently validated but not applied to generated audio.",
         "required": false,
-        "min": 0.0,
+        "min": 0,
         "default": 0.1
       },
       {

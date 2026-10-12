@@ -110,10 +110,9 @@
       {
         "name": "top_p",
         "type": "float",
-        "min": 1e-06,
         "max": 1,
         "required": false,
-        "description": "Nucleus sampling cutoff; defaults to the preset."
+        "description": "Nucleus sampling cutoff; defaults to the preset. Must be in (0, 1]."
       },
       {
         "name": "min_p",

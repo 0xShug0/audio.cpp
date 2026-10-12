@@ -25,7 +25,7 @@
       {
         "name": "language",
         "type": "string",
-        "description": "Transcript language; accepts nl/nld and en/eng, canonicalized internally to ISO 639-3 (nld/eng). Required for alignment.",
+        "description": "Language code. Built-in normalization supports nl/nld and en/eng; pre_romanized accepts any nonempty code.",
         "required": true
       },
       {
@@ -61,7 +61,7 @@
       {
         "name": "return_timestamps",
         "type": "bool",
-        "description": "Request word timestamps in the result; set automatically by --words-out.",
+        "description": "Compatibility option; word timestamps are always returned, including when false.",
         "required": false,
         "default": true
       }
@@ -70,17 +70,19 @@
       {
         "name": "emission_window_sec",
         "type": "float",
-        "description": "Center emission window length in seconds used to split long waveforms; default 30.",
+        "description": "Center emission window length in seconds used to split long waveforms; must be > 0 and at most 3600. Rounded 16 kHz sample count must be a multiple of 320 (20 ms); default 30.",
         "required": false,
         "min": 0.02,
+        "max": 3600,
         "default": 30.0
       },
       {
         "name": "emission_context_sec",
         "type": "float",
-        "description": "Left/right context appended to each emission window in seconds; must be below emission_window_sec; default 2.",
+        "description": "Left/right context appended to each emission window in seconds; must be nonnegative, at most 3600, and below emission_window_sec. Rounded 16 kHz sample count must be a multiple of 320 (20 ms); default 2.",
         "required": false,
         "min": 0.0,
+        "max": 3600,
         "default": 2.0
       },
       {

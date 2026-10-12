@@ -27,7 +27,21 @@ audiocpp_cli --task tts --family moss_ttsd --model /path/to/MOSS-TTSD-GGUF \
   --out dialogue.wav
 ```
 
+### Sampling Options
+
+Use these with `--request-option`:
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `temperature` | float > 0 | `1.5` | Audio-token sampling temperature. |
+| `repetition_penalty` | float > 0 | `1.1` | Audio repetition penalty; checked when token history is present. |
+
 ## Cloning the speakers
+
+`--request-option instruct=<text>` supplies an optional instruction; legacy
+`instruction` remains accepted. `--request-option text_temperature=<float>` controls
+text-stream sampling (default 1.5); legacy `moss_ttsd.text_temperature` remains
+accepted.
 
 Pass one reference recording per speaker, comma separated and positional, and
 the transcript of what those recordings say:

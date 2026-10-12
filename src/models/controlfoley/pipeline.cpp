@@ -176,7 +176,7 @@ ControlFoleyOptions parse_controlfoley_options(
     out.guidance_scale = positive_float_option(options, {"guidance_scale"}, 4.5F, "guidance_scale");
     out.seed = engine::runtime::parse_u32_option(options, {"seed"}).value_or(42);
     out.negative_prompt = engine::runtime::find_option(options, {"negative_prompt"}).value_or("");
-    if (const auto video = engine::runtime::find_option(options, {"video"}); video.has_value() && !video->empty()) {
+    if (const auto video = engine::runtime::find_option(options, {"video_file", "video"}); video.has_value() && !video->empty()) {
         out.video = std::filesystem::path(*video);
     }
     if (const auto value = engine::runtime::find_option(options, {"mask_away_clip"}); value.has_value()) {

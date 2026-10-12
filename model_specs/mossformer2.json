@@ -37,7 +37,7 @@
       {
         "name": "audio_chunk_overlap_sec",
         "type": "float",
-        "description": "Overlap between adjacent audio chunks, in seconds. Recommended: 25% of audio_chunk_duration_sec, matching the official Python settings. Overlapping edges are trimmed rather than averaged. Ignored for whole-file inference.",
+        "description": "Overlap between adjacent audio chunks, in seconds; must be smaller than audio_chunk_duration_sec when chunking is enabled. Recommended: 25% of audio_chunk_duration_sec, matching the official Python settings. Overlapping edges are trimmed rather than averaged. Ignored for whole-file inference.",
         "min": 0,
         "default": 0.5,
         "required": false

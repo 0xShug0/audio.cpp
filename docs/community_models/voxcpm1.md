@@ -100,17 +100,33 @@ Measured on Ubuntu 24.04 with OpenMP optimization (CPU backend):
 |---|---|---:|---|
 | `--voice-ref` | WAV path | not set | Reference speaker audio for voice cloning. |
 | `--reference-text` | text | empty | Transcript of the reference audio (for clone prompting). |
-| `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode; streaming requires `retry_badcase=false`. |
+| `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode; streaming does not retry bad cases. |
 | `--session-option voxcpm1.mem_saver` | `true`, `false` | `false` | Use tighter graph workspaces and release request runtime graphs to reduce resident VRAM. |
 | `--session-option voxcpm1.prompt_cache_slots` | integer | `1` | Prompt and prompt-audio embedding cache slots. Set `0` to disable prompt caching. |
-| `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
-| `--num-inference-steps` | integer | `10` | CFM flow-matching diffusion steps. |
-| `--guidance-scale` | float | `2.0` | CFG strength. |
-| `--request-option retry_badcase` | `true`, `false` | `true` | Auto-retry when generation is detected as a bad case. |
-| `--request-option retry_badcase_max_times` | integer | `2` | Maximum retry count. |
+| `--max-tokens` | integer | `4096` | Maximum MiniCPM output tokens; default 4096. Zero selects model max_length; negative counts are rejected. |
+| `--num-inference-steps` | integer | `10` | CFM diffusion sampling steps; default 10. Must be positive. |
+| `--guidance-scale` | float | `2.0` | CFM classifier-free guidance rate. Must be nonnegative. |
+| `--request-option retry_badcase` | `true`, `false` | offline: `true`; streaming: `false` | Auto-retry when generation is detected as a bad case. Streaming ignores explicit true with a warning. |
+| `--request-option retry_badcase_max_times` | integer | `3` | Maximum total generation attempts, including the initial attempt. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Long-form text chunking strategy. |
 
 ---
+
+### Session Graph Arenas
+
+Use these names with `--session-option`. They size host graph metadata in MiB,
+not device workspace. The old `*_graph_context_mb` aliases remain accepted with
+the same `voxcpm1.` prefix. Weight-context controls are separate and unchanged.
+
+| Option | Default MiB |
+|---|---:|
+| `voxcpm1.text_embedding_graph_arena_mb` | `64` |
+| `voxcpm1.lm_step_graph_arena_mb` | `1024` |
+| `voxcpm1.projection_graph_arena_mb` | `256` |
+| `voxcpm1.local_encoder_graph_arena_mb` | `512` |
+| `voxcpm1.dit_graph_arena_mb` | `1024` |
+| `voxcpm1.audiovae_graph_arena_mb` | `1024` |
+| `voxcpm1.audiovae_encoder_graph_arena_mb` | `1024` |
 
 ## 🔧 Architecture Notes
 
@@ -137,7 +153,7 @@ The converter stages the OpenBMB PyTorch checkpoint as audio.cpp tensor names, f
 |---|---|---|
 | **Offline TTS** | ✅ Works | "This is a test run for the fix" → transcribes as **"This is a test."** (SenseVoice) |
 | **Voice Clone** | ✅ Works | 6/6 target sentences transcribe exactly via SenseVoice; continuation-mode with reference audio + transcript |
-| **Streaming** | ✅ Works | SSE PCM chunks at native 16 kHz; requires `retry_badcase=false`. On CPU, CUDA, HIP and Vulkan each patch is decoded with the AudioVAE's causal-convolution state carried over from the previous patch, so patch boundaries closely match the offline decode. Metal remains on the per-patch fallback and is expected to show the same boundary artifacts; it was not tested. |
+| **Streaming** | ✅ Works | SSE PCM chunks at native 16 kHz; retries default to false, and an explicit true is ignored with a warning. On CPU, CUDA, HIP and Vulkan each patch is decoded with the AudioVAE's causal-convolution state carried over from the previous patch, so patch boundaries closely match the offline decode. Metal remains on the per-patch fallback and is expected to show the same boundary artifacts; it was not tested. |
 | **Reference-only clone** | ⚠️ Limited | `ref_start`/`ref_end` fails identically in the golden `VoxCPM.cpp` — model-level limitation |
 
 **Regression guard**: VoxCPM2 path is untouched (`config.v1` default `false`); still generates 48 kHz speech with byte-identical output.

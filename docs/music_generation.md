@@ -173,13 +173,13 @@ audiocpp_cli --task gen --family heartmula --model models/HeartMuLa --backend cu
 | `--text` | text | required | Music prompt or short description. |
 | `--lyrics` | text | empty string | Lyrics for generated music. |
 | `--request-option tags=<text>` | comma-separated text | required | Music tags; the model path wraps them as tag tokens internally. |
-| `--request-option duration_sec=<seconds>` | seconds | `120` | Maximum generated duration. |
-| `--temperature` | float | `1.0` | Music-token sampling temperature. |
+| `--request-option duration_sec=<seconds>` | seconds > 0 | `120` | Maximum generated duration. |
+| `--temperature` | float > 0 | `1.0` | Music-token sampling temperature. |
 | `--top-k` | integer | `50` | Music-token top-k sampling limit. |
-| `--guidance-scale` | float | `1.5` | MuLa classifier-free guidance scale. |
+| `--guidance-scale` | float > 0 | `1.5` | MuLa classifier-free guidance scale. |
 | `--num-inference-steps` | integer | `10` | Codec flow solver steps. |
-| `--request-option codec_duration_sec=<seconds>` | seconds | `29.76` | Codec detokenization chunk duration. |
-| `--request-option codec_guidance_scale=<float>` | float | `1.25` | Codec classifier-free guidance scale. |
+| `--request-option codec_duration_sec=<seconds>` | seconds > 0 | `29.76` | Codec detokenization chunk duration. |
+| `--request-option codec_guidance_scale=<float>` | float > 0 | `1.25` | Codec classifier-free guidance scale. |
 | `--request-option infinite_mode=true\|false` | bool | `false` | Generate long outputs by splitting lyrics into bounded HeartMuLa requests. |
 | `--text-chunk-size` | chars | `4096` | Text chunk size for infinite mode. |
 | `--request-option infinite_chunk_audio_duration_ms=<n>` | milliseconds | `240000` | Per-chunk audio cap for infinite mode. |

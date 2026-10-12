@@ -29,7 +29,7 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Chunk duration in seconds; zero selects upstream whole-file inference.",
+        "description": "Chunk duration in seconds; zero selects upstream whole-file inference. When enabled, the chunk sample count must exceed n_fft/2.",
         "min": 0,
         "default": 0,
         "required": false
@@ -56,9 +56,24 @@
         "name": "weight_type",
         "type": "enum",
         "description": "Weight storage type; native preserves the GGUF tensor types.",
-        "preset": "weight_type_full",
         "required": false,
-        "default": "native"
+        "default": "native",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_1",
+          "q5_0",
+          "q5_1",
+          "q2_k",
+          "q3_k",
+          "q4_k",
+          "q5_k",
+          "q6_k"
+        ]
       }
     ],
     "load": []

@@ -193,7 +193,7 @@ Request options are bare names. Session options use the
 | `max_tokens` | request | integer >= 0; `0` | TDT token limit; `0` uses the model-derived limit |
 | `keep_language_tags` | request | boolean; `false` | Preserve language-tag tokens in decoded text |
 | `audio_chunk_mode` | request | `auto`, `fixed`, `vad`, `none`; `auto` | Offline chunking mode; `vad` skips silent spans with Silero VAD |
-| `audio_chunk_duration_sec` | request | float >= 0.001; session value | Request-level chunk duration for fixed or VAD offline chunking |
+| `audio_chunk_duration_sec` | request | see description | VAD maximum chunk duration; omitted inherits the session duration. Fixed/long_form windows use the session setting, not this request override. |
 | `weight_type` | session | `native`, `f32`, `f16`, `bf16`, `q8_0`; `native` | Fallback storage type for matmul weights |
 | `matmul_weight_type` | session | same values; inherits `weight_type` | Encoder and decoder matmul storage type |
 | `conv_weight_type` | session | `native`, `f32`, `f16`; `native` | True convolution-weight storage type |
@@ -201,7 +201,7 @@ Request options are bare names. Session options use the
 | `weight_context_mb` | session | integer >= 1; `3072` | Weight arena size in MiB |
 | `encoder_graph_arena_mb` | session | integer >= 1; `1024` | Encoder graph arena size in MiB |
 | `decoder_graph_arena_mb` | session | integer >= 1; `256` | Decoder graph arena size in MiB |
-| `audio_chunk_duration_sec` | session | float >= 0.001; `2` | Center-region duration for long-form and buffered streaming |
+| `audio_chunk_duration_sec` | session | see description | VAD maximum chunk duration; omitted inherits the session duration. Fixed/long_form windows use the session setting, not this request override. |
 | `left_context_sec` | session | float >= 0; `10` | Past context included in each bounded window |
 | `right_context_sec` | session | float >= 0; `2` | Future context/lookahead included in each bounded window |
 | `streaming_attention_mode` | session | `full_context`; `full_context` | Bidirectional attention within each bounded streaming window |

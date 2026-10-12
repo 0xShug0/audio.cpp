@@ -29,7 +29,7 @@ build/debug/bin/audiocpp_cli \
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
 | `ast_audioset.attention` | `auto`, `flash`, `eager` | `auto` | Attention lowering. |
-| `ast_audioset.weight_type` | Supported tensor storage type | `native` | Weight storage override. |
+| `ast_audioset.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Weight storage override. |
 
 The model accepts ordinary audio inputs and resamples them to 16 kHz mono. Audio beyond the model's fixed
 10.24-second feature window is truncated, matching the official feature extractor.

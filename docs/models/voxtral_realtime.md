@@ -190,8 +190,8 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 | `--input-channels` | integer | `1` | Channel count of raw PCM read from stdin. Ignored for file input. |
 | `--mode` | `offline`, `streaming` | `offline` | Full-context or streaming session. |
 | `--do-sample` | bool | `false` | Enable sampling instead of greedy decode. |
-| `--temperature` | float | `1.0` | Sampling temperature. |
-| `--top-p` | float | `1.0` | Nucleus sampling limit. |
+| `--temperature` | float > 0 | `1.0` | Sampling temperature. |
+| `--top-p` | `(0, 1]` | `1.0` | Nucleus sampling limit. |
 | `--top-k` | integer | `50` | Top-k sampling limit; `0` disables top-k. |
 | `--seed` | integer | `1234` | Sampling seed. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
@@ -200,10 +200,10 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `max_tokens` | integer | not set | Maximum generated transcript tokens. |
+| `max_tokens` | integer | not set | Maximum generated transcript tokens; omitted uses the audio-derived limit. Offline decoding only; ignored by live streaming. |
 | `do_sample` | bool | `false` | Sample rather than greedily decode. |
-| `temperature` | float | `1` | Positive sampling temperature. |
-| `top_p` | float | `1` | Nucleus sampling probability in (0, 1]. |
+| `temperature` | float > 0 | `1` | Positive sampling temperature. |
+| `top_p` | `(0, 1]` | `1` | Nucleus sampling probability in (0, 1]. |
 | `top_k` | integer >= 0 | `50` | Top-k sampling limit; zero disables filtering. |
 | `seed` | integer >= 0 | `1234` | Sampling seed. |
 
@@ -218,10 +218,10 @@ The legacy request name `max_new_tokens` remains accepted. Use only one name per
 | `voxtral_realtime.text_decoder_weight_type` | same as above | shared setting | Text decoder matmul weight storage type. `q4_k` roughly halves the streaming decoder step cost. |
 | `voxtral_realtime.audio_encoder_graph_arena_mb` | integer MiB | `512` | Audio encoder graph arena size. |
 | `voxtral_realtime.audio_encoder_weight_context_mb` | integer MiB | `128` | Audio encoder weight context arena size. |
-| `voxtral_realtime.text_decoder_prefill_graph_arena_mb` | integer MiB | `512` | Text decoder prefill graph arena size. |
-| `voxtral_realtime.text_decoder_decode_graph_arena_mb` | integer MiB | `512` | Text decoder cached-step graph arena size. |
+| `voxtral_realtime.text_decoder_prefill_graph_arena_mb` | integer MiB | `512` | Decoder prefill graph arena in MiB. Decoder uses the maximum of prefill and decode arena settings. |
+| `voxtral_realtime.text_decoder_decode_graph_arena_mb` | integer MiB | `512` | Decoder step graph arena in MiB. Decoder uses the maximum of prefill and decode arena settings. |
 | `voxtral_realtime.text_decoder_weight_context_mb` | integer MiB | `128` | Text decoder weight context arena size. |
-| `voxtral_realtime.stream_decode_cache_steps` | integer >= 1 | `1024` | Decoder KV cache size in 80 ms steps, about 82 seconds of context. The cache ring wraps in place during long sessions. Lower values trade context for memory, not speed. |
+| `voxtral_realtime.stream_decode_cache_steps` | integer >= 1 | `1024` | Streaming decoder cache capacity in 80 ms steps. Must be positive and no greater than checkpoint sliding_window. |
 | `voxtral_realtime.stream_batch_tokens` | integer >= 1 | `1` | Audio tokens per encoder forward. The decoder still runs one step per 80 ms; batching amortizes the encoder's fixed per-forward cost at the price of delaying each partial by up to `n * 80 ms`. |
 
 Weight storage types are applied when the model loads, so requesting a type the

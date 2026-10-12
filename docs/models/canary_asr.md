@@ -50,7 +50,7 @@ audiocpp_cli --task asr --family canary_asr \
 |---|---|---|
 | `language` | `en` | Input language: `en`, `de`, `es`, or `fr`. |
 | `target_language` | Input language | Output language: `en`, `de`, `es`, or `fr`; identical source and target select transcription. |
-| `pnc` | `true` | Punctuation and capitalization. |
+| `punc` | `true` | Punctuation and capitalization together. Legacy `pnc` remains accepted. |
 | `audio_chunk_mode` | `auto` | `auto` or `fixed` splits long audio; `none` requires at most 40 seconds. |
 | `audio_chunk_duration_sec` | `40` | Maximum chunk length, at most 40 seconds. |
 | `max_tokens` | `0` | Generated tokens per chunk; zero derives a limit from encoder length. |

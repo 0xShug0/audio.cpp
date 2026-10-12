@@ -183,9 +183,12 @@ for (size_t i = 0; i < count; ++i) {
 }
 ```
 
-Bounds come through too, so generated wrappers can validate rather than just
-pass values along — Sortformer's `speaker_threshold` reports `[0, 1]`, Kokoro's
-`text_chunk_size` reports a minimum of 32.
+Bounds are read-only discovery metadata; returning `min_value` and `max_value`
+does not enforce them on requests. They can guide controls and input hints, but
+are not a complete validation contract. Read `description` for excluded
+endpoints and conditional constraints, such as a temperature that must be
+`> 0` only when sampling is enabled. Model parsers and consumers enforce actual
+values. See [option metadata](maintainers/model_specs.md#metadata-vs-runtime-loading).
 
 This is what keeps the ABI independent of the model surface: the option maps are
 `string -> string` in the framework already, so **adding a model family never

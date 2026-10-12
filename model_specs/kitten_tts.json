@@ -30,15 +30,14 @@
       {
         "name": "speed",
         "type": "float",
-        "description": "Speech speed multiplier; larger values produce faster speech.",
+        "description": "Speech speed multiplier; larger values produce faster speech. Must be finite and positive.",
         "required": false,
-        "min": 0.01,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Decoder noise seed; omitted requests choose a random seed.",
+        "description": "Decoder noise seed; omitted requests choose a random seed. Seeds retained decoder state during preparation, not subsequent run() calls on that prepared session.",
         "required": false,
         "min": 0
       },
@@ -60,7 +59,7 @@
         "type": "int",
         "description": "Maximum Unicode codepoints per long-form chunk.",
         "required": false,
-        "min": 32,
+        "min": 1,
         "default": 400
       }
     ],

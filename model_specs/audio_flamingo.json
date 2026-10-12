@@ -32,10 +32,9 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "default": 2048,
         "min": 1,
         "required": false,
-        "description": "Maximum generated response tokens."
+        "description": "Maximum generated response tokens. Defaults to checkpoint generation configuration (2048 fallback); prompt plus output budget must fit model positions."
       },
       {
         "name": "do_sample",
@@ -48,42 +47,36 @@
         "name": "temperature",
         "type": "float",
         "default": 1,
-        "min": 0.01,
         "required": false,
-        "description": "Sampling temperature."
+        "description": "Sampling temperature. Used only when do_sample=true; must be positive when sampling."
       },
       {
         "name": "top_k",
         "type": "int",
         "default": 50,
-        "min": 0,
         "required": false,
-        "description": "Sampling candidate count; zero disables top-k filtering."
+        "description": "Sampling candidate count; zero disables top-k filtering. Used only when sampling; nonpositive values disable top-k filtering."
       },
       {
         "name": "top_p",
         "type": "float",
         "default": 1,
-        "min": 0.01,
-        "max": 1,
         "required": false,
-        "description": "Nucleus sampling probability."
+        "description": "Nucleus sampling probability. Used only when sampling; zero is accepted and values >=1 disable nucleus filtering."
       },
       {
         "name": "repetition_penalty",
         "type": "float",
         "default": 1,
-        "min": 0.01,
         "required": false,
-        "description": "Token repetition penalty."
+        "description": "Token repetition penalty. Must be positive."
       },
       {
         "name": "seed",
         "type": "int",
         "default": 42,
-        "min": 0,
         "required": false,
-        "description": "Sampling seed."
+        "description": "Sampling seed. Parsed as a signed integer and converted to uint32."
       }
     ],
     "session": [

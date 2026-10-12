@@ -54,10 +54,43 @@ runtime::CapabilitySet capabilities(const Qwen3TTSAssets & assets) {
 
 runtime::ModelCliInterface cli(const Qwen3TTSAssets &) {
     runtime::ModelCliInterface out;
+    out.request_options = {
+        {"stream_chunk_policy", "grow|fixed", "Streaming codec chunk schedule: grow starts with one frame and doubles to stream_frames_per_event; fixed uses that size throughout. Ignored offline.", false, "grow"},
+        {"stream_frames_per_event", "int", "Codec frames per fixed streaming event, or the maximum for growing events. Smaller values reduce chunk latency but increase decoding overhead. Ignored in offline mode.", false, "12", "1"},
+        {"language", "string", "Target synthesis language code or label; default auto lets the model infer from text and voice settings.", false, "auto"},
+        {"max_tokens", "int", "Maximum generated codec frames per text chunk; omitted uses the checkpoint generation_config.json (2048 when absent).", false, std::nullopt, "1"},
+        {"do_sample", "bool", "Sample the main codec stream instead of greedy decoding; default true.", false, "true"},
+        {"temperature", "float", "Main codec sampling temperature; must be > 0 when do_sample=true. Ignored when do_sample=false; default 0.9.", false, "0.9", "0"},
+        {"top_k", "int", "Main codec top-k sampling limit; default 50, 0 disables top-k filtering.", false, "50", "0"},
+        {"top_p", "float", "Main codec nucleus sampling limit; default 1.0.", false, "1", "0", "1"},
+        {"repetition_penalty", "float", "Main codec repetition penalty; must be > 0, default 1.05.", false, "1.05", "0"},
+        {"subtalker_do_sample", "bool", "Enable subtalker sampling for the remaining audio codebooks instead of greedy decoding; default true.", false, "true"},
+        {"subtalker_temperature", "float", "Subtalker sampling temperature; must be > 0 when subtalker_do_sample=true. Ignored when subtalker_do_sample=false; default 0.9.", false, "0.9", "0"},
+        {"subtalker_top_k", "int", "Subtalker top-k sampling limit; default 50, 0 disables top-k filtering.", false, "50", "0"},
+        {"subtalker_top_p", "float", "Subtalker nucleus sampling limit; default 1.0.", false, "1", "0", "1"},
+        {"seed", "int", "Codec sampling seed; omitted requests choose a random seed.", false, std::nullopt, "0", "4294967295"},
+        {"reference_text", "string", "Transcript matching the reference audio for Base voice cloning.", false},
+        {"x_vector_only_mode", "bool", "Use only the speaker embedding for Base voice cloning instead of ICL reference codec prompting; default false.", false, "false"},
+        {"instruct", "string", "Natural-language voice or style instruction for VoiceDesign and CustomVoice variants.", false},
+        {"voice_id", "aiden|dylan|eric|ono_anna|ryan|serena|sohee|uncle_fu|vivian", "Named preset speaker from the CustomVoice checkpoint. These are the official checkpoint's presets; available names are determined by the loaded checkpoint. Legacy speaker remains accepted.", false},
+        {"text_chunk_size", "int", "Maximum UTF-8 codepoints per long-form text chunk; default 8192.", false, "8192", "1"},
+    };
     out.session_options = {
-        {"qwen3_tts.mem_saver", "true|false", "Release the talker cached-step graph after each request; default false."},
-        {"qwen3_tts.perf_mode", "off|flash_attention", "Q8_0-only attention performance mode; default off keeps the exact-safe path."},
-        {"qwen3_tts.voice_prompt_cache_slots", "n", "Voice prompt cache slots; default 1."},
+        {"qwen3_tts.mem_saver", "bool", "Release the talker cached-step graph after each request; default false.", false, "false"},
+        {"qwen3_tts.perf_mode", "off|flash_attention", "Q8_0-only attention performance mode; default off keeps the exact-safe path.", false, "off"},
+        {"qwen3_tts.voice_prompt_cache_slots", "int", "Voice prompt cache slots; default 1.", false, "1", "0"},
+        {"qwen3_tts.weight_type", "native|f32|f16|bf16|q8_0", "Shared talker matmul weight storage type; default native.", false, "native"},
+        {"qwen3_tts.talker_weight_type", "native|f32|f16|bf16|q8_0", "Talker weight storage type; defaults to weight_type when set, otherwise native.", false},
+        {"qwen3_tts.speech_encoder_weight_type", "native|f32|f16|bf16|q8_0", "Reference speech encoder matmul weight storage type; default native.", false, "native"},
+        {"qwen3_tts.speech_decoder_weight_type", "native|f32|f16|bf16|q8_0", "Speech decoder matmul weight storage type; default native.", false, "native"},
+        {"qwen3_tts.conv_weight_type", "native|f32|f16", "Speech tokenizer and speaker-encoder convolution weight storage type; default f32.", false, "f32"},
+        {"qwen3_tts.talker_graph_arena_mb", "int", "Talker graph arena size in MiB; default 32.", false, "32", "1"},
+        {"qwen3_tts.speech_encoder_graph_arena_mb", "int", "Reference speech encoder graph arena size in MiB; default 32.", false, "32", "1"},
+        {"qwen3_tts.speech_decoder_graph_arena_mb", "int", "Speech decoder graph arena size in MiB; default 32.", false, "32", "1"},
+        {"qwen3_tts.speaker_encoder_graph_arena_mb", "int", "Speaker encoder graph arena size in MiB; default 32.", false, "32", "1"},
+        {"qwen3_tts.talker_constant_context_mb", "int", "Talker constant tensor context size in MiB; default 4.", false, "4", "1"},
+        {"qwen3_tts.code_predictor_constant_context_mb", "int", "Code predictor constant tensor context size in MiB; default 4.", false, "4", "1"},
+        {"qwen3_tts.speech_decoder_constant_context_mb", "int", "Speech decoder constant tensor context size in MiB; default 4.", false, "4", "1"},
     };
     return out;
 }

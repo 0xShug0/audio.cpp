@@ -37,8 +37,8 @@ audiocpp_cli \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `audio_chunk_duration_sec` | seconds >= 0 | `0` | Chunk duration; `0` processes the whole recording. |
-| `audio_chunk_overlap_sec` | seconds >= 0 | `1` | Crossfade overlap, at most half the chunk duration. |
+| `audio_chunk_duration_sec` | seconds >= 0 | `0` | Chunk duration; `0` processes the whole recording. When enabled, the rounded chunk sample count must exceed `n_fft/2`. |
+| `audio_chunk_overlap_sec` | seconds >= 0 | `1` | Crossfade overlap; when chunking is enabled, at most half the chunk length after rounding to samples. Ignored for whole-file inference. |
 | `edge_pad_duration_sec` | seconds >= 0 | `0` | Extra context processed and discarded on each side of a chunk. |
 
 For long recordings, add these options to limit per-chunk memory use:

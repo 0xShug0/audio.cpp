@@ -94,19 +94,23 @@ Common request options:
 | `lyrics` | required | Lyrics to sing. Tags such as `[verse]`, `[chorus]`, `[bridge]`, and `[outro]` can be used in the text. |
 | `duration_sec` | `20` | AR frame budget expressed in seconds. It affects maximum length, performance, and memory use, but is not a hard final audio duration. |
 | `num_inference_steps` | `30` | Flow matching Euler steps per chunk. Lower values are faster. |
-| `guidance_scale` | `1.7` | Flow transformer CFG scale. Set `0` for the non-CFG flow path. |
-| `ar_guidance_scale` | `1.5` | Semantic/depth AR CFG scale. Set `0` for the non-CFG AR path. |
+| `guidance_scale` | `1.7` | Flow transformer CFG scale; must be > 0. Set `1` to use the conditional prediction without guidance amplification. |
+| `ar_guidance_scale` | `1.5` | Semantic/depth AR CFG scale; must be > 0. Set `1` to use conditional logits without guidance amplification. |
 | `top_k` | `50` | Top-k sampling for semantic and residual code sampling. |
 | `seed` | `0` | Generation seed. Try several seeds for diffusion-style music generation. |
+
+Both scales use `uncond + scale * (cond - uncond)`. Setting both to `1`
+removes CFG's effect, but the runtime still computes the unconditional branches;
+this does not select a faster conditional-only path. Zero is rejected.
 
 Common session options:
 
 | Option | Default | Notes |
 |---|---:|---|
 | `minimax_music3.language_model_gguf` | `language_model_q4_0.gguf` | Language model component file relative to the model root. |
-| `minimax_music3.rvq_depth_decoder_gguf` | `rvq_depth_decoder_bf16.gguf` | RVQ depth decoder component file relative to the model root. |
+| `minimax_music3.rvq_depth_decoder_gguf` | `rvq_depth_decoder_q8_0.gguf` | RVQ depth decoder component file relative to the model root. |
 | `minimax_music3.flow_transformer_gguf` | `transformer_q4_0.gguf` | Flow transformer component file relative to the model root. |
-| `minimax_music3.graph_context_mb` | `32` | Runtime graph arena size in MiB. |
+| `minimax_music3.graph_arena_mb` | `32` | Host graph-metadata arena size in MiB, not device workspace; legacy `minimax_music3.graph_context_mb` remains accepted. |
 | `minimax_music3.weight_context_mb` | `32` | Weight context size in MiB. |
 | `minimax_music3.mem_saver` | `true` | Load large generation stages only while needed to reduce peak VRAM. |
 
@@ -123,14 +127,14 @@ Request options:
 | `flow_uncond_interval` | `1` | Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between. `2`-`3` measures flow -25..-40% at ~0.3 dB mel-L1. `1` keeps the exact reference trajectory. |
 | `flow_uncond_warmup` | `2` | Steps at the start of each chunk that always evaluate both CFG branches before delta reuse kicks in. |
 | `flow_chunk_hop_frames` | `0` | Flow chunk hop in AR frames (~25/sec). `0` keeps the model config (100, 50% chunk overlap); `150` measures flow ~-35% with consistently rederived crops and carry. |
-| `ensemble_takes` | `1` | Generate K takes that share one batched AR pass and return them as named outputs (`take_01`..). Amortizes the AR stage across takes. |
+| `ensemble_takes` | `1` | Integer in `[1, 16]`. Generate K takes that share one batched AR pass and return them as named outputs (`take_01`..). Amortizes the AR stage across takes. |
 | `ensemble_prefix_frames` | `0` | With ensembles: share a master AR prefix of this many frames across takes (intro-lock), then let takes diverge. |
 
 Session options:
 
 | Option | Default | Notes |
 |---|---:|---|
-| `minimax_music3.pipeline_overlap` | `false` | Overlap AR decoding with per-chunk denoise/vocode on a second, lower-priority CUDA stream. Requires `mem_saver=false` (all stages stay resident). |
+| `minimax_music3.pipeline_overlap` | `false` | Overlap AR decoding with per-chunk denoise/vocode on a second, lower-priority CUDA stream. Combining with `mem_saver=true` is an error. Long requests and nondefault chunk hops use sequential execution. |
 
 Optional component GGUFs: `rvq_depth_decoder_q4_k.gguf` (the depth stage is
 weight-bandwidth-bound; measures depth about -24% against `q8_0` with no

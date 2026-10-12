@@ -60,7 +60,7 @@
         "required": false
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "description": "Instruction text for instruct mode.",
         "required": false
@@ -89,18 +89,18 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated CosyVoice3 speech tokens.",
+        "description": "Maximum generated speech tokens; -1 (default) selects 20 times the target text token count. Explicit limits must be positive.",
         "required": false,
-        "min": 1,
-        "default": 1600
+        "min": -1,
+        "default": -1
       },
       {
         "name": "min_tokens",
         "type": "int",
-        "description": "Minimum generated CosyVoice3 speech tokens before stop tokens are accepted.",
+        "description": "Minimum generated speech tokens before stop is accepted; -1 (default) selects twice the target text token count. Must not exceed the resolved maximum.",
         "required": false,
-        "min": 0,
-        "default": 0
+        "min": -1,
+        "default": -1
       },
       {
         "name": "top_k",
@@ -132,17 +132,17 @@
         "name": "weight_type",
         "type": "enum",
         "description": "CosyVoice3 matmul weight storage type; default native.",
-        "preset": "weight_type_full",
         "required": false,
-        "default": "native"
-      },
-      {
-        "name": "conv_weight_type",
-        "type": "enum",
-        "description": "CosyVoice3 convolution weight storage type; default native.",
-        "preset": "weight_type_conv",
-        "required": false,
-        "default": "native"
+        "default": "native",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_k"
+        ]
       },
       {
         "name": "graph_arena_mb",

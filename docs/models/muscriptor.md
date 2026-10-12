@@ -38,8 +38,8 @@ audiocpp_cli --task midi --mode streaming --family muscriptor \
 | `--max-tokens` | integer | `2000` | Maximum generated MIDI-event tokens per chunk. |
 | `--temperature` | float | `1.0` | Sampling temperature. `0` selects deterministic argmax. |
 | `--guidance-scale` | float | `1.0` | Classifier-free guidance coefficient; `1` disables CFG. |
-| `--num-beams` | integer | `1` | Beam-search width; `1` disables beam search. |
-| `--seed` | integer | `0` | Sampling seed. |
+| `--num-beams` | integer | `1` | Beam-search width; 1 disables beam search, default 1. Beam search requires guidance_scale=1, do_sample=false, and an actual graph batch of one. |
+| `--seed` | integer | `0` | Sampling seed; default 0. Parsed as int64 and converted to uint64; negative values wrap. |
 
 ## Request Options (use with `--request-option`)
 
@@ -50,7 +50,7 @@ audiocpp_cli --task midi --mode streaming --family muscriptor \
 | `max_tokens` | integer | `2000` | Maximum generated MIDI-event tokens per chunk. |
 | `do_sample` | bool | `false` | Use sampling instead of greedy token selection. |
 | `guidance_scale` | float | `1.0` | Classifier-free guidance coefficient; `1` disables CFG. |
-| `num_beams` | integer | `1` | Beam-search width; `1` disables beam search. |
+| `num_beams` | integer | `1` | Beam-search width; 1 disables beam search, default 1. Beam search requires guidance_scale=1, do_sample=false, and an actual graph batch of one. |
 | `batch_size` | integer | `1` | Number of chunks decoded per batch when `prelude_forcing=false`. |
 | `prelude_forcing` | bool | `true` | Force open-note prelude tokens between sequential chunks. |
 

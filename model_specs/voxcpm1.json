@@ -44,49 +44,48 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum MiniCPM output tokens.",
+        "description": "Maximum MiniCPM output tokens; default 4096. Zero selects model max_length; negative counts are rejected.",
         "required": false,
-        "default": 1024
+        "default": 4096
       },
       {
         "name": "min_tokens",
         "type": "int",
-        "description": "Minimum MiniCPM output tokens before an EOS stop is honored.",
-        "required": false,
-        "default": 0
-      },
-      {
-        "name": "num_inference_steps",
-        "type": "int",
-        "description": "CFM diffusion sampling steps.",
-        "required": false,
-        "default": 50
-      },
-      {
-        "name": "guidance_scale",
-        "type": "float",
-        "description": "CFM classifier-free guidance rate.",
-        "required": false,
-        "default": 2.0
-      },
-      {
-        "name": "retry_badcase",
-        "type": "bool",
-        "description": "Retry the request when generation is detected as a bad case.",
-        "required": false,
-        "default": true
-      },
-      {
-        "name": "retry_badcase_max_times",
-        "type": "int",
-        "description": "Maximum bad-case retry count.",
+        "description": "Minimum MiniCPM output tokens before an EOS stop is honored; default 2.",
         "required": false,
         "default": 2
       },
       {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "CFM diffusion sampling steps; default 10. Must be positive.",
+        "required": false,
+        "default": 10
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "CFM classifier-free guidance rate. Must be nonnegative.",
+        "required": false,
+        "default": 2
+      },
+      {
+        "name": "retry_badcase",
+        "type": "bool",
+        "description": "Retry when generation is detected as a bad case; defaults to true offline and false in streaming. Streaming ignores an explicit true value with a warning.",
+        "required": false
+      },
+      {
+        "name": "retry_badcase_max_times",
+        "type": "int",
+        "description": "Maximum total generation attempts when retrying bad cases, including the initial attempt; default 3. Must be positive.",
+        "required": false,
+        "default": 3
+      },
+      {
         "name": "retry_badcase_ratio_threshold",
         "type": "float",
-        "description": "Bad-case ratio threshold for retry decisions.",
+        "description": "Bad-case ratio threshold for retry decisions. Must be positive.",
         "required": false
       },
       {
@@ -99,6 +98,20 @@
         "name": "reference_text",
         "type": "string",
         "description": "Alias for prompt_text; text prompt for prompt-continuation voice cloning.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per offline text chunk; must be positive. Does not control streaming chunk cadence.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Language hint for Chinese-script normalization; Cantonese/yue preserves Traditional characters. Inherits structured transcript or voice language when provided.",
         "required": false
       }
     ],
@@ -140,33 +153,33 @@
         "required": false
       },
       {
-        "name": "text_embedding_graph_context_mb",
+        "name": "text_embedding_graph_arena_mb",
         "type": "int",
-        "description": "Text embedding graph context size in MB.",
+        "description": "Text embedding host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
-        "name": "lm_step_graph_context_mb",
+        "name": "lm_step_graph_arena_mb",
         "type": "int",
-        "description": "LM step graph context size in MB.",
+        "description": "LM step host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
-        "name": "projection_graph_context_mb",
+        "name": "projection_graph_arena_mb",
         "type": "int",
-        "description": "Projection graph context size in MB.",
+        "description": "Projection host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
-        "name": "local_encoder_graph_context_mb",
+        "name": "local_encoder_graph_arena_mb",
         "type": "int",
-        "description": "Local encoder graph context size in MB.",
+        "description": "Local encoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
-        "name": "dit_graph_context_mb",
+        "name": "dit_graph_arena_mb",
         "type": "int",
-        "description": "DiT estimator graph context size in MB.",
+        "description": "DiT estimator host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
@@ -176,15 +189,15 @@
         "required": false
       },
       {
-        "name": "audiovae_graph_context_mb",
+        "name": "audiovae_graph_arena_mb",
         "type": "int",
-        "description": "AudioVAE decoder graph context size in MB.",
+        "description": "AudioVAE decoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {
-        "name": "audiovae_encoder_graph_context_mb",
+        "name": "audiovae_encoder_graph_arena_mb",
         "type": "int",
-        "description": "AudioVAE encoder graph context size in MB.",
+        "description": "AudioVAE encoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false
       },
       {

@@ -67,12 +67,15 @@ git clone https://github.com/pnnbao97/sea-g2p && cd sea-g2p
 cargo build --release --no-default-features --features capi
 # target/release/{libsea_g2p_rs.so | sea_g2p_rs.dll | libsea_g2p_rs.dylib}
 
-audiocpp_cli --task tts --family vieneu_v3_turbo --model .../vieneu-v3-turbo-q8_0.gguf   --backend cpu --text "Tỉ lệ giải ngân đầu tư công đạt 68,5% kế hoạch năm."   --session-option vieneu_v3_turbo.g2p_dict=/path/to/sea_g2p.bin   --request-option reference_codes_file=.../voices/minh_quan_pro/ref_codes.txt   --request-option speaker_embedding_file=.../voices/minh_quan_pro/speaker.emb.txt   --out out.wav
+audiocpp_cli --task tts --family vieneu_v3_turbo --model .../vieneu-v3-turbo-q8_0.gguf   --backend cpu --text "Tỉ lệ giải ngân đầu tư công đạt 68,5% kế hoạch năm."   --session-option vieneu_v3_turbo.g2p_dict_file=/path/to/sea_g2p.bin   --request-option reference_codes_file=.../voices/minh_quan_pro/ref_codes.txt   --request-option speaker_embedding_file=.../voices/minh_quan_pro/speaker.emb.txt   --out out.wav
 ```
 
 The library is found by name (next to the binary, or on the search path) unless
 `vieneu_v3_turbo.g2p_library` names it. `sea_g2p.bin` is the dictionary, ~50 MB,
 published with the Python package.
+
+Legacy `vieneu_v3_turbo.g2p_dict` and bare `g2p_dict` remain accepted for the
+dictionary file.
 
 Without those options nothing changes: `--text` is then the phoneme string, which
 is what every earlier version expected.
@@ -160,13 +163,13 @@ Defaults follow `Vieneu.infer()` in the Python package. Use `--request-option na
 | `repetition_window` | `64` | Frames each codebook remembers (~5 s); `0` = unbounded. |
 | `do_sample` | `true` | `false` = greedy (argmax) decoding. |
 | `max_tokens` | `300` | Frame budget per chunk (80 ms each). |
-| `frame_cap` | `true` | Also cap the budget by the phoneme count of the chunk (Python `max_expected_frames`), which stops runaway generation when EOS is missed. |
+| `auto_frame_cap` | `true` | Also cap the budget by the phoneme count of the chunk (Python `max_expected_frames`), which stops runaway generation when EOS is missed. Legacy `frame_cap` remains accepted. |
 | `seed` | random | Sampling seed. |
 | `reference_codes_file` / `speaker_embedding_file` / `speaker_embedding` | — | Voice inputs, see above. |
-| `x_vector_only_mode` | `false` | Ignore reference codes and clone from the speaker embedding alone. |
+| `x_vector_only_mode` | input-dependent | Defaults to true for embedding-only input; otherwise false. Ignore reference codes and clone from the speaker embedding alone. |
 | `encode_reference_only` | `false` | Encode `--voice-ref` into reference codes, return them as an artifact and generate nothing. |
 | `text_chunk_size` | `200` | Character budget per chunk of the phoneme string. The cut follows paragraphs, then sentences, then minor punctuation, then whitespace. |
-| `text_chunk_min` | `20` | Chunks shorter than this join a neighbour — alone they read as a stutter. |
+| `text_chunk_min_size` | `20` | Chunks shorter than this join a neighbour — alone they read as a stutter. Legacy `text_chunk_min` remains accepted. |
 | `babble_retries` | `2` | Re-generations for a short chunk that kept talking past its text (`0` disables the guard). |
 | `subtalker_temperature` / `subtalker_top_k` / `subtalker_top_p` | = main | Acoustic decoder overrides. |
 | `codes_dump_file` | — | Parity debugging: appends prompt ids, reference codes and generated codes as text. |
@@ -186,7 +189,7 @@ sound like one utterance:
 
 - **the cut** follows paragraphs, then sentences (`. ! ? …`), then minor
   punctuation, then whitespace, packing up to `text_chunk_size` characters of
-  the phoneme string; a chunk under `text_chunk_min` joins a neighbour;
+  the phoneme string; a chunk under `text_chunk_min_size` joins a neighbour;
 - **the pause** between two chunks is a minimum, not an insertion: the silence
   the model already left (tail of one, lead of the next) is measured and only
   the shortfall is padded with zeros — 0.70 s after a paragraph, 0.50 s after a

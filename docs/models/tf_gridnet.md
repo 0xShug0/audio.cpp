@@ -36,8 +36,8 @@ checkpoints require the configured channel count and microphone arrangement.
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `audio_chunk_duration_sec` | `2.4` | Window length; `0` processes the whole recording in one graph shape. |
-| `audio_chunk_overlap_sec` | `1.6` | Overlap for speaker matching and averaging; positive and smaller than the window. |
+| `audio_chunk_duration_sec` | `2.4` | Nonnegative window length; `0` processes the whole recording in one graph shape. When enabled, the rounded sample count must exceed `n_fft/2`. |
+| `audio_chunk_overlap_sec` | `1.6` | Nonnegative overlap for speaker matching and averaging; when chunking is enabled, its rounded sample count must be positive and smaller than the window. Ignored for whole-file inference. |
 | `normalize_output` | `true` | Normalize each final track to a peak of `0.9`. |
 
 ### Session Options (Use With `--session-option`)

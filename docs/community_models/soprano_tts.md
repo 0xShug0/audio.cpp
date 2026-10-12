@@ -124,9 +124,9 @@ build/bin/audiocpp_cli --task tts --mode streaming --family soprano_tts \
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--request-option max_tokens=<n>` | integer | `512` | Maximum generated audio frames per chunk. |
-| `--temperature` / `--request-option temperature=<f>` | float | `0.3` | AR sampling temperature. |
-| `--top-p` / `--request-option top_p=<f>` | float | `0.95` | Nucleus sampling threshold. |
-| `--repetition-penalty` / `--request-option repetition_penalty=<f>` | float | `1.2` | Repetition penalty. |
+| `--temperature` / `--request-option temperature=<f>` | float > 0 | `0.3` | AR sampling temperature; zero is rejected, not a default sentinel. |
+| `--top-p` / `--request-option top_p=<f>` | float | `0.95` | Nucleus sampling probability; default 0.95. Values >=1 disable nucleus filtering. |
+| `--repetition-penalty` / `--request-option repetition_penalty=<f>` | float | `1.2` | Repetition penalty applied to the LM head; default 1.2. Must be positive; values below 1 are accepted. |
 | `--request-option eos_bias=<f>` | float | `0.0` | Additive bias on EOS logit; positive stops sooner. |
 | `--seed` / `--request-option seed=<n>` | integer | random | AR sampling seed. |
 
@@ -134,14 +134,12 @@ build/bin/audiocpp_cli --task tts --mode streaming --family soprano_tts \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--session-option text_chunk_size=<n>` | chars | `200` | Max codepoints per chunk. |
+| `--session-option soprano_tts.text_chunk_size=<n>` | chars | `200` | Max codepoints per chunk. |
+| `--session-option soprano_tts.backbone_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `f32` | LM weight storage. `f16`/`q8_0` are faster (see Performance). |
+| `--session-option soprano_tts.decoder_weight_type=<type>` | `native`, `f32`, `f16` | `f32` | Decoder weight storage. |
 
-### Load options
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--session-option backbone_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `f32` | LM weight storage. `f16`/`q8_0` are faster (see Performance). |
-| `--session-option decoder_weight_type=<type>` | `native`, `f32`, `f16` | `f32` | Decoder weight storage. |
+The legacy unprefixed session names remain accepted. Weight storage is selected
+when the session is created, not changed per request.
 
 ---
 
@@ -236,11 +234,11 @@ fastest inference.
 ```
 # CPU: F16 backbone (recommended)
 build/bin/audiocpp_cli --task tts --family soprano_tts --model models/soprano-1.1-80m-converted \
-  --text "..." --session-option backbone_weight_type=f16 --out out.wav
+  --text "..." --session-option soprano_tts.backbone_weight_type=f16 --out out.wav
 
 # CPU: Q8_0 backbone (fastest)
 build/bin/audiocpp_cli --task tts --family soprano_tts --model models/soprano-1.1-80m-converted \
-  --text "..." --session-option backbone_weight_type=q8_0 --out out.wav
+  --text "..." --session-option soprano_tts.backbone_weight_type=q8_0 --out out.wav
 
 # GPU: pre-quantized GGUF packages already run at the q8_0 rate
 ```

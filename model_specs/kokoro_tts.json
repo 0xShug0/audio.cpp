@@ -19,23 +19,22 @@
       {
         "name": "language",
         "type": "string",
-        "description": "Text language code; defaults to the selected voice prefix.",
+        "description": "Language must be supplied through structured transcript/style input (CLI --language); a language entry in the request option map is not consumed.",
         "required": false
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Decoder noise seed; omitted requests choose a random seed.",
+        "description": "Decoder noise seed; omitted requests choose a random seed. Consumed during preparation, not subsequent run() calls on the prepared session.",
         "required": false,
         "min": 0
       },
       {
         "name": "speed",
         "type": "float",
-        "description": "Speech speed multiplier; default 1.0.",
+        "description": "Speech speed multiplier; default 1.0. Must be finite and positive.",
         "required": false,
-        "min": 0.01,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "phonemes",
@@ -48,7 +47,7 @@
         "type": "int",
         "description": "Maximum codepoints per text chunk before synthesis. Default 240.",
         "required": false,
-        "min": 32,
+        "min": 1,
         "default": 240
       },
       {
@@ -85,25 +84,25 @@
         "default": 512
       },
       {
-        "name": "predictor_duration_graph_mb",
+        "name": "predictor_duration_graph_arena_mb",
         "type": "int",
-        "description": "Predictor duration graph arena size in MiB; default 384.",
+        "description": "Predictor duration host graph-metadata arena size in MiB, not device workspace; default 384.",
         "required": false,
         "min": 1,
         "default": 384
       },
       {
-        "name": "predictor_text_graph_mb",
+        "name": "predictor_text_graph_arena_mb",
         "type": "int",
-        "description": "Predictor text graph arena size in MiB; default 256.",
+        "description": "Predictor text host graph-metadata arena size in MiB, not device workspace; default 256.",
         "required": false,
         "min": 1,
         "default": 256
       },
       {
-        "name": "predictor_tail_graph_mb",
+        "name": "predictor_tail_graph_arena_mb",
         "type": "int",
-        "description": "Predictor tail graph arena size in MiB; default 640.",
+        "description": "Predictor tail host graph-metadata arena size in MiB, not device workspace; default 640.",
         "required": false,
         "min": 1,
         "default": 640

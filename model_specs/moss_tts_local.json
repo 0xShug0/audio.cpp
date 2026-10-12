@@ -64,7 +64,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Audio sampling temperature.",
+        "description": "Audio sampling temperature. Must be finite and positive when sampling.",
         "required": false,
         "default": 1.7
       },
@@ -85,14 +85,14 @@
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "Audio repetition penalty.",
+        "description": "Audio repetition penalty. Must be finite and positive when token history is nonempty.",
         "required": false,
         "default": 1
       },
       {
         "name": "text_temperature",
         "type": "float",
-        "description": "Text sampling temperature.",
+        "description": "Text sampling temperature. Must be finite and positive when sampling.",
         "required": false,
         "default": 1
       },
@@ -123,7 +123,8 @@
         "type": "int",
         "description": "Framework long-form text chunk size.",
         "required": false,
-        "default": 2048
+        "default": 2048,
+        "min": 1
       },
       {
         "name": "text_chunk_mode",

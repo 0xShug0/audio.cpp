@@ -481,7 +481,11 @@ runtime::RunMode DotsSession::run_mode() const {
 }
 
 void DotsSession::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "DotTTS");
+    auto validation_options = request.options;
+    validation_options.erase("instruct");
+    validation_options.erase("instruction");
+    (void)runtime::find_option(request.options, {"instruction", "instruct"});
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "DotTTS");
     prepared_defaults_ = make_dots_prepare_defaults(*assets_, request);
     mark_prepared();
 }
@@ -1376,7 +1380,10 @@ runtime::TaskResult DotsSession::run(const runtime::TaskRequest & request) {
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("DotTTS run requires an offline session");
     }
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "DotTTS");
+    auto validation_options = request.options;
+    validation_options.erase("instruct");
+    validation_options.erase("instruction");
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "DotTTS");
     const auto start = Clock::now();
     auto parsed = make_dots_request(*assets_, request, prepared_defaults_);
     runtime::TaskResult result;
@@ -1397,7 +1404,10 @@ void DotsSession::start_stream(const runtime::TaskRequest & request) {
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("DotTTS start_stream requires a streaming session");
     }
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "DotTTS");
+    auto validation_options = request.options;
+    validation_options.erase("instruct");
+    validation_options.erase("instruction");
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "DotTTS");
     reset();
     const auto start = Clock::now();
     auto parsed = make_dots_request(*assets_, request, prepared_defaults_);

@@ -61,7 +61,7 @@ audiocpp_cli --task asr --mode streaming \
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. |
-| `--max-tokens` | integer | audio-duration derived | Maximum generated transcript tokens. |
+| `--max-tokens` | integer | audio-duration derived | Maximum generated transcript tokens. Defaults to audio-duration derived limit. Nonpositive values select the automatic budget. |
 | `--request-option audio_chunk_mode=...` | `auto`, `fixed`, `vad`, `none` | `auto` | Long-form audio chunking policy. |
 | `--request-option audio_chunk_duration_sec=...` | seconds | `60` | Maximum chunk duration for `auto`, `fixed`, and `vad`. |
 | `--text-out` | TXT path | not set | Transcript output. |
@@ -70,7 +70,8 @@ audiocpp_cli --task asr --mode streaming \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `moonshine_asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared matmul weight storage type. |
+| `moonshine_asr.weight_type` | `native`, `f32`, `f16` | backend/config dependent | Shared matmul storage override. When omitted, the CPU encoder with hidden size 620, 10 layers and decoder hidden size 512 uses f16; other encoders use native. |
+| `moonshine_asr.decoder_weight_type` | `native`, `f32`, `f16` | explicit shared setting, otherwise `native` | Decoder matmul storage override. |
 | `moonshine_asr.encoder_gelu` | `erf`, `exact`, `tanh`, `quick` | `quick` | Encoder GELU lowering. |
 | `moonshine_asr.cpu_blas_scheduler` | bool | `true` | Use BLAS/Accelerate for supported CPU encoder matmuls. |
 | `moonshine_asr.vad_model_path` | path | `assets/framework/models/silero_vad` | Silero VAD model path used by `audio_chunk_mode=vad`. |

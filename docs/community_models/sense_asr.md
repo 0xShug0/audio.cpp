@@ -109,8 +109,8 @@ curl -X POST http://127.0.0.1:8080/v1/audio/transcriptions/live \
 | `language` | auto\|zh\|en\|yue\|ja\|ko\|pt\|ru\|... | `auto` | Recognition language; `auto` lets the model infer it |
 | `enable_itn` | true\|false | `true` | Inverse text normalization via the withitn query token |
 | `keep_tags` | true\|false | `false` | Keep `<|...|>` meta tags inline |
-| `audio_chunk_mode` | auto\|fixed\|none | `auto` | VAD segmentation, fixed split, or one pass |
-| `audio_chunk_duration_sec` | seconds | `30` | Max chunk/window duration |
+| `audio_chunk_mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Offline chunk mode: auto, fixed, vad, or none. Streaming always uses fixed-duration windows. |
+| `audio_chunk_duration_sec` | seconds | `30` | Positive duration rounding to at least one sample; sets fixed windows and the VAD maximum chunk length. |
 
 Session options: `sense_asr.weight_type` (native\|f32\|f16\|bf16\|q8_0),
 `sense_asr.encoder_graph_arena_mb`, and `sense_asr.vad_model_path` (defaults to

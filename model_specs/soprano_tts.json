@@ -39,7 +39,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Autoregressive sampling temperature; default 0.3 (0 selects the framework default and clamps to a small positive value).",
+        "description": "Autoregressive sampling temperature; must be > 0, default 0.3.",
         "required": false,
         "min": 0.0,
         "default": 0.3
@@ -47,18 +47,16 @@
       {
         "name": "top_p",
         "type": "float",
-        "description": "Nucleus sampling probability; default 0.95.",
+        "description": "Nucleus sampling probability; default 0.95. Values >=1 disable nucleus filtering.",
         "required": false,
-        "min": 0.0,
-        "max": 1.0,
+        "min": 0,
         "default": 0.95
       },
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "Repetition penalty applied to the LM head; default 1.2.",
+        "description": "Repetition penalty applied to the LM head; default 1.2. Must be positive; values below 1 are accepted.",
         "required": false,
-        "min": 1.0,
         "default": 1.2
       },
       {
@@ -82,17 +80,15 @@
         "type": "int",
         "description": "Maximum codepoints per sentence chunk before the model generates and decodes separately. Smaller values keep prompts short (more reliable EOS) but increase overhead. Default 200.",
         "required": false,
-        "min": 32,
+        "min": 1,
         "default": 200
-      }
-    ],
-    "load": [
+      },
       {
         "name": "backbone_weight_type",
         "type": "enum",
         "preset": "weight_type_full",
         "required": false,
-        "default": "native",
+        "default": "f32",
         "description": "Storage type for the Qwen3 LM backbone weights."
       },
       {
@@ -100,10 +96,11 @@
         "type": "enum",
         "preset": "weight_type_conv",
         "required": false,
-        "default": "native",
+        "default": "f32",
         "description": "Storage type for the Vocos decoder weights."
       }
-    ]
+    ],
+    "load": []
   },
   "package_defaults": {
     "download": {

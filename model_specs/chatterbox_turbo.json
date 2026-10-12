@@ -14,6 +14,66 @@
     "en"
   ],
   "capabilities": {},
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated tokens; legacy max_new_tokens remains accepted.",
+        "required": false,
+        "min": 0,
+        "default": 1000
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "T3 sampling temperature.",
+        "required": false,
+        "default": 0.8
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "T3 nucleus sampling cutoff.",
+        "required": false,
+        "default": 0.95
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "T3 top-k sampling limit.",
+        "required": false,
+        "min": 0,
+        "default": 1000
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "T3 token repetition penalty.",
+        "required": false,
+        "default": 1.2
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295,
+        "default": 0
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per text chunk; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      }
+    ],
+    "session": [],
+    "load": []
+  },
   "runtime": {
     "tags": [
       "gguf"

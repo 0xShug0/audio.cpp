@@ -67,7 +67,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated speech-token count for the autoregressive generator; 0 uses the remaining model context, default 0.",
+        "description": "Maximum generated speech-token count for the autoregressive generator; 0 uses the remaining model context, default 0. Total generation context is capped at min(checkpoint context, 2048).",
         "required": false,
         "min": 0,
         "default": 0
@@ -83,7 +83,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Autoregressive sampling temperature; must be positive, default 1.0.",
+        "description": "Autoregressive sampling temperature; must be > 0, default 1.0.",
         "required": false,
         "min": 0.0,
         "default": 1.0
@@ -137,7 +137,7 @@
       {
         "name": "generator_weight_type",
         "type": "enum",
-        "description": "Backbone matmul weight storage type; defaults to weight_type when set, otherwise native.",
+        "description": "Generator weight storage; inherits explicit weight_type, otherwise F32 on CPU and native on other backends.",
         "preset": "weight_type_full",
         "required": false
       },

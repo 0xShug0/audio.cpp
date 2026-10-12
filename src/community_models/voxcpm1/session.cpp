@@ -118,13 +118,20 @@ void validate_session_options(
     }
     if (key == "voxcpm1.weight_context_mb" ||
         key == "voxcpm1.text_embedding_graph_context_mb" ||
+        key == "voxcpm1.text_embedding_graph_arena_mb" ||
         key == "voxcpm1.lm_step_graph_context_mb" ||
+        key == "voxcpm1.lm_step_graph_arena_mb" ||
         key == "voxcpm1.projection_graph_context_mb" ||
+        key == "voxcpm1.projection_graph_arena_mb" ||
         key == "voxcpm1.local_encoder_graph_context_mb" ||
+        key == "voxcpm1.local_encoder_graph_arena_mb" ||
         key == "voxcpm1.dit_graph_context_mb" ||
+        key == "voxcpm1.dit_graph_arena_mb" ||
         key == "voxcpm1.audiovae_weight_context_mb" ||
         key == "voxcpm1.audiovae_graph_context_mb" ||
+        key == "voxcpm1.audiovae_graph_arena_mb" ||
         key == "voxcpm1.audiovae_encoder_graph_context_mb" ||
+        key == "voxcpm1.audiovae_encoder_graph_arena_mb" ||
         key == "voxcpm1.audiovae_latent_capacity" ||
         key == "voxcpm1.audiovae_encoder_sample_capacity" ||
         key == "voxcpm1.weight_type" ||
@@ -203,31 +210,31 @@ VoxCPM1SessionBase::VoxCPM1SessionBase(runtime::TaskSpec task,
       generator_config_.weight_context_bytes);
   generator_config_.text_embedding_graph_context_bytes =
       runtime::parse_size_mb_option(
-          options.options, {"voxcpm1.text_embedding_graph_context_mb"},
+          options.options, {"voxcpm1.text_embedding_graph_arena_mb", "voxcpm1.text_embedding_graph_context_mb"},
           generator_config_.text_embedding_graph_context_bytes);
   generator_config_.lm_step_graph_context_bytes = runtime::parse_size_mb_option(
-      options.options, {"voxcpm1.lm_step_graph_context_mb"},
+      options.options, {"voxcpm1.lm_step_graph_arena_mb", "voxcpm1.lm_step_graph_context_mb"},
       generator_config_.lm_step_graph_context_bytes);
   generator_config_.projection_graph_context_bytes =
       runtime::parse_size_mb_option(
-          options.options, {"voxcpm1.projection_graph_context_mb"},
+          options.options, {"voxcpm1.projection_graph_arena_mb", "voxcpm1.projection_graph_context_mb"},
           generator_config_.projection_graph_context_bytes);
   generator_config_.local_encoder_graph_context_bytes =
       runtime::parse_size_mb_option(
-          options.options, {"voxcpm1.local_encoder_graph_context_mb"},
+          options.options, {"voxcpm1.local_encoder_graph_arena_mb", "voxcpm1.local_encoder_graph_context_mb"},
           generator_config_.local_encoder_graph_context_bytes);
   generator_config_.dit_graph_context_bytes = runtime::parse_size_mb_option(
-      options.options, {"voxcpm1.dit_graph_context_mb"},
+      options.options, {"voxcpm1.dit_graph_arena_mb", "voxcpm1.dit_graph_context_mb"},
       generator_config_.dit_graph_context_bytes);
   generator_config_.prompt_cache_slots = encoded_prompt_cache_.capacity();
   decoder_config_.weight_context_bytes = runtime::parse_size_mb_option(
       options.options, {"voxcpm1.audiovae_weight_context_mb"},
       decoder_config_.weight_context_bytes);
   decoder_config_.graph_context_bytes = runtime::parse_size_mb_option(
-      options.options, {"voxcpm1.audiovae_graph_context_mb"},
+      options.options, {"voxcpm1.audiovae_graph_arena_mb", "voxcpm1.audiovae_graph_context_mb"},
       decoder_config_.graph_context_bytes);
   decoder_config_.encoder_graph_context_bytes = runtime::parse_size_mb_option(
-      options.options, {"voxcpm1.audiovae_encoder_graph_context_mb"},
+      options.options, {"voxcpm1.audiovae_encoder_graph_arena_mb", "voxcpm1.audiovae_encoder_graph_context_mb"},
       decoder_config_.encoder_graph_context_bytes);
   decoder_config_.latent_frame_capacity = runtime::parse_positive_i64_option(
       options.options, {"voxcpm1.audiovae_latent_capacity"},
@@ -853,14 +860,39 @@ runtime::CapabilitySet capabilities_v1(const VoxCPM1Assets &) {
 runtime::ModelCliInterface cli_v1(const VoxCPM1Assets &) {
   runtime::ModelCliInterface out;
   out.request_options = {
-      {"text_chunk_mode", "default|tag_aware|japanese|endline",
-       "Text chunking mode; default tag_aware."},
+      {"text_chunk_mode", "word_budget|tag_aware|japanese|endline", "Text chunking mode; default tag_aware.", false, "tag_aware"},
+      {"seed", "int", "Random seed for MiniCPM and diffusion sampling.", false},
+      {"max_tokens", "int", "Maximum MiniCPM output tokens; default 4096. Zero selects model max_length; negative counts are rejected.", false, "4096"},
+      {"min_tokens", "int", "Minimum MiniCPM output tokens before an EOS stop is honored; default 2.", false, "2"},
+      {"num_inference_steps", "int", "CFM diffusion sampling steps; default 10. Must be positive.", false, "10"},
+      {"guidance_scale", "float", "CFM classifier-free guidance rate. Must be nonnegative. Default: 2.", false, "2"},
+      {"retry_badcase", "bool", "Retry when generation is detected as a bad case; defaults to true offline and false in streaming. Streaming ignores an explicit true value with a warning.", false},
+      {"retry_badcase_max_times", "int", "Maximum total generation attempts when retrying bad cases, including the initial attempt; default 3. Must be positive.", false, "3"},
+      {"retry_badcase_ratio_threshold", "float", "Bad-case ratio threshold for retry decisions. Must be positive."},
+      {"prompt_text", "string", "Text prompt for prompt-continuation voice cloning.", false},
+      {"reference_text", "string", "Alias for prompt_text; text prompt for prompt-continuation voice cloning.", false},
+      {"text_chunk_size", "int", "Maximum characters per offline text chunk; must be positive. Does not control streaming chunk cadence. Default: 2048.", false, "2048", "1"},
   };
   out.session_options = {
-      {"voxcpm1.mem_saver", "true|false",
-       "Use tighter graph workspaces and release request runtime graphs; default false."},
-      {"voxcpm1.prompt_cache_slots", "n",
-       "Prompt and prompt-audio embedding cache slots; default 1."},
+      {"voxcpm1.mem_saver", "bool", "Use tighter graph workspaces and release request runtime graphs; default false.", false, "false"},
+      {"voxcpm1.prompt_cache_slots", "int", "Prompt and prompt-audio embedding cache slots; default 1.", false, "1"},
+      {"voxcpm1.weight_type", "native|f32|f16|bf16|q8_0", "Model weight storage type.", false, "native"},
+      {"voxcpm1.audiovae_weight_type", "native|f32|f16|bf16|q8_0", "AudioVAE weight storage type.", false, "native"},
+      {"voxcpm1.weight_context_mb", "int", "Model weight graph context size in MB.", false},
+      {"voxcpm1.text_embedding_graph_arena_mb", "int", "Text embedding host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.lm_step_graph_arena_mb", "int", "LM step host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.projection_graph_arena_mb", "int", "Projection host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.local_encoder_graph_arena_mb", "int", "Local encoder host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.dit_graph_arena_mb", "int", "DiT estimator host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.audiovae_weight_context_mb", "int", "AudioVAE weight graph context size in MB.", false},
+      {"voxcpm1.audiovae_graph_arena_mb", "int", "AudioVAE decoder host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.audiovae_encoder_graph_arena_mb", "int", "AudioVAE encoder host graph-metadata arena size in MiB, not device workspace.", false},
+      {"voxcpm1.audiovae_latent_capacity", "int", "AudioVAE decoder latent frame capacity.", false},
+      {"voxcpm1.audiovae_encoder_sample_capacity", "int", "AudioVAE encoder sample capacity.", false},
+  };
+  out.load_options = {
+      {"voxcpm1.weight_type", "native|f32|f16|bf16|q8_0", "Model weight storage type selected at load time.", false, "native"},
+      {"voxcpm1.audiovae_weight_type", "native|f32|f16|bf16|q8_0", "AudioVAE weight storage type selected at load time.", false, "native"},
   };
   return out;
 }

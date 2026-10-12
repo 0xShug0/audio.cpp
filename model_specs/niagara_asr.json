@@ -21,7 +21,7 @@
       {
         "name": "language",
         "type": "string",
-        "description": "Recognition language; Niagara batch models are English-only.",
+        "description": "Compatibility-only; recognition is English and output is always labelled en.",
         "required": false,
         "default": "en"
       },
@@ -41,16 +41,31 @@
         "name": "weight_type",
         "type": "enum",
         "description": "Matmul weight storage type.",
-        "preset": "weight_type_full",
         "required": false,
-        "default": "native"
+        "default": "native",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_1",
+          "q5_0",
+          "q5_1",
+          "q2_k",
+          "q3_k",
+          "q4_k",
+          "q5_k",
+          "q6_k"
+        ]
       },
       {
         "name": "graph_arena_mb",
         "type": "int",
         "description": "Inference graph arena size in MiB.",
         "required": false,
-        "min": 64,
+        "min": 1,
         "default": 1024
       },
       {
@@ -58,7 +73,7 @@
         "type": "int",
         "description": "Weight descriptor context size in MiB.",
         "required": false,
-        "min": 16,
+        "min": 1,
         "default": 256
       }
     ],

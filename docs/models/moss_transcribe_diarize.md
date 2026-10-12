@@ -52,7 +52,7 @@ Use `--backend cpu --threads 8` for CPU inference or `--backend vulkan` for Vulk
 |---|---|---:|---|
 | `--audio` | WAV path | required | Recording to transcribe. |
 | `--mode` | `offline`, `streaming` | `offline` | Emit the final result or text deltas during generation. |
-| `--instruct` | text | upstream instruction | Replace the transcription instruction; also accepted as `--request-option instruct=<text>`. |
+| `--instruct` | text | upstream instruction | CLI shortcut for `--request-option instruct=<text>`. |
 | `--text-out` | TXT path | not set | Save the timestamped, speaker-labelled transcript. |
 | `--segments-out` | JSON path | not set | Save speech segments. |
 | `--turns-out` | JSON path | not set | Save speaker turns. |
@@ -62,7 +62,7 @@ Use `--backend cpu --threads 8` for CPU inference or `--backend vulkan` for Vulk
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `instruct` | text | upstream instruction | Replace the transcription instruction. |
-| `max_tokens` | integer > 0 | `5120` | Maximum generated transcript tokens. |
+| `max_tokens` | integer > 0 | see description | Maximum generated transcript tokens. Defaults to checkpoint generation_config.max_new_tokens; must be positive. |
 
 Increase `max_tokens` if a long recording reaches the output-token limit.
 

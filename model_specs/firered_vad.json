@@ -38,7 +38,7 @@
       {
         "name": "smooth_window_ms",
         "type": "int",
-        "description": "Trailing probability smoothing window in milliseconds, rounded to the nearest 10 ms.",
+        "description": "Trailing probability smoothing window in milliseconds, rounded to the nearest 10 ms. Validation occurs after conversion to 10-ms frames; metadata bounds describe intended settings.",
         "required": false,
         "default": 50,
         "min": 10
@@ -46,14 +46,14 @@
       {
         "name": "min_speech_duration_ms",
         "type": "int",
-        "description": "Speech confirmation duration, rounded to the nearest 10 ms; defaults to 200 ms for VAD and 80 ms for Stream-VAD.",
+        "description": "Speech confirmation duration, rounded to the nearest 10 ms; defaults to 200 ms for VAD and 80 ms for Stream-VAD. Validation occurs after conversion to 10-ms frames; metadata bounds describe intended settings.",
         "required": false,
         "min": 10
       },
       {
         "name": "max_speech_duration_sec",
         "type": "float",
-        "description": "Maximum speech duration in seconds, rounded to the nearest 10 ms.",
+        "description": "Maximum speech duration in seconds, rounded to the nearest 10 ms. Validation occurs after conversion to 10-ms frames; metadata bounds describe intended settings.",
         "required": false,
         "default": 20,
         "min": 0.02
@@ -61,7 +61,7 @@
       {
         "name": "min_silence_duration_ms",
         "type": "int",
-        "description": "Silence confirmation duration in milliseconds, rounded to the nearest 10 ms.",
+        "description": "Silence confirmation duration in milliseconds, rounded to the nearest 10 ms. Validation occurs after conversion to 10-ms frames; metadata bounds describe intended settings.",
         "required": false,
         "default": 200,
         "min": 0

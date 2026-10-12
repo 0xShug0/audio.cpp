@@ -32,9 +32,14 @@ PR #180.
 `audiocpp_server.json` entry: family `f5_tts`, model path = checkpoint directory (a `*.gguf`
 package, or a safetensors checkpoint + `vocab.txt` for development). Session options:
 `f5_tts.vocos_path` (only needed with safetensors checkpoints lacking a bundled vocoder),
-`f5_tts.dialect` (default UNK), `f5_tts.frame_budget` (mel frames per CFM pass, 0 = 2048).
+`f5_tts.dialect` (default UNK), `f5_tts.frame_budget` (256-8192 mel frames per CFM pass;
+omitted uses 2048, explicit zero is rejected).
 Requests take `reference_text` (required), `dialect`, `speed`, `seed`, `num_inference_steps`,
-`cfg_strength` (alias `guidance_scale`), `sway_sampling_coef`, `strip_diacritics`.
+`guidance_scale` (legacy alias `cfg_strength`), `sway_sampling_coef`, `strip_diacritics`.
+
+Omitting `seed` selects fresh randomness; explicitly setting `seed=0` is deterministic.
+`speed` defaults to 1.0 for duration estimation, but generated text chunks shorter
+than 10 characters use 0.3 instead.
 
 **Diacritics (harakat):** Habibi was trained on ASR transcripts, which are undiacritized —
 the harakat/tanwin/shadda tokens exist in the vocab but are severely undertrained, and raw

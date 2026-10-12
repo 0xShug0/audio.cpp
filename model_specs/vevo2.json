@@ -42,6 +42,74 @@
       "gguf"
     ]
   },
+  "options": {
+    "request": [
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Target output duration hint for flow matching; legacy target_duration_seconds remains accepted.",
+        "required": false
+      },
+      {
+        "name": "reference_duration_sec",
+        "type": "float",
+        "description": "Trim the target voice reference before conditioning; legacy reference_duration_seconds remains accepted.",
+        "required": false,
+        "min": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "ar_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "AR prefill host graph-metadata arena size in MiB, not device workspace.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "ar_decode_graph_arena_mb",
+        "type": "int",
+        "description": "AR decode host graph-metadata arena size in MiB, not device workspace.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "tokenizer_graph_arena_mb",
+        "type": "int",
+        "description": "Audio tokenizer host graph-metadata arena size in MiB, not device workspace.",
+        "required": false,
+        "min": 1,
+        "default": 768
+      },
+      {
+        "name": "whisper_graph_arena_mb",
+        "type": "int",
+        "description": "Whisper encoder host graph-metadata arena size in MiB, not device workspace.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "fm_graph_arena_mb",
+        "type": "int",
+        "description": "Flow-matching host graph-metadata arena size in MiB, not device workspace.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "vocoder_graph_arena_mb",
+        "type": "int",
+        "description": "Vocoder host graph-metadata arena size in MiB, not device workspace.",
+        "required": false,
+        "min": 1,
+        "default": 768
+      }
+    ],
+    "load": []
+  },
   "ui": {
     "recommended_package": "vevo2_q8_0",
     "tags": [

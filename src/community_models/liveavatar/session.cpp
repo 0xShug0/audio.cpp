@@ -71,24 +71,24 @@ engine::runtime::ModelCliInterface make_cli() {
         {"liveavatar.denoiser_weight_streaming", "true|false", "Keep denoiser transformer blocks in host memory and stage layer groups on the accelerator."},
     };
     out.request_options = {
-        {"reference_image_path", "path", "Reference image path used as the identity/appearance condition.", true},
-        {"height", "n", "Generated frame height."},
-        {"width", "n", "Generated frame width."},
-        {"num_frames", "n", "Frames generated per LiveAvatar segment."},
+        {"reference_image_file", "path", "Reference image file used as the identity/appearance condition.", true},
+        {"height", "n", "Generated frame height; must be a positive multiple of 16.", false, std::nullopt, "16"},
+        {"width", "n", "Generated frame width; must be a positive multiple of 16.", false, std::nullopt, "16"},
+        {"num_frames", "n", "Frames generated per LiveAvatar segment; must be positive and a multiple of 4 in blockwise mode (streaming or generation_mode=liveavatar).", false, std::nullopt, "1"},
         {"num_clips", "n", "Maximum LiveAvatar clips to generate from the input audio."},
         {"num_inference_steps", "n", "Flow denoising steps."},
         {"generation_mode", "offline|liveavatar", "Use whole-clip generation or LiveAvatar blockwise generation."},
         {"guidance_scale", "float", "Classifier-free guidance scale."},
         {"fused_cfg", "true|false", "Run classifier-free guidance in one denoiser graph."},
         {"sage_attention", "true|false", "Use H3-style CUDA SAGE attention in the denoiser graph."},
-        {"memory_saver", "true|false", "Reuse immutable condition data and temporary denoiser graph storage across sequential blocks."},
-        {"denoiser_layerwise", "true|false", "Run the denoiser in explicit layerwise mode."},
+        {"mem_saver", "true|false", "Reuse immutable condition data and temporary denoiser graph storage across sequential blocks."},
+        {"denoiser_layerwise", "true|false", "Run the denoiser in explicit layerwise mode. Offline generation requires fused_cfg=true and guidance_scale > 1."},
         {"denoiser_layerwise_batch", "n", "Denoiser layer group size when denoiser_layerwise=true."},
         {"vae_encoder_chunk_size", "n", "Cached VAE encoder chunk size."},
-        {"vae_decoder_tile_size", "n", "Opt-in VAE decoder spatial tile size for large outputs."},
+        {"vae_decoder_tile_size", "n", "Opt-in VAE decoder spatial tile size for large outputs; 0 disables tiling. Enabled tile sizes must be multiples of 8 and larger than the 64-pixel overlap.", false, std::nullopt, "0"},
         {"target_cache_blocks", "n", "Target KV cache window in block units; 0 keeps the full clip cache."},
         {"vae_cache_f16", "true|false", "Store cached VAE encoder state in F16."},
-        {"shift", "float", "Flow scheduler shift."},
+        {"shift", "float", "Flow scheduler shift. Must be > 0.", false, std::nullopt, "0"},
         {"seed", "n", "Generation seed."},
         {"negative_prompt", "text", "Negative prompt for classifier-free guidance."},
     };
@@ -239,7 +239,7 @@ LiveAvatarGenerateRequest LiveAvatarSession::make_request(const engine::runtime:
     if (request.audio_input.has_value()) {
         out.audio = *request.audio_input;
     }
-    if (const auto value = engine::runtime::find_option(request.options, {"reference_image_path", "ref_image"})) {
+    if (const auto value = engine::runtime::find_option(request.options, {"reference_image_file", "reference_image_path", "ref_image"})) {
         out.reference_image_path = *value;
     }
     if (const auto value = engine::runtime::find_option(request.options, {"generation_mode", "liveavatar.generation_mode"})) {
@@ -272,8 +272,8 @@ LiveAvatarGenerateRequest LiveAvatarSession::make_request(const engine::runtime:
     if (const auto value = engine::runtime::find_option(request.options, {"sage_attention", "liveavatar.sage_attention"})) {
         out.sage_attention = engine::runtime::parse_bool_option(*value, "sage_attention");
     }
-    if (const auto value = engine::runtime::find_option(request.options, {"memory_saver", "liveavatar.memory_saver"})) {
-        out.memory_saver = engine::runtime::parse_bool_option(*value, "memory_saver");
+    if (const auto value = engine::runtime::find_option(request.options, {"mem_saver", "memory_saver", "liveavatar.memory_saver"})) {
+        out.memory_saver = engine::runtime::parse_bool_option(*value, "mem_saver");
     }
     if (const auto value = engine::runtime::find_option(request.options, {"denoiser_layerwise", "liveavatar.denoiser_layerwise"})) {
         out.denoiser_layerwise = engine::runtime::parse_bool_option(*value, "denoiser_layerwise");

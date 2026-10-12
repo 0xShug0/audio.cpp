@@ -74,7 +74,11 @@ public:
     }
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
         require_prepared("Hviske v6 run");
-        runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "Hviske v6");
+        auto validation_options = request.options;
+        validation_options.erase("punc");
+        validation_options.erase("punctuation");
+        validation_options.erase("punctuated");
+        runtime::validate_spec_backed_request_options(validation_options, request.option_arrays, *contract_, "Hviske v6");
         if (!request.audio_input) throw std::runtime_error("Hviske v6 requires audio input");
         const auto started = std::chrono::steady_clock::now();
         const auto & audio = *request.audio_input;
@@ -93,12 +97,12 @@ public:
         options.num_beams = runtime::parse_positive_i64_option(request.options, {"num_beams"}, 2);
         options.length_penalty = runtime::parse_finite_float_option(request.options, {"length_penalty"}).value_or(1.0f);
         const auto cased = runtime::find_option(request.options, {"cased"});
-        const auto punctuation = runtime::find_option(request.options, {"punctuated"});
+        const auto punctuation = runtime::find_option(request.options, {"punc", "punctuation", "punctuated"});
         if (cased && punctuation) {
             const auto & c = assets_->config;
             options.control_tokens = {
                 runtime::parse_bool_option(*cased, "cased") ? c.cased_token_id : c.nocase_token_id,
-                runtime::parse_bool_option(*punctuation, "punctuated") ? c.punctuation_token_id : c.no_punctuation_token_id};
+                runtime::parse_bool_option(*punctuation, "punc") ? c.punctuation_token_id : c.no_punctuation_token_id};
         }
         std::string text;
         const auto maximum = options.max_tokens;

@@ -116,15 +116,15 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Semantic classifier-free guidance scale. Default follows the upstream route defaults.",
+        "description": "Semantic classifier-free guidance scale. Default follows the upstream route defaults. Omitted defaults to 1.01 with cot=off, otherwise 1.0.",
         "required": false,
-        "min": 0.0,
-        "max": 20.0
+        "min": 0,
+        "max": 20
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Generation seed.",
+        "description": "Generation seed. Must be nonnegative and less than 2^63.",
         "required": false,
         "min": 0,
         "default": 1234
@@ -148,10 +148,9 @@
       {
         "name": "abc_top_p",
         "type": "float",
-        "description": "ABC planner nucleus sampling probability.",
+        "description": "ABC planner nucleus sampling probability. Must be in (0, 1].",
         "required": false,
-        "min": 0.0,
-        "max": 1.0
+        "max": 1
       },
       {
         "name": "abc_top_k",
@@ -163,9 +162,8 @@
       {
         "name": "abc_repetition_penalty",
         "type": "float",
-        "description": "ABC planner repetition penalty.",
-        "required": false,
-        "min": 0.001
+        "description": "ABC planner repetition penalty. Must be positive.",
+        "required": false
       },
       {
         "name": "abc_penalty_window",
@@ -184,9 +182,9 @@
       {
         "name": "abc_max_tokens",
         "type": "int",
-        "description": "Maximum ABC planner tokens.",
+        "description": "Maximum ABC planner tokens. Zero is allowed when min_tokens is also zero.",
         "required": false,
-        "min": 1
+        "min": 0
       },
       {
         "name": "semantic_temperature",
@@ -199,10 +197,9 @@
       {
         "name": "semantic_top_p",
         "type": "float",
-        "description": "Semantic codec nucleus sampling probability.",
+        "description": "Semantic codec nucleus sampling probability. Must be in (0, 1].",
         "required": false,
-        "min": 0.0,
-        "max": 1.0
+        "max": 1
       },
       {
         "name": "semantic_top_k",
@@ -214,9 +211,8 @@
       {
         "name": "semantic_repetition_penalty",
         "type": "float",
-        "description": "Semantic codec repetition penalty.",
-        "required": false,
-        "min": 0.001
+        "description": "Semantic codec repetition penalty. Must be positive.",
+        "required": false
       },
       {
         "name": "semantic_penalty_window",
@@ -235,9 +231,9 @@
       {
         "name": "semantic_max_tokens",
         "type": "int",
-        "description": "Maximum semantic codec tokens.",
+        "description": "Maximum semantic codec tokens. Zero is allowed when min_tokens is also zero.",
         "required": false,
-        "min": 1
+        "min": 0
       }
     ],
     "session": [
@@ -295,9 +291,8 @@
           "q4_0",
           "q4_k"
         ],
-        "description": "YuE2 MoT weight storage type.",
-        "required": false,
-        "default": "native"
+        "description": "YuE2 MoT weight storage type. Omitted inherits weight_type.",
+        "required": false
       },
       {
         "name": "model_gguf",
@@ -325,9 +320,8 @@
           "q4_0",
           "q4_k"
         ],
-        "description": "YuE2 VAE weight storage type.",
-        "required": false,
-        "default": "native"
+        "description": "YuE2 VAE weight storage type. Omitted inherits weight_type.",
+        "required": false
       },
       {
         "name": "model_weight_context_mb",
@@ -376,6 +370,26 @@
         "required": false,
         "min": 1,
         "default": 32
+      },
+      {
+        "name": "attention",
+        "type": "enum",
+        "description": "NAR acoustic-flow attention lowering; auto selects the backend-appropriate implementation.",
+        "required": false,
+        "values": [
+          "auto",
+          "flash",
+          "eager"
+        ],
+        "default": "auto"
+      },
+      {
+        "name": "attention_tile_rows",
+        "type": "int",
+        "description": "Query rows per eager NAR attention tile; zero automatically keeps the score matrix below 3 GiB.",
+        "required": false,
+        "min": 0,
+        "default": 0
       }
     ],
     "load": []

@@ -27,7 +27,7 @@
   "options": {
     "request": [
       {
-        "name": "speaking_rate",
+        "name": "speed",
         "type": "float",
         "description": "Speech speed multiplier mapped directly to Inflect speed; default 1.0.",
         "required": false,

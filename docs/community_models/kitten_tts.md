@@ -31,8 +31,8 @@ Available voices are `Bella`, `Jasper`, `Luna`, `Bruno`, `Rosie`, `Hugo`,
 
 | Option | Range | Default | Description |
 |---|---:|---:|---|
-| `speed` | positive float | `1.0` | Speech speed multiplier; larger values are faster. |
-| `seed` | non-negative integer | random | Decoder noise seed. |
+| `speed` | positive float | `1.0` | Speech speed multiplier; larger values produce faster speech. Must be finite and positive. |
+| `seed` | non-negative integer | random | Decoder noise seed; omitted requests choose a random seed. Seeds retained decoder state during preparation, not subsequent run() calls on that prepared session. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |
 | `text_chunk_size` | positive integer | `400` | Maximum Unicode codepoints per chunk. |
 
