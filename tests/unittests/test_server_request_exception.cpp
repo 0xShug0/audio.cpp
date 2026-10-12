@@ -8,12 +8,6 @@
 
 namespace {
 
-void require(bool condition, const std::string & message) {
-    if (!condition)
-        throw std::runtime_error(message);
-}
-
-
 void test_capacity_error() {
     // Test that CapacityError gets converted to a HTTP 400
     Fixture f(

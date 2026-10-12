@@ -3109,6 +3109,19 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME server_request_exceptions_test COMMAND server_request_exceptions_test)
         set_tests_properties(server_request_exceptions_test PROPERTIES TIMEOUT 60)
 
+        get_target_property(server_parallel_exception_sources audiocpp_server SOURCES)
+        list(FILTER server_parallel_exception_sources EXCLUDE REGEX "app/server/(main|model_installer|runtime)\\.cpp$")
+        add_executable(server_parallel_request_exceptions_test
+            tests/unittests/test_server_parallel_request_exception.cpp ${server_parallel_exception_sources})
+        target_include_directories(server_parallel_request_exceptions_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/app/server "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_link_libraries(server_parallel_request_exceptions_test PRIVATE engine_runtime ggml Threads::Threads)
+        if(WIN32)
+            target_link_libraries(server_parallel_request_exceptions_test PRIVATE ws2_32)
+        endif()
+        add_test(NAME server_parallel_request_exceptions_test COMMAND server_parallel_request_exceptions_test)
+        set_tests_properties(server_parallel_request_exceptions_test PROPERTIES TIMEOUT 60)
+
         add_executable(session_pool_test tests/unittests/test_session_pool.cpp)
         target_include_directories(session_pool_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
         # TaskResult owns JSON values for custom-schema outputs.
