@@ -4,6 +4,8 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -36,6 +38,28 @@ void check_chunks(const std::string & text, int64_t budget, size_t min_chunks, c
 }  // namespace
 
 int main() {
+    using engine::text::parse_text_chunk_size_override;
+    require(!parse_text_chunk_size_override({}).has_value(), "omitted budget stays unset");
+    for (const std::string key : {"text_chunk_size", "chunk_size"}) {
+        require(!parse_text_chunk_size_override({{key, ""}}).has_value(), key + ": empty budget stays unset");
+        for (const int64_t value : {int64_t{1}, int64_t{12}, int64_t{300}, std::numeric_limits<int64_t>::max()}) {
+            require(parse_text_chunk_size_override({{key, std::to_string(value)}}) == value,
+                    key + ": valid integer preserved");
+        }
+        for (const std::string input : {"12.5", "12junk", "12 ", "0", "-1", "junk", "9223372036854775808"}) {
+            bool rejected = false;
+            try {
+                (void) parse_text_chunk_size_override({{key, input}});
+            } catch (const std::exception & error) {
+                rejected = true;
+                if (input == "12.5" || input == "12junk" || input == "12 ") {
+                    require(error.what() == key + " must be an integer", key + ": useful integer error");
+                }
+            }
+            require(rejected, key + ": reject invalid budget " + input);
+        }
+    }
+
     // Regression: a 236-codepoint CJK paragraph with the 200-codepoint default
     // budget used to come back as a single chunk, because split_word_ranges only
     // cut at ASCII spaces and the whole paragraph parsed as one word. Must now
