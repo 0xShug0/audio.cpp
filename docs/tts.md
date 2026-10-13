@@ -666,7 +666,7 @@ the existing reference-audio or preset behavior.
 To reuse a cloned voice across runs, export its prepared state once. This skips reference-audio encoding and voice-state preparation on subsequent runs:
 
 ```bash
-audiocpp_cli --task tts --family pocket_tts \
+audiocpp_cli --task clon --family pocket_tts \
   --model models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
   --backend cuda --voice-ref assets/resources/b.wav \
   --voice-state-out models/PocketTTS-GGUF/english/embeddings/my_voice.safetensors

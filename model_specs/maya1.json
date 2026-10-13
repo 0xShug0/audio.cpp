@@ -27,9 +27,7 @@
       "long_form"
     ],
     "design": [
-      "voice_design",
-      "emotion_control",
-      "long_form"
+      "voice_design"
     ]
   },
   "options": {
