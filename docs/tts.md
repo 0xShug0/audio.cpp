@@ -14,7 +14,7 @@
 | FireRedTTS3 | `fireredtts3` | `tts`, `clon`, `vdes` | [FireRedTTS3](models/fireredtts3.md) |
 | Fish Audio S2 Pro | `fish_audio` | `tts`, `clon` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
-| Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](models/higgs_audio_tts.md) |
+| Higgs Audio v3 TTS | `higgs_audio_tts` | `tts`, `clon` | [Higgs Audio v3 TTS](models/higgs_audio_tts.md) |
 | IndexTTS2 | `index_tts2` | `tts` | [IndexTTS](models/index_tts2.md) |
 | IndexTTS2.5 | `index_tts2` (variant `2.5`) | `tts` | [IndexTTS](models/index_tts2.md) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |

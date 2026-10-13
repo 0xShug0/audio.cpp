@@ -28,6 +28,7 @@ runtime::CapabilitySet capabilities(const HiggsAssets &) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     out.supports_speaker_reference = true;
     out.languages = {"Auto"};
@@ -75,6 +76,7 @@ public:
         runtime::CapabilitySet out;
         out.supported_tasks = {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
         return out;
@@ -141,8 +143,9 @@ std::unique_ptr<runtime::IVoiceTaskSession> HiggsTTSLoadedModel::create_task_ses
     if (task.mode != runtime::RunMode::Offline && task.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Higgs TTS supports offline and streaming sessions");
     }
-    if (task.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Higgs TTS only supports the Tts task");
+    if (task.task != runtime::VoiceTaskKind::Tts &&
+        task.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("Higgs TTS supports Tts and VoiceCloning tasks");
     }
     return std::make_unique<HiggsTTSSession>(task, options, assets_);
 }
