@@ -810,33 +810,12 @@ ParallelServerState::LoadedModel & ParallelServerState::require_model(const Valu
     return *models_.at(it->second);
 }
 
-const RuntimeVoicePreset * ParallelServerState::select_voice_preset(
-    const LoadedModel & model,
-    const Value & body,
-    bool & voice_field_is_preset) const {
-    voice_field_is_preset = false;
-    if (const auto * value = body.find("voice")) {
-        const auto it = model.voice_presets.find(value->as_string());
-        if (it != model.voice_presets.end()) {
-            voice_field_is_preset = true;
-            return &it->second;
-        }
-        return nullptr;
-    }
-    if (body.find("voice_ref") != nullptr) {
-        return nullptr;
-    }
-    return model.default_voice_preset.has_value() ? &*model.default_voice_preset : nullptr;
-}
-
 engine::runtime::TaskRequest ParallelServerState::build_speech_request(const LoadedModel & model, const Value & body) const {
     std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
-    bool voice_field_is_preset = false;
-    const auto * preset = select_voice_preset(model, body, voice_field_is_preset);
     return minitts::server::build_speech_request(
         body,
         SpeechRequestContext{
-            request_base_, config_.voice_dir, preset, voice_field_is_preset,
+            request_base_, config_.voice_dir, model.voice_presets, model.default_voice_preset,
             model.accepts_reference_text, model.accepts_speed,
             model.accepts_speaking_rate,
             model.config.default_request_options});

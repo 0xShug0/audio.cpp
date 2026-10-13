@@ -139,10 +139,6 @@ private:
     // memory and (for GPU backends) the backend device memory.
     void ensure_model_fits_memory(const ServerModelConfig & model);
     LoadedModel & require_model(const engine::io::json::Value & body);
-    const RuntimeVoicePreset * select_voice_preset(
-        const LoadedModel & model,
-        const engine::io::json::Value & body,
-        bool & voice_field_is_preset) const;
     engine::runtime::TaskRequest build_speech_request(
         const LoadedModel & model,
         const engine::io::json::Value & body) const;

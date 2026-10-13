@@ -88,31 +88,44 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
     request.options["instruction"] = value->as_string();
   }
 
+  bool voice_field_is_preset = false;
+  const RuntimeVoicePreset *preset = nullptr;
+  if (const auto *value = body.find("voice")) {
+    const auto it = context.voice_presets.find(value->as_string());
+    if (it != context.voice_presets.end()) {
+      voice_field_is_preset = true;
+      preset = &it->second;
+    }
+  } else if (body.find("voice_ref") == nullptr &&
+             context.default_voice_preset.has_value()) {
+    preset = &*context.default_voice_preset;
+  }
+
   engine::runtime::VoiceCondition voice;
   bool has_voice = false;
-  if (context.preset != nullptr) {
-    if (context.preset->voice_id.has_value()) {
+  if (preset != nullptr) {
+    if (preset->voice_id.has_value()) {
       voice.speaker = engine::runtime::VoiceReference{};
-      voice.speaker->cached_voice_id = *context.preset->voice_id;
+      voice.speaker->cached_voice_id = *preset->voice_id;
       has_voice = true;
     }
-    if (context.preset->audio.has_value()) {
+    if (preset->audio.has_value()) {
       if (!voice.speaker.has_value()) {
         voice.speaker = engine::runtime::VoiceReference{};
       }
-      voice.speaker->audio = *context.preset->audio;
+      voice.speaker->audio = *preset->audio;
       has_voice = true;
     }
     if (context.accepts_reference_text &&
-        context.preset->reference_text.has_value() &&
+        preset->reference_text.has_value() &&
         request.options.find("reference_text") == request.options.end()) {
-      request.options["reference_text"] = *context.preset->reference_text;
+      request.options["reference_text"] = *preset->reference_text;
     }
   }
 
   const bool has_explicit_voice_ref = body.find("voice_ref") != nullptr;
   if (const auto *value = body.find("voice");
-      value != nullptr && !context.voice_field_is_preset) {
+      value != nullptr && !voice_field_is_preset) {
     bool voice_library_resolved = false;
     if (context.voice_dir.has_value() && !has_explicit_voice_ref) {
       const std::string voice_name = value->as_string();

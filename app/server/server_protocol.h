@@ -52,8 +52,8 @@ struct RuntimeVoicePreset {
 struct SpeechRequestContext {
   const std::filesystem::path &request_base;
   const std::optional<std::filesystem::path> &voice_dir;
-  const RuntimeVoicePreset *preset = nullptr;
-  bool voice_field_is_preset = false;
+  const std::unordered_map<std::string, RuntimeVoicePreset> &voice_presets;
+  const std::optional<RuntimeVoicePreset> &default_voice_preset;
   bool accepts_reference_text = true;
   bool accepts_speed = true;
   bool accepts_speaking_rate = true;
