@@ -369,7 +369,12 @@ HttpResponse ServerState::handle_path_status(const std::string & body_text) cons
 
 HttpResponse ServerState::handle_ui_upload(const HttpRequest & request) {
     return ui_upload_response(
-        *this, request, config_.ui_enabled || config_.ui_management);
+        request,
+        config_.ui_enabled || config_.ui_management,
+        [this](std::string_view filename) {
+            const auto id = next_upload_id_.fetch_add(1);
+            return upload_root_ / (std::to_string(id) + "-" + std::string(filename));
+        });
 }
 
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "frontend.h"
 #include "http.h"
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -19,9 +19,9 @@ HttpResponse ui_path_status_response(
     const std::filesystem::path &request_base,
     const std::filesystem::path &repository_root);
 HttpResponse ui_upload_response(
-    ServerFrontendContext &context,
     const HttpRequest &request,
-    bool enabled);
+    bool enabled,
+    const std::function<std::filesystem::path(std::string_view)> &make_path);
 HttpResponse ui_asset_response(bool ui_enabled);
 HttpResponse ui_voice_preview_response(
     const HttpRequest &request,

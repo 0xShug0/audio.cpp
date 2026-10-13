@@ -57,9 +57,9 @@ HttpResponse ui_path_status_response(
 }
 
 HttpResponse ui_upload_response(
-    ServerFrontendContext &context,
     const HttpRequest &request,
-    bool enabled) {
+    bool enabled,
+    const std::function<std::filesystem::path(std::string_view)> &make_path) {
     if (!enabled) {
         return error_response(403, "UI uploads are disabled", "forbidden");
     }
@@ -74,7 +74,7 @@ HttpResponse ui_upload_response(
     if (const auto it = request.headers.find("x-audiocpp-filename"); it != request.headers.end()) {
         filename = safe_upload_name(it->second);
     }
-    const auto path = context.make_frontend_temp_path(filename);
+    const auto path = make_path(filename);
     std::ofstream out(path, std::ios::binary);
     if (!out) {
         throw std::runtime_error("could not create temporary upload: " + path.string());
