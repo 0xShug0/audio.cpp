@@ -452,9 +452,11 @@ MossTTSNanoGlobalTransformerRuntime::MossTTSNanoGlobalTransformerRuntime(
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes,
     size_t weight_context_bytes,
-    engine::assets::TensorStorageType weight_storage_type)
+    engine::assets::TensorStorageType weight_storage_type,
+    MossTTSNanoPrefillMode prefill_mode)
     : assets_(std::move(assets)),
-      execution_context_(execution_context) {
+      execution_context_(execution_context),
+      prefill_mode_(prefill_mode) {
     if (assets_ == nullptr) {
         throw std::runtime_error("MOSS global transformer requires assets");
     }
@@ -571,6 +573,24 @@ std::vector<float> MossTTSNanoGlobalTransformerRuntime::prefill(
     engine::debug::trace_log_scalar("moss_tts_nano.global.prefill.total_rows", row_count);
     engine::debug::trace_log_scalar("moss_tts_nano.global.prefill.reuse_rows", reuse_rows);
     engine::debug::trace_log_scalar("moss_tts_nano.global.prefill.forward_rows", steps);
+
+    if (prefill_mode_ == MossTTSNanoPrefillMode::SingleRow) {
+        // Forward the remaining rows one at a time through the single-row decode graph: with
+        // quantized weights every row of the trajectory (prompt and generated frames) then runs
+        // the same batch-1 matmul kernels, which keeps the incremental decode numerically
+        // self-consistent on backends whose batched and single-row quantized kernels differ.
+        // Slower than the batched prefill — one graph launch per row.
+        std::vector<float> hidden;
+        std::vector<int32_t> code_row(static_cast<size_t>(n_vq));
+        for (int64_t row = reuse_rows; row < row_count; ++row) {
+            const auto offset = static_cast<size_t>(row * row_width);
+            for (int64_t q = 0; q < n_vq; ++q) {
+                code_row[static_cast<size_t>(q)] = rows[offset + 1 + static_cast<size_t>(q)];
+            }
+            step_into(rows[offset], code_row, hidden);
+        }
+        return hidden;
+    }
 
     ggml_init_params params{prefill_graph_arena_bytes_, nullptr, true};
     std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx(ggml_init(params));

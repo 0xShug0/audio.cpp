@@ -43,6 +43,18 @@ For the 100M model this costs roughly 100 MB of extra VRAM and removes the
 drift; measured parity between the incremental and one-shot paths drops from
 several percent to well below the bf16 configuration.
 
+Alternatively, keep the q8_0 weights and forward the prompt through the same
+single-row graph the decoder uses, so the whole trajectory runs on one kernel
+family:
+
+```bash
+audiocpp_cli --task clon --family moss_tts_nano --model /path/to/moss-tts-nano-100m-q8_0.gguf \
+  --backend cuda --session-option moss_tts_nano.prefill_mode=single_row --text "..." --out out.wav
+```
+
+This costs no extra memory but slows the one-time prompt forward (one graph
+launch per prompt row instead of one batched pass).
+
 Text-only continuation:
 
 ```bash
@@ -94,6 +106,7 @@ audiocpp_cli --task clon --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-1
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `moss_tts_nano.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Global and local-frame weight storage type. See [Quantized weights on CUDA/HIP](#quantized-weights-on-cudahip) before running q8_0 on GPU. |
+| `moss_tts_nano.prefill_mode` | `batched`, `single_row` | `batched` | How prompt rows are forwarded: one batched graph (fast) or one row at a time through the decode graph (numerically self-consistent with quantized weights). |
 | `moss_tts_nano.global_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Global transformer weight storage type. |
 | `moss_tts_nano.local_frame_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Local frame decoder weight storage type. |
 | `moss_tts_nano.global_prefill_graph_arena_mb` | MB | `256` | Global prefill graph arena size. |

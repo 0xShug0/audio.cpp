@@ -63,6 +63,17 @@ engine::assets::TensorStorageType option_weight_type(
     return require_matmul_weight_storage(engine::assets::parse_tensor_storage_type(it->second), key);
 }
 
+MossTTSNanoPrefillMode option_prefill_mode(const runtime::SessionOptions & options) {
+    const auto it = options.options.find("moss_tts_nano.prefill_mode");
+    if (it == options.options.end() || it->second == "batched") {
+        return MossTTSNanoPrefillMode::Batched;
+    }
+    if (it->second == "single_row") {
+        return MossTTSNanoPrefillMode::SingleRow;
+    }
+    throw std::runtime_error("moss_tts_nano.prefill_mode must be batched or single_row");
+}
+
 MossTTSNanoGenerationOptions generation_options_from_request(
     const runtime::TaskRequest & request,
     const MossTTSNanoConfig & config) {
@@ -197,7 +208,8 @@ MossTTSNanoSession::MossTTSNanoSession(
           global_prefill_graph_arena_bytes_,
           global_decode_graph_arena_bytes_,
           global_weight_context_bytes_,
-          global_weight_storage_type_),
+          global_weight_storage_type_,
+          option_prefill_mode(options)),
       local_frame_decoder_(
           assets_,
           execution_context(),
@@ -236,7 +248,8 @@ MossTTSNanoSession::MossTTSNanoSession(
             key != "moss_tts_nano.audio_tokenizer_weight_context_mb" &&
             key != "moss_tts_nano.global_weight_type" &&
             key != "moss_tts_nano.local_frame_weight_type" &&
-            key != "moss_tts_nano.weight_type") {
+            key != "moss_tts_nano.weight_type" &&
+            key != "moss_tts_nano.prefill_mode") {
             throw std::runtime_error("unknown MOSS-TTS-Nano session option: " + key);
         }
     }

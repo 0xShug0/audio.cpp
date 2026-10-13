@@ -8,6 +8,8 @@
  *
  *   prefill_chunk  : prefill(prompt chunk) + prefill(rest, reuse_rows)  == one-shot prefill
  *   decode_step    : prefill(rows - 1) + step_into(last row)            == one-shot prefill
+ *   single_row     : single_row prefill(rows - 1) + step_into(last row) == single_row one-shot
+ *                    prefill (exact on every backend; pins the row loop's position/slot wiring)
  *   prefix_reuse   : prefill(previous prompt) + prefill(new prompt, reuse_rows)
  *                                                                       == fresh full prefill
  *   local_frame    : two frames with identical inputs (and no history) produce identical codes,
@@ -277,6 +279,33 @@ int main(int argc, char ** argv) {
                   << " non_finite=" << step_deviation.non_finite
                   << " (cached rows=" << global.cached_positions() << ")\n";
 
+        // --- 2b. single-row prefill mode -----------------------------------------------------
+        // prefill_mode=single_row forwards prompt rows through the decode graph so a quantized run
+        // stays on one kernel family. Chaining (prefix + one step) must reproduce the one-shot
+        // single-row prefill exactly, which pins the loop's position/slot handling.
+        nano::MossTTSNanoGlobalTransformerRuntime global_single(
+            assets,
+            execution_context,
+            256ull * 1024ull * 1024ull,
+            128ull * 1024ull * 1024ull,
+            512ull * 1024ull * 1024ull,
+            weight_type,
+            nano::MossTTSNanoPrefillMode::SingleRow);
+        global_single.begin_generation(budget);
+        global_single.prefill(prefix_rows, rows - 1, row_width, 0);
+        std::vector<float> hidden_single_step;
+        global_single.step_into(
+            rows_a[static_cast<size_t>((rows - 1) * row_width)],
+            last_codes,
+            hidden_single_step);
+        global_single.reset_cache();
+        const auto hidden_single_full = global_single.prefill(rows_a, rows, row_width, 0);
+        const auto single_deviation = compare(hidden_single_step, hidden_single_full);
+        std::cout << "single-row chain vs full:   max_abs=" << single_deviation.max_abs
+                  << " mean_abs=" << single_deviation.mean_abs
+                  << " max_rel=" << single_deviation.max_relative
+                  << " non_finite=" << single_deviation.non_finite << "\n";
+
         // --- 3. cross-utterance prefix reuse ------------------------------------------------------
         // rows_b shares its first `split` rows with rows_a, so those cached rows may be reused.
         global.reset_cache();
@@ -340,10 +369,11 @@ int main(int argc, char ** argv) {
 
         const bool passed =
             chunked_deviation.non_finite == 0 && step_deviation.non_finite == 0 &&
-            reuse_deviation.non_finite == 0 &&
+            reuse_deviation.non_finite == 0 && single_deviation.non_finite == 0 &&
             chunked_deviation.max_relative <= tolerance &&
             step_deviation.max_relative <= tolerance &&
             reuse_deviation.max_relative <= tolerance &&
+            single_deviation.max_relative <= tolerance &&
             cached_after_full == rows &&
             prompt_sensitivity.max_abs > 0.0F && prompt_sensitivity.non_finite == 0 &&
             prefix_sensitivity.max_abs > 0.0F && prefix_sensitivity.non_finite == 0 &&
