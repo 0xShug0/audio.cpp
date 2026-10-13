@@ -196,17 +196,26 @@ field, repeated ~800k times. `tools/rknn_build_log.py` is the gate that separate
 it captures fds 1/2 around `rknn.build`, because those lines come from the C++ compiler and not from
 Python logging, and aborts past 100 000 lines.
 
-The field is per axis and per op, which is testable: slicing the fine-rate axis inside the graph
-and splitting the inputs and outputs that carry it (so no single op sees more than 8191 columns)
-takes W=256 from 403 587 REGTASK lines to 0, and the re-traced module keeps every gate — 60.5 dB
-against the runtime's generator, 135.6 dB padded-window exactness, 124.4 dB export against torch,
-and 136.6/135.1/136.8/148.9 dB chunked-against-monolithic per span. It does not ship: the
-resulting engine voices fp16-saturated output (117 682 non-finite values out of a 14.85 s
-utterance, contiguous in columns 8329-13872, peak 65440 = fp16 max), and that is not the register
-field, not the input amplitude (identical inf counts at x1.0/0.5/0.25/0.125), not the padding (a
-fully-filled window with an all-ones mask still gives 20 534) and not the AdaIN all-padding divide
-(clamping the count changes the count by 0). A wide window needs that saturation understood first,
-plus a loader that takes 7 inputs and 2 outputs.
+The field is per axis and per op, and the ceiling is escapable: slicing the fine-rate axis inside
+the graph takes W=256 from 403 587 REGTASK lines to 0, and the re-traced module keeps every gate —
+60.5 dB against the runtime's generator, 135.6 dB padded-window exactness, 124.4 dB export against
+torch. The engine then voiced fp16-saturated output (117 682 non-finite values out of a 14.85 s
+utterance, contiguous in columns 8329-13872, peak 65440 = fp16 max), and the cause is the AdaIN
+global pooling: its statistics are raw sums over the fine axis, so the same site that peaks at 7681
+at W=128 peaks at 1.1e6 at W=256 (per-node maxima from an onnxruntime fp32 run: first node past
+fp16 max a Mul at 612 487, largest node an Add at 1 106 990). The diagnosis is a probe, not a
+shipped change: recomputing those statistics as count fractions holds the same graph's fp32 range to
+15 361 with first-over = None. The cure in the producer is `--max-axis`,
+which moves the runtime's window walk *inside* the graph — windows of `(max_axis-1)//scale` frames
+with `--padding` frames of context per side, each window through the full unsliced module, emitted
+columns concatenated the way `decode_windowed` overwrites the seam column. Then every in-graph
+reduction axis is at most `max_axis`, so the 13-bit field and the fp16 range are satisfied by
+construction: W=256 (3 windows of 136 at padding 28) builds with 1 REGTASK line and voices 0
+non-finite values, peak 56.25, 46.8 dB against the chunked torch reference, and W=160 (2 windows)
+builds with 0 lines. The 9.5 dB against the *monolithic* reference is the per-window AdaIN gap, not
+the engine: the chunked-vs-monolithic gate measures 9.9 dB and the fp32 PC simulator of the same
+graph gives the identical 9.5 dB. It does not ship: the runtime loader takes 5 inputs and 1 output,
+and the stitched result is a per-window synthesis, not the monolithic one.
 
 **The per-window statistics are the audible artifact; feeding them is not the fix.** Listening
 compared the NPU render with the CPU render of the same text and seed found the loudness of
@@ -404,8 +413,10 @@ Q4_K is −47% bytes for −23% talker time and −10.7% RTF; Q6_K is −23% byt
 dequant of a 6-bit K-quant eats the saving. No gate applies to these renders: a re-quantized talker
 changes the greedy argmax trajectory, so each variant is a separate valid synthesis (inter-run
 correlation 0.003/−0.012, per-sample SNR −2.5/−3.3 dB is trajectory divergence, not noise; the runs
-are 286/300/272 tokens, so RTF compares audio-seconds across syntheses). Quality is a listening
-question, so this is a measured lever, not a shipped default.
+are 286/300/272 tokens, so RTF compares audio-seconds across syntheses). Listening verdict: Q4_K
+passes against the shipped render, Q6_K shows a slight split on the opening breath (not judged
+critical) — which is the weaker result of the two, and Q6_K is also the one that buys no time. So
+this is a measured lever, not a shipped default.
 
 ## NPU core use
 
