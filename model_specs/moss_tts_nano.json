@@ -173,6 +173,17 @@
         "preset": "weight_type_full"
       },
       {
+        "name": "prefill_mode",
+        "type": "enum",
+        "description": "How prompt rows are forwarded: one batched graph (default, fast) or one row at a time through the decode graph. single_row keeps quantized runs on a single kernel family for numerical self-consistency at a one-time prefill latency cost; see the model docs' quantization notes.",
+        "required": false,
+        "values": [
+          "batched",
+          "single_row"
+        ],
+        "default": "batched"
+      },
+      {
         "name": "global_prefill_graph_arena_mb",
         "type": "int",
         "description": "Context or graph arena size in MiB.",
