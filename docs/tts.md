@@ -2,7 +2,7 @@
 
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
-| AuK (experimental) | `auk` | `tts`, `gen` editing | [AuK](models/auk.md) |
+| AuK (experimental) | `auk` | `tts`, `clon`, `gen` editing | [AuK](models/auk.md) |
 | BreezeTTS 2 | `breeze_tts` | `tts`, `clon` | [BreezeTTS 2](models/breeze_tts.md) |
 | Chatterbox | `chatterbox` | `tts`, `clon`, `vc` | [Chatterbox](#chatterbox) |
 | Confucius4-TTS | `confucius4_tts` | `tts`, `clon` | [Confucius4-TTS](#confucius4-tts) |
