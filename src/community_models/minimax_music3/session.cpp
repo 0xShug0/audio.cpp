@@ -130,7 +130,7 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
     runtime::ModelCliInterface out;
     out.request_options = {
         {"lyrics", "string", "Lyrics to sing.", true},
-        {"duration_sec", "float", "Maximum generated audio duration in seconds.", false, "20.0", "0.1"},
+        {"duration_sec", "float", "Positive AR frame budget expressed in seconds; not a hard final waveform duration limit.", false, "20.0", std::nullopt},
         {"num_inference_steps", "int", "Flow matching Euler steps per chunk.", false, "30", "1"},
         {"guidance_scale", "float", "Flow transformer classifier-free guidance scale. Must be > 0.", false, "1.7", "0"},
         {"ar_guidance_scale", "float", "Autoregressive semantic and depth CFG scale. Must be > 0.", false, "1.5", "0"},

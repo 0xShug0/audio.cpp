@@ -860,6 +860,7 @@ runtime::CapabilitySet capabilities_v1(const VoxCPM1Assets &) {
 runtime::ModelCliInterface cli_v1(const VoxCPM1Assets &) {
   runtime::ModelCliInterface out;
   out.request_options = {
+      {"language", "code", "Text language hint used for text normalization; also exposed as --language."},
       {"text_chunk_mode", "word_budget|tag_aware|japanese|endline", "Text chunking mode; default tag_aware.", false, "tag_aware"},
       {"seed", "int", "Random seed for MiniCPM and diffusion sampling.", false},
       {"max_tokens", "int", "Maximum MiniCPM output tokens; default 4096. Zero selects model max_length; negative counts are rejected.", false, "4096"},

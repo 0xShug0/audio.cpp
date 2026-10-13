@@ -219,7 +219,7 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"yue2.nar_graph_arena_mb", "int", "NAR acoustic flow graph arena size in MiB.", false, "32", "1"},
         {"yue2.vae_graph_arena_mb", "int", "VAE decode graph arena size in MiB.", false, "32", "1"},
         {"yue2.attention", "auto|flash|eager", "NAR acoustic-flow attention lowering; auto uses flash except on CUDA sm70 (no kernel) and Intel Vulkan (eager measured faster).", false, "auto"},
-        {"yue2.attention_tile_rows", "int", "Query rows per tile in the eager NAR attention; 0 keeps a tile's score matrix under 3 GiB.", false, "0", "0"},
+        {"yue2.attention_tile_rows", "int", "Query rows per tile in eager NAR attention; nonpositive values choose automatic tiling to keep each score matrix under 3 GiB.", false, "0", std::nullopt},
         {"yue2.weight_type", "native|f32|f16|bf16|q8_0|q4_0|q4_k", "Shared weight storage type. Default: native.", false, "native"},
     };
     return out;

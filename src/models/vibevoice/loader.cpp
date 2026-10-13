@@ -31,6 +31,12 @@ runtime::ModelMetadata metadata(const VibeVoiceAssets & assets) {
 runtime::ModelCliInterface cli(const VibeVoiceAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
+        {"max_tokens", "n", "Maximum generated tokens; 0 selects an automatic budget.", false, "0", "0"},
+        {"do_sample", "true|false", "Enable sampling instead of deterministic decoding.", false, "false"},
+        {"temperature", "float", "Positive sampling temperature.", false, "1"},
+        {"top_k", "n", "Top-k sampling limit; 0 disables filtering.", false, "50", "0"},
+        {"top_p", "float", "Nucleus sampling probability in (0, 1].", false, "1", std::nullopt, "1"},
+        {"seed", "int", "Generation seed.", false, "1234", "0", "4294967295"},
         {"voice_samples", "path[,path...]", "Comma-separated speaker reference WAV paths for multi-speaker prompts."},
         {"num_inference_steps", "n", "Diffusion inference steps."},
         {"guidance_scale", "float", "Classifier-free guidance scale."},

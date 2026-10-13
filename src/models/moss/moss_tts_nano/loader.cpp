@@ -31,8 +31,10 @@ runtime::CapabilitySet capabilities(const MossTTSNanoAssets &) {
 runtime::ModelCliInterface cli(const MossTTSNanoAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"max_tokens", "n", "Maximum generated audio frames."},
-        {"do_sample", "true|false", "Enable stochastic audio-token sampling."},
+        {"reference_text", "text", "Transcript for reference audio; a nonempty value requires speaker reference audio.", false, ""},
+        {"seed", "int", "Sampling seed; omitted chooses a random seed.", false, std::nullopt, "0", "4294967295"},
+        {"max_tokens", "n", "Maximum generated audio frames.", false, "300", "1"},
+        {"do_sample", "true|false", "Enable stochastic audio-token sampling.", false, "true"},
         {"temperature", "float", "Audio sampling temperature. Must be positive, including when do_sample=false. Default: 1.7.", false, "1.7"},
         {"top_p", "float", "Audio nucleus sampling probability. Default: 0.8.", false, "0.8", "0", "1"},
         {"top_k", "int", "Audio top-k sampling limit. Default: 25.", false, "25", "0"},
@@ -40,23 +42,23 @@ runtime::ModelCliInterface cli(const MossTTSNanoAssets &) {
         {"text_temperature", "float", "Text sampling temperature. Must be positive, including when do_sample=false. Default: 1.5.", false, "1.5"},
         {"text_top_p", "float", "Text nucleus sampling probability. Default: 1.", false, "1", "0", "1"},
         {"text_top_k", "int", "Text top-k sampling limit. Default: 50.", false, "50", "0"},
-        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode; default splitter."},
+        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode; default splitter.", false, "default"},
         {"active_codebooks", "int", "Active codebooks; defaults to the checkpoint n_vq. Must not exceed checkpoint n_vq; omitted uses n_vq.", false, std::nullopt, "1"},
         {"text_chunk_size", "int", "Framework long-form text chunk size. Default: 256.", false, "256", "1"},
     };
     out.session_options = {
-        {"moss_tts_nano.weight_type", "native|f32|f16|bf16|q8_0", "Global and local-frame weight storage type. With quantized weights on CUDA/HIP, incremental decoding may show hardware-dependent numerical drift (single-row decode and batched prefill use different quantized kernels); if output degrades, use an f16 GGUF or set this to f16."},
+        {"moss_tts_nano.weight_type", "native|f32|f16|bf16|q8_0", "Global and local-frame weight storage type. With quantized weights on CUDA/HIP, incremental decoding may show hardware-dependent numerical drift (single-row decode and batched prefill use different quantized kernels); if output degrades, use an f16 GGUF or set this to f16.", false, "native"},
         {"moss_tts_nano.global_weight_type", "native|f32|f16|bf16|q8_0", "Global transformer weight storage type."},
         {"moss_tts_nano.local_frame_weight_type", "native|f32|f16|bf16|q8_0", "Local frame decoder weight storage type."},
-        {"moss_tts_nano.prefill_mode", "batched|single_row", "How prompt rows are forwarded: one batched graph (default, fast) or one row at a time through the decode graph. single_row keeps quantized runs on a single kernel family for numerical self-consistency at a one-time prefill latency cost; see the model docs' quantization notes."},
-        {"moss_tts_nano.global_prefill_graph_arena_mb", "n", "Global transformer prefill graph arena size."},
-        {"moss_tts_nano.global_decode_graph_arena_mb", "n", "Global transformer decode graph arena size."},
-        {"moss_tts_nano.global_weight_context_mb", "n", "Global transformer weight context size."},
-        {"moss_tts_nano.local_frame_graph_arena_mb", "n", "Local frame decoder graph arena size."},
-        {"moss_tts_nano.local_frame_weight_context_mb", "n", "Local frame decoder weight context size."},
-        {"moss_tts_nano.audio_tokenizer_encoder_graph_arena_mb", "n", "Audio tokenizer encoder graph arena size."},
-        {"moss_tts_nano.audio_tokenizer_decoder_graph_arena_mb", "n", "Audio tokenizer decoder graph arena size."},
-        {"moss_tts_nano.audio_tokenizer_weight_context_mb", "n", "Audio tokenizer weight context size."},
+        {"moss_tts_nano.prefill_mode", "batched|single_row", "How prompt rows are forwarded: one batched graph (default, fast) or one row at a time through the decode graph. single_row keeps quantized runs on a single kernel family for numerical self-consistency at a one-time prefill latency cost; see the model docs' quantization notes.", false, "batched"},
+        {"moss_tts_nano.global_prefill_graph_arena_mb", "n", "Global transformer prefill graph arena size.", false, "256", "1"},
+        {"moss_tts_nano.global_decode_graph_arena_mb", "n", "Global transformer decode graph arena size.", false, "128", "1"},
+        {"moss_tts_nano.global_weight_context_mb", "n", "Global transformer weight context size.", false, "512", "1"},
+        {"moss_tts_nano.local_frame_graph_arena_mb", "n", "Local frame decoder graph arena size.", false, "64", "1"},
+        {"moss_tts_nano.local_frame_weight_context_mb", "n", "Local frame decoder weight context size.", false, "128", "1"},
+        {"moss_tts_nano.audio_tokenizer_encoder_graph_arena_mb", "n", "Audio tokenizer encoder graph arena size.", false, "64", "1"},
+        {"moss_tts_nano.audio_tokenizer_decoder_graph_arena_mb", "n", "Audio tokenizer decoder graph arena size.", false, "64", "1"},
+        {"moss_tts_nano.audio_tokenizer_weight_context_mb", "n", "Audio tokenizer weight context size.", false, "128", "1"},
     };
     return out;
 }

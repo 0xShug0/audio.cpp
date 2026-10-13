@@ -27,22 +27,29 @@ runtime::CapabilitySet capabilities(const MioTTSAssets &) {
     return out;
 }
 
-runtime::ModelCliInterface cli(const MioTTSAssets &) {
+runtime::ModelCliInterface cli(const MioTTSAssets & assets) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"best_of_n", "n", "Generate n candidates for this request and select by ASR scoring."},
+        {"max_tokens", "n", "Maximum generated tokens; defaults to the checkpoint config.", false, std::to_string(assets.config.max_tokens), "1"},
+        {"top_k", "int", "Top-k sampling limit; defaults to the checkpoint config.", false, std::to_string(assets.config.top_k)},
+        {"top_p", "float", "Nucleus sampling cutoff; defaults to the checkpoint config.", false, std::to_string(assets.config.top_p), "0", "1"},
+        {"temperature", "float", "Sampling temperature; defaults to the checkpoint config.", false, std::to_string(assets.config.temperature), "0", "2"},
+        {"repetition_penalty", "float", "Token repetition penalty; defaults to the checkpoint config.", false, std::to_string(assets.config.repetition_penalty), "1", "1.5"},
+        {"do_sample", "true|false", "Enable sampling; defaults to the checkpoint config.", false, assets.config.do_sample ? "true" : "false"},
+        {"seed", "int", "Sampling seed; omitted chooses a random seed.", false, std::nullopt, "0", "4294967295"},
+        {"best_of_n", "n", "Generate n candidates for this request and select by ASR scoring.", false, std::nullopt, "1"},
         {"best_of_n_enabled", "true|false", "Enable best-of-N candidate selection for this request."},
         {"best_of_n_language", "auto|en|ja", "Language used when scoring best-of-N candidates."},
-        {"presence_penalty", "float", "Generation control; defaults to the checkpoint config.", false, std::nullopt, "0", "1"},
-        {"frequency_penalty", "float", "Generation control; defaults to the checkpoint config.", false, std::nullopt, "0", "1"},
+        {"presence_penalty", "float", "Generation control; defaults to the checkpoint config.", false, std::to_string(assets.config.presence_penalty), "0", "1"},
+        {"frequency_penalty", "float", "Generation control; defaults to the checkpoint config.", false, std::to_string(assets.config.frequency_penalty), "0", "1"},
         {"text_chunk_size", "int", "Framework long-form text chunk size; inherits the session setting.", false, std::nullopt, "1"},
     };
     out.session_options = {
         {"miotts.codec_model_path", "dir", "MioCodec model directory used by MioTTS acoustic decoding."},
-        {"miotts.best_of_n_enabled", "true|false", "Enable best-of-N candidate selection by default."},
-        {"miotts.best_of_n_default", "n", "Default best-of-N candidate count."},
-        {"miotts.best_of_n_max", "n", "Maximum best-of-N candidate count."},
-        {"miotts.best_of_n_language", "auto|en|ja", "Default language used when scoring best-of-N candidates."},
+        {"miotts.best_of_n_enabled", "true|false", "Enable best-of-N candidate selection by default.", false, "false"},
+        {"miotts.best_of_n_default", "n", "Default best-of-N candidate count.", false, "1", "1"},
+        {"miotts.best_of_n_max", "n", "Maximum best-of-N candidate count.", false, "8", "1"},
+        {"miotts.best_of_n_language", "auto|en|ja", "Default language used when scoring best-of-N candidates.", false, "auto"},
         {"miotts.best_of_n_asr_model_path", "dir", "Qwen3-ASR model directory used by best-of-N scoring."},
         {"miotts.weight_type", "native|f32|f16|bf16|q8_0", "MioTTS language-model matmul weight storage type."},
         {"miotts.text_chunk_size", "int", "Default framework text chunk size.", false, "180"},
