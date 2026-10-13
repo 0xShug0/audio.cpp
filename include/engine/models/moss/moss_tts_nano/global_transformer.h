@@ -11,6 +11,16 @@
 
 namespace engine::models::moss_tts_nano {
 
+// How prefill() forwards the prompt rows. Batched builds one multi-row graph (fast, the default);
+// SingleRow forwards every row through the single-row decode graph instead, so with quantized
+// weights the whole trajectory — prompt rows and generated frames alike — runs through the same
+// batch-1 matmul kernels and stays numerically self-consistent on backends where the batched and
+// single-row quantized kernels differ (see docs/models/moss_tts_nano.md).
+enum class MossTTSNanoPrefillMode {
+    Batched,
+    SingleRow,
+};
+
 // Incremental global transformer runtime for MOSS-TTS-Nano.
 //
 // The model is generated one audio frame at a time, so the runtime keeps a
@@ -31,7 +41,8 @@ public:
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
-        engine::assets::TensorStorageType weight_storage_type);
+        engine::assets::TensorStorageType weight_storage_type,
+        MossTTSNanoPrefillMode prefill_mode = MossTTSNanoPrefillMode::Batched);
     ~MossTTSNanoGlobalTransformerRuntime();
 
     // Ensures the single-row decode graph and the K/V cache can hold max_positions rows. The
@@ -66,6 +77,7 @@ private:
     std::shared_ptr<Weights> weights_;
     size_t prefill_graph_arena_bytes_ = 0;
     size_t decode_graph_arena_bytes_ = 0;
+    MossTTSNanoPrefillMode prefill_mode_ = MossTTSNanoPrefillMode::Batched;
     int64_t graph_builds_ = 0;
     std::unique_ptr<DecodeGraph> decode_;
 };

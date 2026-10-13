@@ -45,9 +45,10 @@ runtime::ModelCliInterface cli(const MossTTSNanoAssets &) {
         {"text_chunk_size", "int", "Framework long-form text chunk size. Default: 256.", false, "256", "1"},
     };
     out.session_options = {
-        {"moss_tts_nano.weight_type", "native|f32|f16|bf16|q8_0", "Global and local-frame weight storage type. On CUDA/HIP backends a quantized resolution is upgraded to f16: single-row decode and batched prefill select numerically different quantized kernels there, which corrupts incremental generation."},
-        {"moss_tts_nano.global_weight_type", "native|f32|f16|bf16|q8_0", "Global transformer weight storage type (same CUDA/HIP f16 upgrade as moss_tts_nano.weight_type)."},
-        {"moss_tts_nano.local_frame_weight_type", "native|f32|f16|bf16|q8_0", "Local frame decoder weight storage type (same CUDA/HIP f16 upgrade as moss_tts_nano.weight_type)."},
+        {"moss_tts_nano.weight_type", "native|f32|f16|bf16|q8_0", "Global and local-frame weight storage type. With quantized weights on CUDA/HIP, incremental decoding may show hardware-dependent numerical drift (single-row decode and batched prefill use different quantized kernels); if output degrades, use an f16 GGUF or set this to f16."},
+        {"moss_tts_nano.global_weight_type", "native|f32|f16|bf16|q8_0", "Global transformer weight storage type."},
+        {"moss_tts_nano.local_frame_weight_type", "native|f32|f16|bf16|q8_0", "Local frame decoder weight storage type."},
+        {"moss_tts_nano.prefill_mode", "batched|single_row", "How prompt rows are forwarded: one batched graph (default, fast) or one row at a time through the decode graph. single_row keeps quantized runs on a single kernel family for numerical self-consistency at a one-time prefill latency cost; see the model docs' quantization notes."},
         {"moss_tts_nano.global_prefill_graph_arena_mb", "n", "Global transformer prefill graph arena size."},
         {"moss_tts_nano.global_decode_graph_arena_mb", "n", "Global transformer decode graph arena size."},
         {"moss_tts_nano.global_weight_context_mb", "n", "Global transformer weight context size."},

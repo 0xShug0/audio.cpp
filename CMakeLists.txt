@@ -3017,6 +3017,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(firered_vad_rules_test PRIVATE engine_runtime ggml)
         add_test(NAME firered_vad_rules_test COMMAND firered_vad_rules_test)
     endif()
+    if (moss_tts_nano IN_LIST AUDIOCPP_LINKED_MODELS)
+        # (moved next to the other moss_tts_nano tests)
+    endif()
     if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
         add_executable(audiocpp_kitten_tts2_prepare_voices tools/community_models/prepare_kitten_tts2_voices.cpp)
         audiocpp_use_utf8_codepage(audiocpp_kitten_tts2_prepare_voices)
@@ -4039,6 +4042,17 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(moss_tts_nano_kv_cache_parity PRIVATE OpenMP::OpenMP_CXX)
         endif()
+
+        # Reference-voice cache rules. Deliberately model-free, so unlike the parity
+        # target above this one is registered as a test and needs no downloaded model.
+        add_executable(moss_tts_nano_reference_cache_test
+            tests/moss_tts_nano/reference_cache_test.cpp
+        )
+        target_link_libraries(moss_tts_nano_reference_cache_test PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(moss_tts_nano_reference_cache_test PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+        add_test(NAME moss_tts_nano_reference_cache_test COMMAND moss_tts_nano_reference_cache_test)
 
         add_executable(moss_tts_v15_prompt_parity
             tests/moss_tts_v15/prompt_parity.cpp
