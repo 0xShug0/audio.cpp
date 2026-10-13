@@ -16,7 +16,11 @@ Orange Pi 5 Plus (RK3588, 4x A76 + 4x A55).
 `cat /sys/class/devfreq/fdab0000.npu/governor`. The OPP table on that overlay starts at 300 MHz,
 so a board running the mainline `rocket` driver's `performance`-less default can sit at a fraction
 of that clock and every figure here scales with it. The CPU side of the same runs is
-`--threads 4` on the A76 cluster. The board's DRAM read ceiling is 26.4-29.4 GB/s, measured with a
+`--threads 4` on the A76 cluster, and the native build (`scripts/build_linux.sh --backend cpu`, which
+turns on the host-ISA ggml kernels): a plain `cmake -DCMAKE_BUILD_TYPE=Release` build of the same
+tree measures the `qwen3_tts` CPU path at RTF 4.287 and 4510 MB against the 3.010 and 4200 MB below,
+while the `kokoro_tts` CPU path reproduces to 1.409 against 1.415. Absolute CPU-path figures are
+therefore build-dependent, ratios are not. The board's DRAM read ceiling is 26.4-29.4 GB/s, measured with a
 cache-bypassing STREAM triad (4 A76 threads, 804 MB working set) and `sysbench memory` with a 64 MB
 buffer; `sysbench` with its default 1 MB buffer reports 61 GB/s because it never leaves L3, and
 `stress-ng --stream` is cache-sized too, so neither is a DRAM measurement.
@@ -380,7 +384,11 @@ onset, i.e. the fp16 noise floor, not the stitching.
 ### Kokoro, measured on the same board
 
 `kokoro-82m-q8_0.gguf`, 185 Russian characters, seed 1234, `--threads 4` (14.85 s of audio,
-1188 latent frames, 17 windows of 72 emitted frames):
+1188 latent frames, 17 windows of 72 emitted frames). The Kokoro voice set has no Russian voice
+(`frontend.cpp` accepts a, b, e, f, h, i, j, p, z; `--language russian` throws
+`unsupported Kokoro language: russian`), so this utterance is Russian text voiced through
+`--voice-id af_heart`, i. e. the built-in eSpeak-ng G2P applied to Cyrillic — a language transfer,
+not a supported Russian path, and a reproduction has to use the same voice and text:
 
 | path | RTF | peak RSS | generator ms |
 |---|---|---|---|
