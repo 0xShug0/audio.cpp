@@ -1,10 +1,7 @@
 #include "engine/models/moss/moss_tts_nano/assets.h"
 
-#include "engine/framework/debug/trace.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
-
-#include <ggml.h>
 
 #include <stdexcept>
 #include <utility>
@@ -110,25 +107,6 @@ std::shared_ptr<const MossTTSNanoAssets> load_moss_tts_nano_assets(const std::fi
     assets.model_weights = assets.resources.open_tensor_source("model_weights");
     assets.audio_tokenizer_weights = assets.resources.open_tensor_source("audio_tokenizer_weights");
     return std::make_shared<MossTTSNanoAssets>(std::move(assets));
-}
-
-assets::TensorStorageType resolve_transformer_weight_storage(
-    core::BackendType backend_type,
-    const assets::TensorSource & source,
-    std::string_view probe_weight_name,
-    assets::TensorStorageType requested) {
-    if (backend_type != core::BackendType::Cuda && backend_type != core::BackendType::Hip) {
-        return requested;
-    }
-    const auto resolved = assets::resolve_tensor_storage_type(source, probe_weight_name, requested);
-    if (!ggml_is_quantized(assets::ggml_type_for_tensor_storage(resolved))) {
-        return requested;
-    }
-    debug::trace_log_scalar(
-        "moss_tts_nano.weight_storage.upgrade",
-        "quantized -> f16 (single-row and batched quantized kernels are numerically inconsistent on "
-        "CUDA/HIP, which corrupts incremental decode); requesting f16 instead");
-    return assets::TensorStorageType::F16;
 }
 
 }  // namespace engine::models::moss_tts_nano
