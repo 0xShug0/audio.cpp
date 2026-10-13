@@ -9,11 +9,11 @@ autoencoder: [jordand/fish-s1-dac-min](https://huggingface.co/jordand/fish-s1-da
 
 | Family | `echo_tts` |
 |---|---|
-| Tasks | `clon` |
-| Modes | offline |
 | Languages | en |
-| Sample rate | 44 100 Hz |
 | Model directory | `models/echo-tts` |
+| Modes | offline |
+| Sample rate | 44 100 Hz |
+| Tasks | `clon` |
 
 ## Text Chunk Size
 

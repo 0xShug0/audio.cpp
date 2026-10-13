@@ -33,33 +33,6 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Ba
 | `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
 | `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
-## Qwen3 TTS VoiceDesign
-
-Qwen3 VoiceDesign creates a voice from an instruction. It does not require a speaker reference WAV.
-
-| Field | Value |
-|---|---|
-| Family | `qwen3_tts` |
-| Model directory | `models/Qwen3-TTS-12Hz-1.7B-VoiceDesign` |
-| Task | `vdes` |
-| Modes | `offline`, `streaming` |
-| Voice input | Instruction text through `--instruct` |
-| Reference audio | Not required |
-
-```bash
-audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-VoiceDesign --backend cuda --text "Hello from a designed voice." --instruct "A warm adult narrator" --out out.wav
-```
-
-### Common Options (use directly)
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--text` | text | required | Text to synthesize. |
-| `--instruct` | text | empty string | Optional voice design instruction. |
-| `--language` | language code | empty string | Text language hint. |
-| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
-| `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
-
 ## Qwen3 TTS CustomVoice
 
 Qwen3 CustomVoice uses speaker ids packaged with the model. Use `--request-option voice_id=Vivian` to select one; legacy `--speaker Vivian` remains accepted. Examples use `Vivian` and `Ryan`.
@@ -85,6 +58,33 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Cu
 | `--text` | text | required | Text to synthesize. |
 | `--speaker` | packaged speaker name | required | Built-in speaker id, such as `Vivian` or `Ryan`. |
 | `--instruct` | text | empty string | Style or emotion instruction. |
+| `--language` | language code | empty string | Text language hint. |
+| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
+| `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
+
+## Qwen3 TTS VoiceDesign
+
+Qwen3 VoiceDesign creates a voice from an instruction. It does not require a speaker reference WAV.
+
+| Field | Value |
+|---|---|
+| Family | `qwen3_tts` |
+| Model directory | `models/Qwen3-TTS-12Hz-1.7B-VoiceDesign` |
+| Task | `vdes` |
+| Modes | `offline`, `streaming` |
+| Voice input | Instruction text through `--instruct` |
+| Reference audio | Not required |
+
+```bash
+audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-VoiceDesign --backend cuda --text "Hello from a designed voice." --instruct "A warm adult narrator" --out out.wav
+```
+
+### Common Options (use directly)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--text` | text | required | Text to synthesize. |
+| `--instruct` | text | empty string | Optional voice design instruction. |
 | `--language` | language code | empty string | Text language hint. |
 | `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
 | `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |

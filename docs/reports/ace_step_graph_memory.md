@@ -20,8 +20,8 @@ Caption:
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Base Q8 | 2.367 | 0.846 | 64.3% | 0.990 | 0.918 | 7.3% |
 | Turbo Q8 | 2.367 | 0.846 | 64.3% | 0.985 | 0.915 | 7.1% |
-| XL Turbo Q8 DiT | 2.375 | 0.869 | 63.4% | 1.152 | 1.086 | 5.7% |
 | XL SFT Q8 DiT | 2.375 | 0.869 | 63.4% | 1.157 | 1.089 | 5.9% |
+| XL Turbo Q8 DiT | 2.375 | 0.869 | 63.4% | 1.152 | 1.086 | 5.7% |
 
 Extra VRAM is the sampled request peak minus the immediately preceding loaded-idle device reading. Idle includes weights, backend state, and retained caches: these are incremental generation peaks, not all non-weight memory or total GPU savings. NVML sampling interval: 10 ms. Times are HTTP wall-time medians of requests 2?8, excluding lazy model loading. All 32 response artifacts/WAVs matched exactly.
 
@@ -69,8 +69,8 @@ Both XL Turbo and XL SFT Q8-DiT passed **56/56 exact server comparisons** across
 
 | Model | Original warm time (s) | Optimized warm time (s) | Less time | Original extra warm VRAM (GiB) | Optimized extra warm VRAM (GiB) | Less extra VRAM |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| XL Turbo Q8 DiT | 0.744 | 0.618 | 16.9% | 2.373 | 0.820 | 65.4% |
 | XL SFT Q8 DiT | 0.721 | 0.620 | 14.1% | 2.373 | 0.820 | 65.4% |
+| XL Turbo Q8 DiT | 0.744 | 0.618 | 16.9% | 2.373 | 0.820 | 65.4% |
 
 Memory saver enabled, one session, RTX 3090, same supplied caption, seed 1234, five seconds, eight diffusion steps. Warm medians: requests 2-8. Extra VRAM is sampled request peak minus preceding loaded idle, not all non-weight bytes. No compilation/other GPU workload overlapped measurements. With memory saver disabled, measured warm latency fell by 3.1%/5.1%; incremental warm memory stayed unchanged, while full mixed-sequence device peaks (including weights) fell from 15.814/15.706 to 14.425 GiB. These measurements do not certify arbitrary requests or a particular smaller GPU capacity; optimized mixed-sequence peaks with memory saver on were 12.731/12.624 GiB.
 

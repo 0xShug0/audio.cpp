@@ -2,6 +2,23 @@
 
 Stable Audio is wired as `--family stable_audio --task gen`. It generates music or sound effects from text, and the music model can condition generation on input audio for init-audio or inpainting workflows.
 
+## Stable Audio 3 Medium
+
+Use the medium package for the larger Stable Audio 3 music model. It uses the same user-facing controls as the music path.
+
+| Field | Value |
+|---|---|
+| Family | `stable_audio` |
+| Model directory | `models/stable-audio-3-medium` |
+| Task | `gen` |
+| Main mode | Text-to-music |
+| Prompt language | `en` |
+| Optional audio input | Supported by the Stable Audio request path when the model package provides the needed components |
+
+```bash
+audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-medium --backend cuda --text "wide cinematic ambient music with soft piano and evolving strings" --duration-seconds 30 --out music_medium.wav
+```
+
 ## Stable Audio 3 Small Music
 
 This is the default music-generation package. Use it for text-to-music, init-audio, and inpainting.
@@ -48,23 +65,6 @@ Use this package for short sound effects. It uses the same `gen` task but is int
 
 ```bash
 audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-small-sfx --backend cuda --text "footsteps on gravel, close perspective, crisp natural stone texture" --duration-seconds 8 --out sfx.wav
-```
-
-## Stable Audio 3 Medium
-
-Use the medium package for the larger Stable Audio 3 music model. It uses the same user-facing controls as the music path.
-
-| Field | Value |
-|---|---|
-| Family | `stable_audio` |
-| Model directory | `models/stable-audio-3-medium` |
-| Task | `gen` |
-| Main mode | Text-to-music |
-| Prompt language | `en` |
-| Optional audio input | Supported by the Stable Audio request path when the model package provides the needed components |
-
-```bash
-audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-medium --backend cuda --text "wide cinematic ambient music with soft piano and evolving strings" --duration-seconds 30 --out music_medium.wav
 ```
 
 ## Stable Audio Foundation / Open v1

@@ -1,72 +1,72 @@
 | Model | Option / area | Before | After |
 |---|---|---|---|
+| ACE-Step | Duration / LM guidance / thinking | `duration_seconds`, `lm_cfg_scale`, `thinking` | `duration_sec`, `lm_guidance_scale`, `enable_thinking` |
 | All renamed options below | Compatibility | Existing spellings | Legacy spellings remain accepted; discovery uses canonical names. |
 | BreezeTTS, CosyVoice3, FireRed Audio, FireRedTTS3 | Instruction | `instruction` | Advertise `instruct`; retain `instruction` as a model-local alias with existing embedded specs. |
-| Irodori TTS | Instruction | `instruction`, legacy `caption` | Advertise `instruct`; retain both existing spellings. |
-| Qwen3 TTS, OmniVoice, DotTTS, MOSS-TTS v1.5, MOSS-TTSD, MOSS-VoiceGen | Instruction discovery | Legacy or duplicate instruction names | Advertise only `instruct`; existing parser aliases remain accepted. |
-| Inflect v2 | Speaking speed | `speaking_rate` | `speed`; larger values remain faster. |
-| sanoTTS | Speaking speed | `speaking_rate` multiplies duration | `speed` uses the reciprocal: `speed=2` equals legacy `speaking_rate=0.5`. Legacy behavior unchanged. |
-| Chatterbox Turbo, VibeASR | Generated-token limit | `max_new_tokens` | `max_tokens` |
-| Index Echo | Transcript-token limit | `max_text_tokens` | `max_tokens` |
-| FireRed Audio | Understanding-token limit | `max_new_tokens` | `max_tokens` |
-| FireRed Audio | Generation limits | `max_new_text_tokens`, `max_new_audio_steps`, `min_new_audio_steps` | `max_text_tokens`, `max_audio_steps`, `min_audio_steps`; independent limits retained. |
-| OWSM | Beam width | `beam_size` | `num_beams` |
-| ZipVoice | Language / timestep shift | `lang`, `t_shift` | `language`, `shift`; session shift remains family-prefixed. |
-| ACE-Step | Duration / LM guidance / thinking | `duration_seconds`, `lm_cfg_scale`, `thinking` | `duration_sec`, `lm_guidance_scale`, `enable_thinking` |
-| F5-TTS | Guidance discovery | Both `cfg_strength` and `guidance_scale` | Advertise only `guidance_scale`. |
+| Canary ASR, Cohere ASR | Punctuation and casing | `pnc` | `punc`; still controls both punctuation and capitalization. |
 | Chatterbox | Flow guidance | `s3gen_cfg_rate` | `flow_guidance_scale`; separate from T3 `guidance_scale`. |
 | Chatterbox | Sampling discovery | Both `greedy` and `do_sample` | Advertise `do_sample`; legacy `greedy=true` still overrides sampling. |
-| FunASR Nano, LFM2 Audio | ASR chunk duration | `audio_chunk_seconds` | `audio_chunk_duration_sec` |
+| Chatterbox Turbo, VibeASR | Generated-token limit | `max_new_tokens` | `max_tokens` |
 | CLI | `--audio-chunk-seconds` request mapping | Emits `audio_chunk_seconds` | Emits `audio_chunk_duration_sec`; flag spelling unchanged |
-| LFM2 Audio | Session one-pass audio limit | `lfm2_audio.max_pass_seconds` | `lfm2_audio.max_pass_duration_sec`; unchanged 120-second default. |
-| Sopro TTS | Generation duration / reference crop | `min_seconds`, `max_seconds`, `ref_seconds` | `min_duration_sec`, `max_duration_sec`, `reference_duration_sec` |
-| Vevo2 | Target duration / reference trim | `target_duration_seconds`, `reference_duration_seconds` | `duration_sec`, `reference_duration_sec` |
-| Irodori TTS | Reference trim | `max_ref_sec` | `reference_duration_sec`; zero still selects the full reference. |
-| Silero VAD | Speech duration limit | `max_speech_duration_s` | `max_speech_duration_sec` |
-| MOSS-TTS v1.5, MOSS-TTSD, MOSS-VoiceGen | Request text temperature | Family-prefixed `text_temperature` | Unprefixed `text_temperature`; prefixed aliases retained. |
-| LiveAvatar | Request memory policy | `memory_saver` | `mem_saver` |
-| Stable Audio, MiniMax H3 | Sampler selection | `sampler` | `sampler_mode`; supported algorithms unchanged. |
-| Qwen3 TTS | CustomVoice preset | `speaker` | `voice_id` |
-| Canary ASR, Cohere ASR | Punctuation and casing | `pnc` | `punc`; still controls both punctuation and capitalization. |
+| ControlFoley | Video conditioning file | `video` | `video_file` |
+| CosyVoice3 | Convolution storage discovery | Advertised `cosyvoice3.conv_weight_type` without a consumer | Remove from discovery; legacy setting remains accepted and ineffective. Existing shared storage selection unchanged. |
+| F5-TTS | Guidance discovery | Both `cfg_strength` and `guidance_scale` | Advertise only `guidance_scale`. |
+| FireRed Audio | Understanding-token limit | `max_new_tokens` | `max_tokens` |
+| FireRed Audio | Generation limits | `max_new_text_tokens`, `max_new_audio_steps`, `min_new_audio_steps` | `max_text_tokens`, `max_audio_steps`, `min_audio_steps`; independent limits retained. |
+| FireRed Audio | Helper graph-arena discovery | Advertised `firered_audio.helper_graph_arena_mb` without a consumer | Remove from discovery; legacy setting remains accepted and ineffective. |
+| FireRed Audio | Template default / instruction description | Unconditional `tts_clone` metadata default; unclear task applicability | Document `asr` for ASR and `tts_clone` for generation. `instruction` conditions generation; ASR/understanding uses text input as its prompt. |
+| Fish Audio, Voxtral Realtime | Token-limit help | `max_new_tokens` | Advertise existing canonical `max_tokens`. |
+| FunASR Nano, LFM2 Audio | ASR chunk duration | `audio_chunk_seconds` | `audio_chunk_duration_sec` |
+| GigaAM | Session VAD location | Consumer read only `vad_model_path` | Also consume canonical `gigaam_asr.vad_model_path`. |
+| GLM-TTS | Noise-file discovery | `flow_noise_path`, `hift_source_random_path` | `flow_noise_file`, `hift_source_random_file` |
 | Hviske ASR | Punctuation and casing | `punctuation` | `punc`; still controls both punctuation and capitalization. |
 | Hviske v6 | Punctuation | `punctuated` | `punc`; casing remains separate. Supply both `punc` and `cased` to override automatic formatting. |
+| Index Echo | Transcript-token limit | `max_text_tokens` | `max_tokens` |
+| IndexTTS2.5 | Duration multiplier | `duration_factor` | `duration_scale`; larger values still mean longer audio. |
+| Inflect v2 | Speaking speed | `speaking_rate` | `speed`; larger values remain faster. |
+| Irodori TTS | Instruction | `instruction`, legacy `caption` | Advertise `instruct`; retain both existing spellings. |
+| Irodori TTS | Reference trim | `max_ref_sec` | `reference_duration_sec`; zero still selects the full reference. |
+| Irodori TTS | Speaker embedding file | `speaker_embedding_path` | `speaker_embedding_file` |
+| Kokoro | Session predictor graph arenas | `kokoro_tts.predictor_{duration,text,tail}_graph_mb` | Corresponding `*_graph_arena_mb`; same host metadata allocations and defaults. |
+| LFM2 Audio | Session one-pass audio limit | `lfm2_audio.max_pass_seconds` | `lfm2_audio.max_pass_duration_sec`; unchanged 120-second default. |
+| LiveAvatar | Request memory policy | `memory_saver` | `mem_saver` |
+| LiveAvatar | Reference image file | `reference_image_path` | `reference_image_file`; existing `ref_image` alias retained. |
+| MiniMax Music3 | Session graph arena | `minimax_music3.graph_context_mb` | `minimax_music3.graph_arena_mb`; size unchanged. |
+| MiniMax Music3 | Depth-decoder default in specs | `rvq_depth_decoder_bf16.gguf` | `rvq_depth_decoder_q8_0.gguf`, matching the existing runtime default. |
+| MioTTS | Request selection help | `miotts.best_of_n`, `miotts.best_of_n_enabled`, `miotts.best_of_n_language` | Advertise unprefixed request names; session defaults remain family-prefixed. |
+| MiraTTS | Session weight selection | Specs classified weights as load options; consumers read bare names | Consume `mira_tts.{backbone,linear,conv}_weight_type`; classify as session options, retaining bare aliases and Native/Native/F32 defaults. |
+| MOSS-TTS v1.5 | Requested duration in codec frames | `tokens` | `duration_frames`; separate from the `max_frames` ceiling. |
+| MOSS-TTS v1.5, MOSS-TTSD, MOSS-VoiceGen | Request text temperature | Family-prefixed `text_temperature` | Unprefixed `text_temperature`; prefixed aliases retained. |
+| OuteTTS | Session aligner location | `outetts.aligner_path` | `outetts.forced_aligner_path` |
+| OWSM | Beam width | `beam_size` | `num_beams` |
 | PocketTTS | Input tokens per text chunk | `max_tokens` | `text_chunk_tokens`; legacy `max_tokens` remains an input-token budget, not a generation limit. |
 | PocketTTS | Generated audio-frame limit | `max_steps` | `max_frames`; zero still selects an estimated cap. |
-| MOSS-TTS v1.5 | Requested duration in codec frames | `tokens` | `duration_frames`; separate from the `max_frames` ceiling. |
-| IndexTTS2.5 | Duration multiplier | `duration_factor` | `duration_scale`; larger values still mean longer audio. |
-| Seed-VC | Duration multiplier | `length_adjust` | `duration_scale`; not inverted into speed. |
-| VieNeu v3 Turbo | Automatic frame cap / minimum text chunk | `frame_cap`, `text_chunk_min` | `auto_frame_cap`, `text_chunk_min_size`; the frame-cap switch remains boolean. |
-| GigaAM | Session VAD location | Consumer read only `vad_model_path` | Also consume canonical `gigaam_asr.vad_model_path`. |
-| Qwen3 ASR | Session VAD discovery | `qwen3_asr.vad_path` | `qwen3_asr.vad_model_path` |
-| OuteTTS | Session aligner location | `outetts.aligner_path` | `outetts.forced_aligner_path` |
-| Kokoro | Session predictor graph arenas | `kokoro_tts.predictor_{duration,text,tail}_graph_mb` | Corresponding `*_graph_arena_mb`; same host metadata allocations and defaults. |
-| Vevo2 | Session graph arenas | `vevo2.{ar_prefill,ar_decode,whisper,tokenizer,fm,vocoder}_graph_context_mb` | Corresponding `*_graph_arena_mb`; sizes unchanged. |
-| MiniMax Music3 | Session graph arena | `minimax_music3.graph_context_mb` | `minimax_music3.graph_arena_mb`; size unchanged. |
 | PocketTTS | Session FlowLM/Mimi graph arenas | Component `*_graph_context_mb` | Corresponding `*_graph_arena_mb`; sizes unchanged. |
-| VoxCPM1, VoxCPM2 | Session generation/AudioVAE graph arenas | Component `*_graph_context_mb` | Corresponding `*_graph_arena_mb`; sizes unchanged. |
-| Seed-VC | Noise file discovery | `noise_path` | `noise_file` |
-| GLM-TTS | Noise-file discovery | `flow_noise_path`, `hift_source_random_path` | `flow_noise_file`, `hift_source_random_file` |
-| Irodori TTS | Speaker embedding file | `speaker_embedding_path` | `speaker_embedding_file` |
 | PocketTTS | Voice-state files | `voice_embedding_path`, `export_voice_state_path` | `voice_embedding_file`, `export_voice_state_file` |
+| PocketTTS | Clone transcript discovery | Advertised `voice_clone_text`, unused by voice encoding | Remove from discovery; legacy input remains accepted with clone audio but does not condition the voice. |
+| Qwen3 ASR | Session VAD discovery | `qwen3_asr.vad_path` | `qwen3_asr.vad_model_path` |
+| Qwen3 TTS | CustomVoice preset | `speaker` | `voice_id` |
+| Qwen3 TTS, OmniVoice, DotTTS, MOSS-TTS v1.5, MOSS-TTSD, MOSS-VoiceGen | Instruction discovery | Legacy or duplicate instruction names | Advertise only `instruct`; existing parser aliases remain accepted. |
 | RVC | Pitch / retrieval files | `pitch_path`, `retrieval_index_path` | `pitch_file`, `retrieval_index_file` |
 | SAM Audio | Visual reference files | `reference_image_path`, `reference_video_path` | `reference_image_file`, `reference_video_file` |
-| LiveAvatar | Reference image file | `reference_image_path` | `reference_image_file`; existing `ref_image` alias retained. |
-| ControlFoley | Video conditioning file | `video` | `video_file` |
-| VieNeu v3 Turbo | Session G2P dictionary file | `vieneu_v3_turbo.g2p_dict` / bare `g2p_dict` | `vieneu_v3_turbo.g2p_dict_file` |
+| sanoTTS | Speaking speed | `speaking_rate` multiplies duration | `speed` uses the reciprocal: `speed=2` equals legacy `speaking_rate=0.5`. Legacy behavior unchanged. |
+| Seed-VC | Duration multiplier | `length_adjust` | `duration_scale`; not inverted into speed. |
+| Seed-VC | Noise file discovery | `noise_path` | `noise_file` |
+| Silero VAD | Speech duration limit | `max_speech_duration_s` | `max_speech_duration_sec` |
 | Soprano TTS | Session weight selection | Specs classified weights as load options; consumers read bare names | Consume `soprano_tts.backbone_weight_type` and `soprano_tts.decoder_weight_type`; classify as session options and retain bare aliases. |
 | Soprano TTS | Weight defaults in specs | `native` despite F32 runtime defaults | Publish `f32`; runtime defaults unchanged. |
 | Soprano TTS | Session text chunk size | Consumer read bare `text_chunk_size` | Also consume `soprano_tts.text_chunk_size` in offline and streaming paths. |
-| MiraTTS | Session weight selection | Specs classified weights as load options; consumers read bare names | Consume `mira_tts.{backbone,linear,conv}_weight_type`; classify as session options, retaining bare aliases and Native/Native/F32 defaults. |
-| FireRed Audio | Helper graph-arena discovery | Advertised `firered_audio.helper_graph_arena_mb` without a consumer | Remove from discovery; legacy setting remains accepted and ineffective. |
-| CosyVoice3 | Convolution storage discovery | Advertised `cosyvoice3.conv_weight_type` without a consumer | Remove from discovery; legacy setting remains accepted and ineffective. Existing shared storage selection unchanged. |
-| PocketTTS | Clone transcript discovery | Advertised `voice_clone_text`, unused by voice encoding | Remove from discovery; legacy input remains accepted with clone audio but does not condition the voice. |
-| MiniMax Music3 | Depth-decoder default in specs | `rvq_depth_decoder_bf16.gguf` | `rvq_depth_decoder_q8_0.gguf`, matching the existing runtime default. |
-| FireRed Audio | Template default / instruction description | Unconditional `tts_clone` metadata default; unclear task applicability | Document `asr` for ASR and `tts_clone` for generation. `instruction` conditions generation; ASR/understanding uses text input as its prompt. |
-| Fish Audio, Voxtral Realtime | Token-limit help | `max_new_tokens` | Advertise existing canonical `max_tokens`. |
+| Sopro TTS | Generation duration / reference crop | `min_seconds`, `max_seconds`, `ref_seconds` | `min_duration_sec`, `max_duration_sec`, `reference_duration_sec` |
 | Stable Audio | Duration and inpainting help | `duration_seconds`, `duration_padding_seconds`, `inpaint_mask_*_seconds` | Advertise existing corresponding `*_sec` names. |
+| Stable Audio, MiniMax H3 | Sampler selection | `sampler` | `sampler_mode`; supported algorithms unchanged. |
 | Supertonic | Speed help | Both `speaking_rate` and `speed` | Advertise only `speed`; legacy input retained. |
-| MioTTS | Request selection help | `miotts.best_of_n`, `miotts.best_of_n_enabled`, `miotts.best_of_n_language` | Advertise unprefixed request names; session defaults remain family-prefixed. |
+| Vevo2 | Target duration / reference trim | `target_duration_seconds`, `reference_duration_seconds` | `duration_sec`, `reference_duration_sec` |
+| Vevo2 | Session graph arenas | `vevo2.{ar_prefill,ar_decode,whisper,tokenizer,fm,vocoder}_graph_context_mb` | Corresponding `*_graph_arena_mb`; sizes unchanged. |
+| VieNeu v3 Turbo | Automatic frame cap / minimum text chunk | `frame_cap`, `text_chunk_min` | `auto_frame_cap`, `text_chunk_min_size`; the frame-cap switch remains boolean. |
+| VieNeu v3 Turbo | Session G2P dictionary file | `vieneu_v3_turbo.g2p_dict` / bare `g2p_dict` | `vieneu_v3_turbo.g2p_dict_file` |
+| VoxCPM1, VoxCPM2 | Session generation/AudioVAE graph arenas | Component `*_graph_context_mb` | Corresponding `*_graph_arena_mb`; sizes unchanged. |
 | VoxCPM2 | Request chunk-strategy help | `voxcpm2.chunk_strategy` | Advertise `chunk_strategy`; prefixed alias retained. |
+| ZipVoice | Language / timestep shift | `lang`, `t_shift` | `language`, `shift`; session shift remains family-prefixed. |
 
 ## Numeric Metadata Correction Checklist
 
