@@ -190,35 +190,26 @@ std::filesystem::path resolve_path(const std::filesystem::path & base, const std
 // Looks up `<voice_name>` in `<voice_dir>/prompt_text`, a mapping file with one
 // `<basename>|<transcript>` line per built-in voice (same format the webui uses).
 std::optional<std::string> load_voice_library_text(
-    const std::filesystem::path & voice_dir, const std::string & voice_name) {
-    std::ifstream f(voice_dir / "prompt_text");
-    std::string line;
-    while (std::getline(f, line)) {
-        const auto sep = line.find('|');
-        if (sep == std::string::npos) continue;
-        std::string name = line.substr(0, sep);
-        // trim trailing whitespace from name
-        while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) {
-            name.pop_back();
-        }
-        if (name == voice_name) {
-            return line.substr(sep + 1);
-        }
-    }
-    return std::nullopt;
+    const std::filesystem::path & voice_dir, const std::string & voice_name);
+
+// A voice name becomes a file name under voice_dir, so it must be a plain basename:
+// no separators, no drive/root, and no "."/"..". Shared by the lookup below and by the
+// voice-management handlers, which would otherwise write outside the library.
+bool is_valid_voice_name(const std::string & voice_name) {
+    const std::filesystem::path name_path(voice_name);
+    return !(voice_name.empty() ||
+             name_path.has_root_name() ||
+             name_path.has_root_directory() ||
+             name_path.has_parent_path() ||
+             name_path.filename().string() != voice_name ||
+             voice_name == "." ||
+             voice_name == "..");
 }
 
 std::optional<std::filesystem::path> resolve_voice_library_wav(
     const std::filesystem::path & voice_dir,
     const std::string & voice_name) {
-    const std::filesystem::path name_path(voice_name);
-    if (voice_name.empty() ||
-        name_path.has_root_name() ||
-        name_path.has_root_directory() ||
-        name_path.has_parent_path() ||
-        name_path.filename().string() != voice_name ||
-        voice_name == "." ||
-        voice_name == "..") {
+    if (!is_valid_voice_name(voice_name)) {
         return std::nullopt;
     }
     const auto wav = voice_dir / (voice_name + ".wav");
@@ -227,6 +218,76 @@ std::optional<std::filesystem::path> resolve_voice_library_wav(
         return std::nullopt;
     }
     return wav;
+}
+
+// Whole `prompt_text` as name -> transcript. The first line for a name wins, which is
+// the same rule load_voice_library_text applies when it scans the file line by line.
+std::unordered_map<std::string, std::string> load_voice_library_map(
+    const std::filesystem::path & voice_dir) {
+    std::unordered_map<std::string, std::string> entries;
+    std::ifstream f(voice_dir / "prompt_text");
+    std::string line;
+    while (std::getline(f, line)) {
+        const auto sep = line.find('|');
+        if (sep == std::string::npos) {
+            continue;
+        }
+        std::string name = line.substr(0, sep);
+        // trim trailing whitespace from name
+        while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) {
+            name.pop_back();
+        }
+        entries.try_emplace(std::move(name), line.substr(sep + 1));
+    }
+    return entries;
+}
+
+// Rewrites prompt_text with `entries`. Sorted so the file's diff is stable across
+// edits, and written through a temporary + rename so a crash or a concurrent reader
+// never sees a half-written mapping file.
+void save_voice_library_map(
+    const std::filesystem::path & voice_dir,
+    const std::unordered_map<std::string, std::string> & entries) {
+    std::vector<std::string> names;
+    names.reserve(entries.size());
+    for (const auto & [name, transcript] : entries) {
+        (void) transcript;
+        names.push_back(name);
+    }
+    std::sort(names.begin(), names.end());
+
+    std::ostringstream out;
+    for (const auto & name : names) {
+        out << name << '|' << entries.at(name) << '\n';
+    }
+    const auto text = out.str();
+
+    std::error_code ec;
+    std::filesystem::create_directories(voice_dir, ec);
+    const auto target = voice_dir / "prompt_text";
+    const auto temporary = voice_dir / "prompt_text.tmp";
+    {
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        if (!file) {
+            throw std::runtime_error("failed to write voice library prompt_text");
+        }
+        file.write(text.data(), static_cast<std::streamsize>(text.size()));
+        if (!file) {
+            throw std::runtime_error("failed to write voice library prompt_text");
+        }
+    }
+    std::filesystem::rename(temporary, target, ec);
+    if (ec) {
+        std::filesystem::remove(temporary, ec);
+        throw std::runtime_error("failed to replace voice library prompt_text");
+    }
+}
+
+std::optional<std::string> load_voice_library_text(
+    const std::filesystem::path & voice_dir, const std::string & voice_name) {
+    const auto entries = load_voice_library_map(voice_dir);
+    const auto it = entries.find(voice_name);
+    return it == entries.end() ? std::nullopt : std::optional<std::string>(it->second);
 }
 
 std::unordered_map<std::string, std::string> options_from_object(const Value * value);
@@ -1257,6 +1318,15 @@ HttpResponse ServerState::handle_request(const HttpRequest & request, bool use_f
     }
     else if (request.method == "GET" && request.path == "/v1/audio/voices") {
         response = handle_voices(request);
+    }
+    // Mutating twins of the listing above. POST rather than PUT/DELETE because that is
+    // the shape every other management route here uses (POST /v1/ui/models/delete) and
+    // the CORS preflight already advertises exactly GET and POST.
+    else if (request.method == "POST" && request.path == "/v1/audio/voices") {
+        response = handle_voice_add(request);
+    }
+    else if (request.method == "POST" && request.path == "/v1/audio/voices/delete") {
+        response = handle_voice_delete(request.body);
     }
     else if (request.method == "GET" && request.path == "/v1/ui/voice-preview") {
         response = handle_ui_voice_preview(request);
@@ -3797,6 +3867,135 @@ HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
     }
     out << "]}";
     return json_response(out.str());
+}
+
+// Writes one voice into the configured voice library: the wav becomes
+// <voice_dir>/<name>.wav and the transcript becomes that name's prompt_text line, so
+// the added voice is immediately usable as a request "voice" and listed by
+// GET /v1/audio/voices. Gated on ui_management because it mutates the host filesystem
+// (the same reason model install/delete is), and multipart because the payload is an
+// audio file rather than a JSON document.
+HttpResponse ServerState::handle_voice_add(const HttpRequest & request) {
+    if (!config_.ui_management) {
+        return error_response(403, "voice management is disabled", "forbidden");
+    }
+    if (!config_.voice_dir.has_value()) {
+        return error_response(403, "voice library is not configured", "forbidden");
+    }
+    const auto content_type = request.headers.find("content-type");
+    const auto boundary = content_type == request.headers.end()
+        ? std::nullopt
+        : extract_multipart_boundary(content_type->second);
+    if (!boundary.has_value()) {
+        return error_response(400, "voice upload requires a multipart/form-data body", "invalid_request_error");
+    }
+    // Bounds one uploaded reference: the wav is held in memory while it is parsed, and
+    // a cloning reference is seconds of speech, not a file transport.
+    constexpr size_t kMaxVoiceWavBytes = size_t{64} * 1024 * 1024;
+    if (request.body.size() > kMaxVoiceWavBytes) {
+        return error_response(413, "voice upload exceeds the 64 MiB limit", "invalid_request_error");
+    }
+    const auto parts = parse_multipart_body(request.body, *boundary);
+    const MultipartPart * file_part = nullptr;
+    std::string name;
+    std::string transcript;
+    bool has_transcript = false;
+    bool overwrite = false;
+    for (const auto & part : parts) {
+        if (part.name == "file") {
+            file_part = &part;
+        } else if (part.name == "name" || part.name == "voice") {
+            name = part.data;
+        } else if (part.name == "transcript" || part.name == "text") {
+            transcript = part.data;
+            has_transcript = true;
+        } else if (part.name == "overwrite") {
+            overwrite = part.data == "true" || part.data == "True" || part.data == "1";
+        }
+    }
+    if (!is_valid_voice_name(name)) {
+        return error_response(
+            400,
+            "voice name must be a non-empty file basename without path separators",
+            "invalid_request_error");
+    }
+    if (file_part == nullptr || file_part->data.empty()) {
+        return error_response(400, "voice upload requires a non-empty \"file\" part", "invalid_request_error");
+    }
+
+    const auto & voice_dir = *config_.voice_dir;
+    std::lock_guard<std::mutex> lock(voice_mutex_);
+    const auto wav = voice_dir / (name + ".wav");
+    std::error_code ec;
+    const bool existed = std::filesystem::is_regular_file(wav, ec);
+    if (existed && !overwrite) {
+        return error_response(
+            409,
+            "voice \"" + name + "\" already exists; resend with overwrite=true to replace it",
+            "invalid_request_error");
+    }
+    std::filesystem::create_directories(voice_dir, ec);
+    {
+        std::ofstream out(wav, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            throw std::runtime_error("could not create voice file: " + wav.string());
+        }
+        out.write(file_part->data.data(), static_cast<std::streamsize>(file_part->data.size()));
+        if (!out) {
+            throw std::runtime_error("could not write voice file: " + wav.string());
+        }
+    }
+    if (has_transcript) {
+        auto entries = load_voice_library_map(voice_dir);
+        entries[name] = transcript;
+        save_voice_library_map(voice_dir, entries);
+    }
+    return json_response(
+        "{\"name\":" + json_quote(name) +
+        ",\"path\":" + json_quote(wav.string()) +
+        ",\"replaced\":" + (existed ? "true" : "false") +
+        ",\"transcript_recorded\":" + (has_transcript ? "true" : "false") + "}");
+}
+
+// Removes one voice from the configured library: the wav and its prompt_text line.
+// Both halves go, because a leftover transcript would silently attach to a later voice
+// of the same name.
+HttpResponse ServerState::handle_voice_delete(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return error_response(403, "voice management is disabled", "forbidden");
+    }
+    if (!config_.voice_dir.has_value()) {
+        return error_response(403, "voice library is not configured", "forbidden");
+    }
+    const auto body = engine::io::json::parse(body_text);
+    const std::string name = engine::io::json::require_string(body, "name");
+    if (!is_valid_voice_name(name)) {
+        return error_response(
+            400,
+            "voice name must be a non-empty file basename without path separators",
+            "invalid_request_error");
+    }
+
+    const auto & voice_dir = *config_.voice_dir;
+    std::lock_guard<std::mutex> lock(voice_mutex_);
+    const auto wav = voice_dir / (name + ".wav");
+    std::error_code ec;
+    const bool deleted = std::filesystem::remove(wav, ec);
+    if (ec) {
+        throw std::runtime_error("could not remove voice file: " + wav.string());
+    }
+    auto entries = load_voice_library_map(voice_dir);
+    const bool had_transcript = entries.erase(name) != 0;
+    if (had_transcript) {
+        save_voice_library_map(voice_dir, entries);
+    }
+    if (!deleted && !had_transcript) {
+        return error_response(404, "voice \"" + name + "\" was not found", "not_found");
+    }
+    return json_response(
+        "{\"name\":" + json_quote(name) +
+        ",\"deleted\":" + (deleted ? "true" : "false") +
+        ",\"transcript_removed\":" + (had_transcript ? "true" : "false") + "}");
 }
 
 std::string ServerState::models_json(bool include_session_options, bool include_params) const {

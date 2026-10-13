@@ -249,6 +249,8 @@ private:
     HttpResponse handle_generic_batch(const std::string & body_text);
     HttpResponse handle_generic_stream(const std::string & body_text);
     HttpResponse handle_voices(const HttpRequest & request) const;
+    HttpResponse handle_voice_add(const HttpRequest & request);
+    HttpResponse handle_voice_delete(const std::string & body_text);
     HttpResponse handle_unload_models(const std::string & body_text);
     HttpResponse handle_unload_all_models();
     // Background loop started when idle_unload_ms > 0: when the server has gone
@@ -273,6 +275,9 @@ private:
     std::mutex bulk_admission_mutex_;
     std::filesystem::path upload_root_;
     std::mutex upload_root_mutex_;
+    // Serializes voice-library edits (wav + prompt_text) so two concurrent add/delete
+    // requests cannot interleave a read-modify-write of the mapping file.
+    std::mutex voice_mutex_;
     std::filesystem::path repository_root_;
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     std::filesystem::path default_models_root_;

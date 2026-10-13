@@ -345,6 +345,38 @@ Resolution precedence for a TTS request's voice fields:
 
 `GET /v1/audio/voices` also lists the `voice_dir` wav basenames (deduplicated against preset names). If `voice_dir` is unset, behavior is exactly as before.
 
+#### Managing the voice library over HTTP
+
+With `"ui_management": true` and a configured `voice_dir`, two routes add and remove library voices at runtime instead of by editing the directory by hand. Both write `<voice_dir>/<name>.wav` and that name's `prompt_text` line, so an added voice is immediately usable as a request `"voice"` and appears in `GET /v1/audio/voices`.
+
+`POST /v1/audio/voices` takes a `multipart/form-data` body:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `name` | yes | Voice name. Must be a plain file basename: no path separators, not `.` or `..`. |
+| `file` | yes | Reference wav bytes, stored as `<voice_dir>/<name>.wav`. The whole request body is capped at 64 MiB. |
+| `transcript` | no | Reference text for the clone; becomes the `prompt_text` line. Without it any existing line for that name is left as it was. |
+| `overwrite` | no | `true`/`1` replaces an existing voice. Otherwise an existing name is refused with `409`. |
+
+```bash
+curl -F 'name=alice' -F 'transcript=okay, this is my new voice.' \
+     -F 'file=@alice.wav' http://127.0.0.1:8080/v1/audio/voices
+```
+
+```json
+{"name": "alice", "path": "/voice/alice.wav", "replaced": false, "transcript_recorded": true}
+```
+
+`POST /v1/audio/voices/delete` takes `{"name": "<name>"}` and removes both the wav and its `prompt_text` line (a leftover transcript would otherwise attach to a later voice of the same name). A name with no wav and no transcript line is a `404`; a name that has only one of the two still succeeds and removes what is there, with `deleted` / `transcript_removed` reporting which halves existed.
+
+```bash
+curl -X POST -d '{"name":"alice"}' http://127.0.0.1:8080/v1/audio/voices/delete
+```
+
+Both routes answer `403` when `ui_management` is off or `voice_dir` is unset, and `400` for a missing field or an invalid name. Models keep resolving voices per request, so a change is visible to the next request without a restart.
+
+Note that a server started with the native WebUI and no configured `voice_dir` uses a temporary directory for the embedded demo voices, which is removed at shutdown — point `voice_dir` at a real directory to keep runtime edits across restarts.
+
 ## Start
 
 ```bash
@@ -691,6 +723,10 @@ curl 'http://127.0.0.1:8080/v1/audio/voices?model=pocket-tts'
 ```json
 {"voices": ["alba", "cosette", "marius"]}
 ```
+
+### `POST /v1/audio/voices` and `POST /v1/audio/voices/delete`
+
+Add or remove a voice in the configured `voice_dir` at runtime; see [Managing the voice library over HTTP](#managing-the-voice-library-over-http) for the fields, the `ui_management` requirement, and examples.
 
 ### `POST /v1/tasks/run`
 
