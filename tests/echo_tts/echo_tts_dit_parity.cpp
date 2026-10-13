@@ -318,7 +318,7 @@ int main(int argc, char ** argv) try {
     std::cout << "text_length=" << conditioning.text_length
               << " speaker_frames=" << conditioning.speaker_frames << "\n";
 
-    dit.prepare_conditioning(conditioning);
+    dit.prepare_conditioning(conditioning, 3); // 3 kv-lanes = independent-cfg
 
     bool ok = true;
 
