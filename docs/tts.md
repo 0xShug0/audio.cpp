@@ -12,7 +12,7 @@
 | F5-TTS | `f5_tts` | `tts`, `clon` | [F5-TTS](models/f5_tts.md) |
 | FireRedAudio | `firered_audio` | `asr`, `tts`, `clon`, `vdes` | [FireRedAudio](models/firered_audio.md) |
 | FireRedTTS3 | `fireredtts3` | `tts`, `clon`, `vdes` | [FireRedTTS3](models/fireredtts3.md) |
-| Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
+| Fish Audio S2 Pro | `fish_audio` | `tts`, `clon` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](models/higgs_audio_tts.md) |
 | IndexTTS2 | `index_tts2` | `tts` | [IndexTTS](models/index_tts2.md) |
@@ -320,7 +320,7 @@ speaker-tagged turns, and the full option list.
 |---|---|
 | Family | `fish_audio` |
 | Model path | `models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf` when installed through the model manager |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | Model auto-handles language; tested paths cover English and Chinese-style prompts |
 | Voice input | Optional reference WAV through `--voice-ref`; transcript through `--reference-text` when known |
@@ -335,13 +335,13 @@ audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGU
 Reference voice clone:
 
 ```bash
-audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The final render is ready for review." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
+audiocpp_cli --task clon --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The final render is ready for review." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
 ```
 
 Multiple reference pairs:
 
 ```bash
-audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The review is ready, and I will check the final numbers." --request-option 'multi_reference_cond=[{"audio":"assets/resources/a.wav","text":"First reference transcript."},{"audio":"assets/resources/b.wav","text":"Second reference transcript."}]' --out out.wav
+audiocpp_cli --task clon --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The review is ready, and I will check the final numbers." --request-option 'multi_reference_cond=[{"audio":"assets/resources/a.wav","text":"First reference transcript."},{"audio":"assets/resources/b.wav","text":"Second reference transcript."}]' --out out.wav
 ```
 
 The model manager installs the Q8_0 standalone GGUF package by default:

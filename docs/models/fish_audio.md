@@ -1,9 +1,10 @@
 # Fish Audio S2 Pro
 
-Fish Audio S2 Pro is wired as `--family fish_audio` for offline and streaming text to speech
-and reference voice cloning. The integration supports standalone GGUF packages,
-session-level reference caching, framework text chunking for long-form text, and
-Fish-style multi-reference conditioning.
+Fish Audio S2 Pro is wired as `--family fish_audio` for offline and streaming
+text to speech (`--task tts`) and reference voice cloning (`--task clon`). The
+integration supports standalone GGUF packages, session-level reference caching,
+framework text chunking for long-form text, and Fish-style multi-reference
+conditioning.
 
 ## Install
 
@@ -35,7 +36,7 @@ audiocpp_cli --task tts --family fish_audio \
 Reference voice clone:
 
 ```bash
-audiocpp_cli --task tts --family fish_audio \
+audiocpp_cli --task clon --family fish_audio \
   --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf \
   --backend cuda \
   --text "The final render is ready for review." \
@@ -62,7 +63,7 @@ this is output streaming, not incremental text input.
 | Field | Value |
 |---|---|
 | Family | `fish_audio` |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Model path | `models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf` |
 | Languages | Model auto-handles language; tested paths cover English and Chinese-style prompts |
@@ -135,7 +136,7 @@ Use multiple references without speaker tags when you want them to condition one
 generated voice/style.
 
 ```bash
-audiocpp_cli --task tts --family fish_audio \
+audiocpp_cli --task clon --family fish_audio \
   --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf \
   --backend cuda \
   --text "The review is ready, and I will check the final numbers." \
@@ -154,7 +155,7 @@ follow a speaker order. Reference array index `0` maps to `<|speaker:0|>`, index
 provided reference indexes.
 
 ```bash
-audiocpp_cli --task tts --family fish_audio \
+audiocpp_cli --task clon --family fish_audio \
   --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf \
   --backend cuda \
   --text "<|speaker:0|>The review is ready. <|speaker:1|>I will check the final numbers. <|speaker:0|>Please send me the final summary." \
