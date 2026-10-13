@@ -7,6 +7,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/audio/waveform_ops.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
