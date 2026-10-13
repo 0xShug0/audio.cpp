@@ -5,6 +5,7 @@
 #include "multipart.h"
 #include "request_dispatch.h"
 #include "server_protocol.h"
+#include "server_ui.h"
 #include "speech_option_exceptions.h"
 #include "task_stream_format.h"
 #include "ui_assets.h"
@@ -338,17 +339,7 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
 }
 
 std::filesystem::path ServerState::resolve_ui_model_path(const std::filesystem::path & path) const {
-    if (path.is_absolute()) {
-        return path;
-    }
-
-    const auto relative = path.lexically_normal();
-    const auto generic = relative.generic_string();
-    if (!repository_root_.empty() &&
-        (generic == "assets/framework" || generic.rfind("assets/framework/", 0) == 0)) {
-        return (repository_root_ / relative).lexically_normal();
-    }
-    return (request_base_ / relative).lexically_normal();
+    return minitts::server::resolve_ui_model_path(path, request_base_, repository_root_);
 }
 
 HttpResponse ServerState::handle_model_unload(const std::string & body_text) {
@@ -372,50 +363,13 @@ HttpResponse ServerState::handle_model_unload(const std::string & body_text) {
 }
 
 HttpResponse ServerState::handle_path_status(const std::string & body_text) const {
-    if (!config_.ui_management) {
-        return error_response(403, "UI path inspection is disabled", "forbidden");
-    }
-    const auto body = engine::io::json::parse(body_text);
-    const auto path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
-    std::error_code ec;
-    const bool exists = std::filesystem::exists(path, ec);
-    const bool directory = exists && std::filesystem::is_directory(path, ec);
-    const bool regular_file = exists && std::filesystem::is_regular_file(path, ec);
-    return json_response(
-        "{\"path\":" + json_quote(path.string()) +
-        ",\"exists\":" + (exists ? "true" : "false") +
-        ",\"directory\":" + (directory ? "true" : "false") +
-        ",\"file\":" + (regular_file ? "true" : "false") + "}");
+    return ui_path_status_response(
+        body_text, config_.ui_management, request_base_, repository_root_);
 }
 
 HttpResponse ServerState::handle_ui_upload(const HttpRequest & request) {
-    if (!config_.ui_enabled && !config_.ui_management) {
-        return error_response(403, "UI uploads are disabled", "forbidden");
-    }
-    if (request.body.empty()) {
-        return error_response(400, "upload body is empty", "invalid_request_error");
-    }
-    constexpr size_t kMaxUploadBytes = size_t{2} * 1024 * 1024 * 1024;
-    if (request.body.size() > kMaxUploadBytes) {
-        return error_response(413, "upload exceeds the 2 GiB limit", "invalid_request_error");
-    }
-    std::string filename = "audio.wav";
-    if (const auto it = request.headers.find("x-audiocpp-filename"); it != request.headers.end()) {
-        filename = safe_upload_name(it->second);
-    }
-    const auto id = next_upload_id_.fetch_add(1);
-    const auto path = upload_root_ / (std::to_string(id) + "-" + filename);
-    std::ofstream out(path, std::ios::binary);
-    if (!out) {
-        throw std::runtime_error("could not create temporary upload: " + path.string());
-    }
-    out.write(request.body.data(), static_cast<std::streamsize>(request.body.size()));
-    if (!out) {
-        throw std::runtime_error("could not write temporary upload: " + path.string());
-    }
-    return json_response(
-        "{\"path\":" + json_quote(path.string()) +
-        ",\"bytes\":" + std::to_string(request.body.size()) + "}");
+    return ui_upload_response(
+        *this, request, config_.ui_enabled || config_.ui_management);
 }
 
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
@@ -423,68 +377,48 @@ HttpResponse ServerState::handle_model_install(const std::string & body_text) {
     if (!config_.ui_management) {
         return error_response(403, "UI model installation is disabled", "forbidden");
     }
-    const auto body = engine::io::json::parse(body_text);
-    const std::string package_id = engine::io::json::require_string(body, "id");
-    const std::string source_directory =
-        engine::io::json::optional_string(body, "source_directory", "");
-    const std::string source_file =
-        engine::io::json::optional_string(body, "source_file", "");
-    const std::string output_file =
-        engine::io::json::optional_string(body, "output_file", "");
-    const std::string variant =
-        engine::io::json::optional_string(body, "variant", "");
-    const bool overwrite =
-        engine::io::json::optional_bool(body, "overwrite", false);
+    const auto request = parse_ui_model_install_request(body_text);
     std::lock_guard<std::mutex> lock(model_installer_mutex_);
     if (!model_installer_) {
         return error_response(403, "UI model installation is disabled", "forbidden");
     }
-    return json_response(model_installer_->start(
-        package_id,
-        source_file,
-        output_file,
-        source_directory,
-        variant,
-        overwrite));
+    return ui_model_install_response(request, *model_installer_);
 }
 
 HttpResponse ServerState::handle_model_remove(const std::string & body_text) {
     if (!config_.ui_management) {
         return error_response(403, "UI model removal is disabled", "forbidden");
     }
-    const auto body = engine::io::json::parse(body_text);
-    const std::string package_id = engine::io::json::require_string(body, "id");
+    const auto package_id = parse_ui_model_id(body_text);
     std::lock_guard<std::mutex> lock(model_installer_mutex_);
     if (!model_installer_) {
         return error_response(403, "UI model removal is disabled", "forbidden");
     }
-    return json_response(model_installer_->remove(package_id));
+    return ui_model_remove_response(package_id, *model_installer_);
 }
 
 HttpResponse ServerState::handle_model_install_stop(const std::string & body_text) {
     if (!config_.ui_management) {
         return error_response(403, "UI model installation is disabled", "forbidden");
     }
-    const auto body = engine::io::json::parse(body_text);
-    const std::string package_id = engine::io::json::require_string(body, "id");
+    const auto package_id = parse_ui_model_id(body_text);
     std::lock_guard<std::mutex> lock(model_installer_mutex_);
     if (!model_installer_) {
         return error_response(403, "UI model installation is disabled", "forbidden");
     }
-    return json_response(model_installer_->stop(package_id));
+    return ui_model_install_stop_response(package_id, *model_installer_);
 }
 
 HttpResponse ServerState::handle_model_clean_partial(const std::string & body_text) {
     if (!config_.ui_management) {
         return error_response(403, "UI model cleanup is disabled", "forbidden");
     }
-    const auto body = engine::io::json::parse(body_text);
-    const std::string package_id = engine::io::json::require_string(body, "id");
+    const auto package_id = parse_ui_model_id(body_text);
     std::lock_guard<std::mutex> lock(model_installer_mutex_);
     if (!model_installer_) {
         return error_response(403, "UI model cleanup is disabled", "forbidden");
     }
-    return json_response(model_installer_->clean_partial(package_id));
+    return ui_model_clean_partial_response(package_id, *model_installer_);
 }
 
 HttpResponse ServerState::handle_model_install_status(const HttpRequest & request) const {
@@ -495,7 +429,7 @@ HttpResponse ServerState::handle_model_install_status(const HttpRequest & reques
     if (!model_installer_) {
         return error_response(403, "UI model installation is disabled", "forbidden");
     }
-    return json_response(model_installer_->status(query_param(request.query, "id")));
+    return ui_model_install_status_response(request, *model_installer_);
 }
 
 HttpResponse ServerState::handle_model_package_sizes() {
@@ -506,7 +440,7 @@ HttpResponse ServerState::handle_model_package_sizes() {
     if (!model_installer_) {
         return error_response(403, "UI model installation is disabled", "forbidden");
     }
-    return json_response(model_installer_->package_sizes());
+    return ui_model_package_sizes_response(*model_installer_);
 }
 
 HttpResponse ServerState::handle_models_root_get() const {
@@ -517,10 +451,7 @@ HttpResponse ServerState::handle_models_root_get() const {
     if (!model_installer_) {
         return error_response(403, "UI model management is disabled", "forbidden");
     }
-    return json_response(
-        "{\"models_root\":" + json_quote(models_root_.string()) +
-        ",\"default_models_root\":" + json_quote(default_models_root_.string()) +
-        ",\"is_default\":" + (models_root_ == default_models_root_ ? "true" : "false") + "}");
+    return ui_models_root_response(models_root_, default_models_root_);
 }
 
 HttpResponse ServerState::handle_models_root_set(const std::string & body_text) {
@@ -578,174 +509,21 @@ HttpResponse ServerState::handle_directory_browser(const std::string & body_text
     if (!config_.ui_management) {
         return error_response(403, "UI directory browsing is disabled", "forbidden");
     }
-    const auto body = engine::io::json::parse(body_text);
-    const auto requested_text = engine::io::json::optional_string(body, "path", "");
-
-    std::filesystem::path current;
+    std::filesystem::path models_root;
     {
         std::lock_guard<std::mutex> lock(model_installer_mutex_);
-        current = requested_text.empty() ? models_root_ : std::filesystem::path(requested_text);
+        models_root = models_root_;
     }
-    if (current.is_relative()) {
-        current = request_base_ / current;
-    }
-    current = std::filesystem::absolute(current).lexically_normal();
-
-    std::error_code error;
-    if (!std::filesystem::is_directory(current, error)) {
-        return error_response(
-            400,
-            "folder is not accessible: " + current.string(),
-            "invalid_request_error");
-    }
-
-    std::vector<std::filesystem::path> roots;
-#ifdef _WIN32
-    for (char drive = 'A'; drive <= 'Z'; ++drive) {
-        const auto root = std::filesystem::path(std::string(1, drive) + ":\\");
-        error.clear();
-        if (std::filesystem::is_directory(root, error)) {
-            roots.push_back(root);
-        }
-    }
-#else
-    roots.emplace_back("/");
-#endif
-
-    struct DirectoryEntry {
-        std::string name;
-        std::filesystem::path path;
-    };
-    std::vector<DirectoryEntry> directories;
-    error.clear();
-    std::filesystem::directory_iterator iterator(
-        current,
-        std::filesystem::directory_options::skip_permission_denied,
-        error);
-    const std::filesystem::directory_iterator end;
-    while (!error && iterator != end) {
-        std::error_code entry_error;
-        if (iterator->is_directory(entry_error)) {
-            directories.push_back(DirectoryEntry{
-                iterator->path().filename().string(),
-                iterator->path().lexically_normal(),
-            });
-        }
-        iterator.increment(error);
-    }
-    std::sort(directories.begin(), directories.end(), [](const auto & left, const auto & right) {
-        return left.name < right.name;
-    });
-
-    auto parent = current.parent_path();
-    if (parent == current) {
-        parent.clear();
-    }
-    std::string response =
-        "{\"current\":" + json_quote(current.string()) +
-        ",\"parent\":" + json_quote(parent.string()) +
-        ",\"roots\":[";
-    for (size_t index = 0; index < roots.size(); ++index) {
-        if (index > 0) response += ",";
-        response += json_quote(roots[index].string());
-    }
-    response += "],\"directories\":[";
-    for (size_t index = 0; index < directories.size(); ++index) {
-        if (index > 0) response += ",";
-        response += "{\"name\":" + json_quote(directories[index].name) +
-            ",\"path\":" + json_quote(directories[index].path.string()) + "}";
-    }
-    return json_response(response + "]}");
+    return ui_directory_browser_response(body_text, models_root, request_base_);
 }
 #endif
 
 HttpResponse ServerState::handle_ui_asset() const {
-    if (!config_.ui_enabled) {
-        return error_response(404, "WebUI is disabled", "not_found");
-    }
-    HttpResponse response;
-    response.status = 200;
-    response.content_type = "text/html; charset=utf-8";
-    const auto html = embedded_ui_html();
-    response.body.assign(html.data(), html.size());
-    // The WebUI shares the server origin (usually localhost:8080) with any app
-    // that previously occupied that port. Never let an old shell survive a
-    // server upgrade, and ask the browser to discard only cached resources.
-    // Deliberately omit the Clear-Site-Data "storage" directive: saved voices,
-    // the selected models folder, and UI preferences live in local storage.
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0";
-    response.headers["Clear-Site-Data"] = "\"cache\"";
-    response.headers["Expires"] = "0";
-    response.headers["Pragma"] = "no-cache";
-    response.headers["Content-Security-Policy"] =
-        "default-src 'self' 'unsafe-inline' blob: data:; connect-src 'self'; media-src 'self' blob: data:";
-    response.headers["X-Content-Type-Options"] = "nosniff";
-    return response;
+    return ui_asset_response(config_.ui_enabled);
 }
 
 HttpResponse ServerState::handle_ui_voice_preview(const HttpRequest & request) const {
-    if (!config_.ui_enabled) {
-        return error_response(404, "WebUI is disabled", "not_found");
-    }
-    if (!config_.voice_dir.has_value()) {
-        return error_response(404, "voice library is not configured", "not_found");
-    }
-    const std::string voice = decoded_query_param(request.query, "voice");
-    const auto wav = resolve_voice_library_wav(*config_.voice_dir, voice);
-    if (!wav.has_value()) {
-        return error_response(404, "voice preview is not available", "not_found");
-    }
-    const auto file_size = std::filesystem::file_size(*wav);
-    std::ifstream file(*wav, std::ios::binary);
-    if (!file) {
-        return error_response(404, "voice preview is not available", "not_found");
-    }
-    std::uintmax_t offset = 0;
-    std::uintmax_t count = file_size;
-    bool partial = false;
-    if (const auto range = request.headers.find("range"); range != request.headers.end() &&
-        range->second.rfind("bytes=", 0) == 0) {
-        const std::string spec = range->second.substr(6);
-        const size_t dash = spec.find('-');
-        if (dash != std::string::npos && dash > 0) {
-            const std::uintmax_t begin = std::stoull(spec.substr(0, dash));
-            const std::uintmax_t end = dash + 1 < spec.size()
-                ? std::stoull(spec.substr(dash + 1))
-                : file_size - 1;
-            if (begin >= file_size || end < begin) {
-                HttpResponse response;
-                response.status = 416;
-                response.content_type = "text/plain";
-                response.headers["Content-Range"] = "bytes */" + std::to_string(file_size);
-                response.headers["Accept-Ranges"] = "bytes";
-                return response;
-            }
-            offset = begin;
-            count = std::min(end, file_size - 1) - begin + 1;
-            partial = true;
-        }
-    }
-    HttpResponse response;
-    response.status = partial ? 206 : 200;
-    response.content_type = "audio/wav";
-    if (partial) {
-        file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
-        response.body.resize(static_cast<size_t>(count));
-        file.read(response.body.data(), static_cast<std::streamsize>(response.body.size()));
-        response.body.resize(static_cast<size_t>(file.gcount()));
-        response.headers["Content-Range"] =
-            "bytes " + std::to_string(offset) + "-" +
-            std::to_string(offset + response.body.size() - 1) + "/" +
-            std::to_string(file_size);
-    } else {
-        response.body.assign(
-            std::istreambuf_iterator<char>(file),
-            std::istreambuf_iterator<char>());
-    }
-    response.headers["Accept-Ranges"] = "bytes";
-    response.headers["Cache-Control"] = "no-store";
-    response.headers["X-Content-Type-Options"] = "nosniff";
-    return response;
+    return ui_voice_preview_response(request, config_.ui_enabled, config_.voice_dir);
 }
 
 RuntimeVoicePreset ServerState::load_runtime_voice_preset(
