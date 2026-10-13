@@ -280,11 +280,16 @@ Three rewrites are compiled in, all of them the reference Kokoro RKNN port's:
   The fold `k = Floor(x/(2*pi) + 0.5); xr = x - k*2*pi` (Mul/Add/Floor/Mul/Sub, all NPU-native)
   puts the polynomial on `xr` in [-pi, pi], where the fit is valid: 41.7 dB sine-level at degree 5
   (70.5 at 7, 103.1 at 9) and 50.0 dB at the generator output against the exact sine (clipped
-  form: 30.4). On the board the folded engine is not slower than the clipped one (13231 vs 14377 ms
-  for the same 14.85 s utterance in the same session, RTF 1.101 vs 1.195) and logs 0 REGTASK lines
-  against the clipped build's 352; the two NPU outputs differ by 28.2 dB, i.e. the change is
+  form: 30.4). The fold is not free: measured on the board with both engines built from the same
+  producer revision and interleaved three times per utterance, it costs **+36% generator time**
+  (RU 33.6 s: 28400 ms median against 20849, RTF 1.074 against 0.851; EN 5.5 s: 4482 against 3239 ms,
+  +38%), and the NPU load says why — the clipped engine holds Core0 at 86-94% during a run, the
+  folded one at 70-72%, so the `Floor` chain does not stay on the NPU end to end. Both engines log 0
+  REGTASK lines on RK3588 (the 352-line count belongs to the RK3566 build, above). The two NPU
+  renders differ by **17.3 dB** (RU; 17.0 dB on EN, max|d| 8020 of 32767), i.e. the change is
   audible, and in a listening test the folded engine ranks between the CPU render and the clipped
-  one. The CPU-vs-NPU SNR of both (0.46/0.48 dB) is the documented per-window AdaIN
+  one. The default is the fold on quality, not on speed. The CPU-vs-NPU SNR of both (0.46/0.48 dB)
+  is the documented per-window AdaIN
   renormalization, not the sine.
 
 The exported graph is checked against the torch graph it was traced from, on the last window of
@@ -393,9 +398,14 @@ not a supported Russian path, and a reproduction has to use the same voice and t
 | path | RTF | peak RSS | generator ms |
 |---|---|---|---|
 | ggml generator | 1.415 | 2777 MB | 17748 |
-| RKNN generator (128-frame window) | 0.867 | 2334 MB | 9609 |
+| RKNN generator (128-frame window, clipped sine) | 0.867 | 2334 MB | 9609 |
 
 1.63x wall, 1.85x on the generator itself (14.9 → 8.1 ms per latent frame processed), -16% RSS.
+**The shipping default is the folded engine, and it is slower than this row**: on a 224-character
+(33.6 s) Russian utterance, engines built from one producer revision and interleaved three times,
+the folded engine measures RTF 1.074 / 28400 ms against the clipped engine's 0.851 / 20849 ms
+(+36%, see the sine bullet above). Quote the clipped row as the clipped engine's figure, not as the
+default's.
 The generator-side gain is smaller than the 5.1x measured in the reference Kokoro engine because
 this window carries 28+28 frames of context for 72 emitted frames (1.78x of compute spent on
 context, and the 28 is the exact receptive field, so it cannot shrink), and because the window
