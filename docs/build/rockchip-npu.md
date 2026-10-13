@@ -16,7 +16,10 @@ Orange Pi 5 Plus (RK3588, 4x A76 + 4x A55).
 `cat /sys/class/devfreq/fdab0000.npu/governor`. The OPP table on that overlay starts at 300 MHz,
 so a board running the mainline `rocket` driver's `performance`-less default can sit at a fraction
 of that clock and every figure here scales with it. The CPU side of the same runs is
-`--threads 4` on the A76 cluster.
+`--threads 4` on the A76 cluster. The board's DRAM read ceiling is 26.4-29.4 GB/s, measured with a
+cache-bypassing STREAM triad (4 A76 threads, 804 MB working set) and `sysbench memory` with a 64 MB
+buffer; `sysbench` with its default 1 MB buffer reports 61 GB/s because it never leaves L3, and
+`stress-ng --stream` is cache-sized too, so neither is a DRAM measurement.
 
 ## Requirements
 
@@ -390,15 +393,22 @@ the smaller ones. All three sidecars therefore ask for `RKNN_NPU_CORE_0_1_2` exp
 back to `AUTO` if the driver rejects it (single-core SoCs do). What the mask buys is per engine:
 `piper_tts` and `kokoro_tts` get real spread (kokoro Core0 95%, Core1 18%, Core2 19%), and the
 `qwen3_tts` vocoder gets spread too (41/15/16) for 1.8% on the stage (21766 → 21383 ms for 300
-Russian characters, same binary with both masks, greedy) — that engine reads its weights per step,
-so it is DRAM-bound, not scheduler-bound, and the extra cores have no bandwidth to use.
+Russian characters, same binary with both masks, greedy). The reason the extra cores buy almost
+nothing is not memory bandwidth: measured on this board, the engines stream their weights at
+0.08-0.10 GB/s (Kokoro 74.68 MB per window over 763 ms of window time, Qwen3 vocoder 259.69 MB
+per 64-token step over 3090 ms), against a DRAM read ceiling of 26.4-29.4 GB/s measured with a
+cache-bypassing STREAM triad on the A76 cluster (4 threads, 804 MB working set; `sysbench` with a
+1 MB buffer reports a fake 61 GB/s because it never leaves L3). They sit at 0.3% of the ceiling,
+so they are compute- and scheduler-bound, and the headroom is in op scheduling, weight reuse
+across steps and tiling — not in shrinking the weights.
 
 One context per sidecar, and one job per context: the mask spreads a *single* job over the cores
 (kokoro measures Core0 95%, Core1 18%, Core2 19% during a run). Running the windows concurrently
 on three `rknn_dup_context` contexts, which is what the reference Kokoro engine does, was built
 and measured here at 1.15x on the window loop (9650 → 8375 ms) with corrupted output (-7 dB SNR,
-rms 2x the reference): duplicated contexts share the runtime's tensor staging, and this engine
-streams ~75 MB of weights per window, so the windows are DRAM-bound, not scheduler-bound.
+rms 2x the reference): duplicated contexts share the runtime's tensor staging, and the gain is
+small because the windows are compute-bound (0.098 GB/s of weight traffic against a 26.4-29.4 GB/s
+ceiling, above), so three cores sharing one job beat three jobs on three cores.
 
 The core mask is therefore also a numerics knob, and it is why every gate in this document is a
 tolerance gate. The reverse-engineered RK3588 notes record (erratum E7) that the DPU's fp16
