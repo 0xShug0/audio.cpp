@@ -38,7 +38,7 @@
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
 | Piper TTS | `piper_tts` | `tts` | [Piper TTS](models/piper_tts.md) |
 | PocketTTS | `pocket_tts` | `tts`, `clon` | [PocketTTS](#pockettts) |
-| Qwen3 TTS | `qwen3_tts` | `tts`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
+| Qwen3 TTS | `qwen3_tts` | `tts`, `clon`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
 | sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
