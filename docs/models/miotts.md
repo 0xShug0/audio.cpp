@@ -11,7 +11,7 @@ can optionally use Qwen3-ASR.
 | Family | `miotts` |
 | GGUF model | `models/MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf` |
 | Required dependency | MioCodec through `--session-option miotts.codec_model_path=<dir>` |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline` |
 | Languages | Model auto-handles supported text languages; no explicit language selector is exposed |
 | Voice input | Required reference WAV through `--voice-ref` |
@@ -22,6 +22,9 @@ can optionally use Qwen3-ASR.
 ```bash
 audiocpp_cli --task tts --family miotts --model models/MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf --backend cuda --session-option miotts.codec_model_path=models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --text "Hello from MioTTS." --voice-ref assets/resources/b.wav --out out.wav
 ```
+
+`clon` is an alias to the same synthesis path. Route selection does not change
+the existing reference-audio requirement.
 
 With best-of-N scoring, also provide a Qwen3-ASR model:
 

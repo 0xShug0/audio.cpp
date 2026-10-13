@@ -28,7 +28,7 @@
 | MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
 | Maya1 | `maya1` | `tts` | [Maya1](models/maya1.md) |
 | MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](models/minimax_h3.md) |
-| MioTTS | `miotts` | `tts` | [MioTTS](models/miotts.md) |
+| MioTTS | `miotts` | `tts`, `clon` | [MioTTS](models/miotts.md) |
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
 | MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
 | MOSS-TTS-v1.5 | `moss_tts_v15` | `tts`, `clon` | [MOSS-TTS-v1.5](models/moss_tts_v15.md) |
