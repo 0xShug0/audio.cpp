@@ -8,6 +8,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <sstream>
 #include <tuple>
@@ -233,6 +234,9 @@ public:
     static auto block_bulk_publication(ParallelServerState & state) {
         return std::unique_lock<std::mutex>(state.bulk_admission_mutex_);
     }
+    static std::filesystem::path voice_dir(ParallelServerState & state) {
+        return *state.config_.voice_dir;
+    }
 };
 }
 using Access = srv::ServerRuntimeTestAccess;
@@ -243,12 +247,13 @@ struct Fixture {
     std::shared_ptr<Loader> loader = std::make_shared<Loader>();
     std::unique_ptr<srv::ParallelServerState> state;
     int count;
-    Fixture(int slots, int limit = 0) : count(slots) {
+    Fixture(int slots, int limit = 0, bool with_voice_dir = false) : count(slots) {
         root = std::filesystem::temp_directory_path() /
             ("audiocpp-lifecycle-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root);
         srv::ServerConfig config; config.backend = engine::core::BackendType::Cpu;
         config.ui_enabled = false; config.max_loaded_models = limit; config.busy_timeout_ms = 0;
+        if (with_voice_dir) { config.voice_dir = root / "voices"; }
         state = std::make_unique<srv::ParallelServerState>(config, root);
         Access::registry(*state, loader);
     }
@@ -1094,6 +1099,63 @@ void generic_task_stream_sse(int count) {
     require(active() == 0, "unstarted task stream leaked its slot");
 }
 
+// The management twins of GET /v1/audio/voices: an upload lands in the configured
+// voice library as <name>.wav plus that name's prompt_text line, and delete removes
+// both halves without disturbing the other voices' lines.
+void voice_library_add_and_delete(int count) {
+    Fixture f(count, 0, /*with_voice_dir=*/true);
+    const auto voice_dir = Access::voice_dir(*f.state);
+    const std::string boundary = "----audiocpp-voice-test";
+    const std::string clip = std::string("RIFF") + std::string(4, '\0') + "WAVE";
+
+    auto add = [&](const std::string & name, const std::string & transcript, bool overwrite) {
+        std::string body;
+        body += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\n" + name + "\r\n";
+        body += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"transcript\"\r\n\r\n" + transcript + "\r\n";
+        if (overwrite) {
+            body += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"overwrite\"\r\n\r\ntrue\r\n";
+        }
+        body += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"clip.wav\"\r\n"
+                "Content-Type: audio/wav\r\n\r\n" + clip + "\r\n";
+        body += "--" + boundary + "--\r\n";
+        srv::HttpRequest request;
+        request.method = "POST"; request.path = "/v1/audio/voices"; request.body = std::move(body);
+        request.headers["content-type"] = "multipart/form-data; boundary=" + boundary;
+        return f.state->handle(request);
+    };
+    auto read_file = [](const std::filesystem::path & path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    };
+    const auto prompts = voice_dir / "prompt_text";
+
+    success(add("alice", "hello there", false));
+    require(std::filesystem::is_regular_file(voice_dir / "alice.wav"), "voice upload did not write the wav");
+    require(read_file(prompts) == "alice|hello there\n", "voice upload did not record the transcript");
+    require(add("alice", "ignored", false).status == 409,
+            "duplicate voice upload replaced the voice without overwrite=true");
+    success(add("alice", "updated", true));
+    require(read_file(prompts) == "alice|updated\n", "voice overwrite did not replace the transcript");
+
+    srv::HttpRequest list; list.method = "GET"; list.path = "/v1/audio/voices";
+    const auto listed = f.state->handle(list);
+    success(listed);
+    require(listed.body.find("\"alice\"") != std::string::npos,
+            "an uploaded voice is missing from GET /v1/audio/voices");
+
+    require(add("../escape", "x", false).status == 400, "voice upload accepted a traversal name");
+    require(post(*f.state, "/v1/audio/voices/delete", "{\"name\":\"../escape\"}").status == 400,
+            "voice delete accepted a traversal name");
+
+    success(add("bob", "second voice", false));
+    success(post(*f.state, "/v1/audio/voices/delete", "{\"name\":\"alice\"}"));
+    require(!std::filesystem::exists(voice_dir / "alice.wav"), "voice delete kept the wav");
+    require(read_file(prompts) == "bob|second voice\n",
+            "voice delete removed an unrelated prompt_text line or kept the deleted one");
+    require(post(*f.state, "/v1/audio/voices/delete", "{\"name\":\"alice\"}").status == 404,
+            "deleting a voice that does not exist was accepted");
+}
+
 int main(int argc, char ** argv) {
     try {
         engine::io::json::enable_serialized_json_parsing();
@@ -1137,10 +1199,11 @@ int main(int argc, char ** argv) {
             live_speech_optional_input(count);
             generic_request_artifacts(count);
             generic_task_stream_sse(count);
+            voice_library_add_and_delete(count);
             std::cout << "PASS real handlers: slots=" << count
                       << " queued unload/reconfiguration, manager order, bulk release, global lock,"
                          " resident limits 1/2, deferred stream/disconnect, live speech return_text and optional input,"
-                         " request artifacts, task stream SSE\n";
+                         " request artifacts, task stream SSE, voice library add/delete\n";
         }
     } catch (const std::exception & e) { std::cerr << e.what() << '\n'; return 1; }
 }
