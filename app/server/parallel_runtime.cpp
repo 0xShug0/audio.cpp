@@ -344,14 +344,17 @@ HttpResponse ParallelServerState::handle_model_load(const std::string & body_tex
         return error_response(403, "dynamic model management is disabled", "forbidden");
     }
     const auto body = engine::io::json::parse(body_text);
-    auto requested = model_config_from_json(body, request_base_, false);
-    if (const auto * value = body.find("slots")) {
-        if (!value->is_number() || !std::isfinite(value->as_number()) ||
-            std::floor(value->as_number()) != value->as_number() ||
-            value->as_number() < 1 || value->as_number() > 16) {
+    const auto * slots = body.find("slots");
+    if (slots != nullptr) {
+        if (!slots->is_number() || !std::isfinite(slots->as_number()) ||
+            std::floor(slots->as_number()) != slots->as_number() ||
+            slots->as_number() < 1 || slots->as_number() > 16) {
             throw engine::runtime::CapacityError("model slots must be an integer between 1 and 16");
         }
-        requested.slots = static_cast<int>(value->as_number());
+    }
+    auto requested = model_config_from_json(body, request_base_, false);
+    if (slots != nullptr) {
+        requested.slots = static_cast<int>(slots->as_number());
     }
     requested.path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
 
