@@ -15,8 +15,8 @@
   "zh"
  ],
  "capabilities": {
-  "vdes": [
-   "style_condition"
+  "design": [
+   "voice_design"
   ]
  },
  "options": {
