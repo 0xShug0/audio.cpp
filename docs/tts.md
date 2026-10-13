@@ -44,7 +44,7 @@
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
 | VieNeu-TTS v3 Turbo | `vieneu_v3_turbo` (alias `vietneu_tts`) | `tts`, `clon` | [VieNeu-TTS v3 Turbo](models/vieneu_v3_turbo.md) |
 | VoxCPM1 | `voxcpm1` | `tts`, `clon` | [VoxCPM1](#voxcpm1) |
-| VoxCPM2 | `voxcpm2` | `tts` | [VoxCPM2](#voxcpm2) |
+| VoxCPM2 | `voxcpm2` | `tts`, `clon`, `vdes` | [VoxCPM2](#voxcpm2) |
 | Voxtral 4B TTS | `voxtral_tts` | `tts` | [Voxtral TTS](models/voxtral_tts.md) |
 
 This page covers speech TTS-style families. MiniMax-H3 appears here for prompt-driven dialogue audio, but it uses the generation route (`--task gen`) rather than the normal speech route (`--task tts`). Detailed route manuals live under `docs/models/` or `docs/models/` when a model needs more space.
@@ -961,13 +961,13 @@ audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b
 
 ## VoxCPM2
 
-VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. Cloning and voice design both use `--task tts`. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
+VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
 
 | Field | Value |
 |---|---|
 | Family | `voxcpm2` |
 | Model directory | `models/VoxCPM2` |
-| Task | `tts` |
+| Tasks | `tts`, `clon`, `vdes` |
 | Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Optional reference WAV; optional transcript through `--reference-text` |
@@ -990,6 +990,9 @@ Ultimate clone:
 ```bash
 audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --text "Hello from VoxCPM2." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
 ```
+
+`clon` and `vdes` are aliases to the same synthesis implementation. Route
+selection does not add or remove reference-audio, prompt, or style inputs.
 
 Streaming output:
 
