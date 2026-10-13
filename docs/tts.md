@@ -37,7 +37,7 @@
 | OmniVoice | `omnivoice` | `tts`, `clon`, `vdes` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
 | Piper TTS | `piper_tts` | `tts` | [Piper TTS](models/piper_tts.md) |
-| PocketTTS | `pocket_tts` | `tts` | [PocketTTS](#pockettts) |
+| PocketTTS | `pocket_tts` | `tts`, `clon` | [PocketTTS](#pockettts) |
 | Qwen3 TTS | `qwen3_tts` | `tts`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
 | sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
@@ -631,7 +631,7 @@ Use the GGUF package for the desired language. French is available as a distille
 |---|---|
 | Family | `pocket_tts` |
 | Model directory | `models/pocket-tts` |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | `english`, `french`, `german`, `italian`, `portuguese`, `spanish` |
 | Voice input | Built-in voice id or reference WAV |
@@ -657,6 +657,9 @@ Voice clone:
 ```bash
 audiocpp_cli --task tts --family pocket_tts --model models/pocket-tts --backend cuda --text "Hello from PocketTTS." --voice-ref assets/resources/b.wav --out out.wav
 ```
+
+`clon` is an alias to the same synthesis path. Route selection does not change
+the existing reference-audio or preset behavior.
 
 To reuse a cloned voice across runs, export its prepared state once. This skips reference-audio encoding and voice-state preparation on subsequent runs:
 

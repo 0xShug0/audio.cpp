@@ -493,8 +493,9 @@ PocketTTSSession::PocketTTSSession(
       cached_voice_states_(resolve_voice_state_cache_slots(this->options())),
       prompt_capacity_controller_(graph_capacity_.prompt_mode),
       generation_capacity_controller_(graph_capacity_.generation_mode) {
-    if (task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("PocketTTS only supports VoiceTaskKind::Tts");
+    if (task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("PocketTTS supports TTS and voice cloning");
     }
     if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("PocketTTS only supports offline and streaming mode");
