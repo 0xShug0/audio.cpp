@@ -43,7 +43,7 @@
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
 | VieNeu-TTS v3 Turbo | `vieneu_v3_turbo` (alias `vietneu_tts`) | `tts`, `clon` | [VieNeu-TTS v3 Turbo](models/vieneu_v3_turbo.md) |
-| VoxCPM1 | `voxcpm1` | `tts` | [VoxCPM1](#voxcpm1) |
+| VoxCPM1 | `voxcpm1` | `tts`, `clon` | [VoxCPM1](#voxcpm1) |
 | VoxCPM2 | `voxcpm2` | `tts` | [VoxCPM2](#voxcpm2) |
 | Voxtral 4B TTS | `voxtral_tts` | `tts` | [Voxtral TTS](models/voxtral_tts.md) |
 
@@ -921,7 +921,7 @@ VoxCPM1 supports offline and streaming TTS plus short-reference voice cloning. I
 |---|---|
 | Family | `voxcpm1` |
 | Model directory | `models/VoxCPM1-GGUF` (0.5B) |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Optional reference WAV; optional transcript through `--reference-text` |
@@ -938,6 +938,9 @@ Voice clone:
 ```bash
 audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --text "Hello from VoxCPM1." --voice-ref assets/resources/b.wav --out out.wav
 ```
+
+`clon` is an alias to the same synthesis path. Route selection does not change
+the existing reference-audio or continuation-prompt behavior.
 
 Streaming output:
 

@@ -6,7 +6,7 @@ VoxCPM1 is a **tokenizer-free TTS model** from [OpenBMB](https://github.com/Open
 |---|---|
 | **Family** | `voxcpm1` |
 | **Model directory** | `models/VoxCPM1-GGUF` (0.5B) |
-| **Task** | `tts` (including reference voice cloning) |
+| **Tasks** | `tts`, `clon` |
 | **Modes** | `offline`, `streaming` |
 | **Languages** | Model auto-handles supported languages (zh, en, ja, ko validated) |
 | **Voice input** | Optional reference WAV; optional transcript via `--reference-text` |
@@ -66,6 +66,9 @@ For CUDA (recommended for production):
   --reference-text "Some call me nature. Others call me Mother Nature." \
   --out out.wav
 ```
+
+`clon` is an alias to the same synthesis path. Route selection does not change
+the existing reference-audio or continuation-prompt behavior.
 
 **Streaming output:**
 
