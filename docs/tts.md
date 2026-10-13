@@ -34,7 +34,7 @@
 | MOSS-TTS-v1.5 | `moss_tts_v15` | `tts`, `clon` | [MOSS-TTS-v1.5](models/moss_tts_v15.md) |
 | MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](models/moss_voicegen.md) |
 | NeuTTS | `neutts` | `tts` | [NeuTTS](#neutts) |
-| OmniVoice | `omnivoice` | `tts` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
+| OmniVoice | `omnivoice` | `tts`, `clon`, `vdes` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
 | Piper TTS | `piper_tts` | `tts` | [Piper TTS](models/piper_tts.md) |
 | PocketTTS | `pocket_tts` | `tts` | [PocketTTS](#pockettts) |
@@ -563,7 +563,7 @@ OmniVoice supports multilingual TTS, voice cloning, voice design, non-verbal tag
 |---|---|
 | Family | `omnivoice` |
 | Model directory | `models/OmniVoice` |
-| Task | `tts` |
+| Tasks | `tts`, `clon`, `vdes` |
 | Modes | `offline`, `streaming` |
 | Languages | 600+ languages handled by the model |
 | Voice input | `--voice-ref` plus optional `--reference-text`, or instruction text through `--instruct` |

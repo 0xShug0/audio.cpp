@@ -5,8 +5,8 @@ OmniVoice supports multilingual TTS, voice cloning, voice design, non-verbal tag
 | Route | Task | Mode | Inputs |
 |---|---|---|---|
 | Auto voice | `tts` | `offline`, `streaming` | `--text` |
-| Voice clone | `tts` | `offline`, `streaming` | `--text`, `--voice-ref`, optional `--reference-text` |
-| Voice design | `tts` | `offline`, `streaming` | `--text`, `--instruct` |
+| Voice clone | `tts`, `clon` | `offline`, `streaming` | `--text`, `--voice-ref`, optional `--reference-text` |
+| Voice design | `tts`, `vdes` | `offline`, `streaming` | `--text`, `--instruct` |
 
 ## Model Layout
 
@@ -37,6 +37,9 @@ Auto voice:
 ```bash
 audiocpp_cli --task tts --family omnivoice --model /path/to/OmniVoice --backend cuda --text "Hello from OmniVoice." --out out.wav
 ```
+
+`clon` and `vdes` are aliases to the same synthesis implementation. Route
+selection does not add or remove input requirements.
 
 ## Streaming CLI
 
