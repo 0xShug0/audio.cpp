@@ -41,7 +41,7 @@ Use with `--request-option name=value`.
 | Option | Default | Description |
 | --- | --- | --- |
 | `voice_id` | `default` | `default`, `clear`, `english_female`, or `english_male`. |
-| `num_inference_steps` | `20` | Diffusion steps per acoustic frame; omitted uses `diffusion_head_config.ddpm_num_inference_steps` from the checkpoint. |
+| `num_inference_steps` | `20` | Diffusion steps per acoustic frame, from 1 to 1000; omitted uses `diffusion_head_config.ddpm_num_inference_steps` from the checkpoint. |
 | `guidance_scale` | `3` | Diffusion guidance; `1` disables the unconditional pass. |
 | `max_tokens` | `2048` | Maximum generated tokens per text chunk. |
 | `do_sample` | `false` | Sample AR control tokens rather than choose the highest logit. |

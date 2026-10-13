@@ -65,8 +65,9 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Positive diffusion steps per acoustic frame; omitted uses the checkpoint's diffusion_head_config.ddpm_num_inference_steps.",
+        "description": "Diffusion steps per acoustic frame, from 1 to 1000; omitted uses the checkpoint's diffusion_head_config.ddpm_num_inference_steps.",
         "min": 1,
+        "max": 1000,
         "default": 20,
         "required": false
       },

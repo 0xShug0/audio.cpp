@@ -388,7 +388,6 @@
         "type": "int",
         "description": "Query rows per eager NAR attention tile; nonpositive values select automatic tiling to keep each score matrix below 3 GiB.",
         "required": false,
-        "min": 0,
         "default": 0
       }
     ],

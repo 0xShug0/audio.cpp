@@ -64,7 +64,7 @@ audiocpp_cli \
 | Tasks | `tts`, `clon`, `vdes` |
 | Modes | `offline`, `streaming` |
 | Languages | `zh`, `en` |
-| Voice input | Optional for `tts`; required for `clon` |
+| Voice input | Optional for `tts` and `clon`; supplied reference audio requires its transcript |
 
 ## Common Options (use directly)
 
