@@ -214,8 +214,10 @@ construction: W=256 (3 windows of 136 at padding 28) builds with 1 REGTASK line 
 non-finite values, peak 56.25, 46.8 dB against the chunked torch reference, and W=160 (2 windows)
 builds with 0 lines. The 9.5 dB against the *monolithic* reference is the per-window AdaIN gap, not
 the engine: the chunked-vs-monolithic gate measures 9.9 dB and the fp32 PC simulator of the same
-graph gives the identical 9.5 dB. It does not ship: the runtime loader takes 5 inputs and 1 output,
-and the stitched result is a per-window synthesis, not the monolithic one.
+graph gives the identical 9.5 dB. It does not ship: the in-graph escape replicates the module
+inside the engine (142.7 MB for 3 windows against 74.7 MB for one W=128 window), so widening the
+window that way costs the weight copies the runtime walk exists to avoid, and the stitched result is
+a per-window synthesis, not the monolithic one.
 
 **The per-window statistics are the audible artifact; feeding them is not the fix.** Listening
 compared the NPU render with the CPU render of the same text and seed found the loudness of
