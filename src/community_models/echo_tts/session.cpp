@@ -7,6 +7,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/audio/waveform_ops.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -314,14 +315,14 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
         sampler.cfg_scale_speaker = runtime::parse_float_option(options, {"speaker_guidance_scale"})
                                     .value_or(sampler.cfg_scale_speaker);
         if (runtime::find_option(options, {"guidance_scale"})) {
-            throw std::runtime_error("Echo-TTS guidance_scale is invalid for independent-CFG sampling");
+            throw runtime::InvalidRequestError("Echo-TTS guidance_scale is invalid for independent-CFG sampling");
         }
     } else { // EchoCfgMode::Joint
         sampler.cfg_scale = runtime::parse_float_option(options, {"guidance_scale"})
                                     .value_or(sampler.cfg_scale);
         if (runtime::find_option(options, {"text_guidance_scale"}) ||
             runtime::find_option(options, {"speaker_guidance_scale"})) {
-          throw std::runtime_error("Echo-TTS text_guidance_scale and speaker_guidance_scale are invalid for joint-CFG sampling");
+          throw runtime::InvalidRequestError("Echo-TTS text_guidance_scale and speaker_guidance_scale are invalid for joint-CFG sampling");
         }
     }
     if (const auto truncation = runtime::parse_float_option(options, {"truncation_factor"})) {
@@ -329,7 +330,7 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
     }
     if (const auto kv_scale = runtime::parse_float_option(options, {"speaker_kv_scale"})) {
         if (*kv_scale == 0.0F) {
-            throw std::runtime_error("speaker_kv_scale must be nonzero");
+            throw runtime::InvalidRequestError("speaker_kv_scale must be nonzero");
         }
         // 1.0 is the documented "disabled" value, not a scale to apply.
         if (*kv_scale != 1.0F) {
@@ -346,7 +347,7 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
     sampler.sequence_length = assets_->config.max_sequence_length;
     if (const auto window_sec = runtime::parse_float_option(options, {"max_duration_sec"})) {
         if (!(*window_sec > 0.0F)) {
-            throw std::runtime_error("Echo-TTS max_duration_sec must be positive");
+            throw runtime::InvalidRequestError("Echo-TTS max_duration_sec must be positive");
         }
         // The window is quantised to whole latent frames. Round *down* so the
         // option keeps its name: the result is never longer than what was asked
@@ -362,12 +363,12 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
     }
     if (const auto interval = runtime::parse_int_option(options, {"guidance_interval"})) {
         if (*interval < 1) {
-            throw std::runtime_error("Echo-TTS guidance_interval must be at least 1");
+            throw runtime::InvalidRequestError("Echo-TTS guidance_interval must be at least 1");
         }
         sampler.cfg_interval = *interval;
     }
     if (sampler.num_steps <= 0) {
-        throw std::runtime_error("Echo-TTS num_inference_steps must be positive");
+        throw runtime::InvalidRequestError("Echo-TTS num_inference_steps must be positive");
     }
     return sampler;
 }
@@ -431,7 +432,7 @@ int64_t EchoTtsSession::resolve_reference_max_samples(
         return kDefaultReferenceMaxSamples;
     }
     if (!(*seconds > 0.0F)) {
-        throw std::runtime_error("Echo-TTS reference_duration_sec must be positive");
+        throw runtime::InvalidRequestError("Echo-TTS reference_duration_sec must be positive");
     }
     const auto requested = static_cast<int64_t>(
         static_cast<double>(*seconds) * static_cast<double>(kSampleRate));
@@ -665,7 +666,7 @@ runtime::TaskResult EchoTtsSession::run(const runtime::TaskRequest & request) {
     require_supported_request_options(request.options, *contract_);
 
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
-        throw std::runtime_error("Echo-TTS requires text input");
+        throw runtime::InvalidRequestError("Echo-TTS requires text input");
     }
     if (!request.voice.has_value() || !request.voice->speaker.has_value() ||
         !request.voice->speaker->audio.has_value()) {
