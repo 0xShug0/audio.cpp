@@ -930,10 +930,12 @@ def main() -> int:
         help="range-reduce Snake1d's sin (fold to [-pi,pi] with Floor, no Clip); the default. "
              "Clipping at ±pi is what sets the 30.4 dB sine floor (measured: 1.6%% of the "
              "Snake arguments of a 200-frame decode are past pi, max 20.5); the folded "
-             "degree-5 fit measures 50.0 dB at the generator output and 41.7 dB at the sine, "
-             "costs 4 extra elementwise ops per Snake, and measured 8%% FASTER on the board "
-             "(RTF 1.101 against 1.195) because it also drops the Clip nodes. "
-             "--no-sin-reduce restores the clipped export byte for byte",
+             "degree-5 fit measures 50.0 dB at the generator output and 41.7 dB at the sine. "
+             "The fold is a quality default, not a speed one: measured on RK3588 with both "
+             "engines built from one producer revision and interleaved 3x per utterance it "
+             "costs +36%% generator time (Core0 load 70-72%% against the clipped engine's "
+             "86-94%%, so the Floor chain does not stay on the NPU), and the two renders "
+             "differ by 17.3 dB. --no-sin-reduce restores the clipped export byte for byte",
     )
     parser.add_argument(
         "--global-stats",
