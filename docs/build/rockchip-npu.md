@@ -383,6 +383,30 @@ q8_0 style affine). The reference Kokoro engine, with the same per-window normal
 gap between its 17 dB and our 0.5 dB is window count, not stitching. Utterances of 72 latent
 frames or fewer (about 0.9 s) fit one window and are exact.
 
+### The talker is the only DRAM-bound candidate, and it is not at the ceiling
+
+The sidecars and the code predictor read 0.08-0.72 GB/s of weights, 0.3-3% of the board's
+26.4-29.4 GB/s ceiling, so shrinking their weights cannot pay. The talker decode is the one
+component that streams its whole weight set per token: 196 Q8_0 matmuls plus `codec_head` =
+471.3 MB per token, at 41.0 ms/token measured (36.5 ms/token documented) = **11.5-12.9 GB/s**,
+i.e. 44-49% of the ceiling. Below it, and bytes convert to time sublinearly. Same conditions as
+above (307 Russian characters, greedy `seed=42`, `--threads 4`, `conv_weight_type=f16`, vocoder on
+the NPU), talker matmuls re-quantized with `audiocpp_gguf --type orig --keep-type <name>=q6_k`
+(`q4_k_m` is not a supported output type in this converter, so `q4_k`):
+
+| talker weights | MB/token | talker ms/token | RTF | peak RSS |
+|---|---|---|---|---|
+| Q8_0 (shipped) | 471.3 | 41.0 | 2.820 | 3144 |
+| Q6_K | 364.6 | 41.6 | 2.740 | 3044 |
+| Q4_K | 251.0 | **31.4** | **2.519** | 2934 |
+
+Q4_K is −47% bytes for −23% talker time and −10.7% RTF; Q6_K is −23% bytes for **nothing** — the
+dequant of a 6-bit K-quant eats the saving. No gate applies to these renders: a re-quantized talker
+changes the greedy argmax trajectory, so each variant is a separate valid synthesis (inter-run
+correlation 0.003/−0.012, per-sample SNR −2.5/−3.3 dB is trajectory divergence, not noise; the runs
+are 286/300/272 tokens, so RTF compares audio-seconds across syntheses). Quality is a listening
+question, so this is a measured lever, not a shipped default.
+
 ## NPU core use
 
 `rknn.config` in 2.3.2 has no `core_num` (it has `single_core_mode`), so an engine is built
