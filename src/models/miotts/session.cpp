@@ -574,8 +574,9 @@ MioTTSSession::MioTTSSession(
     : runtime::RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))) {
-    if (task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("MioTTS only supports VoiceTaskKind::Tts");
+    if (task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("MioTTS supports TTS and voice cloning");
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("MioTTS currently supports offline sessions");

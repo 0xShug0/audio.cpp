@@ -152,8 +152,9 @@ HiggsTTSSession::HiggsTTSSession(
     if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Higgs TTS supports offline and streaming sessions");
     }
-    if (task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Higgs TTS only supports the Tts task");
+    if (task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("Higgs TTS supports Tts and VoiceCloning tasks");
     }
     ar_weight_context_bytes_ = runtime::parse_size_mb_option(
         options.options, {"higgs_audio_tts.ar_weight_context_mb"}, ar_weight_context_bytes_);

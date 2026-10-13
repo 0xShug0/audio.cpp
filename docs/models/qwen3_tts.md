@@ -13,7 +13,7 @@ by default, its transcript. To use reference audio without a transcript, pass
 |---|---|
 | Family | `qwen3_tts` |
 | Model directory | `models/Qwen3-TTS-12Hz-1.7B-Base` |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Voice input | Reference WAV through `--voice-ref` |
 | Transcript | `--reference-text` required unless `x_vector_only_mode=true` |
@@ -21,6 +21,8 @@ by default, its transcript. To use reference audio without a transcript, pass
 ```bash
 audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Base --backend cuda --text "Hello from Qwen3 TTS." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
 ```
+
+`tts` and `clon` enter the same Base synthesis implementation.
 
 ### Common Options (use directly)
 
@@ -70,7 +72,7 @@ Qwen3 VoiceDesign creates a voice from an instruction. It does not require a spe
 |---|---|
 | Family | `qwen3_tts` |
 | Model directory | `models/Qwen3-TTS-12Hz-1.7B-VoiceDesign` |
-| Task | `vdes` |
+| Tasks | `tts`, `vdes` |
 | Modes | `offline`, `streaming` |
 | Voice input | Instruction text through `--instruct` |
 | Reference audio | Not required |
@@ -78,6 +80,8 @@ Qwen3 VoiceDesign creates a voice from an instruction. It does not require a spe
 ```bash
 audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-VoiceDesign --backend cuda --text "Hello from a designed voice." --instruct "A warm adult narrator" --out out.wav
 ```
+
+`tts` and `vdes` enter the same VoiceDesign synthesis implementation.
 
 ### Common Options (use directly)
 

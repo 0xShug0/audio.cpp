@@ -250,8 +250,10 @@ VoxCPM2SessionBase::VoxCPM2SessionBase(runtime::TaskSpec task,
     throw std::runtime_error(
         "VoxCPM2 only supports offline and streaming sessions");
   }
-  if (task_.task != runtime::VoiceTaskKind::Tts) {
-    throw std::runtime_error("VoxCPM2 only supports the Tts task");
+  if (task_.task != runtime::VoiceTaskKind::Tts &&
+      task_.task != runtime::VoiceTaskKind::VoiceCloning &&
+      task_.task != runtime::VoiceTaskKind::VoiceDesign) {
+    throw std::runtime_error("VoxCPM2 supports TTS, voice cloning, and voice design");
   }
 
   reject_enabled_denoise(options.options, {"voxcpm2.denoise"});

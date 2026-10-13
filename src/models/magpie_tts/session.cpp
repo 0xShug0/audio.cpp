@@ -104,8 +104,22 @@ runtime::RunMode MagpieTTSSession::run_mode() const {
 }
 
 void MagpieTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "MagpieTTS");
-    prepared_defaults_ = make_magpie_tts_prepare_defaults(*assets_, request);
+    auto normalized_request = request;
+    if (contract_->request_option_keys.find("voice_id") != contract_->request_option_keys.end()) {
+        normalized_request.options = runtime::apply_option_v1_compatibility(
+            std::move(normalized_request.options),
+            {{"speaker", "voice_id"}},
+            "MagpieTTS",
+            "request");
+    } else if (contract_->request_option_keys.find("speaker") != contract_->request_option_keys.end()) {
+        normalized_request.options = runtime::apply_option_v1_compatibility(
+            std::move(normalized_request.options),
+            {{"voice_id", "speaker"}},
+            "MagpieTTS",
+            "request");
+    }
+    runtime::validate_spec_backed_request_options(normalized_request.options, *contract_, "MagpieTTS");
+    prepared_defaults_ = make_magpie_tts_prepare_defaults(*assets_, normalized_request);
     if (prepared_defaults_.has_value() && !prepared_defaults_->text.empty()) {
         (void) tokenizer_.tokenize(prepared_defaults_->text, prepared_defaults_->generation);
     }
@@ -113,9 +127,23 @@ void MagpieTTSSession::prepare(const runtime::SessionPreparationRequest & reques
 }
 
 runtime::TaskResult MagpieTTSSession::run(const runtime::TaskRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "MagpieTTS");
+    auto normalized_request = request;
+    if (contract_->request_option_keys.find("voice_id") != contract_->request_option_keys.end()) {
+        normalized_request.options = runtime::apply_option_v1_compatibility(
+            std::move(normalized_request.options),
+            {{"speaker", "voice_id"}},
+            "MagpieTTS",
+            "request");
+    } else if (contract_->request_option_keys.find("speaker") != contract_->request_option_keys.end()) {
+        normalized_request.options = runtime::apply_option_v1_compatibility(
+            std::move(normalized_request.options),
+            {{"voice_id", "speaker"}},
+            "MagpieTTS",
+            "request");
+    }
+    runtime::validate_spec_backed_request_options(normalized_request.options, *contract_, "MagpieTTS");
     require_prepared("MagpieTTS run");
-    const auto parsed = make_magpie_tts_request(*assets_, request, prepared_defaults_);
+    const auto parsed = make_magpie_tts_request(*assets_, normalized_request, prepared_defaults_);
     const auto tokenized = tokenizer_.tokenize(parsed.text, parsed.generation);
     engine::debug::trace_log_scalar("magpie_tts.tokenizer.name", tokenized.tokenizer_name);
     runtime::TaskResult result;

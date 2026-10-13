@@ -2,7 +2,8 @@
 
 Higgs Audio v3 TTS is a voice-clone TTS model. The current integration uses
 the framework chunker for long text and keeps the reference prompt state in the
-model session.
+model session. Use `clon` for voice-cloning requests; the existing `tts` route
+remains an alias to the same model path for compatibility.
 
 ## Install
 
@@ -15,7 +16,7 @@ python3 tools/model_manager_v2.py install --models-root models higgs_audio_tts_4
 ## Quick Start
 
 ```bash
-audiocpp_cli --task tts --family higgs_audio_tts --model models/Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf --backend cuda --text "Hello from Higgs Audio." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
+audiocpp_cli --task clon --family higgs_audio_tts --model models/Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf --backend cuda --text "Hello from Higgs Audio." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
 ```
 
 ## Model
@@ -24,7 +25,7 @@ audiocpp_cli --task tts --family higgs_audio_tts --model models/Higgs-Audio-v3-T
 |---|---|
 | Family | `higgs_audio_tts` |
 | Model path | `models/Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf` when installed through the model manager |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Reference WAV through `--voice-ref`; transcript through `--reference-text` when known |

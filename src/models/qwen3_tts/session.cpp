@@ -337,11 +337,15 @@ Qwen3TTSSession::Qwen3TTSSession(
         speech_decoder_weight_storage_type_,
         conv_weight_storage_type_,
         perf_mode_);
-    if (assets_->config.variant == Qwen3TTSVariant::Base && task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Qwen3 base TTS model only supports the Tts task");
+    if (assets_->config.variant == Qwen3TTSVariant::Base &&
+        task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("Qwen3 base TTS model supports TTS and voice cloning");
     }
-    if (assets_->config.variant == Qwen3TTSVariant::VoiceDesign && task_.task != runtime::VoiceTaskKind::VoiceDesign) {
-        throw std::runtime_error("Qwen3 voice design model only supports the VoiceDesign task");
+    if (assets_->config.variant == Qwen3TTSVariant::VoiceDesign &&
+        task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceDesign) {
+        throw std::runtime_error("Qwen3 voice design model supports TTS and voice design");
     }
     if (assets_->config.variant == Qwen3TTSVariant::CustomVoice && task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("Qwen3 custom voice model only supports the Tts task");
