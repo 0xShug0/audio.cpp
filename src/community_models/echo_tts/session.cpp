@@ -226,9 +226,10 @@ EchoTtsSession::EchoTtsSession(
     if (assets_ == nullptr) {
         throw std::runtime_error("Echo-TTS session requires loaded assets");
     }
-    if (task_.task != runtime::VoiceTaskKind::VoiceCloning ||
+    if ((task_.task != runtime::VoiceTaskKind::Tts &&
+         task_.task != runtime::VoiceTaskKind::VoiceCloning) ||
         task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Echo-TTS only supports offline voice cloning");
+        throw std::runtime_error("Echo-TTS supports offline TTS and voice cloning");
     }
 }
 
