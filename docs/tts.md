@@ -5,7 +5,7 @@
 | AuK (experimental) | `auk` | `tts`, `gen` editing | [AuK](models/auk.md) |
 | BreezeTTS 2 | `breeze_tts` | `tts`, `clon` | [BreezeTTS 2](models/breeze_tts.md) |
 | Chatterbox | `chatterbox` | `clon`, `vc` | [Chatterbox](#chatterbox) |
-| Confucius4-TTS | `confucius4_tts` | `clon` | [Confucius4-TTS](#confucius4-tts) |
+| Confucius4-TTS | `confucius4_tts` | `tts`, `clon` | [Confucius4-TTS](#confucius4-tts) |
 | CosyVoice3 | `cosyvoice3` | `tts`, `clon` | [CosyVoice3](models/cosyvoice3.md) |
 | DotTTS | `dots_tts` | `tts`, `clon` | [DotTTS](#dottts) |
 | DramaBox | `dramabox` | `tts`, `clon` | [DramaBox](#dramabox) |
@@ -199,7 +199,7 @@ Confucius4-TTS is an experimental multilingual voice-cloning TTS model packaged 
 |---|---|
 | Family | `confucius4_tts` |
 | GGUF model | `models/Confucius4-TTS-GGUF/confucius4-tts-orig.gguf` |
-| Task | `clon` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | `zh`, `en`, `ja`, `ko`, `de`, `fr`, `es`, `id`, `it`, `th`, `pt`, `ru`, `ms`, `vi` |
 | Voice input | Required reference WAV through `--voice-ref` |
@@ -213,6 +213,9 @@ Voice clone:
 ```bash
 audiocpp_cli --task clon --family confucius4_tts --model models/Confucius4-TTS-GGUF/confucius4-tts-orig.gguf --backend cuda --language en --text "Hello from Confucius four TTS." --voice-ref assets/resources/b.wav --out out.wav
 ```
+
+`tts` remains available as an alias to the same synthesis path. Route selection
+does not change the model's existing input requirements.
 
 Streaming session:
 
