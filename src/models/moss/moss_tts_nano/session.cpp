@@ -268,16 +268,41 @@ runtime::RunMode MossTTSNanoSession::run_mode() const {
     return task_.mode;
 }
 
+void invalidate_reference_codes_if_changed(
+    std::optional<runtime::AudioBuffer> & cached_audio,
+    std::optional<MossTTSNanoAudioCodes> & cached_codes,
+    const runtime::AudioBuffer & audio) {
+    if (cached_audio.has_value() && audio_buffers_equal(*cached_audio, audio)) {
+        return;
+    }
+    cached_audio = audio;
+    cached_codes.reset();
+}
+
+bool reference_codes_reusable(
+    const std::optional<runtime::AudioBuffer> & cached_audio,
+    const std::optional<MossTTSNanoAudioCodes> & cached_codes,
+    const runtime::AudioBuffer & audio,
+    int64_t active_codebooks) {
+    return cached_audio.has_value() &&
+           cached_codes.has_value() &&
+           audio_buffers_equal(*cached_audio, audio) &&
+           cached_codes->codebooks == active_codebooks;
+}
+
 void MossTTSNanoSession::prepare(const runtime::SessionPreparationRequest & request) {
     if (!request.text.has_value()) {
         throw std::runtime_error("MOSS-TTS-Nano prepare() requires text");
     }
     if (request.voice.has_value() && request.voice->speaker.has_value() &&
         request.voice->speaker->audio.has_value()) {
-        prepared_prompt_audio_ = *request.voice->speaker->audio;
-        prepared_reference_codes_ = encode_reference_audio(
-            *request.voice->speaker->audio,
-            assets_->config.n_vq);
+        // Encoding a reference runs the audio tokenizer encoder, which dominates the
+        // preparation cost of a cloning request. Prepare only records the audio: the
+        // codes are encoded on first use by reference_codes_for_request() and kept while
+        // the same voice is used again, so a session that repeats one voice pays the
+        // encoder once instead of once per utterance.
+        invalidate_reference_codes_if_changed(
+            prepared_prompt_audio_, prepared_reference_codes_, *request.voice->speaker->audio);
     } else {
         prepared_prompt_audio_.reset();
         prepared_reference_codes_.reset();
@@ -489,10 +514,8 @@ MossTTSNanoRequest MossTTSNanoSession::make_request(const runtime::TaskRequest &
 }
 
 const MossTTSNanoAudioCodes & MossTTSNanoSession::reference_codes_for_request(const MossTTSNanoRequest & request) {
-    if (prepared_prompt_audio_.has_value() &&
-        prepared_reference_codes_.has_value() &&
-        audio_buffers_equal(*prepared_prompt_audio_, request.prompt_audio) &&
-        prepared_reference_codes_->codebooks == request.generation.active_codebooks) {
+    if (reference_codes_reusable(prepared_prompt_audio_, prepared_reference_codes_, request.prompt_audio,
+                                 request.generation.active_codebooks)) {
         return *prepared_reference_codes_;
     }
     prepared_prompt_audio_ = request.prompt_audio;

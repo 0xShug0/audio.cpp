@@ -65,4 +65,22 @@ private:
     std::optional<MossTTSNanoAudioCodes> prepared_reference_codes_;
 };
 
+/* Reference-voice cache bookkeeping.
+ *
+ * Encoding a reference runs the audio tokenizer encoder, so the codes are kept for as
+ * long as the same voice is used again. These two rules are the whole cache: a
+ * prepared reference only invalidates when the audio itself changes, and the codes are
+ * reusable when they were produced for that audio and codebook count. They are free
+ * functions so the rules can be tested without a model. */
+void invalidate_reference_codes_if_changed(
+    std::optional<runtime::AudioBuffer> & cached_audio,
+    std::optional<MossTTSNanoAudioCodes> & cached_codes,
+    const runtime::AudioBuffer & audio);
+
+bool reference_codes_reusable(
+    const std::optional<runtime::AudioBuffer> & cached_audio,
+    const std::optional<MossTTSNanoAudioCodes> & cached_codes,
+    const runtime::AudioBuffer & audio,
+    int64_t active_codebooks);
+
 }  // namespace engine::models::moss_tts_nano
