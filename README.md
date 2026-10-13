@@ -893,7 +893,7 @@ Have a project using audio.cpp? Submit a PR or let me know, and I’ll be happy 
 - [tts-audiobook-tool](https://github.com/zeropointnine/tts-audiobook-tool) is an audiobook creation app focused on high-quality output. It supports multiple TTS models using local generation or via audio.cpp, with voice cloning, speech-to-text verification, and automatic retries for reliable long-form narration.
 - [ComeCut](https://github.com/juntaosun/ComeCut) A Lightweight Video Editor. Free for the web, desktop, and more, with features inspired by editors like CapCut..  
 - [OpenDub](https://github.com/estebanstifli/OpenDub) is an open-source desktop video dubbing studio for Windows, Linux, and macOS. It uses audio.cpp for dialogue separation, transcription, alignment, speaker diarization, and IndexTTS2.5 speech generation, with editable segments, voice and emotion references, synchronized playback, and video/audio export.
-
+- [pyVideoTrans](https://github.com/jianchang512/pyvideotrans): A one-stop video translation and dubbing tool that integrates audio.cpp as one of its built-in dubbing options.
 
 ## Performance Metrics
 
