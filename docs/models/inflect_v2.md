@@ -46,12 +46,12 @@ upstream ONNX assets themselves.
 
 ```bash
 audiocpp_cli --task tts --family inflect_v2 \
-  --model models/Inflect-Micro-v2 --backend cpu \
+  --model models/Inflect-Micro-v2-GGUF/inflect-micro-v2-orig.gguf --backend cpu \
   --text "Hello from Inflect Micro version two." \
   --seed 0 --out inflect.wav
 ```
 
-Use `models/Inflect-Nano-v2` to run Nano. CUDA uses the same model layout and
+Use a converted Nano checkpoint to run Nano. CUDA uses the same model layout and
 request surface. CUDA sessions keep duration alignment on the native CPU GGML
 path so small TF32 differences cannot change the monotone expansion; the four
 flows and waveform decoder execute on CUDA.
@@ -61,7 +61,7 @@ the library and data paths explicitly:
 
 ```bash
 audiocpp_cli --task tts --family inflect_v2 \
-  --model models/Inflect-Micro-v2 --backend cpu \
+  --model models/Inflect-Micro-v2-GGUF/inflect-micro-v2-orig.gguf --backend cpu \
   --session-option inflect_v2.espeak_library_path=/path/to/libespeak-ng.so \
   --session-option inflect_v2.espeak_data_path=/path/to/espeak-ng-data \
   --text "A configured eSpeak installation." --out inflect.wav

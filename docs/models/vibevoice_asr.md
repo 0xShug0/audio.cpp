@@ -243,8 +243,8 @@ ffmpeg -hide_banner -loglevel error -i input.wav -f s16le -ac 1 -ar 16000 - \
 | `--max-tokens` | integer | `256` | Maximum generated transcript tokens per chunk. |
 | `--temperature` | float | `0` | Sampling temperature; `0` uses deterministic decoding. |
 | `--top-p` | float | `1` | Nucleus sampling probability. |
-| `--top-k` | integer | `0` | Top-k sampling limit; `0` disables top-k filtering. |
-| `--num-beams` | integer | `1` | Beam count for deterministic beam search. |
+| `--top-k` | integer | `50` | Top-k sampling limit; `0` disables top-k filtering. |
+| `--num-beams` | integer | `1` | Accepted but ignored by the streaming checkpoint's incremental path, including offline mode. |
 | `--repetition-penalty` | float | `1` | Generation repetition penalty. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Ignored by this checkpoint in both offline and streaming modes; processor chunk/lookahead settings determine segmentation. |
 | `--audio-chunk-seconds` | float seconds | `1200` | Ignored by this checkpoint in both offline and streaming modes. |
@@ -259,13 +259,13 @@ ffmpeg -hide_banner -loglevel error -i input.wav -f s16le -ac 1 -ar 16000 - \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `vibevoice_asr_streaming.max_history_steps` | integer | `0` (uncapped) | Rolling window for decoder history, in steps. Refer to [Long streams](#long-streams-and-the-history-window). |
+| `vibevoice_asr_streaming.max_history_steps` | integer | `0` (checkpoint capacity) | Rolling window for decoder history, in steps. Refer to [Long streams](#long-streams-and-the-history-window). |
 
 ### Long streams and the history window
 
-By default, the decoder stores the full conversation history. Memory use
-increases with stream length (approximately 0.4 MiB per step on Q8/CUDA).
-On very long streams, the GPU memory becomes full and transcription stops.
+With `max_history_steps=0`, history capacity comes from the checkpoint's
+`max_position_embeddings`; it is not unlimited. Memory use increases with
+stream length (approximately 0.4 MiB per step on Q8/CUDA) up to that capacity.
 
 Set `max_history_steps` to prevent this. The model then stores only the
 most recent steps. Memory use remains constant for streams of any length.

@@ -48,7 +48,7 @@ when you want the model to keep the tag structure but omit that content.
 |---|---|---:|---|
 | `duration_sec` | float | model budget | Target audio duration budget. Must be finite and positive; no fixed runtime upper cap. |
 | `guidance_scale` | float | `2.0` | Classifier-free guidance scale. Any finite value is accepted. |
-| `stop_threshold` | `0..1` | `0.5` | Stop probability threshold. Any finite value is accepted. |
+| `stop_threshold` | finite float | `0.5` | Stop probability threshold. Any finite value is accepted. |
 | `min_stop_step` | integer >= 1 | `5` | Minimum generated steps before accepting stop; zero is rejected. |
 | `seed` | integer in `[0, 4294967295]` | `0` | Fixed unsigned 32-bit generation seed; zero is a fixed seed and negative values are rejected. |
 

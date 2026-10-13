@@ -6,7 +6,7 @@ MOSS-TTS-Nano is the smaller MOSS TTS path. It supports text-only continuation g
 |---|---|
 | Family | `moss_tts_nano` |
 | Model directory | `models/MOSS-TTS-Nano-100M` |
-| Required codec layout | `audio_tokenizer/` directory inside the model root |
+| Codec layout | Bundled in standalone GGUFs; original checkpoints require `audio_tokenizer/` inside the model root |
 | Task | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |

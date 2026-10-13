@@ -76,12 +76,12 @@ Request options (use with `--request-option`):
 |---|---:|---|
 | `generation_mode` | `offline` | Use `liveavatar` for blockwise audio-driven generation. |
 | `reference_image_file` | required | Reference image used for identity and appearance. Legacy `reference_image_path` and `ref_image` remain accepted. |
-| `height` / `width` | `480` / `832` | Output frame dimensions; each must be a positive multiple of 16. |
-| `num_frames` | `48` | Positive frame count per segment; must be a multiple of 4 in blockwise mode (streaming or `generation_mode=liveavatar`). |
+| `height` / `width` | checkpoint config | Output frame dimensions; each must be a positive multiple of 16. |
+| `num_frames` | blockwise: `48`; offline: checkpoint config | Positive frame count per segment; must be a multiple of 4 in blockwise mode (streaming or `generation_mode=liveavatar`). |
 | `num_clips` | `1` | Maximum number of audio-driven clips to generate. |
-| `num_inference_steps` | `4` | UniPC steps offline, Euler steps in blockwise mode; the LiveAvatar adapter is designed for four steps. |
+| `num_inference_steps` | blockwise: `4`; offline: checkpoint config | UniPC steps offline, Euler steps in blockwise mode; the LiveAvatar adapter is designed for four steps. |
 | `shift` | `3` | Flow scheduler shift; must be > 0. |
-| `guidance_scale` | `0` | LiveAvatar blockwise generation requires zero guidance. |
+| `guidance_scale` | blockwise: `0`; offline: checkpoint config | LiveAvatar blockwise generation requires zero guidance. |
 | `seed` | `420` | Generation seed. |
 | `mem_saver` | `true` | Reuse immutable condition data and temporary denoiser graph storage between blocks. Legacy `memory_saver` and `liveavatar.memory_saver` remain accepted. |
 | `denoiser_layerwise` | `false` | Required by denoiser weight streaming. Offline generation requires `fused_cfg=true` and `guidance_scale > 1`. |

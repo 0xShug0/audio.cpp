@@ -283,8 +283,8 @@ audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backe
 | `--request-option retrieval_index_file=<path>` | FAISS `.index` file | unset | User retrieval index used when `retrieval_blend` is greater than 0 for a user checkpoint. Legacy `retrieval_index_path` remains accepted. |
 | `--request-option retrieval_blend=<rate>` | `0.0` to `1.0` | `0.0` | IVF retrieval feature blend rate. `0` disables retrieval. |
 | `--request-option semitone_shift=<n>` | integer | `0` | Semitone pitch shift before synthesis. |
-| `--request-option pitch_filter_radius=<n>` | integer >= 0 | `3` | Median filter radius for F0 smoothing; values greater than 2 enable filtering. |
-| `--request-option output_sample_rate=<hz>` | integer >= 0 | `0` | Output sample rate; `0` keeps the selected voice model sample rate. |
+| `--request-option pitch_filter_radius=<n>` | integer >= 0 | `3` | F0 smoothing switch: values greater than 2 enable a fixed radius-1 median filter; lower values disable it. |
+| `--request-option output_sample_rate=<hz>` | integer | `0` | Output sample rate; nonpositive values keep the selected voice model sample rate. |
 | `--request-option rms_mix_rate=<rate>` | float | `0.25` | RMS envelope mix rate after conversion. |
 | `--request-option unvoiced_protection=<rate>` | `0.0` to `1.0` | `0.33` | Unvoiced consonant protection strength. |
 | `--request-option speaker_id=<n>` | integer >= 0 | `0` | Speaker embedding id for multi-speaker checkpoints. |

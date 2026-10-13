@@ -103,8 +103,8 @@ audiocpp_cli --task clon --family glm_tts \
 | `--top-k` | integer | `25` | Speech-token top-k; official default 25. Nonpositive values disable top-k filtering. |
 | `--top-p` | float | `0.8` | Speech-token nucleus threshold; official default 0.8. Out-of-range values are not rejected by the parser. |
 | `--seed` | integer | `0` | Seed used by token sampling, Flow noise, and HiFT. |
-| `--request-option num_inference_steps=<n>` | integer | `10` | Flow Euler integration steps. |
-| `--request-option flow_guidance_scale=<float>` | float | `0.7` | Flow classifier-free guidance rate. |
+| `--request-option num_inference_steps=<n>` | integer > 0 | checkpoint config | Flow Euler integration steps; commonly 10. |
+| `--request-option flow_guidance_scale=<float>` | float | checkpoint config | Flow classifier-free guidance rate; commonly 0.7. |
 | `--request-option flow_noise_file=<path>` | raw F32 file | none | Optional exact initial Flow noise for parity tests. Legacy `flow_noise_path` remains accepted. |
 | `--request-option hift_source_random_file=<path>` | raw F32 file | none | Optional exact HiFT phase-uniform and Gaussian values for parity tests. Legacy `hift_source_random_path` remains accepted. |
 | `--request-option hift_prior_noise_count=<n>` | integer | `0` | Torch RNG offset before normal HiFT source generation. |

@@ -29,7 +29,7 @@ native cache-aware streaming.
 
 The same runtime can load the [Phonon-2 English ASR variant](#phonon-2-parakeet-tdt-variant) after
 exact reconstruction of its custom five-value container into a dense F32
-package. The Phonon package declares English-only offline support; it does
+package. The Phonon package supports English-only offline and streaming ASR; it does
 not inherit this base checkpoint's 25-language claims.
 
 ```
@@ -202,7 +202,7 @@ Request options are bare names. Session options use the
 | `weight_context_mb` | session | integer >= 1; `3072` | Weight arena size in MiB |
 | `encoder_graph_arena_mb` | session | integer >= 1; `1024` | Encoder graph arena size in MiB |
 | `decoder_graph_arena_mb` | session | integer >= 1; `256` | Decoder graph arena size in MiB |
-| `audio_chunk_duration_sec` | session | see description | VAD maximum chunk duration; omitted inherits the session duration. Fixed/long_form windows use the session setting, not this request override. |
+| `audio_chunk_duration_sec` | session | float >= 0.001; `2` | Center-window duration for streaming and offline long-form execution; also the default maximum VAD chunk duration. |
 | `left_context_sec` | session | float >= 0; `10` | Past context included in each bounded window |
 | `right_context_sec` | session | float >= 0; `2` | Future context/lookahead included in each bounded window |
 | `streaming_attention_mode` | session | `full_context`; `full_context` | Bidirectional attention within each bounded streaming window |

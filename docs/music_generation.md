@@ -145,7 +145,12 @@ audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-smal
 
 ## HeartMuLa
 
-HeartMuLa generates music from lyrics and tags. The upstream reference treats tags as style/control text: it lowercases them and wraps them with special tag tokens internally. The audio.cpp integration follows that behavior and does not use speaker-reference audio.
+HeartMuLa requires nonempty lyrics and tags. `--text` supplies lyrics only when
+`--lyrics` is absent. API callers can also provide tags through structured voice
+style tags (`tags` or `heartmula.tags`). The upstream reference treats tags as
+style/control text: it lowercases them and wraps them with special tag tokens
+internally. The audio.cpp integration follows that behavior and does not use
+speaker-reference audio.
 
 | Field | Value |
 |---|---|
@@ -159,18 +164,18 @@ HeartMuLa generates music from lyrics and tags. The upstream reference treats ta
 | Tag format | Free-form comma-separated descriptors such as genre, mood, instruments, tempo, and vocals |
 
 ```bash
-audiocpp_cli --task gen --family heartmula --model models/HeartMuLa --backend cuda --text "a bright pop chorus with drums" --lyrics "We rise with the morning light" --request-option tags=pop,bright,drums --out song.wav
+audiocpp_cli --task gen --family heartmula --model models/HeartMuLa --backend cuda --lyrics "We rise with the morning light" --request-option tags=pop,bright,drums --out song.wav
 ```
 
 Long output mode:
 
 ```bash
-audiocpp_cli --task gen --family heartmula --model models/HeartMuLa --backend cuda --text "long cinematic pop song" --lyrics "Verse one begins with a quiet street. The chorus opens wide." --request-option tags=pop,cinematic,drums,vocal --duration-seconds 300 --request-option infinite_mode=true --out song_long.wav
+audiocpp_cli --task gen --family heartmula --model models/HeartMuLa --backend cuda --lyrics "Verse one begins with a quiet street. The chorus opens wide." --request-option tags=pop,cinematic,drums,vocal --duration-seconds 300 --request-option infinite_mode=true --out song_long.wav
 ```
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--text` | text | required | Music prompt or short description. |
+| `--text` | text | optional | Lyrics fallback when `--lyrics` is absent; ignored when lyrics are supplied. |
 | `--lyrics` | text | empty string | Lyrics for generated music. |
 | `--request-option tags=<text>` | comma-separated text | required | Music tags; the model path wraps them as tag tokens internally. |
 | `--request-option duration_sec=<seconds>` | seconds > 0 | `120` | Maximum generated duration. |

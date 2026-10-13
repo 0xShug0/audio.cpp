@@ -6,7 +6,7 @@
 |---|---|
 | Family | `vieneu_v3_turbo` (alias: `vietneu_tts`, the name of the first community port) |
 | Model directory | `models/VieNeu-TTS-v3-Turbo-GGUF` |
-| Task | `tts`, `clon` |
+| Task | `tts` (including reference voice cloning) |
 | Modes | `offline` |
 | Languages | `vi`, `en` |
 | Text input | **SEA-G2P phonemes** (see below), not raw text |
@@ -21,7 +21,7 @@ GGUF packages published by the model author in the model's own repo, [pnnbao-ump
 |---|---|---|
 | `vieneu-v3-turbo-q8_0.gguf` | Q8_0 matmuls, bf16 norms / embeddings, f16 codec | 188 MB |
 | `vieneu-v3-turbo-bf16.gguf` | bf16 | 292 MB |
-| `voices/<id>/{ref_codes.txt,speaker.emb.txt}` | — | the 25 preset voices of the Python SDK as packaged voices (`voices/manifest.json`) |
+| `voices/<id>/{ref_codes.txt,speaker.emb.txt}` | — | Preset voice resources listed in `voices/manifest.json`; the model-manager packages install only the default `minh_quan_pro` pair. Download other voice pairs separately. |
 
 ```bash
 python tools/model_manager_v2.py install vieneu_v3_turbo          # q8_0 + the default voice (minh_quan_pro)
@@ -109,7 +109,7 @@ audiocpp_cli --task tts --family vieneu_v3_turbo \
 Reference audio instead of packaged codes:
 
 ```bash
-audiocpp_cli --task clone --family vieneu_v3_turbo \
+audiocpp_cli --task tts --family vieneu_v3_turbo \
   --model models/VieNeu-TTS-v3-Turbo-GGUF/vieneu-v3-turbo-q8_0.gguf --backend cpu \
   --text "<phonemes>" --voice-ref voice/ref.wav \
   --request-option speaker_embedding_file=voice/speaker.emb.txt --out out.wav
@@ -170,7 +170,7 @@ Defaults follow `Vieneu.infer()` in the Python package. Use `--request-option na
 | `encode_reference_only` | `false` | Encode `--voice-ref` into reference codes, return them as an artifact and generate nothing. |
 | `text_chunk_size` | `200` | Character budget per chunk of the phoneme string. The cut follows paragraphs, then sentences, then minor punctuation, then whitespace. |
 | `text_chunk_min_size` | `20` | Chunks shorter than this join a neighbour — alone they read as a stutter. Legacy `text_chunk_min` remains accepted. |
-| `babble_retries` | `2` | Re-generations for a short chunk that kept talking past its text (`0` disables the guard). |
+| `babble_retries` | `2` | Re-generations for a short chunk that kept talking past its text (`0` disables the guard; negative values are clamped to `0`). |
 | `subtalker_temperature` / `subtalker_top_k` / `subtalker_top_p` | = main | Acoustic decoder overrides. |
 | `codes_dump_file` | — | Parity debugging: appends prompt ids, reference codes and generated codes as text. |
 

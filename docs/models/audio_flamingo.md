@@ -70,10 +70,10 @@ Use these with `--request-option key=value`.
 | `max_tokens` | Positive integer | see description | Maximum generated response tokens. Defaults to checkpoint generation configuration (2048 fallback); prompt plus output budget must fit model positions. |
 | `do_sample` | Boolean | `false` | Enable sampling instead of greedy decoding. |
 | `temperature` | Positive number | `1` | Sampling temperature. Used only when do_sample=true; must be positive when sampling. |
-| `top_k` | Non-negative integer | `50` | Sampling candidate count; zero disables top-k filtering. Used only when sampling; nonpositive values disable top-k filtering. |
-| `top_p` | Number in `(0, 1]` | `1` | Nucleus sampling probability. Used only when sampling; zero is accepted and values >=1 disable nucleus filtering. |
+| `top_k` | Signed integer | `50` | Sampling candidate count; nonpositive values disable top-k filtering. Used only when sampling. |
+| `top_p` | Non-negative number | `1` | Nucleus sampling probability. Used only when sampling; zero is accepted and values >=1 disable nucleus filtering. |
 | `repetition_penalty` | Positive number | `1` | Token repetition penalty. Must be positive. |
-| `seed` | Non-negative integer | `42` | Sampling seed. Parsed as a signed integer and converted to uint32. |
+| `seed` | Signed integer | `42` | Sampling seed. Parsed as a signed integer and converted to uint32. |
 
 Temperature, top-k, top-p, and seed affect sampled generation only.
 

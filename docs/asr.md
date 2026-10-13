@@ -204,7 +204,7 @@ completed GGUF can therefore be moved, renamed, and passed directly to `--model`
 | `--temperature` | float | model default | Sampling temperature. |
 | `--top-k` | integer | model default | Top-k sampling limit; `0` disables top-k. |
 | `--top-p` | float | model default | Nucleus sampling limit. |
-| `--seed` | integer | random if omitted | Sampling seed. |
+| `--seed` | integer | `0` | Sampling seed. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `none` | `auto` | Long-audio chunking mode. `auto` uses the model clip limit and speech-energy boundaries when chunking is needed. |
 | `--request-option audio_chunk_duration_sec=<seconds>` | float seconds | model config | Fixed audio chunk duration. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
@@ -216,6 +216,10 @@ Compatibility aliases for existing requests:
 | `audio_chunk_seconds` | `audio_chunk_duration_sec` |
 | `audio_chunk_duration_seconds` | `audio_chunk_duration_sec` |
 | `audio_chunk_duration` | `audio_chunk_duration_sec` |
+
+When setting `hviske_asr.weight_type=bf16` or `q8_0`, also set
+`hviske_asr.conv_weight_type` to `native`, `f32`, or `f16`; convolution weights
+do not support BF16/Q8 storage overrides.
 
 ## Niagara ASR
 

@@ -59,7 +59,7 @@ audiocpp_cli \
 | Family | `firered_audio` |
 | Tasks | `asr`, `tts`, `clon`, `vdes`, `gen` |
 | Mode | `offline` |
-| Default package | `models/FireRedAudio-GGUF/firered-audio-orig.gguf` |
+| Default package | `models/FireRedAudio-GGUF/firered-audio-q8_0.gguf` |
 | Generation paths | `tts_clone`, `voice_design`, `semantic_edit`, `acoustic_edit` |
 | Text paths | `asr`, `understand` |
 

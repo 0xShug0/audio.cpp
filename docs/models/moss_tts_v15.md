@@ -48,7 +48,7 @@ request, not once per text chunk.
 | `--request-option instruct=<text>` | Voice description. Legacy `instruction` remains accepted. **See the limitation below.** |
 | `--request-option text_temperature=<float>` | Text-stream sampling temperature; default 1.5. Legacy `moss_tts_v15.text_temperature` remains accepted. |
 | `--language <name>` | Full language name; the model does not understand codes like `en`. |
-| `--seed`, `--temperature`, `--top_p`, `--top_k`, `--repetition_penalty` | Sampling. |
+| `--seed`, `--temperature`, `--top-p`, `--top-k`, `--repetition-penalty` | Sampling. |
 | `--request-option min_frames=<int>` | Minimum audio frames per text chunk; default 0 derives a text-length-based floor. Nonpositive values select this automatic behavior. Separate from `duration_frames` conditioning. |
 | `--request-option max_frames=<int>` | Audio-frame ceiling per text chunk; default 0 derives a text-length-based ceiling. Nonpositive values select this automatic behavior. Runtime raises the ceiling to at least the effective minimum plus the number of codebooks. |
 | `moss_tts_v15.weight_type` | `native` (default), `f32`, `bf16` or `q8_0`; native preserves packaged quantization. |

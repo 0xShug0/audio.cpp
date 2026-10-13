@@ -1,6 +1,6 @@
 # ACE-Step
 
-ACE-Step is wired as `--family ace_step --task gen`. It generates and edits music from text, lyrics, and optional source audio. The route controls whether source audio is ignored, optional, or required.
+ACE-Step is wired as `--family ace_step --task gen`. It generates and edits music from text, lyrics, and optional source audio. The route controls whether source audio is ignored, optional, or required. Supplied `audio_codes` can also satisfy the source-input requirement for routes that require audio.
 
 Common CLI shape:
 
@@ -15,8 +15,8 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | Family | `ace_step` |
 | Model directory | `models/Ace-Step1.5` |
 | Task | `gen` |
-| Default DiT | `acestep-v15-turbo` |
-| Optional DiT | `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` |
+| Default DiT | Inferred from model filename (`base`, `sft`, `turbo`, and `xl`); otherwise `acestep-v15-turbo` |
+| Optional DiT | `acestep-v15-base`, `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` |
 | Default LM | `acestep-5Hz-lm-1.7B` |
 | Prompt input | `--text` |
 | Lyrics input | `--lyrics` |
@@ -203,7 +203,7 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `ace_step.dit_model_path` | `acestep-v15-turbo`, `acestep-v15-base`, `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` | `acestep-v15-turbo` | Select DiT variant inside the model root. |
+| `ace_step.dit_model_path` | `acestep-v15-turbo`, `acestep-v15-base`, `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` | filename-derived; otherwise `acestep-v15-turbo` | Override DiT variant selection inside the model root. |
 
 ### Spec Scope And Compatibility
 
@@ -236,10 +236,9 @@ individual planner CoT switches, low-level velocity/repaint tuning, experimental
 for omitted controls is unchanged. Repaint preset fields have no spec default
 because supplying a preset changes behavior compared with leaving both unset.
 
-ACE-Step GGUF packages are variant-specific. Use the Turbo GGUF for the default
-`acestep-v15-turbo` path, and pass `--load-option ace_step.dit_model_path=acestep-v15-base`
-when loading a Base GGUF package, or
-`--load-option ace_step.dit_model_path=acestep-v15-xl-turbo` for the XL Turbo one.
+ACE-Step GGUF packages are variant-specific. The model filename selects the DiT
+variant by default. Use `--load-option ace_step.dit_model_path=<variant>` when
+the filename does not identify the packaged variant.
 
 ### XL variants
 

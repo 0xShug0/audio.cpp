@@ -23,7 +23,7 @@
 | OmniVoice | `omnivoice` | `tts` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
 | PocketTTS | `pocket_tts` | `tts` | [PocketTTS](#pockettts) |
 | VoxCPM1 | `voxcpm1` | `tts` | [VoxCPM1](#voxcpm1) |
-| VoxCPM2 | `voxcpm2` | `tts`, `vdes` | [VoxCPM2](#voxcpm2) |
+| VoxCPM2 | `voxcpm2` | `tts` | [VoxCPM2](#voxcpm2) |
 | Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](models/higgs_audio_tts.md) |
 | Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
 | FireRedTTS3 | `fireredtts3` | `tts`, `clon`, `vdes` | [FireRedTTS3](models/fireredtts3.md) |
@@ -136,6 +136,9 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 | `target_voice` | text | not set | Voice conversion target WAV path; overrides the speaker reference. |
 | `text_chunk_size` | integer | `128` | Framework long-form text chunk size. |
 
+For cloning, generation settings are fixed during preparation. Use the same
+settings for subsequent requests in that session.
+
 ### Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
@@ -145,7 +148,7 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 | `chatterbox.multilingual_t3` | `v2`, `v3` | `v2` | Multilingual T3 checkpoint selection. |
 | `chatterbox.conditionals_cache_slots` | integer >= 0 | `1` | Cached speaker conditionals; zero disables reuse. |
 | `chatterbox.mem_saver` | bool | `false` | Release staged runtime components. |
-| `chatterbox.encoder_condition_samples` | integer | `96000` | Speaker/tokenizer reference sample limit at 16 kHz. |
+| `chatterbox.encoder_condition_samples` | integer | `96000` | Tokenizer reference sample limit at 16 kHz; the voice encoder uses the full reference. |
 | `chatterbox.decoder_condition_samples` | integer | `240000` | S3Gen reference sample limit at 24 kHz. |
 | `chatterbox.t3_speech_cond_prompt_len` | integer | `150` | T3 reference speech prompt token limit. |
 
@@ -240,8 +243,8 @@ audiocpp_cli --task clon --family confucius4_tts --model models/Confucius4-TTS-G
 | `--text-chunk-size` | integer tokens | `80` | Maximum text tokens per generated segment. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 | `--request-option cross_fade_duration_sec=<seconds>` | seconds | `0.3` | Cross-fade duration between generated segments. |
-| `--request-option edge_fade_duration_sec=<seconds>` | seconds | `0.1` | Fade duration applied at segment edges. |
-| `--request-option edge_pad_duration_sec=<seconds>` | seconds | `0.1` | Silence padding applied at segment edges. |
+| `--request-option edge_fade_duration_sec=<seconds>` | seconds | `0.1` | Validated but currently not applied. |
+| `--request-option edge_pad_duration_sec=<seconds>` | seconds | `0.1` | Validated but currently not applied. |
 | `--seed` | integer | `1234` | Seed for T2S sampling and S2A noise initialization. |
 | `--session-option confucius4_tts.mem_saver=true\|false` | bool | `false` | Release staged graphs after request phases; default keeps them cached for reuse. |
 
@@ -616,7 +619,7 @@ audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b
 
 ## VoxCPM2
 
-VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
+VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. Cloning and voice design both use `--task tts`. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
 
 | Field | Value |
 |---|---|

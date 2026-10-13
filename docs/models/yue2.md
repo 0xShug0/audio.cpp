@@ -151,7 +151,7 @@ Inline ABC can be passed with `--request-option abc=<abc text>`.
 ## Generated ABC Export
 
 When the model generates its own plan (`cot=melody` or `cot=full` with no
-external `abc` / `abc_file`), the decoded ABC score is attached to the result
+external `abc` / `abc_file`), a nonempty decoded ABC score is attached to the result
 as a `score` artifact (`text/vnd.abc`). The WebUI shows a Save ABC download in
 the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
 
@@ -215,13 +215,14 @@ python3 -c "import json, numpy; numpy.save('semantic.npy', numpy.array(json.load
 | Value | Runs | Produces |
 |---|---|---|
 | `abc` | ABC planner | `score` artifact |
-| `semantic` | ABC planner, semantic AR | `score` and `semantic` artifacts |
-| `audio` | everything | audio, plus `score`; `semantic` with `export_semantic=true` |
+| `semantic` | ABC planner, semantic AR | `semantic` artifact; `score` only for generated nonempty ABC |
+| `audio` | everything | audio; `score` only for generated nonempty ABC; `semantic` with `export_semantic=true` |
 
 `stop_after=abc` requires `cot=melody` or `cot=full` and no external
 `abc` / `abc_file`, because there would be nothing to generate.
 `stop_after=semantic` implies `export_semantic=true`, since the token stream is
-all that stage produces.
+all that stage produces. No `score` is emitted with `cot=off` or externally
+supplied `abc` / `abc_file`.
 
 A result from `abc` or `semantic` carries **no audio**. Use `--out-dir` on the
 CLI to collect the artifacts (`--out` writes nothing), and `/v1/tasks/run` on
@@ -307,7 +308,7 @@ script for it.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--lyrics` | text | required | Song lyrics. |
+| `--lyrics` | text | empty | Song lyrics; optional for instrumental generation. |
 | `--text` | text | empty | Fallback lyrics source when `--lyrics` is not supplied. |
 | `--seed` | integer in `[0, 2^63)` | `1234` | Generation seed. Must be nonnegative and less than 2^63. |
 
@@ -329,6 +330,9 @@ script for it.
 | `seed` | integer in `[0, 2^63)` | `1234` | Generation seed. Must be nonnegative and less than 2^63. |
 
 ## Sampling Options (use with `--request-option`)
+
+Defaults are checkpoint-configurable. The table shows fallback values when the
+checkpoint does not override them.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
