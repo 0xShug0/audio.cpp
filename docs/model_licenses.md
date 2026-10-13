@@ -93,6 +93,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `moss_tts_local` | [OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5) | Apache-2.0 | Yes | | 2026-09-21 |
 | `moss_tts_nano` | [OpenMOSS-Team/MOSS-TTS-Nano-100M](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M) | Apache-2.0 | Yes | | 2026-09-21 |
 | `moss_tts_v15` | [OpenMOSS-Team/MOSS-TTS-v1.5](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5) | Apache-2.0 | Yes | | 2026-09-22 |
+| `moss_ttsd` | [OpenMOSS-Team/MOSS-TTSD-v1.0](https://huggingface.co/OpenMOSS-Team/MOSS-TTSD-v1.0) | Apache-2.0 | Yes | License declared on the official model card; bundled [MOSS-Audio-Tokenizer](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer#license) is also Apache-2.0. | 2026-10-13 |
 | `moss_voicegen` | [OpenMOSS-Team/MOSS-VoiceGenerator](https://huggingface.co/OpenMOSS-Team/MOSS-VoiceGenerator) | Apache-2.0 | Yes | | 2026-09-21 |
 | `mossformer2` | [alibabasglab/MossFormer2_SS_16K](https://huggingface.co/alibabasglab/MossFormer2_SS_16K) | Apache-2.0 | Yes | Two-speaker separation checkpoint from ClearerVoice-Studio. | 2026-10-04 |
 | `muscriptor` | [MuScriptor/muscriptor-small](https://huggingface.co/MuScriptor/muscriptor-small) | CC-BY-NC-4.0 | No | | 2026-09-21 |
