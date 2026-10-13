@@ -29,7 +29,7 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Ba
 | `--reference-text` | text | empty string | Transcript for reference audio. |
 | `--language` | language code | empty string | Text language hint. |
 | `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
-| `--max-tokens` | integer | `8192` | Maximum generated speech tokens per chunk. |
+| `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS VoiceDesign
 
@@ -56,7 +56,7 @@ audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-V
 | `--instruct` | text | required | Voice design instruction. |
 | `--language` | language code | empty string | Text language hint. |
 | `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
-| `--max-tokens` | integer | `8192` | Maximum generated speech tokens per chunk. |
+| `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS CustomVoice
 
@@ -85,7 +85,7 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Cu
 | `--instruct` | text | empty string | Style or emotion instruction. |
 | `--language` | language code | empty string | Text language hint. |
 | `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
-| `--max-tokens` | integer | `8192` | Maximum generated speech tokens per chunk. |
+| `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS Streaming
 

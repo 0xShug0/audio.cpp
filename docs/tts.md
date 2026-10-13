@@ -461,7 +461,7 @@ Use the GGUF package for the desired language. French is available as a distille
 | Family | `pocket_tts` |
 | Model directory | `models/pocket-tts` |
 | Task | `tts` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Languages | `english`, `french`, `german`, `italian`, `portuguese`, `spanish` |
 | Voice input | Built-in voice id or reference WAV |
 | Built-in voices | Voice ids depend on the downloaded language package; `alba` is used by the examples |

@@ -55,7 +55,7 @@ audiocpp_cli --task tts --family kokoro_tts \
 ## Streaming
 
 Use `--mode streaming` to emit each synthesized text chunk immediately. Text
-chunking uses the same `text_chunk_size` and `text_chunk_mode` controls as offline
+chunking uses the same `text_chunk_size` control as offline
 generation; it does not split an already generated waveform into fake streaming
 events. A short input that fits in one chunk produces one audio event. Longer
 inputs produce incremental, non-cumulative audio chunks and a final merged WAV.

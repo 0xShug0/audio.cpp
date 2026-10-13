@@ -5,9 +5,9 @@ the original source/conversion instructions below remain valid for manual use.
 
 FastConformer-TDT ASR port of NVIDIA's [`nvidia/parakeet-tdt-0.6b-v3`](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
 (0.6B params, 25 European languages with auto language detection). The default
-package uses the repository's Transformers-compatible `model.safetensors`
-checkpoint rather than the `.nemo` archive; standalone audio.cpp GGUF packages
-are also supported.
+model-manager package is the standalone Q8_0 GGUF. The repository also supports
+a Transformers-compatible `model.safetensors` checkpoint rather than a `.nemo`
+archive.
 
 ## Status
 

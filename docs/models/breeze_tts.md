@@ -61,7 +61,7 @@ audiocpp_cli \
 |---|---|
 | Family | `breeze_tts` |
 | Default GGUF | `models/Breeze-TTS-2-GGUF/breeze-tts-2-q8_0.gguf` |
-| Tasks | `tts`, `clon` |
+| Tasks | `tts`, `clon`, `vdes` |
 | Modes | `offline`, `streaming` |
 | Languages | `zh`, `en` |
 | Voice input | Optional for `tts`; required for `clon` |
