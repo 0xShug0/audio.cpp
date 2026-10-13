@@ -4,7 +4,7 @@
 |---|---|---|---|
 | AuK (experimental) | `auk` | `tts`, `gen` editing | [AuK](models/auk.md) |
 | BreezeTTS 2 | `breeze_tts` | `tts`, `clon` | [BreezeTTS 2](models/breeze_tts.md) |
-| Chatterbox | `chatterbox` | `clon`, `vc` | [Chatterbox](#chatterbox) |
+| Chatterbox | `chatterbox` | `tts`, `clon`, `vc` | [Chatterbox](#chatterbox) |
 | Confucius4-TTS | `confucius4_tts` | `tts`, `clon` | [Confucius4-TTS](#confucius4-tts) |
 | CosyVoice3 | `cosyvoice3` | `tts`, `clon` | [CosyVoice3](models/cosyvoice3.md) |
 | DotTTS | `dots_tts` | `tts`, `clon` | [DotTTS](#dottts) |
@@ -75,7 +75,7 @@ Chatterbox is a voice-clone TTS model with an audio-to-audio voice-conversion pa
 |---|---|
 | Family | `chatterbox` |
 | Model directory | `models/chatterbox` |
-| Tasks | `clon`, `vc` |
+| Tasks | `tts`, `clon`, `vc` |
 | Modes | `offline` |
 | Languages | `ar`, `da`, `de`, `el`, `en`, `es`, `fi`, `fr`, `hi`, `it`, `ko`, `ms`, `nl`, `no`, `pl`, `pt`, `sv`, `sw`, `tr` |
 | Voice input | Required reference WAV through `--voice-ref`; VC also requires source audio through `--audio` |
@@ -86,6 +86,8 @@ Voice clone:
 ```bash
 audiocpp_cli --task clon --family chatterbox --model models/chatterbox --backend cuda --text "Hello from Chatterbox." --voice-ref assets/resources/b.wav --out out.wav
 ```
+
+`tts` is an alias to the same voice-cloning synthesis path.
 
 Voice conversion:
 

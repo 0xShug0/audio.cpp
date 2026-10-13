@@ -14,6 +14,7 @@ namespace {
 
 runtime::CapabilitySet capabilities(const ChatterboxAssets &) {
     runtime::CapabilitySet capabilities;
+    capabilities.supported_tasks.push_back({runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}});
     capabilities.supported_tasks.push_back({runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}});
     capabilities.supported_tasks.push_back({runtime::VoiceTaskKind::VoiceConversion, {runtime::RunMode::Offline}});
     capabilities.languages = supported_chatterbox_language_codes();
@@ -70,6 +71,7 @@ public:
 
     runtime::CapabilitySet advertised_capabilities() const override {
         runtime::CapabilitySet out;
+        out.supported_tasks.push_back({runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}});
         out.supported_tasks.push_back({runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}});
         out.supported_tasks.push_back({runtime::VoiceTaskKind::VoiceConversion, {runtime::RunMode::Offline}});
         out.languages = supported_chatterbox_language_codes();
@@ -138,9 +140,10 @@ const runtime::CapabilitySet & ChatterboxLoadedModel::capabilities() const noexc
 std::unique_ptr<runtime::IVoiceTaskSession> ChatterboxLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.task != runtime::VoiceTaskKind::VoiceCloning &&
+    if (task.task != runtime::VoiceTaskKind::Tts &&
+        task.task != runtime::VoiceTaskKind::VoiceCloning &&
         task.task != runtime::VoiceTaskKind::VoiceConversion) {
-        throw std::runtime_error("Chatterbox supports VoiceCloning and VoiceConversion");
+        throw std::runtime_error("Chatterbox supports TTS, voice cloning, and voice conversion");
     }
     if (task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Chatterbox only supports offline mode");
