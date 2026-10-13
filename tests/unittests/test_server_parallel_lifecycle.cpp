@@ -754,6 +754,13 @@ void dynamic_capacity_changes_use_parallel_lifecycle() {
         require(rejected, "parallel registration accepted invalid capacity");
         require(Access::resident(*f.state, "shared"), "invalid capacity unloaded an existing model");
     }
+    const auto ordered = post(*f.state, "/v1/models/load",
+        "{\"id\":\"shared\",\"family\":\"lifecycle_fixture\",\"path\":" +
+        quote((f.root / "shared").generic_string()) +
+        ",\"slots\":null,\"load_options\":[]}");
+    require(ordered.status == 400 &&
+            ordered.body.find("model slots must be an integer") != std::string::npos,
+            "parallel registration parsed options before validating capacity");
 }
 
 // An SSE stream's event types in order, its joined text deltas and its final text.

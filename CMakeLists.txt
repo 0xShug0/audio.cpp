@@ -2949,6 +2949,8 @@ add_executable(audiocpp_server
     app/server/parallel_http.cpp
     app/server/model_memory.cpp
     app/server/multipart.cpp
+    app/server/server_protocol.cpp
+    app/server/server_ui.cpp
     app/server/runtime.cpp
     app/server/parallel_runtime.cpp
     app/server/ui_assets.cpp
@@ -3286,6 +3288,15 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_TESTS)
+        # Runtime tests exercise the core HTTP handlers, not optional frontend
+        # modules. Give their frontend.cpp an empty registry and exclude the
+        # server target's inherited frontend object files.
+        set(AUDIOCPP_SERVER_TEST_GENERATED_DIR
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/server_runtime_tests")
+        file(MAKE_DIRECTORY "${AUDIOCPP_SERVER_TEST_GENERATED_DIR}")
+        file(WRITE "${AUDIOCPP_SERVER_TEST_GENERATED_DIR}/server_frontend_module_declarations.inc" "")
+        file(WRITE "${AUDIOCPP_SERVER_TEST_GENERATED_DIR}/server_frontend_module_registrations.inc" "")
+
         add_executable(server_speech_option_exceptions_test
             tests/unittests/test_server_speech_option_exceptions.cpp)
         target_include_directories(server_speech_option_exceptions_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
@@ -3299,10 +3310,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         get_target_property(server_selection_sources audiocpp_server SOURCES)
         list(FILTER server_selection_sources EXCLUDE REGEX "app/server/(main|model_installer|parallel_runtime)\\.cpp$")
+        list(FILTER server_selection_sources EXCLUDE REGEX "audiocpp_server_frontends")
         add_executable(server_runtime_selection_test
             tests/unittests/test_server_runtime_selection.cpp ${server_selection_sources})
         target_include_directories(server_runtime_selection_test PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/app/server "${CMAKE_CURRENT_BINARY_DIR}/generated")
+            ${CMAKE_CURRENT_SOURCE_DIR}/app/server
+            "${AUDIOCPP_SERVER_TEST_GENERATED_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
         target_link_libraries(server_runtime_selection_test PRIVATE engine_runtime ggml Threads::Threads)
         if(WIN32)
             target_link_libraries(server_runtime_selection_test PRIVATE ws2_32)
@@ -3314,10 +3328,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         # installer or backend-specific model admission is needed by this test.
         get_target_property(server_lifecycle_sources audiocpp_server SOURCES)
         list(FILTER server_lifecycle_sources EXCLUDE REGEX "app/server/(main|model_installer|runtime)\\.cpp$")
+        list(FILTER server_lifecycle_sources EXCLUDE REGEX "audiocpp_server_frontends")
         add_executable(server_parallel_lifecycle_test
             tests/unittests/test_server_parallel_lifecycle.cpp ${server_lifecycle_sources})
         target_include_directories(server_parallel_lifecycle_test PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/app/server "${CMAKE_CURRENT_BINARY_DIR}/generated")
+            ${CMAKE_CURRENT_SOURCE_DIR}/app/server
+            "${AUDIOCPP_SERVER_TEST_GENERATED_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
         target_link_libraries(server_parallel_lifecycle_test PRIVATE engine_runtime ggml Threads::Threads)
         if(WIN32)
             target_link_libraries(server_parallel_lifecycle_test PRIVATE ws2_32)
