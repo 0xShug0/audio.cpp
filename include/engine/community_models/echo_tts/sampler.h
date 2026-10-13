@@ -41,7 +41,7 @@ std::vector<float> combine_cfg_lanes_independent(
 // joint-guidance form:
 //     v = v_cond
 //         + w_joint * (v_cond - v_undcond)
-std::vector<float> combine_cfg_lanes_independent(
+std::vector<float> combine_cfg_lanes_joint(
     const std::vector<float> & lanes,
     int64_t lane_elements,
     float cfg_scale);
