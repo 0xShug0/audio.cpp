@@ -198,7 +198,8 @@
         "type": "int",
         "description": "Unsigned 32-bit generation seed in [0, 4294967295]; omitted uses a random seed.",
         "required": false,
-        "min": 0
+        "min": 0,
+        "max": 4294967295
       },
       {
         "name": "trim_tail",

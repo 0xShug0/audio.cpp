@@ -46,13 +46,13 @@ audiocpp_cli --task tts --family miotts --model models/MioTTS-1.7B-GGUF/miotts-1
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `max_tokens` | integer | model default | Generation control; defaults to the checkpoint config. |
+| `max_tokens` | integer | `700` | Maximum generated tokens. |
 | `top_k` | integer | model default | Generation control; defaults to the checkpoint config. |
 | `top_p` | float | model default | Generation control; defaults to the checkpoint config. |
 | `temperature` | float | model default | Generation control; defaults to the checkpoint config. |
 | `repetition_penalty` | float | model default | Generation control; defaults to the checkpoint config. |
-| `presence_penalty` | float | model default | Generation control; defaults to the checkpoint config. |
-| `frequency_penalty` | float | model default | Generation control; defaults to the checkpoint config. |
+| `presence_penalty` | float | `0` | Presence penalty. |
+| `frequency_penalty` | float | `0` | Frequency penalty. |
 | `do_sample` | bool | model default | Generation control; defaults to the checkpoint config. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
 | `best_of_n` | integer | not set | Generate n candidates and select by ASR scoring. |

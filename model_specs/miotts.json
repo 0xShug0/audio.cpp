@@ -20,7 +20,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Generation control; defaults to the checkpoint config.",
+        "description": "Maximum generated tokens; default 700.",
         "required": false,
         "min": 1
       },
@@ -57,7 +57,7 @@
       {
         "name": "presence_penalty",
         "type": "float",
-        "description": "Generation control; defaults to the checkpoint config.",
+        "description": "Presence penalty; default 0.",
         "required": false,
         "min": 0,
         "max": 1
@@ -65,7 +65,7 @@
       {
         "name": "frequency_penalty",
         "type": "float",
-        "description": "Generation control; defaults to the checkpoint config.",
+        "description": "Frequency penalty; default 0.",
         "required": false,
         "min": 0,
         "max": 1

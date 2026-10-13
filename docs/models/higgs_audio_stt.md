@@ -38,7 +38,7 @@ audiocpp_cli --task asr --family higgs_audio_stt --model models/higgs-audio-v3-s
 | `--text` | text | empty string | Prompt/context text for the ASR request. |
 | `--language` | language code | model default (`en`) | Output transcript language label; does not condition recognition. |
 | `--mode` | `offline`, `streaming` | `offline` | Full-context or streaming session. |
-| `--max-tokens` | integer | checkpoint config; 1024 fallback | Maximum generated transcript tokens. |
+| `--max-tokens` | integer | `1024` | Maximum generated transcript tokens. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `none` | `auto` | Long-audio chunking mode. `auto` uses fixed chunks. |
 | `--audio-chunk-seconds` | seconds > 0 | `4` | Fixed audio chunk duration. Equivalent to request option `audio_chunk_duration_sec`. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |

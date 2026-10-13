@@ -30,7 +30,7 @@ runtime::CapabilitySet capabilities(const MioTTSAssets &) {
 runtime::ModelCliInterface cli(const MioTTSAssets & assets) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"max_tokens", "n", "Maximum generated tokens; defaults to the checkpoint config.", false, std::to_string(assets.config.max_tokens), "1"},
+        {"max_tokens", "n", "Maximum generated tokens; default 700.", false, std::to_string(assets.config.max_tokens), "1"},
         {"top_k", "int", "Top-k sampling limit; defaults to the checkpoint config.", false, std::to_string(assets.config.top_k)},
         {"top_p", "float", "Nucleus sampling cutoff; defaults to the checkpoint config.", false, std::to_string(assets.config.top_p), "0", "1"},
         {"temperature", "float", "Sampling temperature; defaults to the checkpoint config.", false, std::to_string(assets.config.temperature), "0", "2"},
@@ -40,8 +40,8 @@ runtime::ModelCliInterface cli(const MioTTSAssets & assets) {
         {"best_of_n", "n", "Generate n candidates for this request and select by ASR scoring.", false, std::nullopt, "1"},
         {"best_of_n_enabled", "true|false", "Enable best-of-N candidate selection for this request."},
         {"best_of_n_language", "auto|en|ja", "Language used when scoring best-of-N candidates."},
-        {"presence_penalty", "float", "Generation control; defaults to the checkpoint config.", false, std::to_string(assets.config.presence_penalty), "0", "1"},
-        {"frequency_penalty", "float", "Generation control; defaults to the checkpoint config.", false, std::to_string(assets.config.frequency_penalty), "0", "1"},
+        {"presence_penalty", "float", "Presence penalty; default 0.", false, std::to_string(assets.config.presence_penalty), "0", "1"},
+        {"frequency_penalty", "float", "Frequency penalty; default 0.", false, std::to_string(assets.config.frequency_penalty), "0", "1"},
         {"text_chunk_size", "int", "Framework long-form text chunk size; inherits the session setting.", false, std::nullopt, "1"},
     };
     out.session_options = {

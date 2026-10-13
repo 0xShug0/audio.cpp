@@ -123,10 +123,9 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Default guidance scale for requests that do not set it; must be finite and nonnegative. The runtime does not enforce a 10 upper limit.",
+        "description": "Default guidance scale for requests that do not set it; must be finite and nonnegative.",
         "required": false,
         "min": 0.0,
-        "max": 10.0,
         "default": 3.0
       },
       {
@@ -141,10 +140,8 @@
       {
         "name": "shift",
         "type": "float",
-        "description": "Default timestep shift for requests that do not set it; must be finite and positive. The runtime does not enforce the advertised 0.05 to 1 range.",
+        "description": "Default timestep shift for requests that do not set it; must be finite and positive.",
         "required": false,
-        "min": 0.05,
-        "max": 1.0,
         "default": 0.5
       },
       {

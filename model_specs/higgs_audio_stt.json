@@ -28,7 +28,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated transcript tokens; omitted uses the checkpoint generation configuration (1024 fallback).",
+        "description": "Maximum generated transcript tokens; default 1024.",
         "required": false,
         "min": 1,
         "default": 1024

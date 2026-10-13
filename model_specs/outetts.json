@@ -115,8 +115,7 @@
         "name": "reference_language",
         "type": "string",
         "description": "Language code used to align the reference transcript; omitted inherits the request text language, then falls back to en.",
-        "required": false,
-        "default": "en"
+        "required": false
       },
       {
         "name": "text_chunk_size",

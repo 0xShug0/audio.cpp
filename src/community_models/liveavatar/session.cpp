@@ -72,13 +72,13 @@ engine::runtime::ModelCliInterface make_cli() {
     };
     out.request_options = {
         {"reference_image_file", "path", "Reference image file used as the identity/appearance condition.", true},
-        {"height", "n", "Generated frame height; defaults to checkpoint height and must be a positive multiple of 16.", false, std::nullopt, "16"},
-        {"width", "n", "Generated frame width; defaults to checkpoint width and must be a positive multiple of 16.", false, std::nullopt, "16"},
-        {"num_frames", "n", "Frames per segment; defaults to 48 in blockwise mode, otherwise checkpoint default_frames. Blockwise counts must be positive multiples of 4.", false, std::nullopt, "1"},
+        {"height", "n", "Generated frame height; must be a positive multiple of 16.", false, std::nullopt, "16"},
+        {"width", "n", "Generated frame width; must be a positive multiple of 16.", false, std::nullopt, "16"},
+        {"num_frames", "n", "Frames generated per LiveAvatar segment; must be positive and a multiple of 4 in blockwise mode (streaming or generation_mode=liveavatar).", false, std::nullopt, "1"},
         {"num_clips", "n", "Maximum LiveAvatar clips to generate from the input audio.", false, "1", "1"},
-        {"num_inference_steps", "n", "Flow steps; defaults to 4 in blockwise mode, otherwise checkpoint sample_steps.", false, std::nullopt, "1"},
+        {"num_inference_steps", "n", "Flow denoising steps.", false, std::nullopt, "1"},
         {"generation_mode", "offline|liveavatar", "Use whole-clip generation or LiveAvatar blockwise generation.", false, "offline"},
-        {"guidance_scale", "float", "CFG scale; defaults to 0 in blockwise mode, otherwise checkpoint guidance_scale.", false, std::nullopt, "0"},
+        {"guidance_scale", "float", "Classifier-free guidance scale.", false, std::nullopt, "0"},
         {"fused_cfg", "true|false", "Run classifier-free guidance in one denoiser graph.", false, "true"},
         {"sage_attention", "true|false", "Use H3-style CUDA SAGE attention in the denoiser graph.", false, "true"},
         {"mem_saver", "true|false", "Reuse immutable condition data and temporary denoiser graph storage across sequential blocks.", false, "true"},
@@ -88,7 +88,7 @@ engine::runtime::ModelCliInterface make_cli() {
         {"vae_decoder_tile_size", "n", "Opt-in VAE decoder spatial tile size for large outputs; 0 disables tiling. Enabled tile sizes must be multiples of 8 and larger than the 64-pixel overlap.", false, "0", "0"},
         {"target_cache_blocks", "n", "Target KV cache window in block units; 0 keeps the full clip cache.", false, "0", "0"},
         {"vae_cache_f16", "true|false", "Store cached VAE encoder state in F16.", false, "true"},
-        {"shift", "float", "Flow scheduler shift; defaults to checkpoint sample_shift and must be positive.", false, std::nullopt, "0"},
+        {"shift", "float", "Flow scheduler shift. Must be > 0.", false, std::nullopt, "0"},
         {"seed", "n", "Generation seed.", false, "420", "0"},
         {"negative_prompt", "text", "Negative prompt for classifier-free guidance."},
     };

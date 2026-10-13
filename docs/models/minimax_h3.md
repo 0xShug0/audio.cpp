@@ -70,11 +70,11 @@ Common request options:
 
 | Option | Default | Notes |
 |---|---:|---|
-| `num_inference_steps` | checkpoint config (typically `50`) | Joint DiT denoising steps. Lower values are faster. |
+| `num_inference_steps` | `50` | Joint DiT denoising steps. Lower values are faster. |
 | `seed` | `42` | Deterministic initial latent seed. |
-| `height` | checkpoint config (typically `768`) | Target video canvas height. Use smaller values for short audio-focused generations. |
-| `width` | checkpoint config (typically `1344`) | Target video canvas width. Use smaller values for short audio-focused generations. |
-| `num_frames` | checkpoint config (typically `124`) | Target video frame count before H3 alignment. MiniMax-H3 video is 24 fps. |
+| `height` | `768` | Target video canvas height. Use smaller values for short audio-focused generations. |
+| `width` | `1344` | Target video canvas width. Use smaller values for short audio-focused generations. |
+| `num_frames` | `124` | Target video frame count before H3 alignment. MiniMax-H3 video is 24 fps. |
 | `guidance_scale` | `1.0` | Classifier-free guidance scale. |
 | `negative_prompt` | `" "` | Negative prompt used when guidance is active. |
 | `sampler_mode` | `euler` | One of `euler`, `res_multistep`, `dpmpp_2m`, or `unipc`. Legacy `sampler` and `minimax_h3.sampler` remain accepted. |

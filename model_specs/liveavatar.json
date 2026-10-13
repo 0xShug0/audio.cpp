@@ -49,7 +49,7 @@
       {
         "name": "height",
         "type": "int",
-        "description": "Generated frame height; omitted uses checkpoint height. Must be a positive multiple of 16.",
+        "description": "Generated frame height; must be a positive multiple of 16.",
         "required": false,
         "min": 16,
         "default": 480
@@ -57,7 +57,7 @@
       {
         "name": "width",
         "type": "int",
-        "description": "Generated frame width; omitted uses checkpoint width. Must be a positive multiple of 16.",
+        "description": "Generated frame width; must be a positive multiple of 16.",
         "required": false,
         "min": 16,
         "default": 832
@@ -65,7 +65,7 @@
       {
         "name": "num_frames",
         "type": "int",
-        "description": "Frames per segment; defaults to 48 in blockwise mode, otherwise checkpoint default_frames. Must be positive and a multiple of 4 in blockwise mode (streaming or generation_mode=liveavatar).",
+        "description": "Frames generated per LiveAvatar segment; must be positive and a multiple of 4 in blockwise mode (streaming or generation_mode=liveavatar).",
         "required": false,
         "min": 1,
         "default": 48
@@ -81,7 +81,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Denoising steps; defaults to 4 in blockwise mode, otherwise checkpoint sample_steps. Offline generation uses UniPC; blockwise generation uses Euler.",
+        "description": "Denoising steps; offline generation uses UniPC, blockwise generation uses Euler. The LiveAvatar DMD adapter is designed for 4 steps.",
         "required": false,
         "min": 1,
         "default": 4
@@ -89,7 +89,7 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Classifier-free guidance scale; defaults to 0 in blockwise mode, otherwise checkpoint guidance_scale. Blockwise generation requires 0.",
+        "description": "Classifier-free guidance scale; LiveAvatar blockwise generation requires 0.",
         "required": false,
         "min": 0.0,
         "default": 0.0
@@ -164,7 +164,7 @@
       {
         "name": "shift",
         "type": "float",
-        "description": "Flow scheduler shift; omitted uses checkpoint sample_shift. Must be finite and positive.",
+        "description": "Flow scheduler shift; must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 3.0
