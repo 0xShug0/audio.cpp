@@ -2,6 +2,7 @@
 #include "cpu_kernels.h"
 
 #include "engine/models/kokoro_tts/assets.h"
+#include "engine/models/kokoro_tts/rknn_generator.h"
 
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/core/backend.h"
@@ -21,6 +22,8 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <stdexcept>
@@ -59,6 +62,96 @@ std::vector<float> make_zero_tensor_2d(int64_t rows, int64_t cols) {
 
 float & tensor_at(std::vector<float> & values, int64_t row, int64_t col, int64_t cols) {
     return values[tensor_offset_2d(row, col, cols)];
+}
+
+// The predictor's decoder latent as one row-major [rows][cols] block, read out of the
+// predictor's graph tensor when it keeps one.
+std::vector<float> read_decoder_x(const PredictorOutputs & predictor) {
+    if (predictor.decoder_x_tensor == nullptr) {
+        return predictor.decoder_x;
+    }
+    std::vector<float> values(
+        static_cast<size_t>(std::max(int64_t{0}, predictor.decoder_x_rows) *
+                            std::max(int64_t{0}, predictor.decoder_x_cols)),
+        0.0f);
+    const size_t elements = std::min(
+        values.size(), static_cast<size_t>(ggml_nelements(predictor.decoder_x_tensor)));
+    ggml_backend_tensor_get(
+        predictor.decoder_x_tensor, values.data(), 0, elements * sizeof(float));
+    return values;
+}
+
+// Parity harness for the RKNN generator sidecar (docs/build/rockchip-npu.md).
+// With AUDIOCPP_KOKORO_DECODER_DUMP=<dir> the generator's exact inputs and its ggml
+// output are written raw, so tools/prepare_kokoro_tts_rknn_generator.py can check the
+// torch re-implementation it compiles the engine from against this runtime on real
+// data instead of on synthetic latents.
+void write_f32_file(const std::string & path, const std::vector<float> & values) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        throw std::runtime_error("kokoro decoder dump: cannot write " + path);
+    }
+    out.write(
+        reinterpret_cast<const char *>(values.data()),
+        static_cast<std::streamsize>(values.size() * sizeof(float)));
+}
+
+void dump_generator_io(
+    const std::string & dir,
+    const std::vector<float> & decoder_x,
+    int64_t decoder_x_cols,
+    const std::vector<float> & conditioning,
+    int64_t conditioning_cols,
+    int64_t conditioning_valid_cols,
+    const std::vector<float> & style,
+    const std::vector<float> & generator_output,
+    int64_t generator_output_cols,
+    const std::vector<float> & stats,
+    const KokoroWeights::GeneratorWeights & generator) {
+    write_f32_file(dir + "/decoder_x.f32", decoder_x);
+    write_f32_file(dir + "/har.f32", conditioning);
+    write_f32_file(dir + "/style.f32", style);
+    write_f32_file(dir + "/generator_out.f32", generator_output);
+    if (!stats.empty()) {
+        write_f32_file(dir + "/stats.f32", stats);
+    }
+    std::ostringstream meta;
+    meta << "{\n"
+         << "  \"decoder_x\": [512, " << decoder_x_cols << "],\n"
+         << "  \"har\": [22, " << conditioning_cols << "],\n"
+         << "  \"har_valid_cols\": " << conditioning_valid_cols << ",\n"
+         << "  \"style\": [" << style.size() << "],\n"
+         << "  \"generator_out\": [22, " << generator_output_cols << "],\n"
+         << "  \"stats\": " << stats.size() << ",\n"
+         << "  \"upsample_rates\": [";
+    for (size_t i = 0; i < generator.ups.size(); ++i) {
+        meta << (i == 0 ? "" : ", ") << generator.ups[i].stride;
+    }
+    meta << "],\n  \"upsample_kernel_sizes\": [";
+    for (size_t i = 0; i < generator.ups.size(); ++i) {
+        meta << (i == 0 ? "" : ", ") << generator.ups[i].kernel;
+    }
+    meta << "],\n  \"noise_conv\": [";
+    for (size_t i = 0; i < generator.noise_convs.size(); ++i) {
+        meta << (i == 0 ? "" : ", ") << "[" << generator.noise_convs[i].kernel << ", "
+             << generator.noise_convs[i].stride << ", " << generator.noise_convs[i].padding << "]";
+    }
+    meta << "],\n  \"resblocks\": [";
+    for (size_t i = 0; i < generator.resblocks.size(); ++i) {
+        meta << (i == 0 ? "" : ", ") << "[" << generator.resblocks[i].convs1.size() << ", "
+             << generator.resblocks[i].convs1.front().kernel << "]";
+    }
+    meta << "],\n  \"conv_post\": [" << generator.conv_post.kernel << ", "
+         << generator.conv_post.padding << "],\n"
+         << "  \"gen_istft_n_fft\": " << generator.gen_istft_n_fft << ",\n"
+         << "  \"gen_istft_hop_size\": " << generator.gen_istft_hop_size << ",\n"
+         << "  \"adain_eps\": 1.0e-5\n"
+         << "}\n";
+    std::ofstream out(dir + "/meta.json", std::ios::trunc);
+    if (!out) {
+        throw std::runtime_error("kokoro decoder dump: cannot write " + dir + "/meta.json");
+    }
+    out << meta.str();
 }
 
 struct TimeMaskInputs {
@@ -186,12 +279,16 @@ void upload_time_masks(
         std::vector<float> keep(static_cast<size_t>(mask.frame_capacity), 0.0f);
         std::vector<float> norm(static_cast<size_t>(mask.frame_capacity), 0.0f);
         std::fill(keep.begin(), keep.begin() + valid_frames, 1.0f);
+        // The stats-capture graph registers a `norm` input per site (masked per-channel
+        // mean/variance); the shipping graph registers none, so the loop body below only
+        // ever runs for capture graphs. norm = keep * capacity/valid, so sum(x*norm) is
+        // capacity * the masked sum and the capture's 1/frames scale turns it into the
+        // masked mean (the whole utterance is valid here, so keep is all-ones and norm
+        // is exactly 1.0).
         const float norm_value = static_cast<float>(mask.frame_capacity) / static_cast<float>(valid_frames);
         std::fill(norm.begin(), norm.begin() + valid_frames, norm_value);
         ggml_backend_tensor_set(mask.keep, keep.data(), 0, ggml_nbytes(mask.keep));
-        if (mask.norm != nullptr) {
-            ggml_backend_tensor_set(mask.norm, norm.data(), 0, ggml_nbytes(mask.norm));
-        }
+        ggml_backend_tensor_set(mask.norm, norm.data(), 0, ggml_nbytes(mask.norm));
     }
 }
 
@@ -238,12 +335,39 @@ ggml_tensor * build_adaptive_instance_norm_bct_decoder(
     const core::TensorValue & style,
     std::vector<TimeMaskInputs> & masks,
     bool use_time_masks,
-    bool use_cpu_fastpath) {
+    bool use_cpu_fastpath,
+    std::vector<std::pair<ggml_tensor *, ggml_tensor *>> * stats_capture = nullptr) {
     const int64_t batch = x->ne[2];
     const int64_t channels = x->ne[1];
     const int64_t frames = x->ne[0];
     core::ModuleBuildContext build_ctx = {};
     build_ctx.ggml = ctx;
+    if (stats_capture != nullptr) {
+        // Per-channel (mean, biased variance) of this site's input over the masked
+        // frames, as graph outputs: the RKNN `--global-stats` sidecar normalizes every
+        // window with the statistics of a full-length decode, and this is where the
+        // full-length pass can read them out. Same estimator as build_masked_adain_bct
+        // (sum over the mask, divided by the mask count), and the same site order as
+        // the producer's stats_out (forward order, mean then variance per site).
+        const TimeMaskInputs & mask = add_time_mask_inputs(ctx, masks, frames);
+        ggml_tensor * norm = repeat_mask_like(ctx, mask.norm, x);
+        ggml_tensor * xc = ggml_cont(ctx, x);
+        const float inv_frames = 1.0f / static_cast<float>(frames);
+        ggml_tensor * mean = ggml_scale(
+            ctx, ggml_sum_rows(ctx, ggml_mul(ctx, xc, norm)), inv_frames);
+        ggml_tensor * var = ggml_sub(
+            ctx,
+            ggml_scale(
+                ctx, ggml_sum_rows(ctx, ggml_mul(ctx, ggml_mul(ctx, xc, xc), norm)), inv_frames),
+            ggml_mul(ctx, mean, mean));
+        // ggml_build_forward_expand alone does not set GGML_TENSOR_FLAG_OUTPUT in this
+        // ggml, so gallocr would free `mean` once its only consumer (the square above)
+        // runs and hand its buffer to a later node; the post-compute readout then reads
+        // that node's data. Marking both as outputs pins their buffers.
+        set_graph_output(mean);
+        set_graph_output(var);
+        stats_capture->push_back({mean, var});
+    }
     const auto affine = modules::LinearModule({
         weights.fc.in_features,
         weights.fc.out_features,
@@ -902,14 +1026,18 @@ ggml_tensor * build_generator_resblock(
     const core::TensorValue & style,
     bool allow_cpu_fastpath,
     std::vector<TimeMaskInputs> & time_masks,
-    bool use_time_masks) {
+    bool use_time_masks,
+    std::vector<std::pair<ggml_tensor *, ggml_tensor *>> * stats_capture = nullptr) {
     ggml_tensor * current = x;
     for (size_t i = 0; i < block.convs1.size(); ++i) {
-        ggml_tensor * xt =
-            build_adaptive_instance_norm_bct_decoder(ctx, current, block.adain1[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
+        ggml_tensor * xt = build_adaptive_instance_norm_bct_decoder(
+            ctx, current, block.adain1[i], style, time_masks, use_time_masks, allow_cpu_fastpath,
+            stats_capture);
         xt = build_snake1d_bct_decoder(ctx, xt, block.alpha1[i], allow_cpu_fastpath);
         xt = build_decoder_conv1d_bct(ctx, xt, block.convs1[i], allow_cpu_fastpath);
-        xt = build_adaptive_instance_norm_bct_decoder(ctx, xt, block.adain2[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
+        xt = build_adaptive_instance_norm_bct_decoder(
+            ctx, xt, block.adain2[i], style, time_masks, use_time_masks, allow_cpu_fastpath,
+            stats_capture);
         xt = build_snake1d_bct_decoder(ctx, xt, block.alpha2[i], allow_cpu_fastpath);
         xt = build_decoder_conv1d_bct(ctx, xt, block.convs2[i], allow_cpu_fastpath);
         current = ggml_add(ctx, xt, current);
@@ -930,6 +1058,9 @@ struct GeneratorGraphSession {
     ggml_tensor * style_in = nullptr;
     ggml_tensor * output = nullptr;
     std::vector<TimeMaskInputs> time_masks;
+    // Per AdaIN site, in forward order: (mean, variance) graph tensors, built only
+    // when the session was asked to capture them (the RKNN global-stats sidecar).
+    std::vector<std::pair<ggml_tensor *, ggml_tensor *>> stats_sites;
     ggml_cgraph * graph = nullptr;
     ggml_backend_t backend = nullptr;
     ggml_gallocr_t gallocr = nullptr;
@@ -942,7 +1073,8 @@ struct GeneratorGraphSession {
         int64_t conditioning_frame_capacity_in,
         int64_t style_dim_in,
         int n_threads_in,
-        bool use_device_backend_in)
+        bool use_device_backend_in,
+        bool capture_stats_in = false)
         : weights(&weights_in),
           decoder_frame_capacity(decoder_frame_capacity_in),
           conditioning_frame_capacity(conditioning_frame_capacity_in),
@@ -985,7 +1117,8 @@ struct GeneratorGraphSession {
                     style,
                     allow_cpu_fastpath,
                     time_masks,
-                    false);
+                    false,
+                    capture_stats_in ? &stats_sites : nullptr);
 
                 ggml_tensor * x = ggml_leaky_relu(ctx, current, 0.1f, false);
                 x = use_device_backend
@@ -1005,7 +1138,8 @@ struct GeneratorGraphSession {
                         style,
                         allow_cpu_fastpath,
                         time_masks,
-                        false);
+                        false,
+                        capture_stats_in ? &stats_sites : nullptr);
                     stage_sum = stage_sum == nullptr ? block : ggml_add(ctx, stage_sum, block);
                 }
                 current = ggml_scale(ctx, stage_sum, 1.0f / 3.0f);
@@ -1018,6 +1152,17 @@ struct GeneratorGraphSession {
 
             graph = ggml_new_graph_custom(ctx, 65536, false);
             ggml_build_forward_expand(graph, output);
+            for (const auto & site : stats_sites) {
+                ggml_build_forward_expand(graph, site.first);
+                ggml_build_forward_expand(graph, site.second);
+            }
+            for (const TimeMaskInputs & mask : time_masks) {
+                // The capture path registers masks whose `keep` no node consumes (it
+                // uses `norm`); an unexpanded graph input gets no gallocr buffer, and
+                // upload_time_masks' tensor_set then asserts.
+                ggml_build_forward_expand(graph, mask.keep);
+                ggml_build_forward_expand(graph, mask.norm);
+            }
 
             core::set_backend_threads(backend, n_threads);
             const double alloc_ms = measure_ms([&]() {
@@ -1073,7 +1218,8 @@ struct GeneratorGraphSession {
         int64_t decoder_x_cols,
         const ggml_tensor * decoder_x_tensor,
         const HarmonicConditioning & conditioning,
-        const std::vector<float> & style) {
+        const std::vector<float> & style,
+        std::vector<float> * stats_out = nullptr) {
         if (decoder_x_tensor == nullptr) {
             if (decoder_x == nullptr || decoder_x_rows != 512 || decoder_x_cols != decoder_frame_capacity) {
                 throw std::runtime_error("Kokoro generator decoder input shape does not match exact graph capacity");
@@ -1151,6 +1297,20 @@ struct GeneratorGraphSession {
             ggml_backend_tensor_get(output, out.data(), 0, ggml_nbytes(output));
         });
         engine::debug::timing_log_scalar("kokoro.decoder.generator.output_read_ms", output_read_ms);
+        if (stats_out != nullptr) {
+            stats_out->clear();
+            stats_out->reserve(stats_sites.size() * 2 * 256);
+            for (const auto & site : stats_sites) {
+                const size_t base = stats_out->size();
+                stats_out->resize(base + static_cast<size_t>(ggml_nelements(site.first)));
+                ggml_backend_tensor_get(site.first, stats_out->data() + base, 0,
+                                       ggml_nbytes(site.first));
+                const size_t base2 = stats_out->size();
+                stats_out->resize(base2 + static_cast<size_t>(ggml_nelements(site.second)));
+                ggml_backend_tensor_get(site.second, stats_out->data() + base2, 0,
+                                       ggml_nbytes(site.second));
+            }
+        }
         return out;
     }
 };
@@ -1189,16 +1349,22 @@ public:
         }
     }
 
+    // The RKNN sidecar is built after this runtime (member order), so a
+    // `--global-stats` engine asks for capture here, before the next prepare().
+    void set_capture_stats(bool capture_stats) { capture_stats_ = capture_stats; }
+
     void prepare(int64_t decoder_frame_capacity, int64_t conditioning_frame_capacity) {
         if (decoder_frame_capacity <= 0 || conditioning_frame_capacity <= 0) {
             throw std::runtime_error("Kokoro generator graph capacity must be positive");
         }
         if (decoder_frame_capacity_ == decoder_frame_capacity &&
             conditioning_frame_capacity_ == conditioning_frame_capacity &&
-            session_ != nullptr) {
+            session_ != nullptr &&
+            capture_stats_ == capture_stats_requested_) {
             return;
         }
         session_.reset();
+        capture_stats_requested_ = capture_stats_;
         decoder_frame_capacity_ = decoder_frame_capacity;
         conditioning_frame_capacity_ = conditioning_frame_capacity;
         session_ = std::make_unique<GeneratorGraphSession>(
@@ -1209,7 +1375,8 @@ public:
             conditioning_frame_capacity_,
             style_dim_,
             n_threads_,
-            use_device_backend_);
+            use_device_backend_,
+            capture_stats_);
     }
 
     std::vector<float> run(
@@ -1218,14 +1385,16 @@ public:
         int64_t decoder_x_cols,
         const ggml_tensor * decoder_x_tensor,
         const HarmonicConditioning & conditioning,
-        const std::vector<float> & style) {
+        const std::vector<float> & style,
+        std::vector<float> * stats_out = nullptr) {
         return session_->run(
             decoder_x_tensor ? nullptr : &decoder_x,
             decoder_x_rows,
             decoder_x_cols,
             decoder_x_tensor,
             conditioning,
-            style);
+            style,
+            stats_out);
     }
 
 private:
@@ -1236,6 +1405,8 @@ private:
     int64_t conditioning_frame_capacity_ = 0;
     int n_threads_ = 1;
     bool use_device_backend_ = false;
+    bool capture_stats_ = false;
+    bool capture_stats_requested_ = false;
     std::vector<GeneratorGraphStage> stages_;
     std::unique_ptr<GeneratorGraphSession> session_;
 };
@@ -1251,6 +1422,13 @@ struct KokoroIstftNetDecoderRuntime::Impl {
     audio::STFTConfig inverse_stft_config;
     std::unique_ptr<ConditioningGraphRuntime> conditioning_graph;
     GeneratorGraphRuntime generator_graph;
+    // Set by the `kokoro_tts.rknn_generator` session option: the generator stage runs on
+    // the NPU, so the ggml generator graph is never prepared.
+    std::unique_ptr<engine::models::kokoro_tts::KokoroTtsRknnGenerator> rknn_generator;
+    // Set by `kokoro_tts.rknn_generator_gain`: the ggml generator graph stays prepared to
+    // render one full-length CPU decode per utterance, whose loudness corrects each NPU
+    // window (see KokoroTtsRknnGenerator::run's `reference`).
+    bool rknn_generator_gain = false;
 
     Impl(
         std::shared_ptr<const KokoroWeights> weights_in,
@@ -1258,7 +1436,10 @@ struct KokoroIstftNetDecoderRuntime::Impl {
         int n_threads_in,
         bool use_device_backend_in,
         uint64_t rng_seed_in,
-        KokoroIstftNetDecoderCapacityContract contract_in)
+        KokoroIstftNetDecoderCapacityContract contract_in,
+        const std::string & rknn_generator_path = {},
+        int64_t rknn_generator_overlap = 0,
+        bool rknn_generator_gain_in = false)
         : weights(std::move(weights_in)),
           n_threads(std::max(1, n_threads_in)),
           use_device_backend(use_device_backend_in),
@@ -1272,7 +1453,24 @@ struct KokoroIstftNetDecoderRuntime::Impl {
               audio::STFTPadMode::Reflect,
               audio::STFTFamily::Kokoro,
           }),
-          generator_graph(weights->decoder.generator, weights->style_dim, backend, n_threads, use_device_backend) {
+          generator_graph(weights->decoder.generator, weights->style_dim, backend, n_threads, use_device_backend),
+          rknn_generator_gain(rknn_generator_gain_in) {
+        if (!rknn_generator_path.empty()) {
+            const auto & gen = weights->decoder.generator;
+            int64_t per_frame = gen.gen_istft_hop_size;
+            for (const auto & up : gen.ups) {
+                per_frame *= up.stride;
+            }
+            rknn_generator = std::make_unique<engine::models::kokoro_tts::KokoroTtsRknnGenerator>(
+                rknn_generator_path,
+                int64_t{512},
+                (gen.gen_istft_n_fft / 2 + 1) * 2,
+                per_frame,
+                rknn_generator_overlap);
+            // A `--global-stats` engine normalizes its windows with the statistics of a
+            // full-length decode, so the ggml generator graph stays alive to produce them.
+            generator_graph.set_capture_stats(rknn_generator->uses_global_stats());
+        }
         prepare(contract_in);
     }
 
@@ -1285,6 +1483,15 @@ struct KokoroIstftNetDecoderRuntime::Impl {
             contract.conditioning_frames,
             n_threads,
             use_device_backend);
+        if (rknn_generator != nullptr && !rknn_generator->uses_global_stats() &&
+            !rknn_generator_gain) {
+            // The generator stage runs on the NPU; its ggml graph, arena and dequantized
+            // weights are all dead weight. A `--global-stats` engine is the exception:
+            // its windows are normalized with the statistics of a full-length decode,
+            // so the ggml graph runs once per utterance to produce them. The gain knob
+            // is the other: it renders that full-length decode to correct against.
+            return;
+        }
         generator_graph.prepare(
             contract.decoder_frames,
             contract.conditioning_frames);
@@ -1297,14 +1504,20 @@ KokoroIstftNetDecoderRuntime::KokoroIstftNetDecoderRuntime(
     int n_threads,
     bool use_device_backend,
     uint64_t rng_seed,
-    KokoroIstftNetDecoderCapacityContract contract)
+    KokoroIstftNetDecoderCapacityContract contract,
+    const std::string & rknn_generator_path,
+    int64_t rknn_generator_overlap,
+    bool rknn_generator_gain)
     : impl_(std::make_unique<Impl>(
           std::move(weights),
           backend,
           n_threads,
           use_device_backend,
           rng_seed,
-          contract)) {}
+          contract,
+          rknn_generator_path,
+          rknn_generator_overlap,
+          rknn_generator_gain)) {}
 
 KokoroIstftNetDecoderRuntime::~KokoroIstftNetDecoderRuntime() = default;
 
@@ -1334,7 +1547,77 @@ std::vector<float> KokoroIstftNetDecoderRuntime::decode(
     });
 
     std::vector<float> generator_output;
+    int64_t generator_output_cols = 0;
+    std::vector<float> stats;  // captured full-decode AdaIN statistics (stats engines)
+    const int64_t bins = impl_->inverse_stft_config.n_fft / 2 + 1;
     generator_ms = measure_ms([&]() {
+        if (impl_->rknn_generator != nullptr) {
+            const std::vector<float> decoder_x = read_decoder_x(predictor);
+            // The conditioning is measured in spectrogram columns (60 per latent frame plus
+            // the reflect pad); the generator window is measured in latent frames.
+            const int64_t columns_per_frame = impl_->rknn_generator->columns_per_frame();
+            const int64_t latent_frames = (conditioning->valid_feature_cols - 1) / columns_per_frame;
+            // A `--global-stats` engine normalizes every window with the AdaIN statistics
+            // of a full-length decode: run the ggml generator graph once over the whole
+            // latent and read the per-site (mean, biased variance) out of it.
+            std::vector<float> full_out;
+            if (impl_->rknn_generator->uses_global_stats()) {
+                full_out = impl_->generator_graph.run(
+                    predictor.decoder_x,
+                    predictor.decoder_x_rows,
+                    predictor.decoder_x_cols,
+                    predictor.decoder_x_tensor,
+                    *conditioning,
+                    style_decoder,
+                    &stats);
+                if (static_cast<int64_t>(stats.size()) != impl_->rknn_generator->stats_elements()) {
+                    throw std::runtime_error(
+                        "Kokoro decoder: generator stats capture produced " +
+                        std::to_string(stats.size()) + " values, the RKNN engine takes " +
+                        std::to_string(impl_->rknn_generator->stats_elements()));
+                }
+            } else if (impl_->rknn_generator_gain) {
+                // The gain knob's reference: one full-length CPU decode, whose per-window
+                // loudness the NPU windows are corrected toward.
+                full_out = impl_->generator_graph.run(
+                    predictor.decoder_x,
+                    predictor.decoder_x_rows,
+                    predictor.decoder_x_cols,
+                    predictor.decoder_x_tensor,
+                    *conditioning,
+                    style_decoder);
+            }
+            generator_output = impl_->rknn_generator->run(
+                decoder_x.data(),
+                predictor.decoder_x_cols,
+                conditioning->features.data(),
+                conditioning->feature_cols,
+                style_decoder.data(),
+                latent_frames,
+                stats.empty() ? nullptr : stats.data(),
+                impl_->rknn_generator_gain ? full_out.data() : nullptr);
+            generator_output_cols = latent_frames * columns_per_frame + 1;
+            if (!full_out.empty() && impl_->rknn_generator->uses_global_stats()) {
+                // The fed global statistics make the utterance-edge windows' activations
+                // several times larger than per-window statistics do, and the NPU's fp16
+                // range overflows there (the first and last windows come back inf; the
+                // simulator's fp32 emulation stays clean). Those two windows are exactly
+                // the region the CPU full-decode pass already computed, so take them
+                // from there; the middle windows stay on the NPU.
+                const int64_t rows = bins * 2;
+                const int64_t cols = generator_output_cols;
+                const int64_t emitted = impl_->rknn_generator->emitted();
+                const int64_t head = std::min(emitted * columns_per_frame + 1, cols);
+                const int64_t tail = std::max(int64_t(0), (latent_frames - emitted) * columns_per_frame);
+                for (int64_t row = 0; row < rows; ++row) {
+                    std::copy_n(full_out.begin() + row * cols, head,
+                                generator_output.begin() + row * cols);
+                    std::copy_n(full_out.begin() + row * cols + tail, cols - tail,
+                                generator_output.begin() + row * cols + tail);
+                }
+            }
+            return;
+        }
         generator_output = impl_->generator_graph.run(
             predictor.decoder_x,
             predictor.decoder_x_rows,
@@ -1342,12 +1625,29 @@ std::vector<float> KokoroIstftNetDecoderRuntime::decode(
             predictor.decoder_x_tensor,
             *conditioning,
             style_decoder);
+        generator_output_cols = static_cast<int64_t>(generator_output.size()) / bins / 2;
     });
-    const int64_t bins = impl_->inverse_stft_config.n_fft / 2 + 1;
-    const int64_t generated_frames = static_cast<int64_t>(generator_output.size()) / (bins * 2);
+    const int64_t generated_frames = generator_output_cols;
     const int64_t frames = conditioning->valid_feature_cols;
     if (frames <= 0 || frames > generated_frames) {
         throw std::runtime_error("Kokoro decoder valid spectrogram frame count exceeds generated output");
+    }
+    if (const char * dump_dir = std::getenv("AUDIOCPP_KOKORO_DECODER_DUMP"); dump_dir != nullptr) {
+        const double dump_ms = measure_ms([&]() {
+            dump_generator_io(
+                dump_dir,
+                read_decoder_x(predictor),
+                predictor.decoder_x_cols,
+                conditioning->features,
+                conditioning->feature_cols,
+                conditioning->valid_feature_cols,
+                style_decoder,
+                generator_output,
+                generated_frames,
+                stats,
+                impl_->weights->decoder.generator);
+        });
+        engine::debug::timing_log_scalar("kokoro.decoder.dump_ms", dump_ms);
     }
     std::vector<float> waveform;
     istft_ms = measure_ms([&]() {

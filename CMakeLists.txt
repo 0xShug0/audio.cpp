@@ -95,6 +95,13 @@ option(ENGINE_ENABLE_CUDA_GRAPHS "Enable ggml CUDA graphs support" ${ENGINE_DEFA
 option(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS
     "Enable opt-in HIP optimizations validated only for Strix Halo (gfx1151)"
     OFF)
+# Rockchip NPU (RK3588 & co): a model-local compute path, not a ggml backend —
+# the Qwen3 TTS speech decoder runs a pre-compiled .rknn step graph through
+# librknnrt. The engine links the board runtime; the models themselves are
+# converted offline on x86 with rknn-toolkit2.
+option(ENGINE_ENABLE_RKNN "Build the Rockchip NPU (librknnrt) decoder path" OFF)
+set(ENGINE_RKNN_INCLUDE_DIR "" CACHE PATH "Directory containing rknn_api.h (empty = use the system include path)")
+set(ENGINE_RKNN_LIBRARY "rknnrt" CACHE STRING "librknnrt to link (path or library name)")
 option(ENGINE_ENABLE_NATIVE_CPU "Build ggml CPU kernels with native host ISA flags" ${ENGINE_DEFAULT_ENABLE_NATIVE_CPU})
 option(ENGINE_ENABLE_OPENMP "Build host code with OpenMP support" ON)
 option(AUDIOCPP_STATIC_ESPEAK "Build and statically link GPL-3.0-or-later eSpeak-ng; keep data separate" OFF)
@@ -399,6 +406,12 @@ function(audiocpp_configure_runtime_object target_name)
     target_compile_definitions(${target_name} PRIVATE ${AUDIOCPP_LIBYAML_COMPILE_DEFINITIONS})
     if (AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE)
         target_compile_definitions(${target_name} PRIVATE ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=1)
+    endif()
+    if (ENGINE_ENABLE_RKNN)
+        target_compile_definitions(${target_name} PRIVATE ENGINE_HAVE_RKNN=1)
+        if (ENGINE_RKNN_INCLUDE_DIR)
+            target_include_directories(${target_name} PRIVATE ${ENGINE_RKNN_INCLUDE_DIR})
+        endif()
     endif()
     target_link_libraries(${target_name} PRIVATE ggml sentencepiece)
     if (ENGINE_ENABLE_OPENMP)
@@ -806,6 +819,7 @@ audiocpp_add_model(kokoro_tts
         src/models/kokoro_tts/frontend.cpp
         src/models/kokoro_tts/predictor.cpp
         src/models/kokoro_tts/decoder.cpp
+        src/models/kokoro_tts/rknn_generator.cpp
         src/models/kokoro_tts/plbert.cpp
         src/models/kokoro_tts/session.cpp
     INCLUDES engine/models/kokoro_tts/session.h
@@ -2623,6 +2637,13 @@ if(AUDIOCPP_STATIC_ESPEAK)
 endif()
 if (AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE)
     target_compile_definitions(engine_runtime PRIVATE ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=1)
+endif()
+if (ENGINE_ENABLE_RKNN)
+    target_compile_definitions(engine_runtime PRIVATE ENGINE_HAVE_RKNN=1)
+    if (ENGINE_RKNN_INCLUDE_DIR)
+        target_include_directories(engine_runtime PUBLIC ${ENGINE_RKNN_INCLUDE_DIR})
+    endif()
+    target_link_libraries(engine_runtime PUBLIC ${ENGINE_RKNN_LIBRARY})
 endif()
 if (ENGINE_ENABLE_HIP)
     # ggml-hip publicly defines GGML_USE_CUDA for consumers, so engine code
