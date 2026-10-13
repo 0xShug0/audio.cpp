@@ -219,6 +219,16 @@ inside the engine (142.7 MB for 3 windows against 74.7 MB for one W=128 window),
 window that way costs the weight copies the runtime walk exists to avoid, and the stitched result is
 a per-window synthesis, not the monolithic one.
 
+The cheap wide window — the widest mono window the field allows, W=136 (emitted 80, 15 windows for
+the 14.85 s utterance, 76.0 MB) — was built and measured on the board, and it is not a win: RTF
+1.057 against 1.114 at W=128, RSS 2345 against 2340 MB, 0 non-finite values, and the pumping spread
+**7.67 dB against 7.23 dB**. Fewer seams and statistics over more frames do not help, the same
+verdict overlap-blending gave: the pumping is per-window loudness, not seam geometry. The same run
+settles where the normalized-statistics cure applies at all: at W=136 the raw sums peak at 8161
+(nothing over 65504) and at W=256 at 1.1e6, so the band of widths where the sums saturate *and* the
+field passes is empty. Normalized statistics matter only in a graph whose span exceeds 8191, which is
+the sliced wide window the field rejects, so they are not implemented.
+
 **The per-window statistics are the audible artifact; feeding them is not the fix.** Listening
 compared the NPU render with the CPU render of the same text and seed found the loudness of
 successive 0.9 s windows swinging -2.8 to +4.5 dB against the CPU render (spread 7.2 dB) with no
