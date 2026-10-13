@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -122,6 +123,11 @@ class Generator(torch.nn.Module):
         # With a coefficient list, True folds the argument into [-pi, pi] before the
         # polynomial (rewrite_sin_range_reduced) instead of clipping it (the shipped form).
         self.sin_reduce = False
+        # --max-axis: run the decode in-graph as windows of (max_axis-1)//scale latent
+        # frames with chunk_padding frames of context per side (0 = single window, the
+        # shipping export).
+        self.max_axis = 0
+        self.chunk_padding = 0
         # --global-stats: the AdaIN statistics become graph I/O. stats_total is the
         # concatenated width: every AdaIN site contributes its channel count twice
         # (mean, variance), in forward order. Per stage: (1 noise_res + one resblock per
@@ -277,14 +283,61 @@ class Generator(torch.nn.Module):
             padding=(self.upsample_kernels[index] - self.upsample_rates[index]) // 2,
         )
 
+    # --- in-graph chunked decode (diagnostic, --max-axis) ------------------------
+
+    def forward_fine_sliced(self, x, har, style, mask_mid, mask_out):
+        """The runtime's window walk moved inside the graph: the latent axis is split into
+        windows of `(max_axis - 1) // scale` frames with `chunk_padding` frames of context
+        per side, each window runs the full unsliced graph, and the emitted columns are
+        concatenated (the seam column takes the later window's value, the way
+        decode_windowed overwrites it). Every window's fine-rate axis is at most
+        `max_axis` columns, so no op encoding field exceeds its 13 bits. The AdaIN
+        statistics are per window (the runtime's semantics), so the stitched result is a
+        valid synthesis, not the full-length one: the chunked-vs-monolithic gate measures
+        that gap (~135 dB per window, ~10 dB stitched, same as decode_windowed)."""
+        if self.global_stats:
+            raise SystemExit("--max-axis with --global-stats is not implemented")
+        frames = x.shape[-1]
+        scale = self.scale
+        window = (self.max_axis - 1) // scale
+        padding = self.chunk_padding
+        emitted = window - 2 * padding
+        outs = []
+        start = 0
+        while True:
+            tail = start + emitted + padding >= frames
+            lo = max(0, min(start - padding, frames - window))
+            hi = frames if tail else min(frames, start + emitted + padding)
+            count = hi - lo
+            # cat against a constant zeros tensor, not F.pad: the legacy exporter turns
+            # F.pad into a Shape/Reshape/Transpose/Cast/ConstantOfShape chain, and
+            # rknn.build core-dumps in fold_constant on exactly that (the upsample()
+            # docstring's Reshape/Slice abort, same optimizer pass).
+            xw = torch.cat([x[:, :, lo:hi],
+                            torch.zeros(1, x.shape[1], window - count)], dim=2)
+            hw = torch.cat([har[:, :, scale * lo:scale * lo + scale * count + 1],
+                            torch.zeros(1, har.shape[1], scale * (window - count))], dim=2)
+            midw = torch.cat([mask_mid[:, :, scale // self.upsample_rates[-1] * lo
+                                      :scale // self.upsample_rates[-1] * (lo + count)],
+                              torch.zeros(1, 1, scale // self.upsample_rates[-1]
+                                          * (window - count))], dim=2)
+            outw = torch.cat([mask_out[:, :, scale * lo:scale * lo + scale * count + 1],
+                              torch.zeros(1, 1, scale * (window - count))], dim=2)
+            y = self._forward_full(xw, hw, style, midw, outw)
+            end = frames if tail else min(frames, start + emitted)
+            crop = y[:, :, scale * (start - lo):scale * (end - lo) + 1]
+            # Bounded slice, not `crop[:, :, 1:]`: an open-ended slice exports an
+            # INT64_MAX sentinel and rknn's fold_constant core-dumps on it.
+            outs.append(crop if not outs else
+                        crop[:, :, 1:scale * (end - start) + 1])
+            if tail:
+                break
+            start += emitted
+        return torch.cat(outs, dim=2)
+
     # --- graph --------------------------------------------------------------
 
-    def forward(self, x, har, style, mask_mid, mask_out, stats_in=None, use_global=None):
-        if self.global_stats:
-            self.stats_in = stats_in.reshape(1, -1)
-            self.use_global = use_global.reshape(1, 1, 1)
-            self._stats_pos = 0
-            self._stats_parts.clear()
+    def _forward_full(self, x, har, style, mask_mid, mask_out):
         for index in range(self.stages):
             # The mask at the rate this stage works at: W*up0 for stage 0, W*up0*up1 + 1 for
             # stage 1 (the +1 is the reflect pad the last stage prepends).
@@ -325,6 +378,16 @@ class Generator(torch.nn.Module):
         if self.global_stats:
             return x, torch.cat(self._stats_parts, dim=1)
         return x
+
+    def forward(self, x, har, style, mask_mid, mask_out, stats_in=None, use_global=None):
+        if self.global_stats:
+            self.stats_in = stats_in.reshape(1, -1)
+            self.use_global = use_global.reshape(1, 1, 1)
+            self._stats_pos = 0
+            self._stats_parts.clear()
+        if self.max_axis and mask_out.shape[-1] > self.max_axis:
+            return self.forward_fine_sliced(x, har, style, mask_mid, mask_out)
+        return self._forward_full(x, har, style, mask_mid, mask_out)
 
 
 def masks_for(keep: torch.Tensor, model: Generator):
@@ -883,6 +946,19 @@ def main() -> int:
              "the full decode, fed statistics put it 135.4 dB from it). The default path is "
              "byte-identical to the shipping export.",
     )
+    parser.add_argument(
+        "--max-axis",
+        type=int,
+        default=0,
+        help="run the decode in-graph as windows of (max_axis-1)//scale latent frames with "
+             "--padding frames of context per side, stitched like decode_windowed (0 = single "
+             "window, the shipping export, byte-identical). Diagnostic for wide windows: at "
+             "W=256 the unsliced build emits 403 587 REGTASK register-field lines (the 13-bit "
+             "op-encoding field caps at 8191 fine columns); chunking to 8191 takes it to 0. "
+             "Each window normalizes with its OWN AdaIN statistics, so the stitched result is "
+             "a valid per-window synthesis, not the monolithic one (the chunked-vs-monolithic "
+             "gate measures that gap, same numbers as decode_windowed).",
+    )
     parser.add_argument("--skip-rknn", action="store_true", help="export and check only")
     parser.add_argument("--skip-check", action="store_true")
     args = parser.parse_args()
@@ -909,6 +985,8 @@ def main() -> int:
     model = Generator(generator_state, config)
     model.eval()
     model.global_stats = args.global_stats
+    model.max_axis = args.max_axis
+    model.chunk_padding = padding
     scale = model.scale
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -928,6 +1006,23 @@ def main() -> int:
             full_stats = None
             if args.global_stats:
                 full, full_stats = full
+            if args.max_axis:
+                # The chunking gate: the in-graph windowed module against the unsliced
+                # one on the same full-length decode. Per-window AdaIN statistics, so this
+                # is the same gap decode_windowed reports (~135 dB per window, ~10 dB
+                # stitched), not exactness. The gates below use the unsliced decode.
+                model.max_axis = 0
+                full_unsliced = decode(model, x, har, style, ones_mask(1, x.shape[-1]))
+                model.max_axis = args.max_axis
+                sliced_snr, sliced_peak = snr(full_unsliced, full)
+                frames_ = x.shape[-1]
+                window_ = (args.max_axis - 1) // scale
+                emitted_ = window_ - 2 * padding
+                windows_ = 1 + max(0, -(-(frames_ - window_) // emitted_))
+                full = full_unsliced
+                print(f"chunked vs monolithic (full decode, {windows_} "
+                      f"windows of {window_} at padding {padding}): "
+                      f"{sliced_snr:.1f} dB (peak |d| {sliced_peak:.6f})")
         if reference is not None:
             edges = padding * scale
             global_snr, peak = snr(reference, full)
@@ -937,6 +1032,7 @@ def main() -> int:
                   f"runtime's convs and torch's disagree)")
             if inner < 45.0:
                 raise SystemExit("the torch module does not reproduce the runtime's generator")
+        model.max_axis = 0  # the out-of-graph window gates run the unsliced module
         for window in args.frames:
             if window <= 2 * padding:
                 raise SystemExit(f"window {window} leaves no emitted frames at padding {padding}")
@@ -965,6 +1061,7 @@ def main() -> int:
                       f"the gap to the full decode is that, not the stitching "
                       f"(--global-stats feeds full-latent statistics instead)")
 
+    model.max_axis = args.max_axis  # the export traces the in-graph windowed module
     for window in args.frames:
         onnx_path = args.output_dir / f"{args.prefix}_w{window}.onnx"
         export_onnx(model, window, onnx_path, args.sin_degree, args.sin_reduce,
