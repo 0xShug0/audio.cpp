@@ -87,6 +87,7 @@ private:
     engine::assets::TensorStorageType speech_encoder_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType speech_decoder_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::F32;
+    Qwen3SpeechTokenizerDecoderRknn rknn_decoder_;
     bool mem_saver_ = false;
     Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
     Qwen3TextTokenizer text_tokenizer_;

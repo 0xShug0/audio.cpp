@@ -421,6 +421,8 @@ scripts/build_linux.sh --backend cuda --native-model-manager --target audiocpp_s
 ```
 
 For direct CMake commands, see [docs/build/linux.md](docs/build/linux.md).
+For the opt-in Rockchip NPU (RKNN) decoder path, see
+[docs/build/rockchip-npu.md](docs/build/rockchip-npu.md).
 
 </details>
 
