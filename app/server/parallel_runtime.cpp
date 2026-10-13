@@ -603,12 +603,14 @@ HttpResponse ParallelServerState::handle_directory_browser(const std::string & b
     if (!config_.ui_management) {
         return error_response(403, "UI directory browsing is disabled", "forbidden");
     }
+    const auto body = engine::io::json::parse(body_text);
+    const auto requested_path = engine::io::json::optional_string(body, "path", "");
     std::filesystem::path models_root;
     {
         std::lock_guard<std::mutex> lock(model_installer_mutex_);
         models_root = models_root_;
     }
-    return ui_directory_browser_response(body_text, models_root, request_base_);
+    return ui_directory_browser_response(requested_path, models_root, request_base_);
 }
 #endif
 

@@ -62,7 +62,7 @@ HttpResponse ui_models_root_response(
     const std::filesystem::path &models_root,
     const std::filesystem::path &default_models_root);
 HttpResponse ui_directory_browser_response(
-    const std::string &body_text,
+    const std::string &requested_path,
     const std::filesystem::path &models_root,
     const std::filesystem::path &request_base);
 #endif

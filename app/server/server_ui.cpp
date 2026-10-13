@@ -252,12 +252,10 @@ HttpResponse ui_models_root_response(
 }
 
 HttpResponse ui_directory_browser_response(
-    const std::string &body_text,
+    const std::string &requested_path,
     const std::filesystem::path &models_root,
     const std::filesystem::path &request_base) {
-    const auto body = engine::io::json::parse(body_text);
-    const auto requested_text = engine::io::json::optional_string(body, "path", "");
-    auto current = requested_text.empty() ? models_root : std::filesystem::path(requested_text);
+    auto current = requested_path.empty() ? models_root : std::filesystem::path(requested_path);
     if (current.is_relative()) {
         current = request_base / current;
     }
