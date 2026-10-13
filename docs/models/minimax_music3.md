@@ -124,10 +124,10 @@ Request options:
 
 | Option | Default | Notes |
 |---|---:|---|
-| `flow_uncond_interval` | `1` | Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between. `2`-`3` measures flow -25..-40% at ~0.3 dB mel-L1. `1` keeps the exact reference trajectory. |
-| `flow_uncond_warmup` | `2` | Steps at the start of each chunk that always evaluate both CFG branches before delta reuse kicks in. |
-| `flow_chunk_hop_frames` | `0` | Flow chunk hop in AR frames (~25/sec). `0` keeps the model config (100, 50% chunk overlap); `150` measures flow ~-35% with consistently rederived crops and carry. |
-| `ensemble_takes` | `1` | Integer in `[1, 16]`. Generate K takes that share one batched AR pass and return them as named outputs (`take_01`..). Amortizes the AR stage across takes. |
+| `flow_uncond_interval` | `1` | Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between. `2`-`3` measures flow -25..-40% at ~0.3 dB mel-L1. Values <= 1 disable guidance reuse. |
+| `flow_uncond_warmup` | `2` | Initial steps in each chunk that evaluate both CFG branches before reuse. Nonpositive values add no warmup. |
+| `flow_chunk_hop_frames` | `0` | Flow chunk hop in AR frames (~25/sec). `0` keeps the model config (100, 50% chunk overlap). Positive values are capped at the configured chunk size; `150` measures flow ~-35% with consistently rederived crops and carry. |
+| `ensemble_takes` | `1` | Integer in `[1, 16]`. Generate K takes that share one batched AR pass. Named outputs (`take_01`..) are emitted only when K > 1; K = 1 returns the primary audio. Amortizes the AR stage across takes. |
 | `ensemble_prefix_frames` | `0` | With ensembles: share a master AR prefix of this many frames across takes (intro-lock), then let takes diverge. |
 
 Session options:

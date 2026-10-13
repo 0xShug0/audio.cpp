@@ -31,7 +31,7 @@
       {
         "name": "duration_sec",
         "type": "float",
-        "description": "Target audio duration budget. Must be finite and positive; no fixed runtime upper cap.",
+        "description": "Target audio duration budget; omitted derives from the checkpoint sequence length, hop size and sample rate. Must be finite and positive; no fixed runtime upper cap.",
         "required": false,
         "default": 20
       },

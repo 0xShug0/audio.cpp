@@ -2,6 +2,23 @@
 
 Stable Audio is wired as `--family stable_audio --task gen`. It generates music or sound effects from text, and the music model can condition generation on input audio for init-audio or inpainting workflows.
 
+## Stable Audio 3 Medium
+
+Use the medium package for the larger Stable Audio 3 music model. It uses the same user-facing controls as the music path.
+
+| Field | Value |
+|---|---|
+| Family | `stable_audio` |
+| Model directory | `models/stable-audio-3-medium` |
+| Task | `gen` |
+| Main mode | Text-to-music |
+| Prompt language | `en` |
+| Optional audio input | Supported by the Stable Audio request path when the model package provides the needed components |
+
+```bash
+audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-medium --backend cuda --text "wide cinematic ambient music with soft piano and evolving strings" --duration-seconds 30 --out music_medium.wav
+```
+
 ## Stable Audio 3 Small Music
 
 This is the default music-generation package. Use it for text-to-music, init-audio, and inpainting.
@@ -50,22 +67,24 @@ Use this package for short sound effects. It uses the same `gen` task but is int
 audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-small-sfx --backend cuda --text "footsteps on gravel, close perspective, crisp natural stone texture" --duration-seconds 8 --out sfx.wav
 ```
 
-## Stable Audio 3 Medium
+## Stable Audio Foundation / Open v1
 
-Use the medium package for the larger Stable Audio 3 music model. It uses the same user-facing controls as the music path.
+The same family also loads Foundation checkpoints using the Stable Audio Open v1
+layout. Use `--task gen --mode offline` with the Foundation checkpoint path; the
+Stable Audio 3 packages above use a separate runtime path.
 
-| Field | Value |
-|---|---|
-| Family | `stable_audio` |
-| Model directory | `models/stable-audio-3-medium` |
-| Task | `gen` |
-| Main mode | Text-to-music |
-| Prompt language | `en` |
-| Optional audio input | Supported by the Stable Audio request path when the model package provides the needed components |
+Foundation accepts these additional request options through
+`--request-option key=value`:
 
-```bash
-audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-medium --backend cuda --text "wide cinematic ambient music with soft piano and evolving strings" --duration-seconds 30 --out music_medium.wav
-```
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `sampler_mode` | `pingpong`, `euler`, `dpmpp-2m`, `dpmpp-3m-sde` | not set | Foundation sampler; legacy `sampler` remains accepted. |
+| `sigma_min` | float > 0 | `0.01` | Minimum noise level for the DPM++ samplers. |
+| `sigma_max` | float > `sigma_min` | `100` | Maximum noise level for the DPM++ samplers; init audio uses `init_noise_level` instead. |
+| `rho` | float > 0 | `1` | Noise-schedule parameter for the DPM++ samplers. |
+
+The following common/request tables describe Stable Audio 3. Foundation also
+accepts the shared request controls, with duration capped by its checkpoint limit.
 
 ## Common Options (use directly)
 

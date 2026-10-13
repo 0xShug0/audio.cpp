@@ -33,16 +33,16 @@ runtime::ModelMetadata metadata(const SupertonicAssets &) {
 runtime::ModelCliInterface cli(const SupertonicAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"voice_id", "M1|M2|M3|M4|M5|F1|F2|F3|F4|F5", "Preset voice style id, default M1; also exposed as --voice-id."},
-        {"num_inference_steps", "n", "Flow denoising steps, default 8."},
-        {"speed", "float", "Speech speed multiplier, default 1.05."},
-        {"seed", "n", "Noise seed, default 1234."},
-        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode."},
+        {"voice_id", "M1|M2|M3|M4|M5|F1|F2|F3|F4|F5", "Preset voice style id, default M1; also exposed as --voice-id.", false, "M1"},
+        {"num_inference_steps", "n", "Flow denoising steps, default 8.", false, "8", "1"},
+        {"speed", "float", "Speech speed multiplier, default 1.05.", false, "1.05", "0"},
+        {"seed", "n", "Noise seed, default 1234.", false, "1234", "0", "4294967295"},
+        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode.", false, "default"},
         {"text_chunk_size", "int", "Framework text chunk size; defaults to 120 for Korean/Japanese, otherwise 300."},
     };
     out.session_options = {
-        {"supertonic.weight_type", "native|f32|f16|bf16|q8_0", "Supertonic weight storage type."},
-        {"supertonic.style_cache_slots", "n", "Preset voice style cache slots; default 4."},
+        {"supertonic.weight_type", "native|f32|f16|bf16|q8_0", "Supertonic weight storage type.", false, "native"},
+        {"supertonic.style_cache_slots", "n", "Preset voice style cache slots; default 4.", false, "4", "0"},
     };
     return out;
 }

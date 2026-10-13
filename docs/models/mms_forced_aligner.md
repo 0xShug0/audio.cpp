@@ -87,7 +87,7 @@ Request options:
 | `language` | `nl`, `nld`, `en`, `eng` (latin); any code (pre_romanized) | — | Language code. Built-in normalization supports nl/nld and en/eng; pre_romanized accepts any nonempty code. |
 | `text_normalization` | `latin`, `pre_romanized` | `latin` | Native Latin normalization or caller-supplied romanization |
 | `star_frequency` | `segment`, `edges` | `segment` | Virtual `<star>` target placement (per-word prefix vs transcript edges) |
-| `merge_threshold_sec` | float >= 0 | `0.0` | Merge words whose gap is at or below this many seconds |
+| `merge_threshold_sec` | float >= 0 | `0.0` | Close gaps at or below this threshold (rounded to alignment frames) by moving the later word's start; word entries remain separate. `0` disables gap closure. |
 
 Session options:
 

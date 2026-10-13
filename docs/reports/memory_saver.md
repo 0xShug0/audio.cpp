@@ -37,27 +37,27 @@ Native/default weights were used for all rows.
 |---|---|---:|---:|---:|---:|---:|
 | ACE-Step base | default | 20098 MiB | 19540 MiB | 30402.5 ms | 120s | 0.253354 |
 | ACE-Step base | mem_saver | 20098 MiB | 10332 MiB | 27470.2 ms | 120s | 0.228918 |
-| HeartMuLa | default | 25600 MiB | 25600 MiB | 47248.6 ms | 120.08s | 0.393476 |
-| HeartMuLa | mem_saver | 25600 MiB | 21762 MiB | 47349.2 ms | 120.08s | 0.394313 |
-| Stable Audio 3 small music | default | 3658 MiB | 3652 MiB | 1485.97 ms | 120s | 0.0123831 |
-| Stable Audio 3 small music | mem_saver | 3070 MiB | 2868 MiB | 1445.73 ms | 120s | 0.0120478 |
-| Stable Audio 3 small SFX | default | 3652 MiB | 3652 MiB | 1407.58 ms | 120s | 0.0117298 |
-| Stable Audio 3 small SFX | mem_saver | 2980 MiB | 2868 MiB | 1415.61 ms | 120s | 0.0117968 |
-| Stable Audio 3 medium | default | 10440 MiB | 10440 MiB | 3847.98 ms | 120s | 0.0320665 |
-| Stable Audio 3 medium | mem_saver | 10324 MiB | 9468 MiB | 3830.24 ms | 120s | 0.0319186 |
-| OmniVoice | default | 11396 MiB | 11396 MiB | 947.392 ms | 4.32s | 0.219304 |
-| OmniVoice | mem_saver | 10526 MiB | 3662 MiB | 968.823 ms | 4.32s | 0.224264 |
 | Chatterbox | default | 13408 MiB | 13408 MiB | 4264.11 ms | 6.76s | 0.630786 |
 | Chatterbox | mem_saver | 12272 MiB | 5074 MiB | 4832.43 ms | 6.76s | 0.714856 |
-| Qwen3 TTS Base voice clone | default | 7518 MiB | 7518 MiB | 122013.55 ms | 327.6s | 0.372447 |
-| Qwen3 TTS Base voice clone | mem_saver | 7520 MiB | 5684 MiB | 121919.91 ms | 327.6s | 0.372161 |
-| VoxCPM2 offline voice design | default | 13080 MiB | 13039 MiB | 15325.7 ms | 93.12s | 0.16458 |
-| VoxCPM2 offline voice design | mem_saver | 12456 MiB | 5966 MiB | 14924 ms | 93.12s | 0.160266 |
+| HeartMuLa | default | 25600 MiB | 25600 MiB | 47248.6 ms | 120.08s | 0.393476 |
+| HeartMuLa | mem_saver | 25600 MiB | 21762 MiB | 47349.2 ms | 120.08s | 0.394313 |
 | IndexTTS2 | default | 12272 MiB | 12072 MiB | 35215.67 ms | 104.889s | 0.335743 |
 | IndexTTS2 | mem_saver | 11445 MiB | 8947 MiB | 35740.72 ms | 104.436s | 0.342226 |
 | Irodori TTS 500M | default | 14112 MiB | 13588 MiB | 3289.85 ms | 95.4s | 0.0344848 |
 | Irodori TTS 500M | mem_saver | 11222 MiB | 3570 MiB | 3276.203 ms | 95.4s | 0.0343418 |
 | Irodori TTS 500M 6000-char | default | 18693 MiB | 13367 MiB | 27185.7 ms | 777.92s | 0.0349466 |
 | Irodori TTS 500M 6000-char | mem_saver | 11588 MiB | 3609 MiB | 27828 ms | 777.92s | 0.0357724 |
+| OmniVoice | default | 11396 MiB | 11396 MiB | 947.392 ms | 4.32s | 0.219304 |
+| OmniVoice | mem_saver | 10526 MiB | 3662 MiB | 968.823 ms | 4.32s | 0.224264 |
 | OuteTTS 1.0 1B Q8 | default | 17653 MiB | 294 MiB | 29911.38 ms | 11.237s | 2.662 |
 | OuteTTS 1.0 1B Q8 | mem_saver | 5780 MiB | 294 MiB | 30043.25 ms | 11.237s | 2.674 |
+| Qwen3 TTS Base voice clone | default | 7518 MiB | 7518 MiB | 122013.55 ms | 327.6s | 0.372447 |
+| Qwen3 TTS Base voice clone | mem_saver | 7520 MiB | 5684 MiB | 121919.91 ms | 327.6s | 0.372161 |
+| Stable Audio 3 medium | default | 10440 MiB | 10440 MiB | 3847.98 ms | 120s | 0.0320665 |
+| Stable Audio 3 medium | mem_saver | 10324 MiB | 9468 MiB | 3830.24 ms | 120s | 0.0319186 |
+| Stable Audio 3 small music | default | 3658 MiB | 3652 MiB | 1485.97 ms | 120s | 0.0123831 |
+| Stable Audio 3 small music | mem_saver | 3070 MiB | 2868 MiB | 1445.73 ms | 120s | 0.0120478 |
+| Stable Audio 3 small SFX | default | 3652 MiB | 3652 MiB | 1407.58 ms | 120s | 0.0117298 |
+| Stable Audio 3 small SFX | mem_saver | 2980 MiB | 2868 MiB | 1415.61 ms | 120s | 0.0117968 |
+| VoxCPM2 offline voice design | default | 13080 MiB | 13039 MiB | 15325.7 ms | 93.12s | 0.16458 |
+| VoxCPM2 offline voice design | mem_saver | 12456 MiB | 5966 MiB | 14924 ms | 93.12s | 0.160266 |

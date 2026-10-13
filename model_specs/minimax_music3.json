@@ -36,7 +36,7 @@
       {
         "name": "duration_sec",
         "type": "float",
-        "description": "Maximum generated audio duration in seconds.",
+        "description": "Positive AR frame budget expressed in seconds; not a hard final waveform duration limit.",
         "required": false,
         "min": 0.1,
         "default": 20.0
@@ -84,21 +84,21 @@
       {
         "name": "flow_uncond_interval",
         "type": "int",
-        "description": "Evaluate unconditional flow CFG every N-th step, reusing the guidance delta between evaluations. One evaluates both branches every step.",
+        "description": "Evaluate unconditional flow CFG every N-th step, reusing the guidance delta between evaluations. Values <= 1 disable reuse and evaluate both branches every step.",
         "required": false,
         "default": 1
       },
       {
         "name": "flow_uncond_warmup",
         "type": "int",
-        "description": "Initial flow steps that evaluate both CFG branches before guidance-delta reuse.",
+        "description": "Initial flow steps that evaluate both CFG branches before guidance-delta reuse; nonpositive values add no warmup.",
         "required": false,
         "default": 2
       },
       {
         "name": "ensemble_takes",
         "type": "int",
-        "description": "Independent takes in a batched AR pass using consecutive seeds; flow/vocoder decode each take. Returns named outputs take_01 through take_NN.",
+        "description": "Independent takes in a batched AR pass using consecutive seeds; flow/vocoder decode each take. Named outputs take_01 through take_NN are emitted only when ensemble_takes > 1; otherwise only primary audio is returned.",
         "required": false,
         "min": 1,
         "max": 16,
@@ -115,7 +115,7 @@
       {
         "name": "flow_chunk_hop_frames",
         "type": "int",
-        "description": "Flow chunk hop in AR frames, approximately 25 per second. Zero uses checkpoint configuration; positive values must satisfy the flow chunk geometry.",
+        "description": "Flow chunk hop in AR frames, approximately 25 per second. Zero uses checkpoint configuration; positive values are capped at the configured chunk size.",
         "required": false,
         "min": 0,
         "default": 0

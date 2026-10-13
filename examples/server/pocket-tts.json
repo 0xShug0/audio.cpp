@@ -1,0 +1,37 @@
+{
+  "_comment": "Replace the GGUF path. Keep the downloaded embeddings/ directory next to that GGUF; alba.safetensors is needed for the default built-in voice. The voice library supplies your own cloning references.",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 4,
+  "lazy_load": true,
+  "max_loaded_models": 1,
+  "ui": true,
+  "ui_management": false,
+  "_comment_voice_dir": "Replace /PATH/TO/voice-library with a folder you create. Put narrator.wav and a plain-text prompt_text file in it; see README.md.",
+  "voice_dir": "/PATH/TO/voice-library",
+  "models": [
+    {
+      "id": "pocket",
+      "family": "pocket_tts",
+      "path": "/PATH/TO/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "load_options": {
+        "language": "english"
+      },
+      "default_voice_preset": {
+        "voice_id": "alba"
+      },
+      "voice_presets": {
+        "alba": {
+          "voice_id": "alba"
+        }
+      },
+      "default_request_options": {
+        "seed": 123
+      }
+    }
+  ]
+}

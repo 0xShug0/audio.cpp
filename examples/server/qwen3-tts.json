@@ -1,0 +1,57 @@
+{
+  "_comment": "Choose the entries for the checkpoints you downloaded; delete unused entries. These are three different checkpoints, not three names for the same file. Replace every /PATH/TO path. See README.md for requests.",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 4,
+  "lazy_load": true,
+  "max_loaded_models": 1,
+  "ui": true,
+  "ui_management": false,
+  "_comment_voice_dir": "Replace /PATH/TO/voice-library with a folder you create. Put narrator.wav and a plain-text prompt_text file in it; see README.md.",
+  "voice_dir": "/PATH/TO/voice-library",
+  "models": [
+    {
+      "id": "qwen3-clone",
+      "family": "qwen3_tts",
+      "path": "/PATH/TO/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "_comment": "Base clones a reference voice. Send voice=narrator to read narrator.wav and its transcript from voice_dir.",
+      "default_request_options": {
+        "seed": 123
+      }
+    },
+    {
+      "id": "qwen3-custom",
+      "family": "qwen3_tts",
+      "path": "/PATH/TO/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "_comment": "CustomVoice uses built-in speakers; no reference WAV is needed.",
+      "default_voice_preset": {
+        "voice_id": "Vivian"
+      },
+      "voice_presets": {
+        "ryan": {
+          "voice_id": "Ryan"
+        }
+      },
+      "default_request_options": {
+        "seed": 123
+      }
+    },
+    {
+      "id": "qwen3-design",
+      "family": "qwen3_tts",
+      "path": "/PATH/TO/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf",
+      "task": "vdes",
+      "mode": "offline",
+      "_comment": "VoiceDesign needs an instruction describing the voice, not a reference WAV.",
+      "default_request_options": {
+        "seed": 123
+      }
+    }
+  ]
+}

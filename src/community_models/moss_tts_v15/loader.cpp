@@ -39,20 +39,19 @@ runtime::ModelCliInterface cli() {
         {"min_frames", "<int>", "Minimum generated audio frames per text chunk; nonpositive values derive a text-length-based floor. Separate from duration_frames conditioning.", false, "0"},
         {"max_frames", "<int>", "Generated audio-frame ceiling per text chunk; nonpositive values derive a text-length-based ceiling. Runtime raises it to at least the effective min_frames plus the number of codebooks.", false, "0"},
         {"instruct", "<text>", "Voice description. Followed only loosely on this checkpoint; a reference recording is far more reliable."},
-        {"duration_frames", "int", "Duration budget in codec frames at 12.5 a second, the model's own '- Tokens:' field. Nonpositive values disable duration conditioning."},
+        {"duration_frames", "int", "Duration budget in codec frames at 12.5 a second, the model's own '- Tokens:' field. Nonpositive values disable duration conditioning.", false, "0"},
         {"text_temperature", "float", "Text-token sampling temperature. Must be finite and positive when sampling. Default: 1.5.", false, "1.5"},
         {"language", "English|Chinese", "Full language name; the model does not understand codes like 'en'."},
-        {"seed", "int", "Reproduces a take exactly. Parsed as signed 32-bit integer then converted to uint32; negative values wrap."},
-        {"temperature", "float", "Audio sampling temperature. Must be finite and positive when sampling."},
-        {"top_p", "<float>", "Audio nucleus sampling cutoff (default 0.6)."},
-        {"top_k", "<int>", "Audio top-k (default 50)."},
-        {"repetition_penalty", "float", "Audio repetition penalty. Must be finite and positive when history is nonempty."},
-        {"text_chunk_size", "<int>", "Maximum Unicode codepoints per long-form text chunk (default 200)."},
+        {"seed", "int", "Reproduces a take exactly. Parsed as signed 32-bit integer then converted to uint32; negative values wrap.", false, "0"},
+        {"temperature", "float", "Audio sampling temperature. Must be finite and positive when sampling.", false, "1.5"},
+        {"top_p", "<float>", "Audio nucleus sampling cutoff (default 0.6).", false, "0.6"},
+        {"top_k", "<int>", "Audio top-k (default 50).", false, "50"},
+        {"repetition_penalty", "float", "Audio repetition penalty. Must be finite and positive when history is nonempty.", false, "1.1"},
+        {"text_chunk_size", "<int>", "Maximum Unicode codepoints per long-form text chunk (default 200).", false, "200", "1"},
         {"text_chunk_mode", "word_budget|tag_aware|japanese|endline", "Text chunking policy; word_budget is the default and also accepts the legacy name default.", false, "word_budget"},
     };
     out.session_options = {
-        {"moss_tts_v15.weight_type", "native|f32|bf16|q8_0",
-         "Weight storage; default native preserves packaged quantization. f16 is rejected because this backbone produces NaN in it.", false, "native"},
+        {"moss_tts_v15.weight_type", "native|f32|bf16|q8_0", "Weight storage; default native preserves packaged quantization. f16 is rejected because this backbone produces NaN in it.", false, "native"},
     };
     return out;
 }

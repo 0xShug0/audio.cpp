@@ -113,7 +113,8 @@
         "name": "seed",
         "type": "int",
         "required": false,
-        "description": "Reproduces a take exactly. Parsed as signed 32-bit integer then converted to uint32; negative values wrap."
+        "description": "Reproduces a take exactly; default 0. Parsed as signed 32-bit integer then converted to uint32; negative values wrap.",
+        "default": 0
       },
       {
         "name": "text_temperature",
@@ -126,25 +127,29 @@
         "name": "temperature",
         "type": "float",
         "required": false,
-        "description": "Audio sampling temperature. Must be finite and positive when sampling."
+        "description": "Audio sampling temperature; default 1.5. Must be finite and positive when sampling.",
+        "default": 1.5
       },
       {
         "name": "top_p",
         "type": "float",
         "required": false,
-        "description": "Audio nucleus sampling cutoff."
+        "description": "Audio nucleus sampling cutoff; default 0.6.",
+        "default": 0.6
       },
       {
         "name": "top_k",
         "type": "int",
         "required": false,
-        "description": "Audio top-k."
+        "description": "Audio top-k; default 50.",
+        "default": 50
       },
       {
         "name": "repetition_penalty",
         "type": "float",
         "required": false,
-        "description": "Audio repetition penalty. Must be finite and positive when history is nonempty."
+        "description": "Audio repetition penalty; default 1.1. Must be finite and positive when history is nonempty.",
+        "default": 1.1
       },
       {
         "name": "text_chunk_size",

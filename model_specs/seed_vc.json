@@ -59,7 +59,7 @@
       {
         "name": "duration_scale",
         "type": "float",
-        "description": "Output duration multiplier; must be > 0, default 1.0.",
+        "description": "V1 output duration multiplier; must be finite and positive, default 1.0. V2 validates this option but does not apply it.",
         "required": false,
         "min": 0.0,
         "default": 1.0

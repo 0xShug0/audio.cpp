@@ -65,10 +65,10 @@ From the model card, applied as the family's defaults rather than left to the ca
 
 | Option | Default |
 |---|---:|
-| `audio_temperature` | 1.5 |
-| `audio_top_p` | 0.6 |
-| `audio_top_k` | 50 |
-| `audio_repetition_penalty` | 1.1 |
+| `temperature` | 1.5 |
+| `top_p` | 0.6 |
+| `top_k` | 50 |
+| `repetition_penalty` | 1.1 |
 
 The family is sensitive to these. At a generic TTS preset it ends speech on the first frame.
 

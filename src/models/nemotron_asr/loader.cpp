@@ -11,23 +11,30 @@ namespace engine::models::nemotron_asr {
 namespace {
 
 // Compatibility for GGUFs that embed a pre-v1 spec when no v1 contract is available:
-// the options and help from before the spec migration.
+// describe the supported runtime options without relying on a v1 contract.
 runtime::ModelCliInterface legacy_cli() {
     runtime::ModelCliInterface cli;
     cli.request_options = {
         {"language", "code", "ASR prompt language such as en-US, da-DK, or auto."},
-        {"lookahead_tokens", "n", "Chunk-limited encoder right context; supported values come from processor_config."},
-        {"max_tokens", "n", "Maximum RNNT generated tokens; 0 uses the model-derived limit."},
-        {"keep_language_tags", "bool", "Keep language tag tokens in decoded text."},
+        {"lookahead_tokens", "n", "Chunk-limited encoder right context; supported values come from processor_config.", false, std::nullopt, "0"},
+        {"max_tokens", "n", "Maximum RNNT generated tokens; 0 uses the model-derived limit.", false, "0", "0"},
+        {"keep_language_tags", "bool", "Keep language tag tokens in decoded text.", false, "false"},
+        {"return_timestamps", "true|false", "Advisory compatibility option; timestamps remain present when false or omitted.", false, "false"},
+        {"streaming", "true|false", "Compatibility flag; true requires a streaming session. Select --mode streaming rather than setting it on an offline request.", false, "false"},
+        {"speaker_probabilities", "path", "NPZ speaker probability file for speaker tagging."},
+        {"speaker_mode", "attribution|masked", "Speaker tagging mode; requires speaker_probabilities.", false, "masked"},
+        {"speaker_mask", "mel|audio", "Speaker masking domain; requires speaker_probabilities.", false, "mel"},
+        {"speaker_segment_gap_sec", "seconds", "Maximum gap for joining speaker segments; requires speaker_probabilities.", false, "1", "0"},
+        {"speaker_segment_max_sec", "seconds", "Positive maximum speaker segment duration; requires speaker_probabilities.", false, "10"},
     };
     cli.session_options = {
-        {"nemotron_asr.weight_type", "native|f32|f16|bf16|q8_0", "Shared matmul weight storage type."},
+        {"nemotron_asr.weight_type", "native|f32|f16|bf16|q8_0", "Shared matmul weight storage type.", false, "native"},
         {"nemotron_asr.matmul_weight_type", "native|f32|f16|bf16|q8_0", "Encoder and decoder matmul weight storage type."},
-        {"nemotron_asr.conv_weight_type", "native|f32|f16", "Convolution weight storage type."},
-        {"nemotron_asr.weight_context_mb", "mb", "Weight context arena size."},
-        {"nemotron_asr.encoder_graph_arena_mb", "mb", "Encoder graph arena size."},
-        {"nemotron_asr.decoder_graph_arena_mb", "mb", "Decoder graph arena size."},
-        {"nemotron_asr.mem_saver", "true|false", "Release the offline encoder graph after each offline request; default false."},
+        {"nemotron_asr.conv_weight_type", "native|f32|f16", "Convolution weight storage type.", false, "native"},
+        {"nemotron_asr.weight_context_mb", "mb", "Weight context arena size.", false, "3072", "1"},
+        {"nemotron_asr.encoder_graph_arena_mb", "mb", "Encoder graph arena size.", false, "1024", "1"},
+        {"nemotron_asr.decoder_graph_arena_mb", "mb", "Decoder graph arena size.", false, "256", "1"},
+        {"nemotron_asr.mem_saver", "true|false", "Release the offline encoder graph after each offline request; default false.", false, "false"},
     };
     return cli;
 }

@@ -46,7 +46,7 @@ runtime::ModelCliInterface cli(const PocketTTSAssets &) {
     out.request_options = {
         {"frames_after_eos", "int", "Extra frames after EOS; -1 uses the model-derived value.", false, "-1", "-1"},
         {"max_frames", "int", "Maximum generated audio frames; zero estimates the cap from text length. Captured during session preparation.", false, "0", "0"},
-        {"text_chunk_tokens", "int", "Tokenizer tokens per text chunk. Captured during session preparation.", false, "50", "1"},
+        {"text_chunk_tokens", "int", "Tokenizer tokens per text chunk; must be positive, default 50. Set during preparation and overridable per request.", false, "50", "1"},
         {"temperature", "float", "Positive flow noise temperature; defaults to the model configuration. Captured during session preparation.", false},
         {"seed", "int", "Noise seed; omitted chooses a random seed. Captured during session preparation.", false, std::nullopt, "0", "4294967295"},
         {"noise_clamp", "float", "Noise clamp; a negative value disables clamping. Captured during session preparation.", false, "-1"},

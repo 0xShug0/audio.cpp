@@ -1,0 +1,35 @@
+{
+  "_comment": "Replace the path with the Kokoro GGUF you downloaded. Built-in voices are in the GGUF; no voice-library WAV is needed. This model does not clone voices.",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 4,
+  "lazy_load": true,
+  "max_loaded_models": 1,
+  "ui": true,
+  "ui_management": false,
+  "models": [
+    {
+      "id": "kokoro",
+      "family": "kokoro_tts",
+      "path": "/PATH/TO/kokoro-82m-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "default_voice_preset": {
+        "voice_id": "af_heart"
+      },
+      "voice_presets": {
+        "heart": {
+          "voice_id": "af_heart"
+        },
+        "michael": {
+          "voice_id": "am_michael"
+        }
+      },
+      "default_request_options": {
+        "speed": 1.0
+      }
+    }
+  ]
+}

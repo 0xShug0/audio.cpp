@@ -48,7 +48,7 @@ The common `--speaking-rate` option also sets speech speed.
 | `kitten_tts.weight_type` | Storage type for matrix multiplication weights. |
 | `kitten_tts.conv_weight_type` | Storage type for convolution weights. |
 | `kitten_tts.graph_capacity_mode` | Predictor graph capacity policy: `fixed`, `tiered`, `grow`, or `double`. |
-| `kitten_tts.max_input_tokens` | Maximum predictor input token capacity. |
+| `kitten_tts.max_input_tokens` | Maximum predictor input token capacity; defaults to `min(512, checkpoint context_length)`. |
 | `kitten_tts.pre_tail_tokens` | Optional prebuilt predictor tail capacity. |
 | `kitten_tts.espeak_library_path` | Explicit path to the eSpeak-ng shared library. |
 | `kitten_tts.espeak_data_path` | Explicit path to `espeak-ng-data`. |

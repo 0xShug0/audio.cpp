@@ -89,15 +89,15 @@ the same model, input, and options. Logs were retained outside the repository.
 
 | Model | Modes and compared output | Result |
 | --- | --- | --- |
-| Nemotron 3.5 ASR | Offline transcript and 451 token timestamps; streaming transcript, 444 token timestamps, and 444 partial updates | Byte-identical in both modes |
+| Canary 180M Flash | Offline transcript | Byte-identical |
+| Citrinet | Offline transcript | Byte-identical |
+| Cohere Transcribe | Offline transcript | Byte-identical |
 | Granite Speech 5.0 | Offline transcript; streaming final transcript | Byte-identical in both modes |
+| Hviske v5.3 | Offline transcript | Byte-identical |
+| Nemotron 3.5 ASR | Offline transcript and 451 token timestamps; streaming transcript, 444 token timestamps, and 444 partial updates | Byte-identical in both modes |
 | Parakeet TDT v3 | Offline transcript and 164 word timestamps; streaming transcript, eight partial updates, and 29 cumulative timestamp updates | Byte-identical in both modes; streaming truncation noted below |
 | Sortformer v1 | Offline, 12 timed speaker turns | Byte-identical |
 | Sortformer v2 | Offline, 16 timed speaker turns; streaming, nine final turns and four turn updates | Byte-identical in both modes |
-| Hviske v5.3 | Offline transcript | Byte-identical |
-| Citrinet | Offline transcript | Byte-identical |
-| Canary 180M Flash | Offline transcript | Byte-identical |
-| Cohere Transcribe | Offline transcript | Byte-identical |
 
 The common input was 56 seconds of repeated four-speaker speech; Hviske used
 55.95 seconds of Danish speech.

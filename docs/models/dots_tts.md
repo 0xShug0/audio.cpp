@@ -36,7 +36,7 @@ audiocpp_cli --task tts --family dots_tts \
   --out mf.wav
 ```
 
-DotTTS Edit uses a separate Edit GGUF package and `template_name=edit`. It
+DotTTS Edit is offline only and uses a separate Edit GGUF package with `template_name=edit`. It
 takes source audio plus a structured edit instruction. When `source_text` and
 `target_text` are omitted, the runtime derives them from the tagged instruction.
 
@@ -121,7 +121,7 @@ audiocpp_cli --task tts --family dots_tts \
 |---|---|---:|---|
 | `reference_text` | text | empty | Transcript for prompt audio. |
 | `reference_duration_sec` | seconds | not set | Trim prompt audio before reference conditioning. |
-| `template_name` | `tts`, `instruction_tts`, `text_to_audio`, `tts_interleave`, `edit` | `tts` | Synthesis template. Use `edit` with the DotTTS Edit package. |
+| `template_name` | `tts`, `instruction_tts`, `text_to_audio`, `tts_interleave`, `edit` | `tts` | Synthesis template. Use `edit` with the DotTTS Edit package in offline mode. |
 | `source_audio` | WAV path | not set | Source audio for `template_name=edit`. |
 | `instruct` / `instruction` | text | request text | Structured DotTTS Edit instruction. |
 | `source_text` | text | derived | Optional source transcript override for DotTTS Edit. |

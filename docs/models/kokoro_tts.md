@@ -55,7 +55,7 @@ audiocpp_cli --task tts --family kokoro_tts \
 ## Streaming
 
 Use `--mode streaming` to emit each synthesized text chunk immediately. Text
-chunking uses the same `text_chunk_size` and `text_chunk_mode` controls as offline
+chunking uses the same `text_chunk_size` control as offline
 generation; it does not split an already generated waveform into fake streaming
 events. A short input that fits in one chunk produces one audio event. Longer
 inputs produce incremental, non-cumulative audio chunks and a final merged WAV.
@@ -214,9 +214,8 @@ the model's, and whose they are depends on which path produced them:
   differ only sometimes, and where they do every later word is off by one. A caller that needs a
   written-word timeline from the text path needs its own G2P and the supplied-phoneme path.
 
-What the groups always give, on both paths, is a correct division of the audio: the spans are
-contiguous in output order and cover the buffer, so following the speech is exact even when
-labelling it is not.
+The spans follow output order but need not be contiguous or cover the full buffer.
+Space tokens, standalone punctuation, and padding can leave gaps between or around groups.
 
 ### Details
 

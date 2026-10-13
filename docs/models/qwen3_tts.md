@@ -5,7 +5,9 @@ For shared conversion guidance, see [Qwen3 GGUF checkpoints](qwen3.md#gguf-check
 
 ## Qwen3 TTS Base
 
-Qwen3 TTS Base is the voice-clone TTS path. It needs reference audio and can use the reference transcript when available.
+Qwen3 TTS Base is the voice-clone TTS path. It requires reference audio and,
+by default, its transcript. To use reference audio without a transcript, pass
+`--request-option x_vector_only_mode=true`.
 
 | Field | Value |
 |---|---|
@@ -14,7 +16,7 @@ Qwen3 TTS Base is the voice-clone TTS path. It needs reference audio and can use
 | Task | `tts` |
 | Modes | `offline`, `streaming` |
 | Voice input | Reference WAV through `--voice-ref` |
-| Transcript | Optional `--reference-text` |
+| Transcript | `--reference-text` required unless `x_vector_only_mode=true` |
 
 ```bash
 audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Base --backend cuda --text "Hello from Qwen3 TTS." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
@@ -26,37 +28,10 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Ba
 |---|---|---:|---|
 | `--text` | text | required | Text to synthesize. |
 | `--voice-ref` | WAV path | required | Voice clone reference audio. |
-| `--reference-text` | text | empty string | Transcript for reference audio. |
+| `--reference-text` | text | required by default | Transcript for reference audio; optional with `x_vector_only_mode=true`. |
 | `--language` | language code | empty string | Text language hint. |
 | `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
-| `--max-tokens` | integer | `8192` | Maximum generated speech tokens per chunk. |
-
-## Qwen3 TTS VoiceDesign
-
-Qwen3 VoiceDesign creates a voice from an instruction. It does not require a speaker reference WAV.
-
-| Field | Value |
-|---|---|
-| Family | `qwen3_tts` |
-| Model directory | `models/Qwen3-TTS-12Hz-1.7B-VoiceDesign` |
-| Task | `vdes` |
-| Modes | `offline`, `streaming` |
-| Voice input | Instruction text through `--instruct` |
-| Reference audio | Not required |
-
-```bash
-audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-VoiceDesign --backend cuda --text "Hello from a designed voice." --instruct "A warm adult narrator" --out out.wav
-```
-
-### Common Options (use directly)
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--text` | text | required | Text to synthesize. |
-| `--instruct` | text | required | Voice design instruction. |
-| `--language` | language code | empty string | Text language hint. |
-| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
-| `--max-tokens` | integer | `8192` | Maximum generated speech tokens per chunk. |
+| `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS CustomVoice
 
@@ -85,7 +60,34 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Cu
 | `--instruct` | text | empty string | Style or emotion instruction. |
 | `--language` | language code | empty string | Text language hint. |
 | `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
-| `--max-tokens` | integer | `8192` | Maximum generated speech tokens per chunk. |
+| `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
+
+## Qwen3 TTS VoiceDesign
+
+Qwen3 VoiceDesign creates a voice from an instruction. It does not require a speaker reference WAV.
+
+| Field | Value |
+|---|---|
+| Family | `qwen3_tts` |
+| Model directory | `models/Qwen3-TTS-12Hz-1.7B-VoiceDesign` |
+| Task | `vdes` |
+| Modes | `offline`, `streaming` |
+| Voice input | Instruction text through `--instruct` |
+| Reference audio | Not required |
+
+```bash
+audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-VoiceDesign --backend cuda --text "Hello from a designed voice." --instruct "A warm adult narrator" --out out.wav
+```
+
+### Common Options (use directly)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--text` | text | required | Text to synthesize. |
+| `--instruct` | text | empty string | Optional voice design instruction. |
+| `--language` | language code | empty string | Text language hint. |
+| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
+| `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS Streaming
 
@@ -109,8 +111,9 @@ the offline decoding path is unchanged.
 For the server, configure the model with `"mode": "streaming"` and request
 `"stream_format": "sse"` from `/v1/audio/speech` (streaming defaults to PCM).
 Audio arrives through the existing `speech.audio.delta`
-events. Base models still require reference audio, VoiceDesign still requires
-an instruction, and CustomVoice still requires a packaged speaker.
+events. Base models require reference audio; the transcript can be omitted only
+with `x_vector_only_mode=true`.
+VoiceDesign accepts an empty instruction; CustomVoice requires a packaged speaker.
 
 ## Qwen3 TTS Sampling
 

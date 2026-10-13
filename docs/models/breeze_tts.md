@@ -61,23 +61,23 @@ audiocpp_cli \
 |---|---|
 | Family | `breeze_tts` |
 | Default GGUF | `models/Breeze-TTS-2-GGUF/breeze-tts-2-q8_0.gguf` |
-| Tasks | `tts`, `clon` |
+| Tasks | `tts`, `clon`, `vdes` |
 | Modes | `offline`, `streaming` |
 | Languages | `zh`, `en` |
-| Voice input | Optional for `tts`; required for `clon` |
+| Voice input | Optional for `tts` and `clon`; supplied reference audio requires its transcript |
 
 ## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--voice-ref` | WAV path | required for `clon` | Prompt/reference speaker audio. |
-| `--reference-text` | text | empty | Transcript for prompt audio when cloning. |
+| `--voice-ref` | WAV path | optional | Supplied audio selects reference conditioning for `tts` or `clon`; `clon` does not enforce its presence. |
+| `--reference-text` | text | required with reference codes | Transcript for prompt audio. |
 
 ## Request Options (use with `--request-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `reference_text` | text | empty | Request-option alias for the prompt-audio transcript. |
+| `reference_text` | text | required with reference codes | Request-option alias for the prompt-audio transcript. |
 | `instruct` | text | `Speak clearly and naturally.` | Voice or style instruction. Legacy `instruction` remains accepted. |
 | `text_chunk_size` | integer > 0 | `600` | Long-form text chunk size. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
@@ -85,8 +85,8 @@ audiocpp_cli \
 | `guidance_scale` | float >= 0 | `1.0` | Classifier-free guidance scale. |
 | `temperature` | float > 0 | `0.9` | Backbone sampling temperature. |
 | `depth_temperature` | float > 0 | `0.9` | Depth decoder sampling temperature. |
-| `top_k` | integer >= 0 | `50` | Top-k sampling limit; 0 disables top-k filtering. Nonpositive values disable top-k filtering. |
-| `top_p` | `(0, 1]` | `1.0` | Positive nucleus sampling cutoff; values >=1 disable nucleus filtering. |
+| `top_k` | integer | `50` | Top-k sampling limit; nonpositive values disable top-k filtering. |
+| `top_p` | float > 0 | `1.0` | Positive nucleus sampling cutoff; values >=1 disable nucleus filtering. |
 | `seed` | integer >= 0 | `0` | Generation seed. |
 | `stream_frames_per_event` | integer > 0 | `16` | Maximum codec frames per audio event, or fixed event size with `stream_chunk_policy=fixed`. |
 | `stream_chunk_policy` | `grow`, `fixed` | `grow` | Emit 1, 2, 4, ... frames up to the configured maximum, or use the fixed size from the first event. |

@@ -18,9 +18,6 @@
       "load_options": {
         "language": "english"
       },
-      "session_options": {
-        "language": "english"
-      },
       "default_voice_preset": {
         "voice_id": "alba"
       },

@@ -69,7 +69,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "CFM Euler steps (NFE); default 32. Use a positive count; the parser does not enforce this bound.",
+        "description": "CFM Euler steps (NFE); default 32. The parser rejects nonpositive counts.",
         "required": false,
         "min": 1,
         "default": 32

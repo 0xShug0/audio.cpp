@@ -81,7 +81,7 @@ audiocpp_gguf --input models/QwenCleo-ASR/model.safetensors --root models/QwenCl
 | `--audio` | WAV path | required | Speech audio; use 16 kHz WAV for the examples. |
 | `--text` | text | empty string | Context prompt. |
 | `--language` | language code | empty string | Recognition language hint. |
-| `--max-tokens` | integer | `512` | Maximum decode tokens. |
+| `--max-tokens` | integer | checkpoint generation config; 512 fallback | Maximum decode tokens. |
 | `--audio-chunk-seconds` | seconds | `30` for streaming/transcription; `15` for offline timestamps/VAD | Target/max chunk length; must be > 0 when chunking or streaming. Ignored with `audio_chunk_mode=none` offline. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Let the model choose, force fixed chunks, force internal VAD chunks, or disable model-side chunking. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |

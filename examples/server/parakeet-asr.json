@@ -1,0 +1,21 @@
+{
+  "_comment": "Replace the path with your Parakeet GGUF. Send an audio file to the transcription endpoint; no voice library or text prompt is needed. README.md shows file upload and timestamp requests.",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 4,
+  "lazy_load": true,
+  "max_loaded_models": 1,
+  "ui": true,
+  "ui_management": false,
+  "models": [
+    {
+      "id": "parakeet",
+      "family": "parakeet_tdt",
+      "path": "/PATH/TO/parakeet-tdt-0.6b-v3-q8_0.gguf",
+      "task": "asr",
+      "mode": "offline"
+    }
+  ]
+}

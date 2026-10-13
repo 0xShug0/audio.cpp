@@ -6,7 +6,7 @@ MOSS-TTS-Local is the larger local-transformer path.
 |---|---|
 | Family | `moss_tts_local` |
 | Model directory | `models/MOSS-TTS-Local-Transformer-v1.5` |
-| Required codec layout | `audio_tokenizer/` directory inside the model root |
+| Codec layout | Bundled in standalone GGUFs; original checkpoints require `audio_tokenizer/` inside the model root |
 | Task | `tts`, `clon` |
 | Modes | `offline` |
 | Languages | Model auto-handles supported languages; `--language` can pass a language hint |
@@ -30,7 +30,6 @@ audiocpp_cli --task clon --family moss_tts_local --model /path/to/MOSS-TTS-Local
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--voice-ref` | WAV path | not set | Reference speaker audio for cloning. |
-| `--reference-text` | text | empty string | Transcript for reference audio. |
 | `--language` | language hint | auto | Optional language hint for the prompt template. |
 | `--max-tokens` | integer | `4096` | Maximum generated audio frames. |
 | `--do-sample` | `true`, `false` | `true` | Enable stochastic audio-token sampling. |
@@ -62,6 +61,6 @@ audiocpp_cli --task clon --family moss_tts_local --model /path/to/MOSS-TTS-Local
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `moss_tts_local.weight_type` | `auto`, `native`, `f32`, `f16`, `bf16`, `q8_0` | `auto` | Backbone weight storage type. |
+| `moss_tts_local.weight_type` | `auto`, `native`, `f32`, `f16`, `bf16`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, `q6_k`, `q8_0`, `nvfp4` | `auto` | Backbone storage override. `auto` selects F32 on CPU, BF16 on CUDA, and native storage on other backends. Accepted storage names do not guarantee support on every backend. |
 | `moss_tts_local.reference_cache_slots` | integer slots | `1` | Prepared reference-voice cache slots; set `0` to disable reuse. |
 

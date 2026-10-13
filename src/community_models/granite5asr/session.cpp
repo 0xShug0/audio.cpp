@@ -165,6 +165,7 @@ public:
             default_spec_path());
         runtime::ModelInspection inspection;
         inspection.cli.request_options = {
+            {"language", "code", "Compatibility-only language option; recognition remains English-only.", false, "en"},
             {"audio_chunk_mode", "auto|fixed|vad|none", "Offline audio chunking mode: auto, fixed, vad, or none. VAD requires a regular model file; otherwise the planner uses fixed chunks. Default: auto.", false, "auto"},
             {"audio_chunk_duration_sec", "float", "Positive maximum audio chunk duration for fixed and VAD chunking. Default: 30.", false, "30", "0.001"},
         };

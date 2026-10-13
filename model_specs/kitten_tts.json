@@ -104,7 +104,7 @@
       {
         "name": "max_input_tokens",
         "type": "int",
-        "description": "Maximum predictor input token capacity.",
+        "description": "Maximum predictor input token capacity; defaults to min(512, checkpoint context_length).",
         "required": false,
         "min": 1,
         "max": 512,

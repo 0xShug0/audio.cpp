@@ -14,25 +14,30 @@ IBM Granite Speech 5.0 TurboCTC is a compact 470-million-parameter English Autom
 
 ```bash
 # Transcribe audio using native safetensors directory
-audiocpp_cli asr --model granite5asr --input sample.wav
+audiocpp_cli --task asr --family granite5asr --model path/to/checkpoint --audio sample.wav
 
-# Or explicitly pass the family
-audiocpp_cli asr --family granite5asr --model path/to/checkpoint --input sample.wav
 ```
 
 ### Quantized GGUF Loading
 
 ```bash
 # Transcribe using a converted Q8_0 GGUF package
-audiocpp_cli asr --model models/granite-speech-5.0-470m-turboctc-gguf --input sample.wav
+audiocpp_cli --task asr --family granite5asr --model models/granite-speech-5.0-470m-turboctc-gguf --audio sample.wav
 ```
 
 ### Audio Chunking & VAD
 
 ```bash
-# Long audio with automatic VAD segmentation
-audiocpp_cli asr --model granite5asr --input long_audio.wav --option audio_chunk_mode=auto
+# Long audio with VAD segmentation using a valid Silero VAD model file
+audiocpp_cli --task asr --family granite5asr --model path/to/checkpoint --audio long_audio.wav --request-option audio_chunk_mode=auto --session-option granite5asr.vad_model_path=/path/to/silero-vad.gguf
 
 # Fixed 30-second chunking
-audiocpp_cli asr --model granite5asr --input long_audio.wav --option audio_chunk_mode=fixed --option audio_chunk_duration_sec=30
+audiocpp_cli --task asr --family granite5asr --model path/to/checkpoint --audio long_audio.wav --request-option audio_chunk_mode=fixed --request-option audio_chunk_duration_sec=30
 ```
+
+VAD segmentation requires `granite5asr.vad_model_path` to point to an existing
+model file. The default directory path does not enable VAD; without a valid
+file, or if VAD fails, transcription uses fixed chunks.
+
+Streaming mode buffers incoming audio and transcribes it when the input closes.
+It returns a final transcript rather than incremental text.

@@ -65,7 +65,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Diffusion steps per generated acoustic frame.",
+        "description": "Diffusion steps per acoustic frame, from 1 to 1000; omitted uses the checkpoint's diffusion_head_config.ddpm_num_inference_steps.",
         "min": 1,
         "max": 1000,
         "default": 20,
