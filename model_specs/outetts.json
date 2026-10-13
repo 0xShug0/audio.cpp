@@ -114,7 +114,7 @@
       {
         "name": "reference_language",
         "type": "string",
-        "description": "Language code used to align the reference transcript; default en.",
+        "description": "Language code used to align the reference transcript; omitted inherits the request text language, then falls back to en.",
         "required": false,
         "default": "en"
       },

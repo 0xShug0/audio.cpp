@@ -41,7 +41,7 @@
       {
         "name": "text_chunk_tokens",
         "type": "int",
-        "description": "Tokenizer tokens per text chunk. Captured during session preparation.",
+        "description": "Tokenizer tokens per text chunk; must be positive, default 50. Set during preparation and overridable per request.",
         "required": false,
         "min": 1,
         "default": 50

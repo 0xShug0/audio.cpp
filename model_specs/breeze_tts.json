@@ -47,7 +47,7 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Transcript for the prompt audio when cloning.",
+        "description": "Transcript for prompt/reference audio; required when reference audio codes are used, for either tts or clon.",
         "required": false
       },
       {

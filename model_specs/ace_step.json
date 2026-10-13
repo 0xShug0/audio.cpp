@@ -69,7 +69,7 @@
       {"name": "mem_saver", "type": "bool", "description": "Release staged graphs and caches between phases; later requests may rebuild them.", "required": false, "default": false}
     ],
     "load": [
-      {"name": "dit_model_path", "type": "enum", "values": ["acestep-v15-turbo", "acestep-v15-base", "acestep-v15-xl-turbo", "acestep-v15-xl-sft"], "description": "DiT variant in the package; must be installed.", "required": false, "default": "acestep-v15-turbo"}
+      {"name": "dit_model_path", "type": "enum", "values": ["acestep-v15-turbo", "acestep-v15-base", "acestep-v15-xl-turbo", "acestep-v15-xl-sft"], "description": "DiT variant in the package; must be installed. Omitted selects from the model filename, falling back to acestep-v15-turbo.", "required": false, "default": "acestep-v15-turbo"}
     ]
   },
   "ui": {

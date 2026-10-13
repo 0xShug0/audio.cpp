@@ -65,7 +65,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Diffusion steps per generated acoustic frame.",
+        "description": "Positive diffusion step count per generated acoustic frame; omitted uses the checkpoint inference_steps configuration (20 fallback).",
         "min": 1,
         "max": 1000,
         "default": 20,

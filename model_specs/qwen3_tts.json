@@ -151,7 +151,7 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Transcript matching the reference audio for Base voice cloning.",
+        "description": "Transcript matching the reference audio for Base voice cloning; required unless x_vector_only_mode=true.",
         "required": false
       },
       {
@@ -164,7 +164,7 @@
       {
         "name": "instruct",
         "type": "string",
-        "description": "Natural-language voice or style instruction for VoiceDesign and CustomVoice variants.",
+        "description": "Optional natural-language voice or style instruction for VoiceDesign and CustomVoice variants; empty instructions are accepted.",
         "required": false
       },
       {

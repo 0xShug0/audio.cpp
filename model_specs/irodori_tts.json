@@ -196,7 +196,7 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Generation seed for reproducible output; omitted uses a random seed.",
+        "description": "Unsigned 32-bit generation seed in [0, 4294967295]; omitted uses a random seed.",
         "required": false,
         "min": 0
       },

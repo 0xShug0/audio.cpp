@@ -53,7 +53,7 @@
       {
         "name": "merge_threshold_sec",
         "type": "float",
-        "description": "Merge adjacent words whose gap is below this many seconds; default 0.0 disables merging.",
+        "description": "Close gaps at or below this threshold, rounded to alignment frames, by moving the later word start; word entries remain separate. Default 0.0 disables gap closure.",
         "required": false,
         "min": 0.0,
         "default": 0.0
