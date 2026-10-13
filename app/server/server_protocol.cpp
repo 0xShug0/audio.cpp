@@ -84,7 +84,11 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
                        "guidance_scale");
   add_option_from_json(request.options, body, "num_inference_steps",
                        "num_inference_steps");
-  if (const auto *value = body.find("instructions")) {
+  if (const auto *value = body.find("instruct")) {
+    request.options["instruct"] = value->as_string();
+  } else if (const auto *value = body.find("instruction")) {
+    request.options["instruction"] = value->as_string();
+  } else if (const auto *value = body.find("instructions")) {
     request.options["instruction"] = value->as_string();
   }
 

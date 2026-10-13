@@ -407,6 +407,8 @@ option parsing.
 
 If no request voice is provided and the configured model has `default_voice_preset`, the server injects that preset automatically. Request-level `voice`, `voice_ref`, and `reference_text` override the configured default.
 
+For instruction-conditioned models, use the normalized top-level `instruct` field. The top-level `instruction` alias is also accepted, and the existing `instructions` field remains supported for backward compatibility.
+
 `voice_ref` accepts either a plain path string (server-side file) or an object with a `type`:
 
 ```json
