@@ -26,7 +26,7 @@
 | KugelAudio-0-Open | `kugelaudio` | `tts` | [KugelAudio](models/kugelaudio.md) |
 | LFM2.5-Audio | `lfm2_audio` | `asr`, `tts`, `s2s` | [LFM2.5-Audio](models/lfm2_audio.md) |
 | MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
-| Maya1 | `maya1` | `tts` | [Maya1](models/maya1.md) |
+| Maya1 | `maya1` | `tts`, `vdes` | [Maya1](models/maya1.md) |
 | MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](models/minimax_h3.md) |
 | MioTTS | `miotts` | `tts`, `clon` | [MioTTS](models/miotts.md) |
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |

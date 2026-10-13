@@ -24,6 +24,8 @@ audiocpp_cli --task tts --family maya1 \
   --out maya1.wav
 ```
 
+`--task vdes` is an alias to the same instruction-conditioned synthesis path.
+
 Emotion tags such as `<laugh>`, `<whisper>`, `<sigh>`, and `<gasp>` may be
 placed directly in the input text. See the upstream Maya1 model card for its
 full prompt and emotion-tag guidance.

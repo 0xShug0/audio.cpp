@@ -6,7 +6,8 @@
   "category": "tts",
   "status": "supported",
   "tasks": [
-    "tts"
+    "tts",
+    "design"
   ],
   "modes": [
     "offline"
@@ -21,6 +22,11 @@
   },
   "capabilities": {
     "tts": [
+      "voice_design",
+      "emotion_control",
+      "long_form"
+    ],
+    "design": [
       "voice_design",
       "emotion_control",
       "long_form"
