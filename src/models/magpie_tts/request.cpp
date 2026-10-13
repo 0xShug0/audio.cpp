@@ -32,7 +32,7 @@ int32_t parse_voice_id(
     const std::optional<runtime::VoiceCondition> & voice,
     const std::unordered_map<std::string, std::string> & options,
     int32_t fallback) {
-    auto value = runtime::find_option(options, {"voice_id"});
+    auto value = runtime::find_option(options, {"voice_id", "speaker"});
     if (voice.has_value() && voice->speaker.has_value() && voice->speaker->cached_voice_id.has_value()) {
         value = voice->speaker->cached_voice_id;
     }
