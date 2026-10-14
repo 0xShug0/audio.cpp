@@ -40,7 +40,7 @@ For the Q2 expert package:
 
 ```powershell
 uv run --no-project --python 3.12 --with huggingface_hub hf download `
-  Jmica/Drama-3-GGUF drama-3-experts-q2_k-backbone-q8_0.gguf `
+  Jmica/Drama-3-GGUF drama-3-backbone-8bit-experts-Q2_K.gguf `
   --local-dir models\Drama-3-GGUF
 ```
 
@@ -53,10 +53,14 @@ uv run --no-project --python 3.12 tools\model_manager_v2.py install fish_drama3_
 
 | File | Size | Expert banks | Other backbone matrices |
 |---|---:|---|---|
-| `drama-3-experts-q4_k-backbone-q8_0.gguf` | 22.91 GiB | Q4_K | Q8_0 |
-| `drama-3-experts-q3_k-backbone-q8_0.gguf` | 18.93 GiB | Q3_K | Q8_0 |
-| `drama-3-experts-q2_k-backbone-q8_0.gguf` | 15.88 GiB | Q2_K | Q8_0 |
-| `drama-3-experts-q4_k-backbone-q4_k.gguf` | 21.78 GiB | Q4_K | Q4_K, with Q4_0 text embedding |
+| `drama-3-backbone-8bit-experts-Q4_K.gguf` | 22.91 GiB | Q4_K | Q8_0 |
+| `drama-3-backbone-8bit-experts-Q3_K.gguf` | 18.93 GiB | Q3_K | Q8_0 |
+| `drama-3-backbone-8bit-experts-Q2_K.gguf` | 15.88 GiB | Q2_K | Q8_0 |
+| `drama-3-backbone-4bit-experts-Q4_K.gguf` | 21.78 GiB | Q4_K | Q4_K, with Q4_0 text embedding |
+
+These are custom mixed quantizations. The filename's final Q2_K, Q3_K or Q4_K
+label identifies the routed expert banks. `backbone-8bit` means Q8_0 backbone
+matrices; `backbone-4bit` means Q4_K matrices with a Q4_0 text embedding.
 
 All four packages retain FP16 audio tower and waveform codec weights and FP32
 normalization vectors. They embed their tokenizer, configuration and model
@@ -79,7 +83,7 @@ script applies those scales and packs each projection into an expert bank.
 uv run --python 3.12 tools\community_models\convert_fish_drama3.py `
   --checkpoint models\drama-3-original `
   --output models\drama3-f16-local.gguf `
-  --quantized-output models\drama-3-experts-q4_k-backbone-q8_0.gguf `
+  --quantized-output models\drama-3-backbone-8bit-experts-Q4_K.gguf `
   --gguf-tool build\windows-cpu-release\bin\audiocpp_gguf.exe
 ```
 
@@ -100,7 +104,7 @@ CPU PyTorch dependencies managed by uv and does not load weights onto a GPU.
 ```powershell
 .\build\windows-cuda-release\bin\audiocpp_cli.exe `
   --task tts --family fish_drama3 --backend cuda --mode streaming `
-  --model models\Drama-3-GGUF\drama-3-experts-q2_k-backbone-q8_0.gguf `
+  --model models\Drama-3-GGUF\drama-3-backbone-8bit-experts-Q2_K.gguf `
   --text 'A quick test of Drama Three on Windows.' `
   --max-tokens 500 --seed 123 --threads 8 `
   --session-option fish_drama3.cpu_expert_layers=8 `
@@ -135,7 +139,7 @@ Save the following as `drama3-server.json` in the repository root:
   "models": [{
     "id": "drama-3",
     "family": "fish_drama3",
-    "path": "models/Drama-3-GGUF/drama-3-experts-q2_k-backbone-q8_0.gguf",
+    "path": "models/Drama-3-GGUF/drama-3-backbone-8bit-experts-Q2_K.gguf",
     "task": "tts",
     "mode": "streaming",
     "session_options": {

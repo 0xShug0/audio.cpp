@@ -185,7 +185,7 @@
       "format": "gguf",
       "precision": "q4_k",
       "target_directory": "Drama-3-GGUF",
-      "files": ["drama-3-experts-q4_k-backbone-q8_0.gguf"]
+      "files": ["drama-3-backbone-8bit-experts-Q4_K.gguf"]
     },
     {
       "id": "fish_drama3_q3_experts_q8_backbone",
@@ -194,7 +194,7 @@
       "format": "gguf",
       "precision": "q3_k",
       "target_directory": "Drama-3-GGUF",
-      "files": ["drama-3-experts-q3_k-backbone-q8_0.gguf"]
+      "files": ["drama-3-backbone-8bit-experts-Q3_K.gguf"]
     },
     {
       "id": "fish_drama3_q2_experts_q8_backbone",
@@ -203,7 +203,7 @@
       "format": "gguf",
       "precision": "q2_k",
       "target_directory": "Drama-3-GGUF",
-      "files": ["drama-3-experts-q2_k-backbone-q8_0.gguf"]
+      "files": ["drama-3-backbone-8bit-experts-Q2_K.gguf"]
     },
     {
       "id": "fish_drama3_q4_backbone",
@@ -212,7 +212,7 @@
       "format": "gguf",
       "precision": "q4_k",
       "target_directory": "Drama-3-GGUF",
-      "files": ["drama-3-experts-q4_k-backbone-q4_k.gguf"]
+      "files": ["drama-3-backbone-4bit-experts-Q4_K.gguf"]
     }
   ],
   "sources": [
