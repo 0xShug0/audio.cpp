@@ -1,3 +1,4 @@
+#include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/io/filesystem.h"
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
@@ -117,6 +119,60 @@ bool check_words(
     return true;
 }
 
+double seconds(int64_t sample, int sample_rate) {
+    return static_cast<double>(sample) / static_cast<double>(sample_rate);
+}
+
+// The same speech at another input rate must land at the same time in seconds,
+// within one 80 ms CTC frame, and in samples of that input buffer.
+bool check_input_rate(
+    engine::runtime::IOfflineVoiceTaskSession & session,
+    const engine::runtime::AudioBuffer & reference_audio,
+    const engine::runtime::TaskResult & reference,
+    int sample_rate,
+    const std::string & chunk_seconds) {
+    engine::runtime::AudioBuffer audio;
+    audio.sample_rate = sample_rate;
+    audio.channels = 1;
+    audio.samples = engine::audio::convert_interleaved_audio_to_mono_linear_resampled(
+        reference_audio.samples, reference_audio.sample_rate, reference_audio.channels, sample_rate);
+    const int64_t audio_samples = static_cast<int64_t>(audio.samples.size());
+    const std::string label = std::to_string(sample_rate / 1000) + "khz";
+
+    engine::runtime::TaskRequest request;
+    request.audio_input = audio;
+    const auto result = session.run(request);
+    if (!check_words(label, result, audio_samples)) {
+        return false;
+    }
+    constexpr double kFrameSeconds = 0.08;
+    const auto & expected_first = reference.word_timestamps.front();
+    const auto & expected_last = reference.word_timestamps.back();
+    const auto & first = result.word_timestamps.front();
+    const auto & last = result.word_timestamps.back();
+    const auto near = [&](int64_t actual, int64_t expected) {
+        return std::abs(seconds(actual, sample_rate) - seconds(expected, reference_audio.sample_rate)) <= kFrameSeconds;
+    };
+    if (first.word != expected_first.word || last.word != expected_last.word ||
+        !near(first.span.start_sample, expected_first.span.start_sample) ||
+        !near(last.span.start_sample, expected_last.span.start_sample) ||
+        !near(last.span.end_sample, expected_last.span.end_sample)) {
+        std::cerr << "FAIL[" << label << "]: word times do not match the reference clip\n"
+                  << "  expected last=" << expected_last.word << " ["
+                  << seconds(expected_last.span.start_sample, reference_audio.sample_rate) << "s, "
+                  << seconds(expected_last.span.end_sample, reference_audio.sample_rate) << "s)\n"
+                  << "  actual last=" << last.word << " ["
+                  << seconds(last.span.start_sample, sample_rate) << "s, "
+                  << seconds(last.span.end_sample, sample_rate) << "s)\n";
+        return false;
+    }
+
+    engine::runtime::TaskRequest chunked_request = request;
+    chunked_request.options["audio_chunk_mode"] = "fixed";
+    chunked_request.options["audio_chunk_duration_sec"] = chunk_seconds;
+    return check_words(label + "_fixed_" + chunk_seconds + "s", session.run(chunked_request), audio_samples);
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -209,6 +265,12 @@ int main(int argc, char ** argv) {
         const auto chunked = offline_session->run(chunked_request);
         if (!check_words("fixed_" + chunk_seconds + "s", chunked, audio_samples)) {
             return kExitFail;
+        }
+
+        for (const int sample_rate : {48000, 8000}) {
+            if (!check_input_rate(*offline_session, audio, result, sample_rate, chunk_seconds)) {
+                return kExitFail;
+            }
         }
 
         if (audio.sample_rate == 16000 && audio.channels == 1) {

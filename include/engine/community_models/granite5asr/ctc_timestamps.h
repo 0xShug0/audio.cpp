@@ -96,11 +96,29 @@ inline int64_t samples_per_ctc_frame(const Granite5ASRConfig & config) {
     return std::max<int64_t>(1, factor * subsample);
 }
 
+// The frontend resamples to the model rate, so frame indexes count model-rate
+// samples. Word spans are reported in samples of the input buffer.
+inline int64_t ctc_frame_to_input_sample(
+    int64_t frame,
+    int64_t samples_per_frame,
+    int64_t model_sample_rate,
+    int64_t input_sample_rate) {
+    const int64_t model_sample = frame * samples_per_frame;
+    if (model_sample_rate <= 0 || input_sample_rate <= 0 || model_sample_rate == input_sample_rate) {
+        return model_sample;
+    }
+    return static_cast<int64_t>(std::llround(
+        static_cast<double>(model_sample) * static_cast<double>(input_sample_rate) /
+        static_cast<double>(model_sample_rate)));
+}
+
 inline std::vector<runtime::WordTimestamp> words_from_decoded_ctc_pieces(
     const std::vector<DecodedCtcPiece> & pieces,
     int64_t samples_per_frame,
     int64_t sample_offset,
-    int64_t max_end_sample) {
+    int64_t max_end_sample,
+    int64_t model_sample_rate,
+    int64_t input_sample_rate) {
     struct Acc {
         std::string text;
         int64_t start = 0;
@@ -156,8 +174,10 @@ inline std::vector<runtime::WordTimestamp> words_from_decoded_ctc_pieces(
         if (decoded.empty()) {
             continue;
         }
-        const int64_t start = sample_offset + piece.start_frame * samples_per_frame;
-        const int64_t end = sample_offset + piece.end_frame * samples_per_frame;
+        const int64_t start = sample_offset + ctc_frame_to_input_sample(
+            piece.start_frame, samples_per_frame, model_sample_rate, input_sample_rate);
+        const int64_t end = sample_offset + ctc_frame_to_input_sample(
+            piece.end_frame, samples_per_frame, model_sample_rate, input_sample_rate);
         if (!current.open) {
             current = Acc{decoded, start, end, piece.log_prob_sum, piece.frames, true};
         } else {

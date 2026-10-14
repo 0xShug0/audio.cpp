@@ -17,6 +17,7 @@ using engine::community_models::granite5asr::samples_per_ctc_frame;
 using engine::community_models::granite5asr::words_from_decoded_ctc_pieces;
 
 constexpr int32_t kBlank = 0;
+constexpr int64_t kRate = 16000;
 
 CtcArgmaxFrame frame(int32_t id, float probability) {
     return CtcArgmaxFrame{id, probability};
@@ -73,7 +74,9 @@ void test_subword_gap_stays_inside_one_word() {
         {decoded_from(pieces[0], "hel"), decoded_from(pieces[1], "lo")},
         1,
         0,
-        1000);
+        1000,
+        kRate,
+        kRate);
     engine::test::require_eq(words.size(), size_t(1), "no leading space keeps one word");
     engine::test::require(words[0].word == "hello", "subwords concatenate");
     engine::test::require_eq(words[0].span.start_sample, int64_t(0), "word starts at the first piece");
@@ -91,7 +94,9 @@ void test_leading_space_leaves_blanks_between_words() {
         {decoded_from(pieces[0], "hel"), decoded_from(pieces[1], " lo")},
         1,
         0,
-        1000);
+        1000,
+        kRate,
+        kRate);
     engine::test::require_eq(words.size(), size_t(2), "leading space flushes the previous word");
     engine::test::require(words[0].word == "hel", "first word text");
     engine::test::require(words[1].word == "lo", "leading spaces are stripped");
@@ -111,7 +116,9 @@ void test_non_positive_probability_zeros_confidence() {
         {decoded_from(zero[0], "hel"), decoded_from(negative[0], "lo")},
         1280,
         0,
-        100000);
+        100000,
+        kRate,
+        kRate);
     engine::test::require_eq(words.size(), size_t(1), "zeroed pieces still form the word");
     engine::test::require_close(words[0].confidence, 0.f, 0.f, "no contributing frames means confidence 0");
 
@@ -120,7 +127,9 @@ void test_non_positive_probability_zeros_confidence() {
         {decoded_from(good[0], "hel"), decoded_from(zero[0], "lo")},
         1280,
         0,
-        100000);
+        100000,
+        kRate,
+        kRate);
     engine::test::require_close(mixed[0].confidence, 0.f, 0.f, "a zeroed piece makes the word sum non-finite");
 }
 
@@ -132,7 +141,7 @@ void test_probability_above_one_clamps() {
 
 void test_end_sample_clamps_to_chunk_end() {
     const DecodedCtcPiece tail{"tail", 12, 13, 0.0, 1};
-    const auto words = words_from_decoded_ctc_pieces({tail}, 1280, 16000, 32000);
+    const auto words = words_from_decoded_ctc_pieces({tail}, 1280, 16000, 32000, kRate, kRate);
     engine::test::require_eq(words[0].span.start_sample, int64_t(16000 + 12 * 1280), "offset start");
     engine::test::require_eq(words[0].span.end_sample, int64_t(32000), "end clamps to the chunk end");
 }
@@ -146,23 +155,39 @@ void test_sample_stride_and_offset() {
     engine::test::require_eq(stride, int64_t(1280), "16 kHz frame is 160 * 2 * 4 samples");
 
     const DecodedCtcPiece piece{"hi", 0, 1, 0.0, 1};
-    const auto origin = words_from_decoded_ctc_pieces({piece}, stride, 0, 1000000);
+    const auto origin = words_from_decoded_ctc_pieces({piece}, stride, 0, 1000000, kRate, kRate);
     engine::test::require_eq(origin[0].span.start_sample, int64_t(0), "frame 0 is sample 0");
     engine::test::require_eq(origin[0].span.end_sample, int64_t(1280), "frame 1 is sample 1280");
 
-    const auto shifted = words_from_decoded_ctc_pieces({piece}, stride, 16000, 1000000);
+    const auto shifted = words_from_decoded_ctc_pieces({piece}, stride, 16000, 1000000, kRate, kRate);
     engine::test::require_eq(shifted[0].span.start_sample, int64_t(16000), "offset is added to the start");
     engine::test::require_eq(shifted[0].span.end_sample, int64_t(17280), "offset is added to the end");
 }
 
+void test_frames_convert_to_input_rate_samples() {
+    const DecodedCtcPiece piece{"hi", 1, 2, 0.0, 1};
+    const auto high = words_from_decoded_ctc_pieces({piece}, 1280, 48000, 1000000, kRate, 48000);
+    engine::test::require_eq(high[0].span.start_sample, int64_t(48000 + 3840), "48 kHz frame 1 is sample 3840");
+    engine::test::require_eq(high[0].span.end_sample, int64_t(48000 + 7680), "48 kHz frame 2 is sample 7680");
+
+    const auto low = words_from_decoded_ctc_pieces({piece}, 1280, 8000, 1000000, kRate, 8000);
+    engine::test::require_eq(low[0].span.start_sample, int64_t(8000 + 640), "8 kHz frame 1 is sample 640");
+    engine::test::require_eq(low[0].span.end_sample, int64_t(8000 + 1280), "8 kHz frame 2 is sample 1280");
+
+    const DecodedCtcPiece tail{"tents", 43, 44, 0.0, 1};
+    const auto clamped = words_from_decoded_ctc_pieces({tail}, 1280, 0, 28040, kRate, 8000);
+    engine::test::require_eq(clamped[0].span.start_sample, int64_t(43 * 640), "8 kHz start stays on the input clock");
+    engine::test::require_eq(clamped[0].span.end_sample, int64_t(28040), "8 kHz end clamps to the input buffer");
+}
+
 void test_end_sample_clamps_and_keeps_one_sample() {
     const DecodedCtcPiece inside{"hi", 0, 10, 0.0, 1};
-    const auto clamped = words_from_decoded_ctc_pieces({inside}, 1280, 0, 1000);
+    const auto clamped = words_from_decoded_ctc_pieces({inside}, 1280, 0, 1000, kRate, kRate);
     engine::test::require_eq(clamped[0].span.start_sample, int64_t(0), "start stays inside the buffer");
     engine::test::require_eq(clamped[0].span.end_sample, int64_t(1000), "end clamps to the buffer length");
 
     const DecodedCtcPiece at_end{"hi", 1000, 1008, 0.0, 1};
-    const auto bumped = words_from_decoded_ctc_pieces({at_end}, 1, 0, 1000);
+    const auto bumped = words_from_decoded_ctc_pieces({at_end}, 1, 0, 1000, kRate, kRate);
     engine::test::require_eq(bumped[0].span.start_sample, int64_t(1000), "start is the piece start");
     engine::test::require_eq(
         bumped[0].span.end_sample,
@@ -180,6 +205,7 @@ int main() {
         test_leading_space_leaves_blanks_between_words();
         test_non_positive_probability_zeros_confidence();
         test_sample_stride_and_offset();
+        test_frames_convert_to_input_rate_samples();
         test_end_sample_clamps_and_keeps_one_sample();
         test_probability_above_one_clamps();
         test_end_sample_clamps_to_chunk_end();
