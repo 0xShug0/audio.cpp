@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <list>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -52,6 +54,7 @@ struct LayerGraph {
     ggml_tensor * attention_mask = nullptr;
     ggml_tensor * output = nullptr;
     ggml_tensor * logits = nullptr;
+    std::vector<ggml_tensor *> book_codes;
     ggml_backend_t backend = nullptr;
 
     ~LayerGraph() {
@@ -101,8 +104,8 @@ bool semantic(const Drama3Frame & frame, const Drama3TowerConfig & config) {
 class Drama3Tower::Impl {
 public:
     Impl(std::shared_ptr<const assets::TensorSource> source, Drama3TowerConfig config,
-         core::ExecutionContext & execution, int64_t capacity)
-        : config_(std::move(config)), execution_(execution), capacity_(capacity) {
+         core::ExecutionContext & execution, int64_t capacity, size_t prefill_cache_bytes)
+        : config_(std::move(config)), execution_(execution), capacity_(capacity), prefill_cache_budget_(prefill_cache_bytes) {
         const auto & c = config_;
         if (!source || capacity <= 0 || c.hidden_size <= 0 || c.heads <= 0 || c.kv_heads <= 0 ||
             c.heads % c.kv_heads || c.shared_layers <= 0 || c.residual_layers != 9 ||
@@ -161,6 +164,7 @@ public:
     }
 
     ~Impl() {
+        prefill_graphs_.clear();
         graphs_.clear();
         if (cache_buffer_) ggml_backend_buffer_free(cache_buffer_);
     }
@@ -199,17 +203,40 @@ public:
         // cache entry is filled by generation, after the semantic draw.
         const int64_t steps = static_cast<int64_t>(frames.size()) - 1;
         if (steps == 0) return;
+        if (steps > capacity_) throw std::runtime_error("Drama 3 tower prefill exceeds cache length");
         std::vector<float> hidden(input.begin(), input.begin() + steps * config_.hidden_size);
         std::vector<Drama3Frame> current(frames.begin(), frames.end() - 1);
         std::vector<float> masks(static_cast<size_t>(steps));
         std::vector<int32_t> codes(static_cast<size_t>(steps));
         for (int64_t row = 0; row < steps; ++row) masks[row] = semantic(frames[row + 1], config_) ? 1.0F : 0.0F;
         const auto extra = shared_input(current);
-        for (int64_t layer = 0; layer < static_cast<int64_t>(layers_.size()); ++layer) {
-            const int64_t book = layer < config_.shared_layers ? 0 : layer - config_.shared_layers;
-            for (int64_t row = 0; row < steps; ++row) codes[row] = frames[row + 1][1 + book];
-            hidden = run_layer(layer, hidden, codes, masks, layer == 0 ? extra : std::vector<float>{}, 0, steps).hidden;
+        std::unique_ptr<LayerGraph> temporary;
+        auto * graph = prefill_graph(steps, temporary);
+        ggml_backend_tensor_set(graph->hidden, hidden.data(), 0, hidden.size() * sizeof(float));
+        ggml_backend_tensor_set(graph->label_mask, masks.data(), 0, masks.size() * sizeof(float));
+        ggml_backend_tensor_set(graph->extra, extra.data(), 0, extra.size() * sizeof(float));
+        std::vector<int32_t> positions(static_cast<size_t>(steps));
+        for (int64_t row = 0; row < steps; ++row) positions[row] = static_cast<int32_t>(row);
+        ggml_backend_tensor_set(graph->positions, positions.data(), 0, positions.size() * sizeof(int32_t));
+        std::vector<ggml_fp16_t> attention_mask(static_cast<size_t>(capacity_ * steps));
+        const auto negative_infinity = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
+        for (int64_t row = 0; row < steps; ++row) for (int64_t key = 0; key < capacity_; ++key) {
+            attention_mask[row * capacity_ + key] = key <= row ? ggml_fp32_to_fp16(0) : negative_infinity;
         }
+        ggml_backend_tensor_set(graph->attention_mask, attention_mask.data(), 0, attention_mask.size() * sizeof(ggml_fp16_t));
+        for (size_t book = 0; book < graph->book_codes.size(); ++book) {
+            for (int64_t row = 0; row < steps; ++row) {
+                codes[row] = frames[row + 1][1 + book];
+                if (codes[row] < 0 || codes[row] >= config_.codebook_size) throw std::runtime_error("Drama 3 code is outside the codebook");
+            }
+            ggml_backend_tensor_set(graph->book_codes[book], codes.data(), 0, codes.size() * sizeof(int32_t));
+        }
+        if (core::compute_backend_graph(execution_.backend(), graph->graph, nullptr, "drama3.tower.prefill") != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("Drama 3 tower prefill computation failed");
+        }
+        // Prefill only populates the layer caches. The last backbone row, not
+        // this hidden output, seeds generation. Keep all intermediates on GPU.
+        ggml_backend_synchronize(execution_.backend());
     }
 
     Drama3TowerOutput run_layer(int64_t layer, const std::vector<float> & hidden,
@@ -265,6 +292,44 @@ public:
     Drama3TowerConfig config_;
 
 private:
+    struct PrefillGraphs {
+        int64_t steps;
+        size_t bytes = 0;
+        std::unique_ptr<LayerGraph> graph;
+    };
+
+    LayerGraph * prefill_graph(int64_t steps, std::unique_ptr<LayerGraph> & temporary) {
+        if (prefill_cache_budget_ == 0 || uncached_prefill_shapes_.count(steps)) {
+            temporary = build_prefill_graph(steps);
+            return temporary.get();
+        }
+        const auto found = std::find_if(prefill_graphs_.begin(), prefill_graphs_.end(),
+            [steps](const auto & entry) { return entry.steps == steps; });
+        if (found != prefill_graphs_.end()) {
+            prefill_graphs_.splice(prefill_graphs_.begin(), prefill_graphs_, found);
+            return prefill_graphs_.front().graph.get();
+        }
+        auto first = build_prefill_graph(steps);
+        const size_t estimate = ggml_gallocr_get_buffer_size(first->allocator, 0);
+        if (estimate > prefill_cache_budget_) {
+            if (uncached_prefill_shapes_.size() >= 32) uncached_prefill_shapes_.erase(uncached_prefill_shapes_.begin());
+            uncached_prefill_shapes_.insert(steps);
+            temporary = std::move(first);
+            return temporary.get();
+        }
+        while (!prefill_graphs_.empty() &&
+               (prefill_cached_bytes_ + estimate > prefill_cache_budget_ || prefill_graphs_.size() >= 8)) {
+            prefill_cached_bytes_ -= prefill_graphs_.back().bytes;
+            prefill_graphs_.pop_back();
+        }
+        PrefillGraphs entry{steps};
+        entry.graph = std::move(first);
+        entry.bytes = estimate;
+        prefill_cached_bytes_ += entry.bytes;
+        prefill_graphs_.push_front(std::move(entry));
+        return prefill_graphs_.front().graph.get();
+    }
+
     void add_codes(float * output, const Drama3Frame & frame, int64_t begin, int64_t end) const {
         for (int64_t book = begin; book < end; ++book) {
             const int32_t code = frame[book + 1];
@@ -272,6 +337,78 @@ private:
             const auto * embedding = code_embeddings_.data() + (book * config_.codebook_size + code) * config_.hidden_size;
             for (int64_t column = 0; column < config_.hidden_size; ++column) output[column] += embedding[column];
         }
+    }
+
+    ggml_tensor * build_layer(ggml_context * ctx, int64_t layer, int64_t steps,
+                             ggml_tensor * hidden, ggml_tensor * codes, ggml_tensor * label_mask,
+                             ggml_tensor * extra, ggml_tensor * positions, ggml_tensor * attention_mask) {
+        const auto & c = config_;
+        const auto & w = layers_[layer];
+        auto * embedding = ggml_get_rows(ctx, w.embedding, codes);
+        embedding = ggml_mul(ctx, embedding, label_mask);
+        if (extra) embedding = ggml_add(ctx, embedding, extra);
+        auto * mixed = ggml_mul_mat(ctx, w.eh, ggml_concat(ctx,
+            gemma_norm(ctx, embedding, w.enorm, c.norm_eps),
+            gemma_norm(ctx, hidden, w.hnorm, c.norm_eps), 0));
+        auto * qkv = ggml_mul_mat(ctx, w.qkv, gemma_norm(ctx, mixed, w.input_norm, c.norm_eps));
+        const int64_t query_width = c.heads * c.head_dim;
+        const int64_t kv_width = c.kv_heads * c.head_dim;
+        auto * query = ggml_reshape_3d(ctx, columns(ctx, qkv, 0, query_width), c.head_dim, c.heads, steps);
+        auto * gate = columns(ctx, qkv, query_width, query_width);
+        auto * key = ggml_reshape_3d(ctx, columns(ctx, qkv, 2 * query_width, kv_width), c.head_dim, c.kv_heads, steps);
+        auto * value = columns(ctx, qkv, 2 * query_width + kv_width, kv_width);
+        query = partial_rope(ctx, gemma_norm(ctx, query, w.q_norm, c.norm_eps), positions, c);
+        key = partial_rope(ctx, gemma_norm(ctx, key, w.k_norm, c.norm_eps), positions, c);
+        key = ggml_reshape_2d(ctx, ggml_cont(ctx, key), kv_width, steps);
+        auto * updated_key = ggml_set_rows(ctx, w.key_cache, key, positions);
+        auto * updated_value = ggml_set_rows(ctx, w.value_cache, value, positions);
+        auto * keys = ggml_permute(ctx, ggml_reshape_3d(ctx, updated_key, c.head_dim, c.kv_heads, capacity_), 0, 2, 1, 3);
+        auto * values = ggml_permute(ctx, ggml_reshape_3d(ctx, updated_value, c.head_dim, c.kv_heads, capacity_), 0, 2, 1, 3);
+        query = ggml_cont(ctx, ggml_permute(ctx, query, 0, 2, 1, 3));
+        auto * attended = ggml_flash_attn_ext(ctx, query, keys, values, attention_mask,
+                                             1.0F / std::sqrt(static_cast<float>(c.head_dim)), 0, 0);
+        ggml_flash_attn_ext_set_prec(attended, GGML_PREC_F32);
+        attended = ggml_reshape_2d(ctx, attended, query_width, steps);
+        attended = ggml_mul(ctx, attended, ggml_sigmoid(ctx, gate));
+        auto * x = ggml_add(ctx, mixed, ggml_mul_mat(ctx, w.output, attended));
+        auto * normed = gemma_norm(ctx, x, w.post_norm, c.norm_eps);
+        auto * ff = ggml_mul(ctx, ggml_silu(ctx, ggml_mul_mat(ctx, w.gate, normed)), ggml_mul_mat(ctx, w.up, normed));
+        return gemma_norm(ctx, ggml_add(ctx, x, ggml_mul_mat(ctx, w.down, ff)), w.final_norm, c.norm_eps);
+    }
+
+    std::unique_ptr<LayerGraph> build_prefill_graph(int64_t steps) {
+        auto result = std::make_unique<LayerGraph>();
+        result->backend = execution_.backend();
+        ggml_init_params params{8 * 1024 * 1024, nullptr, true};
+        result->context.reset(ggml_init(params));
+        auto * ctx = result->context.get();
+        result->graph = ggml_new_graph_custom(ctx, 8192, false);
+        const auto input = [&](ggml_type type, int64_t columns, int64_t rows) {
+            auto * tensor = ggml_new_tensor_2d(ctx, type, columns, rows);
+            ggml_set_input(tensor);
+            return tensor;
+        };
+        result->hidden = input(GGML_TYPE_F32, config_.hidden_size, steps);
+        result->extra = input(GGML_TYPE_F32, config_.hidden_size, steps);
+        result->label_mask = input(GGML_TYPE_F32, 1, steps);
+        result->positions = input(GGML_TYPE_I32, steps, 1);
+        result->attention_mask = input(GGML_TYPE_F16, capacity_, steps);
+        result->book_codes.resize(static_cast<size_t>(std::max<int64_t>(1, config_.residual_layers)));
+        for (auto & codes : result->book_codes) codes = input(GGML_TYPE_I32, steps, 1);
+        auto * hidden = result->hidden;
+        for (size_t layer = 0; layer < layers_.size(); ++layer) {
+            const size_t book = layer < static_cast<size_t>(config_.shared_layers) ? 0 : layer - config_.shared_layers;
+            hidden = build_layer(ctx, layer, steps, hidden, result->book_codes[book], result->label_mask,
+                layer == 0 ? result->extra : nullptr, result->positions, result->attention_mask);
+        }
+        result->output = hidden;
+        ggml_set_output(hidden);
+        ggml_build_forward_expand(result->graph, hidden);
+        result->allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (!result->allocator || !ggml_gallocr_alloc_graph(result->allocator, result->graph)) {
+            throw std::runtime_error("failed to allocate Drama 3 tower prefill graph");
+        }
+        return result;
     }
 
     std::unique_ptr<LayerGraph> build_graph(int64_t layer, int64_t steps) {
@@ -293,40 +430,11 @@ private:
         result->label_mask = input(GGML_TYPE_F32, 1, steps);
         result->positions = input(GGML_TYPE_I32, steps, 1);
         result->attention_mask = input(GGML_TYPE_F16, capacity_, steps);
-        auto * embedding = ggml_get_rows(ctx, w.embedding, result->codes);
-        embedding = ggml_mul(ctx, embedding, result->label_mask);
         if (layer == 0) {
             result->extra = input(GGML_TYPE_F32, c.hidden_size, steps);
-            embedding = ggml_add(ctx, embedding, result->extra);
         }
-        auto * mixed = ggml_mul_mat(ctx, w.eh, ggml_concat(ctx,
-            gemma_norm(ctx, embedding, w.enorm, c.norm_eps),
-            gemma_norm(ctx, result->hidden, w.hnorm, c.norm_eps), 0));
-        auto * qkv = ggml_mul_mat(ctx, w.qkv, gemma_norm(ctx, mixed, w.input_norm, c.norm_eps));
-        const int64_t query_width = c.heads * c.head_dim;
-        const int64_t kv_width = c.kv_heads * c.head_dim;
-        // Checkpoint rows are [all queries, all gates, all keys, all values].
-        auto * query = ggml_reshape_3d(ctx, columns(ctx, qkv, 0, query_width), c.head_dim, c.heads, steps);
-        auto * gate = columns(ctx, qkv, query_width, query_width);
-        auto * key = ggml_reshape_3d(ctx, columns(ctx, qkv, 2 * query_width, kv_width), c.head_dim, c.kv_heads, steps);
-        auto * value = columns(ctx, qkv, 2 * query_width + kv_width, kv_width);
-        query = partial_rope(ctx, gemma_norm(ctx, query, w.q_norm, c.norm_eps), result->positions, c);
-        key = partial_rope(ctx, gemma_norm(ctx, key, w.k_norm, c.norm_eps), result->positions, c);
-        key = ggml_reshape_2d(ctx, ggml_cont(ctx, key), kv_width, steps);
-        auto * updated_key = ggml_set_rows(ctx, w.key_cache, key, result->positions);
-        auto * updated_value = ggml_set_rows(ctx, w.value_cache, value, result->positions);
-        auto * keys = ggml_permute(ctx, ggml_reshape_3d(ctx, updated_key, c.head_dim, c.kv_heads, capacity_), 0, 2, 1, 3);
-        auto * values = ggml_permute(ctx, ggml_reshape_3d(ctx, updated_value, c.head_dim, c.kv_heads, capacity_), 0, 2, 1, 3);
-        query = ggml_cont(ctx, ggml_permute(ctx, query, 0, 2, 1, 3));
-        auto * attended = ggml_flash_attn_ext(ctx, query, keys, values, result->attention_mask,
-                                             1.0F / std::sqrt(static_cast<float>(c.head_dim)), 0, 0);
-        ggml_flash_attn_ext_set_prec(attended, GGML_PREC_F32);
-        attended = ggml_reshape_2d(ctx, attended, query_width, steps);
-        attended = ggml_mul(ctx, attended, ggml_sigmoid(ctx, gate));
-        auto * residual = ggml_add(ctx, mixed, ggml_mul_mat(ctx, w.output, attended));
-        auto * ff_input = gemma_norm(ctx, residual, w.post_norm, c.norm_eps);
-        auto * activated = ggml_mul(ctx, ggml_silu(ctx, ggml_mul_mat(ctx, w.gate, ff_input)), ggml_mul_mat(ctx, w.up, ff_input));
-        result->output = gemma_norm(ctx, ggml_add(ctx, residual, ggml_mul_mat(ctx, w.down, activated)), w.final_norm, c.norm_eps);
+        result->output = build_layer(ctx, layer, steps, result->hidden, result->codes, result->label_mask,
+            result->extra, result->positions, result->attention_mask);
         ggml_set_output(result->output);
         ggml_build_forward_expand(result->graph, result->output);
         // Prompt prefill needs the states, but does not sample codebook heads.
@@ -350,11 +458,15 @@ private:
     std::unique_ptr<ggml_context, ContextDeleter> cache_context_;
     ggml_backend_buffer_t cache_buffer_ = nullptr;
     std::vector<std::unique_ptr<LayerGraph>> graphs_;
+    size_t prefill_cache_budget_;
+    size_t prefill_cached_bytes_ = 0;
+    std::list<PrefillGraphs> prefill_graphs_;
+    std::set<int64_t> uncached_prefill_shapes_;
 };
 
 Drama3Tower::Drama3Tower(std::shared_ptr<const assets::TensorSource> weights,
-                         Drama3TowerConfig config, core::ExecutionContext & execution, int64_t cache_steps)
-    : impl_(std::make_unique<Impl>(std::move(weights), std::move(config), execution, cache_steps)) {}
+                         Drama3TowerConfig config, core::ExecutionContext & execution, int64_t cache_steps, size_t prefill_cache_bytes)
+    : impl_(std::make_unique<Impl>(std::move(weights), std::move(config), execution, cache_steps, prefill_cache_bytes)) {}
 Drama3Tower::~Drama3Tower() = default;
 void Drama3Tower::reset() { impl_->reset(); }
 void Drama3Tower::mix_backbone_embeddings(std::vector<float> & embeddings, const std::vector<Drama3Frame> & frames) const {

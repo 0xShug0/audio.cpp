@@ -20,9 +20,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <limits>
+#include <list>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -74,6 +76,7 @@ public:
     bool allocate(ggml_cgraph * graph, ggml_backend_t primary, ggml_backend_t cpu) {
         reset();
         primary_ = primary;
+        cpu_ = cpu;
         if (cpu) {
             ggml_backend_t backends[] = {primary, cpu};
             scheduler_ = ggml_backend_sched_new(backends, nullptr, 2, 65536, false, false);
@@ -86,10 +89,18 @@ public:
         return scheduler_ ? ggml_backend_sched_graph_compute(scheduler_, graph)
                           : core::compute_backend_graph(primary, graph, nullptr, label);
     }
+    size_t buffer_bytes() const {
+        if (scheduler_) {
+            return ggml_backend_sched_get_buffer_size(scheduler_, primary_) +
+                ggml_backend_sched_get_buffer_size(scheduler_, cpu_);
+        }
+        return allocator_ ? ggml_gallocr_get_buffer_size(allocator_, 0) : 0;
+    }
 private:
     ggml_backend_sched_t scheduler_ = nullptr;
     ggml_gallocr_t allocator_ = nullptr;
     ggml_backend_t primary_ = nullptr;
+    ggml_backend_t cpu_ = nullptr;
 };
 
 struct GraphMemory {
@@ -618,19 +629,17 @@ core::TensorValue repeat_linear_attention_heads(
     if (input.shape.rank != 4) {
         throw std::runtime_error("Drama 3 backbone linear attention head repeat expects rank-4 input");
     }
-    std::vector<core::TensorValue> repeated_heads;
-    repeated_heads.reserve(static_cast<size_t>(input.shape.dims[2] * repeats));
-    for (int64_t head = 0; head < input.shape.dims[2]; ++head) {
-        auto one = modules::SliceModule({2, head, 1}).build(ctx, input);
-        for (int64_t rep = 0; rep < repeats; ++rep) {
-            repeated_heads.push_back(one);
-        }
-    }
-    auto output = repeated_heads.front();
-    for (size_t i = 1; i < repeated_heads.size(); ++i) {
-        output = modules::ConcatModule({2}).build(ctx, output, repeated_heads[i]);
-    }
-    return output;
+    // Introduce a singleton axis before the head axis, repeat that axis, then
+    // collapse it into heads. This is repeat_interleave, not head tiling.
+    // It preserves the exact values while avoiding one concat per output head.
+    const int64_t batch = input.shape.dims[0];
+    const int64_t steps = input.shape.dims[1];
+    const int64_t heads = input.shape.dims[2];
+    const int64_t dim = input.shape.dims[3];
+    auto * shaped = ggml_reshape_4d(ctx.ggml, ggml_cont(ctx.ggml, input.tensor), dim, 1, heads, steps * batch);
+    auto * repeated = ggml_repeat_4d(ctx.ggml, shaped, dim, repeats, heads, steps * batch);
+    return core::wrap_tensor(ggml_reshape_4d(ctx.ggml, repeated, dim, heads * repeats, steps, batch),
+        core::TensorShape::from_dims({batch, steps, heads * repeats, dim}), input.type);
 }
 
 struct LinearAttentionCachedOutput {
@@ -1161,6 +1170,10 @@ public:
 
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         const int64_t state_values = config_.linear_value_head_dim * config_.linear_value_head_dim * config_.linear_num_value_heads;
+        // Every prompt starts with the same read-only GDN state. Sharing it
+        // across layers and shapes avoids retaining a zero tensor per layer.
+        prefill_zero_state_ = core::make_tensor(persistent, GGML_TYPE_F32,
+            core::TensorShape::from_dims({1, 1, state_values})).tensor;
         const int64_t key_dim = config_.linear_key_head_dim * config_.linear_num_key_heads;
         const int64_t value_dim = config_.linear_value_head_dim * config_.linear_num_value_heads;
         const int64_t conv_dim = key_dim * 2 + value_dim;
@@ -1220,7 +1233,7 @@ public:
     }
 
     ~Drama3BackboneCachedDecodeGraph() {
-        prefill_mem_.reset(execution_.backend());
+        prefill_graphs_.clear();
         core::release_backend_graph_resources(execution_.backend(), graph_, true);
         decode_allocator_.reset();
         if (buffer_ != nullptr) {
@@ -1251,14 +1264,14 @@ public:
         if (steps > cache_steps_) {
             throw std::runtime_error("Drama 3 backbone prefill exceeds cache length");
         }
-        ensure_prefill(steps);
-        core::write_tensor_f32(core::wrap_tensor(prefill_input_, core::TensorShape::from_dims({1, steps, config_.hidden_size})), embeddings);
-        if (prefill_mem_.hybrid.compute(execution_.backend(), prefill_mem_.graph, "drama3_backbone.prefill") != GGML_STATUS_SUCCESS) {
+        auto & prefill = ensure_prefill(steps);
+        core::write_tensor_f32(core::wrap_tensor(prefill.input, core::TensorShape::from_dims({1, steps, config_.hidden_size})), embeddings);
+        if (prefill.memory.hybrid.compute(execution_.backend(), prefill.memory.graph, "drama3_backbone.prefill") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Drama 3 backbone prefill graph compute failed");
         }
         Drama3BackboneDecoderForwardResult out;
         out.steps = steps;
-        out.hidden = core::read_tensor_f32(prefill_output_);
+        out.hidden = core::read_tensor_f32(prefill.output);
         if (static_cast<int64_t>(out.hidden.size()) != steps * config_.hidden_size) {
             throw std::runtime_error("Drama 3 backbone prefill readback size mismatch");
         }
@@ -1294,33 +1307,56 @@ public:
     }
 
 private:
-    void ensure_prefill(int64_t steps) {
-        if (prefill_mem_.graph != nullptr && prefill_steps_ == steps) {
-            return;
+    struct PrefillGraph {
+        GraphMemory memory;
+        ggml_backend_t backend = nullptr;
+        int64_t steps = 0;
+        size_t bytes = 0;
+        ggml_tensor * input = nullptr;
+        ggml_tensor * positions = nullptr;
+        ggml_tensor * attention_mask = nullptr;
+        ggml_tensor * output = nullptr;
+        ~PrefillGraph() { memory.reset(backend); }
+    };
+
+    PrefillGraph & ensure_prefill(int64_t steps) {
+        const auto found = std::find_if(prefill_graphs_.begin(), prefill_graphs_.end(),
+            [steps](const auto & graph) { return graph->steps == steps; });
+        if (found != prefill_graphs_.end()) {
+            prefill_graphs_.splice(prefill_graphs_.begin(), prefill_graphs_, found);
+            return *prefill_graphs_.front();
         }
-        prefill_mem_.reset(execution_.backend());
-        prefill_state_inputs_.clear();
-        prefill_attention_mask_ = nullptr;
+        if (!prefill_graphs_.empty() &&
+            (config_.prefill_cache_bytes == 0 || prefill_graphs_.front()->bytes > config_.prefill_cache_bytes)) {
+            // The previous oversized working graph cannot coexist within the
+            // budget. Release it before allocating the next shape.
+            prefill_graphs_.clear();
+            prefill_cached_bytes_ = 0;
+        }
+        auto built = std::make_unique<PrefillGraph>();
+        auto & prefill = *built;
+        prefill.backend = execution_.backend();
+        prefill.steps = steps;
         ggml_init_params params{128ull * 1024ull * 1024ull, nullptr, true};
-        prefill_mem_.ctx.reset(ggml_init(params));
+        prefill.memory.ctx.reset(ggml_init(params));
         ggml_init_params input_params{32ull * 1024ull * 1024ull, nullptr, true};
-        prefill_mem_.input_ctx.reset(ggml_init(input_params));
-        core::ModuleBuildContext ctx{prefill_mem_.ctx.get(), "drama3_backbone.prefill", execution_.backend_type()};
-        core::ModuleBuildContext input_ctx{prefill_mem_.input_ctx.get(), "drama3_backbone.prefill.inputs", execution_.backend_type()};
+        prefill.memory.input_ctx.reset(ggml_init(input_params));
+        core::ModuleBuildContext ctx{prefill.memory.ctx.get(), "drama3_backbone.prefill", execution_.backend_type()};
+        core::ModuleBuildContext input_ctx{prefill.memory.input_ctx.get(), "drama3_backbone.prefill.inputs", execution_.backend_type()};
         auto x = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, steps, config_.hidden_size}));
-        prefill_input_ = x.tensor;
-        ggml_set_input(prefill_input_);
+        prefill.input = x.tensor;
+        ggml_set_input(prefill.input);
         auto positions = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
-        prefill_positions_ = positions.tensor;
-        ggml_set_input(prefill_positions_);
-        prefill_attention_mask_ = ggml_new_tensor_4d(prefill_mem_.input_ctx.get(), GGML_TYPE_F16, steps, steps, 1, 1);
-        ggml_set_input(prefill_attention_mask_);
+        prefill.positions = positions.tensor;
+        ggml_set_input(prefill.positions);
+        prefill.attention_mask = ggml_new_tensor_4d(prefill.memory.input_ctx.get(), GGML_TYPE_F16, steps, steps, 1, 1);
+        ggml_set_input(prefill.attention_mask);
         auto attention_mask = core::wrap_tensor(
-            prefill_attention_mask_,
+            prefill.attention_mask,
             core::TensorShape::from_dims({1, 1, steps, steps}),
             GGML_TYPE_F16);
 
-        prefill_mem_.graph = ggml_new_graph_custom(prefill_mem_.ctx.get(), 65536, false);
+        prefill.memory.graph = ggml_new_graph_custom(prefill.memory.ctx.get(), 65536, false);
         const int64_t state_values = config_.linear_value_head_dim * config_.linear_value_head_dim * config_.linear_num_value_heads;
         const int64_t full_count = static_cast<int64_t>(full_key_caches_.size());
         const int64_t linear_count = static_cast<int64_t>(linear_recurrent_states_.size());
@@ -1336,7 +1372,7 @@ private:
                 }
                 h = full_attention_prefill_cached(
                     ctx,
-                    prefill_mem_.graph,
+                    prefill.memory.graph,
                     h,
                     positions,
                     attention_mask,
@@ -1355,18 +1391,13 @@ private:
                 if (linear_index >= linear_count) {
                     throw std::runtime_error("Drama 3 backbone linear-attention state count mismatch");
                 }
-                auto state = core::make_tensor(
-                    input_ctx,
-                    GGML_TYPE_F32,
-                    core::TensorShape::from_dims({1, 1, state_values}));
-                prefill_state_inputs_.push_back(state.tensor);
-                ggml_set_input(state.tensor);
+                auto state = core::wrap_tensor(prefill_zero_state_, core::TensorShape::from_dims({1, 1, state_values}));
                 auto out = linear_attention_prefill(ctx, h, state, *layer.linear, config_);
                 ggml_build_forward_expand(
-                    prefill_mem_.graph,
+                    prefill.memory.graph,
                     ggml_cpy(ctx.ggml, out.next_conv_tail.tensor, linear_conv_tails_[static_cast<size_t>(linear_index)]));
                 ggml_build_forward_expand(
-                    prefill_mem_.graph,
+                    prefill.memory.graph,
                     ggml_cpy(ctx.ggml, out.next_recurrent_state.tensor, linear_recurrent_states_[static_cast<size_t>(linear_index)]));
                 h = std::move(out.output);
                 ++linear_index;
@@ -1385,24 +1416,35 @@ private:
         }
         x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
         x = round_activation(ctx, x, config_);
-        prefill_output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
-        ggml_set_output(prefill_output_);
-        ggml_build_forward_expand(prefill_mem_.graph, prefill_output_);
-        prefill_mem_.input_buffer = ggml_backend_alloc_ctx_tensors(prefill_mem_.input_ctx.get(), execution_.backend());
-        if (prefill_mem_.input_buffer == nullptr || !prefill_mem_.hybrid.allocate(prefill_mem_.graph, execution_.backend(),
+        prefill.output = core::ensure_backend_addressable_layout(ctx, x).tensor;
+        ggml_set_output(prefill.output);
+        ggml_build_forward_expand(prefill.memory.graph, prefill.output);
+        prefill.memory.input_buffer = ggml_backend_alloc_ctx_tensors(prefill.memory.input_ctx.get(), execution_.backend());
+        if (prefill.memory.input_buffer == nullptr || !prefill.memory.hybrid.allocate(prefill.memory.graph, execution_.backend(),
                 weights_->cpu_execution ? weights_->cpu_execution->backend() : nullptr)) {
-            prefill_mem_.reset(execution_.backend());
+            prefill.memory.reset(execution_.backend());
             throw std::runtime_error("failed to allocate Drama 3 backbone prefill graph");
         }
         const auto pos = position_ids(steps);
-        ggml_backend_tensor_set(prefill_positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(prefill.positions, pos.data(), 0, pos.size() * sizeof(int32_t));
         const auto mask = modules::causal_prefill_mask_values(1, steps);
-        ggml_backend_tensor_set(prefill_attention_mask_, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
-        std::vector<float> zero_state(static_cast<size_t>(state_values), 0.0F);
-        for (ggml_tensor * state : prefill_state_inputs_) {
-            ggml_backend_tensor_set(state, zero_state.data(), 0, zero_state.size() * sizeof(float));
+        ggml_backend_tensor_set(prefill.attention_mask, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
+        prefill.bytes = prefill.memory.hybrid.buffer_bytes() + ggml_backend_buffer_get_size(prefill.memory.input_buffer);
+        // Retain at most eight shapes within the budget. One active graph is
+        // required even when its working set exceeds the cache budget.
+        while (!prefill_graphs_.empty() &&
+               (prefill_cached_bytes_ + prefill.bytes > config_.prefill_cache_bytes || prefill_graphs_.size() >= 8)) {
+            prefill_cached_bytes_ -= prefill_graphs_.back()->bytes;
+            prefill_graphs_.pop_back();
         }
-        prefill_steps_ = steps;
+        prefill_cached_bytes_ += prefill.bytes;
+        prefill_graphs_.push_front(std::move(built));
+        if (config_.profile_prefill_cache) {
+            std::fprintf(stderr, "[drama3.prefill_cache] rows=%lld graph_mib=%.1f retained_mib=%.1f shapes=%zu nodes=%d\n",
+                static_cast<long long>(steps), prefill.bytes / 1048576.0,
+                prefill_cached_bytes_ / 1048576.0, prefill_graphs_.size(), ggml_graph_n_nodes(prefill.memory.graph));
+        }
+        return *prefill_graphs_.front();
     }
 
     core::ExecutionContext & execution_;
@@ -1418,6 +1460,7 @@ private:
     ggml_tensor * cache_slot_ = nullptr;
     ggml_tensor * attention_mask_ = nullptr;
     ggml_tensor * output_ = nullptr;
+    ggml_tensor * prefill_zero_state_ = nullptr;
     std::vector<ggml_tensor *> full_key_caches_;
     std::vector<ggml_tensor *> full_value_caches_;
     std::vector<ggml_tensor *> linear_conv_tails_;
@@ -1425,13 +1468,8 @@ private:
     std::vector<ggml_fp16_t> attention_mask_values_;
     ggml_cgraph * graph_ = nullptr;
     ggml_backend_buffer_t buffer_ = nullptr;
-    GraphMemory prefill_mem_;
-    int64_t prefill_steps_ = 0;
-    ggml_tensor * prefill_input_ = nullptr;
-    ggml_tensor * prefill_positions_ = nullptr;
-    ggml_tensor * prefill_attention_mask_ = nullptr;
-    ggml_tensor * prefill_output_ = nullptr;
-    std::vector<ggml_tensor *> prefill_state_inputs_;
+    size_t prefill_cached_bytes_ = 0;
+    std::list<std::unique_ptr<PrefillGraph>> prefill_graphs_;
 };
 
 }  // namespace

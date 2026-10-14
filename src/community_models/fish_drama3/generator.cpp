@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <deque>
 #include <iostream>
 #include <numeric>
@@ -50,12 +51,22 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     : assets_(std::move(assets)), tokenizer_(assets_->tokenizer_assets),
       cache_steps_(runtime::parse_positive_i64_option(options.options, {"fish_drama3.context_length"}, 2048)) {
     if (cache_steps_ > 262144) throw std::runtime_error("Drama 3 context_length exceeds the checkpoint's maximum position count");
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.profile_first_audio"})) {
+        profile_first_audio_ = runtime::parse_bool_option(*value, "fish_drama3.profile_first_audio");
+    }
     auto backbone_config = assets_->backbone;
     backbone_config.decode_cache_steps = cache_steps_;
     backbone_config.cpu_expert_layers = runtime::parse_i64_option(options.options, {"fish_drama3.cpu_expert_layers"}).value_or(4);
+    const auto backbone_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.backbone_prefill_cache_mb"}).value_or(256);
+    if (backbone_prefill_cache_mb < 0 || backbone_prefill_cache_mb > 4096) throw std::runtime_error("Drama 3 backbone_prefill_cache_mb must be between 0 and 4096");
+    backbone_config.prefill_cache_bytes = static_cast<size_t>(backbone_prefill_cache_mb) * 1024u * 1024u;
+    backbone_config.profile_prefill_cache = profile_first_audio_;
     backbone_ = std::make_unique<Drama3BackboneDecoderRuntime>(assets_->model_weights, backbone_config, execution,
         64 * 1024 * 1024, 8 * 1024 * 1024, assets::TensorStorageType::Native);
-    tower_ = std::make_unique<Drama3Tower>(assets_->model_weights, assets_->tower, execution, cache_steps_);
+    const auto tower_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.tower_prefill_cache_mb"}).value_or(256);
+    if (tower_prefill_cache_mb < 0 || tower_prefill_cache_mb > 4096) throw std::runtime_error("Drama 3 tower_prefill_cache_mb must be between 0 and 4096");
+    tower_ = std::make_unique<Drama3Tower>(assets_->model_weights, assets_->tower, execution, cache_steps_,
+        static_cast<size_t>(tower_prefill_cache_mb) * 1024u * 1024u);
     auto codec_backend = options.backend;
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_backend"})) {
         if (*value == "cpu") codec_backend.type = core::BackendType::Cpu;
@@ -75,10 +86,41 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
 Drama3Generator::~Drama3Generator() = default;
 
 codecs::FishDacCodes Drama3Generator::encode_reference(const runtime::AudioBuffer & audio) {
+    if (cached_reference_audio_ && cached_reference_audio_->sample_rate == audio.sample_rate &&
+        cached_reference_audio_->channels == audio.channels && cached_reference_audio_->samples == audio.samples) {
+        return cached_reference_codes_;
+    }
     auto result = codec_->encode_codes(audio);
     codec_->release_encode_graph();
     validate_drama3_codes(result, assets_->tower.codebook_size);
+    // Keep one short reference in host memory. Exact waveform equality avoids
+    // stale path-based hits when an uploaded file is replaced or re-decoded.
+    constexpr size_t max_cached_samples = 44100 * 30;
+    if (audio.samples.size() <= max_cached_samples) {
+        cached_reference_audio_ = audio;
+        cached_reference_codes_ = result;
+    } else {
+        cached_reference_audio_.reset();
+        cached_reference_codes_ = {};
+    }
     return result;
+}
+
+void Drama3Generator::warm_streaming_codec(const codecs::FishDacCodes & reference) {
+    validate_drama3_codes(reference, assets_->tower.codebook_size);
+    codecs::FishDacCodes frame;
+    frame.codebooks = reference.codebooks;
+    frame.frames = 1;
+    for (int64_t book = 0; book < reference.codebooks; ++book) {
+        frame.codes.push_back(reference.codes[static_cast<size_t>(book * reference.frames)]);
+    }
+    // Initialize and capture the first-frame codec graph during preparation.
+    // Discard decoded reference audio and reset all causal stream state.
+    for (int pass = 0; pass < 4; ++pass) {
+        codec_->reset_decode_stream();
+        (void)codec_->decode_stream(frame);
+    }
+    codec_->reset_decode_stream();
 }
 
 Drama3Generation Drama3Generator::generate(const std::string & text, const std::vector<Drama3Take> & references,
@@ -87,6 +129,16 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     if (!std::isfinite(sampling.temperature) || sampling.temperature < 0 ||
         !std::isfinite(sampling.top_p) || sampling.top_p <= 0 || sampling.top_p > 1 ||
         sampling.top_k <= 0 || sampling.max_frames <= 0) throw std::runtime_error("invalid Drama 3 sampling parameters");
+    using ProfileClock = std::chrono::steady_clock;
+    const auto profile_start = profile_first_audio_ ? ProfileClock::now() : ProfileClock::time_point{};
+    auto profile_marked = profile_start;
+    std::vector<std::pair<const char *, double>> first_audio_phases;
+    const auto mark_phase = [&](const char * name) {
+        if (!profile_first_audio_) return;
+        const auto now = ProfileClock::now();
+        first_audio_phases.emplace_back(name, std::chrono::duration<double, std::milli>(now - profile_marked).count());
+        profile_marked = now;
+    };
     const auto prompt = build_drama3_prompt(*assets_, tokenizer_, text, references, history);
     if (sampling.max_frames > cache_steps_ ||
         prompt.size() > static_cast<size_t>(cache_steps_ - sampling.max_frames)) {
@@ -95,12 +147,16 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     auto decoder = backbone_->create_decode_session(cache_steps_);
     decoder->reset();
     tower_->reset();
+    mark_phase("setup_ms");
     std::vector<int32_t> ids;
     for (const auto & frame : prompt) ids.push_back(frame[0]);
     auto embeddings = backbone_->token_embedding(ids);
     tower_->mix_backbone_embeddings(embeddings, prompt);
+    mark_phase("embedding_ms");
     const auto prefill = decoder->prefill_embeddings(embeddings, static_cast<int64_t>(prompt.size()));
+    mark_phase("backbone_prefill_ms");
     tower_->prefill(prefill.hidden, prompt);
+    mark_phase("tower_prefill_ms");
     auto hidden = last_hidden(prefill.hidden, assets_->backbone.hidden_size);
     Drama3Frame current = prompt.back();
     std::mt19937 random(sampling.seed);
@@ -119,6 +175,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         const bool repeats = first != 0 && std::find(recent.begin(), recent.end(), first_token) != recent.end();
         const int32_t selected = repeats ? second : first;
         if (selected == 0) break;
+        if (step == 0) mark_phase("semantic_ms");
         Drama3Frame next{};
         next[0] = assets_->tower.semantic_begin + selected - 1;
         next[1] = selected - 1;
@@ -136,6 +193,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
             }
         }
         output_frames.push_back(next);
+        if (step == 0) mark_phase("tower_first_frame_ms");
         recent.push_back(next[0]);
         if (recent.size() > 16) recent.pop_front();
         if (streaming) {
@@ -144,8 +202,14 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
             codes.frames = 1;
             codes.codes.assign(next.begin() + 1, next.end());
             auto chunk = codec_->decode_stream(codes);
+            if (step == 0) mark_phase("codec_first_frame_ms");
             runtime::append_audio_buffer(result.audio, chunk);
             if (on_audio) on_audio(chunk);
+            if (step == 0 && profile_first_audio_) {
+                std::cerr << "[drama3.first_audio] prompt_rows=" << prompt.size();
+                for (const auto & phase : first_audio_phases) std::cerr << " " << phase.first << "=" << phase.second;
+                std::cerr << " total_ms=" << std::chrono::duration<double, std::milli>(ProfileClock::now() - profile_start).count() << '\n';
+            }
         }
         if (step + 1 == sampling.max_frames) { result.reached_limit = true; break; }
         current = next;

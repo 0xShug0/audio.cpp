@@ -31,6 +31,13 @@
   "options": {
     "request": [
       {
+        "name": "encode_reference_only",
+        "type": "bool",
+        "description": "Prepare reference VQ codes without generating speech. Use the task API to receive drama3_reference_v1 acoustic-token artifacts.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "reference_text",
         "type": "string",
         "description": "Transcript of inline reference audio.",
@@ -125,6 +132,31 @@
       }
     ],
     "session": [
+      {
+        "name": "backbone_prefill_cache_mb",
+        "type": "int",
+        "description": "Bounded cache of backbone prefill graphs, in MiB. Reuses exact shapes and their CUDA captures. One active graph is retained even if larger than this budget. Zero retains only the active graph.",
+        "required": false,
+        "min": 0,
+        "max": 4096,
+        "default": 256
+      },
+      {
+        "name": "tower_prefill_cache_mb",
+        "type": "int",
+        "description": "Bounded cache of audio-tower prefill graphs, in MiB. Reuses exact shapes and their CUDA captures. Zero disables it.",
+        "required": false,
+        "min": 0,
+        "max": 4096,
+        "default": 256
+      },
+      {
+        "name": "profile_first_audio",
+        "type": "bool",
+        "description": "Emit first-audio stage timings to stderr for performance diagnosis. Disabled by default.",
+        "required": false,
+        "default": false
+      },
       {
         "name": "context_length",
         "type": "int",

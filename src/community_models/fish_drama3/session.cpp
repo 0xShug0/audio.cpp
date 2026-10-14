@@ -132,6 +132,18 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
     if (task_.task == runtime::VoiceTaskKind::VoiceCloning && references.empty()) {
         throw std::runtime_error("Drama 3 cloning requires at least one reference");
     }
+    if (const auto prepare = runtime::find_option(effective.options, {"encode_reference_only"});
+        prepare && runtime::parse_bool_option(*prepare, "encode_reference_only")) {
+        if (references.empty()) throw std::runtime_error("Reference preparation requires reference audio or codes");
+        if (task_.mode == runtime::RunMode::Streaming) generator_->warm_streaming_codec(references.front().codes);
+        runtime::TaskResult result;
+        for (size_t index = 0; index < references.size(); ++index) {
+            result.output_artifacts.push_back(runtime::make_text_artifact(runtime::ArtifactKind::AcousticTokens,
+                "drama3_reference_" + std::to_string(index), json::stringify(take_json(references[index])),
+                {{"family", "fish_drama3"}, {"schema", "drama3_reference_v1"}}));
+        }
+        return result;
+    }
     std::vector<Drama3Take> history;
     for (const auto & artifact : effective.input_artifacts) {
         if (artifact.kind != runtime::ArtifactKind::AcousticTokens) continue;

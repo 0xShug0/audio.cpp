@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 
@@ -39,7 +41,7 @@ class Drama3Tower {
 public:
     Drama3Tower(std::shared_ptr<const assets::TensorSource> weights,
                 Drama3TowerConfig config, core::ExecutionContext & execution,
-                int64_t cache_steps);
+                int64_t cache_steps, size_t prefill_cache_bytes = 256u * 1024u * 1024u);
     ~Drama3Tower();
     Drama3Tower(const Drama3Tower &) = delete;
     Drama3Tower & operator=(const Drama3Tower &) = delete;

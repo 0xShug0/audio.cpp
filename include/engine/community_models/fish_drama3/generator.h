@@ -3,6 +3,7 @@
 #include "engine/community_models/fish_drama3/prompt.h"
 
 #include <functional>
+#include <optional>
 
 namespace engine::models::fish_drama3 {
 
@@ -26,6 +27,7 @@ public:
                     const runtime::SessionOptions & options);
     ~Drama3Generator();
     codecs::FishDacCodes encode_reference(const runtime::AudioBuffer & audio);
+    void warm_streaming_codec(const codecs::FishDacCodes & reference);
     Drama3Generation generate(const std::string & text, const std::vector<Drama3Take> & references,
         const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
         const std::function<void(const runtime::AudioBuffer &)> & on_audio = {});
@@ -34,10 +36,13 @@ private:
     std::shared_ptr<const Drama3Assets> assets_;
     fish_audio::FishAudioTextTokenizer tokenizer_;
     int64_t cache_steps_;
+    bool profile_first_audio_ = false;
     std::unique_ptr<Drama3BackboneDecoderRuntime> backbone_;
     std::unique_ptr<Drama3Tower> tower_;
     std::unique_ptr<core::ExecutionContext> codec_execution_;
     std::unique_ptr<codecs::FishDacCodecRuntime> codec_;
+    std::optional<runtime::AudioBuffer> cached_reference_audio_;
+    codecs::FishDacCodes cached_reference_codes_;
 };
 
 }  // namespace engine::models::fish_drama3
