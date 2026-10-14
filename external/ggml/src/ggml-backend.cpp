@@ -1925,6 +1925,11 @@ int ggml_backend_sched_get_n_splits(ggml_backend_sched_t sched) {
     return sched->n_splits;
 }
 
+const struct ggml_cgraph * ggml_backend_sched_get_split_graph(ggml_backend_sched_t sched, int split_index) {
+    GGML_ASSERT(split_index >= 0 && split_index < sched->n_splits);
+    return &sched->splits[split_index].graph;
+}
+
 int ggml_backend_sched_get_n_copies(ggml_backend_sched_t sched) {
     GGML_ASSERT(sched);
     return sched->n_copies;

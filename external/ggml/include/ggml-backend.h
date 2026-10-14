@@ -326,6 +326,9 @@ extern "C" {
 
     // Get the number of splits of the last graph
     GGML_API int                  ggml_backend_sched_get_n_splits(ggml_backend_sched_t sched);
+    // Borrowed graph view, valid until the next scheduler reset/allocation.
+    // Allows callers to release backend graph resources before freeing splits.
+    GGML_API const struct ggml_cgraph * ggml_backend_sched_get_split_graph(ggml_backend_sched_t sched, int split_index);
     GGML_API int                  ggml_backend_sched_get_n_copies(ggml_backend_sched_t sched);
 
     GGML_API ggml_backend_buffer_type_t ggml_backend_sched_get_buffer_type(ggml_backend_sched_t sched, ggml_backend_t backend);

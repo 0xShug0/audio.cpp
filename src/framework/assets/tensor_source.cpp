@@ -2105,7 +2105,13 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 item.name.compare(item.name.size() - 7, 7, ".weight") == 0;
             const bool is_lookup_table = normalized_name.find("embed") != std::string::npos ||
                 normalized_name.find("codebook") != std::string::npos;
-            const bool can_quantize = !preserve_source_dtype && source_is_float && name_is_weight && item.shape.size() == 2 &&
+            // Expert banks have [expert, output, input] layout. Their rows use
+            // the same block format as a matrix; ordinary 3-D convolution
+            // kernels must keep their existing conversion policy.
+            const bool is_expert_bank = item.shape.size() == 3 && name_is_weight &&
+                normalized_name.find(".mlp.experts.") != std::string::npos;
+            const bool is_quantizable_matrix = item.shape.size() == 2 || is_expert_bank;
+            const bool can_quantize = !preserve_source_dtype && source_is_float && name_is_weight && is_quantizable_matrix &&
                 !is_lookup_table && item.shape.back() % ggml_blck_size(requested_type) == 0;
             const bool use_requested = !preserve_source_dtype &&
                 (!ggml_is_quantized(requested_type) ? source_is_float && !item.shape.empty() : can_quantize);
@@ -2116,7 +2122,7 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             const ggml_type override_type = use_override ? ggml_type_for_tensor_storage(*type_override) : source_type;
             if (use_override && ggml_is_quantized(override_type)) {
                 const bool can_quantize_override =
-                    source_is_float && item.shape.size() == 2 && item.shape.back() % ggml_blck_size(override_type) == 0;
+                    source_is_float && is_quantizable_matrix && item.shape.back() % ggml_blck_size(override_type) == 0;
                 if (!can_quantize_override) {
                     throw std::runtime_error("GGUF tensor type override cannot quantize tensor: " + item.name);
                 }

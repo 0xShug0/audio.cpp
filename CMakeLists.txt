@@ -1452,6 +1452,22 @@ audiocpp_add_model(fish_audio
         engine::models::fish_audio::make_fish_audio_loader
 )
 
+audiocpp_add_model(fish_drama3
+    SOURCES
+        src/community_models/fish_drama3/assets.cpp
+        src/community_models/fish_drama3/backbone.cpp
+        src/community_models/fish_drama3/generator.cpp
+        src/community_models/fish_drama3/loader.cpp
+        src/community_models/fish_drama3/prompt.cpp
+        src/community_models/fish_drama3/session.cpp
+        src/community_models/fish_drama3/tower.cpp
+    INCLUDES
+        engine/community_models/fish_drama3/loader.h
+    LOADERS
+        engine::models::fish_drama3::make_fish_drama3_loader
+    DEPENDS fish_audio
+)
+
 audiocpp_add_model(audio8_tts
     SOURCES
         src/community_models/audio8_tts/ar.cpp
