@@ -17,9 +17,12 @@ struct PiperTtsGenerationOptions {
 
 class PiperVitsRuntime {
 public:
+    // `rknn_decoder_path` (optional) routes the decoder stage to a pre-compiled RKNN
+    // engine on a Rockchip NPU; empty keeps the ggml decoder.
     PiperVitsRuntime(
         std::shared_ptr<const PiperTtsAssets> assets,
-        core::BackendConfig backend_config);
+        core::BackendConfig backend_config,
+        std::string rknn_decoder_path = {});
     ~PiperVitsRuntime();
 
     runtime::AudioBuffer synthesize(
