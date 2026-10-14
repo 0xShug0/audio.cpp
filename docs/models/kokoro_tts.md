@@ -159,6 +159,15 @@ render, at the same samples for every engine and for every window grid, 2.5-5x t
 9-12 kHz energy at those columns): the RK3588 DPU's fp16 rounding at the columns where the graph's
 activations peak, absent from the CPU path.
 
+A `--global-stats` variant of the engine — the per-channel AdaIN mean/variance of a full-length
+decode fed into the engine as graph I/O, so every window normalizes with the whole utterance's
+statistics — is not in the build. In fp32 it is exact (the stitched windowed decode moves from
+9.7 dB to 135.4 dB against the full-length decode), and that is exactly why it was dropped: on the
+RK3588 the fed statistics scale the window activations past the engine's fp16 range and the graph
+collapses — every window after the first renders as a constant-energy tone (rms flat at 51.5 dB,
+spectral flatness 1.7e-17, energy at DC, 4800 Hz and 9600 Hz), for 1.8x the wall time and +1.5 GB
+RSS. The producer, the runtime and the engine contract carry no code for it.
+
 ## Conversion
 
 Convert from the official `hexgrad/Kokoro-82M` source checkout:
