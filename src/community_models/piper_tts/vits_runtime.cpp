@@ -37,9 +37,14 @@ namespace core = engine::core;
 namespace modules = engine::modules;
 
 constexpr size_t kIoArenaBytes = 1ULL * 1024ULL * 1024ULL;
-constexpr size_t kDurationGraphArenaBytes = 16ULL * 1024ULL * 1024ULL;
+// The graph arenas are sized for the CPU backend, which keeps tensor payloads outside the ggml
+// context, so the arena only has to hold graph objects. A device backend allocates the payloads in
+// the same arena: on Vulkan the duration graph asks for 21.4 MiB and the unrolled VITS decoder
+// graph for more than 16 MiB, and the run dies in
+// `ggml_new_object: not enough space in the context's memory pool`.
+constexpr size_t kDurationGraphArenaBytes = 32ULL * 1024ULL * 1024ULL;
 constexpr size_t kDurationFlowGraphArenaBytes = 4ULL * 1024ULL * 1024ULL;
-constexpr size_t kDecoderGraphArenaBytes = 16ULL * 1024ULL * 1024ULL;
+constexpr size_t kDecoderGraphArenaBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr size_t kWeightArenaBytes = 16ULL * 1024ULL * 1024ULL;
 constexpr int64_t kMaxLatentFrames = 4000;
 constexpr float kLeakyReluSlope = 0.1F;
