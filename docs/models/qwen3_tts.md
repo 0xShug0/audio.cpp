@@ -169,4 +169,30 @@ constant-context sizes are in MiB.
 | `qwen3_tts.talker_constant_context_mb` | positive integer | `4` | Talker constant tensor context. |
 | `qwen3_tts.code_predictor_constant_context_mb` | positive integer | `4` | Code predictor constant tensor context. |
 | `qwen3_tts.speech_decoder_constant_context_mb` | positive integer | `4` | Speech decoder constant tensor context. |
+| `qwen3_tts.rknn_decoder` | `.rknn` path | not set | Path to a pre-compiled stateful speech-tokenizer decoder `.rknn` (Rockchip NPU). When set, the decoder stage runs on the NPU and its ggml weights are not loaded. |
+| `qwen3_tts.rknn_decoder_first` | `.rknn` path | not set | Optional smaller-batch `.rknn` used for the first token group only, to cut time-to-first-audio in streaming. Requires `rknn_decoder`. |
+
+## Rockchip NPU decoder
+
+The speech decoder stage can run on a Rockchip NPU through `librknnrt` instead
+of ggml. The path is opt-in at build time:
+
+```bash
+cmake -S . -B build -DENGINE_ENABLE_RKNN=ON \
+  -DENGINE_RKNN_INCLUDE_DIR=/usr/local/include \
+  -DENGINE_RKNN_LIBRARY=/usr/lib/librknnrt.so
+```
+
+The `.rknn` must be the stateful fp16 vocoder export for the same checkpoint
+and target SoC: inputs `audio_codes`, `freqs_in`, `cache_valid`, `cache_in`;
+outputs `audio_values` and `cache_out`; 1920 samples per token at 24 kHz, with
+the convolution and KV cache carried across steps in the graph I/O. The
+optional first-group model runs the first token group at a smaller compiled
+batch; the cache layout is batch-independent, so its cache feeds the main
+model directly. A `.rknn` is compiled per SoC and is not portable between
+chips. Build the file with
+[`tools/prepare_qwen3_tts_rknn_vocoder.py`](../../tools/prepare_qwen3_tts_rknn_vocoder.py)
+and see [the Rockchip NPU build guide](../build/rockchip-npu.md) for the toolkit
+venv, the measured numbers, and the limits of this path. This path is opt-in
+and validated only on RK3588.
 

@@ -290,6 +290,15 @@ Qwen3TTSSession::Qwen3TTSSession(
         speech_decoder_weight_storage_type_ = engine::assets::parse_tensor_storage_type(it->second);
         validate_matmul_weight_storage(speech_decoder_weight_storage_type_, "qwen3_tts.speech_decoder_weight_type");
     }
+    if (const auto it = options.options.find("qwen3_tts.rknn_decoder"); it != options.options.end()) {
+        rknn_decoder_.model_path = it->second;
+    }
+    if (const auto it = options.options.find("qwen3_tts.rknn_decoder_first"); it != options.options.end()) {
+        rknn_decoder_.first_model_path = it->second;
+    }
+    if (!rknn_decoder_.first_model_path.empty() && rknn_decoder_.model_path.empty()) {
+        throw std::runtime_error("qwen3_tts.rknn_decoder_first requires qwen3_tts.rknn_decoder");
+    }
     if (perf_mode_ == Qwen3TTSPerfMode::FlashAttention &&
         (!source_contains_q8_tensor(*assets_->model_weights) ||
          !source_contains_q8_tensor(*assets_->speech_tokenizer_weights))) {
@@ -310,6 +319,8 @@ Qwen3TTSSession::Qwen3TTSSession(
             key != "qwen3_tts.speech_encoder_weight_type" &&
             key != "qwen3_tts.speech_decoder_weight_type" &&
             key != "qwen3_tts.voice_prompt_cache_slots" &&
+            key != "qwen3_tts.rknn_decoder" &&
+            key != "qwen3_tts.rknn_decoder_first" &&
             key != "qwen3_tts.perf_mode" &&
             key != "qwen3_tts.mem_saver") {
             throw std::runtime_error("unknown Qwen3 TTS session option: " + key);
@@ -336,7 +347,8 @@ Qwen3TTSSession::Qwen3TTSSession(
         speech_decoder_constant_context_bytes_,
         speech_decoder_weight_storage_type_,
         conv_weight_storage_type_,
-        perf_mode_);
+        perf_mode_,
+        rknn_decoder_);
     if (assets_->config.variant == Qwen3TTSVariant::Base &&
         task_.task != runtime::VoiceTaskKind::Tts &&
         task_.task != runtime::VoiceTaskKind::VoiceCloning) {
@@ -363,6 +375,15 @@ Qwen3TTSSession::Qwen3TTSSession(
             voice_prompt_context_,
             speaker_encoder_graph_arena_bytes_,
             conv_weight_storage_type_);
+    }
+    if (!rknn_decoder_.model_path.empty()) {
+        // The NPU decoder voices the speech decoder, so the ggml decoder's weights are
+        // never loaded. The speech-tokenizer tensor source is one resident blob opened for
+        // the whole model, and a source frees only the ranges it hands out, so the
+        // decoder's half of it would stay resident for the session's lifetime. Every
+        // consumer of this source uploads its weights in its own constructor, so by here
+        // the blob is dead.
+        assets_->speech_tokenizer_weights->release_storage();
     }
 }
 
@@ -430,7 +451,12 @@ runtime::AudioBuffer Qwen3TTSSession::generate_audio(
             codes.frames = static_cast<int64_t>(window.frames());
             codes.codes.assign(window.data, window.data + window.frames() * window.frame_width);
             return speech_decoder_->decode_stream_chunk(codes, window.left_frames, stream_frames);
-        }, stream_event_sink(), reference_codes ? reference_codes->codes : std::vector<int32_t>{});
+        }, stream_event_sink(), reference_codes ? reference_codes->codes : std::vector<int32_t>{},
+        // Stateful decoders (RKNN) carry history in a cache instead of a left
+        // context window: the controller resets it per utterance and drains the
+        // sub-group tail once at the end. No-ops on the ggml path.
+        [this] { speech_decoder_->reset_stream(); },
+        [this] { return speech_decoder_->flush_stream(); });
     const auto talker_start = Clock::now();
     talker_step_->generate(prefill, options, options.repetition_penalty,
         [&](const std::vector<int32_t> & frame) { stream_audio_.push(frame); });
