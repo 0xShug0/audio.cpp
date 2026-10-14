@@ -106,6 +106,25 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
+  server-config-examples:
+    name: Server config examples
+    needs: get-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.source_repository || github.repository }}
+          ref: ${{ needs.get-version.outputs.source_sha }}
+      - name: Package server config examples
+        env:
+          TAG: ${{ needs.get-version.outputs.tag }}
+        run: zip -qr "audio-${TAG}-server-config-examples.zip" LICENSE examples/server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-server-config-examples
+          path: audio-${{ needs.get-version.outputs.tag }}-server-config-examples.zip
+          if-no-files-found: error
+
   macos-metal:
     name: macOS (${{ matrix.build }})
     needs: [check-release, get-version]
@@ -948,6 +967,7 @@ jobs:
     needs:
       - check-release
       - get-version
+      - server-config-examples
       - macos-metal
       - linux-cpu
       - linux-cpu-portable
@@ -966,6 +986,7 @@ jobs:
         needs.check-release.outputs.should_release == 'true' &&
         (github.ref_type == 'tag' || inputs.publish) &&
         needs.get-version.result == 'success' &&
+        needs.server-config-examples.result == 'success' &&
         needs.macos-metal.result == 'success' &&
         needs.linux-cpu.result == 'success' &&
         needs.linux-cpu-portable.result == 'success' &&
@@ -1007,7 +1028,7 @@ jobs:
             name="${d%/}"
             echo "Packing ${name}"
             case "$name" in
-              *-lib-*|*-cudart-ubuntu-*)
+              *-lib-*|*-cudart-ubuntu-*|*-server-config-examples)
                 mv "$d"* .
                 ;;
               *windows*)
