@@ -151,9 +151,9 @@ including with older embedded specs.
 On RK3588 the generator is 83% of the runtime, so the NPU path is worth the extra file: measured
 RTF 1.415 → 0.867 and peak RSS 2777 → 2334 MB on `kokoro-82m-q8_0` (185 Russian characters,
 `--threads 4`, clipped-sine engine; the range-reduced engine the producer now exports by default
-costs ~36% more generator time, see the RKNN document). The engine is compiled for a 128-latent-frame
-window and the runtime walks it over the latent; see the RKNN document for the window limit and the
-per-window normalization caveat.
+costs +21..36% generator time depending on the utterance, and buys 63 dB of sine accuracy, see the
+RKNN document). The engine is compiled for a 128-latent-frame window and the runtime walks it over
+the latent; see the RKNN document for the window limit and the per-window normalization caveat.
 
 ## Conversion
 

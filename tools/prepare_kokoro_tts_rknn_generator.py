@@ -229,11 +229,12 @@ class Generator(torch.nn.Module):
             return torch.sin(argument)
         coeffs = self.sin_form
         if self.sin_reduce:
-            # The fold of rewrite_sin_range_reduced: k = floor(x/(2*pi) + 0.5),
-            # xr = x - k*2*pi, so the polynomial sees |xr| <= pi and never a clamped
-            # argument.
-            clipped = argument - (2.0 * math.pi) * torch.floor(
-                argument * (1.0 / (2.0 * math.pi)) + 0.5
+            # The fold of rewrite_sin_range_reduced: k = floor(x/pi + 0.5),
+            # xr = x - k*pi. Snake consumes sin(x)^2, which is pi-periodic, so folding by
+            # pi is exact for this graph's use and lands the argument in [-pi/2, pi/2],
+            # the domain the shipped fit is minimax on.
+            clipped = argument - math.pi * torch.floor(
+                argument * (1.0 / math.pi) + 0.5
             )
         else:
             clipped = argument.clamp(-clip, clip)
@@ -609,7 +610,13 @@ def check_onnx(
         exact = model(xw, hw, style, mid, mask_out, *fed)
         exact = exact[0] if fed else exact
         model.sin_form = (
-            sin_polynomial_coeffs(sin_degree, clip) if sin_degree >= 3 else None
+            # The folded form fits on the folded domain, so the reference has to use
+            # the same coefficients the ONNX rewrite embeds.
+            sin_polynomial_coeffs(
+                sin_degree, math.pi / 2.0 if sin_reduce else clip
+            )
+            if sin_degree >= 3
+            else None
         )
         model.sin_reduce = sin_reduce
         reference = model(xw, hw, style, mid, mask_out, *fed)
@@ -749,14 +756,19 @@ def rewrite_sin_polynomial(model, degree: int = 7, clip: float = 3.14159) -> int
 def rewrite_sin_range_reduced(model, degree: int = 7, clip: float = 3.14159) -> int:
     """Snake1d's `sin` -> range-reduced minimax odd polynomial, in ONNX (`--sin-reduce`).
 
-    The shipped rewrite clips its argument at ±pi, and the clip, not the fit, is the
+    The clipped rewrite clips its argument at ±pi, and the clip, not the fit, is the
     30.4 dB floor: measured over the 49M Snake arguments of a 200-frame decode, 1.6%
     are past pi (max 20.5), and degrees 5, 7 and 9 all measure the same 17.6 dB
-    sine-level SNR. This form folds the argument into the fundamental domain with
-    k = Floor(x/(2*pi) + 0.5); xr = x - k*2*pi (Mul/Add/Floor/Mul/Sub, all
-    NPU-native) and evaluates the same minimax fit on the folded argument, where it
-    is valid: 41.7 dB at degree 5, 70.5 at 7, 103.1 at 9. Costs 4 extra full-tensor
-    elementwise ops per Snake on a graph whose NPU time is 84% elementwise.
+    sine-level SNR. This form folds the argument with
+    k = Floor(x/pi + 0.5); xr = x - k*pi (Mul/Add/Floor/Mul/Sub) and evaluates the
+    minimax fit of sin on [-pi/2, pi/2], where it is valid. The fold period is pi, not
+    2*pi, because Snake consumes sin(x)^2, which is pi-periodic: folding by pi is exact
+    for this graph's use, costs the identical 4 extra full-tensor elementwise ops per
+    Snake, and halves the fitted interval, which is where the accuracy comes from.
+    `Floor` is not free: the 2.3.2 compiler lowers it to CPU (`Floor FLOAT16 CPU` at all
+    48 sine sites of a folded engine, against `Clip FLOAT16 NPU` for the clipped form),
+    so each fold site is a full-tensor NPU->CPU->NPU round trip and the folded engine
+    measures +36% generator time on RK3588.
     """
     import numpy as np
     from onnx import helper, numpy_helper
@@ -767,7 +779,8 @@ def rewrite_sin_range_reduced(model, degree: int = 7, clip: float = 3.14159) -> 
     powers = [power for power in (1, 3, 5, 7, 9) if power <= degree]
     if not powers:
         return 0
-    coeffs = sin_polynomial_coeffs(degree, clip)
+    # Fit on the folded domain, not on the clip domain.
+    coeffs = sin_polynomial_coeffs(degree, math.pi / 2.0)
 
     def constant(name: str, value) -> str:
         model.graph.initializer.append(
@@ -783,7 +796,7 @@ def rewrite_sin_range_reduced(model, degree: int = 7, clip: float = 3.14159) -> 
         new = [
             helper.make_node(
                 "Mul",
-                [source, constant(f"{base}/inv_2pi", 1.0 / (2.0 * math.pi))],
+                [source, constant(f"{base}/inv_pi", 1.0 / math.pi)],
                 [f"{base}/fold_scaled"],
                 name=f"{base}/Fold_Mul",
             ),
@@ -796,11 +809,11 @@ def rewrite_sin_range_reduced(model, degree: int = 7, clip: float = 3.14159) -> 
             helper.make_node("Floor", [f"{base}/fold_shift"], [k], name=f"{base}/Fold_Floor"),
             helper.make_node(
                 "Mul",
-                [k, constant(f"{base}/two_pi", 2.0 * math.pi)],
-                [f"{base}/fold_k2pi"],
+                [k, constant(f"{base}/pi", math.pi)],
+                [f"{base}/fold_kpi"],
                 name=f"{base}/Fold_K",
             ),
-            helper.make_node("Sub", [source, f"{base}/fold_k2pi"], [reduced], name=f"{base}/Fold_Sub"),
+            helper.make_node("Sub", [source, f"{base}/fold_kpi"], [reduced], name=f"{base}/Fold_Sub"),
         ]
         new += horner_sin_nodes(base, reduced, target, powers, coeffs, constant)
         position = list(model.graph.node).index(node)
@@ -918,24 +931,29 @@ def main() -> int:
         type=int,
         default=5,
         help="odd-polynomial degree for Snake1d's sin in the exported graph (0 keeps Sin, "
-             "which librknnrt runs on CPU). 5 and 9 measure the same 50.0 dB against the "
-             "exact sine once the argument is range-reduced (the default): the fit is valid "
-             "over the whole folded range, so the extra terms buy nothing. Past the clip "
-             "form (--no-sin-reduce) all degrees plateau at 30.4 dB",
+             "which librknnrt runs on CPU). With the default range reduction the fit is valid "
+             "over the whole folded argument, so degree 5 already measures 93.2 dB against the "
+             "exact sine at the export - above the compiled engine's own fp16 floor (~50 dB at "
+             "the generator output) - and the extra terms buy nothing. Past the clip form "
+             "(--no-sin-reduce) all degrees plateau at 30.4 dB",
     )
     parser.add_argument(
         "--sin-reduce",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="range-reduce Snake1d's sin (fold to [-pi,pi] with Floor, no Clip); the default. "
-             "Clipping at ±pi is what sets the 30.4 dB sine floor (measured: 1.6%% of the "
-             "Snake arguments of a 200-frame decode are past pi, max 20.5); the folded "
-             "degree-5 fit measures 50.0 dB at the generator output and 41.7 dB at the sine. "
-             "The fold is a quality default, not a speed one: measured on RK3588 with both "
-             "engines built from one producer revision and interleaved 3x per utterance it "
-             "costs +36%% generator time (Core0 load 70-72%% against the clipped engine's "
-             "86-94%%, so the Floor chain does not stay on the NPU), and the two renders "
-             "differ by 17.3 dB. --no-sin-reduce restores the clipped export byte for byte",
+        help="range-reduce Snake1d's sin (fold to [-pi/2,pi/2] with Floor, no Clip); the "
+             "default. Clipping at ±pi is what sets the 30.4 dB sine floor (measured: 1.6%% of "
+             "the Snake arguments of a 200-frame decode are past pi, max 20.5). The fold period "
+             "is pi, not 2*pi, because Snake consumes sin(x)^2, which is pi-periodic: folding by "
+             "pi is exact for this graph's use and halves the fitted interval, which is where the "
+             "accuracy is - the exported graph measures 93.2 dB against the exact sine, against "
+             "the 2*pi fold's 50.0 dB. The fold is a quality default, not a speed one: engines "
+             "from one producer revision, interleaved 3x per utterance on RK3588, measure RTF "
+             "1.046 against the clipped engine's 0.867 (+21%%), and the build log says why - the "
+             "2.3.2 compiler lowers every rounding op off the NPU ('Floor FLOAT16 CPU' at all 48 "
+             "sine sites of a folded engine, against 'Clip FLOAT16 NPU' for the clipped form), so "
+             "each fold site is a full-tensor NPU->CPU->NPU round trip. --no-sin-reduce restores "
+             "the clipped export byte for byte",
     )
     parser.add_argument(
         "--global-stats",
