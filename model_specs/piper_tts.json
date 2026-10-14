@@ -96,6 +96,12 @@
         "type": "path",
         "description": "Optional explicit path to espeak-ng-data.",
         "required": false
+      },
+      {
+        "name": "rknn_decoder",
+        "type": "path",
+        "description": "Path to a pre-compiled RKNN engine for this voice's decoder, voiced on a Rockchip NPU. Needs a build with ENGINE_ENABLE_RKNN; build the engine with tools/prepare_piper_tts_rknn_vocoder.py.",
+        "required": false
       }
     ],
     "load": []
