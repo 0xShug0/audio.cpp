@@ -130,7 +130,7 @@ Set top-level `"idle_unload_ms"` to have the server unload every resident model 
 
 Set top-level `"min_free_memory_mb"` to refuse a model load when the host or the GPU backend does not have that much free memory left after the estimated footprint of the new model. The estimate covers only what the loader will actually read: a single-file model's weights, the one GGUF a model directory selects (`model.gguf` or the sole `*.gguf`), or a full safetensors/HF checkpoint tree, plus any session auxiliary files. A directory holding several GGUFs with no `model.gguf` is ambiguous, so the guard makes no estimate there: the loader's own error surfaces for spec-driven loads, and family-specific layouts the estimator cannot resolve load unguarded (the server logs that the guard skipped the model). The estimate is scaled by a runtime overhead factor plus a fixed floor. When the check fails, the request returns HTTP 503 with `insufficient_memory`; the client may retry later. Defaults to `0`, which disables the guard entirely so existing deployments are unaffected; set a positive value to opt in. The `--min-free-memory-mb <mb>` command-line flag overrides the config value.
 
-Set per-model `"default_request_options"` to apply request-option defaults to every request for that model. Values supplied by the actual request body override these defaults.
+Set per-model `"default_request_options"` to apply request-option defaults to every request for that model. Values supplied by the actual request body override these defaults. Instruction-conditioned models may use the normalized per-model `"instruct"` field as a shortcut for `"default_request_options": {"instruct": "..."}`. Use one form or the other; configuring an instruction in both places is rejected as ambiguous.
 
 Set top-level `"max_request_body_bytes"` to bound the largest HTTP request body buffered in host RAM before routing. This protects endpoints that accept JSON or audio uploads from unbounded `Content-Length` claims. The default is `2147483648` bytes (2 GiB). Raise or lower it to match the largest upload your deployment intends to accept. Values above `2^53 - 1` are rejected because this config parser stores JSON numbers as doubles.
 
@@ -406,6 +406,8 @@ below `2^53` are accepted, but larger JSON numbers may lose precision before
 option parsing.
 
 If no request voice is provided and the configured model has `default_voice_preset`, the server injects that preset automatically. Request-level `voice`, `voice_ref`, and `reference_text` override the configured default.
+
+For instruction-conditioned models, use the normalized top-level `instruct` field. The existing `instructions` field remains supported for backward compatibility. As with the other top-level request fields, it takes precedence over the same spelling under `options`. An explicit request instruction overrides either configured spelling while preserving the request spelling for model compatibility. Do not send both top-level spellings in one request.
 
 `voice_ref` accepts either a plain path string (server-side file) or an object with a `type`:
 

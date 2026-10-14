@@ -84,8 +84,16 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
                        "guidance_scale");
   add_option_from_json(request.options, body, "num_inference_steps",
                        "num_inference_steps");
-  if (const auto *value = body.find("instructions")) {
-    request.options["instruction"] = value->as_string();
+  const auto *instruct = body.find("instruct");
+  const auto *instructions = body.find("instructions");
+  if (instruct != nullptr && instructions != nullptr) {
+    throw engine::runtime::InvalidRequestError(
+        "instruct and instructions cannot both be set");
+  }
+  if (instruct != nullptr) {
+    request.options["instruct"] = instruct->as_string();
+  } else if (instructions != nullptr) {
+    request.options["instruction"] = instructions->as_string();
   }
 
   bool voice_field_is_preset = false;
@@ -229,8 +237,18 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
   if (has_voice) {
     request.voice = std::move(voice);
   }
-  return apply_default_request_options(context.default_options,
-                                       std::move(request));
+  const bool request_has_instruct =
+      request.options.find("instruct") != request.options.end();
+  const bool request_has_instruction =
+      request.options.find("instruction") != request.options.end();
+  auto merged = apply_default_request_options(context.default_options,
+                                              std::move(request));
+  if (request_has_instruct && !request_has_instruction) {
+    merged.options.erase("instruction");
+  } else if (request_has_instruction && !request_has_instruct) {
+    merged.options.erase("instruct");
+  }
+  return merged;
 }
 
 static bool is_missing_model_contract_error(std::string_view message) {
