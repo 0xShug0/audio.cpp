@@ -2,6 +2,11 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 
+# Pinned upstream Unicode sources; keep their bytes stable and collapse them in PRs.
+external/utf8proc/* text eol=lf linguist-vendored
+# The upstream-generated table contains intentional trailing spaces.
+external/utf8proc/utf8proc_data.c -whitespace linguist-generated
+
 # Binary, media, model, and archive files.
 *.7z binary
 *.bin binary

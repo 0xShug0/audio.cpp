@@ -4,11 +4,14 @@
 #include "engine/framework/runtime/session.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace engine::models::fish_audio {
+
+struct Drama3Config;
 
 struct FishAudioGenerationOptions {
     int64_t max_new_tokens = 1024;
@@ -75,6 +78,7 @@ struct FishAudioFastConfig {
 };
 
 struct FishAudioConfig {
+    std::shared_ptr<const Drama3Config> drama3;
     std::string model_type;
     std::string torch_dtype;
     int64_t semantic_start_token_id = 0;

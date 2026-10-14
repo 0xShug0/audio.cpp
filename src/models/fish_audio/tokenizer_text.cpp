@@ -1,7 +1,10 @@
 #include "engine/models/fish_audio/tokenizer_text.h"
 
 #include "engine/framework/tokenizers/llama_bpe.h"
+#include "engine/framework/runtime/errors.h"
+#include <utf8proc.h>
 
+#include <cstdlib>
 #include <stdexcept>
 #include <utility>
 
@@ -26,7 +29,8 @@ struct FishAudioTextTokenizer::Impl {
               {},
               assets->resources.require_file("tokenizer_config"),
               assets->resources.require_file("tokenizer_json"),
-              engine::tokenizers::LlamaBpePreTokenizer::Qwen2,
+              assets->config.drama3 ? engine::tokenizers::LlamaBpePreTokenizer::Qwen35 :
+                  engine::tokenizers::LlamaBpePreTokenizer::Qwen2,
           }),
           im_end(require_token_id(tokenizer, "<|im_end|>")),
           semantic_begin(static_cast<int32_t>(assets->config.semantic_start_token_id)),
@@ -47,6 +51,15 @@ FishAudioTextTokenizer::FishAudioTextTokenizer(std::shared_ptr<const FishAudioAs
 }
 
 std::vector<int32_t> FishAudioTextTokenizer::encode(const std::string & text) const {
+    if(impl_->assets->config.drama3) {
+        utf8proc_uint8_t * output=nullptr;
+        const auto size=utf8proc_map(reinterpret_cast<const utf8proc_uint8_t *>(text.data()),
+            static_cast<utf8proc_ssize_t>(text.size()),&output,
+            static_cast<utf8proc_option_t>(UTF8PROC_STABLE|UTF8PROC_COMPOSE));
+        std::unique_ptr<utf8proc_uint8_t,decltype(&std::free)> owned(output,&std::free);
+        if(size<0)throw runtime::InvalidRequestError("Drama 3 text normalization: "+std::string(utf8proc_errmsg(size)));
+        return impl_->tokenizer.encode(std::string(reinterpret_cast<const char *>(output),static_cast<size_t>(size)),true);
+    }
     return impl_->tokenizer.encode(text, true);
 }
 

@@ -1,4 +1,5 @@
 #include "engine/models/fish_audio/assets.h"
+#include "engine/models/fish_audio/drama3.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
@@ -72,6 +73,9 @@ FishAudioFastConfig parse_fast_config(const json::Value & value) {
 
 FishAudioConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
+    if (json::optional_string(root, "model_type", "") == "fish_omni") {
+        return parse_drama3_config(root);
+    }
     FishAudioConfig config;
     config.model_type = json::optional_string(root, "model_type", "");
     if (config.model_type != "fish_qwen3_omni") {
@@ -98,6 +102,16 @@ FishAudioConfig parse_config(const assets::ResourceBundle & resources) {
 }
 
 void validate_weight_anchors(const FishAudioAssets & assets) {
+    if (assets.config.drama3) {
+        assets.model_weights->require_metadata("model.language_model.embed_tokens.weight");
+        assets.model_weights->require_metadata("drama3.candidate_lm_head.weight");
+        assets.model_weights->require_metadata("model.language_model.layers.0.mlp.experts.gate_up.weight");
+        assets.model_weights->require_metadata("audio_decoder.codebook_embeddings.weight");
+        assets.model_weights->require_metadata("audio_decoder_mtp_shared.layers.0.semantic_embedding.weight");
+        assets.codec_weights->require_metadata("decoder.model.0.conv.weight");
+        assets.codec_weights->require_metadata("quantizer.semantic_quantizer.quantizers.0.codebook.weight");
+        return;
+    }
     assets.model_weights->require_metadata("embeddings.weight");
     assets.model_weights->require_metadata("codebook_embeddings.weight");
     assets.model_weights->require_metadata("layers.0.attention.q_proj.weight");

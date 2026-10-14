@@ -33,6 +33,8 @@
 #include <numeric>
 #include <optional>
 #include <sstream>
+#include <cstring>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -1015,6 +1017,10 @@ struct DecodeGraph {
     }
 
     ~DecodeGraph() {
+        if(stream_staging_) {
+            ggml_backend_synchronize(backend_);
+            ggml_backend_buffer_free(stream_staging_);
+        }
         engine::core::release_backend_graph_resources(backend_, graph_);
     }
 
@@ -1031,6 +1037,40 @@ struct DecodeGraph {
 
     void reset_stream() {
         stream_->frames = 0;
+    }
+
+    runtime::AudioBuffer run_stream_frames(const FishDacCodes & codes) {
+        if(!stream_ || frame_capacity_!=1 || codes.frames<=0 || codes.codebooks!=config_.total_codebooks ||
+            codes.codes.size()!=static_cast<size_t>(codes.frames*codes.codebooks))
+            throw std::runtime_error("Fish DAC queued streaming decode code shape mismatch");
+        runtime::AudioBuffer audio{config_.sample_rate,1,{}};
+        audio.samples.reserve(static_cast<size_t>(codes.frames*config_.frame_length));
+        if(!ensure_stream_staging()) {
+            for(int64_t p=0;p<codes.frames;++p) {
+                FishDacCodes frame;frame.frames=1;frame.codebooks=codes.codebooks;
+                for(int64_t b=0;b<codes.codebooks;++b)frame.codes.push_back(codes.codes[static_cast<size_t>(b*codes.frames+p)]);
+                runtime::append_audio_buffer(audio,run_stream(frame));
+            }
+            return audio;
+        }
+        // Initialize the persistent causal caches exactly as the frame path.
+        stream_->prepare(backend_);
+        core::set_backend_threads(backend_,threads_);
+        try {
+            for(int64_t first=0;first<codes.frames;first+=stream_batch_rows_) {
+                const int64_t count=std::min(stream_batch_rows_,codes.frames-first);
+                for(int64_t i=0;i<count;++i)enqueue_stream_frame(codes,first+i,i);
+                ggml_backend_synchronize(backend_);
+                for(int64_t i=0;i<count;++i) {
+                    auto * output=reinterpret_cast<const float *>(stream_staging_base_+static_cast<size_t>(i)*stream_staging_stride_);
+                    audio.samples.insert(audio.samples.end(),output,output+config_.frame_length);
+                }
+            }
+        } catch(...) {
+            ggml_backend_synchronize(backend_);
+            throw;
+        }
+        return audio;
     }
 
     runtime::AudioBuffer run(const FishDacCodes & codes) {
@@ -1076,6 +1116,46 @@ struct DecodeGraph {
     }
 
 private:
+    bool ensure_stream_staging() {
+        if(backend_type_!=core::BackendType::Vulkan || std::getenv("GGML_VK_PERF_LOGGER"))return false;
+        if(output_->type!=GGML_TYPE_F32 || ggml_nelements(output_)<config_.frame_length)return false;
+        if(stream_staging_)return true;
+        if(stream_staging_attempted_)return false;
+        stream_staging_attempted_=true;
+        auto * type=ggml_backend_dev_host_buffer_type(ggml_backend_get_device(backend_));
+        if(!type)return false;
+        stream_staging_stride_=(static_cast<size_t>(config_.frame_length)*sizeof(float)+
+            (static_cast<size_t>(config_.total_codebooks)+1)*sizeof(int32_t)+128*sizeof(ggml_fp16_t)+63)&~size_t(63);
+        stream_staging_=ggml_backend_buft_alloc_buffer(type,stream_staging_stride_*stream_batch_rows_);
+        if(!stream_staging_)return false;
+        stream_staging_base_=static_cast<std::byte *>(ggml_backend_buffer_get_base(stream_staging_));
+        return true;
+    }
+
+    void enqueue_stream_frame(const FishDacCodes & codes,int64_t frame,int64_t row) {
+        auto * output=stream_staging_base_+static_cast<size_t>(row)*stream_staging_stride_;
+        auto * ids=reinterpret_cast<int32_t *>(output+static_cast<size_t>(config_.frame_length)*sizeof(float));
+        auto * position=ids+config_.total_codebooks;
+        auto * mask=reinterpret_cast<ggml_fp16_t *>(position+1);
+        for(int64_t b=0;b<config_.total_codebooks;++b) {
+            const auto max=b==0?config_.semantic_codebook_size:config_.residual_codebook_size;
+            ids[b]=std::clamp<int32_t>(codes.codes[static_cast<size_t>(b*codes.frames+frame)],0,static_cast<int32_t>(max-1));
+            ggml_backend_tensor_set_async(backend_,code_inputs_[static_cast<size_t>(b)].tensor,ids+b,0,sizeof(int32_t));
+        }
+        *position=static_cast<int32_t>(stream_->frames);
+        std::fill(mask,mask+128,ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
+        std::fill(mask+std::max<int64_t>(0,127-stream_->frames),mask+128,ggml_fp32_to_fp16(0));
+        ggml_backend_tensor_set_async(backend_,stream_->positions,position,0,sizeof(int32_t));
+        ggml_backend_tensor_set_async(backend_,stream_->mask,mask,0,128*sizeof(ggml_fp16_t));
+        if(ggml_backend_graph_compute_async(backend_,graph_)!=GGML_STATUS_SUCCESS)
+            throw std::runtime_error("Fish DAC queued streaming decode compute failed");
+        ggml_backend_tensor_get_async(backend_,output_,output,0,static_cast<size_t>(config_.frame_length)*sizeof(float));
+        stream_->attention.commit_outputs(backend_);
+        for(const auto & history:stream_->histories)
+            ggml_backend_tensor_copy_async(backend_,backend_,history.second,history.first);
+        ++stream_->frames;
+    }
+
     FishDacCodecConfig config_;
     std::shared_ptr<const FishCodecWeights> weights_;
     ggml_backend_t backend_ = nullptr;
@@ -1089,6 +1169,11 @@ private:
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
     core::ConstantTensorCache constants_;
     std::unique_ptr<CodecStreamingState> stream_;
+    static constexpr int64_t stream_batch_rows_=8;
+    ggml_backend_buffer_t stream_staging_=nullptr;
+    std::byte * stream_staging_base_=nullptr;
+    size_t stream_staging_stride_=0;
+    bool stream_staging_attempted_=false;
 };
 
 struct LatentDecodeGraph {
@@ -1408,6 +1493,12 @@ public:
         return stream_decode_graph_->run_stream(codes);
     }
 
+    runtime::AudioBuffer decode_stream_frames(const FishDacCodes & codes) {
+        if(!stream_decode_graph_)stream_decode_graph_=std::make_unique<DecodeGraph>(
+            component_->impl_->config,component_->impl_->weights,execution_,graph_arena_bytes_,1,true);
+        return stream_decode_graph_->run_stream_frames(codes);
+    }
+
     void reset_decode_stream() {
         if (stream_decode_graph_) stream_decode_graph_->reset_stream();
     }
@@ -1522,6 +1613,10 @@ runtime::AudioBuffer FishDacCodecRuntime::decode_codes(const FishDacCodes & code
 
 runtime::AudioBuffer FishDacCodecRuntime::decode_stream(const FishDacCodes & codes) {
     return impl_->decode_stream(codes);
+}
+
+runtime::AudioBuffer FishDacCodecRuntime::decode_stream_frames(const FishDacCodes & codes) {
+    return impl_->decode_stream_frames(codes);
 }
 
 void FishDacCodecRuntime::reset_decode_stream() {

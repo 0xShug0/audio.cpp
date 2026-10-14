@@ -21,7 +21,8 @@ public:
     FishAudioGenerator(
         std::shared_ptr<const FishAudioAssets> assets,
         std::unique_ptr<FishAudioDualARRuntime> ar,
-        std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec);
+        std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec,
+        bool bounded_codec_decode = false);
     ~FishAudioGenerator();
 
     engine::codecs::FishDacCodes encode_reference(const runtime::AudioBuffer & audio);
@@ -39,6 +40,7 @@ private:
     FishAudioPromptBuilder prompt_builder_;
     std::unique_ptr<FishAudioDualARRuntime> ar_;
     std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec_;
+    bool bounded_codec_decode_ = false;
 };
 
 }  // namespace engine::models::fish_audio

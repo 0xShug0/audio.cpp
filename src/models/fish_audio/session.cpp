@@ -349,7 +349,8 @@ FishAudioSession::FishAudioSession(
     generator_ = std::make_unique<FishAudioGenerator>(
         assets_,
         std::move(ar),
-        std::move(codec));
+        std::move(codec),
+        assets_->config.drama3 && options.backend.type == core::BackendType::Vulkan);
     assets_->model_weights->release_storage();
     assets_->codec_weights->release_storage();
 }

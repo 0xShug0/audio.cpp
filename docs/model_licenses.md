@@ -53,6 +53,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `firered_vad` | [FireRedTeam/FireRedVAD](https://huggingface.co/FireRedTeam/FireRedVAD) | Apache-2.0 | Yes | VAD and Stream-VAD checkpoints. | 2026-10-07 |
 | `fireredtts3` | [FireRedTeam/FireRedTTS3](https://huggingface.co/FireRedTeam/FireRedTTS3) | Apache-2.0 | Yes | | 2026-09-21 |
 | `fish_audio` | [fishaudio/s2-pro](https://huggingface.co/fishaudio/s2-pro) | [Fish Audio Research License](https://huggingface.co/fishaudio/s2-pro/blob/main/LICENSE.md) | No | Commercial use needs a separate license from Fish Audio. | 2026-09-21 |
+| `fish_audio` (Drama 3) | [fishaudio/drama-3](https://huggingface.co/fishaudio/drama-3) | [Fish Audio Community License](https://huggingface.co/fishaudio/drama-3/blob/e0a9218aa48888270f06ef1ed9ea67622c0e17d2/LICENSE) | See license | Experimental variant; retains the pinned checkpoint license. | 2026-10-14 |
 | `fun_asr_nano` | [FunAudioLLM/Fun-ASR-Nano-2512](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-2512) | Apache-2.0 | Yes | | 2026-09-21 |
 | `gigaam_asr` | [ai-sage/GigaAM-v3](https://huggingface.co/ai-sage/GigaAM-v3), [ai-sage/GigaAM-Multilingual](https://huggingface.co/ai-sage/GigaAM-Multilingual) | MIT | Yes | | 2026-09-25 |
 | `glm_tts` | [zai-org/GLM-TTS](https://huggingface.co/zai-org/GLM-TTS) | MIT | Yes | | 2026-09-21 |

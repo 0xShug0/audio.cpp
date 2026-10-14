@@ -1,4 +1,5 @@
 #include "engine/models/fish_audio/prompt_builder.h"
+#include "engine/models/fish_audio/drama3.h"
 
 #include <regex>
 #include <stdexcept>
@@ -57,6 +58,9 @@ FishAudioPrompt FishAudioPromptBuilder::build(
     const FishAudioRequest & request,
     const std::vector<engine::codecs::FishDacCodes> & reference_codes,
     const std::optional<FishAudioConversationTurn> & previous_turn) const {
+    if (assets_->config.drama3) {
+        return build_drama3_prompt(*assets_, tokenizer_, request, reference_codes, previous_turn);
+    }
     if (request.text.empty()) {
         throw std::runtime_error("Fish Audio request text must not be empty");
     }

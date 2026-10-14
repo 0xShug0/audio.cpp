@@ -88,6 +88,9 @@ public:
     runtime::AudioBuffer decode_codes(const FishDacCodes & codes);
     // Decode one frame with persistent causal attention/convolution state.
     runtime::AudioBuffer decode_stream(const FishDacCodes & codes);
+    // Offline causal decode with the same one-frame math, queued in bounded
+    // groups on Vulkan. Other backends use the existing frame decoder.
+    runtime::AudioBuffer decode_stream_frames(const FishDacCodes & codes);
     void reset_decode_stream();
     runtime::AudioBuffer decode_latents(const FishDacLatents & latents);
     runtime::AudioBuffer decode_latents(const std::vector<float> & values, int64_t frames);
