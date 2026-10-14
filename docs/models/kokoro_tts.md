@@ -141,7 +141,7 @@ package.
 | `kokoro_tts.predictor_tail_graph_arena_mb` | positive integer MiB | `640` | Tail predictor host graph-metadata arena. |
 | `kokoro_tts.rknn_generator` | path to a `.rknn` | unset | Pre-compiled RKNN engine for the iSTFTNet generator, voiced on a Rockchip NPU. Needs a build with `ENGINE_ENABLE_RKNN=ON`; see [docs/build/rockchip-npu.md](../build/rockchip-npu.md). |
 | `kokoro_tts.rknn_generator_overlap` | latent frames, `0` .. window-1 | `0` | Advance the window walk by `emitted - overlap` frames and blend the shared spectrogram columns with a raised-cosine ramp instead of hard-writing them. Measured on RK3588: 1.54x wall for no change in the per-window loudness spread (7.23 → 7.14 dB), so it is a seam-smoothing knob, not a loudness one. |
-| `kokoro_tts.rknn_generator_gain` | `0` / `1` | `0` | Correct each NPU window's loudness toward a full-length CPU decode of the same latent (additive gain on the log-magnitude rows). Measured on RK3588: per-window loudness spread 7.23 → 3.27 dB for 1.9x wall and +544 MB RSS, because the ggml generator graph stays loaded and runs once per utterance. |
+| `kokoro_tts.rknn_generator_gain` | `0` / `1` | `0` | Correct each NPU window's loudness toward a full-length CPU decode of the same latent (additive gain on the log-magnitude rows), and cap the top five log-magnitude rows at that reference's level at every column, which is what removes the near-Nyquist clicks (see below). Measured on RK3588: per-window loudness spread 7.23 → 3.27 dB and the worst of the top eight 9-12 kHz columns 14.7x → 2.8x the CPU render's energy there, for 1.9x wall and +601 MB RSS, because the ggml generator graph stays loaded and runs once per utterance. |
 
 The graph-arena controls do not size device workspace. Their former
 `predictor_duration_graph_mb`, `predictor_text_graph_mb`, and
@@ -154,10 +154,14 @@ RTF 1.415 → 0.867 and peak RSS 2777 → 2334 MB on `kokoro-82m-q8_0` (185 Russ
 costs +21..36% generator time depending on the utterance, and buys 63 dB of sine accuracy, see the
 RKNN document). The engine is compiled for a 128-latent-frame window and the runtime walks it over
 the latent; see the RKNN document for the window limit and the per-window normalization caveat. The
-NPU render also carries a few content-locked near-Nyquist clicks per utterance (2 to 3 on a 33 s
-render, at the same samples for every engine and for every window grid, 2.5-5x the CPU render's
-9-12 kHz energy at those columns): the RK3588 DPU's fp16 rounding at the columns where the graph's
-activations peak, absent from the CPU path.
+NPU render also carries a few content-locked near-Nyquist clicks per utterance (2 to 3 on a 26 s
+render): at the columns where the graph's activations peak, the top iSTFT bins run 10-24x the CPU
+render's 9-12 kHz energy there. They are fp16 rounding in the convolutional accumulation, not the
+sine approximation and not the window seams: the same columns at the same magnitude for the clip
+sine, the range-reduced sine, the exact `Sin` node, the unfolded Snake (`--no-snake-fold`, which
+bounds the convolution input) and the w128/w136 grids, and RKNN 2.3.2 has no per-layer dtype knob.
+`kokoro_tts.rknn_generator_gain=1` caps them (14.7x → 2.8x at the worst of the top eight columns,
+residual 1.4-2.8x is the iSTFT Hann-overlap smear into the bins the cap does not touch).
 
 A `--global-stats` variant of the engine — the per-channel AdaIN mean/variance of a full-length
 decode fed into the engine as graph I/O, so every window normalizes with the whole utterance's

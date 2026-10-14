@@ -359,6 +359,24 @@ std::vector<float> KokoroTtsRknnGenerator::run(
             break;
         }
     }
+    // Near-Nyquist click suppression. The RK3588 DPU's fp16 rounding spikes the top
+    // iSTFT bins (9-12 kHz of the 24 kHz inverse) at the columns where the graph's
+    // activations peak, 10-24x the full-length CPU decode's energy there. The spikes
+    // are content-locked: the same columns for every engine built from this graph, for
+    // every sine form and degree, for the unfolded Snake, and for every window grid, so
+    // no export-time lever moves them. Cap those magnitude rows at the reference level
+    // at every column; the phase rows and the speech band are untouched. Needs the
+    // reference, i.e. kokoro_tts.rknn_generator_gain=1, and is a no-op without it.
+    if (reference != nullptr) {
+        const int64_t top_rows = 5;
+        for (int64_t row = mag_rows - top_rows; row < mag_rows; ++row) {
+            float * d = out.data() + row * columns;
+            const float * r = reference + row * columns;
+            for (int64_t c = 0; c < columns; ++c) {
+                d[c] = std::min(d[c], r[c]);
+            }
+        }
+    }
     debug::timing_log_scalar("kokoro.decoder.rknn.windows", windows);
     debug::timing_log_scalar("kokoro.decoder.rknn.step_ms", debug::elapsed_ms(start));
     return out;
