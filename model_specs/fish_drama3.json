@@ -217,7 +217,7 @@
       "format": "gguf",
       "precision": "q4_k",
       "target_directory": "Drama-3-GGUF",
-      "files": ["drama-3-backbone-8bit-experts-Q4_K_S_AUDIOCPP.gguf"]
+      "files": ["drama-3-backbone-8bit-experts-Q4_K_S.gguf"]
     },
     {
       "id": "fish_drama3_q3_experts_q8_backbone",
@@ -226,7 +226,7 @@
       "format": "gguf",
       "precision": "q3_k",
       "target_directory": "Drama-3-GGUF",
-      "files": ["drama-3-backbone-8bit-experts-Q3_K_S_AUDIOCPP.gguf"]
+      "files": ["drama-3-backbone-8bit-experts-Q3_K_S.gguf"]
     },
     {
       "id": "fish_drama3_q2_experts_q8_backbone",
@@ -244,7 +244,7 @@
       "format": "gguf",
       "precision": "q4_k",
       "target_directory": "Drama-3-GGUF",
-      "files": ["drama-3-backbone-4bit-experts-Q4_K_S_AUDIOCPP.gguf"]
+      "files": ["drama-3-backbone-4bit-experts-Q4_K_S.gguf"]
     }
   ],
   "sources": [
