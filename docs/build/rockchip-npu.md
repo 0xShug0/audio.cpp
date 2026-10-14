@@ -634,6 +634,40 @@ NPU-to-CPU one (the two Kokoro sine engines differ by 28.2 dB from each other). 
 here: the per-core fp16 difference itself, which would need the same engine run with a
 single-core mask and the outputs compared.
 
+## The IOVA ceiling, i.e. how big an engine can be
+
+An engine is mapped into the NPU's I/O address space, and on RK3588 that space is a 32-bit arena. A
+single mapping above ~4 GB is refused at `rknn_init`, before the first step, and the driver says so
+in dmesg:
+
+```
+rknn_init failed with code -4
+RKNPU: failed to allocate IOVA: -12
+rknpu_gem_get_pages: dma map 4710850560 fail
+failed to malloc npu memory, size: 6189218496, flags: 0x2
+```
+
+Measured on this board (31 GiB RAM, `6.1.115-vendor-rk35xx`) with a flow-matching DiT estimator
+compiled at fixed `S=900`, `S=1100` and `S=2000`, fp16, `optimization_level=3`: the requests are
+4.71 GB, 4.66 GB and 5.77 GB, and all three fail. It is not host memory (`MemTotal 32 GiB`;
+`CmaTotal 256 MiB` is not the pool the driver runs out of), and it is not the multicore workspace -
+`AUDIOCPP_RKNN_CORE_MASK=1` and `=7` fail identically, so the request is the engine's own mapping.
+The request grows with `S`, so the ceiling is a length ceiling for this shape: the same estimator
+loads and runs at `S<=500`, and above the ceiling the only path is the CPU graph, which costs the
+same `S^2` it always did (1378 frames: 186.7 s of estimator for 26.9 s of audio).
+
+Three consequences for anyone extending this path:
+
+- Engine size is a design constraint, not a download-size constraint. The three shipped sidecars sit
+  at 20-260 MB per engine and never approach the ceiling. A graph whose intermediates grow with the
+  sequence length - attention at fixed `S`, so S^2 - reaches it in the low hundreds of frames, long
+  before the weight set does.
+- A ladder of engines has to be lazy and single-resident. Four engines that each load on their own
+  fail at `rknn_init` when all four are resident at once, so the runtime keeps exactly one loaded
+  and swaps on demand.
+- The failure is at init, so it is cheap to detect and cannot corrupt output: `rknn_init` returns -4
+  and dmesg names the byte count.
+
 ## What this path is not for
 
 The talker and the code predictor stay on the CPU. Moving the code predictor to the same NPU was
