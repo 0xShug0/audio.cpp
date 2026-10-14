@@ -174,6 +174,12 @@
         "description": "Release cached runtime graphs after each request to reduce peak VRAM; default false.",
         "required": false,
         "default": false
+      },
+      {
+        "name": "rknn_flow",
+        "type": "path",
+        "description": "Rockchip NPU (RKNN) flow estimator engines, comma-separated, one per compiled sequence length (tools/rknn/prepare_cosyvoice3_rknn_flow.py). An utterance longer than the largest engine runs the CPU graph.",
+        "required": false
       }
     ],
     "load": []

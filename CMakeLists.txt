@@ -2473,6 +2473,7 @@ audiocpp_add_model(cosyvoice3
         src/models/cosyvoice3/flow.cpp
         src/models/cosyvoice3/frontend.cpp
         src/models/cosyvoice3/hift.cpp
+        src/models/cosyvoice3/rknn_flow.cpp
         src/models/cosyvoice3/session.cpp
         src/models/cosyvoice3/tokenizer_text.cpp
     INCLUDES

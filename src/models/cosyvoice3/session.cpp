@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace engine::models::cosyvoice3 {
 namespace {
@@ -49,8 +50,27 @@ std::string instruction_text(const runtime::TaskRequest & request) {
     return runtime::find_option(request.options, {"instruct", "instruction"}).value_or("");
 }
 
-std::vector<runtime::TaskRequest> split_request(const runtime::TaskRequest & request) {
-    const int64_t text_chunk_size =
+// The NPU sidecar takes a ladder of compiled engines in one option, comma-separated: which lengths
+// get an engine is a deployment choice (each one is ~700 MB and covers one sequence length), and a
+// list-typed session option would be a schema feature for one consumer.
+std::vector<std::string> split_paths(const std::string & value) {
+    std::vector<std::string> out;
+    size_t start = 0;
+    while (start <= value.size()) {
+        const auto end = value.find(',', start);
+        const auto stop = end == std::string::npos ? value.size() : end;
+        if (stop > start) {
+            out.push_back(value.substr(start, stop - start));
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return out;
+}
+
+std::vector<runtime::TaskRequest> split_request(const runtime::TaskRequest & request) {    const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
     if (text_chunk_size <= 0) {
         throw std::runtime_error("CosyVoice3 text_chunk_size must be positive");
@@ -87,6 +107,10 @@ CosyVoice3Session::CosyVoice3Session(
     auto validation_options = options;
     // This previously advertised option never selected convolution storage.
     validation_options.options.erase("cosyvoice3.conv_weight_type");
+    // A published GGUF package embeds its own model spec, so an option added to
+    // model_specs/cosyvoice3.json is invisible to a package built before it. The NPU estimator
+    // option is therefore also accepted by name (kokoro_tts does the same).
+    validation_options.options.erase("cosyvoice3.rknn_flow");
     runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
     if (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("CosyVoice3 supports tts and clone tasks");
@@ -132,12 +156,17 @@ CosyVoice3Session::CosyVoice3Session(
         graph_arena_bytes,
         weight_context_bytes,
         storage_type);
+    // The Rockchip NPU sidecar for the flow estimator: one compiled engine per sequence length,
+    // loaded up front because an engine takes seconds to init and the ODE loop needs it per step.
+    const std::vector<std::string> rknn_flow_engines = split_paths(
+        runtime::find_option(options.options, {"cosyvoice3.rknn_flow"}).value_or(""));
     flow_ = std::make_unique<CosyVoice3DiTFlowRuntime>(
         assets_,
         execution_context(),
         graph_arena_bytes,
         weight_context_bytes,
-        storage_type);
+        storage_type,
+        rknn_flow_engines);
     hift_ = std::make_unique<CosyVoice3HiftRuntime>(
         assets_,
         execution_context(),

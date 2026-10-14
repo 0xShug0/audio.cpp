@@ -31,7 +31,8 @@ public:
         engine::core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        engine::assets::TensorStorageType storage_type);
+        engine::assets::TensorStorageType storage_type,
+        const std::vector<std::string> & rknn_engine_paths = {});
     ~CosyVoice3DiTFlowRuntime();
 
     CosyVoice3DiTFlowRuntime(const CosyVoice3DiTFlowRuntime &) = delete;
