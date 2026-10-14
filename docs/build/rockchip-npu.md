@@ -482,9 +482,26 @@ model's latent channel count and its samples-per-frame hop at init.
 Streaming gains more than offline because the ggml streaming decoder re-voices the left-context
 tokens in every window, while the stateful model voices each token once.
 
-Quality: offline ggml-vs-RKNN output SNR 27 dB, with the per-second dips confined to
-near-silence (the fp16 noise floor), and no discontinuity at the group boundaries. The two
-batch sizes agree to 57 dB.
+Quality, split by what varies, because the numbers below are not comparable to each other and one
+of the rows is not about the NPU at all:
+
+| pair | SNR | envelope corr |
+|---|---|---|
+| backend, offline, 185 chars | 27 dB | - |
+| backend, offline, 307 chars | 25.1 dB | 0.9999 |
+| backend, streaming, 307 chars | 16.4 dB | 0.9988 |
+| backend, RKNN B=16 vs B=64 | 57 dB | - |
+| mode, same backend (streaming vs offline), 307 chars | -2.2 dB | 0.187 |
+
+The last row is not a sidecar cost. It measures the same on the CPU graph path (-2.24 dB on CPU
+against -2.23 dB on RKNN, one binary, one voice reference, `seed=42`, `conv_weight_type=f16`, 307
+Russian characters), so it is the streaming mode, not the NPU. Cross-correlation alignment moves it
+by 0.1 dB at a -120 ms lag, so it is not a time shift either: the 20 ms RMS envelope correlation of
+0.187 says the prosody and timing diverge across the whole phrase, which is what two valid
+syntheses of one text look like. GigaAM v3 CTC (16 kHz) transcribes all five renders of that matrix
+to the input text exactly (CER 0.00%). The backend rows are the same signal: in the offline row the
+per-second dips are confined to near-silence (the fp16 noise floor) and there is no discontinuity
+at the group boundaries.
 
 ### Piper, measured on the same board
 
