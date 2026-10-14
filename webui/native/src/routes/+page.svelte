@@ -339,6 +339,8 @@
     audio_flamingo: 'Audio Flamingo', owsm: 'OWSM', owsm_ctc: 'OWSM-CTC',
     reuse: 'RE-USE', sidon: 'Sidon', smart_turn: 'Smart Turn',
     gigaam_asr: 'GigaAM ASR',
+    ced: 'CED',
+    firered_vad: 'FireRed VAD',
     samsone: 'SAMSONE',
     sam_audio: 'SAM Audio',
     builtin_audio_utils: 'Audio utilities',
@@ -492,7 +494,7 @@
     selected?.family === 'midashenglm_gen';
   $: supportsTextOnlyTts = (
     selected?.family === 'breeze_tts' ||
-    selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1' || selected?.family === 'kugelaudio' ||
+    selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1' || selected?.family === 'kugelaudio' || selected?.family === 'voxtral_tts' ||
     (selected?.family === 'lfm2_audio' && !selected?.builtin_voices?.length)
   ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi', 'turn', 'wake', 'cls'].includes(selected?.task) ||
@@ -507,7 +509,7 @@
   $: usesBuiltInVoiceSelector = Boolean(selected?.builtin_voices?.length);
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
-  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task) && !['auk', 'maya1', 'moss_ttsd'].includes(selected?.family);
+  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task) && !['auk', 'maya1', 'moss_ttsd', 'voxtral_tts'].includes(selected?.family);
   $: referenceVoiceRequired = !(allowsQuickStartVoice && quickStartVoice) && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
@@ -1098,7 +1100,7 @@
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     if (selected?.family in asrTokenDefaults) asrMaxTokens = asrTokenDefaults[selected.family];
     if (selected?.family === 'confucius4_r2t2') language = 'Auto';
-    else if (['owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'smart_turn', 'reuse', 'sidon'].includes(selected?.family)) language = '';
+    else if (['owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'smart_turn', 'reuse', 'sidon', 'hviske_asr_v6', 'voxtral_tts'].includes(selected?.family)) language = '';
     else if (selected?.family in asrLanguages) language = 'en';
     if (selected?.family === 'minimax_h3') {
       duration = 15;
@@ -1368,6 +1370,7 @@
       .filter(([name, value]) => {
         const spec = paramSpecs.find((candidate) => candidate.name === name);
         if (spec?.scope === 'session') return false;
+        if (value === '' && spec && spec.default === undefined) return false;
         if (selected?.family === 'canary_asr' && name === 'target_language' && value === '') return false;
         if (selected?.family === 'universr' && name === 'input_sample_rate' && value === '') return false;
         if (selected?.family === 'auk' && typeof value === 'string' && value.trim().length === 0) return false;
@@ -2092,7 +2095,7 @@
             seed: chunkSeed(resolvedSeed, index),
             options
           };
-          if (supportsMaxTokens(selected) && selected.family !== 'kugelaudio') body.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected) && !['kugelaudio', 'voxtral_tts'].includes(selected.family)) body.max_tokens = maxTokens;
           if (voiceRef) body.voice_ref = voiceRef;
           else if (quickStartVoice) body.voice = demoVoiceSources[quickStartVoice] || quickStartVoice;
           else if (selected.default_voice) body.voice = selected.default_voice;
@@ -2806,7 +2809,7 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'sidon'].includes(selected.family)}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'sidon', 'hviske_asr_v6', 'voxtral_tts'].includes(selected.family)}
             <div>
               <label for="language">{tr('request.language')} {#if !asrLanguages[selected.family]}<span>{tr('request.autoLanguage')}</span>{/if}</label>
               {#if ['moss_ttsd', 'moss_voicegen'].includes(selected.family)}
@@ -2826,7 +2829,7 @@
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
             </div>
           {/if}
-          {#if supportsMaxTokens(selected) && !['kugelaudio', 'crisperwhisper', 'audio_flamingo', 'owsm'].includes(selected.family)}
+          {#if supportsMaxTokens(selected) && !['kugelaudio', 'crisperwhisper', 'audio_flamingo', 'owsm', 'hviske_asr_v6', 'voxtral_tts'].includes(selected.family)}
             <div>
               <label for="tokens">{tr('request.maxTokens')}</label>
               {#if selected.family in asrTokenDefaults}

@@ -54,7 +54,9 @@ const exposeAllGgufPackageFamilies = new Set([
   'kokoro_tts',
   'meanvc2',
   'midashenglm_gen',
-  'sanotts'
+  'sanotts',
+  'mossformer2',
+  'voxtral_tts'
 ]);
 
 const hanCharacters = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u;
