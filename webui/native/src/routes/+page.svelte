@@ -40,6 +40,7 @@
   import Arena from './Arena.svelte';
   import Configuration from './Configuration.svelte';
   import ModelLibrary from './ModelLibrary.svelte';
+  import VoiceLibrary from './VoiceLibrary.svelte';
   import { loadUiConfiguration, uiConfiguration, uiConfigurationError } from '$lib/configuration';
   import type {
     AudioOutput,
@@ -57,7 +58,8 @@
   } from '$lib/voices';
   import '../app.css';
 
-  let tab: 'studio' | 'arena' | 'models' | 'logs' | 'configuration' = 'studio';
+  let tab: 'studio' | 'arena' | 'models' | 'logs' | 'configuration' | 'voices' = 'studio';
+  let voiceLibrary: VoiceLibrary | null = null;
   let arenaComponent: { runArena: () => Promise<void> } | null = null;
   let selectedId = catalog[0]?.id || '';
   let selected: CatalogEntry = catalog[0];
@@ -904,6 +906,7 @@
   }
 
   function openModelsPage() {
+    if (tab === 'voices' && !voiceLibrary?.canClose()) return;
     if (!server?.ui_management) {
       tab = 'studio';
       status = 'Model management is disabled for this configured server.';
@@ -991,7 +994,9 @@
   }
 
   async function openStudioPage() {
+    if (tab === 'voices' && !voiceLibrary?.canClose()) return;
     tab = 'studio';
+    await refreshVoices();
     await refresh();
     if (server?.ui_management) {
       await refreshPackageSizes();
@@ -2269,6 +2274,7 @@
   }
 
   function handleShortcut(event: KeyboardEvent) {
+    if (tab === 'voices') return;
     if (event.key === 'Escape' && folderBrowserOpen) {
       folderBrowserOpen = false;
       return;
@@ -2278,6 +2284,12 @@
       if (tab === 'arena') arenaComponent?.runArena();
       else run();
     }
+  }
+
+  function openPage(next: typeof tab) {
+    if (next === tab) return;
+    if (tab === 'voices' && !voiceLibrary?.canClose()) return;
+    tab = next;
   }
 
   async function refreshInstallJobs() {
@@ -2598,13 +2610,15 @@
   </div>
   <nav aria-label={tr('nav.primary')}>
     <button class:active={tab === 'studio'} on:click={openStudioPage}>{tr('nav.studio')}</button>
-    <button class:active={tab === 'arena'} on:click={() => tab = 'arena'}>{tr('nav.arena')}</button>
+    <button class:active={tab === 'arena'} on:click={() => openPage('arena')}>{tr('nav.arena')}</button>
+    <button class:active={tab === 'voices'} disabled={running || restoringHistory || Boolean(recorder) || liveRecording}
+      on:click={() => openPage('voices')}>Voices</button>
     {#if server?.ui_management !== false}
       <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
     {/if}
-    <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>{tr('nav.runtime')}</button>
+    <button class:active={tab === 'logs'} on:click={() => openPage('logs')}>{tr('nav.runtime')}</button>
     <button class:active={tab === 'configuration'} disabled={restoringHistory}
-      on:click={() => tab = 'configuration'}>Configuration</button>
+      on:click={() => openPage('configuration')}>Configuration</button>
   </nav>
   <label class="language-picker">
     <span>{tr('language.label')}</span>
@@ -3181,6 +3195,16 @@
         tab = 'studio';
       }}
     />
+  {:else if tab === 'voices'}
+    <VoiceLibrary bind:this={voiceLibrary} onchange={async () => {
+      await refreshVoices();
+      if (savedVoiceId && !savedVoices.some(voice => voice.id === savedVoiceId)) savedVoiceId = '';
+    }} ontext={async (voice) => {
+      await refreshVoices();
+      chooseWorkflow('tts');
+      chooseSavedVoice(voice.id);
+      tab = 'studio';
+    }}/>
   {:else if tab === 'configuration'}
     <Configuration />
   {:else}
