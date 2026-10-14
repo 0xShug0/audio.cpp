@@ -41,7 +41,7 @@ For the Q2 expert package:
 ```powershell
 uv run --no-project --python 3.12 --with huggingface_hub hf download `
   Jmica/Drama-3-GGUF drama-3-experts-q2_k-backbone-q8_0.gguf `
-  --local-dir models\drama-3
+  --local-dir models\Drama-3-GGUF
 ```
 
 The model manager also lists all four packages:
@@ -100,7 +100,7 @@ CPU PyTorch dependencies managed by uv and does not load weights onto a GPU.
 ```powershell
 .\build\windows-cuda-release\bin\audiocpp_cli.exe `
   --task tts --family fish_drama3 --backend cuda --mode streaming `
-  --model models\drama-3\drama-3-experts-q2_k-backbone-q8_0.gguf `
+  --model models\Drama-3-GGUF\drama-3-experts-q2_k-backbone-q8_0.gguf `
   --text 'A quick test of Drama Three on Windows.' `
   --max-tokens 500 --seed 123 --threads 8 `
   --session-option fish_drama3.cpu_expert_layers=8 `
@@ -135,7 +135,7 @@ Save the following as `drama3-server.json` in the repository root:
   "models": [{
     "id": "drama-3",
     "family": "fish_drama3",
-    "path": "models/drama-3/drama-3-experts-q2_k-backbone-q8_0.gguf",
+    "path": "models/Drama-3-GGUF/drama-3-experts-q2_k-backbone-q8_0.gguf",
     "task": "tts",
     "mode": "streaming",
     "session_options": {
