@@ -1,15 +1,14 @@
 #include "engine/community_models/piper_tts/rknn_decoder.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/rknn/engine.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <fstream>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -40,28 +39,9 @@ constexpr int64_t kDepopCompare = 24;
 constexpr int64_t kDepopSearch = 44;
 
 #if defined(ENGINE_HAVE_RKNN)
-std::string rknn_status(const char * what, int code) {
-    std::ostringstream out;
-    out << "Piper TTS decoder RKNN: " << what << " failed with code " << code;
-    return out.str();
-}
-
-std::vector<char> read_file(const std::string & path) {
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
-    if (!in) {
-        throw std::runtime_error("Piper TTS decoder RKNN: cannot open model " + path);
-    }
-    const auto size = in.tellg();
-    if (size <= 0) {
-        throw std::runtime_error("Piper TTS decoder RKNN: model " + path + " is empty");
-    }
-    std::vector<char> data(static_cast<size_t>(size));
-    in.seekg(0);
-    if (!in.read(data.data(), size)) {
-        throw std::runtime_error("Piper TTS decoder RKNN: short read on " + path);
-    }
-    return data;
-}
+// Prefix of every message this sidecar raises, and the label the shared engine
+// plumbing stamps on the ones it raises on its behalf.
+constexpr const char * kLabel = "Piper TTS decoder RKNN";
 #endif
 
 }  // namespace
@@ -69,71 +49,38 @@ std::vector<char> read_file(const std::string & path) {
 struct PiperTtsRknnDecoder::Impl {
     int64_t window = 0;
 #if defined(ENGINE_HAVE_RKNN)
-    rknn_context ctx = 0;
+    engine::rknn::Engine engine;
     int64_t step = 0;  // audio samples per latent slice
-    uint32_t input_count = 0;
     std::vector<float> latent;  // [channels][window]
     std::vector<float> mask;    // [window]
     std::vector<float> global;  // the voice's g input, zero (single-speaker Piper)
     std::vector<float> audio;
 
-    ~Impl() {
-        if (ctx != 0) {
-            rknn_destroy(ctx);
-        }
-    }
-
     void load(const std::string & path, int64_t channels, int64_t samples_per_slice) {
-        auto model = read_file(path);
-        const int ret = rknn_init(&ctx, model.data(), static_cast<uint32_t>(model.size()), 0, nullptr);
-        if (ret != 0) {
-            throw std::runtime_error(rknn_status("rknn_init", ret));
-        }
-        // AUTO lets the driver pick, and for a graph this small it picks one core
-        // (/sys/kernel/debug/rknpu/load stays at 100/0/0). Ask for all three by name.
-        if (const int m = rknn_set_core_mask(ctx, RKNN_NPU_CORE_0_1_2); m != 0) {
-            debug::timing_log_scalar("piper_tts.decoder.rknn.core_mask_ret", m);
-            if (const int a = rknn_set_core_mask(ctx, RKNN_NPU_CORE_AUTO); a != 0) {
-                debug::timing_log_scalar("piper_tts.decoder.rknn.core_mask_auto_ret", a);
-            }
-        }
+        // The shared engine reads the image, inits the context, picks the cores
+        // (all three by name, AUTO fallback, AUDIOCPP_RKNN_CORE_MASK override) and
+        // caches every input/output attribute.
+        engine.load(path, kLabel);
 
-        rknn_input_output_num io_num{};
-        if (const int q = rknn_query(ctx, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num)); q != 0) {
-            throw std::runtime_error(rknn_status("rknn_query(io_num)", q));
-        }
-        if (io_num.n_input < 2 || io_num.n_output != 1) {
+        if (engine.input_count() < 2 || engine.output_count() != 1) {
             throw std::runtime_error(
                 "Piper TTS decoder RKNN: expected the decoder slice (z + y_mask, plus g for a "
                 "multi-speaker voice), got " +
-                std::to_string(io_num.n_input) + " inputs / " +
-                std::to_string(io_num.n_output) + " outputs");
+                std::to_string(engine.input_count()) + " inputs / " +
+                std::to_string(engine.output_count()) + " outputs");
         }
-        input_count = io_num.n_input;
-        rknn_tensor_attr input{};
-        input.index = 0;
-        if (const int q = rknn_query(ctx, RKNN_QUERY_INPUT_ATTR, &input, sizeof(input)); q != 0) {
-            throw std::runtime_error(rknn_status("rknn_query(input_attr)", q));
-        }
-        rknn_tensor_attr mask_attr{};
-        mask_attr.index = 1;
-        if (const int q = rknn_query(ctx, RKNN_QUERY_INPUT_ATTR, &mask_attr, sizeof(mask_attr));
-            q != 0) {
-            throw std::runtime_error(rknn_status("rknn_query(input_attr)", q));
-        }
-        rknn_tensor_attr output{};
-        output.index = 0;
-        if (const int q = rknn_query(ctx, RKNN_QUERY_OUTPUT_ATTR, &output, sizeof(output)); q != 0) {
-            throw std::runtime_error(rknn_status("rknn_query(output_attr)", q));
-        }
+        const rknn_tensor_attr & input = engine.input_attr(0);
+        const rknn_tensor_attr & mask_attr = engine.input_attr(1);
+        const rknn_tensor_attr & output = engine.output_attr(0);
         debug::timing_log_scalar(
             "piper_tts.decoder.rknn.io",
             std::string(input.name) + " type=" + std::to_string(input.type) +
                 " elems=" + std::to_string(input.n_elems) +
                 " + " + std::string(mask_attr.name) +
                 " elems=" + std::to_string(mask_attr.n_elems) +
-                (io_num.n_input > 2
-                    ? " + g elems=" + std::to_string(global_elems()) : std::string{}) +
+                (engine.input_count() > 2
+                    ? " + g elems=" + std::to_string(engine.input_attr(2).n_elems)
+                    : std::string{}) +
                 " -> " + std::string(output.name) + " elems=" + std::to_string(output.n_elems));
         if (std::string(input.name) != "z" || std::string(mask_attr.name) != "y_mask") {
             throw std::runtime_error(
@@ -177,26 +124,11 @@ struct PiperTtsRknnDecoder::Impl {
         }
         latent.assign(static_cast<size_t>(channels * window), 0.0F);
         mask.assign(static_cast<size_t>(window), 0.0F);
-        if (io_num.n_input > 2) {
-            rknn_tensor_attr global_attr{};
-            global_attr.index = 2;
-            if (const int q = rknn_query(
-                    ctx, RKNN_QUERY_INPUT_ATTR, &global_attr, sizeof(global_attr)); q != 0) {
-                throw std::runtime_error(rknn_status("rknn_query(input_attr)", q));
-            }
-            global.assign(static_cast<size_t>(global_attr.n_elems), 0.0F);
+        if (engine.input_count() > 2) {
+            global.assign(static_cast<size_t>(engine.input_attr(2).n_elems), 0.0F);
         }
         audio.assign(static_cast<size_t>(output.n_elems), 0.0F);
         debug::timing_log_scalar("piper_tts.decoder.rknn.window", window);
-    }
-
-    uint32_t global_elems() {
-        rknn_tensor_attr attr{};
-        attr.index = 2;
-        if (rknn_query(ctx, RKNN_QUERY_INPUT_ATTR, &attr, sizeof(attr)) != 0) {
-            return 0;
-        }
-        return attr.n_elems;
     }
 
     // One window: `slice_count` slices of `source` (row-major [channels][frames]) starting at
@@ -221,50 +153,32 @@ struct PiperTtsRknnDecoder::Impl {
         std::fill(mask.begin(), mask.end(), 0.0F);
         std::fill_n(mask.begin(), static_cast<size_t>(slice_count), 1.0F);
 
-        std::vector<rknn_input> inputs(static_cast<size_t>(input_count));
-        for (size_t index = 0; index < inputs.size(); ++index) {
-            inputs[index] = {};
-            inputs[index].index = static_cast<uint32_t>(index);
-            // The buffer is fp32 and pass_through = 0, so the width is the element count
-            // times sizeof(float); INPUT_ATTR.size reports the native (fp16) width and is
-            // not the expected size here (same as the qwen3_tts sidecar).
-            inputs[index].type = RKNN_TENSOR_FLOAT32;
-            inputs[index].fmt = RKNN_TENSOR_UNDEFINED;
-            inputs[index].pass_through = 0;
+        // The buffers are fp32 and pass_through = 0, so each size is the element count
+        // times sizeof(float); the engine's native (fp16) width is not the expected
+        // size here (same as the qwen3_tts sidecar).
+        std::vector<engine::rknn::Input> inputs;
+        inputs.push_back(
+            {0, latent.data(), static_cast<uint32_t>(latent.size() * sizeof(float)),
+             RKNN_TENSOR_FLOAT32, 0});
+        inputs.push_back(
+            {1, mask.data(), static_cast<uint32_t>(mask.size() * sizeof(float)),
+             RKNN_TENSOR_FLOAT32, 0});
+        if (engine.input_count() > 2) {
+            inputs.push_back(
+                {2, global.data(), static_cast<uint32_t>(global.size() * sizeof(float)),
+                 RKNN_TENSOR_FLOAT32, 0});
         }
-        inputs[0].buf = latent.data();
-        inputs[0].size = static_cast<uint32_t>(latent.size() * sizeof(float));
-        inputs[1].buf = mask.data();
-        inputs[1].size = static_cast<uint32_t>(mask.size() * sizeof(float));
-        if (inputs.size() > 2) {
-            inputs[2].buf = global.data();
-            inputs[2].size = static_cast<uint32_t>(global.size() * sizeof(float));
-        }
-        if (const int r = rknn_inputs_set(ctx, input_count, inputs.data()); r != 0) {
-            throw std::runtime_error(rknn_status("rknn_inputs_set", r));
-        }
-        if (const int r = rknn_run(ctx, nullptr); r != 0) {
-            throw std::runtime_error(rknn_status("rknn_run", r));
-        }
-        rknn_output out{};
-        out.index = 0;
-        out.is_prealloc = 0;
-        out.want_float = 1;
-        if (const int r = rknn_outputs_get(ctx, 1, &out, nullptr); r != 0) {
-            throw std::runtime_error(rknn_status("rknn_outputs_get", r));
-        }
-        const auto * data = static_cast<const float *>(out.buf);
-        const size_t count = std::min(audio.size(), static_cast<size_t>(out.size / sizeof(float)));
-        std::copy_n(data, count, audio.begin());
-        rknn_outputs_release(ctx, 1, &out);
+        std::vector<std::vector<float>> outputs;
+        engine.run(inputs, outputs);
+        const std::vector<float> & out = outputs[0];
+        const size_t count = std::min(audio.size(), out.size());
+        std::copy_n(out.begin(), count, audio.begin());
         if (count != audio.size()) {
             throw std::runtime_error(
                 "Piper TTS decoder RKNN: window returned " + std::to_string(count) +
                 " samples, expected " + std::to_string(audio.size()));
         }
     }
-#else
-    ~Impl() = default;
 #endif
 };
 
