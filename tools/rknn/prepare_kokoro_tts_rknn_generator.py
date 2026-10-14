@@ -27,9 +27,9 @@ padded-window gate checks the windowed decode against the full-length one.
 
 Two venvs: the export stage needs torch, the conversion stage needs rknn-toolkit2.
 
-    <export-venv>/bin/python tools/prepare_kokoro_tts_rknn_generator.py \
+    <export-venv>/bin/python tools/rknn/prepare_kokoro_tts_rknn_generator.py \
       --checkpoint kokoro-v1_0.pth --config config.json --frames 512 --skip-rknn
-    <converter-venv>/bin/python tools/prepare_kokoro_tts_rknn_generator.py \
+    <converter-venv>/bin/python tools/rknn/prepare_kokoro_tts_rknn_generator.py \
       --onnx generator_w512.onnx --target rk3588
 """
 from __future__ import annotations

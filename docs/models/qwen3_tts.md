@@ -191,7 +191,7 @@ optional first-group model runs the first token group at a smaller compiled
 batch; the cache layout is batch-independent, so its cache feeds the main
 model directly. A `.rknn` is compiled per SoC and is not portable between
 chips. Build the file with
-[`tools/prepare_qwen3_tts_rknn_vocoder.py`](../../tools/prepare_qwen3_tts_rknn_vocoder.py)
+[`tools/rknn/prepare_qwen3_tts_rknn_vocoder.py`](../../tools/rknn/prepare_qwen3_tts_rknn_vocoder.py)
 and see [the Rockchip NPU build guide](../build/rockchip-npu.md) for the toolkit
 venv, the measured numbers, and the limits of this path. This path is opt-in
 and validated only on RK3588.

@@ -14,9 +14,9 @@ decoder that expects post-flow samples and feeds it pre-flow ones, which is quie
 Two stages, usually in two venvs (the slice/check needs onnx + onnxruntime, the conversion needs
 rknn-toolkit2 with its own pinned torch/onnx):
 
-    <venv>/bin/python tools/prepare_piper_tts_rknn_vocoder.py \
+    <venv>/bin/python tools/rknn/prepare_piper_tts_rknn_vocoder.py \
         --voice-onnx en_US-lessac-medium.onnx --skip-rknn --output decoder_z.onnx
-    <rknn-venv>/bin/python tools/prepare_piper_tts_rknn_vocoder.py \
+    <rknn-venv>/bin/python tools/rknn/prepare_piper_tts_rknn_vocoder.py \
         --onnx decoder_z.onnx --target rk3588
 
 The window contract (window 93 latent slices, 45 emitted + 24+24 real context, zero-padded and

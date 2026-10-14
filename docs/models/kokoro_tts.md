@@ -177,7 +177,7 @@ RSS. The producer, the runtime and the engine contract carry no code for it.
 Convert from the official `hexgrad/Kokoro-82M` source checkout:
 
 ```bash
-python tools/prepare_kokoro_gguf.py \
+python tools/models/prepare_kokoro_gguf.py \
   --source /path/to/Kokoro-82M \
   --output-dir /path/to/Kokoro-82M-GGUF \
   --type both \
@@ -187,7 +187,7 @@ python tools/prepare_kokoro_gguf.py \
 For a fully bundled local multilingual package with eSpeak data and UniDic:
 
 ```bash
-python tools/prepare_kokoro_gguf.py \
+python tools/models/prepare_kokoro_gguf.py \
   --source /path/to/Kokoro-82M \
   --output-dir /path/to/Kokoro-82M-GGUF \
   --type both \

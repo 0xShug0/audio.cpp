@@ -5,10 +5,10 @@ Produces the BF16/Q8_0/Q4_K GGUFs named by `model_specs/vibevoice_asr_streaming.
 for either size, and can create the Hugging Face repo and upload them.
 
   # convert only, into ./out
-  tools/prepare_vibevoice_asr_streaming_gguf.py --size 1.5b --out out
+  tools/models/prepare_vibevoice_asr_streaming_gguf.py --size 1.5b --out out
 
   # convert, check each package transcribes, then publish
-  tools/prepare_vibevoice_asr_streaming_gguf.py --size 1.5b --out out \
+  tools/models/prepare_vibevoice_asr_streaming_gguf.py --size 1.5b --out out \
       --verify-with build/bin/audiocpp_cli \
       --upload audio-cpp/VibeVoice-ASR-Streaming-1.5B-GGUF
 
@@ -41,7 +41,7 @@ FAMILY = "vibevoice_asr_streaming"
 def find_converter(explicit):
     if explicit:
         return pathlib.Path(explicit)
-    root = pathlib.Path(__file__).resolve().parent.parent
+    root = pathlib.Path(__file__).resolve().parents[2]
     found = sorted(root.glob("build*/bin/audiocpp_gguf")) + sorted(root.glob("build*/*/bin/audiocpp_gguf"))
     if not found:
         sys.exit("no audiocpp_gguf found under build*/; pass --gguf, or build the "
@@ -106,7 +106,7 @@ def verify(cli, output, assets, backend):
     activations differently upstream (Q8_K/Q8_0 against Q8_1), so a quantized package
     scores differently on each, and an unlabelled WER number is not interpretable.
     """
-    harness = pathlib.Path(__file__).resolve().parent / "asr_wer.py"
+    harness = pathlib.Path(__file__).resolve().parents[1] / "asr_wer.py"
     command = [sys.executable, str(harness), "--cli", str(cli), "--family", FAMILY,
                "--model", str(output), "--backend", backend,
                "--label", f"{output.stem} [{backend}]"]

@@ -6,10 +6,16 @@ The default package is `MicroWakeWord-GGUF/micro-wake-word-okay-nabu-f32.gguf`
 under `audio-cpp/audio.cpp-gguf`. It is self-contained, including the model
 configuration and spec. Only F32 is packaged.
 
+The default [Okay Nabu checkpoint](https://github.com/esphome/micro-wake-word-models/blob/main/models/v2/okay_nabu.json)
+is Apache-2.0 licensed. Upstream explicitly includes the trained weights and
+manifests in its [license scope](https://github.com/esphome/micro-wake-word-models#license).
+Retain its LICENSE and [NOTICE](https://github.com/esphome/micro-wake-word-models/blob/main/NOTICE)
+when redistributing; other converted models may have different licenses.
+
 Convert a model with its published manifest:
 
 ```bash
-conda run -n qwen3-tts python tools/models/micro_wake_word/convert_tflite_to_gguf.py \
+conda run -n qwen3-tts python tools/models/convert_micro_wake_word_gguf.py \
   model.tflite model.gguf --manifest model.json
 ```
 

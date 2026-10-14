@@ -15,7 +15,7 @@ import onnx
 from safetensors.numpy import save_file
 
 
-REPO = Path(__file__).resolve().parents[3]
+REPO = Path(__file__).resolve().parents[2]
 
 
 def load_zipformer_converter():

@@ -13,6 +13,7 @@
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
+| MossFormer2 | `mossformer2` | `sep` | [MossFormer2](models/mossformer2.md) |
 | MuScriptor | `muscriptor` | audio to MIDI/events | [MuScriptor](#muscriptor) |
 | PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
 | RE-USE | `reuse` | `s2s` speech restoration | [RE-USE](models/reuse.md) |
@@ -22,6 +23,7 @@
 | SheetSage2 | `sheetsage2` | `midi` audio to ABC score | [SheetSage2](#sheetsage2) |
 | Sidon | `sidon` | `s2s` single-speaker speech restoration | [Sidon](models/sidon.md) |
 | Smart Turn v3.2 | `smart_turn` | `turn` completion detection | [Smart Turn](models/smart_turn.md) |
+| TF-GridNet | `tf_gridnet` | `sep` | [TF-GridNet](models/tf_gridnet.md) |
 | Tone Color VC | `tone_color_vc` | `vc` | [Tone Color VC](models/tone_color_vc.md) |
 | UniverSR | `universr` | `s2s` audio/speech super-resolution | [UniverSR](models/universr.md) |
 | VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |

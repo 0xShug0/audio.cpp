@@ -239,7 +239,7 @@ if __name__ == '__main__':
     p.add_argument('--source', type=Path, required=True)
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--model-spec', type=Path,
-                   default=Path(__file__).resolve().parents[1] / 'model_specs' / 'kokoro_tts.json')
+                   default=Path(__file__).resolve().parents[2] / 'model_specs' / 'kokoro_tts.json')
     p.add_argument('--embed-multilingual-resources', action='store_true')
     p.add_argument('--overwrite', action='store_true')
     p.add_argument('--type', choices=['q8_0', 'bf16', 'both'], default='both')

@@ -24,10 +24,10 @@ On Python 3.12 the 2.3.2 converter additionally needs ``setuptools<81`` and an `
 shim inside the venv's onnx package; see docs/build/rockchip-npu.md.
 
 Usage:
-  python3 tools/prepare_qwen3_tts_rknn_vocoder.py --model-dir ~/.cache/huggingface/hub/\\
+  python3 tools/rknn/prepare_qwen3_tts_rknn_vocoder.py --model-dir ~/.cache/huggingface/hub/\\
       models--Qwen--Qwen3-TTS-12Hz-0.6B-Base/snapshots/<sha> --codes-length 64
-  python3 tools/prepare_qwen3_tts_rknn_vocoder.py --model-dir <dir> --codes-length 16
-  python3 tools/prepare_qwen3_tts_rknn_vocoder.py --model-dir <dir> --skip-rknn   # ONNX only
+  python3 tools/rknn/prepare_qwen3_tts_rknn_vocoder.py --model-dir <dir> --codes-length 16
+  python3 tools/rknn/prepare_qwen3_tts_rknn_vocoder.py --model-dir <dir> --skip-rknn   # ONNX only
 """
 
 import argparse

@@ -68,8 +68,8 @@ the `Qwen/Qwen3-TTS-12Hz-0.6B-Base` checkpoint (the `speech_tokenizer` subdirect
 weights the GGUF package was converted from):
 
 ```bash
-python3 tools/prepare_qwen3_tts_rknn_vocoder.py --model-dir <snapshot-dir> --codes-length 64
-python3 tools/prepare_qwen3_tts_rknn_vocoder.py --model-dir <snapshot-dir> --codes-length 16
+python3 tools/rknn/prepare_qwen3_tts_rknn_vocoder.py --model-dir <snapshot-dir> --codes-length 64
+python3 tools/rknn/prepare_qwen3_tts_rknn_vocoder.py --model-dir <snapshot-dir> --codes-length 16
 ```
 
 Each run re-traces the decoder as one fixed-shape streaming step, checks the stepwise decode
@@ -84,9 +84,9 @@ The two stages want different toolchains (the export needs the model package, th
 the toolkit's pinned `torch`/`onnx`), so run them in the two venvs and hand the ONNX over:
 
 ```bash
-<export-venv>/bin/python tools/prepare_qwen3_tts_rknn_vocoder.py \
+<export-venv>/bin/python tools/rknn/prepare_qwen3_tts_rknn_vocoder.py \
   --model-dir <snapshot-dir> --codes-length 64 --skip-rknn --output vocoder_stateful_64.onnx
-<converter-venv>/bin/python tools/prepare_qwen3_tts_rknn_vocoder.py \
+<converter-venv>/bin/python tools/rknn/prepare_qwen3_tts_rknn_vocoder.py \
   --onnx vocoder_stateful_64.onnx --target rk3588
 ```
 
@@ -110,15 +110,15 @@ unsupported.
 
 ### Piper (VITS) decoder
 
-`tools/prepare_piper_tts_rknn_vocoder.py` slices a Piper voice ONNX at the seam the runtime already
+`tools/rknn/prepare_piper_tts_rknn_vocoder.py` slices a Piper voice ONNX at the seam the runtime already
 has — the inverse-flow input `z [1,192,N]` and its frame mask `y_mask [1,1,N]` (plus `g` for a
 multi-speaker voice) — checks the fixed-window decode against a full-length decode, and compiles
 the slice:
 
 ```bash
-<export-venv>/bin/python tools/prepare_piper_tts_rknn_vocoder.py \
+<export-venv>/bin/python tools/rknn/prepare_piper_tts_rknn_vocoder.py \
   --voice-onnx en_US-lessac-medium.onnx --skip-rknn --output decoder_z.onnx
-<converter-venv>/bin/python tools/prepare_piper_tts_rknn_vocoder.py \
+<converter-venv>/bin/python tools/rknn/prepare_piper_tts_rknn_vocoder.py \
   --onnx decoder_z.onnx --target rk3588
 ```
 
@@ -171,7 +171,7 @@ NPU).
 
 ### Kokoro (iSTFTNet) generator
 
-`tools/prepare_kokoro_tts_rknn_generator.py` re-traces the generator the GGUF weights describe
+`tools/rknn/prepare_kokoro_tts_rknn_generator.py` re-traces the generator the GGUF weights describe
 (`decoder.module.generator.*` in `kokoro-v1_0.pth`) at one fixed window and compiles it. The seam
 is the generator alone — `x [1,512,W]`, the harmonic conditioning `har [1,22,60W+1]`, the style
 vector, and the frame mask at the two rates the graph normalizes at, in and out as
@@ -179,10 +179,10 @@ vector, and the frame mask at the two rates the graph normalizes at, in and out 
 CPU:
 
 ```bash
-<export-venv>/bin/python tools/prepare_kokoro_tts_rknn_generator.py \
+<export-venv>/bin/python tools/rknn/prepare_kokoro_tts_rknn_generator.py \
   --checkpoint kokoro-v1_0.pth --config config.json \
   --output-dir artifacts --frames 128 --skip-rknn
-<converter-venv>/bin/python tools/prepare_kokoro_tts_rknn_generator.py \
+<converter-venv>/bin/python tools/rknn/prepare_kokoro_tts_rknn_generator.py \
   --onnx artifacts/generator_w128.onnx --target rk3588
 ```
 
@@ -196,7 +196,7 @@ is not the failure: the RK3566 builds of the three shipping engines log a few hu
 thousand of them (measured: 352 for the Kokoro w128 engine, 355 for the Piper w93 engine, 6570 for
 the Qwen3 B=64 vocoder) and measure clean on the board; the RK3588 build of the Piper w93 engine
 logs none. What kills the engine is the magnitude — `value: 0x7800` is 30720, four times past the
-field, repeated ~800k times. `tools/rknn_build_log.py` is the gate that separates the two regimes:
+field, repeated ~800k times. `tools/rknn/rknn_build_log.py` is the gate that separates the two regimes:
 it captures fds 1/2 around `rknn.build`, because those lines come from the C++ compiler and not from
 Python logging, and aborts past 100 000 lines.
 

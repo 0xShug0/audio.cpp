@@ -51,7 +51,7 @@ def main():
         command = [
             str(args.converter.resolve()), "--input", str(root / "model.safetensors"),
             "--root", str(root), "--family", "ced", "--model-spec",
-            str(Path(__file__).resolve().parents[3] / "model_specs/ced.json"),
+            str(Path(__file__).resolve().parents[2] / "model_specs/ced.json"),
             "--type", args.type, "--output", str(args.output.resolve()),
         ]
         if args.overwrite:

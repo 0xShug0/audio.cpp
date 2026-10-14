@@ -22,7 +22,7 @@ import tflite
 from safetensors.numpy import save_file
 
 
-REPO = Path(__file__).resolve().parents[3]
+REPO = Path(__file__).resolve().parents[2]
 SUPPORTED = {
     "CALL_ONCE", "VAR_HANDLE", "READ_VARIABLE", "ASSIGN_VARIABLE",
     "RESHAPE", "EXPAND_DIMS", "CONCATENATION", "STRIDED_SLICE", "SPLIT_V",

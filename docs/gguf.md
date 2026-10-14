@@ -64,13 +64,16 @@ Status labels:
 |---|---|---|---|---|---|
 | `ace_step` | Done | Pass | --- | Pass (drift) | No (planner sampling can fail) |
 | `apollo` | Done | --- | Pass (drift) | --- | --- |
+| `ast_audioset` | Done | --- | Pass (F32) | --- | --- |
 | `audio_flamingo` | Done | Pass | Pass | --- | --- |
 | `bs_roformer` | Done | Pass | --- | --- | Pass |
 | `canary_asr` | Done | Pass | Pass | --- | Pass |
+| `ced` | Done | --- | Pass (F32; Tiny/Mini/Small/Base) | --- | --- |
 | `chatterbox` | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `citrinet_asr` | Done | Pass | --- | --- | Pass |
 | `cohere_asr` | Done | Pass | Pass | --- | Pass (drift) |
 | `crisperwhisper` | Done | Pass | Pass | --- | Pass (drift) |
+| `firered_vad` | Done | --- | Pass (F32; VAD + Stream-VAD) | --- | --- |
 | `fish_audio` | Done | Pass | --- | Pass | Pass |
 | `fun_asr_nano` | Done | Pass | --- | Pass | Pass |
 | `gigaam_asr` | Done | --- | Pass | Pass | --- |
@@ -81,6 +84,7 @@ Status labels:
 | `htdemucs` | Done | Pass | --- | Pass | Pass (drift) |
 | `htdemucs_6stems` | Done | Pass | --- | Pass | Pass (drift) |
 | `hviske_asr` | Done | Pass | --- | --- | Pass |
+| `hviske_asr_v6` | Done | --- | --- | Pass (BF16) | Pass |
 | `index_tts2` | Done (v2 + v2.5 variant) | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `inflect_v2` | Done | Pass | Pass | --- | --- |
 | `irodori_tts` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
@@ -92,6 +96,7 @@ Status labels:
 | `maya1` | Done | --- | Pass | --- | --- |
 | `meanvc2` | Done | --- | --- | Pass | --- |
 | `mel_band_roformer` | Done | Pass | --- | Pass (drift) | Pass (drift) |
+| `micro_wake_word` | Done | --- | Pass (F32) | --- | --- |
 | `miocodec` | Done | Pass | Pass | Pass (drift) | Pass (drift) |
 | `miotts` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `mms_forced_aligner` | Done | Pass | --- | Pass | Pass (bit-identical) |
@@ -122,6 +127,7 @@ Status labels:
 | `sam_audio` | Done | --- | Pass | --- | --- |
 | `samsone` | Done | --- | --- | Pass | Pass (drift) |
 | `seed_vc` | Done | Pass | --- | Pass (drift) | Pass (drift) |
+| `sherpa_kws` | Done | --- | Pass (F32) | --- | --- |
 | `sidon` | Done | --- | Pass | --- | --- |
 | `silero_vad` | Skip (tiny model) | --- | --- | --- | --- |
 | `smart_turn` | Done | F32 | --- | --- | --- |
@@ -140,6 +146,8 @@ Status labels:
 | `vibevoice_asr_streaming` | Done | --- | --- | Pass | Pass |
 | `voxcpm2` | Done | Pass | Pass | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `voxtral_realtime` | Done | Pass | --- | Pass | Pass |
+| `voxtral_tts` | Done | --- | --- | Pass (BF16) | Pass |
+| `whistle_asr` | Done | --- | --- | --- | --- |
 
 Additional lower-bit checks:
 
