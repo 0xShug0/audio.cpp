@@ -53,14 +53,19 @@ uv run --no-project --python 3.12 tools\model_manager_v2.py install fish_drama3_
 
 | File | Size | Expert banks | Other backbone matrices |
 |---|---:|---|---|
-| `drama-3-backbone-8bit-experts-Q4_K.gguf` | 22.91 GiB | Q4_K | Q8_0 |
-| `drama-3-backbone-8bit-experts-Q3_K.gguf` | 18.93 GiB | Q3_K | Q8_0 |
+| `drama-3-backbone-8bit-experts-Q4_K_S_AUDIOCPP.gguf` | 22.91 GiB | Q4_K | Q8_0 |
+| `drama-3-backbone-8bit-experts-Q3_K_S_AUDIOCPP.gguf` | 18.93 GiB | Q3_K | Q8_0 |
 | `drama-3-backbone-8bit-experts-Q2_K.gguf` | 15.88 GiB | Q2_K | Q8_0 |
-| `drama-3-backbone-4bit-experts-Q4_K.gguf` | 21.78 GiB | Q4_K | Q4_K, with Q4_0 text embedding |
+| `drama-3-backbone-4bit-experts-Q4_K_S_AUDIOCPP.gguf` | 21.78 GiB | Q4_K | Q4_K, with Q4_0 text embedding |
 
-These are custom mixed quantizations. The filename's final Q2_K, Q3_K or Q4_K
-label identifies the routed expert banks. `backbone-8bit` means Q8_0 backbone
-matrices; `backbone-4bit` means Q4_K matrices with a Q4_0 text embedding.
+These are custom mixed quantizations. `Q3_K_S_AUDIOCPP` and `Q4_K_S_AUDIOCPP`
+are Hub display aliases for this repository's compact native profiles: all
+120 routed expert projection banks use uniform Q3_K or Q4_K storage, without
+higher-bit expert-bank exceptions. `AUDIOCPP` distinguishes these profiles from
+llama.cpp's tensor-selection presets. The native converter still takes
+`--expert-type q3_k` or `--expert-type q4_k`; the aliases do not change the weights.
+`backbone-8bit` means Q8_0 backbone matrices; `backbone-4bit` means Q4_K matrices
+with a Q4_0 text embedding. Q2 experts use uniform Q2_K storage.
 
 All four packages retain FP16 audio tower and waveform codec weights and FP32
 normalization vectors. They embed their tokenizer, configuration and model
@@ -83,7 +88,7 @@ script applies those scales and packs each projection into an expert bank.
 uv run --python 3.12 tools\community_models\convert_fish_drama3.py `
   --checkpoint models\drama-3-original `
   --output models\drama3-f16-local.gguf `
-  --quantized-output models\drama-3-backbone-8bit-experts-Q4_K.gguf `
+  --quantized-output models\drama-3-backbone-8bit-experts-Q4_K_S_AUDIOCPP.gguf `
   --gguf-tool build\windows-cpu-release\bin\audiocpp_gguf.exe
 ```
 
