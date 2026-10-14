@@ -475,6 +475,7 @@ add_library(engine_core OBJECT
     src/framework/io/safetensors.cpp
     src/framework/debug/trace.cpp
     src/framework/debug/profiler.cpp
+    src/framework/rknn/engine.cpp
     src/framework/decoders/moss_tts_delay/backbone.cpp
     src/framework/decoders/moss_tts_delay/config.cpp
     src/framework/decoders/moss_tts_delay/delay_decoder.cpp
@@ -3215,6 +3216,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
     add_engine_unittest(cpu_extra_buffers_test tests/unittests/test_cpu_extra_buffers.cpp)
     add_test(NAME cpu_extra_buffers_test COMMAND cpu_extra_buffers_test)
+    add_engine_unittest(rknn_engine_test tests/unittests/test_rknn_engine.cpp)
+    add_test(NAME rknn_engine_test COMMAND rknn_engine_test)
     if (ENGINE_ENABLE_VULKAN)
         add_engine_unittest(vulkan_shared_weight_cache_test tests/unittests/test_vulkan_shared_weight_cache.cpp)
         add_test(NAME vulkan_shared_weight_cache_test COMMAND vulkan_shared_weight_cache_test)
