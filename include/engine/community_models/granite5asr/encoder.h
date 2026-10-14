@@ -48,6 +48,13 @@ struct Granite5ConformerEncoderWeights {
     modules::LinearWeights out_mid;
 };
 
+// One greedy CTC frame. probability is the softmax of the winning class,
+// computed from logits that the encoder already materializes for the argmax.
+struct CtcArgmaxFrame {
+    int32_t id = 0;
+    float probability = 0.f;
+};
+
 class Granite5ConformerEncoderRuntime {
 public:
     Granite5ConformerEncoderRuntime(
@@ -56,7 +63,7 @@ public:
         assets::TensorStorageType storage_type,
         size_t graph_arena_bytes = 1024ull * 1024ull * 1024ull);
 
-    std::vector<int32_t> transcribe_features(
+    std::vector<CtcArgmaxFrame> transcribe_features(
         const Granite5FrontendFeatures & features);
 
     const Granite5ASRAssets & assets() const noexcept { return *assets_; }

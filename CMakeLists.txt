@@ -3293,6 +3293,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
     endif()
 
+    if (granite5asr IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(granite5asr_ctc_timestamps_test tests/granite5asr/test_ctc_timestamps.cpp)
+        target_include_directories(granite5asr_ctc_timestamps_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME granite5asr_ctc_timestamps_test COMMAND granite5asr_ctc_timestamps_test)
+    endif()
+
     if (ENGINE_BUILD_TESTS)
         # Runtime tests exercise the core HTTP handlers, not optional frontend
         # modules. Give their frontend.cpp an empty registry and exclude the
