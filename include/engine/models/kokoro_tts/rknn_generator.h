@@ -26,17 +26,6 @@ namespace engine::models::kokoro_tts {
 // synthesis than a full-length one, not an approximation of it: pick a window wide
 // enough that a whole text chunk fits one window, which is exact.
 //
-// An engine compiled with `--global-stats` (7 inputs / 2 outputs: `stats_in`,
-// `use_global`, `stats_out`) takes the per-channel AdaIN (mean, biased variance) of
-// every normalization site, interleaved per site in forward order, as an input: the
-// engine then normalizes every window with the statistics of a full-length decode. The
-// caller computes them on CPU from the full latent. In fp32 that is exact (measured:
-// 9.7 dB -> 135.4 dB on the 486-frame dump). On the RK3588 it is degenerate, not a
-// trade: every window past the first renders as a constant-energy tone (flat rms,
-// spectral flatness 1.7e-17, energy at DC and two fixed frequencies) — the statistics
-// scale the window activations past the engine's fp16 range and the graph collapses.
-// Opt-in, off by default, a PC-simulator diagnostic only.
-//
 // Two knobs soften the per-window-AdaIN pumping of the shipping walk, each off by
 // default (overlap = 0, reference = null keeps the walk byte-identical):
 //  - `overlap` (constructor): advance the walk by `emitted - overlap` latent frames
@@ -69,17 +58,11 @@ public:
     int64_t emitted() const;
     // Spectrogram columns the generator emits per latent frame (the upsampling product).
     int64_t columns_per_frame() const;
-    // True when the engine takes the full-decode AdaIN statistics as an input.
-    bool uses_global_stats() const;
-    // Floats `run`'s `stats` must carry for such an engine (0 for a shipping engine).
-    int64_t stats_elements() const;
 
     // `x` is `latent_channels` rows of `x_stride` floats, `har` is `feature_rows` rows
     // of `har_stride` floats; only the first `frames` columns of `x` and the first
     // `frames * columns_per_frame() + 1` columns of `har` are real. The result is
     // `feature_rows` rows of `frames * columns_per_frame() + 1` contiguous floats.
-    // `stats` (only for a `--global-stats` engine) is `stats_elements()` floats of
-    // full-decode AdaIN statistics; null falls back to per-window statistics.
     // `reference` (optional) is a full-length spectrogram in this call's result
     // layout; each window's log-magnitude rows are gain-corrected toward its loudness.
     std::vector<float> run(
@@ -89,7 +72,6 @@ public:
         int64_t har_stride,
         const float * style,
         int64_t frames,
-        const float * stats = nullptr,
         const float * reference = nullptr);
 
 private:
