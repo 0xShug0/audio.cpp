@@ -21,6 +21,7 @@
 #include <ggml.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -30,6 +31,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -510,6 +512,24 @@ PromptEmbeddingState build_prompt_state(
 
     std::vector<float> custom_voice_speaker_embed;
     std::string language = ascii_lower(prefill.language);
+    static constexpr std::array<std::pair<std::string_view, std::string_view>, 10> kLanguageCodeAliases = {{
+        {"zh", "chinese"},
+        {"en", "english"},
+        {"ja", "japanese"},
+        {"ko", "korean"},
+        {"de", "german"},
+        {"fr", "french"},
+        {"ru", "russian"},
+        {"pt", "portuguese"},
+        {"es", "spanish"},
+        {"it", "italian"},
+    }};
+    for (const auto & [code, label] : kLanguageCodeAliases) {
+        if (language == code) {
+            language = label;
+            break;
+        }
+    }
     if (prefill.prompt_mode == Qwen3TalkerPromptMode::CustomVoice) {
         const std::string speaker = ascii_lower(prefill.speaker);
         const auto speaker_it = config.speaker_id.find(speaker);
