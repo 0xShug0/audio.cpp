@@ -398,6 +398,15 @@ Qwen3TTSSession::Qwen3TTSSession(
             speaker_encoder_graph_arena_bytes_,
             conv_weight_storage_type_);
     }
+    if (!rknn_decoder_.model_path.empty()) {
+        // The NPU decoder voices the speech decoder, so the ggml decoder's weights are
+        // never loaded. The speech-tokenizer tensor source is one resident blob opened for
+        // the whole model, and a source frees only the ranges it hands out, so the
+        // decoder's half of it would stay resident for the session's lifetime. Every
+        // consumer of this source uploads its weights in its own constructor, so by here
+        // the blob is dead.
+        assets_->speech_tokenizer_weights->release_storage();
+    }
 }
 
 std::string Qwen3TTSSession::family() const {
