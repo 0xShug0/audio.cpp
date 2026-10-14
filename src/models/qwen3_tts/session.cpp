@@ -10,7 +10,6 @@
 #include <chrono>
 #include <cstring>
 #include <limits>
-#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -19,27 +18,6 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr int64_t kDefaultTextChunkSize = 8192;
-
-// Text chunking splits the talker, not the vocoder: every chunk's codes are concatenated and
-// voiced in one decode pass. Voicing per chunk re-voices the whole voice-clone reference once
-// per chunk (`decode_and_trim_reference` prepends it and trims it back off), pads every chunk's
-// tail up to a full 64-token group, and zeroes the stateful conv/KV cache at every chunk
-// boundary. Measured on RK3588, 300 Russian characters at `--text-chunk-size 60`: 7 vocoder
-// runs and 21.6 s of vocoder time unchunked, 18 runs and 53.0 s chunked.
-void append_speech_codes(Qwen3SpeechCodes & dst, const Qwen3SpeechCodes & src) {
-    if (src.frames == 0) {
-        return;
-    }
-    if (dst.frames == 0) {
-        dst = src;
-        return;
-    }
-    if (dst.code_groups != src.code_groups) {
-        throw std::runtime_error("Qwen3 TTS text chunks produced incompatible code shapes");
-    }
-    dst.codes.insert(dst.codes.end(), src.codes.begin(), src.codes.end());
-    dst.frames += src.frames;
-}
 
 std::shared_ptr<const Qwen3TTSAssets> require_assets(std::shared_ptr<const Qwen3TTSAssets> assets) {
     if (assets == nullptr) {
@@ -516,28 +494,14 @@ runtime::TaskResult Qwen3TTSSession::synthesize(const runtime::TaskRequest & req
         double talker_ms = 0.0;
         double decoder_ms = 0.0;
         runtime::AudioBuffer merged_audio;
-        Qwen3SpeechCodes codes;
         for (const auto & chunk_request : chunk_requests) {
             const Qwen3TTSRequest qwen_request = make_request(chunk_request);
             const auto prefill_start = Clock::now();
             const auto prefill = prompt_builder.build_prefill(qwen_request);
             prefill_ms += engine::debug::elapsed_ms(prefill_start, Clock::now());
-            if (stream_frames == 0) {
-                const auto talker_start = Clock::now();
-                auto generated = talker_step_->generate(
-                    prefill, qwen_request.generation, qwen_request.generation.repetition_penalty);
-                talker_ms += engine::debug::elapsed_ms(talker_start);
-                append_speech_codes(codes, generated.generated_codes);
-            } else {
-                runtime::append_audio_buffer(
-                    merged_audio,
-                    generate_audio(prefill, qwen_request.generation, nullptr, stream_frames, stream_policy, talker_ms, decoder_ms));
-            }
-        }
-        if (stream_frames == 0) {
-            const auto decoder_start = Clock::now();
-            merged_audio = speech_decoder_->decode(codes);
-            decoder_ms += engine::debug::elapsed_ms(decoder_start);
+            runtime::append_audio_buffer(
+                merged_audio,
+                generate_audio(prefill, qwen_request.generation, nullptr, stream_frames, stream_policy, talker_ms, decoder_ms));
         }
         release_talker_cached_step_graph.release();
         runtime::TaskResult result;
@@ -557,28 +521,14 @@ runtime::TaskResult Qwen3TTSSession::synthesize(const runtime::TaskRequest & req
         double talker_ms = 0.0;
         double decoder_ms = 0.0;
         runtime::AudioBuffer merged_audio;
-        Qwen3SpeechCodes codes;
         for (const auto & chunk_request : chunk_requests) {
             const Qwen3TTSRequest qwen_request = make_request(chunk_request);
             const auto prefill_start = Clock::now();
             const auto prefill = prompt_builder.build_prefill(qwen_request);
             prefill_ms += engine::debug::elapsed_ms(prefill_start, Clock::now());
-            if (stream_frames == 0) {
-                const auto talker_start = Clock::now();
-                auto generated = talker_step_->generate(
-                    prefill, qwen_request.generation, qwen_request.generation.repetition_penalty);
-                talker_ms += engine::debug::elapsed_ms(talker_start);
-                append_speech_codes(codes, generated.generated_codes);
-            } else {
-                runtime::append_audio_buffer(
-                    merged_audio,
-                    generate_audio(prefill, qwen_request.generation, nullptr, stream_frames, stream_policy, talker_ms, decoder_ms));
-            }
-        }
-        if (stream_frames == 0) {
-            const auto decoder_start = Clock::now();
-            merged_audio = speech_decoder_->decode(codes);
-            decoder_ms += engine::debug::elapsed_ms(decoder_start);
+            runtime::append_audio_buffer(
+                merged_audio,
+                generate_audio(prefill, qwen_request.generation, nullptr, stream_frames, stream_policy, talker_ms, decoder_ms));
         }
         release_talker_cached_step_graph.release();
         runtime::TaskResult result;
@@ -606,8 +556,6 @@ runtime::TaskResult Qwen3TTSSession::synthesize(const runtime::TaskRequest & req
     double talker_ms = 0.0;
     double decoder_ms = 0.0;
     runtime::AudioBuffer merged_audio;
-    Qwen3SpeechCodes codes;
-    std::optional<Qwen3SpeechCodes> reference_codes;
     for (const auto & chunk_request : chunk_requests) {
         const Qwen3TTSRequest qwen_request = make_request(chunk_request);
         const auto prompt_start = Clock::now();
@@ -616,31 +564,11 @@ runtime::TaskResult Qwen3TTSSession::synthesize(const runtime::TaskRequest & req
         const auto prefill_start = Clock::now();
         const auto prefill = prompt_builder.build_prefill(qwen_request, voice_prompt);
         prefill_ms += engine::debug::elapsed_ms(prefill_start, Clock::now());
-        if (stream_frames == 0) {
-            const auto talker_start = Clock::now();
-            auto generated = talker_step_->generate(
-                prefill, qwen_request.generation, qwen_request.generation.repetition_penalty);
-            talker_ms += engine::debug::elapsed_ms(talker_start);
-            append_speech_codes(codes, generated.generated_codes);
-            if (!reference_codes && voice_prompt.reference_codes) {
-                reference_codes = *voice_prompt.reference_codes;
-            }
-        } else {
-            runtime::append_audio_buffer(merged_audio, generate_audio(
-                prefill, qwen_request.generation,
-                voice_prompt.reference_codes ? &*voice_prompt.reference_codes : nullptr,
-                stream_frames, stream_policy, talker_ms, decoder_ms));
-        }
-    }
-    if (stream_frames == 0) {
-        // One decode pass over the concatenated codes: the reference clip is voiced once for the
-        // whole utterance instead of once per text chunk, and the stateful vocoder cache runs
-        // continuously across the chunk boundaries.
-        const auto decoder_start = Clock::now();
-        merged_audio = reference_codes
-            ? speech_decoder_->decode_and_trim_reference(*reference_codes, codes)
-            : speech_decoder_->decode(codes);
-        decoder_ms += engine::debug::elapsed_ms(decoder_start);
+        auto decoded = generate_audio(
+            prefill, qwen_request.generation,
+            voice_prompt.reference_codes ? &*voice_prompt.reference_codes : nullptr,
+            stream_frames, stream_policy, talker_ms, decoder_ms);
+        runtime::append_audio_buffer(merged_audio, decoded);
     }
     release_talker_cached_step_graph.release();
     runtime::TaskResult result;
