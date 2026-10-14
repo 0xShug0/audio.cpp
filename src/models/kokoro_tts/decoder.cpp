@@ -2,6 +2,7 @@
 #include "cpu_kernels.h"
 
 #include "engine/models/kokoro_tts/assets.h"
+#include "engine/models/kokoro_tts/rknn_generator.h"
 
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/core/backend.h"
@@ -59,6 +60,23 @@ std::vector<float> make_zero_tensor_2d(int64_t rows, int64_t cols) {
 
 float & tensor_at(std::vector<float> & values, int64_t row, int64_t col, int64_t cols) {
     return values[tensor_offset_2d(row, col, cols)];
+}
+
+// The predictor's decoder latent as one row-major [rows][cols] block, read out of the
+// predictor's graph tensor when it keeps one.
+std::vector<float> read_decoder_x(const PredictorOutputs & predictor) {
+    if (predictor.decoder_x_tensor == nullptr) {
+        return predictor.decoder_x;
+    }
+    std::vector<float> values(
+        static_cast<size_t>(std::max(int64_t{0}, predictor.decoder_x_rows) *
+                            std::max(int64_t{0}, predictor.decoder_x_cols)),
+        0.0f);
+    const size_t elements = std::min(
+        values.size(), static_cast<size_t>(ggml_nelements(predictor.decoder_x_tensor)));
+    ggml_backend_tensor_get(
+        predictor.decoder_x_tensor, values.data(), 0, elements * sizeof(float));
+    return values;
 }
 
 struct TimeMaskInputs {
@@ -905,11 +923,12 @@ ggml_tensor * build_generator_resblock(
     bool use_time_masks) {
     ggml_tensor * current = x;
     for (size_t i = 0; i < block.convs1.size(); ++i) {
-        ggml_tensor * xt =
-            build_adaptive_instance_norm_bct_decoder(ctx, current, block.adain1[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
+        ggml_tensor * xt = build_adaptive_instance_norm_bct_decoder(
+            ctx, current, block.adain1[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
         xt = build_snake1d_bct_decoder(ctx, xt, block.alpha1[i], allow_cpu_fastpath);
         xt = build_decoder_conv1d_bct(ctx, xt, block.convs1[i], allow_cpu_fastpath);
-        xt = build_adaptive_instance_norm_bct_decoder(ctx, xt, block.adain2[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
+        xt = build_adaptive_instance_norm_bct_decoder(
+            ctx, xt, block.adain2[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
         xt = build_snake1d_bct_decoder(ctx, xt, block.alpha2[i], allow_cpu_fastpath);
         xt = build_decoder_conv1d_bct(ctx, xt, block.convs2[i], allow_cpu_fastpath);
         current = ggml_add(ctx, xt, current);
@@ -1251,6 +1270,13 @@ struct KokoroIstftNetDecoderRuntime::Impl {
     audio::STFTConfig inverse_stft_config;
     std::unique_ptr<ConditioningGraphRuntime> conditioning_graph;
     GeneratorGraphRuntime generator_graph;
+    // Set by the `kokoro_tts.rknn_generator` session option: the generator stage runs on
+    // the NPU, so the ggml generator graph is never prepared.
+    std::unique_ptr<engine::models::kokoro_tts::KokoroTtsRknnGenerator> rknn_generator;
+    // Set by `kokoro_tts.rknn_generator_gain`: the ggml generator graph stays prepared to
+    // render one full-length CPU decode per utterance, whose loudness corrects each NPU
+    // window (see KokoroTtsRknnGenerator::run's `reference`).
+    bool rknn_generator_gain = false;
 
     Impl(
         std::shared_ptr<const KokoroWeights> weights_in,
@@ -1258,7 +1284,10 @@ struct KokoroIstftNetDecoderRuntime::Impl {
         int n_threads_in,
         bool use_device_backend_in,
         uint64_t rng_seed_in,
-        KokoroIstftNetDecoderCapacityContract contract_in)
+        KokoroIstftNetDecoderCapacityContract contract_in,
+        const std::string & rknn_generator_path = {},
+        int64_t rknn_generator_overlap = 0,
+        bool rknn_generator_gain_in = false)
         : weights(std::move(weights_in)),
           n_threads(std::max(1, n_threads_in)),
           use_device_backend(use_device_backend_in),
@@ -1272,7 +1301,21 @@ struct KokoroIstftNetDecoderRuntime::Impl {
               audio::STFTPadMode::Reflect,
               audio::STFTFamily::Kokoro,
           }),
-          generator_graph(weights->decoder.generator, weights->style_dim, backend, n_threads, use_device_backend) {
+          generator_graph(weights->decoder.generator, weights->style_dim, backend, n_threads, use_device_backend),
+          rknn_generator_gain(rknn_generator_gain_in) {
+        if (!rknn_generator_path.empty()) {
+            const auto & gen = weights->decoder.generator;
+            int64_t per_frame = gen.gen_istft_hop_size;
+            for (const auto & up : gen.ups) {
+                per_frame *= up.stride;
+            }
+            rknn_generator = std::make_unique<engine::models::kokoro_tts::KokoroTtsRknnGenerator>(
+                rknn_generator_path,
+                int64_t{512},
+                (gen.gen_istft_n_fft / 2 + 1) * 2,
+                per_frame,
+                rknn_generator_overlap);
+        }
         prepare(contract_in);
     }
 
@@ -1285,6 +1328,12 @@ struct KokoroIstftNetDecoderRuntime::Impl {
             contract.conditioning_frames,
             n_threads,
             use_device_backend);
+        if (rknn_generator != nullptr && !rknn_generator_gain) {
+            // The generator stage runs on the NPU; its ggml graph, arena and dequantized
+            // weights are all dead weight. The gain knob is the exception: it renders a
+            // full-length decode that the NPU windows are corrected against.
+            return;
+        }
         generator_graph.prepare(
             contract.decoder_frames,
             contract.conditioning_frames);
@@ -1297,14 +1346,20 @@ KokoroIstftNetDecoderRuntime::KokoroIstftNetDecoderRuntime(
     int n_threads,
     bool use_device_backend,
     uint64_t rng_seed,
-    KokoroIstftNetDecoderCapacityContract contract)
+    KokoroIstftNetDecoderCapacityContract contract,
+    const std::string & rknn_generator_path,
+    int64_t rknn_generator_overlap,
+    bool rknn_generator_gain)
     : impl_(std::make_unique<Impl>(
           std::move(weights),
           backend,
           n_threads,
           use_device_backend,
           rng_seed,
-          contract)) {}
+          contract,
+          rknn_generator_path,
+          rknn_generator_overlap,
+          rknn_generator_gain)) {}
 
 KokoroIstftNetDecoderRuntime::~KokoroIstftNetDecoderRuntime() = default;
 
@@ -1334,7 +1389,38 @@ std::vector<float> KokoroIstftNetDecoderRuntime::decode(
     });
 
     std::vector<float> generator_output;
+    int64_t generator_output_cols = 0;
+    const int64_t bins = impl_->inverse_stft_config.n_fft / 2 + 1;
     generator_ms = measure_ms([&]() {
+        if (impl_->rknn_generator != nullptr) {
+            const std::vector<float> decoder_x = read_decoder_x(predictor);
+            // The conditioning is measured in spectrogram columns (60 per latent frame plus
+            // the reflect pad); the generator window is measured in latent frames.
+            const int64_t columns_per_frame = impl_->rknn_generator->columns_per_frame();
+            const int64_t latent_frames = (conditioning->valid_feature_cols - 1) / columns_per_frame;
+            // The gain knob's reference: one full-length CPU decode, whose per-window
+            // loudness the NPU windows are corrected toward.
+            std::vector<float> full_out;
+            if (impl_->rknn_generator_gain) {
+                full_out = impl_->generator_graph.run(
+                    predictor.decoder_x,
+                    predictor.decoder_x_rows,
+                    predictor.decoder_x_cols,
+                    predictor.decoder_x_tensor,
+                    *conditioning,
+                    style_decoder);
+            }
+            generator_output = impl_->rknn_generator->run(
+                decoder_x.data(),
+                predictor.decoder_x_cols,
+                conditioning->features.data(),
+                conditioning->feature_cols,
+                style_decoder.data(),
+                latent_frames,
+                impl_->rknn_generator_gain ? full_out.data() : nullptr);
+            generator_output_cols = latent_frames * columns_per_frame + 1;
+            return;
+        }
         generator_output = impl_->generator_graph.run(
             predictor.decoder_x,
             predictor.decoder_x_rows,
@@ -1342,9 +1428,9 @@ std::vector<float> KokoroIstftNetDecoderRuntime::decode(
             predictor.decoder_x_tensor,
             *conditioning,
             style_decoder);
+        generator_output_cols = static_cast<int64_t>(generator_output.size()) / bins / 2;
     });
-    const int64_t bins = impl_->inverse_stft_config.n_fft / 2 + 1;
-    const int64_t generated_frames = static_cast<int64_t>(generator_output.size()) / (bins * 2);
+    const int64_t generated_frames = generator_output_cols;
     const int64_t frames = conditioning->valid_feature_cols;
     if (frames <= 0 || frames > generated_frames) {
         throw std::runtime_error("Kokoro decoder valid spectrogram frame count exceeds generated output");

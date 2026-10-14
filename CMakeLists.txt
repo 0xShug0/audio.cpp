@@ -819,6 +819,7 @@ audiocpp_add_model(kokoro_tts
         src/models/kokoro_tts/frontend.cpp
         src/models/kokoro_tts/predictor.cpp
         src/models/kokoro_tts/decoder.cpp
+        src/models/kokoro_tts/rknn_generator.cpp
         src/models/kokoro_tts/plbert.cpp
         src/models/kokoro_tts/session.cpp
     INCLUDES engine/models/kokoro_tts/session.h

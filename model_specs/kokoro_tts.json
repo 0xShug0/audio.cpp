@@ -137,6 +137,12 @@
         "required": false,
         "min": 0,
         "default": 0
+      },
+      {
+        "name": "rknn_generator",
+        "type": "path",
+        "description": "Path to a pre-compiled RKNN engine for the iSTFTNet generator, voiced on a Rockchip NPU. Needs a build with ENGINE_ENABLE_RKNN; build the engine with tools/prepare_kokoro_tts_rknn_generator.py.",
+        "required": false
       }
     ],
     "load": []
