@@ -1,6 +1,7 @@
 #include "engine/models/qwen3_tts/rknn_speech_decoder.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/rknn/engine.h"
 
 #include <algorithm>
 #include <chrono>
@@ -8,16 +9,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-#if defined(ENGINE_HAVE_RKNN)
-#include <rknn_api.h>
-#endif
 
 namespace engine::models::qwen3_tts {
 
@@ -28,28 +23,9 @@ using Clock = std::chrono::steady_clock;
 
 constexpr int64_t kSampleRate = 24000;
 
-std::string rknn_status(const char * what, int code) {
-    std::ostringstream out;
-    out << "Qwen3 speech decoder RKNN: " << what << " failed with code " << code;
-    return out.str();
-}
-
-std::vector<char> read_file(const std::string & path) {
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
-    if (!in) {
-        throw std::runtime_error("Qwen3 speech decoder RKNN: cannot open model " + path);
-    }
-    const auto size = in.tellg();
-    if (size <= 0) {
-        throw std::runtime_error("Qwen3 speech decoder RKNN: model " + path + " is empty");
-    }
-    std::vector<char> data(static_cast<size_t>(size));
-    in.seekg(0);
-    if (!in.read(data.data(), size)) {
-        throw std::runtime_error("Qwen3 speech decoder RKNN: short read on " + path);
-    }
-    return data;
-}
+// Prefix of every message this sidecar raises, shared with the plumbing in
+// engine::rknn so a failure names the stage that failed.
+const char * const kLabel = "Qwen3 speech decoder RKNN";
 #endif
 
 }  // namespace
@@ -59,51 +35,34 @@ struct RknnSpeechDecoder::Impl {
     // One compiled step graph. The cache layout is B-independent, so the
     // first-group (small-B) model hands its cache straight to the big one.
     struct Step {
-        rknn_context ctx = 0;
+        engine::rknn::Engine engine;
         int64_t group = 0;
         int64_t cache_numel = 0;
         int64_t freqs_width = 0;
         int64_t cache_valid_elems = 1;
-        uint32_t codes_size = 0;  // native (pass_through) size of audio_codes
+        uint32_t codes_size = 0;  // byte width of audio_codes at the declared type
         int64_t freqs_elems = 0;
         bool codes_pass_through = true;
 
         void load(const std::string & path, int64_t num_quantizers, int64_t head_dim_half) {
-            auto model = read_file(path);
-            const int ret = rknn_init(&ctx, model.data(), static_cast<uint32_t>(model.size()), 0, nullptr);
-            if (ret != 0) {
-                throw std::runtime_error(rknn_status("rknn_init", ret));
-            }
-            // Ask for all three cores by name, fall back to AUTO, as the piper and
-            // kokoro sidecars do. Measured here (same binary, both masks, 300 Russian
-            // characters, greedy): AUTO keeps the engine on Core0 (55/0/0 in
-            // /sys/kernel/debug/rknpu/load), 0_1_2 is accepted and spreads it (41/15/16)
-            // for 1.8% on the vocoder (21766 -> 21383 ms). The engine reads its weights
-            // per step, so the step is DRAM-bound, not scheduler-bound: the mask is
+            // Engine::load reads the image, inits the context, picks the cores
+            // (all three by name, AUTO fallback, AUDIOCPP_RKNN_CORE_MASK
+            // override) and caches the tensor attributes. Measured here (same
+            // binary, both masks, 300 Russian characters, greedy): AUTO keeps
+            // the engine on Core0 (55/0/0 in /sys/kernel/debug/rknpu/load),
+            // 0_1_2 is accepted and spreads it (41/15/16) for 1.8% on the
+            // vocoder (21766 -> 21383 ms). The engine reads its weights per
+            // step, so the step is DRAM-bound, not scheduler-bound: the mask is
             // right, the headroom is not there.
-            if (const int m = rknn_set_core_mask(ctx, RKNN_NPU_CORE_0_1_2); m != 0) {
-                debug::timing_log_scalar("qwen3_tts.speech_decoder.rknn.core_mask_ret", m);
-                if (const int a = rknn_set_core_mask(ctx, RKNN_NPU_CORE_AUTO); a != 0) {
-                    debug::timing_log_scalar("qwen3_tts.speech_decoder.rknn.core_mask_auto_ret", a);
-                }
-            }
-
-            rknn_input_output_num io_num{};
-            if (const int q = rknn_query(ctx, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num)); q != 0) {
-                throw std::runtime_error(rknn_status("rknn_query(io_num)", q));
-            }
-            if (io_num.n_input != 4 || io_num.n_output != 2) {
+            engine.load(path, kLabel);
+            if (engine.input_count() != 4 || engine.output_count() != 2) {
                 throw std::runtime_error(
-                    "Qwen3 speech decoder RKNN: expected the 4-input/2-output stateful export, got " +
-                    std::to_string(io_num.n_input) + "/" + std::to_string(io_num.n_output));
+                    std::string(kLabel) + ": expected the 4-input/2-output stateful export, got " +
+                    std::to_string(engine.input_count()) + "/" + std::to_string(engine.output_count()));
             }
             int64_t codes_groups = 0;
-            for (uint32_t index = 0; index < io_num.n_input; ++index) {
-                rknn_tensor_attr attr{};
-                attr.index = index;
-                if (const int q = rknn_query(ctx, RKNN_QUERY_INPUT_ATTR, &attr, sizeof(attr)); q != 0) {
-                    throw std::runtime_error(rknn_status("rknn_query(input_attr)", q));
-                }
+            for (uint32_t index = 0; index < engine.input_count(); ++index) {
+                const rknn_tensor_attr & attr = engine.input_attr(index);
                 const std::string name(attr.name);
                 debug::timing_log_scalar(
                     "qwen3_tts.speech_decoder.rknn.input_attr" + std::to_string(index),
@@ -113,7 +72,7 @@ struct RknnSpeechDecoder::Impl {
                 if (name == "audio_codes" && attr.n_dims == 3) {
                     codes_groups = attr.dims[1];
                     group = static_cast<int64_t>(attr.dims[2]);
-                    codes_size = attr.size;
+                    codes_size = static_cast<uint32_t>(attr.n_elems * sizeof(int64_t));
                     codes_pass_through = attr.type == RKNN_TENSOR_INT64;
                 } else if (name == "freqs_in" && attr.n_dims == 2) {
                     freqs_width = static_cast<int64_t>(attr.dims[1]);
@@ -125,24 +84,17 @@ struct RknnSpeechDecoder::Impl {
                 }
             }
             if (group <= 0 || cache_numel <= 0 || freqs_width <= 0) {
-                throw std::runtime_error("Qwen3 speech decoder RKNN: model " + path + " is not the stateful export");
+                throw std::runtime_error(std::string(kLabel) + ": model " + path + " is not the stateful export");
             }
             if (codes_groups != num_quantizers) {
                 throw std::runtime_error(
-                    "Qwen3 speech decoder RKNN: model has " + std::to_string(codes_groups) +
+                    std::string(kLabel) + ": model has " + std::to_string(codes_groups) +
                     " codebooks, checkpoint has " + std::to_string(num_quantizers));
             }
             if (freqs_width != head_dim_half) {
                 throw std::runtime_error(
-                    "Qwen3 speech decoder RKNN: model RoPE width " + std::to_string(freqs_width) +
+                    std::string(kLabel) + ": model RoPE width " + std::to_string(freqs_width) +
                     " does not match head_dim/2 " + std::to_string(head_dim_half));
-            }
-        }
-
-        void release() {
-            if (ctx != 0) {
-                rknn_destroy(ctx);
-                ctx = 0;
             }
         }
 
@@ -155,52 +107,30 @@ struct RknnSpeechDecoder::Impl {
             const float * cache,
             std::vector<float> & audio,
             std::vector<float> & cache_out) {
-            std::vector<rknn_input> inputs(4);
+            // With pass_through = 0 the runtime wants the width of the declared
+            // type, not attr.size, which reports the engine's native fp16 width.
+            std::vector<engine::rknn::Input> inputs(4);
             for (uint32_t index = 0; index < inputs.size(); ++index) {
-                inputs[index] = {};
                 inputs[index].index = index;
+                inputs[index].type = RKNN_TENSOR_FLOAT32;
             }
-            inputs[0].buf = const_cast<int64_t *>(codes);
+            inputs[0].buf = codes;
             inputs[0].size = codes_size;
             inputs[0].pass_through = codes_pass_through ? 1 : 0;
             inputs[0].type = RKNN_TENSOR_INT64;
-            inputs[0].fmt = RKNN_TENSOR_UNDEFINED;
-            inputs[1].buf = const_cast<float *>(freqs);
+            inputs[1].buf = freqs;
             inputs[1].size = static_cast<uint32_t>(freqs_elems * sizeof(float));
             inputs[2].buf = &cache_valid;
             inputs[2].size = static_cast<uint32_t>(cache_valid_elems * sizeof(float));
-            inputs[3].buf = const_cast<float *>(cache);
+            inputs[3].buf = cache;
             inputs[3].size = static_cast<uint32_t>(cache_numel * sizeof(float));
-            for (uint32_t index = 1; index < 4; ++index) {
-                inputs[index].pass_through = 0;
-                inputs[index].type = RKNN_TENSOR_FLOAT32;
-                inputs[index].fmt = RKNN_TENSOR_UNDEFINED;
+            std::vector<std::vector<float>> outputs;
+            engine.run(inputs, outputs);
+            if (outputs.size() != 2) {
+                throw std::runtime_error(std::string(kLabel) + ": expected the 4-input/2-output stateful export");
             }
-            if (const int ret = rknn_inputs_set(ctx, 4, inputs.data()); ret != 0) {
-                throw std::runtime_error(rknn_status("rknn_inputs_set", ret));
-            }
-            if (const int ret = rknn_run(ctx, nullptr); ret != 0) {
-                throw std::runtime_error(rknn_status("rknn_run", ret));
-            }
-            std::vector<rknn_output> outputs(2);
-            for (uint32_t index = 0; index < outputs.size(); ++index) {
-                outputs[index] = {};
-                outputs[index].index = index;
-                outputs[index].want_float = 1;
-                outputs[index].is_prealloc = 0;
-            }
-            if (const int ret = rknn_outputs_get(ctx, 2, outputs.data(), nullptr); ret != 0) {
-                throw std::runtime_error(rknn_status("rknn_outputs_get", ret));
-            }
-            const auto n_audio = outputs[0].size / sizeof(float);
-            const auto n_cache = outputs[1].size / sizeof(float);
-            audio.assign(
-                static_cast<const float *>(outputs[0].buf),
-                static_cast<const float *>(outputs[0].buf) + n_audio);
-            cache_out.assign(
-                static_cast<const float *>(outputs[1].buf),
-                static_cast<const float *>(outputs[1].buf) + n_cache);
-            rknn_outputs_release(ctx, 2, outputs.data());
+            audio.swap(outputs[0]);
+            cache_out.swap(outputs[1]);
         }
     };
 
@@ -308,7 +238,9 @@ RknnSpeechDecoder::RknnSpeechDecoder(
         }
     }
     debug::timing_log_scalar("qwen3_tts.speech_decoder.rknn.group", impl_->main.group);
-    debug::timing_log_scalar("qwen3_tts.speech_decoder.rknn.first_group", impl_->first.ctx != 0 ? impl_->first.group : 0);
+    debug::timing_log_scalar(
+        "qwen3_tts.speech_decoder.rknn.first_group",
+        impl_->first.engine.loaded() ? impl_->first.group : 0);
     debug::timing_log_scalar("qwen3_tts.speech_decoder.rknn.cache_numel", impl_->main.cache_numel);
 #else
     (void)model_path;
@@ -321,14 +253,7 @@ RknnSpeechDecoder::RknnSpeechDecoder(
 #endif
 }
 
-RknnSpeechDecoder::~RknnSpeechDecoder() {
-#if defined(ENGINE_HAVE_RKNN)
-    if (impl_ != nullptr) {
-        impl_->main.release();
-        impl_->first.release();
-    }
-#endif
-}
+RknnSpeechDecoder::~RknnSpeechDecoder() = default;
 
 int64_t RknnSpeechDecoder::group_tokens() const {
 #if defined(ENGINE_HAVE_RKNN)
@@ -340,7 +265,7 @@ int64_t RknnSpeechDecoder::group_tokens() const {
 
 int64_t RknnSpeechDecoder::first_group_tokens() const {
 #if defined(ENGINE_HAVE_RKNN)
-    return impl_->first.ctx != 0 ? impl_->first.group : impl_->main.group;
+    return impl_->first.engine.loaded() ? impl_->first.group : impl_->main.group;
 #else
     return 0;
 #endif
@@ -419,7 +344,7 @@ std::vector<float> RknnSpeechDecoder::step(
         // The first group of an utterance runs on the small-B model: the cache
         // layout is B-independent, so its cache feeds the big one directly, and
         // 16 tokens is 1.28 s of audio the listener does not have to wait for.
-        const bool first = s.first.ctx != 0 && s.pos == 0;
+        const bool first = s.first.engine.loaded() && s.pos == 0;
         const int64_t group_tokens = first ? s.first.group : s.main.group;
         if (voiced - done < group_tokens) {
             break;
