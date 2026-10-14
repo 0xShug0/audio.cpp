@@ -29,9 +29,9 @@ function transaction<T>(
   return openDatabase().then((database) => new Promise<T>((resolve, reject) => {
     const tx = database.transaction(storeName, mode);
     const request = operation(tx.objectStore(storeName));
-    request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('Voice library operation failed.'));
-    tx.oncomplete = () => database.close();
+    tx.oncomplete = () => { database.close(); resolve(request.result); };
+    tx.onabort = () => { database.close(); reject(tx.error || new Error('Voice library transaction was aborted.')); };
     tx.onerror = () => {
       database.close();
       reject(tx.error || new Error('Voice library transaction failed.'));

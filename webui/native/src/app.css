@@ -344,7 +344,8 @@ footer { display: flex; justify-content: space-between; max-width: 1600px; margi
 }
 @media (max-width: 520px) {
   .topbar { height: auto; flex-wrap: wrap; padding-block: 8px; }
-  .topbar nav { height: 36px; }
+  .topbar nav { height: 36px; max-width: 100%; overflow-x: auto; }
+  .topbar nav button { flex-shrink: 0; }
   .brand strong { font-size: 14px; } nav button { font-size: 12px; padding: 0 7px; }.language-picker select, .theme-picker select { min-width: 112px; }
   .long-text-row, .voice-library, .reference-input-grid { grid-template-columns: 1fr; }.long-text-row > .toggle { margin-top: 12px; }
   footer { display: block; } footer span { display: block; margin-top: 5px; }
