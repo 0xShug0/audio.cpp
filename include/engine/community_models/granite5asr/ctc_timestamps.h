@@ -100,7 +100,7 @@ inline std::vector<runtime::WordTimestamp> words_from_decoded_ctc_pieces(
     const std::vector<DecodedCtcPiece> & pieces,
     int64_t samples_per_frame,
     int64_t sample_offset,
-    int64_t audio_samples) {
+    int64_t max_end_sample) {
     struct Acc {
         std::string text;
         int64_t start = 0;
@@ -121,8 +121,8 @@ inline std::vector<runtime::WordTimestamp> words_from_decoded_ctc_pieces(
         word.word = text;
         word.span.start_sample = current.start;
         word.span.end_sample = std::max(current.end, current.start + 1);
-        if (audio_samples > 0 && word.span.end_sample > audio_samples) {
-            word.span.end_sample = audio_samples;
+        if (max_end_sample > 0 && word.span.end_sample > max_end_sample) {
+            word.span.end_sample = max_end_sample;
         }
         if (word.span.end_sample <= word.span.start_sample) {
             word.span.end_sample = word.span.start_sample + 1;

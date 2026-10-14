@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -244,7 +245,7 @@ std::vector<runtime::WordTimestamp> words_from_ctc_pieces(
     const std::vector<CtcPiece> & pieces,
     int64_t samples_per_frame,
     int64_t sample_offset,
-    int64_t audio_samples) {
+    int64_t max_end_sample) {
     std::vector<DecodedCtcPiece> decoded;
     decoded.reserve(pieces.size());
     for (const auto & piece : pieces) {
@@ -256,7 +257,7 @@ std::vector<runtime::WordTimestamp> words_from_ctc_pieces(
             piece.frames,
         });
     }
-    return words_from_decoded_ctc_pieces(decoded, samples_per_frame, sample_offset, audio_samples);
+    return words_from_decoded_ctc_pieces(decoded, samples_per_frame, sample_offset, max_end_sample);
 }
 
 TimedTranscript Granite5ASRSessionBase::transcribe_audio(
@@ -287,7 +288,9 @@ TimedTranscript Granite5ASRSessionBase::transcribe_audio(
             ids.push_back(piece.id);
         }
         out.transcript.text = assets_->tokenizer->decode_ids(ids);
-        out.words = words_from_ctc_pieces(*assets_->tokenizer, pieces, frame_samples, sample_offset, audio_samples);
+        const int64_t clip_samples = static_cast<int64_t>(clip.samples.size() / std::max(1, clip.channels));
+        const int64_t max_end_sample = std::min(audio_samples, sample_offset + clip_samples);
+        out.words = words_from_ctc_pieces(*assets_->tokenizer, pieces, frame_samples, sample_offset, max_end_sample);
         return out;
     };
 

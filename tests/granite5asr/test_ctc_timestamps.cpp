@@ -114,6 +114,27 @@ void test_non_positive_probability_zeros_confidence() {
         100000);
     engine::test::require_eq(words.size(), size_t(1), "zeroed pieces still form the word");
     engine::test::require_close(words[0].confidence, 0.f, 0.f, "no contributing frames means confidence 0");
+
+    const auto good = ctc_greedy_pieces({frame(9, 0.9f)}, kBlank);
+    const auto mixed = words_from_decoded_ctc_pieces(
+        {decoded_from(good[0], "hel"), decoded_from(zero[0], "lo")},
+        1280,
+        0,
+        100000);
+    engine::test::require_close(mixed[0].confidence, 0.f, 0.f, "a zeroed piece makes the word sum non-finite");
+}
+
+void test_probability_above_one_clamps() {
+    const auto pieces = ctc_greedy_pieces({frame(3, 1.5f), frame(3, 2.f)}, kBlank);
+    engine::test::require_eq(pieces[0].frames, int64_t(2), "clamped frames still count");
+    engine::test::require_close(static_cast<float>(pieces[0].log_prob_sum), 0.f, 0.f, "probability above 1 scores as 1");
+}
+
+void test_end_sample_clamps_to_chunk_end() {
+    const DecodedCtcPiece tail{"tail", 12, 13, 0.0, 1};
+    const auto words = words_from_decoded_ctc_pieces({tail}, 1280, 16000, 32000);
+    engine::test::require_eq(words[0].span.start_sample, int64_t(16000 + 12 * 1280), "offset start");
+    engine::test::require_eq(words[0].span.end_sample, int64_t(32000), "end clamps to the chunk end");
 }
 
 void test_sample_stride_and_offset() {
@@ -160,6 +181,8 @@ int main() {
         test_non_positive_probability_zeros_confidence();
         test_sample_stride_and_offset();
         test_end_sample_clamps_and_keeps_one_sample();
+        test_probability_above_one_clamps();
+        test_end_sample_clamps_to_chunk_end();
         std::cout << "PASS: granite5asr CTC word timestamps\n";
         return 0;
     } catch (const std::exception & error) {
