@@ -13,6 +13,11 @@
 
 namespace engine::community_models::granite5asr {
 
+struct TimedTranscript {
+    runtime::Transcript transcript;
+    std::vector<runtime::WordTimestamp> words;
+};
+
 class Granite5ASRSessionBase : public runtime::RuntimeSessionBase {
 public:
     Granite5ASRSessionBase(
@@ -26,7 +31,7 @@ protected:
     runtime::VoiceTaskKind task_kind_impl() const;
     runtime::RunMode run_mode_impl() const;
 
-    runtime::Transcript transcribe_audio(
+    TimedTranscript transcribe_audio(
         const runtime::AudioBuffer & audio,
         const std::unordered_map<std::string, std::string> & options);
 

@@ -127,6 +127,58 @@ int main(int argc, char ** argv) {
             return kExitFail;
         }
 
+        if (result.word_timestamps.empty()) {
+            std::cerr << "FAIL: expected word timestamps\n";
+            return kExitFail;
+        }
+
+        const int64_t audio_samples = static_cast<int64_t>(
+            audio.samples.size() / static_cast<size_t>(std::max(1, audio.channels)));
+        int64_t previous_start = 0;
+        int64_t previous_end = 0;
+        std::string joined;
+        for (size_t i = 0; i < result.word_timestamps.size(); ++i) {
+            const auto & word = result.word_timestamps[i];
+            if (word.span.start_sample < 0 ||
+                word.span.end_sample > audio_samples ||
+                word.span.end_sample <= word.span.start_sample) {
+                std::cerr << "FAIL: word span outside buffer: " << word.word
+                          << " [" << word.span.start_sample << ", " << word.span.end_sample
+                          << ") samples=" << audio_samples << "\n";
+                return kExitFail;
+            }
+            if (i > 0 &&
+                (word.span.start_sample < previous_start || word.span.end_sample < previous_end)) {
+                std::cerr << "FAIL: word spans are not monotonic\n";
+                return kExitFail;
+            }
+            previous_start = word.span.start_sample;
+            previous_end = word.span.end_sample;
+            const auto trimmed = engine::io::trim_ascii_whitespace(word.word);
+            if (trimmed.empty()) {
+                std::cerr << "FAIL: empty word timestamp\n";
+                return kExitFail;
+            }
+            if (!joined.empty()) {
+                joined.push_back(' ');
+            }
+            joined += trimmed;
+        }
+        if (normalize_text(joined) != actual) {
+            std::cerr << "FAIL: joined words do not match transcript\n";
+            std::cerr << "Joined normalized: " << normalize_text(joined) << "\n";
+            return kExitFail;
+        }
+
+        const auto & first = result.word_timestamps.front();
+        const auto & last = result.word_timestamps.back();
+        std::cout << "Words: " << result.word_timestamps.size()
+                  << " sample_rate=" << audio.sample_rate
+                  << " samples=" << audio_samples << "\n";
+        std::cout << "First word: " << first.word
+                  << " [" << first.span.start_sample << ", " << first.span.end_sample << ")\n";
+        std::cout << "Last word: " << last.word
+                  << " [" << last.span.start_sample << ", " << last.span.end_sample << ")\n";
         std::cout << "PASS: Granite 5 ASR golden transcription verified successfully.\n";
         return kExitPass;
     } catch (const std::exception & ex) {

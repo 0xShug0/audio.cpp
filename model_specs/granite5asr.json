@@ -17,7 +17,8 @@
   "capabilities": {
     "asr": [
       "vad_chunking",
-      "partial_results"
+      "partial_results",
+      "word_timestamps"
     ]
   },
   "options": {
