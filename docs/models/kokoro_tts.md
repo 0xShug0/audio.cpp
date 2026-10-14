@@ -153,7 +153,11 @@ RTF 1.415 → 0.867 and peak RSS 2777 → 2334 MB on `kokoro-82m-q8_0` (185 Russ
 `--threads 4`, clipped-sine engine; the range-reduced engine the producer now exports by default
 costs +21..36% generator time depending on the utterance, and buys 63 dB of sine accuracy, see the
 RKNN document). The engine is compiled for a 128-latent-frame window and the runtime walks it over
-the latent; see the RKNN document for the window limit and the per-window normalization caveat.
+the latent; see the RKNN document for the window limit and the per-window normalization caveat. The
+NPU render also carries a few content-locked near-Nyquist clicks per utterance (2 to 3 on a 33 s
+render, at the same samples for every engine and for every window grid, 2.5-5x the CPU render's
+9-12 kHz energy at those columns): the RK3588 DPU's fp16 rounding at the columns where the graph's
+activations peak, absent from the CPU path.
 
 ## Conversion
 
