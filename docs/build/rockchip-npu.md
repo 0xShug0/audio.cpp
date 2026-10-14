@@ -180,7 +180,7 @@ CPU:
 
 ```bash
 <export-venv>/bin/python tools/prepare_kokoro_tts_rknn_generator.py \
-  --checkpoint kokoro-v1_0.pth --config config.json --dump-dir <runtime-dump> \
+  --checkpoint kokoro-v1_0.pth --config config.json \
   --output-dir artifacts --frames 128 --skip-rknn
 <converter-venv>/bin/python tools/prepare_kokoro_tts_rknn_generator.py \
   --onnx artifacts/generator_w128.onnx --target rk3588
@@ -233,26 +233,28 @@ settles where the normalized-statistics cure applies at all: at W=136 the raw su
 field passes is empty. Normalized statistics matter only in a graph whose span exceeds 8191, which is
 the sliced wide window the field rejects, so they are not implemented.
 
-**The per-window statistics are the audible artifact; feeding them is not the fix.** Listening
-compared the NPU render with the CPU render of the same text and seed found the loudness of
-successive 0.9 s windows swinging -2.8 to +4.5 dB against the CPU render (spread 7.2 dB) with no
-clicks at the seams - the per-window renormalization, heard as compression. `--global-stats` makes
-the statistics graph I/O (`stats_in`/`stats_out`/`use_global`, 7 inputs / 2 outputs) and the runtime
-computes them on CPU from the full latent, one full-length generator pass. In fp32 that is exact:
-the stitched per-window decode against the full-length decode goes from 9.7 dB to 135.4 dB on the
-486-frame dump, with the stitch, the tail and the padding exact once the statistics are global. That
-confirms the diagnosis and rules out this engine as the cure: on the board the fed statistics scale
-the window activations past the engine's fp16 range and every window after the first renders as a
-constant-energy tone. Measured on a 14.85 s utterance: windows 1..15 carry rms flat at 51.5 dB
-(the CPU render swings 57.1 to 67.4), spectral flatness 1.7e-17, and all the energy at DC, 4800 Hz
-and 9600 Hz - Nyquist/2 and 0.8 * Nyquist, i.e. a saturated output, not speech. Only window 0 is
-intelligible, because that one is taken from the CPU pass. The render also costs 1.8x the wall
-clock (RTF 2.18 against 1.08) and +1.5 GB RSS. The path stays opt-in and off by default, as a
-PC-simulator diagnostic for the AdaIN hypothesis; the fix has to be in the window walk, not in the
-statistics. The capture path needs one runtime detail: `ggml_build_forward_expand` in the vendored ggml
-does not set `GGML_TENSOR_FLAG_OUTPUT`, so a captured statistics node with no other consumer is
-freed by the allocator and its buffer is handed to a later node - the statistics nodes must be
-marked as graph outputs. Default off.
+**The per-window statistics are the audible artifact; feeding them is not the fix, and that path is
+not in the build.** Listening compared the NPU render with the CPU render of the same text and seed
+found the loudness of successive 0.9 s windows swinging -2.8 to +4.5 dB against the CPU render
+(spread 7.2 dB) with no clicks at the seams - the per-window renormalization, heard as compression.
+A `--global-stats` variant of the engine - the per-channel AdaIN mean/variance of a full-length
+decode fed into the engine as graph I/O (`stats_in`/`stats_out`/`use_global`, 7 inputs / 2 outputs),
+computed on CPU from the full latent by one full-length generator pass - was built and measured for
+exactly that reason. In fp32 it is exact: the stitched per-window decode against the full-length
+decode goes from 9.7 dB to 135.4 dB on the 486-frame latent, with the stitch, the tail and the
+padding exact once the statistics are global. That confirms the diagnosis and rules out this engine
+as the cure: on the board the fed statistics scale the window activations past the engine's fp16
+range and every window after the first renders as a constant-energy tone. Measured on a 14.85 s
+utterance: windows 1..15 carry rms flat at 51.5 dB (the CPU render swings 57.1 to 67.4), spectral
+flatness 1.7e-17, and all the energy at DC, 4800 Hz and 9600 Hz - Nyquist/2 and 0.8 * Nyquist, i.e.
+a saturated output, not speech. Only window 0 is intelligible, because that one is taken from the CPU
+pass. The render also costs 1.8x the wall clock (RTF 2.18 against 1.08) and +1.5 GB RSS. The
+producer, the runtime and the engine contract therefore carry no code for it, and the runtime
+rejects a 7-input engine at load; the findings stay here as the reason. Building it needed one
+runtime detail: `ggml_build_forward_expand` in the vendored ggml does not set
+`GGML_TENSOR_FLAG_OUTPUT`, so a captured statistics node with no other consumer is freed by the
+allocator and its buffer is handed to a later node - the statistics nodes must be marked as graph
+outputs.
 
 Three rewrites are compiled in, all of them the reference Kokoro RKNN port's:
 
@@ -303,7 +305,7 @@ gate measures the export and not the approximation.
 - Conversion stage: converting a reference ONNX reproduces the reference `.rknn` byte for byte
   (identical MD5, 259688011 bytes).
 - Kokoro export stage: the re-traced generator reproduces the runtime's own generator at 60.5 dB
-  interior SNR against a dumped decode, a padded 128-frame window reproduces the same frames
+  interior SNR against the runtime's own generator, a padded 128-frame window reproduces the same
   decoded unpadded at 135.1 dB, and the exported ONNX reproduces the torch graph it was traced
   from at 124.6 dB.
 
@@ -335,7 +337,8 @@ Piper takes one option and is offline only:
 The engine is per voice: a `.rknn` compiled from lessac's latent is validated against the loaded
 voice's channel count at init and fails with a message naming the producer if it does not match.
 
-Kokoro takes one option and is offline only:
+Kokoro takes the engine plus two measured knobs on its window walk and is offline only
+(`kokoro_tts.rknn_generator_overlap`, `kokoro_tts.rknn_generator_gain`):
 
 ```bash
 ./build/bin/audiocpp_cli --task tts --family kokoro_tts \
@@ -347,6 +350,13 @@ Kokoro takes one option and is offline only:
 The engine is per model, not per voice: the generator weights are in the GGUF, and the engine is
 validated against the loaded model's latent channel count, its spectrogram row count and its audio
 samples per latent frame at init.
+
+`..._overlap` advances the walk by `emitted - overlap` frames and blends the shared columns with a
+raised cosine (1.54x wall, no change in the per-window loudness spread, so it is a seam knob, not a
+loudness one). `..._gain` corrects each window's loudness toward a full-length CPU decode of the same
+latent and is also what enables the near-Nyquist cap in the Kokoro measurements below (1.9x wall,
++601 MB RSS, because the ggml generator graph stays loaded and runs once per utterance). Both default
+to the shipping walk.
 
 ## Measured on RK3588
 
@@ -421,6 +431,17 @@ q8_0 style affine). The reference Kokoro engine, with the same per-window normal
 `T_fix=50`, measures 17.11 dB against its own CPU decode on a 7.1 s utterance (2 windows); the
 gap between its 17 dB and our 0.5 dB is window count, not stitching. Utterances of 72 latent
 frames or fewer (about 0.9 s) fit one window and are exact.
+
+The NPU render also carries 2-3 content-locked near-Nyquist clicks per 26 s render: at the columns
+where the graph's activations peak, the top iSTFT bins run 10-24x the CPU render's 9-12 kHz energy
+there. They are fp16 rounding in the convolutional accumulation, not the sine and not the seams -
+the clip sine, the range-reduced sine, the exact `Sin` node, the unfolded Snake (`--no-snake-fold`,
+which bounds the convolution input) and the w128/w136 grids all leave the same columns at the same
+magnitude - and RKNN 2.3.2 has no per-layer dtype knob. `kokoro_tts.rknn_generator_gain=1` caps the
+top five log-magnitude rows at the full-length CPU decode's level at every column: on a 25.9 s
+render the worst of the top eight columns goes 14.7x -> 2.8x (shipping, no gain: 23.3x), for 1.9x
+wall and +601 MB RSS, because the ggml generator graph stays loaded and runs once per utterance. The
+residual 1.4-2.8x is the iSTFT Hann-overlap smear into the bins the cap does not touch.
 
 ### The talker is the only DRAM-bound candidate, and it is not at the ceiling
 
