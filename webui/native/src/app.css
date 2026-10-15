@@ -108,6 +108,56 @@
   --footer-text: #6c7e93;
 }
 
+:root[data-theme="paper"] {
+  color-scheme: light;
+  --bg: #f7f7f8;
+  --panel: #ffffff;
+  --panel-2: #eeeeef;
+  --line: #dedee2;
+  --muted: #68686f;
+  --text: #34343a;
+  --text-strong: #202024;
+  --text-label: #494950;
+  --text-subtle: #68686f;
+  --text-invert: #ffffff;
+  --cyan: #202024;
+  --blue: #b95721;
+  --green: #247149;
+  --danger: #b4233a;
+  --body-glow: transparent;
+  --topbar-bg: #f7f7f8;
+  --panel-bg: #ffffff;
+  --control-bg: #ffffff;
+  --control-border: #ceced4;
+  --control-disabled: #77777f;
+  --button-bg: #ffffff;
+  --button-hover-bg: #eeeeef;
+  --button-hover-border: #aaaab3;
+  --active-bg: #eeeeef;
+  --active-border: #8c8c96;
+  --card-bg: #ffffff;
+  --code-bg: #f1f1f3;
+  --icon-bg: #eeeeef;
+  --file-button-bg: #202024;
+  --chip-bg: #eeeeef;
+  --panel-shadow: rgba(20,20,24,.04);
+  --folder-backdrop: rgba(20,20,24,.35);
+  --footer-text: #68686f;
+}
+
+:root[data-theme="paper"] button.primary,
+:root[data-theme="paper"] button.run,
+:root[data-theme="paper"] .brand .mark { background: var(--cyan); }
+:root[data-theme="paper"] .hero-stat { background: var(--panel); }
+:root[data-theme="paper"] .hint { background: #faf1eb; }
+:root[data-theme="paper"] .status.warning { color: #954215; }
+:root[data-theme="paper"] button.danger { color: var(--danger); border-color: #e3bac2; background: #fff0f3; }
+:root[data-theme="paper"] .live-card { border-color: var(--line); background: var(--panel); }
+:root[data-theme="paper"] .server-pill i,
+:root[data-theme="paper"] .recording-dot::before,
+:root[data-theme="paper"] .studio-package-buttons button.resident::after,
+:root[data-theme="paper"] .single-model-toggle.resident::after { box-shadow: none; }
+
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background:
   radial-gradient(circle at 82% -10%, var(--body-glow), transparent 30rem),

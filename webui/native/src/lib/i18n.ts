@@ -26,6 +26,7 @@ const english: Record<string, string> = {
   'theme.dark': 'Dark',
   'theme.mocha': 'Catppuccin Mocha',
   'theme.light': 'Light',
+  'theme.paper': 'Paper',
   'arena.eyebrow': 'ARENA',
   'arena.title.tts': 'TTS comparison',
   'arena.title.vc': 'Voice conversion comparison',
