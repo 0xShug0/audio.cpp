@@ -660,6 +660,11 @@ struct VocosGraph {
     ggml_backend_buffer_t io_buffer = nullptr;
     ggml_tensor * mel = nullptr;   // ne [100, T] (m fastest)
     ggml_tensor * spec = nullptr;  // ne [1026, T] (o fastest; row t at t*1026)
+    ~VocosGraph() {
+        if (gallocr != nullptr) ggml_gallocr_free(gallocr);
+        if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
+        if (ctx != nullptr) ggml_free(ctx);
+    }
 };
 
 std::vector<float> vocos_decode_gpu(
@@ -805,6 +810,20 @@ std::vector<float> vocos_decode_gpu(
             }
         }
         it = cache->emplace(ckey, std::move(g)).first;
+        // bound the graph cache like the DiT one: the key is the per-request mel
+        // length, so a chunked request adds a 256 MiB pool per chunk. Keep at most
+        // 2; evict the oldest (map order == insertion order), never the entry added.
+        while (cache->size() > 2) {
+            bool evicted = false;
+            for (auto cit = cache->begin(); cit != cache->end(); ++cit) {
+                if (cit->first != ckey) {
+                    cache->erase(cit);
+                    evicted = true;
+                    break;
+                }
+            }
+            if (!evicted) break;
+        }
     }
     VocosGraph & g = *it->second;
 
