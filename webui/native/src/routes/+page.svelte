@@ -3216,6 +3216,7 @@
         <div><span>{tr('runtime.registered')}</span><strong>{loadedModels.length}</strong></div>
         <div><span>{tr('runtime.resident')}</span><strong>{loadedModels.filter((model) => model.loaded).length}</strong></div>
       </div>
+      <p class="hint">{tr('runtime.serverLogNotice')}</p>
       <pre class="logs">{logs.length ? logs.join('\n') : tr('runtime.noEvents')}</pre>
     </section>
   {/if}

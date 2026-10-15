@@ -267,6 +267,7 @@ const english: Record<string, string> = {
   'runtime.registered': 'Registered',
   'runtime.resident': 'Resident',
   'runtime.noEvents': 'No events yet.',
+  'runtime.serverLogNotice': 'This panel shows UI events, not server logs. Add --log --log-file server.log to your server startup command, then open server.log on the server machine.',
   'status.ready': 'Ready',
   'status.modelReady': '{model} is resident and ready.',
   'status.runningTask': 'Running {task}...',
