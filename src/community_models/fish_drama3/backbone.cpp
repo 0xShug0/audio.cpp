@@ -61,23 +61,35 @@ public:
     ~HybridGraphAllocator() { reset(); }
     void reset() {
         if (scheduler_) {
-            // CUDA captures the scheduler's individual splits. Releasing only
-            // the original graph leaves the other captures cached indefinitely.
-            for (int split = 0; split < ggml_backend_sched_get_n_splits(scheduler_); ++split) {
-                const auto * graph = ggml_backend_sched_get_split_graph(scheduler_, split);
-                core::release_backend_graph_resources(primary_, const_cast<ggml_cgraph *>(graph), true);
+            // CUDA capture keys are first-node pointers. Scheduler split views
+            // borrow nodes from this graph, so visiting its nodes also covers
+            // all capture keys without accessing scheduler internals.
+            if (graph_ && cleanup_graph_) {
+                for (int node = 0; node < ggml_graph_n_nodes(graph_); ++node) {
+                    ggml_graph_set_n_nodes(cleanup_graph_, 0);
+                    ggml_graph_add_node(cleanup_graph_, ggml_graph_node(graph_, node));
+                    core::release_backend_graph_resources(primary_, cleanup_graph_, true);
+                }
             }
             ggml_backend_sched_free(scheduler_);
         }
         if (allocator_) ggml_gallocr_free(allocator_);
         scheduler_ = nullptr;
         allocator_ = nullptr;
+        graph_ = nullptr;
+        cleanup_graph_ = nullptr;
+        cleanup_context_.reset();
     }
     bool allocate(ggml_cgraph * graph, ggml_backend_t primary, ggml_backend_t cpu) {
         reset();
         primary_ = primary;
         cpu_ = cpu;
+        graph_ = graph;
         if (cpu) {
+            // Allocate the cleanup view with the graph, not in its destructor.
+            cleanup_context_.reset(ggml_init({ggml_graph_overhead_custom(1, false) + 1024, nullptr, true}));
+            if (!cleanup_context_) return false;
+            cleanup_graph_ = ggml_new_graph_custom(cleanup_context_.get(), 1, false);
             ggml_backend_t backends[] = {primary, cpu};
             scheduler_ = ggml_backend_sched_new(backends, nullptr, 2, 65536, false, false);
             return scheduler_ && ggml_backend_sched_alloc_graph(scheduler_, graph);
@@ -101,6 +113,9 @@ private:
     ggml_gallocr_t allocator_ = nullptr;
     ggml_backend_t primary_ = nullptr;
     ggml_backend_t cpu_ = nullptr;
+    ggml_cgraph * graph_ = nullptr;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> cleanup_context_;
+    ggml_cgraph * cleanup_graph_ = nullptr;
 };
 
 struct GraphMemory {
