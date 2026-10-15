@@ -37,7 +37,7 @@ struct ComponentExecImplementation {
     std::initializer_list<core::BackendType> backends;
     std::initializer_list<std::string_view> required_artifacts;
     std::initializer_list<std::string_view> optional_artifacts;
-    std::initializer_list<std::string_view> params = {};
+    std::initializer_list<std::string_view> params;
 };
 
 struct ComponentExecSpec {

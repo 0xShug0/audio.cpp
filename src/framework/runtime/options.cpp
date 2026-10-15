@@ -163,7 +163,8 @@ parse_exec_plan(const std::unordered_map<std::string, std::string> & options, st
             throw std::runtime_error(std::string(key) + " must be a JSON object");
         }
     }
-    for (const auto & [name, _] : value.as_object()) {
+    for (const auto & entry : value.as_object()) {
+        const auto & name = entry.first;
         if (std::find_if(components.begin(), components.end(),
                          [&](const auto & component) { return component.name == name; }) == components.end()) {
             throw std::runtime_error(std::string(key) + ": unsupported component '" + name + "'");
@@ -178,7 +179,9 @@ parse_exec_plan(const std::unordered_map<std::string, std::string> & options, st
             if (!settings->is_object()) {
                 throw std::runtime_error(component_key + " must be a JSON object");
             }
-            for (const auto & [field, item] : settings->as_object()) {
+            for (const auto & setting : settings->as_object()) {
+                const auto & field = setting.first;
+                const auto & item = setting.second;
                 if (field == "impl") {
                     if (!item.is_string() || item.as_string().empty()) {
                         throw std::runtime_error(component_key + ".impl must be a nonempty string");
