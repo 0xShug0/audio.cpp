@@ -1238,7 +1238,7 @@ public:
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(persistent_ctx_.get(), execution_.backend());
+        buffer_.reset(ggml_backend_alloc_ctx_tensors(persistent_ctx_.get(), execution_.backend()));
         if (buffer_ == nullptr || !decode_allocator_.allocate(graph_, execution_.backend(),
                 weights_->cpu_execution ? weights_->cpu_execution->backend() : nullptr)) {
             throw std::runtime_error("failed to allocate Drama 3 backbone cached decode graph");
@@ -1251,9 +1251,6 @@ public:
         prefill_graphs_.clear();
         core::release_backend_graph_resources(execution_.backend(), graph_, true);
         decode_allocator_.reset();
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
     }
 
     void reset() {
@@ -1261,7 +1258,7 @@ public:
         // Masked attention can still multiply a zero probability by a cached
         // value. Initialize KV as well as recurrent state to avoid NaNs from
         // uninitialized storage on the first request.
-        ggml_backend_buffer_clear(buffer_, 0);
+        ggml_backend_buffer_clear(buffer_.get(), 0);
     }
 
     int64_t valid_steps() const noexcept {
@@ -1469,6 +1466,10 @@ private:
     int64_t valid_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> persistent_ctx_;
+    // Also owns the buffer when construction fails. Destroy the allocator first,
+    // while its graph, tensors, and persistent buffer are still alive.
+    std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, decltype(&ggml_backend_buffer_free)>
+        buffer_{nullptr, ggml_backend_buffer_free};
     HybridGraphAllocator decode_allocator_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * positions_ = nullptr;
@@ -1482,7 +1483,6 @@ private:
     std::vector<ggml_tensor *> linear_recurrent_states_;
     std::vector<ggml_fp16_t> attention_mask_values_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
     size_t prefill_cached_bytes_ = 0;
     std::list<std::unique_ptr<PrefillGraph>> prefill_graphs_;
 };

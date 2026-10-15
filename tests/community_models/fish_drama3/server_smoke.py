@@ -177,6 +177,11 @@ try:
     info['per_chunk_max_tokens'] = 150
     report['checks']['long_form_chunking'] = info
 
+    malformed_history = (arguments.output_directory / 'malformed-history.json').resolve()
+    malformed_history.write_text('[', encoding='utf-8')
+    malformed_artifact = {'id': 'drama3_take', 'kind': 'acoustic_tokens',
+                          'payload': base64.b64encode(b'[').decode('ascii'),
+                          'meta': {'family': 'fish_drama3', 'schema': 'drama3_take_v1'}}
     rejected = []
     invalid_requests = [
         {'text': '<|speaker:16|> Hello.', 'max_tokens': 50},
@@ -190,6 +195,23 @@ try:
          'options': {'references': json.dumps([{'text': 'Hello.', 'vq_codes': [[1.5]] + [[0]] * 9}])}},
         {'text': 'Hello.', 'max_tokens': 50,
          'options': {'references': json.dumps([{'text': 'Hello.', 'vq_codes': 'invalid'}])}},
+        {'text': 'Hello.', 'max_tokens': 50, 'options': {'references': '['}},
+        {'text': 'Hello.', 'max_tokens': 50, 'options': {'references': '{}'}},
+        {'text': 'Hello.', 'max_tokens': 50, 'options': {'references': '[null]'}},
+        {'text': 'Hello.', 'max_tokens': 50,
+         'options': {'references': json.dumps([{'vq_codes': [[0]] * 10}])}},
+        {'text': 'Hello.', 'max_tokens': 50,
+         'options': {'references': json.dumps([{'text': 123, 'vq_codes': [[0]] * 10}])}},
+        {'text': 'Hello.', 'max_tokens': 50,
+         'options': {'references': json.dumps([{'text': 'Hello.', 'audio_path': 123}])}},
+        {'text': 'Hello.', 'max_tokens': 50,
+         'options': {'references': json.dumps([{'text': 'Hello.', 'audio': 123}])}},
+        {'text': 'Hello.', 'max_tokens': 50, 'options': {'multi_reference_cond': '['}},
+        {'text': 'Hello.', 'max_tokens': 50, 'options': {'previous_takes': '['}},
+        {'text': 'Hello.', 'max_tokens': 50,
+         'options': {'previous_takes': json.dumps([{'vq_codes': [[0]] * 10}])}},
+        {'text': 'Hello.', 'max_tokens': 50, 'options': {'previous_takes_file': str(malformed_history)}},
+        {'text': 'Hello.', 'max_tokens': 50, 'artifacts': [malformed_artifact]},
     ]
     for invalid in invalid_requests:
         try:

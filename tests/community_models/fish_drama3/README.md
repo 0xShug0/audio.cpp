@@ -1,5 +1,11 @@
 # Drama 3 regression tests
 
+`fish_drama3_backbone_allocation_test` injects failures during persistent-buffer
+and graph allocation, checks that repeated failures retain no buffers, and then
+runs a decode step. It covers both allocator paths with a small CPU fixture and
+requires no model files. The test compiles the model constructor with local
+allocation wrappers; the production build has no fault-injection hooks.
+
 `fish_drama3_codec_source_test` compares packed codec weights with independent
 split checkpoints in F32, F16 and BF16. It also checks existing split weights,
 partial layouts and malformed shapes. `fish_drama3_expert_quantization_test`
@@ -15,16 +21,21 @@ Only `tokenizer.json` and `tokenizer_config.json` from
 [fishaudio/drama-3](https://huggingface.co/fishaudio/drama-3) are required.
 Place them in `models/Drama-3-source`. Model weights and a GPU are unnecessary.
 
+```powershell
+uv run --no-project --python 3.12 --with huggingface_hub hf download fishaudio/drama-3 tokenizer.json tokenizer_config.json --revision dd64a85cd82e9521f7202610ede97b367fc83946 --local-dir models/Drama-3-source
+```
+
 From a Visual Studio Developer PowerShell with CMake and Ninja available:
 
 ```powershell
 cmake -S . -B build/drama3-tokenizer-tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=fish_drama3 -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF -DENGINE_BUILD_TESTS=ON -DAUDIOCPP_DRAMA3_TOKENIZER_DIR="$PWD/models/Drama-3-source"
-cmake --build build/drama3-tokenizer-tests --target fish_drama3_codec_source_test fish_drama3_expert_quantization_test fish_drama3_tokenizer_test --parallel 4
-ctest --test-dir build/drama3-tokenizer-tests -R '^fish_drama3_(codec_source|expert_quantization|tokenizer)_test$' --output-on-failure
+cmake --build build/drama3-tokenizer-tests --target fish_drama3_backbone_allocation_test fish_drama3_codec_source_test fish_drama3_expert_quantization_test fish_drama3_tokenizer_test model_spec_system_test gguf_tensor_source_test quantize_chunking_test text_chunking_test streaming_audio_test --parallel 4
+ctest --test-dir build/drama3-tokenizer-tests -R '^(fish_drama3_(backbone_allocation|codec_source|expert_quantization|tokenizer)_test|model_spec_system_test|gguf_tensor_source_test|quantize_chunking_test|text_chunking_test|streaming_audio_test)$' --output-on-failure
 ```
 
 The same CMake options work on Linux. Use an absolute tokenizer directory and
 a shell-appropriate path in place of the PowerShell `$PWD` expression.
+This selection runs the four Drama 3 tests and five existing framework tests.
 
 The vectors cover combining marks, several scripts, numbers, delivery and
 speaker tags, whitespace, empty input, and an embedded NUL supplied as bytes.
@@ -62,8 +73,31 @@ This requires a loaded Drama 3 GGUF. It checks WAV/SSE sample parity, streamed
 take artifacts, continuation, fresh reference encoding, voice cloning from
 audio versus prepared codes, long-form text chunking, and a repeated seeded
 request after those mixed tasks. It uses its own generated audio as the
-reference. Run the test on the server's machine because reference audio paths
+reference. It also checks HTTP 400 responses for invalid tags, sampling limits,
+VQ grids, reference/history JSON, descriptor fields, and acoustic-token artifacts.
+Run the test on the server's machine because reference audio paths
 must be readable by the server. WAVs and a JSON report are saved in the output
 directory; no model or reference dataset is downloaded by the test.
 The default per-request timeout is 600 seconds to allow a cold load from slower
 storage. Use `--timeout` to adjust it.
+
+## Warm first-audio timing
+
+With the same server running, use the standard-library benchmark:
+
+```powershell
+uv run --no-project --python 3.12 tests/community_models/fish_drama3/benchmark.py --base-url http://127.0.0.1:8035 --output-directory build/drama3-benchmark --count 100
+```
+
+It generates and prepares a reference before timing, checks file-path and Base64
+reference uploads, excludes ten warmup requests, then measures five short English
+prompts in rotation. TTFA runs from the HTTP request write to the first nonempty
+raw PCM chunk. Every stream is fully consumed, and repeated seeded PCM must match.
+The report includes median and nearest-rank p95 TTFA and median RTF. It measures
+receipt of audio bytes, not browser playback or cold model loading.
+
+The output directory contains `summary.json`, `measured.csv`, the exact requests,
+and generated WAVs. Use separate output directories for builds being compared.
+Keep model, expert placement, context length, thread count, and other workloads
+consistent. The documented comparison used Q4_K experts with a Q8_0 backbone,
+zero CPU expert layers, context length 2048, eight threads, and concurrency one.

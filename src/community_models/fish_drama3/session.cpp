@@ -1,6 +1,7 @@
 #include "engine/community_models/fish_drama3/session.h"
 
 #include "engine/framework/audio/wav_reader.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
@@ -13,6 +14,14 @@
 namespace engine::models::fish_drama3 {
 namespace {
 namespace json = engine::io::json;
+
+json::Value parse_conditioning_json(std::string_view text) {
+    try {
+        return json::parse(text);
+    } catch (const std::runtime_error & error) {
+        throw runtime::InvalidRequestError(error.what());
+    }
+}
 
 codecs::FishDacCodes parse_codes(const json::Value & value, int64_t codebook_size) {
     codecs::FishDacCodes codes;
@@ -91,18 +100,21 @@ void Drama3Session::prepare(const runtime::SessionPreparationRequest & request) 
 
 Drama3Take Drama3Session::conditioning_take(const json::Value & value) {
     Drama3Take take;
-    take.text = json::require_string(value, "text");
-    validate_drama3_text(take.text, "conditioning text");
-    if (const auto * codes = value.find("vq_codes")) {
-        try {
+    std::optional<std::string> audio_path;
+    try {
+        take.text = json::require_string(value, "text");
+        validate_drama3_text(take.text, "conditioning text");
+        if (const auto * codes = value.find("vq_codes")) {
             take.codes = parse_codes(*codes, assets_->tower.codebook_size);
-        } catch (const std::runtime_error & error) {
-            throw runtime::InvalidRequestError(error.what());
-        }
+        } else if (const auto * audio = value.find("audio_path")) audio_path = audio->as_string();
+        else if (const auto * audio = value.find("audio")) audio_path = audio->as_string();
+        else throw runtime::InvalidRequestError("Drama 3 conditioning requires vq_codes, audio_path, or audio");
+    } catch (const std::runtime_error & error) {
+        throw runtime::InvalidRequestError(error.what());
     }
-    else if (const auto * audio = value.find("audio_path")) take.codes = generator_->encode_reference(read_reference(audio->as_string()));
-    else if (const auto * audio = value.find("audio")) take.codes = generator_->encode_reference(read_reference(audio->as_string()));
-    else throw runtime::InvalidRequestError("Drama 3 conditioning requires vq_codes, audio_path, or audio");
+    // Only parsing above translates client errors. I/O and codec failures retain
+    // their original classification.
+    if (audio_path) take.codes = generator_->encode_reference(read_reference(*audio_path));
     return take;
 }
 
@@ -142,7 +154,8 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
         references.push_back({*transcript, generator_->encode_reference(*effective.voice->speaker->audio)});
     }
     if (const auto ordered = runtime::find_option(effective.options, {"multi_reference_cond", "references"})) {
-        const auto descriptors = json::parse(*ordered);
+        const auto descriptors = parse_conditioning_json(*ordered);
+        if (!descriptors.is_array()) throw runtime::InvalidRequestError("Drama 3 references must be a JSON array");
         for (const auto & value : descriptors.as_array()) references.push_back(conditioning_take(value));
     }
     if (task_.task == runtime::VoiceTaskKind::VoiceCloning && references.empty()) {
@@ -168,13 +181,13 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
             throw runtime::InvalidRequestError("Drama 3 continuation cannot consume acoustic tokens from another model family");
         }
         const std::string payload(reinterpret_cast<const char *>(artifact.payload.data()), artifact.payload.size());
-        history.push_back(conditioning_take(json::parse(payload)));
+        history.push_back(conditioning_take(parse_conditioning_json(payload)));
     }
     const auto takes = runtime::find_option(effective.options, {"previous_takes"});
     const auto takes_file = runtime::find_option(effective.options, {"previous_takes_file"});
     if (takes && takes_file) throw runtime::InvalidRequestError("choose previous_takes or previous_takes_file");
     if (takes || takes_file) {
-        const auto descriptors = takes_file ? json::parse_file(*takes_file) : json::parse(*takes);
+        const auto descriptors = parse_conditioning_json(takes_file ? engine::io::read_text_file(*takes_file) : *takes);
         const auto append_take = [&](const json::Value & value) {
             if (value.is_string()) {
                 auto generated = generator_->generate(value.as_string(), references, history, sampling, false);
