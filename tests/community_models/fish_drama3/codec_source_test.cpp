@@ -60,7 +60,7 @@ int main(int argc, char ** argv) {
             const auto original = assets::open_tensor_source(packed_path);
             const auto adapted = engine::models::fish_drama3::make_drama3_codec_source(original);
             const auto split = assets::open_tensor_source(split_path);
-            if (adapted->source_path() != packed_path || adapted->has_tensor("missing") || adapted->optional_f32("missing"))
+            if (adapted->source_path() != original->source_path() || adapted->has_tensor("missing") || adapted->optional_f32("missing"))
                 throw std::runtime_error("codec source delegation failed");
             if (adapted->require_tensor_data(packed_name).bytes != original->require_tensor_data(packed_name).bytes)
                 throw std::runtime_error("packed source changed");
