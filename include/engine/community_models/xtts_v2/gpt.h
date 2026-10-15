@@ -9,7 +9,7 @@
 //   4. GPT-2 forward (return_latent): text + mel codes -> hidden states [d_model, T_mel]
 
 #include "engine/framework/core/backend.h"
-#include "engine/models/xtts_v2/assets.h"
+#include "engine/community_models/xtts_v2/assets.h"
 
 #include <cstdint>
 #include <filesystem>

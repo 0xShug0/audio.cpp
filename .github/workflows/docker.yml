@@ -1,0 +1,307 @@
+# audio.cpp — Build and publish Docker images
+#
+# Produces multi-arch (amd64, arm64) images on ghcr.io:
+#   full-cpu                     (latest, mutable)
+#   full-cpu-YYYYMMDD-HHHHHHH    (pinned to date + short SHA, immutable)
+#   full-cuda12                  (latest, mutable)
+#   full-cuda12-YYYYMMDD-HHHHHHH (pinned to date + short SHA, immutable)
+#   full-cuda13                  (latest, mutable)
+#   full-cuda13-YYYYMMDD-HHHHHHH (pinned to date + short SHA, immutable)
+
+name: Build and publish Docker images
+
+on:
+  # Runs daily at 03:21 UTC
+  schedule:
+    - cron: '21 3 * * *'
+  # or when triggered manually
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force build even if no new commits'
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ── Check for new commits ───────────────────────────────────────────────────
+  check-commits:
+    name: Check for new commits
+    runs-on: ubuntu-24.04
+    outputs:
+      skip_build: ${{ steps.check.outputs.skip }}
+      short_sha:  ${{ steps.check.outputs.short_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check for new commits
+        id: check
+        run: |
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.force_build }}" == 'true' ]]; then
+            echo "Manual trigger (force_build=true) — building"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            LAST_TAG=$(git tag -l 'last-docker-build' | head -1)
+            if [[ -n "$LAST_TAG" ]]; then
+              LAST_SHA=$(git rev-list -1 "$LAST_TAG" 2>/dev/null || echo "")
+              HEAD_SHA=$(git rev-parse HEAD)
+              if [[ "$LAST_SHA" == "$HEAD_SHA" ]]; then
+                echo "No new commits since last daily build — skipping"
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "New commits found — building"
+                echo "skip=false" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "No previous build tag found — building"
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+  # ── Shared metadata (date computed once for all jobs) ───────────────────────
+  metadata:
+    name: Generate metadata
+    needs: check-commits
+    if: ${{ needs.check-commits.outputs.skip_build != 'true' }}
+    runs-on: ubuntu-24.04
+    outputs:
+      build_date: ${{ steps.date.outputs.date }}
+      date_tag:   ${{ steps.date.outputs.tag }}
+      image_repo: ${{ steps.image_repo.outputs.image_repo }}
+    steps:
+      - name: Get build date
+        id: date
+        run: |
+          echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          echo "tag=$(date -u +'%Y%m%d')" >> "$GITHUB_OUTPUT"
+
+      - name: Determine lowercase image repository
+        id: image_repo
+        run: echo "image_repo=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+  # ── Build each arch, push by digest ─────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.tag }}, ${{ matrix.platforms }})
+    needs: [check-commits, metadata]
+    if: ${{ needs.check-commits.outputs.skip_build != 'true' }}
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── CPU ──
+          - tag: cpu
+            dockerfile: .devops/cpu.Dockerfile
+            platforms: linux/amd64
+            arch: amd64
+            runs_on: ubuntu-24.04
+            enabled: true
+          - tag: cpu
+            dockerfile: .devops/cpu.Dockerfile
+            platforms: linux/arm64
+            arch: arm64
+            runs_on: ubuntu-24.04-arm
+            enabled: true
+          # ── CUDA 12 ──
+          - tag: cuda12
+            dockerfile: .devops/cuda.Dockerfile
+            platforms: linux/amd64
+            arch: amd64
+            runs_on: ubuntu-24.04
+            cuda_version: "12.9.2"
+            enabled: true
+          - tag: cuda12
+            dockerfile: .devops/cuda.Dockerfile
+            platforms: linux/arm64
+            arch: arm64
+            runs_on: ubuntu-24.04-arm
+            cuda_version: "12.9.2"
+            enabled: true
+          # ── CUDA 13 ──
+          - tag: cuda13
+            dockerfile: .devops/cuda.Dockerfile
+            platforms: linux/amd64
+            arch: amd64
+            runs_on: ubuntu-24.04
+            cuda_version: "13.3.0"
+            enabled: true
+          - tag: cuda13
+            dockerfile: .devops/cuda.Dockerfile
+            platforms: linux/arm64
+            arch: arm64
+            runs_on: ubuntu-24.04-arm
+            cuda_version: "13.3.0"
+            enabled: true
+    steps:
+      - name: Skip when not enabled
+        if: ${{ matrix.enabled != true }}
+        run: echo "Skipping ${{ matrix.tag }} build"
+
+      - name: Checkout
+        if: ${{ matrix.enabled == true }}
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        if: ${{ matrix.enabled == true }}
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        if: ${{ matrix.enabled == true }}
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: push
+        if: ${{ matrix.enabled == true }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: full
+          platforms: ${{ matrix.platforms }}
+          provenance: false
+          outputs: type=image,name=ghcr.io/${{ needs.metadata.outputs.image_repo }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
+          build-args: |
+            BUILD_DATE=${{ needs.metadata.outputs.build_date }}
+            APP_VERSION=${{ github.sha }}
+            APP_REVISION=${{ github.sha }}
+            IMAGE_URL=${{ github.server_url }}/${{ github.repository }}
+            IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
+            ${{ matrix.cuda_version && format('CUDA_VERSION={0}', matrix.cuda_version) || '' }}
+          cache-from: type=registry,ref=ghcr.io/${{ needs.metadata.outputs.image_repo }}:cache-${{ matrix.arch }}-${{ matrix.tag }}
+          cache-to: type=registry,ref=ghcr.io/${{ needs.metadata.outputs.image_repo }}:cache-${{ matrix.arch }}-${{ matrix.tag }},mode=max
+
+      - name: Upload digest
+        if: ${{ matrix.enabled == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          digest="${{ steps.push.outputs.digest }}"
+
+          if [[ "$digest" != sha256:* ]]; then
+            echo "::error::Invalid digest format: $digest"
+            exit 1
+          fi
+
+          printf '%s\n' "$digest" > "/tmp/digests/${{ matrix.tag }}-${{ matrix.arch }}.txt"
+
+      - name: Save digest artifact
+        if: ${{ matrix.enabled == true }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.arch }}-${{ matrix.tag }}
+          path: /tmp/digests/
+          if-no-files-found: error
+
+  # ── Merge per-arch digests into multi-arch manifests ────────────────────────
+  merge:
+    name: Merge (${{ matrix.tag }})
+    needs: [check-commits, metadata, build]
+    # Merge will only run if there was actually a new commit to act on and
+    # if all build jobs succeeded. As soon as one build fails, we won't
+    # produce any merged images.
+    if: ${{ needs.check-commits.outputs.skip_build != 'true' && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [cpu, cuda12, cuda13]
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          pattern: digest-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - name: Create manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="ghcr.io/${{ needs.metadata.outputs.image_repo }}"
+          date_tag="${{ needs.metadata.outputs.date_tag }}"
+          short_sha="${{ needs.check-commits.outputs.short_sha }}"
+          tag="${{ matrix.tag }}"
+          build_date="${{ needs.metadata.outputs.build_date }}"
+          image_url="${{ github.server_url }}/${{ github.repository }}"
+
+          mutable="full-${tag}"
+          immutable="full-${tag}-${date_tag}-${short_sha}"
+
+          # Collect per-arch digests.
+          # Because this job is gated on needs.build.result == 'success', a missing
+          # digest can only mean the variant was intentionally disabled (enabled: false).
+          expected_arches=(amd64 arm64)
+          refs=()
+          for arch in "${expected_arches[@]}"; do
+            file="/tmp/digests/${tag}-${arch}.txt"
+            [ -f "$file" ] || continue
+            refs+=("${repo}@$(cat "$file")")
+          done
+
+          echo "${tag}: ${#refs[@]}/${#expected_arches[@]} digests merged"
+
+          if [ ${#refs[@]} -eq 0 ]; then
+            echo "  → skipping (all variants disabled)"
+            exit 0
+          fi
+
+          # OCI annotations for the merged manifest
+          annotations=(
+            --annotation "index:org.opencontainers.image.created=${build_date}"
+            --annotation "index:org.opencontainers.image.revision=${{ github.sha }}"
+            --annotation "index:org.opencontainers.image.url=${image_url}"
+            --annotation "index:org.opencontainers.image.source=${image_url}"
+          )
+
+          echo "  → ${mutable}"
+          docker buildx imagetools create "${annotations[@]}" --tag "${repo}:${mutable}" "${refs[@]}"
+
+          echo "  → ${immutable}"
+          docker buildx imagetools create "${annotations[@]}" --tag "${repo}:${immutable}" "${refs[@]}"
+
+  # ── Update last-docker-build tag ────────────────────────────────────────────
+  update-tag:
+    name: Update build tag
+    needs: [check-commits, merge]
+    if: ${{ needs.check-commits.outputs.skip_build != 'true' && needs.merge.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Update last-docker-build tag
+        run: |
+          set -euo pipefail
+          git tag -f last-docker-build HEAD
+          git push origin last-docker-build -f

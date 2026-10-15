@@ -1127,12 +1127,9 @@ HttpResponse ServerState::run_transcription(
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("transcription timing requires audio_input");
     }
-    std::string response_str = "{\"text\":" + json_quote(result.text_output->text);
-    if (!result.text_output->language.empty()) {
-        response_str += ",\"language\":" + json_quote(result.text_output->language);
-    }
-    response_str += ",\"timing\":" + timing_json(timed_result.wall_ms, *request.audio_input) + "}";
-    return json_response(response_str);
+    return json_response(
+        "{\"text\":" + json_quote(result.text_output->text) +
+        ",\"timing\":" + timing_json(timed_result.wall_ms, *request.audio_input) + "}");
 }
 
 HttpResponse ServerState::run_transcription_stream(

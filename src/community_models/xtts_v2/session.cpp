@@ -1,8 +1,8 @@
 // xtts_v2 TTS session
-#include "engine/models/xtts_v2/session.h"
-#include "engine/models/xtts_v2/gpt.h"
-#include "engine/models/xtts_v2/vocoder.h"
-#include "engine/models/xtts_v2/tokenizer_text.h"
+#include "engine/community_models/xtts_v2/session.h"
+#include "engine/community_models/xtts_v2/gpt.h"
+#include "engine/community_models/xtts_v2/vocoder.h"
+#include "engine/community_models/xtts_v2/tokenizer_text.h"
 
 #include "engine/framework/runtime/session.h"
 

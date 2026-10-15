@@ -1,0 +1,59 @@
+name: Linux Build
+
+on:
+  push:
+    branches:
+      - ci/**
+      - main
+      - dev
+      - release-0.2
+  pull_request:
+    branches:
+      - main
+      - dev
+      - release-0.2
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Linux ${{ matrix.backend }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: cpu
+            enable_vulkan: "OFF"
+          - backend: vulkan
+            enable_vulkan: "ON"
+
+    env:
+      CC: gcc-13
+      CXX: g++-13
+      BUILD_DIR: build/ci-linux-${{ matrix.backend }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check loader/spec sync
+        run: |
+          python3 tools/check_loader_catalog_sync.py --self-test
+          python3 tools/check_loader_catalog_sync.py
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13 cmake make glslc libvulkan-dev spirv-headers
+
+      - name: Configure
+        run: |
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DENGINE_ENABLE_CUDA=OFF \
+            -DENGINE_ENABLE_VULKAN=${{ matrix.enable_vulkan }}
+
+      - name: Build
+        run: |
+          cmake --build "$BUILD_DIR" --parallel "$(nproc)" --target audiocpp_cli audiocpp_server audiocpp_gguf

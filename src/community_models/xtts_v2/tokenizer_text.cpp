@@ -1,5 +1,5 @@
-#include "engine/models/xtts_v2/tokenizer_text.h"
-#include "engine/models/xtts_v2/assets.h"
+#include "engine/community_models/xtts_v2/tokenizer_text.h"
+#include "engine/community_models/xtts_v2/assets.h"
 
 #include <algorithm>
 #include <cctype>

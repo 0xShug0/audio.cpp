@@ -1,7 +1,7 @@
 // xtts_v2 vocoder -- HiFi-GAN + ResNet speaker encoder
 // Ported from CrispASR xtts_voc.cpp for audio.cpp framework.
 
-#include "engine/models/xtts_v2/vocoder.h"
+#include "engine/community_models/xtts_v2/vocoder.h"
 #include "engine/framework/core/backend.h"
 
 #include "ggml-backend.h"

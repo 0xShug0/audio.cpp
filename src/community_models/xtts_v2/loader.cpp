@@ -1,6 +1,6 @@
-#include "engine/models/xtts_v2/loader.h"
-#include "engine/models/xtts_v2/assets.h"
-#include "engine/models/xtts_v2/session.h"
+#include "engine/community_models/xtts_v2/loader.h"
+#include "engine/community_models/xtts_v2/assets.h"
+#include "engine/community_models/xtts_v2/session.h"
 
 namespace engine::models::xtts_v2 {
 namespace {

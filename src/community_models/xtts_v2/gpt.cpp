@@ -1,7 +1,7 @@
 // xtts_v2 GPT engine -- GPT-2 AR + ConditioningEncoder + Perceiver resampler
-#include "engine/models/xtts_v2/gpt.h"
-#include "engine/models/xtts_v2/assets.h"
-#include "engine/models/xtts_v2/tokenizer_text.h"
+#include "engine/community_models/xtts_v2/gpt.h"
+#include "engine/community_models/xtts_v2/assets.h"
+#include "engine/community_models/xtts_v2/tokenizer_text.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 #include "ggml.h"

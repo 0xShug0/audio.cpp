@@ -1069,14 +1069,14 @@ audiocpp_add_model(ace_step
 
 audiocpp_add_model(xtts_v2
     SOURCES
-        src/models/xtts_v2/assets.cpp
-        src/models/xtts_v2/gpt.cpp
-        src/models/xtts_v2/loader.cpp
-        src/models/xtts_v2/session.cpp
-        src/models/xtts_v2/tokenizer_text.cpp
-        src/models/xtts_v2/vocoder.cpp
+        src/community_models/xtts_v2/assets.cpp
+        src/community_models/xtts_v2/gpt.cpp
+        src/community_models/xtts_v2/loader.cpp
+        src/community_models/xtts_v2/session.cpp
+        src/community_models/xtts_v2/tokenizer_text.cpp
+        src/community_models/xtts_v2/vocoder.cpp
     INCLUDES
-        engine/models/xtts_v2/loader.h
+        engine/community_models/xtts_v2/loader.h
     LOADERS
         engine::models::xtts_v2::make_xtts_v2_loader
 )
