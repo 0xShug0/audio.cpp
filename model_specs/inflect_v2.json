@@ -83,6 +83,12 @@
         "type": "path",
         "description": "Optional explicit path to the directory containing espeak-ng-data.",
         "required": false
+      },
+      {
+        "name": "rknn_decoder",
+        "type": "path",
+        "description": "Path to a pre-compiled RKNN engine for this model's decoder, voiced on a Rockchip NPU. Needs a build with ENGINE_ENABLE_RKNN; build the engine with tools/rknn/prepare_inflect_v2_rknn_decoder.py.",
+        "required": false
       }
     ],
     "load": []

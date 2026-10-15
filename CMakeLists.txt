@@ -1022,6 +1022,7 @@ audiocpp_add_model(inflect_v2
         src/community_models/inflect_v2/assets.cpp
         src/community_models/inflect_v2/frontend.cpp
         src/community_models/inflect_v2/runtime.cpp
+        src/community_models/inflect_v2/rknn_decoder.cpp
         src/community_models/inflect_v2/session.cpp
     INCLUDES
         engine/community_models/inflect_v2/session.h

@@ -169,6 +169,49 @@ board — `Resize` does not lower to a target the board runtime accepts, so the 
 `ConvTranspose1d` of all ones (exact nearest, and the same operator the decoder already runs on the
 NPU).
 
+### Inflect v2 (Micro/Nano) decoder
+
+`tools/rknn/prepare_inflect_v2_rknn_decoder.py` slices the official `decode.onnx` at the same kind
+of seam — the inverse-flow input `z [1,192,N]` and its frame mask `y_mask [1,1,N]`, the pre-flow
+latent the runtime's decoder graph (`reverse_flow(latent)` into `dec`) already has on hand — checks
+the fixed-window decode against a full-length one, and compiles the slice:
+
+```bash
+<export-venv>/bin/python tools/rknn/prepare_inflect_v2_rknn_decoder.py \
+  --decode-onnx decode.onnx --duration-onnx duration.onnx --skip-rknn --output decoder_z.onnx
+<converter-venv>/bin/python tools/rknn/prepare_inflect_v2_rknn_decoder.py \
+  --onnx decoder_z.onnx --decode-onnx decode.onnx --duration-onnx duration.onnx --target rk3588
+```
+
+The head of `decode.onnx` (`z = m_p + exp(logs) * zp_noise * noise_scale`) stays outside the slice,
+so the engine has no noise input and no `noise_scale`: the runtime draws the noise with its own
+`variation` knob and hands the engine the finished latent. Because the slice is pinned to the
+compiled window, the self-check needs `decode.onnx` itself for a full-length reference decode;
+without it the check degrades to one window-length latent decoded against itself.
+
+The slice is folded before it is compiled (`onnxslim`, with the input shapes pinned to the window):
+the export sizes its spline-flow tensors from the latent length through `Shape` →
+`ConstantOfShape` → `Slice`, and handing that to `rknn.build` aborts the build inside
+`fold_constant` with a core dump and no traceback — the same failure the qwen3 export stage warns
+about, arriving here from the vendor graph rather than from a too-new `torch`. Folding first takes
+979 nodes with 24 `Shape` and 24 `ConstantOfShape` down to 409 plain conv nodes, and the build
+finishes (23.9 MB engine, 14.9 MB of it weights).
+
+The window is 256 latent slices: 192 emitted per step, 32 slices of real context on each side, a
+short window zero-padded and mask-zeroed at the end that has no data, and the window that reaches
+the end of the latent extends its left context to fill the window. The 32 is measured on the model's
+own prior samples at 480 slices against a full-length decode: 5.1 dB with no context, 40.0 dB at
+20, 82.1 dB at 24, 128.8 dB at 32.
+
+Unlike VITS's `dec`, this decoder half is masked in the flow and unmasked in the decoder, so the
+slice carries the decoder-half muls by default (`mask_decoder_graph`, the same construction as
+piper's opt-in `--dec-mask`): without them a latent whose decode is dominated by the window that
+reaches the end of the latent scores 7.5-17.9 dB against a full-length decode (30, 47, 91 and 210
+slices), with them 94.9-120.2 dB, and the interior windows are unchanged (they run with mask 1
+everywhere, where every injected `Mul` is an exact fp32 identity). A 480-slice latent is unaffected
+either way, because its tail window is long enough that the implicit-zero end is buried.
+`--no-dec-mask` drops the muls.
+
 ### Kokoro (iSTFTNet) generator
 
 `tools/rknn/prepare_kokoro_tts_rknn_generator.py` re-traces the generator the GGUF weights describe
@@ -395,6 +438,18 @@ Kokoro takes the engine plus two measured parameters on its window walk and is o
 The engine is per model, not per voice: the generator weights are in the GGUF, and the engine is
 validated against the loaded model's latent channel count, its spectrogram row count and its audio
 samples per latent frame at init.
+
+Inflect v2 takes one option and is offline only:
+
+```bash
+./build/bin/audiocpp_cli --task tts --family inflect_v2 \
+  --model models/Inflect-Micro-v2-GGUF/inflect-micro-v2-q8_0.gguf \
+  --text "..." --seed 1234 --out out.wav \
+  --session-option inflect_v2.rknn_decoder=/root/tts-rknn/inflect-v2-micro-decoder-rk3588.rknn
+```
+
+The engine is per model (Micro and Nano differ in latent width), validated against the loaded
+model's latent channel count and its samples-per-frame hop at init.
 
 `..._overlap` advances the walk by `emitted - overlap` frames and blends the shared columns with a
 raised cosine (1.54x wall, no change in the per-window loudness spread, so it is a seam knob, not a
