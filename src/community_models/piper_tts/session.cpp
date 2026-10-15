@@ -1,5 +1,6 @@
 #include "engine/community_models/piper_tts/session.h"
 
+#include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -90,12 +91,19 @@ PiperTtsSession::PiperTtsSession(
         throw std::runtime_error("Piper TTS only supports offline TTS");
     }
     validate_session_options(options, *contract_);
+    // The two duration stages are exec_plan components next to the decoder: each accepts the
+    // session backend (the device path) or the CPU backend (the host path), so a plan can pin
+    // one, both, or neither without adding a session option per stage.
     const auto exec_plan = runtime::parse_exec_plan(
         options.options,
         "piper_tts.exec_plan",
         {{"decoder", "ggml",
           {{"ggml", {options.backend.type}, {}, {}},
-           {"rknn", {}, {"main"}, {}}}}});
+           {"rknn", {}, {"main"}, {}}}},
+         {"duration_encoder", "ggml",
+          {{"ggml", {core::BackendType::Cpu, options.backend.type}, {}, {}}}},
+         {"duration_flows", "ggml",
+          {{"ggml", {core::BackendType::Cpu, options.backend.type}, {}, {}}}}});
     const auto & decoder_plan = exec_plan.at("decoder");
     frontend_ = std::make_unique<PiperTtsFrontend>(
         session_path(options, "piper_tts.espeak_library_path"),
@@ -106,7 +114,9 @@ PiperTtsSession::PiperTtsSession(
     runtime_ = std::make_unique<PiperVitsRuntime>(
         assets_,
         options.backend,
-        decoder_plan.impl == "rknn" ? decoder_plan.artifacts.at("main") : std::string{});
+        decoder_plan.impl == "rknn" ? decoder_plan.artifacts.at("main") : std::string{},
+        exec_plan.at("duration_encoder").backend,
+        exec_plan.at("duration_flows").backend);
 }
 
 PiperTtsSession::~PiperTtsSession() = default;

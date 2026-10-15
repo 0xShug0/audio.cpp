@@ -318,6 +318,7 @@ the configurable components:
 | Component | Option | Implementations | Artifact roles |
 |---|---|---|---|
 | Piper `decoder` | `piper_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
+| Piper `duration_encoder` / `duration_flows` | `piper_tts.exec_plan` | `ggml` | None (`backend` may name `cpu`) |
 | Kokoro `generator` | `kokoro_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
 | Qwen3 `speech_decoder` | `qwen3_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main`, optional `first` |
 | sanoTTS `decoder` | `sanotts.exec_plan` | `default`, `ggml`, `neon` | None |
@@ -339,7 +340,9 @@ accept no params. Parameter types and bounds are checked by the model, including
 the engine-dependent emitted-window limit for overlap.
 
 The current GGML components retain their session placement: an explicit `backend`
-must match the session's backend selection. NEON requires an AArch64 CPU session.
+must match the session's backend selection. The Piper duration stages are the
+exception: they accept the session backend or `cpu`, which is how a device session
+runs the small duration path on the host. NEON requires an AArch64 CPU session.
 RKNN selects the NPU through its implementation; omit `backend` rather than naming
 a ggml backend. This is not a global backend switch or a generic pipeline system.
 
@@ -377,6 +380,12 @@ Piper takes one option and is offline only:
   --model models/Piper-TTS-GGUF/piper-en-us-lessac-medium-orig.gguf \
   --text "..." --text-chunk-size 60 --out out.wav \
   --session-option 'piper_tts.exec_plan={"decoder":{"impl":"rknn","artifacts":{"main":"/root/tts-rknn/piper-lessac-w93.rknn"}}}'
+```
+
+The same option pins the duration stages to the host, with the decoder untouched:
+
+```bash
+  --session-option 'piper_tts.exec_plan={"duration_encoder":{"backend":"cpu"},"duration_flows":{"backend":"cpu"}}'
 ```
 
 The engine is per voice: a `.rknn` compiled from lessac's latent is validated against the loaded
