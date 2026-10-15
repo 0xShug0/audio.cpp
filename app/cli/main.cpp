@@ -63,7 +63,7 @@ void print_task_list_help() {
         << "    --list-devices  List available backend devices and exit\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
         << "    --registry-config <path>\n"
-        << "    --model-spec-override <json-or-directory>  Override package-spec resolution\n"
+        << "    --model-spec-override <json-or-directory|embedded>  Select a spec file/directory or the GGUF's embedded spec\n"
         << "    --config <id>\n"
         << "    --weight <id>\n"
         << "    --log  Stream framework progress and timing logs to stdout\n"

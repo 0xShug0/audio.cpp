@@ -207,6 +207,7 @@ void ModelRegistry::validate_request(const ModelLoadRequest & request) const {
         throw std::runtime_error("unsupported model family hint: " + *request.family_hint);
     }
     if (request.model_spec_override.has_value() &&
+        *request.model_spec_override != "embedded" &&
         !engine::io::is_existing_file(*request.model_spec_override) &&
         !engine::io::is_existing_directory(*request.model_spec_override)) {
         throw std::runtime_error("model spec override path does not exist: " + request.model_spec_override->string());

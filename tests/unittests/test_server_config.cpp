@@ -87,6 +87,24 @@ void test_inline_default_and_named_presets() {
     require(model.voice_presets.at("builtin").voice_id == "alba", "named voice_id parsed");
 }
 
+void test_model_spec_override_selection() {
+    const auto root = make_temp_root();
+    const auto path = write_config(root, "spec-override.json", R"JSON({
+      "model_spec_override": "embedded",
+      "models": [
+        {"id": "embedded", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "embedded"},
+        {"id": "file", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "specs/kokoro_tts.json"},
+        {"id": "literal", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "./embedded"}
+      ]
+    })JSON");
+    const auto config = minitts::server::load_server_config(path);
+    require(config.model_spec_override == std::filesystem::path("embedded"), "global embedded selector stays literal");
+    require(config.models[0].model_spec_override == std::filesystem::path("embedded"), "per-model embedded selector stays literal");
+    require(config.models[1].model_spec_override == root / "specs/kokoro_tts.json", "spec file still resolves relative to config");
+    require(config.models[2].model_spec_override == (root / "./embedded"), "literal embedded path stays a path");
+    std::filesystem::remove_all(root);
+}
+
 void test_builtin_utility_model_paths() {
     const auto root = make_temp_root();
     const auto absolute = (root / "weights" / "rnnoise.safetensors").generic_string();
@@ -658,6 +676,7 @@ int main() {
     try {
         test_model_slots();
         test_inline_default_and_named_presets();
+        test_model_spec_override_selection();
         test_builtin_utility_model_paths();
         test_default_preset_name();
         test_default_request_options();
