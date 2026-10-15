@@ -328,6 +328,17 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         ggml_tensor * th_t = nullptr;     // [256, 1]
         ggml_tensor * output = nullptr;   // [MEL, N] (half 0, conditioned)
         ggml_tensor * out_u = nullptr;    // [MEL, N] (half 1, uncond)
+        ~CfgGraph() {
+            // Cache eviction (more than two distinct (N, NT) keys in one process,
+            // i.e. every chunk past the second of a chunked request) destroys the
+            // unique_ptr, and without this the context pool, the gallocr arena and
+            // the io buffer of every evicted graph were leaked: measured 24.5 GiB
+            // peak RSS for a four-chunk CPU request, unchanged when the cache bound
+            // was lowered from 2 to 1 (more evictions, same leaks).
+            if (gallocr != nullptr) ggml_gallocr_free(gallocr);
+            if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
+            if (ctx != nullptr) ggml_free(ctx);
+        }
     };
     static auto * cache = new std::map<std::tuple<const LoadedModel *, int, int>, std::unique_ptr<CfgGraph>>();
     const auto ckey = std::make_tuple(&model, N, NT);
