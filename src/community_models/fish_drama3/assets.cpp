@@ -3,11 +3,106 @@
 #include "engine/framework/io/config.h"
 #include "engine/framework/model_spec/package.h"
 
+#include <limits>
+#include <map>
 #include <stdexcept>
 #include <utility>
 
 namespace engine::models::fish_drama3 {
 namespace json = engine::io::json;
+namespace {
+
+// Drama 3 packs Q, K, V into consecutive rows. Present the split names expected
+// by FishDacCodecRuntime without changing that shared codec or its decode graph.
+class Drama3CodecSource final : public assets::TensorSource {
+public:
+    explicit Drama3CodecSource(std::shared_ptr<const assets::TensorSource> source) : source_(std::move(source)) {
+        if (!source_) throw std::invalid_argument("Drama 3 codec source is null");
+        const std::string suffix = ".attention.wqkv.weight";
+        const char * projections[] = {"q_proj", "k_proj", "v_proj"};
+        for (const auto & tensor : source_->tensors()) {
+            if (tensor.name.size() < suffix.size() ||
+                tensor.name.compare(tensor.name.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+            const auto prefix = tensor.name.substr(0, tensor.name.size() - suffix.size()) + ".attention.";
+            int split_count = 0;
+            for (const auto * projection : projections) split_count += source_->has_tensor(prefix + projection + ".weight");
+            if (split_count == 3) continue;
+            if (split_count != 0) throw std::runtime_error("Drama 3 codec has incomplete split QKV weights: " + prefix);
+            if (tensor.shape.size() != 2 || tensor.shape[1] <= 0 || tensor.shape[0] % 3 != 0 ||
+                tensor.shape[0] / 3 != tensor.shape[1]) {
+                throw std::runtime_error("Drama 3 codec packed QKV shape is invalid: " + tensor.name);
+            }
+            for (size_t part = 0; part < 3; ++part) {
+                auto metadata = tensor;
+                metadata.name = prefix + projections[part] + ".weight";
+                metadata.shape[0] /= 3;
+                slices_.emplace(metadata.name, Slice{tensor.name, part, metadata});
+            }
+        }
+    }
+
+    const std::filesystem::path & source_path() const noexcept override { return source_->source_path(); }
+    bool has_tensor(std::string_view name) const noexcept override {
+        return slices_.find(name) != slices_.end() || source_->has_tensor(name);
+    }
+    assets::TensorMetadata require_metadata(std::string_view name) const override {
+        const auto found = slices_.find(name);
+        return found == slices_.end() ? source_->require_metadata(name) : found->second.metadata;
+    }
+    std::vector<assets::TensorMetadata> tensors() const override {
+        auto result = source_->tensors();
+        for (const auto & slice : slices_) result.push_back(slice.second.metadata);
+        return result;
+    }
+    void release_storage() const override { source_->release_storage(); }
+    assets::RawTensorData require_tensor_data(std::string_view name) const override {
+        const auto found = slices_.find(name);
+        if (found == slices_.end()) return source_->require_tensor_data(name);
+        const auto & slice = found->second;
+        const auto packed = source_->require_tensor_data(slice.packed_name);
+        const auto columns = slice.metadata.shape[1];
+        const auto type = assets::ggml_type_for_tensor_dtype(slice.metadata.dtype);
+        if (columns % ggml_blck_size(type) != 0) throw std::runtime_error("Drama 3 codec QKV row is not block aligned");
+        const auto row_bytes = ggml_row_size(type, columns);
+        const auto rows = static_cast<size_t>(slice.metadata.shape[0]);
+        if (rows > std::numeric_limits<size_t>::max() / row_bytes / 3 || packed.bytes.size() != rows * row_bytes * 3) {
+            throw std::runtime_error("Drama 3 codec packed QKV byte count is invalid: " + slice.packed_name);
+        }
+        const auto count = rows * row_bytes;
+        const auto begin = packed.bytes.begin() + slice.part * count;
+        return {slice.metadata, {begin, begin + count}};
+    }
+    std::vector<float> require_f32(std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape = std::nullopt) const override {
+        const auto found = slices_.find(name);
+        if (found == slices_.end()) return source_->require_f32(name, expected_shape);
+        const auto & metadata = found->second.metadata;
+        if (expected_shape && *expected_shape != metadata.shape) throw std::runtime_error("Drama 3 codec QKV shape mismatch");
+        const auto data = require_tensor(name, assets::TensorStorageType::Native, metadata.shape);
+        return assets::tensor_data_to_f32(name, data);
+    }
+    std::optional<std::vector<float>> optional_f32(std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape = std::nullopt) const override {
+        if (!has_tensor(name)) return std::nullopt;
+        return require_f32(name, expected_shape);
+    }
+    int64_t require_i64_scalar(std::string_view name) const override { return source_->require_i64_scalar(name); }
+
+private:
+    struct Slice {
+        std::string packed_name;
+        size_t part;
+        assets::TensorMetadata metadata;
+    };
+    std::shared_ptr<const assets::TensorSource> source_;
+    std::map<std::string, Slice, std::less<>> slices_;
+};
+
+}  // namespace
+
+std::shared_ptr<const assets::TensorSource> make_drama3_codec_source(std::shared_ptr<const assets::TensorSource> source) {
+    return std::make_shared<Drama3CodecSource>(std::move(source));
+}
 
 std::shared_ptr<const Drama3Assets> load_drama3_assets(const std::filesystem::path & model_path) {
     auto out = std::make_shared<Drama3Assets>();
@@ -75,17 +170,11 @@ std::shared_ptr<const Drama3Assets> load_drama3_assets(const std::filesystem::pa
         throw std::runtime_error("unsupported Drama 3 tower or semantic range");
     }
     out->model_weights = out->resources.open_tensor_source("model_weights");
-    out->codec_weights = out->resources.open_tensor_source("codec_weights");
+    out->codec_weights = make_drama3_codec_source(out->resources.open_tensor_source("codec_weights"));
     (void) out->model_weights->require_metadata("model.language_model.layers.0.mlp.experts.gate_proj.weight");
     (void) out->model_weights->require_metadata("audio_decoder_mtp_shared.layers.0.eh_proj.weight");
     const auto & residual_codebook = out->codec_weights->require_metadata("quantizer.quantizer.quantizers.0.codebook.weight");
     out->codec.residual_codebook_size = residual_codebook.shape[0];
-    auto tokenizer = std::make_shared<fish_audio::FishAudioAssets>();
-    tokenizer->resources = out->resources;
-    tokenizer->config.semantic_start_token_id = t.semantic_begin;
-    tokenizer->config.semantic_end_token_id = t.semantic_begin + t.codebook_size - 1;
-    tokenizer->config.im_end_token_id = out->eos;
-    out->tokenizer_assets = std::move(tokenizer);
     return out;
 }
 

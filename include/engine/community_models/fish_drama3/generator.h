@@ -34,7 +34,7 @@ public:
 
 private:
     std::shared_ptr<const Drama3Assets> assets_;
-    fish_audio::FishAudioTextTokenizer tokenizer_;
+    Drama3TextTokenizer tokenizer_;
     int64_t cache_steps_;
     bool profile_first_audio_ = false;
     std::unique_ptr<Drama3BackboneDecoderRuntime> backbone_;

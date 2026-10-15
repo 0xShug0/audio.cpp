@@ -1460,13 +1460,17 @@ audiocpp_add_model(fish_drama3
         src/community_models/fish_drama3/loader.cpp
         src/community_models/fish_drama3/prompt.cpp
         src/community_models/fish_drama3/session.cpp
+        src/community_models/fish_drama3/tokenizer_text.cpp
         src/community_models/fish_drama3/tower.cpp
+        external/utf8proc/utf8proc.c
     INCLUDES
         engine/community_models/fish_drama3/loader.h
     LOADERS
         engine::models::fish_drama3::make_fish_drama3_loader
-    DEPENDS fish_audio
 )
+
+target_include_directories(engine_model_fish_drama3 PRIVATE external/utf8proc)
+target_compile_definitions(engine_model_fish_drama3 PRIVATE UTF8PROC_STATIC)
 
 audiocpp_add_model(audio8_tts
     SOURCES
@@ -3576,6 +3580,20 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME lstm_sequence_test COMMAND lstm_sequence_test --log)
         target_include_directories(transpose_module_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME transpose_module_test COMMAND transpose_module_test)
+
+        if (fish_drama3 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(fish_drama3_codec_source_test tests/community_models/fish_drama3/codec_source_test.cpp)
+            add_test(NAME fish_drama3_codec_source_test COMMAND fish_drama3_codec_source_test)
+            add_engine_unittest(fish_drama3_expert_quantization_test tests/community_models/fish_drama3/expert_quantization_test.cpp)
+            add_test(NAME fish_drama3_expert_quantization_test COMMAND fish_drama3_expert_quantization_test)
+            add_engine_unittest(fish_drama3_tokenizer_test tests/community_models/fish_drama3/tokenizer_test.cpp)
+            set(AUDIOCPP_DRAMA3_TOKENIZER_DIR "" CACHE PATH "Optional Drama 3 tokenizer sidecars for reference tests")
+            if(AUDIOCPP_DRAMA3_TOKENIZER_DIR)
+                add_test(NAME fish_drama3_tokenizer_test COMMAND fish_drama3_tokenizer_test
+                    "${AUDIOCPP_DRAMA3_TOKENIZER_DIR}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/community_models/fish_drama3/tokenizer_vectors.json")
+            endif()
+        endif()
 
         add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
         target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)

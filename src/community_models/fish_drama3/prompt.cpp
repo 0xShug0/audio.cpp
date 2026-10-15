@@ -72,7 +72,7 @@ void validate_drama3_codes(const codecs::FishDacCodes & codes, int64_t size) {
 }
 
 std::vector<Drama3Frame> build_drama3_prompt(const Drama3Assets & assets,
-    const fish_audio::FishAudioTextTokenizer & tokenizer, const std::string & text,
+    const Drama3TextTokenizer & tokenizer, const std::string & text,
     const std::vector<Drama3Take> & references, const std::vector<Drama3Take> & history) {
     std::vector<Drama3Frame> frames;
     const auto append_text = [&](const std::string & segment) {

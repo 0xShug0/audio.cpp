@@ -48,7 +48,7 @@ std::vector<float> last_hidden(const std::vector<float> & values, int64_t width)
 
 Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     core::ExecutionContext & execution, const runtime::SessionOptions & options)
-    : assets_(std::move(assets)), tokenizer_(assets_->tokenizer_assets),
+    : assets_(std::move(assets)), tokenizer_(assets_->resources),
       cache_steps_(runtime::parse_positive_i64_option(options.options, {"fish_drama3.context_length"}, 2048)) {
     if (cache_steps_ > 262144) throw std::runtime_error("Drama 3 context_length exceeds the checkpoint's maximum position count");
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.profile_first_audio"})) {

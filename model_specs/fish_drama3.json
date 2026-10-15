@@ -224,7 +224,7 @@
       "display_name": "Drama 3 Q3_K experts / Q8_0 backbone",
       "description": "Mixed quantization with Q3_K routed experts, Q8_0 backbone matrices, and FP16 audio tower/codec. Experimental delivery quality.",
       "format": "gguf",
-      "precision": "q3_k",
+      "precision": "q3_k_s",
       "target_directory": "Drama-3-GGUF",
       "files": ["drama-3-backbone-8bit-experts-Q3_K_S.gguf"]
     },

@@ -4,6 +4,8 @@
 [fishaudio/drama-3](https://huggingface.co/fishaudio/drama-3). Inference runs in
 native audio.cpp with GGML; Python is used to prepare the checkpoint.
 
+Built with Fish Audio.
+
 The implementation includes the 40-layer hybrid attention/MoE backbone,
 256 experts with eight selected per token, four shared enrichment layers,
 nine residual codebook layers with persistent timeline caches, and the Fish DAC
@@ -16,9 +18,14 @@ Install Visual Studio 2022 C++ build tools, a CUDA toolkit that supports your GP
 and Git. Use the Drama 3 branch and initialize its public frontend submodule:
 
 ```powershell
-git clone --branch drama-3-native --recurse-submodules https://github.com/JarodMica/audio.cpp.git
+git clone --branch drama-3-native https://github.com/JarodMica/audio.cpp.git
 Set-Location audio.cpp
+git -c submodule.external/audio.cpp-server-frontends.url=https://github.com/0xShug0/audio.cpp-server-frontends.git submodule update --init --recursive
 ```
+
+The command-local HTTPS override lets the public frontend submodule download
+without GitHub SSH credentials. It does not modify `.gitmodules` or global Git
+configuration.
 
 Run the build helper from the repository root. It selects the required model
 dependencies and detects the CUDA architecture:
@@ -48,7 +55,7 @@ The model manager also lists all four packages:
 
 ```powershell
 uv run --no-project --python 3.12 tools\model_manager_v2.py list | Select-String 'fish_drama3'
-uv run --no-project --python 3.12 tools\model_manager_v2.py install fish_drama3_q2_experts_q8_backbone --models-dir models
+uv run --no-project --python 3.12 tools\model_manager_v2.py install fish_drama3_q2_experts_q8_backbone --models-root models
 ```
 
 | File | Size | Expert banks | Other backbone matrices |
@@ -70,9 +77,11 @@ The native converter takes `--expert-type q3_k` or `--expert-type q4_k`.
 `backbone-8bit` means Q8_0 backbone matrices; `backbone-4bit` means Q4_K matrices
 with a Q4_0 text embedding. Q2 experts use uniform Q2_K storage.
 
-All four packages retain FP16 audio tower and waveform codec weights and FP32
-normalization vectors. They embed their tokenizer, configuration and model
-contract. Stock audio.cpp releases without this port cannot run Drama 3.
+All four packages retain FP16 audio-tower matrices and waveform codec weights.
+Backbone and audio-tower normalization vectors stay FP32; codec normalization
+vectors use FP16 with the rest of the codec. The packages embed their tokenizer,
+configuration and model contract. Stock audio.cpp releases without this port
+cannot run Drama 3.
 
 ## Prepare weights with uv
 
@@ -83,9 +92,16 @@ converter if you want to prepare a different precision:
 .\scripts\build_windows.ps1 -Preset windows-cpu-release -ModelSet custom -Models fish_drama3 -Target audiocpp_gguf -Jobs 4
 ```
 
-Download the complete official checkpoint into `models\drama-3-original`. Its
-original per-expert FP8 tensors have 128-by-128 inverse scales. The preparation
-script applies those scales and packs each projection into an expert bank.
+Download the complete official checkpoint into `models\drama-3-original`.
+The revision below is the checkpoint used for validation:
+
+```powershell
+uv run --no-project --python 3.12 --with huggingface_hub hf download fishaudio/drama-3 --revision dd64a85cd82e9521f7202610ede97b367fc83946 --local-dir models\drama-3-original
+```
+
+Its original per-expert FP8 tensors have 128-by-128 inverse scales. The
+preparation script applies those scales and packs each projection into an
+expert bank.
 
 ```powershell
 uv run --python 3.12 tools\community_models\convert_fish_drama3.py `
@@ -211,6 +227,9 @@ Long-form text uses the framework chunker, with `text_chunk_size=200` and
 chunk as context. Caller-supplied history remains ordered in every chunk.
 
 ## Validation limits
+
+Reproducible codec, tokenizer, quantization and HTTP smoke commands are in the
+[Drama 3 test guide](../../tests/community_models/fish_drama3/README.md).
 
 The port was exercised on native Windows with an RTX PRO 6000 Blackwell 96 GB,
 CUDA 12.8 and eight CPU worker threads. English speech, voice references,

@@ -754,27 +754,9 @@ CodecTransformerWeights load_transformer(
         const std::string layer_prefix = prefix + ".layers." + std::to_string(layer);
         CodecTransformerLayerWeights weights;
         weights.attention_norm = binding::norm_weight_from_source(store, source, layer_prefix + ".attention_norm", kCodecDim);
-        if (source.has_tensor(layer_prefix + ".attention.q_proj.weight")) {
-            weights.attention.q_weight = store.load_tensor(source, layer_prefix + ".attention.q_proj.weight", storage_type, {kCodecDim, kCodecDim});
-            weights.attention.k_weight = store.load_tensor(source, layer_prefix + ".attention.k_proj.weight", storage_type, {kCodecDim, kCodecDim});
-            weights.attention.v_weight = store.load_tensor(source, layer_prefix + ".attention.v_proj.weight", storage_type, {kCodecDim, kCodecDim});
-        } else {
-            // Official DAC checkpoints store [query, key, value] as one matrix.
-            // Preserve the package's storage when materializing the three rows.
-            const auto name = layer_prefix + ".attention.wqkv.weight";
-            const auto packed = source.require_f32(name, {3 * kCodecDim, kCodecDim});
-            const auto type = storage_type == assets::TensorStorageType::Native
-                ? assets::tensor_storage_type_for_dtype(source.require_metadata(name).dtype)
-                : storage_type;
-            const size_t count = static_cast<size_t>(kCodecDim * kCodecDim);
-            const auto part = [&](size_t offset) {
-                return store.make_from_f32(core::TensorShape::from_dims({kCodecDim, kCodecDim}), type,
-                    std::vector<float>(packed.begin() + offset * count, packed.begin() + (offset + 1) * count));
-            };
-            weights.attention.q_weight = part(0);
-            weights.attention.k_weight = part(1);
-            weights.attention.v_weight = part(2);
-        }
+        weights.attention.q_weight = store.load_tensor(source, layer_prefix + ".attention.q_proj.weight", storage_type, {kCodecDim, kCodecDim});
+        weights.attention.k_weight = store.load_tensor(source, layer_prefix + ".attention.k_proj.weight", storage_type, {kCodecDim, kCodecDim});
+        weights.attention.v_weight = store.load_tensor(source, layer_prefix + ".attention.v_proj.weight", storage_type, {kCodecDim, kCodecDim});
         weights.attention.out_weight = store.load_tensor(source, layer_prefix + ".attention.wo.weight", storage_type, {kCodecDim, kCodecDim});
         weights.attention_scale = binding::layer_scale_from_named_source(store, source, layer_prefix + ".attention_layer_scale.gamma");
         weights.ffn_norm = binding::norm_weight_from_source(store, source, layer_prefix + ".ffn_norm", kCodecDim);
