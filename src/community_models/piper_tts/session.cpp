@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -47,22 +46,12 @@ std::filesystem::path session_path(
 void validate_session_options(
     const runtime::SessionOptions & options,
     const engine::model_spec::ModelContract & contract) {
-    const std::string family_prefix = std::string(kFamily) + ".";
-    // A published GGUF package embeds its own model spec, so an option added to
-    // model_specs/piper_tts.json is invisible to a package built before it. The NPU
-    // decoder option is therefore also accepted by name (qwen3_tts does the same).
-    static const std::set<std::string> kPackageIndependent = {
-        "piper_tts.rknn_decoder",
-    };
-    for (const auto & [key, _] : options.options) {
-        if (key.rfind(family_prefix, 0) == 0 &&
-            contract.session_option_keys.find(key) ==
-                contract.session_option_keys.end() &&
-            kPackageIndependent.find(key) == kPackageIndependent.end()) {
-            throw std::runtime_error(
-                "unknown Piper TTS session option: " + key);
-        }
+    auto validation_options = options;
+    // Older embedded contracts omit exec_plan; parse_exec_plan validates its value.
+    if (contract.session_option_keys.find("piper_tts.exec_plan") == contract.session_option_keys.end()) {
+        validation_options.options.erase("piper_tts.exec_plan");
     }
+    runtime::validate_spec_backed_session_options(validation_options, contract, kFamily, "Piper TTS");
 }
 
 int64_t chunk_size_from_request(const runtime::TaskRequest & request) {
@@ -101,6 +90,13 @@ PiperTtsSession::PiperTtsSession(
         throw std::runtime_error("Piper TTS only supports offline TTS");
     }
     validate_session_options(options, *contract_);
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "piper_tts.exec_plan",
+        {{"decoder", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}},
+           {"rknn", {}, {"main"}, {}}}}});
+    const auto & decoder_plan = exec_plan.at("decoder");
     frontend_ = std::make_unique<PiperTtsFrontend>(
         session_path(options, "piper_tts.espeak_library_path"),
         session_path(options, "piper_tts.espeak_data_path"),
@@ -110,7 +106,7 @@ PiperTtsSession::PiperTtsSession(
     runtime_ = std::make_unique<PiperVitsRuntime>(
         assets_,
         options.backend,
-        session_path(options, "piper_tts.rknn_decoder").string());
+        decoder_plan.impl == "rknn" ? decoder_plan.artifacts.at("main") : std::string{});
 }
 
 PiperTtsSession::~PiperTtsSession() = default;

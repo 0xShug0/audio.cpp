@@ -1,4 +1,4 @@
-// SanoTtsNeonDecoder (sanotts.cpu_decoder=neon) against a plain double-precision reference of
+// SanoTtsNeonDecoder against a plain double-precision reference of
 // the same decoder, on small random weights. No model files needed. On builds without AArch64
 // NEON it only checks that the decoder reports itself unavailable and refuses to construct.
 

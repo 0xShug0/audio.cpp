@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/io/json.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -12,12 +14,44 @@ namespace engine::assets {
 enum class TensorStorageType;
 }
 
+namespace engine::core {
+enum class BackendType;
+}
+
 namespace engine::runtime {
 
 struct OptionMatch {
     std::string key;
     std::string value;
 };
+
+struct ComponentExecPlan {
+    std::string impl;
+    std::optional<core::BackendType> backend;
+    std::unordered_map<std::string, std::string> artifacts;
+    io::json::Value::Object params;
+};
+
+struct ComponentExecImplementation {
+    std::string_view name;
+    std::initializer_list<core::BackendType> backends;
+    std::initializer_list<std::string_view> required_artifacts;
+    std::initializer_list<std::string_view> optional_artifacts;
+    std::initializer_list<std::string_view> params;
+};
+
+struct ComponentExecSpec {
+    std::string_view name;
+    std::string_view default_impl;
+    std::initializer_list<ComponentExecImplementation> implementations;
+};
+
+// Parses one family.exec_plan JSON object. Omitted components/fields retain their
+// defaults. Parameter values retain JSON types for model-local semantic validation.
+std::unordered_map<std::string, ComponentExecPlan> parse_exec_plan(
+    const std::unordered_map<std::string, std::string> & options,
+    std::string_view key,
+    std::initializer_list<ComponentExecSpec> components);
 
 std::optional<OptionMatch> find_option_match(
     const std::unordered_map<std::string, std::string> & options,

@@ -85,12 +85,9 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::shared_ptr<const kokoro_ggml::KokoroWeights> weights_;
     runtime::GraphCapacityController graph_capacity_controller_;
-    // The `kokoro_tts.rknn_generator` session option: a pre-compiled RKNN engine for
-    // the generator stage. Empty means the ggml generator graph runs on the CPU.
+    // artifacts.main from kokoro_tts.exec_plan.generator when RKNN is selected.
     std::string rknn_generator_path_;
-    // `kokoro_tts.rknn_generator_overlap` / `kokoro_tts.rknn_generator_gain`: measured
-    // knobs on the sidecar's window walk (overlap-blend / per-window loudness
-    // correction). Both default to the shipping walk.
+    // exec_plan.generator params: overlap-blend / per-window loudness correction.
     int64_t rknn_generator_overlap_ = 0;
     bool rknn_generator_gain_ = false;
     int64_t fixed_token_capacity_ = 0;

@@ -366,7 +366,7 @@ std::vector<float> KokoroTtsRknnGenerator::run(
     // every sine form and degree, for the unfolded Snake, and for every window grid, so
     // no export-time lever moves them. Cap those magnitude rows at the reference level
     // at every column; the phase rows and the speech band are untouched. Needs the
-    // reference, i.e. kokoro_tts.rknn_generator_gain=1, and is a no-op without it.
+    // reference, i.e. exec_plan.generator.params.gain=true, and is a no-op without it.
     if (reference != nullptr) {
         const int64_t top_rows = 5;
         for (int64_t row = mag_rows - top_rows; row < mag_rows; ++row) {

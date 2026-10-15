@@ -43,37 +43,15 @@ std::filesystem::path session_path(
         : std::filesystem::path(found->second);
 }
 
-SanoTtsCpuDecoder cpu_decoder_option(const runtime::SessionOptions & options) {
-    const auto found = options.options.find("sanotts.cpu_decoder");
-    if (found == options.options.end() || found->second == "auto") {
-        return SanoTtsCpuDecoder::Auto;
-    }
-    if (found->second == "ggml") {
-        return SanoTtsCpuDecoder::Ggml;
-    }
-    if (found->second == "neon") {
-        return SanoTtsCpuDecoder::Neon;
-    }
-    throw std::runtime_error("sanoTTS cpu_decoder must be auto, ggml or neon");
-}
-
 void validate_session_options(
     const runtime::SessionOptions & options,
     const engine::model_spec::ModelContract & contract) {
     auto validation_options = options;
-    // Published GGUFs may predate this option; its value is validated locally.
-    if (contract.session_option_keys.find("sanotts.cpu_decoder") ==
-        contract.session_option_keys.end()) {
-        validation_options.options.erase("sanotts.cpu_decoder");
+    // Older embedded contracts omit exec_plan; parse_exec_plan validates its value.
+    if (contract.session_option_keys.find("sanotts.exec_plan") == contract.session_option_keys.end()) {
+        validation_options.options.erase("sanotts.exec_plan");
     }
-    const std::string family_prefix = std::string(kFamily) + ".";
-    for (const auto & [key, _] : validation_options.options) {
-        if (key.rfind(family_prefix, 0) == 0 &&
-            contract.session_option_keys.find(key) ==
-                contract.session_option_keys.end()) {
-            throw std::runtime_error("unknown sanoTTS session option: " + key);
-        }
-    }
+    runtime::validate_spec_backed_session_options(validation_options, contract, kFamily, "sanoTTS");
 }
 
 int64_t chunk_size_from_request(const runtime::TaskRequest & request) {
@@ -159,7 +137,17 @@ SanoTtsSession::SanoTtsSession(
         throw std::runtime_error("sanoTTS only supports offline TTS");
     }
     validate_session_options(options, *contract_);
-    const auto cpu_decoder = cpu_decoder_option(options);
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "sanotts.exec_plan",
+        {{"decoder", "default",
+          {{"default", {options.backend.type}, {}, {}},
+           {"ggml", {options.backend.type}, {}, {}},
+           {"neon", {core::BackendType::Cpu}, {}, {}}}}});
+    const auto & decoder_plan = exec_plan.at("decoder");
+    const auto cpu_decoder = decoder_plan.impl == "neon" ? SanoTtsCpuDecoder::Neon
+        : decoder_plan.impl == "ggml" ? SanoTtsCpuDecoder::Ggml
+        : SanoTtsCpuDecoder::Auto;
     if (assets_->graph == SanoTtsGraph::Nano) {
         frontend_ = std::make_unique<SanoTtsFrontend>(
             session_path(options, "sanotts.espeak_library_path"),
@@ -168,6 +156,9 @@ SanoTtsSession::SanoTtsSession(
         runtime_ = std::make_unique<SanoTtsNativeRuntime>(
             assets_, options.backend, cpu_decoder);
     } else {
+        if (decoder_plan.impl == "neon") {
+            throw std::runtime_error("sanotts.exec_plan.decoder: NEON requires a Nano-lineage model");
+        }
         piper_frontend_ = std::make_unique<SanoTtsPiperFrontend>(
             session_path(options, "sanotts.espeak_library_path"),
             session_path(options, "sanotts.espeak_data_path"),

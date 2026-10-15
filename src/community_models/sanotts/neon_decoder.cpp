@@ -628,7 +628,7 @@ bool SanoTtsNeonDecoder::available() { return false; }
 
 SanoTtsNeonDecoder::SanoTtsNeonDecoder(const SanoTtsConfig &, const WeightReader &, int) {
     throw std::runtime_error(
-        "sanoTTS cpu_decoder=neon needs an AArch64 build with NEON; use cpu_decoder=ggml");
+        "sanotts.exec_plan.decoder: impl neon needs an AArch64 build with NEON; select ggml instead");
 }
 
 SanoTtsNeonDecoder::~SanoTtsNeonDecoder() = default;

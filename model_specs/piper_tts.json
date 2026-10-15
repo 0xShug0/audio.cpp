@@ -98,10 +98,11 @@
         "required": false
       },
       {
-        "name": "rknn_decoder",
-        "type": "path",
-        "description": "Path to a pre-compiled RKNN engine for this voice's decoder, voiced on a Rockchip NPU. Needs a build with ENGINE_ENABLE_RKNN; build the engine with tools/prepare_piper_tts_rknn_vocoder.py.",
-        "required": false
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Component: decoder. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. Default keeps existing execution. GGML supports the session backend; RKNN requires artifacts.main and ENGINE_ENABLE_RKNN, with no backend field. Neither implementation takes params.",
+        "required": false,
+        "default": "{}"
       }
     ],
     "load": []

@@ -89,16 +89,11 @@
         "required": false
       },
       {
-        "name": "cpu_decoder",
-        "type": "enum",
-        "description": "Nano-lineage frame-stage and decoder implementation. auto selects NEON on AArch64 CPU sessions when available, otherwise GGML. ggml explicitly uses the existing graph; neon requires an AArch64 NEON build and the CPU backend. Piperlite voices ignore the selection.",
-        "values": [
-          "auto",
-          "ggml",
-          "neon"
-        ],
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Component: decoder. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/neon; no artifacts or params are used. Default retains automatic NEON selection on supported Nano-lineage AArch64 CPU sessions. GGML supports the session backend; explicit NEON requires a Nano-lineage model, AArch64 NEON, and a CPU session.",
         "required": false,
-        "default": "auto"
+        "default": "{}"
       }
     ],
     "load": []

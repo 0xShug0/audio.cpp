@@ -39,7 +39,7 @@ audiocpp_cli --task tts --family piper_tts \
 |---|---|
 | `piper_tts.espeak_library_path` | Explicit path to the eSpeak-ng shared library. |
 | `piper_tts.espeak_data_path` | Explicit path to `espeak-ng-data`. |
-| `piper_tts.rknn_decoder` | Pre-compiled RKNN engine for this voice's decoder, voiced on a Rockchip NPU. Needs a build with `ENGINE_ENABLE_RKNN=ON`; see [docs/build/rockchip-npu.md](../build/rockchip-npu.md). |
+| `piper_tts.exec_plan` | JSON object of component execution plans. Default `{}` keeps existing execution. Select the RKNN decoder with `{"decoder":{"impl":"rknn","artifacts":{"main":"/models/decoder.rknn"}}}`. No decoder-specific params. Requires `ENGINE_ENABLE_RKNN=ON`; see [Rockchip NPU](../build/rockchip-npu.md#component-execution-plans). |
 
 On RK3588 the decoder is 75% of the runtime, so the NPU path is worth the extra file: measured
 RTF 0.198 → 0.0696 and peak RSS 299 → 175 MB on `en_US-lessac-medium`.

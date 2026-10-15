@@ -58,7 +58,7 @@ cmake --build build --parallel --target audiocpp_cli
 ```
 
 `ENGINE_ENABLE_RKNN` is `OFF` by default and nothing in the default build links `librknnrt`. With
-the flag off, passing `qwen3_tts.rknn_decoder` fails with
+the flag off, selecting RKNN in `qwen3_tts.exec_plan` fails with
 `Qwen3 speech decoder RKNN: built without ENGINE_ENABLE_RKNN` rather than falling back silently.
 
 ## Model preparation
@@ -310,6 +310,52 @@ gate measures the export and not the approximation.
   from at 124.6 dB.
 
 
+## Component execution plans
+
+Each participating model exposes one JSON-valued session option. Its keys name
+the configurable components:
+
+| Component | Option | Implementations | Artifact roles |
+|---|---|---|---|
+| Piper `decoder` | `piper_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
+| Kokoro `generator` | `kokoro_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
+| Qwen3 `speech_decoder` | `qwen3_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main`, optional `first` |
+| sanoTTS `decoder` | `sanotts.exec_plan` | `default`, `ggml`, `neon` | None |
+
+These options also work with older GGUFs whose embedded specs do not declare
+`exec_plan`; the model validates the plan without requiring a spec override.
+The replaced RKNN/NEON option names are not retained as aliases.
+
+Each component uses the same optional fields: `impl`, `backend`, `artifacts`
+(an object of named file paths), and `params` (an object of implementation-specific
+settings). Omit the option, use `{}`, omit a component, or give it an empty object
+or `impl=default` to retain that component's existing selection. Explicit RKNN
+selection requires its compiled files and an RKNN-enabled build; files alone
+do not select RKNN. Unknown fields, unsupported implementations/backends, missing
+required artifacts, unknown components/artifact roles, and unsupported params are errors.
+Kokoro's RKNN generator accepts `params.overlap` (nonnegative integer, default 0)
+and `params.gain` (boolean, default false). The other implementations currently
+accept no params. Parameter types and bounds are checked by the model, including
+the engine-dependent emitted-window limit for overlap.
+
+The current GGML components retain their session placement: an explicit `backend`
+must match the session's backend selection. NEON requires an AArch64 CPU session.
+RKNN selects the NPU through its implementation; omit `backend` rather than naming
+a ggml backend. This is not a global backend switch or a generic pipeline system.
+
+CLI session options carry JSON text. Server configs also accept a JSON object:
+
+```json
+"session_options": {
+  "piper_tts.exec_plan": {
+    "decoder": {
+      "impl": "rknn",
+      "artifacts": {"main": "/models/decoder.rknn"}
+    }
+  }
+}
+```
+
 ## Run
 
 ```bash
@@ -317,11 +363,10 @@ gate measures the export and not the approximation.
   --model models/Qwen3-TTS-12Hz-0.6B-Base-GGUF --text "..." --voice-ref ref.wav \
   --out out.wav \
   --session-option qwen3_tts.conv_weight_type=f16 \
-  --session-option qwen3_tts.rknn_decoder=/root/tts-rknn/vocoder/vocoder_stateful_64b_fp16.rknn \
-  --session-option qwen3_tts.rknn_decoder_first=/root/tts-rknn/vocoder/vocoder_stateful_16_fp16.rknn
+  --session-option 'qwen3_tts.exec_plan={"speech_decoder":{"impl":"rknn","artifacts":{"main":"/root/tts-rknn/vocoder/vocoder_stateful_64b_fp16.rknn","first":"/root/tts-rknn/vocoder/vocoder_stateful_16_fp16.rknn"}}}'
 ```
 
-`rknn_decoder_first` is optional and only affects streaming: the first token group runs on the
+`artifacts.first` is optional and only affects streaming: the first token group runs on the
 small-batch model, which is what cuts time-to-first-audio. When the RKNN decoder is active the
 ggml decoder weights are not loaded at all, which is where most of the memory saving comes from.
 
@@ -331,20 +376,20 @@ Piper takes one option and is offline only:
 ./build/bin/audiocpp_cli --task tts --family piper_tts \
   --model models/Piper-TTS-GGUF/piper-en-us-lessac-medium-orig.gguf \
   --text "..." --text-chunk-size 60 --out out.wav \
-  --session-option piper_tts.rknn_decoder=/root/tts-rknn/piper-lessac-w93.rknn
+  --session-option 'piper_tts.exec_plan={"decoder":{"impl":"rknn","artifacts":{"main":"/root/tts-rknn/piper-lessac-w93.rknn"}}}'
 ```
 
 The engine is per voice: a `.rknn` compiled from lessac's latent is validated against the loaded
 voice's channel count at init and fails with a message naming the producer if it does not match.
 
-Kokoro takes the engine plus two measured knobs on its window walk and is offline only
-(`kokoro_tts.rknn_generator_overlap`, `kokoro_tts.rknn_generator_gain`):
+Kokoro takes the engine plus two measured parameters on its window walk and is offline only
+(`generator.params.overlap`, `generator.params.gain` inside the execution plan):
 
 ```bash
 ./build/bin/audiocpp_cli --task tts --family kokoro_tts \
   --model models/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf \
   --text "..." --seed 1234 --out out.wav \
-  --session-option kokoro_tts.rknn_generator=/root/tts-rknn/gen_w128.rknn
+  --session-option 'kokoro_tts.exec_plan={"generator":{"impl":"rknn","artifacts":{"main":"/root/tts-rknn/gen_w128.rknn"},"params":{"overlap":0,"gain":false}}}'
 ```
 
 The engine is per model, not per voice: the generator weights are in the GGUF, and the engine is
@@ -437,7 +482,7 @@ where the graph's activations peak, the top iSTFT bins run 10-24x the CPU render
 there. They are fp16 rounding in the convolutional accumulation, not the sine and not the seams -
 the clip sine, the range-reduced sine, the exact `Sin` node, the unfolded Snake (`--no-snake-fold`,
 which bounds the convolution input) and the w128/w136 grids all leave the same columns at the same
-magnitude - and RKNN 2.3.2 has no per-layer dtype knob. `kokoro_tts.rknn_generator_gain=1` caps the
+magnitude - and RKNN 2.3.2 has no per-layer dtype knob. `params.gain=true` in the generator plan caps the
 top five log-magnitude rows at the full-length CPU decode's level at every column: on a 25.9 s
 render the worst of the top eight columns goes 14.7x -> 2.8x (shipping, no gain: 23.3x), for 1.9x
 wall and +601 MB RSS, because the ggml generator graph stays loaded and runs once per utterance. The

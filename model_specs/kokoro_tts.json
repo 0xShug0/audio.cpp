@@ -139,10 +139,11 @@
         "default": 0
       },
       {
-        "name": "rknn_generator",
-        "type": "path",
-        "description": "Path to a pre-compiled RKNN engine for the iSTFTNet generator, voiced on a Rockchip NPU. Needs a build with ENGINE_ENABLE_RKNN; build the engine with tools/prepare_kokoro_tts_rknn_generator.py.",
-        "required": false
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Component: generator. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. GGML keeps the session backend. RKNN requires artifacts.main and ENGINE_ENABLE_RKNN; omit backend. RKNN params: overlap (nonnegative integer, default 0, smaller than the emitted window), gain (boolean, default false; keeps a GGML generator reference).",
+        "required": false,
+        "default": "{}"
       }
     ],
     "load": []

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build the stateful RKNN speech decoder (vocoder) for the Qwen3-TTS family.
 
-The runtime side (``src/models/qwen3_tts/rknn_speech_decoder.cpp``, session options
-``qwen3_tts.rknn_decoder`` / ``qwen3_tts.rknn_decoder_first``) runs one compiled RKNN step graph
+The runtime side (``src/models/qwen3_tts/rknn_speech_decoder.cpp``, session option
+``qwen3_tts.exec_plan``) runs one compiled RKNN step graph
 in place of the ggml speech tokenizer decoder. Nothing in this repository produces that graph, so
 this script is its only producer: it re-traces the WavTokenizer-v2 decoder from the
 ``Qwen/Qwen3-TTS-12Hz-0.6B-Base`` Hugging Face checkpoint (the ``speech_tokenizer`` subdirectory,
@@ -15,7 +15,7 @@ from continuous state and there are no chunk seams. Four inputs
 ``audio_codes [1,16,B] int64`` / ``freqs_in [B,head_dim/2] fp32`` / ``cache_valid [1] fp32`` /
 ``cache_in [N] fp32``, two outputs ``audio_values`` / ``cache_out``, ``1920`` samples per token at
 24 kHz. ``N`` does not depend on ``B``, so a small-B step's cache feeds a large-B step directly —
-that is what ``qwen3_tts.rknn_decoder_first`` uses.
+that is what the execution plan's optional ``artifacts.first`` uses.
 
 Requirements (host, x86_64, dedicated venv — the RKNN toolkit pins its own numpy/onnx/torch):
   pip install torch onnx onnxruntime numpy
@@ -31,6 +31,7 @@ Usage:
 """
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -423,8 +424,9 @@ def convert_rknn(args, onnx_path, cache_numel, head_dim, kv_len):
         f"\nDeploy (per-SoC file, not portable between chips):\n"
         f"  scp {out} <board>:/root/tts-rknn/vocoder/\n"
         f"then run with\n"
-        f"  --session-option qwen3_tts.rknn_decoder=/root/tts-rknn/vocoder/"
-        f"{os.path.basename(out)}"
+        "  --session-option 'qwen3_tts.exec_plan="
+        + json.dumps({"speech_decoder": {"impl": "rknn", "artifacts": {"main": f"/root/tts-rknn/vocoder/{os.path.basename(out)}"}}})
+        + "'"
     )
 
 

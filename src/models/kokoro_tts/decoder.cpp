@@ -1270,10 +1270,10 @@ struct KokoroIstftNetDecoderRuntime::Impl {
     audio::STFTConfig inverse_stft_config;
     std::unique_ptr<ConditioningGraphRuntime> conditioning_graph;
     GeneratorGraphRuntime generator_graph;
-    // Set by the `kokoro_tts.rknn_generator` session option: the generator stage runs on
+    // Selected by `kokoro_tts.exec_plan.generator`: the generator stage runs on
     // the NPU, so the ggml generator graph is never prepared.
     std::unique_ptr<engine::models::kokoro_tts::KokoroTtsRknnGenerator> rknn_generator;
-    // Set by `kokoro_tts.rknn_generator_gain`: the ggml generator graph stays prepared to
+    // Set by exec_plan.generator.params.gain: the ggml generator graph stays prepared to
     // render one full-length CPU decode per utterance, whose loudness corrects each NPU
     // window (see KokoroTtsRknnGenerator::run's `reference`).
     bool rknn_generator_gain = false;

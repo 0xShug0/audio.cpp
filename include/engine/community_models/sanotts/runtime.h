@@ -19,7 +19,7 @@ struct SanoTtsGenerationOptions {
 };
 
 /** Which code runs the frame stage + decoder on a CPU backend
- *  (session option sanotts.cpu_decoder). */
+ *  (selected through sanotts.exec_plan). */
 enum class SanoTtsCpuDecoder {
     Auto,   // NEON on supported AArch64 CPU sessions, otherwise GGML
     Ggml,   // the GGML graph (every platform and backend)

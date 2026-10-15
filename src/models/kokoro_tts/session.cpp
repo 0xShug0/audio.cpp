@@ -12,7 +12,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -28,15 +30,6 @@ using engine::debug::measure_ms;
 constexpr int64_t kDefaultTextChunkSize = 240;
 constexpr const char * kFamily = "kokoro_tts";
 constexpr const char * kModelName = "Kokoro TTS";
-
-// A published GGUF package embeds its own model spec, so an option added to
-// model_specs/kokoro_tts.json is invisible to a package built before it. The NPU
-// generator option is therefore also accepted by name (piper_tts does the same).
-constexpr const char * kPackageIndependentSessionOptions[] = {
-    "kokoro_tts.rknn_generator",
-    "kokoro_tts.rknn_generator_overlap",
-    "kokoro_tts.rknn_generator_gain",
-};
 
 }  // namespace
 
@@ -65,36 +58,35 @@ KokoroTTSSession::KokoroTTSSession(
                             "kokoro_tts.predictor_tail_graph_mb"}) {
         validation_options.options.erase(key);
     }
-    // The RKNN sidecar options are model-local and opt-in, and a published GGUF package embeds
-    // an older spec that does not declare them, so they are accepted by name below.
-    for (const auto * key : kPackageIndependentSessionOptions) {
-        validation_options.options.erase(key);
+    // Older embedded contracts omit exec_plan; parse_exec_plan validates its value.
+    if (contract_->session_option_keys.find("kokoro_tts.exec_plan") == contract_->session_option_keys.end()) {
+        validation_options.options.erase("kokoro_tts.exec_plan");
     }
     runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
-    if (const auto found = RuntimeSessionBase::options().options.find("kokoro_tts.rknn_generator");        found != RuntimeSessionBase::options().options.end()) {
-        rknn_generator_path_ = found->second;
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "kokoro_tts.exec_plan",
+        {{"generator", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}},
+           {"rknn", {}, {"main"}, {}, {"overlap", "gain"}}}}});
+    const auto & generator_plan = exec_plan.at("generator");
+    if (generator_plan.impl == "rknn") {
+        rknn_generator_path_ = generator_plan.artifacts.at("main");
     }
-    if (rknn_generator_path_.empty()) {
-        for (const char * option : {"kokoro_tts.rknn_generator_overlap",
-                                    "kokoro_tts.rknn_generator_gain"}) {
-            if (RuntimeSessionBase::options().options.count(option) != 0) {
-                throw std::runtime_error(
-                    std::string(kModelName) + " session option 'kokoro_tts.rknn_generator' " +
-                    "must name an RKNN engine before '" + option + "' can tune its window walk");
-            }
+    if (const auto overlap = generator_plan.params.find("overlap"); overlap != generator_plan.params.end()) {
+        const auto & value = overlap->second;
+        if (!value.is_number() || !std::isfinite(value.as_number()) || value.as_number() < 0 ||
+            value.as_number() >= static_cast<double>(std::numeric_limits<int64_t>::max()) ||
+            std::floor(value.as_number()) != value.as_number()) {
+            throw std::runtime_error("kokoro_tts.exec_plan.generator.params.overlap must be a nonnegative integer");
         }
+        rknn_generator_overlap_ = value.as_i64();
     }
-    if (const auto overlap = runtime::parse_i64_option(
-            RuntimeSessionBase::options().options,
-            {"kokoro_tts.rknn_generator_overlap"});
-        overlap.has_value()) {
-        rknn_generator_overlap_ = *overlap;
-    }
-    if (const auto gain = runtime::find_option(
-            RuntimeSessionBase::options().options,
-            {"kokoro_tts.rknn_generator_gain"});
-        gain.has_value()) {
-        rknn_generator_gain_ = runtime::parse_bool_option(*gain, "kokoro_tts.rknn_generator_gain");
+    if (const auto gain = generator_plan.params.find("gain"); gain != generator_plan.params.end()) {
+        if (!gain->second.is_bool()) {
+            throw std::runtime_error("kokoro_tts.exec_plan.generator.params.gain must be a boolean");
+        }
+        rknn_generator_gain_ = gain->second.as_bool();
     }
     if (task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("Kokoro TTS only supports tts tasks");
