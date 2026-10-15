@@ -4,6 +4,7 @@
 #include "engine/framework/model_spec/schema.h"
 #include "engine/framework/io/json.h"
 #include "test_assert.h"
+#include "gguf.h"
 
 #include <filesystem>
 #include <fstream>
@@ -1363,6 +1364,75 @@ void test_contract_spec_prefers_workspace_over_package_local_spec() {
     std::filesystem::remove_all(root);
 }
 
+void test_contract_spec_priority_with_embedded_gguf() {
+    const auto root = make_temp_root();
+    const auto workspace = root / "workspace";
+    std::filesystem::create_directories(workspace);
+    const auto embedded = schema_v1_spec_with_options(
+        R"JSON({"request": [{"name": "old_option", "type": "string", "required": false, "description": "Existing option."}], "session": [], "load": []})JSON");
+    const auto current = schema_v1_spec_with_options(
+        R"JSON({"request": [{"name": "old_option", "type": "string", "required": false, "description": "Existing option."}, {"name": "new_option", "type": "string", "required": false, "description": "New option."}], "session": [], "load": []})JSON");
+    const auto gguf_path = root / "model.gguf";
+    auto * gguf = gguf_init_empty();
+    engine::test::require(gguf != nullptr, "create embedded-spec fixture");
+    gguf_set_val_u32(gguf, "audiocpp.model_spec.version", 1);
+    gguf_set_val_str(gguf, "audiocpp.model_spec.family", "toy_model");
+    gguf_set_val_str(gguf, "audiocpp.model_spec.json", embedded.c_str());
+    const bool written = gguf_write_to_file(gguf, gguf_path.string().c_str(), true);
+    gguf_free(gguf);
+    engine::test::require(written, "write embedded-spec fixture");
+
+    {
+        ScopedCurrentPath cwd(workspace);
+        const auto external = write_text(workspace, "model_specs/toy_model.json", current);
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope(std::nullopt, gguf_path);
+            engine::test::require_eq(
+                engine::model_spec::default_contract_spec_path("toy_model").string(),
+                std::filesystem::weakly_canonical(external).string(), "external contract wins over embedded");
+            const auto contract = engine::model_spec::model_contract("toy_model");
+            engine::test::require(contract->request_option_keys.count("old_option") == 1,
+                                  "external contract retains existing option");
+            engine::test::require(contract->request_option_keys.count("new_option") == 1,
+                                  "external contract exposes new option");
+            engine::test::require_eq(
+                engine::model_spec::default_package_spec_path("toy_model").generic_string(),
+                std::string("@gguf/toy_model.json"), "package still uses embedded spec");
+        }
+        const auto override_path = write_text(root, "override.json", embedded);
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope(override_path, gguf_path);
+            engine::test::require_eq(
+                engine::model_spec::default_contract_spec_path("toy_model").string(),
+                std::filesystem::weakly_canonical(override_path).string(), "explicit override wins");
+        }
+        write_text(workspace, "model_specs/toy_model.json", "{");
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope(std::nullopt, gguf_path);
+            bool rejected = false;
+            try {
+                (void)engine::model_spec::default_contract_spec_path("toy_model");
+            } catch (const std::exception & error) {
+                rejected = std::string(error.what()).find("invalid candidate model spec") != std::string::npos;
+            }
+            engine::test::require(rejected, "invalid external spec must not silently fall back");
+        }
+        std::filesystem::remove(external);
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope(std::nullopt, gguf_path);
+            engine::test::require_eq(
+                engine::model_spec::default_contract_spec_path("toy_model").generic_string(),
+                std::string("@gguf/toy_model.json"), "standalone embedded contract fallback");
+            const auto contract = engine::model_spec::model_contract("toy_model");
+            engine::test::require(contract->request_option_keys.count("old_option") == 1,
+                                  "embedded fallback retains existing option");
+            engine::test::require(contract->request_option_keys.count("new_option") == 0,
+                                  "embedded fallback uses its own contract");
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
 void test_loading_and_resource_bundle() {
     // Resource bundles resolve required files, tensor source files, and missing optional files.
     const auto root = make_temp_root();
@@ -1510,6 +1580,7 @@ int main() {
         test_legacy_spec_contract_behavior_unchanged();
         test_experimental_spec_without_installable_package();
         test_contract_spec_prefers_workspace_over_package_local_spec();
+        test_contract_spec_priority_with_embedded_gguf();
         test_loading_and_resource_bundle();
         test_task_vocabulary_is_consistent();
         test_vad_timestamp_capability();

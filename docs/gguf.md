@@ -10,7 +10,7 @@ spec in `audiocpp.model_spec.*` metadata, so a standalone GGUF does not depend o
 `model_specs` directory or on the binary having that family compiled into its spec
 catalog.
 
-Runtime resolution is deterministic:
+Package/resource resolution is deterministic:
 
 ```text
 explicit --model-spec-override
@@ -24,6 +24,15 @@ compiled catalog (AUDIOCPP_DEPLOYMENT_BUILD=ON)
               v
 external model_specs/<family>.json discovery
 ```
+
+Option validation, capabilities, and model-specific CLI help use a separate
+contract lookup order: explicit override, local `model_specs/<family>.json`
+discovered from the working directory and its parents, compiled deployment
+catalog, then the embedded GGUF spec. This allows contract updates without
+redistributing weights; package/resource resolution above is unchanged.
+Use external specs compatible with the installed runtime, not an arbitrary newer
+`main` revision. Legacy option aliases must remain supported. With `--log`,
+`runtime.model.contract_spec` identifies the selected contract.
 
 An explicit override is useful for testing a modified layout without rebuilding or
 reconverting:

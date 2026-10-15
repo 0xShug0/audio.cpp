@@ -231,10 +231,12 @@ paths refer to files accessible on the **server's computer**, not the client's;
 upload audio when the server cannot access the original file. Option-map path
 handling is model-specific; do not assume every option is config-relative.
 
-Package specs embedded in a GGUF are used automatically. Builds configured with
-`AUDIOCPP_DEPLOYMENT_BUILD=ON` also carry a compiled fallback catalog; normal builds
-discover `model_specs/<family>.json` on disk. `model_spec_override` explicitly replaces
-that resolution order. It accepts either one JSON file or a directory containing `<family>.json`.
+Package/resource loading prefers the spec embedded in a GGUF. For option validation,
+capabilities, and help, contracts instead prefer `model_specs/<family>.json` in the
+working directory or its parents, then the compiled catalog
+(`AUDIOCPP_DEPLOYMENT_BUILD=ON`), then the embedded spec. External specs must be
+compatible with the installed runtime. `model_spec_override` takes priority over
+both lookup orders. It accepts either one JSON file or a directory containing `<family>.json`.
 Set it at the top level to provide a server-wide override, or inside one model entry;
 the per-model value takes precedence. The equivalent command-line option is
 `--model-spec-override <json-or-directory>`. Leave this unset for normal use;

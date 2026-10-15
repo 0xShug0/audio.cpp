@@ -2,18 +2,17 @@
 
 #include "engine/framework/model_spec/schema.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
 #include <cctype>
-#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace engine::model_spec {
@@ -23,7 +22,6 @@ thread_local std::optional<std::filesystem::path> active_model_spec_override;
 thread_local std::optional<std::filesystem::path> active_model_path;
 thread_local bool active_embedded_spec_checked = false;
 thread_local std::optional<assets::GgufEmbeddedModelSpec> active_embedded_spec;
-thread_local std::unordered_set<std::string> legacy_embedded_contract_warnings;
 
 const std::unordered_map<std::string, std::string_view> & builtin_model_specs() {
     static const std::unordered_map<std::string, std::string_view> specs = {
@@ -128,16 +126,6 @@ bool embedded_model_spec_has_v1_contract(
     }
     const auto root = engine::io::json::parse(embedded.json);
     return root.find("schema_version") != nullptr;
-}
-
-void warn_legacy_embedded_contract(std::string_view family) {
-    if (!legacy_embedded_contract_warnings.emplace(family).second) {
-        return;
-    }
-    std::cerr << "[warning][model_spec] GGUF for family '" << family
-              << "' embeds a legacy model spec. Using the current schema-v1 model contract "
-                 "from the installed audio.cpp runtime for option validation. Regenerate the "
-                 "GGUF to make the package fully standalone.\n";
 }
 
 bool external_spec_matches_family(const std::filesystem::path & path, std::string_view family) {
@@ -503,6 +491,7 @@ std::filesystem::path default_package_spec_path(std::string_view family) {
 
 std::filesystem::path default_contract_spec_path(std::string_view family) {
     if (const auto path = find_contract_spec_path(family)) {
+        engine::debug::trace_log_scalar("runtime.model.contract_spec", path->string());
         return *path;
     }
     throw std::runtime_error("GGUF for family '" + std::string(family) +
@@ -523,18 +512,16 @@ std::optional<std::filesystem::path> find_contract_spec_path(std::string_view fa
         }
         return std::filesystem::weakly_canonical(path);
     }
+    if (const auto external = discover_workspace_model_spec(family)) {
+        return *external;
+    }
+    if (builtin_model_specs().find(std::string(family)) != builtin_model_specs().end()) {
+        return std::filesystem::path("@builtin") / (std::string(family) + ".json");
+    }
     bool active_gguf_has_legacy_spec = false;
     if (const auto gguf = active_gguf_path()) {
         const auto & embedded = embedded_model_spec();
         if (!embedded.has_value()) {
-            if (family == "minimax_h3") {
-                if (const auto external = discover_workspace_model_spec(family)) {
-                    return *external;
-                }
-                if (builtin_model_specs().find(std::string(family)) != builtin_model_specs().end()) {
-                    return std::filesystem::path("@builtin") / (std::string(family) + ".json");
-                }
-            }
             throw std::runtime_error("GGUF for family '" + std::string(family) +
                                      "' does not embed an audio.cpp model spec: " + gguf->string() +
                                      ". Published GGUF packages must embed a model spec; regenerate the GGUF "
@@ -544,13 +531,6 @@ std::optional<std::filesystem::path> find_contract_spec_path(std::string_view fa
             return std::filesystem::path("@gguf") / (std::string(family) + ".json");
         }
         active_gguf_has_legacy_spec = true;
-        warn_legacy_embedded_contract(family);
-    }
-    if (const auto external = discover_workspace_model_spec(family)) {
-        return *external;
-    }
-    if (builtin_model_specs().find(std::string(family)) != builtin_model_specs().end()) {
-        return std::filesystem::path("@builtin") / (std::string(family) + ".json");
     }
     if (const auto hint = directory_gguf_hint(family); !hint.empty()) {
         throw std::runtime_error(hint);
