@@ -12,7 +12,7 @@ namespace engine::models::sanotts {
 
 /** Hand-written ARM NEON version of the nano-lineage decoder (frame-stage
  *  acoustic blocks -> mel projection -> noise-fed ConvNeXt-1D -> spectrum
- *  head), for CPU sessions that ask for it with sanotts.cpu_decoder=neon.
+ *  head), for CPU sessions selecting neon through sanotts.exec_plan.
  *
  *  Same inputs and output as the GGML decoder graph in runtime.cpp, so the
  *  rest of the pipeline (durations, token stage, host iSTFT, DC block) is

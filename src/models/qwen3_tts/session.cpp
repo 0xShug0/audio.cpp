@@ -290,14 +290,18 @@ Qwen3TTSSession::Qwen3TTSSession(
         speech_decoder_weight_storage_type_ = engine::assets::parse_tensor_storage_type(it->second);
         validate_matmul_weight_storage(speech_decoder_weight_storage_type_, "qwen3_tts.speech_decoder_weight_type");
     }
-    if (const auto it = options.options.find("qwen3_tts.rknn_decoder"); it != options.options.end()) {
-        rknn_decoder_.model_path = it->second;
-    }
-    if (const auto it = options.options.find("qwen3_tts.rknn_decoder_first"); it != options.options.end()) {
-        rknn_decoder_.first_model_path = it->second;
-    }
-    if (!rknn_decoder_.first_model_path.empty() && rknn_decoder_.model_path.empty()) {
-        throw std::runtime_error("qwen3_tts.rknn_decoder_first requires qwen3_tts.rknn_decoder");
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "qwen3_tts.exec_plan",
+        {{"speech_decoder", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}},
+           {"rknn", {}, {"main"}, {"first"}}}}});
+    const auto & decoder_plan = exec_plan.at("speech_decoder");
+    if (decoder_plan.impl == "rknn") {
+        rknn_decoder_.model_path = decoder_plan.artifacts.at("main");
+        if (const auto first = decoder_plan.artifacts.find("first"); first != decoder_plan.artifacts.end()) {
+            rknn_decoder_.first_model_path = first->second;
+        }
     }
     if (perf_mode_ == Qwen3TTSPerfMode::FlashAttention &&
         (!source_contains_q8_tensor(*assets_->model_weights) ||
@@ -319,8 +323,7 @@ Qwen3TTSSession::Qwen3TTSSession(
             key != "qwen3_tts.speech_encoder_weight_type" &&
             key != "qwen3_tts.speech_decoder_weight_type" &&
             key != "qwen3_tts.voice_prompt_cache_slots" &&
-            key != "qwen3_tts.rknn_decoder" &&
-            key != "qwen3_tts.rknn_decoder_first" &&
+            key != "qwen3_tts.exec_plan" &&
             key != "qwen3_tts.perf_mode" &&
             key != "qwen3_tts.mem_saver") {
             throw std::runtime_error("unknown Qwen3 TTS session option: " + key);

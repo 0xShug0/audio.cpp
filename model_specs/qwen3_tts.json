@@ -257,16 +257,11 @@
         "preset": "weight_type_conv"
       },
       {
-        "name": "rknn_decoder",
-        "type": "path",
+        "name": "exec_plan",
+        "type": "string",
         "required": false,
-        "description": "Path to a pre-compiled stateful speech-tokenizer decoder .rknn (Rockchip NPU). Requires a build with ENGINE_ENABLE_RKNN. When set, the decoder stage runs on the NPU and its ggml weights are not loaded."
-      },
-      {
-        "name": "rknn_decoder_first",
-        "type": "path",
-        "required": false,
-        "description": "Optional smaller-batch .rknn used for the first token group only, to cut time-to-first-audio in streaming. Requires rknn_decoder."
+        "default": "{}",
+        "description": "JSON object of component execution plans. Component: speech_decoder. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. GGML supports the session backend. RKNN requires artifacts.main, optionally artifacts.first for the first streaming group, and ENGINE_ENABLE_RKNN; omit backend. RKNN skips GGML decoder weights. Neither implementation takes params."
       },
       {
         "name": "talker_graph_arena_mb",

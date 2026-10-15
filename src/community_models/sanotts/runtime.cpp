@@ -486,11 +486,11 @@ SanoTtsNativeRuntime::SanoTtsNativeRuntime(
     }
     if (cpu_decoder == SanoTtsCpuDecoder::Neon) {
         if (state_->backend_type != core::BackendType::Cpu) {
-            throw std::runtime_error("sanoTTS cpu_decoder=neon needs the CPU backend");
+            throw std::runtime_error("sanotts.exec_plan.decoder: impl neon needs the CPU backend");
         }
         if (!SanoTtsNeonDecoder::available()) {
             throw std::runtime_error(
-                "sanoTTS cpu_decoder=neon needs an AArch64 build with NEON; use cpu_decoder=ggml");
+                "sanotts.exec_plan.decoder: impl neon needs an AArch64 build with NEON; select ggml instead");
         }
         // The weights already live in host memory on the CPU backend; copy them out once.
         const auto setup_start = std::chrono::steady_clock::now();
@@ -549,14 +549,14 @@ SanoTtsNativeRuntime::SanoTtsNativeRuntime(
         // and the GELU approximation); a real mismatch is orders of magnitude larger.
         if (!(max_diff <= 1.0e-3F * std::max(1.0F, max_ref))) {
             if (auto_selected) {
-                // cpu_decoder=auto: keep working, on the GGML graph.
+                // Default selection: keep the existing GGML path when the self-check fails.
                 state_->neon_decoder.reset();
                 engine::debug::timing_log_scalar("sanotts.neon_self_check_fallback", 1);
                 return;
             }
             throw std::runtime_error(
                 "sanoTTS NEON decoder self-check failed (max difference " + std::to_string(max_diff) +
-                " from the GGML decoder graph); use --session-option sanotts.cpu_decoder=ggml");
+                " from the GGML decoder graph); use --session-option 'sanotts.exec_plan={\"decoder\":{\"impl\":\"ggml\"}}'");
         }
     }
 }

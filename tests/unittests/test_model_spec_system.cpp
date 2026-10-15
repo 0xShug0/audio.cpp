@@ -1107,6 +1107,30 @@ void test_options_schema() {
         "load option must be local");
 }
 
+void test_component_exec_plan_schema() {
+    const auto options = R"({"request":[],"session":[{
+        "name":"exec_plan","type":"string","description":"Model execution plan.",
+        "required":false,"default":"{}"
+    }],"load":[]})";
+    const auto root = make_temp_root();
+    write_text(root, "toy_model.json", schema_v1_spec_with_options(options));
+    const engine::model_spec::ScopedSpecOverride override(root);
+    const auto cli = engine::model_spec::cli_interface("toy_model");
+    engine::test::require(cli.has_value(), "exec plan spec projects CLI options");
+    engine::test::require_eq(cli->session_options.front().name, std::string("toy_model.exec_plan"),
+                            "exec plan receives exactly one family prefix");
+    const auto contract = engine::model_spec::model_contract("toy_model");
+    engine::test::require(contract && contract->session_option_keys.count("toy_model.exec_plan") == 1,
+                          "exec plan appears in the session contract");
+    expect_rejects("exec_plan_wrong_type", schema_v1_spec_with_options(R"({
+        "request":[],"session":[{"name":"exec_plan","type":"bool","description":"Bad type."}],"load":[]
+    })"), "exec_plan must be a JSON object encoded as a string");
+    expect_rejects("exec_plan_extra_namespace", schema_v1_spec_with_options(R"({
+        "request":[],"session":[{"name":"decoder.exec_plan","type":"string","description":"Bad name."}],"load":[]
+    })"), "session option must be local");
+    std::filesystem::remove_all(root);
+}
+
 void test_option_name_mapping_from_production_spec() {
     // Reference option tables do not opt legacy loaders into v1 contracts.
     const auto specs = std::filesystem::path(AUDIOCPP_SOURCE_DIR) / "model_specs";
@@ -1503,6 +1527,7 @@ int main() {
         test_typed_schema_renamed_dependencies();
         test_dependency_option_mapping_from_production_spec();
         test_options_schema();
+        test_component_exec_plan_schema();
         test_option_name_mapping_from_production_spec();
         test_echo_text_chunk_size_contract();
         test_schema_v1_metadata_projection();
