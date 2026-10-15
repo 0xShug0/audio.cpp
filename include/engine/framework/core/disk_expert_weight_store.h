@@ -20,6 +20,9 @@ public:
         uint64_t expert_loads = 0;
         uint64_t cache_hits = 0;
         size_t buffer_bytes = 0;
+        double read_ms = 0;
+        double upload_ms = 0;
+        double stage_ms = 0;
     };
 
     explicit DiskExpertWeightStore(const std::filesystem::path & gguf_path);

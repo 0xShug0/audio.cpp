@@ -1,6 +1,7 @@
 #include "engine/framework/core/disk_expert_weight_store.h"
 
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/debug/profiler.h"
 
 #include <ggml-alloc.h>
 #include <gguf.h>
@@ -26,11 +27,19 @@ public:
     struct Group {
         std::unique_ptr<ggml_context, ContextDeleter> context;
         ggml_backend_buffer_t buffer = nullptr;
+        ggml_backend_t backend = nullptr;
         std::vector<Projection> projections;
         std::vector<ggml_tensor *> tensors;
         std::vector<int32_t> expert_ids;
         std::vector<uint64_t> last_used;
         ~Group() { if (buffer) ggml_backend_buffer_free(buffer); }
+    };
+    struct Staging {
+        ggml_backend_buffer_t buffer = nullptr;
+        std::vector<std::byte> bytes;
+        size_t capacity = 0;
+        ~Staging() { if (buffer) ggml_backend_buffer_free(buffer); }
+        std::byte * data() { return buffer ? static_cast<std::byte *>(ggml_backend_buffer_get_base(buffer)) : bytes.data(); }
     };
 
     explicit Impl(const std::filesystem::path & path) : file(path, std::ios::binary) {
@@ -68,6 +77,7 @@ public:
     }
 
     void stage(ggml_tensor * ids_tensor, size_t index) {
+        const auto stage_started = std::chrono::steady_clock::now();
         auto & group = *groups.at(index);
         std::vector<int32_t> ids(static_cast<size_t>(ggml_nelements(ids_tensor)));
         ggml_backend_tensor_get(ids_tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
@@ -77,44 +87,73 @@ public:
             if (id < 0 || id >= group.projections.front().experts) throw std::runtime_error("disk expert routing ID out of range");
         }
         ++clock;
+        struct Miss { int32_t id; size_t slot; };
+        std::vector<Miss> misses;
+        auto planned_ids = group.expert_ids;
         for (const auto id : required) {
-            const auto found = std::find(group.expert_ids.begin(), group.expert_ids.end(), id);
+            const auto found = std::find(planned_ids.begin(), planned_ids.end(), id);
             size_t slot;
-            if (found != group.expert_ids.end()) {
-                slot = static_cast<size_t>(found - group.expert_ids.begin());
+            if (found != planned_ids.end()) {
+                slot = static_cast<size_t>(found - planned_ids.begin());
                 ++stats.cache_hits;
             } else {
-                slot = group.expert_ids.size();
-                for (size_t candidate = 0; candidate < group.expert_ids.size(); ++candidate) {
-                    if (required.count(group.expert_ids[candidate])) continue;
-                    if (slot == group.expert_ids.size() || group.last_used[candidate] < group.last_used[slot]) slot = candidate;
+                slot = planned_ids.size();
+                for (size_t candidate = 0; candidate < planned_ids.size(); ++candidate) {
+                    if (required.count(planned_ids[candidate])) continue;
+                    if (slot == planned_ids.size() || group.last_used[candidate] < group.last_used[slot]) slot = candidate;
                 }
+                planned_ids[slot] = id;
+                misses.push_back({id, slot});
+                // This slot must not remain a hit if a later read/upload fails.
                 group.expert_ids[slot] = -1;
-                for (size_t p = 0; p < group.projections.size(); ++p) {
-                    const auto & projection = group.projections[p];
-                    scratch.resize(projection.expert_bytes);
-                    file.clear();
-                    file.seekg(static_cast<std::streamoff>(projection.offset + static_cast<size_t>(id) * projection.expert_bytes));
-                    file.read(reinterpret_cast<char *>(scratch.data()), static_cast<std::streamsize>(scratch.size()));
-                    if (!file) throw std::runtime_error("failed to read selected expert " + std::to_string(id));
-                    ggml_backend_tensor_set(group.tensors[p], scratch.data(), slot * projection.expert_bytes, scratch.size());
-                    stats.bytes_read += scratch.size();
-                }
-                group.expert_ids[slot] = id;
-                ++stats.expert_loads;
             }
             group.last_used[slot] = clock;
         }
+        std::sort(misses.begin(), misses.end(), [](const Miss & a, const Miss & b) { return a.slot < b.slot; });
+        auto * staging = host_staging.at(group.backend)->data();
+        size_t offset = 0;
+        // Read the whole selected batch before posting copies. The staging
+        // allocation remains alive and unchanged until the backend is finished.
+        auto started = std::chrono::steady_clock::now();
+        for (const auto & projection : group.projections) {
+            for (const auto & miss : misses) {
+                file.clear();
+                file.seekg(static_cast<std::streamoff>(projection.offset + static_cast<size_t>(miss.id) * projection.expert_bytes));
+                file.read(reinterpret_cast<char *>(staging + offset), static_cast<std::streamsize>(projection.expert_bytes));
+                if (!file) throw std::runtime_error("failed to read selected expert " + std::to_string(miss.id));
+                stats.bytes_read += projection.expert_bytes;
+                offset += projection.expert_bytes;
+            }
+        }
+        stats.read_ms += debug::elapsed_ms(started);
+        started = std::chrono::steady_clock::now();
+        offset = 0;
+        for (size_t p = 0; p < group.projections.size(); ++p) {
+            const auto bytes = group.projections[p].expert_bytes;
+            for (size_t begin = 0; begin < misses.size();) {
+                size_t end = begin + 1;
+                while (end < misses.size() && misses[end].slot == misses[end - 1].slot + 1) ++end;
+                ggml_backend_tensor_set_async(group.backend, group.tensors[p], staging + offset + begin * bytes,
+                    misses[begin].slot * bytes, (end - begin) * bytes);
+                begin = end;
+            }
+            offset += misses.size() * bytes;
+        }
+        if (!misses.empty()) ggml_backend_synchronize(group.backend);
+        stats.upload_ms += debug::elapsed_ms(started);
+        for (const auto & miss : misses) group.expert_ids[miss.slot] = miss.id;
+        stats.expert_loads += misses.size();
         for (auto & id : ids) id = static_cast<int32_t>(
             std::find(group.expert_ids.begin(), group.expert_ids.end(), id) - group.expert_ids.begin());
         ggml_backend_tensor_set(ids_tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
+        stats.stage_ms += debug::elapsed_ms(stage_started);
     }
 
     std::ifstream file;
     std::map<std::string, Projection> projections;
     std::vector<std::unique_ptr<Group>> groups;
     std::map<std::string, size_t> routes;
-    std::vector<std::byte> scratch;
+    std::map<ggml_backend_t, std::unique_ptr<Staging>> host_staging;
     uint64_t clock = 0;
     Statistics stats;
 };
@@ -125,11 +164,15 @@ DiskExpertWeightStore::~DiskExpertWeightStore() {
     debug::timing_log_scalar("disk_experts.expert_loads", impl_->stats.expert_loads);
     debug::timing_log_scalar("disk_experts.cache_hits", impl_->stats.cache_hits);
     debug::timing_log_scalar("disk_experts.buffer_mb", double(impl_->stats.buffer_bytes) / (1024 * 1024));
+    debug::timing_log_scalar("disk_experts.read_ms", impl_->stats.read_ms);
+    debug::timing_log_scalar("disk_experts.upload_ms", impl_->stats.upload_ms);
+    debug::timing_log_scalar("disk_experts.stage_ms", impl_->stats.stage_ms);
 }
 
 size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, ggml_backend_t backend, int64_t slots) {
     if (names.empty() || !backend || slots <= 0) throw std::runtime_error("disk expert group requires projections, backend and positive capacity");
     auto group = std::make_unique<Impl::Group>();
+    group->backend = backend;
     group->context.reset(ggml_init({names.size() * ggml_tensor_overhead() + 1024, nullptr, true}));
     if (!group->context) throw std::runtime_error("cannot allocate disk expert tensor context");
     for (const auto & name : names) {
@@ -149,6 +192,25 @@ size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, 
     ggml_backend_buffer_set_usage(group->buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
     group->expert_ids.assign(static_cast<size_t>(slots), -1);
     group->last_used.assign(static_cast<size_t>(slots), 0);
+    size_t staging_bytes = 0;
+    for (const auto & projection : group->projections) staging_bytes += projection.expert_bytes * slots;
+    auto & staging = impl_->host_staging[backend];
+    if (!staging || staging->capacity < staging_bytes) {
+        auto buffer = std::make_unique<Impl::Staging>();
+        const auto host_type = ggml_backend_dev_host_buffer_type(ggml_backend_get_device(backend));
+        if (host_type) {
+            buffer->buffer = ggml_backend_buft_alloc_buffer(host_type, staging_bytes);
+            if (!buffer->buffer) throw std::runtime_error("cannot allocate expert upload staging buffer");
+        } else {
+            // Backends without pinned host buffers use ordinary host staging.
+            buffer->bytes.resize(staging_bytes);
+        }
+        buffer->capacity = staging_bytes;
+        staging = std::move(buffer);
+        debug::trace_log_scalar("disk_experts.staging_backend", ggml_backend_name(backend));
+        debug::trace_log_scalar("disk_experts.staging_type", host_type ? ggml_backend_buft_name(host_type) : "host");
+        debug::timing_log_scalar("disk_experts.staging_mb", double(staging_bytes) / (1024 * 1024));
+    }
     impl_->stats.buffer_bytes += ggml_backend_buffer_get_size(group->buffer);
     const auto index = impl_->groups.size();
     impl_->groups.push_back(std::move(group));

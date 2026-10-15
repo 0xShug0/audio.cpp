@@ -3587,6 +3587,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME transpose_module_test COMMAND transpose_module_test)
 
         if (fish_drama3 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(fish_drama3_sampler_test tests/community_models/fish_drama3/sampler_test.cpp)
+            add_test(NAME fish_drama3_sampler_test COMMAND fish_drama3_sampler_test --log)
             add_engine_unittest(fish_drama3_backbone_allocation_test tests/community_models/fish_drama3/backbone_allocation_test.cpp)
             add_test(NAME fish_drama3_backbone_allocation_test COMMAND fish_drama3_backbone_allocation_test)
             add_engine_unittest(fish_drama3_codec_source_test tests/community_models/fish_drama3/codec_source_test.cpp)

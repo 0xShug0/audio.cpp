@@ -3,6 +3,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/sampling/hf_sampler.h"
 
 #include <algorithm>
 #include <cmath>
@@ -19,16 +20,22 @@ namespace {
 int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
                float top_p, std::mt19937 & random) {
     if (logits.empty()) throw std::runtime_error("Drama 3 sampler has no logits");
+    if (temperature == 0 || top_k == 1)
+        return sampling::HfLogitsProcessor::argmax(logits.data(), logits.size(), "Drama 3");
     std::vector<int32_t> order(logits.size());
     std::iota(order.begin(), order.end(), 0);
-    std::stable_sort(order.begin(), order.end(), [&](int32_t left, int32_t right) { return logits[left] > logits[right]; });
-    if (temperature == 0 || top_k == 1) return order.front();
+    const auto count = std::min(logits.size(), static_cast<size_t>(top_k));
+    std::partial_sort(order.begin(), order.begin() + count, order.end(), [&](int32_t left, int32_t right) {
+        return logits[left] == logits[right] ? left < right : logits[left] > logits[right];
+    });
+    order.resize(count);
     const double maximum = logits[order.front()] / temperature;
-    std::vector<double> probabilities(order.size());
     double total = 0;
+    // Top-p is defined against the full distribution, before top-k filtering.
+    for (const auto logit : logits) total += std::exp(logit / temperature - maximum);
+    std::vector<double> probabilities(order.size());
     for (size_t rank = 0; rank < order.size(); ++rank) {
         probabilities[rank] = std::exp(logits[order[rank]] / temperature - maximum);
-        total += probabilities[rank];
     }
     if (!(total > 0) || !std::isfinite(total)) throw std::runtime_error("Drama 3 sampler encountered nonfinite logits");
     double cumulative = 0;
@@ -135,6 +142,8 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         !std::isfinite(sampling.top_p) || sampling.top_p <= 0 || sampling.top_p > 1 ||
         sampling.top_k <= 0 || sampling.max_frames <= 0) throw runtime::InvalidRequestError("invalid Drama 3 sampling parameters");
     using ProfileClock = std::chrono::steady_clock;
+    std::array<double, 9> component_ms{};
+    auto component_started = ProfileClock::now();
     const auto profile_start = profile_first_audio_ ? ProfileClock::now() : ProfileClock::time_point{};
     auto profile_marked = profile_start;
     std::vector<std::pair<const char *, double>> first_audio_phases;
@@ -153,15 +162,22 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     decoder->reset();
     tower_->reset();
     mark_phase("setup_ms");
+    component_ms[0] += debug::elapsed_ms(component_started);
+    component_started = ProfileClock::now();
     std::vector<int32_t> ids;
     for (const auto & frame : prompt) ids.push_back(frame[0]);
     auto embeddings = backbone_->token_embedding(ids);
     tower_->mix_backbone_embeddings(embeddings, prompt);
     mark_phase("embedding_ms");
+    component_ms[1] += debug::elapsed_ms(component_started);
+    component_started = ProfileClock::now();
     const auto prefill = decoder->prefill_embeddings(embeddings, static_cast<int64_t>(prompt.size()));
     mark_phase("backbone_prefill_ms");
+    component_ms[2] += debug::elapsed_ms(component_started);
+    component_started = ProfileClock::now();
     tower_->prefill(prefill.hidden, prompt);
     mark_phase("tower_prefill_ms");
+    component_ms[3] += debug::elapsed_ms(component_started);
     auto hidden = last_hidden(prefill.hidden, assets_->backbone.hidden_size);
     Drama3Frame current = prompt.back();
     std::mt19937 random(sampling.seed);
@@ -170,7 +186,10 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     Drama3Generation result;
     if (streaming) codec_->reset_decode_stream();
     for (int64_t step = 0; step < sampling.max_frames; ++step) {
+        component_started = ProfileClock::now();
         const auto logits = backbone_->lm_head(hidden);
+        component_ms[4] += debug::elapsed_ms(component_started);
+        component_started = ProfileClock::now();
         std::vector<float> candidates(static_cast<size_t>(assets_->tower.codebook_size + 1));
         candidates[0] = logits.at(assets_->eos);
         std::copy_n(logits.begin() + assets_->tower.semantic_begin, assets_->tower.codebook_size, candidates.begin() + 1);
@@ -179,11 +198,14 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         const int32_t first_token = first == 0 ? assets_->eos : assets_->tower.semantic_begin + first - 1;
         const bool repeats = first != 0 && std::find(recent.begin(), recent.end(), first_token) != recent.end();
         const int32_t selected = repeats ? second : first;
+        component_ms[5] += debug::elapsed_ms(component_started);
         if (selected == 0) break;
         if (step == 0) mark_phase("semantic_ms");
         Drama3Frame next{};
         next[0] = assets_->tower.semantic_begin + selected - 1;
         next[1] = selected - 1;
+        const auto tower_started = ProfileClock::now();
+        const auto sampling_before_tower = component_ms[5];
         const auto shared_input = tower_->shared_input({current});
         auto tower_hidden = hidden;
         const int64_t position = decoder->valid_steps() - 1;
@@ -194,14 +216,18 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
                                                         layer == 0 ? shared_input : std::vector<float>{}, position);
             tower_hidden = tower_output.hidden;
             if (layer >= config.shared_layers) {
+                component_started = ProfileClock::now();
                 next[2 + book] = sample(tower_output.logits, sampling.temperature, sampling.top_k, sampling.top_p, random);
+                component_ms[5] += debug::elapsed_ms(component_started);
             }
         }
+        component_ms[6] += debug::elapsed_ms(tower_started) - (component_ms[5] - sampling_before_tower);
         output_frames.push_back(next);
         if (step == 0) mark_phase("tower_first_frame_ms");
         recent.push_back(next[0]);
         if (recent.size() > 16) recent.pop_front();
         if (streaming) {
+            component_started = ProfileClock::now();
             codecs::FishDacCodes codes;
             codes.codebooks = 10;
             codes.frames = 1;
@@ -210,6 +236,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
             if (step == 0) mark_phase("codec_first_frame_ms");
             runtime::append_audio_buffer(result.audio, chunk);
             if (on_audio) on_audio(chunk);
+            component_ms[8] += debug::elapsed_ms(component_started);
             if (step == 0 && profile_first_audio_) {
                 std::cerr << "[drama3.first_audio] prompt_rows=" << prompt.size();
                 for (const auto & phase : first_audio_phases) std::cerr << " " << phase.first << "=" << phase.second;
@@ -218,9 +245,13 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         }
         if (step + 1 == sampling.max_frames) { result.reached_limit = true; break; }
         current = next;
+        component_started = ProfileClock::now();
         auto embedding = backbone_->token_embedding({current[0]});
         tower_->mix_backbone_embeddings(embedding, {current});
+        component_ms[1] += debug::elapsed_ms(component_started);
+        component_started = ProfileClock::now();
         hidden = decoder->run_embedding_step(embedding);
+        component_ms[7] += debug::elapsed_ms(component_started);
     }
     if (output_frames.empty()) throw std::runtime_error("Drama 3 ended before producing an audio frame");
     result.codes.codebooks = 10;
@@ -230,9 +261,16 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         for (size_t row = 0; row < output_frames.size(); ++row) result.codes.codes[book * output_frames.size() + row] = output_frames[row][book + 1];
     }
     if (!streaming) {
+        component_started = ProfileClock::now();
         result.audio = codec_->decode_codes(result.codes);
         codec_->release_runtime_graphs();
+        component_ms[8] += debug::elapsed_ms(component_started);
     }
+    const char * component_keys[] = {"drama3.setup_ms", "drama3.embedding_ms", "drama3.backbone_prefill_ms",
+        "drama3.tower_prefill_ms", "drama3.lm_head_ms", "drama3.sampling_ms", "drama3.tower_ms",
+        "drama3.backbone_step_ms", "drama3.codec_ms"};
+    for (size_t i = 0; i < component_ms.size(); ++i) debug::timing_log_scalar(component_keys[i], component_ms[i]);
+    debug::timing_log_scalar("drama3.generated_frames", output_frames.size());
     if (result.reached_limit) std::cerr << "[fish_drama3] max_tokens reached; audio may be incomplete\n";
     return result;
 }
