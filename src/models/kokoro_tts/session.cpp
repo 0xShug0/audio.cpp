@@ -58,6 +58,10 @@ KokoroTTSSession::KokoroTTSSession(
                             "kokoro_tts.predictor_tail_graph_mb"}) {
         validation_options.options.erase(key);
     }
+    // Older embedded contracts omit exec_plan; parse_exec_plan validates its value.
+    if (contract_->session_option_keys.find("kokoro_tts.exec_plan") == contract_->session_option_keys.end()) {
+        validation_options.options.erase("kokoro_tts.exec_plan");
+    }
     runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
     const auto exec_plan = runtime::parse_exec_plan(
         options.options,

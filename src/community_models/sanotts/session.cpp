@@ -46,14 +46,12 @@ std::filesystem::path session_path(
 void validate_session_options(
     const runtime::SessionOptions & options,
     const engine::model_spec::ModelContract & contract) {
-    const std::string family_prefix = std::string(kFamily) + ".";
-    for (const auto & [key, _] : options.options) {
-        if (key.rfind(family_prefix, 0) == 0 &&
-            contract.session_option_keys.find(key) ==
-                contract.session_option_keys.end()) {
-            throw std::runtime_error("unknown sanoTTS session option: " + key);
-        }
+    auto validation_options = options;
+    // Older embedded contracts omit exec_plan; parse_exec_plan validates its value.
+    if (contract.session_option_keys.find("sanotts.exec_plan") == contract.session_option_keys.end()) {
+        validation_options.options.erase("sanotts.exec_plan");
     }
+    runtime::validate_spec_backed_session_options(validation_options, contract, kFamily, "sanoTTS");
 }
 
 int64_t chunk_size_from_request(const runtime::TaskRequest & request) {

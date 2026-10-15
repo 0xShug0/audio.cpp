@@ -322,6 +322,10 @@ the configurable components:
 | Qwen3 `speech_decoder` | `qwen3_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main`, optional `first` |
 | sanoTTS `decoder` | `sanotts.exec_plan` | `default`, `ggml`, `neon` | None |
 
+These options also work with older GGUFs whose embedded specs do not declare
+`exec_plan`; the model validates the plan without requiring a spec override.
+The replaced RKNN/NEON option names are not retained as aliases.
+
 Each component uses the same optional fields: `impl`, `backend`, `artifacts`
 (an object of named file paths), and `params` (an object of implementation-specific
 settings). Omit the option, use `{}`, omit a component, or give it an empty object
