@@ -62,6 +62,8 @@ const english: Record<string, string> = {
   'arena.package.label': 'Package',
   'arena.package.configured': 'Configured',
   'arena.results.title': 'Compare outputs',
+  'arena.results.orderSelection': 'Order: selection order',
+  'arena.results.orderRtf': 'Order: RTF, lowest first · completed results first',
   'arena.results.empty': 'No arena results yet.',
   'arena.metric.wall': 'wall',
   'arena.metric.rtf': 'rtf',
