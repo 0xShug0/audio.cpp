@@ -48,16 +48,16 @@ struct XttSv2TtsSession::Impl {
     bool prepared = false;
 };
 
-XttSv2TtsSession::XttSv2TtsSession(std::shared_ptr<const XttSv2Assets> assets)
+XttSv2TtsSession::XttSv2TtsSession(std::shared_ptr<const XttSv2Assets> assets, const runtime::SessionOptions& session_options)
     : impl_(std::make_unique<Impl>()) {
     impl_->assets = std::move(assets);
+    impl_->n_threads = session_options.backend.threads > 0 ? session_options.backend.threads : impl_->n_threads;
 }
 
 XttSv2TtsSession::~XttSv2TtsSession() = default;
 
 void XttSv2TtsSession::prepare(const runtime::SessionPreparationRequest& request) {
     auto& c = *impl_;
-    c.n_threads = parse_opt<int>(get_opt(request, "n_threads", "4"), 4);
     c.temperature = parse_opt<float>(get_opt(request, "temperature", "0.75"), 0.75f);
     c.top_k = parse_opt<int>(get_opt(request, "top_k", "50"), 50);
     c.top_p = parse_opt<float>(get_opt(request, "top_p", "0.85"), 0.85f);
@@ -65,14 +65,13 @@ void XttSv2TtsSession::prepare(const runtime::SessionPreparationRequest& request
     c.max_mel_tokens = parse_opt<int>(get_opt(request, "max_mel_tokens", "605"), 605);
     c.language = get_opt(request, "language", "en");
 
-    fprintf(stderr, "xtts_v2: preparing GPT engine...\n");
     if (!c.gpt.load(c.assets->gpt_gguf_path, c.assets->vocoder_gguf_path, c.n_threads, false)) {
-        fprintf(stderr, "xtts_v2: GPT load failed\n"); return; }
-    fprintf(stderr, "xtts_v2: preparing vocoder...\n");
+        throw std::runtime_error("xtts_v2: failed to load GPT weights from " + c.assets->gpt_gguf_path.string());
+    }
     if (!c.vocoder.load(c.assets->vocoder_gguf_path, c.n_threads, false)) {
-        fprintf(stderr, "xtts_v2: vocoder load failed\n"); return; }
+        throw std::runtime_error("xtts_v2: failed to load vocoder weights from " + c.assets->vocoder_gguf_path.string());
+    }
     c.prepared = true;
-    fprintf(stderr, "xtts_v2: session prepared\n");
 }
 
 runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {

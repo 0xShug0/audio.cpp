@@ -45,7 +45,6 @@ public:
             {"repetition_penalty", "float", "Repetition penalty (default 5.0)"},
             {"max_mel_tokens", "n", "Max mel tokens (default 1500)"},
             {"language", "text", "Source language code"},
-            {"n_threads", "n", "Number of computation threads"},
         };
         return out;
     }
@@ -72,7 +71,7 @@ const runtime::CapabilitySet& XttSv2LoadedModel::capabilities() const noexcept {
 std::unique_ptr<runtime::IVoiceTaskSession> XttSv2LoadedModel::create_task_session(
     const runtime::TaskSpec& task, const runtime::SessionOptions& options) const {
     if (task.task != runtime::VoiceTaskKind::Tts) return nullptr;
-    return std::make_unique<XttSv2TtsSession>(assets_);
+    return std::make_unique<XttSv2TtsSession>(assets_, options);
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_xtts_v2_loader() { return std::make_shared<XttSv2Loader>(); }

@@ -12,7 +12,7 @@ class XttSv2Vocoder;
 
 class XttSv2TtsSession final : public runtime::IOfflineVoiceTaskSession {
 public:
-    explicit XttSv2TtsSession(std::shared_ptr<const XttSv2Assets> assets);
+    XttSv2TtsSession(std::shared_ptr<const XttSv2Assets> assets, const runtime::SessionOptions& session_options);
     ~XttSv2TtsSession() override;
 
     XttSv2TtsSession(const XttSv2TtsSession &) = delete;

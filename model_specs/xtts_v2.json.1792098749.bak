@@ -1,0 +1,20 @@
+{
+    "family": "xtts_v2",
+    "description": "Coqui XTTS v2 (CC-BY-NC 4.0)",
+    "license": "CC-BY-NC-4.0",
+    "tasks": ["tts"],
+    "formats": ["gguf"],
+    "expected_files": ["xtts-v2-gpt.gguf", "xtts-v2-vocoder.gguf"],
+    "default_sample_rate": 24000,
+    "languages": ["en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh-cn", "hu", "ko", "ja", "hi"],
+    "cli_options": {
+        "temperature": {"type": "float", "default": 0.75, "help": "AR sampling temperature"},
+        "top_k": {"type": "int", "default": 50, "help": "AR top-k sampling"},
+        "top_p": {"type": "float", "default": 0.85, "help": "AR nucleus sampling probability"},
+        "repetition_penalty": {"type": "float", "default": 5.0, "help": "AR repetition penalty"},
+        "max_mel_tokens": {"type": "int", "default": 1500, "help": "Max mel codes to generate"},
+        "language": {"type": "string", "default": "en", "help": "Source language code"},
+        "n_threads": {"type": "int", "default": 4, "help": "CPU thread count"}
+    }
+}
+
