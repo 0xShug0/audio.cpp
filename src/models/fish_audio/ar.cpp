@@ -1,4 +1,5 @@
 #include "engine/models/fish_audio/ar.h"
+#include "engine/models/fish_audio/drama3.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/backend.h"
@@ -1744,13 +1745,15 @@ FishAudioDualARRuntime::FishAudioDualARRuntime(
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type)
-    : impl_(std::make_unique<Impl>(
-          std::move(assets),
-          backend,
-          threads,
-          graph_arena_bytes,
-          weight_context_bytes,
-          weight_storage_type)) {}
+{
+    if (assets && assets->config.drama3) {
+        drama3_ = std::make_unique<Drama3ARRuntime>(std::move(assets), backend, threads,
+            graph_arena_bytes, weight_context_bytes, weight_storage_type);
+    } else {
+        impl_ = std::make_unique<Impl>(std::move(assets), backend, threads,
+            graph_arena_bytes, weight_context_bytes, weight_storage_type);
+    }
+}
 
 FishAudioDualARRuntime::~FishAudioDualARRuntime() = default;
 
@@ -1758,10 +1761,12 @@ engine::codecs::FishDacCodes FishAudioDualARRuntime::generate(
     const FishAudioPrompt & prompt,
     const FishAudioGenerationOptions & options,
     const std::function<void(const std::vector<int32_t> &)> & on_frame) {
+    if (drama3_) return drama3_->generate(prompt, options, on_frame);
     return impl_->generate(prompt, options, on_frame);
 }
 
 void FishAudioDualARRuntime::release_runtime_graphs() {
+    if (drama3_) { drama3_->release_runtime_graphs(); return; }
     impl_->release_runtime_graphs();
 }
 

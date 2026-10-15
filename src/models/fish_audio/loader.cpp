@@ -9,23 +9,28 @@
 namespace engine::models::fish_audio {
 namespace {
 
-runtime::ModelMetadata metadata(const FishAudioAssets &) {
+runtime::ModelMetadata metadata(const FishAudioAssets & assets) {
     runtime::ModelMetadata out;
     out.family = "fish_audio";
     out.variant = "s2-pro";
     out.description = "Fish Audio S2-Pro loaded from prepared local assets.";
+    if (assets.config.drama3) {
+        out.variant = "drama-3";
+        out.description = "Fish Audio Drama 3 loaded from prepared local assets.";
+    }
     out.config_candidates = {"config.json", "tokenizer_config.json", "tokenizer.json"};
     out.weight_candidates = {"model_audio_cpp.safetensors.index.json", "codec.safetensors", "model.gguf"};
     return out;
 }
 
-runtime::CapabilitySet capabilities(const FishAudioAssets &) {
+runtime::CapabilitySet capabilities(const FishAudioAssets & assets) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     out.languages = {"en", "zh", "auto"};
+    if(assets.config.drama3)out.languages={"en","auto"};
     out.supports_speaker_reference = true;
     out.supports_style_condition = true;
     return out;

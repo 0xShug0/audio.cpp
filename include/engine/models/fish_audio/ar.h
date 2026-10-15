@@ -10,6 +10,8 @@
 
 namespace engine::models::fish_audio {
 
+class Drama3ARRuntime;
+
 class FishAudioDualARRuntime {
 public:
     FishAudioDualARRuntime(
@@ -30,6 +32,7 @@ public:
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
+    std::unique_ptr<Drama3ARRuntime> drama3_;
 };
 
 }  // namespace engine::models::fish_audio

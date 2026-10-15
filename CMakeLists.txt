@@ -544,6 +544,7 @@ add_library(engine_core OBJECT
     src/framework/modules/transformers/causal_decoder.cpp
     src/framework/modules/transformers/causal_decoder_runtime.cpp
     src/framework/modules/transformers/qwen35_decoder_runtime.cpp
+    src/framework/modules/transformers/qwen35_moe_decoder_runtime.cpp
     src/framework/modules/text_encoders/qwen3_vl_encoder_runtime.cpp
     src/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.cpp
     src/framework/modules/attention/cross_attention.cpp
@@ -1439,6 +1440,7 @@ audiocpp_add_model(voxtral_realtime
 
 audiocpp_add_model(fish_audio
     SOURCES
+        external/utf8proc/utf8proc.c
         src/models/fish_audio/ar.cpp
         src/models/fish_audio/assets.cpp
         src/models/fish_audio/generator.cpp
@@ -1446,11 +1448,19 @@ audiocpp_add_model(fish_audio
         src/models/fish_audio/prompt_builder.cpp
         src/models/fish_audio/session.cpp
         src/models/fish_audio/tokenizer_text.cpp
+        src/models/fish_audio/drama3.cpp
+        src/models/fish_audio/drama3_tower.cpp
     INCLUDES
         engine/models/fish_audio/loader.h
     LOADERS
         engine::models::fish_audio::make_fish_audio_loader
 )
+if(TARGET engine_model_fish_audio)
+    target_include_directories(engine_model_fish_audio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/external/utf8proc)
+    target_compile_definitions(engine_model_fish_audio PRIVATE UTF8PROC_STATIC)
+endif()
+
+
 
 audiocpp_add_model(audio8_tts
     SOURCES
@@ -4634,5 +4644,29 @@ if (ENGINE_BUILD_EXAMPLES)
     target_link_libraries(model_spec_download_demo PRIVATE engine_runtime ggml)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(model_spec_download_demo PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+endif()
+
+# Drama 3 is an opt-in Fish variant. Reference fixtures are generated separately
+# from the pinned Fish Speech implementation; normal builds download nothing.
+if(ENGINE_BUILD_MODEL_TESTS AND fish_audio IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_executable(drama3_quantize tests/fish_audio/drama3_quantize.cpp)
+    target_link_libraries(drama3_quantize PRIVATE ggml)
+    add_executable(drama3_parity tests/fish_audio/drama3_parity.cpp)
+    target_link_libraries(drama3_parity PRIVATE engine_runtime ggml)
+    add_executable(drama3_codec_queue tests/fish_audio/drama3_codec_queue.cpp)
+    target_link_libraries(drama3_codec_queue PRIVATE engine_runtime ggml)
+    set(AUDIOCPP_DRAMA3_REFERENCE_DIR "" CACHE PATH "Generated Drama 3 reference fixture root")
+    if(AUDIOCPP_DRAMA3_REFERENCE_DIR)
+        enable_testing()
+        add_test(NAME fish_drama3_math_cpu COMMAND drama3_parity "${AUDIOCPP_DRAMA3_REFERENCE_DIR}/tiny" cpu)
+        add_test(NAME fish_drama3_prompt COMMAND drama3_parity "${AUDIOCPP_DRAMA3_REFERENCE_DIR}/prompt" prompt)
+        if(ENGINE_ENABLE_CUDA)
+            add_test(NAME fish_drama3_math_cuda COMMAND drama3_parity "${AUDIOCPP_DRAMA3_REFERENCE_DIR}/tiny" cuda)
+        endif()
+        if(ENGINE_ENABLE_VULKAN)
+            add_test(NAME fish_drama3_math_vulkan COMMAND drama3_parity "${AUDIOCPP_DRAMA3_REFERENCE_DIR}/tiny" vulkan)
+        endif()
+        set_tests_properties(fish_drama3_math_cpu fish_drama3_prompt PROPERTIES TIMEOUT 120 LABELS "fish_audio;drama3")
     endif()
 endif()

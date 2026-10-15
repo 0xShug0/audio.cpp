@@ -6,6 +6,10 @@ integration supports standalone GGUF packages, session-level reference caching,
 framework text chunking for long-form text, and Fish-style multi-reference
 conditioning.
 
+The experimental [Drama 3 variant](fish_drama3.md) also uses `--family fish_audio`
+with a separately converted `fish_omni` GGUF. Its backbone, prompt format, and
+audio tower differ from S2 Pro; see that page for preparation and validation.
+
 ## Install
 
 ```bash

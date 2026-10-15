@@ -17,12 +17,14 @@ using Clock = std::chrono::steady_clock;
 FishAudioGenerator::FishAudioGenerator(
     std::shared_ptr<const FishAudioAssets> assets,
     std::unique_ptr<FishAudioDualARRuntime> ar,
-    std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec)
+    std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec,
+    bool bounded_codec_decode)
     : assets_(std::move(assets)),
       tokenizer_(assets_),
       prompt_builder_(assets_, tokenizer_),
       ar_(std::move(ar)),
-      codec_(std::move(codec)) {
+      codec_(std::move(codec)),
+      bounded_codec_decode_(bounded_codec_decode) {
     if (assets_ == nullptr || ar_ == nullptr || codec_ == nullptr) {
         throw std::runtime_error("Fish Audio generator requires assets, AR runtime, and codec runtime");
     }
@@ -81,16 +83,26 @@ FishAudioGenerationResult FishAudioGenerator::generate(
         "fish_audio.ar_generate_ms",
         engine::debug::elapsed_ms(ar_start, Clock::now()) - callback_ms);
 
+    const bool release_before_codec=mem_saver && !streaming && assets_->config.drama3;
+    if(release_before_codec) ar_->release_runtime_graphs();
+
     const auto decode_start = Clock::now();
     if (!streaming) {
-        result.audio = codec_->decode_codes(result.codes);
+        if(bounded_codec_decode_ && assets_->config.drama3) {
+            // Keep the causal codec state across frames; resetting between
+            // chunks here would alter the audio. Only Drama 3 opts into this.
+            codec_->reset_decode_stream();
+            result.audio=codec_->decode_stream_frames(result.codes);
+        } else {
+            result.audio = codec_->decode_codes(result.codes);
+        }
         decode_ms = engine::debug::elapsed_ms(decode_start, Clock::now());
     }
     engine::debug::timing_log_scalar(
         "fish_audio.codec_decode_ms",
         decode_ms);
     if (!streaming) codec_->release_runtime_graphs();
-    if (mem_saver) {
+    if (mem_saver && !release_before_codec) {
         ar_->release_runtime_graphs();
     }
     return result;
