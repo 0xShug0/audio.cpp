@@ -34,10 +34,6 @@ constexpr size_t kWeightContextBytes = 6144ull * 1024ull * 1024ull;
 constexpr size_t kGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr float kRopeTheta = 10000.0F;
 
-// cond, text-uncond, speaker-uncond. The KV cache is sized to this so the
-// three-lane graph never has to broadcast it at sampling time.
-constexpr int64_t kMaxCfgLanes = 3;
-
 // Additive mask value for disallowed keys. -INFINITY would be exact but
 // produces NaN when an entire row is masked, which happens for the
 // speaker-uncond CFG lane; a large finite penalty is the standard ggml
