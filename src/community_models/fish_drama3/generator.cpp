@@ -58,6 +58,10 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     auto backbone_config = assets_->backbone;
     backbone_config.decode_cache_steps = cache_steps_;
     backbone_config.cpu_expert_layers = runtime::parse_i64_option(options.options, {"fish_drama3.cpu_expert_layers"}).value_or(4);
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.disk_experts"}))
+        backbone_config.disk_experts = runtime::parse_bool_option(*value, "fish_drama3.disk_experts");
+    backbone_config.expert_cache_size = runtime::parse_positive_i64_option(
+        options.options, {"fish_drama3.expert_cache_size"}, 32);
     const auto backbone_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.backbone_prefill_cache_mb"}).value_or(256);
     if (backbone_prefill_cache_mb < 0 || backbone_prefill_cache_mb > 4096) throw std::runtime_error("Drama 3 backbone_prefill_cache_mb must be between 0 and 4096");
     backbone_config.prefill_cache_bytes = static_cast<size_t>(backbone_prefill_cache_mb) * 1024u * 1024u;

@@ -36,6 +36,8 @@ struct Drama3BackboneDecoderConfig {
     bool round_bf16_activations = false;
     int64_t decode_cache_steps = 2048;
     int64_t cpu_expert_layers = 0;
+    bool disk_experts = false;
+    int64_t expert_cache_size = 32;
     size_t prefill_cache_bytes = 256u * 1024u * 1024u;
     bool profile_prefill_cache = false;
 };

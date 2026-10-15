@@ -1,6 +1,7 @@
 #include "engine/community_models/fish_drama3/session.h"
 
 #include "engine/framework/audio/wav_reader.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
@@ -231,10 +232,12 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
     result.output_artifacts.push_back(runtime::make_text_artifact(runtime::ArtifactKind::AcousticTokens,
         "drama3_take", json::stringify(take_json(take)), {{"family", "fish_drama3"}, {"schema", "drama3_take_v1"}}));
     result.audio_output = std::move(merged);
+    const auto wall_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    engine::debug::timing_log_scalar("session.wall_ms", wall_ms);
     result.custom_schema_output = runtime::CustomSchemaOutput{"drama3_generation_v1", json::Value::make_object({
         {"frames", json::Value::make_number(take.codes.frames)},
         {"reached_limit", json::Value::make_bool(limited)},
-        {"wall_ms", json::Value::make_number(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count())}})};
+        {"wall_ms", json::Value::make_number(wall_ms)}})};
     return result;
 }
 

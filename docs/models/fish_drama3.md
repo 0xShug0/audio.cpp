@@ -146,6 +146,30 @@ backend. `fish_drama3.codec_backend=cpu` moves codec computation to CPU as well.
 Host memory is required for offloaded weights. Context capacity includes text,
 reference audio frames, prior takes, and the requested generation budget.
 
+### Disk-backed experts
+
+Set `fish_drama3.disk_experts=true` to keep the full routed expert banks in the
+GGUF file and read only selected experts into a bounded native-format cache.
+`fish_drama3.expert_cache_size` sets resident slots per layer (8 to 256; default
+32). Dense backbone, tower, and codec weights remain resident. The existing
+`cpu_expert_layers` setting still selects CPU execution for those layers, but
+their expert caches are bounded too. No GGUF conversion is required.
+
+This is a memory/speed trade-off, not a faster MoE kernel. Disk mode uses
+token-wise prompt prefill, synchronizes after each layer's routing, and transfers
+cache misses from disk. Long prompts and slow storage can be substantially
+slower. Resident mode remains the default. For the minimum expert-cache size:
+
+```text
+--session-option fish_drama3.disk_experts=true
+--session-option fish_drama3.expert_cache_size=8
+```
+
+Logs report `disk_experts.bytes_read`, `disk_experts.expert_loads`,
+`disk_experts.cache_hits`, and `disk_experts.buffer_mb` when the session is
+destroyed. These describe selected-expert I/O and cache allocation, not total
+process peak VRAM.
+
 ## Serve over HTTP
 
 Save the following as `drama3-server.json` in the repository root:
