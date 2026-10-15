@@ -1,11 +1,13 @@
 #include "engine/community_models/fish_drama3/session.h"
 
 #include "engine/framework/audio/wav_reader.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 
 #include <algorithm>
 #include <chrono>
+#include <optional>
 #include <stdexcept>
 
 namespace engine::models::fish_drama3 {
@@ -91,10 +93,16 @@ Drama3Take Drama3Session::conditioning_take(const json::Value & value) {
     Drama3Take take;
     take.text = json::require_string(value, "text");
     validate_drama3_text(take.text, "conditioning text");
-    if (const auto * codes = value.find("vq_codes")) take.codes = parse_codes(*codes, assets_->tower.codebook_size);
+    if (const auto * codes = value.find("vq_codes")) {
+        try {
+            take.codes = parse_codes(*codes, assets_->tower.codebook_size);
+        } catch (const std::runtime_error & error) {
+            throw runtime::InvalidRequestError(error.what());
+        }
+    }
     else if (const auto * audio = value.find("audio_path")) take.codes = generator_->encode_reference(read_reference(audio->as_string()));
     else if (const auto * audio = value.find("audio")) take.codes = generator_->encode_reference(read_reference(audio->as_string()));
-    else throw std::runtime_error("Drama 3 conditioning requires vq_codes, audio_path, or audio");
+    else throw runtime::InvalidRequestError("Drama 3 conditioning requires vq_codes, audio_path, or audio");
     return take;
 }
 
@@ -108,21 +116,29 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
     if (request.voice) effective.voice = request.voice;
     for (const auto & option : request.options) effective.options[option.first] = option.second;
     effective.input_artifacts = request.input_artifacts;
-    if (!effective.text_input) throw std::runtime_error("Drama 3 requires input text");
+    if (!effective.text_input) throw runtime::InvalidRequestError("Drama 3 requires input text");
     Drama3Sampling sampling;
-    sampling.temperature = runtime::parse_finite_float_option(effective.options, {"temperature"}).value_or(1.0F);
-    sampling.top_p = runtime::parse_finite_float_option(effective.options, {"top_p"}).value_or(0.9F);
-    sampling.top_k = runtime::parse_int_option(effective.options, {"top_k"}).value_or(30);
-    sampling.max_frames = runtime::parse_positive_i64_option(effective.options, {"max_tokens", "max_new_tokens"}, 1024);
-    sampling.seed = runtime::parse_u32_option(effective.options, {"seed"}).value_or(runtime::random_u32_seed());
+    std::optional<uint32_t> seed;
+    try {
+        sampling.temperature = runtime::parse_finite_float_option(effective.options, {"temperature"}).value_or(1.0F);
+        sampling.top_p = runtime::parse_finite_float_option(effective.options, {"top_p"}).value_or(0.9F);
+        sampling.top_k = runtime::parse_int_option(effective.options, {"top_k"}).value_or(30);
+        sampling.max_frames = runtime::parse_positive_i64_option(effective.options, {"max_tokens", "max_new_tokens"}, 1024);
+        seed = runtime::parse_u32_option(effective.options, {"seed"});
+    } catch (const std::runtime_error & error) {
+        throw runtime::InvalidRequestError(error.what());
+    } catch (const std::logic_error & error) {
+        throw runtime::InvalidRequestError(error.what());
+    }
+    sampling.seed = seed.value_or(runtime::random_u32_seed());
     std::vector<Drama3Take> references;
     if (effective.voice && effective.voice->speaker && effective.voice->speaker->cached_voice_id &&
         !effective.voice->speaker->audio) {
-        throw std::runtime_error("Drama 3 requires reference audio or a reference descriptor with VQ codes");
+        throw runtime::InvalidRequestError("Drama 3 requires reference audio or a reference descriptor with VQ codes");
     }
     if (effective.voice && effective.voice->speaker && effective.voice->speaker->audio) {
         const auto transcript = runtime::find_option(effective.options, {"reference_text"});
-        if (!transcript) throw std::runtime_error("Drama 3 reference audio requires reference_text");
+        if (!transcript) throw runtime::InvalidRequestError("Drama 3 reference audio requires reference_text");
         references.push_back({*transcript, generator_->encode_reference(*effective.voice->speaker->audio)});
     }
     if (const auto ordered = runtime::find_option(effective.options, {"multi_reference_cond", "references"})) {
@@ -130,11 +146,11 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
         for (const auto & value : descriptors.as_array()) references.push_back(conditioning_take(value));
     }
     if (task_.task == runtime::VoiceTaskKind::VoiceCloning && references.empty()) {
-        throw std::runtime_error("Drama 3 cloning requires at least one reference");
+        throw runtime::InvalidRequestError("Drama 3 cloning requires at least one reference");
     }
     if (const auto prepare = runtime::find_option(effective.options, {"encode_reference_only"});
         prepare && runtime::parse_bool_option(*prepare, "encode_reference_only")) {
-        if (references.empty()) throw std::runtime_error("Reference preparation requires reference audio or codes");
+        if (references.empty()) throw runtime::InvalidRequestError("Reference preparation requires reference audio or codes");
         if (task_.mode == runtime::RunMode::Streaming) generator_->warm_streaming_codec(references.front().codes);
         runtime::TaskResult result;
         for (size_t index = 0; index < references.size(); ++index) {
@@ -149,14 +165,14 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
         if (artifact.kind != runtime::ArtifactKind::AcousticTokens) continue;
         const auto artifact_family = artifact.meta.find("family");
         if (artifact_family != artifact.meta.end() && artifact_family->second != "fish_drama3") {
-            throw std::runtime_error("Drama 3 continuation cannot consume acoustic tokens from another model family");
+            throw runtime::InvalidRequestError("Drama 3 continuation cannot consume acoustic tokens from another model family");
         }
         const std::string payload(reinterpret_cast<const char *>(artifact.payload.data()), artifact.payload.size());
         history.push_back(conditioning_take(json::parse(payload)));
     }
     const auto takes = runtime::find_option(effective.options, {"previous_takes"});
     const auto takes_file = runtime::find_option(effective.options, {"previous_takes_file"});
-    if (takes && takes_file) throw std::runtime_error("choose previous_takes or previous_takes_file");
+    if (takes && takes_file) throw runtime::InvalidRequestError("choose previous_takes or previous_takes_file");
     if (takes || takes_file) {
         const auto descriptors = takes_file ? json::parse_file(*takes_file) : json::parse(*takes);
         const auto append_take = [&](const json::Value & value) {

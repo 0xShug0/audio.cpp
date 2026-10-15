@@ -1,5 +1,7 @@
 #include "engine/community_models/fish_drama3/prompt.h"
 
+#include "engine/framework/runtime/errors.h"
+
 #include <array>
 #include <regex>
 #include <stdexcept>
@@ -44,9 +46,9 @@ std::string tagged(const std::string & text, bool reference) {
 }  // namespace
 
 void validate_drama3_text(const std::string & text, const char * location) {
-    if (leading_space_bytes(text) == text.size()) throw std::runtime_error(std::string(location) + ": text is empty");
+    if (leading_space_bytes(text) == text.size()) throw runtime::InvalidRequestError(std::string(location) + ": text is empty");
     for (const auto * token : {"<|im_start|>", "<|im_end|>", "<|voice|>", "<|text|>", "<|interleave|>", "<|semantic:"}) {
-        if (text.find(token) != std::string::npos) throw std::runtime_error(std::string(location) + ": structural tokens are reserved for the prompt builder");
+        if (text.find(token) != std::string::npos) throw runtime::InvalidRequestError(std::string(location) + ": structural tokens are reserved for the prompt builder");
     }
     size_t offset = 0;
     while ((offset = text.find("<|speaker", offset)) != std::string::npos) {
@@ -55,7 +57,7 @@ void validate_drama3_text(const std::string & text, const char * location) {
         if (!std::regex_search(body, match, speaker_pattern, std::regex_constants::match_continuous) ||
             match[1].length() > 2 || (match[1].length() > 1 && match[1].str()[0] == '0') ||
             std::stoi(match[1].str()) > 15) {
-            throw std::runtime_error(std::string(location) + ": speaker tags require N in 0..15 without leading zeroes");
+            throw runtime::InvalidRequestError(std::string(location) + ": speaker tags require N in 0..15 without leading zeroes");
         }
         offset += match.length();
     }

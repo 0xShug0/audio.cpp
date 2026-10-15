@@ -177,6 +177,31 @@ try:
     info['per_chunk_max_tokens'] = 150
     report['checks']['long_form_chunking'] = info
 
+    rejected = []
+    invalid_requests = [
+        {'text': '<|speaker:16|> Hello.', 'max_tokens': 50},
+        {'text': '<|im_start|> Hello.', 'max_tokens': 50},
+        {'text': 'Hello.', 'max_tokens': 0},
+        {'text': 'Hello.', 'max_tokens': 262145},
+        {'text': 'Hello.', 'voice_ref': str(reference_path), 'max_tokens': 50},
+        {'text': 'Hello.', 'max_tokens': 50,
+         'options': {'references': json.dumps([{'text': 'Hello.', 'vq_codes': [[0]] * 9}])}},
+        {'text': 'Hello.', 'max_tokens': 50,
+         'options': {'references': json.dumps([{'text': 'Hello.', 'vq_codes': [[1.5]] + [[0]] * 9}])}},
+        {'text': 'Hello.', 'max_tokens': 50,
+         'options': {'references': json.dumps([{'text': 'Hello.', 'vq_codes': 'invalid'}])}},
+    ]
+    for invalid in invalid_requests:
+        try:
+            json_request('/v1/tasks/run', {'model': 'drama-3', 'request': invalid})
+        except urllib.error.HTTPError as error:
+            detail = json.loads(error.read())
+            assert error.code == 400 and detail['error']['type'] == 'invalid_request_error', detail
+            rejected.append({'status': error.code, 'message': detail['error']['message']})
+        else:
+            raise AssertionError('Invalid Drama 3 request was accepted.')
+    report['checks']['invalid_requests'] = rejected
+
     with request('/v1/audio/speech', original_speech) as response:
         assert response.read() == payload, 'A repeated seeded request changed after cloning and continuation.'
     report['checks']['repeated_request_after_mixed_tasks'] = {'wav_exact': True}

@@ -1,6 +1,7 @@
 #include "engine/community_models/fish_drama3/generator.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 
 #include <algorithm>
@@ -128,7 +129,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     const std::function<void(const runtime::AudioBuffer &)> & on_audio) {
     if (!std::isfinite(sampling.temperature) || sampling.temperature < 0 ||
         !std::isfinite(sampling.top_p) || sampling.top_p <= 0 || sampling.top_p > 1 ||
-        sampling.top_k <= 0 || sampling.max_frames <= 0) throw std::runtime_error("invalid Drama 3 sampling parameters");
+        sampling.top_k <= 0 || sampling.max_frames <= 0) throw runtime::InvalidRequestError("invalid Drama 3 sampling parameters");
     using ProfileClock = std::chrono::steady_clock;
     const auto profile_start = profile_first_audio_ ? ProfileClock::now() : ProfileClock::time_point{};
     auto profile_marked = profile_start;
@@ -142,7 +143,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     const auto prompt = build_drama3_prompt(*assets_, tokenizer_, text, references, history);
     if (sampling.max_frames > cache_steps_ ||
         prompt.size() > static_cast<size_t>(cache_steps_ - sampling.max_frames)) {
-        throw std::runtime_error("Drama 3 prompt plus max_tokens exceeds fish_drama3.context_length; increase it or shorten history");
+        throw runtime::CapacityError("Drama 3 prompt plus max_tokens exceeds fish_drama3.context_length; increase it or shorten history");
     }
     auto decoder = backbone_->create_decode_session(cache_steps_);
     decoder->reset();
