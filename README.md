@@ -21,9 +21,9 @@ Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio 
 
 > [!IMPORTANT]
 >
-> **v0.9.1 highlights:** **LFM2.5-Audio** brings speech recognition, speech generation, and speech-to-speech conversations to audio.cpp. **Higgs Audio TTS runs faster at around 6 GB VRAM**, and the WebUI adds **experimental generation history** to revisit your results!
+> **v0.9.2 highlights:** New and improved streaming for Qwen3 TTS, BreezeTTS2, Higgs Audio, VibeVoice, and Fish Audio. **Expect roughly 85-90% lower BreezeTTS2 time to first audio.** This release also improves BreezeTTS2 longform voice consistency and adds a shared Voice Library with refreshed Studio, Arena, and model-download pages. Selected models also gain ARM CPU optimizations for devices such as Raspberry Pi and Rockchip NPU acceleration.
 >
-> <img src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20logo%20only.png" alt="Unsloth logo" width="28" align="absmiddle"> **Unsloth integration:** audio.cpp now powers speech, music, and speech-to-text in [Unsloth Studio](https://github.com/unslothai/unsloth#audiocpp-audio-engine)!
+> <img src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20logo%20only.png" alt="Unsloth logo" width="48" align="absmiddle"> **Unsloth integration:** audio.cpp now powers speech, music, and speech-to-text in [Unsloth Studio](https://github.com/unslothai/unsloth#audiocpp-audio-engine)!
 >
 > **110+ audio model families and 190+ variants, running locally.** Explore TTS, ASR, music generation, voice conversion, separation, and more through a shared CLI, server API, and WebUI. Built with contributions from the community.
 >
@@ -62,7 +62,7 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
-> **2026-10-07 - Release v0.9.1:** New models include LFM2.5-Audio, Audio Flamingo 3/Next, OWSM/OWSM-CTC, Index-Echo translation, CrisperWhisper2, KittenTTS2, KugelAudio, RE-USE, Sidon, and Smart Turn. The WebUI adds more models, elapsed-time tracking, settings import/export, and experimental generation history. This release also improves CPU/GPU performance, memory use, streaming, and cross-platform compatibility. Thanks to everyone contributing code, testing, and feedback!
+> **Release v0.9.2:** New models include Voxtral TTS, TF-GridNet, MossFormer2, Hviske v6, FireRed VAD, AST, CED, and wake-word detection models. This release expands TTS streaming, adds multi-turn LFM2.5-Audio conversations, and improves model performance and compatibility. The WebUI gains a shared Voice Library and layout improvements. Downloadable C API libraries, Windows Vulkan portable builds, and packaged server configuration examples make integration easier. Thanks to everyone contributing code, testing, and feedback!
 >
 > **2026-09-30 - Release v0.9.0:** **100+ audio models**, an enhancement and denoising WebUI tab, speaker-tagged ASR, and performance and memory improvements. Explore the [Architecture Atlas](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas). Thanks to our community!
 >
