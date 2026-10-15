@@ -251,7 +251,9 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         config.live_ingest = parse_live_ingest_limits(*value, config.live_ingest, "server live_ingest");
     }
     if (const auto * value = root.find("model_spec_override")) {
-        config.model_spec_override = resolve_path(base, value->as_string());
+        const auto & selection = value->as_string();
+        config.model_spec_override = selection == "embedded"
+            ? std::filesystem::path(selection) : resolve_path(base, selection);
     }
     if (const auto * value = root.find("voice_dir")) {
         if (!value->is_string()) {
@@ -307,7 +309,9 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         const auto raw_path = engine::io::json::require_string(item, "path");
         model.path = resolve_path(base, raw_path);
         if (const auto * value = item.find("model_spec_override")) {
-            model.model_spec_override = resolve_path(base, value->as_string());
+            const auto & selection = value->as_string();
+            model.model_spec_override = selection == "embedded"
+                ? std::filesystem::path(selection) : resolve_path(base, selection);
         }
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);

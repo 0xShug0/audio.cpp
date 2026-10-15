@@ -47,6 +47,13 @@ the same command-line option and a `model_spec_override` field either at the top
 or inside an individual model entry. A per-model field takes precedence over the
 server-wide value.
 
+Use `--model-spec-override embedded` (server config: `"model_spec_override":
+"embedded"`) to use the selected GGUF's embedded spec instead of external or
+compiled contracts. This requires a schema-v1 embedded contract; missing or legacy
+contracts fail without fallback. `--log` reports the selection as
+`runtime.model.contract_spec @gguf/<family>.json`. To select a local file or
+directory literally named `embedded`, use `./embedded` or its absolute path.
+
 ## Support And Test Status
 
 AuK Base and AuK-Flash use separate GGUFs for the generator, Qwen conditioner,

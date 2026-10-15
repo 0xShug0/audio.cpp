@@ -89,7 +89,7 @@ void print_help() {
         << "audiocpp_server [--config <server.json>] [--ui] [--host <ip>] [--port <port>] [--backend <backend>]\n"
         << "                [--device <id>] [--list-devices] [--threads <n>] [--busy-timeout-ms <ms>]\n"
         << "                [--max-loaded-models <n>] [--idle-unload-ms <ms>] [--min-free-memory-mb <mb>]\n"
-        << "                [--model-spec-override <json-or-directory>] [--voice-dir <directory>]\n"
+        << "                [--model-spec-override <json-or-directory|embedded>] [--voice-dir <directory>]\n"
         << "                [--frontend-listener <name>] [--frontend-option key=value]\n"
         << "                [--log] [--log-file <path>] [--load-progress 0|1]\n"
         << "                [--cors-origins <origins>]\n"

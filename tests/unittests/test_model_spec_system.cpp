@@ -1402,12 +1402,38 @@ void test_contract_spec_priority_with_embedded_gguf() {
         }
         const auto override_path = write_text(root, "override.json", embedded);
         {
+            const engine::model_spec::ScopedSpecOverride model_scope("embedded", gguf_path);
+            engine::test::require_eq(
+                engine::model_spec::default_contract_spec_path("toy_model").generic_string(),
+                std::string("@gguf/toy_model.json"), "explicit embedded contract wins over external");
+            const auto contract = engine::model_spec::model_contract("toy_model");
+            engine::test::require(contract->request_option_keys.count("old_option") == 1 &&
+                                  contract->request_option_keys.count("new_option") == 0,
+                                  "explicit embedded selection uses embedded options");
+            engine::test::require_eq(
+                engine::model_spec::default_package_spec_path("toy_model").generic_string(),
+                std::string("@gguf/toy_model.json"), "explicit embedded package selection");
+            bool mismatch_rejected = false;
+            try {
+                (void)engine::model_spec::default_contract_spec_path("different_model");
+            } catch (const std::runtime_error & error) {
+                mismatch_rejected = std::string(error.what()).find("not 'different_model'") != std::string::npos;
+            }
+            engine::test::require(mismatch_rejected, "explicit embedded selection checks family");
+        }
+        {
             const engine::model_spec::ScopedSpecOverride model_scope(override_path, gguf_path);
             engine::test::require_eq(
                 engine::model_spec::default_contract_spec_path("toy_model").string(),
                 std::filesystem::weakly_canonical(override_path).string(), "explicit override wins");
         }
         write_text(workspace, "model_specs/toy_model.json", "{");
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope("embedded", gguf_path);
+            engine::test::require_eq(
+                engine::model_spec::default_contract_spec_path("toy_model").generic_string(),
+                std::string("@gguf/toy_model.json"), "explicit embedded selection ignores invalid external spec");
+        }
         {
             const engine::model_spec::ScopedSpecOverride model_scope(std::nullopt, gguf_path);
             bool rejected = false;
@@ -1429,6 +1455,34 @@ void test_contract_spec_priority_with_embedded_gguf() {
                                   "embedded fallback retains existing option");
             engine::test::require(contract->request_option_keys.count("new_option") == 0,
                                   "embedded fallback uses its own contract");
+        }
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope("embedded", workspace);
+            bool rejected = false;
+            try {
+                (void)engine::model_spec::default_contract_spec_path("kokoro_tts");
+            } catch (const std::runtime_error & error) {
+                rejected = std::string(error.what()).find("requires a GGUF with an embedded model spec") != std::string::npos;
+            }
+            engine::test::require(rejected, "missing embedded spec must not fall back to compiled catalog");
+        }
+        gguf = gguf_init_empty();
+        engine::test::require(gguf != nullptr, "create legacy-spec fixture");
+        gguf_set_val_u32(gguf, "audiocpp.model_spec.version", 1);
+        gguf_set_val_str(gguf, "audiocpp.model_spec.family", "toy_model");
+        gguf_set_val_str(gguf, "audiocpp.model_spec.json", legacy_spec_text("[]").c_str());
+        const bool legacy_written = gguf_write_to_file(gguf, gguf_path.string().c_str(), true);
+        gguf_free(gguf);
+        engine::test::require(legacy_written, "write legacy-spec fixture");
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope("embedded", gguf_path);
+            bool rejected = false;
+            try {
+                (void)engine::model_spec::default_contract_spec_path("toy_model");
+            } catch (const std::runtime_error & error) {
+                rejected = std::string(error.what()).find("requires a schema-v1 embedded contract") != std::string::npos;
+            }
+            engine::test::require(rejected, "explicit embedded legacy contract must fail clearly");
         }
     }
     std::filesystem::remove_all(root);

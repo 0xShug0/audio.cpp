@@ -457,7 +457,7 @@ ScopedSpecOverride::~ScopedSpecOverride() {
 }
 
 std::filesystem::path default_package_spec_path(std::string_view family) {
-    if (active_model_spec_override.has_value()) {
+    if (active_model_spec_override.has_value() && *active_model_spec_override != "embedded") {
         auto path = *active_model_spec_override;
         if (engine::io::is_existing_directory(path)) {
             path /= std::string(family) + ".json";
@@ -473,6 +473,10 @@ std::filesystem::path default_package_spec_path(std::string_view family) {
                                      std::string(family) + "'");
         }
         return std::filesystem::path("@gguf") / (std::string(family) + ".json");
+    }
+    if (active_model_spec_override.has_value() && *active_model_spec_override == "embedded") {
+        throw std::runtime_error("model spec override 'embedded' requires a GGUF with an embedded model spec "
+                                 "for family '" + std::string(family) + "'");
     }
     if (builtin_model_specs().find(std::string(family)) != builtin_model_specs().end()) {
         return std::filesystem::path("@builtin") / (std::string(family) + ".json");
@@ -503,6 +507,14 @@ std::filesystem::path default_contract_spec_path(std::string_view family) {
 
 std::optional<std::filesystem::path> find_contract_spec_path(std::string_view family) {
     if (active_model_spec_override.has_value()) {
+        if (*active_model_spec_override == "embedded") {
+            const auto path = default_package_spec_path(family);
+            if (!embedded_model_spec_has_v1_contract(*embedded_model_spec(), family)) {
+                throw std::runtime_error("model spec override 'embedded' requires a schema-v1 embedded contract "
+                                         "for family '" + std::string(family) + "'");
+            }
+            return path;
+        }
         auto path = *active_model_spec_override;
         if (engine::io::is_existing_directory(path)) {
             path /= std::string(family) + ".json";
