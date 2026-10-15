@@ -7,6 +7,8 @@
 #include "engine/framework/runtime/session.h"
 
 #include <algorithm>
+#include <chrono>
+#include <omp.h>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -117,6 +119,7 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
         ref_buf = &*request.audio_input;
     }
 
+    auto t0 = std::chrono::steady_clock::now();
     if (ref_buf) {
         ref_pcm = ref_buf->samples;
         ref_sr = ref_buf->sample_rate;
@@ -142,9 +145,19 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
         fprintf(stderr, "xtts_v2: computing conditioning (%d samples @ 22050 Hz)\n", (int)ref_pcm.size());
         if (!c.gpt.compute_conditioning(ref_pcm.data(), (int)ref_pcm.size(), cond_latents))
             return runtime::TaskResult{};
+        auto t0b = std::chrono::steady_clock::now();
+        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   cond = %.2f s\n", std::chrono::duration<double>(t0b - t0).count());
 
-        // Speaker embedding from 16kHz-resampled reference audio
-        spk_emb = c.vocoder.speaker_embed(ref_pcm.data(), (int)ref_pcm.size());
+        // Speaker embedding from 16kHz-resampled reference audio.
+        // Reference truncates the audio to max_ref_length=30 s BEFORE the speaker
+        // encoder (xtts.py get_conditioning_latents), so match that here.
+        {
+            const int max_ref_ns = 22050 * 30;
+            int spk_ns = (int)std::min<size_t>(ref_pcm.size(), (size_t)max_ref_ns);
+            spk_emb = c.vocoder.speaker_embed(ref_pcm.data(), spk_ns);
+        }
+        auto t0c = std::chrono::steady_clock::now();
+        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   spk  = %.2f s\n", std::chrono::duration<double>(t0c - t0b).count());
         if (spk_emb.empty()) fprintf(stderr, "xtts_v2: WARNING speaker embedding failed, using zeros\n");
         if (getenv("XTTS_DUMP_SPK")) {
             FILE* f = fopen(getenv("XTTS_DUMP_SPK"), "wb");
@@ -157,6 +170,9 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
         }
     }
     if (getenv("XTTS_NOCOND")) { fprintf(stderr, "xtts_dbg: XTTS_NOCOND set - zeroing cond latents\n"); cond_latents.clear(); }
+    auto t1 = std::chrono::steady_clock::now();
+    if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: omp max threads = %d\n", omp_get_max_threads());
+    if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: cond+spk = %.2f s\n", std::chrono::duration<double>(t1 - t0).count());
     if (getenv("XTTS_SPKSCALE")) {
         float sc = atof(getenv("XTTS_SPKSCALE"));
         for (auto& v : spk_emb) v *= sc;
@@ -186,6 +202,7 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
 
     // Generate mel codes
     fprintf(stderr, "xtts_v2: generating mel codes\n");
+    auto t2 = std::chrono::steady_clock::now();
     auto mel_codes = c.gpt.generate_mel_codes(
         text_tokens, cond_latents, c.temperature, c.top_k, c.top_p,
         c.repetition_penalty, c.max_mel_tokens);
@@ -216,6 +233,8 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
     mel_seq.insert(mel_seq.end(), mel_codes.begin(), mel_codes.end());
     mel_seq.push_back(1025);
     fprintf(stderr, "xtts_v2: extracting GPT latents\n");
+    auto t3 = std::chrono::steady_clock::now();
+    if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: mel_code_gen = %.2f s (%d codes)\n", std::chrono::duration<double>(t3 - t2).count(), (int)mel_codes.size());
     auto latents = c.gpt.extract_latents(text_tokens, mel_seq, cond_latents);
     if (latents.empty()) return runtime::TaskResult{};
     if (getenv("XTTS_DUMP_LATENTS")) {
@@ -251,7 +270,11 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
             fprintf(stderr, "xtts_dbg:   frame %d rms=%.4f\n", t, sqrt(fs / 1024));
         }
     }
+    auto t4 = std::chrono::steady_clock::now();
+    if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: extract = %.2f s\n", std::chrono::duration<double>(t4 - t3).count());
     auto waveform = c.vocoder.generate(latents_cm.data(), T_mel, spk_emb.empty() ? nullptr : spk_emb.data());
+    auto t5 = std::chrono::steady_clock::now();
+    if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: vocoder = %.2f s\n", std::chrono::duration<double>(t5 - t4).count());
     if (waveform.empty()) return runtime::TaskResult{};
 
     // Amplitude normalization

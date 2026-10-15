@@ -7,6 +7,8 @@
 #include "ggml.h"
 #include "gguf.h"
 #include <algorithm>
+#include <chrono>
+#include <omp.h>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -82,6 +84,7 @@ static void h_gn32(float* x, const float* g, const float* b, int C, int T, int G
     }
 }
 static void h_c1d(float* o, const float* W, const float* X, const float* b, int ni, int no) {
+#pragma omp parallel for schedule(static)
     for (int m = 0; m < no; m++) {
         float s = b ? b[m] : 0;
         const float* Wm = W + m * ni;
@@ -160,10 +163,33 @@ static std::vector<float> comp_mel(const float* pcm, int ns, int sr, int nfft, i
     std::memcpy(pd.data() + pad, pcm, ns * sizeof(float));
     int T2 = (int)((pd.size() - nfft) / hop) + 1; if (T2 <= 0) return {};
     std::vector<float> mel(nm * T2, 0);
-    for (int t = 0; t < T2; t++) { std::vector<float> re(nf), im(nf);
-        for (int k = 0; k < nf; k++) for (int n = 0; n < nfft; n++) { float a = -2.0f * (float)M_PI * k * n / nfft;
-            float wv = (n >= wpad && n < wpad + win) ? hann[n - wpad] : 0.0f;  // centered window
-            float v = pd[t * hop + n] * wv; re[k] += v * cosf(a); im[k] += v * sinf(a); }
+    // Precompute bit-reversal permutation and twiddles for radix-2 FFT (nfft is a power of 2)
+    const int levels = __builtin_ctz((unsigned)nfft);           // log2(nfft)
+    std::vector<unsigned> brev(nfft);
+    for (unsigned i = 0; i < (unsigned)nfft; i++) { unsigned r = 0; for (int b = 0; b < levels; b++) if (i & (1u << b)) r |= 1u << (levels - 1 - b); brev[i] = r; }
+    std::vector<float> cos_t(nfft / 2), sin_t(nfft / 2);
+    for (int i = 0; i < nfft / 2; i++) { float a = -2.0f * (float)M_PI * i / nfft; cos_t[i] = cosf(a); sin_t[i] = sinf(a); }
+    std::vector<float> wwin(nfft, 0.0f);
+    for (int n = wpad; n < wpad + win; n++) wwin[n] = hann[n - wpad];  // centered window
+#pragma omp parallel for schedule(static)
+    for (int t = 0; t < T2; t++) {
+        std::vector<float> re(nf), im(nf), fr(nfft), fi(nfft);
+        // windowed frame -> in-place radix-2 FFT
+        for (int n = 0; n < nfft; n++) { unsigned b = brev[n]; fr[b] = pd[(size_t)t * hop + n] * wwin[n]; fi[b] = 0; }
+        for (int len = 2; len <= nfft; len <<= 1) {
+            int half = len >> 1, step = nfft / len;
+            for (int i = 0; i < nfft; i += len) {
+                for (int j = 0; j < half; j++) {
+                    float wr = cos_t[j * step], wi = sin_t[j * step];
+                    float ur = fr[i + j], ui = fi[i + j];
+                    float vr = fr[i + j + half] * wr - fi[i + j + half] * wi;
+                    float vi = fr[i + j + half] * wi + fi[i + j + half] * wr;
+                    fr[i + j] = ur + vr; fi[i + j] = ui + vi;
+                    fr[i + j + half] = ur - vr; fi[i + j + half] = ui - vi;
+                }
+            }
+        }
+        for (int k = 0; k < nf; k++) { re[k] = fr[k]; im[k] = fi[k]; }
         if (getenv("XTTS_DUMP_PWR") && t == 65) {
             FILE* ff = fopen("/tmp/pwr_cpp.bin", "wb");
             if (ff) { for (int f = 0; f < nf; f++) { float p = re[f]*re[f] + im[f]*im[f]; fwrite(&p, 4, 1, ff); } fclose(ff); }
@@ -313,6 +339,7 @@ static std::vector<float> cond_enc_fwd(const GM& m, const float* mel, int T, int
     if (!m.cib_data.empty()) {
         for (int t = 0; t < T; t++) for (int c = 0; c < oc && c < (int)m.cib_data.size(); c++)
             out[t * oc + c] += m.cib_data[c]; }
+#pragma omp parallel for schedule(static)
     for (int t = 0; t < T; t++) for (int c = 0; c < oc; c++) {
         float s = 0; for (int k = 0; k < ic; k++) s += m.ciwc[c * ic + k] * mel[t * ic + k];
         out[t * oc + c] += s; }
@@ -333,6 +360,7 @@ static std::vector<float> cond_enc_fwd(const GM& m, const float* mel, int T, int
         const int chh = hp / n_heads, blk = 3 * chh;  // 64, 192
         // K/V projections for all positions from the normed stream (per-head row ranges)
         std::vector<float> Kall((size_t)T * hp), Vall((size_t)T * hp);
+#pragma omp parallel for schedule(static)
         for (int t2 = 0; t2 < T; t2++) {
             const float* xt2 = &out[(size_t)t2 * hp];
             for (int h = 0; h < n_heads; h++) {
@@ -350,11 +378,11 @@ static std::vector<float> cond_enc_fwd(const GM& m, const float* mel, int T, int
                 }
             }
         }
-        std::vector<float> att(T), out_v(hp), po(hp);
         std::vector<float> attn_out((size_t)T * hp, 0.f);
+#pragma omp parallel for schedule(static)
         for (int t = 0; t < T; t++) {
             const float* xt = &out[t * hp];
-            std::vector<float> Q(hp);
+            std::vector<float> Q(hp), att(T), out_v(hp);
             for (int h = 0; h < n_heads; h++) {
                 const float* Bq = B ? B + h * blk : nullptr;
                 for (int r = 0; r < chh; r++) {
@@ -454,6 +482,7 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
         for (int t = 0; t < N; t++) std::memcpy(&kv_in[(size_t)t * D], &lat[(size_t)t * D], D * sizeof(float));
         for (int t = 0; t < CL; t++) std::memcpy(&kv_in[(size_t)(N + t) * D], &cl[(size_t)t * D], D * sizeof(float));
         // to_kv: [1024 inner*2, D] row-major; K = rows 0..inner-1, V = rows inner..2*inner-1
+#pragma omp parallel for schedule(static)
         for (int t = 0; t < KT; t++) {
             const float* xt = &kv_in[(size_t)t * D];
             for (int r = 0; r < inner; r++) {
@@ -466,6 +495,7 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
             }
         }
         // Q from raw latents
+#pragma omp parallel for schedule(static)
         for (int n = 0; n < N; n++) {
             const float* xn = &lat[(size_t)n * D];
             for (int r = 0; r < inner; r++) {
@@ -484,6 +514,7 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
             if (FILE* f = fopen(pv, "wb")) { fwrite(v.data(), 4, v.size(), f); fclose(f); }
         }
         // Multi-head attention: N queries attend to KT keys
+#pragma omp parallel for schedule(static)
         for (int n = 0; n < N; n++) {
             for (int h = 0; h < heads; h++) {
                 const float* qh = &q[(size_t)n * inner + h * hd];
@@ -508,6 +539,7 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
             }
         }
         // to_out projection [D][inner] + residual
+#pragma omp parallel for schedule(static)
         for (int n = 0; n < N; n++) {
             for (int r = 0; r < D; r++) {
                 float s = 0; const float* W = p.to_out_c.data() + (size_t)r * inner;
@@ -526,7 +558,9 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
         // FFN: Linear(dim, dim_inner*2) -> GEGLU -> Linear(dim_inner, dim), residual
         std::vector<float> ffn_h1_dump;
         if (getenv("XTTS_DUMP_PERC") && l == 0) ffn_h1_dump.resize((size_t)N * ffn_dim);
+#pragma omp parallel for schedule(static)
         for (int n = 0; n < N; n++) {
+            std::vector<float> ffn_h(ffn_dim);
             const float* xn = &lat[(size_t)n * D];
             for (int r = 0; r < ffn_dim; r++) {
                 float s = 0; const float* W = p.ffn_w_c.data() + (size_t)r * D;
@@ -607,8 +641,113 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
     std::vector<float> emb(D), qkv(D * 3), xln(D), attn_out(D), h2(hp.ffn), ff_out(D);
     int seq_pos = 0;  // absolute position in the sequence (cache index)
 
+
+    // Batched forward of T token embeddings at positions seq_pos..seq_pos+T-1 (GEMM form).
+    // Fills K/V caches; writes post-final-LN hidden states to out [T x D]. Much faster than
+    // T sequential forward_token calls (one weight pass for the whole prefix).
+    auto forward_batch = [&](const std::vector<float>& E, int T, std::vector<float>& out) {
+        const size_t L = hp.n_layers;
+        out.assign((size_t)T * D, 0.f);
+        std::vector<float> R = E;                       // residual stream [T x D]
+        std::vector<float> Xn((size_t)T * D);           // normed stream
+        std::vector<float> QKV((size_t)T * 3 * D);
+        std::vector<float> AT((size_t)T * D);           // attention merged output
+        std::vector<float> FF((size_t)T * D);
+        std::vector<float> H2((size_t)T * hp.ffn);
+        for (int l = 0; l < (int)L; l++) {
+            auto& bl = m.bl[l];
+            // LayerNorm (row-wise)
+#pragma omp parallel for schedule(static)
+            for (int t = 0; t < T; t++)
+                h_ln(&Xn[(size_t)t * D], &R[(size_t)t * D], bl.l1w_c.data(), bl.l1b_c.data(), D);
+            // QKV GEMM: QKV[t] = Xn[t] @ W^T + b  (W [3D x D] row-major), flat parallel
+#pragma omp parallel for schedule(static)
+            for (int tm = 0; tm < T * 3 * D; tm++) {
+                int t = tm / (3 * D), m = tm % (3 * D);
+                float s = bl.qkb_c.empty() ? 0.f : bl.qkb_c[m];
+                const float* Wm = bl.qkw_c.data() + (size_t)m * D;
+                const float* x = &Xn[(size_t)t * D];
+                for (int n = 0; n < D; n++) s += Wm[n] * x[n];
+                QKV[(size_t)tm] = s;
+            }
+            // Store K,V into cache rows seq_pos..seq_pos+T-1
+            for (int t = 0; t < T; t++) {
+                std::memcpy(k_cache[l].data() + (size_t)(seq_pos + t) * H * HD, &QKV[(size_t)t * 3 * D] + D, D * sizeof(float));
+                std::memcpy(v_cache[l].data() + (size_t)(seq_pos + t) * H * HD, &QKV[(size_t)t * 3 * D] + 2 * D, D * sizeof(float));
+            }
+            // Causal multi-head attention (queries = rows, keys/vals = cache rows 0..seq_pos+T-1)
+#pragma omp parallel for schedule(static)
+            for (int t = 0; t < T; t++) {
+                const int Tc = seq_pos + t + 1;   // causal: query t sees positions 0..seq_pos+t
+                for (int h = 0; h < H; h++) {
+                    const float* qh = &QKV[(size_t)t * 3 * D] + h * HD;
+                    std::vector<float> sc(Tc);
+                    float mx = -1e30f;
+                    for (int s = 0; s < Tc; s++) {
+                        const float* kh = k_cache[l].data() + (size_t)s * H * HD + h * HD;
+                        float v = 0; for (int j = 0; j < HD; j++) v += qh[j] * kh[j];
+                        sc[s] = v * scale; if (sc[s] > mx) mx = sc[s];
+                    }
+                    float sa = 0;
+                    for (int s = 0; s < Tc; s++) { sc[s] = expf(sc[s] - mx); sa += sc[s]; }
+                    for (int s = 0; s < Tc; s++) sc[s] /= sa;
+                    float* oh = &AT[(size_t)t * D] + h * HD;
+                    for (int j = 0; j < HD; j++) oh[j] = 0;
+                    for (int s = 0; s < Tc; s++) {
+                        float a = sc[s]; if (a < 1e-10f) continue;
+                        const float* vh = v_cache[l].data() + (size_t)s * H * HD + h * HD;
+                        for (int j = 0; j < HD; j++) oh[j] += a * vh[j];
+                    }
+                }
+            }
+            // Output projection + residual (flat GEMM over T*D outputs)
+#pragma omp parallel for schedule(static)
+            for (int tm = 0; tm < T * D; tm++) {
+                int t = tm / D, m = tm % D;
+                float s = bl.pwb_c.empty() ? 0.f : bl.pwb_c[m];
+                const float* Wm = bl.pwo_c.data() + (size_t)m * D;
+                const float* x = &AT[(size_t)t * D];
+                for (int n = 0; n < D; n++) s += Wm[n] * x[n];
+                R[(size_t)tm] += s;
+            }
+            // FFN pre-norm (row-wise)
+#pragma omp parallel for schedule(static)
+            for (int t = 0; t < T; t++)
+                h_ln(&Xn[(size_t)t * D], &R[(size_t)t * D], bl.l2w_c.data(), bl.l2b_c.data(), D);
+            // FFN up-proj + gelu (flat GEMM over T*ffn outputs)
+#pragma omp parallel for schedule(static)
+            for (int tm = 0; tm < T * (int)hp.ffn; tm++) {
+                int t = tm / (int)hp.ffn, m = tm % (int)hp.ffn;
+                float s = bl.fcb_c.empty() ? 0.f : bl.fcb_c[m];
+                const float* Wm = bl.fcw_c.data() + (size_t)m * D;
+                const float* x = &Xn[(size_t)t * D];
+                for (int n = 0; n < D; n++) s += Wm[n] * x[n];
+                H2[(size_t)tm] = gelu_t(s);
+            }
+            // FFN down-proj + residual (flat GEMM over T*D outputs)
+#pragma omp parallel for schedule(static)
+            for (int tm = 0; tm < T * D; tm++) {
+                int t = tm / D, m = tm % D;
+                float s = bl.fpb_c.empty() ? 0.f : bl.fpb_c[m];
+                const float* Wm = bl.fpw_c.data() + (size_t)m * (int)hp.ffn;
+                const float* x = &H2[(size_t)t * hp.ffn];
+                for (int n = 0; n < (int)hp.ffn; n++) s += Wm[n] * x[n];
+                R[(size_t)tm] += s;
+            }
+        }
+        // Final LN (double: ln_f + final_norm via lfw then fnw)
+#pragma omp parallel for schedule(static)
+        for (int t = 0; t < T; t++) {
+            std::vector<float> tmp(D);
+            h_ln(&tmp[0], &R[(size_t)t * D], m.lfw_c.data(), m.lfb_c.data(), D);
+            h_ln(&out[(size_t)t * D], &tmp[0], m.fnw_c.data(), m.fnb_c.data(), D);
+        }
+        seq_pos += T;
+    };
+
     // Forward one token embedding at position seq_pos; appends K,V to cache.
     // Returns the pre-logits hidden state (post final LN) in emb_out.
+    static double t_qkv = 0, t_attn = 0, t_proj = 0, t_ffn = 0, t_logits = 0;
     auto forward_token = [&](const std::vector<float>& input_emb, std::vector<float>& emb_out) {
         if (seq_pos >= max_pos) { fprintf(stderr, "xtts: seq overflow %d\n", seq_pos); return; }
         std::vector<float> residual(D);
@@ -618,13 +757,16 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
             // Pre-norm (LayerNorm with bias)
             h_ln(xln.data(), residual.data(), bl.l1w_c.data(), bl.l1b_c.data(), D);
             // QKV projection: [3D, D] row-major -> qkv[0..D-1]=Q, [D..2D-1]=K, [2D..3D-1]=V
+            auto ta0 = omp_get_wtime();
             h_c1d(qkv.data(), bl.qkw_c.data(), xln.data(), bl.qkb_c.data(), D, D * 3);
+            t_qkv += omp_get_wtime() - ta0;
             // Store K,V for this position in cache
             float* kdst = k_cache[l].data() + (size_t)seq_pos * H * HD;
             float* vdst = v_cache[l].data() + (size_t)seq_pos * H * HD;
             memcpy(kdst, qkv.data() + D, D * sizeof(float));
             memcpy(vdst, qkv.data() + 2 * D, D * sizeof(float));
             // Multi-head causal attention over positions 0..seq_pos
+            auto ta1 = omp_get_wtime();
             std::vector<float> attn(H * HD, 0.f);
             int Tc = seq_pos + 1;
             std::vector<float> scores(Tc);
@@ -651,14 +793,19 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
                     for (int j = 0; j < HD; j++) oh[j] += a * vh[j];
                 }
             }
+            t_attn += omp_get_wtime() - ta1;
             // Output projection + residual
+            auto ta2 = omp_get_wtime();
             h_c1d(ff_out.data(), bl.pwo_c.data(), attn.data(), bl.pwb_c.data(), D, D);
+            t_proj += omp_get_wtime() - ta2;
             for (int j = 0; j < D; j++) residual[j] += ff_out[j];
             // FFN with pre-norm
             h_ln(xln.data(), residual.data(), bl.l2w_c.data(), bl.l2b_c.data(), D);
+            auto tf0 = omp_get_wtime();
             h_c1d(h2.data(), bl.fcw_c.data(), xln.data(), bl.fcb_c.data(), D, hp.ffn);
             for (int j = 0; j < (int)hp.ffn; j++) h2[j] = gelu_t(h2[j]);
             h_c1d(ff_out.data(), bl.fpw_c.data(), h2.data(), bl.fpb_c.data(), hp.ffn, D);
+            t_ffn += omp_get_wtime() - tf0;
             for (int j = 0; j < D; j++) residual[j] += ff_out[j];
         }
         // Final LN (HF GPT2Model applies ln_f; then lm_head applies final_norm AGAIN - double norm!)
@@ -687,38 +834,35 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
         FILE* f = fopen(getenv("XTTS_DUMP_COND"), "wb");
         if (f) { fwrite(cl.data(), 4, cl.size(), f); fclose(f); }
     }
-    if (!cl.empty()) {
-        int ncl = (int)cl.size() / hp.d;
-        std::vector<float> dummy(D);
-        for (int c = 0; c < ncl; c++) {
-            std::vector<float> me(D);
-            for (int j = 0; j < D; j++) me[j] = cl[c * D + j];
-            if (getenv("XTTS_DEBUG") && c == 0) {
-                float mn = me[0], mx = me[0], sum = 0;
-                for (auto v : me) { mn = std::min(mn, v); mx = std::max(mx, v); sum += v * v; }
-                fprintf(stderr, "xtts_dbg: cond_latent[0] min=%.4f max=%.4f rms=%.4f\n", mn, mx, sqrtf(sum / D));
-            }
-            forward_token(me, dummy);
-        }
-    }
-    for (int i = 0; i < (int)tids.size(); i++) {
-        std::vector<float> te(D, 0), tp(D, 0), dummy(D);
-        get_emb(m.te, tids[i], te.data(), D);
-        if (i < (int)m.tp->ne[1]) get_emb(m.tp, i, tp.data(), D);
-        for (int j = 0; j < D; j++) te[j] += tp[j];
-        forward_token(te, dummy);
-    }
     // --- AR mel code generation ---
     // Start token 1024, stop token 1025. Mel positions start at 0.
     std::vector<float> emb_last(D, 0), logits(hp.mel_vocab, 0);
-    int mel_pos = 0;
+    int mel_pos = 1;   // start_mel consumed pos 0 during prefix
+    // --- Build prefix embedding matrix: [cond_latents | text+pos | start_mel+melpos0] ---
+    int Tpre = (int)(cl.size() / hp.d) + (int)tids.size() + 1;
     {
-        std::vector<float> me(D, 0), mp(D, 0);
-        get_emb(m.me, 1024, me.data(), D);
-        if (mel_pos < (int)m.mp->ne[1]) get_emb(m.mp, mel_pos, mp.data(), D);
-        for (int j = 0; j < D; j++) me[j] += mp[j];
-        mel_pos++;
-        forward_token(me, emb_last);
+        std::vector<float> E((size_t)Tpre * D, 0.f);
+        int p = 0;
+        int ncl = (int)cl.size() / hp.d;
+        for (int c = 0; c < ncl; c++, p++)
+            std::memcpy(&E[(size_t)p * D], &cl[(size_t)c * D], D * sizeof(float));
+        for (int i = 0; i < (int)tids.size(); i++, p++) {
+            get_emb(m.te, tids[i], &E[(size_t)p * D], D);
+            if (i < (int)m.tp->ne[1]) {
+                std::vector<float> tp(D, 0);
+                get_emb(m.tp, i, tp.data(), D);
+                for (int j = 0; j < D; j++) E[(size_t)p * D + j] += tp[j];
+            }
+        }
+        get_emb(m.me, 1024, &E[(size_t)p * D], D);          // start mel token
+        if ((int)m.mp->ne[1] > 0) {
+            std::vector<float> mp(D, 0);
+            get_emb(m.mp, 0, mp.data(), D);
+            for (int j = 0; j < D; j++) E[(size_t)p * D + j] += mp[j];
+        }
+        std::vector<float> hidden;
+        forward_batch(E, Tpre, hidden);
+        std::memcpy(emb_last.data(), &hidden[(size_t)(Tpre - 1) * D], D * sizeof(float));
         h_c1d(logits.data(), m.lmw_c.data(), emb_last.data(), m.lmb_c.data(), D, hp.mel_vocab);
     }
     if (getenv("XTTS_DUMP_LOGITS")) {
@@ -796,8 +940,11 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
         for (int j = 0; j < D; j++) me[j] += mp[j];
         mel_pos++;
         forward_token(me, emb_last);
+        auto tl1 = omp_get_wtime();
         h_c1d(logits.data(), m.lmw_c.data(), emb_last.data(), m.lmb_c.data(), D, hp.mel_vocab);
+        t_logits += omp_get_wtime() - tl1;
     }
+    if (getenv("XTTS_TIMING")) if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   gen breakdown qkv=%.2f attn=%.2f proj=%.2f ffn=%.2f logits=%.2f s\n", t_qkv, t_attn, t_proj, t_ffn, t_logits);
     return codes;
 }
 // GPT-2 latent extraction via GGML graph
@@ -1008,8 +1155,10 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
     for (int cs = 0; cs < ref_ns; cs += chunk_ns) {
         int cn = std::min(chunk_ns, ref_ns - cs);
         if (cn < min_chunk_ns) continue;    // reference skips chunks < 0.33 s
+        auto tm0 = std::chrono::steady_clock::now();
         std::vector<float> mel = comp_mel(ref_pcm + cs, cn, 22050, 2048, 256, 1024, 80, 0, 8000);
         if (mel.empty()) continue;
+        auto tm1 = std::chrono::steady_clock::now();
         int T = (int)mel.size() / 80;
         if (mel_norms.size() == 80)
             for (int mch = 0; mch < 80; mch++) for (int t = 0; t < T; t++)
@@ -1018,8 +1167,11 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
         std::vector<float> melT((size_t)T * 80);
         for (int mch = 0; mch < 80; mch++) for (int t = 0; t < T; t++)
             melT[(size_t)t * 80 + mch] = mel[(size_t)mch * T + t];
+        auto tm2 = std::chrono::steady_clock::now();
         auto cl = cond_enc_fwd(m, melT.data(), T, hp.d);
         if (cl.empty()) return false;
+        auto tm3 = std::chrono::steady_clock::now();
+        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   chunk %d: mel=%.2f cond_enc=%.2f", n_chunks, std::chrono::duration<double>(tm1 - tm0).count(), std::chrono::duration<double>(tm3 - tm2).count());
         if (getenv("XTTS_DUMP_PERC")) {
             char ps[512], pm[512], pc[512];
             snprintf(ps, sizeof(ps), "%s.c%d.style.bin", getenv("XTTS_DUMP_PERC"), n_chunks);
@@ -1032,9 +1184,12 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
         }
         // perceiver resampler: cond encoder output [T,1024] -> [32,1024]
         ggml_context* ctx = ggml_init({1 << 24, nullptr, false});
+        auto tm4 = std::chrono::steady_clock::now();
         auto pl = perceiver_fwd(m, cl.data(), (int)cl.size() / hp.d, hp.d, n_chunks);
         ggml_free(ctx);
         if (pl.empty()) return false;
+        auto tm5 = std::chrono::steady_clock::now();
+        fprintf(stderr, " perceiver=%.2f s\n", std::chrono::duration<double>(tm5 - tm4).count());
         if (getenv("XTTS_DEBUG")) {
             float mn = pl[0], mx = pl[0], sum = 0;
             for (auto v : pl) { mn = std::min(mn, v); mx = std::max(mx, v); sum += v * v; }

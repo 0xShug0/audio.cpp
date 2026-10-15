@@ -864,6 +864,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
         }
 
         auto request = build_request_from_cli(argc, argv);
+        request.options["n_threads"] = std::to_string(threads);
         if (has_vad_chunk_option(argc, argv)) {
             if (task_spec.mode != engine::runtime::RunMode::Offline ||
                 task_spec.task != engine::runtime::VoiceTaskKind::Vad) {

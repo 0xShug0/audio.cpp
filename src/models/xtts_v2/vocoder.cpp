@@ -10,6 +10,7 @@
 #include "gguf.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -532,7 +533,10 @@ std::vector<float> XttSv2Vocoder::speaker_embed(const float* ref_pcm, int n_samp
         FILE* f = fopen(getenv("XTTS_DUMP_SPK_PRE"), "wb");
         if (f) { fwrite(pre.data(), 4, pre.size(), f); fclose(f); }
     }
+    auto ts0 = std::chrono::steady_clock::now();
     auto mel = compute_mel_hamming(pre.data(), (int)pre.size(), 16000, 512, 160, 400, 64, 0, 8000);
+    auto ts1 = std::chrono::steady_clock::now();
+    if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   spk mel=%.2f s\n", std::chrono::duration<double>(ts1 - ts0).count());
     if (mel.empty()) return {};
     for (auto& v : mel) v = logf(v + 1e-6f); // LOGFIX
     if (getenv("XTTS_INJECT_SPK_MEL")) {
@@ -576,9 +580,16 @@ std::vector<float> XttSv2Vocoder::speaker_embed(const float* ref_pcm, int n_samp
         fprintf(stderr, "xtts_spk_dbg: speaker_mel readback err=%.3g (Tm=%d rms=%.4f)\n", sqrt(e), Tm,
                 sqrt(std::inner_product(mel.begin(), mel.end(), mel.begin(), 0.0) / (double)mel.size()));
     }
+    auto ts2 = std::chrono::steady_clock::now();
+    if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   spk graph build+set=%.2f s\n", std::chrono::duration<double>(ts2 - ts1).count());
+    auto ts3 = std::chrono::steady_clock::now();
+    if (getenv("XTTS_GRAPH_PRINT")) ggml_graph_print(gf);
     if (ggml_backend_graph_compute(c.backend_cpu, gf) != GGML_STATUS_SUCCESS) {
+
         ggml_gallocr_free(ga); ggml_free(ctx0); return {};
     }
+    auto ts4 = std::chrono::steady_clock::now();
+    if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   spk graph compute=%.2f s\n", std::chrono::duration<double>(ts4 - ts3).count());
     if (getenv("XTTS_DUMP_SPK_NET")) {
         for (const char* nm : {"spk_net_conv1", "spk_net_stem", "spk_net_layer1", "spk_net_layer2", "spk_net_layer3", "spk_net_layer4"}) {
             ggml_tensor* t2 = ggml_graph_get_tensor(gf, nm);
