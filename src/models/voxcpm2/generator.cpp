@@ -1234,18 +1234,20 @@ public:
 
     // The diffusion step schedule (t/dt values and their sinusoidal
     // embeddings) depends only on `timesteps` — compute it once per request
-    // batch instead of per patch, and upload the loop-invariant conditioning
-    // (mu, cond) once per patch instead of per step.
+    // batch instead of per patch.
+    // NOTE: conditioning (mu/cond) is deliberately re-uploaded on every
+    // estimator call. Hoisting it to once per patch was measured to corrupt
+    // output on the default (mem_saver) path (PR #921 review evidence), so
+    // the estimator's run() keeps its original per-call upload semantics.
     const auto &sched = step_schedule(timesteps);
-    estimator_.set_conditioning(mu_in, cond_in);
     for (int64_t step = 1; step <= timesteps; ++step) {
       std::vector<float> dphi(static_cast<size_t>(patch_elems), 0.0F);
       if (step > sched.zero_init_steps) {
         std::copy(x.begin(), x.end(), x_in.begin());
         std::copy(x.begin(), x.end(),
                   x_in.begin() + static_cast<std::ptrdiff_t>(patch_elems));
-        const auto estimator = estimator_.run_step(
-            x_in, sched.time_emb[static_cast<size_t>(step)],
+        const auto estimator = estimator_.run(
+            x_in, mu_in, cond_in, sched.time_emb[static_cast<size_t>(step)],
             sched.delta_emb[static_cast<size_t>(step)]);
         const float scale = optimized_cfg_scale(estimator, patch_elems);
         for (int64_t i = 0; i < patch_elems; ++i) {
