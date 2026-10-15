@@ -39,6 +39,11 @@ struct TransformerKVCacheOptions {
     int64_t ring_pinned_steps = 0;
     // Device-only users can defer host staging allocation until import_state.
     bool lazy_import_scratch = false;
+    // When true, import_state writes only the valid prefix rows of each cache
+    // tensor and skips the full-capacity zero fill (f32 caches, non-ring only).
+    // Callers must guarantee rows beyond valid_steps are never consumed
+    // unmasked and that the cache was zeroed once after allocation.
+    bool import_prefix_only = false;
 };
 
 class TransformerKVCache {
@@ -58,6 +63,10 @@ public:
 
     void import_state(const TransformerKVState & state);
     void clear_on_backend();
+    // Resets valid/current counters without touching device memory. Rows
+    // beyond the new valid range keep stale-but-finite values; only safe when
+    // consumers mask positions >= valid_steps (e.g. causal step graphs).
+    void reset_counters();
     TransformerKVState export_state() const;
 
     void advance_after_direct_append(int64_t steps);

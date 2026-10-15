@@ -135,6 +135,9 @@ public:
   ~VoxCPM2TextEmbeddingRuntime();
 
   std::vector<float> embed_token(int32_t token_id);
+  // Batched embedding lookup: one graph compute for all ids. Returns
+  // token_ids.size() * hidden_size floats in row order.
+  std::vector<float> embed_tokens(const std::vector<int32_t> &token_ids);
 
 private:
   class Impl;
@@ -165,6 +168,12 @@ public:
   ~VoxCPM2MiniCPMStepRuntime();
 
   void reset();
+  // Rebuilds the step graph with a larger KV capacity when `required_steps`
+  // exceeds the current capacity (rounded up to reduce rebuild frequency).
+  // Never exceeds the max_cache_steps passed to the constructor. Small
+  // requests therefore pay attention over their real length, not max_length.
+  void ensure_capacity(int64_t required_steps);
+  int64_t cache_capacity() const;
   void import_state(const engine::runtime::TransformerKVState &state);
   engine::runtime::TransformerKVState export_state() const;
   VoxCPM2MiniCPMStepOutput run_step(const std::vector<float> &embedding);

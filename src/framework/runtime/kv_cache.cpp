@@ -132,6 +132,11 @@ void TransformerKVCache::clear_on_backend() {
     valid_steps_ = 0;
 }
 
+void TransformerKVCache::reset_counters() {
+    current_end_ = 0;
+    valid_steps_ = 0;
+}
+
 void TransformerKVCache::import_state(const TransformerKVState & state) {
     current_end_ = state.current_end;
     if (layers_.empty()) {
@@ -146,6 +151,7 @@ void TransformerKVCache::import_state(const TransformerKVState & state) {
         throw std::runtime_error("TransformerKVCache state valid_steps exceeds cache capacity");
     }
     valid_steps_ = state_steps;
+    const bool prefix_only = options_.import_prefix_only && !options_.ring_mode;
     for (size_t layer = 0; layer < layers_.size(); ++layer) {
         auto & cache = layers_[layer];
         const auto & source = state.layers[layer];
@@ -159,30 +165,48 @@ void TransformerKVCache::import_state(const TransformerKVState & state) {
         if (source.key.size() != keep_elems) {
             throw std::runtime_error("TransformerKVCache source tensors do not match valid_steps * step_elems");
         }
-        if (cache_steps_ > 0) {
-            const size_t cache_elems = static_cast<size_t>(cache_steps_ * step_elems_);
-            cache.import_key_scratch.resize(cache_elems);
-            cache.import_value_scratch.resize(cache_elems);
-            std::fill(cache.import_key_scratch.begin(), cache.import_key_scratch.end(), 0.0F);
-            std::fill(cache.import_value_scratch.begin(), cache.import_value_scratch.end(), 0.0F);
-            if (keep_elems > 0) {
-                if (!options_.ring_mode) {
-                    std::copy(source.key.begin(), source.key.end(), cache.import_key_scratch.begin());
-                    std::copy(source.value.begin(), source.value.end(), cache.import_value_scratch.begin());
-                } else {
-                    for (int64_t row = 0; row < state_steps; ++row) {
-                        const int64_t position = ring_stored_position(
-                            row, state_steps, current_end_, options_.ring_pinned_steps);
-                        copy_cache_row(
-                            source.key, row, cache.import_key_scratch, slot_for_position(position), step_elems_);
-                        copy_cache_row(
-                            source.value, row, cache.import_value_scratch, slot_for_position(position), step_elems_);
-                    }
+        if (cache_steps_ <= 0) {
+            continue;
+        }
+        if (prefix_only) {
+            // Prefix rows are contiguous floats at offset 0 in the cache
+            // tensors ({1, cache_steps, heads, dim} dense layout).
+            if (keep_elems == 0) {
+                continue;
+            }
+            if (cache.key_tensor.type != GGML_TYPE_F32 ||
+                cache.value_tensor.type != GGML_TYPE_F32) {
+                throw std::runtime_error(
+                    "TransformerKVCache import_prefix_only requires f32 cache tensors");
+            }
+            ggml_backend_tensor_set(cache.key_tensor.tensor, source.key.data(), 0,
+                                    keep_elems * sizeof(float));
+            ggml_backend_tensor_set(cache.value_tensor.tensor, source.value.data(), 0,
+                                    keep_elems * sizeof(float));
+            continue;
+        }
+        const size_t cache_elems = static_cast<size_t>(cache_steps_ * step_elems_);
+        cache.import_key_scratch.resize(cache_elems);
+        cache.import_value_scratch.resize(cache_elems);
+        std::fill(cache.import_key_scratch.begin(), cache.import_key_scratch.end(), 0.0F);
+        std::fill(cache.import_value_scratch.begin(), cache.import_value_scratch.end(), 0.0F);
+        if (keep_elems > 0) {
+            if (!options_.ring_mode) {
+                std::copy(source.key.begin(), source.key.end(), cache.import_key_scratch.begin());
+                std::copy(source.value.begin(), source.value.end(), cache.import_value_scratch.begin());
+            } else {
+                for (int64_t row = 0; row < state_steps; ++row) {
+                    const int64_t position = ring_stored_position(
+                        row, state_steps, current_end_, options_.ring_pinned_steps);
+                    copy_cache_row(
+                        source.key, row, cache.import_key_scratch, slot_for_position(position), step_elems_);
+                    copy_cache_row(
+                        source.value, row, cache.import_value_scratch, slot_for_position(position), step_elems_);
                 }
             }
-            write_cache_tensor(cache.key_tensor, cache.import_key_scratch, options_);
-            write_cache_tensor(cache.value_tensor, cache.import_value_scratch, options_);
         }
+        write_cache_tensor(cache.key_tensor, cache.import_key_scratch, options_);
+        write_cache_tensor(cache.value_tensor, cache.import_value_scratch, options_);
     }
 }
 

@@ -425,9 +425,8 @@ core::TensorValue snake_exact(core::ModuleBuildContext &ctx,
   const auto input_f32 = core::ensure_backend_addressable_layout(ctx, input);
   auto alpha = core::reshape_tensor(
       ctx, weights.alpha, core::TensorShape::from_dims({1, channels, 1}));
-  alpha =
-      core::wrap_tensor(ggml_repeat(ctx.ggml, alpha.tensor, input_f32.tensor),
-                        input.shape, GGML_TYPE_F32);
+  // Broadcast the per-channel alpha against {1, C, T} instead of
+  // materializing a full-size ggml_repeat copy per snake activation.
   auto ax =
       core::wrap_tensor(ggml_mul(ctx.ggml, input_f32.tensor, alpha.tensor),
                         input.shape, GGML_TYPE_F32);
@@ -437,7 +436,7 @@ core::TensorValue snake_exact(core::ModuleBuildContext &ctx,
                               input.shape, GGML_TYPE_F32);
   auto denom =
       core::wrap_tensor(ggml_scale_bias(ctx.ggml, alpha.tensor, 1.0F, 1.0e-9F),
-                        input.shape, GGML_TYPE_F32);
+                        alpha.shape, GGML_TYPE_F32);
   auto frac = core::wrap_tensor(ggml_div(ctx.ggml, s2.tensor, denom.tensor),
                                 input.shape, GGML_TYPE_F32);
   return core::wrap_tensor(ggml_add(ctx.ggml, input_f32.tensor, frac.tensor),
@@ -450,13 +449,9 @@ core::TensorValue apply_sr_condition(
   const auto input_f32 = core::ensure_backend_addressable_layout(ctx, input);
   auto scale = core::reshape_tensor(
       ctx, weights.scale, core::TensorShape::from_dims({1, channels, 1}));
-  scale =
-      core::wrap_tensor(ggml_repeat(ctx.ggml, scale.tensor, input_f32.tensor),
-                        input.shape, GGML_TYPE_F32);
   auto bias = core::reshape_tensor(
       ctx, weights.bias, core::TensorShape::from_dims({1, channels, 1}));
-  bias = core::wrap_tensor(ggml_repeat(ctx.ggml, bias.tensor, input_f32.tensor),
-                           input.shape, GGML_TYPE_F32);
+  // Broadcast {1, C, 1} scale/bias against {1, C, T} (no ggml_repeat copies).
   auto scaled =
       core::wrap_tensor(ggml_mul(ctx.ggml, input_f32.tensor, scale.tensor),
                         input.shape, GGML_TYPE_F32);
