@@ -334,8 +334,12 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
     auto it = cache->find(ckey);
     if (it == cache->end()) {
         auto gnew = std::make_unique<CfgGraph>();
+        // Measured on CPU the pool has to hold the staged DiT constants plus the graph
+        // objects at ~8 MiB per mel frame (9664 MiB at 1216 frames, 12302 MiB at 1856),
+        // so 9 MiB/frame carries ~12% headroom over the measured need; at 8 MiB/frame the
+        // pool was exactly full and a longer pass died on GGML_ASSERT(obj_new).
         const size_t ctx_bytes = std::min<size_t>(
-            std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (8ULL << 20)),
+            std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (9ULL << 20)),
             12288ULL << 20);
         gnew->ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
         ggml_context * ctx = gnew->ctx;

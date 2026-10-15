@@ -1030,8 +1030,21 @@ void trim_chunk_mel_silence(
 // the 1024 budget forced ~57-char mid-word slices that dropped straddled
 // words) at ~6 GiB peak on an RTX 3090 (measured). Override via
 // F5SynthesisRequest::frame_budget (session option f5_tts.frame_budget).
+//
+// On CPU the budget is also the DiT graph pool, allocated up front at 9 MiB per
+// mel frame (measured need ~8 MiB/frame: 9664 MiB at 1216 frames, 12302 MiB at
+// 1856) and hard-capped at 12 GiB for the batched-CFG graph and 6 GiB for the
+// plain one, so a pass above 1024 frames cannot build a graph at all. The default
+// 2048 is twice that, and such a pass never reaches inference: ggml_new_object
+// died on GGML_ASSERT(obj_new) with a core dump (measured: 10.2 s reference +
+// 44-char text = 1856 frames, `needed 12894420288, available 12884901888`).
+// Clamp the CPU budget inside the smaller ceiling, with the 64-frame graph bucket
+// accounted for: 960 + 63 < 1024. The reference truncation and the text chunking
+// both derive from this budget, so one clamp bounds all three. CUDA builds the
+// graph into a no_alloc context and keeps the full range.
 int frame_budget(const F5SynthesisRequest & request) {
-    return request.frame_budget > 0 ? request.frame_budget : 2048;
+    const int budget = request.frame_budget > 0 ? request.frame_budget : 2048;
+    return request.use_cuda ? budget : std::min(budget, 960);
 }
 
 // One CFM pass for a single chunk: the original pipeline verbatim.
@@ -1167,8 +1180,9 @@ F5SynthesisResult f5_synthesize(
         std::fprintf(stderr,
             "F5-TTS: reference audio is %.1fs (%d frames) — truncated to %d frames (half the "
             "frame budget). The transcript tail will leak into the output; use a reference "
-            "shorter than %.1fs or raise the frame budget (session option f5_tts.frame_budget).\n",
-            ref_frames / 93.75, ref_frames, kMaxRefFrames, kMaxRefFrames / 93.75);
+            "shorter than %.1fs or raise the frame budget (session option f5_tts.frame_budget%s).\n",
+            ref_frames / 93.75, ref_frames, kMaxRefFrames, kMaxRefFrames / 93.75,
+            request.use_cuda ? "" : ", capped at 960 frames on CPU");
         std::vector<float> trimmed(static_cast<size_t>(kMaxRefFrames) * kNMel);
         for (int t = 0; t < kMaxRefFrames; ++t) {
             for (int m = 0; m < kNMel; ++m) {
