@@ -223,7 +223,7 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
             };
         }
         const auto & text = chunks[index].text_input->text;
-        auto generated = generator_->generate(text, references, context, chunk_sampling, streaming, callback);
+        auto generated = generator_->generate(text, references, context, chunk_sampling, streaming, callback, index > 0);
         runtime::append_audio_buffer(merged, generated.audio);
         limited = limited || generated.reached_limit;
         generated_takes.push_back({text, std::move(generated.codes)});

@@ -165,10 +165,20 @@ slower. Resident mode remains the default. For the minimum expert-cache size:
 --session-option fish_drama3.expert_cache_size=8
 ```
 
+When sufficient host RAM is available, add
+`fish_drama3.pin_experts=true` and set `fish_drama3.cpu_expert_layers=0`.
+This loads full expert banks into pinned host memory once, then uploads cache
+misses directly without an intermediate host copy. Expert matmuls still run on
+the selected backend, and GPU cache size is unchanged. This option is off by
+default and requires pinned host-buffer support; allocation failure is an error,
+not a fallback to a different memory policy.
+
 Logs report `disk_experts.bytes_read`, `disk_experts.expert_loads`,
-`disk_experts.cache_hits`, and `disk_experts.buffer_mb` when the session is
-destroyed. These describe selected-expert I/O and cache allocation, not total
-process peak VRAM.
+`disk_experts.cache_hits`, `disk_experts.buffer_mb`, and
+`disk_experts.host_buffer_mb` when the session is destroyed. These describe
+expert I/O and cache allocation, not total process peak VRAM. With pinned
+experts, bytes read include the initial host-bank load instead of per-request
+cache-miss reads.
 
 ## Serve over HTTP
 

@@ -137,7 +137,7 @@ void BinaryBlob::reset() noexcept {
     owned_.shrink_to_fit();
 }
 
-BinaryBlob read_binary_blob(const std::filesystem::path & path) {
+BinaryBlob read_binary_blob(const std::filesystem::path & path, bool require_mapping) {
 #if defined(__unix__) || defined(__APPLE__)
     const int fd = open(path.c_str(), O_RDONLY);
     if (fd >= 0) {
@@ -197,6 +197,9 @@ BinaryBlob read_binary_blob(const std::filesystem::path & path) {
         }
     }
 #endif
+    if (require_mapping) {
+        throw std::runtime_error("failed to memory-map binary file: " + path.string());
+    }
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         throw std::runtime_error("failed to open binary file: " + path.string());

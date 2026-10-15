@@ -182,6 +182,13 @@
         "default": false
       },
       {
+        "name": "pin_experts",
+        "type": "bool",
+        "description": "Keep full expert banks in pinned host RAM for direct cache-miss uploads. Requires disk_experts and pinned host-buffer support; default false.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "expert_cache_size",
         "type": "int",
         "description": "Resident expert slots per layer in disk_experts mode; 8 to 256. Larger caches trade memory for fewer disk reads; ignored in resident mode.",

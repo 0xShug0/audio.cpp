@@ -12,7 +12,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_fish_drama3_loader() {
         auto validation_options = options;
         // Published standalone contracts predate the opt-in disk cache controls.
         // Their values are checked by the generator and backbone constructors.
-        for (const auto * key : {"fish_drama3.disk_experts", "fish_drama3.expert_cache_size"}) {
+        for (const auto * key : {"fish_drama3.disk_experts", "fish_drama3.expert_cache_size", "fish_drama3.pin_experts"}) {
             if (!contract->session_option_keys.count(key)) validation_options.options.erase(key);
         }
         runtime::validate_spec_backed_session_options(validation_options, *contract, "fish_drama3", "Drama 3");

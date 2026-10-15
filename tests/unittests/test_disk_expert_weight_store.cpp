@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 struct FixtureDirectory {
@@ -57,15 +58,29 @@ int main(int argc, char ** argv) {
             entries.push_back({names[p], "F32", {12, 256, 256}, std::move(bytes)});
         }
         engine::io::write_safetensors_file(input, entries);
-        for (const auto type : {assets::TensorStorageType::F32, assets::TensorStorageType::Q4_K}) {
+        const std::vector<std::pair<assets::TensorStorageType, bool>> modes{
+            {assets::TensorStorageType::F32, false}, {assets::TensorStorageType::Q4_K, false},
+            {assets::TensorStorageType::F32, true}, {assets::TensorStorageType::Q4_K, true}};
+        for (const auto & [type, pin_experts] : modes) {
             assets::GgufConversionOptions options;
             options.type_overrides.push_back({"model.layers.0.mlp.experts.*", type});
             assets::convert_tensor_sources_to_gguf({{input, ""}}, gguf, assets::TensorStorageType::F32,
                 true, false, {}, {}, std::nullopt, options);
-            core::DiskExpertWeightStore disk(gguf);
+            core::DiskExpertWeightStore disk(gguf, pin_experts);
+            if (pin_experts && !ggml_backend_dev_host_buffer_type(ggml_backend_get_device(execution.backend()))) {
+                bool rejected = false;
+                try { disk.add_group(names, execution.backend(), 4); }
+                catch (const std::runtime_error & error) {
+                    rejected = std::string(error.what()).find("pinned host buffers") != std::string::npos;
+                }
+                if (!rejected) throw std::runtime_error("unsupported pinned experts were not rejected");
+                continue;
+            }
             const auto group = disk.add_group(names, execution.backend(), 4);
-            if (disk.statistics().bytes_read != 0 || disk.statistics().expert_loads != 0)
+            if ((!pin_experts && disk.statistics().bytes_read != 0) || disk.statistics().expert_loads != 0)
                 throw std::runtime_error("expert payloads were eagerly read");
+            if (pin_experts && disk.statistics().host_buffer_bytes == 0)
+                throw std::runtime_error("pinned expert banks were not allocated");
             auto source = assets::open_tensor_source(gguf);
             const auto expected_type = type == assets::TensorStorageType::Q4_K ? "q4_k" : "f32";
             if (source->require_metadata(names[0]).dtype != expected_type)
@@ -124,11 +139,11 @@ int main(int argc, char ** argv) {
                 if (!std::all_of(actual.begin(), actual.end(), [](float a) { return std::isfinite(a); }) || maximum > 1e-4F)
                     throw std::runtime_error("disk and resident expert output mismatch: " + std::to_string(maximum));
                 const auto after = disk.statistics();
-                if ((requests == 1 || requests == 4) && before.bytes_read != after.bytes_read)
+                if ((pin_experts || requests == 1 || requests == 4) && before.bytes_read != after.bytes_read)
                     throw std::runtime_error("cache hit read expert payloads again");
                 if (after.buffer_bytes != cache_bytes) throw std::runtime_error("expert cache grew");
                 if (core::read_tensor_i32(ids) != route) throw std::runtime_error("routing changed original expert IDs");
-                std::cout << "request=" << requests++ << " max_abs=" << maximum << " expert_loads=" << after.expert_loads
+                std::cout << "pin_experts=" << pin_experts << " request=" << requests++ << " max_abs=" << maximum << " expert_loads=" << after.expert_loads
                           << " bytes_read=" << after.bytes_read << " cache_bytes=" << after.buffer_bytes << '\n';
             }
             const std::vector<int32_t> invalid{12, 0, 1, 2};
@@ -138,15 +153,34 @@ int main(int argc, char ** argv) {
             catch (const std::runtime_error & e) { rejected = std::string(e.what()).find("routing ID out of range") != std::string::npos; }
             if (!rejected) throw std::runtime_error("invalid routing IDs were not rejected");
             source->release_storage();
+#if !defined(_WIN32)
+            // Windows prevents truncating a file while its mapping is open.
             std::filesystem::resize_file(gguf, 0);
             const std::vector<int32_t> unread{8, 9, 8, 9};
             ggml_backend_tensor_set(ids, unread.data(), 0, unread.size() * sizeof(int32_t));
             rejected = false;
             try { ggml_backend_sched_graph_compute(scheduler.get(), graph); }
-            catch (const std::runtime_error & e) { rejected = std::string(e.what()).find("failed to read selected expert") != std::string::npos; }
-            if (!rejected) throw std::runtime_error("failed expert reads were not propagated");
+            catch (const std::runtime_error & e) {
+                if (pin_experts) throw;
+                rejected = std::string(e.what()).find("failed to read selected expert") != std::string::npos;
+                if (!rejected) throw;
+            }
+            if (pin_experts) {
+                const auto actual = core::read_tensor_f32(cached);
+                const auto reference = core::read_tensor_f32(expected);
+                for (size_t i = 0; i < actual.size(); ++i) {
+                    if (!std::isfinite(actual[i]) || std::abs(actual[i] - reference[i]) > 1e-4F)
+                        throw std::runtime_error("pinned experts did not retain their loaded snapshot");
+                }
+            } else if (!rejected) throw std::runtime_error("failed expert reads were not propagated");
+#endif
             core::release_backend_graph_resources(execution.backend(), graph, true);
         }
+        std::filesystem::resize_file(gguf, 0);
+        bool rejected = false;
+        try { core::DiskExpertWeightStore truncated(gguf); }
+        catch (const std::runtime_error &) { rejected = true; }
+        if (!rejected) throw std::runtime_error("truncated expert GGUF header was not rejected");
         engine::debug::timing_log_scalar("session.wall_ms", std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - started).count());
     } catch (const std::exception & error) {

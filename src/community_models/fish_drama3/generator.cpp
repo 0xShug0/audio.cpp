@@ -67,6 +67,10 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     backbone_config.cpu_expert_layers = runtime::parse_i64_option(options.options, {"fish_drama3.cpu_expert_layers"}).value_or(4);
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.disk_experts"}))
         backbone_config.disk_experts = runtime::parse_bool_option(*value, "fish_drama3.disk_experts");
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.pin_experts"}))
+        backbone_config.pin_experts = runtime::parse_bool_option(*value, "fish_drama3.pin_experts");
+    if (backbone_config.pin_experts && !backbone_config.disk_experts)
+        throw std::runtime_error("fish_drama3.pin_experts requires fish_drama3.disk_experts=true");
     backbone_config.expert_cache_size = runtime::parse_positive_i64_option(
         options.options, {"fish_drama3.expert_cache_size"}, 32);
     const auto backbone_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.backbone_prefill_cache_mb"}).value_or(256);
@@ -75,6 +79,8 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     backbone_config.profile_prefill_cache = profile_first_audio_;
     backbone_ = std::make_unique<Drama3BackboneDecoderRuntime>(assets_->model_weights, backbone_config, execution,
         64 * 1024 * 1024, 8 * 1024 * 1024, assets::TensorStorageType::Native);
+    disk_experts_ = backbone_config.disk_experts;
+    decoder_ = backbone_->create_decode_session(cache_steps_);
     const auto tower_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.tower_prefill_cache_mb"}).value_or(256);
     if (tower_prefill_cache_mb < 0 || tower_prefill_cache_mb > 4096) throw std::runtime_error("Drama 3 tower_prefill_cache_mb must be between 0 and 4096");
     tower_ = std::make_unique<Drama3Tower>(assets_->model_weights, assets_->tower, execution, cache_steps_,
@@ -137,7 +143,7 @@ void Drama3Generator::warm_streaming_codec(const codecs::FishDacCodes & referenc
 
 Drama3Generation Drama3Generator::generate(const std::string & text, const std::vector<Drama3Take> & references,
     const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
-    const std::function<void(const runtime::AudioBuffer &)> & on_audio) {
+    const std::function<void(const runtime::AudioBuffer &)> & on_audio, bool continuation) {
     if (!std::isfinite(sampling.temperature) || sampling.temperature < 0 ||
         !std::isfinite(sampling.top_p) || sampling.top_p <= 0 || sampling.top_p > 1 ||
         sampling.top_k <= 0 || sampling.max_frames <= 0) throw runtime::InvalidRequestError("invalid Drama 3 sampling parameters");
@@ -158,8 +164,16 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         prompt.size() > static_cast<size_t>(cache_steps_ - sampling.max_frames)) {
         throw runtime::CapacityError("Drama 3 prompt plus max_tokens exceeds fish_drama3.context_length; increase it or shorten history");
     }
-    auto decoder = backbone_->create_decode_session(cache_steps_);
-    decoder->reset();
+    auto & decoder = decoder_;
+    // A continuation may extend the exact frames already evaluated. Never
+    // carry recurrent state across independent requests or changed histories.
+    const size_t prefix_rows = disk_experts_ && continuation && !cached_prefix_.empty() &&
+        cached_prefix_.size() <= prompt.size() && std::equal(cached_prefix_.begin(), cached_prefix_.end(), prompt.begin())
+        ? cached_prefix_.size() : 0;
+    auto prefix_hidden = std::move(cached_hidden_);
+    cached_prefix_.clear();
+    cached_hidden_.clear();
+    if (prefix_rows == 0) decoder->reset();
     tower_->reset();
     mark_phase("setup_ms");
     component_ms[0] += debug::elapsed_ms(component_started);
@@ -171,7 +185,19 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     mark_phase("embedding_ms");
     component_ms[1] += debug::elapsed_ms(component_started);
     component_started = ProfileClock::now();
-    const auto prefill = decoder->prefill_embeddings(embeddings, static_cast<int64_t>(prompt.size()));
+    Drama3BackboneDecoderForwardResult prefill;
+    if (prefix_rows != 0) {
+        prefill.hidden = std::move(prefix_hidden);
+        prefill.steps = static_cast<int64_t>(prompt.size());
+        for (size_t row = prefix_rows; row < prompt.size(); ++row) {
+            const auto begin = embeddings.begin() + row * assets_->backbone.hidden_size;
+            const auto hidden = decoder->run_embedding_step({begin, begin + assets_->backbone.hidden_size});
+            prefill.hidden.insert(prefill.hidden.end(), hidden.begin(), hidden.end());
+        }
+    } else {
+        prefill = decoder->prefill_embeddings(embeddings, static_cast<int64_t>(prompt.size()));
+    }
+    debug::trace_log_scalar("drama3.prefill_reused_rows", prefix_rows);
     mark_phase("backbone_prefill_ms");
     component_ms[2] += debug::elapsed_ms(component_started);
     component_started = ProfileClock::now();
@@ -251,9 +277,17 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         component_ms[1] += debug::elapsed_ms(component_started);
         component_started = ProfileClock::now();
         hidden = decoder->run_embedding_step(embedding);
+        if (disk_experts_) prefill.hidden.insert(prefill.hidden.end(), hidden.begin(), hidden.end());
         component_ms[7] += debug::elapsed_ms(component_started);
     }
     if (output_frames.empty()) throw std::runtime_error("Drama 3 ended before producing an audio frame");
+    if (disk_experts_) {
+        cached_prefix_ = prompt;
+        cached_prefix_.insert(cached_prefix_.end(), output_frames.begin(), output_frames.end());
+        // At max_tokens the final sampled frame has not entered the backbone.
+        cached_prefix_.resize(static_cast<size_t>(decoder->valid_steps()));
+        cached_hidden_ = std::move(prefill.hidden);
+    }
     result.codes.codebooks = 10;
     result.codes.frames = static_cast<int64_t>(output_frames.size());
     result.codes.codes.resize(output_frames.size() * 10);
