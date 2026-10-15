@@ -1,5 +1,6 @@
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/task_vocabulary.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/model_spec/schema.h"
 #include "engine/framework/io/json.h"
@@ -1433,6 +1434,36 @@ void test_contract_spec_priority_with_embedded_gguf() {
     std::filesystem::remove_all(root);
 }
 
+void test_unknown_request_option_guidance() {
+    engine::model_spec::ModelContract contract;
+    contract.metadata.family = "kokoro_tts";
+    contract.request_option_keys.insert("speed");
+    engine::runtime::validate_spec_backed_request_options({{"speed", "1.0"}}, contract, "Kokoro TTS");
+    engine::runtime::validate_spec_backed_request_options({}, {{"speed", {"1.0"}}}, contract, "Kokoro TTS");
+
+    const std::string expected =
+        "unknown Kokoro TTS request option: speeed. "
+        "The option may be misspelled or require a newer audio.cpp runtime. "
+        "Supported options: https://github.com/0xShug0/audio.cpp/blob/main/model_specs/kokoro_tts.json. "
+        "Update audio.cpp: https://github.com/0xShug0/audio.cpp/releases";
+    for (const bool list_valued : {false, true}) {
+        bool rejected = false;
+        try {
+            if (list_valued) {
+                engine::runtime::validate_spec_backed_request_options(
+                    {}, {{"speeed", {"1.0"}}}, contract, "Kokoro TTS");
+            } else {
+                engine::runtime::validate_spec_backed_request_options(
+                    {{"speeed", "1.0"}}, contract, "Kokoro TTS");
+            }
+        } catch (const std::runtime_error & error) {
+            engine::test::require_eq(std::string(error.what()), expected, "unknown option guidance");
+            rejected = true;
+        }
+        engine::test::require(rejected, "unknown scalar and list options must still be rejected");
+    }
+}
+
 void test_loading_and_resource_bundle() {
     // Resource bundles resolve required files, tensor source files, and missing optional files.
     const auto root = make_temp_root();
@@ -1581,6 +1612,7 @@ int main() {
         test_experimental_spec_without_installable_package();
         test_contract_spec_prefers_workspace_over_package_local_spec();
         test_contract_spec_priority_with_embedded_gguf();
+        test_unknown_request_option_guidance();
         test_loading_and_resource_bundle();
         test_task_vocabulary_is_consistent();
         test_vad_timestamp_capability();
