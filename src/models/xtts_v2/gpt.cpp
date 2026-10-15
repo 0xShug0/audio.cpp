@@ -215,7 +215,7 @@ struct GM { ggml_tensor* te, *me, *tp, *mp; std::vector<GB> bl;
     const float* cqwb[6] = {}, *cpwb[6] = {}, *cgww[6] = {}, *cgwb[6] = {};
     ggml_tensor* pl, *png;
 };
-static bool bind(GM& m, const std::map<std::string, ggml_tensor*>& ts, const XttSv2HyperParams& hp) {
+static bool xtts_bind_tensors(GM& m, const std::map<std::string, ggml_tensor*>& ts, const XttSv2HyperParams& hp) {
     m.te = req(ts, "gpt.text_embedding.weight"); m.me = req(ts, "gpt.mel_embedding.weight");
     m.tp = req(ts, "gpt.text_pos.weight"); m.mp = req(ts, "gpt.mel_pos.weight");
     if (getenv("XTTS_DEBUG")) {
@@ -364,25 +364,33 @@ static std::vector<float> cond_enc_fwd(const GM& m, const float* mel, int T, int
                     Q[h * chh + r] = s;
                 }
             }
-            float mx = -1e30f;
-            for (int t2 = 0; t2 < T; t2++) {
-                float sc = 0;
-                for (int h = 0; h < n_heads; h++) {
-                    const float* qh = &Q[h * hd]; const float* kh = &Kall[(size_t)t2 * hp + h * hd];
+            // Per-head attention (reference QKVAttention): each head has its own
+            // [T, T] score matrix, softmaxed independently over keys.
+            // scale = ch**-0.25 applied to BOTH q and k => effective ch**-0.5 on the product.
+            const float scale = 1.0f / sqrtf(sqrtf((float)chh));
+            for (int h = 0; h < n_heads; h++) {
+                const float* qh = &Q[h * hd];
+                // scores for head h
+                float mx = -1e30f;
+                for (int t2 = 0; t2 < T; t2++) {
+                    const float* kh = &Kall[(size_t)t2 * hp + h * hd];
+                    float sc = 0;
                     for (int j = 0; j < hd; j++) sc += qh[j] * kh[j];
+                    att[t2] = sc * scale * scale;   // q*scale, k*scale => product * scale^2
+                    if (att[t2] > mx) mx = att[t2];
                 }
-                att[t2] = sc / sqrtf((float)hd);
-                if (att[t2] > mx) mx = att[t2];
-            }
-            float sa = 0;
-            for (int t2 = 0; t2 < T; t2++) { att[t2] = expf(att[t2] - mx); sa += att[t2]; }
-            for (int t2 = 0; t2 < T; t2++) att[t2] /= sa;
-            for (int j = 0; j < hp; j++) out_v[j] = 0;
-            for (int t2 = 0; t2 < T; t2++) {
-                float a = att[t2];
-                if (a < 1e-10f) continue;
-                const float* v2 = &Vall[(size_t)t2 * hp];
-                for (int j = 0; j < hp; j++) out_v[j] += a * v2[j];
+                float sa = 0;
+                for (int t2 = 0; t2 < T; t2++) { att[t2] = expf(att[t2] - mx); sa += att[t2]; }
+                for (int t2 = 0; t2 < T; t2++) att[t2] /= sa;
+                // weighted sum of this head's values
+                float* oh = &out_v[h * hd];
+                for (int j = 0; j < hd; j++) oh[j] = 0;
+                for (int t2 = 0; t2 < T; t2++) {
+                    float a = att[t2];
+                    if (a < 1e-10f) continue;
+                    const float* v2 = &Vall[(size_t)t2 * hp + h * hd];
+                    for (int j = 0; j < hd; j++) oh[j] += a * v2[j];
+                }
             }
             // Output projection
             const float* Wp = m.cpwc[l].data();
@@ -397,7 +405,6 @@ static std::vector<float> cond_enc_fwd(const GM& m, const float* mel, int T, int
         // Residual: out = normed_out + attn_out (normed stream IS the residual base)
         for (int t = 0; t < T; t++) for (int j = 0; j < hp; j++) out[t * hp + j] += attn_out[t * hp + j];
     }
-    return out;
     return out;
 }
 // Perceiver resampler - host-side implementation.
@@ -421,7 +428,7 @@ static std::vector<float> cond_enc_fwd(const GM& m, const float* mel, int T, int
 //   out = RMSNorm(latents) * sqrt(dim) * gamma
 // Attention: 8 heads, head_dim 64, inner 512. to_q: [512,1024], to_kv: [1024,1024],
 // to_out: [1024,512] (all nn.Linear [out][in] row-major in GGUF).
-static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, int hp) {
+static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, int hp, int chunk_idx = 0) {
     const int N = 32;          // number of latent queries
     const int D = hp;          // 1024 latent/context dim
     const int inner = m.perc[0].to_q ? (int)(m.perc[0].to_q->ne[1]) : 512;
@@ -438,7 +445,7 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
     const int KT = N + CL;
     std::vector<float> kv_in((size_t)KT * D);
     std::vector<float> q((size_t)N * inner), k((size_t)KT * inner), v((size_t)KT * inner);
-    std::vector<float> attn_out((size_t)N * D), ffn_h(ffn_dim), ffn_out((size_t)N * D);
+    std::vector<float> attn_out((size_t)N * inner), ffn_h(ffn_dim), ffn_out((size_t)N * D);
 
     for (int l = 0; l < 2; l++) {
         auto& p = m.perc[l];
@@ -467,6 +474,15 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
                 q[(size_t)n * inner + r] = s;
             }
         }
+        if (getenv("XTTS_DUMP_PERC") && l == 0) {
+            char pq[512], pk[512], pv[512];
+            snprintf(pq, sizeof(pq), "%s.c%d.L0.q", getenv("XTTS_DUMP_PERC"), chunk_idx);
+            snprintf(pk, sizeof(pk), "%s.c%d.L0.k", getenv("XTTS_DUMP_PERC"), chunk_idx);
+            snprintf(pv, sizeof(pv), "%s.c%d.L0.v", getenv("XTTS_DUMP_PERC"), chunk_idx);
+            if (FILE* f = fopen(pq, "wb")) { fwrite(q.data(), 4, q.size(), f); fclose(f); }
+            if (FILE* f = fopen(pk, "wb")) { fwrite(k.data(), 4, k.size(), f); fclose(f); }
+            if (FILE* f = fopen(pv, "wb")) { fwrite(v.data(), 4, v.size(), f); fclose(f); }
+        }
         // Multi-head attention: N queries attend to KT keys
         for (int n = 0; n < N; n++) {
             for (int h = 0; h < heads; h++) {
@@ -482,7 +498,7 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
                 float sa = 0;
                 for (int t = 0; t < KT; t++) { att[t] = expf(att[t] - mx); sa += att[t]; }
                 for (int t = 0; t < KT; t++) att[t] /= sa;
-                float* oh = &attn_out[(size_t)n * D + h * hd];
+                float* oh = &attn_out[(size_t)n * inner + h * hd];
                 for (int j = 0; j < hd; j++) oh[j] = 0;
                 for (int t = 0; t < KT; t++) {
                     float a = att[t]; if (a < 1e-10f) continue;
@@ -499,7 +515,17 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
                 lat[(size_t)n * D + r] += s;
             }
         }
+        if (getenv("XTTS_DUMP_PERC") && l == 0) {
+            char pa[512];
+            snprintf(pa, sizeof(pa), "%s.c%d.L0.attn_out", getenv("XTTS_DUMP_PERC"), chunk_idx);
+            FILE* fa = fopen(pa, "wb"); if (fa) { fwrite(attn_out.data(), 4, attn_out.size(), fa); fclose(fa); }
+            char pl[512];
+            snprintf(pl, sizeof(pl), "%s.c%d.L0.lat_after_attn", getenv("XTTS_DUMP_PERC"), chunk_idx);
+            FILE* fl = fopen(pl, "wb"); if (fl) { fwrite(lat.data(), 4, lat.size(), fl); fclose(fl); }
+        }
         // FFN: Linear(dim, dim_inner*2) -> GEGLU -> Linear(dim_inner, dim), residual
+        std::vector<float> ffn_h1_dump;
+        if (getenv("XTTS_DUMP_PERC") && l == 0) ffn_h1_dump.resize((size_t)N * ffn_dim);
         for (int n = 0; n < N; n++) {
             const float* xn = &lat[(size_t)n * D];
             for (int r = 0; r < ffn_dim; r++) {
@@ -507,17 +533,34 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
                 for (int c = 0; c < D; c++) s += W[c] * xn[c];
                 ffn_h[r] = s + p.ffn_b_c[r];
             }
+            if (getenv("XTTS_DUMP_PERC") && l == 0)
+                std::copy(ffn_h.begin(), ffn_h.end(), ffn_h1_dump.begin() + (size_t)n * ffn_dim);
             // GEGLU: chunk into [value=first half, gate=second half]; out = gelu(gate) * value
-            // F.gelu default = exact erf gelu: 0.5*x*(1+erf(x/sqrt(2)))
+            // F.gelu default = exact erf gelu: gelu(x) = 0.5*x*(1+erf(x/sqrt(2)))
             for (int r = 0; r < gelu_dim; r++) {
                 float val = ffn_h[r], gate = ffn_h[gelu_dim + r];
-                ffn_h[r] = 0.5f * val * (1.0f + erff(gate * 0.70710678118654752440f));
+                ffn_h[r] = 0.5f * gate * (1.0f + erff(gate * 0.70710678118654752440f)) * val;
+            }
+            if (getenv("XTTS_DUMP_PERC") && l == 0 && n == 0) {
+                char pg[512];
+                snprintf(pg, sizeof(pg), "%s.c%d.L0.ffn_geglu", getenv("XTTS_DUMP_PERC"), chunk_idx);
+                FILE* fg = fopen(pg, "wb"); if (fg) { fwrite(ffn_h.data(), 4, gelu_dim, fg); fclose(fg); }
+                fprintf(stderr, "xtts_dbg: perc L0 n0 GEGLU: val[0..2]=%.3f,%.3f,%.3f gate[0..2]=%.3f,%.3f,%.3f gelu_out[0..2]=%.3f,%.3f,%.3f gelu_dim=%d ffn_dim=%d\n",
+                        ffn_h[0], ffn_h[1], ffn_h[2], ffn_h[gelu_dim], ffn_h[gelu_dim+1], ffn_h[gelu_dim+2],
+                        0.5f*ffn_h[0]*(1.0f+erff(ffn_h[gelu_dim]*0.70710678f)), 0.5f*ffn_h[1]*(1.0f+erff(ffn_h[gelu_dim+1]*0.70710678f)), 0.5f*ffn_h[2]*(1.0f+erff(ffn_h[gelu_dim+2]*0.70710678f)), gelu_dim, ffn_dim);
             }
             for (int r = 0; r < D; r++) {
                 float s = 0; const float* W = p.ffn2_w_c.data() + (size_t)r * gelu_dim;
                 for (int c = 0; c < gelu_dim; c++) s += W[c] * ffn_h[c];
                 lat[(size_t)n * D + r] += s + p.ffn2_b_c[r];
             }
+        }
+        if (getenv("XTTS_DUMP_PERC") && l == 0) {
+            char pf[512], ph[512];
+            snprintf(pf, sizeof(pf), "%s.c%d.L0.lat_after_ffn", getenv("XTTS_DUMP_PERC"), chunk_idx);
+            snprintf(ph, sizeof(ph), "%s.c%d.L0.ffn_h1", getenv("XTTS_DUMP_PERC"), chunk_idx);
+            FILE* ff2 = fopen(pf, "wb"); if (ff2) { fwrite(lat.data(), 4, lat.size(), ff2); fclose(ff2); }
+            FILE* fh = fopen(ph, "wb"); if (fh) { fwrite(ffn_h1_dump.data(), 4, ffn_h1_dump.size(), fh); fclose(fh); }
         }
     }
     // Final RMSNorm: normalize(x) * sqrt(D) * gamma
@@ -528,6 +571,11 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
             float inv = 1.0f / (sqrtf(ss) + 1e-12f);  // 1/||x||_2, then *sqrt(D)*gamma
             for (int j = 0; j < D; j++) x[j] = x[j] * inv * sqrtf((float)D) * (m.perc_norm_gamma_c.empty() ? 1.f : m.perc_norm_gamma_c[j]);
         }
+    }
+    if (getenv("XTTS_DUMP_PERC")) {
+        char pf[512];
+        snprintf(pf, sizeof(pf), "%s.c%d.final", getenv("XTTS_DUMP_PERC"), chunk_idx);
+        FILE* ff = fopen(pf, "wb"); if (ff) { fwrite(lat.data(), 4, lat.size(), ff); fclose(ff); }
     }
     lat.resize((size_t)N * D);
     return lat;
@@ -635,6 +683,10 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
     };
 
     // --- Prefix: [cond_latents (no pos emb) | text tokens + text_pos] ---
+    if (getenv("XTTS_DUMP_COND") && !cl.empty()) {
+        FILE* f = fopen(getenv("XTTS_DUMP_COND"), "wb");
+        if (f) { fwrite(cl.data(), 4, cl.size(), f); fclose(f); }
+    }
     if (!cl.empty()) {
         int ncl = (int)cl.size() / hp.d;
         std::vector<float> dummy(D);
@@ -914,7 +966,7 @@ bool XttSv2GptEngine::load(const std::filesystem::path& gpt_path, const std::fil
         impl_->hp.code_stride = (int)kv_u32(gu, "xtts.gpt.code_stride_len", 1024);
         gguf_free(gu);
     }
-    if (!bind(impl_->model, impl_->gpt_wl.tensors, impl_->hp)) return false;
+    if (!xtts_bind_tensors(impl_->model, impl_->gpt_wl.tensors, impl_->hp)) return false;
     if (!load_xtts_v2_tokenizer(&impl_->vocab, gpt_path)) {
         impl_->vocab.merges.resize(impl_->hp.text_vocab);
     }
@@ -929,7 +981,7 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
     if (!impl_) return false;
     auto& m = impl_->model;
     auto& hp = impl_->hp;
-    // Reference get_gpt_cond_latents(audio, sr, length=gpt_cond_len=30, chunk_length=gpt_cond_chunk_len=4):
+    // Reference get_gpt_cond_latents(audio, sr, length=gpt_cond_len=30, chunk_length=gpt_cond_chunk_len=6):
     //   audio = audio[:, :22050*length]           (truncate to 30 s)
     //   for each 4-second chunk (skip chunks < 0.33 s):
     //       mel_chunk = wav_to_mel_cloning(chunk, n_fft=2048, hop=256, win=1024)
@@ -938,7 +990,7 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
     int ref_ns = ref_ns_in;
     int max_ns = 22050 * 30;   // gpt_cond_len = 30
     if (ref_ns > max_ns) ref_ns = max_ns;
-    const int chunk_ns = 22050 * 4;    // gpt_cond_chunk_len = 4 s
+    const int chunk_ns = 22050 * 6;    // gpt_cond_chunk_len = 6 s
     const int min_chunk_ns = (int)(22050 * 0.33f);
     // Per-channel mel normalization (clips_mel_norms.pth / mel_stats.pth, 80 float32 values, log-domain means)
     static std::vector<float> mel_norms;
@@ -968,9 +1020,19 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
             melT[(size_t)t * 80 + mch] = mel[(size_t)mch * T + t];
         auto cl = cond_enc_fwd(m, melT.data(), T, hp.d);
         if (cl.empty()) return false;
+        if (getenv("XTTS_DUMP_PERC")) {
+            char ps[512], pm[512], pc[512];
+            snprintf(ps, sizeof(ps), "%s.c%d.style.bin", getenv("XTTS_DUMP_PERC"), n_chunks);
+            snprintf(pm, sizeof(pm), "%s.c%d.mel.bin", getenv("XTTS_DUMP_PERC"), n_chunks);
+            snprintf(pc, sizeof(pc), "%s.c%d.melT.bin", getenv("XTTS_DUMP_PERC"), n_chunks);
+            FILE* fs = fopen(ps, "wb"); if (fs) { fwrite(cl.data(), 4, cl.size(), fs); fclose(fs); }
+            FILE* fm = fopen(pm, "wb"); if (fm) { fwrite(mel.data(), 4, mel.size(), fm); fclose(fm); }
+            FILE* fc = fopen(pc, "wb"); if (fc) { fwrite(melT.data(), 4, melT.size(), fc); fclose(fc); }
+            fprintf(stderr, "xtts_dbg: chunk %d T=%d ns=%d dumped mel/style\n", n_chunks, T, cn);
+        }
         // perceiver resampler: cond encoder output [T,1024] -> [32,1024]
         ggml_context* ctx = ggml_init({1 << 24, nullptr, false});
-        auto pl = perceiver_fwd(m, cl.data(), (int)cl.size() / hp.d, hp.d);
+        auto pl = perceiver_fwd(m, cl.data(), (int)cl.size() / hp.d, hp.d, n_chunks);
         ggml_free(ctx);
         if (pl.empty()) return false;
         if (getenv("XTTS_DEBUG")) {

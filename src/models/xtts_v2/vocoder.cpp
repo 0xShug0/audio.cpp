@@ -16,6 +16,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <string>
 #include <vector>
 
@@ -151,11 +152,12 @@ static ggml_tensor* se_basic(ggml_context* ctx, ggml_tensor* x,
     const std::map<std::string, ggml_tensor*>& ts, const std::string& p,
     int C, bool ds) {
     ggml_tensor* res = x;
+    // reference: conv1 -> relu -> bn1
     ggml_tensor* h = ggml_conv_2d(ctx, T(ts, p + ".conv1.weight"), x,
         ds ? 2 : 1, ds ? 2 : 1, 1, 1, 1, 1);
+    h = ggml_relu(ctx, h);
     h = apply_bn4d(ctx, h, T(ts, p + ".bn1.rm"), T(ts, p + ".bn1.rv"),
                    T(ts, p + ".bn1.weight"), T(ts, p + ".bn1.bias"));
-    h = ggml_relu(ctx, h);
     h = ggml_conv_2d(ctx, T(ts, p + ".conv2.weight"), h, 1, 1, 1, 1, 1, 1);
     h = apply_bn4d(ctx, h, T(ts, p + ".bn2.rm"), T(ts, p + ".bn2.rv"),
                    T(ts, p + ".bn2.weight"), T(ts, p + ".bn2.bias"));
@@ -169,7 +171,8 @@ static ggml_tensor* se_basic(ggml_context* ctx, ggml_tensor* x,
         }
         res = dc;
     }
-    return ggml_add(ctx, h, res);
+    // reference: out += residual; out = relu(out)
+    return ggml_relu(ctx, ggml_add(ctx, h, res));
 }
 
 // Speaker encoder graph
@@ -180,15 +183,27 @@ static ggml_cgraph* build_spk_enc(ggml_context* ctx0,
     // data layout: element (t, ch) at t + ch*T_mel -> matches mel[ch*Tm + t]
     ggml_tensor* x = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, T_mel, 64, 1, 1);
     ggml_set_name(x, "speaker_mel"); ggml_set_input(x);
+    // reference stem: conv1 -> relu -> bn1
     ggml_tensor* h = ggml_conv_2d(ctx0, T(ts, "hifigan_decoder.se.conv1.weight"), x, 1, 1, 1, 1, 1, 1);
+    h = ggml_add(ctx0, h, ggml_repeat(ctx0, ggml_reshape_4d(ctx0, T(ts, "hifigan_decoder.se.conv1.bias"), 1, 1, (int)h->ne[2], 1), h));
+    if (getenv("XTTS_DUMP_SPK_NET")) { ggml_set_name(h, "spk_net_conv1"); ggml_set_output(h); ggml_build_forward_expand(gf, h); }
+    h = ggml_relu(ctx0, h);
     h = apply_bn4d(ctx0, h, T(ts, "hifigan_decoder.se.bn1.rm"), T(ts, "hifigan_decoder.se.bn1.rv"),
                    T(ts, "hifigan_decoder.se.bn1.weight"), T(ts, "hifigan_decoder.se.bn1.bias"));
+    if (getenv("XTTS_DUMP_SPK_NET")) { ggml_set_name(h, "spk_net_stem"); ggml_set_output(h); ggml_build_forward_expand(gf, h); }
     int lf[4] = {32,64,128,256}, lb[4] = {3,4,6,3};
-    for (int ly = 0; ly < 4; ly++)
+    for (int ly = 0; ly < 4; ly++) {
         for (int bl = 0; bl < lb[ly]; bl++) {
             std::string pfx = "hifigan_decoder.se.layer" + std::to_string(ly + 1) + "." + std::to_string(bl);
             h = se_basic(ctx0, h, ts, pfx, lf[ly], (bl == 0 && ly > 0));
         }
+        if (getenv("XTTS_DUMP_SPK_NET")) {
+            char nm[64];
+            snprintf(nm, sizeof(nm), "spk_net_layer%d", ly + 1);
+            ggml_set_name(h, nm); ggml_set_output(h);
+            ggml_build_forward_expand(gf, h);
+        }
+    }
     int Ws = (int)h->ne[0], Hs = (int)h->ne[1], Cs = (int)h->ne[2];
     // Flatten conv output to [Ws, Cs*Hs]: row r = c*Hs + h (PyTorch reshape(B, -1, T) order).
     // GGML element (w,h,c) at w + h*Ws + c*Ws*Hs == 2D view (w, r=c*Hs+h) at w + r*Ws. Exact match.
@@ -281,10 +296,20 @@ static bool load_gguf(const char* path, ggml_backend_t be, WL& wl) {
 // (matches torchaudio MelSpectrogram with hamming_window + PreEmphasis(0.97) applied upstream)
 static std::vector<float> compute_mel_hamming(const float* pcm, int ns, int sr, int nfft,
     int hop, int win, int nm, float fmin, float fmax) {
+    // torch.hamming_window(win) default: PERIODIC (denominator win-1)
     std::vector<float> ham(win);
-    for (int i = 0; i < win; i++) ham[i] = 0.54f - 0.46f * cosf(2.0f * (float)M_PI * i / win);
-    std::vector<float> padded(ns + nfft, 0);
-    std::memcpy(padded.data() + nfft / 2, pcm, ns * sizeof(float));
+    for (int i = 0; i < win; i++) ham[i] = 0.54f - 0.46f * cosf(2.0f * (float)M_PI * i / (win - 1));
+    // torchaudio center=True, pad_mode="reflect": reflect padding of nfft/2 on both sides
+    int pad = nfft / 2;
+    std::vector<float> padded(2 * pad + ns, 0);
+    for (int i = 1; i <= pad; i++) {
+        int li = i, ri = i;
+        while (li >= ns) li = 2 * (ns - 1) - li;
+        while (ri >= ns) ri = 2 * (ns - 1) - ri;
+        padded[pad - i] = pcm[li];
+        padded[pad + ns - 1 + i] = pcm[ns - 1 - ri];
+    }
+    std::memcpy(padded.data() + pad, pcm, ns * sizeof(float));
     int T = (int)((padded.size() - nfft) / hop) + 1;
     if (T <= 0) return {};
     int nf = nfft / 2 + 1;
@@ -303,10 +328,21 @@ static std::vector<float> compute_mel_hamming(const float* pcm, int ns, int sr, 
     }
     std::vector<float> mel(nm * T, 0);
     std::vector<float> frame(nfft);
+    // torchaudio centers the (short) window inside the n_fft frame
+    const int wpad = (nfft - win) / 2;
     for (int t = 0; t < T; t++) {
-        for (int n = 0; n < nfft; n++) frame[n] = padded[(size_t)t * hop + n] * (n < win ? ham[n] : 0.0f);
-        // radix-2 FFT (nfft=512)
+        for (int n = 0; n < nfft; n++) {
+            int wi = n - wpad;
+            frame[n] = padded[(size_t)t * hop + n] * ((wi >= 0 && wi < win) ? ham[wi] : 0.0f);
+        }
+        // radix-2 FFT (nfft=512), iterative Cooley-Tukey: requires bit-reversed input order
         std::vector<float> re(frame), im(nfft, 0);
+        for (int i = 1, j = 0; i < nfft; i++) {
+            int bit = nfft >> 1;
+            for (; j & bit; bit >>= 1) j ^= bit;
+            j ^= bit;
+            if (i < j) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
+        }
         for (int len = 2; len <= nfft; len <<= 1) {
             int half = len >> 1;
             float wr = cosf(-2.0f * (float)M_PI / len), wi = sinf(-2.0f * (float)M_PI / len);
@@ -492,9 +528,27 @@ std::vector<float> XttSv2Vocoder::speaker_embed(const float* ref_pcm, int n_samp
     std::vector<float> pre(pcm16.size());
     for (int i = (int)pcm16.size() - 1; i > 0; i--) pre[i] = pcm16[i] - 0.97f * pcm16[i - 1];
     if (!pcm16.empty()) pre[0] = pcm16[0];
+    if (getenv("XTTS_DUMP_SPK_PRE")) {
+        FILE* f = fopen(getenv("XTTS_DUMP_SPK_PRE"), "wb");
+        if (f) { fwrite(pre.data(), 4, pre.size(), f); fclose(f); }
+    }
     auto mel = compute_mel_hamming(pre.data(), (int)pre.size(), 16000, 512, 160, 400, 64, 0, 8000);
     if (mel.empty()) return {};
     for (auto& v : mel) v = logf(v + 1e-6f); // LOGFIX
+    if (getenv("XTTS_INJECT_SPK_MEL")) {
+        // bypass: load reference log-mel (64 x T, channel-major) for numerical debugging
+        FILE* f = fopen(getenv("XTTS_INJECT_SPK_MEL"), "rb");
+        if (f) {
+            fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+            std::vector<float> refmel(sz / 4);
+            if (fread(refmel.data(), 4, refmel.size(), f) == refmel.size()) mel = std::move(refmel);
+            fclose(f);
+        }
+    }
+    if (getenv("XTTS_DUMP_SPK_MEL")) {
+        FILE* f = fopen(getenv("XTTS_DUMP_SPK_MEL"), "wb");
+        if (f) { fwrite(mel.data(), 4, mel.size(), f); fclose(f); }
+    }
     int Tm = (int)mel.size() / 64;
     // InstanceNorm1d(64): per-channel zero-mean unit-variance over time
     for (int ch = 0; ch < 64; ch++) {
@@ -513,9 +567,29 @@ std::vector<float> XttSv2Vocoder::speaker_embed(const float* ref_pcm, int n_samp
     ggml_gallocr_t ga = ggml_gallocr_new(ggml_backend_get_default_buffer_type(c.backend_cpu));
     if (!ga || !ggml_gallocr_reserve(ga, gf)) { if (ga) ggml_gallocr_free(ga); ggml_free(ctx0); return {}; }
     if (!ggml_gallocr_alloc_graph(ga, gf)) { ggml_gallocr_free(ga); ggml_free(ctx0); return {}; }
-    ggml_backend_tensor_set(ggml_graph_get_tensor(gf, "speaker_mel"), mel.data(), 0, mel.size() * sizeof(float));
+    ggml_tensor* mel_in = ggml_graph_get_tensor(gf, "speaker_mel");
+    ggml_backend_tensor_set(mel_in, mel.data(), 0, mel.size() * sizeof(float));
+    if (getenv("XTTS_DUMP_SPK_NET")) {
+        std::vector<float> rb(mel.size());
+        ggml_backend_tensor_get(mel_in, rb.data(), 0, mel.size() * sizeof(float));
+        double e = 0; for (size_t i = 0; i < mel.size(); i++) { double d = rb[i] - mel[i]; e += d * d; }
+        fprintf(stderr, "xtts_spk_dbg: speaker_mel readback err=%.3g (Tm=%d rms=%.4f)\n", sqrt(e), Tm,
+                sqrt(std::inner_product(mel.begin(), mel.end(), mel.begin(), 0.0) / (double)mel.size()));
+    }
     if (ggml_backend_graph_compute(c.backend_cpu, gf) != GGML_STATUS_SUCCESS) {
         ggml_gallocr_free(ga); ggml_free(ctx0); return {};
+    }
+    if (getenv("XTTS_DUMP_SPK_NET")) {
+        for (const char* nm : {"spk_net_conv1", "spk_net_stem", "spk_net_layer1", "spk_net_layer2", "spk_net_layer3", "spk_net_layer4"}) {
+            ggml_tensor* t2 = ggml_graph_get_tensor(gf, nm);
+            if (!t2 || !t2->buffer) continue;
+            size_t sz = ggml_nbytes(t2);
+            std::vector<float> buf(sz / 4);
+            ggml_backend_tensor_get(t2, buf.data(), 0, sz);
+            char path[512];
+            snprintf(path, sizeof(path), "%s.%s", getenv("XTTS_DUMP_SPK_NET"), nm + 8);
+            FILE* f = fopen(path, "wb"); if (f) { fwrite(buf.data(), 4, buf.size(), f); fclose(f); }
+        }
     }
     ggml_tensor* out = ggml_graph_node(gf, ggml_graph_n_nodes(gf) - 1);
     std::vector<float> result(512);

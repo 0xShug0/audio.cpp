@@ -146,6 +146,10 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
         // Speaker embedding from 16kHz-resampled reference audio
         spk_emb = c.vocoder.speaker_embed(ref_pcm.data(), (int)ref_pcm.size());
         if (spk_emb.empty()) fprintf(stderr, "xtts_v2: WARNING speaker embedding failed, using zeros\n");
+        if (getenv("XTTS_DUMP_SPK")) {
+            FILE* f = fopen(getenv("XTTS_DUMP_SPK"), "wb");
+            if (f) { fwrite(spk_emb.data(), 4, spk_emb.size(), f); fclose(f); }
+        }
         else {
             float rms = 0; for (auto v : spk_emb) rms += v * v;
             double vsum = 0; for (float v : spk_emb) vsum += v;
