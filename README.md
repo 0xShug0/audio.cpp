@@ -95,6 +95,7 @@ Model weights keep the license of their original release, which is separate from
 | **dots_tts** | TTS, Clone, Edit, Ctrl | multilingual | DotTTS SOAR<br>DotTTS MeanFlow<br>DotTTS Edit | GGUF 16/Q8, Stream |
 | **dramabox** | TTS, Clone | en | DramaBox expressive TTS and voice cloning | GGUF Q8 |
 | **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | Fish Audio S2 Pro | GGUF 16/Q8, Stream |
+| **[fish_drama3](docs/models/fish_drama3.md)** | TTS, Clone, Ctrl, Edit | auto | Fish Audio Drama 3 (experimental community port) | Mixed Q2_K/Q3_K/Q4_K GGUF, Stream |
 | **firered_audio** | ASR, TTS, Clone, Design, Ctrl | zh, en | FireRedAudio multimodal speech/audio model with ASR, understanding, cloning, design, and edit paths | GGUF original/Q8 |
 | **fireredtts3** | TTS, Clone, Design, Ctrl | 24 langs + 21 zh dialects | FireRedTTS3 Base<br>FireRedTTS3 Instruct/Voicedesign | GGUF original/Q8 |
 | **higgs_audio_tts** | TTS, Clone, Ctrl | auto | Higgs Audio v3 TTS 4B | GGUF 16/Q8, Stream |

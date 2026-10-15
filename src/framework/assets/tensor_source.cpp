@@ -2115,8 +2115,13 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             const bool use_override = type_override.has_value() && *type_override != TensorStorageType::Native;
             const ggml_type override_type = use_override ? ggml_type_for_tensor_storage(*type_override) : source_type;
             if (use_override && ggml_is_quantized(override_type)) {
+                // An explicit override may quantize [expert, output, input] banks.
+                // Keep the default policy and ordinary 3-D kernels unchanged.
+                const bool is_expert_bank = item.shape.size() == 3 && name_is_weight &&
+                    normalized_name.find(".mlp.experts.") != std::string::npos;
                 const bool can_quantize_override =
-                    source_is_float && item.shape.size() == 2 && item.shape.back() % ggml_blck_size(override_type) == 0;
+                    source_is_float && (item.shape.size() == 2 || is_expert_bank) &&
+                    item.shape.back() % ggml_blck_size(override_type) == 0;
                 if (!can_quantize_override) {
                     throw std::runtime_error("GGUF tensor type override cannot quantize tensor: " + item.name);
                 }
