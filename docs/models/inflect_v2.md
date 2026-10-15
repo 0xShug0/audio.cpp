@@ -98,6 +98,14 @@ inside the native audio.cpp process.
 | `text_chunk_mode` | `word_budget` | `word_budget` | Long-form splitting mode. |
 | `text_chunk_size` | positive integer | `280` | Maximum Unicode codepoints per chunk. |
 
+Session options (use with `--session-option`):
+
+| Option | Description |
+|---|---|
+| `inflect_v2.espeak_library_path` | Explicit path to the eSpeak-ng shared library. |
+| `inflect_v2.espeak_data_path` | Explicit path to `espeak-ng-data`. |
+| `inflect_v2.exec_plan` | JSON object of component execution plans. Default `{}` keeps existing execution. Select the RKNN decoder with `{"decoder":{"impl":"rknn","artifacts":{"main":"/models/decoder.rknn"}}}`. No params. Requires `ENGINE_ENABLE_RKNN=ON`; see [Rockchip NPU](../build/rockchip-npu.md#component-execution-plans). |
+
 Long-form text is split near punctuation. Adjacent chunks receive 5 ms edge
 fades and punctuation-dependent pauses. A request is rejected if its expanded
 latent would exceed 4000 frames. The model has one fixed voice and exposes no
