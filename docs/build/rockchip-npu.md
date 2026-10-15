@@ -364,6 +364,7 @@ the configurable components:
 | Kokoro `generator` | `kokoro_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
 | Qwen3 `speech_decoder` | `qwen3_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main`, optional `first` |
 | sanoTTS `decoder` | `sanotts.exec_plan` | `default`, `ggml`, `neon` | None |
+| Inflect v2 `decoder` | `inflect_v2.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
 
 These options also work with older GGUFs whose embedded specs do not declare
 `exec_plan`; the model validates the plan without requiring a spec override.
@@ -439,24 +440,24 @@ The engine is per model, not per voice: the generator weights are in the GGUF, a
 validated against the loaded model's latent channel count, its spectrogram row count and its audio
 samples per latent frame at init.
 
-Inflect v2 takes one option and is offline only:
-
-```bash
-./build/bin/audiocpp_cli --task tts --family inflect_v2 \
-  --model models/Inflect-Micro-v2-GGUF/inflect-micro-v2-q8_0.gguf \
-  --text "..." --seed 1234 --out out.wav \
-  --session-option inflect_v2.rknn_decoder=/root/tts-rknn/inflect-v2-micro-decoder-rk3588.rknn
-```
-
-The engine is per model (Micro and Nano differ in latent width), validated against the loaded
-model's latent channel count and its samples-per-frame hop at init.
-
 `..._overlap` advances the walk by `emitted - overlap` frames and blends the shared columns with a
 raised cosine (1.54x wall, no change in the per-window loudness spread, so it is a seam knob, not a
 loudness one). `..._gain` corrects each window's loudness toward a full-length CPU decode of the same
 latent and is also what enables the near-Nyquist cap in the Kokoro measurements below (1.9x wall,
 +601 MB RSS, because the ggml generator graph stays loaded and runs once per utterance). Both default
 to the shipping walk.
+
+Inflect v2 takes one option and is offline only:
+
+```bash
+./build/bin/audiocpp_cli --task tts --family inflect_v2 \
+  --model models/Inflect-Micro-v2-GGUF/inflect-micro-v2-q8_0.gguf \
+  --text "..." --seed 1234 --out out.wav \
+  --session-option 'inflect_v2.exec_plan={"decoder":{"impl":"rknn","artifacts":{"main":"/root/tts-rknn/inflect-v2-micro-decoder-rk3588.rknn"}}}'
+```
+
+The engine is per model (Micro and Nano differ in latent width), validated against the loaded
+model's latent channel count and its samples-per-frame hop at init.
 
 ## Measured on RK3588
 

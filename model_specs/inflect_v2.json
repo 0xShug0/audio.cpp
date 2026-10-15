@@ -85,10 +85,11 @@
         "required": false
       },
       {
-        "name": "rknn_decoder",
-        "type": "path",
-        "description": "Path to a pre-compiled RKNN engine for this model's decoder, voiced on a Rockchip NPU. Needs a build with ENGINE_ENABLE_RKNN; build the engine with tools/rknn/prepare_inflect_v2_rknn_decoder.py.",
-        "required": false
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Component: decoder. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. GGML keeps the session backend. RKNN requires artifacts.main and ENGINE_ENABLE_RKNN; omit backend. Neither implementation takes params.",
+        "required": false,
+        "default": "{}"
       }
     ],
     "load": []

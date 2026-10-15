@@ -52,7 +52,7 @@ void validate_session_options(
     // model_specs/inflect_v2.json is invisible to a package built before it. The NPU
     // decoder option is therefore also accepted by name (piper_tts does the same).
     static const std::set<std::string> kPackageIndependent = {
-        "inflect_v2.rknn_decoder",
+        "inflect_v2.exec_plan",
     };
     for (const auto & [key, _] : options.options) {
         if (key.rfind(family_prefix, 0) == 0 &&
@@ -113,10 +113,19 @@ InflectV2Session::InflectV2Session(
     frontend_ = std::make_unique<InflectV2Frontend>(
         session_path(options, "inflect_v2.espeak_library_path"),
         session_path(options, "inflect_v2.espeak_data_path"));
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "inflect_v2.exec_plan",
+        {{"decoder", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}},
+           {"rknn", {}, {"main"}, {}}}}});
     runtime_ = std::make_unique<InflectV2VitsRuntime>(
         assets_,
         options.backend,
-        session_path(options, "inflect_v2.rknn_decoder").string());
+        [&exec_plan] {
+            const auto & decoder = exec_plan.at("decoder");
+            return decoder.impl == "rknn" ? decoder.artifacts.at("main") : std::string{};
+        }());
 }
 
 InflectV2Session::~InflectV2Session() = default;
