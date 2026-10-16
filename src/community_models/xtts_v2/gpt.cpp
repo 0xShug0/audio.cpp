@@ -2,6 +2,7 @@
 #include "engine/community_models/xtts_v2/gpt.h"
 #include "engine/community_models/xtts_v2/assets.h"
 #include "engine/community_models/xtts_v2/tokenizer_text.h"
+#include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 #include "ggml.h"
@@ -113,10 +114,17 @@ static void get_emb(ggml_tensor* w, int t, float* o, int d) {
 // In both cases the raw data is already [out][in] row-major, so just read it flat.
 static std::vector<float> tconv1d(ggml_tensor* t) {
     if (!t) return {};
-    size_t ne0 = t->ne[0], ne1 = t->ne[1], ne2 = t->ne[2];
-    size_t total = ne0 * ne1 * (ne2 ? ne2 : 1);
+    size_t total = ggml_nelements(t);
     std::vector<float> r(total);
-    ggml_backend_tensor_get(t, r.data(), 0, total * sizeof(float));
+    if (t->type == GGML_TYPE_F32) {
+        ggml_backend_tensor_get(t, r.data(), 0, total * sizeof(float));
+    } else {
+        size_t nbytes = ggml_nbytes(t);
+        std::vector<uint8_t> tmp(nbytes);
+        ggml_backend_tensor_get(t, tmp.data(), 0, nbytes);
+        const auto* tt = ggml_get_type_traits(t->type);
+        if (tt && tt->to_float) tt->to_float(tmp.data(), r.data(), total);
+    }
     return r;
 }
 static std::vector<float> comp_mel(const float* pcm, int ns, int sr, int nfft, int hop, int win, int nm, float fmin, float fmax) {
@@ -202,7 +210,6 @@ static std::vector<float> comp_mel(const float* pcm, int ns, int sr, int nfft, i
 }
 struct GB {
     ggml_tensor* l1w, *l1b, *qkw, *qkb, *pwo, *pwb, *l2w, *l2b, *fcw, *fcb, *fpw, *fpb;
-    std::vector<float> l1w_c, l1b_c, qkw_c, qkb_c, pwo_c, pwb_c, l2w_c, l2b_c, fcw_c, fcb_c, fpw_c, fpb_c;
 };
 static void read_tensor_weights(ggml_tensor* t, std::vector<float>& out) {
     if (!t) return;
@@ -234,7 +241,6 @@ struct GM { ggml_tensor* te, *me, *tp, *mp; std::vector<GB> bl;
     ggml_tensor* perc_latents = nullptr; std::vector<float> perc_latents_c;
     ggml_tensor* perc_norm_gamma = nullptr; std::vector<float> perc_norm_gamma_c;
     ggml_tensor* lfw, *lfb, *fnw, *fnb, *lmw, *lmb;
-    std::vector<float> lfw_c, lfb_c, lmw_c, lmb_c, fnw_c, fnb_c;
     ggml_tensor* ciw, *cib; std::vector<float> ciwc;
     std::vector<float> cib_data;
     std::vector<float> cqwc[6], cpwc[6], cqwb_c[6], cpwb_c[6], cgww_c[6], cgwb_c[6];
@@ -263,12 +269,7 @@ static bool xtts_bind_tensors(GM& m, const std::map<std::string, ggml_tensor*>& 
         b.l2w = req(ts, f(i,"ln_2.weight").c_str()); b.l2b = T(ts, f(i,"ln_2.bias"));
         b.fcw = req(ts, f(i,"mlp.c_fc.weight").c_str()); b.fcb = T(ts, f(i,"mlp.c_fc.bias"));
         b.fpw = req(ts, f(i,"mlp.c_proj.weight").c_str()); b.fpb = T(ts, f(i,"mlp.c_proj.bias"));
-        read_tensor_weights(b.l1w, b.l1w_c); read_tensor_weights(b.l1b, b.l1b_c);
-        read_tensor_weights(b.qkw, b.qkw_c); read_tensor_weights(b.qkb, b.qkb_c);
-        read_tensor_weights(b.pwo, b.pwo_c); read_tensor_weights(b.pwb, b.pwb_c);
-        read_tensor_weights(b.l2w, b.l2w_c); read_tensor_weights(b.l2b, b.l2b_c);
-        read_tensor_weights(b.fcw, b.fcw_c); read_tensor_weights(b.fcb, b.fcb_c);
-        read_tensor_weights(b.fpw, b.fpw_c); read_tensor_weights(b.fpb, b.fpb_c); }
+    }
     m.lfw = T(ts, "gpt.gpt.ln_f.weight"); m.lfb = T(ts, "gpt.gpt.ln_f.bias");
     m.fnw = req(ts, "gpt.final_norm.weight"); m.fnb = T(ts, "gpt.final_norm.bias");
     m.lmw = req(ts, "gpt.mel_head.weight"); m.lmb = T(ts, "gpt.mel_head.bias");
@@ -279,19 +280,6 @@ static bool xtts_bind_tensors(GM& m, const std::map<std::string, ggml_tensor*>& 
                 (long long)m.bl[0].fpw->ne[0], (long long)m.bl[0].fpw->ne[1],
                 (long long)m.lmw->ne[0], (long long)m.lmw->ne[1]);
     }
-    read_tensor_weights(m.lfw, m.lfw_c); read_tensor_weights(m.lfb, m.lfb_c);
-    read_tensor_weights(m.lmw, m.lmw_c); read_tensor_weights(m.lmb, m.lmb_c);
-    if (getenv("XTTS_DEBUG")) {
-        fprintf(stderr, "xtts_dbg: lmw_c[0..7]:");
-        for (int i = 0; i < 8; i++) fprintf(stderr, " %.4f", m.lmw_c[i]);
-        fprintf(stderr, " | lmw_c[1024..1031]:");
-        for (int i = 0; i < 8; i++) fprintf(stderr, " %.4f", m.lmw_c[1024 + i]);
-        fprintf(stderr, " | lmb[0..3]:");
-        for (int i = 0; i < 4; i++) fprintf(stderr, " %.4f", m.lmb_c[i]);
-        fprintf(stderr, " | lmw ne=[%lld,%lld]\n", (long long)m.lmw->ne[0], (long long)m.lmw->ne[1]);
-    }
-    if (m.fnw) read_tensor_weights(m.fnw, m.fnw_c);
-    if (m.fnb) read_tensor_weights(m.fnb, m.fnb_c);
     m.ciw = T(ts, "gpt.cond_enc.init.weight"); m.cib = T(ts, "gpt.cond_enc.init.bias");
     m.ciwc = tconv1d(m.ciw);
     std::vector<float> cib_c;
@@ -622,296 +610,232 @@ static ggml_tensor* ggml_layer_norm(ggml_context* ctx, ggml_tensor* x, ggml_tens
     return out;
 }
 
-// GPT-2 AR generation with proper KV cache and separate position embeddings.
-// Sequence layout: [cond_latents (no pos emb)] -> [text tokens + text_pos] -> [start_mel + mel_pos] -> [mel codes + mel_pos]
-// Returns the generated mel codes (excluding start token, excluding stop token).
-static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& m, const XttSv2HyperParams& hp,
-        const std::vector<int>& tids, const std::vector<float>& cl, float temp, int top_k, float top_p, float rep_pen, int max_n) {
-    (void)ctx; (void)be;  // host-side implementation; kept for signature compatibility
+// ---------------------------------------------------------------------------
+// GGML-native GPT-2 autoregressive decode.
+//
+//  * Weights are used in-place from the backend buffer in whatever type the GGUF
+//    stores (F32/F16/Q8_0/...); no dequantized host copies.  ggml's mul_mat
+//    kernels do the GEMM/GEMV (vectorized, quantized vec_dot, multithreaded).
+//  * The KV cache is a persistent F16 backend tensor per layer/K/V, laid out
+//    [HD, n_ctx, H] so flash_attn_ext reads it directly.  New K/V rows are
+//    written with ggml_set_rows (position index is a graph *input*, so the graph
+//    does not change from step to step).
+//  * Attention runs over a window that is padded up to a multiple of KV_BUCKET
+//    and masked with an additive F16 mask (-inf outside the causal range).  The
+//    graph is only rebuilt when the window crosses a bucket boundary (every 256
+//    steps), not per token.
+//  * Intermediates are planned by ggml_gallocr (buffers reused across layers).
+//  * The lm_head (ln_f -> final_norm -> mel_head) is fused into the graph and,
+//    for the prefix, only evaluated on the last position.
+// ---------------------------------------------------------------------------
+static constexpr int KV_BUCKET = 256;
+static int round_up_i(int x, int m) { return (x + m - 1) / m * m; }
+
+// Persistent KV cache. Kept across gpt_gen calls: the buffer is zeroed once at
+// allocation, afterwards it only ever holds finite values from earlier chunks,
+// and anything outside the causal window is masked to -inf, so no re-zeroing.
+struct GptKV {
+    ggml_context* ctx = nullptr;
+    ggml_backend_buffer_t buf = nullptr;
+    std::vector<ggml_tensor*> k, v;     // per layer, [HD, n_ctx, H] F16
+    int n_ctx = 0;
+    void release() {
+        if (buf) { ggml_backend_buffer_free(buf); buf = nullptr; }
+        if (ctx) { ggml_free(ctx); ctx = nullptr; }
+        k.clear(); v.clear(); n_ctx = 0;
+    }
+    ~GptKV() { release(); }
+    bool ensure(ggml_backend_t be, const XttSv2HyperParams& hp, int need) {
+        if (n_ctx >= need && buf) return true;
+        release();
+        const int nc = round_up_i(need, KV_BUCKET);
+        ggml_init_params ip = { ggml_tensor_overhead() * (size_t)(2 * hp.n_layers + 8), nullptr, true };
+        ctx = ggml_init(ip);
+        if (!ctx) return false;
+        for (uint32_t l = 0; l < hp.n_layers; l++) {
+            k.push_back(ggml_new_tensor_3d(ctx, GGML_TYPE_F16, hp.head_dim, nc, hp.n_heads));
+            v.push_back(ggml_new_tensor_3d(ctx, GGML_TYPE_F16, hp.head_dim, nc, hp.n_heads));
+        }
+        buf = ggml_backend_alloc_ctx_tensors(ctx, be);
+        if (!buf) { release(); return false; }
+        ggml_backend_buffer_clear(buf, 0);
+        n_ctx = nc;
+        return true;
+    }
+};
+
+// One compiled graph for a fixed (n_tok, n_kv) shape.
+struct GptGraph {
+    std::vector<uint8_t> meta;
+    ggml_context* ctx = nullptr;
+    ggml_gallocr_t galloc = nullptr;
+    ggml_cgraph* gf = nullptr;
+    ggml_tensor *emb = nullptr, *idx = nullptr, *mask = nullptr, *logits = nullptr;
+    int n_tok = 0, n_kv = 0;
+    void release() {
+        if (galloc) { ggml_gallocr_free(galloc); galloc = nullptr; }
+        if (ctx) { ggml_free(ctx); ctx = nullptr; }
+        gf = nullptr; emb = idx = mask = logits = nullptr; n_tok = n_kv = 0;
+    }
+    ~GptGraph() { release(); }
+};
+
+static bool gpt_build_graph(GptGraph& g, ggml_backend_t be, const GM& m, const XttSv2HyperParams& hp,
+                            GptKV& kv, int n_tok, int n_kv) {
+    g.release();
+    const int D = (int)hp.d, H = (int)hp.n_heads, HD = (int)hp.head_dim, L = (int)hp.n_layers;
+    const size_t max_nodes = 4096;
+    g.meta.resize(ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false) + (1u << 20));
+    ggml_init_params ip = { g.meta.size(), g.meta.data(), true };
+    g.ctx = ggml_init(ip);
+    if (!g.ctx) return false;
+    ggml_context* c = g.ctx;
+    g.gf = ggml_new_graph_custom(c, max_nodes, false);
+    g.n_tok = n_tok; g.n_kv = n_kv;
+
+    g.emb = ggml_new_tensor_2d(c, GGML_TYPE_F32, D, n_tok);   ggml_set_name(g.emb, "gpt_emb");  ggml_set_input(g.emb);
+    g.idx = ggml_new_tensor_1d(c, GGML_TYPE_I64, n_tok);      ggml_set_name(g.idx, "kv_idx");   ggml_set_input(g.idx);
+    g.mask = ggml_new_tensor_2d(c, GGML_TYPE_F16, n_kv, n_tok); ggml_set_name(g.mask, "kq_mask"); ggml_set_input(g.mask);
+
+    const size_t fs = sizeof(float);
+    ggml_tensor* x = g.emb;
+    for (int l = 0; l < L; l++) {
+        const GB& b = m.bl[l];
+        ggml_tensor* cur = ggml_layer_norm(c, x, b.l1w, b.l1b);
+        ggml_tensor* qkv = ggml_mul_mat(c, b.qkw, cur);                    // [3D, T]
+        if (b.qkb) qkv = ggml_add(c, qkv, b.qkb);
+        // Per-token layout is [Q(D) | K(D) | V(D)], each head-major [h*HD + d].
+        ggml_tensor* q  = ggml_view_3d(c, qkv, HD, n_tok, H, qkv->nb[1], (size_t)HD * fs, 0);
+        ggml_tensor* ks = ggml_view_3d(c, qkv, HD, n_tok, H, qkv->nb[1], (size_t)HD * fs, (size_t)D * fs);
+        ggml_tensor* vs = ggml_view_3d(c, qkv, HD, n_tok, H, qkv->nb[1], (size_t)HD * fs, (size_t)2 * D * fs);
+        // Append K/V rows at the positions given by g.idx. These must be expanded
+        // into the graph BEFORE the attention node that reads the cache.
+        ggml_build_forward_expand(g.gf, ggml_set_rows(c, kv.k[l], ks, g.idx));
+        ggml_build_forward_expand(g.gf, ggml_set_rows(c, kv.v[l], vs, g.idx));
+        ggml_tensor* kc = ggml_view_3d(c, kv.k[l], HD, n_kv, H, kv.k[l]->nb[1], kv.k[l]->nb[2], 0);
+        ggml_tensor* vc = ggml_view_3d(c, kv.v[l], HD, n_kv, H, kv.v[l]->nb[1], kv.v[l]->nb[2], 0);
+        ggml_tensor* a = ggml_flash_attn_ext(c, q, kc, vc, g.mask, 1.0f / sqrtf((float)HD), 0.0f, 0.0f);
+        a = ggml_reshape_2d(c, a, D, n_tok);                               // [h*HD+d, t] already contiguous
+        a = ggml_mul_mat(c, b.pwo, a);
+        if (b.pwb) a = ggml_add(c, a, b.pwb);
+        x = ggml_add(c, x, a);
+
+        cur = ggml_layer_norm(c, x, b.l2w, b.l2b);
+        cur = ggml_mul_mat(c, b.fcw, cur);
+        if (b.fcb) cur = ggml_add(c, cur, b.fcb);
+        cur = ggml_gelu(c, cur);                                            // gelu_new == tanh approx
+        cur = ggml_mul_mat(c, b.fpw, cur);
+        if (b.fpb) cur = ggml_add(c, cur, b.fpb);
+        x = ggml_add(c, x, cur);
+    }
+    // Only the last position feeds the sampler. ln_f then final_norm (HF GPT2Model
+    // applies ln_f itself, then the XTTS head applies final_norm again), then mel_head.
+    ggml_tensor* last = n_tok > 1 ? ggml_view_2d(c, x, D, 1, x->nb[1], (size_t)(n_tok - 1) * x->nb[1]) : x;
+    last = ggml_layer_norm(c, last, m.lfw, m.lfb);
+    last = ggml_layer_norm(c, last, m.fnw, m.fnb);
+    ggml_tensor* lg = ggml_mul_mat(c, m.lmw, last);                         // [vocab, 1]
+    if (m.lmb) lg = ggml_add(c, lg, m.lmb);
+    g.logits = lg; ggml_set_name(lg, "mel_logits"); ggml_set_output(lg);
+    ggml_build_forward_expand(g.gf, lg);
+
+    g.galloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(be));
+    if (!g.galloc || !ggml_gallocr_alloc_graph(g.galloc, g.gf)) { g.release(); return false; }
+    return true;
+}
+
+// Causal mask for query rows at absolute positions pos0..pos0+n_tok-1 over n_kv keys.
+static void gpt_fill_mask(GptGraph& g, int pos0) {
+    std::vector<ggml_fp16_t> mk((size_t)g.n_kv * g.n_tok);
+    const ggml_fp16_t zero = ggml_fp32_to_fp16(0.0f), ninf = ggml_fp32_to_fp16(-INFINITY);
+    for (int t = 0; t < g.n_tok; t++)
+        for (int j = 0; j < g.n_kv; j++)
+            mk[(size_t)t * g.n_kv + j] = (j <= pos0 + t) ? zero : ninf;
+    ggml_backend_tensor_set(g.mask, mk.data(), 0, mk.size() * sizeof(ggml_fp16_t));
+}
+
+// GPT-2 AR generation. Sequence layout:
+//   [cond_latents (no pos emb)] -> [text tokens + text_pos] -> [start_mel + mel_pos] -> [mel codes + mel_pos]
+// Returns generated mel codes (including the stop token if it was sampled, as before).
+static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const XttSv2HyperParams& hp,
+        const std::vector<int>& tids, const std::vector<float>& cl, float temp, int top_k, float top_p, float rep_pen,
+        int max_n, int n_threads) {
     std::vector<int> codes;
-    const int H = hp.n_heads, HD = hp.head_dim, D = hp.d;
-    const float scale = 1.0f / sqrtf((float)HD);
-    const int max_pos = 4096;
-    // KV cache: [layer][pos][head][dim] for K and V separately
-    std::vector<std::vector<float>> k_cache(hp.n_layers), v_cache(hp.n_layers);
-    for (int l = 0; l < (int)hp.n_layers; l++) {
-        k_cache[l].assign((size_t)max_pos * H * HD, 0.f);
-        v_cache[l].assign((size_t)max_pos * H * HD, 0.f);
-    }
-    std::vector<float> emb(D), qkv(D * 3), xln(D), attn_out(D), h2(hp.ffn), ff_out(D);
-    int seq_pos = 0;  // absolute position in the sequence (cache index)
+    const int D = (int)hp.d, V = (int)hp.mel_vocab;
+    const bool timing = getenv("XTTS_TIMING") != nullptr;
+    if (ggml_backend_is_cpu(be) && n_threads > 0) ggml_backend_cpu_set_n_threads(be, n_threads);
 
-
-    // Batched forward of T token embeddings at positions seq_pos..seq_pos+T-1 (GEMM form).
-    // Fills K/V caches; writes post-final-LN hidden states to out [T x D]. Much faster than
-    // T sequential forward_token calls (one weight pass for the whole prefix).
-    auto forward_batch = [&](const std::vector<float>& E, int T, std::vector<float>& out) {
-        const size_t L = hp.n_layers;
-        out.assign((size_t)T * D, 0.f);
-        std::vector<float> R = E;                       // residual stream [T x D]
-        std::vector<float> Xn((size_t)T * D);           // normed stream
-        std::vector<float> QKV((size_t)T * 3 * D);
-        std::vector<float> AT((size_t)T * D);           // attention merged output
-        std::vector<float> FF((size_t)T * D);
-        std::vector<float> H2((size_t)T * hp.ffn);
-        for (int l = 0; l < (int)L; l++) {
-            auto& bl = m.bl[l];
-            // LayerNorm (row-wise)
-#pragma omp parallel for schedule(static)
-            for (int t = 0; t < T; t++)
-                h_ln(&Xn[(size_t)t * D], &R[(size_t)t * D], bl.l1w_c.data(), bl.l1b_c.data(), D);
-            // QKV GEMM: QKV[t*3D+m] = Xn[t*D..t*D+D-1] @ W[m*D..m*D+D-1] + b[m]
-            // Weights outer, positions inner: weight row Wm stays in L1 for all T positions.
-#pragma omp parallel for schedule(static)
-            for (int m = 0; m < 3 * D; m++) {
-                const float* Wm = bl.qkw_c.data() + (size_t)m * D;
-                float b = bl.qkb_c.empty() ? 0.f : bl.qkb_c[m];
-                for (int t = 0; t < T; t++) {
-                    const float* x = &Xn[(size_t)t * D];
-                    float s = b; for (int n = 0; n < D; n++) s += Wm[n] * x[n];
-                    QKV[(size_t)t * 3 * D + m] = s;
-                }
-            }
-            // Store K,V into cache rows seq_pos..seq_pos+T-1
-            for (int t = 0; t < T; t++) {
-                std::memcpy(k_cache[l].data() + (size_t)(seq_pos + t) * H * HD, &QKV[(size_t)t * 3 * D] + D, D * sizeof(float));
-                std::memcpy(v_cache[l].data() + (size_t)(seq_pos + t) * H * HD, &QKV[(size_t)t * 3 * D] + 2 * D, D * sizeof(float));
-            }
-            // Causal multi-head attention (queries = rows, keys/vals = cache rows 0..seq_pos+T-1)
-#pragma omp parallel for schedule(static)
-            for (int t = 0; t < T; t++) {
-                const int Tc = seq_pos + t + 1;   // causal: query t sees positions 0..seq_pos+t
-                for (int h = 0; h < H; h++) {
-                    const float* qh = &QKV[(size_t)t * 3 * D] + h * HD;
-                    std::vector<float> sc(Tc);
-                    float mx = -1e30f;
-                    for (int s = 0; s < Tc; s++) {
-                        const float* kh = k_cache[l].data() + (size_t)s * H * HD + h * HD;
-                        float v = 0; for (int j = 0; j < HD; j++) v += qh[j] * kh[j];
-                        sc[s] = v * scale; if (sc[s] > mx) mx = sc[s];
-                    }
-                    float sa = 0;
-                    for (int s = 0; s < Tc; s++) { sc[s] = expf(sc[s] - mx); sa += sc[s]; }
-                    for (int s = 0; s < Tc; s++) sc[s] /= sa;
-                    float* oh = &AT[(size_t)t * D] + h * HD;
-                    for (int j = 0; j < HD; j++) oh[j] = 0;
-                    for (int s = 0; s < Tc; s++) {
-                        float a = sc[s]; if (a < 1e-10f) continue;
-                        const float* vh = v_cache[l].data() + (size_t)s * H * HD + h * HD;
-                        for (int j = 0; j < HD; j++) oh[j] += a * vh[j];
-                    }
-                }
-            }
-            // Output projection + residual: weights outer, positions inner.
-#pragma omp parallel for schedule(static)
-            for (int m = 0; m < D; m++) {
-                const float* Wm = bl.pwo_c.data() + (size_t)m * D;
-                float b = bl.pwb_c.empty() ? 0.f : bl.pwb_c[m];
-                for (int t = 0; t < T; t++) {
-                    const float* x = &AT[(size_t)t * D];
-                    float s = b; for (int n = 0; n < D; n++) s += Wm[n] * x[n];
-                    R[(size_t)t * D + m] += s;
-                }
-            }
-            // FFN pre-norm (row-wise)
-#pragma omp parallel for schedule(static)
-            for (int t = 0; t < T; t++)
-                h_ln(&Xn[(size_t)t * D], &R[(size_t)t * D], bl.l2w_c.data(), bl.l2b_c.data(), D);
-            // FFN up-proj + gelu: weights outer, positions inner.
-#pragma omp parallel for schedule(static)
-            for (int m = 0; m < (int)hp.ffn; m++) {
-                const float* Wm = bl.fcw_c.data() + (size_t)m * D;
-                float b = bl.fcb_c.empty() ? 0.f : bl.fcb_c[m];
-                for (int t = 0; t < T; t++) {
-                    const float* x = &Xn[(size_t)t * D];
-                    float s = b; for (int n = 0; n < D; n++) s += Wm[n] * x[n];
-                    H2[(size_t)t * hp.ffn + m] = gelu_t(s);
-                }
-            }
-            // FFN down-proj + residual: weights outer, positions inner.
-#pragma omp parallel for schedule(static)
-            for (int m = 0; m < D; m++) {
-                const float* Wm = bl.fpw_c.data() + (size_t)m * (int)hp.ffn;
-                float b = bl.fpb_c.empty() ? 0.f : bl.fpb_c[m];
-                for (int t = 0; t < T; t++) {
-                    const float* x = &H2[(size_t)t * hp.ffn];
-                    float s = b; for (int n = 0; n < (int)hp.ffn; n++) s += Wm[n] * x[n];
-                    R[(size_t)t * D + m] += s;
-                }
-            }
-        }
-        // Final LN (double: ln_f + final_norm via lfw then fnw)
-#pragma omp parallel for schedule(static)
-        for (int t = 0; t < T; t++) {
-            std::vector<float> tmp(D);
-            h_ln(&tmp[0], &R[(size_t)t * D], m.lfw_c.data(), m.lfb_c.data(), D);
-            h_ln(&out[(size_t)t * D], &tmp[0], m.fnw_c.data(), m.fnb_c.data(), D);
-        }
-        seq_pos += T;
-    };
-
-    // Forward one token embedding at position seq_pos; appends K,V to cache.
-    // Returns the pre-logits hidden state (post final LN) in emb_out.
-    static double t_qkv = 0, t_attn = 0, t_proj = 0, t_ffn = 0, t_logits = 0;
-    t_qkv = t_attn = t_proj = t_ffn = t_logits = 0;
-    double t_sample = 0, t_emb = 0;
-    int n_steps_actual = 0;
-    auto forward_token = [&](const std::vector<float>& input_emb, std::vector<float>& emb_out) {
-        if (seq_pos >= max_pos) { fprintf(stderr, "xtts: seq overflow %d\n", seq_pos); return; }
-        std::vector<float> residual(D);
-        std::copy(input_emb.begin(), input_emb.end(), residual.begin());
-        for (int l = 0; l < (int)hp.n_layers; l++) {
-            auto& bl = m.bl[l];
-            // Pre-norm (LayerNorm with bias)
-            h_ln(xln.data(), residual.data(), bl.l1w_c.data(), bl.l1b_c.data(), D);
-            // QKV projection: [3D, D] row-major -> qkv[0..D-1]=Q, [D..2D-1]=K, [2D..3D-1]=V
-            auto ta0 = omp_get_wtime();
-            h_c1d(qkv.data(), bl.qkw_c.data(), xln.data(), bl.qkb_c.data(), D, D * 3);
-            t_qkv += omp_get_wtime() - ta0;
-            // Store K,V for this position in cache
-            float* kdst = k_cache[l].data() + (size_t)seq_pos * H * HD;
-            float* vdst = v_cache[l].data() + (size_t)seq_pos * H * HD;
-            memcpy(kdst, qkv.data() + D, D * sizeof(float));
-            memcpy(vdst, qkv.data() + 2 * D, D * sizeof(float));
-            // Multi-head causal attention over positions 0..seq_pos
-            auto ta1 = omp_get_wtime();
-            std::vector<float> attn(H * HD, 0.f);
-            int Tc = seq_pos + 1;
-            std::vector<float> scores(Tc);
-            for (int h = 0; h < H; h++) {
-                const float* qh = qkv.data() + h * HD;
-                float mx = -1e30f;
-                for (int t = 0; t < Tc; t++) {
-                    const float* kh = k_cache[l].data() + (size_t)t * H * HD + h * HD;
-                    float sc = 0;
-                    for (int j = 0; j < HD; j++) sc += qh[j] * kh[j];
-                    sc *= scale;
-                    scores[t] = sc;
-                    if (sc > mx) mx = sc;
-                }
-                float sa = 0;
-                for (int t = 0; t < Tc; t++) { scores[t] = expf(scores[t] - mx); sa += scores[t]; }
-                for (int t = 0; t < Tc; t++) scores[t] /= sa;
-                float* oh = &attn[h * HD];
-                for (int j = 0; j < HD; j++) oh[j] = 0;
-                for (int t = 0; t < Tc; t++) {
-                    float a = scores[t];
-                    if (a < 1e-10f) continue;
-                    const float* vh = v_cache[l].data() + (size_t)t * H * HD + h * HD;
-                    for (int j = 0; j < HD; j++) oh[j] += a * vh[j];
-                }
-            }
-            t_attn += omp_get_wtime() - ta1;
-            // Output projection + residual
-            auto ta2 = omp_get_wtime();
-            h_c1d(ff_out.data(), bl.pwo_c.data(), attn.data(), bl.pwb_c.data(), D, D);
-            t_proj += omp_get_wtime() - ta2;
-            for (int j = 0; j < D; j++) residual[j] += ff_out[j];
-            // FFN with pre-norm
-            h_ln(xln.data(), residual.data(), bl.l2w_c.data(), bl.l2b_c.data(), D);
-            auto tf0 = omp_get_wtime();
-            h_c1d(h2.data(), bl.fcw_c.data(), xln.data(), bl.fcb_c.data(), D, hp.ffn);
-            for (int j = 0; j < (int)hp.ffn; j++) h2[j] = gelu_t(h2[j]);
-            h_c1d(ff_out.data(), bl.fpw_c.data(), h2.data(), bl.fpb_c.data(), hp.ffn, D);
-            t_ffn += omp_get_wtime() - tf0;
-            for (int j = 0; j < D; j++) residual[j] += ff_out[j];
-        }
-        // Final LN (HF GPT2Model applies ln_f; then lm_head applies final_norm AGAIN - double norm!)
-        h_ln(emb_out.data(), residual.data(), m.lfw_c.data(), m.lfb_c.data(), D);
-        // Debug: capture post-ln_f / pre-final_norm hidden at this position
-        if (getenv("XTTS_DUMP_HIDDEN")) {
-            static FILE* hf = nullptr;
-            if (!hf) { hf = fopen(getenv("XTTS_DUMP_HIDDEN"), "wb"); }
-            fwrite(emb_out.data(), 4, D, hf);
-            fflush(hf);
-        }
-        std::vector<float> tmp(D);
-        std::memcpy(tmp.data(), emb_out.data(), D * sizeof(float));
-        h_ln(emb_out.data(), tmp.data(), m.fnw_c.data(), m.fnb_c.data(), D);
-        if (getenv("XTTS_DUMP_NORMED")) {
-            static FILE* nf = nullptr;
-            if (!nf) { nf = fopen(getenv("XTTS_DUMP_NORMED"), "wb"); }
-            fwrite(emb_out.data(), 4, D, nf);
-            fflush(nf);
-        }
-        seq_pos++;
-    };
-
-    // --- Prefix: [cond_latents (no pos emb) | text tokens + text_pos] ---
-    if (getenv("XTTS_DUMP_COND") && !cl.empty()) {
-        FILE* f = fopen(getenv("XTTS_DUMP_COND"), "wb");
-        if (f) { fwrite(cl.data(), 4, cl.size(), f); fclose(f); }
-    }
-    // --- AR mel code generation ---
-    // Start token 1024, stop token 1025. Mel positions start at 0.
-    std::vector<float> emb_last(D, 0), logits(hp.mel_vocab, 0);
-    int mel_pos = 1;   // start_mel consumed pos 0 during prefix
-    // --- Build prefix embedding matrix: [cond_latents | text+pos | start_mel+melpos0] ---
-    int Tpre = (int)(cl.size() / hp.d) + (int)tids.size() + 1;
+    // --- Prefix embeddings: [cond_latents | text+pos | start_mel+mel_pos0] ---
+    const int ncl = (int)(cl.size() / hp.d);
+    const int Tpre = ncl + (int)tids.size() + 1;
+    if (!kv.ensure(be, hp, Tpre + max_n + 1)) { fprintf(stderr, "xtts: KV cache allocation failed\n"); return codes; }
+    std::vector<float> E((size_t)Tpre * D, 0.f), tmp(D);
     {
-        std::vector<float> E((size_t)Tpre * D, 0.f);
         int p = 0;
-        int ncl = (int)cl.size() / hp.d;
         for (int c = 0; c < ncl; c++, p++)
             std::memcpy(&E[(size_t)p * D], &cl[(size_t)c * D], D * sizeof(float));
         for (int i = 0; i < (int)tids.size(); i++, p++) {
             get_emb(m.te, tids[i], &E[(size_t)p * D], D);
             if (i < (int)m.tp->ne[1]) {
-                std::vector<float> tp(D, 0);
-                get_emb(m.tp, i, tp.data(), D);
-                for (int j = 0; j < D; j++) E[(size_t)p * D + j] += tp[j];
+                get_emb(m.tp, i, tmp.data(), D);
+                for (int j = 0; j < D; j++) E[(size_t)p * D + j] += tmp[j];
             }
         }
-        get_emb(m.me, 1024, &E[(size_t)p * D], D);          // start mel token
+        get_emb(m.me, (int)hp.start_mel_token, &E[(size_t)p * D], D);
         if ((int)m.mp->ne[1] > 0) {
-            std::vector<float> mp(D, 0);
-            get_emb(m.mp, 0, mp.data(), D);
-            for (int j = 0; j < D; j++) E[(size_t)p * D + j] += mp[j];
+            get_emb(m.mp, 0, tmp.data(), D);
+            for (int j = 0; j < D; j++) E[(size_t)p * D + j] += tmp[j];
         }
-        std::vector<float> hidden;
-        const double tp0 = omp_get_wtime();
-        forward_batch(E, Tpre, hidden);
-        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   prefix batch (%d pos) = %.2f s\n", Tpre, omp_get_wtime() - tp0);
-        std::memcpy(emb_last.data(), &hidden[(size_t)(Tpre - 1) * D], D * sizeof(float));
-        h_c1d(logits.data(), m.lmw_c.data(), emb_last.data(), m.lmb_c.data(), D, hp.mel_vocab);
     }
+
+    std::vector<float> logits(V, 0.f);
+    auto run = [&](GptGraph& g, const float* emb, int pos0) -> bool {
+        std::vector<int64_t> idx(g.n_tok);
+        for (int i = 0; i < g.n_tok; i++) idx[i] = pos0 + i;
+        ggml_backend_tensor_set(g.emb, emb, 0, (size_t)g.n_tok * D * sizeof(float));
+        ggml_backend_tensor_set(g.idx, idx.data(), 0, idx.size() * sizeof(int64_t));
+        if (ggml_backend_graph_compute(be, g.gf) != GGML_STATUS_SUCCESS) return false;
+        ggml_backend_tensor_get(g.logits, logits.data(), 0, (size_t)V * sizeof(float));
+        return true;
+    };
+
+    // --- Prefill (one pass over the whole prefix) ---
+    const double tp0 = omp_get_wtime();
+    {
+        GptGraph pg;
+        if (!gpt_build_graph(pg, be, m, hp, kv, Tpre, round_up_i(Tpre, KV_BUCKET))) { fprintf(stderr, "xtts: prefill graph build failed\n"); return codes; }
+        gpt_fill_mask(pg, 0);
+        if (!run(pg, E.data(), 0)) { fprintf(stderr, "xtts: prefill compute failed\n"); return codes; }
+    }
+    if (timing) fprintf(stderr, "xtts_timing:   prefix batch (%d pos) = %.2f s\n", Tpre, omp_get_wtime() - tp0);
     if (getenv("XTTS_DUMP_LOGITS")) {
         FILE* f = fopen(getenv("XTTS_DUMP_LOGITS"), "wb");
         if (f) { fwrite(logits.data(), 4, logits.size(), f); fclose(f); }
-        // self-check: recompute logits from the normed emb_last directly
-        {
-            float mx2 = -1e30f; int bi = -1;
-            for (int m2 = 0; m2 < (int)hp.mel_vocab; m2++) {
-                float s2 = m.lmb_c[m2];
-                const float* Wm = m.lmw_c.data() + (size_t)m2 * D;
-                for (int n2 = 0; n2 < D; n2++) s2 += Wm[n2] * emb_last[n2];
-                if (s2 > mx2) { mx2 = s2; bi = m2; }
-            }
-            fprintf(stderr, "xtts_dbg: selfcheck argmax=%d val=%.3f | dumped argmax=%d val=%.3f | emb_last[0..4]:",
-                    bi, mx2, (int)std::distance(logits.begin(), std::max_element(logits.begin(), logits.end())), *std::max_element(logits.begin(), logits.end()));
-            for (int j = 0; j < 5; j++) fprintf(stderr, " %.4f", emb_last[j]);
-            fprintf(stderr, "\n");
-        }
     }
+
+    // --- Decode ---
+    GptGraph dg;                    // (n_tok=1, n_kv=bucket) graph, rebuilt only at bucket boundaries
+    int seq_pos = Tpre;             // absolute position of the NEXT token
+    int mel_pos = 1;                // start_mel consumed mel position 0 during prefill
+    int n_steps = 0, n_rebuilds = 0;
+    double t_dec = 0, t_sample = 0, t_build = 0;
+    std::vector<float> scaled, me(D), mp(D);
     for (int g = 0; g < max_n; g++) {
         if ((int)codes.size() >= max_n) break;
-        // Sample from logits
-        auto ts0 = omp_get_wtime();
-        std::vector<float> scaled(logits);
+        // ---- sample ----
+        const double ts0 = omp_get_wtime();
+        scaled = logits;
         if (temp > 0) for (auto& l2 : scaled) l2 /= temp;
         if (rep_pen != 1.0f && !codes.empty()) {
             // HF-style: penalize ALL distinct previously generated tokens
-            std::vector<char> seen(hp.mel_vocab, 0);
+            std::vector<char> seen(V, 0);
             for (int tok : codes) if (tok >= 0 && tok < (int)scaled.size() && !seen[tok]) {
                 seen[tok] = 1;
                 scaled[tok] *= scaled[tok] > 0 ? 1.0f / rep_pen : rep_pen;
             }
         }
-        // softmax
         float mx = *std::max_element(scaled.begin(), scaled.end());
         float sa = 0; for (auto& l2 : scaled) { l2 = expf(l2 - mx); sa += l2; }
         for (auto& l2 : scaled) l2 /= sa;
-        // top-k filter (on probabilities)
         if (top_k > 0 && top_k < (int)scaled.size()) {
             std::vector<float> ls(scaled);
             std::partial_sort(ls.begin(), ls.begin() + top_k, ls.end(), std::greater<>());
@@ -920,7 +844,6 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
             float sa2 = 0; for (auto& l2 : scaled) sa2 += l2;
             if (sa2 > 0) for (auto& l2 : scaled) l2 /= sa2;
         }
-        // top-p filter
         if (top_p < 1.0f) {
             std::vector<int> idx(scaled.size());
             for (int i = 0; i < (int)idx.size(); i++) idx[i] = i;
@@ -934,31 +857,36 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
         double r = (double)rand() / RAND_MAX; float cum = 0; int st = 0;
         for (int j = 0; j < (int)scaled.size(); j++) { cum += scaled[j]; if (r <= cum) { st = j; break; } }
         codes.push_back(st);
-        n_steps_actual++;
-        if (getenv("XTTS_DEBUG") && (g < 20 || g % 100 == 0)) {
-            // Top-5 logits for diagnostics
-            std::vector<std::pair<float,int>> top5;
-            for (int j = 0; j < (int)scaled.size(); j++) if (scaled[j] > 0) top5.push_back({scaled[j], j});
-            std::sort(top5.begin(), top5.end(), std::greater<>());
-            fprintf(stderr, "xtts_dbg: step %d code=%d p=%.3f top:", g, st, scaled[st]);
-            for (int k = 0; k < 3 && k < (int)top5.size(); k++) fprintf(stderr, " %d:%.3f", top5[k].second, top5[k].first);
-            fprintf(stderr, " maxlogit=%.2f\n", mx);
-        }
-        if (st == 1025) break;  // stop token
-        // Next token embedding: mel_embedding(st) + mel_pos_embedding(mel_pos)
-        auto te0 = omp_get_wtime();
-        std::vector<float> me(D, 0), mp(D, 0), dummy(D);
+        t_sample += omp_get_wtime() - ts0;
+        if (getenv("XTTS_DEBUG") && (g < 20 || g % 100 == 0))
+            fprintf(stderr, "xtts_dbg: step %d code=%d p=%.3f maxlogit=%.2f\n", g, st, scaled[st], mx);
+        if (st == (int)hp.stop_mel_token) break;
+
+        // ---- next token: mel_embedding(st) + mel_pos_embedding(mel_pos) ----
         get_emb(m.me, st, me.data(), D);
+        std::fill(mp.begin(), mp.end(), 0.f);
         if (mel_pos < (int)m.mp->ne[1]) get_emb(m.mp, mel_pos, mp.data(), D);
         for (int j = 0; j < D; j++) me[j] += mp[j];
         mel_pos++;
-        t_emb += omp_get_wtime() - te0;
-        forward_token(me, emb_last);
-        auto tl1 = omp_get_wtime();
-        h_c1d(logits.data(), m.lmw_c.data(), emb_last.data(), m.lmb_c.data(), D, hp.mel_vocab);
-        t_logits += omp_get_wtime() - tl1;
+
+        const double td0 = omp_get_wtime();
+        const int want_kv = std::min(kv.n_ctx, round_up_i(seq_pos + 1, KV_BUCKET));
+        if (!dg.gf || dg.n_kv != want_kv) {
+            const double tb0 = omp_get_wtime();
+            if (!gpt_build_graph(dg, be, m, hp, kv, 1, want_kv)) { fprintf(stderr, "xtts: decode graph build failed\n"); break; }
+            gpt_fill_mask(dg, seq_pos);
+            n_rebuilds++; t_build += omp_get_wtime() - tb0;
+        } else {
+            // Only one mask element changes per step: key `seq_pos` becomes visible.
+            gpt_fill_mask(dg, seq_pos);  // DIAGNOSTIC: full refill instead of single element
+        }
+        if (!run(dg, me.data(), seq_pos)) { fprintf(stderr, "xtts: decode compute failed\n"); break; }
+        seq_pos++; n_steps++;
+        t_dec += omp_get_wtime() - td0;
     }
-    if (getenv("XTTS_TIMING")) if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   gen breakdown qkv=%.2f attn=%.2f proj=%.2f ffn=%.2f logits=%.2f sample=%.2f emb=%.2f steps=%d\n", t_qkv, t_attn, t_proj, t_ffn, t_logits, t_sample, t_emb, n_steps_actual);
+    if (timing)
+        fprintf(stderr, "xtts_timing:   decode steps=%d total=%.2f s (%.2f ms/step) sample=%.3f s graph_rebuilds=%d (%.3f s)\n",
+                n_steps, t_dec, n_steps ? 1000.0 * t_dec / n_steps : 0.0, t_sample, n_rebuilds, t_build);
     return codes;
 }
 // GPT-2 latent extraction via GGML graph
@@ -1088,11 +1016,13 @@ struct XttSv2GptEngine::Impl {
     XttSv2BpeVocab vocab;
     ggml_backend_t backend = nullptr;
     ggml_context* graph_ctx = nullptr;
+    GptKV kv;                       // persistent F16 KV cache (reused across chunks)
     int n_threads = 4;
 };
 
 XttSv2GptEngine::~XttSv2GptEngine() {
-    if (impl_) { if (impl_->graph_ctx) ggml_free(impl_->graph_ctx);
+    if (impl_) { impl_->kv.release();
+        if (impl_->graph_ctx) ggml_free(impl_->graph_ctx);
         if (impl_->backend) ggml_backend_free(impl_->backend);
         if (impl_->gpt_wl.ctx) ggml_free(impl_->gpt_wl.ctx);
         if (impl_->gpt_wl.buf) ggml_backend_buffer_free(impl_->gpt_wl.buf);
@@ -1227,11 +1157,10 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
 std::vector<int32_t> XttSv2GptEngine::generate_mel_codes(const std::vector<int32_t>& text_tokens, const std::vector<float>& cond_latents,
         float temperature, int top_k, float top_p, float rep_penalty, int max_tokens) {
     if (!impl_) return {};
-    ggml_context* ctx = ggml_init({1 << 22, nullptr, false});
-    auto codes = gpt_gen(ctx, impl_->backend, impl_->model, impl_->hp,
+    auto codes = gpt_gen(impl_->backend, impl_->kv, impl_->model, impl_->hp,
         std::vector<int>(text_tokens.begin(), text_tokens.end()), cond_latents,
-        temperature, top_k, top_p, rep_penalty, max_tokens);
-    ggml_free(ctx); return std::vector<int32_t>(codes.begin(), codes.end());
+        temperature, top_k, top_p, rep_penalty, max_tokens, impl_->n_threads);
+    return std::vector<int32_t>(codes.begin(), codes.end());
 }
 std::vector<float> XttSv2GptEngine::extract_latents(const std::vector<int32_t>& text_tokens, const std::vector<int32_t>& mel_codes,
         const std::vector<float>& cond_latents) {
