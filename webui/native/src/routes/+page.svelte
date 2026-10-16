@@ -298,7 +298,7 @@
 
   function setParameterValue(spec: ParamSpec, value: unknown) {
     advancedValues = { ...advancedValues, [spec.name]: value };
-    if (['auk', 'yue2', 'liveavatar'].includes(selected?.family || '') && spec.scope === 'session') {
+    if (['auk', 'yue2', 'liveavatar', 'fish_drama3'].includes(selected?.family || '') && spec.scope === 'session') {
       isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
         modelMatchesSelectedPackage(model, selected));
     }
@@ -337,6 +337,7 @@
   }
 
   const familyLabels: Record<string, string> = {
+    fish_drama3: 'Fish Audio Drama 3',
     kugelaudio: 'KugelAudio', crisperwhisper: 'CrisperWhisper', index_echo: 'Index-Echo S2TT',
     audio_flamingo: 'Audio Flamingo', owsm: 'OWSM', owsm_ctc: 'OWSM-CTC',
     reuse: 'RE-USE', sidon: 'Sidon', smart_turn: 'Smart Turn',
@@ -484,7 +485,7 @@
     modelMatchesSelectedPackage(model, selected));
   $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family, selected?.task);
   $: modelStudioPanel = modelStudioPanelConfig?.component;
-  $: replacesGenericControls = modelStudioPanelConfig?.replacesGenericControls || noGenericControlReplacements;
+  $: replacesGenericControls = (modelStudioPanelConfig?.replacesGenericControls || noGenericControlReplacements) as GenericControlReplacements;
   $: usesYue2Request = modelStudioPanelConfig?.requestMode === 'yue2';
   $: usesPanelRequest = modelStudioPanelConfig?.requestMode === 'panel';
   $: modelPanelUploading = modelStudioPanelConfig?.blocksRunWhileUploading === true && loraUploading;
@@ -2740,8 +2741,10 @@
           <div><span>{tr('request.label')}</span><h2>{tr('request.title')}</h2></div>
           <div class="studio-request-actions">
             <span class="task-chip">{selected?.task}</span>
-            <button type="button" class="settings-import" disabled={running || loadingModel || restoringHistory}
-              on:click={() => settingsInput?.click()}>Load settings JSON</button>
+            {#if !replacesGenericControls.settingsImport}
+              <button type="button" class="settings-import" disabled={running || loadingModel || restoringHistory}
+                on:click={() => settingsInput?.click()}>Load settings JSON</button>
+            {/if}
           </div>
         </div>
         <input type="file" accept=".json,application/json" bind:this={settingsInput} hidden
@@ -2753,7 +2756,7 @@
             placeholder={selected.task === 'gen' ? tr('request.soundPlaceholder') : tr('request.textPlaceholder')}></textarea>
         {/if}
 
-        {#if ['tts', 'clon'].includes(selected.task) && selected.family !== 'moss_ttsd'}
+        {#if ['tts', 'clon'].includes(selected.task) && selected.family !== 'moss_ttsd' && !replacesGenericControls.chunking}
           <div class="long-text-row">
             <label class="toggle">
               <input type="checkbox" bind:checked={longText} />
@@ -2792,6 +2795,7 @@
               {localizedParameterText}
               {setParameterValue}
               {sourceFile}
+              {savedVoices}
               clearSource={clearSourceFile}
               sourceRecording={recordingTarget === 'source'}
               sourceRecordingBlocked={Boolean(recorder) || liveRecording}
@@ -2917,7 +2921,7 @@
               <MediaPreview file={videoFile} kind="video" label={tr('file.preview')} />
             {/if}
 
-            {#if (needsVoice || selected.family === 'kugelaudio') && !usesVibeVoiceSpeakerFiles}
+            {#if (needsVoice || selected.family === 'kugelaudio') && !usesVibeVoiceSpeakerFiles && !replacesGenericControls.voice}
           {#if allowsQuickStartVoice && quickStartVoices.length}
             <label for="quick-start-voice">{selected.family === 'kugelaudio' ? 'Voice preset' : server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
