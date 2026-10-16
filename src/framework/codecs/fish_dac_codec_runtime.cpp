@@ -1193,7 +1193,8 @@ struct EncodeGraph {
         size_t graph_arena_bytes,
         int64_t samples,
         int64_t frames,
-        bool want_latents)
+        bool want_latents,
+        bool encoder_f32_accumulation)
         : config_(std::move(config)),
           weights_(std::move(weights)),
           backend_(execution_context.backend()),
@@ -1231,6 +1232,17 @@ struct EncodeGraph {
         }
         for (ggml_tensor * code_output : code_outputs_) {
             ggml_build_forward_expand(graph_, code_output);
+        }
+        // Vulkan defaults F16 convolution GEMMs to F16 accumulation. Reference
+        // quantization needs F32 accumulation: changed code IDs can derail AR
+        // conditioning. Keep F16 storage and leave all decode graphs unchanged.
+        if (encoder_f32_accumulation && backend_type_ == core::BackendType::Vulkan) {
+            for (int node = 0; node < ggml_graph_n_nodes(graph_); ++node) {
+                auto * tensor = ggml_graph_node(graph_, node);
+                if (tensor->op == GGML_OP_MUL_MAT && tensor->src[0]->type == GGML_TYPE_F16 &&
+                    tensor->src[1]->type == GGML_TYPE_F16)
+                    ggml_mul_mat_set_prec(tensor, GGML_PREC_F32);
+            }
         }
         constants_.finish_graph();
         constants_.ensure_uploaded();
@@ -1334,11 +1346,13 @@ public:
         std::shared_ptr<const FishDacCodecComponent> component,
         core::BackendConfig backend,
         int threads,
-        size_t graph_arena_bytes)
+        size_t graph_arena_bytes,
+        bool encoder_f32_accumulation)
         : component_(std::move(component)),
           execution_(std::move(backend)),
           threads_(std::max(1, threads)),
-          graph_arena_bytes_(graph_arena_bytes) {
+          graph_arena_bytes_(graph_arena_bytes),
+          encoder_f32_accumulation_(encoder_f32_accumulation) {
         if (component_ == nullptr || component_->impl_ == nullptr || component_->impl_->weights == nullptr) {
             throw std::runtime_error("Fish DAC codec runtime requires a loaded codec component");
         }
@@ -1358,7 +1372,8 @@ public:
                 graph_arena_bytes_,
                 samples,
                 frames,
-                false);
+                false,
+                encoder_f32_accumulation_);
         }
         return encode_graph_->run(audio);
     }
@@ -1377,7 +1392,8 @@ public:
                 graph_arena_bytes_,
                 samples,
                 frames,
-                true);
+                true,
+                encoder_f32_accumulation_);
         }
         (void)encode_graph_->run(audio);
         return encode_graph_->read_latents(frames);
@@ -1455,6 +1471,7 @@ private:
     core::ExecutionContext execution_;
     int threads_ = 1;
     size_t graph_arena_bytes_ = 0;
+    bool encoder_f32_accumulation_ = false;
     std::unique_ptr<EncodeGraph> encode_graph_;
     std::unique_ptr<DecodeGraph> decode_graph_;
     std::unique_ptr<DecodeGraph> stream_decode_graph_;
@@ -1499,12 +1516,14 @@ FishDacCodecRuntime::FishDacCodecRuntime(
     std::shared_ptr<const FishDacCodecComponent> component,
     core::BackendConfig backend,
     int threads,
-    size_t graph_arena_bytes)
+    size_t graph_arena_bytes,
+    bool encoder_f32_accumulation)
     : impl_(std::make_unique<Impl>(
           std::move(component),
           std::move(backend),
           threads,
-          graph_arena_bytes)) {}
+          graph_arena_bytes,
+          encoder_f32_accumulation)) {}
 
 FishDacCodecRuntime::~FishDacCodecRuntime() = default;
 

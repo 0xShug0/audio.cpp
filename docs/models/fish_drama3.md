@@ -143,6 +143,13 @@ not enforced memory limits. They were measured on a 96 GB GPU; physical 16 GB
 and 24 GB cards have not been tested. These counts control where expert weights and matmuls run.
 The backbone's attention/dense weights and the audio tower use the selected
 backend. `fish_drama3.codec_backend=cpu` moves codec computation to CPU as well.
+
+If Vulkan voice cloning produces incomplete speech or reaches the token limit,
+try `--session-option fish_drama3.codec_encoder_f32_accumulation=true`.
+This opt-in control uses F32 accumulation in the Vulkan reference encoder while
+keeping F16 storage. It defaults to false and does not change codec decoding or
+other backends. It also works with existing GGUFs without replacing their specs.
+
 Host memory is required for offloaded weights. Context capacity includes text,
 reference audio frames, prior takes, and the requested generation budget.
 

@@ -77,7 +77,8 @@ public:
         std::shared_ptr<const FishDacCodecComponent> component,
         core::BackendConfig backend,
         int threads,
-        size_t graph_arena_bytes);
+        size_t graph_arena_bytes,
+        bool encoder_f32_accumulation = false);
     ~FishDacCodecRuntime();
 
     FishDacCodecRuntime(const FishDacCodecRuntime &) = delete;
