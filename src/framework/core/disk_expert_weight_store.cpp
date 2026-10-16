@@ -84,11 +84,9 @@ public:
         mapped_file = io::read_binary_blob(path, true);
     }
 
-    void stage(ggml_tensor * ids_tensor, size_t index) {
+    std::vector<int32_t> stage(std::vector<int32_t> ids, size_t index) {
         const auto stage_started = std::chrono::steady_clock::now();
         auto & group = *groups.at(index);
-        std::vector<int32_t> ids(static_cast<size_t>(ggml_nelements(ids_tensor)));
-        ggml_backend_tensor_get(ids_tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
         const std::unordered_set<int32_t> required(ids.begin(), ids.end());
         if (required.size() > group.expert_ids.size()) throw std::runtime_error("routed experts exceed disk expert cache capacity");
         for (const auto id : required) {
@@ -161,8 +159,8 @@ public:
         stats.expert_loads += misses.size();
         for (auto & id : ids) id = static_cast<int32_t>(
             std::find(group.expert_ids.begin(), group.expert_ids.end(), id) - group.expert_ids.begin());
-        ggml_backend_tensor_set(ids_tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
         stats.stage_ms += debug::elapsed_ms(stage_started);
+        return ids;
     }
 
     std::ifstream file;
@@ -210,6 +208,8 @@ size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, 
     group->buffer = ggml_backend_alloc_ctx_tensors(group->context.get(), backend);
     if (!group->buffer) throw std::runtime_error("cannot allocate disk expert cache");
     ggml_backend_buffer_set_usage(group->buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+    // Unoccupied slots are valid zero weights for padded batched expert work.
+    ggml_backend_buffer_clear(group->buffer, 0);
     group->expert_ids.assign(static_cast<size_t>(slots), -1);
     group->last_used.assign(static_cast<size_t>(slots), 0);
     if (impl_->pin_experts) {
@@ -277,11 +277,24 @@ ggml_tensor * DiskExpertWeightStore::route(ModuleBuildContext & ctx, ggml_tensor
     return routed;
 }
 
+std::vector<int32_t> DiskExpertWeightStore::stage(size_t group, const std::vector<int32_t> & expert_ids) {
+    return impl_->stage(expert_ids, group);
+}
+
 bool DiskExpertWeightStore::evaluate(ggml_tensor * tensor, bool ask, void * store) {
     auto & self = *static_cast<DiskExpertWeightStore *>(store);
     const auto found = self.impl_->routes.find(ggml_get_name(tensor));
     if (found == self.impl_->routes.end()) return false;
-    if (!ask) self.impl_->stage(tensor, found->second);
+    if (!ask) {
+        auto started = std::chrono::steady_clock::now();
+        std::vector<int32_t> ids(static_cast<size_t>(ggml_nelements(tensor)));
+        ggml_backend_tensor_get(tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
+        self.impl_->stats.stage_ms += debug::elapsed_ms(started);
+        ids = self.impl_->stage(std::move(ids), found->second);
+        started = std::chrono::steady_clock::now();
+        ggml_backend_tensor_set(tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
+        self.impl_->stats.stage_ms += debug::elapsed_ms(started);
+    }
     return true;
 }
 

@@ -177,7 +177,7 @@
       {
         "name": "disk_experts",
         "type": "bool",
-        "description": "Read routed expert weights from GGUF on demand instead of keeping full expert banks resident. Uses token-wise prefill and can be much slower; default false.",
+        "description": "Read routed expert weights from GGUF on demand into a bounded cache instead of keeping full expert banks resident. Trades speed for memory; default false.",
         "required": false,
         "default": false
       },

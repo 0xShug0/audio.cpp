@@ -155,14 +155,20 @@ GGUF file and read only selected experts into a bounded native-format cache.
 `cpu_expert_layers` setting still selects CPU execution for those layers, but
 their expert caches are bounded too. No GGUF conversion is required.
 
-This is a memory/speed trade-off, not a faster MoE kernel. Disk mode uses
-token-wise prompt prefill, synchronizes after each layer's routing, and transfers
-cache misses from disk. Long prompts and slow storage can be substantially
-slower. Resident mode remains the default. For the minimum expert-cache size:
+This is a memory/speed trade-off, not a faster MoE kernel. With
+`cpu_expert_layers=0`, prompt prefill groups tokens by expert within each layer,
+so one upload serves multiple tokens. Attention and shared/router projections
+retain the resident batched-prefill path; cached experts retain their vector
+projection path. Session-owned graphs share one activation workspace and are
+reused for the same exact prompt length. A different length replaces that graph
+set rather than reusing a rounded capacity for stateful attention.
+Mixed CPU/backend expert execution retains token-wise prefill. Storage speed
+still matters, and resident mode remains the default. For the minimum cache:
 
 ```text
 --session-option fish_drama3.disk_experts=true
 --session-option fish_drama3.expert_cache_size=8
+--session-option fish_drama3.cpu_expert_layers=0
 ```
 
 When sufficient host RAM is available, add

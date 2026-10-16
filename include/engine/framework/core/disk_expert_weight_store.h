@@ -36,6 +36,8 @@ public:
     size_t add_group(const std::vector<std::string> & tensor_names,
                      ggml_backend_t backend, int64_t cache_slots);
     TensorValue tensor(size_t group, size_t projection) const;
+    // Stage one bounded group and return cache-slot IDs in the caller's order.
+    std::vector<int32_t> stage(size_t group, const std::vector<int32_t> & expert_ids);
     ggml_tensor * route(ModuleBuildContext & ctx, ggml_tensor * expert_ids, size_t group) const;
 
     // Install on a scheduler before computing graphs containing route() nodes.

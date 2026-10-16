@@ -146,6 +146,28 @@ int main(int argc, char ** argv) {
                 std::cout << "pin_experts=" << pin_experts << " request=" << requests++ << " max_abs=" << maximum << " expert_loads=" << after.expert_loads
                           << " bytes_read=" << after.bytes_read << " cache_bytes=" << after.buffer_bytes << '\n';
             }
+            const std::vector<int32_t> grouped_ids{7, 6, 7, 4};
+            const auto slots = disk.stage(group, grouped_ids);
+            if (slots.size() != grouped_ids.size() || slots[0] != slots[2])
+                throw std::runtime_error("explicit expert staging lost ID order or duplicate IDs");
+            for (size_t p = 0; p < full.size(); ++p) {
+                const auto bytes = full[p].tensor->nb[2];
+                std::vector<std::byte> cached_bytes(bytes), expected_bytes(bytes);
+                for (size_t row = 0; row < slots.size(); ++row) {
+                    ggml_backend_tensor_get(disk.tensor(group, p).tensor, cached_bytes.data(), slots[row] * bytes, bytes);
+                    ggml_backend_tensor_get(full[p].tensor, expected_bytes.data(), grouped_ids[row] * bytes, bytes);
+                    if (cached_bytes != expected_bytes) throw std::runtime_error("explicit staging changed native expert bytes");
+                }
+            }
+            const auto grouped_before = disk.statistics();
+            if (disk.stage(group, grouped_ids) != slots || disk.statistics().expert_loads != grouped_before.expert_loads)
+                throw std::runtime_error("explicit expert staging did not reuse cached slots");
+            bool capacity_rejected = false;
+            try { disk.stage(group, {0, 1, 2, 3, 4}); }
+            catch (const std::runtime_error & error) {
+                capacity_rejected = std::string(error.what()).find("cache capacity") != std::string::npos;
+            }
+            if (!capacity_rejected) throw std::runtime_error("explicit staging exceeded bounded cache capacity");
             const std::vector<int32_t> invalid{12, 0, 1, 2};
             ggml_backend_tensor_set(ids, invalid.data(), 0, invalid.size() * sizeof(int32_t));
             bool rejected = false;
