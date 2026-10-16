@@ -6,6 +6,7 @@
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/text/chunking.h"
 #include <stdexcept>
+#include <chrono>
 
 #include "engine/framework/runtime/session.h"
 
@@ -112,6 +113,7 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
 
     // Resample the reference to 22.05 kHz once; reuse cached conditioning when the
     // reference content is unchanged across requests (frequent-graph reuse).
+    const auto xtts_cache_t0 = std::chrono::steady_clock::now();
     std::vector<float> ref_pcm;
     if (ref_buf->sample_rate != 22050) {
         ref_pcm = engine::audio::resample_mono_torchaudio_sinc_hann(
@@ -133,6 +135,7 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
         const int spk_ns = (int)std::min<size_t>(ref_pcm.size(), (size_t)max_ref_ns);
         spk = c.vocoder.speaker_embed(ref_pcm.data(), spk_ns);
         if (spk.empty()) throw std::runtime_error("xtts_v2: speaker encoder failed on reference audio");
+        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: cond+spk (cache miss) = %.2f s\n", std::chrono::duration<double>(std::chrono::steady_clock::now()-xtts_cache_t0).count());
         c.ref_cache = Impl::RefCache{std::move(ref_pcm), std::move(cond), std::move(spk)};
     }
     const auto& cond_latents = c.ref_cache.cond;
@@ -152,6 +155,7 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
         text_tokens.insert(text_tokens.begin(), 261);
         text_tokens.push_back(0);
 
+        auto xtts_t0 = std::chrono::steady_clock::now();
         auto mel_codes = c.gpt.generate_mel_codes(
             text_tokens, cond_latents, c.temperature, c.top_k, c.top_p,
             c.repetition_penalty, c.max_mel_tokens);
@@ -165,6 +169,7 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
         mel_seq.push_back(1024);
         mel_seq.insert(mel_seq.end(), mel_codes.begin(), mel_codes.end());
         mel_seq.push_back(1025);
+        auto xtts_t1 = std::chrono::steady_clock::now();
         auto latents = c.gpt.extract_latents(text_tokens, mel_seq, cond_latents);
         if (latents.empty()) {
             throw std::runtime_error("xtts_v2: latent extraction failed");
@@ -181,8 +186,14 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
             for (int ch = 0; ch < 1024; ch++)
                 latents_cm[(size_t)ch * T_mel + t] = latents[(size_t)(off + t) * 1024 + ch];
 
+        auto xtts_t2 = std::chrono::steady_clock::now();
         auto chunk_wave = c.vocoder.generate(latents_cm.data(), T_mel,
                                              spk_emb.empty() ? nullptr : spk_emb.data());
+        auto xtts_t3 = std::chrono::steady_clock::now();
+        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: chunk gen=%.2f extract=%.2f vocoder=%.2f\n",
+            std::chrono::duration<double>(xtts_t1-xtts_t0).count(),
+            std::chrono::duration<double>(xtts_t2-xtts_t1).count(),
+            std::chrono::duration<double>(xtts_t3-xtts_t2).count());
         if (chunk_wave.empty()) {
             throw std::runtime_error("xtts_v2: vocoder produced no output");
         }

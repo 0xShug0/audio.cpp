@@ -660,15 +660,17 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
 #pragma omp parallel for schedule(static)
             for (int t = 0; t < T; t++)
                 h_ln(&Xn[(size_t)t * D], &R[(size_t)t * D], bl.l1w_c.data(), bl.l1b_c.data(), D);
-            // QKV GEMM: QKV[t] = Xn[t] @ W^T + b  (W [3D x D] row-major), flat parallel
+            // QKV GEMM: QKV[t*3D+m] = Xn[t*D..t*D+D-1] @ W[m*D..m*D+D-1] + b[m]
+            // Weights outer, positions inner: weight row Wm stays in L1 for all T positions.
 #pragma omp parallel for schedule(static)
-            for (int tm = 0; tm < T * 3 * D; tm++) {
-                int t = tm / (3 * D), m = tm % (3 * D);
-                float s = bl.qkb_c.empty() ? 0.f : bl.qkb_c[m];
+            for (int m = 0; m < 3 * D; m++) {
                 const float* Wm = bl.qkw_c.data() + (size_t)m * D;
-                const float* x = &Xn[(size_t)t * D];
-                for (int n = 0; n < D; n++) s += Wm[n] * x[n];
-                QKV[(size_t)tm] = s;
+                float b = bl.qkb_c.empty() ? 0.f : bl.qkb_c[m];
+                for (int t = 0; t < T; t++) {
+                    const float* x = &Xn[(size_t)t * D];
+                    float s = b; for (int n = 0; n < D; n++) s += Wm[n] * x[n];
+                    QKV[(size_t)t * 3 * D + m] = s;
+                }
             }
             // Store K,V into cache rows seq_pos..seq_pos+T-1
             for (int t = 0; t < T; t++) {
@@ -700,39 +702,42 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
                     }
                 }
             }
-            // Output projection + residual (flat GEMM over T*D outputs)
+            // Output projection + residual: weights outer, positions inner.
 #pragma omp parallel for schedule(static)
-            for (int tm = 0; tm < T * D; tm++) {
-                int t = tm / D, m = tm % D;
-                float s = bl.pwb_c.empty() ? 0.f : bl.pwb_c[m];
+            for (int m = 0; m < D; m++) {
                 const float* Wm = bl.pwo_c.data() + (size_t)m * D;
-                const float* x = &AT[(size_t)t * D];
-                for (int n = 0; n < D; n++) s += Wm[n] * x[n];
-                R[(size_t)tm] += s;
+                float b = bl.pwb_c.empty() ? 0.f : bl.pwb_c[m];
+                for (int t = 0; t < T; t++) {
+                    const float* x = &AT[(size_t)t * D];
+                    float s = b; for (int n = 0; n < D; n++) s += Wm[n] * x[n];
+                    R[(size_t)t * D + m] += s;
+                }
             }
             // FFN pre-norm (row-wise)
 #pragma omp parallel for schedule(static)
             for (int t = 0; t < T; t++)
                 h_ln(&Xn[(size_t)t * D], &R[(size_t)t * D], bl.l2w_c.data(), bl.l2b_c.data(), D);
-            // FFN up-proj + gelu (flat GEMM over T*ffn outputs)
+            // FFN up-proj + gelu: weights outer, positions inner.
 #pragma omp parallel for schedule(static)
-            for (int tm = 0; tm < T * (int)hp.ffn; tm++) {
-                int t = tm / (int)hp.ffn, m = tm % (int)hp.ffn;
-                float s = bl.fcb_c.empty() ? 0.f : bl.fcb_c[m];
+            for (int m = 0; m < (int)hp.ffn; m++) {
                 const float* Wm = bl.fcw_c.data() + (size_t)m * D;
-                const float* x = &Xn[(size_t)t * D];
-                for (int n = 0; n < D; n++) s += Wm[n] * x[n];
-                H2[(size_t)tm] = gelu_t(s);
+                float b = bl.fcb_c.empty() ? 0.f : bl.fcb_c[m];
+                for (int t = 0; t < T; t++) {
+                    const float* x = &Xn[(size_t)t * D];
+                    float s = b; for (int n = 0; n < D; n++) s += Wm[n] * x[n];
+                    H2[(size_t)t * hp.ffn + m] = gelu_t(s);
+                }
             }
-            // FFN down-proj + residual (flat GEMM over T*D outputs)
+            // FFN down-proj + residual: weights outer, positions inner.
 #pragma omp parallel for schedule(static)
-            for (int tm = 0; tm < T * D; tm++) {
-                int t = tm / D, m = tm % D;
-                float s = bl.fpb_c.empty() ? 0.f : bl.fpb_c[m];
+            for (int m = 0; m < D; m++) {
                 const float* Wm = bl.fpw_c.data() + (size_t)m * (int)hp.ffn;
-                const float* x = &H2[(size_t)t * hp.ffn];
-                for (int n = 0; n < (int)hp.ffn; n++) s += Wm[n] * x[n];
-                R[(size_t)tm] += s;
+                float b = bl.fpb_c.empty() ? 0.f : bl.fpb_c[m];
+                for (int t = 0; t < T; t++) {
+                    const float* x = &H2[(size_t)t * hp.ffn];
+                    float s = b; for (int n = 0; n < (int)hp.ffn; n++) s += Wm[n] * x[n];
+                    R[(size_t)t * D + m] += s;
+                }
             }
         }
         // Final LN (double: ln_f + final_norm via lfw then fnw)
@@ -748,6 +753,9 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
     // Forward one token embedding at position seq_pos; appends K,V to cache.
     // Returns the pre-logits hidden state (post final LN) in emb_out.
     static double t_qkv = 0, t_attn = 0, t_proj = 0, t_ffn = 0, t_logits = 0;
+    t_qkv = t_attn = t_proj = t_ffn = t_logits = 0;
+    double t_sample = 0, t_emb = 0;
+    int n_steps_actual = 0;
     auto forward_token = [&](const std::vector<float>& input_emb, std::vector<float>& emb_out) {
         if (seq_pos >= max_pos) { fprintf(stderr, "xtts: seq overflow %d\n", seq_pos); return; }
         std::vector<float> residual(D);
@@ -861,7 +869,9 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
             for (int j = 0; j < D; j++) E[(size_t)p * D + j] += mp[j];
         }
         std::vector<float> hidden;
+        const double tp0 = omp_get_wtime();
         forward_batch(E, Tpre, hidden);
+        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   prefix batch (%d pos) = %.2f s\n", Tpre, omp_get_wtime() - tp0);
         std::memcpy(emb_last.data(), &hidden[(size_t)(Tpre - 1) * D], D * sizeof(float));
         h_c1d(logits.data(), m.lmw_c.data(), emb_last.data(), m.lmb_c.data(), D, hp.mel_vocab);
     }
@@ -886,6 +896,7 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
     for (int g = 0; g < max_n; g++) {
         if ((int)codes.size() >= max_n) break;
         // Sample from logits
+        auto ts0 = omp_get_wtime();
         std::vector<float> scaled(logits);
         if (temp > 0) for (auto& l2 : scaled) l2 /= temp;
         if (rep_pen != 1.0f && !codes.empty()) {
@@ -923,6 +934,7 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
         double r = (double)rand() / RAND_MAX; float cum = 0; int st = 0;
         for (int j = 0; j < (int)scaled.size(); j++) { cum += scaled[j]; if (r <= cum) { st = j; break; } }
         codes.push_back(st);
+        n_steps_actual++;
         if (getenv("XTTS_DEBUG") && (g < 20 || g % 100 == 0)) {
             // Top-5 logits for diagnostics
             std::vector<std::pair<float,int>> top5;
@@ -934,17 +946,19 @@ static std::vector<int> gpt_gen(ggml_context* ctx, ggml_backend_t be, const GM& 
         }
         if (st == 1025) break;  // stop token
         // Next token embedding: mel_embedding(st) + mel_pos_embedding(mel_pos)
+        auto te0 = omp_get_wtime();
         std::vector<float> me(D, 0), mp(D, 0), dummy(D);
         get_emb(m.me, st, me.data(), D);
         if (mel_pos < (int)m.mp->ne[1]) get_emb(m.mp, mel_pos, mp.data(), D);
         for (int j = 0; j < D; j++) me[j] += mp[j];
         mel_pos++;
+        t_emb += omp_get_wtime() - te0;
         forward_token(me, emb_last);
         auto tl1 = omp_get_wtime();
         h_c1d(logits.data(), m.lmw_c.data(), emb_last.data(), m.lmb_c.data(), D, hp.mel_vocab);
         t_logits += omp_get_wtime() - tl1;
     }
-    if (getenv("XTTS_TIMING")) if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   gen breakdown qkv=%.2f attn=%.2f proj=%.2f ffn=%.2f logits=%.2f s\n", t_qkv, t_attn, t_proj, t_ffn, t_logits);
+    if (getenv("XTTS_TIMING")) if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   gen breakdown qkv=%.2f attn=%.2f proj=%.2f ffn=%.2f logits=%.2f sample=%.2f emb=%.2f steps=%d\n", t_qkv, t_attn, t_proj, t_ffn, t_logits, t_sample, t_emb, n_steps_actual);
     return codes;
 }
 // GPT-2 latent extraction via GGML graph
