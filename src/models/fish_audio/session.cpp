@@ -333,6 +333,9 @@ FishAudioSession::FishAudioSession(
         runtime::parse_size_mb_option(options.options, {"fish_audio.codec_weight_context_mb"}, kDefaultCodecWeightContextBytes);
     codec_options.matmul_weight_storage_type = codec_weight_type;
     codec_options.conv_weight_storage_type = codec_weight_type;
+    if (const auto value = runtime::find_option(options.options, {"fish_audio.codec_encoder_bf16_compute"})) {
+        codec_options.encoder_bf16_compute = runtime::parse_bool_option(*value, "fish_audio.codec_encoder_bf16_compute");
+    }
     core::ExecutionContext codec_execution(options.backend);
     auto codec_component = engine::codecs::FishDacCodecComponent::load_from_tensor_source(
         assets_->codec_weights,

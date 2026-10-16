@@ -130,6 +130,13 @@
         "default": "native"
       },
       {
+        "name": "codec_encoder_bf16_compute",
+        "type": "bool",
+        "description": "Use BF16 reference-encoder arithmetic on CUDA with F16/BF16 codec weights; default false. Decoding is unchanged.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "ar_graph_arena_mb",
         "type": "int",
         "description": "AR runtime graph arena size in MiB; default 512.",

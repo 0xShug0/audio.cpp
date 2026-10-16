@@ -540,6 +540,44 @@ core::TensorValue Conv1dModule::build(
     const auto output_shape = core::TensorShape::from_dims(
         {input.shape.dims[0], config_.out_channels, conv1d_output_frames(config_, input.shape.dims[2])});
     const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
+    if (config_.bf16_compute) {
+        const auto weight_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weights.weight);
+        auto * weight = weight_contiguous.type == GGML_TYPE_BF16 ? weight_contiguous.tensor
+            : ggml_cast(ctx.ggml, ensure_f32(ctx, weight_contiguous).tensor, GGML_TYPE_BF16);
+        const auto build_batch = [&](const core::TensorValue & batch_input) {
+            ggml_tensor * columns;
+            if (ctx.backend_type == core::BackendType::Cuda) {
+                columns = ggml_im2col(ctx.ggml, weight, batch_input.tensor,
+                    config_.stride, 0, config_.padding, 0, config_.dilation, 0, false, GGML_TYPE_BF16);
+            } else {
+                auto * rounded_input = ggml_round_bf16(ctx.ggml, batch_input.tensor);
+                columns = ggml_im2col(ctx.ggml, weight, rounded_input,
+                    config_.stride, 0, config_.padding, 0, config_.dilation, 0, false, GGML_TYPE_F32);
+                columns = ggml_cast(ctx.ggml, columns, GGML_TYPE_BF16);
+            }
+            auto * projected = ggml_mul_mat(ctx.ggml,
+                ggml_reshape_2d(ctx.ggml, columns, columns->ne[0], output_shape.dims[2]),
+                ggml_reshape_2d(ctx.ggml, weight, columns->ne[0], config_.out_channels));
+            projected = ggml_round_bf16(ctx.ggml, projected);
+            if (config_.use_bias) {
+                if (!weights.bias) throw std::runtime_error("Conv1d bias is required");
+                core::validate_shape(*weights.bias, core::TensorShape::from_dims({config_.out_channels}), "bias");
+                auto * bias = ggml_round_bf16(ctx.ggml, ensure_f32(ctx, *weights.bias).tensor);
+                projected = ggml_add(ctx.ggml, projected, ggml_reshape_2d(ctx.ggml, bias, 1, config_.out_channels));
+                projected = ggml_round_bf16(ctx.ggml, projected);
+            }
+            return core::wrap_tensor(projected,
+                core::TensorShape::from_dims({1, config_.out_channels, output_shape.dims[2]}), GGML_TYPE_F32);
+        };
+        core::TensorValue result;
+        for (int64_t batch_index = 0; batch_index < input.shape.dims[0]; ++batch_index) {
+            const auto batch_input = view_batch_matrix(ctx, input_contiguous, batch_index,
+                config_.in_channels, input.shape.dims[2]);
+            const auto batch_output = build_batch(batch_input);
+            result = result.tensor ? ConcatModule({0}).build(ctx, result, batch_output) : batch_output;
+        }
+        return result;
+    }
     const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "Conv1dModule");
     core::TensorValue output;
     if (is_conv1d_pertap_fast_path_eligible(ctx, config_, input) &&

@@ -146,9 +146,15 @@ backend. `fish_drama3.codec_backend=cpu` moves codec computation to CPU as well.
 
 If Vulkan voice cloning produces incomplete speech or reaches the token limit,
 try `--session-option fish_drama3.codec_encoder_f32_accumulation=true`.
+
 This opt-in control uses F32 accumulation in the Vulkan reference encoder while
 keeping F16 storage. It defaults to false and does not change codec decoding or
 other backends. It also works with existing GGUFs without replacing their specs.
+
+On CUDA, BF16 reference-encoder arithmetic is enabled by default with F16/BF16
+codec weights. Set `--session-option fish_drama3.codec_encoder_bf16_compute=false`
+to restore the previous encoder arithmetic. This changes reference-conditioned
+generation but does not change codec decoding or backbone inference.
 
 Host memory is required for offloaded weights. Context capacity includes text,
 reference audio frames, prior takes, and the requested generation budget.
