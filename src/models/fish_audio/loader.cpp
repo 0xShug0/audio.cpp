@@ -49,6 +49,7 @@ runtime::ModelCliInterface cli(const FishAudioAssets &) {
         {"fish_audio.reference_cache_slots", "n", "Prepared reference-audio cache slots; default 1.", false, "1", "0"},
         {"fish_audio.weight_type", "native|f32|f16|bf16|q8_0", "AR matmul weight storage type; default native.", false, "native"},
         {"fish_audio.codec_weight_type", "native|f32|f16|q8_0", "Codec conv/matmul weight storage type; default native.", false, "native"},
+        {"fish_audio.codec_encoder_bf16_compute", "true|false", "Use BF16 reference-encoder arithmetic on CUDA with F16/BF16 codec weights; default false. Decoding is unchanged.", false, "false"},
         {"fish_audio.ar_graph_arena_mb", "int", "AR runtime graph arena size in MiB; default 512.", false, "512", "1"},
         {"fish_audio.ar_weight_context_mb", "int", "AR weight context size in MiB; default 32.", false, "32", "1"},
         {"fish_audio.codec_graph_arena_mb", "int", "Codec encode/decode graph arena size in MiB; default 512.", false, "512", "1"},

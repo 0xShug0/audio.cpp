@@ -46,6 +46,7 @@ struct FishDacCodecRuntimeOptions {
     size_t weight_context_bytes = 1024ull * 1024ull * 1024ull;
     assets::TensorStorageType matmul_weight_storage_type = assets::TensorStorageType::Native;
     assets::TensorStorageType conv_weight_storage_type = assets::TensorStorageType::Native;
+    bool encoder_bf16_compute = false;
 };
 
 class FishDacCodecComponent {

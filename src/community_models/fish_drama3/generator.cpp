@@ -93,6 +93,10 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     codec_execution_ = std::make_unique<core::ExecutionContext>(codec_backend);
     codecs::FishDacCodecRuntimeOptions codec_options;
     codec_options.weight_context_bytes = 16 * 1024 * 1024;
+    codec_options.encoder_bf16_compute = true;
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_encoder_bf16_compute"})) {
+        codec_options.encoder_bf16_compute = runtime::parse_bool_option(*value, "fish_drama3.codec_encoder_bf16_compute");
+    }
     const auto component = codecs::FishDacCodecComponent::load_from_tensor_source(assets_->codec_weights,
         assets_->codec, {}, codec_execution_->backend(), codec_backend.type, codec_options);
     bool codec_encoder_f32_accumulation = false;
