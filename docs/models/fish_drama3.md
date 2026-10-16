@@ -146,6 +146,49 @@ backend. `fish_drama3.codec_backend=cpu` moves codec computation to CPU as well.
 Host memory is required for offloaded weights. Context capacity includes text,
 reference audio frames, prior takes, and the requested generation budget.
 
+### Disk-backed experts
+
+Set `fish_drama3.disk_experts=true` to keep the full routed expert banks in the
+GGUF file and read only selected experts into a bounded native-format cache.
+`fish_drama3.expert_cache_size` sets resident slots per layer (8 to 256; default
+32). Dense backbone, tower, and codec weights remain resident. The existing
+`cpu_expert_layers` setting still selects CPU execution for those layers, but
+their expert caches are bounded too. No GGUF conversion is required.
+
+This is a memory/speed trade-off, not a faster MoE kernel. With
+`cpu_expert_layers=0`, prompt prefill groups tokens by expert within each layer,
+so one upload serves multiple tokens. Attention and shared/router projections
+retain the resident batched-prefill path; cached experts retain their vector
+projection path. Session-owned graphs share one activation workspace and are
+reused for the same exact prompt length while retained. A different length
+replaces that graph set rather than reusing a rounded capacity for stateful
+attention. Offline disk mode releases backbone and tower prefill graphs before
+waveform decoding, without clearing continuation state. Later full prefills
+rebuild those workspaces; resident execution keeps its existing cache policy.
+Mixed CPU/backend expert execution retains token-wise prefill. Storage speed
+still matters, and resident mode remains the default. For the minimum cache:
+
+```text
+--session-option fish_drama3.disk_experts=true
+--session-option fish_drama3.expert_cache_size=8
+--session-option fish_drama3.cpu_expert_layers=0
+```
+
+When sufficient host RAM is available, add
+`fish_drama3.pin_experts=true` and set `fish_drama3.cpu_expert_layers=0`.
+This loads full expert banks into pinned host memory once, then uploads cache
+misses directly without an intermediate host copy. Expert matmuls still run on
+the selected backend, and GPU cache size is unchanged. This option is off by
+default and requires pinned host-buffer support; allocation failure is an error,
+not a fallback to a different memory policy.
+
+Logs report `disk_experts.bytes_read`, `disk_experts.expert_loads`,
+`disk_experts.cache_hits`, `disk_experts.buffer_mb`, and
+`disk_experts.host_buffer_mb` when the session is destroyed. These describe
+expert I/O and cache allocation, not total process peak VRAM. With pinned
+experts, bytes read include the initial host-bank load instead of per-request
+cache-miss reads.
+
 ## Serve over HTTP
 
 Save the following as `drama3-server.json` in the repository root:

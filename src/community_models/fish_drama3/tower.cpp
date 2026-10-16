@@ -171,6 +171,11 @@ public:
 
     void reset() { ggml_backend_buffer_clear(cache_buffer_, 0); }
 
+    void release_prefill_graphs() {
+        prefill_graphs_.clear();
+        prefill_cached_bytes_ = 0;
+    }
+
     void mix_backbone_embeddings(std::vector<float> & values, const std::vector<Drama3Frame> & frames) const {
         if (values.size() != frames.size() * static_cast<size_t>(config_.hidden_size)) {
             throw std::runtime_error("Drama 3 frame embedding size mismatch");
@@ -469,6 +474,7 @@ Drama3Tower::Drama3Tower(std::shared_ptr<const assets::TensorSource> weights,
     : impl_(std::make_unique<Impl>(std::move(weights), std::move(config), execution, cache_steps, prefill_cache_bytes)) {}
 Drama3Tower::~Drama3Tower() = default;
 void Drama3Tower::reset() { impl_->reset(); }
+void Drama3Tower::release_prefill_graphs() { impl_->release_prefill_graphs(); }
 void Drama3Tower::mix_backbone_embeddings(std::vector<float> & embeddings, const std::vector<Drama3Frame> & frames) const {
     impl_->mix_backbone_embeddings(embeddings, frames);
 }

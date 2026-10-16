@@ -1,10 +1,13 @@
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
+#include "engine/framework/io/safetensors.h"
+#include "engine/framework/debug/profiler.h"
 
 #include <cmath>
 #include <iostream>
 #include <set>
 #include <stdexcept>
+#include <random>
 
 namespace {
 bool fail_buffer = false;
@@ -44,7 +47,7 @@ bool test_alloc_split_graph(ggml_backend_sched_t scheduler, ggml_cgraph * graph)
 #undef ggml_gallocr_alloc_graph
 #undef ggml_backend_sched_alloc_graph
 
-int main() {
+int main(int argc, char ** argv) {
     try {
         namespace drama = engine::models::fish_drama3;
         engine::core::BackendConfig backend;
@@ -95,6 +98,130 @@ int main() {
             if (!live_buffers.empty()) throw std::runtime_error("normal destruction leaked a persistent buffer");
         }
         std::cout << "rejected_allocations=" << failures << " live_buffers=0 recovery_cases=2\n";
+
+        engine::debug::configure_logging({true, std::nullopt});
+        const auto started = std::chrono::steady_clock::now();
+        auto test_backend = backend;
+        if (argc > 1 && std::string(argv[1]) == "cuda") test_backend.type = engine::core::BackendType::Cuda;
+        if (argc > 1 && std::string(argv[1]) == "vulkan") test_backend.type = engine::core::BackendType::Vulkan;
+        engine::core::ExecutionContext prefill_execution(test_backend);
+        struct FixtureDirectory {
+            std::filesystem::path path = std::filesystem::temp_directory_path() /
+                ("drama3_prefill_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            FixtureDirectory() { std::filesystem::create_directories(path); }
+            ~FixtureDirectory() { std::error_code error; std::filesystem::remove_all(path, error); }
+        } fixture;
+        auto c = config;
+        c.vocab_size = 16;
+        c.hidden_size = c.intermediate_size = 256;
+        c.layers = 2;
+        c.experts = 12;
+        c.experts_per_token = 2;
+        c.expert_cache_size = 4;
+        c.heads = 4;
+        c.kv_heads = 2;
+        c.head_dim = 64;
+        c.full_attention_interval = 2;
+        c.linear_key_head_dim = c.linear_value_head_dim = 128;
+        c.linear_num_key_heads = 2;
+        c.linear_num_value_heads = 4;
+        std::vector<engine::io::SafeTensorWriteEntry> entries;
+        std::mt19937 random(1234);
+        std::uniform_real_distribution<float> distribution(-1.0F, 1.0F);
+        auto add = [&](const std::string & name, std::vector<int64_t> shape, float scale = .025F, float offset = 0.0F) {
+            size_t count = 1;
+            for (auto dim : shape) count *= static_cast<size_t>(dim);
+            std::vector<float> data(count);
+            for (size_t i = 0; i < count; ++i) data[i] = offset + scale * distribution(random);
+            std::vector<unsigned char> bytes(count * sizeof(float));
+            std::memcpy(bytes.data(), data.data(), bytes.size());
+            entries.push_back({"model_weights/" + name, "F32", std::move(shape), std::move(bytes)});
+        };
+        add(c.weight_prefix + ".embed_tokens.weight", {16, 256});
+        add("lm_head.weight", {16, 256});
+        add(c.weight_prefix + ".norm.weight", {256}, 0);
+        for (int layer = 0; layer < 2; ++layer) {
+            const auto p = c.weight_prefix + ".layers." + std::to_string(layer);
+            add(p + ".input_layernorm.weight", {256}, 0);
+            add(p + ".post_attention_layernorm.weight", {256}, 0);
+            if (layer == 0) {
+                const auto a = p + ".linear_attn";
+                add(a + ".in_proj_qkv.weight", {1024, 256});
+                add(a + ".in_proj_z.weight", {512, 256});
+                add(a + ".in_proj_b.weight", {4, 256});
+                add(a + ".in_proj_a.weight", {4, 256});
+                add(a + ".conv1d.weight", {1024, 1, 4});
+                add(a + ".dt_bias", {4});
+                add(a + ".A_log", {4});
+                add(a + ".norm.weight", {128}, 0, 1);
+                add(a + ".out_proj.weight", {256, 512});
+            } else {
+                const auto a = p + ".self_attn";
+                add(a + ".q_proj.weight", {512, 256});
+                add(a + ".k_proj.weight", {128, 256});
+                add(a + ".v_proj.weight", {128, 256});
+                add(a + ".o_proj.weight", {256, 256});
+                add(a + ".q_norm.weight", {64}, 0);
+                add(a + ".k_norm.weight", {64}, 0);
+            }
+            for (const auto * projection : {"gate_proj", "up_proj", "down_proj"}) {
+                add(p + ".mlp.shared_expert." + projection + ".weight", {256, 256});
+                add(p + ".mlp.experts." + projection + ".weight", {12, 256, 256});
+            }
+            add(p + ".mlp.gate.weight", {12, 256});
+            add(p + ".mlp.shared_expert_gate.weight", {1, 256});
+        }
+        const auto safe = fixture.path / "weights.safetensors";
+        const auto gguf = fixture.path / "weights.gguf";
+        engine::io::write_safetensors_file(safe, entries);
+        engine::assets::convert_tensor_sources_to_gguf({{safe, ""}}, gguf, engine::assets::TensorStorageType::F32,
+            true, false, {}, {}, std::nullopt);
+        auto source = engine::assets::open_tensor_source(gguf, "model_weights/");
+        auto resident = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
+        c.disk_experts = true;
+        auto disk = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
+        drama::Drama3BackboneCachedDecodeGraph reference(prefill_execution, resident, c, 1024, 8 * 1024 * 1024);
+        drama::Drama3BackboneCachedDecodeGraph grouped(prefill_execution, disk, c, 1024, 8 * 1024 * 1024);
+        std::vector<float> first_hidden, first_next;
+        for (int steps : {7, 129, 513, 7}) {
+            std::vector<float> input(steps * 256);
+            for (size_t i = 0; i < input.size(); ++i) input[i] = std::cos(float(i) * .091F);
+            reference.reset();
+            const auto reference_hidden = reference.prefill_embeddings(input, steps).hidden;
+            const auto actual = grouped.prefill_embeddings(input, steps);
+            float maximum = 0;
+            double square = 0, energy = 0;
+            for (size_t i = 0; i < actual.hidden.size(); ++i) {
+                maximum = std::max(maximum, std::abs(actual.hidden[i] - reference_hidden[i]));
+                square += std::pow(actual.hidden[i] - reference_hidden[i], 2);
+                energy += reference_hidden[i] * reference_hidden[i];
+            }
+            std::cout << "batched_steps=" << steps << " max_abs=" << maximum
+                      << " relative_rmse=" << std::sqrt(square / energy) << '\n';
+            if (!std::all_of(actual.hidden.begin(), actual.hidden.end(), [](float value) { return std::isfinite(value); }) ||
+                maximum > 1e-3F || square > 1e-8 * energy)
+                throw std::runtime_error("grouped and resident batched prefill mismatch");
+            const std::vector<float> next(256, .3F);
+            const auto valid_steps = grouped.valid_steps();
+            grouped.release_prefill_graphs();
+            if (grouped.valid_steps() != valid_steps)
+                throw std::runtime_error("releasing prefill graphs reset continuation state");
+            const auto expected_next = reference.run_embedding_step(next);
+            const auto actual_next = grouped.run_embedding_step(next);
+            maximum = 0;
+            for (size_t i = 0; i < next.size(); ++i) maximum = std::max(maximum, std::abs(expected_next[i] - actual_next[i]));
+            std::cout << "continuation_steps=" << steps << " max_abs=" << maximum << '\n';
+            if (maximum > 1e-4F) throw std::runtime_error("grouped prefill corrupted continuation state");
+            if (steps == 7) {
+                if (first_hidden.empty()) {
+                    first_hidden = actual.hidden;
+                    first_next = actual_next;
+                } else if (first_hidden != actual.hidden || first_next != actual_next) {
+                    throw std::runtime_error("offload prefill retained state after prompt length changed");
+                }
+            }
+        }
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;

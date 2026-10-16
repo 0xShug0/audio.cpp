@@ -36,6 +36,9 @@ struct Drama3BackboneDecoderConfig {
     bool round_bf16_activations = false;
     int64_t decode_cache_steps = 2048;
     int64_t cpu_expert_layers = 0;
+    bool disk_experts = false;
+    bool pin_experts = false;
+    int64_t expert_cache_size = 32;
     size_t prefill_cache_bytes = 256u * 1024u * 1024u;
     bool profile_prefill_cache = false;
 };
@@ -62,6 +65,7 @@ public:
     std::vector<float> token_embedding(const std::vector<int32_t> & token_ids);
     Drama3BackboneDecoderForwardResult forward_embeddings(const std::vector<float> & embeddings, int64_t steps);
     std::vector<float> lm_head(const std::vector<float> & hidden);
+    void release_prefill_graphs();
     void release_graphs();
 
     class DecodeSession {

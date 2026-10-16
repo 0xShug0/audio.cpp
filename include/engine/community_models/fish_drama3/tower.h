@@ -47,6 +47,7 @@ public:
     Drama3Tower & operator=(const Drama3Tower &) = delete;
 
     void reset();
+    void release_prefill_graphs();
     void mix_backbone_embeddings(std::vector<float> & embeddings,
                                  const std::vector<Drama3Frame> & frames) const;
     std::vector<float> shared_input(const std::vector<Drama3Frame> & frames) const;

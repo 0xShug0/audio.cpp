@@ -24,7 +24,7 @@ public:
     void discard_range(size_t offset, size_t size) const noexcept;
 
 private:
-    friend BinaryBlob read_binary_blob(const std::filesystem::path & path);
+    friend BinaryBlob read_binary_blob(const std::filesystem::path & path, bool require_mapping);
 
     explicit BinaryBlob(std::vector<std::byte> owned) noexcept;
     BinaryBlob(const std::byte * mapped, size_t size) noexcept;
@@ -35,7 +35,8 @@ private:
     size_t size_ = 0;
 };
 
-BinaryBlob read_binary_blob(const std::filesystem::path & path);
+// require_mapping forbids an owned full-file copy when mapping is unavailable.
+BinaryBlob read_binary_blob(const std::filesystem::path & path, bool require_mapping = false);
 std::vector<std::byte> read_binary_file(const std::filesystem::path & path);
 std::vector<float> read_f32_file(const std::filesystem::path & path);
 std::vector<int32_t> read_i32_file(const std::filesystem::path & path);

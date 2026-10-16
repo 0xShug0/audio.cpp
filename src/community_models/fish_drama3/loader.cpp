@@ -9,7 +9,13 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_fish_drama3_loader() {
     config.load_assets = load_drama3_assets;
     config.create_session = [](const runtime::TaskSpec & task, const runtime::SessionOptions & options,
         std::shared_ptr<const Drama3Assets> assets, std::shared_ptr<const engine::model_spec::ModelContract> contract) {
-        runtime::validate_spec_backed_session_options(options, *contract, "fish_drama3", "Drama 3");
+        auto validation_options = options;
+        // Published standalone contracts predate the opt-in disk cache controls.
+        // Their values are checked by the generator and backbone constructors.
+        for (const auto * key : {"fish_drama3.disk_experts", "fish_drama3.expert_cache_size", "fish_drama3.pin_experts"}) {
+            if (!contract->session_option_keys.count(key)) validation_options.options.erase(key);
+        }
+        runtime::validate_spec_backed_session_options(validation_options, *contract, "fish_drama3", "Drama 3");
         return std::make_unique<Drama3Session>(task, options, std::move(assets));
     };
     return runtime::make_spec_backed_voice_loader(std::move(config));
