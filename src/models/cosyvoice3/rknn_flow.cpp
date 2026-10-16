@@ -30,6 +30,21 @@ const char * const kLabel = "CosyVoice3 flow estimator RKNN";
 // unconditioned one, and the ODE loop mixes them outside the engine.
 constexpr int64_t kCfgBatch = 2;
 
+// The NPU I/O aperture an engine occupies is not its file size: measured on RK3588 with every
+// context of a ladder resident in one process, the estimator engines occupy 0.27 GiB at S=110,
+// 0.48 at 200, 0.77 at 250, 1.93 at 400, 3.04 at 500 and 4.39 at 900, while all of their files are
+// 661-714 MB. The short rungs are therefore genuinely co-resident (S=200 x3, 250+250+110 and 110 x4
+// all initialize together, at <= 1.81 GiB), and the long ones are not (400 coexists only with
+// 110/200, 500 with nothing). 5 MiB per frame over-estimates the short rungs by ~2x (S=110 really
+// costs 0.27 GiB, S=200 0.48, S=250 0.77) and is within 5% of the long ones, so the budget is a
+// statement about the long rungs with a safety margin on the short ones. 2800 MiB of proxy is the
+// largest resident set the measured aperture fits: 110+200+250 = 1.52 GiB real (three engines fit
+// 1.81 GiB), 110+400 = 2.20 GiB (two engines fit 2.42), while 200+400 = 2.41 GiB is refused by the
+// proxy although it measures just inside the two-engine ceiling -- the proxy pins less than the
+// aperture allows, never more.
+constexpr int64_t kApertureMiBPerFrame = 5;
+constexpr int64_t kAperturePinBudgetMiB = 2800;
+
 // Graph order, as tools/rknn/prepare_cosyvoice3_rknn_flow.py compiles it.
 const char * const kInputNames[] = {"x", "mask", "mu", "t", "spks", "cond"};
 constexpr uint32_t kInputCount = 6;
@@ -235,10 +250,12 @@ struct CosyVoice3RknnFlow::Impl {
         }
     }
 
-    // The smallest engine that fits `frames`, loaded on demand. One engine is resident: the driver
-    // allocates the whole engine (weights and workspace) per context, and the long-sequence
-    // engines need gigabytes, so a resident ladder is not an option. The ODE loop asks for the same
-    // length ten times in a row, so the switch costs one rknn_init per utterance.
+    // The smallest engine that fits `frames`. The long-sequence engines are loaded on demand and
+    // evicted on the next length change, because the driver allocates the whole engine (weights and
+    // workspace) per context and the long rungs need gigabytes. The short rungs stay resident: they
+    // fit together in the NPU aperture (see kAperturePinBudgetMiB), they are the rungs the served
+    // requests ask for, and each of them costs ~9 s of `rknn_init` per utterance when it has to be
+    // re-loaded.
     Slot & pick(int64_t frames) {
         for (auto & holder : slots) {
             Slot & slot = *holder;
@@ -246,13 +263,29 @@ struct CosyVoice3RknnFlow::Impl {
                 continue;
             }
             if (!slot.loaded) {
+                int64_t resident = 0;
                 for (auto & other : slots) {
                     if (other->loaded) {
-                        other->engine.release();
-                        other->loaded = false;
+                        resident += other->frames;
+                    }
+                }
+                // The rung is kept (and the new one pinned) only while the whole resident set stays
+                // inside the aperture; a rung above the budget can never share it with anything, so
+                // it evicts everything and is itself evicted by the next length change.
+                // ponytail: linear aperture proxy; a per-engine measured table would pin ~2x more.
+                const bool fits = (resident + frames) * kApertureMiBPerFrame <= kAperturePinBudgetMiB;
+                if (!fits) {
+                    for (auto & other : slots) {
+                        if (other->loaded) {
+                            other->engine.release();
+                            other->loaded = false;
+                        }
                     }
                 }
                 slot.load(channels);
+                debug::trace_log_scalar(
+                    "cosyvoice3.flow.dit.rknn.resident_frames",
+                    fits ? resident + frames : frames);
             }
             return slot;
         }
