@@ -385,7 +385,7 @@ core::TensorValue causal_conv_transpose1d(
 }
 
 core::TensorValue l2_normalize_last(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
-    const bool materialize_input = ctx.backend_type == core::BackendType::Metal;
+    const bool materialize_input = ctx.backend_type == core::BackendType::Metal || ctx.backend_type == core::BackendType::Cpu;
     const auto normalized_input = materialize_input
         ? core::ensure_backend_addressable_layout(ctx, input)
         : input;
@@ -704,6 +704,9 @@ core::TensorValue build_encode_quantizer(
         x = build_convnext(ctx, x, stage.second, kCodecDim);
     }
     x = build_window_transformer(ctx, constants, x, weights.pre_module, 128);
+    if (ctx.backend_type == core::BackendType::Cpu) {
+        x = core::ensure_backend_addressable_layout(ctx, x);
+    }
 
     auto residual = x;
     auto quantize_one = [&](const QuantizerUnitWeights & quantizer, int64_t codebook_size) {
