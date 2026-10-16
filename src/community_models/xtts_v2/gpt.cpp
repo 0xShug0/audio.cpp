@@ -874,12 +874,12 @@ static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const
         if (!dg.gf || dg.n_kv != want_kv) {
             const double tb0 = omp_get_wtime();
             if (!gpt_build_graph(dg, be, m, hp, kv, 1, want_kv)) { fprintf(stderr, "xtts: decode graph build failed\n"); break; }
-            gpt_fill_mask(dg, seq_pos);
             n_rebuilds++; t_build += omp_get_wtime() - tb0;
-        } else {
-            // Only one mask element changes per step: key `seq_pos` becomes visible.
-            gpt_fill_mask(dg, seq_pos);  // DIAGNOSTIC: full refill instead of single element
         }
+        // Refill the whole mask every step: gallocr may reassign the mask tensor's
+        // buffer region between computes, so incremental single-element updates are
+        // not durable. The refill is O(n_kv) F16 bytes (~512 B) - negligible.
+        gpt_fill_mask(dg, seq_pos);
         if (!run(dg, me.data(), seq_pos)) { fprintf(stderr, "xtts: decode compute failed\n"); break; }
         seq_pos++; n_steps++;
         t_dec += omp_get_wtime() - td0;
