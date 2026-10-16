@@ -38,6 +38,8 @@ public:
     TensorValue tensor(size_t group, size_t projection) const;
     // Stage one bounded group and return cache-slot IDs in the caller's order.
     std::vector<int32_t> stage(size_t group, const std::vector<int32_t> & expert_ids);
+    // Invalidate placement at an independent request boundary, retaining all allocations and statistics.
+    void invalidate_cache();
     ggml_tensor * route(ModuleBuildContext & ctx, ggml_tensor * expert_ids, size_t group) const;
 
     // Install on a scheduler before computing graphs containing route() nodes.

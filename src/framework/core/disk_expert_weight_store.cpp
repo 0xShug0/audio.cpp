@@ -281,6 +281,14 @@ std::vector<int32_t> DiskExpertWeightStore::stage(size_t group, const std::vecto
     return impl_->stage(expert_ids, group);
 }
 
+void DiskExpertWeightStore::invalidate_cache() {
+    for (auto & group : impl_->groups) {
+        std::fill(group->expert_ids.begin(), group->expert_ids.end(), -1);
+        std::fill(group->last_used.begin(), group->last_used.end(), 0);
+    }
+    impl_->clock = 0;
+}
+
 bool DiskExpertWeightStore::evaluate(ggml_tensor * tensor, bool ask, void * store) {
     auto & self = *static_cast<DiskExpertWeightStore *>(store);
     const auto found = self.impl_->routes.find(ggml_get_name(tensor));

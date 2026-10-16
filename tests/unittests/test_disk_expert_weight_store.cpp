@@ -162,6 +162,39 @@ int main(int argc, char ** argv) {
             const auto grouped_before = disk.statistics();
             if (disk.stage(group, grouped_ids) != slots || disk.statistics().expert_loads != grouped_before.expert_loads)
                 throw std::runtime_error("explicit expert staging did not reuse cached slots");
+            const auto other_group = disk.add_group(names, execution.backend(), 4);
+            for (const auto & route : std::vector<std::vector<int32_t>>{{7, 6, 7, 4}, {4, 6, 4, 7}, {7}, {7, 6, 7, 4}}) {
+                core::DiskExpertWeightStore cold(gguf, pin_experts);
+                const auto cold_group = cold.add_group(names, execution.backend(), 4);
+                const auto cold_slots = cold.stage(cold_group, route);
+                for (const auto cached_group : {group, other_group}) {
+                    disk.stage(cached_group, {0, 1, 2, 3});
+                    for (const auto id : {7, 6, 4}) disk.stage(cached_group, {id});
+                }
+                const auto before_reset = disk.statistics();
+                disk.invalidate_cache();
+                if (disk.statistics().buffer_bytes != before_reset.buffer_bytes ||
+                    disk.statistics().host_buffer_bytes != before_reset.host_buffer_bytes ||
+                    disk.statistics().expert_loads != before_reset.expert_loads)
+                    throw std::runtime_error("invalidating expert placement changed allocations or statistics");
+                const auto restaged = disk.stage(group, route);
+                if (restaged != cold_slots || disk.stage(other_group, route) != cold_slots ||
+                    disk.statistics().expert_loads - before_reset.expert_loads != 2 * cold.statistics().expert_loads)
+                    throw std::runtime_error("invalidating experts did not restore empty-cache placement");
+                for (size_t row = 0; row < route.size(); ++row) {
+                    for (size_t p = 0; p < full.size(); ++p) {
+                        const auto bytes = full[p].tensor->nb[2];
+                        std::vector<std::byte> cached_bytes(bytes), expected_bytes(bytes);
+                        ggml_backend_tensor_get(disk.tensor(group, p).tensor, cached_bytes.data(), restaged[row] * bytes, bytes);
+                        ggml_backend_tensor_get(full[p].tensor, expected_bytes.data(), route[row] * bytes, bytes);
+                        if (cached_bytes != expected_bytes) throw std::runtime_error("invalidating experts changed staged bytes");
+                    }
+                }
+                const auto loads = disk.statistics().expert_loads;
+                if (disk.stage(group, route) != restaged || disk.stage(other_group, route) != restaged ||
+                    disk.statistics().expert_loads != loads)
+                    throw std::runtime_error("expert staging did not reuse within-request slots");
+            }
             bool capacity_rejected = false;
             try { disk.stage(group, {0, 1, 2, 3, 4}); }
             catch (const std::runtime_error & error) {

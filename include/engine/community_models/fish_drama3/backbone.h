@@ -71,7 +71,7 @@ public:
     class DecodeSession {
     public:
         virtual ~DecodeSession() = default;
-        virtual void reset() = 0;
+        virtual void reset(bool invalidate_experts = false) = 0;
         virtual Drama3BackboneDecoderForwardResult prefill_embeddings(
             const std::vector<float> & embeddings,
             int64_t steps) = 0;

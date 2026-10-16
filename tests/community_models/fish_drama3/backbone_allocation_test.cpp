@@ -188,6 +188,7 @@ int main(int argc, char ** argv) {
             for (size_t i = 0; i < input.size(); ++i) input[i] = std::cos(float(i) * .091F);
             reference.reset();
             const auto reference_hidden = reference.prefill_embeddings(input, steps).hidden;
+            grouped.reset(true);
             const auto actual = grouped.prefill_embeddings(input, steps);
             float maximum = 0;
             double square = 0, energy = 0;
