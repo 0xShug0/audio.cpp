@@ -116,9 +116,25 @@
   ],
   "packages": [
     {
+      "id": "xtts_v2_gguf_q8_0",
+      "display_name": "XTTS v2 GGUF (Q8_0)",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "XTTS-v2-Q8",
+      "files": [
+        "Text to Speech (TTS)/xtts-v2-gpt-q8_0.gguf",
+        "Text to Speech (TTS)/xtts-v2-vocoder-f16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mirek190/audio.cpp"
+      }
+    },
+    {
       "id": "xtts_v2_gguf",
       "display_name": "XTTS v2 GGUF (F16)",
-      "default": true,
+      "default": false,
       "format": "gguf",
       "precision": "f16",
       "target_directory": "XTTS-v2",
@@ -142,6 +158,6 @@
     "docs": [
       "docs/community_models/xtts_v2.md"
     ],
-    "recommended_package": "xtts_v2_gguf"
+    "recommended_package": "xtts_v2_gguf_q8_0"
   }
 }

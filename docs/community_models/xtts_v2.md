@@ -20,11 +20,13 @@ normalized request options.
 
 ## Weights
 
-The GGUF package bundles two files plus the conditioning mel statistics:
+Two packages are available: a Q8_0-quantized GPT (recommended, ~518 MB
+total) and the full-precision F16/F32 original (~1.75 GB total). Each bundles:
 
-- `xtts-v2-gpt.gguf` - GPT-2 generator (text/mel embeddings, 30 transformer
-  layers, perceiver resampler, conditioning encoder, BPE tokenizer vocab).
-- `xtts-v2-vocoder-f16.gguf` - HiFi-GAN decoder and SE-ResNet speaker encoder.
+- `xtts-v2-gpt[-q8_0|-f16].gguf` - GPT-2 generator (text/mel embeddings, 30
+  transformer layers, perceiver resampler, conditioning encoder, BPE vocab).
+- `xtts-v2-vocoder-f16.gguf` - HiFi-GAN decoder and SE-ResNet speaker encoder
+  (kept F16 in both packages; it is small and quality-sensitive).
 
 The upstream Coqui release is distributed under CC-BY-NC-4.0 (see
 [License](#license)). Convert official checkpoints with the Coqui `model.pth`
