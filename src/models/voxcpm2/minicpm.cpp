@@ -1016,6 +1016,9 @@ public:
     step_cache_.import_state(state);
   }
 
+  int64_t cache_steps() const { return cache_steps_; }
+  int64_t valid_steps() const { return step_cache_.valid_steps(); }
+
   void import_state(const engine::runtime::TransformerKVState &state) {
     ensure_graph();
     step_cache_.import_state(state);
@@ -1205,6 +1208,14 @@ void VoxCPM2MiniCPMStepRuntime::import_state(
 engine::runtime::TransformerKVState
 VoxCPM2MiniCPMStepRuntime::export_state() const {
   return impl_->export_state();
+}
+
+int64_t VoxCPM2MiniCPMStepRuntime::cache_steps() const {
+  return impl_->cache_steps();
+}
+
+int64_t VoxCPM2MiniCPMStepRuntime::valid_steps() const {
+  return impl_->valid_steps();
 }
 
 VoxCPM2MiniCPMStepOutput
