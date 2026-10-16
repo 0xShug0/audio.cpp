@@ -1223,16 +1223,21 @@ public:
         expert_output_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, k * steps + rows);
         source_rows_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, rows);
         target_rows_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, rows);
+        expert_slot_ids_ = ggml_new_tensor_2d(persistent, GGML_TYPE_I32, 1, rows);
         positions_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, steps);
         mask_ = ggml_new_tensor_4d(persistent, GGML_TYPE_F16, steps, steps, 1, 1);
         for (auto * tensor : {x_, hidden_, residual_, shared_, scales_, ids_, expert_output_, source_rows_,
-                              target_rows_, positions_, mask_})
+                              target_rows_, expert_slot_ids_, positions_, mask_})
             ggml_set_input(tensor);
         buffer_.reset(ggml_backend_alloc_ctx_tensors(persistent, execution.backend()));
         if (!buffer_)
             throw std::runtime_error("cannot allocate Drama 3 offload prefill inputs");
         // Padded expert lanes must never read uninitialized values.
         ggml_backend_buffer_clear(buffer_.get(), 0);
+        std::vector<int32_t> slot_ids(static_cast<size_t>(rows));
+        for (int64_t slot = 0; slot < config.expert_cache_size; ++slot)
+            std::fill_n(slot_ids.begin() + slot * expert_rows, expert_rows, static_cast<int32_t>(slot));
+        ggml_backend_tensor_set(expert_slot_ids_, slot_ids.data(), 0, slot_ids.size() * sizeof(int32_t));
         std::vector<int32_t> positions(static_cast<size_t>(steps));
         std::vector<ggml_fp16_t> mask(static_cast<size_t>(steps * steps));
         for (int64_t row = 0; row < steps; ++row) {
@@ -1317,18 +1322,13 @@ public:
                 graph = ggml_new_graph_custom(ctx.ggml, small_nodes, false);
                 auto * source_rows = ggml_view_1d(ctx.ggml, source_rows_, rows, 0);
                 auto * target_rows = ggml_view_1d(ctx.ggml, target_rows_, rows, 0);
-                auto * input = ggml_reshape_4d(ctx.ggml, ggml_get_rows(ctx.ggml, hidden_, source_rows), h, 1,
-                                               block_rows, config.expert_cache_size);
-                auto * gate_bank = ggml_reshape_4d(ctx.ggml, layer.expert_gate.tensor,
-                    layer.expert_gate.tensor->ne[0], layer.expert_gate.tensor->ne[1], 1, config.expert_cache_size);
-                auto * up_bank = ggml_reshape_4d(ctx.ggml, layer.expert_up.tensor,
-                    layer.expert_up.tensor->ne[0], layer.expert_up.tensor->ne[1], 1, config.expert_cache_size);
-                auto * down_bank = ggml_reshape_4d(ctx.ggml, layer.expert_down.tensor,
-                    layer.expert_down.tensor->ne[0], layer.expert_down.tensor->ne[1], 1, config.expert_cache_size);
-                auto * gate = ggml_mul_mat(ctx.ggml, gate_bank, input);
-                auto * up = ggml_mul_mat(ctx.ggml, up_bank, input);
+                auto * input = ggml_reshape_3d(ctx.ggml, ggml_get_rows(ctx.ggml, hidden_, source_rows), h, 1, rows);
+                // Preserve the resident indexed-MoE arithmetic. Generic batched
+                // GEMMs select different quantized activation paths on CUDA.
+                auto * gate = ggml_mul_mat_id(ctx.ggml, layer.expert_gate.tensor, input, expert_slot_ids_);
+                auto * up = ggml_mul_mat_id(ctx.ggml, layer.expert_up.tensor, input, expert_slot_ids_);
                 auto * activated = ggml_mul(ctx.ggml, ggml_silu(ctx.ggml, gate), up);
-                auto * output = ggml_mul_mat(ctx.ggml, down_bank, activated);
+                auto * output = ggml_mul_mat_id(ctx.ggml, layer.expert_down.tensor, activated, expert_slot_ids_);
                 ggml_build_forward_expand(
                     graph,
                     ggml_set_rows(ctx.ggml, expert_output_, ggml_reshape_2d(ctx.ggml, output, h, rows), target_rows));
@@ -1405,7 +1405,8 @@ public:
             for (size_t start = 0; start < experts.size(); start += static_cast<size_t>(config_.expert_cache_size)) {
                 const auto end = std::min(experts.size(), start + static_cast<size_t>(config_.expert_cache_size));
                 const std::vector<int32_t> group(experts.begin() + start, experts.begin() + end);
-                const auto mapped = weights.disk_store->stage(weights.disk_group, group);
+                // Cache history must not change the packed-column placement or its arithmetic.
+                const auto mapped = weights.disk_store->stage(weights.disk_group, group, true);
                 size_t maximum = 0;
                 for (const auto expert : group)
                     maximum = std::max(maximum, by_expert[expert].size());
@@ -1475,6 +1476,7 @@ private:
     ggml_tensor * expert_output_ = nullptr;
     ggml_tensor * source_rows_ = nullptr;
     ggml_tensor * target_rows_ = nullptr;
+    ggml_tensor * expert_slot_ids_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * mask_ = nullptr;
     std::map<ggml_cgraph *, core::HostGraphPlan> plans_;

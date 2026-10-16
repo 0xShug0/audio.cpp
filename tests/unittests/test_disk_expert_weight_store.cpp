@@ -162,6 +162,27 @@ int main(int argc, char ** argv) {
             const auto grouped_before = disk.statistics();
             if (disk.stage(group, grouped_ids) != slots || disk.statistics().expert_loads != grouped_before.expert_loads)
                 throw std::runtime_error("explicit expert staging did not reuse cached slots");
+            for (const auto & route : std::vector<std::vector<int32_t>>{{7, 6, 7, 4}, {4, 6, 4, 7}, {7}, {7, 6, 7, 4}}) {
+                core::DiskExpertWeightStore cold(gguf, pin_experts);
+                const auto cold_group = cold.add_group(names, execution.backend(), 4);
+                const auto cold_slots = cold.stage(cold_group, route);
+                disk.stage(group, {0, 1, 2, 3});
+                const auto fixed = disk.stage(group, route, true);
+                if (fixed != cold_slots)
+                    throw std::runtime_error("fixed staging changed empty-cache placement");
+                for (size_t row = 0; row < route.size(); ++row) {
+                    for (size_t p = 0; p < full.size(); ++p) {
+                        const auto bytes = full[p].tensor->nb[2];
+                        std::vector<std::byte> cached_bytes(bytes), expected_bytes(bytes);
+                        ggml_backend_tensor_get(disk.tensor(group, p).tensor, cached_bytes.data(), fixed[row] * bytes, bytes);
+                        ggml_backend_tensor_get(full[p].tensor, expected_bytes.data(), route[row] * bytes, bytes);
+                        if (cached_bytes != expected_bytes) throw std::runtime_error("fixed staging changed expert bytes");
+                    }
+                }
+                const auto loads = disk.statistics().expert_loads;
+                if (disk.stage(group, route, true) != fixed || disk.statistics().expert_loads != loads)
+                    throw std::runtime_error("fixed staging reloaded unchanged experts");
+            }
             bool capacity_rejected = false;
             try { disk.stage(group, {0, 1, 2, 3, 4}); }
             catch (const std::runtime_error & error) {

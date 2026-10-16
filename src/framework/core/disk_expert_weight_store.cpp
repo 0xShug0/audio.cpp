@@ -84,7 +84,7 @@ public:
         mapped_file = io::read_binary_blob(path, true);
     }
 
-    std::vector<int32_t> stage(std::vector<int32_t> ids, size_t index) {
+    std::vector<int32_t> stage(std::vector<int32_t> ids, size_t index, bool fixed_slots = false) {
         const auto stage_started = std::chrono::steady_clock::now();
         auto & group = *groups.at(index);
         const std::unordered_set<int32_t> required(ids.begin(), ids.end());
@@ -96,10 +96,24 @@ public:
         struct Miss { int32_t id; size_t slot; };
         std::vector<Miss> misses;
         auto planned_ids = group.expert_ids;
+        if (fixed_slots) {
+            for (size_t slot = required.size(); slot < group.expert_ids.size(); ++slot)
+                if (required.count(group.expert_ids[slot])) group.expert_ids[slot] = planned_ids[slot] = -1;
+        }
+        size_t position = 0;
         for (const auto id : required) {
             const auto found = std::find(planned_ids.begin(), planned_ids.end(), id);
             size_t slot;
-            if (found != planned_ids.end()) {
+            if (fixed_slots) {
+                slot = position++;
+                if (group.expert_ids[slot] == id) {
+                    ++stats.cache_hits;
+                } else {
+                    planned_ids[slot] = id;
+                    misses.push_back({id, slot});
+                    group.expert_ids[slot] = -1;
+                }
+            } else if (found != planned_ids.end()) {
                 slot = static_cast<size_t>(found - planned_ids.begin());
                 ++stats.cache_hits;
             } else {
@@ -277,8 +291,8 @@ ggml_tensor * DiskExpertWeightStore::route(ModuleBuildContext & ctx, ggml_tensor
     return routed;
 }
 
-std::vector<int32_t> DiskExpertWeightStore::stage(size_t group, const std::vector<int32_t> & expert_ids) {
-    return impl_->stage(expert_ids, group);
+std::vector<int32_t> DiskExpertWeightStore::stage(size_t group, const std::vector<int32_t> & expert_ids, bool fixed_slots) {
+    return impl_->stage(expert_ids, group, fixed_slots);
 }
 
 bool DiskExpertWeightStore::evaluate(ggml_tensor * tensor, bool ask, void * store) {
