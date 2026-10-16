@@ -198,6 +198,13 @@
         "default": 32
       },
       {
+        "name": "codec_encoder_f32_accumulation",
+        "type": "bool",
+        "description": "Use F32 accumulation for F16 reference-encoder GEMMs on Vulkan. Try this if voice cloning produces incomplete speech or reaches the token limit. Other backends and codec decoding are unchanged.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "codec_backend",
         "type": "enum",
         "description": "Run the codec on the selected backend or on CPU.",

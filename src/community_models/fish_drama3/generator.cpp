@@ -95,8 +95,12 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     codec_options.weight_context_bytes = 16 * 1024 * 1024;
     const auto component = codecs::FishDacCodecComponent::load_from_tensor_source(assets_->codec_weights,
         assets_->codec, {}, codec_execution_->backend(), codec_backend.type, codec_options);
+    bool codec_encoder_f32_accumulation = false;
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_encoder_f32_accumulation"})) {
+        codec_encoder_f32_accumulation = runtime::parse_bool_option(*value, "fish_drama3.codec_encoder_f32_accumulation");
+    }
     codec_ = std::make_unique<codecs::FishDacCodecRuntime>(component, codec_backend,
-        codec_backend.threads, codec_options.graph_arena_bytes);
+        codec_backend.threads, codec_options.graph_arena_bytes, codec_encoder_f32_accumulation);
     assets_->model_weights->release_storage();
     assets_->codec_weights->release_storage();
 }
