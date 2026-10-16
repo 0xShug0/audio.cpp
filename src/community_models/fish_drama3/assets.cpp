@@ -169,6 +169,9 @@ std::shared_ptr<const Drama3Assets> load_drama3_assets(const std::filesystem::pa
         json::require_string(audio, "decoder_type") != "codebook_mtp_shared") {
         throw std::runtime_error("unsupported Drama 3 tower or semantic range");
     }
+    b.lm_head_token_ids.push_back(out->eos);
+    for (int32_t token = 0; token < t.codebook_size; ++token)
+        b.lm_head_token_ids.push_back(t.semantic_begin + token);
     out->model_weights = out->resources.open_tensor_source("model_weights");
     out->codec_weights = make_drama3_codec_source(out->resources.open_tensor_source("codec_weights"));
     (void) out->model_weights->require_metadata("model.language_model.layers.0.mlp.experts.gate_proj.weight");

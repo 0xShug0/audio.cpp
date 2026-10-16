@@ -178,6 +178,23 @@ int main(int argc, char ** argv) {
             true, false, {}, {}, std::nullopt);
         auto source = engine::assets::open_tensor_source(gguf, "model_weights/");
         auto resident = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
+        {
+            drama::LmHeadGraph full(prefill_execution, resident, c, 4 * 1024 * 1024);
+            auto selected_config = c;
+            selected_config.lm_head_token_ids = {9, 2, 3, 4, 15};
+            drama::LmHeadGraph selected(prefill_execution, resident, selected_config, 4 * 1024 * 1024);
+            for (float value : {.2F, -.3F, .2F}) {
+                const std::vector<float> hidden(256, value);
+                const auto expected = full.run(hidden);
+                const auto actual = selected.run(hidden);
+                if (actual.size() != selected_config.lm_head_token_ids.size())
+                    throw std::runtime_error("selected LM head candidate count mismatch");
+                for (size_t i = 0; i < actual.size(); ++i)
+                    if (std::abs(actual[i] - expected.at(selected_config.lm_head_token_ids[i])) > 1e-5F)
+                        throw std::runtime_error("selected LM head changed candidate logits");
+                selected.release_graph();
+            }
+        }
         c.disk_experts = true;
         auto disk = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
         drama::Drama3BackboneCachedDecodeGraph reference(prefill_execution, resident, c, 1024, 8 * 1024 * 1024);
