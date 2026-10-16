@@ -328,14 +328,29 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         ggml_tensor * th_t = nullptr;     // [256, 1]
         ggml_tensor * output = nullptr;   // [MEL, N] (half 0, conditioned)
         ggml_tensor * out_u = nullptr;    // [MEL, N] (half 1, uncond)
+        ~CfgGraph() {
+            // Cache eviction (more than two distinct (N, NT) keys in one process,
+            // i.e. every chunk past the second of a chunked request) destroys the
+            // unique_ptr, and without this the context pool, the gallocr arena and
+            // the io buffer of every evicted graph were leaked: measured 24.5 GiB
+            // peak RSS for a four-chunk CPU request, unchanged when the cache bound
+            // was lowered from 2 to 1 (more evictions, same leaks).
+            if (gallocr != nullptr) ggml_gallocr_free(gallocr);
+            if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
+            if (ctx != nullptr) ggml_free(ctx);
+        }
     };
     static auto * cache = new std::map<std::tuple<const LoadedModel *, int, int>, std::unique_ptr<CfgGraph>>();
     const auto ckey = std::make_tuple(&model, N, NT);
     auto it = cache->find(ckey);
     if (it == cache->end()) {
         auto gnew = std::make_unique<CfgGraph>();
+        // Measured on CPU the pool has to hold the staged DiT constants plus the graph
+        // objects at ~8 MiB per mel frame (9664 MiB at 1216 frames, 12302 MiB at 1856),
+        // so 9 MiB/frame carries ~12% headroom over the measured need; at 8 MiB/frame the
+        // pool was exactly full and a longer pass died on GGML_ASSERT(obj_new).
         const size_t ctx_bytes = std::min<size_t>(
-            std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (8ULL << 20)),
+            std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (9ULL << 20)),
             12288ULL << 20);
         gnew->ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
         ggml_context * ctx = gnew->ctx;
@@ -391,9 +406,12 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         }
         it = cache->emplace(ckey, std::move(gnew)).first;
         // bound the graph cache: each entry holds a CUDA io buffer + gallocr
-        // arena (~1-5 GiB at N~1000). Keep at most 2; evict the oldest
-        // (map order == insertion order), never the entry just added.
-        while (cache->size() > 2) {
+        // arena (~1-5 GiB at N~1000). Keep at most 1: on CPU the entries are
+        // host RAM and the graph pool is the ceiling that trips, on CUDA a miss
+        // re-captures the arena and costs ~50 ms (measured +3.4% on a 3.55 s
+        // request) while a second entry retains 96 MiB for the whole session.
+        // Evict the oldest (map order == insertion order), never the new entry.
+        while (cache->size() > 1) {
             bool evicted = false;
             for (auto cit = cache->begin(); cit != cache->end(); ++cit) {
                 if (cit->first != ckey) {

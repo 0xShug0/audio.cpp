@@ -108,7 +108,7 @@
       {
         "name": "frame_budget",
         "type": "int",
-        "description": "Total mel frames per CFM pass (ref + generated); larger budgets allow sentence-scale chunks at higher VRAM. Must be in [256, 8192]; omitted uses 2048. Explicit zero is not accepted.",
+        "description": "Total mel frames per CFM pass (ref + generated); larger budgets allow sentence-scale chunks at higher VRAM. Must be in [256, 8192]; omitted uses 2048. Explicit zero is not accepted. On CPU the allocated DiT graph pool caps a pass at 960 frames (10.2 s), so larger values are clamped there; CUDA keeps the full range.",
         "required": false,
         "min": 256,
         "max": 8192,
