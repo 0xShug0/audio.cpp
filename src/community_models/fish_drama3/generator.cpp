@@ -296,6 +296,12 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     }
     if (!streaming) {
         component_started = ProfileClock::now();
+        if (disk_experts_) {
+            // Preserve KV/recurrent state for continuation, but do not overlap
+            // completed prompt workspaces with the waveform decoder workspace.
+            backbone_->release_prefill_graphs();
+            tower_->release_prefill_graphs();
+        }
         result.audio = codec_->decode_codes(result.codes);
         codec_->release_runtime_graphs();
         component_ms[8] += debug::elapsed_ms(component_started);

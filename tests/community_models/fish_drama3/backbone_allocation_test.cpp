@@ -202,6 +202,10 @@ int main(int argc, char ** argv) {
                 maximum > 1e-3F || square > 1e-8 * energy)
                 throw std::runtime_error("grouped and resident batched prefill mismatch");
             const std::vector<float> next(256, .3F);
+            const auto valid_steps = grouped.valid_steps();
+            grouped.release_prefill_graphs();
+            if (grouped.valid_steps() != valid_steps)
+                throw std::runtime_error("releasing prefill graphs reset continuation state");
             const auto expected_next = reference.run_embedding_step(next);
             const auto actual_next = grouped.run_embedding_step(next);
             maximum = 0;

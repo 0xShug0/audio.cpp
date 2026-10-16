@@ -160,8 +160,11 @@ This is a memory/speed trade-off, not a faster MoE kernel. With
 so one upload serves multiple tokens. Attention and shared/router projections
 retain the resident batched-prefill path; cached experts retain their vector
 projection path. Session-owned graphs share one activation workspace and are
-reused for the same exact prompt length. A different length replaces that graph
-set rather than reusing a rounded capacity for stateful attention.
+reused for the same exact prompt length while retained. A different length
+replaces that graph set rather than reusing a rounded capacity for stateful
+attention. Offline disk mode releases backbone and tower prefill graphs before
+waveform decoding, without clearing continuation state. Later full prefills
+rebuild those workspaces; resident execution keeps its existing cache policy.
 Mixed CPU/backend expert execution retains token-wise prefill. Storage speed
 still matters, and resident mode remains the default. For the minimum cache:
 

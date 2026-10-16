@@ -1583,10 +1583,15 @@ public:
     }
 
     ~Drama3BackboneCachedDecodeGraph() {
-        offload_prefill_.reset();
-        prefill_graphs_.clear();
+        release_prefill_graphs();
         core::release_backend_graph_resources(execution_.backend(), graph_, true);
         decode_allocator_.reset();
+    }
+
+    void release_prefill_graphs() {
+        offload_prefill_.reset();
+        prefill_graphs_.clear();
+        prefill_cached_bytes_ = 0;
     }
 
     void reset() {
@@ -1895,6 +1900,10 @@ public:
         decode_graph_.reset();
     }
 
+    void release_prefill_graphs() {
+        decode_graph_.release_prefill_graphs();
+    }
+
 private:
     Drama3BackboneDecoderConfig config_;
     std::shared_ptr<Drama3BackboneWeights> weights_;
@@ -1966,6 +1975,10 @@ std::unique_ptr<Drama3BackboneDecoderRuntime::DecodeSession> Drama3BackboneDecod
 
 void Drama3BackboneDecoderRuntime::release_graphs() {
     impl_->release_graphs();
+}
+
+void Drama3BackboneDecoderRuntime::release_prefill_graphs() {
+    impl_->release_prefill_graphs();
 }
 
 }  // namespace engine::models::fish_drama3

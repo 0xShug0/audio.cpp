@@ -65,6 +65,7 @@ public:
     std::vector<float> token_embedding(const std::vector<int32_t> & token_ids);
     Drama3BackboneDecoderForwardResult forward_embeddings(const std::vector<float> & embeddings, int64_t steps);
     std::vector<float> lm_head(const std::vector<float> & hidden);
+    void release_prefill_graphs();
     void release_graphs();
 
     class DecodeSession {
