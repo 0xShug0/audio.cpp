@@ -1405,8 +1405,7 @@ public:
             for (size_t start = 0; start < experts.size(); start += static_cast<size_t>(config_.expert_cache_size)) {
                 const auto end = std::min(experts.size(), start + static_cast<size_t>(config_.expert_cache_size));
                 const std::vector<int32_t> group(experts.begin() + start, experts.begin() + end);
-                // Cache history must not change the packed-column placement or its arithmetic.
-                const auto mapped = weights.disk_store->stage(weights.disk_group, group, true);
+                const auto mapped = weights.disk_store->stage(weights.disk_group, group);
                 size_t maximum = 0;
                 for (const auto expert : group)
                     maximum = std::max(maximum, by_expert[expert].size());
@@ -1596,8 +1595,9 @@ public:
         prefill_cached_bytes_ = 0;
     }
 
-    void reset() {
+    void reset(bool invalidate_experts = false) {
         valid_steps_ = 0;
+        if (invalidate_experts && weights_->disk_store) weights_->disk_store->invalidate_cache();
         // Masked attention can still multiply a zero probability by a cached
         // value. Initialize KV as well as recurrent state to avoid NaNs from
         // uninitialized storage on the first request.
@@ -1919,8 +1919,8 @@ class Drama3BackboneDecodeSession final : public Drama3BackboneDecoderRuntime::D
 public:
     explicit Drama3BackboneDecodeSession(Drama3BackboneCachedDecodeGraph & graph) : graph_(graph) {}
 
-    void reset() override {
-        graph_.get().reset();
+    void reset(bool invalidate_experts) override {
+        graph_.get().reset(invalidate_experts);
     }
 
     Drama3BackboneDecoderForwardResult prefill_embeddings(

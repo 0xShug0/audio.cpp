@@ -177,7 +177,9 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     auto prefix_hidden = std::move(cached_hidden_);
     cached_prefix_.clear();
     cached_hidden_.clear();
-    if (prefix_rows == 0) decoder->reset();
+    // Start independent requests from the same expert placement, but preserve
+    // LRU reuse between continuation chunks within a request.
+    if (prefix_rows == 0) decoder->reset(disk_experts_ && !continuation);
     tower_->reset();
     mark_phase("setup_ms");
     component_ms[0] += debug::elapsed_ms(component_started);
