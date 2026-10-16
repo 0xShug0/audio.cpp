@@ -1,7 +1,7 @@
 {
   "family": "qwen3_tts",
   "display_name": "Qwen3-TTS",
-  "description": "Qwen TTS family for controllable 10-language speech synthesis, including 3-second voice cloning, CustomVoice instruction control over preset timbres, and VoiceDesign from natural-language descriptions.",
+  "description": "Qwen3-TTS for controllable 10-language synthesis, 3-second voice cloning, CustomVoice, and VoiceDesign.",
   "category": "tts",
   "status": "supported",
   "tasks": [
@@ -38,7 +38,7 @@
       {
         "name": "stream_chunk_policy",
         "type": "enum",
-        "description": "Streaming codec chunk schedule: grow starts with one frame and doubles to stream_frames_per_event; fixed uses that size throughout. Ignored offline.",
+        "description": "Streaming codec chunk schedule: grow starts with one frame and doubles to stream_frames_per_event; fixed uses that size throughout.",
         "required": false,
         "default": "grow",
         "values": [
@@ -49,7 +49,7 @@
       {
         "name": "stream_frames_per_event",
         "type": "int",
-        "description": "Codec frames per fixed streaming event, or the maximum for growing events. Smaller values reduce chunk latency but increase decoding overhead. Ignored in offline mode.",
+        "description": "Codec frames per fixed streaming event, or the maximum for growing events. Smaller values reduce chunk latency but increase decoding overhead.",
         "required": false,
         "default": 12,
         "min": 1
@@ -151,13 +151,13 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Transcript matching the reference audio for Base voice cloning; required unless x_vector_only_mode=true.",
+        "description": "Transcript matching the reference audio for voice cloning; required unless x_vector_only_mode=true.",
         "required": false
       },
       {
         "name": "x_vector_only_mode",
         "type": "bool",
-        "description": "Use only the speaker embedding for Base voice cloning instead of ICL reference codec prompting; default false.",
+        "description": "Use only the speaker embedding for voice cloning instead of ICL reference codec prompting; default false.",
         "required": false,
         "default": false
       },
@@ -170,7 +170,7 @@
       {
         "name": "voice_id",
         "type": "enum",
-        "description": "Named preset speaker from the CustomVoice checkpoint. These are the official checkpoint's presets; available names are determined by the loaded checkpoint. Legacy speaker remains accepted.",
+        "description": "Named preset speaker from the CustomVoice checkpoint. Legacy speaker remains accepted.",
         "values": [
           "aiden",
           "dylan",
