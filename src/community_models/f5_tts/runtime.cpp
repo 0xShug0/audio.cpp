@@ -406,9 +406,12 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         }
         it = cache->emplace(ckey, std::move(gnew)).first;
         // bound the graph cache: each entry holds a CUDA io buffer + gallocr
-        // arena (~1-5 GiB at N~1000). Keep at most 2; evict the oldest
-        // (map order == insertion order), never the entry just added.
-        while (cache->size() > 2) {
+        // arena (~1-5 GiB at N~1000). Keep at most 1: on CPU the entries are
+        // host RAM and the graph pool is the ceiling that trips, on CUDA a miss
+        // re-captures the arena and costs ~50 ms (measured +3.4% on a 3.55 s
+        // request) while a second entry retains 96 MiB for the whole session.
+        // Evict the oldest (map order == insertion order), never the new entry.
+        while (cache->size() > 1) {
             bool evicted = false;
             for (auto cit = cache->begin(); cit != cache->end(); ++cit) {
                 if (cit->first != ckey) {
