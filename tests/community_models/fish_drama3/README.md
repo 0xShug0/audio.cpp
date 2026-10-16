@@ -1,5 +1,28 @@
 # Drama 3 regression tests
 
+## Offload Regression Group
+
+The [case group](offload_regression_cases.json) covers three noise seeds, the
+standard five-request sequence, three long-short-long sequences, and resident
+controls. Each case starts a fresh session; its requests share that session.
+
+```bash
+RUN_DIR="build/logs/drama3-regression/$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$RUN_DIR"
+conda run --no-capture-output -n qwen3-tts python tools/audiocpp_cli/run_audiocpp_cli_path_tests.py \
+  --cases tests/community_models/fish_drama3/offload_regression_cases.json \
+  --models-root /path/to/models \
+  --audiocpp-cli-bin build/debug/bin/audiocpp_cli \
+  --backend cuda --threads 8 --measure-resources --resource-sample-ms 25 --log \
+  --out-root "$RUN_DIR" > "$RUN_DIR/runner.log" 2>&1
+```
+
+Run the whole group sequentially and preserve the baseline. Check repeat hashes,
+noise and transcript quality, baseline parity, peak VRAM, and end-to-end RTF.
+Exclude only the standard sequence's warmup when averaging warm RTF.
+
+## Unit and HTTP Tests
+
 `fish_drama3_backbone_allocation_test` injects failures during persistent-buffer
 and graph allocation, checks that repeated failures retain no buffers, and then
 runs a decode step. It covers both allocator paths with a small CPU fixture and

@@ -1168,7 +1168,29 @@ private:
         auto x = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config_.hidden_size}));
         input_ = x.tensor;
         ggml_set_input(input_);
-        x = modules::LinearModule({config_.hidden_size, config_.vocab_size, false}).build(ctx, x, weights_->lm_head);
+        if (config_.lm_head_token_ids.empty()) {
+            x = modules::LinearModule({config_.hidden_size, config_.vocab_size, false}).build(ctx, x, weights_->lm_head);
+        } else {
+            const auto input = x;
+            auto * head = weights_->lm_head.weight.tensor;
+            // View candidate rows without copying the head weights.
+            for (size_t first = 0; first < config_.lm_head_token_ids.size();) {
+                const auto token = config_.lm_head_token_ids[first];
+                size_t end = first + 1;
+                while (end < config_.lm_head_token_ids.size() &&
+                       config_.lm_head_token_ids[end] == token + static_cast<int64_t>(end - first)) ++end;
+                const auto count = static_cast<int64_t>(end - first);
+                if (token < 0 || token + count > config_.vocab_size)
+                    throw std::runtime_error("Drama 3 LM head candidate range is outside the vocabulary");
+                auto weight = core::wrap_tensor(
+                    ggml_view_2d(ctx.ggml, head, config_.hidden_size, count, head->nb[1], token * head->nb[1]),
+                    core::TensorShape::from_dims({count, config_.hidden_size}), head->type);
+                auto logits = modules::LinearModule({config_.hidden_size, count, false}).build(
+                    ctx, input, {weight, std::nullopt});
+                x = first == 0 ? logits : modules::ConcatModule({2}).build(ctx, x, logits);
+                first = end;
+            }
+        }
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
         mem_.graph = ggml_new_graph_custom(mem_.ctx.get(), 4096, false);
