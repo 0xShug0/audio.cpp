@@ -89,13 +89,13 @@ audiocpp_cli \
 |---|---|---:|---|
 | `cosyvoice3.reference_cache_slots` | integer >= 0 | `4` | Prepared reference-audio cache slots. |
 | `cosyvoice3.mem_saver` | bool | `false` | Release cached runtime graphs after request phases. |
-| `cosyvoice3.rknn_flow` | paths | unset | Run the flow DiT estimator on a Rockchip NPU. |
+| `cosyvoice3.exec_plan` | JSON object | `{}` | Component execution plans. The only component is `flow`; see the RKNN section. |
 
 ## Rockchip NPU (RKNN) estimator
 
 The flow decoder is the expensive half of this family: the DiT estimator runs once per Euler step
 (`num_inference_steps`, default 10) over the whole utterance, and on an RK3588 it is ~79% of
-synthesis. `cosyvoice3.rknn_flow` voices that one stage through `librknnrt` and leaves the AR LLM
+synthesis. `cosyvoice3.exec_plan` voices that one stage through `librknnrt` and leaves the AR LLM
 and the HiFT vocoder on the host, which is the split the reference RKNN port of this model
 measured best: a quantized NPU LLM degrades the speech tokens, and a quantized HiFT adds
 high-frequency artifacts.
@@ -111,17 +111,20 @@ python3 tools/rknn/prepare_cosyvoice3_rknn_flow.py \
 ```
 
 Then point the session at the ladder (order does not matter; the smallest engine that fits is
-used, and an utterance longer than the largest engine runs the CPU graph):
+used, and an utterance longer than the largest engine runs the CPU graph). The ladder travels as
+the `flow` component's `main` artifact, comma-separated — see
+[component execution plans](../build/rockchip-npu.md#component-execution-plans):
 
 ```bash
 audiocpp_cli --task clon --family cosyvoice3 --model models/CosyVoice3-GGUF/cosyvoice3-q8_0.gguf \
-    --backend cpu --session-option cosyvoice3.rknn_flow=models/CosyVoice3-RKNN/flow_estimator_seq200.rknn,models/CosyVoice3-RKNN/flow_estimator_seq900.rknn \
+    --backend cpu --session-option 'cosyvoice3.exec_plan={"flow":{"impl":"rknn","artifacts":{"main":"models/CosyVoice3-RKNN/flow_estimator_seq200.rknn,models/CosyVoice3-RKNN/flow_estimator_seq900.rknn"}}}' \
     --text "..." --voice-ref assets/resources/b.wav --reference-text "..." --out out.wav
 ```
 
 Build with `-DENGINE_ENABLE_RKNN=ON` (plus `ENGINE_RKNN_LIBRARY` / `ENGINE_RKNN_INCLUDE_DIR`
-pointing at the board's `librknnrt`); the option throws at load in a build without it rather than
-falling back silently. Each engine is ~700 MB and an utterance is padded up to the engine's
+pointing at the board's `librknnrt`); a plan selecting `impl: rknn` throws at load in a build
+without it rather than falling back silently. Each engine is ~700 MB and an utterance is padded up
+to the engine's
 length, so the ladder is a time trade: the estimator costs about `S^2`, and the padding is exact
 (measured bit-identical to an unpadded run), not a quality one.
 

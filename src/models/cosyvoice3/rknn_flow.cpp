@@ -97,7 +97,6 @@ struct CosyVoice3RknnFlow::Impl {
         void load(int64_t expected_channels) {
             const auto start = Clock::now();
             engine.load(path, kLabel);
-            loaded = true;
             if (engine.input_count() != kInputCount || engine.output_count() != kOutputCount) {
                 throw std::runtime_error(
                     std::string(kLabel) + ": expected the 6-input/1-output estimator export, got " +
@@ -151,6 +150,10 @@ struct CosyVoice3RknnFlow::Impl {
             spks.resize(static_cast<size_t>(kCfgBatch) * static_cast<size_t>(channels));
             debug::timing_log_scalar("cosyvoice3.flow.dit.rknn.load_ms", debug::elapsed_ms(start));
             debug::trace_log_scalar("cosyvoice3.flow.dit.rknn.loaded_frames", frames);
+            // Only once the engine is validated and its scratch exists: a slot that threw halfway
+            // through would otherwise be marked resident, and every later request would be handed
+            // an engine with no input buffers instead of the same clear failure.
+            loaded = true;
         }
 
         // One ODE step at the engine's own length. The five host-side tensors arrive at the real
@@ -271,9 +274,11 @@ struct CosyVoice3RknnFlow::Impl {
                 }
                 // The rung is kept (and the new one pinned) only while the whole resident set stays
                 // inside the aperture; a rung above the budget can never share it with anything, so
-                // it evicts everything and is itself evicted by the next length change.
+                // it evicts everything and is itself evicted by the next length change. The budget
+                // is spent on the engine's compiled length, not the request's: a 900-frame engine
+                // asked for by a 200-frame utterance reserves 900 frames of aperture.
                 // ponytail: linear aperture proxy; a per-engine measured table would pin ~2x more.
-                const bool fits = (resident + frames) * kApertureMiBPerFrame <= kAperturePinBudgetMiB;
+                const bool fits = (resident + slot.frames) * kApertureMiBPerFrame <= kAperturePinBudgetMiB;
                 if (!fits) {
                     for (auto & other : slots) {
                         if (other->loaded) {
@@ -285,7 +290,7 @@ struct CosyVoice3RknnFlow::Impl {
                 slot.load(channels);
                 debug::trace_log_scalar(
                     "cosyvoice3.flow.dit.rknn.resident_frames",
-                    fits ? resident + frames : frames);
+                    fits ? resident + slot.frames : slot.frames);
             }
             return slot;
         }

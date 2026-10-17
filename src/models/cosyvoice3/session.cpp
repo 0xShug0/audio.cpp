@@ -107,10 +107,10 @@ CosyVoice3Session::CosyVoice3Session(
     auto validation_options = options;
     // This previously advertised option never selected convolution storage.
     validation_options.options.erase("cosyvoice3.conv_weight_type");
-    // A published GGUF package embeds its own model spec, so an option added to
-    // model_specs/cosyvoice3.json is invisible to a package built before it. The NPU estimator
-    // option is therefore also accepted by name (kokoro_tts does the same).
-    validation_options.options.erase("cosyvoice3.rknn_flow");
+    // Older embedded contracts omit exec_plan; parse_exec_plan validates its value.
+    if (contract_->session_option_keys.find("cosyvoice3.exec_plan") == contract_->session_option_keys.end()) {
+        validation_options.options.erase("cosyvoice3.exec_plan");
+    }
     runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
     if (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("CosyVoice3 supports tts and clone tasks");
@@ -158,8 +158,18 @@ CosyVoice3Session::CosyVoice3Session(
         storage_type);
     // The Rockchip NPU sidecar for the flow estimator: one compiled engine per sequence length,
     // loaded up front because an engine takes seconds to init and the ODE loop needs it per step.
-    const std::vector<std::string> rknn_flow_engines = split_paths(
-        runtime::find_option(options.options, {"cosyvoice3.rknn_flow"}).value_or(""));
+    // The ladder travels as the component's main artifact, comma-separated, because the roles of
+    // an exec_plan artifact block are a closed vocabulary while the ladder is not.
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "cosyvoice3.exec_plan",
+        {{"flow", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}},
+           {"rknn", {}, {"main"}, {}}}}});
+    const auto & flow_plan = exec_plan.at("flow");
+    const std::vector<std::string> rknn_flow_engines = flow_plan.impl == "rknn"
+        ? split_paths(flow_plan.artifacts.at("main"))
+        : std::vector<std::string>{};
     flow_ = std::make_unique<CosyVoice3DiTFlowRuntime>(
         assets_,
         execution_context(),
