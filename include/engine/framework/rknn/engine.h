@@ -26,6 +26,42 @@ std::vector<char> read_engine(const std::string & path, const std::string & labe
 // Formats one `RKNN_*` return code the same way every sidecar does.
 std::string status(const std::string & label, const char * what, int code);
 
+// The largest set of engine contexts the RK3588 I/O aperture fits resident at once, stated in the
+// linear proxy below. Measured on RK3588 with every context of a ladder resident in one process: the
+// CosyVoice3 flow estimator occupies 0.27 GiB at S=110, 0.48 at 200, 0.77 at 250, 1.93 at 400, 3.04
+// at 500 and 4.39 at 900, while all of its engine files are 661-714 MB -- so a context costs its
+// compiled length, not its image size. The short rungs are genuinely co-resident (S=200 x3,
+// 250+250+110 and 110 x4 all initialize together, at <= 1.81 GiB) and the long ones are not (400
+// coexists only with 110/200, 500 with nothing). 2800 MiB of proxy is the largest resident set the
+// measured aperture fits: 110+200+250 = 1.52 GiB real (three engines fit 1.81 GiB) and 110+400 =
+// 2.20 GiB (two fit 2.42), while 200+400 = 2.41 GiB is refused by the proxy although it measures
+// just inside the two-engine ceiling -- the proxy under-pins, never over-pins. A sidecar that
+// compiles a ladder passes its own measured per-unit cost; the ceiling is the board's.
+inline constexpr int64_t kAperturePinBudgetMiB = 2800;
+
+// Aperture accounting for a ladder of engines compiled one per sequence length: the resident set is
+// the sum of the compiled lengths of the loaded engines, and a rung is kept (and the new engine
+// pinned) only while the whole set stays inside the budget. A rung above the budget can never share
+// the aperture with anything, so it evicts the set and is itself evicted by the next length change.
+// The budget is spent on the engine's compiled length, not the request's: a 900-frame engine asked
+// for by a 200-frame utterance reserves 900 frames of aperture.
+class ApertureBudget {
+public:
+    explicit ApertureBudget(int64_t mib_per_unit, int64_t budget_mib = kAperturePinBudgetMiB)
+        : mib_per_unit_(mib_per_unit), budget_mib_(budget_mib) {}
+
+    // Would adding an engine of `units` compiled length keep the resident set inside the aperture?
+    bool fits(int64_t units) const { return (resident_ + units) * mib_per_unit_ <= budget_mib_; }
+    void reserve(int64_t units) { resident_ += units; }
+    void clear() { resident_ = 0; }
+    int64_t resident() const { return resident_; }
+
+private:
+    int64_t resident_ = 0;
+    int64_t mib_per_unit_ = 0;
+    int64_t budget_mib_ = 0;
+};
+
 #if defined(ENGINE_HAVE_RKNN)
 
 // One graph input for `Engine::run`. `size` is the size of the buffer in bytes: with

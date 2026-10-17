@@ -30,20 +30,13 @@ const char * const kLabel = "CosyVoice3 flow estimator RKNN";
 // unconditioned one, and the ODE loop mixes them outside the engine.
 constexpr int64_t kCfgBatch = 2;
 
-// The NPU I/O aperture an engine occupies is not its file size: measured on RK3588 with every
-// context of a ladder resident in one process, the estimator engines occupy 0.27 GiB at S=110,
-// 0.48 at 200, 0.77 at 250, 1.93 at 400, 3.04 at 500 and 4.39 at 900, while all of their files are
-// 661-714 MB. The short rungs are therefore genuinely co-resident (S=200 x3, 250+250+110 and 110 x4
-// all initialize together, at <= 1.81 GiB), and the long ones are not (400 coexists only with
-// 110/200, 500 with nothing). 5 MiB per frame over-estimates the short rungs by ~2x (S=110 really
-// costs 0.27 GiB, S=200 0.48, S=250 0.77) and is within 5% of the long ones, so the budget is a
-// statement about the long rungs with a safety margin on the short ones. 2800 MiB of proxy is the
-// largest resident set the measured aperture fits: 110+200+250 = 1.52 GiB real (three engines fit
-// 1.81 GiB), 110+400 = 2.20 GiB (two engines fit 2.42), while 200+400 = 2.41 GiB is refused by the
-// proxy although it measures just inside the two-engine ceiling -- the proxy pins less than the
-// aperture allows, never more.
+// The linear aperture proxy for one estimator rung: 5 MiB per compiled mel frame. Measured on
+// RK3588 with every context of the ladder resident in one process, the estimator engines occupy
+// 0.27 GiB at S=110, 0.48 at 200, 0.77 at 250, 1.93 at 400, 3.04 at 500 and 4.39 at 900, while all
+// of their files are 661-714 MB. The proxy over-estimates the short rungs by ~2x and is within 5%
+// of the long ones, so the shared ceiling (rknn::ApertureBudget, whose comment carries the
+// co-residency matrix) is a statement about the long rungs with a safety margin on the short ones.
 constexpr int64_t kApertureMiBPerFrame = 5;
-constexpr int64_t kAperturePinBudgetMiB = 2800;
 
 // Graph order, as tools/rknn/prepare_cosyvoice3_rknn_flow.py compiles it.
 const char * const kInputNames[] = {"x", "mask", "mu", "t", "spks", "cond"};
@@ -222,6 +215,10 @@ struct CosyVoice3RknnFlow::Impl {
     // ladder has to be a vector of slots, not of slots by value.
     std::vector<std::unique_ptr<Slot>> slots;
     int64_t channels = 0;
+#if defined(ENGINE_HAVE_RKNN)
+    // Resident-set accounting for the ladder, in the shared aperture proxy.
+    engine::rknn::ApertureBudget budget_{kApertureMiBPerFrame};
+#endif
 
 #if defined(ENGINE_HAVE_RKNN)
     void register_ladder(const std::vector<std::string> & engine_paths, int64_t expected_channels) {
@@ -266,19 +263,11 @@ struct CosyVoice3RknnFlow::Impl {
                 continue;
             }
             if (!slot.loaded) {
-                int64_t resident = 0;
-                for (auto & other : slots) {
-                    if (other->loaded) {
-                        resident += other->frames;
-                    }
-                }
                 // The rung is kept (and the new one pinned) only while the whole resident set stays
                 // inside the aperture; a rung above the budget can never share it with anything, so
-                // it evicts everything and is itself evicted by the next length change. The budget
-                // is spent on the engine's compiled length, not the request's: a 900-frame engine
-                // asked for by a 200-frame utterance reserves 900 frames of aperture.
+                // it evicts everything and is itself evicted by the next length change.
                 // ponytail: linear aperture proxy; a per-engine measured table would pin ~2x more.
-                const bool fits = (resident + slot.frames) * kApertureMiBPerFrame <= kAperturePinBudgetMiB;
+                const bool fits = budget_.fits(slot.frames);
                 if (!fits) {
                     for (auto & other : slots) {
                         if (other->loaded) {
@@ -286,11 +275,12 @@ struct CosyVoice3RknnFlow::Impl {
                             other->loaded = false;
                         }
                     }
+                    budget_.clear();
                 }
                 slot.load(channels);
+                budget_.reserve(slot.frames);
                 debug::trace_log_scalar(
-                    "cosyvoice3.flow.dit.rknn.resident_frames",
-                    fits ? resident + slot.frames : slot.frames);
+                    "cosyvoice3.flow.dit.rknn.resident_frames", budget_.resident());
             }
             return slot;
         }
