@@ -531,11 +531,13 @@ Relative `voice_dir` paths resolve against the config file's directory. The comm
 
 When a request sends `"voice"` that is not a configured model preset, the server checks `<voice_dir>/<name>.wav`; if the file exists it is loaded as the cloning reference, and the `<name>` transcript from `prompt_text` is injected as `reference_text` unless the request already provides one.
 
+For Irodori-TTS, the library can also hold Speaker Inversion embeddings as `<name>.speaker.safetensors` (the files Irodori-TTS training writes). `"voice": "<name>"` then passes the file as the `speaker_embedding_file` request option, in place of reference audio; see [Speaker Inversion Embeddings](../../docs/models/irodori_tts.md#speaker-inversion-embeddings). An embedding wins over a `.wav` of the same name. Other models do not use these files.
+
 Server-side resolution of reference audio and voice names:
 
 1. Explicit `voice_ref` replaces any preset reference audio and bypasses WAV-name lookup.
 2. `voice` matching a configured model preset — preset wins.
-3. `voice` matching a wav basename in `voice_dir` — voice-library clone.
+3. `voice` matching a wav basename in `voice_dir` — voice-library clone. For Irodori-TTS, a `<name>.speaker.safetensors` in `voice_dir` comes first and is used as the speaker embedding.
 4. Otherwise, `voice` is passed as the model-native cached voice ID.
 
 If neither `voice` nor `voice_ref` is supplied, the configured default preset
@@ -544,7 +546,8 @@ applies. Prefer one selection method per request: combining `voice` and
 is model-specific. Top-level `reference_text` overrides the preset/library text.
 
 [`GET /v1/audio/voices`](api.md#get-v1audiovoicesmodelid) lists library WAV
-basenames, deduplicated against configured preset and cached voice names.
+basenames, deduplicated against configured preset and cached voice names, and
+for an Irodori-TTS model also the library's speaker embedding names.
 
 With native UI management enabled and no configured `voice_dir`, the server
 provides embedded demo recordings in a temporary reference library. Those names

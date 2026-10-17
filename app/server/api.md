@@ -383,7 +383,9 @@ A browser cannot drive it: `fetch()` request streaming requires HTTP/2 and is ha
 Lists cached voice IDs, configured model preset names, and shared `voice_dir`
 WAV basenames. If the configured model path is a directory containing
 `embeddings/*.safetensors` (used by PocketTTS), their filename stems are also
-listed. It does not enumerate speaker tensors packed inside a GGUF; use the
+listed. For an Irodori-TTS model, `voice_dir` speaker embeddings
+(`<name>.speaker.safetensors`) are listed by `<name>`. It does not enumerate
+speaker tensors packed inside a GGUF; use the
 [model's documented built-in IDs](README.md#built-in-voices-and-discovery) for those.
 
 Pass `model` explicitly when several entries are configured. Omitting it selects

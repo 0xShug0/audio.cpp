@@ -828,7 +828,8 @@ engine::runtime::TaskRequest ParallelServerState::build_speech_request(const Loa
             request_base_, config_.voice_dir, model.voice_presets, model.default_voice_preset,
             model.accepts_reference_text, model.accepts_speed,
             model.accepts_speaking_rate,
-            model.config.default_request_options});
+            model.config.default_request_options,
+            uses_voice_library_speaker_embeddings(model.config.family)});
 }
 
 struct ParallelServerState::TimedTaskResult {
@@ -2336,8 +2337,10 @@ HttpResponse ParallelServerState::handle_voices(const HttpRequest & request) con
         }
         if (model_idx != SIZE_MAX) { selected = models_.at(model_idx).get(); }
     }
+    bool lists_speaker_embeddings = false;
     if (selected != nullptr) {
         const auto & model = *selected;
+        lists_speaker_embeddings = uses_voice_library_speaker_embeddings(model.config.family);
         std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
         for (const auto & [name, preset] : model.voice_presets) {
             (void) preset;
@@ -2360,6 +2363,11 @@ HttpResponse ParallelServerState::handle_voices(const HttpRequest & request) con
                 if (entry.is_regular_file() && entry.path().extension() == ".wav") {
                     voices.push_back(entry.path().stem().string());
                 }
+            }
+        }
+        if (lists_speaker_embeddings) {
+            for (auto & name : voice_library_speaker_embedding_names(*config_.voice_dir)) {
+                voices.push_back(std::move(name));
             }
         }
     }

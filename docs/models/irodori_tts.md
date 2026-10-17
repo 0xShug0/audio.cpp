@@ -84,6 +84,7 @@ audiocpp_cli --task tts --family irodori_tts \
 
 - **By file:** request option `speaker_embedding_file` (CLI `--request-option`, or `"options"` in a server request). Legacy `speaker_embedding_path` remains accepted.
 - **By name:** put the file in an `embeddings` directory next to the model weights as `<name>.safetensors` and pass `<name>` as the voice id (CLI `--voice-id`, server `"voice"`). With the model path set to that directory, the server's `GET /v1/audio/voices` lists the names. A voice id with no such file is ignored, as before.
+- **From the server's voice library:** put the file in the server's [`voice_dir`](../../app/server/README.md#voice-library-voice_dir) as `<name>.speaker.safetensors` and send `"voice": "<name>"`. This works with any model path, including a single GGUF file, and the library is shared by all configured Irodori-TTS models. `GET /v1/audio/voices?model=<id>` lists the names, so the WebUI's voice list offers them too. An embedding wins over a `.wav` of the same name.
 
 The file must hold a `speaker_embedding` tensor of shape `[tokens, speaker_dim]` (F32, F16 or BF16). An embedding cannot be combined with reference audio or `no_ref=true`. Use it with the base checkpoint it was trained on: an embedding from another checkpoint with the same `speaker_dim` loads, but the speaker match is not guaranteed.
 
