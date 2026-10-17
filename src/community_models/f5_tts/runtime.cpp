@@ -328,6 +328,11 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         ggml_tensor * th_t = nullptr;     // [256, 1]
         ggml_tensor * output = nullptr;   // [MEL, N] (half 0, conditioned)
         ggml_tensor * out_u = nullptr;    // [MEL, N] (half 1, uncond)
+        // The staged graph constants this build created (pe table, masks,
+        // per-block ones rows). On CUDA each carries a private backend buffer
+        // allocated in const_stage_bind: the eviction path destroys the
+        // unique_ptr, and nothing else frees them.
+        std::vector<engine::models::f5_tts::ConstStage> * stage = nullptr;
         ~CfgGraph() {
             // Cache eviction (more than two distinct (N, NT) keys in one process,
             // i.e. every chunk past the second of a chunked request) destroys the
@@ -338,6 +343,7 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
             if (gallocr != nullptr) ggml_gallocr_free(gallocr);
             if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
             if (ctx != nullptr) ggml_free(ctx);
+            const_stage_free(stage);
         }
     };
     static auto * cache = new std::map<std::tuple<const LoadedModel *, int, int>, std::unique_ptr<CfgGraph>>();
@@ -367,6 +373,7 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
             ctx, dit_w, arch, N, NT, model.backend_type);
         const_stage_end(stage);
         cfg_staged = stage;
+        gnew->stage = stage;
         // Mark I/O explicitly: without ggml_set_input/output the gallocr
         // treats leaves as scratch and may clobber them across replays.
         ggml_set_input(io.x.tensor);
@@ -539,12 +546,17 @@ std::vector<float> f5_dit_forward(
         ggml_tensor * tap_time_embed = nullptr;
         ggml_tensor * tap_block0 = nullptr;
         ggml_tensor * tap_block21 = nullptr;
+        // The staged graph constants this build created (pe table, per-block ones
+        // rows). On CUDA each carries a private backend buffer from
+        // const_stage_bind, so the vector has to die with the graph.
+        std::vector<engine::models::f5_tts::ConstStage> * stage = nullptr;
         ~DiTGraph() {
             // Leaked by design when cached (freed only on program-graph reset);
             // destroyed here only when construction throws mid-build.
             if (gallocr != nullptr) ggml_gallocr_free(gallocr);
             if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
             if (ctx != nullptr) ggml_free(ctx);
+            const_stage_free(stage);
         }
     };
 
@@ -587,6 +599,7 @@ std::vector<float> f5_dit_forward(
     const_stage_end(stage);
     // staged constants upload after ggml_backend_alloc_ctx_tensors below
     staged_module_consts = stage;
+    gnew->stage = stage;
     ggml_set_input(io.x.tensor);
     ggml_set_input(io.cond.tensor);
     ggml_set_input(io.text_ids.tensor);
