@@ -21,9 +21,11 @@ build flag or Torch package is needed.
 This port uses the fixes from [Chatterbox S3 encoder correctness PR #778](https://github.com/0xShug0/audio.cpp/pull/778)
 (relative-shift padding and attention/feed-forward LayerNorm epsilon), which
 merged before the Kitten integration. Current upstream includes both changes.
-The Kitten patch does not modify the shared framework, Chatterbox implementation,
-or ggml. Its changes outside model-specific files are build registration,
-documentation indexes, and the WebUI catalog with its generated bundle.
+The original Kitten integration also added build registration, documentation
+indexes and the WebUI catalog with its generated bundle. The updated weight
+profiles below update the Kitten implementation, exporter, package metadata, tests,
+documentation and Kitten WebUI entries; shared framework, Chatterbox and ggml code
+are unchanged.
 
 ```sh
 cmake -S . -B build-kitten2 -DAUDIOCPP_MODEL_SET=custom \
@@ -67,39 +69,42 @@ minimum for every input or weight type.
 
 ## Download and preset speech
 
-The ready-to-run [community package](https://huggingface.co/dignome/kitten_tts2)
-contains the full native decoder, speaker encoders, and all 48 prepared voice
-entries. Install it through the WebUI model manager or from the command line:
+The ready-to-run [community packages](https://huggingface.co/dignome/kitten_tts2)
+contain the full native decoder, speaker encoders, and all 48 prepared voice
+entries. **Q8 is the default and recommended package** and the initial WebUI
+choice. BF16 and hybrid Q4 are also available; see
+[weight profiles](#updated-weight-profiles).
 
 ```sh
 python tools/model_manager_v2.py install kitten_tts2 --models-root models
 ```
 
-The explicit package ID is `kitten_tts2_q8_0`. It installs the GGUF and readable
-license/NOTICE files under `models/kitten-tts2/`. No Hugging Face token is needed.
+The family ID resolves to `kitten_tts2_q8_v2`, which installs the GGUF and readable
+license/NOTICE files under `models/kitten-tts2/`. No Hugging Face token is
+needed.
 
 Direct download:
-[kitten-tts2-native-q8-multilingual.gguf](https://huggingface.co/dignome/kitten_tts2/resolve/main/kitten-tts2-native-q8-multilingual.gguf)
-(3,282,123,776 bytes, approximately 3.28 GB). The published file's SHA-256 is
-`e97920ca5053f9fcd4de638dcd8114ed2510d4291a93257473a8843c3ff349ad`.
+[kitten-tts2-q8-v2-multilingual.gguf](https://huggingface.co/dignome/kitten_tts2/resolve/main/kitten-tts2-q8-v2-multilingual.gguf)
+(3,282,201,248 bytes, approximately 3.28 GB). Its SHA-256 is
+`a9c14096dc9aac53ac38658ac41d0c296d0b5d24cfc26b1dd5a38e8dba0e2cfe`.
 Separate model components or the original preset recordings are not needed at
 runtime. Custom voice cloning still requires the reference clip and transcript
 you supply.
 
 ```sh
 audiocpp_cli --family kitten_tts2 \
-  --model models/kitten-tts2/kitten-tts2-native-q8-multilingual.gguf \
+  --model models/kitten-tts2/kitten-tts2-q8-v2-multilingual.gguf \
   --backend cpu --threads 8 --task tts --voice-id Bruno \
   --request-option seed=1234 --text "Hello there. This is native Kitten speech." \
   --out hello.wav
 ```
 
-### Original source assets
+### Upstream source assets
 
 These assets are for direct safetensors loading, local conversion, or developer
 validation. They are not additional downloads required by the published GGUF.
 
-Use the original [KittenML/kitten-tts-2](https://huggingface.co/KittenML/kitten-tts-2)
+Use the upstream [KittenML/kitten-tts-2](https://huggingface.co/KittenML/kitten-tts-2)
 layout, including the full `lm/model.safetensors`, LM configuration/tokenizer,
 `config.json`, `cpp/default/voices.json`, and `speaker/model.safetensors`.
 Preserve `LICENSE.md` and `speaker/LICENSE`.
@@ -137,7 +142,7 @@ Italian, Portuguese, Russian, or Spanish. The 38 named English voices remain
 available. These ten languages are registered in the model spec.
 
 ```sh
-audiocpp_cli --family kitten_tts2 --model models/kitten-tts2/kitten-tts2-native-q8-multilingual.gguf \
+audiocpp_cli --family kitten_tts2 --model models/kitten-tts2/kitten-tts2-q8-v2-multilingual.gguf \
   --backend cpu --task tts --voice-id German \
   --text "Guten Morgen. Dies ist ein Test der deutschen Sprachausgabe." --out german.wav
 ```
@@ -163,7 +168,7 @@ see the validation record for exactly what was exercised.
 Supply a one-to-thirty-second reference clip and its transcript:
 
 ```sh
-audiocpp_cli --family kitten_tts2 --model models/kitten-tts2/kitten-tts2-native-q8-multilingual.gguf \
+audiocpp_cli --family kitten_tts2 --model models/kitten-tts2/kitten-tts2-q8-v2-multilingual.gguf \
   --backend cpu --threads 8 --task clon --voice-ref reference.wav \
   --reference-text "The exact words spoken in the reference clip." \
   --text "The new words to say in this voice." --request-option seed=1234 \
@@ -202,27 +207,90 @@ reference prefix and starts fresh target generation. Joins trim edge silence,
 apply short fades, and insert 160 ms gaps. Expression tags reach the model
 verbatim and enable its emotion prefix. Expand numbers/abbreviations when needed.
 
-Qwen projections default to Q8_0. With original full safetensors,
-`--session-option kitten_tts2.weight_type=q4_0` packs folded ternary weights
-exactly into standard GGML Q4_0 blocks. Already quantized sources may fail that
-exact-packing check; use `native` or `q8_0` with the Q8 package.
-Embeddings/the tied head stay F16; decoder and reference encoders use F32.
+LM tensors retain their stored types by default. An explicit
+`--session-option kitten_tts2.weight_type=...` changes projection storage only;
+the embedding and tied output head retain their stored type. The decoder and
+reference encoders use F32.
 
-## Self-contained GGUF
+## Updated weight profiles
+
+Use the `kitten_tts2` model family and leave `kitten_tts2.weight_type` unset
+(or select `native`) to retain the GGUF's stored precision. The loader reads
+tensor types directly; no custom export selector is embedded in the package.
+The WebUI sends no Kitten precision override by default.
+
+| Export `--type` | Download filename | Source LM | Body / tied embedding | Approximate complete size |
+| --- | --- | --- | --- | --- |
+| `bf16` | [kitten-tts2-bf16-multilingual.gguf](https://huggingface.co/dignome/kitten_tts2/resolve/main/kitten-tts2-bf16-multilingual.gguf) | `model.safetensors` | BF16 / BF16 | 4.60 GB |
+| `q8_0` | [kitten-tts2-q8-v2-multilingual.gguf](https://huggingface.co/dignome/kitten_tts2/resolve/main/kitten-tts2-q8-v2-multilingual.gguf) | `model-ternary.safetensors` | Q8_0 / BF16 | 3.28 GB |
+| `q4_0` | [kitten-tts2-q4-multilingual.gguf](https://huggingface.co/dignome/kitten_tts2/resolve/main/kitten-tts2-q4-multilingual.gguf) | `model.safetensors` | Q4_0 / Q8_0 | 2.27 GB |
+
+`install kitten_tts2` selects Q8. Install a selected package with:
+
+```sh
+python tools/model_manager_v2.py install kitten_tts2_bf16 --models-root models
+python tools/model_manager_v2.py install kitten_tts2_q8_v2 --models-root models
+python tools/model_manager_v2.py install kitten_tts2_q4 --models-root models
+```
+
+All three packages install into `models/kitten-tts2/`, with distinct GGUF
+filenames. They can coexist and share the license/NOTICE files. Select the
+chosen GGUF path in the CLI/server. Each package also downloads `LICENSE`, `NOTICE`,
+`native/LICENSE`, `speaker/LICENSE`, and `SHA256SUMS` from the same repository.
+
+Every profile uses the existing default S3 MeanFlow decoder, reference encoders
+and multilingual voice conditioning. No shared framework, S3 or ggml changes
+are required. The student decoders and upstream TL2/emb4 format are not part of
+these profiles.
+
+The Q8 and Q4 body matrices preserve the updated BF16 checkpoint's ternary
+values exactly in standard GGML blocks. Q4 is a mixed-precision export: its
+embedding is quantized directly from full BF16 to Q8_0, with approximately
+0.44% relative L2 weight error overall and 0.41% across speech-token rows.
+These are reconstruction errors, not audio quality scores. Norms and speaker
+projections retain BF16; S3 and reference components retain their original types.
+Hybrid Q4 remains experimental: local ASR checks found missing words in longer
+CPU samples. See the [validation record](../../tests/kitten_tts2/validation.md)
+for speech-quality checks and limitations.
+
+On CUDA, Q4 feed-forward down projections are loaded as BF16 to avoid
+non-finite results with this model's large activations. Their values stay exact;
+this adds about 483 MiB of resident weights compared with retaining those
+projections as Q4. CPU keeps the Q4 body. File size is not a RAM/VRAM estimate.
+
+Updated conversion requires NumPy, PyTorch and safetensors offline only.
+The full `lm/model.safetensors` is needed for every updated profile to refresh
+the preset speaker projections from the shipped NPZ identities. The existing
+decoder conditioning and `PreparedBruno` alias are retained.
+
+The exporter defaults to `--type q8_0`. Each type selects its source checkpoint
+and tensor storage recipe, including the embedding precision shown above.
 
 ```sh
 python tools/community_models/prepare_kitten_tts2_gguf.py \
-  --model /path/to/kitten-tts-2 --converter build-kitten2/bin/audiocpp_gguf \
-  --type q8_0 --output kitten-tts2-native-q8-multilingual.gguf
+  --model /path/to/updated-kitten-tts-2 --converter build-kitten2/bin/audiocpp_gguf \
+  --type bf16 --output kitten-tts2-bf16-multilingual.gguf
+python tools/community_models/prepare_kitten_tts2_gguf.py \
+  --model /path/to/updated-kitten-tts-2 --converter build-kitten2/bin/audiocpp_gguf \
+  --type q8_0 --output kitten-tts2-q8-v2-multilingual.gguf
+python tools/community_models/prepare_kitten_tts2_gguf.py \
+  --model /path/to/updated-kitten-tts-2 --converter build-kitten2/bin/audiocpp_gguf \
+  --type q4_0 --output kitten-tts2-q4-multilingual.gguf
 ```
 
-This helper uses Python's standard library, the native converter, and the
-`audiocpp_kitten_tts2_prepare_voices` executable beside it. The upstream prepared
-`cpp/default/voices.json` omits the nine language presets; the helper fills those
-from `voices/voices.json`, the original NPZ embeddings/tokens, and reference WAVs.
-It preserves existing English conditioning and computes only missing decoder
-conditioning and speaker projections through native GGML. No Torch or NumPy is
-needed for preparation or inference.
+Use `--s3gen` and `--s3-license` when the original default decoder assets are
+stored separately.
+
+## Self-contained GGUF
+
+The conversion commands above produce complete runtime packages. They require
+the native converter and `audiocpp_kitten_tts2_prepare_voices` beside it.
+
+The upstream prepared `cpp/default/voices.json` omits the nine language presets;
+the helper fills those from `voices/voices.json`, the NPZ embeddings/tokens, and
+reference WAVs. It refreshes every preset speaker projection with the updated
+full LM while preserving decoder conditioning. These preparation dependencies
+are not needed for inference.
 
 Preparation uses CPU by default; `--voice-backend cuda` selects a CUDA-enabled
 preparer. `--voice-preparer` can select an executable elsewhere. Save the complete

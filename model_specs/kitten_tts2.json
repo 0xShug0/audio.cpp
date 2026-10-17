@@ -188,8 +188,8 @@
           "q8_0"
         ],
         "required": false,
-        "default": "q8_0",
-        "description": "Qwen projection storage. q4_0 packs original ternary weights exactly; other sources may require q8_0. Embeddings and the tied speech head remain F16."
+        "default": "native",
+        "description": "Qwen projection storage. native preserves the GGUF's intended tensor types. An explicit override changes projection storage only."
       }
     ]
   },
@@ -203,14 +203,46 @@
   },
   "packages": [
     {
-      "id": "kitten_tts2_q8_0",
-      "display_name": "Kitten TTS 2 Multilingual Q8_0 GGUF",
+      "id": "kitten_tts2_bf16",
+      "display_name": "Kitten TTS 2 BF16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "kitten-tts2",
+      "files": [
+        "kitten-tts2-bf16-multilingual.gguf",
+        "LICENSE",
+        "NOTICE",
+        "native/LICENSE",
+        "speaker/LICENSE",
+        "SHA256SUMS"
+      ]
+    },
+    {
+      "id": "kitten_tts2_q8_v2",
+      "display_name": "Kitten TTS 2 Q8 GGUF",
       "default": true,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "kitten-tts2",
       "files": [
-        "kitten-tts2-native-q8-multilingual.gguf",
+        "kitten-tts2-q8-v2-multilingual.gguf",
+        "LICENSE",
+        "NOTICE",
+        "native/LICENSE",
+        "speaker/LICENSE",
+        "SHA256SUMS"
+      ]
+    },
+    {
+      "id": "kitten_tts2_q4",
+      "display_name": "Kitten TTS 2 Q4 GGUF (Experimental)",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "kitten-tts2",
+      "files": [
+        "kitten-tts2-q4-multilingual.gguf",
         "LICENSE",
         "NOTICE",
         "native/LICENSE",
@@ -221,7 +253,7 @@
   ],
   "dependencies": [],
   "ui": {
-    "recommended_package": "kitten_tts2_q8_0",
+    "recommended_package": "kitten_tts2_q8_v2",
     "min_vram_gb": 7,
     "tags": [
       "TTS",
