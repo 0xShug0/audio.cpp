@@ -118,6 +118,20 @@ std::string tensor_storage_type_name(assets::TensorStorageType storage_type) {
         return "q8_0";
     case assets::TensorStorageType::NVFP4:
         return "nvfp4";
+    case assets::TensorStorageType::IQ2_XXS:
+        return "iq2_xxs";
+    case assets::TensorStorageType::IQ2_XS:
+        return "iq2_xs";
+    case assets::TensorStorageType::IQ2_S:
+        return "iq2_s";
+    case assets::TensorStorageType::IQ3_XXS:
+        return "iq3_xxs";
+    case assets::TensorStorageType::IQ3_S:
+        return "iq3_s";
+    case assets::TensorStorageType::IQ4_NL:
+        return "iq4_nl";
+    case assets::TensorStorageType::IQ4_XS:
+        return "iq4_xs";
     }
     throw std::runtime_error("unknown tensor storage type");
 }
