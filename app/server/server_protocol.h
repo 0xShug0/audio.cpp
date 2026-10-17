@@ -47,6 +47,7 @@ struct RuntimeVoicePreset {
   std::optional<std::string> voice_id;
   std::optional<engine::runtime::AudioBuffer> audio;
   std::optional<std::string> reference_text;
+  std::unordered_map<std::string, std::string> options;
 };
 
 struct SpeechRequestContext {

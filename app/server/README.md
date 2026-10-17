@@ -520,6 +520,28 @@ reference library before passing it through as a model-native voice ID.
 For built-in speakers, configure `voice_id` using an ID valid for that model,
 such as `af_heart` for Kokoro; preset names and native voice IDs are not universal.
 
+A preset can also carry request `options` for the model. Explicit request options
+override preset options with the same key. Different aliases are not merged;
+supplying conflicting aliases may produce a model validation error. The model
+validates preset options like any other request option. For example, an
+Irodori-TTS speaker embedding selected by name:
+
+```json
+{
+  "voice_presets": {
+    "narrator": {
+      "options": {
+        "speaker_embedding_file": "/absolute/path/to/narrator.speaker.safetensors"
+      }
+    }
+  }
+}
+```
+
+A request `{"input": "Hello.", "voice": "narrator"}` then uses that embedding.
+Option values are not paths to the server, so a relative path is not resolved
+against the config file the way `voice_ref` is; use absolute paths.
+
 ### Voice library (`voice_dir`)
 
 Set server-level `"voice_dir"` to a folder of your reference WAV recordings and

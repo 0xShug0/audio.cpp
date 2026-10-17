@@ -121,6 +121,7 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
         request.options.find("reference_text") == request.options.end()) {
       request.options["reference_text"] = *preset->reference_text;
     }
+    request = apply_default_request_options(preset->options, std::move(request));
   }
 
   const bool has_explicit_voice_ref = body.find("voice_ref") != nullptr;

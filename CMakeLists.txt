@@ -3444,6 +3444,18 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME server_runtime_selection_test COMMAND server_runtime_selection_test)
         set_tests_properties(server_runtime_selection_test PROPERTIES TIMEOUT 60)
 
+        add_executable(server_voice_preset_test
+            tests/unittests/test_server_voice_preset.cpp ${server_selection_sources})
+        target_include_directories(server_voice_preset_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/app/server
+            "${AUDIOCPP_SERVER_TEST_GENERATED_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_link_libraries(server_voice_preset_test PRIVATE engine_runtime ggml Threads::Threads)
+        if(WIN32)
+            target_link_libraries(server_voice_preset_test PRIVATE ws2_32)
+        endif()
+        add_test(NAME server_voice_preset_test COMMAND server_voice_preset_test)
+
         # Exercise real handlers with controlled, tiny model loaders. No native
         # installer or backend-specific model admission is needed by this test.
         get_target_property(server_lifecycle_sources audiocpp_server SOURCES)
