@@ -84,6 +84,8 @@ option parsing.
 
 If no request voice is provided and the configured model has `default_voice_preset`, the server injects that preset automatically. Request-level `voice`, `voice_ref`, and `reference_text` override the configured default.
 
+A preset's configured `options` are added to the request's `options`; an option the request sets itself keeps the request's value.
+
 `voice_ref` accepts either a plain path string (server-side file) or an object with a `type`:
 
 ```json
@@ -383,9 +385,7 @@ A browser cannot drive it: `fetch()` request streaming requires HTTP/2 and is ha
 Lists cached voice IDs, configured model preset names, and shared `voice_dir`
 WAV basenames. If the configured model path is a directory containing
 `embeddings/*.safetensors` (used by PocketTTS), their filename stems are also
-listed. For an Irodori-TTS model, `voice_dir` speaker embeddings
-(`<name>.speaker.safetensors`) are listed by `<name>`. It does not enumerate
-speaker tensors packed inside a GGUF; use the
+listed. It does not enumerate speaker tensors packed inside a GGUF; use the
 [model's documented built-in IDs](README.md#built-in-voices-and-discovery) for those.
 
 Pass `model` explicitly when several entries are configured. Omitting it selects

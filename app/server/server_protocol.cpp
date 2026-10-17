@@ -121,6 +121,11 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
         request.options.find("reference_text") == request.options.end()) {
       request.options["reference_text"] = *preset->reference_text;
     }
+    // Preset options fill what the request leaves unset; the model validates
+    // them like any other request option.
+    for (const auto &[key, value] : preset->options) {
+      request.options.emplace(key, value);
+    }
   }
 
   const bool has_explicit_voice_ref = body.find("voice_ref") != nullptr;
@@ -129,20 +134,8 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
     bool voice_library_resolved = false;
     if (context.voice_dir.has_value() && !has_explicit_voice_ref) {
       const std::string voice_name = value->as_string();
-      // A speaker embedding wins over a wav of the same name. It replaces any
-      // embedding given in "options", under either option name, since the
-      // model rejects the two names when they disagree.
-      std::optional<std::filesystem::path> embedding;
-      if (context.uses_speaker_embeddings) {
-        embedding = resolve_voice_library_speaker_embedding(*context.voice_dir,
-                                                            voice_name);
-      }
-      if (embedding.has_value()) {
-        request.options.erase("speaker_embedding_path");
-        request.options["speaker_embedding_file"] = embedding->string();
-        voice_library_resolved = true;
-      } else if (const auto wav = resolve_voice_library_wav(*context.voice_dir,
-                                                            voice_name)) {
+      if (const auto wav =
+              resolve_voice_library_wav(*context.voice_dir, voice_name)) {
         voice.speaker = engine::runtime::VoiceReference{};
         voice.speaker->audio = minitts::cli::read_audio_buffer(*wav);
         has_voice = true;
@@ -373,16 +366,9 @@ load_voice_library_text(const std::filesystem::path &voice_dir,
   return std::nullopt;
 }
 
-namespace {
-
-constexpr std::string_view kSpeakerEmbeddingSuffix = ".speaker.safetensors";
-
-// <voice_dir>/<voice_name><suffix>, when voice_name is a bare file name (never
-// a path that could leave voice_dir) and the file exists.
 std::optional<std::filesystem::path>
-resolve_voice_library_file(const std::filesystem::path &voice_dir,
-                           const std::string &voice_name,
-                           std::string_view suffix) {
+resolve_voice_library_wav(const std::filesystem::path &voice_dir,
+                          const std::string &voice_name) {
   const std::filesystem::path name_path(voice_name);
   if (voice_name.empty() || name_path.has_root_name() ||
       name_path.has_root_directory() || name_path.has_parent_path() ||
@@ -390,57 +376,12 @@ resolve_voice_library_file(const std::filesystem::path &voice_dir,
       voice_name == "..") {
     return std::nullopt;
   }
-  const auto file = voice_dir / (voice_name + std::string(suffix));
+  const auto wav = voice_dir / (voice_name + ".wav");
   std::error_code ec;
-  if (!std::filesystem::is_regular_file(file, ec)) {
+  if (!std::filesystem::is_regular_file(wav, ec)) {
     return std::nullopt;
   }
-  return file;
-}
-
-} // namespace
-
-std::optional<std::filesystem::path>
-resolve_voice_library_wav(const std::filesystem::path &voice_dir,
-                          const std::string &voice_name) {
-  return resolve_voice_library_file(voice_dir, voice_name, ".wav");
-}
-
-bool uses_voice_library_speaker_embeddings(std::string_view family) {
-  // vieneu_v3_turbo declares an option of the same name, but it reads
-  // comma-separated floats, not a safetensors file.
-  return family == "irodori_tts";
-}
-
-std::optional<std::filesystem::path>
-resolve_voice_library_speaker_embedding(const std::filesystem::path &voice_dir,
-                                        const std::string &voice_name) {
-  return resolve_voice_library_file(voice_dir, voice_name,
-                                    kSpeakerEmbeddingSuffix);
-}
-
-std::vector<std::string>
-voice_library_speaker_embedding_names(const std::filesystem::path &voice_dir) {
-  std::vector<std::string> names;
-  std::error_code ec;
-  if (!std::filesystem::is_directory(voice_dir, ec)) {
-    return names;
-  }
-  for (const auto &entry :
-       std::filesystem::directory_iterator(voice_dir, ec)) {
-    if (!entry.is_regular_file()) {
-      continue;
-    }
-    const auto filename = entry.path().filename().string();
-    if (filename.size() > kSpeakerEmbeddingSuffix.size() &&
-        filename.compare(filename.size() - kSpeakerEmbeddingSuffix.size(),
-                         kSpeakerEmbeddingSuffix.size(),
-                         kSpeakerEmbeddingSuffix) == 0) {
-      names.push_back(
-          filename.substr(0, filename.size() - kSpeakerEmbeddingSuffix.size()));
-    }
-  }
-  return names;
+  return wav;
 }
 
 std::unordered_map<std::string, std::string>

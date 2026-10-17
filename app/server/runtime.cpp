@@ -539,6 +539,7 @@ RuntimeVoicePreset ServerState::load_runtime_voice_preset(
     RuntimeVoicePreset out;
     out.voice_id = preset.voice_id;
     out.reference_text = preset.reference_text;
+    out.options = preset.options;
     if (preset.voice_ref.has_value()) {
         out.audio = minitts::cli::read_audio_buffer(*preset.voice_ref);
     }
@@ -718,8 +719,7 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
             request_base_, config_.voice_dir, model.voice_presets, model.default_voice_preset,
             model.accepts_reference_text, model.accepts_speed,
             model.accepts_speaking_rate,
-            model.config.default_request_options,
-            uses_voice_library_speaker_embeddings(model.config.family)});
+            model.config.default_request_options});
 }
 
 struct ServerState::TimedTaskResult {
@@ -2177,10 +2177,8 @@ HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
     } else if (models_.size() == 1) {
         model_idx = 0;
     }
-    bool lists_speaker_embeddings = false;
     if (model_idx != SIZE_MAX) {
         const auto & model = *models_.at(model_idx);
-        lists_speaker_embeddings = uses_voice_library_speaker_embeddings(model.config.family);
         std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
         for (const auto & [name, preset] : model.voice_presets) {
             (void) preset;
@@ -2203,11 +2201,6 @@ HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
                 if (entry.is_regular_file() && entry.path().extension() == ".wav") {
                     voices.push_back(entry.path().stem().string());
                 }
-            }
-        }
-        if (lists_speaker_embeddings) {
-            for (auto & name : voice_library_speaker_embedding_names(*config_.voice_dir)) {
-                voices.push_back(std::move(name));
             }
         }
     }

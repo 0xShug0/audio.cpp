@@ -40,15 +40,6 @@ load_voice_library_text(const std::filesystem::path &voice_dir,
 std::optional<std::filesystem::path>
 resolve_voice_library_wav(const std::filesystem::path &voice_dir,
                           const std::string &voice_id);
-// Irodori-TTS Speaker Inversion embeddings in the voice library, as
-// <voice_dir>/<name>.speaker.safetensors. Only families that read that file
-// through their speaker_embedding_file request option use them.
-bool uses_voice_library_speaker_embeddings(std::string_view family);
-std::optional<std::filesystem::path>
-resolve_voice_library_speaker_embedding(const std::filesystem::path &voice_dir,
-                                        const std::string &voice_id);
-std::vector<std::string>
-voice_library_speaker_embedding_names(const std::filesystem::path &voice_dir);
 std::unordered_map<std::string, std::string>
 options_from_object(const engine::io::json::Value *value);
 
@@ -56,6 +47,7 @@ struct RuntimeVoicePreset {
   std::optional<std::string> voice_id;
   std::optional<engine::runtime::AudioBuffer> audio;
   std::optional<std::string> reference_text;
+  std::unordered_map<std::string, std::string> options;
 };
 
 struct SpeechRequestContext {
@@ -67,7 +59,6 @@ struct SpeechRequestContext {
   bool accepts_speed = true;
   bool accepts_speaking_rate = true;
   const std::unordered_map<std::string, std::string> &default_options;
-  bool uses_speaker_embeddings = false;
 };
 
 engine::runtime::TaskRequest build_speech_request(

@@ -63,8 +63,15 @@ ServerModelConfig::VoicePreset parse_voice_preset(
     if (const auto * reference_text = value.find("reference_text")) {
         preset.reference_text = reference_text->as_string();
     }
-    if (!preset.voice_id.has_value() && !preset.voice_ref.has_value() && !preset.reference_text.has_value()) {
-        throw std::runtime_error(context + " must set voice_id, voice_ref, or reference_text");
+    if (const auto * options = value.find("options")) {
+        if (!options->is_object()) {
+            throw std::runtime_error(context + " options must be an object");
+        }
+        preset.options = options_from_object(options);
+    }
+    if (!preset.voice_id.has_value() && !preset.voice_ref.has_value() && !preset.reference_text.has_value() &&
+        preset.options.empty()) {
+        throw std::runtime_error(context + " must set voice_id, voice_ref, reference_text, or options");
     }
     return preset;
 }
