@@ -129,6 +129,33 @@
         "description": "Reproducible native sampling seed.",
         "required": false,
         "min": 0
+      },
+      {
+        "name": "max_pause_frames",
+        "type": "int",
+        "description": "drama3-small pause clamp: after this many consecutive silence-code frames the next main token must be speech or EOS (21.5 frames = 1 s). 0 disables; unset uses AUDIOCPP_DRAMA3_MAX_PAUSE_FRAMES.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "silence_codes",
+        "type": "string",
+        "description": "Semantic codes treated as silence for the pause clamp: a comma/space/JSON list or a path to a file holding one. Unset uses AUDIOCPP_DRAMA3_SILENCE_CODES.",
+        "required": false
+      },
+      {
+        "name": "pause_end_ratio",
+        "type": "float",
+        "description": "With the pause clamp: a pause after this multiple of the text's expected frames ends the take (default 2.0).",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "pause_cap_ratio",
+        "type": "float",
+        "description": "With the pause clamp: stop at this multiple of the text's expected frames regardless (default 3.0).",
+        "required": false,
+        "min": 0
       }
     ],
     "session": [
@@ -272,7 +299,9 @@
       "format": "gguf",
       "precision": "q2_k",
       "target_directory": "Drama-3-GGUF",
-      "files": ["drama-3-backbone-8bit-experts-Q2_K.gguf"]
+      "files": [
+        "drama-3-backbone-8bit-experts-Q2_K.gguf"
+      ]
     },
     {
       "id": "fish_drama3_q4_backbone",

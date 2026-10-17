@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "engine/community_models/fish_drama3/prompt.h"
 
 #include <functional>
@@ -13,6 +15,11 @@ struct Drama3Sampling {
     int top_k = 30;
     int64_t max_frames = 1024;
     uint32_t seed = 0;
+    // drama3-small pause clamp; unset values fall back to AUDIOCPP_DRAMA3_* environment variables.
+    int64_t max_pause_frames = -1;  // -1 unset, 0 off
+    std::string silence_codes;      // list or file path; empty = unset
+    double pause_end_ratio = 0;     // 0 = unset (2.0)
+    double pause_cap_ratio = 0;     // 0 = unset (3.0)
 };
 
 struct Drama3Generation {
