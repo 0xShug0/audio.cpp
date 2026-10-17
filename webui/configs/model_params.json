@@ -9,7 +9,7 @@
     {"name":"text_chunk_size","type":"number","label":"Characters per chunk","default":256,"minimum":1,"step":1,"info":"Smaller chunks reduce waveform-decoder peak memory; larger chunks reduce repeated prefills."},
     {"name":"temperature","type":"slider","label":"Temperature","default":1,"minimum":0,"maximum":2,"step":0.05},
     {"name":"top_p","type":"slider","label":"Top-p","default":0.9,"minimum":0.01,"maximum":1,"step":0.01},
-    {"name":"top_k","type":"number","label":"Top-k","default":30,"minimum":1,"step":1},
+    {"name":"top_k","type":"number","label":"Top-k","default":4097,"minimum":1,"step":1},
     {"name":"disk_experts","type":"bool","scope":"session","session_option":"fish_drama3.disk_experts","label":"Offload expert weights","default":true,"info":"Keep only selected expert weights on the GPU. Expert computation stays on the selected backend; changing this reloads the model."},
     {"name":"pin_experts","type":"bool","scope":"session","session_option":"fish_drama3.pin_experts","label":"Preload experts in pinned host RAM","default":true,"info":"Requires expert offload. Faster uploads, but holds the full expert banks in pinned host RAM."},
     {"name":"expert_cache_size","type":"number","scope":"session","session_option":"fish_drama3.expert_cache_size","label":"GPU expert slots per layer","default":8,"minimum":8,"maximum":256,"step":1},

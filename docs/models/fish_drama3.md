@@ -167,6 +167,13 @@ sequence, so total memory is not constant. Chunking can cost additional time
 and produce small backend-dependent numerical differences. Existing GGUFs
 accept the option without a spec override.
 
+Sampling defaults to `top_k=4097`, which keeps every candidate for the semantic
+token and each tower codebook, so only `top_p=0.9` filters. This matches Fish's
+official Drama 3 Space, which dropped the top-k cap because `top_k=30` left takes
+stuck in silence. With `--request-option top_k=30`, long chunked requests can
+stall for about 9-21 s. The repetition-avoiding resample keeps its own
+`top_k=30`, `top_p=0.95`.
+
 Host memory is required for offloaded weights. Context capacity includes text,
 reference audio frames, prior takes, and the requested generation budget.
 

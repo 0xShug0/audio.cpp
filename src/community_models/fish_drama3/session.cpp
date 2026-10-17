@@ -135,7 +135,7 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
     try {
         sampling.temperature = runtime::parse_finite_float_option(effective.options, {"temperature"}).value_or(1.0F);
         sampling.top_p = runtime::parse_finite_float_option(effective.options, {"top_p"}).value_or(0.9F);
-        sampling.top_k = runtime::parse_int_option(effective.options, {"top_k"}).value_or(30);
+        sampling.top_k = runtime::parse_int_option(effective.options, {"top_k"}).value_or(4097);
         sampling.max_frames = runtime::parse_positive_i64_option(effective.options, {"max_tokens", "max_new_tokens"}, 1024);
         seed = runtime::parse_u32_option(effective.options, {"seed"});
     } catch (const std::runtime_error & error) {
