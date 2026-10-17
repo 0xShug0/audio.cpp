@@ -33,6 +33,8 @@
 #include <numeric>
 #include <optional>
 #include <sstream>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -740,6 +742,56 @@ core::TensorValue build_encoder(
     x = modules::Snake1dModule({channels}).build(ctx, x, weights.encoder_final_snake);
     if (bf16_input) x = core::wrap_tensor(ggml_round_bf16(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
     return causal_conv1d(ctx, x, weights.encoder_final, channels, kCodecDim, 3, 1, 1, true, nullptr, bf16_input);
+}
+
+// drama3-small: exact chunked reference encoding. The encoder is causal (causal convs and
+// causal windowed attention), so its convolution stack can run over time windows that
+// carry enough left context, and only the transformer + quantizer see the whole sequence.
+// This removes the full-length im2col buffers (several hundred MB per conv at 44.1 kHz).
+constexpr int64_t kEncoderConvHop = 512;            // product of encoder strides {2, 4, 8, 8}
+constexpr int64_t kEncodeContextSamples = 16384;    // >= conv receptive field (~6.4k samples)
+
+bool encoder_is_chunkable(const FishCodecWeights & weights) {
+    for (size_t index = 0; index + 1 < weights.encoder_blocks.size(); ++index) {
+        if (weights.encoder_blocks[index].transformer.has_value()) {
+            return false;
+        }
+    }
+    return !weights.encoder_blocks.empty();
+}
+
+core::TensorValue build_encoder_convs(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const FishCodecWeights & weights) {
+    auto x = causal_conv1d(ctx, input, weights.encoder_first, 1, 64, 7, 1, 1, true);
+    int64_t channels = 64;
+    const int strides[] = {2, 4, 8, 8};
+    for (size_t index = 0; index < weights.encoder_blocks.size(); ++index) {
+        const auto & block = weights.encoder_blocks[index];
+        x = build_residual_unit(ctx, x, block.residual1, channels, 1);
+        x = build_residual_unit(ctx, x, block.residual3, channels, 3);
+        x = build_residual_unit(ctx, x, block.residual9, channels, 9);
+        x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
+        x = causal_conv1d(ctx, x, block.conv, channels, channels * 2, 2 * strides[index], strides[index], 1, true);
+        channels *= 2;
+    }
+    return x;
+}
+
+core::TensorValue build_encoder_tail(
+    core::ModuleBuildContext & ctx,
+    core::ConstantTensorCache & constants,
+    const core::TensorValue & features,
+    const FishCodecWeights & weights) {
+    auto x = features;
+    const auto & last = weights.encoder_blocks.back();
+    if (last.transformer.has_value()) {
+        x = build_window_transformer(ctx, constants, x, *last.transformer, 512);
+    }
+    const int64_t channels = features.shape.dims[1];
+    x = modules::Snake1dModule({channels}).build(ctx, x, weights.encoder_final_snake);
+    return causal_conv1d(ctx, x, weights.encoder_final, channels, kCodecDim, 3, 1, 1, true);
 }
 
 core::TensorValue build_decoder(
@@ -1542,6 +1594,157 @@ private:
     core::ConstantTensorCache constants_;
 };
 
+// drama3-small: stage A of chunked encoding, one fixed-size waveform window -> conv features.
+struct EncodeConvGraph {
+    EncodeConvGraph(
+        std::shared_ptr<const FishCodecWeights> weights,
+        core::ExecutionContext & execution_context,
+        size_t graph_arena_bytes,
+        int64_t window_samples)
+        : weights_(std::move(weights)),
+          backend_(execution_context.backend()),
+          backend_type_(execution_context.backend_type()),
+          threads_(std::max(1, execution_context.config().threads)),
+          window_samples_(window_samples) {
+        ggml_init_params params{graph_arena_bytes, nullptr, true};
+        ctx_.reset(ggml_init(params));
+        if (ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize Fish DAC codec encode-conv graph context");
+        }
+        core::ModuleBuildContext ctx{ctx_.get(), "fish_audio.codec.encode_convs", backend_type_};
+        input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, window_samples_}));
+        ggml_set_input(input_.tensor);
+        auto features = build_encoder_convs(ctx, input_, *weights_);
+        channels_ = features.shape.dims[1];
+        frames_ = features.shape.dims[2];
+        output_ = core::ensure_backend_addressable_layout(ctx, features).tensor;
+        ggml_set_output(output_);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
+        ggml_build_forward_expand(graph_, output_);
+        gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+        if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
+            throw std::runtime_error("failed to allocate Fish DAC codec encode-conv graph");
+        }
+    }
+
+    ~EncodeConvGraph() {
+        engine::core::release_backend_graph_resources(backend_, graph_);
+    }
+
+    int64_t window_samples() const { return window_samples_; }
+    int64_t channels() const { return channels_; }
+    int64_t frames() const { return frames_; }
+
+    // Returns channel-major features: value(c, t) at index c * frames() + t.
+    std::vector<float> run(const std::vector<float> & window) {
+        core::write_tensor_f32(input_, window);
+        core::set_backend_threads(backend_, threads_);
+        const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+        ggml_backend_synchronize(backend_);
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("Fish DAC codec encode-conv graph compute failed");
+        }
+        return core::read_tensor_f32(output_);
+    }
+
+private:
+    std::shared_ptr<const FishCodecWeights> weights_;
+    ggml_backend_t backend_ = nullptr;
+    core::BackendType backend_type_ = core::BackendType::Cpu;
+    int threads_ = 1;
+    int64_t window_samples_ = 0;
+    int64_t channels_ = 0;
+    int64_t frames_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    core::TensorValue input_;
+    ggml_tensor * output_ = nullptr;
+    ggml_cgraph * graph_ = nullptr;
+    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
+};
+
+// drama3-small: stage B of chunked encoding, whole conv-feature sequence -> codes.
+struct EncodeTailGraph {
+    EncodeTailGraph(
+        std::shared_ptr<const FishCodecWeights> weights,
+        core::ExecutionContext & execution_context,
+        size_t graph_arena_bytes,
+        int64_t channels,
+        int64_t feature_frames)
+        : weights_(std::move(weights)),
+          backend_(execution_context.backend()),
+          backend_type_(execution_context.backend_type()),
+          threads_(std::max(1, execution_context.config().threads)),
+          constants_(backend_, threads_, "Fish DAC codec encode-tail constants") {
+        ggml_init_params params{graph_arena_bytes, nullptr, true};
+        ctx_.reset(ggml_init(params));
+        if (ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize Fish DAC codec encode-tail graph context");
+        }
+        core::ModuleBuildContext ctx{ctx_.get(), "fish_audio.codec.encode_tail", backend_type_};
+        constants_.begin_graph();
+        input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, channels, feature_frames}));
+        ggml_set_input(input_.tensor);
+        auto encoded = build_encoder_tail(ctx, constants_, input_, *weights_);
+        build_encode_quantizer(ctx, constants_, encoded, *weights_, code_outputs_, nullptr);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
+        for (ggml_tensor * code_output : code_outputs_) {
+            ggml_build_forward_expand(graph_, code_output);
+        }
+        constants_.finish_graph();
+        constants_.ensure_uploaded();
+        gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+        if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
+            throw std::runtime_error("failed to allocate Fish DAC codec encode-tail graph");
+        }
+    }
+
+    ~EncodeTailGraph() {
+        engine::core::release_backend_graph_resources(backend_, graph_);
+    }
+
+    FishDacCodes run(const std::vector<float> & features, int64_t frames) {
+        core::write_tensor_f32(input_, features);
+        core::set_backend_threads(backend_, threads_);
+        const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+        ggml_backend_synchronize(backend_);
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("Fish DAC codec encode-tail graph compute failed");
+        }
+        FishDacCodes out;
+        out.codebooks = static_cast<int64_t>(code_outputs_.size());
+        out.frames = frames;
+        out.codes.resize(static_cast<size_t>(out.codebooks * out.frames));
+        for (int64_t codebook = 0; codebook < out.codebooks; ++codebook) {
+            auto values = core::read_tensor_i32(code_outputs_[static_cast<size_t>(codebook)]);
+            if (static_cast<int64_t>(values.size()) < frames) {
+                throw std::runtime_error("Fish DAC codec encode-tail produced too few frames");
+            }
+            for (int64_t frame = 0; frame < frames; ++frame) {
+                out.codes[static_cast<size_t>(codebook * frames + frame)] = values[static_cast<size_t>(frame)];
+            }
+        }
+        return out;
+    }
+
+private:
+    std::shared_ptr<const FishCodecWeights> weights_;
+    ggml_backend_t backend_ = nullptr;
+    core::BackendType backend_type_ = core::BackendType::Cpu;
+    int threads_ = 1;
+    core::ConstantTensorCache constants_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    core::TensorValue input_;
+    std::vector<ggml_tensor *> code_outputs_;
+    ggml_cgraph * graph_ = nullptr;
+    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
+};
+
+int64_t encode_chunk_samples() {
+    // 0 disables chunking (single full-length graph, the original behaviour).
+    const char * value = std::getenv("AUDIOCPP_FISH_DAC_ENCODE_CHUNK_SAMPLES");
+    return value != nullptr ? std::max<int64_t>(0, std::atoll(value)) : 45056;  // 22 frames ~= 1.02 s
+}
+
 }  // namespace
 
 struct FishDacCodecComponent::Impl {
@@ -1568,10 +1771,29 @@ public:
     }
 
     FishDacCodes encode_codes(const runtime::AudioBuffer & audio) {
+        auto out = encode_codes_impl(audio);
+        // drama3-small debug: dump reference codes as int32 [codebooks, frames].
+        if (const char * path = std::getenv("AUDIOCPP_FISH_DAC_DUMP_CODES")) {
+            if (FILE * f = std::fopen(path, "wb")) {
+                const int64_t header[2] = {out.codebooks, out.frames};
+                std::fwrite(header, sizeof(header), 1, f);
+                std::fwrite(out.codes.data(), sizeof(out.codes[0]), out.codes.size(), f);
+                std::fclose(f);
+            }
+        }
+        return out;
+    }
+
+    FishDacCodes encode_codes_impl(const runtime::AudioBuffer & audio) {
         const auto & config = component_->impl_->config;
         auto mono = prepare_codec_mono(audio, config.sample_rate);
         const int64_t samples = ceil_div(static_cast<int64_t>(mono.size()), config.frame_length) * config.frame_length;
         const int64_t frames = ceil_div(static_cast<int64_t>(mono.size()), config.frame_length);
+        const int64_t chunk = encode_chunk_samples();
+        if (chunk > 0 && chunk % kEncoderConvHop == 0 && config.frame_length % kEncoderConvHop == 0 &&
+            samples > chunk + kEncodeContextSamples && encoder_is_chunkable(*component_->impl_->weights)) {
+            return encode_codes_chunked(std::move(mono), samples, frames, chunk);
+        }
         if (encode_graph_ == nullptr || !encode_graph_->matches(samples, frames, execution_.backend(), threads_, false)) {
             encode_graph_.reset();
             encode_graph_ = std::make_unique<EncodeGraph>(
@@ -1585,6 +1807,49 @@ public:
                 encoder_f32_accumulation_);
         }
         return encode_graph_->run(audio);
+    }
+
+    // drama3-small: stage A over fixed windows (window 0 starts at sample 0 with no
+    // artificial prefix; later windows carry kEncodeContextSamples of real left context and
+    // keep only their new frames), then stage B over the whole feature sequence. Both
+    // graphs are released afterwards so the reference encode leaves no VRAM behind.
+    FishDacCodes encode_codes_chunked(std::vector<float> mono, int64_t samples, int64_t frames, int64_t chunk) {
+        const auto & weights = component_->impl_->weights;
+        const int64_t window = kEncodeContextSamples + chunk;
+        mono.resize(static_cast<size_t>(samples), 0.0F);
+        EncodeConvGraph convs(weights, execution_, graph_arena_bytes_, window);
+        const int64_t channels = convs.channels();
+        const int64_t window_frames = convs.frames();
+        if (window_frames * kEncoderConvHop != window) {
+            throw std::runtime_error("Fish DAC codec encode-conv window is not hop-aligned");
+        }
+        const int64_t total_frames = samples / kEncoderConvHop;
+        std::vector<float> features(static_cast<size_t>(channels * total_frames), 0.0F);
+        std::vector<float> buffer(static_cast<size_t>(window));
+        for (int64_t k = 0;; ++k) {
+            const int64_t start = k * chunk;
+            const int64_t keep_from = k == 0 ? 0 : kEncodeContextSamples / kEncoderConvHop;
+            const int64_t global0 = (start / kEncoderConvHop) + keep_from;
+            std::fill(buffer.begin(), buffer.end(), 0.0F);
+            const int64_t n = std::min(window, samples - start);
+            std::copy_n(mono.begin() + start, n, buffer.begin());
+            const auto values = convs.run(buffer);
+            for (int64_t c = 0; c < channels; ++c) {
+                for (int64_t t = keep_from; t < window_frames; ++t) {
+                    const int64_t g = global0 + (t - keep_from);
+                    if (g >= total_frames) {
+                        break;
+                    }
+                    features[static_cast<size_t>(c * total_frames + g)] =
+                        values[static_cast<size_t>(c * window_frames + t)];
+                }
+            }
+            if (start + window >= samples) {
+                break;
+            }
+        }
+        EncodeTailGraph tail(weights, execution_, graph_arena_bytes_, channels, total_frames);
+        return tail.run(features, frames);
     }
 
     FishDacLatents encode_latents(const runtime::AudioBuffer & audio) {
