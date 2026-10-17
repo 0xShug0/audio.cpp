@@ -51,8 +51,10 @@ expensive decoder stays on the device. `duration_flows` runs on the device by de
 the stage worth watching on a device backend, because the flows are the sampler: a rounding
 difference there is a different syllable length, and `expand_prior` then spreads it over the whole
 frame layout. Measured on an RK3588 Mali G610 with `--backend vulkan`, six runs of one fixed-seed
-request produced six different renders, and with the RKNN decoder sidecar the same draw landed
-outside `exp` outright as `Piper TTS duration predictor produced a non-finite duration`. Pinning
+request produced six different renders, and the same draw lands outside `exp` outright as
+`Piper TTS duration predictor produced a non-finite duration` — on v0.9.2 that abort is the normal
+outcome of the plain `--backend vulkan` path (1 of 1 runs, first request, no sidecar involved),
+not only the one-in-six draw the RKNN decoder sidecar used to add. Pinning
 the stage to the host is the fix for that, and on a desktop Vulkan device it costs about 1.9x on
 the duration stage. The placement is not math-neutral on CUDA either: host flows change the render
 there too (`24298.6` → `24310.2 ms` of audio on a 443-character request), so treat both fields as
