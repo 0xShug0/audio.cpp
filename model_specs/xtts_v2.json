@@ -146,6 +146,22 @@
         "kind": "huggingface_snapshot",
         "repo": "mirek190/audio.cpp"
       }
+    },
+    {
+      "id": "xtts_v2_gguf_q4_k_m",
+      "display_name": "XTTS v2 GGUF (Q4_K_M)",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_k_m",
+      "target_directory": "XTTS-v2-Q4_K_M",
+      "files": [
+        "Text to Speech (TTS)/xtts-v2-gpt-q4_k_m.gguf",
+        "Text to Speech (TTS)/xtts-v2-vocoder-f16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mirek190/audio.cpp"
+      }
     }
   ],
   "dependencies": [],
