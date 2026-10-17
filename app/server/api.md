@@ -84,7 +84,7 @@ option parsing.
 
 If no request voice is provided and the configured model has `default_voice_preset`, the server injects that preset automatically. Request-level `voice`, `voice_ref`, and `reference_text` override the configured default.
 
-A preset's configured `options` are added to the request's `options`; an option the request sets itself keeps the request's value.
+A preset's configured `options` fill missing request keys. Explicit request options override preset options with the same key. Different aliases are not merged; supplying conflicting aliases may produce a model validation error.
 
 `voice_ref` accepts either a plain path string (server-side file) or an object with a `type`:
 

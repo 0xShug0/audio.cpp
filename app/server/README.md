@@ -520,10 +520,11 @@ reference library before passing it through as a model-native voice ID.
 For built-in speakers, configure `voice_id` using an ID valid for that model,
 such as `af_heart` for Kokoro; preset names and native voice IDs are not universal.
 
-A preset can also carry request `options` for the model. The server passes them
-through as given, after the request's own options, so a request that sets the
-same option keeps its value; the model validates them like any other request
-option. For example, an Irodori-TTS speaker embedding selected by name:
+A preset can also carry request `options` for the model. Explicit request options
+override preset options with the same key. Different aliases are not merged;
+supplying conflicting aliases may produce a model validation error. The model
+validates preset options like any other request option. For example, an
+Irodori-TTS speaker embedding selected by name:
 
 ```json
 {
