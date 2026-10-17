@@ -742,6 +742,61 @@ void test_model_memory_estimator() {
         require(estimate.has_value(), "an aux-resolved directory has a determinate footprint");
         require(*estimate == expected_estimate(15000), "a relative aux path resolves against the model directory");
     }
+
+    // An exec_plan engine is counted by name: the option value is JSON, so the
+    // path scan above sees nothing, and a name relative to the model directory is
+    // how a deployment spells an engine installed with the weights.
+    {
+        const auto dir = root / "plan";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        write_file(dir / "flow_seq110.rknn", 900);
+        write_file(dir / "flow_seq200.rknn", 1100);
+        const auto elsewhere = root / "plan-abs.rknn";
+        write_file(elsewhere, 500);
+        ServerModelConfig model;
+        model.path = dir;
+        // generic_string(), not string(): on Windows the native separators are
+        // backslashes, which are invalid escapes inside the JSON plan.
+        model.session_options["cosyvoice3.exec_plan"] =
+            R"({"flow":{"impl":"rknn","artifacts":{"main":"flow_seq110.rknn,flow_seq200.rknn,)" +
+            elsewhere.generic_string() + R"("}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "an exec_plan model has a determinate footprint");
+        require(
+            *estimate == expected_estimate(7000 + 900 + 1100 + 500),
+            "exec_plan engines resolve relative to the model directory, and an absolute path is used as given");
+    }
+
+    // An engine inside a summed checkpoint tree is counted once, not once by the
+    // tree scan and again by the plan.
+    {
+        const auto dir = root / "plan-tree";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.safetensors", 5000);
+        write_file(dir / "vocoder.rknn", 600);
+        ServerModelConfig model;
+        model.path = dir;
+        model.session_options["qwen3_tts.exec_plan"] =
+            R"({"decoder":{"impl":"rknn","artifacts":{"main":"vocoder.rknn","first":"absent.rknn"}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(
+            estimate.has_value() && *estimate == expected_estimate(5600),
+            "an engine already counted by the tree scan is not counted twice, and an absent engine adds nothing");
+    }
+
+    // A malformed plan is the session's error to report, not the guard's.
+    {
+        const auto path = root / "malformed.gguf";
+        write_file(path, 1000);
+        ServerModelConfig model;
+        model.path = path;
+        model.session_options["piper_tts.exec_plan"] = "{not json";
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(
+            estimate.has_value() && *estimate == expected_estimate(1000),
+            "a malformed exec plan contributes nothing to the estimate");
+    }
 }
 
 void test_model_slots() {

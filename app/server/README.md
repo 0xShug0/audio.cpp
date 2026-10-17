@@ -355,7 +355,11 @@ The next request reloads the model.
 
 The optional free-memory guard checks host memory and GPU memory where available.
 Its load estimate covers the selected weight file/package plus session auxiliary
-files, with a runtime overhead factor and fixed floor. A directory normally
+files, with a runtime overhead factor and fixed floor. An `exec_plan` session
+option is JSON rather than a path, so its declared artifacts are read out of the
+plan and counted as files, each path resolved like an auxiliary file (relative to
+the model directory) and counted once even when the plan declares a file the tree
+scan already summed. A directory normally
 selects `model.gguf` or its sole GGUF; several GGUFs without `model.gguf` are
 ambiguous to the estimator. Unsupported family-specific layouts may skip the
 guard with a log message, while an invalid spec-driven package can still fail
