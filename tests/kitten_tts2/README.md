@@ -107,7 +107,7 @@ These are validation-only dependencies.
 
 ```sh
 build-kitten2/bin/kitten_tts2_session_probe \
-  models/kitten-tts2/kitten-tts2-q8-v2-multilingual.gguf build-kitten2/native-session \
+  models/kitten-tts2-v2/kitten-tts2-q8-v2-multilingual.gguf build-kitten2/native-session \
   8 native /absolute/path/kitten-tts-2 cpu > build-kitten2/session.log 2>&1
 ```
 

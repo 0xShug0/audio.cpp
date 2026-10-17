@@ -80,7 +80,7 @@ python tools/model_manager_v2.py install kitten_tts2 --models-root models
 ```
 
 The family ID resolves to `kitten_tts2_q8_v2`, which installs the GGUF and readable
-license/NOTICE files under `models/kitten-tts2/`. No Hugging Face token is
+license/NOTICE files under `models/kitten-tts2-v2/`. No Hugging Face token is
 needed.
 
 Direct download:
@@ -93,7 +93,7 @@ you supply.
 
 ```sh
 audiocpp_cli --family kitten_tts2 \
-  --model models/kitten-tts2/kitten-tts2-q8-v2-multilingual.gguf \
+  --model models/kitten-tts2-v2/kitten-tts2-q8-v2-multilingual.gguf \
   --backend cpu --threads 8 --task tts --voice-id Bruno \
   --request-option seed=1234 --text "Hello there. This is native Kitten speech." \
   --out hello.wav
@@ -142,7 +142,7 @@ Italian, Portuguese, Russian, or Spanish. The 38 named English voices remain
 available. These ten languages are registered in the model spec.
 
 ```sh
-audiocpp_cli --family kitten_tts2 --model models/kitten-tts2/kitten-tts2-q8-v2-multilingual.gguf \
+audiocpp_cli --family kitten_tts2 --model models/kitten-tts2-v2/kitten-tts2-q8-v2-multilingual.gguf \
   --backend cpu --task tts --voice-id German \
   --text "Guten Morgen. Dies ist ein Test der deutschen Sprachausgabe." --out german.wav
 ```
@@ -168,7 +168,7 @@ see the validation record for exactly what was exercised.
 Supply a one-to-thirty-second reference clip and its transcript:
 
 ```sh
-audiocpp_cli --family kitten_tts2 --model models/kitten-tts2/kitten-tts2-q8-v2-multilingual.gguf \
+audiocpp_cli --family kitten_tts2 --model models/kitten-tts2-v2/kitten-tts2-q8-v2-multilingual.gguf \
   --backend cpu --threads 8 --task clon --voice-ref reference.wav \
   --reference-text "The exact words spoken in the reference clip." \
   --text "The new words to say in this voice." --request-option seed=1234 \
@@ -233,7 +233,7 @@ python tools/model_manager_v2.py install kitten_tts2_q8_v2 --models-root models
 python tools/model_manager_v2.py install kitten_tts2_q4 --models-root models
 ```
 
-All three packages install into `models/kitten-tts2/`, with distinct GGUF
+All three packages install into `models/kitten-tts2-v2/`, with distinct GGUF
 filenames. They can coexist and share the license/NOTICE files. Select the
 chosen GGUF path in the CLI/server. Each package also downloads `LICENSE`, `NOTICE`,
 `native/LICENSE`, `speaker/LICENSE`, and `SHA256SUMS` from the same repository.

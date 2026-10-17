@@ -36,12 +36,17 @@ upstream TL2/emb4 format is used.
 ### Model contract and WebUI defaults
 
 The contract defaults projection storage to `native`. Q8 is the sole default
-package and UI recommendation. All three packages share `models/kitten-tts2/` and keep distinct GGUF filenames.
+package and UI recommendation. All three packages share `models/kitten-tts2-v2/`
+and keep distinct GGUF filenames.
 
 - Model-manager inspection selected `kitten_tts2_q8_v2`.
-- An isolated package-manager fixture installed all three packages together
-  under `models/kitten-tts2/`; removing each preserved sibling GGUFs, shared
-  sidecars and unrelated files. No network downloads were used for this check.
+- Rechecked on 2026-10-17 with an isolated package-manager fixture containing
+  an existing `models/kitten-tts2/` installation: all three updated packages
+  installed under `models/kitten-tts2-v2/` without overwrite. Installing and
+  removing them preserved the old folder, sibling GGUFs, shared sidecars and
+  unrelated files. Downloads were mocked for this check.
+- The existing frontend catalog resolved all three new paths and retained Q8
+  as the default without WebUI source changes.
 - Frontend catalog and Studio function checks exposed all three packages with
   distinct labels and submitted no precision override by default.
 - Svelte checks passed with zero errors/warnings; the WebUI build passed.

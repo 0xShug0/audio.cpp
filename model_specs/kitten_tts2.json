@@ -208,7 +208,7 @@
       "default": false,
       "format": "gguf",
       "precision": "bf16",
-      "target_directory": "kitten-tts2",
+      "target_directory": "kitten-tts2-v2",
       "files": [
         "kitten-tts2-bf16-multilingual.gguf",
         "LICENSE",
@@ -224,7 +224,7 @@
       "default": true,
       "format": "gguf",
       "precision": "q8_0",
-      "target_directory": "kitten-tts2",
+      "target_directory": "kitten-tts2-v2",
       "files": [
         "kitten-tts2-q8-v2-multilingual.gguf",
         "LICENSE",
@@ -240,7 +240,7 @@
       "default": false,
       "format": "gguf",
       "precision": "q4_0",
-      "target_directory": "kitten-tts2",
+      "target_directory": "kitten-tts2-v2",
       "files": [
         "kitten-tts2-q4-multilingual.gguf",
         "LICENSE",
