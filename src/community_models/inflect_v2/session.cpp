@@ -2,6 +2,7 @@
 
 #include "engine/community_models/inflect_v2/rknn_decoder.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/rknn/engine.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/utf8.h"
@@ -119,13 +120,15 @@ InflectV2Session::InflectV2Session(
         {{"decoder", "ggml",
           {{"ggml", {options.backend.type}, {}, {}},
            {"rknn", {}, {"main"}, {}}}}});
+    const auto & decoder_plan = exec_plan.at("decoder");
+    const std::string rknn_decoder_path = decoder_plan.impl == "rknn"
+        ? engine::rknn::resolve_engine_path(
+              decoder_plan.artifacts.at("main"), assets_->resources.model_directory())
+        : std::string{};
     runtime_ = std::make_unique<InflectV2VitsRuntime>(
         assets_,
         options.backend,
-        [&exec_plan] {
-            const auto & decoder = exec_plan.at("decoder");
-            return decoder.impl == "rknn" ? decoder.artifacts.at("main") : std::string{};
-        }());
+        rknn_decoder_path);
 }
 
 InflectV2Session::~InflectV2Session() = default;

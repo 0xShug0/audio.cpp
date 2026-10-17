@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -30,6 +31,19 @@ std::string status(const std::string & label, const char * what, int code) {
     std::ostringstream out;
     out << label << ": " << what << " failed with code " << code;
     return out.str();
+}
+
+std::string resolve_engine_path(const std::string & artifact, const std::filesystem::path & model_root) {
+    if (artifact.empty() || model_root.empty()) {
+        return artifact;
+    }
+    const std::filesystem::path here(artifact);
+    if (here.is_absolute()) {
+        return artifact;
+    }
+    std::error_code ec;
+    const auto joined = model_root / here;
+    return std::filesystem::exists(joined, ec) ? joined.string() : artifact;
 }
 
 #if defined(ENGINE_HAVE_RKNN)

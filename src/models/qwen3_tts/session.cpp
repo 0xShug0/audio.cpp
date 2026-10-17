@@ -1,6 +1,7 @@
 #include "engine/models/qwen3_tts/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/rknn/engine.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/qwen3_tts/prompt_tts_custom_voice.h"
@@ -339,9 +340,11 @@ Qwen3TTSSession::Qwen3TTSSession(
            {"rknn", {}, {"main"}, {"first"}}}}});
     const auto & decoder_plan = exec_plan.at("speech_decoder");
     if (decoder_plan.impl == "rknn") {
-        rknn_decoder_.model_path = decoder_plan.artifacts.at("main");
+        const auto & model_dir = assets_->resources.model_directory();
+        rknn_decoder_.model_path = engine::rknn::resolve_engine_path(
+            decoder_plan.artifacts.at("main"), model_dir);
         if (const auto first = decoder_plan.artifacts.find("first"); first != decoder_plan.artifacts.end()) {
-            rknn_decoder_.first_model_path = first->second;
+            rknn_decoder_.first_model_path = engine::rknn::resolve_engine_path(first->second, model_dir);
         }
     }
     if (perf_mode_ == Qwen3TTSPerfMode::FlashAttention &&
