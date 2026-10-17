@@ -37,6 +37,8 @@ struct ServerModelConfig {
         std::optional<std::string> voice_id;
         std::optional<std::filesystem::path> voice_ref;
         std::optional<std::string> reference_text;
+        // Request options the preset supplies, passed to the model as given.
+        std::unordered_map<std::string, std::string> options;
     };
 
     std::string id;

@@ -68,6 +68,12 @@ void test_inline_default_and_named_presets() {
         },
         "builtin": {
           "voice_id": "alba"
+        },
+        "embedding": {
+          "options": {
+            "speaker_embedding_file": "voices/embedding.safetensors",
+            "num_steps": 8
+          }
         }
       }
     }
@@ -81,10 +87,45 @@ void test_inline_default_and_named_presets() {
     require(model.default_voice_preset.has_value(), "inline default preset parsed");
     require(model.default_voice_preset->voice_ref == root / "voices/default.wav", "default voice_ref path resolved");
     require(model.default_voice_preset->reference_text == "default transcript", "default reference_text parsed");
-    require(model.voice_presets.size() == 2, "named presets parsed");
+    require(model.voice_presets.size() == 3, "named presets parsed");
     require(model.voice_presets.at("assistant").voice_ref == root / "voices/assistant.wav", "named voice_ref path resolved");
     require(model.voice_presets.at("assistant").reference_text == "assistant transcript", "named reference_text parsed");
     require(model.voice_presets.at("builtin").voice_id == "alba", "named voice_id parsed");
+    const auto & options = model.voice_presets.at("embedding").options;
+    require(options.size() == 2, "preset options parsed");
+    require(options.at("speaker_embedding_file") == "voices/embedding.safetensors",
+            "preset option values are kept as given, not resolved as paths");
+    require(options.at("num_steps") == "8", "numeric preset option parsed");
+    require(model.voice_presets.at("assistant").options.empty(), "presets without options have none");
+}
+
+void test_bad_preset_options_are_rejected() {
+    const auto root = make_temp_root();
+    const auto not_object = write_config(root, "server_preset_options_type.json", R"JSON({
+  "models": [{"id": "tts", "family": "irodori_tts", "path": "models/irodori",
+              "voice_presets": {"narrator": {"options": "speaker.safetensors"}}}]
+})JSON");
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(not_object);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("options must be an object") != std::string::npos;
+    }
+    require(rejected, "non-object preset options are rejected");
+
+    const auto empty = write_config(root, "server_preset_options_empty.json", R"JSON({
+  "models": [{"id": "tts", "family": "irodori_tts", "path": "models/irodori",
+              "voice_presets": {"narrator": {"options": {}}}}]
+})JSON");
+    rejected = false;
+    try {
+        (void) minitts::server::load_server_config(empty);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("must set voice_id, voice_ref, reference_text, or options") !=
+            std::string::npos;
+    }
+    require(rejected, "a preset with only empty options is rejected");
+    std::filesystem::remove_all(root);
 }
 
 void test_model_spec_override_selection() {
@@ -739,6 +780,7 @@ int main() {
         test_model_spec_override_selection();
         test_builtin_utility_model_paths();
         test_default_preset_name();
+        test_bad_preset_options_are_rejected();
         test_default_request_options();
         test_default_session_options();
         test_missing_default_preset_name_is_rejected();

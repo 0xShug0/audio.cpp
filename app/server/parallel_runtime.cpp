@@ -636,6 +636,7 @@ RuntimeVoicePreset ParallelServerState::load_runtime_voice_preset(
     RuntimeVoicePreset out;
     out.voice_id = preset.voice_id;
     out.reference_text = preset.reference_text;
+    out.options = preset.options;
     if (preset.voice_ref.has_value()) {
         out.audio = minitts::cli::read_audio_buffer(*preset.voice_ref);
     }
