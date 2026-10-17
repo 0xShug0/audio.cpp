@@ -72,6 +72,7 @@
     "request.sourceAudio": "入力音声",
     "request.recordMicrophone": "マイクで録音",
     "voice.quickStart": "すぐに試せるデモ音声",
+    "voice.configured": "設定済みの音声",
     "voice.useReference": "以下の参照音声ファイルを使用",
     "voice.reference": "参照音声",
     "voice.required": "必須",
