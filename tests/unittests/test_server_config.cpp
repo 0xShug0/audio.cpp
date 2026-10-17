@@ -179,6 +179,66 @@ void test_default_request_options() {
     require(options.at("do_sample") == "false", "bool default request option parsed");
 }
 
+void test_default_session_options() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "server_default_session_options.json",
+        R"JSON({
+  "default_session_options": {
+    "irodori_tts.mem_saver": true,
+    "irodori_tts.codec_decode_chunk_steps": 100,
+    "qwen3_asr.max_tokens": 256
+  },
+  "models": [
+    {
+      "id": "tts",
+      "family": "irodori_tts",
+      "path": "models/irodori.gguf",
+      "session_options": {
+        "irodori_tts.codec_decode_chunk_steps": "50"
+      }
+    },
+    {
+      "id": "other",
+      "family": "omnivoice",
+      "path": "models/OmniVoice"
+    }
+  ]
+})JSON");
+
+    const auto config = minitts::server::load_server_config(config_path);
+    require(config.default_session_options.size() == 3, "default session options parsed");
+    const auto & tts = config.models.at(0).session_options;
+    require(tts.at("irodori_tts.mem_saver") == "true", "default fills an unset session option");
+    require(tts.at("irodori_tts.codec_decode_chunk_steps") == "50", "the model's own session option wins");
+    require(tts.count("qwen3_asr.max_tokens") == 0, "defaults of another family are not applied");
+    require(config.models.at(1).session_options.empty(), "a family without defaults is unchanged");
+
+    // Models loaded later (POST /v1/models/load) get the same treatment.
+    minitts::server::ServerModelConfig loaded;
+    loaded.family = "irodori_tts";
+    loaded.session_options["irodori_tts.mem_saver"] = "false";
+    minitts::server::apply_default_session_options(config, loaded);
+    require(loaded.session_options.at("irodori_tts.mem_saver") == "false", "a loaded model's own value wins");
+    require(loaded.session_options.at("irodori_tts.codec_decode_chunk_steps") == "100",
+            "a loaded model gets the family default");
+
+    for (const std::string bad : {R"({"default_session_options": {"mem_saver": true}, "models": []})",
+                                  R"({"default_session_options": {".mem_saver": true}, "models": []})",
+                                  R"({"default_session_options": {"irodori_tts.": true}, "models": []})",
+                                  R"({"default_session_options": ["irodori_tts.mem_saver"], "models": []})"}) {
+        const auto bad_path = write_config(root, "server_bad_default_session_options.json", bad);
+        bool rejected = false;
+        try {
+            (void) minitts::server::load_server_config(bad_path);
+        } catch (const std::runtime_error & error) {
+            rejected = std::string(error.what()).find("default_session_options") != std::string::npos;
+        }
+        require(rejected, "malformed default_session_options is rejected: " + bad);
+    }
+}
+
 void test_missing_default_preset_name_is_rejected() {
     const auto root = make_temp_root();
     const auto config_path = write_config(
@@ -680,6 +740,7 @@ int main() {
         test_builtin_utility_model_paths();
         test_default_preset_name();
         test_default_request_options();
+        test_default_session_options();
         test_missing_default_preset_name_is_rejected();
         test_duplicate_json_keys_are_rejected();
         test_busy_timeout_defaults_and_overrides();
