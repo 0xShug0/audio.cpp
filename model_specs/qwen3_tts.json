@@ -202,6 +202,13 @@
         "default": false
       },
       {
+        "name": "stitch_decode",
+        "type": "bool",
+        "description": "Voice the concatenated speech codes of all text chunks in one decoder pass instead of voicing each chunk separately; default false. Per-chunk voicing re-voices the voice-clone reference once per chunk and restarts the stateful vocoder cache at every chunk boundary; the stitched pass costs device memory proportional to the utterance.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "perf_mode",
         "type": "enum",
         "description": "Q8_0-only attention performance mode; default off keeps the exact-safe path.",

@@ -32,7 +32,7 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Ba
 | `--voice-ref` | WAV path | required | Voice clone reference audio. |
 | `--reference-text` | text | required by default | Transcript for reference audio; optional with `x_vector_only_mode=true`. |
 | `--language` | language code | empty string | Text language hint. |
-| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
+| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. Each chunk is voiced separately; with the session option `qwen3_tts.stitch_decode=true` the talker still runs per chunk but the codes of all chunks are voiced in one decoder pass. |
 | `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS CustomVoice
@@ -61,7 +61,7 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Cu
 | `--speaker` | packaged speaker name | required | Built-in speaker id, such as `Vivian` or `Ryan`. |
 | `--instruct` | text | empty string | Style or emotion instruction. |
 | `--language` | language code | empty string | Text language hint. |
-| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
+| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. Each chunk is voiced separately; with the session option `qwen3_tts.stitch_decode=true` the talker still runs per chunk but the codes of all chunks are voiced in one decoder pass. |
 | `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS VoiceDesign
@@ -90,7 +90,7 @@ audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-V
 | `--text` | text | required | Text to synthesize. |
 | `--instruct` | text | empty string | Optional voice design instruction. |
 | `--language` | language code | empty string | Text language hint. |
-| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
+| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. Each chunk is voiced separately; with the session option `qwen3_tts.stitch_decode=true` the talker still runs per chunk but the codes of all chunks are voiced in one decoder pass. |
 | `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS Streaming
@@ -156,6 +156,7 @@ constant-context sizes are in MiB.
 |---|---|---:|---|
 | `qwen3_tts.mem_saver` | bool | `false` | Release the talker cached-step graph after each request. Voice-prompt, prefill, code-predictor, and speech-decoder caches remain reusable. |
 | `qwen3_tts.perf_mode` | `off`, `flash_attention` | `off` | Opt-in attention optimization; `flash_attention` requires Q8_0 weights in both the talker and speech tokenizer. |
+| `qwen3_tts.stitch_decode` | bool | `false` | Voice the concatenated speech codes of all text chunks in one decoder pass instead of voicing each chunk separately. Per-chunk voicing voices the voice-clone reference once per chunk and zeroes the stateful vocoder cache at every chunk boundary (measured on RK3588, 300 characters, 22.5 s reference: 7 vocoder runs for 159.9 s against 1 run for 57.5 s); the stitched pass costs device memory proportional to the utterance, since one decode call builds a vocoder graph sized by its frame count. |
 | `qwen3_tts.voice_prompt_cache_slots` | nonnegative integer | `1` | Cached voice-clone prompts; `0` disables prompt caching. |
 | `qwen3_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Talker weight storage fallback. |
 | `qwen3_tts.talker_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit talker weight storage override. |
