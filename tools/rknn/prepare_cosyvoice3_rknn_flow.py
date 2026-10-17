@@ -202,25 +202,21 @@ def convert_rknn(
     opt_level: int,
     seq_len: int,
 ) -> None:
-    from rknn.api import RKNN
-
     names = graph_input_names(onnx_path)
-    rknn = RKNN(verbose=False)
     # FP16 with no quantization: the flow estimator is the stage the reference port keeps on the NPU,
     # and quantizing it (int8) is what pushes the mel off enough to need a hand-tuned offset.
-    rknn.config(target_platform=target, optimization_level=opt_level)
-    if rknn.load_onnx(model=str(onnx_path), inputs=names, input_size_list=input_shapes(seq_len)) != 0:
-        raise SystemExit("load_onnx failed")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from rknn_build_log import rknn_build_gate
+    from rknn_build import build_engine
 
-    with rknn_build_gate(f"build {output.name}", output.with_suffix(".build.log")):
-        built = rknn.build(do_quantization=False)
-    if built != 0:
-        raise SystemExit("build failed (see the rknn log above)")
-    if rknn.export_rknn(str(output)) != 0:
-        raise SystemExit("export_rknn failed")
-    rknn.release()
+    build_engine(
+        onnx_path,
+        output,
+        target,
+        names=names,
+        shapes=input_shapes(seq_len),
+        opt_level=opt_level,
+        gate_label=f"build {output.name}",
+    )
     print(f"wrote {output} ({output.stat().st_size / 1e6:.1f} MB, seq_len {seq_len}, "
           f"{target}, optimization_level {opt_level})")
 

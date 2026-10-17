@@ -746,30 +746,16 @@ def export_onnx(
 def convert_rknn(onnx_path: Path, output: Path, target: str) -> None:
     import onnx
 
-    from rknn.api import RKNN
-
     graph = onnx.load(str(onnx_path))
     names = [value.name for value in graph.graph.input]
     sizes = [
         [dim.dim_value if dim.HasField("dim_value") else 1 for dim in value.type.tensor_type.shape.dim]
         for value in graph.graph.input
     ]
-    rknn = RKNN(verbose=False)
-    # Not single_core_mode: the engine stays multi-core and rknn_set_core_mask in the runtime
-    # decides how many NPU cores a call runs on.
-    rknn.config(target_platform=target)
-    if rknn.load_onnx(model=str(onnx_path), inputs=names, input_size_list=sizes) != 0:
-        raise SystemExit("load_onnx failed")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from rknn_build_log import rknn_build_gate
+    from rknn_build import build_engine
 
-    with rknn_build_gate(f"{output.name}", output.with_suffix(".build.log")):
-        built = rknn.build(do_quantization=False)
-    if built != 0:
-        raise SystemExit("build failed (see the rknn log above)")
-    if rknn.export_rknn(str(output)) != 0:
-        raise SystemExit("export_rknn failed")
-    rknn.release()
+    build_engine(onnx_path, output, target, names=names, shapes=sizes)
     print(f"wrote {output} ({output.stat().st_size / 1e6:.1f} MB, inputs {names})")
 
 

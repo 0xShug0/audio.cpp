@@ -243,6 +243,11 @@ field, repeated ~800k times. `tools/rknn/rknn_build_log.py` is the gate that sep
 it captures fds 1/2 around `rknn.build`, because those lines come from the C++ compiler and not from
 Python logging, and aborts past 100 000 lines.
 
+The call sequence that gate has to wrap — `config`, `load_onnx`, `build`, `export_rknn`, `release` —
+is the same in all five converters and lives in `tools/rknn/rknn_build.py` (`build_engine`). What
+stays per converter is the ONNX surgery, the input names and shapes it declares, and the
+simulator-side verification.
+
 The field is per axis and per op, and the ceiling is escapable: slicing the fine-rate axis inside
 the graph takes W=256 from 403 587 REGTASK lines to 0, and the re-traced module keeps every gate —
 60.5 dB against the runtime's generator, 135.6 dB padded-window exactness, 124.4 dB export against
