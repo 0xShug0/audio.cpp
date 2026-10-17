@@ -443,8 +443,6 @@ def convert_rknn(
     target: str,
     window: int,
 ) -> None:
-    from rknn.api import RKNN
-
     channels = decoder_channels(onnx_path)
     names = graph_input_names(onnx_path)
     sizes = [[1, channels, window]]
@@ -453,22 +451,10 @@ def convert_rknn(
             sizes.append([1, 1, window])
         elif name == "g":
             sizes.append([1, 512, 1])
-    rknn = RKNN(verbose=False)
-    # Not single_core_mode: the engine stays multi-core, and rknn_set_core_mask in the runtime
-    # decides how many NPU cores a call actually runs on.
-    rknn.config(target_platform=target)
-    if rknn.load_onnx(model=str(onnx_path), inputs=names, input_size_list=sizes) != 0:
-        raise SystemExit("load_onnx failed")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from rknn_build_log import rknn_build_gate
+    from rknn_build import build_engine
 
-    with rknn_build_gate(f"{output.name}", output.with_suffix(".build.log")):
-        built = rknn.build(do_quantization=False)
-    if built != 0:
-        raise SystemExit("build failed (see the rknn log above)")
-    if rknn.export_rknn(str(output)) != 0:
-        raise SystemExit("export_rknn failed")
-    rknn.release()
+    build_engine(onnx_path, output, target, names=names, shapes=sizes)
     print(f"wrote {output} ({output.stat().st_size / 1e6:.1f} MB, inputs {names}, "
           f"window {window})")
 

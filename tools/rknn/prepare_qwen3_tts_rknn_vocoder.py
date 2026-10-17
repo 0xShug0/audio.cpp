@@ -386,39 +386,31 @@ def graph_contract(onnx_path):
 
 
 def convert_rknn(args, onnx_path, cache_numel, head_dim, kv_len):
-    from rknn.api import RKNN
-
     out = args.output or (
         os.path.splitext(os.path.basename(onnx_path))[0] + f"_{args.target}.rknn"
     )
     print(f"=== {onnx_path} -> {out} ({args.target}) ===")
-    rknn = RKNN(verbose=True)
-    rknn.config(target_platform=args.target, optimization_level=args.opt_level)
-    ret = rknn.load_onnx(
-        model=onnx_path,
-        inputs=["audio_codes", "freqs_in", "cache_valid", "cache_in"],
-        input_size_list=[
+    # FP16 (w16a16), not quantized: the Snake activation makes Q8/INT8 audibly noisy
+    # (SNR 9.5-13.4 dB) for 1.75x the speed, while fp16 measures lossless (56.8 dB).
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from rknn_build import build_engine
+
+    build_engine(
+        onnx_path,
+        out,
+        args.target,
+        names=["audio_codes", "freqs_in", "cache_valid", "cache_in"],
+        shapes=[
             [1, 16, args.codes_length],
             [args.codes_length, head_dim // 2],
             [1],
             [cache_numel],
         ],
+        opt_level=args.opt_level,
+        verbose=True,
+        gate_label=f"build {os.path.basename(out)}",
+        gate_log=out + ".build.log",
     )
-    if ret != 0:
-        sys.exit(f"ERROR: rknn load_onnx failed: {ret}")
-    # FP16 (w16a16), not quantized: the Snake activation makes Q8/INT8 audibly noisy
-    # (SNR 9.5-13.4 dB) for 1.75x the speed, while fp16 measures lossless (56.8 dB).
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from rknn_build_log import rknn_build_gate
-
-    with rknn_build_gate(f"build {os.path.basename(out)}", out + ".build.log"):
-        ret = rknn.build(do_quantization=False)
-    if ret != 0:
-        sys.exit(f"ERROR: rknn build failed: {ret}")
-    ret = rknn.export_rknn(out)
-    if ret != 0:
-        sys.exit(f"ERROR: rknn export failed: {ret}")
-    rknn.release()
     print(f"saved {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
     print(
         f"\nDeploy (per-SoC file, not portable between chips):\n"
