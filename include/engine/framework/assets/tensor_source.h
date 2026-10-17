@@ -39,6 +39,14 @@ enum class TensorStorageType {
     Q6_K,
     Q8_0,
     NVFP4,
+    // drama3-small: i-quants (routed expert banks).
+    IQ2_XXS,
+    IQ2_XS,
+    IQ2_S,
+    IQ3_XXS,
+    IQ3_S,
+    IQ4_NL,
+    IQ4_XS,
 };
 
 struct TensorMetadata {
