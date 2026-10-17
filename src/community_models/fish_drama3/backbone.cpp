@@ -444,7 +444,9 @@ Drama3MoeInputs build_moe_inputs(
     auto * hidden = ggml_reshape_2d(ctx.ggml, x.tensor, config.hidden_size, steps);
     auto * router_logits = ggml_mul_mat(ctx.ggml, weights.router.tensor, hidden);
     auto * probabilities = ggml_soft_max(ctx.ggml, router_logits);
-    auto * expert_ids = ggml_top_k(ctx.ggml, probabilities, config.experts_per_token);
+    auto * expert_ids = ggml_argsort_top_k(ctx.ggml, probabilities, config.experts_per_token);
+    // Preserve the offload prefill's unfused routing arithmetic.
+    if (weights.disk_store && !ggml_is_contiguous(expert_ids)) expert_ids = ggml_cont(ctx.ggml, expert_ids);
     auto * selected = ggml_get_rows(ctx.ggml, ggml_reshape_3d(ctx.ggml, probabilities, 1, config.experts, steps), expert_ids);
     selected = ggml_reshape_2d(ctx.ggml, selected, config.experts_per_token, steps);
     selected = ggml_div(ctx.ggml, selected, ggml_sum_rows(ctx.ggml, selected));

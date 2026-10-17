@@ -197,6 +197,19 @@ int main(int argc, char ** argv) {
         }
         c.disk_experts = true;
         auto disk = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
+        for (int64_t steps : {1, 7}) {
+            std::unique_ptr<ggml_context, drama::GgmlContextDeleter> routing_context(
+                ggml_init({1024 * 1024, nullptr, true}));
+            engine::core::ModuleBuildContext routing_ctx{routing_context.get(), "routing_layout", test_backend.type};
+            auto * input = ggml_new_tensor_3d(routing_ctx.ggml, GGML_TYPE_F32, c.hidden_size, steps, 1);
+            const auto routed = drama::build_moe_inputs(routing_ctx,
+                engine::core::wrap_tensor(input, engine::core::TensorShape::from_dims({1, steps, c.hidden_size})),
+                disk->layers.front(), c);
+            if (!ggml_is_contiguous(routed.ids))
+                throw std::runtime_error("Drama 3 offload routing IDs must remain compact");
+            if (steps == 1 && routed.ids->op == GGML_OP_CONT)
+                throw std::runtime_error("single-token routing must not copy already compact IDs");
+        }
         drama::Drama3BackboneCachedDecodeGraph reference(prefill_execution, resident, c, 1024, 8 * 1024 * 1024);
         drama::Drama3BackboneCachedDecodeGraph grouped(prefill_execution, disk, c, 1024, 8 * 1024 * 1024);
         std::vector<float> first_hidden, first_next;
