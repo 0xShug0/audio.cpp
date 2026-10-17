@@ -165,7 +165,6 @@
   let refreshedInstallFinishes: Record<string, number> = {};
   let quickStartVoices: string[] = [];
   let configuredVoices: string[] = [];
-  let bundledVoices: string[] = [];
   let quickStartVoice = '';
   let uiLanguage = 'en';
   let uiTheme: UiTheme = 'mocha';
@@ -526,9 +525,7 @@
       ]))
     : usesBuiltInVoiceSelector
       ? selected?.builtin_voices || []
-    : Object.entries(demoVoiceSources)
-      .filter(([, source]) => bundledVoices.includes(source))
-      .map(([voice]) => voice);
+      : configuredVoices;
   $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false && !usesBuiltInVoiceSelector
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
@@ -1274,6 +1271,7 @@
         session_options: mergedSessionOptions(selected)
       });
       await refresh();
+      await refreshConfiguredVoices();
       status = tr('status.modelReady', { model: selected.display_name });
       errorStatus = '';
       log(status);
@@ -1300,6 +1298,7 @@
     try {
       await unloadModel(selected.id);
       await refresh();
+      await refreshConfiguredVoices();
       const selectionCleared = clearUnavailableModelSelection(true);
       status = selectionCleared
         ? `${modelName} unloaded. No installed model is selected.`
@@ -1778,16 +1777,8 @@
     }
   }
 
-  async function refreshBundledVoices() {
-    try {
-      bundledVoices = await availableVoices();
-    } catch (error) {
-      log(`Quick-start voices unavailable: ${error instanceof Error ? error.message : error}`);
-    }
-  }
-
   async function refreshConfiguredVoices() {
-    if (!selectedId || server?.ui_management !== false) {
+    if (!selectedId || !server) {
       configuredVoices = [];
       return;
     }
@@ -2575,7 +2566,6 @@
       installed = Boolean(selectedId);
     }
     await refreshVoices();
-    await refreshBundledVoices();
     await refreshConfiguredVoices();
     await refreshInstallJobs();
   });
