@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/higgs_audio_tts/codebooks.h"
@@ -19,22 +20,6 @@ namespace engine::models::higgs_audio_tts {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-constexpr int64_t kInitialGeneratedCacheSteps = 128;
-constexpr int64_t kMinimumCacheBucketSteps = 128;
-
-int64_t bucketed_initial_cache_steps(int64_t prompt_steps, int64_t max_tokens) {
-    const int64_t maximum = prompt_steps + max_tokens;
-    const int64_t required = prompt_steps + std::min(max_tokens, kInitialGeneratedCacheSteps);
-    int64_t bucket = kMinimumCacheBucketSteps;
-    while (bucket < required && bucket <= maximum / 2) {
-        bucket *= 2;
-    }
-    if (bucket < required) {
-        bucket = required;
-    }
-    return std::min(bucket, maximum);
-}
 
 void validate_generation_options(const HiggsGenerationOptions & options) {
     if (options.max_tokens <= 0) {
@@ -391,7 +376,8 @@ HiggsGenerationResult HiggsGenerator::generate(
     engine::debug::trace_log_scalar("higgs_audio_tts.generator.reference_prefix_cache_hit", reference_cache_hit);
     engine::debug::trace_log_scalar("higgs_audio_tts.generator.reference_prefix_steps", prepared.prefix_steps);
     const int64_t max_cache_steps = prompt_steps + request.options.max_tokens;
-    const int64_t initial_cache_steps = bucketed_initial_cache_steps(prompt_steps, request.options.max_tokens);
+    const int64_t initial_cache_steps =
+        engine::runtime::bucketed_cache_steps(prompt_steps, request.options.max_tokens);
     const bool cache_rebuild =
         ar_kv_cache_ == nullptr || !ar_kv_cache_->can_run(*ar_, initial_cache_steps) ||
         ar_kv_cache_->cache_steps() != initial_cache_steps;
