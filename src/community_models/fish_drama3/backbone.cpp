@@ -332,7 +332,8 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
         out.mlp_gate = binding::linear_from_source(*weights->store, source, prefix + ".mlp.shared_expert.gate_proj", storage_type, c.intermediate_size, c.hidden_size, false);
         out.mlp_up = binding::linear_from_source(*weights->store, source, prefix + ".mlp.shared_expert.up_proj", storage_type, c.intermediate_size, c.hidden_size, false);
         out.mlp_down = binding::linear_from_source(*weights->store, source, prefix + ".mlp.shared_expert.down_proj", storage_type, c.hidden_size, c.intermediate_size, false);
-        out.router = weights->store->load_tensor(source, prefix + ".mlp.gate.weight", storage_type, {c.experts, c.hidden_size});
+        const int64_t layer_experts = c.experts_per_layer.empty() ? c.experts : c.experts_per_layer[static_cast<size_t>(layer)];
+        out.router = weights->store->load_tensor(source, prefix + ".mlp.gate.weight", storage_type, {layer_experts, c.hidden_size});
         out.shared_gate = weights->store->load_tensor(source, prefix + ".mlp.shared_expert_gate.weight", storage_type, {1, c.hidden_size});
         if (weights->disk_store) {
             out.disk_store = weights->disk_store.get();
@@ -346,9 +347,9 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
             out.expert_down = out.disk_store->tensor(out.disk_group, 2);
         } else {
             auto & expert_store = weights->cpu_store && layer < c.cpu_expert_layers ? *weights->cpu_store : *weights->store;
-            out.expert_gate = expert_store.load_tensor(source, prefix + ".mlp.experts.gate_proj.weight", storage_type, {c.experts, c.intermediate_size, c.hidden_size});
-            out.expert_up = expert_store.load_tensor(source, prefix + ".mlp.experts.up_proj.weight", storage_type, {c.experts, c.intermediate_size, c.hidden_size});
-            out.expert_down = expert_store.load_tensor(source, prefix + ".mlp.experts.down_proj.weight", storage_type, {c.experts, c.hidden_size, c.intermediate_size});
+            out.expert_gate = expert_store.load_tensor(source, prefix + ".mlp.experts.gate_proj.weight", storage_type, {layer_experts, c.intermediate_size, c.hidden_size});
+            out.expert_up = expert_store.load_tensor(source, prefix + ".mlp.experts.up_proj.weight", storage_type, {layer_experts, c.intermediate_size, c.hidden_size});
+            out.expert_down = expert_store.load_tensor(source, prefix + ".mlp.experts.down_proj.weight", storage_type, {layer_experts, c.hidden_size, c.intermediate_size});
         }
         weights->layers.push_back(std::move(out));
     }
@@ -361,7 +362,7 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
             source,
             c.lm_head_prefix,
             storage_type,
-            c.vocab_size,
+            c.lm_head_rows > 0 ? c.lm_head_rows : c.vocab_size,
             c.hidden_size,
             false);
     }
@@ -445,7 +446,8 @@ Drama3MoeInputs build_moe_inputs(
     auto * router_logits = ggml_mul_mat(ctx.ggml, weights.router.tensor, hidden);
     auto * probabilities = ggml_soft_max(ctx.ggml, router_logits);
     auto * expert_ids = ggml_top_k(ctx.ggml, probabilities, config.experts_per_token);
-    auto * selected = ggml_get_rows(ctx.ggml, ggml_reshape_3d(ctx.ggml, probabilities, 1, config.experts, steps), expert_ids);
+    const int64_t experts = weights.router.tensor->ne[1];  // per layer (adaptive pruning)
+    auto * selected = ggml_get_rows(ctx.ggml, ggml_reshape_3d(ctx.ggml, probabilities, 1, experts, steps), expert_ids);
     selected = ggml_reshape_2d(ctx.ggml, selected, config.experts_per_token, steps);
     selected = ggml_div(ctx.ggml, selected, ggml_sum_rows(ctx.ggml, selected));
     return {ggml_reshape_2d(ctx.ggml, shared_output, config.hidden_size, steps), expert_ids, selected};
@@ -1168,7 +1170,9 @@ private:
         auto x = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config_.hidden_size}));
         input_ = x.tensor;
         ggml_set_input(input_);
-        if (config_.lm_head_token_ids.empty()) {
+        if (config_.lm_head_rows > 0) {
+            x = modules::LinearModule({config_.hidden_size, config_.lm_head_rows, false}).build(ctx, x, weights_->lm_head);
+        } else if (config_.lm_head_token_ids.empty()) {
             x = modules::LinearModule({config_.hidden_size, config_.vocab_size, false}).build(ctx, x, weights_->lm_head);
         } else {
             const auto input = x;
