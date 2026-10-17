@@ -255,6 +255,20 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         config.model_spec_override = selection == "embedded"
             ? std::filesystem::path(selection) : resolve_path(base, selection);
     }
+    if (const auto * value = root.find("default_session_options")) {
+        if (!value->is_object()) {
+            throw std::runtime_error("server default_session_options must be an object");
+        }
+        config.default_session_options = options_from_object(value);
+        for (const auto & [key, option] : config.default_session_options) {
+            (void) option;
+            const auto dot = key.find('.');
+            if (dot == std::string::npos || dot == 0 || dot + 1 == key.size()) {
+                throw std::runtime_error(
+                    "server default_session_options key must be <family>.<option>: " + key);
+            }
+        }
+    }
     if (const auto * value = root.find("voice_dir")) {
         if (!value->is_string()) {
             throw std::runtime_error("server voice_dir must be a string");
@@ -385,7 +399,19 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         }
         config.models.push_back(std::move(model));
     }
+    for (auto & model : config.models) {
+        apply_default_session_options(config, model);
+    }
     return config;
+}
+
+void apply_default_session_options(const ServerConfig & config, ServerModelConfig & model) {
+    const std::string prefix = model.family + ".";
+    for (const auto & [key, value] : config.default_session_options) {
+        if (key.rfind(prefix, 0) == 0) {
+            model.session_options.emplace(key, value);
+        }
+    }
 }
 
 }  // namespace minitts::server

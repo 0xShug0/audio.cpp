@@ -223,6 +223,30 @@ Always set `family`, `task`, and `mode` explicitly rather than relying on inferr
 names or defaults. Several entries can use the same family with different GGUFs,
 tasks, or modes, provided each entry has a unique `id`.
 
+### Default session options
+
+Top-level `"default_session_options"` sets session options for every model of a
+family, keyed `<family>.<option>`. A model gets the entries of its family that its
+own `session_options` do not set. This applies to the configured models and to
+models loaded later through `POST /v1/models/load`, which is how the WebUI loads
+a model with `--ui-management`. The WebUI sends the catalog's session options,
+not the config's, so without defaults such a load drops settings like memory
+options:
+
+```json
+{
+  "ui_management": true,
+  "default_session_options": {
+    "irodori_tts.mem_saver": true,
+    "irodori_tts.codec_decode_chunk_steps": 100
+  },
+  "models": []
+}
+```
+
+A key without a family prefix is rejected when the config loads. A value for a
+family that never loads is ignored.
+
 ### Paths and model specs
 
 Relative model and configured voice-library paths resolve against the config
@@ -267,6 +291,7 @@ endpoint, or `request.options` on generic task endpoints.
 | `--task tts --mode offline` | `models[].task` and `models[].mode` | Choose the matching entry; a request does not change its session mode. |
 | `--load-option key=value` | `models[].load_options` | Not an inference-request option. |
 | `--session-option family.key=value` | `models[].session_options` | Not an inference-request option. |
+| `--session-option family.key=value` for every model of that family | top-level [`default_session_options`](#default-session-options) | Not an inference-request option. |
 | `--request-option key=value` | `models[].default_request_options` | Speech `options`, or generic `request.options`. |
 | `--seed 1234`, `--max-tokens 512` | `default_request_options`: `seed`, `max_tokens` | Speech also accepts these as top-level fields. |
 | `--instruct "..."` | `default_request_options`: use the model's documented option, usually `instruct` | `options.instruct` for a model accepting `instruct`; see the speech endpoint for the distinct `instructions` field. |
