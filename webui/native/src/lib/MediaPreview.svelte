@@ -9,7 +9,9 @@
 
   let objectUrl = '';
   let lastFile: File | null = null;
+  let failedUrl = '';
   $: previewUrl = objectUrl || src;
+  $: failed = Boolean(previewUrl) && failedUrl === previewUrl;
   $: previewName = file?.name || name;
 
   function clearObjectUrl() {
@@ -28,7 +30,7 @@
   onDestroy(clearObjectUrl);
 </script>
 
-{#if previewUrl}
+{#if previewUrl && !failed}
   <div class="media-preview">
     <div class="media-preview-header">
       <strong>{label}</strong>
@@ -36,9 +38,9 @@
     </div>
     {#if kind === 'video'}
       <!-- svelte-ignore a11y_media_has_caption -->
-      <video controls preload="metadata" src={previewUrl}></video>
+      <video controls preload="metadata" src={previewUrl} on:error={() => (failedUrl = previewUrl)}></video>
     {:else}
-      <audio controls src={previewUrl}></audio>
+      <audio controls src={previewUrl} on:error={() => (failedUrl = previewUrl)}></audio>
     {/if}
   </div>
 {/if}

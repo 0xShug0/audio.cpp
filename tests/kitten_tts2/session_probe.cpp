@@ -19,8 +19,15 @@ int main(int argc, char ** argv) {
             // these tensors and can otherwise escape an end-to-end smoke test.
             namespace assets = engine::assets;
             auto source = assets::open_tensor_source(argv[1]);
+            const auto body_type = assets::tensor_storage_type_for_dtype(
+                source->require_metadata("language_model/model.layers.0.self_attn.q_proj.weight").dtype);
+            if (body_type != assets::TensorStorageType::BF16 && body_type != assets::TensorStorageType::Q8_0 &&
+                body_type != assets::TensorStorageType::Q4_0)
+                throw std::runtime_error("incorrect packaged LM body precision");
+            const auto embedding_type = body_type == assets::TensorStorageType::Q4_0
+                ? assets::TensorStorageType::Q8_0 : assets::TensorStorageType::BF16;
             const std::pair<const char *, assets::TensorStorageType> expected[] = {
-                {"language_model/model.embed_tokens.weight", assets::TensorStorageType::F16},
+                {"language_model/model.embed_tokens.weight", embedding_type},
                 {"language_model/spk_proj.0.weight", assets::TensorStorageType::BF16},
                 {"s3gen/flow.encoder_proj.weight", assets::TensorStorageType::F32},
                 {"speaker/embedding.weight", assets::TensorStorageType::F32},
@@ -44,7 +51,7 @@ int main(int argc, char ** argv) {
             else if (backend != "cpu") throw std::runtime_error("probe backend must be cpu or cuda");
         }
         options.backend.threads = argc > 3 ? std::stoi(argv[3]) : 8;
-        if (argc > 4) options.options["kitten_tts2.weight_type"] = argv[4];
+        if (argc > 4 && std::string(argv[4]) != "default") options.options["kitten_tts2.weight_type"] = argv[4];
         const engine::runtime::TaskSpec task{engine::runtime::VoiceTaskKind::Tts, engine::runtime::RunMode::Offline};
         auto base = model->create_task_session(task, options);
         auto * session = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(base.get());

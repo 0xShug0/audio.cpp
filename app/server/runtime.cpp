@@ -285,6 +285,7 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
     }
     auto requested = model_config_from_json(body, request_base_, false);
     requested.path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
+    apply_default_session_options(config_, requested);
 
     LoadedModel * existing = nullptr;
     {

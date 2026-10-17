@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/module.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -27,6 +28,27 @@ inline int64_t ring_stored_position(
     int64_t current_end,
     int64_t pinned_prefix_steps) {
     return row < pinned_prefix_steps ? row : current_end - valid_steps + row;
+}
+
+// Bucketed capacity for a static-cache AR loop: prompt rows plus a small
+// generated window to start, doubling buckets up to prompt + max_tokens. A
+// family that sizes its step graph from this number builds (and attends over)
+// the cache the request can fill, not the model's full cache length.
+inline int64_t bucketed_cache_steps(
+    int64_t prompt_steps,
+    int64_t max_tokens,
+    int64_t initial_generated_steps = 128,
+    int64_t minimum_bucket_steps = 128) {
+    const int64_t maximum = prompt_steps + max_tokens;
+    const int64_t required = prompt_steps + std::min(max_tokens, initial_generated_steps);
+    int64_t bucket = minimum_bucket_steps;
+    while (bucket < required && bucket <= maximum / 2) {
+        bucket *= 2;
+    }
+    if (bucket < required) {
+        bucket = required;
+    }
+    return std::min(bucket, maximum);
 }
 
 struct TransformerKVCacheOptions {

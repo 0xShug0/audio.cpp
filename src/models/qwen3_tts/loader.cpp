@@ -79,6 +79,7 @@ runtime::ModelCliInterface cli(const Qwen3TTSAssets &) {
     };
     out.session_options = {
         {"qwen3_tts.mem_saver", "bool", "Release the talker cached-step graph after each request; default false.", false, "false"},
+        {"qwen3_tts.stitch_decode", "bool", "Voice the concatenated speech codes of all text chunks in one decoder pass instead of voicing each chunk separately; default false. Per-chunk voicing re-voices the voice-clone reference once per chunk and restarts the stateful vocoder cache at every chunk boundary; the stitched pass costs device memory proportional to the utterance.", false, "false"},
         {"qwen3_tts.perf_mode", "off|flash_attention", "Q8_0-only attention performance mode; default off keeps the exact-safe path.", false, "off"},
         {"qwen3_tts.voice_prompt_cache_slots", "int", "Voice prompt cache slots; default 1.", false, "1", "0"},
         {"qwen3_tts.weight_type", "native|f32|f16|bf16|q8_0", "Shared talker matmul weight storage type; default native.", false, "native"},

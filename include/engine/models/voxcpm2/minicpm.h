@@ -167,6 +167,8 @@ public:
   void reset();
   void import_state(const engine::runtime::TransformerKVState &state);
   engine::runtime::TransformerKVState export_state() const;
+  int64_t cache_steps() const;
+  int64_t valid_steps() const;
   VoxCPM2MiniCPMStepOutput run_step(const std::vector<float> &embedding);
   void release_runtime_memory();
 

@@ -1,5 +1,6 @@
 // Unit tests for TransformerKVCache ring_mode: slot mapping, wrap advance,
-// chronological export, wrap-placement import, and non-ring regression.
+// chronological export, wrap-placement import, and non-ring regression, plus
+// the bucketed step-graph capacity a static-cache AR loop sizes itself from.
 #include "engine/framework/runtime/kv_cache.h"
 
 #include "engine/framework/core/backend.h"
@@ -7,6 +8,7 @@
 #include "ggml-backend.h"
 #include "ggml.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <memory>
@@ -265,6 +267,31 @@ void test_non_ring_regression() {
     std::cout << "non-ring regression done\n";
 }
 
+void test_bucketed_cache_steps() {
+    // The shape families size their step graph from: doubling buckets from 128,
+    // clamped to prompt + max_tokens, exact once doubling would overshoot.
+    check(runtime::bucketed_cache_steps(114, 128) == 242, "one generated window is exact");
+    check(runtime::bucketed_cache_steps(100, 200) == 256, "short request rounds to a bucket");
+    check(runtime::bucketed_cache_steps(200, 8000) == 512, "generated window stops at 128 steps");
+    check(runtime::bucketed_cache_steps(8000, 0) == 8000, "long prompt lands on its own length");
+    check(runtime::bucketed_cache_steps(0, 64) == 64, "promptless request clamps to the total");
+    check(runtime::bucketed_cache_steps(0, 0) == 0, "empty request is empty");
+    check(runtime::bucketed_cache_steps(10, 10, 4, 8) == 16, "window and floor knobs are honoured");
+    for (const int64_t prompt : {0, 1, 43, 114, 1000, 8000}) {
+        int64_t previous = 0;
+        for (const int64_t tokens : {0, 1, 64, 128, 129, 1024, 8192}) {
+            const int64_t maximum = prompt + tokens;
+            const int64_t bucket = runtime::bucketed_cache_steps(prompt, tokens);
+            check(bucket <= maximum, "bucket never exceeds the request total");
+            check(bucket >= std::min(prompt + std::min(tokens, int64_t{128}), maximum),
+                  "bucket never undercuts the generated window it needs");
+            check(bucket >= previous, "bucket grows with the request");
+            previous = bucket;
+        }
+    }
+    std::cout << "bucketed_cache_steps done\n";
+}
+
 }  // namespace
 
 int main() {
@@ -274,6 +301,7 @@ int main() {
         test_wrap_round_trip();
         test_wrap_advance();
         test_non_ring_regression();
+        test_bucketed_cache_steps();
     } catch (const std::exception & e) {
         std::cerr << "ERROR: " << e.what() << "\n";
         return 1;

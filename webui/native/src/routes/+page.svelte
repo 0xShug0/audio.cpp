@@ -199,6 +199,7 @@
     'firered_audio',
     'fireredtts3',
     'irodori_tts',
+    'kitten_tts2',
     'kokoro_tts',
     'meanvc2',
     'midashenglm_gen'
@@ -526,9 +527,15 @@
     : usesBuiltInVoiceSelector
       ? selected?.builtin_voices || []
       : configuredVoices;
-  $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false && !usesBuiltInVoiceSelector
+  // The list holds server voices in both modes. Names without a library wav
+  // (presets, embeddings) have no preview; MediaPreview hides it then.
+  $: quickStartVoicePreview = quickStartVoice && server && !usesBuiltInVoiceSelector
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
+  // With UI management the list is the embedded demos only while the server
+  // has no voice_dir of its own.
+  $: quickStartVoicesAreDemos = usesBuiltInVoiceSelector ||
+    quickStartVoices.every((voice) => voice in demoVoiceSources);
   // LFM2.5-Audio S2S text would replace the chat system prompt the checkpoints
   // were trained with, so it gets no text box, and text kept from another
   // model is not sent.
@@ -2913,7 +2920,7 @@
 
             {#if (needsVoice || selected.family === 'kugelaudio') && !usesVibeVoiceSpeakerFiles && !replacesGenericControls.voice}
           {#if allowsQuickStartVoice && quickStartVoices.length}
-            <label for="quick-start-voice">{selected.family === 'kugelaudio' ? 'Voice preset' : server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
+            <label for="quick-start-voice">{selected.family === 'kugelaudio' ? 'Voice preset' : server?.ui_management === false || !quickStartVoicesAreDemos ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
               on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
               {#if selected.family !== 'kugelaudio'}<option value="">{tr('voice.useReference')}</option>{/if}

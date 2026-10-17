@@ -366,6 +366,7 @@ the configurable components:
 | Qwen3 `speech_decoder` | `qwen3_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main`, optional `first` |
 | sanoTTS `decoder` | `sanotts.exec_plan` | `default`, `ggml`, `neon` | None |
 | Inflect v2 `decoder` | `inflect_v2.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
+| CosyVoice3 `flow` | `cosyvoice3.exec_plan` | `ggml`, `rknn` | RKNN: required `main` (comma-separated ladder of per-length engines) |
 
 These options also work with older GGUFs whose embedded specs do not declare
 `exec_plan`; the model validates the plan without requiring a spec override.
@@ -482,9 +483,26 @@ model's latent channel count and its samples-per-frame hop at init.
 Streaming gains more than offline because the ggml streaming decoder re-voices the left-context
 tokens in every window, while the stateful model voices each token once.
 
-Quality: offline ggml-vs-RKNN output SNR 27 dB, with the per-second dips confined to
-near-silence (the fp16 noise floor), and no discontinuity at the group boundaries. The two
-batch sizes agree to 57 dB.
+Quality, split by what varies, because the numbers below are not comparable to each other and one
+of the rows is not about the NPU at all:
+
+| pair | SNR | envelope corr |
+|---|---|---|
+| backend, offline, 185 chars | 27 dB | - |
+| backend, offline, 307 chars | 25.1 dB | 0.9999 |
+| backend, streaming, 307 chars | 16.4 dB | 0.9988 |
+| backend, RKNN B=16 vs B=64 | 57 dB | - |
+| mode, same backend (streaming vs offline), 307 chars | -2.2 dB | 0.187 |
+
+The last row is not a sidecar cost. It measures the same on the CPU graph path (-2.24 dB on CPU
+against -2.23 dB on RKNN, one binary, one voice reference, `seed=42`, `conv_weight_type=f16`, 307
+Russian characters), so it is the streaming mode, not the NPU. Cross-correlation alignment moves it
+by 0.1 dB at a -120 ms lag, so it is not a time shift either: the 20 ms RMS envelope correlation of
+0.187 says the prosody and timing diverge across the whole phrase, which is what two valid
+syntheses of one text look like. GigaAM v3 CTC (16 kHz) transcribes all five renders of that matrix
+to the input text exactly (CER 0.00%). The backend rows are the same signal: in the offline row the
+per-second dips are confined to near-silence (the fp16 noise floor) and there is no discontinuity
+at the group boundaries.
 
 ### Piper, measured on the same board
 
@@ -616,6 +634,40 @@ max|d| against the CPU render, and the observed NPU-to-NPU spread is of the same
 NPU-to-CPU one (the two Kokoro sine engines differ by 28.2 dB from each other). Not characterized
 here: the per-core fp16 difference itself, which would need the same engine run with a
 single-core mask and the outputs compared.
+
+## The IOVA ceiling, i.e. how big an engine can be
+
+An engine is mapped into the NPU's I/O address space, and on RK3588 that space is a 32-bit arena. A
+single mapping above ~4 GB is refused at `rknn_init`, before the first step, and the driver says so
+in dmesg:
+
+```
+rknn_init failed with code -4
+RKNPU: failed to allocate IOVA: -12
+rknpu_gem_get_pages: dma map 4710850560 fail
+failed to malloc npu memory, size: 6189218496, flags: 0x2
+```
+
+Measured on this board (31 GiB RAM, `6.1.115-vendor-rk35xx`) with a flow-matching DiT estimator
+compiled at fixed `S=900`, `S=1100` and `S=2000`, fp16, `optimization_level=3`: the requests are
+4.71 GB, 4.66 GB and 5.77 GB, and all three fail. It is not host memory (`MemTotal 32 GiB`;
+`CmaTotal 256 MiB` is not the pool the driver runs out of), and it is not the multicore workspace -
+`AUDIOCPP_RKNN_CORE_MASK=1` and `=7` fail identically, so the request is the engine's own mapping.
+The request grows with `S`, so the ceiling is a length ceiling for this shape: the same estimator
+loads and runs at `S<=500`, and above the ceiling the only path is the CPU graph, which costs the
+same `S^2` it always did (1378 frames: 186.7 s of estimator for 26.9 s of audio).
+
+Three consequences for anyone extending this path:
+
+- Engine size is a design constraint, not a download-size constraint. The three shipped sidecars sit
+  at 20-260 MB per engine and never approach the ceiling. A graph whose intermediates grow with the
+  sequence length - attention at fixed `S`, so S^2 - reaches it in the low hundreds of frames, long
+  before the weight set does.
+- A ladder of engines has to be lazy and single-resident. Four engines that each load on their own
+  fail at `rknn_init` when all four are resident at once, so the runtime keeps exactly one loaded
+  and swaps on demand.
+- The failure is at init, so it is cheap to detect and cannot corrupt output: `rknn_init` returns -4
+  and dmesg names the byte count.
 
 ## What this path is not for
 
