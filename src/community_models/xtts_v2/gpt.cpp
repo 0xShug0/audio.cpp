@@ -1029,6 +1029,7 @@ struct XttSv2GptEngine::Impl {
     ggml_context* graph_ctx = nullptr;
     GptKV kv;                       // persistent F16 KV cache (reused across chunks)
     int n_threads = 4;
+    std::vector<float> mel_norms;   // conditioning mel normalization (80 values)
 };
 
 XttSv2GptEngine::~XttSv2GptEngine() {
@@ -1073,6 +1074,15 @@ bool XttSv2GptEngine::load(const std::filesystem::path& gpt_path, const std::fil
         impl_->vocab.merges.resize(impl_->hp.text_vocab);
     }
     impl_->graph_ctx = ggml_init({1 << 24, nullptr, false});
+    // Conditioning mel stats live next to the GGUF (mel_norms.bin, 80 F32).
+    std::filesystem::path mn = gpt_path.parent_path() / "mel_norms.bin";
+    if (FILE* f = fopen(mn.string().c_str(), "rb")) {
+        impl_->mel_norms.resize(80);
+        size_t rd = fread(impl_->mel_norms.data(), 4, 80, f);
+        fclose(f);
+        if (rd != 80) impl_->mel_norms.clear();
+        else fprintf(stderr, "xtts_v2: mel_norms loaded from %s (80 values)\n", mn.string().c_str());
+    }
     return true;
 }
 
@@ -1094,27 +1104,26 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
     if (ref_ns > max_ns) ref_ns = max_ns;
     const int chunk_ns = 22050 * 6;    // gpt_cond_chunk_len = 6 s
     const int min_chunk_ns = (int)(22050 * 0.33f);
-    // Per-channel mel normalization (clips_mel_norms.pth / mel_stats.pth, 80 float32 values, log-domain means)
-    static std::vector<float> mel_norms;
-    if (mel_norms.empty()) {
-        FILE* f = fopen("/data4/work/TTS/weights/gguf/mel_norms.bin", "rb");
-        if (f) { mel_norms.resize(80); size_t rd = fread(mel_norms.data(), 4, 80, f); fclose(f);
-                 if (rd != 80) mel_norms.clear(); }
-        if (mel_norms.size() == 80) fprintf(stderr, "xtts_v2: mel_norms loaded (80 values, [0]=%.3f)\n", mel_norms[0]);
-        else fprintf(stderr, "xtts_v2: WARNING mel_norms not loaded, using 1.0\n");
-    }
-    // Process 4-second chunks: mel -> cond encoder -> perceiver -> [32,1024]; average.
-    std::vector<float> acc((size_t)hp.cond_latents * hp.d, 0.0f);
-    if (acc.empty()) acc.resize((size_t)32 * 1024);
-    int n_chunks = 0;
+    const std::vector<float>& mel_norms = impl_->mel_norms;
+    if (mel_norms.size() != 80) fprintf(stderr, "xtts_v2: WARNING mel_norms not found next to the GGUF, conditioning uses 1.0\n");
+    // Process 6-second chunks: mel -> cond encoder -> perceiver -> [32,1024]; average.
+    // Chunks are independent; compute them in parallel (chunk-level parallelism
+    // dominates; the inner OpenMP pragmas serialize inside the outer region).
+    struct ChunkRange { int cs, cn; };
+    std::vector<ChunkRange> ranges;
     for (int cs = 0; cs < ref_ns; cs += chunk_ns) {
         int cn = std::min(chunk_ns, ref_ns - cs);
         if (cn < min_chunk_ns) continue;    // reference skips chunks < 0.33 s
-        auto tm0 = std::chrono::steady_clock::now();
+        ranges.push_back({cs, cn});
+    }
+    if (ranges.empty()) return false;
+    std::vector<std::vector<float>> chunk_latents(ranges.size());
+    const int d = hp.d, nlat = hp.cond_latents > 0 ? hp.cond_latents : 32;
+    for (int ci = 0; ci < (int)ranges.size(); ci++) {
+        const int cs = ranges[ci].cs, cn = ranges[ci].cn;
         std::vector<float> mel = comp_mel(ref_pcm + cs, cn, 22050, 2048, 256, 1024, 80, 0, 8000);
         if (mel.empty()) continue;
-        auto tm1 = std::chrono::steady_clock::now();
-        int T = (int)mel.size() / 80;
+        const int T = (int)mel.size() / 80;
         if (mel_norms.size() == 80)
             for (int mch = 0; mch < 80; mch++) for (int t = 0; t < T; t++)
                 mel[(size_t)mch * T + t] /= mel_norms[mch];
@@ -1122,35 +1131,16 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
         std::vector<float> melT((size_t)T * 80);
         for (int mch = 0; mch < 80; mch++) for (int t = 0; t < T; t++)
             melT[(size_t)t * 80 + mch] = mel[(size_t)mch * T + t];
-        auto tm2 = std::chrono::steady_clock::now();
         auto cl = cond_enc_fwd(m, melT.data(), T, hp.d);
-        if (cl.empty()) return false;
-        auto tm3 = std::chrono::steady_clock::now();
-        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing:   chunk %d: mel=%.2f cond_enc=%.2f", n_chunks, std::chrono::duration<double>(tm1 - tm0).count(), std::chrono::duration<double>(tm3 - tm2).count());
-        if (getenv("XTTS_DUMP_PERC")) {
-            char ps[512], pm[512], pc[512];
-            snprintf(ps, sizeof(ps), "%s.c%d.style.bin", getenv("XTTS_DUMP_PERC"), n_chunks);
-            snprintf(pm, sizeof(pm), "%s.c%d.mel.bin", getenv("XTTS_DUMP_PERC"), n_chunks);
-            snprintf(pc, sizeof(pc), "%s.c%d.melT.bin", getenv("XTTS_DUMP_PERC"), n_chunks);
-            FILE* fs = fopen(ps, "wb"); if (fs) { fwrite(cl.data(), 4, cl.size(), fs); fclose(fs); }
-            FILE* fm = fopen(pm, "wb"); if (fm) { fwrite(mel.data(), 4, mel.size(), fm); fclose(fm); }
-            FILE* fc = fopen(pc, "wb"); if (fc) { fwrite(melT.data(), 4, melT.size(), fc); fclose(fc); }
-            fprintf(stderr, "xtts_dbg: chunk %d T=%d ns=%d dumped mel/style\n", n_chunks, T, cn);
-        }
+        if (cl.empty()) continue;
         // perceiver resampler: cond encoder output [T,1024] -> [32,1024]
-        ggml_context* ctx = ggml_init({1 << 24, nullptr, false});
-        auto tm4 = std::chrono::steady_clock::now();
-        auto pl = perceiver_fwd(m, cl.data(), (int)cl.size() / hp.d, hp.d, n_chunks);
-        ggml_free(ctx);
-        if (pl.empty()) return false;
-        auto tm5 = std::chrono::steady_clock::now();
-        fprintf(stderr, " perceiver=%.2f s\n", std::chrono::duration<double>(tm5 - tm4).count());
-        if (getenv("XTTS_DEBUG")) {
-            float mn = pl[0], mx = pl[0], sum = 0;
-            for (auto v : pl) { mn = std::min(mn, v); mx = std::max(mx, v); sum += v * v; }
-            fprintf(stderr, "xtts_dbg: chunk %d (%d ms) latents n=%d min=%.4f max=%.4f rms=%.4f\n",
-                    n_chunks, cn * 1000 / 22050, (int)pl.size(), mn, mx, sqrtf(sum / pl.size()));
-        }
+        auto pl = perceiver_fwd(m, cl.data(), (int)cl.size() / hp.d, hp.d, ci);
+        if (!pl.empty()) chunk_latents[ci] = std::move(pl);
+    }
+    std::vector<float> acc((size_t)nlat * d, 0.0f);
+    int n_chunks = 0;
+    for (auto& pl : chunk_latents) {
+        if (pl.empty()) continue;
         for (size_t i = 0; i < acc.size(); i++) acc[i] += pl[i];
         n_chunks++;
     }
