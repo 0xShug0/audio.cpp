@@ -26,6 +26,29 @@ std::vector<char> read_engine(const std::string & path, const std::string & labe
 // Formats one `RKNN_*` return code the same way every sidecar does.
 std::string status(const std::string & label, const char * what, int code);
 
+// Aperture accounting for a sidecar that keeps more than one compiled engine resident: the resident
+// set is the sum of the units each loaded engine reserves, and a new engine is pinned only while the
+// whole set stays inside the budget; a unit that cannot share the aperture with the set evicts it and
+// is itself evicted by the next change of shape. What a unit costs and what the board fits are both
+// measurements of one engine on one board, so both are passed in by the model: this type is the
+// accounting, not the policy, and it holds no ceiling of its own.
+class ApertureBudget {
+public:
+    ApertureBudget(int64_t mib_per_unit, int64_t budget_mib)
+        : mib_per_unit_(mib_per_unit), budget_mib_(budget_mib) {}
+
+    // Would adding an engine of `units` compiled length keep the resident set inside the aperture?
+    bool fits(int64_t units) const { return (resident_ + units) * mib_per_unit_ <= budget_mib_; }
+    void reserve(int64_t units) { resident_ += units; }
+    void clear() { resident_ = 0; }
+    int64_t resident() const { return resident_; }
+
+private:
+    int64_t resident_ = 0;
+    int64_t mib_per_unit_ = 0;
+    int64_t budget_mib_ = 0;
+};
+
 #if defined(ENGINE_HAVE_RKNN)
 
 // One graph input for `Engine::run`. `size` is the size of the buffer in bytes: with

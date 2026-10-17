@@ -668,9 +668,14 @@ Three consequences for anyone extending this path:
   at 20-260 MB per engine and never approach the ceiling. A graph whose intermediates grow with the
   sequence length - attention at fixed `S`, so S^2 - reaches it in the low hundreds of frames, long
   before the weight set does.
-- A ladder of engines has to be lazy and single-resident. Four engines that each load on their own
-  fail at `rknn_init` when all four are resident at once, so the runtime keeps exactly one loaded
-  and swaps on demand.
+- A ladder of engines has to be lazy. Four engines that each load on their own fail at `rknn_init`
+  when all four are resident at once, so the ladder loads on demand and evicts. How many rungs share
+  the aperture is a measurement, not a rule: the cost of a context is its compiled length, not its
+  image size, and the rungs co-resident on this board are S=200 x3, 250+250+110 and 110 x4 (all at
+  <= 1.81 GiB) while S=400 coexists only with 110/200 and S=500 with nothing. The accounting for that
+  is shared (`rknn::ApertureBudget`, `include/engine/framework/rknn/engine.h`) and the numbers are
+  not: the per-unit cost and the budget are measurements of one engine on one board, and they live
+  with the sidecar that measured them.
 - The failure is at init, so it is cheap to detect and cannot corrupt output: `rknn_init` returns -4
   and dmesg names the byte count.
 
