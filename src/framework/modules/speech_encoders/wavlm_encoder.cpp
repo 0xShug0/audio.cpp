@@ -11,6 +11,7 @@
 #include "engine/framework/modules/structural_modules.h"
 
 #include <ggml.h>
+#include <ggml-alloc.h>
 
 #include <algorithm>
 #include <chrono>
@@ -725,9 +726,10 @@ public:
 
 private:
     void release_graph() {
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-            buffer_ = nullptr;
+        if (allocator_ != nullptr) {
+            core::release_backend_graph_resources(weights_->execution_context->backend(), graph_, true);
+            ggml_gallocr_free(allocator_);
+            allocator_ = nullptr;
         }
         if (ggml_ != nullptr) {
             ggml_free(ggml_);
@@ -792,28 +794,35 @@ private:
         input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, samples}));
         ggml_set_input(input_.tensor);
         const int64_t first_conv_frames = wavlm_first_conv_output_frames(samples);
-        first_conv_time_mask_ = core::make_tensor(
-            ctx,
-            GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch, 1, first_conv_frames}));
-        ggml_set_input(first_conv_time_mask_.tensor);
-        first_conv_inv_valid_time_count_ = core::make_tensor(
-            ctx,
-            GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch, 1, 1}));
-        ggml_set_input(first_conv_inv_valid_time_count_.tensor);
+        if (!weights_->config.conv_feature_layer_norm) {
+            first_conv_time_mask_ = core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch, 1, first_conv_frames}));
+            ggml_set_input(first_conv_time_mask_.tensor);
+            first_conv_inv_valid_time_count_ = core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch, 1, 1}));
+            ggml_set_input(first_conv_inv_valid_time_count_.tensor);
+        }
         const int64_t tokens = wavlm_output_frames(samples);
         token_mask_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({batch, tokens}));
         ggml_set_input(token_mask_.tensor);
-        attention_mask_ = core::make_tensor(
-            ctx,
-            GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch, 1, tokens, tokens}));
-        ggml_set_input(attention_mask_.tensor);
-        position_bias_ = core::make_tensor(
-            ctx,
-            GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch, weights_->config.num_attention_heads, tokens, tokens}));
+        if (output_layers.back() > 0) {
+            attention_mask_ = core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch, 1, tokens, tokens}));
+            ggml_set_input(attention_mask_.tensor);
+            position_bias_ = core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch, weights_->config.num_attention_heads, tokens, tokens}));
+            ggml_set_input(position_bias_.tensor);
+            // Uploaded once per graph; keep its storage intact across executions.
+            ggml_set_output(position_bias_.tensor);
+        }
         outputs_ = build_wavlm_graph_layers(
             ctx,
             input_,
@@ -829,15 +838,20 @@ private:
             ggml_set_output(output.tensor);
             ggml_build_forward_expand(graph_, output.tensor);
         }
-        buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, weights_->execution_context->backend());
-        if (buffer_ == nullptr) {
+        allocator_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->execution_context->backend()));
+        if (allocator_ == nullptr || !ggml_gallocr_reserve(allocator_, graph_) ||
+            !ggml_gallocr_alloc_graph(allocator_, graph_)) {
             release_graph();
             throw std::runtime_error("failed to allocate WavLM graph tensors");
         }
+        engine::debug::timing_log_scalar("framework.wavlm.graph.buffer_mb",
+            double(ggml_gallocr_get_buffer_size(allocator_, 0)) / (1024 * 1024));
         const auto position_bias_start = Clock::now();
         bool position_bias_cache_hit = false;
-        const auto position_bias_values = position_bias_values_for_capacity(batch, tokens, position_bias_cache_hit);
-        core::write_tensor_f32(position_bias_, *position_bias_values);
+        if (output_layers.back() > 0) {
+            const auto position_bias_values = position_bias_values_for_capacity(batch, tokens, position_bias_cache_hit);
+            core::write_tensor_f32(position_bias_, *position_bias_values);
+        }
         engine::debug::timing_log_scalar("framework.wavlm.position_bias.cache_hit", position_bias_cache_hit);
         engine::debug::timing_log_scalar("framework.wavlm.position_bias_ms", engine::debug::elapsed_ms(position_bias_start));
         output_layers_ = output_layers;
@@ -853,32 +867,36 @@ private:
     }
 
     void upload_runtime_masks(int64_t actual_samples, int64_t actual_tokens) {
-        const int64_t actual_first_conv_frames = wavlm_first_conv_output_frames(actual_samples);
-        std::vector<float> first_conv_time_mask(static_cast<size_t>(first_conv_frame_capacity_), 0.0F);
-        std::fill(first_conv_time_mask.begin(), first_conv_time_mask.begin() + actual_first_conv_frames, 1.0F);
-        core::write_tensor_f32(first_conv_time_mask_, first_conv_time_mask);
-        const std::vector<float> first_conv_inv_count{
-            1.0F / static_cast<float>(actual_first_conv_frames),
-        };
-        core::write_tensor_f32(first_conv_inv_valid_time_count_, first_conv_inv_count);
+        if (!weights_->config.conv_feature_layer_norm) {
+            const int64_t actual_first_conv_frames = wavlm_first_conv_output_frames(actual_samples);
+            std::vector<float> first_conv_time_mask(static_cast<size_t>(first_conv_frame_capacity_), 0.0F);
+            std::fill(first_conv_time_mask.begin(), first_conv_time_mask.begin() + actual_first_conv_frames, 1.0F);
+            core::write_tensor_f32(first_conv_time_mask_, first_conv_time_mask);
+            const std::vector<float> first_conv_inv_count{
+                1.0F / static_cast<float>(actual_first_conv_frames),
+            };
+            core::write_tensor_f32(first_conv_inv_valid_time_count_, first_conv_inv_count);
+        }
 
         std::vector<int32_t> token_mask(static_cast<size_t>(token_capacity_), 0);
         std::fill(token_mask.begin(), token_mask.begin() + actual_tokens, 1);
         core::write_tensor_i32(token_mask_, token_mask);
 
-        std::vector<float> attention_mask(
-            static_cast<size_t>(batch_ * token_capacity_ * token_capacity_),
-            0.0F);
-        const float neg_inf = -std::numeric_limits<float>::infinity();
-        for (int64_t b = 0; b < batch_; ++b) {
-            for (int64_t q = 0; q < token_capacity_; ++q) {
-                auto * row = attention_mask.data() + static_cast<size_t>((b * token_capacity_ + q) * token_capacity_);
-                for (int64_t k = actual_tokens; k < token_capacity_; ++k) {
-                    row[k] = neg_inf;
+        if (output_layers_.back() > 0) {
+            std::vector<float> attention_mask(
+                static_cast<size_t>(batch_ * token_capacity_ * token_capacity_),
+                0.0F);
+            const float neg_inf = -std::numeric_limits<float>::infinity();
+            for (int64_t b = 0; b < batch_; ++b) {
+                for (int64_t q = 0; q < token_capacity_; ++q) {
+                    auto * row = attention_mask.data() + static_cast<size_t>((b * token_capacity_ + q) * token_capacity_);
+                    for (int64_t k = actual_tokens; k < token_capacity_; ++k) {
+                        row[k] = neg_inf;
+                    }
                 }
             }
+            core::write_tensor_f32(attention_mask_, attention_mask);
         }
-        core::write_tensor_f32(attention_mask_, attention_mask);
     }
 
     int64_t wavlm_first_conv_output_frames(int64_t samples) const {
@@ -905,7 +923,7 @@ private:
     bool reuse_graph_ = true;
     std::mutex mutex_;
     ggml_context * ggml_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t allocator_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     core::TensorValue input_;
     core::TensorValue first_conv_time_mask_;
