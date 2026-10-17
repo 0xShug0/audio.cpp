@@ -155,44 +155,58 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
         text_tokens.insert(text_tokens.begin(), 261);
         text_tokens.push_back(0);
 
-        auto xtts_t0 = std::chrono::steady_clock::now();
+        // Generate codes and capture the per-position post-norm hidden states
+        // during decoding; these are exactly what a teacher-forced second pass
+        // (extract_latents) would recompute, so the second pass is skipped.
+        std::vector<float> decode_hiddens;   // [start_mel, c1, c2, ...] x 1024
+        const auto xtts_chunk_t0 = std::chrono::steady_clock::now();
         auto mel_codes = c.gpt.generate_mel_codes(
             text_tokens, cond_latents, c.temperature, c.top_k, c.top_p,
-            c.repetition_penalty, c.max_mel_tokens);
+            c.repetition_penalty, c.max_mel_tokens, &decode_hiddens);
         if (mel_codes.empty()) {
             throw std::runtime_error("xtts_v2: mel code generation produced no output");
         }
 
-        // Extract GPT latents: [start_mel=1024] + codes + [stop_mel=1025]
-        std::vector<int32_t> mel_seq;
-        mel_seq.reserve(mel_codes.size() + 2);
-        mel_seq.push_back(1024);
-        mel_seq.insert(mel_seq.end(), mel_codes.begin(), mel_codes.end());
-        mel_seq.push_back(1025);
-        auto xtts_t1 = std::chrono::steady_clock::now();
-        auto latents = c.gpt.extract_latents(text_tokens, mel_seq, cond_latents);
-        if (latents.empty()) {
-            throw std::runtime_error("xtts_v2: latent extraction failed");
-        }
-        // Reference gpt.py forward(return_latent=True): take the last mel_len
-        // hidden positions and drop the final 5 latent frames.
-        const int mel_len = (int)mel_seq.size();
+        // Latent frame mapping (identical to the reference gpt.py
+        // forward(return_latent=True) slice): the vocoder takes the frames at
+        // absolute positions [Tpre, Tpre + T_mel) where Tpre is the first mel
+        // code position, and the final 5 latent frames are dropped.
+        const int mel_len = (int)mel_codes.size() + 2;   // [start] + codes + [stop]
         int T_mel = mel_len - 5;
         if (T_mel <= 0) T_mel = mel_len;
-        const int off = (int)latents.size() / 1024 - mel_len;
-        // time-major [T][1024] -> channel-major [1024][T] for the vocoder
-        std::vector<float> latents_cm((size_t)1024 * T_mel);
-        for (int t = 0; t < T_mel; t++)
-            for (int ch = 0; ch < 1024; ch++)
-                latents_cm[(size_t)ch * T_mel + t] = latents[(size_t)(off + t) * 1024 + ch];
+        std::vector<float> latents_cm;
+        const int n_hid = (int)decode_hiddens.size() / 1024;   // 1 + n_codes
+        if (n_hid >= T_mel) {
+            // decode_hiddens[0] is the start_mel position, which is exactly
+            // where the reference slice begins (off = n_cond + text = Tpre-1).
+            latents_cm.resize((size_t)1024 * T_mel);
+            for (int t = 0; t < T_mel; t++)
+                for (int ch = 0; ch < 1024; ch++)
+                    latents_cm[(size_t)ch * T_mel + t] = decode_hiddens[(size_t)t * 1024 + ch];
+        } else {
+            // Fallback: degenerate short generations lack enough captured frames.
+            std::vector<int32_t> mel_seq;
+            mel_seq.reserve(mel_codes.size() + 2);
+            mel_seq.push_back(1024);
+            mel_seq.insert(mel_seq.end(), mel_codes.begin(), mel_codes.end());
+            mel_seq.push_back(1025);
+            auto latents = c.gpt.extract_latents(text_tokens, mel_seq, cond_latents);
+            if (latents.empty()) {
+                throw std::runtime_error("xtts_v2: latent extraction failed");
+            }
+            const int off = (int)latents.size() / 1024 - mel_len;
+            latents_cm.resize((size_t)1024 * T_mel);
+            for (int t = 0; t < T_mel; t++)
+                for (int ch = 0; ch < 1024; ch++)
+                    latents_cm[(size_t)ch * T_mel + t] = latents[(size_t)(off + t) * 1024 + ch];
+        }
 
-        auto xtts_t2 = std::chrono::steady_clock::now();
+        const auto xtts_t2 = std::chrono::steady_clock::now();
         auto chunk_wave = c.vocoder.generate(latents_cm.data(), T_mel,
                                              spk_emb.empty() ? nullptr : spk_emb.data());
-        auto xtts_t3 = std::chrono::steady_clock::now();
-        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: chunk gen=%.2f extract=%.2f vocoder=%.2f\n",
-            std::chrono::duration<double>(xtts_t1-xtts_t0).count(),
-            std::chrono::duration<double>(xtts_t2-xtts_t1).count(),
+        const auto xtts_t3 = std::chrono::steady_clock::now();
+        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: chunk gen+latents=%.2f vocoder=%.2f\n",
+            std::chrono::duration<double>(xtts_t2-xtts_chunk_t0).count(),
             std::chrono::duration<double>(xtts_t3-xtts_t2).count());
         if (chunk_wave.empty()) {
             throw std::runtime_error("xtts_v2: vocoder produced no output");

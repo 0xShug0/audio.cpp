@@ -671,11 +671,12 @@ struct GptGraph {
     ggml_gallocr_t galloc = nullptr;
     ggml_cgraph* gf = nullptr;
     ggml_tensor *emb = nullptr, *idx = nullptr, *mask = nullptr, *logits = nullptr;
+    ggml_tensor *hidden = nullptr;   // post ln_f+final_norm last-position state (pre-logits)
     int n_tok = 0, n_kv = 0;
     void release() {
         if (galloc) { ggml_gallocr_free(galloc); galloc = nullptr; }
         if (ctx) { ggml_free(ctx); ctx = nullptr; }
-        gf = nullptr; emb = idx = mask = logits = nullptr; n_tok = n_kv = 0;
+        gf = nullptr; emb = idx = mask = logits = hidden = nullptr; n_tok = n_kv = 0;
     }
     ~GptGraph() { release(); }
 };
@@ -733,6 +734,7 @@ static bool gpt_build_graph(GptGraph& g, ggml_backend_t be, const GM& m, const X
     ggml_tensor* last = n_tok > 1 ? ggml_view_2d(c, x, D, 1, x->nb[1], (size_t)(n_tok - 1) * x->nb[1]) : x;
     last = ggml_layer_norm(c, last, m.lfw, m.lfb);
     last = ggml_layer_norm(c, last, m.fnw, m.fnb);
+    g.hidden = last; ggml_set_name(last, "mel_hidden"); ggml_set_output(last);
     ggml_tensor* lg = ggml_mul_mat(c, m.lmw, last);                         // [vocab, 1]
     if (m.lmb) lg = ggml_add(c, lg, m.lmb);
     g.logits = lg; ggml_set_name(lg, "mel_logits"); ggml_set_output(lg);
@@ -758,7 +760,7 @@ static void gpt_fill_mask(GptGraph& g, int pos0) {
 // Returns generated mel codes (including the stop token if it was sampled, as before).
 static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const XttSv2HyperParams& hp,
         const std::vector<int>& tids, const std::vector<float>& cl, float temp, int top_k, float top_p, float rep_pen,
-        int max_n, int n_threads) {
+        int max_n, int n_threads, std::vector<float>* hiddens_out = nullptr) {
     std::vector<int> codes;
     const int D = (int)hp.d, V = (int)hp.mel_vocab;
     const bool timing = getenv("XTTS_TIMING") != nullptr;
@@ -788,13 +790,18 @@ static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const
     }
 
     std::vector<float> logits(V, 0.f);
-    auto run = [&](GptGraph& g, const float* emb, int pos0) -> bool {
+    auto run = [&](GptGraph& g, const float* emb, int pos0, std::vector<float>* hid_out = nullptr) -> bool {
         std::vector<int64_t> idx(g.n_tok);
         for (int i = 0; i < g.n_tok; i++) idx[i] = pos0 + i;
         ggml_backend_tensor_set(g.emb, emb, 0, (size_t)g.n_tok * D * sizeof(float));
         ggml_backend_tensor_set(g.idx, idx.data(), 0, idx.size() * sizeof(int64_t));
         if (ggml_backend_graph_compute(be, g.gf) != GGML_STATUS_SUCCESS) return false;
         ggml_backend_tensor_get(g.logits, logits.data(), 0, (size_t)V * sizeof(float));
+        if (hid_out) {
+            const size_t prev = hid_out->size();
+            hid_out->resize(prev + D);
+            ggml_backend_tensor_get(g.hidden, hid_out->data() + prev, 0, (size_t)D * sizeof(float));
+        }
         return true;
     };
 
@@ -804,7 +811,7 @@ static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const
         GptGraph pg;
         if (!gpt_build_graph(pg, be, m, hp, kv, Tpre, round_up_i(Tpre, KV_BUCKET))) { fprintf(stderr, "xtts: prefill graph build failed\n"); return codes; }
         gpt_fill_mask(pg, 0);
-        if (!run(pg, E.data(), 0)) { fprintf(stderr, "xtts: prefill compute failed\n"); return codes; }
+        if (!run(pg, E.data(), 0, hiddens_out)) { fprintf(stderr, "xtts: prefill compute failed\n"); return codes; }
     }
     if (timing) fprintf(stderr, "xtts_timing:   prefix batch (%d pos) = %.2f s\n", Tpre, omp_get_wtime() - tp0);
     if (getenv("XTTS_DUMP_LOGITS")) {
@@ -834,6 +841,10 @@ static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const
             }
         }
         float mx = *std::max_element(scaled.begin(), scaled.end());
+        if (!std::isfinite(mx)) {
+            fprintf(stderr, "xtts_v2: non-finite logits at mel step %d (pos %d), aborting generation\n", g, seq_pos);
+            break;
+        }
         float sa = 0; for (auto& l2 : scaled) { l2 = expf(l2 - mx); sa += l2; }
         for (auto& l2 : scaled) l2 /= sa;
         if (top_k > 0 && top_k < (int)scaled.size()) {
@@ -880,7 +891,7 @@ static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const
         // buffer region between computes, so incremental single-element updates are
         // not durable. The refill is O(n_kv) F16 bytes (~512 B) - negligible.
         gpt_fill_mask(dg, seq_pos);
-        if (!run(dg, me.data(), seq_pos)) { fprintf(stderr, "xtts: decode compute failed\n"); break; }
+        if (!run(dg, me.data(), seq_pos, hiddens_out)) { fprintf(stderr, "xtts: decode compute failed\n"); break; }
         seq_pos++; n_steps++;
         t_dec += omp_get_wtime() - td0;
     }
@@ -1155,11 +1166,12 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
     return true;
 }
 std::vector<int32_t> XttSv2GptEngine::generate_mel_codes(const std::vector<int32_t>& text_tokens, const std::vector<float>& cond_latents,
-        float temperature, int top_k, float top_p, float rep_penalty, int max_tokens) {
+        float temperature, int top_k, float top_p, float rep_penalty, int max_tokens,
+        std::vector<float>* decode_hiddens) {
     if (!impl_) return {};
     auto codes = gpt_gen(impl_->backend, impl_->kv, impl_->model, impl_->hp,
         std::vector<int>(text_tokens.begin(), text_tokens.end()), cond_latents,
-        temperature, top_k, top_p, rep_penalty, max_tokens, impl_->n_threads);
+        temperature, top_k, top_p, rep_penalty, max_tokens, impl_->n_threads, decode_hiddens);
     return std::vector<int32_t>(codes.begin(), codes.end());
 }
 std::vector<float> XttSv2GptEngine::extract_latents(const std::vector<int32_t>& text_tokens, const std::vector<int32_t>& mel_codes,

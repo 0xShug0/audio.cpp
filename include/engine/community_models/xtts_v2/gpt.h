@@ -50,7 +50,8 @@ public:
         int top_k = 50,
         float top_p = 0.85f,
         float repetition_penalty = 5.0f,
-        int max_mel_tokens = 1500);
+        int max_mel_tokens = 1500,
+        std::vector<float> * decode_hiddens = nullptr);
 
     // Extract GPT hidden latents for vocoding.
     // text_tokens: BPE token IDs.
