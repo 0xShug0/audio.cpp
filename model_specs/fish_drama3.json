@@ -81,7 +81,7 @@
         "description": "Maximum characters per long-form chunk.",
         "required": false,
         "min": 1,
-        "default": 200
+        "default": 128
       },
       {
         "name": "text_chunk_mode",
@@ -111,10 +111,10 @@
       {
         "name": "top_k",
         "type": "int",
-        "description": "Top-k candidate count.",
+        "description": "Top-k candidate count. The default 4097 keeps every candidate (no cap), as Fish's Drama 3 Space does; 30 can stall in long silences.",
         "required": false,
         "min": 1,
-        "default": 30
+        "default": 4097
       },
       {
         "name": "seed",
