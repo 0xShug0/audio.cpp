@@ -92,6 +92,17 @@ def huggingface_token() -> str | None:
     return None
 
 
+def hf_endpoint() -> str:
+    """Base URL for Hugging Face Hub requests.
+
+    Honors the standard HF_ENDPOINT environment variable (e.g.
+    HF_ENDPOINT=https://hf-mirror.com for the hf-mirror mirror). Falls back to
+    https://huggingface.co. Empty values and trailing slashes are tolerated.
+    """
+    endpoint = os.environ.get("HF_ENDPOINT", "").strip().rstrip("/")
+    return endpoint or "https://huggingface.co"
+
+
 def http_headers() -> dict[str, str]:
     headers = {"User-Agent": "audio.cpp model_manager.py"}
     token = huggingface_token()
@@ -227,6 +238,18 @@ CATALOG: tuple[ModelPackage, ...] = (
             "acestep-v15-turbo/model.safetensors",
             "acestep-v15-turbo/silence_latent.safetensors",
             "vae/diffusion_pytorch_model.safetensors",
+        ),
+    ),
+    ModelPackage(
+        id="kokoro_82m_bf16",
+        display_name="Kokoro 82M GGML",
+        target_directory="kokoro-82m-v1_0-ggml",
+        source=SnapshotSource(repo_id="mlx-community/kokoro_mlx"),
+        required_files=(
+            "config.json",
+            "kokoro-v1_0.safetensors",
+            "voices.json",
+            "voices/af_heart.f32",
         ),
     ),
     ModelPackage(
@@ -576,7 +599,7 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
     ),
     ModelPackage(
-        id="vietneu_tts_v3_turbo",
+        id="vieneu_v3_turbo_v3_turbo",
         display_name="VieNeu-TTS v3 Turbo Base",
         target_directory="VieNeu-TTS-v3-Turbo",
         source=SnapshotSource(repo_id="phuocnguyen90/VieNeu-TTS-v3-Turbo-GGUF"),
@@ -589,7 +612,7 @@ CATALOG: tuple[ModelPackage, ...] = (
             "special_tokens_map.json",
         ),
         description="Installs VieNeu-TTS v3 Turbo GGUF model and configuration sidecars for C++ inference.",
-        family="vietneu_tts",
+        family="vieneu_v3_turbo",
         tasks=("tts",),
     ),
     ModelPackage(
@@ -1700,13 +1723,13 @@ def print_package_table(packages: Iterable[ModelPackage]) -> None:
 def hf_tree_url(source: SnapshotSource) -> str:
     revision = quote(source.revision, safe="")
     repo_id = source.repo_id
-    return f"https://huggingface.co/api/models/{repo_id}/tree/{revision}?recursive=true"
+    return f"{hf_endpoint()}/api/models/{repo_id}/tree/{revision}?recursive=true"
 
 
 def hf_resolve_url(source: SnapshotSource, relative_path: str) -> str:
     revision = quote(source.revision, safe="")
     path = quote(relative_path, safe="/")
-    return f"https://huggingface.co/{source.repo_id}/resolve/{revision}/{path}"
+    return f"{hf_endpoint()}/{source.repo_id}/resolve/{revision}/{path}"
 
 
 def http_json(url: str, timeout: float = 30.0) -> object:

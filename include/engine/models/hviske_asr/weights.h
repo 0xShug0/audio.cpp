@@ -30,7 +30,7 @@ struct HviskeSubsamplingWeights {
     engine::modules::LinearWeights linear;
 };
 
-struct HviskeEncoderLayerWeights {
+struct HviskeConformerLayerWeights {
     engine::modules::NormWeights norm_feed_forward1;
     engine::modules::NormWeights norm_self_att;
     engine::modules::NormWeights norm_conv;
@@ -47,9 +47,9 @@ struct HviskeEncoderLayerWeights {
     engine::modules::LinearWeights conv_pointwise2;
 };
 
-struct HviskeEncoderWeights {
+struct HviskeConformerWeights {
     HviskeSubsamplingWeights subsampling;
-    std::vector<HviskeEncoderLayerWeights> layers;
+    std::vector<HviskeConformerLayerWeights> layers;
     engine::modules::LinearWeights encoder_projector;
 };
 
@@ -74,7 +74,7 @@ struct HviskeDecoderWeights {
 
 struct HviskeWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
-    HviskeEncoderWeights encoder;
+    HviskeConformerWeights encoder;
     HviskeDecoderWeights decoder;
 };
 

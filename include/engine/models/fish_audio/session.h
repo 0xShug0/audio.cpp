@@ -2,6 +2,7 @@
 
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/models/fish_audio/assets.h"
 #include "engine/models/fish_audio/generator.h"
 
@@ -13,7 +14,8 @@
 
 namespace engine::models::fish_audio {
 
-class FishAudioSession final : public runtime::RuntimeSessionBase, public runtime::IOfflineVoiceTaskSession {
+class FishAudioSession final : public runtime::RuntimeSessionBase, public runtime::IOfflineVoiceTaskSession,
+                               public runtime::StreamingTtsSessionBase {
 public:
     FishAudioSession(
         runtime::TaskSpec task,
@@ -28,6 +30,10 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override {}
+    runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);
+
     struct ReferenceCacheKey {
         std::string source_id;
         int sample_rate = 0;
@@ -41,11 +47,11 @@ private:
     };
 
     struct ReferenceCacheEntry {
-        FishAudioCodes codes;
+        engine::codecs::FishDacCodes codes;
     };
 
     FishAudioRequest make_request(const runtime::TaskRequest & request) const;
-    const FishAudioCodes & resolve_reference_codes(const FishAudioReference & reference);
+    const engine::codecs::FishDacCodes & resolve_reference_codes(const FishAudioReference & reference);
 
     runtime::TaskSpec task_;
     std::shared_ptr<const FishAudioAssets> assets_;

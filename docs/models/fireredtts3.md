@@ -1,0 +1,127 @@
+# FireRedTTS3
+
+FireRedTTS3 is a TTS family with separate Base and Instruct GGUF packages.
+Base supports zero-shot voice cloning. Instruct supports reference cloning,
+voice design, semantic editing, and acoustic editing.
+
+## Quick Start
+
+Base voice cloning:
+
+```bash
+audiocpp_cli \
+  --task clon \
+  --family fireredtts3 \
+  --model models/FireRedTTS3-Base-GGUF/fireredtts3-base-orig.gguf \
+  --backend cuda \
+  --language Chinese \
+  --text "今天天气很好，我们一起去公园散步吧。" \
+  --voice-ref assets/resources/b.wav \
+  --reference-text "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years. Twenty two thousand five hundred times longer than you." \
+  --request-option num_inference_steps=4 \
+  --request-option guidance_scale=2.0 \
+  --request-option stop_threshold=0.5 \
+  --request-option seed=1234 \
+  --out fireredtts3_base.wav
+```
+
+Instruct voice cloning:
+
+```bash
+audiocpp_cli \
+  --task tts \
+  --family fireredtts3 \
+  --model models/FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-orig.gguf \
+  --backend cuda \
+  --language Chinese \
+  --text "今天天气很好，我们一起去公园散步吧。" \
+  --voice-ref assets/resources/b.wav \
+  --reference-text "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years. Twenty two thousand five hundred times longer than you." \
+  --request-option template_name=instruct_tts \
+  --request-option num_inference_steps=4 \
+  --request-option guidance_scale=2.0 \
+  --out fireredtts3_instruct.wav
+```
+
+Voice design:
+
+```bash
+audiocpp_cli \
+  --task vdes \
+  --family fireredtts3 \
+  --model models/FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-orig.gguf \
+  --backend cuda \
+  --language Chinese \
+  --text "今天天气很好，我们一起去公园散步吧。" \
+  --request-option template_name=voice_design \
+  --request-option instruct="一个年轻女性的温柔嗓音，语速稍慢，带一点俏皮。" \
+  --out fireredtts3_design.wav
+```
+
+## Model
+
+| Field | Base | Instruct |
+|---|---|---|
+| Family | `fireredtts3` | `fireredtts3` |
+| Tasks | `clon` | `tts`, `clon`, `vdes` |
+| Mode | `offline` | `offline` |
+| GGUF | `models/FireRedTTS3-Base-GGUF/fireredtts3-base-orig.gguf` | `models/FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-orig.gguf` |
+| Primary use | Zero-shot voice clone | Clone, voice design, semantic edit, acoustic edit |
+| Languages | Official 24 language tags plus 21 Chinese dialect tags | Same request language tags for text frontend handling |
+
+## Templates
+
+| `template_name` | Task | Inputs |
+|---|---|---|
+| `instruct_tts` | `tts` or `clon` | `--text`, `--voice-ref`, `--reference-text` |
+| `voice_design` | `vdes` | `--text`, `--request-option instruct=<text>` |
+| `semantic_edit` | `tts` | `--audio`, `--request-option instruct=<text>` |
+| `acoustic_edit` | `tts` | `--audio`, `--request-option instruct=<text>` |
+
+## Common Options (use directly)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--language` | official FireRedTTS3 language or dialect tag | `Chinese` | Generation language tag. |
+| `--voice-ref` | WAV path | required for clone | Prompt/reference voice. |
+| `--reference-text` | text | empty | Transcript for the prompt audio. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `language` | official FireRedTTS3 language or dialect tag | `Chinese` | Generation language tag. |
+| `reference_text` | text | empty | Transcript for the prompt audio. |
+| `template_name` | `instruct_tts`, `voice_design`, `semantic_edit`, `acoustic_edit` | see description | Instruct template; defaults to acoustic_edit with input audio, otherwise instruct_tts. |
+| `instruct` | text | required for design/edit | Voice design or edit instruction. Legacy `instruction` remains accepted. |
+| `text_chunk_size` | integer > 0 | `600` | Long-form text chunk size. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
+| `num_inference_steps` | integer > 0 | `10` | FireRed DiT flow steps per latent patch. |
+| `guidance_scale` | float > 0 | see description | Positive guidance scale; defaults to 1.2 for voice-design/semantic-edit/acoustic-edit templates and 2 otherwise. |
+| `stop_threshold` | `0..1` | `0.5` | AR stop probability threshold. |
+| `seed` | integer >= 0 | see description | uint32 sampling seed; defaults to 2 for voice design and 1234 otherwise. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `fireredtts3.reference_cache_slots` | integer >= 0 | `4` | Prepared reference-audio cache slots; set 0 to disable reuse. Applies only to Base; Instruct does not use this cache. |
+| `fireredtts3.mem_saver` | bool | `false` | Release runtime graphs after request phases. |
+| `fireredtts3.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
+
+Language tags accepted by FireRedTTS3 Base match the official tokenizer:
+`Arabic`, `Cantonese`, `Chinese`, `Czech`, `Dutch`, `English`, `Finnish`,
+`French`, `German`, `Greek`, `Hindi`, `Indonesian`, `Italian`, `Japanese`,
+`Korean`, `Polish`, `Portuguese`, `Romanian`, `Russian`, `Spanish`, `Thai`,
+`Turkish`, `Ukrainian`, `Vietnamese`, plus Chinese dialect tags such as
+`ZH_Sichuan`, `ZH_Shanghai`, and `ZH_Wu`.
+
+Text normalization note: the native frontend applies local normalization for
+Chinese, English, Cantonese, and `ZH_*` dialect tags. Other official language
+tags are accepted but currently use basic whitespace cleanup, matching the
+official Python path when LLM-based TN is not enabled.
+
+Quality note: based on local checks against the original Python mode, non-English
+and non-Chinese generation can be weaker even though the language tags are
+accepted. Validate the specific language, task, and voice-reference setup before
+depending on those outputs.

@@ -11,7 +11,7 @@
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/runtime/kv_cache.h"
 
 #include <ggml-backend.h>
@@ -40,7 +40,7 @@ struct GgmlContextDeleter {
   }
 };
 
-struct TextLayerWeights {
+struct Qwen3LayerWeights {
   core::TensorValue input_norm;
   core::TensorValue q_proj;
   core::TensorValue k_proj;
@@ -54,10 +54,10 @@ struct TextLayerWeights {
   core::TensorValue down_proj;
 };
 
-struct TextDecoderWeights {
+struct Qwen3DecoderWeights {
   std::shared_ptr<core::BackendWeightStore> store;
   core::TensorValue token_embedding;
-  std::vector<TextLayerWeights> layers;
+  std::vector<Qwen3LayerWeights> layers;
   core::TensorValue norm;
   core::TensorValue lm_head;
 };
@@ -67,9 +67,9 @@ struct PrefillOutput {
   runtime::TransformerKVState kv_state;
 };
 
-modules::QwenDecoderLayerWeights
-to_qwen_layer_weights(const TextLayerWeights &weights) {
-  modules::QwenDecoderLayerWeights out;
+modules::DecoderLayerWeights
+to_qwen_layer_weights(const Qwen3LayerWeights &weights) {
+  modules::DecoderLayerWeights out;
   out.input_norm = {weights.input_norm, std::nullopt};
   out.self_attention.q_weight = weights.q_proj;
   out.self_attention.k_weight = weights.k_proj;
@@ -84,9 +84,9 @@ to_qwen_layer_weights(const TextLayerWeights &weights) {
   return out;
 }
 
-modules::QwenCausalDecoderConfig
-make_qwen_decoder_config(const FunAsrNanoTextConfig &config) {
-  modules::QwenCausalDecoderConfig out;
+modules::CausalDecoderConfig
+make_qwen_decoder_config(const FunAsrNanoQwen3DecoderConfig &config) {
+  modules::CausalDecoderConfig out;
   out.stack.hidden_size = config.hidden_size;
   out.stack.num_attention_heads = config.attention_heads;
   out.stack.num_key_value_heads = config.key_value_heads;
@@ -97,15 +97,15 @@ make_qwen_decoder_config(const FunAsrNanoTextConfig &config) {
   out.stack.rope_theta = config.rope_theta;
   out.stack.use_qk_norm = true;
   out.stack.runtime.static_cache.update_mode =
-      modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+      modules::DecoderStaticCacheUpdateMode::DirectSetRows;
   out.logits_size = config.vocab_size;
-  out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+  out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
   return out;
 }
 
-modules::QwenCausalDecoderWeights
-make_qwen_decoder_weights(const TextDecoderWeights &weights) {
-  modules::QwenCausalDecoderWeights out;
+modules::CausalDecoderWeights
+make_qwen_decoder_weights(const Qwen3DecoderWeights &weights) {
+  modules::CausalDecoderWeights out;
   out.stack.layers.reserve(weights.layers.size());
   for (const auto &layer : weights.layers) {
     out.stack.layers.push_back(to_qwen_layer_weights(layer));
@@ -115,7 +115,7 @@ make_qwen_decoder_weights(const TextDecoderWeights &weights) {
   return out;
 }
 
-int64_t head_dim(const FunAsrNanoTextConfig &config) {
+int64_t head_dim(const FunAsrNanoQwen3DecoderConfig &config) {
   if (config.attention_heads <= 0 || config.key_value_heads <= 0 ||
       config.head_dim <= 0) {
     throw std::runtime_error(
@@ -126,8 +126,8 @@ int64_t head_dim(const FunAsrNanoTextConfig &config) {
 
 core::TensorValue
 prompt_embeddings(core::ModuleBuildContext &ctx,
-                  const TextDecoderWeights &weights,
-                  const FunAsrNanoTextConfig &config, ggml_tensor *token_ids,
+                  const Qwen3DecoderWeights &weights,
+                  const FunAsrNanoQwen3DecoderConfig &config, ggml_tensor *token_ids,
                   ggml_tensor *audio_embeddings, ggml_tensor *audio_positions,
                   int64_t prompt_steps, int64_t audio_tokens) {
   auto ids = core::wrap_tensor(
@@ -151,14 +151,14 @@ prompt_embeddings(core::ModuleBuildContext &ctx,
       core::TensorShape::from_dims({1, prompt_steps, config.hidden_size}));
 }
 
-TextDecoderWeights load_weights(const FunAsrNanoAssets &assets,
+Qwen3DecoderWeights load_weights(const FunAsrNanoAssets &assets,
                                 ggml_backend_t backend,
                                 core::BackendType backend_type,
                                 size_t weight_context_bytes,
                                 assets::TensorStorageType storage_type) {
   const auto &config = assets.config.text;
   const auto &source = *assets.model_weights;
-  TextDecoderWeights weights;
+  Qwen3DecoderWeights weights;
   weights.store = std::make_shared<core::BackendWeightStore>(
       backend, backend_type, "fun_asr_nano.decoder.weights",
       weight_context_bytes);
@@ -170,7 +170,7 @@ TextDecoderWeights load_weights(const FunAsrNanoAssets &assets,
   for (int64_t layer = 0; layer < config.layers; ++layer) {
     const std::string prefix =
         "model.language_model.layers." + std::to_string(layer);
-    TextLayerWeights w;
+    Qwen3LayerWeights w;
     w.input_norm = weights.store->load_f32_tensor(
         source, prefix + ".input_layernorm.weight", {config.hidden_size});
     w.q_proj = weights.store->load_tensor(
@@ -224,7 +224,7 @@ int32_t argmax_index(const std::vector<float> &values) {
   return static_cast<int32_t>(best);
 }
 
-bool is_eos(const FunAsrNanoTextConfig &config, int32_t token) {
+bool is_eos(const FunAsrNanoQwen3DecoderConfig &config, int32_t token) {
   return token == config.eos_token_id;
 }
 
@@ -236,16 +236,16 @@ require_assets(std::shared_ptr<const FunAsrNanoAssets> assets) {
   return assets;
 }
 
-class TextDecoderWeightsRuntime {
+class Qwen3DecoderWeightsRuntime {
 public:
-  TextDecoderWeightsRuntime(std::shared_ptr<const FunAsrNanoAssets> assets,
+  Qwen3DecoderWeightsRuntime(std::shared_ptr<const FunAsrNanoAssets> assets,
                             core::ExecutionContext &execution,
                             size_t weight_context_bytes,
                             assets::TensorStorageType storage_type)
       : assets_(require_assets(std::move(assets))),
         backend_(execution.backend()), backend_type_(execution.backend_type()),
         threads_(std::max(1, execution.config().threads)),
-        weights_(std::make_shared<TextDecoderWeights>(
+        weights_(std::make_shared<Qwen3DecoderWeights>(
             load_weights(*assets_, backend_, backend_type_,
                          weight_context_bytes, storage_type))) {
     if (backend_ == nullptr) {
@@ -256,7 +256,7 @@ public:
 
   const FunAsrNanoAssets &assets() const noexcept { return *assets_; }
 
-  const TextDecoderWeights &weights() const noexcept { return *weights_; }
+  const Qwen3DecoderWeights &weights() const noexcept { return *weights_; }
 
   ggml_backend_t backend() const noexcept { return backend_; }
 
@@ -269,12 +269,12 @@ private:
   ggml_backend_t backend_ = nullptr;
   core::BackendType backend_type_ = core::BackendType::Cpu;
   int threads_ = 1;
-  std::shared_ptr<const TextDecoderWeights> weights_;
+  std::shared_ptr<const Qwen3DecoderWeights> weights_;
 };
 
-class PrefillGraph {
+class Qwen3PrefillGraph {
 public:
-  PrefillGraph(std::shared_ptr<TextDecoderWeightsRuntime> runtime,
+  Qwen3PrefillGraph(std::shared_ptr<Qwen3DecoderWeightsRuntime> runtime,
                int64_t prompt_steps, int64_t audio_tokens,
                size_t graph_arena_bytes)
       : runtime_(std::move(runtime)), prompt_steps_(prompt_steps),
@@ -313,7 +313,7 @@ public:
         GGML_TYPE_I32);
 
     auto decoder_out =
-        modules::QwenCausalDecoderModule(make_qwen_decoder_config(config))
+        modules::CausalDecoderModule(make_qwen_decoder_config(config))
             .build(ctx, x, positions, make_qwen_decoder_weights(weights));
     for (const auto &layer : decoder_out.state.layers) {
       if (!layer.key.has_value() || !layer.value.has_value()) {
@@ -348,7 +348,7 @@ public:
       throw std::runtime_error(
           "failed to allocate Fun-ASR-Nano decoder prefill graph");
     }
-    const auto pos = modules::qwen_position_ids(prompt_steps_);
+    const auto pos = modules::decoder_position_ids(prompt_steps_);
     ggml_backend_tensor_set(positions_, pos.data(), 0,
                             pos.size() * sizeof(int32_t));
     debug::timing_log_scalar(
@@ -358,14 +358,14 @@ public:
                             prompt_steps_);
   }
 
-  ~PrefillGraph() {
+  ~Qwen3PrefillGraph() {
     engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
     if (gallocr_ != nullptr) {
       ggml_gallocr_free(gallocr_);
     }
   }
 
-  bool matches(const TextDecoderWeightsRuntime &runtime, int64_t prompt_steps,
+  bool matches(const Qwen3DecoderWeightsRuntime &runtime, int64_t prompt_steps,
                int64_t audio_tokens) const {
     return runtime_.get() == &runtime && prompt_steps_ == prompt_steps &&
            audio_tokens_ == audio_tokens;
@@ -441,7 +441,7 @@ public:
   }
 
 private:
-  std::shared_ptr<TextDecoderWeightsRuntime> runtime_;
+  std::shared_ptr<Qwen3DecoderWeightsRuntime> runtime_;
   int64_t prompt_steps_ = 0;
   int64_t audio_tokens_ = 0;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -456,9 +456,9 @@ private:
   ggml_gallocr_t gallocr_ = nullptr;
 };
 
-class DecodeGraph {
+class Qwen3DecodeGraph {
 public:
-  DecodeGraph(std::shared_ptr<TextDecoderWeightsRuntime> runtime,
+  Qwen3DecodeGraph(std::shared_ptr<Qwen3DecoderWeightsRuntime> runtime,
               int64_t cache_steps, size_t graph_arena_bytes)
       : runtime_(std::move(runtime)), real_cache_steps_(cache_steps),
         cache_steps_(cache_steps) {
@@ -501,7 +501,7 @@ public:
         GGML_TYPE_F16);
     graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
     auto decoder_out =
-        modules::QwenCausalDecoderModule(make_qwen_decoder_config(config))
+        modules::CausalDecoderModule(make_qwen_decoder_config(config))
             .build_static_cache_tail(ctx, graph_, x, positions,
                                      make_qwen_decoder_weights(weights),
                                      cache_steps_, attention_mask, cache_slot);
@@ -523,14 +523,14 @@ public:
                             real_cache_steps_);
   }
 
-  ~DecodeGraph() {
+  ~Qwen3DecodeGraph() {
     engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
     if (buffer_ != nullptr) {
       ggml_backend_buffer_free(buffer_);
     }
   }
 
-  bool can_run(const TextDecoderWeightsRuntime &runtime,
+  bool can_run(const Qwen3DecoderWeightsRuntime &runtime,
                int64_t required_steps) const {
     return runtime_.get() == &runtime && real_cache_steps_ >= required_steps;
   }
@@ -549,7 +549,7 @@ public:
     ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
     const int32_t cache_slot = static_cast<int32_t>(step_cache_.valid_steps());
     ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(int32_t));
-    modules::write_qwen_cached_step_mask(
+    modules::write_decoder_cached_step_mask(
         attention_mask_, attention_mask_values_, cache_steps_,
         step_cache_.valid_steps(), step_cache_.valid_steps());
     core::set_backend_threads(runtime_->backend(), runtime_->threads());
@@ -568,7 +568,7 @@ public:
   }
 
 private:
-  std::shared_ptr<TextDecoderWeightsRuntime> runtime_;
+  std::shared_ptr<Qwen3DecoderWeightsRuntime> runtime_;
   int64_t real_cache_steps_ = 0;
   int64_t cache_steps_ = 0;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -585,12 +585,12 @@ private:
 
 } // namespace
 
-struct FunAsrNanoDecoderRuntime::Impl {
+struct FunAsrNanoQwen3DecoderRuntime::Impl {
   Impl(std::shared_ptr<const FunAsrNanoAssets> assets,
        core::ExecutionContext &execution, size_t prefill_graph_arena_bytes,
        size_t decode_graph_arena_bytes, size_t weight_context_bytes,
        assets::TensorStorageType storage_type)
-      : weights(std::make_shared<TextDecoderWeightsRuntime>(
+      : weights(std::make_shared<Qwen3DecoderWeightsRuntime>(
             std::move(assets), execution, weight_context_bytes, storage_type)),
         prefill_graph_arena_bytes(prefill_graph_arena_bytes),
         decode_graph_arena_bytes(decode_graph_arena_bytes) {}
@@ -659,7 +659,7 @@ struct FunAsrNanoDecoderRuntime::Impl {
     if (prefill_graph == nullptr ||
         !prefill_graph->matches(*weights, prompt_steps,
                                 audio_embeddings.tokens)) {
-      prefill_graph = std::make_unique<PrefillGraph>(weights, prompt_steps,
+      prefill_graph = std::make_unique<Qwen3PrefillGraph>(weights, prompt_steps,
                                                      audio_embeddings.tokens,
                                                      prefill_graph_arena_bytes);
     } else {
@@ -679,7 +679,7 @@ struct FunAsrNanoDecoderRuntime::Impl {
     if (required_cache_steps > prompt_steps) {
       if (decode_graph == nullptr ||
           !decode_graph->can_run(*weights, required_cache_steps)) {
-        decode_graph = std::make_unique<DecodeGraph>(
+        decode_graph = std::make_unique<Qwen3DecodeGraph>(
             weights, required_cache_steps, decode_graph_arena_bytes);
       } else {
         debug::timing_log_scalar("fun_asr_nano.decoder.decode.graph.build_ms",
@@ -720,14 +720,14 @@ struct FunAsrNanoDecoderRuntime::Impl {
     return out;
   }
 
-  std::shared_ptr<TextDecoderWeightsRuntime> weights;
+  std::shared_ptr<Qwen3DecoderWeightsRuntime> weights;
   size_t prefill_graph_arena_bytes = 0;
   size_t decode_graph_arena_bytes = 0;
-  std::unique_ptr<PrefillGraph> prefill_graph;
-  std::unique_ptr<DecodeGraph> decode_graph;
+  std::unique_ptr<Qwen3PrefillGraph> prefill_graph;
+  std::unique_ptr<Qwen3DecodeGraph> decode_graph;
 };
 
-FunAsrNanoDecoderRuntime::FunAsrNanoDecoderRuntime(
+FunAsrNanoQwen3DecoderRuntime::FunAsrNanoQwen3DecoderRuntime(
     std::shared_ptr<const FunAsrNanoAssets> assets,
     core::ExecutionContext &execution, size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes, size_t weight_context_bytes,
@@ -738,9 +738,9 @@ FunAsrNanoDecoderRuntime::FunAsrNanoDecoderRuntime(
                                    weight_context_bytes, weight_storage_type)) {
 }
 
-FunAsrNanoDecoderRuntime::~FunAsrNanoDecoderRuntime() = default;
+FunAsrNanoQwen3DecoderRuntime::~FunAsrNanoQwen3DecoderRuntime() = default;
 
-FunAsrNanoGeneratedTokens FunAsrNanoDecoderRuntime::generate(
+FunAsrNanoGeneratedTokens FunAsrNanoQwen3DecoderRuntime::generate(
     const FunAsrNanoPrompt &prompt,
     const FunAsrNanoAdaptorEmbeddings &audio_embeddings,
     const FunAsrNanoGenerationOptions &options,

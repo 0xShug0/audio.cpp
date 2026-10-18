@@ -1255,6 +1255,17 @@ void ggml_compute_forward_mul_mat(
         return;
     }
 
+    // Ternary weights own their activation quantization, so they cannot use the
+    // vec_dot_type path below: that quantizes src1 one row at a time into a
+    // fixed row_size and hands the kernel nothing but two row pointers, while
+    // I2_S needs the per-row activation scale and int8 row sum to survive into
+    // the epilogue. Branching here rather than adding an op keeps the language
+    // model graph on plain ggml_mul_mat.
+    if (src0->type == GGML_TYPE_I2_S) {
+        ggml_compute_forward_mul_mat_i2_s(params, dst);
+        return;
+    }
+
     GGML_TENSOR_BINARY_OP_LOCALS
 
     const int ith = params->ith;
@@ -1697,6 +1708,93 @@ static void ggml_compute_forward_mul_mat_id(
     }
 }
 
+// reference implementation of the accumulate-in-place matmul (dst aliases src[2]):
+// dst += src0 * src1. The op is only exercised on Metal; this plain single-threaded
+// loop exists so the CPU backend stays correct if a graph containing it is ever run.
+static void ggml_compute_forward_mul_mat_acc(
+        const struct ggml_compute_params * params,
+        struct ggml_tensor * dst) {
+    const struct ggml_tensor * src0 = dst->src[0]; // a [K, M]
+    const struct ggml_tensor * src1 = dst->src[1]; // b [K, N]
+
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+
+    if (params->ith != 0) {
+        return;
+    }
+
+    const int64_t K = src0->ne[0];
+    const int64_t M = src0->ne[1];
+    const int64_t N = src1->ne[1];
+
+    GGML_ASSERT(src1->ne[0] == K);
+    GGML_ASSERT(dst->ne[0] == M && dst->ne[1] == N);
+    GGML_ASSERT(src0->ne[2] == 1 && src0->ne[3] == 1);
+    GGML_ASSERT(src1->ne[2] == 1 && src1->ne[3] == 1);
+    GGML_ASSERT(dst->ne[2]  == 1 && dst->ne[3]  == 1);
+
+    const char * A = (const char *) src0->data;
+    const char * B = (const char *) src1->data;
+    char       * C = (char *)       dst->data;
+
+    for (int64_t n = 0; n < N; ++n) {
+        for (int64_t m = 0; m < M; ++m) {
+            float sum = 0.0f;
+            for (int64_t k = 0; k < K; ++k) {
+                const float av = *(const float *) (A + k*src0->nb[0] + m*src0->nb[1]);
+                const float bv = *(const float *) (B + k*src1->nb[0] + n*src1->nb[1]);
+                sum += av * bv;
+            }
+            float * cv = (float *) (C + m*dst->nb[0] + n*dst->nb[1]);
+            *cv += sum;
+        }
+    }
+}
+
+// ggml_compute_forward_snake_1d
+//
+// fused snake activation: y = x + sin(x * alpha)^2 / alpha, alpha broadcast per channel.
+// naive single-threaded reference so the CPU backend stays correct if a graph containing
+// this op is ever run there.
+static void ggml_compute_forward_snake_1d(
+        const struct ggml_compute_params * params,
+        struct ggml_tensor * dst) {
+    const struct ggml_tensor * src0 = dst->src[0]; // x [C, T], channels on the fast axis
+    const struct ggml_tensor * src1 = dst->src[1]; // alpha [C, 1]
+
+    if (params->ith != 0) {
+        return;
+    }
+
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ggml_is_contiguous(src1));
+    GGML_ASSERT(ggml_is_contiguous(dst));
+    GGML_ASSERT(src0->ne[2] == 1 && src0->ne[3] == 1);
+    GGML_ASSERT(src1->ne[0] == src0->ne[0] && src1->ne[1] == 1);
+
+    const int64_t nc = src0->ne[0];
+    const int64_t nt = src0->ne[1];
+
+    const float * x = (const float *) src0->data;
+    const float * a = (const float *) src1->data;
+    float       * y = (float       *) dst->data;
+
+    for (int64_t t = 0; t < nt; t++) {
+        for (int64_t c = 0; c < nc; c++) {
+            const float av = a[c];
+            const float xv = x[t*nc + c];
+            const float ax = xv * av;
+            const float s  = sinf(ax);
+            y[t*nc + c] = xv + (s*s)/av;
+        }
+    }
+}
+
 /////////////////////////////////
 
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
@@ -1828,6 +1926,14 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         case GGML_OP_MUL_MAT_PACK4:
             {
                 ggml_compute_forward_mul_mat(params, tensor);
+            } break;
+        case GGML_OP_MUL_MAT_ACC:
+            {
+                ggml_compute_forward_mul_mat_acc(params, tensor);
+            } break;
+        case GGML_OP_SNAKE_1D:
+            {
+                ggml_compute_forward_snake_1d(params, tensor);
             } break;
         case GGML_OP_MUL_MAT_ID:
             {
@@ -2092,6 +2198,26 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 ggml_compute_forward_opt_step_sgd(params, tensor);
             }
             break;
+        case GGML_OP_ADD_SCALED:
+            {
+                ggml_compute_forward_add_scaled(params, tensor);
+            } break;
+        case GGML_OP_RMS_NORM_SCALED:
+            {
+                ggml_compute_forward_rms_norm_scaled(params, tensor);
+            } break;
+        case GGML_OP_MUL_MAT_ADD:
+            {
+                ggml_compute_forward_mul_mat_add(params, tensor);
+            } break;
+        case GGML_OP_MUL_MAT_ADD_RELU:
+            {
+                ggml_compute_forward_mul_mat_add_relu(params, tensor);
+            } break;
+        case GGML_OP_IM2COL_ASYM:
+            {
+                ggml_compute_forward_im2col_asym(params, tensor);
+            } break;
         case GGML_OP_NONE:
             {
                 // nop
@@ -2260,6 +2386,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 case GGML_UNARY_OP_CEIL:
                 case GGML_UNARY_OP_ROUND:
                 case GGML_UNARY_OP_TRUNC:
+                case GGML_UNARY_OP_ROUND_BF16:
                     {
                         n_tasks = 1;
                     } break;
@@ -2307,6 +2434,16 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
             {
                 n_tasks = n_threads;
             } break;
+        case GGML_OP_MUL_MAT_ACC:
+            {
+                // reference implementation is single-threaded
+                n_tasks = 1;
+            } break;
+        case GGML_OP_SNAKE_1D:
+            {
+                // reference implementation is single-threaded
+                n_tasks = 1;
+            } break;
         case GGML_OP_GET_ROWS:
         case GGML_OP_SET_ROWS:
             {
@@ -2345,6 +2482,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
             } break;
         case GGML_OP_IM2COL:
         case GGML_OP_IM2COL_FAST_1D:
+        case GGML_OP_IM2COL_ASYM:
         case GGML_OP_IM2COL_BACK:
         case GGML_OP_IM2COL_3D:
         case GGML_OP_CONV_2D:
@@ -2352,6 +2490,10 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_CONV_2D_DW:
         case GGML_OP_CONV_TRANSPOSE_1D:
         case GGML_OP_CONV_TRANSPOSE_2D:
+        case GGML_OP_ADD_SCALED:
+        case GGML_OP_RMS_NORM_SCALED:
+        case GGML_OP_MUL_MAT_ADD:
+        case GGML_OP_MUL_MAT_ADD_RELU:
             {
                 n_tasks = n_threads;
             } break;
@@ -2821,6 +2963,17 @@ struct ggml_cplan ggml_graph_plan(
                 case GGML_OP_MUL_MAT:
                 case GGML_OP_MUL_MAT_PACK4:
                     {
+                        if (node->src[0]->type == GGML_TYPE_I2_S) {
+                            // The int8 activation rows, then one scale and one
+                            // int8 row sum each. I2_S has no vec_dot_type entry
+                            // -- see ggml_compute_forward_mul_mat_i2_s.
+                            const int64_t nrows_y = ggml_nrows(node->src[1]);
+
+                            cur  = GGML_PAD((size_t) ggml_nelements(node->src[1]), sizeof(float));
+                            cur += nrows_y*(sizeof(float) + sizeof(int32_t));
+                            break;
+                        }
+
                         const enum ggml_type vec_dot_type = type_traits_cpu[node->src[0]->type].vec_dot_type;
 
                         if (node->src[1]->type != vec_dot_type) {
@@ -2947,6 +3100,18 @@ struct ggml_cplan ggml_graph_plan(
                 case GGML_OP_CROSS_ENTROPY_LOSS:
                     {
                         cur = ggml_type_size(node->type)*(n_tasks + node->src[0]->ne[0]*n_tasks);
+                    } break;
+                case GGML_OP_ADD_SCALED:
+                case GGML_OP_RMS_NORM_SCALED:
+                case GGML_OP_MUL_MAT_ADD:
+                case GGML_OP_MUL_MAT_ADD_RELU:
+                    {
+                        // F32 staging for the whole output, plus one absmax per
+                        // thread. The output cannot be quantized in place: its
+                        // scale is only known once every element has been
+                        // computed, so all of them have to be held somewhere
+                        // first.
+                        cur = sizeof(float)*ggml_nelements(node) + sizeof(float)*n_tasks;
                     } break;
                 case GGML_OP_GATED_DELTA_NET:
                     {

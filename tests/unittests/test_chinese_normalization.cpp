@@ -37,6 +37,13 @@ int main() {
         {"零下5", "零下五"},
         {"3.2个百分点", "三点二个百分点"},
         {"公元前221年到公元前121年", "公元前两百二十一年到公元前一百二十一年"},
+        // Pinyin-tone and name placeholders must survive the number normalizer
+        // (official TextNormalizer uses letter-suffixed placeholders for this).
+        {"我试了试wan22的还能正常跑", "我试了试wan2二的还能正常跑"},
+        {"chong2", "chong2"},
+        {"ju2", "JV2"},
+        {"克里斯托弗·诺兰", "克里斯托弗-诺兰"},
+        {"克里斯托弗·诺兰2024年", "克里斯托弗-诺兰二零二四年"},
     };
 
     for (const auto & item : cases) {

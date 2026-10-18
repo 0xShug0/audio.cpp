@@ -36,6 +36,7 @@ struct BackendConv1dWeights {
     int64_t padding = 0;
     int64_t dilation = 1;
     bool use_bias = true;
+    Conv1dPaddingMode padding_mode = Conv1dPaddingMode::Reflect;
     modules::Conv1dWeights conv;
 };
 
@@ -49,6 +50,7 @@ struct BackendRes2NetBlockWeights {
     std::vector<BackendTDNNBlockWeights> blocks;
     int64_t scale = 8;
     int64_t width = 0;
+    bool first_chunk_passthrough = true;
 };
 
 struct BackendSEBlockWeights {
@@ -70,6 +72,8 @@ struct BackendAspWeights {
     modules::BatchNorm1dEvalWeights tdnn_norm;
     int64_t tdnn_norm_channels = 0;
     BackendConv1dWeights conv;
+    AttentivePoolingKind kind = AttentivePoolingKind::GlobalContext;
+    bool tdnn_use_batch_norm = true;
 };
 
 struct EcapaBackendWeights {
@@ -77,11 +81,15 @@ struct EcapaBackendWeights {
     BackendTDNNBlockWeights block0;
     std::vector<BackendSERes2NetBlockWeights> se_blocks;
     BackendTDNNBlockWeights mfa;
+    bool mfa_use_batch_norm = true;
     BackendAspWeights asp;
     modules::BatchNorm1dEvalWeights asp_bn;
     int64_t asp_bn_channels = 0;
     BackendConv1dWeights fc;
     core::TensorValue stats_eps;
+    int64_t feature_dim = 80;
+    int64_t embedding_dim = 192;
+    size_t graph_context_bytes = 256ull * 1024ull * 1024ull;
 };
 
 namespace {
@@ -110,26 +118,6 @@ struct GgmlContextDeleter {
     }
 };
 
-core::TensorValue store_weight(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const Conv1dWeights & tensor,
-    assets::TensorStorageType storage_type) {
-    return store.load_tensor_as_shape(
-        source,
-        tensor.weight_name,
-        storage_type,
-        tensor.weight_source_shape,
-        core::TensorShape::from_dims({tensor.out_channels, tensor.in_channels, tensor.kernel}));
-}
-
-core::TensorValue store_f32(
-    core::BackendWeightStore & store,
-    const core::TensorShape & shape,
-    const std::vector<float> & values) {
-    return store.make_f32(shape, values);
-}
-
 BackendConv1dWeights make_backend_conv(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
@@ -143,7 +131,13 @@ BackendConv1dWeights make_backend_conv(
     weights.padding = conv.padding;
     weights.dilation = conv.dilation;
     weights.use_bias = conv.use_bias;
-    weights.conv.weight = store_weight(store, source, conv, storage_type);
+    weights.padding_mode = conv.padding_mode;
+    weights.conv.weight = store.load_tensor_as_shape(
+        source,
+        conv.weight_name,
+        storage_type,
+        conv.weight_source_shape,
+        core::TensorShape::from_dims({conv.out_channels, conv.in_channels, conv.kernel}));
     if (conv.use_bias) {
         weights.conv.bias = store.load_f32_tensor(source, *conv.bias_name, {conv.out_channels});
     }
@@ -228,13 +222,14 @@ modules::BatchNorm1dEvalWeights bind_batch_norm_weights(
     std::vector<float> scale(static_cast<size_t>(channels), 0.0f);
     std::vector<float> bias(static_cast<size_t>(channels), 0.0f);
     for (int64_t i = 0; i < channels; ++i) {
-        const float inv_std = 1.0f / std::sqrt(bn.running_var[static_cast<size_t>(i)] + kBatchNormEps);
-        scale[static_cast<size_t>(i)] = bn.weight[static_cast<size_t>(i)] * inv_std;
-        bias[static_cast<size_t>(i)] = bn.bias[static_cast<size_t>(i)] - bn.running_mean[static_cast<size_t>(i)] * scale[static_cast<size_t>(i)];
+        scale[static_cast<size_t>(i)] =
+            bn.weight[static_cast<size_t>(i)] / std::sqrt(bn.running_var[static_cast<size_t>(i)] + kBatchNormEps);
+        bias[static_cast<size_t>(i)] =
+            bn.bias[static_cast<size_t>(i)] - bn.running_mean[static_cast<size_t>(i)] * scale[static_cast<size_t>(i)];
     }
     return {
-        store_f32(store, core::TensorShape::from_dims({channels}), scale),
-        store_f32(store, core::TensorShape::from_dims({channels}), bias),
+        store.make_f32(core::TensorShape::from_dims({channels}), scale),
+        store.make_f32(core::TensorShape::from_dims({channels}), bias),
     };
 }
 
@@ -257,7 +252,10 @@ std::shared_ptr<const EcapaBackendWeights> load_backend_weights(
     assets::TensorStorageType storage_type) {
     auto out = std::make_shared<EcapaBackendWeights>();
     out->store = std::make_shared<core::BackendWeightStore>(
-        backend, backend_type, "ecapa_tdnn_spk.weights", 256ull * 1024ull * 1024ull);
+        backend, backend_type, "ecapa_tdnn_spk.weights", weights.weight_context_bytes);
+    out->feature_dim = weights.feature_dim;
+    out->embedding_dim = weights.embedding_dim;
+    out->graph_context_bytes = weights.graph_context_bytes;
     auto & store = *out->store;
     if (weights.source == nullptr) {
         throw std::runtime_error("ECAPA weights require a tensor source");
@@ -270,6 +268,7 @@ std::shared_ptr<const EcapaBackendWeights> load_backend_weights(
         dst.tdnn1 = make_backend_tdnn(store, source, block.tdnn1, storage_type);
         dst.res2net.scale = block.res2net.scale;
         dst.res2net.width = block.res2net.width;
+        dst.res2net.first_chunk_passthrough = block.res2net.first_chunk_passthrough;
         dst.res2net.blocks.reserve(block.res2net.blocks.size());
         for (const auto & res2 : block.res2net.blocks) {
             dst.res2net.blocks.push_back(make_backend_tdnn(store, source, res2, storage_type));
@@ -279,8 +278,15 @@ std::shared_ptr<const EcapaBackendWeights> load_backend_weights(
         dst.se.conv2 = make_backend_conv(store, source, block.se.conv2, storage_type);
         out->se_blocks.push_back(std::move(dst));
     }
-    out->mfa = make_backend_tdnn(store, source, weights.mfa, storage_type);
-    if (engine::core::uses_host_graph_plan(backend)) {
+    out->mfa.conv = make_backend_conv(store, source, weights.mfa.conv, storage_type);
+    out->mfa.norm_channels = static_cast<int64_t>(weights.mfa.norm.running_mean.size());
+    out->mfa_use_batch_norm = weights.mfa_use_batch_norm;
+    if (weights.mfa_use_batch_norm) {
+        out->mfa.norm = bind_batch_norm_weights(weights.mfa.norm, store);
+    }
+    out->asp.kind = weights.asp.kind;
+    out->asp.tdnn_use_batch_norm = weights.asp.tdnn_use_batch_norm;
+    if (weights.asp.kind == AttentivePoolingKind::GlobalContext && engine::core::uses_host_graph_plan(backend)) {
         auto [tdnn_x_conv, tdnn_stats_conv] = make_backend_split_pool_conv(
             store,
             source,
@@ -289,16 +295,24 @@ std::shared_ptr<const EcapaBackendWeights> load_backend_weights(
             storage_type);
         out->asp.tdnn_x_conv = std::move(tdnn_x_conv);
         out->asp.tdnn_stats_conv = std::move(tdnn_stats_conv);
-        out->asp.tdnn_norm = bind_batch_norm_weights(weights.asp.tdnn.norm, store);
+        if (weights.asp.tdnn_use_batch_norm) {
+            out->asp.tdnn_norm = bind_batch_norm_weights(weights.asp.tdnn.norm, store);
+        }
         out->asp.tdnn_norm_channels = static_cast<int64_t>(weights.asp.tdnn.norm.running_mean.size());
     } else {
-        out->asp.tdnn = make_backend_tdnn(store, source, weights.asp.tdnn, storage_type);
+        out->asp.tdnn.conv = make_backend_conv(store, source, weights.asp.tdnn.conv, storage_type);
+        if (weights.asp.tdnn_use_batch_norm) {
+            out->asp.tdnn.norm = bind_batch_norm_weights(weights.asp.tdnn.norm, store);
+        }
+        out->asp.tdnn.norm_channels = static_cast<int64_t>(weights.asp.tdnn.norm.running_mean.size());
     }
     out->asp.conv = make_backend_conv(store, source, weights.asp.conv, storage_type);
     out->asp_bn = bind_batch_norm_weights(weights.asp_bn, store);
     out->asp_bn_channels = static_cast<int64_t>(weights.asp_bn.running_mean.size());
     out->fc = make_backend_conv(store, source, weights.fc, storage_type);
-    out->stats_eps = store_f32(store, core::TensorShape::from_dims({1, 1, 1}), std::vector<float>{kStatsEps});
+    out->stats_eps = store.make_f32(
+        core::TensorShape::from_dims({1, 1, 1}),
+        std::vector<float>{weights.stats_eps});
     store.upload();
     weights.source->release_storage();
     return out;
@@ -311,17 +325,6 @@ std::shared_ptr<const EcapaWeights> require_weights(std::shared_ptr<const EcapaW
     return weights;
 }
 
-core::TensorValue batch_norm_1d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & x,
-    const modules::BatchNorm1dEvalWeights & bn,
-    int64_t channels) {
-    return modules::BatchNorm1dEvalModule({channels}).build(
-        ctx,
-        x,
-        bn);
-}
-
 core::TensorValue conv1d(
     core::ModuleBuildContext & ctx,
     core::TensorValue x,
@@ -331,15 +334,17 @@ core::TensorValue conv1d(
             "ECAPA conv1d channel mismatch: got=" + std::to_string(x.shape.dims[1]) +
             " expected=" + std::to_string(conv.in_channels));
     }
-    if (conv.padding > 0) {
+    int padding = static_cast<int>(conv.padding);
+    if (conv.padding_mode == Conv1dPaddingMode::Reflect && conv.padding > 0) {
         x = modules::ReflectPad1dModule({conv.padding, conv.padding}).build(ctx, x);
+        padding = 0;
     }
     return modules::FastConv1dModule({
         conv.in_channels,
         conv.out_channels,
         conv.kernel,
         static_cast<int>(conv.stride),
-        0,
+        padding,
         static_cast<int>(conv.dilation),
         conv.use_bias,
     }, modules::FastConv1dKind::MinittsFast1dIm2col).build(ctx, x, conv.conv);
@@ -351,30 +356,21 @@ core::TensorValue tdnn_block(
     const BackendTDNNBlockWeights & block) {
     auto y = conv1d(ctx, x, block.conv);
     y = modules::ReluModule{}.build(ctx, y);
-    y = batch_norm_1d(ctx, y, block.norm, block.norm_channels);
+    y = modules::BatchNorm1dEvalModule({block.norm_channels}).build(ctx, y, block.norm);
     return y;
 }
 
-core::TensorValue concat_channels(core::ModuleBuildContext & ctx, const core::TensorValue & a, const core::TensorValue & b) {
-    return modules::ConcatModule({1}).build(ctx, a, b);
-}
-
-core::TensorValue se_block(
+core::TensorValue tdnn_block(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & x,
-    const BackendSEBlockWeights & se) {
-    return modules::SqueezeExcite1dModule({se.conv2.out_channels, se.conv1.out_channels, true}).build(
-        ctx,
-        x,
-        {se.conv1.conv, se.conv2.conv});
-}
-
-core::TensorValue view_channels(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & x,
-    int64_t c0,
-    int64_t c1) {
-    return modules::SliceModule({1, c0, c1 - c0}).build(ctx, x);
+    const BackendTDNNBlockWeights & block,
+    bool use_batch_norm) {
+    auto y = conv1d(ctx, x, block.conv);
+    y = modules::ReluModule{}.build(ctx, y);
+    if (use_batch_norm) {
+        y = modules::BatchNorm1dEvalModule({block.norm_channels}).build(ctx, y, block.norm);
+    }
+    return y;
 }
 
 core::TensorValue se_res2net_block(
@@ -385,26 +381,65 @@ core::TensorValue se_res2net_block(
     auto y = tdnn_block(ctx, x, block.tdnn1);
     core::TensorValue merged;
     core::TensorValue prev;
-    for (int64_t i = 0; i < block.res2net.scale; ++i) {
-        auto chunk = view_channels(ctx, y, i * block.res2net.width, (i + 1) * block.res2net.width);
-        core::TensorValue out;
-        if (i == 0) {
-            out = chunk;
-        } else if (i == 1) {
-            out = tdnn_block(ctx, chunk, block.res2net.blocks[0]);
-        } else {
-            auto summed = modules::ResidualAddModule{}.build(ctx, chunk, prev);
-            out = tdnn_block(ctx, summed, block.res2net.blocks[static_cast<size_t>(i - 1)]);
+    if (block.res2net.first_chunk_passthrough) {
+        for (int64_t i = 0; i < block.res2net.scale; ++i) {
+            auto chunk = modules::SliceModule({1, i * block.res2net.width, block.res2net.width}).build(ctx, y);
+            core::TensorValue out;
+            if (i == 0) {
+                out = chunk;
+            } else if (i == 1) {
+                out = tdnn_block(ctx, chunk, block.res2net.blocks[0]);
+            } else {
+                auto summed = modules::AddModule{}.build(ctx, chunk, prev);
+                out = tdnn_block(ctx, summed, block.res2net.blocks[static_cast<size_t>(i - 1)]);
+            }
+            prev = out;
+            merged = merged.valid() ? modules::ConcatModule({1}).build(ctx, merged, out) : out;
         }
-        prev = out;
-        merged = merged.valid() ? concat_channels(ctx, merged, out) : out;
+    } else {
+        for (int64_t i = 0; i < block.res2net.scale - 1; ++i) {
+            auto chunk = modules::SliceModule({1, i * block.res2net.width, block.res2net.width}).build(ctx, y);
+            auto input = i == 0 ? chunk : modules::AddModule{}.build(ctx, chunk, prev);
+            auto out = tdnn_block(ctx, input, block.res2net.blocks[static_cast<size_t>(i)]);
+            prev = out;
+            merged = merged.valid() ? modules::ConcatModule({1}).build(ctx, merged, out) : out;
+        }
+        auto tail = modules::SliceModule({
+            1,
+            (block.res2net.scale - 1) * block.res2net.width,
+            block.res2net.width}).build(ctx, y);
+        merged = merged.valid() ? modules::ConcatModule({1}).build(ctx, merged, tail) : tail;
     }
     y = tdnn_block(ctx, merged, block.tdnn2);
-    y = se_block(ctx, y, block.se);
-    return modules::ResidualAddModule{}.build(ctx, y, residual);
+    y = modules::SqueezeExcite1dModule({block.se.conv2.out_channels, block.se.conv1.out_channels, true}).build(
+        ctx,
+        y,
+        {block.se.conv1.conv, block.se.conv2.conv});
+    return modules::AddModule{}.build(ctx, y, residual);
 }
 
-core::TensorValue attentive_statistics_pool(
+core::TensorValue simple_attentive_statistics_pool(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & x,
+    const BackendAspWeights & asp,
+    core::TensorValue eps) {
+    auto attn = conv1d(ctx, x, asp.tdnn.conv);
+    attn = modules::TanhModule{}.build(ctx, attn);
+    attn = conv1d(ctx, attn, asp.conv);
+    auto weights = modules::SoftmaxModule{}.build(ctx, attn);
+    auto weighted_x = modules::MulModule{}.build(ctx, x, weights);
+    auto mean_att = modules::ReduceSumModule({static_cast<int>(weighted_x.shape.rank - 1)}).build(ctx, weighted_x);
+    auto mean_att_rep = modules::RepeatModule({x.shape}).build(ctx, mean_att);
+    auto diff = core::wrap_tensor(ggml_sub(ctx.ggml, x.tensor, mean_att_rep.tensor), x.shape, GGML_TYPE_F32);
+    auto diff_sq = modules::MulModule{}.build(ctx, diff, diff);
+    auto weighted_var = modules::MulModule{}.build(ctx, diff_sq, weights);
+    auto var_att = modules::ReduceSumModule({static_cast<int>(weighted_var.shape.rank - 1)}).build(ctx, weighted_var);
+    auto eps_stats = modules::RepeatModule({var_att.shape}).build(ctx, eps);
+    auto std_att = modules::SqrtModule{}.build(ctx, modules::AddModule{}.build(ctx, var_att, eps_stats));
+    return modules::ConcatModule({1}).build(ctx, mean_att, std_att);
+}
+
+core::TensorValue global_context_attentive_statistics_pool(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & x,
     const BackendAspWeights & asp,
@@ -418,17 +453,22 @@ core::TensorValue attentive_statistics_pool(
     auto std = modules::SqrtModule{}.build(ctx, modules::AddModule{}.build(ctx, variance, eps_stats));
     core::TensorValue attn;
     if (core::uses_host_graph_plan(ctx.backend_type)) {
-        auto stats = concat_channels(ctx, mean, std);
+        auto stats = modules::ConcatModule({1}).build(ctx, mean, std);
         attn = conv1d(ctx, x, asp.tdnn_x_conv);
         auto stats_attn = conv1d(ctx, stats, asp.tdnn_stats_conv);
         auto stats_attn_rep = modules::RepeatModule({attn.shape}).build(ctx, stats_attn);
         attn = modules::AddModule{}.build(ctx, attn, stats_attn_rep);
         attn = modules::ReluModule{}.build(ctx, attn);
-        attn = batch_norm_1d(ctx, attn, asp.tdnn_norm, asp.tdnn_norm_channels);
+        if (asp.tdnn_use_batch_norm) {
+            attn = modules::BatchNorm1dEvalModule({asp.tdnn_norm_channels}).build(ctx, attn, asp.tdnn_norm);
+        }
     } else {
         auto std_rep = modules::RepeatModule({x.shape}).build(ctx, std);
-        auto gc = concat_channels(ctx, concat_channels(ctx, x, mean_rep), std_rep);
-        attn = tdnn_block(ctx, gc, asp.tdnn);
+        auto gc = modules::ConcatModule({1}).build(
+            ctx,
+            modules::ConcatModule({1}).build(ctx, x, mean_rep),
+            std_rep);
+        attn = tdnn_block(ctx, gc, asp.tdnn, asp.tdnn_use_batch_norm);
     }
     attn = modules::TanhModule{}.build(ctx, attn);
     attn = conv1d(ctx, attn, asp.conv);
@@ -442,7 +482,18 @@ core::TensorValue attentive_statistics_pool(
     auto var_att = modules::ReduceSumModule({static_cast<int>(weighted_var.shape.rank - 1)}).build(ctx, weighted_var);
     eps_stats = modules::RepeatModule({var_att.shape}).build(ctx, eps);
     auto std_att = modules::SqrtModule{}.build(ctx, modules::AddModule{}.build(ctx, var_att, eps_stats));
-    return concat_channels(ctx, mean_att, std_att);
+    return modules::ConcatModule({1}).build(ctx, mean_att, std_att);
+}
+
+core::TensorValue attentive_statistics_pool(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & x,
+    const BackendAspWeights & asp,
+    core::TensorValue eps) {
+    if (asp.kind == AttentivePoolingKind::Simple) {
+        return simple_attentive_statistics_pool(ctx, x, asp, eps);
+    }
+    return global_context_attentive_statistics_pool(ctx, x, asp, eps);
 }
 
 core::TensorValue build_ecapa_graph(
@@ -456,11 +507,11 @@ core::TensorValue build_ecapa_graph(
         x = se_res2net_block(ctx, x, weights.se_blocks[i]);
         xl.push_back(x);
     }
-    auto cat = concat_channels(ctx, xl[1], xl[2]);
-    cat = concat_channels(ctx, cat, xl[3]);
-    x = tdnn_block(ctx, cat, weights.mfa);
+    auto cat = modules::ConcatModule({1}).build(ctx, xl[1], xl[2]);
+    cat = modules::ConcatModule({1}).build(ctx, cat, xl[3]);
+    x = tdnn_block(ctx, cat, weights.mfa, weights.mfa_use_batch_norm);
     x = attentive_statistics_pool(ctx, x, weights.asp, weights.stats_eps);
-    x = batch_norm_1d(ctx, x, weights.asp_bn, weights.asp_bn_channels);
+    x = modules::BatchNorm1dEvalModule({weights.asp_bn_channels}).build(ctx, x, weights.asp_bn);
     x = conv1d(ctx, x, weights.fc);
     return x;
 }
@@ -488,7 +539,7 @@ class EcapaRuntime::Graph {
         }
 
         ggml_init_params params{
-            /*.mem_size   =*/ 256ull * 1024ull * 1024ull,
+            /*.mem_size   =*/ backend_weights_->graph_context_bytes,
             /*.mem_buffer =*/ nullptr,
             /*.no_alloc   =*/ true,
         };
@@ -502,15 +553,19 @@ class EcapaRuntime::Graph {
             "ecapa_tdnn_spk",
             execution_context.backend_type(),
         };
-        auto input = core::make_tensor(build_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kFeatureDim, frames_}));
+        auto input = core::make_tensor(
+            build_ctx,
+            GGML_TYPE_F32,
+            core::TensorShape::from_dims({1, backend_weights_->feature_dim, frames_}));
         input_ = input.tensor;
         output_ = build_ecapa_graph(build_ctx, input, *backend_weights_).tensor;
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), 4096, false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, output_);
 
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
-        if (buffer_ == nullptr) {
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             throw std::runtime_error("failed to allocate ECAPA backend graph");
         }
         if (engine::core::uses_host_graph_plan(backend_)) {
@@ -530,8 +585,8 @@ class EcapaRuntime::Graph {
         if (plan_ != nullptr) {
             engine::core::free_backend_graph_plan(backend_, plan_);
         }
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
         }
     }
 
@@ -542,22 +597,23 @@ class EcapaRuntime::Graph {
     std::vector<float> run(const std::vector<float> & features) {
         upload_input(features);
         compute();
-        std::vector<float> embedding(static_cast<size_t>(kEmbeddingDim), 0.0f);
+        std::vector<float> embedding(static_cast<size_t>(backend_weights_->embedding_dim), 0.0f);
         ggml_backend_tensor_get(output_, embedding.data(), 0, embedding.size() * sizeof(float));
         return embedding;
     }
 
   private:
     void upload_input(const std::vector<float> & features) {
-        if (features.size() != static_cast<size_t>(frames_ * kFeatureDim)) {
+        if (features.size() != static_cast<size_t>(frames_ * backend_weights_->feature_dim)) {
             throw std::runtime_error("feature tensor size mismatch");
         }
         if (channels_first_.size() != features.size()) {
             channels_first_.resize(features.size());
         }
         for (int64_t t = 0; t < frames_; ++t) {
-            for (int64_t c = 0; c < kFeatureDim; ++c) {
-                channels_first_[static_cast<size_t>(t + frames_ * c)] = features[static_cast<size_t>(t * kFeatureDim + c)];
+            for (int64_t c = 0; c < backend_weights_->feature_dim; ++c) {
+                channels_first_[static_cast<size_t>(t + frames_ * c)] =
+                    features[static_cast<size_t>(t * backend_weights_->feature_dim + c)];
             }
         }
         ggml_backend_tensor_set(input_, channels_first_.data(), 0, channels_first_.size() * sizeof(float));
@@ -584,7 +640,7 @@ class EcapaRuntime::Graph {
     ggml_cgraph * graph_ = nullptr;
     ggml_backend_t backend_ = nullptr;
     int compute_threads_ = 1;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_graph_plan_t plan_ = nullptr;
     double plan_create_ms_ = 0.0;
     std::vector<float> channels_first_;
@@ -722,21 +778,23 @@ std::vector<float> compute_speechbrain_fbank(const std::vector<float> & waveform
 }
 
 std::vector<float> normalize_classifier_weights(const EcapaWeights & weights) {
-    if (weights.classifier_weight.empty() || weights.classifier_weight.size() % static_cast<size_t>(kEmbeddingDim) != 0) {
+    if (weights.classifier_weight.empty() ||
+        weights.classifier_weight.size() % static_cast<size_t>(weights.embedding_dim) != 0) {
         throw std::runtime_error("classifier weights are missing from checkpoint");
     }
     std::vector<float> normalized(weights.classifier_weight.size(), 0.0f);
-    const int64_t class_count = static_cast<int64_t>(weights.classifier_weight.size() / static_cast<size_t>(kEmbeddingDim));
+    const int64_t class_count =
+        static_cast<int64_t>(weights.classifier_weight.size() / static_cast<size_t>(weights.embedding_dim));
     for (int64_t cls = 0; cls < class_count; ++cls) {
-        const float * row = weights.classifier_weight.data() + static_cast<size_t>(cls * kEmbeddingDim);
+        const float * row = weights.classifier_weight.data() + static_cast<size_t>(cls * weights.embedding_dim);
         double norm_sq = 0.0;
-        for (int64_t i = 0; i < kEmbeddingDim; ++i) {
+        for (int64_t i = 0; i < weights.embedding_dim; ++i) {
             const double w = row[static_cast<size_t>(i)];
             norm_sq += w * w;
         }
-        const double inv_norm = 1.0 / std::sqrt(std::max(norm_sq, static_cast<double>(kStatsEps)));
-        float * dst = normalized.data() + static_cast<size_t>(cls * kEmbeddingDim);
-        for (int64_t i = 0; i < kEmbeddingDim; ++i) {
+        const double inv_norm = 1.0 / std::sqrt(std::max(norm_sq, static_cast<double>(weights.stats_eps)));
+        float * dst = normalized.data() + static_cast<size_t>(cls * weights.embedding_dim);
+        for (int64_t i = 0; i < weights.embedding_dim; ++i) {
             dst[static_cast<size_t>(i)] = static_cast<float>(static_cast<double>(row[static_cast<size_t>(i)]) * inv_norm);
         }
     }
@@ -749,27 +807,29 @@ std::vector<float> classify_embedding(
     std::vector<float> & centered,
     const std::vector<float> & embedding) {
     const auto start = Clock::now();
-    if (weights.embedding_global_mean.size() != static_cast<size_t>(kEmbeddingDim)) {
+    if (weights.embedding_global_mean.size() != static_cast<size_t>(weights.embedding_dim)) {
         throw std::runtime_error("embedding global mean is missing from checkpoint");
     }
-    if (normalized_classifier_weight.empty() || normalized_classifier_weight.size() % static_cast<size_t>(kEmbeddingDim) != 0) {
+    if (normalized_classifier_weight.empty() ||
+        normalized_classifier_weight.size() % static_cast<size_t>(weights.embedding_dim) != 0) {
         throw std::runtime_error("normalized classifier weights are missing");
     }
-    const int64_t class_count = static_cast<int64_t>(normalized_classifier_weight.size() / static_cast<size_t>(kEmbeddingDim));
-    if (centered.size() != static_cast<size_t>(kEmbeddingDim)) {
-        centered.resize(static_cast<size_t>(kEmbeddingDim));
+    const int64_t class_count =
+        static_cast<int64_t>(normalized_classifier_weight.size() / static_cast<size_t>(weights.embedding_dim));
+    if (centered.size() != static_cast<size_t>(weights.embedding_dim)) {
+        centered.resize(static_cast<size_t>(weights.embedding_dim));
     }
     float emb_norm_sq = 0.0f;
-    for (int64_t i = 0; i < kEmbeddingDim; ++i) {
+    for (int64_t i = 0; i < weights.embedding_dim; ++i) {
         centered[static_cast<size_t>(i)] = embedding[static_cast<size_t>(i)] - weights.embedding_global_mean[static_cast<size_t>(i)];
         emb_norm_sq += centered[static_cast<size_t>(i)] * centered[static_cast<size_t>(i)];
     }
-    const float inv_emb_norm = 1.0f / std::sqrt(std::max(emb_norm_sq, kStatsEps));
+    const float inv_emb_norm = 1.0f / std::sqrt(std::max(emb_norm_sq, weights.stats_eps));
     std::vector<float> logits(static_cast<size_t>(class_count), 0.0f);
     for (int64_t cls = 0; cls < class_count; ++cls) {
-        const float * row = normalized_classifier_weight.data() + static_cast<size_t>(cls * kEmbeddingDim);
+        const float * row = normalized_classifier_weight.data() + static_cast<size_t>(cls * weights.embedding_dim);
         float dot = 0.0f;
-        for (int64_t i = 0; i < kEmbeddingDim; ++i) {
+        for (int64_t i = 0; i < weights.embedding_dim; ++i) {
             dot += centered[static_cast<size_t>(i)] * row[static_cast<size_t>(i)];
         }
         logits[static_cast<size_t>(cls)] = dot * inv_emb_norm;
@@ -801,7 +861,7 @@ EcapaClassifyResult classify_runtime_audio(
     const std::vector<std::string> & labels,
     const runtime::AudioBuffer & audio) {
     const auto start = Clock::now();
-    const size_t class_count = normalized_classifier_weight.size() / static_cast<size_t>(kEmbeddingDim);
+    const size_t class_count = normalized_classifier_weight.size() / static_cast<size_t>(weights.embedding_dim);
     if (class_count == 0) {
         throw std::runtime_error("classifier weights are missing from checkpoint");
     }
@@ -835,8 +895,11 @@ EcapaRuntime::EcapaRuntime(
     : weights_(require_weights(std::move(weights))),
       backend_weights_(load_backend_weights(*weights_, execution_context.backend(), execution_context.backend_type(), weight_storage_type)),
       labels_(std::move(labels)),
-      normalized_classifier_weight_(normalize_classifier_weights(*weights_)),
-      execution_context_(&execution_context) {}
+      execution_context_(&execution_context) {
+    if (!weights_->classifier_weight.empty()) {
+        normalized_classifier_weight_ = normalize_classifier_weights(*weights_);
+    }
+}
 
 EcapaRuntime::~EcapaRuntime() = default;
 
@@ -857,7 +920,7 @@ std::vector<float> EcapaRuntime::embed_features(const std::vector<float> & featu
     if (frames <= 0) {
         throw std::runtime_error("frames must be positive");
     }
-    if (features.size() != static_cast<size_t>(frames * kFeatureDim)) {
+    if (features.size() != static_cast<size_t>(frames * weights_->feature_dim)) {
         throw std::runtime_error("feature tensor size mismatch");
     }
     return ensure_graph(frames).run(features);

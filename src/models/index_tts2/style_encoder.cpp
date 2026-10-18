@@ -5,7 +5,7 @@
 
 namespace engine::models::index_tts2 {
 
-IndexTTS2StyleEncoder::IndexTTS2StyleEncoder(
+IndexTTS2CampplusStyleEncoder::IndexTTS2CampplusStyleEncoder(
     std::shared_ptr<const IndexTTS2Assets> assets,
     core::BackendConfig backend,
     engine::assets::TensorStorageType weight_storage_type)
@@ -23,7 +23,7 @@ IndexTTS2StyleEncoder::IndexTTS2StyleEncoder(
         config);
 }
 
-IndexTTS2StyleEmbedding IndexTTS2StyleEncoder::embed_fbank(
+IndexTTS2StyleEmbedding IndexTTS2CampplusStyleEncoder::embed_fbank(
     const std::vector<float> & features,
     int64_t frames,
     int64_t dims) const {
@@ -31,7 +31,7 @@ IndexTTS2StyleEmbedding IndexTTS2StyleEncoder::embed_fbank(
     return {out.embedding, out.embedding_size};
 }
 
-void IndexTTS2StyleEncoder::release_graph() {
+void IndexTTS2CampplusStyleEncoder::release_graph() {
     component_.release_runtime_graph();
 }
 

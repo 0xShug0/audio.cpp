@@ -46,8 +46,7 @@
         "inference_cfg_rate": 0.7,
         "f0_condition": true,
         "auto_f0_adjust": true,
-        "semi_tone_shift": 0,
-        "fp16": false
+        "semi_tone_shift": 0
       }
     ]
   },
@@ -62,8 +61,7 @@
         "inference_cfg_rate": 0.7,
         "f0_condition": true,
         "auto_f0_adjust": false,
-        "semi_tone_shift": 2,
-        "fp16": false
+        "semi_tone_shift": 2
       }
     ]
   },
@@ -78,8 +76,7 @@
         "inference_cfg_rate": 0.7,
         "f0_condition": true,
         "auto_f0_adjust": true,
-        "semi_tone_shift": 0,
-        "fp16": false
+        "semi_tone_shift": 0
       }
     ]
   },
@@ -94,8 +91,7 @@
         "inference_cfg_rate": 0.7,
         "f0_condition": false,
         "auto_f0_adjust": false,
-        "semi_tone_shift": 0,
-        "fp16": false
+        "semi_tone_shift": 0
       }
     ]
   },
@@ -110,8 +106,7 @@
         "inference_cfg_rate": 0.7,
         "f0_condition": false,
         "auto_f0_adjust": false,
-        "semi_tone_shift": 0,
-        "fp16": false
+        "semi_tone_shift": 0
       }
     ]
   }

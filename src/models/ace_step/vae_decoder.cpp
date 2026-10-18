@@ -132,24 +132,13 @@ assets::TensorStorageType compatible_regular_conv_storage_type(
     std::string_view tensor_name,
     assets::TensorStorageType requested) {
     const assets::TensorStorageType resolved = assets::resolve_tensor_storage_type(source, tensor_name, requested);
-    switch (resolved) {
-        case assets::TensorStorageType::F32:
-        case assets::TensorStorageType::F16:
-            return resolved;
-        case assets::TensorStorageType::BF16:
-            return assets::TensorStorageType::F16;
-        case assets::TensorStorageType::Native:
-        case assets::TensorStorageType::Q4_0:
-        case assets::TensorStorageType::Q4_1:
-        case assets::TensorStorageType::Q5_0:
-        case assets::TensorStorageType::Q5_1:
-        case assets::TensorStorageType::Q4_K:
-        case assets::TensorStorageType::Q5_K:
-        case assets::TensorStorageType::Q6_K:
-        case assets::TensorStorageType::Q8_0:
-            return assets::TensorStorageType::F32;
+    if (resolved == assets::TensorStorageType::F32 || resolved == assets::TensorStorageType::F16) {
+        return resolved;
     }
-    throw std::runtime_error("ACE-Step VAE regular conv storage type resolution failed");
+    if (resolved == assets::TensorStorageType::BF16) {
+        return assets::TensorStorageType::F16;
+    }
+    return assets::TensorStorageType::F32;
 }
 
 assets::TensorStorageType compatible_conv_transpose_storage_type(

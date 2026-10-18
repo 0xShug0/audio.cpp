@@ -408,10 +408,12 @@ public:
         core::ExecutionContext & execution,
         std::shared_ptr<const IndexTTS2SemanticCodecWeights> weights,
         int64_t frames,
+        bool upsample_decode,
         size_t graph_arena_bytes)
         : execution_(execution),
           weights_(std::move(weights)),
-          frames_(frames) {
+          frames_(frames),
+          upsample_decode_(upsample_decode) {
         if (frames_ <= 0) {
             throw std::runtime_error("IndexTTS2 semantic codec code graph requires positive frame count");
         }
@@ -436,11 +438,28 @@ public:
             "index_tts2.semantic_codec.codes.inputs",
             execution_.backend_type()};
         codes_ = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, frames_})).tensor;
+        if (upsample_decode_) {
+            upsample_ids_ = ggml_new_tensor_1d(input_ctx_.get(), GGML_TYPE_I32, 2 * frames_);
+        }
         ggml_set_input(codes_);
         auto embedding = embed_codes_bct(
             ctx,
             core::wrap_tensor(codes_, core::TensorShape::from_dims({1, frames_}), GGML_TYPE_I32),
             *weights_);
+        if (upsample_decode_) {
+            // v2.5 EnhancedCodec.decode (codec/models.py): decoder backbone +
+            // projection, then 2x nearest upsample along time and the `up` conv.
+            auto x = vocos_backbone(ctx, embedding, weights_->decoder_backbone);
+            x = modules::LinearModule({kVocosDim, kHidden, true}).build(ctx, x, weights_->decoder_projection);
+            x = core::ensure_backend_addressable_layout(ctx, x);
+            x = core::wrap_tensor(
+                ggml_get_rows(ctx.ggml, x.tensor, upsample_ids_),
+                core::TensorShape::from_dims({1, 2 * frames_, kHidden}),
+                GGML_TYPE_F32);
+            x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
+            x = modules::Conv1dModule({kHidden, kHidden, 3, 1, 1, 1, true}).build(ctx, x, weights_->up);
+            embedding = x;
+        }
         embedding_ = core::ensure_backend_addressable_layout(ctx, embedding).tensor;
         ggml_set_output(embedding_);
 
@@ -449,6 +468,14 @@ public:
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
         if (input_buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate IndexTTS2 semantic codec code input buffer");
+        }
+        if (upsample_decode_) {
+            std::vector<int32_t> upsample_ids(static_cast<size_t>(2 * frames_));
+            for (int64_t frame = 0; frame < frames_; ++frame) {
+                upsample_ids[static_cast<size_t>(2 * frame)] = static_cast<int32_t>(frame);
+                upsample_ids[static_cast<size_t>(2 * frame + 1)] = static_cast<int32_t>(frame);
+            }
+            ggml_backend_tensor_set(upsample_ids_, upsample_ids.data(), 0, upsample_ids.size() * sizeof(int32_t));
         }
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
         if (gallocr_ == nullptr ||
@@ -493,10 +520,10 @@ public:
         }
 
         IndexTTS2SemanticCodecOutput output;
-        output.frames = frames_;
+        output.frames = upsample_decode_ ? 2 * frames_ : frames_;
         output.dims = kHidden;
         output.codes = codes;
-        output.embedding_channel_first.resize(static_cast<size_t>(kHidden * frames_));
+        output.embedding_channel_first.resize(static_cast<size_t>(kHidden * output.frames));
         timing_start = Clock::now();
         ggml_backend_tensor_get(
             embedding_,
@@ -528,9 +555,11 @@ private:
     core::ExecutionContext & execution_;
     std::shared_ptr<const IndexTTS2SemanticCodecWeights> weights_;
     int64_t frames_ = 0;
+    bool upsample_decode_ = false;
     std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * codes_ = nullptr;
+    ggml_tensor * upsample_ids_ = nullptr;
     ggml_tensor * embedding_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
@@ -610,6 +639,17 @@ std::shared_ptr<const IndexTTS2SemanticCodecWeights> load_index_tts2_semantic_co
         kHidden,
         kVocosDim,
         true);
+    if (index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5) {
+        weights->up = binding::conv1d_from_source(
+            *weights->store,
+            source,
+            "up",
+            conv_storage_type,
+            kHidden,
+            kHidden,
+            3,
+            true);
+    }
 
     weights->store->upload();
     assets.semantic_codec_weights->release_storage();
@@ -668,7 +708,12 @@ void IndexTTS2SemanticCodecRuntime::prepare_codes(int64_t frames) {
         return;
     }
     codes_graph_.reset();
-    codes_graph_ = std::make_unique<CodesGraph>(*execution_, weights_, frames, graph_arena_bytes_);
+    codes_graph_ = std::make_unique<CodesGraph>(
+        *execution_,
+        weights_,
+        frames,
+        index_tts2_variant_from_version(assets_->config.version) == IndexTTS2Variant::kV2_5,
+        graph_arena_bytes_);
 }
 
 IndexTTS2SemanticCodecOutput IndexTTS2SemanticCodecRuntime::quantize(const IndexTTS2SemanticEmbedding & semantic) {

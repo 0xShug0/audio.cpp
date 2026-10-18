@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 #include "engine/models/index_tts2/assets.h"
 
 #include <memory>
@@ -13,9 +13,9 @@ struct IndexTTS2StyleEmbedding {
     int64_t dims = 0;
 };
 
-class IndexTTS2StyleEncoder {
+class IndexTTS2CampplusStyleEncoder {
 public:
-    IndexTTS2StyleEncoder(
+    IndexTTS2CampplusStyleEncoder(
         std::shared_ptr<const IndexTTS2Assets> assets,
         core::BackendConfig backend,
         engine::assets::TensorStorageType weight_storage_type);

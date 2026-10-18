@@ -4,6 +4,7 @@
 #include "engine/models/higgs_audio_tts/codec.h"
 #include "engine/models/higgs_audio_tts/sampler.h"
 #include "engine/models/higgs_audio_tts/tokenizer_text.h"
+#include "engine/framework/runtime/streaming_audio.h"
 
 #include <cstdint>
 #include <memory>
@@ -42,14 +43,18 @@ struct HiggsGenerationResult {
 class HiggsGenerator {
 public:
     HiggsGenerator(std::shared_ptr<const HiggsAssets> assets,
-                   std::shared_ptr<HiggsARRuntime> ar,
+                   std::shared_ptr<HiggsQwen3ARRuntime> ar,
                    std::shared_ptr<HiggsCodecRuntime> codec,
                    size_t ar_decode_graph_arena_bytes);
 
     void prepare(const HiggsGenerationRequest & request);
-    HiggsGenerationResult generate(const HiggsGenerationRequest & request);
+    HiggsGenerationResult generate(
+        const HiggsGenerationRequest & request,
+        runtime::StreamingAudioController<int32_t> * stream = nullptr);
 
 private:
+    void replace_kv_cache(int64_t steps, bool preserve_state);
+
     struct ReferencePrefixCache {
         std::string reference_text;
         std::vector<int32_t> reference_codes;
@@ -62,16 +67,20 @@ private:
     };
 
     std::shared_ptr<const HiggsAssets> assets_;
-    std::shared_ptr<HiggsARRuntime> ar_;
+    std::shared_ptr<HiggsQwen3ARRuntime> ar_;
     std::shared_ptr<HiggsCodecRuntime> codec_;
     HiggsTextTokenizer tokenizer_;
     size_t ar_decode_graph_arena_bytes_ = 0;
     std::optional<ReferencePrefixCache> reference_prefix_cache_;
     bool reference_kv_ready_ = false;
     std::optional<HiggsCudaSamplingPolicy> cuda_sampling_policy_;
-    std::unique_ptr<HiggsARKVCache> ar_kv_cache_;
-    std::unique_ptr<HiggsARPrefillGraph> prefill_graph_;
-    std::unique_ptr<HiggsARDecodeGraph> decode_graph_;
+    std::unique_ptr<HiggsQwen3KVCache> ar_kv_cache_;
+    std::unique_ptr<HiggsQwen3PrefillGraph> prefill_graph_;
+    std::unique_ptr<HiggsQwen3DecodeGraph> decode_graph_;
+    // Keep one previous capacity for repeated requests that grow their cache.
+    // The graph must be destroyed before the cache that it references.
+    std::unique_ptr<HiggsQwen3KVCache> spare_kv_cache_;
+    std::unique_ptr<HiggsQwen3DecodeGraph> spare_decode_graph_;
 };
 
 } // namespace engine::models::higgs_audio_tts

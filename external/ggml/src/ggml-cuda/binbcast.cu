@@ -548,6 +548,80 @@ void ggml_cuda_op_mul(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_mul>>(dst->src[0], dst->src[1], dst, dst->src[0]->data, dst->src[1]->data, dst->data, ctx.stream());
 }
 
+template <typename T>
+static __global__ void rope_interleaved_pairs_kernel(
+        const T * __restrict__ even,
+        const T * __restrict__ odd,
+        const float * __restrict__ cos,
+        const float * __restrict__ sin,
+        T * __restrict__ dst,
+        int64_t n,
+        int64_t even_s,
+        int64_t odd_s,
+        int64_t cos_s,
+        int64_t sin_s,
+        int64_t dst_s) {
+    for (int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x; i < n; i += int64_t(blockDim.x) * gridDim.x) {
+        const float x0 = float(even[i * even_s]);
+        const float x1 = float(odd[i * odd_s]);
+        const float c = cos[i * cos_s];
+        const float s = sin[i * sin_s];
+        dst[i * dst_s + 0] = T(x0 * c - x1 * s);
+        dst[i * dst_s + 1] = T(x1 * c + x0 * s);
+    }
+}
+
+template <typename T>
+static void rope_interleaved_pairs_cuda(
+        const ggml_tensor * even,
+        const ggml_tensor * odd,
+        const ggml_tensor * cos,
+        const ggml_tensor * sin,
+        ggml_tensor * dst,
+        cudaStream_t stream) {
+    GGML_ASSERT(even->ne[0] == 1 && odd->ne[0] == 1 && cos->ne[0] == 1 && sin->ne[0] == 1);
+    GGML_ASSERT(dst->ne[0] == 2);
+    const int64_t n = ggml_nelements(even);
+    constexpr int block_size = 256;
+    const int64_t blocks = std::min<int64_t>((n + block_size - 1) / block_size, 65535);
+    rope_interleaved_pairs_kernel<T><<<blocks, block_size, 0, stream>>>(
+        (const T *) even->data,
+        (const T *) odd->data,
+        (const float *) cos->data,
+        (const float *) sin->data,
+        (T *) dst->data,
+        n,
+        even->nb[1] / sizeof(T),
+        odd->nb[1] / sizeof(T),
+        cos->nb[1] / sizeof(float),
+        sin->nb[1] / sizeof(float),
+        dst->nb[1] / sizeof(T));
+}
+
+void ggml_cuda_op_rope_interleaved_pairs(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    GGML_ASSERT(dst->op == GGML_OP_ROPE_INTERLEAVED_PAIRS);
+    const ggml_tensor * even = dst->src[0];
+    const ggml_tensor * odd  = dst->src[1];
+    const ggml_tensor * cos  = dst->src[2];
+    const ggml_tensor * sin  = dst->src[3];
+    GGML_ASSERT(even != nullptr && odd != nullptr && cos != nullptr && sin != nullptr);
+    GGML_ASSERT(cos->type == GGML_TYPE_F32 && sin->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type == even->type && dst->type == odd->type);
+
+    ggml_cuda_pool_alloc<char> tmp(ctx.pool(), ggml_nbytes(dst));
+    ggml_tensor tmp_concat = *dst;
+    tmp_concat.data = tmp.get();
+
+    if (dst->type == GGML_TYPE_F32) {
+        rope_interleaved_pairs_cuda<float>(even, odd, cos, sin, &tmp_concat, ctx.stream());
+    } else if (dst->type == GGML_TYPE_F16) {
+        rope_interleaved_pairs_cuda<half>(even, odd, cos, sin, &tmp_concat, ctx.stream());
+    } else {
+        GGML_ABORT("fatal error");
+    }
+    CUDA_CHECK(cudaMemcpyAsync(dst->data, tmp.get(), ggml_nbytes(dst), cudaMemcpyDeviceToDevice, ctx.stream()));
+}
+
 void ggml_cuda_op_div(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     if (!ggml_are_same_shape(dst->src[0], dst)) {
         ggml_cuda_op_bin_bcast_two_sided<op_div>(

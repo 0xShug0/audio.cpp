@@ -1,7 +1,10 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/cache_slots.h"
+#include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/models/irodori_tts/assets.h"
 #include "engine/models/irodori_tts/tokenizer_text.h"
 #include "engine/models/irodori_tts/types.h"
@@ -14,15 +17,19 @@
 
 namespace engine::models::irodori_tts {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_irodori_tts_loader();
+
 class IrodoriCodec;
 class IrodoriConditionEncoder;
 class IrodoriRfSampler;
 
 class IrodoriTTSSession final : public runtime::RuntimeSessionBase,
-                                public runtime::IOfflineVoiceTaskSession {
+                                public runtime::IOfflineVoiceTaskSession,
+                                public runtime::StreamingTtsSessionBase {
 public:
   IrodoriTTSSession(runtime::TaskSpec task, runtime::SessionOptions options,
-                    std::shared_ptr<const IrodoriTTSAssets> assets);
+                    std::shared_ptr<const IrodoriTTSAssets> assets,
+                    std::shared_ptr<const engine::model_spec::ModelContract> contract);
   ~IrodoriTTSSession() override;
 
   std::string family() const override;
@@ -32,6 +39,9 @@ public:
   runtime::TaskResult run(const runtime::TaskRequest &request) override;
 
 private:
+  runtime::TaskResult generate_stream(const runtime::TaskRequest &request) override;
+  void reset_stream_state() override {}
+  runtime::TaskResult synthesize(const runtime::TaskRequest &request, bool streaming);
   IrodoriRequest make_request(const runtime::TaskRequest &request) const;
 
   struct ReferenceAudioCacheKey {
@@ -39,6 +49,7 @@ private:
     int sample_rate = 0;
     int channels = 0;
     size_t sample_count = 0;
+    int64_t max_latent_steps = 0;
   };
 
   struct ReferenceAudioCacheKeyEqual {
@@ -55,18 +66,20 @@ private:
 
   runtime::TaskSpec task_;
   std::shared_ptr<const IrodoriTTSAssets> assets_;
+  std::shared_ptr<const engine::model_spec::ModelContract> contract_;
   IrodoriTextTokenizer tokenizer_;
   size_t condition_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
   size_t rf_graph_arena_bytes_ = 768ull * 1024ull * 1024ull;
   size_t codec_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
-  size_t condition_weight_context_bytes_ = 512ull * 1024ull * 1024ull;
-  size_t rf_weight_context_bytes_ = 768ull * 1024ull * 1024ull;
-  size_t codec_weight_context_bytes_ = 512ull * 1024ull * 1024ull;
+  size_t condition_weight_context_bytes_ = 32ull * 1024ull * 1024ull;
+  size_t rf_weight_context_bytes_ = 32ull * 1024ull * 1024ull;
+  size_t codec_weight_context_bytes_ = 32ull * 1024ull * 1024ull;
   assets::TensorStorageType weight_storage_type_ =
       assets::TensorStorageType::Native;
   assets::TensorStorageType codec_weight_storage_type_ =
       assets::TensorStorageType::Native;
   bool mem_saver_ = true;
+  std::unique_ptr<engine::core::ExecutionContext> codec_execution_context_;
   std::unique_ptr<IrodoriConditionEncoder> condition_encoder_;
   std::unique_ptr<IrodoriRfSampler> rf_sampler_;
   std::unique_ptr<IrodoriCodec> codec_;

@@ -8,6 +8,7 @@ using namespace cub;
 #endif // USE_CUB
 
 #include "ssm-scan.cuh"
+#include "unary.cuh"
 
 // We would like to keep pragma unroll for cases where L_template is not 0,
 // so we suppress the clang transformation warning.
@@ -15,7 +16,7 @@ using namespace cub;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpass-failed"
 #endif // __clang__
-template <size_t splitD, size_t N, size_t L_template>
+template <size_t splitD, size_t N, size_t L_template, bool gated = false>
 __global__ void __launch_bounds__(splitD, 1)
     ssm_scan_f32(const float *__restrict__ src0, const float *__restrict__ src1, const float *__restrict__ src2,
                  const float *__restrict__ src3, const float *__restrict__ src4, const float *__restrict__ src5,
@@ -23,7 +24,9 @@ __global__ void __launch_bounds__(splitD, 1)
                  const int src0_nb2, const int src0_nb3, const int src1_nb2, const int src1_nb3,
                  const int src2_nb1, const int src2_nb2, const int src3_nb1,
                  const int src4_nb2, const int src4_nb3, const int src5_nb2, const int src5_nb3,
-                 const int64_t s_off, const int64_t d_inner, const int64_t L_param)
+                 const int64_t s_off, const int64_t d_inner, const int64_t L_param,
+                 const float * scale = nullptr, const float * gate = nullptr,
+                 const int64_t gate_stride = 0, const int64_t gate_batch_stride = 0)
 {
     const size_t L = L_template == 0 ? L_param : L_template;
     const float *s0_block = (const float *)((const char *)src0 + src6[blockIdx.x] * src0_nb3 + blockIdx.y * splitD * src0_nb2);
@@ -58,6 +61,9 @@ __global__ void __launch_bounds__(splitD, 1)
     __shared__ CubTempStorage cub_temp_storage;
 
     BlockLoad(cub_temp_storage.load_temp).Load(A_block, regA);
+    if constexpr (gated) {
+        __syncthreads();
+    }
     BlockLoad(cub_temp_storage.load_temp).Load(s0_block, regs0);
 #else
     const int stride_s0 = src0_nb2 / sizeof(float);
@@ -95,9 +101,19 @@ __global__ void __launch_bounds__(splitD, 1)
             sumf += state * smemC[n];
             regs0[n] = state;
         }
+        if constexpr (gated) {
+            const int channel = blockIdx.y * splitD + threadIdx.x;
+            const float product = __fmul_rn(x_block[i * stride_x + threadIdx.x], scale[channel]);
+            const float g = gate[blockIdx.x * gate_batch_stride + i * gate_stride + channel];
+            sumf = ggml_cuda_op_silu_single(g) * __fadd_rn(sumf, product);
+        }
         y_block[i * stride_y + threadIdx.x] = sumf;
+        if constexpr (gated) {
+            __syncthreads();
+        }
     }
 
+    if constexpr (!gated) {
 #ifdef USE_CUB
     BlockStore(cub_temp_storage.store_temp).Store(s_block, regs0);
 #else
@@ -108,6 +124,7 @@ __global__ void __launch_bounds__(splitD, 1)
         s_block[threadIdx.x * stride_s + n] = regs0[n];
     }
 #endif
+    }
 }
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -340,3 +357,27 @@ void ggml_cuda_op_ssm_scan(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
                       src3->nb[1], src4->nb[2], src4->nb[3], src5->nb[2], src5->nb[3],
                       s_off, nc, nr, nh, ng, n_t, n_s, stream);
 }
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+void ggml_cuda_op_ssm_scan_gated(
+        ggml_backend_cuda_context & ctx, ggml_tensor * scan, ggml_tensor * scale, ggml_tensor * glu) {
+    const auto * s = scan->src[0];
+    const auto * x = scan->src[1];
+    const auto * dt = scan->src[2];
+    const auto * a = scan->src[3];
+    const auto * b = scan->src[4];
+    const auto * c = scan->src[5];
+    const auto * ids = scan->src[6];
+    const auto * gate = glu->src[0];
+    const dim3 blocks(x->ne[3], 2, 1);
+    ssm_scan_f32<128, 16, 0, true><<<blocks, 128, 0, ctx.stream()>>>(
+        static_cast<const float *>(s->data), static_cast<const float *>(x->data),
+        static_cast<const float *>(dt->data), static_cast<const float *>(a->data),
+        static_cast<const float *>(b->data), static_cast<const float *>(c->data),
+        static_cast<const int32_t *>(ids->data), static_cast<float *>(scan->data),
+        s->nb[2], s->nb[3], x->nb[2], x->nb[3], dt->nb[1], dt->nb[2], a->nb[1],
+        b->nb[2], b->nb[3], c->nb[2], c->nb[3], 0, x->ne[1], x->ne[2],
+        static_cast<const float *>(scale->data), static_cast<const float *>(gate->data),
+        gate->nb[1] / sizeof(float), gate->nb[2] / sizeof(float));
+}
+#endif

@@ -34,7 +34,7 @@ private:
     engine::assets::TensorStorageType weight_storage_type_ = engine::assets::TensorStorageType::Native;
     std::unique_ptr<StableAudioConditionerInputs> conditioner_inputs_;
     std::unique_ptr<StableAudioConditionerRuntime> conditioner_runtime_;
-    std::unique_ptr<StableAudioRfDitRuntime> rf_dit_;
+    std::unique_ptr<StableAudioRFDiTRuntime> rf_dit_;
     std::unique_ptr<StableAudioSameRuntime> same_;
     int64_t max_batch_ = 1;
     bool mem_saver_ = false;

@@ -1,0 +1,1093 @@
+{
+  "scope": "Minimal Phonon-2 variant; normal Parakeet loader/backend math; no dependency on PR #861; no Vulkan optimization",
+  "upstream_base": "86a51cab",
+  "platform": "Windows, Ryzen 7950X3D, 8 threads, RTX 3090; MSVC 14.43, CUDA 12.4, Vulkan SDK 1.4.350",
+  "source_sha256_utf8_lf": {
+    "include/engine/community_models/parakeet_tdt/assets.h": "a13ec05ba65b7399f95ffbccec4b9e3b7fbe545ec78a0ea22cc5ea2acd3103eb",
+    "src/community_models/parakeet_tdt/assets.cpp": "ade5612799d3cea63094fd8481b3f13dbb8a12fd233b1e0589fbbb41177cfa52",
+    "src/community_models/parakeet_tdt/decoder.cpp": "817fc33e76c2f8f01f0cde735a77fc8f93f45f89da6753a4ddc32c912ca3ce71",
+    "src/community_models/parakeet_tdt/session.cpp": "9415c99af77fdb2ce47d6933387193622a3774dc4bcf51dbe5a23fe42d8c7143",
+    "src/community_models/parakeet_tdt/hotwords.cpp": "ef659af252d72219abe8ee58c0aefc59fa4a42040239d7916df5abe8fc2ccd42",
+    "src/community_models/parakeet_tdt/phonon_streaming.cpp": "42519f01de163e4bb058bc589a6b92bb06bba30afa58c60dce4a676ab3213d46",
+    "tools/community_models/convert_phonon2.py": "3756780dc07800b360b4d5effb37e2a8362c9e88e2f0f235a1dd85e35eca3590",
+    "include/engine/framework/runtime/session.h": "8ea01d52e91796c4049bbc72c019c6df4ac98d245e680d8abab2d9b514d9610b"
+  },
+  "models": {
+    "f32": {
+      "path": "E:\\LLAMA\\llama.cpp\\new4\\TEST_29_audiocp_new\\models\\Phonon-2-Parakeet-GGUF\\phonon-2-f32.gguf",
+      "sha256": "488ea8f3642543705122072695b411b175d7b1a7fa4a2e72bcf2205613f9d7c7"
+    },
+    "bf16": {
+      "path": "E:\\LLAMA\\llama.cpp\\new4\\TEST_29_audiocp_new\\models\\Phonon-2-Parakeet-GGUF\\phonon-2-bf16.gguf",
+      "sha256": "ca0825eb6fe5892ad608463955016824c91ee7b544e2ef99ff92b9ac3de941ae"
+    },
+    "q8_0": {
+      "path": "E:\\LLAMA\\llama.cpp\\new4\\TEST_29_audiocp_new\\models\\Phonon-2-Parakeet-GGUF\\phonon-2-q8_0.gguf",
+      "sha256": "fada3829021a98a39de8e3bde839a88e521f5b59c60146b9fb680e1beeb149dd"
+    }
+  },
+  "matched_f32_cpu": {
+    "weights": {
+      "official_records": 723,
+      "inference_tensors": 699,
+      "official_to_staging_exact_with_documented_loader_compensation": true,
+      "staging_to_gguf_exact": true
+    },
+    "encoder": {
+      "relative_l2": 1.043804778334038e-06,
+      "relative_l2_limit": 0.0001,
+      "max_abs": 3.501772880554199e-07,
+      "finite": true,
+      "pass": true
+    },
+    "text_and_timestamps_exact": true
+  },
+  "ordinary_matrix": [
+    {
+      "storage": "f32",
+      "backend": "cpu",
+      "text_matches": 20,
+      "timestamps_match": 20,
+      "exact_repeats": 20,
+      "reference_word_edits": 0,
+      "reference_word_count": 450,
+      "warm_12s_median_s": 0.54927509999834,
+      "full_peak_additional_vram_gib": 0.0,
+      "full_peak_host_rss_gib": 4.6285552978515625
+    },
+    {
+      "storage": "f32",
+      "backend": "cuda",
+      "text_matches": 20,
+      "timestamps_match": 19,
+      "exact_repeats": 20,
+      "reference_word_edits": 0,
+      "reference_word_count": 450,
+      "warm_12s_median_s": 0.04252110002562404,
+      "full_peak_additional_vram_gib": 3.2415390014648438,
+      "full_peak_host_rss_gib": 2.9487762451171875
+    },
+    {
+      "storage": "f32",
+      "backend": "vulkan",
+      "text_matches": 20,
+      "timestamps_match": 20,
+      "exact_repeats": 20,
+      "reference_word_edits": 0,
+      "reference_word_count": 450,
+      "warm_12s_median_s": 0.06839819997549057,
+      "full_peak_additional_vram_gib": 3.3815879821777344,
+      "full_peak_host_rss_gib": 2.881397247314453
+    },
+    {
+      "storage": "bf16",
+      "backend": "cpu",
+      "text_matches": 20,
+      "timestamps_match": 19,
+      "exact_repeats": 20,
+      "reference_word_edits": 0,
+      "reference_word_count": 450,
+      "warm_12s_median_s": 0.5179595001973212,
+      "full_peak_additional_vram_gib": 0.0,
+      "full_peak_host_rss_gib": 3.5105514526367188
+    },
+    {
+      "storage": "bf16",
+      "backend": "cuda",
+      "text_matches": 19,
+      "timestamps_match": 18,
+      "exact_repeats": 20,
+      "reference_word_edits": 2,
+      "reference_word_count": 450,
+      "warm_12s_median_s": 0.04498880007304251,
+      "full_peak_additional_vram_gib": 2.6204452514648438,
+      "full_peak_host_rss_gib": 2.151287078857422
+    },
+    {
+      "storage": "bf16",
+      "backend": "vulkan",
+      "text_matches": 20,
+      "timestamps_match": 19,
+      "exact_repeats": 20,
+      "reference_word_edits": 0,
+      "reference_word_count": 450,
+      "warm_12s_median_s": 0.06207600003108382,
+      "full_peak_additional_vram_gib": 2.7241783142089844,
+      "full_peak_host_rss_gib": 2.1058998107910156
+    },
+    {
+      "storage": "q8_0",
+      "backend": "cpu",
+      "text_matches": 19,
+      "timestamps_match": 17,
+      "exact_repeats": 20,
+      "reference_word_edits": 1,
+      "reference_word_count": 450,
+      "warm_12s_median_s": 0.5303867999464273,
+      "full_peak_additional_vram_gib": 0.0,
+      "full_peak_host_rss_gib": 3.4641647338867188
+    },
+    {
+      "storage": "q8_0",
+      "backend": "cuda",
+      "text_matches": 18,
+      "timestamps_match": 17,
+      "exact_repeats": 20,
+      "reference_word_edits": 3,
+      "reference_word_count": 450,
+      "warm_12s_median_s": 0.04154739994555712,
+      "full_peak_additional_vram_gib": 2.3704452514648438,
+      "full_peak_host_rss_gib": 2.1915512084960938
+    },
+    {
+      "storage": "q8_0",
+      "backend": "vulkan",
+      "text_matches": 19,
+      "timestamps_match": 17,
+      "exact_repeats": 20,
+      "reference_word_edits": 1,
+      "reference_word_count": 450,
+      "warm_12s_median_s": 0.0674523999914527,
+      "full_peak_additional_vram_gib": 3.9034996032714844,
+      "full_peak_host_rss_gib": 2.124053955078125
+    }
+  ],
+  "reference_differences": [
+    {
+      "storage": "f32",
+      "backend": "cuda",
+      "fixture": "movie_offset_240_12s",
+      "word_edits": 0,
+      "max_shift_ms": 240.00000000000023,
+      "text_exact": true,
+      "timing_exact": false
+    },
+    {
+      "storage": "bf16",
+      "backend": "cpu",
+      "fixture": "video_30s",
+      "word_edits": 0,
+      "max_shift_ms": 80.00000000000007,
+      "text_exact": true,
+      "timing_exact": false
+    },
+    {
+      "storage": "bf16",
+      "backend": "cuda",
+      "fixture": "video_30s",
+      "word_edits": 0,
+      "max_shift_ms": 80.00000000000007,
+      "text_exact": true,
+      "timing_exact": false
+    },
+    {
+      "storage": "bf16",
+      "backend": "cuda",
+      "fixture": "mp3_holdout_1",
+      "word_edits": 2,
+      "max_shift_ms": null,
+      "text_exact": false,
+      "timing_exact": false
+    },
+    {
+      "storage": "bf16",
+      "backend": "vulkan",
+      "fixture": "video_30s",
+      "word_edits": 0,
+      "max_shift_ms": 80.00000000000007,
+      "text_exact": true,
+      "timing_exact": false
+    },
+    {
+      "storage": "q8_0",
+      "backend": "cpu",
+      "fixture": "movie_offset_20_12s",
+      "word_edits": 0,
+      "max_shift_ms": 80.00000000000007,
+      "text_exact": true,
+      "timing_exact": false
+    },
+    {
+      "storage": "q8_0",
+      "backend": "cpu",
+      "fixture": "video_18s",
+      "word_edits": 0,
+      "max_shift_ms": 80.00000000000007,
+      "text_exact": true,
+      "timing_exact": false
+    },
+    {
+      "storage": "q8_0",
+      "backend": "cpu",
+      "fixture": "mp3_holdout_2",
+      "word_edits": 1,
+      "max_shift_ms": null,
+      "text_exact": false,
+      "timing_exact": false
+    },
+    {
+      "storage": "q8_0",
+      "backend": "cuda",
+      "fixture": "movie_offset_20_12s",
+      "word_edits": 0,
+      "max_shift_ms": 80.00000000000007,
+      "text_exact": true,
+      "timing_exact": false
+    },
+    {
+      "storage": "q8_0",
+      "backend": "cuda",
+      "fixture": "mp3_holdout_1",
+      "word_edits": 2,
+      "max_shift_ms": null,
+      "text_exact": false,
+      "timing_exact": false
+    },
+    {
+      "storage": "q8_0",
+      "backend": "cuda",
+      "fixture": "mp3_holdout_2",
+      "word_edits": 1,
+      "max_shift_ms": null,
+      "text_exact": false,
+      "timing_exact": false
+    },
+    {
+      "storage": "q8_0",
+      "backend": "vulkan",
+      "fixture": "movie_offset_240_12s",
+      "word_edits": 0,
+      "max_shift_ms": 240.00000000000023,
+      "text_exact": true,
+      "timing_exact": false
+    },
+    {
+      "storage": "q8_0",
+      "backend": "vulkan",
+      "fixture": "video_18s",
+      "word_edits": 0,
+      "max_shift_ms": 80.00000000000007,
+      "text_exact": true,
+      "timing_exact": false
+    },
+    {
+      "storage": "q8_0",
+      "backend": "vulkan",
+      "fixture": "mp3_holdout_2",
+      "word_edits": 1,
+      "max_shift_ms": null,
+      "text_exact": false,
+      "timing_exact": false
+    }
+  ],
+  "original_hotword_policy": {
+    "lists": 9,
+    "exact_transition_bonus_vectors": 329
+  },
+  "original_feature_comparison": {
+    "final_text": [
+      54,
+      54
+    ],
+    "stream_final_segments": [
+      18,
+      18
+    ],
+    "offline_exact_word_timings": [
+      27,
+      36
+    ],
+    "exact_provisional_sequences": [
+      5,
+      18
+    ]
+  },
+  "cpu_ctest": [
+    54,
+    54
+  ],
+  "gpu_targeted_ctest": [
+    4,
+    4
+  ],
+  "converter_timestamp_python": [
+    14,
+    14
+  ],
+  "server_routes": [
+    {
+      "backend": "cpu",
+      "mode": "offline",
+      "multipart": true,
+      "json": true,
+      "request_isolation": true,
+      "explicit_empty_overrides_prompt": true
+    },
+    {
+      "backend": "cpu",
+      "mode": "streaming",
+      "snapshot_updates": true,
+      "committed_deltas_equal_final": true,
+      "reuse": true,
+      "unaligned_live_pcm": true
+    },
+    {
+      "backend": "cuda",
+      "mode": "offline",
+      "multipart": true,
+      "json": true,
+      "request_isolation": true,
+      "explicit_empty_overrides_prompt": true
+    },
+    {
+      "backend": "cuda",
+      "mode": "streaming",
+      "snapshot_updates": true,
+      "committed_deltas_equal_final": true,
+      "reuse": true,
+      "unaligned_live_pcm": true
+    },
+    {
+      "backend": "vulkan",
+      "mode": "offline",
+      "multipart": true,
+      "json": true,
+      "request_isolation": true,
+      "explicit_empty_overrides_prompt": true
+    },
+    {
+      "backend": "vulkan",
+      "mode": "streaming",
+      "snapshot_updates": true,
+      "committed_deltas_equal_final": true,
+      "reuse": true,
+      "unaligned_live_pcm": true
+    }
+  ],
+  "lifecycle_and_names": [
+    {
+      "backend": "cpu",
+      "test": "chunk-reuse-exception-silence",
+      "passed": true
+    },
+    {
+      "backend": "cpu",
+      "test": "two-phrase-segmentation-offsets",
+      "passed": true
+    },
+    {
+      "backend": "cpu",
+      "test": "names-hotwords-original",
+      "terms": [],
+      "original_text_match": true,
+      "passed": true
+    },
+    {
+      "backend": "cpu",
+      "test": "names-hotwords-original",
+      "terms": [
+        "Ada Lovelace",
+        "Quillon",
+        "Fermion Research",
+        "Vulkan",
+        "CUDA",
+        "RoFormer"
+      ],
+      "original_text_match": true,
+      "passed": true
+    },
+    {
+      "backend": "cuda",
+      "test": "chunk-reuse-exception-silence",
+      "passed": true
+    },
+    {
+      "backend": "cuda",
+      "test": "two-phrase-segmentation-offsets",
+      "passed": true
+    },
+    {
+      "backend": "cuda",
+      "test": "names-hotwords-original",
+      "terms": [],
+      "original_text_match": true,
+      "passed": true
+    },
+    {
+      "backend": "cuda",
+      "test": "names-hotwords-original",
+      "terms": [
+        "Ada Lovelace",
+        "Quillon",
+        "Fermion Research",
+        "Vulkan",
+        "CUDA",
+        "RoFormer"
+      ],
+      "original_text_match": true,
+      "passed": true
+    },
+    {
+      "backend": "vulkan",
+      "test": "chunk-reuse-exception-silence",
+      "passed": true
+    },
+    {
+      "backend": "vulkan",
+      "test": "two-phrase-segmentation-offsets",
+      "passed": true
+    },
+    {
+      "backend": "vulkan",
+      "test": "names-hotwords-original",
+      "terms": [],
+      "original_text_match": true,
+      "passed": true
+    },
+    {
+      "backend": "vulkan",
+      "test": "names-hotwords-original",
+      "terms": [
+        "Ada Lovelace",
+        "Quillon",
+        "Fermion Research",
+        "Vulkan",
+        "CUDA",
+        "RoFormer"
+      ],
+      "original_text_match": true,
+      "passed": true
+    }
+  ],
+  "cli_stock_and_negative_routes": [
+    {
+      "backend": "cpu",
+      "model": "stock Parakeet Q8",
+      "mode": "offline",
+      "previous_text_and_words_exact": true
+    },
+    {
+      "backend": "cpu",
+      "model": "stock Parakeet Q8",
+      "mode": "streaming",
+      "previous_text_and_words_exact": true
+    },
+    {
+      "backend": "cpu",
+      "model": "Phonon Q8",
+      "mode": "streaming CLI",
+      "passed": true
+    },
+    {
+      "backend": "cuda",
+      "model": "stock Parakeet Q8",
+      "mode": "offline",
+      "previous_text_and_words_exact": true
+    },
+    {
+      "backend": "cuda",
+      "model": "stock Parakeet Q8",
+      "mode": "streaming",
+      "previous_text_and_words_exact": true
+    },
+    {
+      "backend": "cuda",
+      "model": "Phonon Q8",
+      "mode": "streaming CLI",
+      "passed": true
+    },
+    {
+      "backend": "vulkan",
+      "model": "stock Parakeet Q8",
+      "mode": "offline",
+      "previous_text_and_words_exact": true
+    },
+    {
+      "backend": "vulkan",
+      "model": "stock Parakeet Q8",
+      "mode": "streaming",
+      "previous_text_and_words_exact": true
+    },
+    {
+      "backend": "vulkan",
+      "model": "Phonon Q8",
+      "mode": "streaming CLI",
+      "passed": true
+    },
+    {
+      "backend": "cuda",
+      "test": "repeated-fields-rejection-recovery-silence",
+      "passed": true
+    }
+  ],
+  "raw_artifacts": "outputs/phonon2-review-20261010/",
+  "limitations": [
+    "Sampled word edits compare to the dense reference, not human ground truth or corpus-level WER",
+    "Cross-backend exact text/timing and provisional equality are diagnostics, not a mandatory precision API",
+    "VRAM is device-wide NVML sampled at 20 ms with desktop baseline subtracted; includes weights/work buffers/driver allocations",
+    "Timing is warm functional-run evidence, not a controlled comparison to the previous forced-precision implementation",
+    "RTX 5090, Metal, HIP and MUSA runtime validation not performed locally",
+    "Old precision-policy development packages must be reconverted"
+  ],
+  "mixed_gguf_followup": {
+    "scope": "Opt-in Phonon-only mixed GGUF conversion; no new runtime/backend/kernel precision policy",
+    "runtime_baseline_commit": "7e9293f9c5ecd45f3cfafe602a69d4c68c10e9e5",
+    "oracle": "Published dense Transformers FP32 generation and original word formatter, not human-labelled WER",
+    "platform": "Windows, Ryzen 7950X3D, RTX 3090; CPU/CUDA device 0/Vulkan device 1; 4 threads",
+    "fixture_count": 21,
+    "holdouts": 10,
+    "backend_count": 3,
+    "timestamp_tolerance_ms": 1,
+    "input_sha256": "2fa5d362e8b1cfb251094ec31a1f287f475245aaa2648a13a2f5ad01b66748cb",
+    "models": {
+      "mixed-f16": {
+        "bytes": 1301745696,
+        "sha256": "3ca25f950f46ab66f5b09ad806610ad0ff826c0d0cf0360fc87d4d704eb104c7",
+        "types": {
+          "GGMLQuantizationType.F16": 327,
+          "GGMLQuantizationType.F32": 372
+        },
+        "exact_staged_values": true,
+        "tensors": 699
+      },
+      "mixed-q8": {
+        "bytes": 1183640960,
+        "sha256": "238f4d03628ae7d594fe6345535cadba4f8576331ff5d7572c838add583ca25d",
+        "types": {
+          "F32": 435,
+          "F16": 144,
+          "Q8_0": 120
+        },
+        "exact_staged_values": false,
+        "f16_f32_values_exact": true,
+        "tensors": 699,
+        "all_tensors_match_validated_candidate": true
+      }
+    },
+    "quality": [
+      {
+        "model": "FP32",
+        "backend": "cpu",
+        "text_matches": 21,
+        "timing_matches": 21,
+        "exact_repeat_pairs": 21,
+        "differing_cases": []
+      },
+      {
+        "model": "FP32",
+        "backend": "cuda",
+        "text_matches": 21,
+        "timing_matches": 20,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "movie_offset_240_12s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 240.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "FP32",
+        "backend": "vulkan",
+        "text_matches": 21,
+        "timing_matches": 20,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 320.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Old BF16",
+        "backend": "cpu",
+        "text_matches": 21,
+        "timing_matches": 19,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "video_30s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 80.0,
+            "word_edits": 0
+          },
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 320.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Old BF16",
+        "backend": "cuda",
+        "text_matches": 20,
+        "timing_matches": 18,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "video_30s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 80.0,
+            "word_edits": 0
+          },
+          {
+            "fixture": "mp3_holdout_1",
+            "text_matches": false,
+            "timestamps_match": false,
+            "max_shift_ms": null,
+            "word_edits": 2
+          },
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 320.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Old BF16",
+        "backend": "vulkan",
+        "text_matches": 21,
+        "timing_matches": 19,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "video_30s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 80.0,
+            "word_edits": 0
+          },
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 320.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Old Q8",
+        "backend": "cpu",
+        "text_matches": 20,
+        "timing_matches": 17,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "movie_offset_20_12s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 80.0,
+            "word_edits": 0
+          },
+          {
+            "fixture": "video_18s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 80.0,
+            "word_edits": 0
+          },
+          {
+            "fixture": "mp3_holdout_2",
+            "text_matches": false,
+            "timestamps_match": false,
+            "max_shift_ms": null,
+            "word_edits": 1
+          },
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 160.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Old Q8",
+        "backend": "cuda",
+        "text_matches": 19,
+        "timing_matches": 17,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "movie_offset_20_12s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 80.0,
+            "word_edits": 0
+          },
+          {
+            "fixture": "mp3_holdout_1",
+            "text_matches": false,
+            "timestamps_match": false,
+            "max_shift_ms": null,
+            "word_edits": 2
+          },
+          {
+            "fixture": "mp3_holdout_2",
+            "text_matches": false,
+            "timestamps_match": false,
+            "max_shift_ms": null,
+            "word_edits": 1
+          },
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 160.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Old Q8",
+        "backend": "vulkan",
+        "text_matches": 20,
+        "timing_matches": 17,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "movie_offset_240_12s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 240.0,
+            "word_edits": 0
+          },
+          {
+            "fixture": "video_18s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 80.0,
+            "word_edits": 0
+          },
+          {
+            "fixture": "mp3_holdout_2",
+            "text_matches": false,
+            "timestamps_match": false,
+            "max_shift_ms": null,
+            "word_edits": 1
+          },
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 320.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Mixed-FP16",
+        "backend": "cpu",
+        "text_matches": 21,
+        "timing_matches": 20,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 80.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Mixed-FP16",
+        "backend": "cuda",
+        "text_matches": 21,
+        "timing_matches": 19,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "movie_offset_240_12s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 240.0,
+            "word_edits": 0
+          },
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 80.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Mixed-FP16",
+        "backend": "vulkan",
+        "text_matches": 21,
+        "timing_matches": 20,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 320.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Mixed-Q8",
+        "backend": "cpu",
+        "text_matches": 21,
+        "timing_matches": 20,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "movie_offset_240_12s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 240.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Mixed-Q8",
+        "backend": "cuda",
+        "text_matches": 21,
+        "timing_matches": 20,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 80.0,
+            "word_edits": 0
+          }
+        ]
+      },
+      {
+        "model": "Mixed-Q8",
+        "backend": "vulkan",
+        "text_matches": 21,
+        "timing_matches": 20,
+        "exact_repeat_pairs": 21,
+        "differing_cases": [
+          {
+            "fixture": "maintainer_28s",
+            "text_matches": true,
+            "timestamps_match": false,
+            "max_shift_ms": 320.0,
+            "word_edits": 0
+          }
+        ]
+      }
+    ],
+    "loaded_28s_request_times": [
+      {
+        "backend": "cpu",
+        "seconds": {
+          "FP32": 2.8313404999207705,
+          "Old BF16": 2.823215799871832,
+          "Old Q8": 2.4159285998903215,
+          "Mixed-FP16": 3.0016151000745595,
+          "Mixed-Q8": 2.5056611001491547
+        }
+      },
+      {
+        "backend": "cuda",
+        "seconds": {
+          "FP32": 0.12010579998604953,
+          "Old BF16": 0.1087198001332581,
+          "Old Q8": 0.1107715000398457,
+          "Mixed-FP16": 0.11552939983084798,
+          "Mixed-Q8": 0.10437890002503991
+        }
+      },
+      {
+        "backend": "vulkan",
+        "seconds": {
+          "FP32": 0.21094370004720986,
+          "Old BF16": 0.18693740013986826,
+          "Old Q8": 0.1913050999864936,
+          "Mixed-FP16": 0.19893110007978976,
+          "Mixed-Q8": 0.18460769997909665
+        }
+      }
+    ],
+    "word_end_offsets_ms": [
+      {
+        "backend": "cpu",
+        "word": "solar",
+        "python_fp32_end_s": 3.84,
+        "shift_ms": {
+          "FP32": 0,
+          "Old BF16": 0,
+          "Old Q8": 160,
+          "Mixed-FP16": 0,
+          "Mixed-Q8": 0
+        }
+      },
+      {
+        "backend": "cpu",
+        "word": "sunrise.",
+        "python_fp32_end_s": 14.56,
+        "shift_ms": {
+          "FP32": 0,
+          "Old BF16": 320,
+          "Old Q8": 0,
+          "Mixed-FP16": 0,
+          "Mixed-Q8": 0
+        }
+      },
+      {
+        "backend": "cpu",
+        "word": "spare",
+        "python_fp32_end_s": 18.8,
+        "shift_ms": {
+          "FP32": 0,
+          "Old BF16": 80,
+          "Old Q8": 0,
+          "Mixed-FP16": 80,
+          "Mixed-Q8": 0
+        }
+      },
+      {
+        "backend": "cuda",
+        "word": "solar",
+        "python_fp32_end_s": 3.84,
+        "shift_ms": {
+          "FP32": 0,
+          "Old BF16": 0,
+          "Old Q8": 160,
+          "Mixed-FP16": 0,
+          "Mixed-Q8": 0
+        }
+      },
+      {
+        "backend": "cuda",
+        "word": "sunrise.",
+        "python_fp32_end_s": 14.56,
+        "shift_ms": {
+          "FP32": 0,
+          "Old BF16": 320,
+          "Old Q8": 0,
+          "Mixed-FP16": 0,
+          "Mixed-Q8": 0
+        }
+      },
+      {
+        "backend": "cuda",
+        "word": "spare",
+        "python_fp32_end_s": 18.8,
+        "shift_ms": {
+          "FP32": 0,
+          "Old BF16": 80,
+          "Old Q8": 0,
+          "Mixed-FP16": 80,
+          "Mixed-Q8": 80
+        }
+      },
+      {
+        "backend": "vulkan",
+        "word": "solar",
+        "python_fp32_end_s": 3.84,
+        "shift_ms": {
+          "FP32": 0,
+          "Old BF16": 0,
+          "Old Q8": 0,
+          "Mixed-FP16": 0,
+          "Mixed-Q8": 0
+        }
+      },
+      {
+        "backend": "vulkan",
+        "word": "sunrise.",
+        "python_fp32_end_s": 14.56,
+        "shift_ms": {
+          "FP32": 320,
+          "Old BF16": 320,
+          "Old Q8": 320,
+          "Mixed-FP16": 320,
+          "Mixed-Q8": 320
+        }
+      },
+      {
+        "backend": "vulkan",
+        "word": "spare",
+        "python_fp32_end_s": 18.8,
+        "shift_ms": {
+          "FP32": 80,
+          "Old BF16": 80,
+          "Old Q8": 80,
+          "Mixed-FP16": 80,
+          "Mixed-Q8": 80
+        }
+      }
+    ],
+    "controlled_speedup_established": false,
+    "working_memory_benchmarked": false,
+    "tests": {
+      "converter": {
+        "passed": 13,
+        "failed": 0
+      },
+      "timestamps": {
+        "passed": 3,
+        "failed": 0
+      },
+      "targeted_ctest": {
+        "passed": 4,
+        "failed": 0
+      },
+      "mixed_q8_final_server_requests": 126,
+      "mixed_q8_final_exact_repeat_pairs": 63
+    },
+    "limitations": [
+      "Mixed-Q8 introduces a CPU +240 ms word-end shift on movie_offset_240_12s; old Q8 has none there.",
+      "Mixed-FP16 has remaining CPU/CUDA timing differences; GPU FP32 itself can differ from the Python oracle.",
+      "Native storage types may select different kernels despite exact stored F32 values.",
+      "No corpus WER, controlled speedup, peak working-memory or RTX 5090/Metal/HIP/MUSA claims."
+    ],
+    "raw_artifacts": [
+      "outputs/phonon2-duration-investigation-20261010/",
+      "outputs/phonon2-q8-update-20261010/"
+    ],
+    "diagnostics": {
+      "encoder_frame_ms": 80,
+      "same_python_encoder_f32_decoder_retained_tokens_exact": 166,
+      "decoder_replay_backends": [
+        "cpu",
+        "cuda",
+        "vulkan"
+      ],
+      "f32_encoder_relative_l2": {
+        "cpu": 8.7702039e-07,
+        "cuda": 0.00053852938,
+        "vulkan": 0.00502534112
+      },
+      "valid_encoder_rows": 350,
+      "allocated_encoder_rows": 351,
+      "near_tie_margins": {
+        "period_vs_blank": 0.00357914,
+        "duration_1_vs_2": 0.00139236
+      },
+      "original_cpu_reference_mask_frames": 2801,
+      "dense_reference_mask_frames": 2800,
+      "mask_only_crossover_matches_dense_word_timing_on_maintainer_clip": true
+    }
+  }
+}

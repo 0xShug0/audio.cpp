@@ -101,8 +101,8 @@ Qwen3TTSSpeechTokenizerConfig parse_speech_tokenizer_config(const json::Value & 
     return config;
 }
 
-Qwen3TTSSpeakerEncoderConfig parse_speaker_encoder_config(const json::Value & value) {
-    Qwen3TTSSpeakerEncoderConfig config;
+Qwen3TTSEcapaTdnnEncoderConfig parse_speaker_encoder_config(const json::Value & value) {
+    Qwen3TTSEcapaTdnnEncoderConfig config;
     config.embedding_dim = json::optional_i64(value, "enc_dim", 1024);
     config.sample_rate = static_cast<int>(json::optional_i64(value, "sample_rate", 24000));
     return config;

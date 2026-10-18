@@ -8,6 +8,15 @@
       }
     ]
   },
+  "beam_decode_medium_voice_clone": {
+    "requests": [
+      {
+        "text": "The meeting room went quiet after the first announcement, but the engineer kept explaining the schedule carefully so everyone could follow the plan without confusion.",
+        "voice_ref": "resources/index_tts2/official_examples/voice_02.wav",
+        "seed": 1260
+      }
+    ]
+  },
   "chinese_voice_clone": {
     "requests": [
       {

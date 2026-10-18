@@ -5,7 +5,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -40,7 +40,7 @@ struct GgmlContextDeleter {
     }
 };
 
-struct TextLayerWeights {
+struct Qwen3LayerWeights {
     core::TensorValue input_norm;
     core::TensorValue q_proj;
     core::TensorValue k_proj;
@@ -54,10 +54,10 @@ struct TextLayerWeights {
     core::TensorValue down_proj;
 };
 
-struct TextDecoderWeights {
+struct Qwen3DecoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
-    std::vector<TextLayerWeights> layers;
+    std::vector<Qwen3LayerWeights> layers;
     core::TensorValue norm;
     core::TensorValue lm_head;
 };
@@ -67,8 +67,8 @@ struct PrefillOutput {
     runtime::TransformerKVState kv_state;
 };
 
-modules::QwenDecoderLayerWeights to_qwen_layer_weights(const TextLayerWeights & weights) {
-    modules::QwenDecoderLayerWeights out;
+modules::DecoderLayerWeights to_qwen_layer_weights(const Qwen3LayerWeights & weights) {
+    modules::DecoderLayerWeights out;
     out.input_norm = {weights.input_norm, std::nullopt};
     out.self_attention.q_weight = weights.q_proj;
     out.self_attention.k_weight = weights.k_proj;
@@ -83,8 +83,8 @@ modules::QwenDecoderLayerWeights to_qwen_layer_weights(const TextLayerWeights & 
     return out;
 }
 
-modules::QwenCausalDecoderConfig make_qwen_decoder_config(const HiggsAudioSTTTextDecoderConfig & config) {
-    modules::QwenCausalDecoderConfig out;
+modules::CausalDecoderConfig make_qwen_decoder_config(const HiggsAudioSTTQwen3DecoderConfig & config) {
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.num_attention_heads;
     out.stack.num_key_value_heads = config.num_key_value_heads;
@@ -94,14 +94,14 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(const HiggsAudioSTTTex
     out.stack.rms_norm_eps = config.rms_norm_eps;
     out.stack.rope_theta = config.rope_theta;
     out.stack.use_qk_norm = true;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     out.logits_size = config.output_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     return out;
 }
 
-modules::QwenCausalDecoderWeights make_qwen_decoder_weights(const TextDecoderWeights & weights) {
-    modules::QwenCausalDecoderWeights out;
+modules::CausalDecoderWeights make_qwen_decoder_weights(const Qwen3DecoderWeights & weights) {
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(weights.layers.size());
     for (const auto & layer : weights.layers) {
         out.stack.layers.push_back(to_qwen_layer_weights(layer));
@@ -111,7 +111,7 @@ modules::QwenCausalDecoderWeights make_qwen_decoder_weights(const TextDecoderWei
     return out;
 }
 
-int64_t head_dim(const HiggsAudioSTTTextDecoderConfig & config) {
+int64_t head_dim(const HiggsAudioSTTQwen3DecoderConfig & config) {
     if (config.num_attention_heads <= 0 || config.num_key_value_heads <= 0 || config.head_dim <= 0) {
         throw std::runtime_error("Higgs Audio STT text_decoder attention config is invalid");
     }
@@ -120,8 +120,8 @@ int64_t head_dim(const HiggsAudioSTTTextDecoderConfig & config) {
 
 core::TensorValue prompt_embeddings(
     core::ModuleBuildContext & ctx,
-    const TextDecoderWeights & weights,
-    const HiggsAudioSTTTextDecoderConfig & config,
+    const Qwen3DecoderWeights & weights,
+    const HiggsAudioSTTQwen3DecoderConfig & config,
     ggml_tensor * token_ids,
     ggml_tensor * audio_embeddings,
     ggml_tensor * audio_positions,
@@ -146,7 +146,7 @@ core::TensorValue prompt_embeddings(
     return core::reshape_tensor(ctx, x, core::TensorShape::from_dims({1, prompt_steps, config.hidden_size}));
 }
 
-TextDecoderWeights load_weights(
+Qwen3DecoderWeights load_weights(
     const HiggsAudioSTTAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -154,7 +154,7 @@ TextDecoderWeights load_weights(
     assets::TensorStorageType storage_type) {
     const auto & config = assets.config.text_decoder;
     const auto & source = *assets.model_weights;
-    TextDecoderWeights weights;
+    Qwen3DecoderWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -169,7 +169,7 @@ TextDecoderWeights load_weights(
     const int64_t dim = head_dim(config);
     for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
         const std::string prefix = "layers." + std::to_string(layer);
-        TextLayerWeights w;
+        Qwen3LayerWeights w;
         w.input_norm = weights.store->load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.hidden_size});
         w.q_proj = weights.store->load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, {config.num_attention_heads * dim, config.hidden_size});
         w.k_proj = weights.store->load_tensor(source, prefix + ".self_attn.k_proj.weight", storage_type, {config.num_key_value_heads * dim, config.hidden_size});
@@ -202,14 +202,14 @@ int32_t argmax_index(const std::vector<float> & values) {
     return static_cast<int32_t>(best);
 }
 
-bool is_eos(const HiggsAudioSTTTextDecoderConfig & config, int32_t token) {
+bool is_eos(const HiggsAudioSTTQwen3DecoderConfig & config, int32_t token) {
     return std::find(config.eos_token_ids.begin(), config.eos_token_ids.end(), static_cast<int64_t>(token)) !=
         config.eos_token_ids.end();
 }
 
-class TextDecoderWeightsRuntime {
+class Qwen3DecoderWeightsRuntime {
 public:
-    TextDecoderWeightsRuntime(
+    Qwen3DecoderWeightsRuntime(
         std::shared_ptr<const HiggsAudioSTTAssets> assets,
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
@@ -218,7 +218,7 @@ public:
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
-          weights_(std::make_shared<TextDecoderWeights>(load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type))) {
+          weights_(std::make_shared<Qwen3DecoderWeights>(load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type))) {
         if (assets_ == nullptr) {
             throw std::runtime_error("Higgs Audio STT text_decoder weights runtime requires assets");
         }
@@ -231,7 +231,7 @@ public:
         return *assets_;
     }
 
-    const TextDecoderWeights & weights() const noexcept {
+    const Qwen3DecoderWeights & weights() const noexcept {
         return *weights_;
     }
 
@@ -252,13 +252,13 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
-    std::shared_ptr<const TextDecoderWeights> weights_;
+    std::shared_ptr<const Qwen3DecoderWeights> weights_;
 };
 
-class PrefillGraph {
+class Qwen3PrefillGraph {
 public:
-    PrefillGraph(
-        std::shared_ptr<TextDecoderWeightsRuntime> runtime,
+    Qwen3PrefillGraph(
+        std::shared_ptr<Qwen3DecoderWeightsRuntime> runtime,
         int64_t prompt_steps,
         int64_t audio_tokens,
         size_t graph_arena_bytes)
@@ -295,7 +295,7 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_steps_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32);
 
-        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen_decoder_config(config))
                                .build(ctx, x, positions, make_qwen_decoder_weights(weights));
         for (const auto & layer : decoder_out.state.layers) {
             if (!layer.key.has_value() || !layer.value.has_value()) {
@@ -322,20 +322,20 @@ public:
         if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             throw std::runtime_error("failed to allocate Higgs Audio STT text_decoder prefill graph");
         }
-        const auto pos = modules::qwen_position_ids(prompt_steps_);
+        const auto pos = modules::decoder_position_ids(prompt_steps_);
         ggml_backend_tensor_set(positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
         debug::timing_log_scalar("higgs_audio_stt.text_decoder.prefill.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("higgs_audio_stt.text_decoder.prefill_prompt_steps", prompt_steps_);
     }
 
-    ~PrefillGraph() {
+    ~Qwen3PrefillGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
     }
 
-    bool matches(const TextDecoderWeightsRuntime & runtime, int64_t prompt_steps, int64_t audio_tokens) const {
+    bool matches(const Qwen3DecoderWeightsRuntime & runtime, int64_t prompt_steps, int64_t audio_tokens) const {
         return runtime_.get() == &runtime && prompt_steps_ == prompt_steps && audio_tokens_ == audio_tokens;
     }
 
@@ -398,7 +398,7 @@ public:
     }
 
 private:
-    std::shared_ptr<TextDecoderWeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3DecoderWeightsRuntime> runtime_;
     int64_t prompt_steps_ = 0;
     int64_t audio_tokens_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -413,9 +413,9 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-class DecodeGraph {
+class Qwen3DecodeGraph {
 public:
-    DecodeGraph(std::shared_ptr<TextDecoderWeightsRuntime> runtime, int64_t cache_steps, size_t graph_arena_bytes)
+    Qwen3DecodeGraph(std::shared_ptr<Qwen3DecoderWeightsRuntime> runtime, int64_t cache_steps, size_t graph_arena_bytes)
         : runtime_(std::move(runtime)),
           real_cache_steps_(cache_steps),
           cache_steps_(cache_steps) {
@@ -450,7 +450,7 @@ public:
             core::TensorShape::from_dims({1, 1, 1, cache_steps_}),
             GGML_TYPE_F16);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
-        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen_decoder_config(config))
                                .build_static_cache_tail(
                                    ctx,
                                    graph_,
@@ -473,14 +473,14 @@ public:
         debug::trace_log_scalar("higgs_audio_stt.text_decoder.decode_cache_steps", real_cache_steps_);
     }
 
-    ~DecodeGraph() {
+    ~Qwen3DecodeGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
     }
 
-    bool can_run(const TextDecoderWeightsRuntime & runtime, int64_t required_steps) const {
+    bool can_run(const Qwen3DecoderWeightsRuntime & runtime, int64_t required_steps) const {
         return runtime_.get() == &runtime && real_cache_steps_ >= required_steps;
     }
 
@@ -498,7 +498,7 @@ public:
         ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
         const int32_t cache_slot = static_cast<int32_t>(step_cache_.valid_steps());
         ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(int32_t));
-        modules::write_qwen_cached_step_mask(
+        modules::write_decoder_cached_step_mask(
             attention_mask_,
             attention_mask_values_,
             cache_steps_,
@@ -517,7 +517,7 @@ public:
     }
 
 private:
-    std::shared_ptr<TextDecoderWeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3DecoderWeightsRuntime> runtime_;
     int64_t real_cache_steps_ = 0;
     int64_t cache_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -534,7 +534,7 @@ private:
 
 }  // namespace
 
-struct HiggsAudioSTTTextDecoderRuntime::Impl {
+struct HiggsAudioSTTQwen3DecoderRuntime::Impl {
     Impl(
         std::shared_ptr<const HiggsAudioSTTAssets> assets,
         core::ExecutionContext & execution,
@@ -542,7 +542,7 @@ struct HiggsAudioSTTTextDecoderRuntime::Impl {
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType storage_type)
-        : weights(std::make_shared<TextDecoderWeightsRuntime>(
+        : weights(std::make_shared<Qwen3DecoderWeightsRuntime>(
               std::move(assets),
               execution,
               weight_context_bytes,
@@ -590,7 +590,7 @@ struct HiggsAudioSTTTextDecoderRuntime::Impl {
         validate_prompt_audio(prompt, audio_embeddings);
         debug::timing_log_scalar("higgs_audio_stt.text_decoder.prompt_prepare_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         if (prefill_graph == nullptr || !prefill_graph->matches(*weights, prompt_steps, audio_embeddings.tokens)) {
-            prefill_graph = std::make_unique<PrefillGraph>(
+            prefill_graph = std::make_unique<Qwen3PrefillGraph>(
                 weights,
                 prompt_steps,
                 audio_embeddings.tokens,
@@ -608,7 +608,7 @@ struct HiggsAudioSTTTextDecoderRuntime::Impl {
         const int64_t required_cache_steps = prompt_steps + std::max<int64_t>(options.max_new_tokens - 1, 0);
         if (required_cache_steps > prompt_steps) {
             if (decode_graph == nullptr || !decode_graph->can_run(*weights, required_cache_steps)) {
-                decode_graph = std::make_unique<DecodeGraph>(weights, required_cache_steps, decode_graph_arena_bytes);
+                decode_graph = std::make_unique<Qwen3DecodeGraph>(weights, required_cache_steps, decode_graph_arena_bytes);
             } else {
                 debug::timing_log_scalar("higgs_audio_stt.text_decoder.decode.graph.build_ms", 0.0);
                 debug::trace_log_scalar("higgs_audio_stt.text_decoder.decode_cache_steps", required_cache_steps);
@@ -640,14 +640,14 @@ struct HiggsAudioSTTTextDecoderRuntime::Impl {
         return out;
     }
 
-    std::shared_ptr<TextDecoderWeightsRuntime> weights;
+    std::shared_ptr<Qwen3DecoderWeightsRuntime> weights;
     size_t prefill_graph_arena_bytes = 0;
     size_t decode_graph_arena_bytes = 0;
-    std::unique_ptr<PrefillGraph> prefill_graph;
-    std::unique_ptr<DecodeGraph> decode_graph;
+    std::unique_ptr<Qwen3PrefillGraph> prefill_graph;
+    std::unique_ptr<Qwen3DecodeGraph> decode_graph;
 };
 
-HiggsAudioSTTTextDecoderRuntime::HiggsAudioSTTTextDecoderRuntime(
+HiggsAudioSTTQwen3DecoderRuntime::HiggsAudioSTTQwen3DecoderRuntime(
     std::shared_ptr<const HiggsAudioSTTAssets> assets,
     core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
@@ -662,9 +662,9 @@ HiggsAudioSTTTextDecoderRuntime::HiggsAudioSTTTextDecoderRuntime(
           weight_context_bytes,
           weight_storage_type)) {}
 
-HiggsAudioSTTTextDecoderRuntime::~HiggsAudioSTTTextDecoderRuntime() = default;
+HiggsAudioSTTQwen3DecoderRuntime::~HiggsAudioSTTQwen3DecoderRuntime() = default;
 
-HiggsAudioSTTGeneratedTokens HiggsAudioSTTTextDecoderRuntime::generate(
+HiggsAudioSTTGeneratedTokens HiggsAudioSTTQwen3DecoderRuntime::generate(
     const HiggsAudioSTTPrompt & prompt,
     const HiggsAudioSTTAudioEmbeddings & audio_embeddings,
     const HiggsAudioSTTGenerationOptions & options,

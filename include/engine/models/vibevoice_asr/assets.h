@@ -35,7 +35,7 @@ struct VibeVoiceTokenizerConfig {
     std::string decoder_depths;
 };
 
-struct VibeVoiceDecoderConfig {
+struct VibeVoiceQwen2Config {
     int64_t hidden_size = 0;
     int64_t intermediate_size = 0;
     int64_t max_position_embeddings = 0;
@@ -74,7 +74,7 @@ struct VibeVoiceConfig {
     std::string torch_dtype;
     VibeVoiceTokenizerConfig acoustic_tokenizer;
     VibeVoiceTokenizerConfig semantic_tokenizer;
-    VibeVoiceDecoderConfig decoder;
+    VibeVoiceQwen2Config decoder;
     VibeVoiceDiffusionHeadConfig diffusion_head;
 };
 
@@ -87,6 +87,8 @@ struct VibeVoiceAudioProcessorConfig {
 
 struct VibeVoiceProcessorConfig {
     int64_t speech_tok_compress_ratio = 3200;
+    int64_t chunk_frames = 0;
+    int64_t lookahead_frames = 0;
     bool db_normalize = true;
     std::string language_model_pretrained_name = "Qwen/Qwen2.5-1.5B";
     VibeVoiceAudioProcessorConfig audio_processor;
@@ -94,6 +96,7 @@ struct VibeVoiceProcessorConfig {
 
 struct VibeVoiceASRAssets {
     assets::ResourceBundle resources;
+    std::string family = "vibevoice_asr";
     VibeVoiceConfig config;
     VibeVoiceProcessorConfig processor;
     std::shared_ptr<const assets::TensorSource> model_weights;
@@ -104,6 +107,8 @@ struct VibeVoiceASRAssets {
     bool fine_tune_applied = false;
 };
 
-std::shared_ptr<const VibeVoiceASRAssets> load_vibevoice_asr_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const VibeVoiceASRAssets> load_vibevoice_asr_assets(
+    const std::filesystem::path & model_path,
+    const std::string & family = "vibevoice_asr");
 
 }  // namespace engine::models::vibevoice_asr

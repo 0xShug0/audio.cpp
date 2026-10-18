@@ -2,7 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/conversion.h"
-#include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/mel_spectrogram_frontend.h"
 #include "engine/framework/audio/resampling.h"
 
 #include <algorithm>
@@ -148,61 +148,29 @@ std::vector<float> trim_voice_encoder_audio_librosa(
         audio.begin() + static_cast<ptrdiff_t>(end));
 }
 
+}  // namespace
+
 std::vector<float> compute_voice_encoder_mel(
     const std::vector<float> & waveform,
     const VoiceEncoderConfig & config) {
-    const int64_t pad = config.n_fft / 2;
-    const int64_t padded_samples = static_cast<int64_t>(waveform.size()) + 2 * pad;
-    const int64_t freq_bins = (config.n_fft / 2) + 1;
-    const int64_t frames = 1 + (padded_samples - config.n_fft) / config.hop_size;
-    const auto filterbank = engine::audio::MelFilterbank().build(
-        engine::audio::MelFilterbankConfig{
-            config.sample_rate,
-            config.n_fft,
-            config.num_mels,
-            0.0f,
-            static_cast<float>(config.sample_rate) * 0.5f,
-            true});
-    const engine::audio::STFTConfig window_config{
-        config.n_fft,
-        config.hop_size,
-        config.win_size,
-        true,
-        engine::audio::STFTPadMode::Reflect,
-        engine::audio::STFTFamily::Kokoro,
-    };
-    const auto & window = engine::audio::get_cached_stft_window(window_config);
-    const engine::audio::STFTConfig stft_config{
-        config.n_fft,
-        config.hop_size,
-        config.win_size,
-        true,
-        engine::audio::STFTPadMode::Reflect,
-        engine::audio::STFTFamily::Default,
-    };
-    const auto magnitude = engine::audio::STFT().compute_magnitude(
-        waveform,
-        window,
-        1,
-        static_cast<int64_t>(waveform.size()),
-        stft_config);
-
-    std::vector<float> mel_frames(static_cast<size_t>(frames * config.num_mels), 0.0f);
-#ifdef _OPENMP
-#pragma omp parallel for if (frames > 8)
-#endif
-    for (int64_t frame = 0; frame < frames; ++frame) {
-        for (int64_t mel_bin = 0; mel_bin < config.num_mels; ++mel_bin) {
-            float sum = 0.0f;
-            for (int64_t freq = 0; freq < freq_bins; ++freq) {
-                const float mag = magnitude.values[static_cast<size_t>(freq * frames + frame)];
-                sum += filterbank.values[static_cast<size_t>(mel_bin * freq_bins + freq)] * (mag * mag);
-            }
-            mel_frames[static_cast<size_t>(frame * config.num_mels + mel_bin)] = sum;
-        }
-    }
-    return mel_frames;
+    engine::audio::MelSpectrogramFrontendConfig mel_config;
+    mel_config.sample_rate = config.sample_rate;
+    mel_config.n_fft = config.n_fft;
+    mel_config.hop_length = config.hop_size;
+    mel_config.win_length = config.win_size;
+    mel_config.n_mels = config.num_mels;
+    mel_config.mel_fmax = static_cast<float>(config.sample_rate) * 0.5f;
+    mel_config.window = engine::audio::MelHannWindow::Periodic;
+    mel_config.stft_center = true;
+    mel_config.waveform_padding = engine::audio::MelWaveformPadding::None;
+    mel_config.spectrum_mode = engine::audio::MelSpectrumMode::PowerBeforeProjection;
+    mel_config.value_transform = engine::audio::MelValueTransform::None;
+    mel_config.layout = engine::audio::MelOutputLayout::TimeMajor;
+    return engine::audio::get_cached_mel_spectrogram_frontend(mel_config)
+        ->extract_mono(waveform).values;
 }
+
+namespace {
 
 std::vector<float> run_lstm_layer(
     const VoiceEncoderLayerWeights & weights,

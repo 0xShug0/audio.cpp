@@ -1,6 +1,6 @@
 #include "engine/models/rvc/hubert.h"
 
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 
 #include <stdexcept>
 #include <utility>
@@ -18,8 +18,8 @@ const std::vector<int64_t> kConvDim{512, 512, 512, 512, 512, 512, 512};
 const std::vector<int64_t> kConvKernel{10, 3, 3, 3, 3, 2, 2};
 const std::vector<int64_t> kConvStride{5, 2, 2, 2, 2, 2, 2};
 
-engine::modules::HubertEncoderConfig rvc_hubert_config() {
-    engine::modules::HubertEncoderConfig config;
+engine::modules::Wav2Vec2EncoderConfig rvc_hubert_config() {
+    engine::modules::Wav2Vec2EncoderConfig config;
     config.hidden_size = kHidden;
     config.intermediate_size = kIntermediate;
     config.num_hidden_layers = kLayers;
@@ -35,14 +35,14 @@ engine::modules::HubertEncoderConfig rvc_hubert_config() {
     config.apply_final_layer_norm = false;
     config.pad_odd_tokens_with_attention_mask = true;
     config.final_projection_size = 256;
-    config.feature_extractor_norm = engine::modules::HubertFeatureExtractorNorm::FirstLayerGroupNorm;
-    config.encoder_layer_norm_order = engine::modules::HubertEncoderLayerNormOrder::PostNorm;
+    config.feature_extractor_norm = engine::modules::Wav2Vec2FeatureExtractorNorm::FirstLayerGroupNorm;
+    config.encoder_layer_norm_order = engine::modules::Wav2Vec2EncoderLayerNormOrder::PostNorm;
     return config;
 }
 
-engine::modules::HubertEncoderWeightBinding rvc_hubert_binding(
+engine::modules::Wav2Vec2EncoderWeightBinding rvc_hubert_binding(
     engine::assets::TensorStorageType storage_type) {
-    engine::modules::HubertEncoderWeightBinding binding;
+    engine::modules::Wav2Vec2EncoderWeightBinding binding;
     binding.feature_extractor_conv = "0";
     binding.feature_extractor_layer_norm = "2";
     binding.feature_projection_layer_norm = "layer_norm";
@@ -63,7 +63,7 @@ engine::modules::HubertEncoderWeightBinding rvc_hubert_binding(
 }  // namespace
 
 struct RvcHubertEncoder::State {
-    engine::modules::HubertEncoderComponent component;
+    engine::modules::Wav2Vec2EncoderRuntime hubert_runtime;
 };
 
 RvcHubertEncoder::RvcHubertEncoder(
@@ -71,7 +71,7 @@ RvcHubertEncoder::RvcHubertEncoder(
     engine::core::BackendConfig backend,
     engine::assets::TensorStorageType storage_type)
     : state_(std::make_shared<State>()) {
-    state_->component = engine::modules::HubertEncoderComponent::load_from_tensor_source(
+    state_->hubert_runtime = engine::modules::Wav2Vec2EncoderRuntime::load_from_tensor_source(
         std::move(source),
         std::move(backend),
         rvc_hubert_config(),
@@ -88,10 +88,10 @@ RvcHubertFeatures RvcHubertEncoder::encode_16k_mono(
     if (state_ == nullptr) {
         throw std::runtime_error("RVC HuBERT encoder is not initialized");
     }
-    engine::modules::HubertEncoderRunConfig run_config;
+    engine::modules::Wav2Vec2EncoderRunConfig run_config;
     run_config.output_hidden_layer = v1_features ? 10 : kLayers;
     run_config.apply_final_projection = v1_features;
-    const auto out = state_->component.encode(
+    const auto out = state_->hubert_runtime.encode(
         waveform_16k,
         1,
         static_cast<int64_t>(waveform_16k.size()),

@@ -8,7 +8,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,32 +26,53 @@ struct NemotronDecodedText {
     std::vector<runtime::WordTimestamp> token_timestamps;
 };
 
-using NemotronTextDeltaCallback = std::function<void(const std::string &)>;
+// RNNT prediction-network state carried between decoder steps.
+struct NemotronPredictorState {
+    std::vector<float> hidden;         // [layers, hidden]
+    std::vector<float> cell;           // [layers, hidden]
+    std::vector<float> decoder_cache;  // projected prediction output [hidden]
+};
 
-class NemotronDecoderRuntime {
+struct NemotronDecoderStreamState {
+    NemotronDecodeOptions options;
+    NemotronDecodedText decoded;
+    int64_t encoded_frames = 0;
+    int64_t symbols_at_frame = 0;
+    int32_t input_token = 0;
+    bool decoder_cache_initialized = false;
+    NemotronPredictorState predictor;
+};
+
+class NemotronRnntDecoderRuntime {
 public:
-    NemotronDecoderRuntime(
+    NemotronRnntDecoderRuntime(
         std::shared_ptr<const NemotronASRAssets> assets,
         std::shared_ptr<const NemotronWeights> weights,
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes);
-    ~NemotronDecoderRuntime();
+    ~NemotronRnntDecoderRuntime();
 
     void prepare();
     NemotronDecodedText decode(const NemotronEncodedAudio & encoded, const NemotronDecodeOptions & options);
-    NemotronDecodedText decode_streaming(
-        const NemotronDecodeOptions & options,
-        const std::function<bool(NemotronEncodedAudio &)> & next_chunk,
-        const NemotronTextDeltaCallback & on_text_delta = nullptr);
-
+    NemotronDecoderStreamState make_stream_state(const NemotronDecodeOptions & options);
+    void decode_stream_chunk(
+        const NemotronEncodedAudio & encoded,
+        NemotronDecoderStreamState & state);
+    NemotronDecodedText stream_result(const NemotronDecoderStreamState & state) const;
+    // NeMo Hypothesis views for the speaker-tagged segment builder: the decoded
+    // text, and the cumulative encoder frame of every emitted (non-blank) token.
+    std::string stream_text(const NemotronDecoderStreamState & state, bool keep_language_tags) const;
+    std::vector<int64_t> stream_token_frames(const NemotronDecoderStreamState & state) const;
 private:
     struct Graph;
     struct JointGraph;
 
     void ensure_graph();
     void ensure_joint_graph();
-    int32_t run_step(int32_t input_token, const float * encoder_frame, bool decoder_cache_initialized);
-    int32_t run_joint_step(const float * encoder_frame);
+    NemotronPredictorState initial_predictor_state() const;
+    int32_t run_step(
+        int32_t input_token, const float * encoder_frame, bool decoder_cache_initialized, NemotronPredictorState & predictor);
+    int32_t run_joint_step(const float * encoder_frame, const NemotronPredictorState & predictor);
     std::string decode_text(const std::vector<int32_t> & token_ids, bool keep_language_tags) const;
 
     std::shared_ptr<const NemotronASRAssets> assets_;
@@ -62,12 +82,10 @@ private:
     std::unique_ptr<Graph> graph_;
     std::unique_ptr<JointGraph> joint_graph_;
     std::vector<float> encoder_frame_scratch_;
-    std::vector<float> hidden_scratch_;
-    std::vector<float> cell_scratch_;
-    std::vector<float> decoder_cache_scratch_;
     std::vector<float> logits_scratch_;
     std::vector<float> hidden_read_scratch_;
     std::vector<float> cell_read_scratch_;
+    int32_t unk_token_id_ = -1;
 };
 
 }  // namespace engine::models::nemotron_asr

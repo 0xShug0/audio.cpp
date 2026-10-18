@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/sortformer_diar/assets.h"
 #include "engine/models/sortformer_diar/graph.h"
@@ -11,6 +13,8 @@
 
 namespace engine::models::sortformer_diar {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_sortformer_diar_loader();
+
 class SortformerDiarSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession {
@@ -18,7 +22,8 @@ public:
     SortformerDiarSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const SortformerAssets> assets);
+        std::shared_ptr<const SortformerAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~SortformerDiarSession() override;
 
     std::string family() const override;
@@ -38,9 +43,10 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const SortformerAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::shared_ptr<const SortformerDiarWeights> weights_;
     SortformerPostprocessConfig default_postprocess_;
-    size_t graph_context_bytes_ = 512ull * 1024ull * 1024ull;
+    size_t graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t weight_context_bytes_ = 128ull * 1024ull * 1024ull;
     assets::TensorStorageType matmul_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType conv_weight_storage_type_ = assets::TensorStorageType::Native;

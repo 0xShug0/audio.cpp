@@ -72,11 +72,12 @@ void pad1d_reflect_fast(
     const std::vector<float> & signal,
     int64_t channels,
     int64_t samples,
-    const std::vector<int32_t> & indices) {
+    const std::vector<int32_t> & indices,
+    size_t threads) {
     const int64_t out_len = static_cast<int64_t>(indices.size());
     out.resize(static_cast<size_t>(channels * out_len));
 #ifdef _OPENMP
-    #pragma omp parallel for if(channels >= 2)
+    #pragma omp parallel for num_threads(threads) if(channels >= 2)
 #endif
     for (int64_t ch = 0; ch < channels; ++ch) {
         const float * src = signal.data() + static_cast<size_t>(ch * samples);
@@ -101,7 +102,7 @@ void compute_stft_complex_normalized(
     const int64_t freq_bins = (n_fft / 2) + 1;
     framed.resize(static_cast<size_t>(batch * frames * n_fft));
 #ifdef _OPENMP
-    #pragma omp parallel for if(batch * frames >= 8)
+    #pragma omp parallel for num_threads(fft_threads) if(batch * frames >= 8)
 #endif
     for (int64_t b = 0; b < batch; ++b) {
         const float * src = signal.data() + static_cast<size_t>(b * samples);
@@ -145,7 +146,8 @@ void compute_stft_complex_normalized(
 std::pair<float, float> normalize_in_place_with_stats(
     std::vector<float> & values,
     double sum,
-    double sumsq) {
+    double sumsq,
+    size_t threads) {
     const double count = static_cast<double>(values.size());
     const double mean = sum / count;
     const double denom = values.size() > 1 ? static_cast<double>(values.size() - 1) : 1.0;
@@ -153,7 +155,7 @@ std::pair<float, float> normalize_in_place_with_stats(
     const float mean_f32 = static_cast<float>(mean);
     const float stddev = static_cast<float>(std::sqrt(centered / denom) + 1.0e-5);
 #ifdef _OPENMP
-    #pragma omp parallel for if(values.size() >= 1 << 16)
+    #pragma omp parallel for num_threads(threads) if(values.size() >= 1 << 16)
 #endif
     for (int64_t i = 0; i < static_cast<int64_t>(values.size()); ++i) {
         values[static_cast<size_t>(i)] = (values[static_cast<size_t>(i)] - mean_f32) / stddev;
@@ -161,7 +163,7 @@ std::pair<float, float> normalize_in_place_with_stats(
     return {mean_f32, stddev};
 }
 
-std::pair<float, float> normalize_in_place(std::vector<float> & values) {
+std::pair<float, float> normalize_in_place(std::vector<float> & values, size_t threads) {
     double sum = 0.0;
     double sumsq = 0.0;
     for (int64_t i = 0; i < static_cast<int64_t>(values.size()); ++i) {
@@ -169,7 +171,7 @@ std::pair<float, float> normalize_in_place(std::vector<float> & values) {
         sum += value;
         sumsq += value * value;
     }
-    return normalize_in_place_with_stats(values, sum, sumsq);
+    return normalize_in_place_with_stats(values, sum, sumsq, threads);
 }
 
 std::pair<double, double> build_demucs_complex_input(
@@ -259,7 +261,7 @@ void HTDemucsFrontend::prepare_chunk(std::vector<float> & chunk_planar) {
         *time_input_,
         config_.audio_channels,
         config_.segment_samples,
-        pad_indices_);
+        pad_indices_, fft_threads_);
     compute_stft_complex_normalized(
         stft_framed_,
         stft_spectrum_,
@@ -278,8 +280,8 @@ void HTDemucsFrontend::prepare_chunk(std::vector<float> & chunk_planar) {
         config_.stft_freq_bins,
         config_.stft_frames,
         stft_full_frames_);
-    std::tie(freq_mean_, freq_std_) = normalize_in_place_with_stats(freq_input_, freq_sum, freq_sumsq);
-    std::tie(time_mean_, time_std_) = normalize_in_place(*time_input_);
+    std::tie(freq_mean_, freq_std_) = normalize_in_place_with_stats(freq_input_, freq_sum, freq_sumsq, fft_threads_);
+    std::tie(time_mean_, time_std_) = normalize_in_place(*time_input_, fft_threads_);
 }
 
 const std::vector<float> & HTDemucsFrontend::freq_input() const noexcept { return freq_input_; }

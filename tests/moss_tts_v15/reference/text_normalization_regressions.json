@@ -1,0 +1,47 @@
+[
+ {
+  "name": "placeholder_inside_url",
+  "input": "https://x.com/___PROT0___",
+  "expected": "https://x.com/___PROT0___"
+ },
+ {
+  "name": "placeholder_inside_file",
+  "input": "a.b___PROT0___.js",
+  "expected": "a.b___PROT0___.js"
+ },
+ {
+  "name": "placeholder_literal",
+  "input": "see ___PROT0___ here",
+  "expected": "see ___PROT0___ here"
+ },
+ {
+  "name": "lone_ellipsis_en",
+  "input": "Hmm… ok.",
+  "expected": "Hmm… ok."
+ },
+ {
+  "name": "lone_ellipsis_zh",
+  "input": "今天下雨了…",
+  "expected": "今天下雨了…"
+ },
+ {
+  "name": "lone_ellipsis_mid",
+  "input": "a…b",
+  "expected": "a…b"
+ },
+ {
+  "name": "double_ellipsis",
+  "input": "a……b",
+  "expected": "a。b"
+ },
+ {
+  "name": "three_dots",
+  "input": "wait... ok",
+  "expected": "wait。ok"
+ },
+ {
+  "name": "mixed_dots_ellipsis",
+  "input": "a..…b",
+  "expected": "a..…b"
+ }
+]

@@ -12,11 +12,13 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "helper_utils.h"
 
+#include <ggml-alloc.h>
 #include <ggml-backend.h>
 #include <ggml.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -313,11 +315,11 @@ public:
 
         AceStepTextConditioning run(const AceStepTextConditioning & input) const {
             if (input.tokens <= 0 || input.tokens > tokens_ ||
-                input.hidden_size != assets_->config.diffusion.text_hidden_dim) {
+                input.hidden_size != assets_->config.encoder.text_hidden_dim) {
                 throw std::runtime_error("ACE-Step text projector input shape mismatch");
             }
             std::vector<float> padded(
-                static_cast<size_t>(tokens_ * assets_->config.diffusion.text_hidden_dim),
+                static_cast<size_t>(tokens_ * assets_->config.encoder.text_hidden_dim),
                 0.0F);
             std::copy(input.values.begin(), input.values.end(), padded.begin());
             core::write_tensor_f32(input_value_, padded);
@@ -328,7 +330,7 @@ public:
             }
             AceStepTextConditioning out;
             out.tokens = input.tokens;
-            out.hidden_size = assets_->config.diffusion.hidden_size;
+            out.hidden_size = assets_->config.encoder.hidden_size;
             std::vector<float> full;
             core::read_tensor_f32_into(output_, full);
             out.values.assign(
@@ -339,7 +341,7 @@ public:
 
     private:
         void build() {
-            const auto & config = assets_->config.diffusion;
+            const auto & config = assets_->config.encoder;
             ggml_init_params params{8ull * 1024ull * 1024ull, nullptr, true};
             ctx_.reset(ggml_init(params));
             if (ctx_ == nullptr) {
@@ -399,9 +401,7 @@ public:
             if (backend_ != nullptr && graph_ != nullptr) {
                 engine::core::release_backend_graph_resources(backend_, graph_);
             }
-            if (buffer_ != nullptr) {
-                ggml_backend_buffer_free(buffer_);
-            }
+            graph_allocator_.reset();
         }
 
         bool can_run(int64_t tokens) const noexcept {
@@ -410,11 +410,11 @@ public:
 
         AceStepTextConditioning run(const AceStepTextConditioning & input) const {
             if (input.tokens <= 0 || input.tokens > tokens_ ||
-                input.hidden_size != assets_->config.diffusion.text_hidden_dim) {
+                input.hidden_size != assets_->config.encoder.text_hidden_dim) {
                 throw std::runtime_error("ACE-Step lyric encoder input shape mismatch");
             }
             std::vector<float> padded(
-                static_cast<size_t>(tokens_ * assets_->config.diffusion.text_hidden_dim),
+                static_cast<size_t>(tokens_ * assets_->config.encoder.text_hidden_dim),
                 0.0F);
             std::copy(input.values.begin(), input.values.end(), padded.begin());
             core::write_tensor_f32(input_value_, padded);
@@ -428,7 +428,7 @@ public:
             }
             AceStepTextConditioning out;
             out.tokens = input.tokens;
-            out.hidden_size = assets_->config.diffusion.hidden_size;
+            out.hidden_size = assets_->config.encoder.hidden_size;
             std::vector<float> full;
             core::read_tensor_f32_into(output_, full);
             out.values.assign(
@@ -439,7 +439,7 @@ public:
 
     private:
         void build() {
-            const auto & config = assets_->config.diffusion;
+            const auto & config = assets_->config.encoder;
             ggml_init_params params{128ull * 1024ull * 1024ull, nullptr, true};
             ctx_.reset(ggml_init(params));
             if (ctx_ == nullptr) {
@@ -491,10 +491,22 @@ public:
             ggml_set_output(output_);
             graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
             ggml_build_forward_expand(graph_, output_);
-            buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
-            if (buffer_ == nullptr) {
+            // Keep uploaded inputs/constants live across warm executions.
+            // Include the sliding mask even for configurations that do not use it.
+            for (auto * input : {input_.tensor, positions_, sliding_mask_value_.tensor,
+                                 padding_mask_value_.tensor}) {
+                ggml_set_input(input);
+                ggml_build_forward_expand(graph_, input);
+            }
+            // These constants are uploaded once and reused by later requests.
+            ggml_set_output(positions_);
+            ggml_set_output(sliding_mask_value_.tensor);
+            graph_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+            if (!graph_allocator_ || !ggml_gallocr_alloc_graph(graph_allocator_.get(), graph_)) {
                 throw std::runtime_error("ACE-Step lyric encoder backend buffer allocation failed");
             }
+            engine::debug::trace_log_scalar("ace_step.lyric_encoder.graph_bytes",
+                static_cast<int64_t>(ggml_gallocr_get_buffer_size(graph_allocator_.get(), 0)));
 
             std::vector<int32_t> position_values(static_cast<size_t>(tokens_), 0);
             for (int64_t i = 0; i < tokens_; ++i) {
@@ -530,7 +542,7 @@ public:
         core::TensorValue padding_mask_value_;
         ggml_tensor * output_ = nullptr;
         ggml_cgraph * graph_ = nullptr;
-        ggml_backend_buffer_t buffer_ = nullptr;
+        std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator_{nullptr, ggml_gallocr_free};
     };
 
     class TimbreEncoderGraph {
@@ -562,8 +574,12 @@ public:
             return frames_ >= frames;
         }
 
+        bool has_exact_capacity(int64_t frames) const noexcept {
+            return frames_ == frames;
+        }
+
         AceStepTextConditioning run_one(const std::vector<float> & packed_reference, int64_t frames) const {
-            const auto & config = assets_->config.diffusion;
+            const auto & config = assets_->config.encoder;
             if (frames <= 0 || frames > frames_ ||
                 static_cast<int64_t>(packed_reference.size()) != frames * config.timbre_hidden_dim) {
                 throw std::runtime_error("ACE-Step timbre encoder input shape mismatch");
@@ -575,7 +591,7 @@ public:
             core::write_tensor_f32(input_value_, padded);
             core::write_tensor_f16(
                 padding_mask_value_,
-                build_padding_attention_mask_values(frames_, frames));
+                build_padding_attention_mask_values(tokens_, frames + cls_tokens()));
             core::set_backend_threads(backend_, threads_);
             const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
             if (status != GGML_STATUS_SUCCESS) {
@@ -589,8 +605,17 @@ public:
         }
 
     private:
+        // XL prepends a CLS token to the reference frames and reads it back as the
+        // timbre embedding. Earlier variants declare the same parameter but leave
+        // it out of the sequence, so position 0 there is the first audio frame —
+        // which is why this is a config question and not a tensor lookup.
+        int64_t cls_tokens() const noexcept {
+            return assets_->config.encoder.timbre_special_token ? 1 : 0;
+        }
+
         void build() {
-            const auto & config = assets_->config.diffusion;
+            const auto & config = assets_->config.encoder;
+            tokens_ = frames_ + cls_tokens();
             ggml_init_params params{128ull * 1024ull * 1024ull, nullptr, true};
             ctx_.reset(ggml_init(params));
             if (ctx_ == nullptr) {
@@ -603,28 +628,35 @@ public:
                 GGML_TYPE_F32,
                 core::TensorShape::from_dims({1, frames_, config.timbre_hidden_dim}));
             input_value_ = input_;
-            positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, frames_);
-            auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({frames_}), GGML_TYPE_I32);
+            positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, tokens_);
+            auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({tokens_}), GGML_TYPE_I32);
             sliding_mask_value_ = core::make_tensor(
                 build_ctx,
                 GGML_TYPE_F16,
-                core::TensorShape::from_dims({1, 1, frames_, frames_}));
+                core::TensorShape::from_dims({1, 1, tokens_, tokens_}));
             padding_mask_value_ = core::make_tensor(
                 build_ctx,
                 GGML_TYPE_F16,
-                core::TensorShape::from_dims({1, 1, frames_, frames_}));
+                core::TensorShape::from_dims({1, 1, tokens_, tokens_}));
             auto hidden = modules::LinearModule({config.timbre_hidden_dim, config.hidden_size, true})
                               .build(
                                   build_ctx,
                                   input_,
                                   {weights_->timbre_embed_weight, weights_->timbre_embed_bias});
+            if (cls_tokens() > 0) {
+                special_token_value_ = core::make_tensor(
+                    build_ctx,
+                    GGML_TYPE_F32,
+                    core::TensorShape::from_dims({1, 1, config.hidden_size}));
+                hidden = modules::ConcatModule({1}).build(build_ctx, special_token_value_, hidden);
+            }
             const auto sliding_mask = core::wrap_tensor(
                 sliding_mask_value_.tensor,
-                core::TensorShape::from_dims({1, 1, frames_, frames_}),
+                core::TensorShape::from_dims({1, 1, tokens_, tokens_}),
                 GGML_TYPE_F16);
             const auto padding_mask = core::wrap_tensor(
                 padding_mask_value_.tensor,
-                core::TensorShape::from_dims({1, 1, frames_, frames_}),
+                core::TensorShape::from_dims({1, 1, tokens_, tokens_}),
                 GGML_TYPE_F16);
             for (int64_t i = 0; i < config.num_timbre_encoder_hidden_layers; ++i) {
                 const std::optional<core::TensorValue> mask =
@@ -648,14 +680,18 @@ public:
                 throw std::runtime_error("ACE-Step timbre encoder backend buffer allocation failed");
             }
 
-            std::vector<int32_t> position_values(static_cast<size_t>(frames_), 0);
-            for (int64_t i = 0; i < frames_; ++i) {
+            // Positions and both masks run over the extended sequence: upstream
+            // builds its cache_position from the embeddings *after* the CLS token
+            // is prepended, so the token sits at position 0 and everything else
+            // shifts by one.
+            std::vector<int32_t> position_values(static_cast<size_t>(tokens_), 0);
+            for (int64_t i = 0; i < tokens_; ++i) {
                 position_values[static_cast<size_t>(i)] = static_cast<int32_t>(i);
             }
             ggml_backend_tensor_set(positions_, position_values.data(), 0, position_values.size() * sizeof(int32_t));
             const std::vector<float> sliding_mask_values =
                 ace_step_bidirectional_sliding_mask_values(
-                    frames_,
+                    tokens_,
                     config.sliding_window,
                     "ACE-Step");
             std::vector<ggml_fp16_t> sliding_mask_f16(sliding_mask_values.size());
@@ -667,6 +703,17 @@ public:
                 sliding_mask_f16.data(),
                 0,
                 sliding_mask_f16.size() * sizeof(ggml_fp16_t));
+            if (cls_tokens() > 0) {
+                const auto & token = weights_->timbre_special_token_host;
+                if (static_cast<int64_t>(token.size()) != config.hidden_size) {
+                    throw std::runtime_error("ACE-Step timbre encoder CLS token shape mismatch");
+                }
+                ggml_backend_tensor_set(
+                    special_token_value_.tensor,
+                    token.data(),
+                    0,
+                    token.size() * sizeof(float));
+            }
         }
 
         ggml_backend_t backend_ = nullptr;
@@ -674,9 +721,12 @@ public:
         std::shared_ptr<const AceStepAssets> assets_;
         std::shared_ptr<const AceStepConditionEncoderWeights> weights_;
         int64_t frames_ = 0;
+        // frames_ plus the CLS token, when the variant has one.
+        int64_t tokens_ = 0;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
         core::TensorValue input_;
         core::TensorValue input_value_;
+        core::TensorValue special_token_value_;
         ggml_tensor * positions_ = nullptr;
         core::TensorValue sliding_mask_value_;
         core::TensorValue padding_mask_value_;
@@ -715,10 +765,10 @@ public:
         int64_t refer_audio_frames,
         const std::vector<int32_t> & refer_audio_order_mask) const {
         const auto total_start = Clock::now();
-        if (text_hidden_states.hidden_size != assets_->config.diffusion.text_hidden_dim) {
+        if (text_hidden_states.hidden_size != assets_->config.encoder.text_hidden_dim) {
             throw std::runtime_error("ACE-Step condition encoder text hidden size mismatch");
         }
-        if (lyric_token_embeddings.hidden_size != assets_->config.diffusion.text_hidden_dim) {
+        if (lyric_token_embeddings.hidden_size != assets_->config.encoder.text_hidden_dim) {
             throw std::runtime_error("ACE-Step condition encoder lyric hidden size mismatch");
         }
         const auto project_text_start = Clock::now();
@@ -761,6 +811,7 @@ public:
         text_projector_.reset();
         lyric_encoder_.reset();
         timbre_encoder_.reset();
+        timbre_frame_capacity_ = 0;
     }
 
 private:
@@ -795,7 +846,7 @@ private:
         int64_t refer_audio_count,
         int64_t refer_audio_frames,
         const std::vector<int32_t> & refer_audio_order_mask) const {
-        const auto & config = assets_->config.diffusion;
+        const auto & config = assets_->config.encoder;
         if (refer_audio_count <= 0 || refer_audio_frames <= 0) {
             throw std::runtime_error("ACE-Step timbre encoder requires positive reference count and frame count");
         }
@@ -805,19 +856,36 @@ private:
         if (static_cast<int64_t>(packed_values.size()) != refer_audio_count * refer_audio_frames * config.timbre_hidden_dim) {
             throw std::runtime_error("ACE-Step timbre encoder packed values shape mismatch");
         }
-        if (!timbre_encoder_ || !timbre_encoder_->can_run(refer_audio_frames)) {
+        for (int32_t order : refer_audio_order_mask) {
+            if (order != 0) {
+                throw std::runtime_error("ACE-Step timbre encoder currently supports only single-batch reference ordering");
+            }
+        }
+        // A session owns immutable weights. Reuse only an identical reference
+        // computed at this exact frame capacity, not one from a larger padded
+        // graph. Keep one bounded CPU entry when memory-saver drops GPU graphs.
+        const int64_t capacity = std::max(timbre_frame_capacity_, refer_audio_frames);
+        if (refer_audio_count == 1 && capacity == refer_audio_frames && cached_timbre_frames_ == refer_audio_frames &&
+            cached_timbre_reference_.size() == packed_values.size() &&
+            std::memcmp(cached_timbre_reference_.data(), packed_values.data(),
+                        packed_values.size() * sizeof(float)) == 0) {
+            engine::debug::trace_log_scalar("ace_step.timbre_encoder.cache_hit", 1);
+            // Preserve the capacity that an uncached execution would create.
+            // A later, shorter reference must use the same padded graph shape.
+            timbre_frame_capacity_ = capacity;
+            return cached_timbre_;
+        }
+        engine::debug::trace_log_scalar("ace_step.timbre_encoder.cache_hit", 0);
+        if (!timbre_encoder_ || !timbre_encoder_->can_run(capacity)) {
             timbre_encoder_.reset();
+            timbre_frame_capacity_ = 0;
             timbre_encoder_ = std::make_unique<TimbreEncoderGraph>(
                 backend_,
                 threads_,
                 assets_,
                 weights_,
-                refer_audio_frames);
-        }
-        for (int32_t order : refer_audio_order_mask) {
-            if (order != 0) {
-                throw std::runtime_error("ACE-Step timbre encoder currently supports only single-batch reference ordering");
-            }
+                capacity);
+            timbre_frame_capacity_ = capacity;
         }
         AceStepPackedConditioning out;
         out.batch = 1;
@@ -835,6 +903,15 @@ private:
                 encoded.values.end(),
                 out.values.begin() + static_cast<std::ptrdiff_t>(i * config.hidden_size));
         }
+        if (refer_audio_count == 1 && timbre_encoder_->has_exact_capacity(refer_audio_frames)) {
+            cached_timbre_frames_ = refer_audio_frames;
+            cached_timbre_reference_ = packed_values;
+            cached_timbre_ = out;
+        } else {
+            cached_timbre_frames_ = 0;
+            cached_timbre_reference_.clear();
+            cached_timbre_ = {};
+        }
         return out;
     }
 
@@ -845,6 +922,10 @@ private:
     mutable std::unique_ptr<TextProjectorGraph> text_projector_;
     mutable std::unique_ptr<LyricEncoderGraph> lyric_encoder_;
     mutable std::unique_ptr<TimbreEncoderGraph> timbre_encoder_;
+    mutable int64_t timbre_frame_capacity_ = 0;
+    mutable int64_t cached_timbre_frames_ = 0;
+    mutable std::vector<float> cached_timbre_reference_;
+    mutable AceStepPackedConditioning cached_timbre_;
 };
 
 AceStepConditionEncoderRuntime::AceStepConditionEncoderRuntime(

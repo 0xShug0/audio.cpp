@@ -4,7 +4,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -16,10 +16,12 @@
 
 #include "engine/framework/core/constant_tensor_cache.h"
 
+#include <ggml-alloc.h>
 #include <ggml-backend.h>
 #include <ggml.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -29,11 +31,27 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace engine::models::qwen3_tts {
+
+void validate_qwen3_talker_voice_clone_prefill(
+    const Qwen3TalkerPrefill & prefill,
+    int64_t hidden_size) {
+    if (!prefill.speaker_embedding.has_value() || prefill.speaker_embedding->dims != hidden_size) {
+        throw std::runtime_error("Qwen3 talker voice clone prefill requires speaker embedding");
+    }
+    if (prefill.icl_mode == prefill.x_vector_only_mode) {
+        throw std::runtime_error("Qwen3 talker voice clone prefill requires exactly one prompt mode");
+    }
+    if (prefill.icl_mode && (!prefill.reference_codes.has_value() || prefill.reference_ids.empty())) {
+        throw std::runtime_error("Qwen3 talker ICL prefill requires reference ids and codes");
+    }
+}
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -209,11 +227,11 @@ core::TensorValue cache_view(
 }
 
 template <typename Config>
-modules::QwenCausalDecoderConfig make_qwen_decoder_config(
+modules::CausalDecoderConfig make_qwen3_decoder_config(
     const Config & config,
     int64_t logits_size,
     Qwen3TTSPerfMode perf_mode) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.num_attention_heads;
     out.stack.num_key_value_heads = config.num_key_value_heads;
@@ -224,20 +242,20 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(
     out.stack.rope_theta = config.rope_theta;
     out.stack.attention_precision = GGML_PREC_F32;
     out.stack.use_qk_norm = true;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     if (perf_mode == Qwen3TTSPerfMode::FlashAttention) {
-        out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-        out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+        out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+        out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
     }
     out.logits_size = logits_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     return out;
 }
 
-modules::QwenDecoderLayerWeights make_qwen_decoder_layer_weights(
+modules::DecoderLayerWeights make_qwen3_decoder_layer_weights(
     core::ConstantTensorCache & constants,
     const TalkerLayerWeights & weights) {
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_data(constants, weights.input_norm);
     out.self_attention.q_weight = binding::tensor_data(constants, weights.q_proj);
     out.self_attention.k_weight = binding::tensor_data(constants, weights.k_proj);
@@ -252,15 +270,15 @@ modules::QwenDecoderLayerWeights make_qwen_decoder_layer_weights(
     return out;
 }
 
-modules::QwenCausalDecoderWeights make_qwen_decoder_weights(
+modules::CausalDecoderWeights make_qwen3_decoder_weights(
     core::ConstantTensorCache & constants,
     const std::vector<TalkerLayerWeights> & layers,
     const assets::TensorDataF32 & norm,
     const core::TensorValue & lm_head) {
-    modules::QwenCausalDecoderWeights out;
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(layers.size());
     for (const auto & layer : layers) {
-        out.stack.layers.push_back(make_qwen_decoder_layer_weights(constants, layer));
+        out.stack.layers.push_back(make_qwen3_decoder_layer_weights(constants, layer));
     }
     out.final_norm = binding::norm_data(constants, norm);
     out.lm_head = binding::linear_data(constants, lm_head);
@@ -298,11 +316,87 @@ std::vector<float> linear_host(
     return output;
 }
 
-std::vector<float> text_project_host(
+class Qwen3TalkerTextProjectionGraph {
+public:
+    Qwen3TalkerTextProjectionGraph(ggml_backend_t backend, int threads,
+                                  const Qwen3TalkerWeights & weights,
+                                  const Qwen3TTSTalkerConfig & config)
+        : backend_(backend), threads_(threads), weights_(weights), config_(config),
+          constants_(backend, threads, "qwen3_tts.text_projection", 4ull * 1024 * 1024) {}
+
+    std::vector<float> run(const std::vector<float> & input, int64_t rows) {
+        if (input.size() != static_cast<size_t>(rows * config_.text_hidden_size) || rows <= 0) {
+            throw std::runtime_error("Qwen3 text projection input shape mismatch");
+        }
+        if (!ctx_) {
+            ctx_.reset(ggml_init({4ull * 1024 * 1024, nullptr, true}));
+            if (!ctx_) throw std::runtime_error("failed to initialize Qwen3 text projection graph");
+            core::ModuleBuildContext ctx{ctx_.get(), "qwen3_tts.text_projection"};
+            constants_.begin_graph();
+            auto x = core::make_tensor(ctx, GGML_TYPE_F32,
+                core::TensorShape::from_dims({capacity_, config_.text_hidden_size}));
+            input_ = x.tensor;
+            x = modules::LinearModule({config_.text_hidden_size, config_.text_hidden_size, true}).build(
+                ctx, x, binding::linear_data(constants_, weights_.text_projection_fc1.weight,
+                                            weights_.text_projection_fc1.bias));
+            x = modules::SiluModule().build(ctx, x);
+            x = modules::LinearModule({config_.text_hidden_size, config_.hidden_size, true}).build(
+                ctx, x, binding::linear_data(constants_, weights_.text_projection_fc2.weight,
+                                            weights_.text_projection_fc2.bias));
+            output_ = x.tensor;
+            ggml_set_input(input_);
+            ggml_set_output(output_);
+            graph_ = ggml_new_graph_custom(ctx_.get(), 64, false);
+            ggml_build_forward_expand(graph_, output_);
+            constants_.finish_graph();
+            constants_.ensure_uploaded();
+            allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+            if (!allocator_ || !ggml_gallocr_reserve(allocator_.get(), graph_) ||
+                !ggml_gallocr_alloc_graph(allocator_.get(), graph_)) {
+                throw std::runtime_error("failed to allocate Qwen3 text projection graph");
+            }
+        }
+        // Independent rows use a fixed tile so previous request lengths cannot
+        // change the projection's matmul shape or numerical results.
+        std::vector<float> padded(static_cast<size_t>(capacity_ * config_.text_hidden_size), 0.0F);
+        core::set_backend_threads(backend_, threads_);
+        std::vector<float> output(static_cast<size_t>(rows * config_.hidden_size));
+        for (int64_t first = 0; first < rows; first += capacity_) {
+            const int64_t count = std::min(capacity_, rows - first);
+            std::fill(padded.begin(), padded.end(), 0.0F);
+            std::copy_n(input.begin() + first * config_.text_hidden_size,
+                        count * config_.text_hidden_size, padded.begin());
+            ggml_backend_tensor_set(input_, padded.data(), 0, padded.size() * sizeof(float));
+            if (core::compute_backend_graph(backend_, graph_) != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("Qwen3 text projection graph compute failed");
+            }
+            ggml_backend_tensor_get(output_, output.data() + first * config_.hidden_size,
+                                    0, count * config_.hidden_size * sizeof(float));
+        }
+        return output;
+    }
+
+private:
+    ggml_backend_t backend_;
+    int threads_;
+    const Qwen3TalkerWeights & weights_;
+    const Qwen3TTSTalkerConfig & config_;
+    core::ConstantTensorCache constants_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator_{nullptr, ggml_gallocr_free};
+    ggml_cgraph * graph_ = nullptr;
+    ggml_tensor * input_ = nullptr;
+    ggml_tensor * output_ = nullptr;
+    static constexpr int64_t capacity_ = 32;
+};
+
+std::vector<float> text_project(
     const std::vector<float> & text_hidden,
     int64_t rows,
     const Qwen3TalkerWeights & weights,
-    const Qwen3TTSTalkerConfig & config) {
+    const Qwen3TTSTalkerConfig & config,
+    Qwen3TalkerTextProjectionGraph * projection) {
+    if (projection) return projection->run(text_hidden, rows);
     auto hidden = linear_host(text_hidden, rows, config.text_hidden_size, weights.text_projection_fc1);
     for (float & value : hidden) {
         value = silu(value);
@@ -397,7 +491,8 @@ std::vector<float> repeat_row(const std::vector<float> & row, int64_t repeats) {
 PromptEmbeddingState build_prompt_state(
     const Qwen3TalkerPrefill & prefill,
     const Qwen3TTSConfig & root_config,
-    const Qwen3TalkerWeights & weights) {
+    const Qwen3TalkerWeights & weights,
+    Qwen3TalkerTextProjectionGraph * projection) {
     const auto & config = root_config.talker;
     if (prefill.input_ids.size() < 8) {
         throw std::runtime_error("Qwen3 talker prefill input ids are too short");
@@ -410,13 +505,31 @@ PromptEmbeddingState build_prompt_state(
             static_cast<int32_t>(root_config.tts_eos_token_id),
             static_cast<int32_t>(root_config.tts_pad_token_id),
         });
-    const auto tts_special = text_project_host(tts_special_hidden, 3, weights, config);
+    const auto tts_special = text_project(tts_special_hidden, 3, weights, config, projection);
     const auto tts_bos = row_at(tts_special, 0, config.hidden_size);
     const auto tts_eos = row_at(tts_special, 1, config.hidden_size);
     const auto tts_pad = row_at(tts_special, 2, config.hidden_size);
 
     std::vector<float> custom_voice_speaker_embed;
     std::string language = ascii_lower(prefill.language);
+    static constexpr std::array<std::pair<std::string_view, std::string_view>, 10> kLanguageCodeAliases = {{
+        {"zh", "chinese"},
+        {"en", "english"},
+        {"ja", "japanese"},
+        {"ko", "korean"},
+        {"de", "german"},
+        {"fr", "french"},
+        {"ru", "russian"},
+        {"pt", "portuguese"},
+        {"es", "spanish"},
+        {"it", "italian"},
+    }};
+    for (const auto & [code, label] : kLanguageCodeAliases) {
+        if (language == code) {
+            language = label;
+            break;
+        }
+    }
     if (prefill.prompt_mode == Qwen3TalkerPromptMode::CustomVoice) {
         const std::string speaker = ascii_lower(prefill.speaker);
         const auto speaker_it = config.speaker_id.find(speaker);
@@ -463,16 +576,16 @@ PromptEmbeddingState build_prompt_state(
         if (!prefill.instruct_ids.empty()) {
             append_rows(
                 state.prompt,
-                text_project_host(
+                text_project(
                     lookup_rows(weights.text_embedding, config.text_hidden_size, prefill.instruct_ids),
                     static_cast<int64_t>(prefill.instruct_ids.size()),
                     weights,
-                    config));
+                    config, projection));
         }
         const std::vector<int32_t> role_ids(prefill.input_ids.begin(), prefill.input_ids.begin() + 3);
         append_rows(
             state.prompt,
-            text_project_host(lookup_rows(weights.text_embedding, config.text_hidden_size, role_ids), 3, weights, config));
+            text_project(lookup_rows(weights.text_embedding, config.text_hidden_size, role_ids), 3, weights, config, projection));
 
         auto codec_embed = lookup_rows(weights.codec_embedding, config.hidden_size, codec_prefix);
         if (prefill.prompt_mode == Qwen3TalkerPromptMode::CustomVoice) {
@@ -498,11 +611,11 @@ PromptEmbeddingState build_prompt_state(
         append_row(state.prompt, add_rows(tts_bos, row_at(codec_embed, codec_rows - 2, config.hidden_size)));
 
         const std::vector<int32_t> text_ids(prefill.input_ids.begin() + 3, prefill.input_ids.end() - 5);
-        auto text_embed = text_project_host(
+        auto text_embed = text_project(
             lookup_rows(weights.text_embedding, config.text_hidden_size, text_ids),
             static_cast<int64_t>(text_ids.size()),
             weights,
-            config);
+            config, projection);
         append_row(text_embed, tts_eos);
         append_rows(
             state.prompt,
@@ -521,17 +634,12 @@ PromptEmbeddingState build_prompt_state(
         return state;
     }
 
-    if (!prefill.speaker_embedding.has_value() || prefill.speaker_embedding->dims != config.hidden_size) {
-        throw std::runtime_error("Qwen3 talker voice clone prefill requires speaker embedding");
-    }
-    if (!prefill.reference_codes.has_value() || prefill.reference_ids.empty()) {
-        throw std::runtime_error("Qwen3 talker ICL prefill requires reference ids and codes");
-    }
+    validate_qwen3_talker_voice_clone_prefill(prefill, config.hidden_size);
 
     PromptEmbeddingState state;
     state.tts_pad = tts_pad;
     const std::vector<int32_t> role_ids(prefill.input_ids.begin(), prefill.input_ids.begin() + 3);
-    append_rows(state.prompt, text_project_host(lookup_rows(weights.text_embedding, config.text_hidden_size, role_ids), 3, weights, config));
+    append_rows(state.prompt, text_project(lookup_rows(weights.text_embedding, config.text_hidden_size, role_ids), 3, weights, config, projection));
 
     auto codec_embed = lookup_rows(weights.codec_embedding, config.hidden_size, codec_prefix);
     append_row(codec_embed, prefill.speaker_embedding->values);
@@ -549,14 +657,34 @@ PromptEmbeddingState build_prompt_state(
     append_row(state.prompt, add_rows(tts_bos, row_at(codec_embed, codec_rows - 2, config.hidden_size)));
 
     const std::vector<int32_t> text_ids(prefill.input_ids.begin() + 3, prefill.input_ids.end() - 5);
+    if (prefill.x_vector_only_mode) {
+        auto text_embed = text_project(
+            lookup_rows(weights.text_embedding, config.text_hidden_size, text_ids),
+            static_cast<int64_t>(text_ids.size()),
+            weights,
+            config, projection);
+        append_row(text_embed, tts_eos);
+        append_rows(
+            state.prompt,
+            add_rows(
+                text_embed,
+                lookup_rows(
+                    weights.codec_embedding,
+                    config.hidden_size,
+                    std::vector<int32_t>(text_ids.size() + 1, static_cast<int32_t>(config.codec_pad_id)))));
+        append_row(state.prompt, add_rows(tts_pad, row_at(codec_embed, codec_rows - 1, config.hidden_size)));
+        state.trailing_text = tts_pad;
+        return state;
+    }
+
     const std::vector<int32_t> ref_text_ids(prefill.reference_ids.begin() + 3, prefill.reference_ids.end() - 2);
     std::vector<int32_t> combined_text = ref_text_ids;
     combined_text.insert(combined_text.end(), text_ids.begin(), text_ids.end());
-    auto text_embed = text_project_host(
+    auto text_embed = text_project(
         lookup_rows(weights.text_embedding, config.text_hidden_size, combined_text),
         static_cast<int64_t>(combined_text.size()),
         weights,
-        config);
+        config, projection);
     append_row(text_embed, tts_eos);
 
     const auto & ref_codes = *prefill.reference_codes;
@@ -908,12 +1036,12 @@ public:
                 core::TensorShape::from_dims({1, 1, prompt_capacity_, prompt_capacity_}),
                 GGML_TYPE_F16);
         }
-        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config, config.vocab_size, weights_->perf_mode()))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode()))
                                .build(
                                    ctx,
                                    x,
                                    positions_value,
-                                   make_qwen_decoder_weights(constants, tensor_weights.layers, tensor_weights.norm, tensor_weights.codec_head),
+                                   make_qwen3_decoder_weights(constants, tensor_weights.layers, tensor_weights.norm, tensor_weights.codec_head),
                                    std::nullopt,
                                    attention_mask);
         for (const auto & layer : decoder_out.state.layers) {
@@ -925,13 +1053,31 @@ public:
         }
         hidden_output_ = decoder_out.hidden.tensor;
         logits_output_ = decoder_out.logits.tensor;
+        ggml_set_input(input_);
+        ggml_set_input(positions_);
+        ggml_set_output(positions_);
+        if (attention_mask_ != nullptr) {
+            ggml_set_input(attention_mask_);
+            ggml_set_output(attention_mask_);
+        }
+        ggml_set_output(hidden_output_);
+        if (hidden_output_->view_src != nullptr) ggml_set_output(hidden_output_->view_src);
         ggml_set_output(logits_output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, logits_output_);
+        // The CPU exports every layer's K/V after execution, not just logits.
+        for (size_t layer = 0; layer < keys_.size(); ++layer) {
+            for (auto * output : {keys_[layer], values_[layer]}) {
+                ggml_set_output(output);
+                if (output->view_src != nullptr) ggml_set_output(output->view_src);
+                ggml_build_forward_expand(graph_, output);
+            }
+        }
         constants.finish_graph();
         constants.ensure_uploaded();
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
-        if (buffer_ == nullptr) {
+        graph_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->backend())));
+        if (!graph_allocator_ || !ggml_gallocr_reserve(graph_allocator_.get(), graph_) ||
+            !ggml_gallocr_alloc_graph(graph_allocator_.get(), graph_)) {
             throw std::runtime_error("failed to allocate Qwen3 talker prefill graph");
         }
         std::vector<int32_t> positions(static_cast<size_t>(prompt_capacity_), 0);
@@ -940,16 +1086,14 @@ public:
         }
         ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
         if (attention_mask_ != nullptr) {
-            auto mask = modules::qwen_causal_prefill_mask_values(1, prompt_capacity_);
+            auto mask = modules::causal_prefill_mask_values(1, prompt_capacity_);
             ggml_backend_tensor_set(attention_mask_, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
         }
     }
 
     ~TalkerPrefillGraph() {
         engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        graph_allocator_.reset();
     }
 
     bool matches(const Qwen3TalkerWeightsRuntime & weights, int64_t prompt_capacity) const {
@@ -968,8 +1112,9 @@ public:
         }
         ggml_backend_tensor_set(input_, embeddings.data(), 0, embeddings.size() * sizeof(float));
         core::set_backend_threads(weights_->backend(), weights_->threads());
+        // compute_backend_graph is synchronous; an additional backend-wide wait
+        // before the blocking output reads only duplicates that synchronization.
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), graph_);
-        ggml_backend_synchronize(weights_->backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 talker prefill graph compute failed");
         }
@@ -1007,7 +1152,7 @@ private:
     std::vector<ggml_tensor *> keys_;
     std::vector<ggml_tensor *> values_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator_{nullptr, ggml_gallocr_free};
 };
 
 class TalkerCachedStepGraph {
@@ -1042,25 +1187,36 @@ public:
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         auto & constants = weights_->talker_constants();
         constants.begin_graph();
-        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config, config.vocab_size, weights_->perf_mode()))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode()))
                                .build_static_cache_tail(
                                    ctx,
                                    graph_,
                                    x,
                                    positions_value,
-                                   make_qwen_decoder_weights(constants, tensor_weights.layers, tensor_weights.norm, tensor_weights.codec_head),
+                                   make_qwen3_decoder_weights(constants, tensor_weights.layers, tensor_weights.norm, tensor_weights.codec_head),
                                    cache_steps_,
                                    attention_mask_value,
                                    cache_slot_value);
         step_cache_ = std::move(decoder_out.cache);
         hidden_output_ = decoder_out.hidden.tensor;
         logits_output_ = decoder_out.logits.tensor;
+        for (auto * input : {input_, positions_, cache_slot_, attention_mask_}) ggml_set_input(input);
+        ggml_set_output(hidden_output_);
+        if (hidden_output_->view_src != nullptr) ggml_set_output(hidden_output_->view_src);
+        // Persistent state must not be recycled between autoregressive steps.
+        for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
+            for (const auto & state : {step_cache_.key_tensor(layer), step_cache_.value_tensor(layer)}) {
+                ggml_set_input(state.tensor);
+                ggml_set_output(state.tensor);
+            }
+        }
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);
         constants.finish_graph();
         constants.ensure_uploaded();
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
-        if (buffer_ == nullptr) {
+        graph_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->backend())));
+        if (!graph_allocator_ || !ggml_gallocr_reserve(graph_allocator_.get(), graph_) ||
+            !ggml_gallocr_alloc_graph(graph_allocator_.get(), graph_)) {
             throw std::runtime_error("failed to allocate Qwen3 talker cached step graph");
         }
         attention_mask_buffer_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-INFINITY));
@@ -1068,9 +1224,7 @@ public:
 
     ~TalkerCachedStepGraph() {
         engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        graph_allocator_.reset();
     }
 
     bool can_run(const Qwen3TalkerWeightsRuntime & weights, int64_t required_capacity) const {
@@ -1120,7 +1274,6 @@ public:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), graph_);
-        ggml_backend_synchronize(weights_->backend());
         last_timing_.graph_compute_ms = engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 talker cached step graph compute failed");
@@ -1155,7 +1308,7 @@ private:
     std::vector<ggml_fp16_t> attention_mask_buffer_;
     runtime::TransformerKVCache step_cache_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator_{nullptr, ggml_gallocr_free};
     CachedStepTiming last_timing_;
 };
 
@@ -1356,7 +1509,7 @@ public:
         int32_t prefill_positions[2] = {0, 1};
         ggml_backend_tensor_set(prefill_positions_, prefill_positions, 0, sizeof(prefill_positions));
         if (prefill_attention_mask_ != nullptr) {
-            auto mask = modules::qwen_causal_prefill_mask_values(1, 2);
+            auto mask = modules::causal_prefill_mask_values(1, 2);
             ggml_backend_tensor_set(prefill_attention_mask_, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
         }
     }
@@ -1468,12 +1621,12 @@ private:
                 core::TensorShape::from_dims({1, 1, 2, 2}),
                 GGML_TYPE_F16);
         }
-        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config, config.vocab_size, weights_->perf_mode()))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode()))
                                .build(
                                    ctx,
                                    x,
                                    positions_value,
-                                   make_qwen_decoder_weights(
+                                   make_qwen3_decoder_weights(
                                        constants,
                                        tensor_weights.code_predictor.layers,
                                        tensor_weights.code_predictor.norm,
@@ -1517,16 +1670,16 @@ private:
             GGML_TYPE_F16);
         step.graph = ggml_new_graph_custom(ctx_.get(), 32768, false);
         const auto & step_head = tensor_weights.code_predictor.lm_heads.at(static_cast<size_t>(group));
-        const auto decoder_config = make_qwen_decoder_config(config, config.vocab_size, weights_->perf_mode());
-        const modules::QwenDecoderLayerModule layer_module(
-            modules::qwen_decoder_layer_config_from_stack(decoder_config.stack));
+        const auto decoder_config = make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode());
+        const modules::DecoderLayerModule layer_module(
+            modules::decoder_layer_config_from_stack(decoder_config.stack));
         for (size_t layer_index = 0; layer_index < tensor_weights.code_predictor.layers.size(); ++layer_index) {
             auto layer_out = layer_module.build_with_static_cache_tail(
                 ctx,
                 step.graph,
                 x,
                 position_value,
-                make_qwen_decoder_layer_weights(constants, tensor_weights.code_predictor.layers[layer_index]),
+                make_qwen3_decoder_layer_weights(constants, tensor_weights.code_predictor.layers[layer_index]),
                 cache_keys_[layer_index],
                 cache_values_[layer_index],
                 cache_slot_value,
@@ -1555,7 +1708,6 @@ private:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), prefill_graph_);
-        ggml_backend_synchronize(weights_->backend());
         timing_.graph_compute_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 code predictor prefill graph compute failed");
@@ -1597,7 +1749,6 @@ private:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), step_graph.graph);
-        ggml_backend_synchronize(weights_->backend());
         timing_.graph_compute_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 code predictor step graph compute failed");
@@ -1656,7 +1807,8 @@ public:
     Qwen3TalkerCodes generate(
         const Qwen3TalkerPrefill & request,
         const Qwen3TTSGenerationOptions & options,
-        float repetition_penalty) {
+        float repetition_penalty,
+        const std::function<void(const std::vector<int32_t> &)> & on_frame) {
         const auto total_start = Clock::now();
         const int64_t max_new_tokens = options.max_new_tokens;
         if (max_new_tokens <= 0 || max_new_tokens > generation_capacity_) {
@@ -1667,7 +1819,12 @@ public:
         if (!cached_prompt_state_.has_value() ||
             !cached_prompt_prefill_.has_value() ||
             !talker_prefill_equal(*cached_prompt_prefill_, request)) {
-            cached_prompt_state_ = build_prompt_state(request, weights_->assets().config, weights_->weights());
+            if (on_frame && !text_projection_) {
+                text_projection_ = std::make_unique<Qwen3TalkerTextProjectionGraph>(
+                    weights_->backend(), weights_->threads(), weights_->weights(), weights_->assets().config.talker);
+            }
+            cached_prompt_state_ = build_prompt_state(
+                request, weights_->assets().config, weights_->weights(), on_frame ? text_projection_.get() : nullptr);
             cached_prompt_prefill_ = request;
             cached_prefill_output_.reset();
         }
@@ -1779,6 +1936,10 @@ public:
             out.generated_codes.codes.insert(out.generated_codes.codes.end(), frame.codes.begin(), frame.codes.end());
             ++out.generated_codes.frames;
 
+            if (on_frame) {
+                on_frame(frame.codes);
+            }
+
             const auto frame_embed_start = Clock::now();
             const auto text_hidden = step < trailing_rows
                 ? row_at(state.trailing_text, step, config.hidden_size)
@@ -1862,6 +2023,7 @@ private:
     std::unique_ptr<CodePredictorGraph> code_predictor_graph_;
     std::optional<Qwen3TalkerPrefill> cached_prompt_prefill_;
     std::optional<PromptEmbeddingState> cached_prompt_state_;
+    std::unique_ptr<Qwen3TalkerTextProjectionGraph> text_projection_;
     std::optional<TalkerPrefillGraph::OutputWithCache> cached_prefill_output_;
 };
 
@@ -1876,8 +2038,9 @@ Qwen3TalkerStepRuntime::~Qwen3TalkerStepRuntime() = default;
 Qwen3TalkerCodes Qwen3TalkerStepRuntime::generate(
     const Qwen3TalkerPrefill & prefill,
     const Qwen3TTSGenerationOptions & options,
-    float repetition_penalty) {
-    return impl_->generate(prefill, options, repetition_penalty);
+    float repetition_penalty,
+    const std::function<void(const std::vector<int32_t> &)> & on_frame) {
+    return impl_->generate(prefill, options, repetition_penalty, on_frame);
 }
 
 int64_t Qwen3TalkerStepRuntime::release_cached_step_graph() {

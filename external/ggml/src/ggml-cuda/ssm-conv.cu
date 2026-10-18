@@ -1,6 +1,50 @@
 #include "ssm-conv.cuh"
 #include "unary.cuh"
 
+// Token-major projections allow coalesced channel loads without materializing
+// the transposed causal pad. Each block keeps its four-sample window in registers.
+static __global__ void ssm_conv_causal_f32(
+        const float * __restrict__ x, const float * __restrict__ w,
+        const float * __restrict__ bias, float * __restrict__ y,
+        int64_t tokens, int64_t channels, int64_t stride_t, int64_t stride_s) {
+    const int64_t channel = blockIdx.y * blockDim.x + threadIdx.x;
+    const int64_t first = blockIdx.z * 32;
+    const int64_t sequence = blockIdx.x;
+    float window[4] = {};
+    float weights[4];
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+        weights[j] = w[channel * 4 + j];
+        const int64_t t = first + j - 3;
+        if (j < 3 && t >= 0) {
+            window[j] = x[sequence * stride_s + t * stride_t + channel];
+        }
+    }
+    for (int64_t t = first; t < tokens && t < first + 32; ++t) {
+        window[3] = x[sequence * stride_s + t * stride_t + channel];
+        float sum = 0.0f;
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+            sum += window[j] * weights[j];
+        }
+        y[(sequence * tokens + t) * channels + channel] = ggml_cuda_op_silu_single(sum + bias[channel]);
+#pragma unroll
+        for (int j = 0; j < 3; ++j) {
+            window[j] = window[j + 1];
+        }
+    }
+}
+
+void ggml_cuda_op_ssm_conv_causal(ggml_backend_cuda_context & ctx, ggml_tensor * conv, ggml_tensor * bias, ggml_tensor * dst) {
+    const auto * x = conv->src[0]->src[0];
+    const auto * w = conv->src[1];
+    const dim3 blocks(x->ne[2], x->ne[1] / 128, (x->ne[0] + 31) / 32);
+    ssm_conv_causal_f32<<<blocks, 128, 0, ctx.stream()>>>(
+        static_cast<const float *>(x->data), static_cast<const float *>(w->data),
+        static_cast<const float *>(bias->data), static_cast<float *>(dst->data),
+        x->ne[0], x->ne[1], x->nb[0] / sizeof(float), x->nb[2] / sizeof(float));
+}
+
 template <bool apply_silu, size_t split_d_inner, size_t d_conv>
 static __global__ void ssm_conv_f32(const float * __restrict__ src0, const float * __restrict__ src1,
                                     const float * __restrict__ bias,

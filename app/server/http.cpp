@@ -1,5 +1,6 @@
 #include "http.h"
 
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
@@ -65,12 +66,18 @@ const char * status_text(int status) noexcept {
     switch (status) {
     case 200:
         return "OK";
+    case 204:
+        return "No Content";
     case 400:
         return "Bad Request";
+    case 403:
+        return "Forbidden";
     case 404:
         return "Not Found";
     case 405:
         return "Method Not Allowed";
+    case 413:
+        return "Payload Too Large";
     case 500:
         return "Internal Server Error";
     case 503:
@@ -172,10 +179,11 @@ void set_send_timeout(SocketHandle socket, int timeout_ms) {
 #endif
 }
 
-// The one endpoint that consumes its body incrementally. Gating on the path as
+// The endpoints that consume their body incrementally. Gating on the path as
 // well as the encoding keeps every other endpoint's request handling bit-for-bit
 // unchanged, instead of silently altering how any chunked request is read.
-constexpr std::string_view kLiveIngestPath = "/v1/audio/transcriptions/live";
+constexpr std::string_view kLiveTranscriptionPath = "/v1/audio/transcriptions/live";
+constexpr std::string_view kLiveSpeechPath = "/v1/audio/speech/live";
 
 // True only when the header names exactly one transfer-coding and that coding is
 // "chunked". A substring test would accept "notchunked" as well as chains like
@@ -203,7 +211,7 @@ bool is_chunked_only(std::string_view value) {
 }
 
 bool wants_incremental_body(const HttpRequest & request) {
-    if (request.path != kLiveIngestPath) {
+    if (request.path != kLiveTranscriptionPath && request.path != kLiveSpeechPath) {
         return false;
     }
     const auto it = request.headers.find("transfer-encoding");
@@ -590,8 +598,49 @@ HttpRequest read_http_request(
         request.headers[name] = value;
     }
 
+    const auto transfer_encoding_it = request.headers.find("transfer-encoding");
+    const bool chunked_body =
+        transfer_encoding_it != request.headers.end() &&
+        is_chunked_only(transfer_encoding_it->second);
+    if (engine::debug::log_enabled()) {
+        const auto content_length_it = request.headers.find("content-length");
+        engine::debug::log_message(
+            "[SERVER_HTTP_DEBUG] http.headers method=" + request.method +
+            " path=" + request.path +
+            " content_length=" +
+            (content_length_it == request.headers.end() ? std::string("<none>") : content_length_it->second) +
+            " transfer_encoding=" +
+            (transfer_encoding_it == request.headers.end() ? std::string("<none>") : transfer_encoding_it->second) +
+            " incremental=" + (wants_incremental_body(request) ? "true" : "false") +
+            " prefetched_body_bytes=" + std::to_string(data.size() - header_end - 4));
+    }
+
     if (wants_incremental_body(request)) {
         leftover = data.substr(header_end + 4);
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message(
+                "[SERVER_HTTP_DEBUG] http.body_deferred path=" + request.path +
+                " leftover_bytes=" + std::to_string(leftover.size()));
+        }
+        return request;
+    }
+
+    if (chunked_body) {
+        LiveIngestLimits limits;
+        limits.max_body_bytes = static_cast<size_t>(std::min<uint64_t>(
+            max_request_body_bytes,
+            static_cast<uint64_t>(std::numeric_limits<size_t>::max())));
+        ChunkedSocketStreambuf body_buffer(
+            socket,
+            data.substr(header_end + 4),
+            limits);
+        std::istream body_stream(&body_buffer);
+        body_stream.exceptions(std::ios::badbit);
+        std::array<char, 8192> chunk_buffer{};
+        while (body_stream) {
+            body_stream.read(chunk_buffer.data(), static_cast<std::streamsize>(chunk_buffer.size()));
+            request.body.append(chunk_buffer.data(), static_cast<size_t>(body_stream.gcount()));
+        }
         return request;
     }
 
@@ -633,6 +682,11 @@ HttpRequest read_http_request(
     }
     if (request.body.size() > content_length) {
         request.body.resize(content_length);
+    }
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[SERVER_HTTP_DEBUG] http.body_ready path=" + request.path +
+            " body_bytes=" + std::to_string(request.body.size()));
     }
     return request;
 }
@@ -768,6 +822,9 @@ void handle_client(SocketHandle client, IHttpHandler & handler, uint64_t max_req
             send_all(socket.get(), serialize_response(response));
         }
     } catch (const std::exception & ex) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message(std::string("[SERVER_HTTP_DEBUG] http.error ") + ex.what());
+        }
         try {
             send_all(socket.get(), serialize_response(error_response(500, ex.what(), "server_error")));
         } catch (const std::exception & send_error) {
@@ -806,7 +863,7 @@ bool wait_for_client(SocketHandle socket, int timeout_ms) {
 }  // namespace
 
 HttpResponse json_response(std::string body, int status) {
-    return HttpResponse{status, "application/json", std::move(body), {}};
+    return HttpResponse{status, "application/json", std::move(body), {}, {}};
 }
 
 HttpResponse error_response(int status, const std::string & message, const std::string & type) {

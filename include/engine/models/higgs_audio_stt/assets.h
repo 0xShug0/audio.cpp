@@ -14,7 +14,7 @@ class TensorSource;
 
 namespace engine::models::higgs_audio_stt {
 
-struct HiggsAudioSTTAudioEncoderConfig {
+struct HiggsAudioSTTWhisperEncoderConfig {
     int64_t num_mel_bins = 128;
     int64_t encoder_layers = 0;
     int64_t encoder_attention_heads = 0;
@@ -24,7 +24,7 @@ struct HiggsAudioSTTAudioEncoderConfig {
     std::string activation_function = "gelu";
 };
 
-struct HiggsAudioSTTTextDecoderConfig {
+struct HiggsAudioSTTQwen3DecoderConfig {
     int64_t vocab_size = 0;
     int64_t output_size = 0;
     int64_t hidden_size = 0;
@@ -62,8 +62,8 @@ struct HiggsAudioSTTConfig {
     int64_t max_new_tokens = 1024;
     int64_t projector_temporal_downsample = 1;
     HiggsAudioSTTFrontendConfig frontend;
-    HiggsAudioSTTAudioEncoderConfig audio_encoder;
-    HiggsAudioSTTTextDecoderConfig text_decoder;
+    HiggsAudioSTTWhisperEncoderConfig audio_encoder;
+    HiggsAudioSTTQwen3DecoderConfig text_decoder;
     std::vector<std::string> supported_languages;
 };
 

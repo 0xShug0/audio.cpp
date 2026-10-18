@@ -60,10 +60,10 @@ private:
       assets::TensorStorageType::Native;
   FunAsrNanoTextTokenizer tokenizer_;
   FunAsrNanoFrontend frontend_;
-  FunAsrNanoEncoderRuntime encoder_;
+  FunAsrNanoSenseVoiceEncoderRuntime encoder_;
   FunAsrNanoAdaptorRuntime adaptor_;
   FunAsrNanoPromptBuilder prompt_builder_;
-  FunAsrNanoDecoderRuntime decoder_;
+  FunAsrNanoQwen3DecoderRuntime decoder_;
 };
 
 } // namespace engine::models::fun_asr_nano

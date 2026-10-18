@@ -28,6 +28,79 @@
       "word_timestamps"
     ]
   },
+  "options": {
+    "request": [
+      {
+        "name": "clamp_timestamps_to_audio",
+        "type": "bool",
+        "description": "Opt-in guard for word timestamp output: keep repaired word spans inside the local audio input. Defaults to false to preserve existing timestamp repair behavior.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared thinker matmul storage; does not override audio encoder storage.",
+        "required": false,
+        "preset": "weight_type_full",
+        "default": "native"
+      },
+      {
+        "name": "audio_encoder_weight_type",
+        "type": "enum",
+        "description": "Audio encoder matmul storage.",
+        "required": false,
+        "values": [
+          "native",
+          "f32",
+          "f16"
+        ],
+        "default": "native"
+      },
+      {
+        "name": "thinker_weight_type",
+        "type": "enum",
+        "description": "Thinker matmul storage; inherits weight_type when omitted.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "audio_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Audio encoder graph metadata arena. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "thinker_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Thinker prefill graph metadata arena. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "thinker_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Thinker cached-step graph metadata arena. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "thinker_weight_context_mb",
+        "type": "int",
+        "description": "Thinker weight metadata context. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      }
+    ],
+    "load": []
+  },
   "runtime": {
     "tags": [
       "gguf"
@@ -40,7 +113,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/models/qwen3.md",
+      "docs/models/qwen3_forced_aligner.md",
       "docs/gguf.md"
     ]
   },

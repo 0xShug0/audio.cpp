@@ -2,6 +2,7 @@
 #include "tensor_layout_utils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace engine::modules {
@@ -11,6 +12,13 @@ namespace {
 const core::ModulePortSpec kBinaryInputs[] = {
     {"lhs", core::PortKind::Activation, false},
     {"rhs", core::PortKind::Activation, false},
+};
+
+const core::ModulePortSpec kRopeInterleavedPairsInputs[] = {
+    {"even", core::PortKind::Activation, false},
+    {"odd", core::PortKind::Activation, false},
+    {"cos", core::PortKind::Activation, false},
+    {"sin", core::PortKind::Activation, false},
 };
 
 const core::ModulePortSpec kSingleInput[] = {
@@ -65,6 +73,16 @@ const core::ModuleSchema kMulSchema = {
 const core::ModulePortSpec kTimeMask4dInputs[] = {
     {"input", core::PortKind::Activation, false},
     {"mask", core::PortKind::Activation, false},
+};
+
+const core::ModuleSchema kRopeInterleavedPairsSchema = {
+    "RopeInterleavedPairs",
+    "tensor.position",
+    kRopeInterleavedPairsInputs,
+    4,
+    kSingleOutput,
+    1,
+    "Applies rotary position embedding to split even/odd pairs and returns interleaved pairs.",
 };
 
 const core::ModuleSchema kTimeMask4dSchema = {
@@ -283,6 +301,38 @@ const core::ModuleSchema & MulModule::static_schema() noexcept {
     return kMulSchema;
 }
 
+const core::ModuleSchema & RopeInterleavedPairsModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue RopeInterleavedPairsModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & even,
+    const core::TensorValue & odd,
+    const core::TensorValue & cos,
+    const core::TensorValue & sin) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    validate_same_shape(even, odd, "RopeInterleavedPairs");
+    validate_same_shape(even, cos, "RopeInterleavedPairs");
+    validate_same_shape(even, sin, "RopeInterleavedPairs");
+    if (even.type != odd.type || cos.type != GGML_TYPE_F32 || sin.type != GGML_TYPE_F32) {
+        throw std::runtime_error("RopeInterleavedPairs expects matching even/odd type and F32 cos/sin");
+    }
+
+    core::TensorShape output_shape = even.shape;
+    output_shape.dims[output_shape.rank - 1] = 2;
+    return core::wrap_tensor(
+        ggml_rope_interleaved_pairs(ctx.ggml, even.tensor, odd.tensor, cos.tensor, sin.tensor),
+        output_shape,
+        even.type);
+}
+
+const core::ModuleSchema & RopeInterleavedPairsModule::static_schema() noexcept {
+    return kRopeInterleavedPairsSchema;
+}
+
 const core::ModuleSchema & TimeMask4dModule::schema() const noexcept {
     return static_schema();
 }
@@ -398,6 +448,60 @@ core::TensorValue ReduceSumModule::build(core::ModuleBuildContext & ctx, const c
 
 const core::ModuleSchema & ReduceSumModule::static_schema() noexcept {
     return kReduceSumSchema;
+}
+
+ScaleBiasModule::ScaleBiasModule(ScaleBiasConfig config) : config_(config) {}
+
+const core::ModuleSchema & ScaleBiasModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue ScaleBiasModule::build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const {
+    core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");
+    auto * output = ggml_scale_bias(ctx.ggml, input.tensor, config_.scale, config_.bias);
+    return core::wrap_tensor(output, input.shape, output->type);
+}
+
+const core::ModuleSchema & ScaleBiasModule::static_schema() noexcept {
+    static const core::ModuleSchema schema{"ScaleBias", "tensor.primitive", kSingleInput, 1, kSingleOutput, 1,
+        "Applies a scalar scale and bias to every element."};
+    return schema;
+}
+
+WeightedStatisticsModule::WeightedStatisticsModule(WeightedStatisticsConfig config) : config_(config) {
+    if (!std::isfinite(config_.variance_min) || config_.variance_min < 0 ||
+        std::isnan(config_.variance_max) || config_.variance_max < config_.variance_min) {
+        throw std::runtime_error("WeightedStatistics variance bounds must be nonnegative and ordered");
+    }
+}
+
+const core::ModuleSchema & WeightedStatisticsModule::schema() const noexcept {
+    return static_schema();
+}
+
+WeightedStatisticsOutputs WeightedStatisticsModule::build(core::ModuleBuildContext & ctx,
+    const core::TensorValue & input, const core::TensorValue & normalized_weights) const {
+    core::validate_shape(normalized_weights, input.shape, "normalized_weights");
+    const auto mean = ReduceSumModule({config_.axis}).build(ctx, MulModule().build(ctx, normalized_weights, input));
+    auto second = MulModule().build(ctx, input, input);
+    second = ReduceSumModule({config_.axis}).build(ctx, MulModule().build(ctx, normalized_weights, second));
+    auto * variance = ggml_sub(ctx.ggml, second.tensor, ggml_sqr(ctx.ggml, mean.tensor));
+    variance = ggml_clamp(ctx.ggml, variance, config_.variance_min, config_.variance_max);
+    return {mean, core::wrap_tensor(ggml_sqrt(ctx.ggml, variance), mean.shape, GGML_TYPE_F32)};
+}
+
+const core::ModuleSchema & WeightedStatisticsModule::static_schema() noexcept {
+    static const core::ModulePortSpec inputs[] = {
+        {"input", core::PortKind::Activation, false},
+        {"normalized_weights", core::PortKind::Activation, false},
+    };
+    static const core::ModulePortSpec outputs[] = {
+        {"mean", core::PortKind::Activation, false},
+        {"stddev", core::PortKind::Activation, false},
+    };
+    static const core::ModuleSchema schema{"WeightedStatistics", "tensor.pooling", inputs, 2, outputs, 2,
+        "Reduces normalized weights into a mean and clamped standard deviation, retaining the reduced axis."};
+    return schema;
 }
 
 }  // namespace engine::modules

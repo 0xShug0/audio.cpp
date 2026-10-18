@@ -1,5 +1,6 @@
 #include "engine/framework/sampling/torch_random.h"
 
+#include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/dynamic_library.h"
 #ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
@@ -8,7 +9,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -299,6 +302,48 @@ void log_default_policy(std::string_view category, std::string_view reason) {
             + "(multiprocessor_count=1, max_threads_per_multiprocessor=256): " + std::string(reason));
 }
 
+// ENGINE_TORCH_SAMPLING_POLICY pins the TensorIterator RNG layout instead of
+// probing the CUDA device, making the noise realization identical across
+// backends (CUDA/HIP/CPU) and machines. Accepted values: "default" (1x256)
+// or "<multiprocessor_count>x<max_threads_per_multiprocessor>" (e.g.
+// "68x1024"). Unset keeps the legacy behavior (device probe on CUDA, default
+// layout elsewhere). The pinned layout never uses the CUDA fast path so every
+// backend computes the same Philox element mapping on the host.
+std::optional<TorchCudaSamplingPolicy> pinned_policy_from_env(std::string_view log_category) {
+    const char * value = std::getenv("ENGINE_TORCH_SAMPLING_POLICY");
+    if (value == nullptr || *value == '\0') {
+        return std::nullopt;
+    }
+    TorchCudaSamplingPolicy policy;
+    std::string text(value);
+    if (text != "default") {
+        const auto cross = text.find('x');
+        if (cross == std::string::npos) {
+            throw std::runtime_error(
+                "ENGINE_TORCH_SAMPLING_POLICY must be \"default\" or \"<sm>x<threads>\", got: " + text);
+        }
+        try {
+            policy.multiprocessor_count = std::stoll(text.substr(0, cross));
+            policy.max_threads_per_multiprocessor = std::stoll(text.substr(cross + 1));
+        } catch (const std::exception &) {
+            throw std::runtime_error(
+                "ENGINE_TORCH_SAMPLING_POLICY must be \"default\" or \"<sm>x<threads>\", got: " + text);
+        }
+        if (policy.multiprocessor_count <= 0 || policy.max_threads_per_multiprocessor <= 0) {
+            throw std::runtime_error("ENGINE_TORCH_SAMPLING_POLICY values must be positive: " + text);
+        }
+    }
+    policy.cuda_fast_path = false;
+    engine::debug::log_message(
+        engine::debug::LogLevel::Warning,
+        log_category,
+        "using pinned Torch RNG layout policy from ENGINE_TORCH_SAMPLING_POLICY "
+        "(multiprocessor_count=" + std::to_string(policy.multiprocessor_count)
+        + ", max_threads_per_multiprocessor=" + std::to_string(policy.max_threads_per_multiprocessor)
+        + ")");
+    return policy;
+}
+
 }  // namespace
 
 TorchCudaSamplingPolicy resolve_torch_cuda_sampling_policy(
@@ -307,6 +352,9 @@ TorchCudaSamplingPolicy resolve_torch_cuda_sampling_policy(
     std::string_view log_category,
     std::string_view model_name,
     TorchCudaSamplingPolicyFailureMode failure_mode) {
+    if (const auto pinned = pinned_policy_from_env(log_category)) {
+        return *pinned;
+    }
     TorchCudaSamplingPolicy policy;
     if (backend_type != engine::core::BackendType::Cuda) {
         log_default_policy(log_category, "backend is not CUDA");
@@ -390,11 +438,146 @@ uint64_t torch_cuda_tensor_iterator_offset_blocks(
     return ((total_elements - 1) / (stride * unroll_factor) + 1);
 }
 
+bool torch_cuda_sample_topk_exponential_pairs_available() {
+#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
+    return true;
+#else
+    return false;
+#endif
+}
+
+void torch_cuda_sample_topk_exponential_pairs(
+    const void * device_logits_f32,
+    int64_t songs,
+    int64_t vocab,
+    float guidance_scale,
+    int64_t top_k,
+    const uint64_t * seeds,
+    const uint64_t * offset_blocks,
+    uint64_t offset_step_blocks,
+    const TorchCudaSamplingPolicy & policy,
+    int32_t * out_codes) {
+#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
+    detail::sample_topk_exponential_pairs_cuda(
+        device_logits_f32, songs, vocab, guidance_scale, top_k,
+        seeds, offset_blocks, offset_step_blocks, policy, out_codes);
+#else
+    (void) device_logits_f32;
+    (void) songs;
+    (void) vocab;
+    (void) guidance_scale;
+    (void) top_k;
+    (void) seeds;
+    (void) offset_blocks;
+    (void) policy;
+    (void) out_codes;
+    throw std::runtime_error("torch CUDA top-k exponential sampler is unavailable in this build");
+#endif
+}
+
+#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
+#define ENGINE_TORCH_RANDOM_CUDA_ONLY(...) __VA_ARGS__
+#else
+#define ENGINE_TORCH_RANDOM_CUDA_ONLY(...) \
+    throw std::runtime_error("torch CUDA depth frame runtime is unavailable in this build")
+#endif
+
+void * torch_cuda_backend_stream(void * ggml_backend) {
+#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
+    return core::backend_cuda_stream(static_cast<ggml_backend_t>(ggml_backend));
+#else
+    (void) ggml_backend;
+    return nullptr;
+#endif
+}
+
+void torch_cuda_depth_frame_ensure(int64_t songs, int64_t levels, int64_t hidden_size, const TorchCudaSamplingPolicy & policy) {
+    (void) songs; (void) levels; (void) hidden_size; (void) policy;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_ensure_cuda(songs, levels, hidden_size, policy));
+}
+
+void torch_cuda_depth_frame_begin(const uint64_t * seeds, const uint64_t * offset_blocks, int64_t songs, void * stream) {
+    (void) seeds; (void) offset_blocks; (void) songs; (void) stream;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_begin_cuda(seeds, offset_blocks, songs, stream));
+}
+
+void torch_cuda_depth_frame_sample(
+    const void * device_logits_f32,
+    int64_t level_index,
+    int64_t songs,
+    int64_t vocab,
+    float guidance_scale,
+    int64_t top_k,
+    const TorchCudaSamplingPolicy & policy,
+    void * stream) {
+    (void) device_logits_f32; (void) level_index; (void) songs; (void) vocab;
+    (void) guidance_scale; (void) top_k; (void) policy; (void) stream;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_sample_cuda(
+        device_logits_f32, level_index, songs, vocab, guidance_scale, top_k, policy, stream));
+}
+
+void torch_cuda_depth_frame_residual_fill(
+    void * residual_ids_i32,
+    int64_t previous_levels,
+    int64_t songs,
+    int64_t audio_vocab,
+    void * stream) {
+    (void) residual_ids_i32; (void) previous_levels; (void) songs; (void) audio_vocab; (void) stream;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_residual_fill_cuda(
+        residual_ids_i32, previous_levels, songs, audio_vocab, stream));
+}
+
+void torch_cuda_depth_frame_accumulate_hidden(
+    const void * hidden_f32,
+    int64_t level_index,
+    int64_t songs,
+    int64_t hidden_size,
+    void * stream) {
+    (void) hidden_f32; (void) level_index; (void) songs; (void) hidden_size; (void) stream;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_accumulate_hidden_cuda(
+        hidden_f32, level_index, songs, hidden_size, stream));
+}
+
+void torch_cuda_depth_frame_end(
+    int32_t * host_codes,
+    float * host_hidden,
+    int64_t levels,
+    int64_t songs,
+    int64_t hidden_size,
+    void * stream) {
+    (void) host_codes; (void) host_hidden; (void) levels; (void) songs; (void) hidden_size; (void) stream;
+    ENGINE_TORCH_RANDOM_CUDA_ONLY(detail::depth_frame_end_cuda(
+        host_codes, host_hidden, levels, songs, hidden_size, stream));
+}
+
 float torch_cuda_tensor_iterator_exponential_element(
     uint64_t seed,
     uint64_t total_elements,
     uint64_t element_index,
     uint64_t call_index,
+    int64_t multiprocessor_count,
+    int64_t max_threads_per_multiprocessor) {
+    const uint64_t offset_blocks =
+        call_index * torch_cuda_tensor_iterator_offset_blocks(total_elements, TorchCudaSamplingPolicy{
+            multiprocessor_count,
+            max_threads_per_multiprocessor,
+            false,
+            0,
+        });
+    return torch_cuda_tensor_iterator_exponential_element_at_offset(
+        seed,
+        total_elements,
+        element_index,
+        offset_blocks,
+        multiprocessor_count,
+        max_threads_per_multiprocessor);
+}
+
+float torch_cuda_tensor_iterator_exponential_element_at_offset(
+    uint64_t seed,
+    uint64_t total_elements,
+    uint64_t element_index,
+    uint64_t offset_blocks,
     int64_t multiprocessor_count,
     int64_t max_threads_per_multiprocessor) {
     if (total_elements == 0 || element_index >= total_elements) {
@@ -418,8 +601,9 @@ float torch_cuda_tensor_iterator_exponential_element(
     const int component = static_cast<int>(chunk % unroll_factor);
     const uint64_t loop_index = chunk / unroll_factor;
     const uint64_t sequence = element_index % stride;
-    const uint64_t offset_blocks = call_index * (counter_offset / unroll_factor) + loop_index;
-    const float uniform = torch_cuda_uniform_tensor_iterator_element(seed, sequence, offset_blocks, component);
+    (void)counter_offset;
+    const float uniform =
+        torch_cuda_uniform_tensor_iterator_element(seed, sequence, offset_blocks + loop_index, component);
     return -std::log(uniform);
 }
 

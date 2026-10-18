@@ -26,7 +26,7 @@ struct NemotronSubsamplingWeights {
     engine::modules::LinearWeights linear;
 };
 
-struct NemotronEncoderLayerWeights {
+struct NemotronFastConformerEncoderLayerWeights {
     engine::modules::NormWeights norm_feed_forward1;
     engine::modules::NormWeights norm_self_att;
     engine::modules::NormWeights norm_conv;
@@ -43,15 +43,15 @@ struct NemotronEncoderLayerWeights {
     engine::modules::LinearWeights conv_pointwise2;
 };
 
-struct NemotronEncoderWeights {
+struct NemotronFastConformerEncoderWeights {
     NemotronSubsamplingWeights subsampling;
-    std::vector<NemotronEncoderLayerWeights> layers;
+    std::vector<NemotronFastConformerEncoderLayerWeights> layers;
     engine::modules::LinearWeights prompt_linear1;
     engine::modules::LinearWeights prompt_linear2;
     engine::modules::LinearWeights encoder_projector;
 };
 
-struct NemotronDecoderWeights {
+struct NemotronRnntDecoderWeights {
     engine::core::TensorValue embedding;
     std::vector<engine::modules::LSTMCellWeights> lstm_layers;
     engine::modules::LinearWeights decoder_projector;
@@ -60,8 +60,8 @@ struct NemotronDecoderWeights {
 
 struct NemotronWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
-    NemotronEncoderWeights encoder;
-    NemotronDecoderWeights decoder;
+    NemotronFastConformerEncoderWeights encoder;
+    NemotronRnntDecoderWeights decoder;
 };
 
 std::shared_ptr<const NemotronWeights> load_nemotron_asr_weights(

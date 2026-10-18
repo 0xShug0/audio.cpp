@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/sampling/torch_random.h"
 
@@ -12,7 +13,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -87,6 +90,10 @@ void validate_config(const HiftVocoderConfig & config) {
             throw std::runtime_error("HiFT upsample rate must be positive");
         }
     }
+}
+
+int64_t causal_conv1d_padding(int64_t kernel, int64_t dilation) {
+    return ((kernel * dilation - dilation) / 2) * 2 + (kernel + 1) % 2;
 }
 
 Conv1dWeights load_conv1d(
@@ -228,7 +235,8 @@ ResBlockWeights load_resblock(
     int64_t channels,
     int64_t kernel,
     const std::vector<int64_t> & dilations,
-    assets::TensorStorageType storage_type) {
+    assets::TensorStorageType storage_type,
+    bool causal = false) {
     ResBlockWeights block;
     block.convs1.reserve(dilations.size());
     block.convs2.reserve(dilations.size());
@@ -236,7 +244,7 @@ ResBlockWeights load_resblock(
     block.activations2.reserve(dilations.size());
     for (size_t index = 0; index < dilations.size(); ++index) {
         const int64_t dilation = dilations[index];
-        block.convs1.push_back(load_conv1d(
+        auto conv1 = load_conv1d(
             store,
             source,
             config,
@@ -245,12 +253,16 @@ ResBlockWeights load_resblock(
             channels,
             kernel,
             1,
-            (kernel * dilation - dilation) / 2,
+            causal ? 0 : (kernel * dilation - dilation) / 2,
             dilation,
             true,
             storage_type,
-            config.weight_layout == HiftVocoderWeightLayout::TorchParametrizedWeightNorm));
-        block.convs2.push_back(load_conv1d(
+            config.weight_layout == HiftVocoderWeightLayout::TorchParametrizedWeightNorm);
+        if (causal) {
+            conv1.pad_left = causal_conv1d_padding(kernel, dilation);
+        }
+        block.convs1.push_back(std::move(conv1));
+        auto conv2 = load_conv1d(
             store,
             source,
             config,
@@ -259,11 +271,15 @@ ResBlockWeights load_resblock(
             channels,
             kernel,
             1,
-            (kernel - 1) / 2,
+            causal ? 0 : (kernel - 1) / 2,
             1,
             true,
             storage_type,
-            config.weight_layout == HiftVocoderWeightLayout::TorchParametrizedWeightNorm));
+            config.weight_layout == HiftVocoderWeightLayout::TorchParametrizedWeightNorm);
+        if (causal) {
+            conv2.pad_left = causal_conv1d_padding(kernel, 1);
+        }
+        block.convs2.push_back(std::move(conv2));
         block.activations1.push_back(load_snake(
             store,
             source,
@@ -330,6 +346,8 @@ ggml_tensor * conv1d(
         conv.kernel == 1 &&
         conv.stride == 1 &&
         conv.padding == 0 &&
+        conv.pad_left == 0 &&
+        conv.pad_right == 0 &&
         conv.dilation == 1) {
         ggml_tensor * weight = weight_2d(ctx, conv.weight_tensor, conv.in_channels, conv.out_channels, name + ".weight");
         ggml_tensor * x_cf = contiguous_if_needed(ctx, ggml_permute(ctx, x, 1, 0, 2, 3));
@@ -342,11 +360,28 @@ ggml_tensor * conv1d(
         return named(y, name.c_str());
     }
 
+    ggml_tensor * input = contiguous_if_needed(ctx, x);
+    int64_t padding = conv.padding;
+    if (conv.pad_left != 0 || conv.pad_right != 0) {
+        input = ggml_pad_ext(
+            ctx,
+            input,
+            static_cast<int>(conv.pad_left),
+            static_cast<int>(conv.pad_right),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0);
+        padding = 0;
+    }
+
     ggml_tensor * weight =
         weight_3d(ctx, conv.weight_tensor, conv.kernel, conv.in_channels, conv.out_channels, name + ".weight");
-    ggml_tensor * x3 = ggml_reshape_3d(ctx, contiguous_if_needed(ctx, x), x->ne[0], x->ne[1], 1);
+    ggml_tensor * x3 = ggml_reshape_3d(ctx, input, input->ne[0], input->ne[1], 1);
     ggml_tensor * y3 =
-        ggml_conv_1d(ctx, weight, x3, static_cast<int>(conv.stride), static_cast<int>(conv.padding), static_cast<int>(conv.dilation));
+        ggml_conv_1d(ctx, weight, x3, static_cast<int>(conv.stride), static_cast<int>(padding), static_cast<int>(conv.dilation));
     ggml_tensor * y = ggml_reshape_2d(ctx, y3, y3->ne[0], y3->ne[1]);
     if (conv.use_bias) {
         y = ggml_add(ctx, y, weight_2d(ctx, conv.bias_tensor, 1, conv.out_channels, name + ".bias"));
@@ -369,6 +404,29 @@ ggml_tensor * conv_transpose1d(
         y = ggml_add(ctx, y, weight_2d(ctx, conv.bias_tensor, 1, conv.out_channels, name + ".bias"));
     }
     return named(y, name.c_str());
+}
+
+ggml_tensor * causal_conv1d_nearest_upsample(
+    ggml_context * ctx,
+    ggml_tensor * x,
+    const Conv1dWeights & conv,
+    int64_t scale,
+    const std::string & name) {
+    if (scale <= 0) {
+        throw std::runtime_error("HiFT nearest upsample scale must be positive");
+    }
+    auto * contiguous = contiguous_if_needed(ctx, x);
+    auto * upsampled = ggml_interpolate(
+        ctx,
+        contiguous,
+        contiguous->ne[0] * scale,
+        contiguous->ne[1],
+        contiguous->ne[2],
+        contiguous->ne[3],
+        GGML_SCALE_MODE_NEAREST);
+    upsampled = named(upsampled, (name + ".nearest").c_str());
+    auto * padded = ggml_pad_ext(ctx, upsampled, static_cast<int>(conv.kernel - 1), 0, 0, 0, 0, 0, 0, 0);
+    return conv1d(ctx, padded, conv, name, false);
 }
 
 ggml_tensor * snake(
@@ -432,10 +490,25 @@ ggml_tensor * build_backend_graph(
     bool allow_pointwise_fastpath) {
     ggml_tensor * x = conv1d(ctx, speech_in, weights.conv_pre, "conv_pre", allow_pointwise_fastpath);
     const int64_t num_kernels = static_cast<int64_t>(weights.config.resblock_kernel_sizes.size());
-    for (size_t up_index = 0; up_index < weights.ups.size(); ++up_index) {
+    const size_t upsample_count = weights.config.upsample_rates.size();
+    for (size_t up_index = 0; up_index < upsample_count; ++up_index) {
         x = named(ggml_leaky_relu(ctx, x, weights.config.lrelu_slope, false), ("ups." + std::to_string(up_index) + ".act").c_str());
-        x = conv_transpose1d(ctx, x, weights.ups[up_index], "ups." + std::to_string(up_index));
-        if (up_index + 1 == weights.ups.size()) {
+        switch (weights.config.upsample_mode) {
+            case HiftVocoderUpsampleMode::ConvTranspose1d:
+                x = conv_transpose1d(ctx, x, weights.ups[up_index], "ups." + std::to_string(up_index));
+                break;
+            case HiftVocoderUpsampleMode::CausalConv1dNearest:
+                x = causal_conv1d_nearest_upsample(
+                    ctx,
+                    x,
+                    weights.up_convs[up_index],
+                    weights.config.upsample_rates[up_index],
+                    "ups." + std::to_string(up_index));
+                break;
+            default:
+                throw std::runtime_error("HiFT unsupported upsample mode");
+        }
+        if (up_index + 1 == upsample_count) {
             x = named(reflect_pad_1d(ctx, x, 1, 0), "reflection_pad");
         }
 
@@ -531,6 +604,169 @@ std::vector<float> make_sine_source(
             sum += wave * weights.source_linear.weight[static_cast<size_t>(h)];
         }
         source[static_cast<size_t>(t)] = std::tanh(sum);
+    }
+    return source;
+}
+
+std::vector<float> make_causal_sinegen2_source(
+    const HiftVocoderWeights & weights,
+    const std::vector<float> & f0,
+    int64_t frames,
+    int64_t scale,
+    uint64_t seed,
+    uint64_t prior_noise_values,
+    const std::vector<float> * source_random_values) {
+    constexpr float kPi = 3.14159265358979323846F;
+    constexpr float kTwoPi = 2.0F * kPi;
+    if (static_cast<int64_t>(f0.size()) != frames) {
+        throw std::runtime_error("HiFT CausalSineGen2 F0 shape mismatch");
+    }
+    const int64_t samples = frames * scale;
+    const int64_t harmonics = weights.config.nb_harmonics + 1;
+    const size_t phase_count = static_cast<size_t>(harmonics);
+    const size_t noise_count = static_cast<size_t>(harmonics * samples);
+    if (source_random_values != nullptr &&
+        source_random_values->size() != phase_count + noise_count) {
+        throw std::runtime_error("HiFT CausalSineGen2 source random value count mismatch");
+    }
+
+    std::vector<float> phase_uniform = source_random_values == nullptr
+        ? sampling::generate_torch_cuda_uniform(phase_count, seed, prior_noise_values)
+        : std::vector<float>(source_random_values->begin(), source_random_values->begin() + static_cast<std::ptrdiff_t>(phase_count));
+    (void) phase_uniform;
+    const uint64_t noise_offset = prior_noise_values + static_cast<uint64_t>(phase_uniform.size());
+    std::vector<float> noise_uniform = source_random_values == nullptr
+        ? sampling::generate_torch_cuda_uniform(noise_count, seed, noise_offset)
+        : std::vector<float>(source_random_values->begin() + static_cast<std::ptrdiff_t>(phase_count), source_random_values->end());
+
+    auto high_rad = [&](int64_t sample, int64_t harmonic) {
+        const int64_t frame = std::clamp<int64_t>(sample / scale, 0, frames - 1);
+        float rad = std::fmod(
+            f0[static_cast<size_t>(frame)] * static_cast<float>(harmonic + 1) /
+                static_cast<float>(weights.config.sampling_rate),
+            1.0F);
+        if (sample == 0) {
+            rad += phase_uniform[static_cast<size_t>(harmonic)];
+        }
+        return rad;
+    };
+
+    std::vector<float> source(static_cast<size_t>(samples), 0.0F);
+    std::vector<float> cumulative(static_cast<size_t>(harmonics), 0.0F);
+    for (int64_t frame = 0; frame < frames; ++frame) {
+        const float base_f0 = f0[static_cast<size_t>(frame)];
+        const float uv = base_f0 > weights.config.nsf_voiced_threshold ? 1.0F : 0.0F;
+        const float noise_amp =
+            uv * weights.config.nsf_sigma + (1.0F - uv) * weights.config.nsf_alpha / 3.0F;
+        std::vector<float> frame_wave(static_cast<size_t>(harmonics), 0.0F);
+        const float source_pos = (static_cast<float>(frame) + 0.5F) * static_cast<float>(scale) - 0.5F;
+        const int64_t left = static_cast<int64_t>(std::floor(source_pos));
+        const int64_t right = std::min<int64_t>(left + 1, samples - 1);
+        const float lerp = source_pos - static_cast<float>(left);
+        for (int64_t h = 0; h < harmonics; ++h) {
+            const float rad = high_rad(std::max<int64_t>(left, 0), h) * (1.0F - lerp) + high_rad(right, h) * lerp;
+            cumulative[static_cast<size_t>(h)] += rad;
+            const float phase = cumulative[static_cast<size_t>(h)] * kTwoPi * static_cast<float>(scale);
+            frame_wave[static_cast<size_t>(h)] = weights.config.nsf_alpha * std::sin(phase) * uv;
+        }
+        for (int64_t sample_in_frame = 0; sample_in_frame < scale; ++sample_in_frame) {
+            const int64_t sample = frame * scale + sample_in_frame;
+            float sum = weights.source_linear.bias[0];
+            for (int64_t h = 0; h < harmonics; ++h) {
+                const float wave = frame_wave[static_cast<size_t>(h)] +
+                    noise_amp * noise_uniform[static_cast<size_t>(sample * harmonics + h)];
+                sum += wave * weights.source_linear.weight[static_cast<size_t>(h)];
+            }
+            source[static_cast<size_t>(sample)] = std::tanh(sum);
+        }
+    }
+    return source;
+}
+
+std::vector<float> make_sinegen2_source(
+    const HiftVocoderWeights & weights,
+    const std::vector<float> & f0,
+    int64_t frames,
+    int64_t scale,
+    uint64_t seed,
+    uint64_t prior_noise_values,
+    const std::vector<float> * source_random_values,
+    const sampling::TorchCudaSamplingPolicy * random_policy) {
+    constexpr float kTwoPi = 6.28318530717958647692F;
+    const int64_t harmonics = weights.config.nb_harmonics + 1;
+    const int64_t samples = frames * scale;
+    const size_t phase_count = static_cast<size_t>(harmonics);
+    const size_t noise_count = static_cast<size_t>(samples * harmonics);
+    if (f0.size() != static_cast<size_t>(frames) || (source_random_values &&
+        source_random_values->size() != phase_count + noise_count)) {
+        throw std::runtime_error("HiFT SineGen2 source shape mismatch");
+    }
+    auto initial_phase = source_random_values
+        ? std::vector<float>(source_random_values->begin(), source_random_values->begin() + phase_count)
+        : sampling::generate_torch_cuda_uniform(phase_count, seed, prior_noise_values);
+    initial_phase[0] = 0.0f;
+    std::vector<float> noise(noise_count);
+    if (source_random_values) {
+        std::copy(source_random_values->begin() + phase_count, source_random_values->end(), noise.begin());
+    } else if (random_policy != nullptr) {
+        const auto offset = prior_noise_values + sampling::torch_cuda_tensor_iterator_offset_blocks(phase_count, *random_policy);
+        sampling::fill_torch_cuda_tensor_iterator_randn(noise.data(), noise_count, seed, offset, *random_policy);
+    } else {
+        constexpr int64_t block_size = 16384;
+        const int64_t blocks = (static_cast<int64_t>(noise_count) + block_size - 1) / block_size;
+#ifdef _OPENMP
+        #pragma omp parallel for if(blocks > 1)
+#endif
+        for (int64_t block = 0; block < blocks; ++block) {
+            const auto offset = static_cast<size_t>(block * block_size);
+            sampling::fill_torch_cuda_randn(noise.data() + offset,
+                std::min<size_t>(block_size, noise_count - offset), seed,
+                sampling::TorchRandnPrecision::Float32, prior_noise_values + phase_count + offset);
+        }
+    }
+    const auto radians = [&](int64_t sample, int64_t harmonic) {
+        float value = std::fmod(f0[static_cast<size_t>(sample / scale)] * static_cast<float>(harmonic + 1) /
+            static_cast<float>(weights.config.sampling_rate), 1.0f);
+        if (sample == 0) value += initial_phase[static_cast<size_t>(harmonic)];
+        return value;
+    };
+    std::vector<float> phase(static_cast<size_t>(frames * harmonics));
+    std::vector<float> cumulative(static_cast<size_t>(harmonics), 0.0f);
+    // SineGen2 downsamples radians, integrates, then linearly upsamples the phase.
+    for (int64_t frame = 0; frame < frames; ++frame) {
+        const float position = (static_cast<float>(frame) + 0.5f) * static_cast<float>(scale) - 0.5f;
+        const auto left = static_cast<int64_t>(std::floor(position));
+        const auto right = std::min(left + 1, samples - 1);
+        const float fraction = position - static_cast<float>(left);
+        for (int64_t h = 0; h < harmonics; ++h) {
+            cumulative[h] += radians(std::max<int64_t>(0, left), h) * (1.0f - fraction) + radians(right, h) * fraction;
+            phase[static_cast<size_t>(frame * harmonics + h)] = cumulative[h] * kTwoPi * static_cast<float>(scale);
+        }
+    }
+    std::vector<float> source(static_cast<size_t>(samples));
+#ifdef _OPENMP
+    #pragma omp parallel for if(samples >= 4096)
+#endif
+    for (int64_t sample = 0; sample < samples; ++sample) {
+        const float position = (static_cast<float>(sample) + 0.5f) / static_cast<float>(scale) - 0.5f;
+        const auto floor = static_cast<int64_t>(std::floor(position));
+        const auto left = std::clamp<int64_t>(floor, 0, frames - 1);
+        const auto right = std::clamp<int64_t>(floor + 1, 0, frames - 1);
+        const float fraction = position - static_cast<float>(floor);
+        const float uv = f0[static_cast<size_t>(sample / scale)] > weights.config.nsf_voiced_threshold ? 1.0f : 0.0f;
+        const float amplitude = uv * weights.config.nsf_sigma + (1.0f - uv) * weights.config.nsf_alpha / 3.0f;
+        float sum = weights.source_linear.bias[0];
+        for (int64_t h = 0; h < harmonics; ++h) {
+            const float angle = phase[static_cast<size_t>(left * harmonics + h)] * (1.0f - fraction) +
+                phase[static_cast<size_t>(right * harmonics + h)] * fraction;
+            // Python randn_like preserves the transposed [harmonic, time] storage.
+            const auto noise_index = random_policy != nullptr && !source_random_values
+                ? h * samples + sample : sample * harmonics + h;
+            const float value = weights.config.nsf_alpha * std::sin(angle) * uv +
+                amplitude * noise[static_cast<size_t>(noise_index)];
+            sum += value * weights.source_linear.weight[static_cast<size_t>(h)];
+        }
+        source[static_cast<size_t>(sample)] = std::tanh(sum);
     }
     return source;
 }
@@ -674,9 +910,21 @@ class BackendRunner {
 public:
     BackendRunner(const HiftVocoderWeights & weights, int64_t frames, int64_t stft_frames)
         : weights_(&weights), capacity_frames_(frames), capacity_stft_frames_(stft_frames) {
+        constexpr uint64_t kBaseBytes = 512ull * 1024ull * 1024ull;
+        constexpr uint64_t kPerFrameBytes = 4ull * 1024ull * 1024ull;
+        constexpr uint64_t kMaxSizeT = static_cast<uint64_t>(std::numeric_limits<size_t>::max());
+
+        const uint64_t clamped_frames = static_cast<uint64_t>(std::max<int64_t>(frames, 1));
+        if (kBaseBytes > kMaxSizeT || clamped_frames > (kMaxSizeT - kBaseBytes) / kPerFrameBytes) {
+            const uint64_t requested_mib = (kBaseBytes + clamped_frames * kPerFrameBytes) / (1024ull * 1024ull);
+            throw std::runtime_error(
+                "HiFT vocoder requested context size (" + std::to_string(requested_mib) +
+                " MiB for " + std::to_string(clamped_frames) +
+                " frames) exceeds size_t addressable memory limit");
+        }
+        const size_t context_size = static_cast<size_t>(kBaseBytes + clamped_frames * kPerFrameBytes);
         ggml_init_params params{
-            512ull * 1024ull * 1024ull +
-                static_cast<size_t>(std::max<int64_t>(frames, 1)) * 4ull * 1024ull * 1024ull,
+            context_size,
             nullptr,
             true,
         };
@@ -706,6 +954,12 @@ public:
             ctx_ = nullptr;
             throw std::runtime_error("failed to allocate HiFT backend graph");
         }
+        if (weights.config.source_mode == HiftVocoderSourceMode::SineGen2 &&
+            weights.execution_context->backend_type() == core::BackendType::Cuda) {
+            cuda_istft_ = std::make_unique<audio::CudaLogMagnitudePhaseISTFT>(
+                audio::CudaLogMagnitudePhaseISTFTConfig{stft_frames, weights.config.istft_n_fft,
+                    weights.config.istft_hop, kHiftStftChannels, weights.execution_context->config().device});
+        }
     }
 
     ~BackendRunner() {
@@ -728,7 +982,8 @@ public:
         const std::vector<float> & mel,
         int64_t frames,
         const std::vector<float> & source_stft,
-        int64_t stft_frames) {
+        int64_t stft_frames,
+        const std::vector<float> & window) {
         if (frames != capacity_frames_ || stft_frames != capacity_stft_frames_) {
             throw std::runtime_error("HiFT backend graph frame mismatch");
         }
@@ -737,7 +992,25 @@ public:
         if (engine::core::compute_backend_graph(weights_->execution_context->backend(), graph_) != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ggml_backend_graph_compute failed for HiFT backend");
         }
-        return core::read_tensor_f32(post_);
+        const auto post = core::read_tensor_f32(post_);
+        if (!cuda_istft_) return waveform_from_post(*weights_, post, stft_frames, window);
+        std::vector<float> spectrum(post.size());
+        for (int64_t frame = 0; frame < stft_frames; ++frame) {
+            for (int64_t frequency = 0; frequency < kHiftStftBins; ++frequency) {
+                spectrum[static_cast<size_t>(frame * kHiftStftChannels + frequency)] =
+                    post[static_cast<size_t>(frequency * stft_frames + frame)];
+                spectrum[static_cast<size_t>(frame * kHiftStftChannels + kHiftStftBins + frequency)] =
+                    std::sin(post[static_cast<size_t>((kHiftStftBins + frequency) * stft_frames + frame)]);
+            }
+        }
+        auto reconstructed = cuda_istft_->compute(spectrum, window).audio;
+        // The CUDA helper uses Vocos padding; HiFT uses centered ISTFT padding.
+        const auto offset = weights_->config.istft_n_fft / 2 -
+            (weights_->config.istft_n_fft - weights_->config.istft_hop) / 2;
+        const auto samples = weights_->config.istft_hop * (stft_frames - 1);
+        std::vector<float> audio(reconstructed.begin() + offset, reconstructed.begin() + offset + samples);
+        for (auto & sample : audio) sample = std::clamp(sample, -weights_->config.audio_limit, weights_->config.audio_limit);
+        return audio;
     }
 
 private:
@@ -750,12 +1023,19 @@ private:
     ggml_tensor * speech_in_ = nullptr;
     ggml_tensor * source_in_ = nullptr;
     ggml_tensor * post_ = nullptr;
+    std::unique_ptr<audio::CudaLogMagnitudePhaseISTFT> cuda_istft_;
 };
 
 class HiftRunner {
 public:
     HiftRunner(const HiftVocoderWeights & weights, core::BackendConfig backend)
-        : weights_(&weights), backend_(backend) {}
+        : weights_(&weights), backend_(backend) {
+        if (weights.config.source_mode == HiftVocoderSourceMode::SineGen2 &&
+            weights.execution_context->backend_type() == core::BackendType::Cuda) {
+            random_policy_ = sampling::resolve_torch_cuda_sampling_policy(
+                core::BackendType::Cuda, backend.device, "framework.hift", "HiFT SineGen2");
+        }
+    }
 
     std::vector<float> predict_f0(const std::vector<float> & mel, int64_t frames) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -771,8 +1051,16 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         const auto f0 = predict_f0_locked(mel, frames);
         const int64_t scale = upsample_scale(weights_->config);
-        const auto f0_upsampled = nearest_upsample_f0(f0, frames, scale);
-        const auto source = make_sine_source(*weights_, f0_upsampled, seed, prior_noise_values, source_random_values);
+        std::vector<float> source;
+        if (weights_->config.source_mode == HiftVocoderSourceMode::CausalSineGen2) {
+            source = make_causal_sinegen2_source(*weights_, f0, frames, scale, seed, prior_noise_values, source_random_values);
+        } else if (weights_->config.source_mode == HiftVocoderSourceMode::SineGen2) {
+            source = make_sinegen2_source(*weights_, f0, frames, scale, seed, prior_noise_values,
+                source_random_values, random_policy_ ? &*random_policy_ : nullptr);
+        } else {
+            const auto f0_upsampled = nearest_upsample_f0(f0, frames, scale);
+            source = make_sine_source(*weights_, f0_upsampled, seed, prior_noise_values, source_random_values);
+        }
         std::vector<float> window;
         int64_t stft_frames = 0;
         const auto source_stft = source_stft_bct(*weights_, source, stft_frames, window);
@@ -782,9 +1070,8 @@ public:
         if (backend_runner_ == nullptr) {
             backend_runner_ = std::make_unique<BackendRunner>(*weights_, frames, stft_frames);
         }
-        const auto post = backend_runner_->run(mel, frames, source_stft, stft_frames);
         HiftVocoderOutput out;
-        out.waveform = waveform_from_post(*weights_, post, stft_frames, window);
+        out.waveform = backend_runner_->run(mel, frames, source_stft, stft_frames, window);
         out.batch = 1;
         out.samples = static_cast<int64_t>(out.waveform.size());
         out.sample_rate = weights_->config.sampling_rate;
@@ -813,6 +1100,7 @@ private:
 
     const HiftVocoderWeights * weights_ = nullptr;
     core::BackendConfig backend_;
+    std::optional<sampling::TorchCudaSamplingPolicy> random_policy_;
     std::mutex mutex_;
     std::unique_ptr<F0Runner> f0_runner_;
     std::unique_ptr<BackendRunner> backend_runner_;
@@ -867,21 +1155,39 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
         ? weights->config.weight_storage_type
         : assets::TensorStorageType::F32;
 
+    const std::vector<int64_t> f0_kernels = weights->config.f0_condnet_kernel_sizes.empty()
+        ? std::vector<int64_t>(5, 3)
+        : weights->config.f0_condnet_kernel_sizes;
+    if (f0_kernels.size() != 5) {
+        throw std::runtime_error("HiFT F0 condnet requires 5 kernel sizes");
+    }
     for (int index = 0; index < 5; ++index) {
-        weights->f0_predictor.condnet.push_back(load_conv1d(
+        const int64_t kernel = f0_kernels[static_cast<size_t>(index)];
+        if (kernel <= 0) {
+            throw std::runtime_error("HiFT F0 condnet kernel size must be positive");
+        }
+        auto conv = load_conv1d(
             *weights->store,
             *source,
             weights->config,
             "f0_predictor.condnet." + std::to_string(index * 2),
             weights->config.f0_cond_channels,
             index == 0 ? weights->config.f0_in_channels : weights->config.f0_cond_channels,
-            3,
+            kernel,
             1,
-            1,
+            weights->config.causal_convolutions ? 0 : kernel / 2,
             1,
             true,
             conv_storage_type,
-            use_weight_norm));
+            use_weight_norm);
+        if (weights->config.causal_convolutions) {
+            if (index == 0) {
+                conv.pad_right = causal_conv1d_padding(kernel, 1);
+            } else {
+                conv.pad_left = causal_conv1d_padding(kernel, 1);
+            }
+        }
+        weights->f0_predictor.condnet.push_back(std::move(conv));
     }
     weights->f0_predictor.classifier = load_linear(
         *weights->store,
@@ -900,16 +1206,20 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
         "conv_pre",
         weights->config.base_channels,
         weights->config.in_channels,
-        7,
+        weights->config.conv_pre_kernel_size,
         1,
-        3,
+        weights->config.causal_convolutions ? 0 : weights->config.conv_pre_kernel_size / 2,
         1,
         true,
         conv_storage_type,
         use_weight_norm);
+    if (weights->config.causal_convolutions) {
+        weights->conv_pre.pad_right = causal_conv1d_padding(weights->config.conv_pre_kernel_size, 1);
+    }
 
     const int64_t upsample_count = static_cast<int64_t>(weights->config.upsample_rates.size());
     weights->ups.reserve(static_cast<size_t>(upsample_count));
+    weights->up_convs.reserve(static_cast<size_t>(upsample_count));
     weights->source_downs.reserve(static_cast<size_t>(upsample_count));
     weights->source_resblocks.reserve(static_cast<size_t>(upsample_count));
     const int64_t num_kernels = static_cast<int64_t>(weights->config.resblock_kernel_sizes.size());
@@ -934,24 +1244,46 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
         const int64_t out_channels = weights->config.base_channels / (int64_t{1} << (up_index + 1));
         const int64_t kernel = weights->config.upsample_kernel_sizes[static_cast<size_t>(up_index)];
         const int64_t stride = weights->config.upsample_rates[static_cast<size_t>(up_index)];
-        weights->ups.push_back(load_conv_transpose1d(
-            *weights->store,
-            *source,
-            weights->config,
-            "ups." + std::to_string(up_index),
-            in_channels,
-            out_channels,
-            kernel,
-            stride,
-            (kernel - stride) / 2,
-            true,
-            assets::TensorStorageType::F32,
-            use_weight_norm));
+        switch (weights->config.upsample_mode) {
+            case HiftVocoderUpsampleMode::ConvTranspose1d:
+                weights->ups.push_back(load_conv_transpose1d(
+                    *weights->store,
+                    *source,
+                    weights->config,
+                    "ups." + std::to_string(up_index),
+                    in_channels,
+                    out_channels,
+                    kernel,
+                    stride,
+                    (kernel - stride) / 2,
+                    true,
+                    assets::TensorStorageType::F32,
+                    use_weight_norm));
+                break;
+            case HiftVocoderUpsampleMode::CausalConv1dNearest:
+                weights->up_convs.push_back(load_conv1d(
+                    *weights->store,
+                    *source,
+                    weights->config,
+                    "ups." + std::to_string(up_index),
+                    out_channels,
+                    in_channels,
+                    kernel,
+                    1,
+                    0,
+                    1,
+                    true,
+                    conv_storage_type,
+                    use_weight_norm));
+                break;
+            default:
+                throw std::runtime_error("HiFT unsupported upsample mode");
+        }
 
         const int64_t source_stride = downsample_cum[static_cast<size_t>(up_index)];
         const int64_t source_kernel = source_stride == 1 ? 1 : source_stride * 2;
-        const int64_t source_padding = source_stride == 1 ? 0 : source_stride / 2;
-        weights->source_downs.push_back(load_conv1d(
+        const int64_t source_padding = weights->config.causal_convolutions ? 0 : (source_stride == 1 ? 0 : source_stride / 2);
+        auto source_down = load_conv1d(
             *weights->store,
             *source,
             weights->config,
@@ -964,7 +1296,11 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
             1,
             true,
             conv_storage_type,
-            false));
+            false);
+        if (weights->config.causal_convolutions && source_stride > 1) {
+            source_down.pad_left = source_stride - 1;
+        }
+        weights->source_downs.push_back(std::move(source_down));
 
         weights->source_resblocks.push_back(load_resblock(
             *weights->store,
@@ -974,7 +1310,8 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
             out_channels,
             weights->config.source_resblock_kernel_sizes[static_cast<size_t>(up_index)],
             weights->config.source_resblock_dilation_sizes[static_cast<size_t>(up_index)],
-            conv_storage_type));
+            conv_storage_type,
+            weights->config.causal_convolutions));
 
         for (int64_t kernel_index = 0; kernel_index < num_kernels; ++kernel_index) {
             const int64_t block_index = up_index * num_kernels + kernel_index;
@@ -986,7 +1323,8 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
                 out_channels,
                 weights->config.resblock_kernel_sizes[static_cast<size_t>(kernel_index)],
                 weights->config.resblock_dilation_sizes[static_cast<size_t>(kernel_index)],
-                conv_storage_type));
+                conv_storage_type,
+                weights->config.causal_convolutions));
         }
     }
 
@@ -1000,11 +1338,14 @@ HiftVocoderComponent HiftVocoderComponent::load_from_tensor_source(
         post_channels,
         7,
         1,
-        3,
+        weights->config.causal_convolutions ? 0 : 3,
         1,
         true,
         conv_storage_type,
         use_weight_norm);
+    if (weights->config.causal_convolutions) {
+        weights->conv_post.pad_left = causal_conv1d_padding(7, 1);
+    }
     weights->source_linear = load_linear(
         *weights->store,
         *source,

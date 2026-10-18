@@ -1,0 +1,802 @@
+#include "engine/models/kokoro_tts/session.h"
+
+#include "engine/framework/debug/profiler.h"
+#include "engine/framework/text/chunking.h"
+#include "engine/framework/debug/trace.h"
+#include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
+
+#include "engine/models/kokoro_tts/decoder.h"
+#include "engine/models/kokoro_tts/frontend.h"
+#include "engine/models/kokoro_tts/predictor.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <filesystem>
+#include <limits>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+namespace engine::models::kokoro_tts {
+
+namespace {
+using engine::debug::measure_ms;
+constexpr int64_t kDefaultTextChunkSize = 240;
+constexpr const char * kFamily = "kokoro_tts";
+constexpr const char * kModelName = "Kokoro TTS";
+
+}  // namespace
+
+KokoroTTSSession::KokoroTTSSession(
+    runtime::TaskSpec task,
+    runtime::SessionOptions options,
+    std::shared_ptr<const KokoroAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    : RuntimeSessionBase(options),
+      task_(std::move(task)),
+      assets_(std::move(assets)),
+      contract_(std::move(contract)) {
+    if (!assets_ || !assets_->model_weights) {
+        throw std::runtime_error("Kokoro TTS session requires loaded assets");
+    }
+    if (contract_ == nullptr) {
+        throw std::runtime_error("Kokoro TTS session requires a model contract");
+    }
+    auto validation_options = RuntimeSessionBase::options();
+    // Arena aliases are parsed below, independently of the embedded spec version.
+    for (const auto * key : {"kokoro_tts.predictor_duration_graph_arena_mb",
+                            "kokoro_tts.predictor_duration_graph_mb",
+                            "kokoro_tts.predictor_text_graph_arena_mb",
+                            "kokoro_tts.predictor_text_graph_mb",
+                            "kokoro_tts.predictor_tail_graph_arena_mb",
+                            "kokoro_tts.predictor_tail_graph_mb"}) {
+        validation_options.options.erase(key);
+    }
+    // Older embedded contracts omit exec_plan; parse_exec_plan validates its value.
+    if (contract_->session_option_keys.find("kokoro_tts.exec_plan") == contract_->session_option_keys.end()) {
+        validation_options.options.erase("kokoro_tts.exec_plan");
+    }
+    runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "kokoro_tts.exec_plan",
+        {{"generator", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}},
+           {"rknn", {}, {"main"}, {}, {"overlap", "gain"}}}}});
+    const auto & generator_plan = exec_plan.at("generator");
+    if (generator_plan.impl == "rknn") {
+        rknn_generator_path_ = generator_plan.artifacts.at("main");
+    }
+    if (const auto overlap = generator_plan.params.find("overlap"); overlap != generator_plan.params.end()) {
+        const auto & value = overlap->second;
+        if (!value.is_number() || !std::isfinite(value.as_number()) || value.as_number() < 0 ||
+            value.as_number() >= static_cast<double>(std::numeric_limits<int64_t>::max()) ||
+            std::floor(value.as_number()) != value.as_number()) {
+            throw std::runtime_error("kokoro_tts.exec_plan.generator.params.overlap must be a nonnegative integer");
+        }
+        rknn_generator_overlap_ = value.as_i64();
+    }
+    if (const auto gain = generator_plan.params.find("gain"); gain != generator_plan.params.end()) {
+        if (!gain->second.is_bool()) {
+            throw std::runtime_error("kokoro_tts.exec_plan.generator.params.gain must be a boolean");
+        }
+        rknn_generator_gain_ = gain->second.as_bool();
+    }
+    if (task_.task != runtime::VoiceTaskKind::Tts) {
+        throw std::runtime_error("Kokoro TTS only supports tts tasks");
+    }
+    if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("Kokoro TTS only supports offline and streaming sessions");
+    }
+    const auto & session_options = RuntimeSessionBase::options().options;
+    using T = engine::assets::TensorStorageType;
+    matmul_weight_storage_type_ = runtime::parse_tensor_storage_option(
+        session_options,
+        "kokoro_tts.weight_type",
+        matmul_weight_storage_type_,
+        {T::Native, T::F32, T::F16, T::BF16, T::Q8_0});
+    conv_weight_storage_type_ = runtime::parse_tensor_storage_option(
+        session_options,
+        "kokoro_tts.conv_weight_type",
+        conv_weight_storage_type_,
+        {T::Native, T::F32, T::F16});
+    weight_context_bytes_ = runtime::parse_size_mb_option(
+        session_options,
+        {"kokoro_tts.weight_context_mb"},
+        weight_context_bytes_);
+    predictor_duration_graph_bytes_ = runtime::parse_size_mb_option(
+        session_options,
+        {"kokoro_tts.predictor_duration_graph_arena_mb", "kokoro_tts.predictor_duration_graph_mb"},
+        predictor_duration_graph_bytes_);
+    predictor_text_graph_bytes_ = runtime::parse_size_mb_option(
+        session_options,
+        {"kokoro_tts.predictor_text_graph_arena_mb", "kokoro_tts.predictor_text_graph_mb"},
+        predictor_text_graph_bytes_);
+    predictor_tail_graph_bytes_ = runtime::parse_size_mb_option(
+        session_options,
+        {"kokoro_tts.predictor_tail_graph_arena_mb", "kokoro_tts.predictor_tail_graph_mb"},
+        predictor_tail_graph_bytes_);
+    weights_ = load_kokoro_backend_weights(
+        *assets_,
+        execution_context().backend(),
+        execution_context().backend_type(),
+        matmul_weight_storage_type_,
+        conv_weight_storage_type_,
+        weight_context_bytes_);
+    const auto graph_capacity_mode = runtime::resolve_graph_capacity_mode(
+        RuntimeSessionBase::options(),
+        runtime::GraphCapacityMode::Fixed,
+        {"kokoro_tts.graph_capacity_mode"});
+    if (graph_capacity_mode == runtime::GraphCapacityMode::Unsupported) {
+        throw std::runtime_error("Kokoro TTS graph_capacity_mode=unsupported is not implemented");
+    }
+    graph_capacity_controller_ = runtime::GraphCapacityController(graph_capacity_mode);
+    fixed_token_capacity_ = runtime::parse_positive_i64_option(
+        session_options,
+        {"kokoro_tts.max_input_tokens"},
+        std::min<int64_t>(512, weights_->context_length));
+    pre_tail_token_capacity_ = runtime::parse_i64_option(
+        session_options,
+        {"kokoro_tts.pre_tail_tokens"}).value_or(0);
+    if (pre_tail_token_capacity_ < 0) {
+        throw std::runtime_error("kokoro_tts.pre_tail_tokens must be non-negative");
+    }
+    rng_seed_ = runtime::random_u64_seed();
+    if (fixed_token_capacity_ > weights_->context_length) {
+        throw std::runtime_error("Kokoro fixed token capacity exceeds model context length");
+    }
+    if (pre_tail_token_capacity_ > weights_->context_length) {
+        throw std::runtime_error("Kokoro pre-tail token capacity exceeds model context length");
+    }
+}
+
+KokoroTTSSession::~KokoroTTSSession() = default;
+
+std::string KokoroTTSSession::family() const {
+    return kFamily;
+}
+
+runtime::VoiceTaskKind KokoroTTSSession::task_kind() const {
+    return task_.task;
+}
+
+runtime::RunMode KokoroTTSSession::run_mode() const {
+    return task_.mode;
+}
+
+runtime::MappedGraphCapacityAdapter KokoroTTSSession::make_graph_capacity_adapter() {
+    return runtime::MappedGraphCapacityAdapter(
+        fixed_token_capacity_,
+        fixed_token_capacity_,
+        [this](int64_t request_size) {
+            if (request_size <= 0) {
+                throw std::runtime_error("Kokoro graph capacity request size must be positive");
+            }
+            if (request_size > weights_->context_length) {
+                throw std::runtime_error("Kokoro request exceeds model context length");
+            }
+            return request_size;
+        },
+        [this]() { return prepared_graph_capacities(); },
+        [this](int64_t capacity) { prepare_graph_capacity(capacity); });
+}
+
+std::vector<int64_t> KokoroTTSSession::prepared_graph_capacities() const {
+    std::vector<int64_t> capacities;
+    if (prepared_predictor_ && prepared_session_capacity_ > 0) {
+        capacities.push_back(prepared_session_capacity_);
+    }
+    return capacities;
+}
+
+KokoroTTSSession::DecoderCapacityContract KokoroTTSSession::make_decoder_capacity_contract(int64_t decoder_frame_capacity) const {
+    if (decoder_frame_capacity <= 0) {
+        throw std::runtime_error("Kokoro decoder frame capacity must be positive");
+    }
+    DecoderCapacityContract contract = {};
+    contract.decoder_frame_capacity = decoder_frame_capacity;
+    contract.conditioning_sample_capacity = contract.decoder_frame_capacity * 300;
+    const int64_t pad = weights_->decoder.generator.gen_istft_n_fft / 2;
+    contract.conditioning_frame_capacity =
+        1 + (contract.conditioning_sample_capacity + 2 * pad - weights_->decoder.generator.gen_istft_n_fft) /
+                weights_->decoder.generator.gen_istft_hop_size;
+    if (contract.conditioning_sample_capacity <= 0 || contract.conditioning_frame_capacity <= 0) {
+        throw std::runtime_error("Kokoro decoder capacity contract overflowed");
+    }
+    return contract;
+}
+
+void KokoroTTSSession::prepare_graph_capacity(int64_t capacity) {
+    if (capacity <= 0) {
+        throw std::runtime_error("Kokoro graph capacity must be positive");
+    }
+    if (capacity > weights_->context_length) {
+        throw std::runtime_error("Kokoro graph capacity exceeds model context length");
+    }
+    if (prepared_predictor_ && prepared_session_capacity_ >= capacity) {
+        return;
+    }
+    const int threads = std::max(1, execution_context().config().threads);
+    const bool use_device_backend = !execution_context().uses_host_graph_plan();
+    ggml_backend_t backend = execution_context().backend();
+    const int64_t plbert_fixed_token_capacity = 0;
+    const int64_t predictor_pre_tail_capacity = pre_tail_token_capacity_;
+    prepared_predictor_.reset();
+    prepared_session_capacity_ = 0;
+    double build_ms = 0.0;
+    kokoro_ggml::KokoroPredictorGraphConfig predictor_graph_config;
+    predictor_graph_config.duration_graph_bytes = predictor_duration_graph_bytes_;
+    predictor_graph_config.text_graph_bytes = predictor_text_graph_bytes_;
+    predictor_graph_config.tail_graph_bytes = predictor_tail_graph_bytes_;
+    build_ms = measure_ms([&]() {
+        prepared_predictor_ = std::make_unique<kokoro_ggml::KokoroPredictorRuntime>(
+            weights_,
+            backend,
+            threads,
+            use_device_backend,
+            plbert_fixed_token_capacity,
+            predictor_pre_tail_capacity,
+            predictor_graph_config);
+    });
+    prepared_session_capacity_ = capacity;
+    engine::debug::timing_log_scalar("kokoro.prepare.predictor.graph.build_ms", build_ms);
+}
+
+void KokoroTTSSession::prepare_decoder_graph_capacity(int64_t capacity) {
+    if (capacity <= 0) {
+        throw std::runtime_error("Kokoro decoder graph capacity must be positive");
+    }
+    if (prepared_decoder_ && prepared_decoder_capacity_ == capacity) {
+        return;
+    }
+    const int threads = std::max(1, execution_context().config().threads);
+    const bool use_device_backend = !execution_context().uses_host_graph_plan();
+    ggml_backend_t backend = execution_context().backend();
+    const DecoderCapacityContract contract = make_decoder_capacity_contract(capacity);
+    double build_ms = 0.0;
+    kokoro_ggml::KokoroIstftNetDecoderCapacityContract decoder_contract;
+    decoder_contract.decoder_frames = contract.decoder_frame_capacity;
+    decoder_contract.conditioning_frames = contract.conditioning_frame_capacity;
+    if (prepared_decoder_) {
+        build_ms = measure_ms([&]() {
+            prepared_decoder_->prepare(decoder_contract);
+        });
+    } else {
+        build_ms = measure_ms([&]() {
+            prepared_decoder_ = std::make_unique<kokoro_ggml::KokoroIstftNetDecoderRuntime>(
+                weights_,
+                backend,
+                threads,
+                use_device_backend,
+                rng_seed_,
+                decoder_contract,
+                rknn_generator_path_,
+                rknn_generator_overlap_,
+                rknn_generator_gain_);
+        });
+    }
+    prepared_decoder_capacity_ = capacity;
+    prepared_decoder_context_ = contract;
+    engine::debug::timing_log_scalar("kokoro.prepare.decoder_runtime_build_ms", build_ms);
+}
+
+namespace {
+
+constexpr const char * kPhonemesOption = "phonemes";
+constexpr const char * kTimestampsOption = "return_timestamps";
+
+/// The supplied phoneme chunks, or empty when the caller set no such option.
+///
+/// ⚠ SET-BUT-EMPTY IS NOT THE SAME AS UNSET, at either level. An empty list, and an empty entry
+/// within a list, both used to read as "no override" -- the first because the vector is empty,
+/// the second because the frontend took an empty string as its sentinel -- and the chunk was
+/// then spoken from `text`. A caller that asked for phonemes and supplied none got the source
+/// text read aloud, which is the one thing this option exists to avoid. Both are refused here,
+/// where the offending entry can still be named. The C ABI accepts a zero-length array
+/// (audiocpp_request_set_option_array with count == 0), so the empty list is reachable.
+const std::vector<std::string> & require_phoneme_chunks(
+    const std::unordered_map<std::string, std::vector<std::string>> & option_arrays) {
+    static const std::vector<std::string> none;
+    const auto it = option_arrays.find(kPhonemesOption);
+    if (it == option_arrays.end()) return none;
+    if (it->second.empty()) {
+        throw std::runtime_error(
+            "Kokoro 'phonemes' was set but holds no entries; pass the phonemes to synthesize, or "
+            "leave the option unset to use the built-in G2P");
+    }
+    for (size_t index = 0; index < it->second.size(); ++index) {
+        if (it->second[index].empty()) {
+            throw std::runtime_error(
+                "Kokoro supplied phoneme entry " + std::to_string(index) +
+                " is empty; every entry is rendered as its own chunk, so each one must carry "
+                "symbols -- drop the entry instead of leaving it blank");
+        }
+    }
+    return it->second;
+}
+
+/// Builds one chunk's input, naming the entry a supplied-phoneme failure came from.
+///
+/// The frontend's own rejections -- an out-of-vocab symbol, a chunk over 510 symbols -- say what
+/// is wrong but not which entry it is in, and a list can be long. The empty-entry check above
+/// names its entry, so these should too.
+KokoroSynthesisInput build_supplied_or_text_input(
+    const runtime::TaskRequest & chunk_request,
+    const KokoroFrontendSessionState & state,
+    const KokoroAssets & assets,
+    std::optional<std::string_view> chunk_phonemes,
+    size_t chunk_index,
+    bool supplied) {
+    if (!supplied) {
+        return build_kokoro_synthesis_input(*chunk_request.text_input, state, assets, chunk_phonemes);
+    }
+    try {
+        return build_kokoro_synthesis_input(*chunk_request.text_input, state, assets, chunk_phonemes);
+    } catch (const std::exception & error) {
+        throw std::runtime_error(
+            "Kokoro supplied phoneme entry " + std::to_string(chunk_index) + ": " + error.what());
+    }
+}
+
+/// The text-derived half of the synthesis cache key.
+///
+/// Held apart from the phoneme half because in the supplied path every chunk shares one request:
+/// this is the same string for all of them, and it carries the WHOLE document, so building it
+/// per chunk would copy the caller's input once per entry.
+std::string cache_key_prefix(
+    const KokoroFrontendSessionState & state,
+    const runtime::Transcript & text) {
+    return state.voice_id + ":" +
+        state.language_code + ":" +
+        std::to_string(state.speaking_rate) + ":" +
+        std::to_string(text.text.size()) + ":" +
+        text.text + ":";
+}
+
+/// Request options, validated against the package's own contract.
+///
+/// Older standalone GGUF packages embed a schema-v1 contract written before
+/// `phonemes` existed, and a published package cannot be edited in place. Drop
+/// the key from the VALIDATION COPY so those packages can still be given
+/// phonemes -- the engine serves the request either way -- while every unrelated
+/// unknown option is still rejected. Same shape as irodori_tts.codec_backend and
+/// the Parakeet TDT VAD controls, which are older options in the same position.
+///
+/// ⚠ `return_timestamps` IS IN THAT SAME POSITION AND REACHES HERE WITHOUT BEING ASKED FOR.
+/// `--words-out` injects it for every family (app/cli/main.cpp), so a package published before
+/// this option existed would fail the whole synthesis on a flag whose only job is to choose an
+/// output file -- not a degraded result, no audio at all. The durations it reports are computed
+/// by the same graph in every package, so serving the request against an older contract gives
+/// the caller exactly what a regenerated one would.
+void validate_request_options(
+    const std::unordered_map<std::string, std::string> & options,
+    const std::unordered_map<std::string, std::vector<std::string>> & option_arrays,
+    const engine::model_spec::ModelContract & contract) {
+    const bool old_phonemes = contract.request_option_keys.find(kPhonemesOption) == contract.request_option_keys.end();
+    const bool old_speed = contract.request_option_keys.find("speed") == contract.request_option_keys.end();
+    const bool old_speaking_rate = contract.request_option_keys.find("speaking_rate") == contract.request_option_keys.end();
+    const bool old_timestamps = contract.request_option_keys.find(kTimestampsOption) == contract.request_option_keys.end();
+    const bool old_voice_id = contract.request_option_keys.find("voice_id") == contract.request_option_keys.end();
+    if (!old_phonemes && !old_speed && !old_speaking_rate && !old_timestamps && !old_voice_id) {
+        runtime::validate_spec_backed_request_options(options, option_arrays, contract, kModelName);
+        return;
+    }
+    std::unordered_map<std::string, std::string> validation_options;
+    for (const auto & [key, _] : options) {
+        if ((key == "speed" && old_speed) || (key == "speaking_rate" && old_speaking_rate) ||
+            (key == "voice_id" && old_voice_id) ||
+            (key == kTimestampsOption && old_timestamps)) continue;
+        validation_options.emplace(key, std::string{});
+    }
+    // Keys only: the validator reads names, not the supplied values.
+    std::unordered_map<std::string, std::vector<std::string>> validation_arrays;
+    for (const auto & [key, _] : option_arrays) {
+        if ((key == kPhonemesOption && old_phonemes) ||
+            (key == "speed" && old_speed) || (key == "speaking_rate" && old_speaking_rate) ||
+            (key == kTimestampsOption && old_timestamps)) continue;
+        validation_arrays.emplace(key, std::vector<std::string>{});
+    }
+    runtime::validate_spec_backed_request_options(validation_options, validation_arrays, contract, kModelName);
+}
+
+/// Whether the caller asked for timings.
+///
+/// ⚠ OPT-IN, AND DEFAULTING TO OFF IS THE POINT. What this family can report is a phoneme-group
+/// alignment in Kokoro's own alphabet, which is not the written-word timeline `word_timestamps`
+/// means elsewhere -- so a caller receives it because it asked this family for it, not because it
+/// read a generic capability and assumed the usual contract.
+bool request_return_timestamps(const std::unordered_map<std::string, std::string> & options) {
+    const auto value = runtime::find_option(options, {kTimestampsOption});
+    return value.has_value() && runtime::parse_bool_option(*value, kTimestampsOption);
+}
+
+std::optional<runtime::VoiceCondition> voice_with_request_options(
+    const std::optional<runtime::VoiceCondition> & voice,
+    const std::optional<runtime::Transcript> & text,
+    const std::unordered_map<std::string, std::string> & options) {
+    const auto rate = runtime::parse_positive_finite_float_option(options, {"speed", "speaking_rate"});
+    const auto voice_id = runtime::find_option(options, {"voice_id"});
+    const auto language = runtime::find_option(options, {"language"});
+    if (!rate.has_value() && !voice_id.has_value() && !language.has_value()) {
+        return voice;
+    }
+    auto resolved = voice.value_or(runtime::VoiceCondition{});
+    if (voice_id.has_value() && (!resolved.speaker.has_value() || !resolved.speaker->cached_voice_id.has_value())) {
+        if (!resolved.speaker.has_value()) resolved.speaker = runtime::VoiceReference{};
+        resolved.speaker->cached_voice_id = *voice_id;
+    }
+    if (rate.has_value() && (!resolved.style.has_value() || !resolved.style->speaking_rate.has_value())) {
+        if (!resolved.style.has_value()) resolved.style = runtime::StyleCondition{};
+        resolved.style->speaking_rate = *rate;
+    }
+    if (language.has_value() && (!text.has_value() || text->language.empty()) &&
+        (!resolved.style.has_value() || !resolved.style->language.has_value())) {
+        if (!resolved.style.has_value()) resolved.style = runtime::StyleCondition{};
+        resolved.style->language = *language;
+    }
+    return resolved;
+}
+
+}  // namespace
+
+/// One timing per PHONEME GROUP -- a run of tokens between the space tokens Kokoro's own
+/// vocabulary carries -- from the durations its duration predictor produced.
+///
+/// ⚠ THIS IS A MEASUREMENT, NOT AN ESTIMATE, and that is the whole point. The model predicts a
+/// per-token frame count before the decoder runs, and the decoder upsamples by exactly those
+/// counts (`expand_tc_by_durations`), so a group's share of the output is known rather than
+/// guessed at. A caller that today spreads words across a buffer in proportion to their spelling
+/// can read the model's own answer instead.
+///
+/// ⚠ A GROUP IS NOT A WRITTEN WORD, AND ON THE TEXT PATH THERE MAY BE FEWER OF THEM. Nothing in
+/// this family maps tokens back to the input text: the built-in G2P emits a phoneme string and
+/// keeps no span, and on the supplied-phoneme path there is no text to map to at all. Whoever
+/// chose the spacing owns the boundaries, and eSpeak-ng -- which chooses them on the text path --
+/// MERGES FUNCTION WORDS: `on the` is the single group `ɔnðə`, `at a` is `æTə`, `in the` is
+/// `ɪnðə`. So a caller that zips these onto whitespace-split words is correct on some sentences
+/// and one out for the rest of the chunk on others, which is the worst way to be wrong. A caller
+/// whose own G2P produced the stream picked the spacing itself and can join the two safely. This
+/// is why the option is opt-in and why the family declares no `word_timestamps` capability: the
+/// division of the audio is exact, the mapping to written words is not available here.
+///
+/// The frames->samples scale is derived from THIS CHUNK's audio rather than assumed from a hop
+/// length, so it stays correct if the decoder's upsampling ratio ever changes, and it absorbs the
+/// rounding in a chunk whose sample count is not an exact multiple of the frame count.
+void append_kokoro_word_timings(
+    std::vector<runtime::WordTimestamp> & out,
+    const std::vector<int32_t> & input_ids,
+    const std::vector<int32_t> & durations,
+    const std::unordered_map<std::string, int32_t> & vocab,
+    size_t chunk_samples,
+    int64_t chunk_start_sample) {
+    // ⚠ REPORTS NOTHING RATHER THAN THROWING, and the distinction matters because of what this
+    // function is for. The audio is the product; the timings are an extra with a designed absence
+    // -- an empty list is exactly what a caller running against an older engine sees, and every
+    // caller therefore already has a path for it. Throwing here would turn a defect in a
+    // supplementary feature into a failed synthesis, which is a strictly worse outcome than the
+    // one it would be reporting. Emitting timings that point at the wrong audio WOULD be worse
+    // than silence, so the check stays; only its severity changes.
+    //
+    // The invariant does hold by construction today: the predictor sizes `durations` to
+    // `input_ids.size()` on both its padded and unpadded paths. This is here so that a later
+    // change to that cannot quietly produce a highlight that drifts.
+    if (input_ids.size() != durations.size()) {
+        // The one that means something is wrong, and therefore the only one that is traced: a
+        // chunk with no tokens or no audio is not a defect and a trace named for a skip would
+        // tell whoever reads it the opposite.
+        engine::debug::trace_log_scalar(
+            "kokoro.word_timings_token_mismatch", static_cast<int64_t>(input_ids.size()));
+        return;
+    }
+    if (chunk_samples == 0 || input_ids.empty()) {
+        return;
+    }
+
+    int64_t total_frames = 0;
+    for (const int32_t duration : durations) {
+        total_frames += duration;
+    }
+    if (total_frames <= 0) {
+        return;
+    }
+    const double samples_per_frame = static_cast<double>(chunk_samples) / static_cast<double>(total_frames);
+
+    // ⚠ A PUNCTUATION-ONLY GROUP IS NOT A WORD, and emitting one shifts every caller that joins
+    // its own words to these in order. The G2P spaces a mark that followed a space in the source,
+    // so `She said "hello" loudly.` -- four words -- phonemizes to `ʃi sˈɛd " həlˈO" lˈWdli.` and
+    // would report FIVE groups, the third being the opening quote. From there the caller's third
+    // word is on the fourth group and stays one out for the rest of the chunk. The mark's frames
+    // are real and are still consumed; they simply belong between words rather than to one, the
+    // same way the space token's do.
+    static const std::unordered_set<std::string> punctuation = {
+        ";", ":", ",", ".", "!", "?", "-", "\u2014", "\u2026", "\"", "(", ")",
+        "\u201C", "\u201D", "\u2018", "\u2019", "'",
+    };
+
+    // id -> symbol, for the labels. The vocabulary is ~114 entries and this runs once per chunk,
+    // against a decoder pass that is orders of magnitude more expensive.
+    std::unordered_map<int32_t, std::string> symbols;
+    symbols.reserve(vocab.size());
+    int32_t space_id = -1;
+    for (const auto & [symbol, id] : vocab) {
+        symbols.emplace(id, symbol);
+        if (symbol == " ") {
+            space_id = id;
+        }
+    }
+
+    // ⚠ PAD IS A BOUNDARY AND SO IS SPACE. The id sequence is [pad, ...ids..., pad]; treating pad
+    // as an ordinary token would glue the leading silence onto the first group. `space_id` is -1
+    // only for a vocabulary with no space symbol, which would make every token one group -- so the
+    // comparison is against a value no id can take rather than against a guess at 16.
+    int64_t frame = 0;
+    size_t index = 0;
+    while (index < input_ids.size()) {
+        const int32_t id = input_ids[index];
+        if (id == 0 || id == space_id) {
+            frame += durations[index];
+            ++index;
+            continue;
+        }
+        const int64_t group_start_frame = frame;
+        std::string label;
+        bool spoken = false;
+        while (index < input_ids.size() && input_ids[index] != 0 && input_ids[index] != space_id) {
+            const auto it = symbols.find(input_ids[index]);
+            if (it != symbols.end()) {
+                label += it->second;
+                spoken = spoken || punctuation.find(it->second) == punctuation.end();
+            }
+            frame += durations[index];
+            ++index;
+        }
+        if (!spoken) {
+            continue;   // a standalone mark: its frames are consumed, no word is reported
+        }
+        runtime::WordTimestamp timing;
+        timing.span.start_sample =
+            chunk_start_sample + static_cast<int64_t>(static_cast<double>(group_start_frame) * samples_per_frame);
+        timing.span.end_sample =
+            chunk_start_sample + static_cast<int64_t>(static_cast<double>(frame) * samples_per_frame);
+        timing.word = std::move(label);
+        // The model does not score its own duration prediction, and inventing a number here would
+        // be read as one. Left at 0, which the ABI documents as "no confidence reported".
+        out.push_back(std::move(timing));
+    }
+}
+
+void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
+    validate_request_options(request.options, request.option_arrays, *contract_);
+    const auto voice = voice_with_request_options(request.voice, request.text, request.options);
+    auto adapter = make_graph_capacity_adapter();
+    int64_t request_size = 0;
+    const auto & prepare_phonemes = require_phoneme_chunks(request.option_arrays);
+    if (request.text.has_value()) {
+        const int64_t text_chunk_size =
+            engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
+        // The graph is sized for the LARGEST chunk either way. With supplied phonemes the
+        // caller's own chunking decides that, so the text is not split -- splitting it would
+        // size the graph against a boundary run() is never going to use.
+        const auto text_chunks = prepare_phonemes.empty()
+            ? engine::text::split_text_chunks(request.text->text, text_chunk_size)
+            : std::vector<std::string>{request.text->text};
+        for (const auto & chunk : text_chunks) {
+            runtime::SessionPreparationRequest chunk_request = request;
+            chunk_request.text = runtime::Transcript{chunk, request.text->language};
+            const auto frontend_state =
+                resolve_kokoro_frontend_session_state(chunk_request.text, voice, *assets_);
+            if (prepare_phonemes.empty()) {
+                request_size = std::max(
+                    request_size,
+                    estimate_kokoro_request_tokens(chunk_request, frontend_state, *assets_));
+            } else {
+                // Every entry is sized here, before anything is synthesized, so a bad entry
+                // near the end of a long list is reported without rendering the ones before it.
+                for (size_t index = 0; index < prepare_phonemes.size(); ++index) {
+                    try {
+                        request_size = std::max(
+                            request_size,
+                            estimate_kokoro_request_tokens(
+                                chunk_request, frontend_state, *assets_, prepare_phonemes[index]));
+                    } catch (const std::exception & error) {
+                        throw std::runtime_error(
+                            "Kokoro supplied phoneme entry " + std::to_string(index) + ": " + error.what());
+                    }
+                }
+            }
+        }
+    }
+    graph_capacity_controller_.ensure_prepared(adapter, request_size);
+    mark_prepared();
+}
+
+runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) {
+    if (task_.mode != runtime::RunMode::Offline) {
+        throw std::runtime_error("Kokoro TTS run requires an offline session");
+    }
+    return synthesize(request, false);
+}
+
+runtime::TaskResult KokoroTTSSession::generate_stream(const runtime::TaskRequest & request) {
+    return synthesize(request, true);
+}
+
+runtime::TaskResult KokoroTTSSession::synthesize(const runtime::TaskRequest & request, bool streaming) {
+    require_prepared("Kokoro TTS run()");
+    if (!request.text_input.has_value()) {
+        throw std::runtime_error("Kokoro TTS run requires text_input");
+    }
+    validate_request_options(request.options, request.option_arrays, *contract_);
+    const auto voice = voice_with_request_options(request.voice, request.text_input, request.options);
+
+    rng_seed_ = runtime::parse_u64_option(request.options, {"seed"}).value_or(runtime::random_u64_seed());
+    if (prepared_decoder_) prepared_decoder_->set_seed(rng_seed_);
+    engine::debug::trace_log_scalar("kokoro.generation.seed", rng_seed_);
+
+    const int64_t text_chunk_size =
+        engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
+    // ⚠ WHEN PHONEMES ARE SUPPLIED THE CALLER OWNS THE CHUNKING. Chunking splits the TEXT, and
+    // nothing here knows where the matching cut points in someone else's phoneme stream are --
+    // only their G2P does. So the option is a LIST: one entry per chunk, rendered in order and
+    // merged into one result exactly as text chunks are. A caller whose document exceeds the
+    // 510-symbol limit therefore still makes ONE call and gets ONE buffer back, instead of
+    // having to stitch the audio itself.
+    const auto & supplied_phonemes = require_phoneme_chunks(request.option_arrays);
+    // ⚠ NOT one TaskRequest per chunk. With supplied phonemes every chunk runs the SAME request
+    // -- only the phoneme entry differs -- and the request carries the whole phoneme list, so a
+    // copy per chunk would copy the caller's own input once for every entry in it.
+    const auto text_chunk_requests = supplied_phonemes.empty()
+        ? runtime::chunk_text_request(request, text_chunk_size)
+        : std::vector<runtime::TaskRequest>{};
+    const size_t chunk_count =
+        supplied_phonemes.empty() ? text_chunk_requests.size() : supplied_phonemes.size();
+    engine::debug::trace_log_scalar("kokoro.text_chunk_size", text_chunk_size);
+    engine::debug::trace_log_scalar("kokoro.text_chunk_count", static_cast<int64_t>(chunk_count));
+    if (!supplied_phonemes.empty()) {
+        engine::debug::trace_log_scalar(
+            "kokoro.supplied_phoneme_chunks", static_cast<int64_t>(supplied_phonemes.size()));
+    }
+    double frontend_ms = 0.0;
+    double inference_ms = 0.0;
+    double predictor_ms = 0.0;
+    double decoder_ms = 0.0;
+    runtime::AudioBuffer merged_audio;
+    // One entry per phoneme group, accumulated across chunks: the chunks are joined into one
+    // buffer, so their timings have to be too, each offset by the audio already merged.
+    const bool return_timestamps = request_return_timestamps(request.options);
+    std::vector<runtime::WordTimestamp> word_timestamps;
+    // Resolved once in the supplied path, where every chunk runs the same request: the state
+    // and the text half of the key cannot differ between chunks there.
+    const bool supplied = !supplied_phonemes.empty();
+    std::optional<KokoroFrontendSessionState> shared_state;
+    std::string shared_key_prefix;
+    if (supplied) {
+        shared_state = resolve_kokoro_frontend_session_state(request.text_input, voice, *assets_);
+        shared_key_prefix = cache_key_prefix(*shared_state, *request.text_input);
+    }
+    for (size_t chunk_index = 0; chunk_index < chunk_count; ++chunk_index) {
+        const auto & chunk_request = supplied ? request : text_chunk_requests[chunk_index];
+        const std::optional<std::string_view> chunk_phonemes =
+            supplied ? std::optional<std::string_view>{supplied_phonemes[chunk_index]}
+                     : std::optional<std::string_view>{};
+        const auto frontend_state = supplied
+            ? *shared_state
+            : resolve_kokoro_frontend_session_state(chunk_request.text_input, voice, *assets_);
+        const std::string cache_key =
+            (supplied ? shared_key_prefix : cache_key_prefix(frontend_state, *chunk_request.text_input)) +
+            // Without this, two requests with the same text and different supplied phonemes
+            // would hit the same cache entry and the second would be spoken as the first --
+            // and with a list, every chunk shares one text, so this is the ONLY thing telling
+            // them apart.
+            std::string(chunk_phonemes.value_or(std::string_view{}));
+        KokoroSynthesisInput input;
+        frontend_ms += measure_ms([&]() {
+            if (!cache_key.empty() && cached_input_ && cache_key == cached_request_key_) {
+                input = *cached_input_;
+                return;
+            }
+            input = build_supplied_or_text_input(
+                chunk_request, frontend_state, *assets_, chunk_phonemes, chunk_index, supplied);
+            if (!cache_key.empty()) {
+                cached_request_key_ = cache_key;
+                cached_input_ = std::make_unique<KokoroSynthesisInput>(input);
+            }
+        });
+
+        const auto inference_started = std::chrono::steady_clock::now();
+        auto adapter = make_graph_capacity_adapter();
+        const int64_t request_size = static_cast<int64_t>(input.input_ids.size());
+        graph_capacity_controller_.ensure_prepared(adapter, request_size);
+        const int64_t selected_capacity = graph_capacity_controller_.select_capacity_for_run(adapter, request_size);
+        if (!prepared_predictor_ || prepared_session_capacity_ != selected_capacity) {
+            throw std::runtime_error("Kokoro selected graph capacity was not prepared");
+        }
+
+        kokoro_ggml::PredictorOutputs predictor;
+        predictor_ms += measure_ms([&]() {
+            predictor = prepared_predictor_->predict(
+                input.input_ids,
+                input.style,
+                input.speaking_rate);
+        });
+        const int64_t decoder_request_size = predictor.decoder_x_cols;
+        if (predictor.decoder_x_on_backend && predictor.decoder_x_tensor == nullptr) {
+            throw std::runtime_error("Kokoro predictor reported backend decoder features without a tensor");
+        }
+        if (decoder_request_size <= 0) {
+            throw std::runtime_error("Kokoro predictor produced invalid decoder request size");
+        }
+        if (static_cast<int64_t>(predictor.f0_curve.size()) != decoder_request_size) {
+            throw std::runtime_error("Kokoro predictor decoder and f0 frame counts diverged");
+        }
+        if (!prepared_decoder_ || prepared_decoder_capacity_ != decoder_request_size) {
+            prepare_decoder_graph_capacity(decoder_request_size);
+        }
+        if (!prepared_decoder_ ||
+            prepared_decoder_context_.decoder_frame_capacity <= 0 ||
+            decoder_request_size != prepared_decoder_context_.decoder_frame_capacity) {
+            throw std::runtime_error("Kokoro decoder runtime was not prepared");
+        }
+        std::vector<float> audio;
+        decoder_ms += measure_ms([&]() {
+            audio = prepared_decoder_->decode(
+                predictor,
+                input.style);
+        });
+        const auto inference_ended = std::chrono::steady_clock::now();
+        inference_ms += std::chrono::duration<double, std::milli>(inference_ended - inference_started).count();
+        // Before the append and before the move: the offset is where THIS chunk starts in the
+        // merged buffer, and `audio` is about to be emptied into it.
+        if (return_timestamps) {
+            append_kokoro_word_timings(
+                word_timestamps,
+                input.input_ids,
+                predictor.durations,
+                assets_->vocab,
+                audio.size(),
+                static_cast<int64_t>(merged_audio.samples.size()));
+        }
+        runtime::AudioBuffer chunk_audio{24000, 1, std::move(audio)};
+        runtime::append_audio_buffer(merged_audio, chunk_audio);
+        if (streaming && stream_event_sink()) {
+            runtime::StreamEvent event;
+            event.audio_output = std::move(chunk_audio);
+            stream_event_sink()(event);
+        }
+    }
+
+    runtime::TaskResult result;
+    result.audio_output = std::move(merged_audio);
+    result.word_timestamps = std::move(word_timestamps);
+    const double wall_ms = frontend_ms + inference_ms;
+    engine::debug::timing_log_scalar("kokoro.frontend_ms", frontend_ms);
+    engine::debug::timing_log_scalar("kokoro.inference_ms", inference_ms);
+    engine::debug::timing_log_scalar("kokoro.predictor_ms", predictor_ms);
+    engine::debug::timing_log_scalar("kokoro.decoder_ms", decoder_ms);
+    engine::debug::timing_log_scalar("session.wall_ms", wall_ms);
+    return result;
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_kokoro_tts_loader() {
+    runtime::SpecBackedVoiceModelConfig<KokoroAssets> config;
+    config.family = kFamily;
+    config.load_assets = [](const std::filesystem::path & model_path) {
+        return load_kokoro_assets(model_path);
+    };
+    config.create_session = [](
+        const runtime::TaskSpec & task,
+        const runtime::SessionOptions & options,
+        std::shared_ptr<const KokoroAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        return std::make_unique<KokoroTTSSession>(task, options, std::move(assets), std::move(contract));
+    };
+    return runtime::make_spec_backed_voice_loader(std::move(config));
+}
+
+}  // namespace engine::models::kokoro_tts

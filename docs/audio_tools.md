@@ -2,15 +2,38 @@
 
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
-| MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
-| RVC | `rvc` | `vc` | [RVC](#rvc) |
-| Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |
-| VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
-| HTDemucs | `htdemucs` | `sep` | [HTDemucs](#htdemucs) |
+| Apollo | `apollo` | `s2s` music restoration | [Apollo](models/apollo.md) |
+| AudioSR | `audiosr` | `s2s` audio super-resolution | [AudioSR](#audiosr) |
 | BS-RoFormer | `bs_roformer` | `sep` | [BS-RoFormer](#bs-roformer) |
+| Built-in audio utilities | `builtin_audio_utils` | `s2s` denoise/enhance/super-resolution | [Built-in audio utilities](#built-in-audio-utilities) |
+| ControlFoley | `controlfoley` | `gen` Foley/SFX generation | [ControlFoley](#controlfoley) |
+| GTCRN | `gtcrn`, `gtcrn_dns3`, `gtcrn_vctk`, `gtcrn_streaming` | framework denoise utility API | [GTCRN](#gtcrn) |
+| HTDemucs | `htdemucs` | `sep` | [HTDemucs](#htdemucs) |
+| LFM2.5-Audio | `lfm2_audio` | `s2s` spoken chat (also `asr`, `tts`) | [LFM2.5-Audio](models/lfm2_audio.md) |
+| MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
+| MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
+| MossFormer2 | `mossformer2` | `sep` | [MossFormer2](models/mossformer2.md) |
+| MuScriptor | `muscriptor` | audio to MIDI/events | [MuScriptor](#muscriptor) |
+| PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
+| RE-USE | `reuse` | `s2s` speech restoration | [RE-USE](models/reuse.md) |
+| RVC | `rvc` | `vc` | [RVC](#rvc) |
+| SAM Audio | `sam_audio` | `s2s` prompt-conditioned separation | [SAM Audio](models/sam_audio.md) |
+| Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |
+| SheetSage2 | `sheetsage2` | `midi` audio to ABC score | [SheetSage2](#sheetsage2) |
+| Sidon | `sidon` | `s2s` single-speaker speech restoration | [Sidon](models/sidon.md) |
+| Smart Turn v3.2 | `smart_turn` | `turn` completion detection | [Smart Turn](models/smart_turn.md) |
+| TF-GridNet | `tf_gridnet` | `sep` | [TF-GridNet](models/tf_gridnet.md) |
+| Tone Color VC | `tone_color_vc` | `vc` | [Tone Color VC](models/tone_color_vc.md) |
+| UniverSR | `universr` | `s2s` audio/speech super-resolution | [UniverSR](models/universr.md) |
+| VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
 
-This page covers voice conversion, codec, and source-separation families. These models do not share one interface: conversion models consume source speech plus a target voice, while the separation models consume a mixture and write named stems.
+This page covers voice conversion, codec, audio enhancement, Foley generation,
+audio-to-symbolic, and source-separation families. These models do not share one
+interface: conversion models consume source speech plus a target voice,
+enhancement models consume source audio, Foley models consume text/audio/video
+conditioning, audio-to-symbolic models consume audio and write structured
+artifacts, and separation models consume a mixture and write named stems.
 
 Common CLI shape:
 
@@ -18,135 +41,18 @@ Common CLI shape:
 audiocpp_cli --task <task> --family <family> --model <model-dir> --backend cuda ...
 ```
 
-## MioCodec
+## AudioSR
 
-MioCodec is a speech codec and voice-conversion path. In the CLI it is exposed as conversion tasks, not as a low-level token encode/decode tool.
-
-| Field | Value |
-|---|---|
-| Family | `miocodec` |
-| GGUF model | `models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf` |
-| Tasks | `vc`, `s2s` |
-| Modes | `offline` |
-| Input | Source speech WAV through `--audio` |
-| Conditioning | Target/reference voice WAV through `--voice-ref` |
-| Output | Single converted WAV through `--out` |
-
-Voice conversion:
+AudioSR performs audio super-resolution from an input waveform. See
+[AudioSR](models/audiosr.md) for options and long-audio chunking behavior.
 
 ```bash
-audiocpp_cli --task vc --family miocodec --model models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --backend cuda --audio assets/resources/a.wav --voice-ref assets/resources/b.wav --out converted.wav
+audiocpp_cli --task s2s --family audiosr \
+  --model models/AudioSR-GGUF/audiosr-basic-f32.gguf \
+  --backend cuda \
+  --audio input.wav \
+  --out enhanced.wav
 ```
-
-Speech-to-speech:
-
-```bash
-audiocpp_cli --task s2s --family miocodec --model models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --backend cuda --audio assets/resources/a.wav --voice-ref assets/resources/b.wav --out converted.wav
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--audio` | WAV path | required | Source speech audio. |
-| `--voice-ref` | WAV path | required | Target speaker/reference audio. |
-| `--task` | `vc`, `s2s` | required | Conversion task. |
-| `--out` | WAV path | required | Output audio path. |
-| `--session-option miocodec.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Model weight type when supported by each component. |
-
-## RVC
-
-RVC is an offline retrieval-based voice-conversion model. The audio.cpp package
-uses native HuBERT content features, RMVPE pitch extraction, optional IVF
-retrieval blending, and packaged v1/v2 voices. The F16 GGUF package is
-self-contained and embeds the package spec plus packaged retrieval sidecars.
-
-| Field | Value |
-|---|---|
-| Family | `rvc` |
-| GGUF model | `models/RVC-GGUF/rvc-f16.gguf` |
-| Task | `vc` |
-| Modes | `offline` |
-| Input | Source speech WAV through `--audio` |
-| Packaged voices | `default`, `manthos`, `chocola`, `fraise` |
-| Output | Single converted WAV through `--out` |
-
-Packaged voice without retrieval:
-
-```bash
-audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backend cuda --audio source.wav --out converted.wav --request-option voice_id=default
-```
-
-Packaged voice with retrieval blending:
-
-```bash
-audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backend cuda --audio source.wav --out converted.wav --request-option voice_id=default --request-option retrieval_blend=0.5
-```
-
-User RVC checkpoint with a matching FAISS retrieval index:
-
-```bash
-audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backend cuda --audio source.wav --out converted.wav --request-option voice_model_path=/path/to/voice.pth --request-option retrieval_index_path=/path/to/voice.index --request-option retrieval_blend=0.5
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--request-option voice_id=<id>` | `default`, `manthos`, `chocola`, `fraise` | `default` | Packaged RVC voice id. Ignored when `voice_model_path` is set. |
-| `--request-option voice_model_path=<path>` | `.pth` or `.pt` path | unset | User RVC checkpoint path. |
-| `--request-option pitch_extractor=rmvpe` | `rmvpe` | `rmvpe` | Pitch extractor for F0-enabled voices. |
-| `--request-option pitch_path=<path>` | CSV path | unset | Optional F0 override file with `time,Hz` rows sorted by time. |
-| `--request-option retrieval_index_path=<path>` | FAISS `.index` path | unset | User retrieval index used when `retrieval_blend` is greater than 0 for a user checkpoint. |
-| `--request-option retrieval_blend=<rate>` | `0.0` to `1.0` | `0.0` | IVF retrieval feature blend rate. `0` disables retrieval. |
-| `--request-option semitone_shift=<n>` | integer | `0` | Semitone pitch shift before synthesis. |
-| `--request-option pitch_filter_radius=<n>` | integer >= 0 | `3` | Median filter radius for F0 smoothing; values greater than 2 enable filtering. |
-| `--request-option output_sample_rate=<hz>` | integer >= 0 | `0` | Output sample rate; `0` keeps the selected voice model sample rate. |
-| `--request-option rms_mix_rate=<rate>` | float | `0.25` | RMS envelope mix rate after conversion. |
-| `--request-option unvoiced_protection=<rate>` | `0.0` to `1.0` | `0.33` | Unvoiced consonant protection strength. |
-| `--request-option speaker_id=<n>` | integer >= 0 | `0` | Speaker embedding id for multi-speaker checkpoints. |
-| `--request-option audio_pad_duration_sec=<sec>` | integer >= 1 | `1` | Long-audio chunk pad duration. |
-| `--request-option split_query_sec=<sec>` | integer >= 1 | `5` | Quiet-point query window for long-audio splitting. |
-| `--request-option split_center_sec=<sec>` | integer >= 1 | `30` | Long-audio split center stride. |
-| `--request-option split_threshold_sec=<sec>` | integer >= 1 | `32` | Input duration before quiet-point splitting is used. |
-| `--session-option rvc.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `f32` | Tensor storage type for native RVC, HuBERT, and RMVPE weights. |
-| `--session-option rvc.voice_cache_slots=<n>` | integer >= 0 | `4` | User voice model cache slots. Set `0` to disable caching. |
-
-## Seed-VC
-
-Seed-VC provides voice conversion and singing voice conversion routes. See [Seed-VC](models/seed_vc.md) for the full route manual.
-
-```bash
-audiocpp_cli --task vc --family seed_vc --model models/Seed-VC --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
-```
-
-## VeVo2
-
-VeVo2 covers speech, singing, voice conversion, singing conversion, and editing routes. See [VeVo2](models/vevo2.md) for the full route manual.
-
-```bash
-audiocpp_cli --task vc --family vevo2 --model models/VeVo2 --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
-```
-
-## HTDemucs
-
-HTDemucs separates a music mixture into stems. The current integration writes the model stems as named output artifacts under `--out-dir`; it does not expose the upstream two-stems shortcut as a separate CLI task.
-
-| Field | Value |
-|---|---|
-| Family | `htdemucs` |
-| Model directory | `models/htdemucs` |
-| Task | `sep` |
-| Modes | `offline` |
-| Input | 44.1 kHz music mixture WAV through `--audio` |
-| Output | Stem files under `--out-dir` |
-| Stems | Vocals, drums, bass, and other when produced by the model package |
-
-```bash
-audiocpp_cli --task sep --family htdemucs --model models/htdemucs --backend cuda --audio song_44k.wav --out-dir stems
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--audio` | 44.1 kHz WAV path | required | Input music mixture. |
-| `--out-dir` | directory | required | Directory for separated stems. |
-| `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
 
 ## BS-RoFormer
 
@@ -206,6 +112,221 @@ python tests/bs_roformer/convert_reference_ckpt.py \
   --output-dir models/BS-RoFormer
 ```
 
+## Built-in Audio Utilities
+
+The `builtin_audio_utils` family exposes the built-in framework audio utility
+models through the normal CLI and server model-loading path. These utilities do
+require separately downloaded SafeTensors weights; they are not embedded in the
+executable. Pass the weights file or its directory as `--model` and select the
+implementation with `--load-option utility=<utility-id>`. Absolute and relative
+paths are supported; no repository checkout or fixed `assets/` layout is needed.
+
+| Utility id | Operation | Input rate | Output rate |
+|---|---|---:|---:|
+| `deepfilternet2` | Denoise/enhance | 48 kHz | 48 kHz |
+| `rnnoise` | Denoise/enhance | 48 kHz | 48 kHz |
+| `zipenhancer` | Denoise/enhance | 16 kHz | 16 kHz |
+| `gtcrn` | Denoise/enhance, alias for `gtcrn_streaming` | 16 kHz | 16 kHz |
+| `gtcrn_streaming` | Denoise/enhance | 16 kHz | 16 kHz |
+| `gtcrn_dns3` | Denoise/enhance | 16 kHz | 16 kHz |
+| `gtcrn_vctk` | Denoise/enhance | 16 kHz | 16 kHz |
+| `flashsr` | Audio super-resolution | 16 kHz | 48 kHz |
+
+Weights are in [the audio utility assets directory](https://github.com/0xShug0/audio.cpp/tree/main/assets/framework/audio_utilities).
+For DeepFilterNet2, ZipEnhancer, and FlashSR, keep the original weight filename
+inside the selected model directory. RNNoise and GTCRN also accept a weight file
+with a custom filename. Directory loading selects `rnnoise10Gb_15.safetensors`
+for RNNoise and `<utility-id>.safetensors` for the others (`gtcrn` selects
+`gtcrn_streaming.safetensors`).
+
+CLI example (replace the path with your download location):
+
+```bash
+audiocpp_cli --task s2s --family builtin_audio_utils \
+  --model /absolute/path/to/models/rnnoise \
+  --load-option utility=rnnoise \
+  --backend cuda \
+  --audio input.wav \
+  --out enhanced.wav \
+  --log \
+  --log-file rnnoise.log
+```
+
+Server config example:
+
+```json
+{
+  "id": "builtin-rnnoise",
+  "family": "builtin_audio_utils",
+  "path": "/absolute/path/to/models/rnnoise",
+  "load_options": {"utility": "rnnoise"},
+  "task": "s2s",
+  "mode": "offline"
+}
+```
+
+Relative model paths in server configuration are resolved relative to the
+configuration file, not the server's working directory.
+
+Server request example:
+
+```bash
+curl http://127.0.0.1:8080/v1/tasks/run \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"builtin-rnnoise","request":{"audio":"input.wav"}}'
+```
+
+## ControlFoley
+
+ControlFoley generates Foley audio from text, video, text plus video, or
+reference audio plus video. See [ControlFoley](models/controlfoley.md) for the
+full route matrix.
+
+```bash
+audiocpp_cli --task gen --family controlfoley \
+  --model models/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf \
+  --backend cuda \
+  --text "A wooden door closes in a quiet hallway." \
+  --out foley.wav
+```
+
+## GTCRN
+
+GTCRN is a tiny 16 kHz speech-enhancement utility exposed through the framework
+audio utility API. The native runtime supports the DNS3, VCTK, and streaming
+checkpoints converted from the official PyTorch weights to SafeTensors.
+
+| Utility model | Checkpoint |
+|---|---|
+| `gtcrn` | Alias for `gtcrn_streaming` |
+| `gtcrn_dns3` | Official DNS3 checkpoint |
+| `gtcrn_streaming` | Official streaming DNS3 checkpoint |
+| `gtcrn_vctk` | Official VCTK checkpoint |
+
+Offline file processing through the utility API:
+
+```cpp
+engine::audio::denoise_file("input.wav", "enhanced.wav", "gtcrn");
+```
+
+Native streaming uses one 512-point STFT frame at a time:
+
+```cpp
+auto model = engine::audio::GTCRNModel::load_from_safetensors("gtcrn_streaming.safetensors");
+auto session = model.create_streaming_session();
+session->process_stft_frame(input_257x2, output_257x2);
+```
+
+## HTDemucs
+
+HTDemucs separates a music mixture into stems. The current integration writes the model stems as named output artifacts under `--out-dir`; it does not expose the upstream two-stems shortcut as a separate CLI task.
+
+| Field | Value |
+|---|---|
+| Family | `htdemucs` |
+| Model directory | `models/htdemucs` |
+| Task | `sep` |
+| Modes | `offline` |
+| Input | 44.1 kHz music mixture WAV through `--audio` |
+| Output | Stem files under `--out-dir` |
+| Stems | Vocals, drums, bass, and other when produced by the model package |
+
+```bash
+audiocpp_cli --task sep --family htdemucs --model models/htdemucs --backend cuda --audio song_44k.wav --out-dir stems
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | 44.1 kHz WAV path | required | Input music mixture. |
+| `--out-dir` | directory | required | Directory for separated stems. |
+| `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
+| `--session-option htdemucs.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | backend-dependent | Weight storage type. Defaults to `f32` for host graph planning, `f16` on CUDA, and `native` otherwise. |
+
+Schema-v1 option compatibility:
+
+| Legacy/session input | Schema-v1 option | Notes |
+|---|---|---|
+| `weight_type` | `htdemucs.weight_type` | Accepted as a compatibility alias for direct session-option callers. Prefer the family-prefixed form. |
+
+### HTDemucs 6-stem
+
+HTDemucs_6stems extends separation to six stems: drums, bass, vocals, other, guitar, and piano. It uses the same Hybrid Transformer Demucs architecture with a different checkpoint (`5c90dfd2`) that was trained for six-source separation.
+
+The original checkpoint is [`5c90dfd2-34c22ccb.th`](https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th). The Demucs checkpoint is a PyTorch package rather than a flat tensor file, so first extract it with the existing Demucs converter and then create each GGUF directly from the extracted SafeTensors weights:
+
+```bash
+mkdir -p models/htdemucs_6stems_source models/HTDemucs-6stems-GGUF
+curl -fL \
+  https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th \
+  -o models/htdemucs_6stems_source/5c90dfd2-34c22ccb.th
+
+python tests/demucs/convert_reference_ckpt.py \
+  --name htdemucs_6s \
+  --repo models/htdemucs_6stems_source \
+  --output-dir models/htdemucs_6stems_source
+
+build/debug/bin/audiocpp_gguf \
+  --input submodel_weights=models/htdemucs_6stems_source/htdemucs_6s/5c90dfd2/model.safetensors \
+  --root models/htdemucs_6stems_source/htdemucs_6s \
+  --family htdemucs_6stems \
+  --model-spec model_specs/htdemucs_6stems.json \
+  --type f16 \
+  --output models/HTDemucs-6stems-GGUF/htdemucs-6stems-f16.gguf
+
+build/debug/bin/audiocpp_gguf \
+  --input submodel_weights=models/htdemucs_6stems_source/htdemucs_6s/5c90dfd2/model.safetensors \
+  --root models/htdemucs_6stems_source/htdemucs_6s \
+  --family htdemucs_6stems \
+  --model-spec model_specs/htdemucs_6stems.json \
+  --type q8_0 \
+  --output models/HTDemucs-6stems-GGUF/htdemucs-6stems-q8_0.gguf
+```
+
+| Field | Value |
+|---|---|
+| Family | `htdemucs_6stems` (alias: `htdemucs_6s`) |
+| Model directory | `models/HTDemucs-6stems-GGUF` |
+| Task | `sep` |
+| Modes | `offline` |
+| Input | 44.1 kHz music mixture WAV through `--audio` |
+| Output | Stem files under `--out-dir` |
+| Stems | Drums, bass, vocals, other, guitar, piano |
+
+```bash
+audiocpp_cli --task sep --family htdemucs_6stems --model models/HTDemucs-6stems-GGUF/htdemucs-6stems-q8_0.gguf --backend cuda --audio song_44k.wav --out-dir stems_6
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | 44.1 kHz WAV path | required | Input music mixture. |
+| `--out-dir` | directory | required | Directory for separated stems. |
+| `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
+| `--session-option htdemucs_6stems.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | backend-dependent | Weight storage type. Defaults to `f32` for host graph planning, `f16` on CUDA, and `native` otherwise. |
+
+Schema-v1 option compatibility:
+
+| Legacy/session input | Schema-v1 option | Notes |
+|---|---|---|
+| `weight_type` | `htdemucs_6stems.weight_type` | Accepted as a compatibility alias for direct session-option callers. Prefer the family-prefixed form. |
+
+## MeanVC2
+
+MeanVC2 is a zero-shot voice conversion model. It takes source speech through
+`--audio` and a target speaker reference through `--voice-ref`. See
+[MeanVC2](models/meanvc2.md) for streaming behavior and options.
+
+```bash
+python3 tools/model_manager_v2.py install meanvc2_120ms_40ms_f32
+
+audiocpp_cli --task vc --family meanvc2 \
+  --model models/MeanVC2-GGUF/meanvc2-120ms-40ms-fp32.gguf \
+  --backend cuda \
+  --audio assets/resources/a.wav \
+  --voice-ref assets/resources/b.wav \
+  --out converted.wav
+```
+
+
 ## Mel-Band RoFormer
 
 Mel-Band RoFormer is wired as a vocal/source-separation model. The CLI uses the framework separation task and writes named artifacts under `--out-dir`.
@@ -218,7 +339,7 @@ Mel-Band RoFormer is wired as a vocal/source-separation model. The CLI uses the 
 | Modes | `offline` |
 | Input | 44.1 kHz music mixture WAV through `--audio` |
 | Output | Named separated artifacts under `--out-dir` |
-| Notes | Chunking/overlap behavior is internal to the integration; no user chunk option is exposed here |
+| Notes | Uses the package overlap count by default; `mel_band_roformer.num_overlap` can lower the overlap for faster inference with a quality tradeoff |
 
 ```bash
 audiocpp_cli --task sep --family mel_band_roformer --model models/mel-roformer-mlx --backend cuda --audio song_44k.wav --out-dir stems
@@ -229,5 +350,185 @@ audiocpp_cli --task sep --family mel_band_roformer --model models/mel-roformer-m
 | `--audio` | 44.1 kHz WAV path | required | Input music mixture. |
 | `--out-dir` | directory | required | Directory for separated outputs. |
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
+| `--session-option mel_band_roformer.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | backend-dependent | Weight storage type. Defaults to `f32` when the backend requires a host graph plan, otherwise `native`. |
+| `--session-option mel_band_roformer.num_overlap=<n>` | integer `>= 1` | package config | Number of overlapping inference windows. Lower values improve throughput but can reduce boundary quality. |
+
+Schema-v1 option compatibility:
+
+| Legacy/session input | Schema-v1 option | Notes |
+|---|---|---|
+| `weight_type` | `mel_band_roformer.weight_type` | Accepted as a compatibility alias for direct session-option callers. Prefer the family-prefixed form. |
+| `num_overlap` | `mel_band_roformer.num_overlap` | Accepted as a compatibility alias for direct session-option callers. Prefer the family-prefixed form. |
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.
+
+## MioCodec
+
+MioCodec is a speech codec and voice-conversion path. In the CLI it is exposed as conversion tasks, not as a low-level token encode/decode tool.
+
+| Field | Value |
+|---|---|
+| Family | `miocodec` |
+| GGUF model | `models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf` |
+| Tasks | `vc`, `s2s` |
+| Modes | `offline` |
+| Input | Source speech WAV through `--audio` |
+| Conditioning | Target/reference voice WAV through `--voice-ref` |
+| Output | Single converted WAV through `--out` |
+
+Voice conversion:
+
+```bash
+audiocpp_cli --task vc --family miocodec --model models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --backend cuda --audio assets/resources/a.wav --voice-ref assets/resources/b.wav --out converted.wav
+```
+
+Speech-to-speech:
+
+```bash
+audiocpp_cli --task s2s --family miocodec --model models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --backend cuda --audio assets/resources/a.wav --voice-ref assets/resources/b.wav --out converted.wav
+```
+
+### Common Options (use directly)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | WAV path | required | Source speech audio. |
+| `--voice-ref` | WAV path | required | Target speaker/reference audio. |
+| `--task` | `vc`, `s2s` | required | Conversion task. |
+| `--out` | WAV path | required | Output audio path. |
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `miocodec.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `f32` | Weight storage type. |
+| `miocodec.weight_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
+| `miocodec.constant_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
+| `miocodec.content_graph_arena_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
+| `miocodec.global_graph_arena_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
+| `miocodec.wave_graph_arena_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
+
+## MuScriptor
+
+MuScriptor is an audio-to-symbolic tool that converts music audio into
+note-event JSON or a MIDI file. See [MuScriptor](models/muscriptor.md) for
+streaming, sampling, and full option details.
+
+```bash
+python3 tools/model_manager_v2.py install muscriptor
+
+audiocpp_cli --task midi --family muscriptor \
+  --model models/MuScriptor-Small-GGUF/muscriptor-small-f32.gguf \
+  --backend cuda \
+  --audio song.wav \
+  --request-option instruments=drums,electric_bass \
+  --out result.mid
+```
+
+Use `--request-option output_format=json --out events.json` when you want the
+generated note-event JSON instead of MIDI.
+
+## PersonaPlex
+
+PersonaPlex is a speech-to-speech conversational model. It consumes user audio,
+a packaged or reference voice prompt, and an optional system/persona prompt.
+See [PersonaPlex](models/personaplex.md) for offline and streaming examples.
+
+```bash
+python3 tools/model_manager_v2.py install personaplex_7b_v1_q4_k
+
+audiocpp_cli --task s2s --family personaplex \
+  --model models/PersonaPlex-GGUF \
+  --backend cuda \
+  --audio user.wav \
+  --text "You are a concise assistant. Answer naturally and briefly." \
+  --request-option voice_id=NATF2 \
+  --out reply.wav
+```
+
+## RVC
+
+RVC is an offline retrieval-based voice-conversion model. The audio.cpp package
+uses native HuBERT content features, RMVPE pitch extraction, optional IVF
+retrieval blending, and packaged v1/v2 voices. The F16 GGUF package is
+self-contained and embeds the package spec plus packaged retrieval sidecars.
+
+| Field | Value |
+|---|---|
+| Family | `rvc` |
+| GGUF model | `models/RVC-GGUF/rvc-f16.gguf` |
+| Task | `vc` |
+| Modes | `offline` |
+| Input | Source speech WAV through `--audio` |
+| Packaged voices | `default`, `manthos`, `chocola`, `fraise` |
+| Output | Single converted WAV through `--out` |
+
+Packaged voice without retrieval:
+
+```bash
+audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backend cuda --audio source.wav --out converted.wav --request-option voice_id=default
+```
+
+Packaged voice with retrieval blending:
+
+```bash
+audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backend cuda --audio source.wav --out converted.wav --request-option voice_id=default --request-option retrieval_blend=0.5
+```
+
+User RVC checkpoint with a matching FAISS retrieval index:
+
+```bash
+audiocpp_cli --task vc --family rvc --model models/RVC-GGUF/rvc-f16.gguf --backend cuda --audio source.wav --out converted.wav --request-option voice_model_path=/path/to/voice.pth --request-option retrieval_index_file=/path/to/voice.index --request-option retrieval_blend=0.5
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--request-option voice_id=<id>` | `default`, `manthos`, `chocola`, `fraise` | `default` | Packaged RVC voice id. Ignored when `voice_model_path` is set. |
+| `--request-option voice_model_path=<path>` | `.pth` or `.pt` path | unset | User RVC checkpoint path. |
+| `--request-option pitch_extractor=rmvpe` | `rmvpe` | `rmvpe` | Pitch extractor for F0-enabled voices. |
+| `--request-option pitch_file=<path>` | CSV file | unset | Optional F0 override file with `time,Hz` rows sorted by time. Legacy `pitch_path` remains accepted. |
+| `--request-option retrieval_index_file=<path>` | FAISS `.index` file | unset | User retrieval index used when `retrieval_blend` is greater than 0 for a user checkpoint. Legacy `retrieval_index_path` remains accepted. |
+| `--request-option retrieval_blend=<rate>` | `0.0` to `1.0` | `0.0` | IVF retrieval feature blend rate. `0` disables retrieval. |
+| `--request-option semitone_shift=<n>` | integer | `0` | Semitone pitch shift before synthesis. |
+| `--request-option pitch_filter_radius=<n>` | integer >= 0 | `3` | F0 smoothing switch: values greater than 2 enable a fixed radius-1 median filter; lower values disable it. |
+| `--request-option output_sample_rate=<hz>` | integer | `0` | Output sample rate; nonpositive values keep the selected voice model sample rate. |
+| `--request-option rms_mix_rate=<rate>` | float | `0.25` | RMS envelope mix rate after conversion. |
+| `--request-option unvoiced_protection=<rate>` | `0.0` to `1.0` | `0.33` | Unvoiced consonant protection strength. |
+| `--request-option speaker_id=<n>` | integer >= 0 | `0` | Speaker embedding id for multi-speaker checkpoints. |
+| `--request-option audio_pad_duration_sec=<sec>` | integer >= 1 | `1` | Long-audio chunk pad duration. |
+| `--request-option split_query_sec=<sec>` | integer >= 1 | `5` | Quiet-point query window for long-audio splitting. |
+| `--request-option split_center_sec=<sec>` | integer >= 1 | `30` | Long-audio split center stride. |
+| `--request-option split_threshold_sec=<sec>` | integer >= 1 | `32` | Input duration before quiet-point splitting is used. |
+| `--session-option rvc.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `f32` | Tensor storage type for native RVC, HuBERT, and RMVPE weights. |
+| `--session-option rvc.voice_cache_slots=<n>` | integer >= 0 | `4` | User voice model cache slots. Set `0` to disable caching. |
+
+## Seed-VC
+
+Seed-VC provides voice conversion and singing voice conversion routes. See [Seed-VC](models/seed_vc.md) for the full route manual.
+
+```bash
+audiocpp_cli --task vc --family seed_vc --model models/Seed-VC --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
+```
+
+## SheetSage2
+
+SheetSage2 transcribes music into an ABC score. It uses the `midi` task route but
+writes ABC notation, not a binary MIDI file.
+
+```bash
+audiocpp_cli --task midi --family sheetsage2 \
+  --model models/SheetSage2-GGUF/sheetsage2-orig.gguf \
+  --backend cuda --threads 8 --audio song.wav \
+  --out score.abc --log
+```
+
+Use the original-precision package; Q8 is not supported. The resulting score can
+condition [YuE2](models/yue2.md) through `abc_file` with `cot=melody` or `cot=full`.
+
+## VeVo2
+
+VeVo2 covers speech, singing, voice conversion, singing conversion, and editing routes. See [VeVo2](models/vevo2.md) for the full route manual.
+
+```bash
+audiocpp_cli --task vc --family vevo2 --model models/VeVo2 --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
+```

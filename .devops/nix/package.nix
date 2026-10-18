@@ -4,6 +4,7 @@
   cmake,
   ninja,
   pkg-config,
+  openssl,
   rocmPackages,
   cudaPackages,
   vulkan-headers,
@@ -14,6 +15,7 @@
   python-scripts,
   config,
   version,
+  autoAddDriverRunpath,
 
   # Overridable feature flags
   cudaSupport ? config.cudaSupport or false,
@@ -21,6 +23,8 @@
   metalSupport ? stdenv.isDarwin,
   rocmSupport ? config.rocmSupport or false,
   rocmGpuTargets ? (lib.optionals rocmSupport rocmPackages.clr.gpuTargets),
+  strixHaloOptimizations ? (rocmSupport && rocmGpuTargets == [ "gfx1151" ]),
+  nativeModelManagerSupport ? true,
   # Model selection: if non-empty, only these model targets are built.
   # See CMakeLists.txt AUDIOCPP_MODEL_SET / AUDIOCPP_MODELS.
   models ? [ ],
@@ -37,11 +41,13 @@ stdenv.mkDerivation (finalAttrs: {
     pkg-config
   ]
   ++ lib.optional cudaSupport cudaPackages.cuda_nvcc
+  ++ lib.optional cudaSupport autoAddDriverRunpath
   ++ lib.optional rocmSupport rocmPackages.clr;
 
   buildInputs = [
     python-scripts
   ]
+  ++ lib.optional nativeModelManagerSupport openssl
   ++ lib.optionals vulkanSupport [
     vulkan-headers
     vulkan-loader
@@ -63,6 +69,10 @@ stdenv.mkDerivation (finalAttrs: {
     "-DENGINE_ENABLE_NATIVE_CPU=ON"
     "-DENGINE_ENABLE_LLAMAFILE=ON"
   ]
+  ++ lib.optionals nativeModelManagerSupport [
+    "-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON"
+    "-DAUDIOCPP_USE_SYSTEM_OPENSSL=ON"
+  ]
   ++ (
     if models != [ ] then
       [
@@ -78,7 +88,8 @@ stdenv.mkDerivation (finalAttrs: {
   ++ lib.optional metalSupport "-DENGINE_ENABLE_METAL=ON"
   ++ lib.optional rocmSupport "-DENGINE_ENABLE_HIP=ON"
   ++ lib.optional rocmSupport "-DCMAKE_HIP_COMPILER=${rocmPackages.llvm.clang}/bin/clang"
-  ++ lib.optional rocmSupport "-DGPU_TARGETS=${lib.concatStringsSep ";" rocmGpuTargets}";
+  ++ lib.optional rocmSupport "-DGPU_TARGETS=${lib.concatStringsSep ";" rocmGpuTargets}"
+  ++ lib.optional strixHaloOptimizations "-DENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=ON";
 
   env = lib.optionalAttrs rocmSupport {
     ROCM_PATH = "${rocmPackages.clr}";
@@ -91,13 +102,17 @@ stdenv.mkDerivation (finalAttrs: {
 
     # Copy the built C++ executables directly from the bin directory
     cp bin/audiocpp_cli bin/audiocpp_server bin/audiocpp_gguf $out/bin/
+    ${lib.optionalString nativeModelManagerSupport ''
+      cp bin/audiocpp_model_manager $out/bin/
+    ''}
 
-    # Install the python model manager script
-    cp $src/tools/model_manager.py $out/bin/audiocpp_model_manager
-    chmod +x $out/bin/audiocpp_model_manager
+    # Keep the supported Python v2 manager available during migration without
+    # overwriting the native audiocpp_model_manager executable copied above.
+    install -Dm755 $src/tools/model_manager_v2.py $out/bin/audiocpp_model_manager_v2.py
+    cp -R $src/model_specs $out/model_specs
 
     # Patch the shebang to use our python environment with torch/safetensors/pyyaml
-    patchShebangs $out/bin/audiocpp_model_manager
+    patchShebangs $out/bin/audiocpp_model_manager_v2.py
 
     runHook postInstall
   '';

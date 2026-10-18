@@ -73,6 +73,7 @@ private:
         const EmotionState & emotion);
     runtime::AudioBuffer synthesize_segment(
         const std::vector<int32_t> & text_tokens,
+        int32_t lang_id,
         const SpeakerState & speaker,
         const EmotionState & emotion,
         const std::vector<float> & emotion_vector,
@@ -87,13 +88,13 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const IndexTTS2Assets> assets_;
-    size_t gpt_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
-    size_t s2mel_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
+    size_t gpt_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
+    size_t s2mel_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
     size_t reference_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t emotion_text_prefill_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
     size_t emotion_text_decode_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t weight_context_bytes_ = 32ull * 1024ull * 1024ull;
-    int64_t emotion_text_max_new_tokens_ = 256;
+    int64_t emotion_text_max_tokens_ = 256;
     engine::assets::TensorStorageType matmul_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     bool mem_saver_ = false;
@@ -101,11 +102,11 @@ private:
     IndexTTS2TextTokenizer tokenizer_;
     std::unique_ptr<IndexTTS2Wav2Vec2BertRuntime> semantic_encoder_;
     std::unique_ptr<IndexTTS2SemanticCodecRuntime> semantic_codec_;
-    std::unique_ptr<IndexTTS2StyleEncoder> style_encoder_;
+    std::unique_ptr<IndexTTS2CampplusStyleEncoder> style_encoder_;
     std::unique_ptr<IndexTTS2GptRuntime> gpt_;
     std::unique_ptr<IndexTTS2S2MelRuntime> s2mel_;
     std::unique_ptr<IndexTTS2BigVganVocoder> vocoder_;
-    std::unique_ptr<IndexTTS2QwenEmotionRuntime> qwen_emotion_;
+    std::unique_ptr<IndexTTS2Qwen3EmotionRuntime> qwen_emotion_;
 
     std::vector<float> speaker_matrix_;
     std::vector<float> emotion_matrix_;

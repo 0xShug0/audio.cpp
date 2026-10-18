@@ -1,5 +1,7 @@
 #include "engine/models/qwen3_tts/tokenizer_speech_decoder.h"
 
+#include "engine/models/qwen3_tts/rknn_speech_decoder.h"
+
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -27,6 +29,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -44,7 +47,13 @@ namespace binding = modules::binding;
 constexpr int64_t kSampleRate = 24000;
 constexpr int64_t kDecodeSamplesPerCode = 1920;
 constexpr int64_t kChunkCodes = 300;
-constexpr int64_t kLeftContextCodes = 25;
+constexpr int64_t kLeftContextCodes = Qwen3SpeechTokenizerDecoderRuntime::kLeftContextFrames;
+constexpr std::array<int64_t, 2> kStrixHaloCachedChunkFrames{300, 105};
+#if defined(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
+constexpr bool kStrixHaloGraphCacheEnabled = true;
+#else
+constexpr bool kStrixHaloGraphCacheEnabled = false;
+#endif
 constexpr float kCodebookEps = 1.0e-5F;
 constexpr float kMaskNegInf = -1.0e9F;
 
@@ -1018,21 +1027,20 @@ public:
         if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             throw std::runtime_error("failed to allocate Qwen3 speech decoder graph");
         }
-        std::vector<int32_t> positions(static_cast<size_t>(code_frames_));
+        positions_data_.resize(static_cast<size_t>(code_frames_));
         for (int64_t i = 0; i < code_frames_; ++i) {
-            positions[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+            positions_data_[static_cast<size_t>(i)] = static_cast<int32_t>(i);
         }
         const auto mask = make_mask(code_frames_, config.sliding_window);
-        ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
         if (perf_mode_ == Qwen3TTSPerfMode::FlashAttention) {
-            std::vector<ggml_fp16_t> mask_f16(mask.size());
+            mask_f16_data_.resize(mask.size());
             for (size_t index = 0; index < mask.size(); ++index) {
-                mask_f16[index] = ggml_fp32_to_fp16(mask[index]);
+                mask_f16_data_[index] = ggml_fp32_to_fp16(mask[index]);
             }
-            ggml_backend_tensor_set(mask_, mask_f16.data(), 0, mask_f16.size() * sizeof(ggml_fp16_t));
         } else {
-            ggml_backend_tensor_set(mask_, mask.data(), 0, mask.size() * sizeof(float));
+            mask_f32_data_ = mask;
         }
+        upload_static_inputs();
     }
 
     ~Qwen3SpeechTokenizerDecoderGraph() {
@@ -1059,6 +1067,10 @@ public:
             throw std::runtime_error("Qwen3 speech decoder code count exceeds graph capacity");
         }
         const auto upload_start = Clock::now();
+        // Cached GGML graphs may reuse backend allocations whose input contents are
+        // not guaranteed to survive a prior execution. Restore every declared input,
+        // not only the request-varying codes, before replaying a retained graph.
+        upload_static_inputs();
         std::vector<int32_t> tensor_codes(expected, 0);
         for (int64_t frame = 0; frame < input_frames; ++frame) {
             for (int64_t group = 0; group < weights_->config.num_quantizers; ++group) {
@@ -1071,7 +1083,6 @@ public:
         const auto compute_start = Clock::now();
         core::set_backend_threads(backend_, compute_threads_);
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
-        ggml_backend_synchronize(backend_);
         last_graph_compute_ms_ = engine::debug::elapsed_ms(compute_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 speech decoder graph compute failed");
@@ -1096,6 +1107,27 @@ public:
     }
 
 private:
+    void upload_static_inputs() {
+        ggml_backend_tensor_set(
+            positions_,
+            positions_data_.data(),
+            0,
+            positions_data_.size() * sizeof(int32_t));
+        if (perf_mode_ == Qwen3TTSPerfMode::FlashAttention) {
+            ggml_backend_tensor_set(
+                mask_,
+                mask_f16_data_.data(),
+                0,
+                mask_f16_data_.size() * sizeof(ggml_fp16_t));
+        } else {
+            ggml_backend_tensor_set(
+                mask_,
+                mask_f32_data_.data(),
+                0,
+                mask_f32_data_.size() * sizeof(float));
+        }
+    }
+
     std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> weights_;
     int64_t code_frames_ = 0;
     int64_t waveform_frames_ = 0;
@@ -1106,6 +1138,9 @@ private:
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * mask_ = nullptr;
     ggml_tensor * output_ = nullptr;
+    std::vector<int32_t> positions_data_;
+    std::vector<float> mask_f32_data_;
+    std::vector<ggml_fp16_t> mask_f16_data_;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
@@ -1121,13 +1156,30 @@ Qwen3SpeechTokenizerDecoderRuntime::Qwen3SpeechTokenizerDecoderRuntime(
     size_t constant_context_bytes,
     assets::TensorStorageType linear_weight_storage_type,
     assets::TensorStorageType conv_weight_storage_type,
-    Qwen3TTSPerfMode perf_mode)
+    Qwen3TTSPerfMode perf_mode,
+    Qwen3SpeechTokenizerDecoderRknn rknn)
     : assets_(std::move(assets)),
       execution_context_(&execution_context),
       graph_arena_bytes_(graph_arena_bytes),
       perf_mode_(perf_mode) {
     if (assets_ == nullptr) {
         throw std::runtime_error("Qwen3 speech tokenizer decoder requires assets");
+    }
+    if (!rknn.model_path.empty()) {
+        // The NPU path owns the whole decoder stage, so the ggml decoder
+        // weights (hundreds of MB) are never loaded; only the config is needed,
+        // for shape validation and the RoPE/KV-window geometry.
+        auto config_only = std::make_shared<Qwen3SpeechTokenizerDecoderWeights>();
+        config_only->config = load_decoder_config(*assets_);
+        weights_ = std::move(config_only);
+        rknn_ = std::make_unique<RknnSpeechDecoder>(
+            std::move(rknn.model_path),
+            std::move(rknn.first_model_path),
+            weights_->config.num_quantizers,
+            weights_->config.head_dim,
+            weights_->config.sliding_window,
+            weights_->config.rope_theta);
+        return;
     }
     weights_ = load_weights(
         *assets_,
@@ -1152,6 +1204,15 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
     if (static_cast<int64_t>(codec_codes.codes.size()) != codec_codes.frames * codec_codes.code_groups) {
         throw std::runtime_error("Qwen3 speech decoder codec payload size mismatch");
     }
+    if (rknn_ != nullptr) {
+        const auto start = Clock::now();
+        auto samples = rknn_->decode(
+            codec_codes.codes.data(), codec_codes.frames, codec_codes.code_groups);
+        debug::timing_log_scalar(
+            "qwen3_tts.speech_decoder.rknn.decode_ms",
+            engine::debug::elapsed_ms(start, Clock::now()));
+        return runtime::AudioBuffer{kSampleRate, 1, std::move(samples)};
+    }
     std::vector<float> samples;
     samples.reserve(static_cast<size_t>(codec_codes.frames * kDecodeSamplesPerCode));
     double graph_build_ms = 0.0;
@@ -1161,6 +1222,8 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
     int64_t chunks = 0;
     int64_t graph_rebuilds = 0;
     int64_t max_chunk_frames = 0;
+    const bool optimized_cache_enabled =
+        kStrixHaloGraphCacheEnabled && execution_context_->backend_type() == core::BackendType::Hip;
     for (int64_t start = 0; start < codec_codes.frames; start += kChunkCodes) {
         const int64_t end = std::min<int64_t>(start + kChunkCodes, codec_codes.frames);
         const int64_t context = start > kLeftContextCodes ? kLeftContextCodes : start;
@@ -1175,10 +1238,24 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
             std::copy(src, src + codec_codes.code_groups, dst);
         }
         const int threads = std::max(1, execution_context_->config().threads);
-        if (graph_ == nullptr || !graph_->matches(*weights_, chunk_frames, execution_context_->backend(), threads)) {
+        auto * graph_slot = &graph_;
+#if defined(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
+        if (optimized_cache_enabled) {
+            for (size_t index = 0; index < kStrixHaloCachedChunkFrames.size(); ++index) {
+                if (chunk_frames == kStrixHaloCachedChunkFrames[index]) {
+                    graph_slot = &optimized_graphs_[index];
+                    break;
+                }
+            }
+        }
+#endif
+        auto & graph = *graph_slot;
+        const bool graph_rebuilt =
+            graph == nullptr || !graph->matches(*weights_, chunk_frames, execution_context_->backend(), threads);
+        if (graph_rebuilt) {
             const auto build_start = Clock::now();
-            graph_.reset();
-            graph_ = std::make_unique<Qwen3SpeechTokenizerDecoderGraph>(
+            graph.reset();
+            auto replacement = std::make_unique<Qwen3SpeechTokenizerDecoderGraph>(
                 weights_,
                 chunk_frames,
                 *execution_context_,
@@ -1186,12 +1263,13 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
                 graph_arena_bytes_,
                 perf_mode_);
             graph_build_ms += engine::debug::elapsed_ms(build_start, Clock::now());
+            graph = std::move(replacement);
             ++graph_rebuilds;
         }
-        auto decoded = graph_->run(chunk.data(), chunk.size());
-        input_upload_ms += graph_->last_input_upload_ms();
-        graph_compute_ms += graph_->last_graph_compute_ms();
-        output_read_ms += graph_->last_output_read_ms();
+        auto decoded = graph->run(chunk.data(), chunk.size());
+        input_upload_ms += graph->last_input_upload_ms();
+        graph_compute_ms += graph->last_graph_compute_ms();
+        output_read_ms += graph->last_output_read_ms();
         ++chunks;
         const int64_t drop = context * kDecodeSamplesPerCode;
         if (drop > static_cast<int64_t>(decoded.size())) {
@@ -1215,28 +1293,104 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
     return runtime::AudioBuffer{kSampleRate, 1, std::move(samples)};
 }
 
+runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode_stream_chunk(
+    const Qwen3SpeechCodes & codec_codes,
+    int64_t context_frames,
+    int64_t frames_per_chunk) const {
+    if (frames_per_chunk <= 0 || context_frames < 0 || context_frames > kLeftContextCodes ||
+        codec_codes.frames <= context_frames || codec_codes.frames - context_frames > frames_per_chunk ||
+        codec_codes.code_groups != weights_->config.num_quantizers ||
+        static_cast<int64_t>(codec_codes.codes.size()) != codec_codes.frames * codec_codes.code_groups) {
+        throw std::runtime_error("Qwen3 streaming speech decoder received invalid codec shape");
+    }
+    const auto begin = Clock::now();
+    if (rknn_ != nullptr) {
+        // Stateful NPU path: the left context is already in the carried cache,
+        // so only the tail is fed, and audio comes out in whole model groups
+        // (the controller drops empty chunks).
+        auto samples = rknn_->step(
+            codec_codes.codes.data(),
+            context_frames,
+            codec_codes.frames - context_frames,
+            codec_codes.code_groups,
+            false);
+        debug::timing_log_scalar("qwen3_tts.speech_decoder.rknn.chunk_ms", engine::debug::elapsed_ms(begin));
+        return runtime::AudioBuffer{kSampleRate, 1, std::move(samples)};
+    }
+    const bool initial = context_frames == 0;
+    const int64_t capacity = initial ? codec_codes.frames : kLeftContextCodes + frames_per_chunk;
+    auto & graph = initial ? stream_initial_graph_ : stream_graph_;
+    const int threads = std::max(1, execution_context_->config().threads);
+    const bool rebuild = graph == nullptr ||
+        !graph->matches(*weights_, capacity, execution_context_->backend(), threads);
+    if (rebuild) {
+        graph.reset();
+        graph = std::make_unique<Qwen3SpeechTokenizerDecoderGraph>(
+            weights_, capacity, *execution_context_, *constants_, graph_arena_bytes_, perf_mode_);
+    }
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.graph.rebuilds", static_cast<int64_t>(rebuild));
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.graph.build_ms", engine::debug::elapsed_ms(begin));
+    // All decoder layers are causal. Right padding allows the initial and final
+    // short chunks to use the same graph without changing their valid samples.
+    auto decoded = graph->run(codec_codes.codes.data(), codec_codes.codes.size());
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.graph.compute_ms", graph->last_graph_compute_ms());
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.input_upload_ms", graph->last_input_upload_ms());
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.output_read_ms", graph->last_output_read_ms());
+    decoded.resize(static_cast<size_t>(codec_codes.frames * kDecodeSamplesPerCode));
+    decoded.erase(decoded.begin(), decoded.begin() + context_frames * kDecodeSamplesPerCode);
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.total_ms", engine::debug::elapsed_ms(begin));
+    return runtime::AudioBuffer{kSampleRate, 1, std::move(decoded)};
+}
+
+void Qwen3SpeechTokenizerDecoderRuntime::reset_stream() const {
+    if (rknn_ != nullptr) {
+        rknn_->reset();
+    }
+}
+
+runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::flush_stream() const {
+    if (rknn_ == nullptr) {
+        return runtime::AudioBuffer{kSampleRate, 1, {}};
+    }
+    // The stateful model voices whole groups; whatever is left below one group
+    // at the end of the utterance is padded and voiced here.
+    return runtime::AudioBuffer{kSampleRate, 1, rknn_->step(nullptr, 0, 0, weights_->config.num_quantizers, true)};
+}
+
 runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode_and_trim_reference(
     const Qwen3SpeechCodes & reference_codes,
     const Qwen3SpeechCodes & generated_codes) const {
     if (reference_codes.code_groups != generated_codes.code_groups) {
         throw std::runtime_error("Qwen3 speech decoder reference/generated code group mismatch");
     }
+    if (reference_codes.frames < 0 || generated_codes.frames < 0 || reference_codes.code_groups <= 0) {
+        throw std::runtime_error("Qwen3 speech decoder reference/generated code shape is invalid");
+    }
+    if (reference_codes.frames > std::numeric_limits<int64_t>::max() - generated_codes.frames) {
+        throw std::runtime_error("Qwen3 speech decoder combined frame count is too large");
+    }
     Qwen3SpeechCodes combined;
     combined.frames = reference_codes.frames + generated_codes.frames;
     combined.code_groups = reference_codes.code_groups;
-    combined.codes.reserve(static_cast<size_t>(combined.frames * combined.code_groups));
+    if (combined.frames > std::numeric_limits<int64_t>::max() / combined.code_groups) {
+        throw std::runtime_error("Qwen3 speech decoder combined code count is too large");
+    }
+    const int64_t combined_code_count = combined.frames * combined.code_groups;
+    if (static_cast<uint64_t>(combined_code_count) > std::numeric_limits<size_t>::max()) {
+        throw std::runtime_error("Qwen3 speech decoder combined code count exceeds host size limits");
+    }
+    combined.codes.reserve(static_cast<size_t>(combined_code_count));
     combined.codes.insert(combined.codes.end(), reference_codes.codes.begin(), reference_codes.codes.end());
     combined.codes.insert(combined.codes.end(), generated_codes.codes.begin(), generated_codes.codes.end());
     auto audio = decode(combined);
-    const int64_t cut = combined.frames > 0
-        ? static_cast<int64_t>(
-              static_cast<double>(reference_codes.frames) / static_cast<double>(combined.frames) *
-              static_cast<double>(audio.samples.size()))
-        : 0;
-    if (cut < 0 || cut > static_cast<int64_t>(audio.samples.size())) {
+    if (reference_codes.frames > std::numeric_limits<int64_t>::max() / kDecodeSamplesPerCode) {
+        throw std::runtime_error("Qwen3 speech decoder reference sample count is too large");
+    }
+    const int64_t cut = reference_codes.frames * kDecodeSamplesPerCode;
+    if (static_cast<uint64_t>(cut) > audio.samples.size()) {
         throw std::runtime_error("Qwen3 speech decoder reference trim is out of range");
     }
-    audio.samples.erase(audio.samples.begin(), audio.samples.begin() + cut);
+    audio.samples.erase(audio.samples.begin(), audio.samples.begin() + static_cast<std::ptrdiff_t>(cut));
     return audio;
 }
 

@@ -41,6 +41,15 @@ void BoundedStaticKVDecodeCursor::import_state(const TransformerKVState & state,
     cache_steps_ = cache_steps;
 }
 
+void BoundedStaticKVDecodeCursor::reset_to_empty(int64_t cache_steps) {
+    if (cache_steps <= 0) {
+        throw std::runtime_error("BoundedStaticKVDecodeCursor requires positive cache_steps");
+    }
+    valid_steps_ = 0;
+    absolute_end_ = 0;
+    cache_steps_ = cache_steps;
+}
+
 BoundedStaticKVDecodeStep BoundedStaticKVDecodeCursor::next_step() const {
     if (cache_steps_ <= 0) {
         throw std::runtime_error("BoundedStaticKVDecodeCursor requires imported state before decode");

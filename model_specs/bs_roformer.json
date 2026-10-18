@@ -77,7 +77,7 @@
   "package_defaults": {
     "download": {
       "kind": "huggingface_snapshot",
-      "repo": "mirek190/audio.cpp",
+      "repo": "audio-cpp/audio.cpp-gguf",
       "revision": "main",
       "gated": false
     }
@@ -89,11 +89,11 @@
       "default": true,
       "format": "gguf",
       "precision": "q8_0",
-      "target_directory": "BS-RoFormer-ep368_Q8",
+      "target_directory": "BS-RoFormer-ep368-GGUF",
       "files": [
-        "vocal separation models/BS-RoFormer-ep368_Q8.gguf"
+        "BS-RoFormer-ep368-GGUF/bs-roformer-ep368-q8_0.gguf"
       ],
-      "strip_prefix": "vocal separation models"
+      "strip_prefix": "BS-RoFormer-ep368-GGUF"
     }
   ],
   "dependencies": [],

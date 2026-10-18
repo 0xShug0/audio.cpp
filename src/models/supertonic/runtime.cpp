@@ -65,7 +65,7 @@ struct SupertonicChunkOutput {
 
 constexpr size_t kSupertonicDurationArenaBytes = 256ull * 1024ull * 1024ull;
 constexpr size_t kSupertonicTextArenaBytes = 1024ull * 1024ull * 1024ull;
-constexpr size_t kSupertonicVectorArenaBytes = 8192ull * 1024ull * 1024ull;
+constexpr size_t kSupertonicVectorArenaBytes = 32ull * 1024ull * 1024ull;
 constexpr size_t kSupertonicVocoderArenaBytes = 2048ull * 1024ull * 1024ull;
 constexpr size_t kSupertonicIoArenaBytes = 64ull * 1024ull * 1024ull;
 constexpr int kSupertonicVectorStepsPerGraph = 1;
@@ -340,7 +340,7 @@ std::shared_ptr<const SupertonicBackendWeights> load_backend_weights(
     for (const auto & metadata : tensors) {
         const auto & name = metadata.name;
         const ggml_type source_type = assets::ggml_type_for_tensor_dtype(metadata.dtype);
-        if (source_type == GGML_TYPE_F32 || source_type == GGML_TYPE_F16 || source_type == GGML_TYPE_BF16) {
+        if (source_type != GGML_TYPE_I64) {
             const auto tensor_storage_type = storage_type_for_weight(name, weight_storage_type);
             core::TensorValue tensor;
             if (tensor_storage_type == assets::TensorStorageType::Q8_0 && is_reshaped_linear_weight(name)) {
@@ -358,9 +358,6 @@ std::shared_ptr<const SupertonicBackendWeights> load_backend_weights(
             }
             weights->tensors.emplace(name, tensor);
             continue;
-        }
-        if (source_type != GGML_TYPE_I64) {
-            throw std::runtime_error("Supertonic unsupported weight dtype: " + metadata.dtype);
         }
     }
     weights->store->upload();
@@ -501,18 +498,6 @@ core::TensorValue edge_pad_time(
         out = modules::ConcatModule({2}).build(ctx, out, edge);
     }
     return out;
-}
-
-core::TensorValue prelu(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & slope) {
-    auto x = core::ensure_backend_addressable_layout(ctx, input);
-    auto positive = core::wrap_tensor(ggml_relu(ctx.ggml, x.tensor), input.shape, GGML_TYPE_F32);
-    auto negative = core::wrap_tensor(ggml_sub(ctx.ggml, x.tensor, positive.tensor), input.shape, GGML_TYPE_F32);
-    auto slope_repeated = broadcast_to(ctx, slope, input.shape);
-    auto scaled_negative = core::wrap_tensor(ggml_mul(ctx.ggml, negative.tensor, slope_repeated.tensor), input.shape, GGML_TYPE_F32);
-    return core::wrap_tensor(ggml_add(ctx.ggml, positive.tensor, scaled_negative.tensor), input.shape, GGML_TYPE_F32);
 }
 
 core::TensorValue batch_norm_eval(
@@ -752,7 +737,7 @@ private:
             1,
             true,
         }).build(ctx, x, {weights_.head1_weight, weights_.head1_bias});
-        x = prelu(ctx, x, weights_.head_prelu_slope);
+        x = modules::PReluModule().build(ctx, x, weights_.head_prelu_slope);
         x = modules::Conv1dModule({
             x.shape.dims[1],
             weights_.head2_weight.shape.dims[0],
@@ -835,7 +820,8 @@ public:
             ctx_,
             joined,
             {weight("duration_predictor.tts.dp.predictor.layers.0.weight"), weight("duration_predictor.tts.dp.predictor.layers.0.bias")});
-        h = prelu(ctx_, h, weight("duration_predictor.tts.dp.predictor.activation.weight"));
+        h = modules::PReluModule().build(ctx_, h,
+            weight("duration_predictor.tts.dp.predictor.activation.weight"));
         auto duration = modules::LinearModule({
             h.shape.last_dim(),
             weight("duration_predictor.tts.dp.predictor.layers.1.weight").shape.dims[0],
@@ -2389,7 +2375,7 @@ SupertonicChunkOutput synthesize_supertonic_chunk(
 
 }  // namespace
 
-struct SupertonicNativeRuntime::State {
+struct SupertonicRuntime::State {
     struct BackendOwner {
         ggml_backend_t backend = nullptr;
 
@@ -2499,16 +2485,16 @@ struct SupertonicNativeRuntime::State {
     Style uncached_style;
 };
 
-SupertonicNativeRuntime::SupertonicNativeRuntime(
+SupertonicRuntime::SupertonicRuntime(
     std::shared_ptr<const SupertonicAssets> assets,
     core::BackendConfig backend_config,
     assets::TensorStorageType weight_storage_type,
     std::size_t style_cache_slots)
     : state_(std::make_unique<State>(std::move(assets), backend_config, weight_storage_type, style_cache_slots)) {}
 
-SupertonicNativeRuntime::~SupertonicNativeRuntime() = default;
+SupertonicRuntime::~SupertonicRuntime() = default;
 
-runtime::AudioBuffer SupertonicNativeRuntime::synthesize(
+runtime::AudioBuffer SupertonicRuntime::synthesize(
     const std::string & text,
     const SupertonicGenerationOptions & options,
     const SupertonicTextTokenizer & tokenizer) {

@@ -9,6 +9,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/io/binary.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/lookup_modules.h"
@@ -36,7 +37,7 @@ using Clock = std::chrono::steady_clock;
 
 constexpr size_t kMaxTimbreMelCacheEntries = 4;
 
-struct Vevo2FMWeights {
+struct Vevo2DiffLlamaWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
     engine::core::TensorValue cond_emb;
     std::vector<engine::modules::ConvTranspose1dWeights> resampling_layers;
@@ -154,7 +155,7 @@ engine::core::TensorValue adaptive_rms_norm(
 engine::core::TensorValue mlp(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & input,
-    const Vevo2FMWeights::Layer & weights,
+    const Vevo2DiffLlamaWeights::Layer & weights,
     const Vevo2FMConfig & config) {
     auto gate = engine::modules::LinearModule({
         config.hidden_size,
@@ -183,7 +184,7 @@ engine::core::TensorValue diff_llama_layer(
     const engine::core::TensorValue & input,
     const engine::core::TensorValue & timestep_embedding,
     const engine::core::TensorValue & positions,
-    const Vevo2FMWeights::Layer & weights,
+    const Vevo2DiffLlamaWeights::Layer & weights,
     const Vevo2FMConfig & config) {
     const int64_t head_dim = config.hidden_size / config.num_heads;
     auto hidden = adaptive_rms_norm(ctx, input, timestep_embedding, weights.input_norm_to_weight, config);
@@ -372,7 +373,7 @@ Vevo2MelSequence extract_timbre_mel(
     return out;
 }
 
-std::shared_ptr<const Vevo2FMWeights> load_fm_weights(
+std::shared_ptr<const Vevo2DiffLlamaWeights> load_fm_weights(
     ggml_backend_t backend,
     engine::core::BackendType backend_type,
     const engine::assets::TensorSource & source,
@@ -380,7 +381,7 @@ std::shared_ptr<const Vevo2FMWeights> load_fm_weights(
     size_t weight_context_bytes,
     engine::assets::TensorStorageType matmul_storage_type,
     engine::assets::TensorStorageType conv_storage_type) {
-    auto weights = std::make_shared<Vevo2FMWeights>();
+    auto weights = std::make_shared<Vevo2DiffLlamaWeights>();
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
         backend,
         backend_type,
@@ -486,7 +487,7 @@ std::shared_ptr<const Vevo2FMWeights> load_fm_weights(
     weights->layers.reserve(static_cast<size_t>(config.num_layers));
     for (int64_t layer = 0; layer < config.num_layers; ++layer) {
         const std::string prefix = "diff_estimator.layers." + std::to_string(layer);
-        Vevo2FMWeights::Layer layer_weights;
+        Vevo2DiffLlamaWeights::Layer layer_weights;
         layer_weights.input_norm_to_weight = engine::modules::binding::linear_from_source(
             *weights->store,
             source,
@@ -571,7 +572,7 @@ engine::core::TensorValue build_diff_llama(
     const engine::core::TensorValue & cond_input,
     const engine::core::TensorValue & timestep_input,
     const engine::core::TensorValue & positions,
-    const Vevo2FMWeights & weights,
+    const Vevo2DiffLlamaWeights & weights,
     const Vevo2FMConfig & config) {
     auto cond_embedding = engine::modules::LinearModule({
         config.hidden_size,
@@ -638,13 +639,13 @@ engine::core::TensorValue build_diff_llama(
 
 }  // namespace
 
-struct Vevo2FMGraph {
-    Vevo2FMGraph(
+struct Vevo2DiffLlamaConditionGraph {
+    Vevo2DiffLlamaConditionGraph(
         ggml_backend_t backend,
         engine::core::BackendType backend_type,
         size_t graph_context_bytes,
         const Vevo2FMConfig & config,
-        std::shared_ptr<const Vevo2FMWeights> weights,
+        std::shared_ptr<const Vevo2DiffLlamaWeights> weights,
         int64_t code_tokens)
         : backend(backend),
           weights(std::move(weights)),
@@ -689,20 +690,22 @@ struct Vevo2FMGraph {
 
         graph = ggml_new_graph_custom(ctx.get(), 65536, false);
         ggml_build_forward_expand(graph, cond_output);
+        engine::debug::timing_log_context_reservation("vevo2.fm.condition.graph", ctx.get());
         gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
         if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
             throw std::runtime_error("failed to allocate Vevo2 FM graph");
         }
     }
 
-    ~Vevo2FMGraph() {
+    ~Vevo2DiffLlamaConditionGraph() {
+        engine::core::release_backend_graph_resources(backend, graph, true);
         if (gallocr != nullptr) {
             ggml_gallocr_free(gallocr);
             gallocr = nullptr;
         }
     }
 
-    bool matches(const Vevo2FMWeights & other_weights, int64_t other_code_tokens) const noexcept {
+    bool matches(const Vevo2DiffLlamaWeights & other_weights, int64_t other_code_tokens) const noexcept {
         return weights.get() == &other_weights && code_tokens == other_code_tokens;
     }
 
@@ -722,7 +725,7 @@ struct Vevo2FMGraph {
     }
 
     ggml_backend_t backend = nullptr;
-    std::shared_ptr<const Vevo2FMWeights> weights;
+    std::shared_ptr<const Vevo2DiffLlamaWeights> weights;
     int64_t code_tokens = 0;
     int64_t cond_frames = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
@@ -732,13 +735,13 @@ struct Vevo2FMGraph {
     ggml_gallocr_t gallocr = nullptr;
 };
 
-struct Vevo2FMStepGraph {
-    Vevo2FMStepGraph(
+struct Vevo2DiffLlamaStepGraph {
+    Vevo2DiffLlamaStepGraph(
         ggml_backend_t backend,
         engine::core::BackendType backend_type,
         size_t graph_context_bytes,
         const Vevo2FMConfig & config,
-        std::shared_ptr<const Vevo2FMWeights> weights,
+        std::shared_ptr<const Vevo2DiffLlamaWeights> weights,
         int64_t cond_frames,
         int64_t prompt_frames,
         int64_t target_frames,
@@ -757,39 +760,45 @@ struct Vevo2FMStepGraph {
         if (config.hidden_size % config.num_heads != 0) {
             throw std::runtime_error("Vevo2 FM hidden_size must be divisible by num_heads");
         }
+        ggml_init_params input_params{ggml_tensor_overhead() * 64, nullptr, true};
+        input_ctx.reset(ggml_init(input_params));
+        if (input_ctx == nullptr) {
+            throw std::runtime_error("failed to initialize Vevo2 FM step input context");
+        }
         ggml_init_params params{graph_context_bytes, nullptr, true};
         ctx.reset(ggml_init(params));
         if (ctx == nullptr) {
             throw std::runtime_error("failed to initialize Vevo2 FM step graph context");
         }
 
+        engine::core::ModuleBuildContext input_build_ctx{input_ctx.get(), "vevo2.fm.step.input", backend_type};
         engine::core::ModuleBuildContext build_ctx{ctx.get(), "vevo2.fm.step", backend_type};
         prompt_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, prompt_frames, config.mel_dim})).tensor;
         xt_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, target_frames, config.mel_dim})).tensor;
         cond_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, cond_frames, config.hidden_size})).tensor;
         uncond_cond_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, target_frames, config.hidden_size})).tensor;
         timestep_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, config.hidden_size})).tensor;
         cond_position_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_I32,
             engine::core::TensorShape::from_dims({cond_frames})).tensor;
         uncond_position_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_I32,
             engine::core::TensorShape::from_dims({target_frames})).tensor;
         ggml_set_input(prompt_input);
@@ -878,8 +887,13 @@ struct Vevo2FMStepGraph {
 
         graph = ggml_new_graph_custom(ctx.get(), 524288, false);
         ggml_build_forward_expand(graph, output);
-        buffer = ggml_backend_alloc_ctx_tensors(ctx.get(), backend);
-        if (buffer == nullptr) {
+        input_buffer = ggml_backend_alloc_ctx_tensors(input_ctx.get(), backend);
+        engine::debug::timing_log_context_reservation("vevo2.fm.step.graph", ctx.get());
+        engine::debug::timing_log_context_reservation("vevo2.fm.inputs", input_ctx.get());
+        gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (input_buffer == nullptr || gallocr == nullptr ||
+            !ggml_gallocr_reserve(gallocr, graph) ||
+            !ggml_gallocr_alloc_graph(gallocr, graph)) {
             throw std::runtime_error("failed to allocate Vevo2 FM step graph");
         }
 
@@ -903,15 +917,20 @@ struct Vevo2FMStepGraph {
             positions_data.size() * sizeof(int32_t));
     }
 
-    ~Vevo2FMStepGraph() {
-        if (buffer != nullptr) {
-            ggml_backend_buffer_free(buffer);
-            buffer = nullptr;
+    ~Vevo2DiffLlamaStepGraph() {
+        engine::core::release_backend_graph_resources(backend, graph, true);
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+            gallocr = nullptr;
+        }
+        if (input_buffer != nullptr) {
+            ggml_backend_buffer_free(input_buffer);
+            input_buffer = nullptr;
         }
     }
 
     bool matches(
-        const Vevo2FMWeights & other_weights,
+        const Vevo2DiffLlamaWeights & other_weights,
         int64_t other_cond_frames,
         int64_t other_prompt_frames,
         int64_t other_target_frames) const noexcept {
@@ -962,10 +981,11 @@ struct Vevo2FMStepGraph {
     }
 
     ggml_backend_t backend = nullptr;
-    std::shared_ptr<const Vevo2FMWeights> weights;
+    std::shared_ptr<const Vevo2DiffLlamaWeights> weights;
     int64_t cond_frames = 0;
     int64_t prompt_frames = 0;
     int64_t target_frames = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
     ggml_tensor * prompt_input = nullptr;
     ggml_tensor * xt_input = nullptr;
@@ -976,10 +996,11 @@ struct Vevo2FMStepGraph {
     ggml_tensor * uncond_position_input = nullptr;
     ggml_tensor * output = nullptr;
     ggml_cgraph * graph = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
+    ggml_backend_buffer_t input_buffer = nullptr;
+    ggml_gallocr_t gallocr = nullptr;
 };
 
-Vevo2FlowMatchingRuntime::Vevo2FlowMatchingRuntime(
+Vevo2DiffLlamaFlowMatchingRuntime::Vevo2DiffLlamaFlowMatchingRuntime(
     const Vevo2Assets & assets,
     engine::core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
@@ -1003,9 +1024,9 @@ Vevo2FlowMatchingRuntime::Vevo2FlowMatchingRuntime(
     weight_source_->release_storage();
 }
 
-Vevo2FlowMatchingRuntime::~Vevo2FlowMatchingRuntime() = default;
+Vevo2DiffLlamaFlowMatchingRuntime::~Vevo2DiffLlamaFlowMatchingRuntime() = default;
 
-Vevo2MelSequence Vevo2FlowMatchingRuntime::cached_timbre_mel(const runtime::AudioBuffer & timbre_ref_audio) const {
+Vevo2MelSequence Vevo2DiffLlamaFlowMatchingRuntime::cached_timbre_mel(const runtime::AudioBuffer & timbre_ref_audio) const {
     const TimbreMelCacheKey key{
         hash_audio_buffer(timbre_ref_audio),
         timbre_ref_audio.sample_rate,
@@ -1033,7 +1054,7 @@ Vevo2MelSequence Vevo2FlowMatchingRuntime::cached_timbre_mel(const runtime::Audi
     return mel;
 }
 
-Vevo2MelSequence Vevo2FlowMatchingRuntime::generate_mel(
+Vevo2MelSequence Vevo2DiffLlamaFlowMatchingRuntime::generate_mel(
     const runtime::AudioBuffer & timbre_ref_audio,
     const Vevo2TokenSequence & timbre_tokens,
     const Vevo2TokenSequence & generated_tokens,
@@ -1052,7 +1073,7 @@ Vevo2MelSequence Vevo2FlowMatchingRuntime::generate_mel(
     double cond_graph_build_ms = 0.0;
     if (graph_ == nullptr || !graph_->matches(*weights_, static_cast<int64_t>(diffusion_tokens.size()))) {
         const auto build_start = Clock::now();
-        graph_ = std::make_unique<Vevo2FMGraph>(
+        graph_ = std::make_unique<Vevo2DiffLlamaConditionGraph>(
             execution_context_.backend(),
             execution_context_.backend_type(),
             graph_context_bytes_,
@@ -1064,6 +1085,8 @@ Vevo2MelSequence Vevo2FlowMatchingRuntime::generate_mel(
     const auto cond_run_start = Clock::now();
     const auto diffusion_cond = graph_->run_conditioning(diffusion_tokens, config_);
     const double cond_run_ms = engine::debug::elapsed_ms(cond_run_start);
+    graph_.reset();
+    engine::core::trim_backend_pools(execution_context_.backend());
     const int64_t cond_frames = static_cast<int64_t>(diffusion_cond.size()) / config_.hidden_size;
     if (cond_frames * config_.hidden_size != static_cast<int64_t>(diffusion_cond.size())) {
         throw std::runtime_error("Vevo2 FM conditioning output shape mismatch");
@@ -1089,7 +1112,7 @@ Vevo2MelSequence Vevo2FlowMatchingRuntime::generate_mel(
     double step_graph_build_ms = 0.0;
     if (step_graph_ == nullptr || !step_graph_->matches(*weights_, cond_frames, prompt_len, target_len)) {
         const auto build_start = Clock::now();
-        step_graph_ = std::make_unique<Vevo2FMStepGraph>(
+        step_graph_ = std::make_unique<Vevo2DiffLlamaStepGraph>(
             execution_context_.backend(),
             execution_context_.backend_type(),
             graph_context_bytes_,
@@ -1123,6 +1146,8 @@ Vevo2MelSequence Vevo2FlowMatchingRuntime::generate_mel(
     const auto read_start = Clock::now();
     out.values = step_graph_->read_output(config_);
     const double final_read_ms = engine::debug::elapsed_ms(read_start);
+    step_graph_.reset();
+    engine::core::trim_backend_pools(execution_context_.backend());
     engine::debug::timing_log_scalar("vevo2.fm.timbre_mel_ms", timbre_mel_ms);
     engine::debug::timing_log_scalar("vevo2.fm.cond.graph.build_ms", cond_graph_build_ms);
     engine::debug::timing_log_scalar("vevo2.fm.cond_run_ms", cond_run_ms);

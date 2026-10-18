@@ -28,18 +28,18 @@ struct RvcInferenceConfig {
     int split_threshold_sec = 32;
 };
 
-class RvcNativePipeline {
+class RvcPipeline {
 public:
-    RvcNativePipeline(
+    RvcPipeline(
         std::shared_ptr<const RvcAssets> assets,
         engine::core::BackendConfig backend,
         engine::assets::TensorStorageType storage_type);
-    ~RvcNativePipeline();
+    ~RvcPipeline();
 
-    RvcNativePipeline(RvcNativePipeline &&) noexcept;
-    RvcNativePipeline & operator=(RvcNativePipeline &&) noexcept;
-    RvcNativePipeline(const RvcNativePipeline &) = delete;
-    RvcNativePipeline & operator=(const RvcNativePipeline &) = delete;
+    RvcPipeline(RvcPipeline &&) noexcept;
+    RvcPipeline & operator=(RvcPipeline &&) noexcept;
+    RvcPipeline(const RvcPipeline &) = delete;
+    RvcPipeline & operator=(const RvcPipeline &) = delete;
 
     runtime::AudioBuffer infer(
         const runtime::AudioBuffer & source,

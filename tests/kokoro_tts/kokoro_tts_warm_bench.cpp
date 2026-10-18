@@ -226,10 +226,13 @@ std::vector<std::string> read_timing_lines(const std::filesystem::path & path) {
 }
 
 void clear_file(const std::filesystem::path & path) {
+    engine::debug::reset_logging();
     std::ofstream output(path, std::ios::trunc);
     if (!output.is_open()) {
         throw std::runtime_error("failed to clear timing log: " + path.string());
     }
+    output.close();
+    engine::debug::configure_logging({true, path.string()});
 }
 
 void write_sectioned_timing_log(
@@ -424,7 +427,11 @@ int main(int argc, char ** argv) {
         for (size_t request_index = 0; request_index < requests.size(); ++request_index) {
             for (int i = 0; i < iterations; ++i) {
                 clear_file(timing_path);
+                const auto request_start = std::chrono::steady_clock::now();
                 last_results[request_index] = session->run(requests[request_index]);
+                const double request_ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - request_start).count();
+                engine::debug::timing_log_scalar("benchmark.request_wall_ms", request_ms);
                 const auto metrics = parse_timing_file(timing_path);
                 auto lines = read_timing_lines(timing_path);
                 log_sections.push_back({
@@ -437,6 +444,7 @@ int main(int argc, char ** argv) {
             }
         }
 
+        engine::debug::reset_logging();
         write_sectioned_timing_log(timing_path, log_sections);
 
         for (size_t request_index = 0; request_index < requests.size(); ++request_index) {

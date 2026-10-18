@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/runtime/streaming_asr_session.h"
+
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/community_models/parakeet_tdt/assets.h"
@@ -10,8 +12,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
+
 #include <unordered_map>
 #include <vector>
 
@@ -45,8 +49,8 @@ protected:
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     bool encoder_flash_attention_ = false;
     ParakeetFrontend frontend_;
-    std::unique_ptr<ParakeetEncoderRuntime> encoder_;
-    std::unique_ptr<ParakeetDecoderRuntime> decoder_;
+    std::unique_ptr<ParakeetFastConformerEncoderRuntime> encoder_;
+    std::unique_ptr<ParakeetTDTDecoderRuntime> decoder_;
 };
 
 class ParakeetTDTOfflineSession final
@@ -69,17 +73,25 @@ private:
     runtime::TaskResult run_long_form(
         const runtime::AudioBuffer & audio,
         const ParakeetDecodeOptions & options);
+    runtime::TaskResult run_vad_chunks(
+        const runtime::AudioBuffer & audio,
+        const std::unordered_map<std::string, std::string> & request_options,
+        const ParakeetDecodeOptions & options);
+    runtime::IOfflineVoiceTaskSession & vad_session();
 
     std::string offline_mode_ = "full_context";
     int64_t center_samples_ = 0;
     int64_t left_context_samples_ = 0;
     int64_t right_context_samples_ = 0;
     int64_t auto_full_context_max_samples_ = 0;
+    std::filesystem::path vad_model_path_;
+    std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
+    std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
 };
 
 class ParakeetTDTStreamingSession final
     : public ParakeetTDTSessionBase
-    , public runtime::IStreamingVoiceTaskSession {
+    , public runtime::StreamingAsrSessionBase {
 public:
     ParakeetTDTStreamingSession(
         runtime::TaskSpec task,
@@ -92,14 +104,13 @@ public:
     runtime::RunMode run_mode() const override;
     void prepare(const runtime::SessionPreparationRequest & request) override;
     runtime::StreamingPolicy streaming_policy() const override;
-    void start_stream(const runtime::TaskRequest & request) override;
-    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
-    void reset() override;
-    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
-    runtime::TaskResult finalize() override;
 
 private:
-    runtime::StreamEvent process_ready_windows(bool flush_tail);
+    void begin_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override;
+    void consume_audio(const runtime::AudioChunk & chunk) override;
+    void complete_stream(runtime::TaskResult & result) override;
+    ParakeetDecodedText process_ready_windows(bool flush_tail);
     bool process_center_window(int64_t center_end_sample, bool flush_tail);
     ParakeetDecodedText merged_decode() const;
 
@@ -115,9 +126,6 @@ private:
     std::vector<int32_t> token_ids_;
     std::vector<int32_t> token_frame_indices_;
     std::vector<int32_t> token_durations_;
-    runtime::StreamEventCallback stream_event_sink_;
-    bool stream_started_ = false;
-    bool finalized_ = false;
 };
 
 }  // namespace engine::community_models::parakeet_tdt

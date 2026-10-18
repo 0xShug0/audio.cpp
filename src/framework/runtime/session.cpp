@@ -1,7 +1,9 @@
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/task_vocabulary.h"
 #include "engine/framework/text/chunking.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <limits>
 #include <stdexcept>
 
@@ -88,33 +90,12 @@ void DiscreteGraphCapacityAdapter::prepare_capacity(int64_t capacity) {
 }
 
 const char * to_string(VoiceTaskKind task) noexcept {
-    switch (task) {
-    case VoiceTaskKind::Vad:
-        return "vad";
-    case VoiceTaskKind::Asr:
-        return "asr";
-    case VoiceTaskKind::Diarization:
-        return "diar";
-    case VoiceTaskKind::SourceSeparation:
-        return "sep";
-    case VoiceTaskKind::AudioGeneration:
-        return "gen";
-    case VoiceTaskKind::Tts:
-        return "tts";
-    case VoiceTaskKind::VoiceCloning:
-        return "clon";
-    case VoiceTaskKind::VoiceConversion:
-        return "vc";
-    case VoiceTaskKind::SpeechToSpeech:
-        return "s2s";
-    case VoiceTaskKind::Alignment:
-        return "align";
-    case VoiceTaskKind::VoiceDesign:
-        return "vdes";
-    case VoiceTaskKind::SpeakerRecognition:
-        return "spk";
-    case VoiceTaskKind::Svc:
-        return "svc";
+    std::size_t count = 0;
+    const auto * entries = task_vocabulary(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        if (entries[i].kind == task) {
+            return entries[i].token.data();
+        }
     }
     return "unknown";
 }
@@ -153,46 +134,27 @@ const char * to_string(GraphCapacityMode mode) noexcept {
 }
 
 VoiceTaskKind parse_voice_task_kind(const std::string & value) {
-    if (value == "vad") {
-        return VoiceTaskKind::Vad;
+    std::size_t count = 0;
+    const auto * entries = task_vocabulary(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        if (entries[i].token == value) {
+            return entries[i].kind;
+        }
     }
-    if (value == "asr") {
-        return VoiceTaskKind::Asr;
+    // The list in this message was a fifth copy of the vocabulary; it is built
+    // from the table now, so a task kind added later cannot leave behind an
+    // error message that says it does not exist.
+    std::string expected;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (i != 0) {
+            expected += ", ";
+        }
+        if (i + 1 == count) {
+            expected += "or ";
+        }
+        expected.append(entries[i].token);
     }
-    if (value == "diar") {
-        return VoiceTaskKind::Diarization;
-    }
-    if (value == "sep") {
-        return VoiceTaskKind::SourceSeparation;
-    }
-    if (value == "gen") {
-        return VoiceTaskKind::AudioGeneration;
-    }
-    if (value == "tts") {
-        return VoiceTaskKind::Tts;
-    }
-    if (value == "clon") {
-        return VoiceTaskKind::VoiceCloning;
-    }
-    if (value == "vc") {
-        return VoiceTaskKind::VoiceConversion;
-    }
-    if (value == "s2s") {
-        return VoiceTaskKind::SpeechToSpeech;
-    }
-    if (value == "align") {
-        return VoiceTaskKind::Alignment;
-    }
-    if (value == "vdes") {
-        return VoiceTaskKind::VoiceDesign;
-    }
-    if (value == "spk") {
-        return VoiceTaskKind::SpeakerRecognition;
-    }
-    if (value == "svc") {
-        return VoiceTaskKind::Svc;
-    }
-    throw std::runtime_error("unsupported task: " + value + " (expected vad, asr, diar, sep, gen, tts, clon, vc, s2s, align, vdes, spk, or svc)");
+    throw std::runtime_error("unsupported task: " + value + " (expected " + expected + ")");
 }
 
 RunMode parse_run_mode(const std::string & value) {
@@ -241,6 +203,36 @@ void append_audio_buffer(AudioBuffer & dst, const AudioBuffer & src) {
         throw std::runtime_error("audio append requires matching audio format");
     }
     dst.samples.insert(dst.samples.end(), src.samples.begin(), src.samples.end());
+}
+
+std::vector<std::byte> bytes_from_string(std::string_view value) {
+    std::vector<std::byte> out;
+    out.reserve(value.size());
+    for (const unsigned char ch : value) {
+        out.push_back(static_cast<std::byte>(ch));
+    }
+    return out;
+}
+
+VoiceArtifact make_voice_artifact(
+    ArtifactKind kind,
+    std::string id,
+    std::vector<std::byte> payload,
+    std::unordered_map<std::string, std::string> meta) {
+    VoiceArtifact artifact;
+    artifact.kind = kind;
+    artifact.id = std::move(id);
+    artifact.payload = std::move(payload);
+    artifact.meta = std::move(meta);
+    return artifact;
+}
+
+VoiceArtifact make_text_artifact(
+    ArtifactKind kind,
+    std::string id,
+    std::string_view payload,
+    std::unordered_map<std::string, std::string> meta) {
+    return make_voice_artifact(kind, std::move(id), bytes_from_string(payload), std::move(meta));
 }
 
 GraphCapacityMode parse_graph_capacity_mode(const std::string & value) {
@@ -440,6 +432,13 @@ SessionPreparationRequest build_preparation_request(const AudioBuffer & audio) {
 SessionPreparationRequest build_preparation_request(const TaskRequest & request) {
     SessionPreparationRequest prep;
     prep.options = request.options;
+    // ⚠ CARRY THE LIST OPTIONS TOO. Preparation decides how the graphs are sized, and a family
+    // whose work depends on a list option would otherwise size itself for a different request
+    // than the one run() is handed. For kokoro_tts that was not merely a bad estimate: with the
+    // phonemes missing here, preparation fell back to the built-in G2P, and a Japanese request
+    // failed for want of UniDic even though the caller had supplied phonemes precisely so that
+    // the G2P would never be consulted.
+    prep.option_arrays = request.option_arrays;
     prep.text = request.text_input;
     prep.voice = request.voice;
     if (request.audio_input.has_value()) {

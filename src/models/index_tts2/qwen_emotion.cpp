@@ -45,8 +45,8 @@ struct GgmlContextDeleter {
     }
 };
 
-modules::QwenDecoderStackConfig qwen_config() {
-    modules::QwenDecoderStackConfig config;
+modules::DecoderStackConfig qwen_config() {
+    modules::DecoderStackConfig config;
     config.hidden_size = kHidden;
     config.num_attention_heads = kAttentionHeads;
     config.num_key_value_heads = kKvHeads;
@@ -112,13 +112,13 @@ IndexTTS2EmotionVector convert_emotion_json(const std::string & content, const s
     return out;
 }
 
-engine::modules::QwenDecoderLayerWeights load_qwen_layer(
+engine::modules::DecoderLayerWeights load_qwen_layer(
     engine::core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
     int64_t layer_index,
     engine::assets::TensorStorageType storage_type) {
     const std::string prefix = "model.layers." + std::to_string(layer_index);
-    engine::modules::QwenDecoderLayerWeights layer;
+    engine::modules::DecoderLayerWeights layer;
     layer.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", kHidden);
     layer.self_attention.q_weight = store.load_tensor(
         source,
@@ -172,7 +172,7 @@ engine::modules::QwenDecoderLayerWeights load_qwen_layer(
 
 }  // namespace
 
-std::shared_ptr<const IndexTTS2QwenEmotionWeights> load_index_tts2_qwen_emotion_weights(
+std::shared_ptr<const IndexTTS2Qwen3EmotionWeights> load_index_tts2_qwen_emotion_weights(
     const IndexTTS2Assets & assets,
     ggml_backend_t backend,
     engine::core::BackendType backend_type,
@@ -181,7 +181,7 @@ std::shared_ptr<const IndexTTS2QwenEmotionWeights> load_index_tts2_qwen_emotion_
     if (assets.qwen_emotion_weights == nullptr) {
         throw std::runtime_error("IndexTTS2 Qwen emotion requires tensor source");
     }
-    auto weights = std::make_shared<IndexTTS2QwenEmotionWeights>();
+    auto weights = std::make_shared<IndexTTS2Qwen3EmotionWeights>();
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
         backend,
         backend_type,
@@ -261,11 +261,11 @@ int32_t IndexTTS2QwenEmotionTokenizer::think_end_token_id() const noexcept {
     return think_end_token_id_;
 }
 
-class IndexTTS2QwenEmotionRuntime::PrefillGraph {
+class IndexTTS2Qwen3EmotionRuntime::PrefillGraph {
 public:
     PrefillGraph(
         core::ExecutionContext & execution,
-        std::shared_ptr<const IndexTTS2QwenEmotionWeights> weights,
+        std::shared_ptr<const IndexTTS2Qwen3EmotionWeights> weights,
         int64_t prompt_steps,
         size_t graph_arena_bytes)
         : execution_(execution),
@@ -309,7 +309,7 @@ public:
             ctx,
             core::wrap_tensor(token_ids_, core::TensorShape::from_dims({1, prompt_steps_}), GGML_TYPE_I32),
             weights_->token_embedding);
-        auto outputs = modules::QwenDecoderStackModule(qwen_config()).build(
+        auto outputs = modules::DecoderStackModule(qwen_config()).build(
             ctx,
             x,
             core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32),
@@ -369,7 +369,7 @@ public:
         clear_graph();
     }
 
-    bool matches(const IndexTTS2QwenEmotionWeights & weights, ggml_backend_t backend, int64_t prompt_steps) const noexcept {
+    bool matches(const IndexTTS2Qwen3EmotionWeights & weights, ggml_backend_t backend, int64_t prompt_steps) const noexcept {
         return weights_.get() == &weights && execution_.backend() == backend && prompt_steps_ == prompt_steps;
     }
 
@@ -436,7 +436,7 @@ private:
     }
 
     core::ExecutionContext & execution_;
-    std::shared_ptr<const IndexTTS2QwenEmotionWeights> weights_;
+    std::shared_ptr<const IndexTTS2Qwen3EmotionWeights> weights_;
     int64_t prompt_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> output_ctx_;
@@ -453,11 +453,11 @@ private:
     ggml_backend_buffer_t output_buffer_ = nullptr;
 };
 
-class IndexTTS2QwenEmotionRuntime::DecodeGraph {
+class IndexTTS2Qwen3EmotionRuntime::DecodeGraph {
 public:
     DecodeGraph(
         core::ExecutionContext & execution,
-        std::shared_ptr<const IndexTTS2QwenEmotionWeights> weights,
+        std::shared_ptr<const IndexTTS2Qwen3EmotionWeights> weights,
         int64_t cache_steps,
         size_t graph_arena_bytes)
         : execution_(execution),
@@ -505,7 +505,7 @@ public:
             core::wrap_tensor(token_id_, core::TensorShape::from_dims({1, 1}), GGML_TYPE_I32),
             weights_->token_embedding);
         const auto cfg = qwen_config();
-        const modules::QwenDecoderLayerModule layer_module(modules::qwen_decoder_layer_config_from_stack(cfg));
+        const modules::DecoderLayerModule layer_module(modules::decoder_layer_config_from_stack(cfg));
         const auto mask = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, 1, cache_steps_ + 1}), GGML_TYPE_F16);
         for (const auto & layer : weights_->decoder.layers) {
             cache_keys.push_back(core::make_tensor(
@@ -563,7 +563,7 @@ public:
         clear_graph();
     }
 
-    bool can_run(const IndexTTS2QwenEmotionWeights & weights, ggml_backend_t backend, int64_t required_steps) const noexcept {
+    bool can_run(const IndexTTS2Qwen3EmotionWeights & weights, ggml_backend_t backend, int64_t required_steps) const noexcept {
         return weights_.get() == &weights && execution_.backend() == backend && cache_steps_ >= required_steps;
     }
 
@@ -678,7 +678,7 @@ private:
     }
 
     core::ExecutionContext & execution_;
-    std::shared_ptr<const IndexTTS2QwenEmotionWeights> weights_;
+    std::shared_ptr<const IndexTTS2Qwen3EmotionWeights> weights_;
     int64_t cache_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
@@ -701,7 +701,7 @@ private:
     ggml_backend_buffer_t state_buffer_ = nullptr;
 };
 
-IndexTTS2QwenEmotionRuntime::IndexTTS2QwenEmotionRuntime(
+IndexTTS2Qwen3EmotionRuntime::IndexTTS2Qwen3EmotionRuntime(
     std::shared_ptr<const IndexTTS2Assets> assets,
     core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
@@ -727,9 +727,9 @@ IndexTTS2QwenEmotionRuntime::IndexTTS2QwenEmotionRuntime(
         weight_context_bytes);
 }
 
-IndexTTS2QwenEmotionRuntime::~IndexTTS2QwenEmotionRuntime() = default;
+IndexTTS2Qwen3EmotionRuntime::~IndexTTS2Qwen3EmotionRuntime() = default;
 
-IndexTTS2EmotionVector IndexTTS2QwenEmotionRuntime::infer(const std::string & text, int64_t max_new_tokens) {
+IndexTTS2EmotionVector IndexTTS2Qwen3EmotionRuntime::infer(const std::string & text, int64_t max_new_tokens) {
     if (execution_ == nullptr) {
         throw std::runtime_error("IndexTTS2 Qwen emotion runtime execution context is missing");
     }
@@ -786,7 +786,7 @@ IndexTTS2EmotionVector IndexTTS2QwenEmotionRuntime::infer(const std::string & te
     return convert_emotion_json(content, text);
 }
 
-void IndexTTS2QwenEmotionRuntime::release_graphs() {
+void IndexTTS2Qwen3EmotionRuntime::release_graphs() {
     prefill_graph_.reset();
     decode_graph_.reset();
 }

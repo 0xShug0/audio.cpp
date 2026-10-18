@@ -2,11 +2,22 @@
 
 | Model | Family | Task | Quick Start |
 |---|---|---|---|
-| Silero VAD | `silero_vad` | `vad` | [Silero VAD](#silero-vad) |
+| AST AudioSet | `ast_audioset` | `cls` | [Model guide](models/ast_audioset.md) |
+| CED Audio Tagging | `ced` | `cls` | [Model guide](models/ced.md) |
+| FireRed VAD / Stream-VAD | `firered_vad` | `vad` | [Model guide](models/firered_vad.md) |
 | MarbleNet VAD | `marblenet_vad` | `vad` | [MarbleNet VAD](#marblenet-vad) |
+| microWakeWord | `micro_wake_word` | `wake` | [Model guide](models/micro_wake_word.md) |
+| MMS Forced Aligner | `mms_forced_aligner` | `align` | [MMS Forced Aligner](#mms-forced-aligner) |
+| Nemotron 3 Diarization | `nemotron_3_diar` | `diar` | [Model guide](models/nemotron_3_diar.md) |
+| OpenWakeWord Alexa | `open_wake_word` | `wake` | [Model guide](models/open_wake_word.md) |
+| PulseVAD | `pulsevad` | `vad` | [PulseVAD](models/pulsevad.md) |
+| Qwen3 Forced Aligner | `qwen3_forced_aligner` | `align` | [Qwen3 Forced Aligner](models/qwen3_forced_aligner.md) |
+| sherpa-onnx Zipformer KWS | `sherpa_kws` | `wake` | [Model guide](models/sherpa_kws.md) |
+| Silero VAD | `silero_vad` | `vad` | [Silero VAD](#silero-vad) |
 | Sortformer Diarization | `sortformer_diar` | `diar` | [Sortformer Diarization](#sortformer-diarization) |
+| Sortformer Diarization v2.1 | `sortformer_diar_v2` | `diar` | [Sortformer Diarization v2.1](#sortformer-diarization-v21) |
 
-This page covers VAD and diarization models. ASR models are documented in [ASR models](asr.md).
+This page covers audio classification, wake-word detection, VAD, diarization, and forced-aligner models. ASR models are documented in [ASR models](asr.md).
 
 Common CLI shape:
 
@@ -15,6 +26,62 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend cuda 
 ```
 
 When `--mode streaming` is used, the selected model provides its default streaming policy.
+
+## MarbleNet VAD
+
+MarbleNet VAD is an offline speech activity detector.
+
+| Field | Value |
+|---|---|
+| Family | `marblenet_vad` |
+| Model directory | `assets/framework/models/marblenet_vad` |
+| Task | `vad` |
+| Modes | `offline` |
+| Output | Speech segment JSON through `--segments-out` |
+| Streaming | Not exposed |
+
+```bash
+audiocpp_cli --task vad --family marblenet_vad --model assets/framework/models/marblenet_vad --backend cuda --audio speech_16k.wav --segments-out segments.json
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | WAV path | required | Input audio. |
+| `--segments-out` | JSON path | not set | Write speech segments. |
+| `--request-option threshold=<float>` | float | `0.5` | Speech probability threshold. |
+
+## MMS Forced Aligner
+
+The MMS forced aligner aligns an exact transcript to mono/stereo audio and
+returns per-word start/end timestamps. Native normalization covers Dutch and
+English; a pre-romanized mode accepts ASCII romanization for other languages.
+
+| Field | Value |
+|---|---|
+| Family | `mms_forced_aligner` |
+| Model directory | `models/mms-300m-1130-forced-aligner` (safetensors) or a local GGUF |
+| Task | `align` |
+| Mode | `offline` only |
+| Output | `word_timestamps` |
+
+```bash
+audiocpp_cli --task align --family mms_forced_aligner --model models/mms-300m-1130-forced-aligner \
+  --audio speech.wav --text "The quick brown fox." --language eng --words-out words.json
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | WAV path | required | Input audio. |
+| `--text` | string | required | Exact transcript to align. |
+| `--language` | `nl`, `nld`, `en`, `eng` (latin); any code (pre_romanized) | required | Transcript language. |
+| `--request-option text_normalization=<mode>` | `latin`, `pre_romanized` | `latin` | Native Latin normalization or caller-supplied romanization. |
+| `--request-option star_frequency=<mode>` | `segment`, `edges` | `segment` | Virtual `<star>` target placement. |
+| `--request-option merge_threshold_sec=<float>` | float >= 0 | `0.0` | Merge words whose gap is at or below this many seconds. |
+| `--words-out` | JSON path | not set | Write per-word timestamps. |
+
+The checkpoint is CC-BY-NC-4.0 and GGUF conversion is local-only. See the
+[full model guide](models/mms_forced_aligner.md) for install,
+conversion, licensing, and boundary-parity evidence.
 
 ## Silero VAD
 
@@ -71,30 +138,7 @@ audiocpp_cli --task vad --family silero_vad --model assets/framework/models/sile
 | `--request-option min_speech_duration_ms=<n>` | integer ms | `250` | Minimum speech duration. |
 | `--request-option min_silence_duration_ms=<n>` | integer ms | `100` | Minimum silence duration. |
 | `--request-option speech_pad_ms=<n>` | integer ms | `30` | Padding around speech segments. |
-| `--request-option max_speech_duration_s=<float>` | seconds | `1000000000` | Maximum speech segment length. |
-
-## MarbleNet VAD
-
-MarbleNet VAD is an offline speech activity detector.
-
-| Field | Value |
-|---|---|
-| Family | `marblenet_vad` |
-| Model directory | `assets/framework/models/marblenet_vad` |
-| Task | `vad` |
-| Modes | `offline` |
-| Output | Speech segment JSON through `--segments-out` |
-| Streaming | Not exposed |
-
-```bash
-audiocpp_cli --task vad --family marblenet_vad --model assets/framework/models/marblenet_vad --backend cuda --audio speech_16k.wav --segments-out segments.json
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--audio` | WAV path | required | Input audio. |
-| `--segments-out` | JSON path | not set | Write speech segments. |
-| `--request-option threshold=<float>` | float | `0.5` | Speech probability threshold. |
+| `--request-option max_speech_duration_sec=<float>` | seconds | `1000000000` | Maximum speech segment length. Legacy `max_speech_duration_s` remains accepted. |
 
 ## Sortformer Diarization
 
@@ -103,23 +147,80 @@ Sortformer diarization identifies speaker turns. The packaged model path is the 
 | Field | Value |
 |---|---|
 | Family | `sortformer_diar` |
-| Model directory | `models/diar_sortformer_4spk-v1` |
+| Model directory | `models/Sortformer-Diar-4spk-v1-GGUF` |
 | Task | `diar` |
 | Modes | `offline` |
 | Output | Speaker turn JSON through `--turns-out` |
 | Speakers | Up to the speaker count supported by the model package; the default model is 4-speaker |
 
 ```bash
-audiocpp_cli --task diar --family sortformer_diar --model models/diar_sortformer_4spk-v1 --backend cuda --audio meeting_16k.wav --turns-out turns.json
+audiocpp_cli --task diar --family sortformer_diar --model models/Sortformer-Diar-4spk-v1-GGUF/sortformer-diar-4spk-v1-q8_0.gguf --backend cuda --audio meeting_16k.wav --turns-out turns.json
 ```
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Meeting or conversation audio. |
 | `--turns-out` | JSON path | not set | Write speaker turns. |
-| `--session-option speaker_threshold=<float>` | float | `0.5` | Speaker activation threshold. |
-| `--session-option speaker_min_frames=<n>` | integer | `0` | Minimum speaker segment frames. |
-| `--session-option speaker_pad_frames=<n>` | integer | `0` | Padding around speaker turns. |
-| `--session-option session_len_sec=<float>` | seconds | `20.0` | Diarization graph window length. |
+| `--request-option speaker_threshold=<float>` | float | session default | Per-request speaker activation threshold. |
+| `--request-option speaker_min_frames=<n>` | integer | session default | Per-request minimum speaker segment frames. |
+| `--request-option speaker_pad_frames=<n>` | integer | session default | Per-request padding around speaker turns. |
+| `--session-option sortformer_diar.speaker_threshold=<float>` | float | `0.5` | Default speaker activation threshold. |
+| `--session-option sortformer_diar.speaker_min_frames=<n>` | integer | `0` | Default minimum speaker segment frames. |
+| `--session-option sortformer_diar.speaker_pad_frames=<n>` | integer | `0` | Default padding around speaker turns. |
+| `--session-option sortformer_diar.session_len_sec=<float>` | seconds > 0 | `20.0` | Diarization graph window length. |
+| `--session-option sortformer_diar.graph_capacity_mode=<mode>` | `fixed`, `tiered`, `grow`, `double` | backend default | Offline graph capacity policy. |
+| `--session-option sortformer_diar.graph_arena_mb=<n>` | MB | `512` | Inference graph arena size. |
+| `--session-option sortformer_diar.weight_context_mb=<n>` | MB | `128` | Weight context size. |
+| `--session-option sortformer_diar.weight_type=<type>` | storage type | `f32` | Default weight storage type. |
+| `--session-option sortformer_diar.matmul_weight_type=<type>` | storage type | `weight_type` | Matmul weight storage override. |
+| `--session-option sortformer_diar.conv_weight_type=<type>` | storage type | `weight_type` | Convolution weight storage override. |
+
+Compatibility aliases are applied before v1 option validation:
+
+| Legacy session option | v1 session option |
+|---|---|
+| `speaker_threshold` | `sortformer_diar.speaker_threshold` |
+| `speaker_min_frames` | `sortformer_diar.speaker_min_frames` |
+| `speaker_pad_frames` | `sortformer_diar.speaker_pad_frames` |
+| `session_len_sec` | `sortformer_diar.session_len_sec` |
+| `graph_context_mb`, `sortformer_diar.graph_context_mb` | `sortformer_diar.graph_arena_mb` |
+| `graph_capacity_mode`, `offline_graph_capacity_mode` | `sortformer_diar.graph_capacity_mode` |
+| `weight_context_mb` | `sortformer_diar.weight_context_mb` |
+| `weight_type` | `sortformer_diar.weight_type` |
+| `matmul_weight_type` | `sortformer_diar.matmul_weight_type` |
+| `conv_weight_type` | `sortformer_diar.conv_weight_type` |
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.
+
+## Sortformer Diarization v2.1
+
+Sortformer v2.1 is the streaming four-speaker successor to the v1 family. It
+uses a continuous frontend and bounded-context AOSC state to preserve speaker
+identities across audio chunks. The v1 `sortformer_diar` family remains
+unchanged.
+
+| Field | Value |
+|---|---|
+| Family | `sortformer_diar_v2` |
+| Model directory | `models/Sortformer-Diar-v2.1-local` |
+| Task | `diar` |
+| Modes | `offline`, `streaming` |
+| Input | Mono 16 kHz audio |
+| Output | Speaker turn JSON through `--turns-out` |
+
+The checkpoint is local-use only pending NVIDIA Open Model License
+redistribution approval. Convert it with
+[`tools/community_models/convert_sortformer_v2_1.py`](models/sortformer_diar_v2.md#license-and-local-conversion).
+
+```bash
+audiocpp_cli --task diar --family sortformer_diar_v2 --mode streaming \
+  --model models/Sortformer-Diar-v2.1-local/sortformer-v2.1-f16-mixed.gguf \
+  --backend cuda --audio meeting_16k.wav --turns-out turns.json
+```
+
+Use request options `speaker_threshold`, `speaker_min_frames`, and
+`speaker_pad_frames` for decoding controls.
+See the [community-model guide](models/sortformer_diar_v2.md) for
+conversion commands, weight profiles, streaming geometry, and validation
+limits. CUDA offline F32 execution is memory-heavy; streaming is the supported
+path for long recordings.

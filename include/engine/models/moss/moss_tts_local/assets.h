@@ -10,7 +10,7 @@
 
 namespace engine::models::moss_tts_local {
 
-struct MossBackboneConfig {
+struct MossTTSLocalQwen3Config {
     int64_t hidden_size = 0;
     int64_t intermediate_size = 0;
     int64_t num_hidden_layers = 0;
@@ -35,7 +35,7 @@ struct MossLocalTransformerConfig {
 };
 
 struct MossTTSLocalConfig {
-    MossBackboneConfig backbone;
+    MossTTSLocalQwen3Config backbone;
     MossLocalTransformerConfig local;
     int64_t num_codebooks = 0;
     int64_t audio_vocab_size = 0;

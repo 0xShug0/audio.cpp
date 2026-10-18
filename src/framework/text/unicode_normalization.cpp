@@ -1,5 +1,8 @@
 #include "engine/framework/text/unicode_normalization.h"
 
+#include <algorithm>
+#include <iterator>
+
 namespace engine::text {
 namespace {
 
@@ -92,6 +95,8 @@ constexpr Decomposition kKnownDecompositions[] = {
     {0x045E, 0x0443, 0x0306, 0x0000},
 };
 
+#include "unicode_nfkd_data.inc"
+
 }  // namespace
 
 bool append_known_unicode_decomposition(uint32_t codepoint, std::vector<uint32_t> & out) {
@@ -113,6 +118,32 @@ std::vector<uint32_t> decompose_known_unicode_codepoints(const std::vector<uint3
     out.reserve(codepoints.size() * 3);
     for (const uint32_t codepoint : codepoints) {
         if (!append_known_unicode_decomposition(codepoint, out)) {
+            out.push_back(codepoint);
+        }
+    }
+    return out;
+}
+
+bool append_nfkd_decomposition(uint32_t codepoint, std::vector<uint32_t> & out) {
+    const auto it = std::lower_bound(
+        std::begin(kNfkdEntries),
+        std::end(kNfkdEntries),
+        codepoint,
+        [](const NfkdEntry & entry, uint32_t value) { return entry.codepoint < value; });
+    if (it == std::end(kNfkdEntries) || it->codepoint != codepoint) {
+        return false;
+    }
+    for (uint16_t i = 0; i < it->length; ++i) {
+        out.push_back(kNfkdCodepoints[it->offset + i]);
+    }
+    return true;
+}
+
+std::vector<uint32_t> normalize_nfkd_codepoints(const std::vector<uint32_t> & codepoints) {
+    std::vector<uint32_t> out;
+    out.reserve(codepoints.size() * 3);
+    for (const uint32_t codepoint : codepoints) {
+        if (!append_nfkd_decomposition(codepoint, out)) {
             out.push_back(codepoint);
         }
     }

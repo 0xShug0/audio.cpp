@@ -34,6 +34,9 @@ void ggml_cuda_op_silu(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 void ggml_cuda_op_silu_back(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
 void ggml_cuda_op_gelu_erf(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
+void ggml_cuda_op_bias_gelu_erf(ggml_backend_cuda_context & ctx, const ggml_tensor * add, ggml_tensor * dst);
+void ggml_cuda_op_bias_residual(ggml_backend_cuda_context & ctx, const ggml_tensor * add,
+                               const ggml_tensor * residual, ggml_tensor * dst);
 
 void ggml_cuda_op_gelu_quick(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
@@ -74,6 +77,8 @@ void ggml_cuda_op_ceil(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 void ggml_cuda_op_round(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
 void ggml_cuda_op_trunc(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
+
+void ggml_cuda_op_round_bf16(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
 void ggml_cuda_op_reglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 

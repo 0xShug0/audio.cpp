@@ -1091,6 +1091,14 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                 case GGML_UNARY_OP_TRUNC:
                 case GGML_UNARY_OP_XIELU:
                     return ggml_is_contiguous_rows(op->src[0]) && (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16);
+                case GGML_UNARY_OP_ROUND_BF16:
+                    // Fused round-to-bf16: f32/f16/bf16 source, f32 result. The rounding
+                    // itself is integer math, so only reading a bf16 source needs
+                    // hardware support; other devices keep the cast round trip.
+                    return op->type == GGML_TYPE_F32 && ggml_is_contiguous_rows(op->src[0]) &&
+                           (op->src[0]->type == GGML_TYPE_F32 ||
+                            op->src[0]->type == GGML_TYPE_F16 ||
+                            (op->src[0]->type == GGML_TYPE_BF16 && has_bfloat));
                 default:
                     return false;
             }
@@ -1252,6 +1260,21 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
             return has_simdgroup_reduction && op->src[0]->type != GGML_TYPE_NVFP4;
+        case GGML_OP_SNAKE_1D:
+            // fused snake activation: elementwise F32, nothing exotic required
+            return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 &&
+                   op->type == GGML_TYPE_F32;
+        case GGML_OP_MUL_MAT_ACC:
+            // accumulate-in-place matmul: mirrors the has_simdgroup_mm branch of mul_mat
+            // (the encode always takes the mm kernel), contiguous F32 x F32 -> F32
+            return has_simdgroup_mm &&
+                   op->src[0]->type == GGML_TYPE_F32 &&
+                   op->src[1]->type == GGML_TYPE_F32 &&
+                   op->type         == GGML_TYPE_F32 &&
+                   op->src[0]->ne[0] >= 64 &&
+                   op->src[1]->ne[1] >  8 &&
+                   !ggml_is_transposed(op->src[0]) &&
+                   !ggml_is_transposed(op->src[1]);
         case GGML_OP_SET:
         case GGML_OP_CPY:
         case GGML_OP_DUP:
@@ -1279,14 +1302,14 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                         switch (op->type) {
                             case GGML_TYPE_F32:
                             case GGML_TYPE_F16:
-                                return true;
+                            case GGML_TYPE_BF16:                                return true;
                             default:
                                 return false;
                         }
                     case GGML_TYPE_BF16:
                         switch (op->type) {
                             case GGML_TYPE_F32:
-                            case GGML_TYPE_BF16:
+                            case GGML_TYPE_F16:                            case GGML_TYPE_BF16:
                                 return true;
                             default:
                                 return false;

@@ -99,4 +99,11 @@ void fill_asr_stream_attention_bias(
     }
 }
 
+bool asr_graph_capacity_usable(int64_t capacity_frames, int64_t request_frames) {
+    constexpr double kMaxGraphOversizeRatio = 1.10;
+    return capacity_frames >= request_frames &&
+        static_cast<double>(capacity_frames) <=
+            kMaxGraphOversizeRatio * static_cast<double>(request_frames);
+}
+
 }  // namespace engine::modules

@@ -7,6 +7,7 @@ This document covers native Windows builds and release zip packaging.
 - Visual Studio Build Tools 2022 or newer with the C++ desktop workload
 - MSVC x64 compiler, Windows SDK, CMake, Ninja, and MSVC OpenMP components
 - Official NVIDIA CUDA Toolkit for CUDA builds
+- Official LunarG Vulkan SDK with `glslc` compiler for Vulkan builds
 
 The Visual Studio IDE is not required.
 
@@ -34,7 +35,14 @@ CUDA:
 .\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_server -Jobs 16
 ```
 
-The CUDA build also includes the CPU backend, so the same binary can run with `--backend cpu` or `--backend cuda`.
+Vulkan:
+
+```powershell
+.\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli -Jobs 16
+.\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_server -Jobs 16
+```
+
+The CUDA and Vulkan builds also include the CPU backend, so the same binary can run with `--backend cpu` or `--backend cuda` / `--backend vulkan`.
 
 From `cmd.exe`:
 
@@ -47,6 +55,7 @@ If GNU Make is available on Windows:
 ```bash
 make -f Makefile.windows cpu JOBS=16
 make -f Makefile.windows cuda JOBS=16
+make -f Makefile.windows vulkan JOBS=16
 make -f Makefile.windows cuda NATIVE_CPU=OFF JOBS=16
 ```
 
@@ -55,7 +64,9 @@ Useful script variants:
 ```powershell
 .\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
 .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
+.\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli
 .\scripts\build_windows.ps1 -Preset windows-cuda-debug -Target audiocpp_cli
+.\scripts\build_windows.ps1 -Preset windows-vulkan-debug -Target audiocpp_cli
 .\scripts\build_windows.ps1 -NativeCpu OFF -Target audiocpp_cli
 .\scripts\build_windows.ps1 -ConfigureOnly
 .\scripts\build_windows.ps1 -CudaArchitectures 120a-real
@@ -72,6 +83,7 @@ The built CLI is written to the selected preset directory:
 ```text
 build\windows-cpu-release\bin\audiocpp_cli.exe
 build\windows-cuda-release\bin\audiocpp_cli.exe
+build\windows-vulkan-release\bin\audiocpp_cli.exe
 ```
 
 ## CPU Architecture Profiles
@@ -144,6 +156,12 @@ CUDA package:
 - 64-bit Windows
 - NVIDIA GPU with compute capability 7.5 or newer
 - NVIDIA driver 580 or newer
+- Model files downloaded separately
+
+Vulkan package:
+
+- 64-bit Windows
+- GPU with a Vulkan 1.1 or newer driver (AMD, NVIDIA, or Intel)
 - Model files downloaded separately
 
 The package script copies MSVC/OpenMP runtime DLLs into both packages. The CUDA package also copies the CUDA DLLs used by this build, so users should not need to install the CUDA Toolkit or Visual Studio Build Tools.

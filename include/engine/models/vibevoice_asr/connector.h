@@ -80,6 +80,7 @@ public:
         int64_t input_dim) const;
     std::vector<VibeVoiceConnectorOutput> project_semantic_batch(
         const std::vector<VibeVoiceTokenizerLatents> & features) const;
+    void release_cached_graphs() const;
 
 private:
     std::shared_ptr<const VibeVoiceASRAssets> assets_;

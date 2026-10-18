@@ -15,6 +15,7 @@ struct HfSamplingOptions {
     float temperature = 1.0F;
     int64_t top_k = 0;
     float top_p = 1.0F;
+    float min_p = 0.0F;
     int64_t min_tokens_to_keep = 1;
     float repetition_penalty = 1.0F;
 };
@@ -23,6 +24,11 @@ struct HfTorchSamplingState {
     const TorchCudaSamplingPolicy * policy = nullptr;
     uint64_t seed = 0;
     uint64_t call_index = 0;
+    uint64_t offset_blocks = 0;
+    bool use_offset_blocks = false;
+    // Preserve full-population CUDA RNG coordinates when scores are a contiguous slice.
+    uint64_t population_size = 0;
+    uint64_t token_index_offset = 0;
 };
 
 class HfSamplerScratch {
@@ -70,6 +76,12 @@ public:
     static void apply_top_p(
         std::vector<float> & scores,
         float top_p,
+        int64_t min_tokens_to_keep,
+        HfSamplerScratch & scratch);
+
+    static void apply_min_p(
+        std::vector<float> & scores,
+        float min_p,
         int64_t min_tokens_to_keep,
         HfSamplerScratch & scratch);
 

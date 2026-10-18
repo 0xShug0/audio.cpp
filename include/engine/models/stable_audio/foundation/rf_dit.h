@@ -47,7 +47,7 @@ struct FoundationRfLayerWeights {
     FoundationRfFeedForwardWeights ff;
 };
 
-struct FoundationRfDitWeights {
+struct FoundationRFDiTWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     std::vector<float> timestep_frequencies;
     modules::LinearWeights to_cond_embed_0;
@@ -63,23 +63,23 @@ struct FoundationRfDitWeights {
     std::vector<FoundationRfLayerWeights> layers;
 };
 
-FoundationRfDitWeights load_foundation_rf_dit_weights(
+FoundationRFDiTWeights load_foundation_rf_dit_weights(
     const StableAudioAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type);
 
-class FoundationRfDitRuntime {
+class FoundationRFDiTRuntime {
 public:
-    FoundationRfDitRuntime(
+    FoundationRFDiTRuntime(
         core::ExecutionContext & execution,
         std::shared_ptr<const StableAudioAssets> assets,
         assets::TensorStorageType weight_storage_type);
-    ~FoundationRfDitRuntime();
+    ~FoundationRFDiTRuntime();
 
-    FoundationRfDitRuntime(const FoundationRfDitRuntime &) = delete;
-    FoundationRfDitRuntime & operator=(const FoundationRfDitRuntime &) = delete;
+    FoundationRFDiTRuntime(const FoundationRFDiTRuntime &) = delete;
+    FoundationRFDiTRuntime & operator=(const FoundationRFDiTRuntime &) = delete;
 
     void prepare(const StableAudioSamplingState & sampling, float cfg_scale) const;
     std::vector<float> sample(
@@ -101,7 +101,7 @@ private:
     core::ExecutionContext * execution_ = nullptr;
     std::shared_ptr<const StableAudioAssets> assets_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
-    mutable std::unique_ptr<FoundationRfDitWeights> weights_;
+    mutable std::unique_ptr<FoundationRFDiTWeights> weights_;
     mutable std::unique_ptr<Graph> graph_;
 };
 

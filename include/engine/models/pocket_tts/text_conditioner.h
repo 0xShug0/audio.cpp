@@ -28,6 +28,15 @@ public:
         const PocketTTSHostWeights & weights,
         const std::string & text) const;
 
+    // Splits a prompt the way the reference implementation does (pocket_tts
+    // split_into_best_sentences): sentence boundaries found on the model's own
+    // end-of-sentence tokens, sentences longer than max_tokens split again on
+    // ",;:", then regrouped into chunks of at most max_tokens tokens.
+    std::vector<std::string> split_into_sentence_chunks(
+        const PocketTTSAssets & manifest,
+        const std::string & text,
+        int64_t max_tokens) const;
+
 private:
     TextConditionerConfig config_;
 };

@@ -3,6 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/mel_spectrogram_frontend.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -38,8 +39,6 @@ constexpr int64_t kFeatureDim = 128;
 constexpr int64_t kNfft = 1024;
 constexpr int64_t kHopLength = 256;
 constexpr int64_t kWinLength = 1024;
-constexpr int64_t kPrepad = (kNfft - kHopLength) / 2;
-constexpr float kLogClamp = 1.0e-5F;
 constexpr float kStatsEps = 1.0e-12F;
 
 struct GgmlContextDeleter {
@@ -88,77 +87,27 @@ ConvWeights load_conv(
     return conv;
 }
 
-int64_t reflect_index(int64_t index, int64_t length) {
-    if (length <= 1) {
-        return 0;
-    }
-    while (index < 0 || index >= length) {
-        if (index < 0) {
-            index = -index;
-        } else {
-            index = 2 * length - index - 2;
-        }
-    }
-    return index;
-}
+}  // namespace
 
-std::vector<float> reflect_prepad(const std::vector<float> & waveform) {
-    if (waveform.empty()) {
-        throw std::runtime_error("Qwen3 speaker encoder reference waveform is empty");
-    }
-    std::vector<float> padded(static_cast<size_t>(static_cast<int64_t>(waveform.size()) + 2 * kPrepad), 0.0F);
-    const int64_t samples = static_cast<int64_t>(waveform.size());
-    for (int64_t i = 0; i < static_cast<int64_t>(padded.size()); ++i) {
-        padded[static_cast<size_t>(i)] = waveform[static_cast<size_t>(reflect_index(i - kPrepad, samples))];
-    }
-    return padded;
-}
-
-audio::AudioTensor compute_reference_log_mel(const runtime::AudioBuffer & audio, int threads) {
-    if (audio.sample_rate <= 0 || audio.channels <= 0 || audio.samples.empty()) {
-        throw std::runtime_error("Qwen3 speaker encoder requires non-empty reference audio");
-    }
-    const auto padded = reflect_prepad(engine::audio::convert_interleaved_audio_to_mono_linear_resampled(
-        audio.samples,
-        audio.sample_rate,
-        audio.channels,
-        static_cast<int>(kSampleRate)));
-    const audio::STFTConfig config{
-        kNfft,
-        kHopLength,
-        kWinLength,
-        false,
-        audio::STFTPadMode::Reflect,
-        audio::STFTFamily::Kokoro,
-    };
-    const auto & window = audio::get_cached_stft_window(config);
-    auto magnitude = audio::STFT().compute_magnitude(
-        padded,
-        window,
-        1,
-        static_cast<int64_t>(padded.size()),
-        config,
+audio::AudioTensor compute_qwen3_speaker_mel(const runtime::AudioBuffer & audio, int threads) {
+    engine::audio::MelSpectrogramFrontendConfig config;
+    config.sample_rate = kSampleRate;
+    config.n_fft = kNfft;
+    config.hop_length = kHopLength;
+    config.win_length = kWinLength;
+    config.n_mels = kFeatureDim;
+    config.mel_fmax = 12000.0f;
+    config.waveform_padding = engine::audio::MelWaveformPadding::ReflectOrRepeatSingleton;
+    config.filterbank_projection = engine::audio::MelFilterbankProjection::DenseLongDouble;
+    config.resample_mode = engine::audio::MelResampleMode::Linear;
+    const auto frontend = engine::audio::get_cached_mel_spectrogram_frontend(config);
+    auto features = frontend->extract_audio(
+        audio.samples, audio.sample_rate, audio.channels,
         static_cast<size_t>(std::max(1, threads)));
-    auto filterbank = audio::MelFilterbank().build(
-        audio::MelFilterbankConfig{
-            kSampleRate,
-            kNfft,
-            kFeatureDim,
-            0.0F,
-            12000.0F,
-            true,
-        });
-    auto mel = audio::MelFilterbank().compute_custom(
-        magnitude.values,
-        magnitude.shape[0],
-        magnitude.shape[1],
-        magnitude.shape[2],
-        filterbank);
-    for (float & value : mel.values) {
-        value = std::log(std::max(value, kLogClamp));
-    }
-    return mel;
+    return {std::move(features.values), {1, features.mel_bins, features.frames}};
 }
+
+namespace {
 
 core::TensorValue conv1d(
     core::ModuleBuildContext & ctx,
@@ -263,7 +212,7 @@ core::TensorValue attentive_statistics_pool(
 
 }  // namespace
 
-struct Qwen3SpeakerEncoderWeights {
+struct Qwen3TTSEcapaTdnnEncoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     ConvWeights block0;
     std::vector<SERes2NetWeights> blocks;
@@ -276,13 +225,13 @@ struct Qwen3SpeakerEncoderWeights {
 
 namespace {
 
-std::shared_ptr<const Qwen3SpeakerEncoderWeights> load_weights(
+std::shared_ptr<const Qwen3TTSEcapaTdnnEncoderWeights> load_weights(
     const Qwen3TTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     assets::TensorStorageType conv_weight_storage_type) {
     const auto & source = *assets.model_weights;
-    auto weights = std::make_shared<Qwen3SpeakerEncoderWeights>();
+    auto weights = std::make_shared<Qwen3TTSEcapaTdnnEncoderWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -322,10 +271,10 @@ std::shared_ptr<const Qwen3SpeakerEncoderWeights> load_weights(
 
 }  // namespace
 
-class Qwen3SpeakerEncoderGraph {
+class Qwen3TTSEcapaTdnnEncoderGraph {
 public:
-    Qwen3SpeakerEncoderGraph(
-        std::shared_ptr<const Qwen3SpeakerEncoderWeights> weights,
+    Qwen3TTSEcapaTdnnEncoderGraph(
+        std::shared_ptr<const Qwen3TTSEcapaTdnnEncoderWeights> weights,
         int64_t frames,
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes)
@@ -387,14 +336,14 @@ public:
         }
     }
 
-    ~Qwen3SpeakerEncoderGraph() {
+    ~Qwen3TTSEcapaTdnnEncoderGraph() {
         engine::core::release_backend_graph_resources(backend_, graph_);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
     }
 
-    bool matches(const Qwen3SpeakerEncoderWeights & weights, int64_t frames, ggml_backend_t backend, int threads) const {
+    bool matches(const Qwen3TTSEcapaTdnnEncoderWeights & weights, int64_t frames, ggml_backend_t backend, int threads) const {
         return weights_.get() == &weights && frames_ >= frames && backend_ == backend && compute_threads_ == std::max(1, threads);
     }
 
@@ -425,7 +374,7 @@ public:
     }
 
 private:
-    std::shared_ptr<const Qwen3SpeakerEncoderWeights> weights_;
+    std::shared_ptr<const Qwen3TTSEcapaTdnnEncoderWeights> weights_;
     int64_t frames_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::ConstantTensorCache constants_;
@@ -437,7 +386,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-Qwen3SpeakerEncoderRuntime::Qwen3SpeakerEncoderRuntime(
+Qwen3TTSEcapaTdnnEncoderRuntime::Qwen3TTSEcapaTdnnEncoderRuntime(
     std::shared_ptr<const Qwen3TTSAssets> assets,
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
@@ -454,11 +403,11 @@ Qwen3SpeakerEncoderRuntime::Qwen3SpeakerEncoderRuntime(
     weights_ = load_weights(*assets_, execution_context_->backend(), execution_context_->backend_type(), conv_weight_storage_type);
 }
 
-Qwen3SpeakerEncoderRuntime::~Qwen3SpeakerEncoderRuntime() = default;
+Qwen3TTSEcapaTdnnEncoderRuntime::~Qwen3TTSEcapaTdnnEncoderRuntime() = default;
 
-Qwen3SpeakerFeatures Qwen3SpeakerEncoderRuntime::extract_features(const runtime::AudioBuffer & audio) const {
+Qwen3SpeakerFeatures Qwen3TTSEcapaTdnnEncoderRuntime::extract_features(const runtime::AudioBuffer & audio) const {
     const int threads = execution_context_ != nullptr ? std::max(1, execution_context_->config().threads) : 1;
-    auto mel = compute_reference_log_mel(audio, threads);
+    auto mel = compute_qwen3_speaker_mel(audio, threads);
     if (mel.shape.size() != 3 || mel.shape[1] != kFeatureDim) {
         throw std::runtime_error("Qwen3 speaker frontend produced invalid feature shape");
     }
@@ -469,11 +418,11 @@ Qwen3SpeakerFeatures Qwen3SpeakerEncoderRuntime::extract_features(const runtime:
     return features;
 }
 
-Qwen3SpeakerEmbedding Qwen3SpeakerEncoderRuntime::encode(const runtime::AudioBuffer & audio) const {
+Qwen3SpeakerEmbedding Qwen3TTSEcapaTdnnEncoderRuntime::encode(const runtime::AudioBuffer & audio) const {
     return encode_features(extract_features(audio));
 }
 
-Qwen3SpeakerEmbedding Qwen3SpeakerEncoderRuntime::encode_features(const Qwen3SpeakerFeatures & extracted) const {
+Qwen3SpeakerEmbedding Qwen3TTSEcapaTdnnEncoderRuntime::encode_features(const Qwen3SpeakerFeatures & extracted) const {
     if (execution_context_ == nullptr) {
         throw std::runtime_error("Qwen3 speaker encoder execution context is missing");
     }
@@ -485,7 +434,7 @@ Qwen3SpeakerEmbedding Qwen3SpeakerEncoderRuntime::encode_features(const Qwen3Spe
     if (graph_ == nullptr || !graph_->matches(*weights_, frames, execution_context_->backend(), threads)) {
         const auto build_start = Clock::now();
         graph_.reset();
-        graph_ = std::make_unique<Qwen3SpeakerEncoderGraph>(
+        graph_ = std::make_unique<Qwen3TTSEcapaTdnnEncoderGraph>(
             weights_,
             frames,
             *execution_context_,

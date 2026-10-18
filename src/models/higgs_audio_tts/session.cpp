@@ -1,5 +1,6 @@
 #include "engine/models/higgs_audio_tts/session.h"
 
+#include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
@@ -10,6 +11,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace engine::models::higgs_audio_tts {
@@ -48,6 +50,23 @@ uint64_t hash_audio_samples(const runtime::AudioBuffer & audio) {
         hash = fnv1a_mix(hash, &bits, sizeof(bits));
     }
     return hash;
+}
+
+core::AttentionPreference resolve_attention_preference(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"higgs_audio_tts.attention"})) {
+        return core::parse_attention_preference(*value, "higgs_audio_tts.attention");
+    }
+    return core::AttentionPreference::Auto;
+}
+
+void trace_attention_preference(core::AttentionPreference preference) {
+    const char * name = "auto";
+    if (preference == core::AttentionPreference::Flash) {
+        name = "flash";
+    } else if (preference == core::AttentionPreference::Eager) {
+        name = "eager";
+    }
+    debug::trace_log_scalar("higgs_audio_tts.attention.preference", std::string_view(name));
 }
 
 std::size_t resolve_reference_cache_slots(const runtime::SessionOptions & options) {
@@ -130,11 +149,12 @@ HiggsTTSSession::HiggsTTSSession(
     if (assets_ == nullptr) {
         throw std::runtime_error("Higgs TTS session requires assets");
     }
-    if (task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Higgs TTS currently supports offline sessions");
+    if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("Higgs TTS supports offline and streaming sessions");
     }
-    if (task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Higgs TTS only supports the Tts task");
+    if (task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("Higgs TTS supports Tts and VoiceCloning tasks");
     }
     ar_weight_context_bytes_ = runtime::parse_size_mb_option(
         options.options, {"higgs_audio_tts.ar_weight_context_mb"}, ar_weight_context_bytes_);
@@ -169,6 +189,8 @@ HiggsTTSSession::HiggsTTSSession(
             key != "higgs_audio_tts.codec_decode_graph_arena_mb" &&
             key != "higgs_audio_tts.codec_encode_graph_arena_mb" &&
             key != "higgs_audio_tts.reference_cache_slots" &&
+            key != "higgs_audio_tts.attention" &&
+            key != "higgs_audio_tts.reference_prefill_mode" &&
             key != "higgs_audio_tts.weight_type" &&
             key != "higgs_audio_tts.ar_weight_type" &&
             key != "higgs_audio_tts.codec_weight_type") {
@@ -176,11 +198,20 @@ HiggsTTSSession::HiggsTTSSession(
         }
     }
 
-    ar_ = std::make_shared<HiggsARRuntime>(
+    const auto attention_preference = resolve_attention_preference(options);
+    const auto reference_prefill_mode =
+        runtime::find_option(options.options, {"higgs_audio_tts.reference_prefill_mode"}).value_or("auto");
+    if (reference_prefill_mode != "auto" && reference_prefill_mode != "exact") {
+        throw std::runtime_error("higgs_audio_tts.reference_prefill_mode must be auto or exact");
+    }
+    trace_attention_preference(attention_preference);
+    ar_ = std::make_shared<HiggsQwen3ARRuntime>(
         assets_,
         execution_context(),
         ar_weight_context_bytes_,
-        ar_weight_storage_type_);
+        ar_weight_storage_type_,
+        attention_preference,
+        reference_prefill_mode == "exact");
     codec_ = std::make_shared<HiggsCodecRuntime>(
         assets_,
         execution_context(),
@@ -220,8 +251,33 @@ void HiggsTTSSession::prepare(const runtime::SessionPreparationRequest & request
 }
 
 runtime::TaskResult HiggsTTSSession::run(const runtime::TaskRequest & request) {
+    return synthesize(request, false);
+}
+
+runtime::TaskResult HiggsTTSSession::generate_stream(const runtime::TaskRequest & request) {
+    return synthesize(request, true);
+}
+
+void HiggsTTSSession::reset_stream_state() {
+    stream_audio_.reset();
+}
+
+runtime::TaskResult HiggsTTSSession::synthesize(const runtime::TaskRequest & request, bool streaming) {
     require_prepared("Higgs TTS run");
     const auto wall_start = Clock::now();
+    runtime::StreamingAudioConfig stream_config;
+    if (streaming) {
+        const auto frames = runtime::parse_i64_option(request.options, {"stream_frames_per_event"}).value_or(32);
+        if (frames <= 0) {
+            throw std::runtime_error("Higgs TTS stream_frames_per_event must be positive");
+        }
+        stream_config.frames_per_chunk = static_cast<size_t>(frames);
+        stream_config.frame_width = static_cast<size_t>(assets_->config.audio.num_codebooks);
+        stream_config.left_context_frames = HiggsCodecRuntime::streaming_context_frames;
+        stream_config.right_context_frames = HiggsCodecRuntime::streaming_context_frames;
+        stream_config.policy = runtime::parse_streaming_audio_chunk_policy(
+            runtime::find_option(request.options, {"stream_chunk_policy"}).value_or("grow"));
+    }
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
     const auto text_chunk_mode =
@@ -238,12 +294,25 @@ runtime::TaskResult HiggsTTSSession::run(const runtime::TaskRequest & request) {
     runtime::AudioBuffer merged_audio;
     for (const auto & chunk_request : chunk_requests) {
         const auto generation_request = make_generation_request(chunk_request, reference_codes);
-        auto result = generator_->generate(generation_request);
-        runtime::append_audio_buffer(merged_audio, runtime::AudioBuffer{
-            result.audio.sample_rate,
-            result.audio.channels,
-            std::move(result.audio.values),
-        });
+        if (streaming) {
+            bool generation_complete = false;
+            stream_audio_.begin(stream_config,
+                [this, &stream_config, &generation_complete](const runtime::StreamingAudioWindow<int32_t> & window) {
+                    return codec_->decode_streaming_window(
+                        window, stream_config.frames_per_chunk, generation_complete);
+                }, stream_event_sink());
+            generator_->generate(generation_request, &stream_audio_);
+            generation_complete = true;
+            runtime::append_audio_buffer(merged_audio, stream_audio_.finish());
+            debug::timing_log_scalar("higgs_audio_tts.generator.codec_decode_ms", stream_audio_.decode_ms());
+        } else {
+            auto result = generator_->generate(generation_request);
+            runtime::append_audio_buffer(merged_audio, runtime::AudioBuffer{
+                result.audio.sample_rate,
+                result.audio.channels,
+                std::move(result.audio.values),
+            });
+        }
     }
 
     runtime::TaskResult out;

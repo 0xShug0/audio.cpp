@@ -48,7 +48,7 @@ private:
     assets::TensorStorageType text_encoder_weight_storage_type_ = assets::TensorStorageType::Native;
     AceStepTextTokenizer tokenizer_;
     core::ExecutionContext * execution_ = nullptr;
-    mutable std::unique_ptr<AceStepQwenTextEncoderRuntime> text_encoder_;
+    mutable std::unique_ptr<AceStepQwen3TextEncoderRuntime> text_encoder_;
     mutable std::unique_ptr<AceStepConditionEncoderRuntime> condition_encoder_;
     mutable std::unique_ptr<AceStepCoverTokenizerRuntime> cover_tokenizer_;
     mutable std::unique_ptr<AceStepAudioDetokenizerRuntime> detokenizer_;

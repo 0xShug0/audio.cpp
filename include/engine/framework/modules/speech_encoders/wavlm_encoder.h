@@ -29,6 +29,9 @@ struct WavlmEncoderConfig {
     std::vector<int64_t> conv_kernel{10, 3, 3, 3, 3, 2, 2};
     std::vector<int64_t> conv_stride{5, 2, 2, 2, 2, 2, 2};
     float layer_norm_eps = 1.0e-5F;
+    bool normalize_input = false;
+    bool conv_feature_layer_norm = false;
+    bool transformer_layer_norm_first = false;
     assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
 };
 

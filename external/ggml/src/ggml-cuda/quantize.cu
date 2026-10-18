@@ -71,8 +71,9 @@ __device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
 }
 
 
+template <typename T>
 static __global__ void quantize_mmq_nvfp4(
-        const float * __restrict__ x, const int32_t * __restrict__ ids, void * __restrict__ vy,
+        const T * __restrict__ x, const int32_t * __restrict__ ids, void * __restrict__ vy,
         const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
         const int64_t ne0, const int64_t ne1, const int64_t ne2) {
 #if defined(BLACKWELL_MMA_AVAILABLE)
@@ -105,7 +106,7 @@ static __global__ void quantize_mmq_nvfp4(
     for (int k = 0; k < QK_NVFP4_SUB; k++) {
         const int64_t i00 = i0_base + k;
         if (i00 < ne00) {
-            const float v = x[base_idx + i00];
+            const float v = float(x[base_idx + i00]);
             vals_raw[k] = v;
             amax_raw = fmaxf(amax_raw, fabsf(v));
         } else {
@@ -219,7 +220,7 @@ static __global__ void quantize_mmq_mxfp4(const float * __restrict__ x,
 #pragma unroll
     for (int b = 0; b < 2; ++b) {
         const int64_t i0 = warp_start_offset + b * vals_per_scale + lane_id_32;
-        const float xi = (i0 < ne00) ? x[base_pos + i0] : 0.0f;
+        const float xi = (i0 < ne00) ? float(x[base_pos + i0]) : 0.0f;
 
         float amax = fabsf(xi);
 #pragma unroll
@@ -425,7 +426,7 @@ void quantize_mmq_fp4_cuda(
         const int64_t block_num_y = (ne0 + QK_NVFP4_SUB * nvfp4_block_size - 1) / (QK_NVFP4_SUB * nvfp4_block_size);
         const dim3 block_size(nvfp4_block_size, 1, 1);
         const dim3 num_blocks(ne1, block_num_y, ne2 * ne3);
-        quantize_mmq_nvfp4<<<num_blocks, block_size, 0, stream>>>(
+        quantize_mmq_nvfp4<float><<<num_blocks, block_size, 0, stream>>>(
             x, ids, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
     } else {
         GGML_ASSERT(ne0 % (2 * QK_MXFP4) == 0);
@@ -440,4 +441,20 @@ void quantize_mmq_fp4_cuda(
 
         quantize_mmq_mxfp4<<<num_blocks, block_size, 0, stream>>>(x, ids, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
     }
+}
+
+void quantize_mmq_nvfp4_f16_cuda(
+        const half * x, const int32_t * ids, void * vy, const ggml_type type_src0,
+        const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
+        const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
+    GGML_ASSERT(type_src0 == GGML_TYPE_NVFP4);
+    GGML_ASSERT(ne0 > 0);
+    GGML_ASSERT(ne00 % QK_NVFP4 == 0);
+
+    constexpr int nvfp4_block_size = 128;
+    const int64_t block_num_y = (ne0 + QK_NVFP4_SUB * nvfp4_block_size - 1) / (QK_NVFP4_SUB * nvfp4_block_size);
+    const dim3 block_size(nvfp4_block_size, 1, 1);
+    const dim3 num_blocks(ne1, block_num_y, ne2 * ne3);
+    quantize_mmq_nvfp4<half><<<num_blocks, block_size, 0, stream>>>(
+        x, ids, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
 }

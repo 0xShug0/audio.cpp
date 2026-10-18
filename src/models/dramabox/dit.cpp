@@ -4,7 +4,7 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conditioning_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -30,7 +31,11 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kDitWeightContextBytes = 1024ull * 1024ull * 1024ull;
+#else
 constexpr size_t kDitWeightContextBytes = 8500ull * 1024ull * 1024ull;
+#endif
 constexpr size_t kDitGraphContextBytes = 768ull * 1024ull * 1024ull;
 constexpr size_t kDitGraphNodeCapacity = 32768;
 constexpr float kNormEps = 1.0e-6F;
@@ -114,7 +119,7 @@ DramaBoxAdaLayerNormWeights load_adaln(
     return weights;
 }
 
-DramaBoxDitSelfAttentionWeights load_self_attention(
+DramaBoxDiTSelfAttentionWeights load_self_attention(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const std::string & prefix,
@@ -122,7 +127,7 @@ DramaBoxDitSelfAttentionWeights load_self_attention(
     int64_t hidden,
     int64_t heads,
     DramaBoxPerfMode perf_mode) {
-    DramaBoxDitSelfAttentionWeights weights;
+    DramaBoxDiTSelfAttentionWeights weights;
     if (perf_mode == DramaBoxPerfMode::FlashAttention) {
         weights.q = modules::binding::linear_from_source(store, source, prefix + ".to_q", storage_type, hidden, hidden, true);
         weights.k = modules::binding::linear_from_source(store, source, prefix + ".to_k", storage_type, hidden, hidden, true);
@@ -137,14 +142,14 @@ DramaBoxDitSelfAttentionWeights load_self_attention(
     return weights;
 }
 
-DramaBoxDitCrossAttentionWeights load_cross_attention(
+DramaBoxDiTCrossAttentionWeights load_cross_attention(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const std::string & prefix,
     assets::TensorStorageType storage_type,
     int64_t hidden,
     int64_t heads) {
-    DramaBoxDitCrossAttentionWeights weights;
+    DramaBoxDiTCrossAttentionWeights weights;
     weights.q_gate = load_packed_pair_linear(
         store,
         source,
@@ -169,7 +174,7 @@ DramaBoxDitCrossAttentionWeights load_cross_attention(
     return weights;
 }
 
-DramaBoxDitBlockWeights load_dit_transformer_block(
+DramaBoxDiTBlockWeights load_dit_transformer_block(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     int64_t index,
@@ -178,7 +183,7 @@ DramaBoxDitBlockWeights load_dit_transformer_block(
     DramaBoxPerfMode perf_mode) {
     const int64_t hidden = config.hidden_size;
     const std::string prefix = "model.diffusion_model.transformer_blocks." + std::to_string(index);
-    DramaBoxDitBlockWeights weights;
+    DramaBoxDiTBlockWeights weights;
     weights.audio_scale_shift_table =
         store.load_tensor(source, prefix + ".audio_scale_shift_table", assets::TensorStorageType::F32, {9, hidden});
     weights.audio_prompt_scale_shift_table =
@@ -317,7 +322,7 @@ core::TensorValue self_attention(
     const core::TensorValue & rope_cos,
     const core::TensorValue & rope_sin,
     int64_t ref_tokens,
-    const DramaBoxDitSelfAttentionWeights & weights,
+    const DramaBoxDiTSelfAttentionWeights & weights,
     const DramaBoxTransformerConfig & config,
     bool skip_last_perturbed_attention,
     DramaBoxPerfMode perf_mode) {
@@ -425,7 +430,7 @@ core::TensorValue cross_attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & x,
     const core::TensorValue & context,
-    const DramaBoxDitCrossAttentionWeights & weights,
+    const DramaBoxDiTCrossAttentionWeights & weights,
     const DramaBoxTransformerConfig & config,
     bool share_last_context) {
     const int64_t heads = config.num_attention_heads;
@@ -508,7 +513,7 @@ core::TensorValue build_block(
     const core::TensorValue & prompt_timestep,
     const core::TensorValue & rope_cos,
     const core::TensorValue & rope_sin,
-    const DramaBoxDitBlockWeights & weights,
+    const DramaBoxDiTBlockWeights & weights,
     const DramaBoxTransformerConfig & config,
     int64_t ref_tokens,
     int64_t block_index,
@@ -642,7 +647,7 @@ void make_dramabox_audio_rope_repeated(
     }
 }
 
-DramaBoxDitWeights load_dramabox_dit_weights(
+DramaBoxDiTWeights load_dramabox_dit_weights(
     const DramaBoxAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -651,7 +656,7 @@ DramaBoxDitWeights load_dramabox_dit_weights(
     DramaBoxPerfMode perf_mode) {
     const auto & config = assets.config.transformer;
     const auto & source = *assets.dit_weights;
-    DramaBoxDitWeights weights;
+    DramaBoxDiTWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -697,12 +702,12 @@ DramaBoxDitWeights load_dramabox_dit_weights(
     return weights;
 }
 
-class DramaBoxDitRuntime::Graph {
+class DramaBoxDiTRuntime::Graph {
 public:
     Graph(
         core::ExecutionContext & execution,
         std::shared_ptr<const DramaBoxAssets> assets,
-        const DramaBoxDitWeights & weights,
+        const DramaBoxDiTWeights & weights,
         int64_t batch,
         int64_t tokens,
         int64_t context_tokens,
@@ -779,7 +784,7 @@ public:
         debug::timing_log_scalar("dramabox.dit.static_input_upload_ms", debug::elapsed_ms(input_start, Clock::now()));
     }
 
-    std::vector<float> forward(const DramaBoxDitInputs & inputs) const {
+    std::vector<float> forward(const DramaBoxDiTInputs & inputs) const {
         const bool share_stg_prefix = inputs.stg_enabled && inputs.batch >= 2;
         if (!matches(
                 inputs.batch,
@@ -1013,7 +1018,7 @@ private:
     bool share_stg_prefix_ = false;
     int64_t ref_tokens_ = 0;
     DramaBoxPerfMode perf_mode_ = DramaBoxPerfMode::Exact;
-    const DramaBoxDitWeights & weights_;
+    const DramaBoxDiTWeights & weights_;
     mutable bool static_inputs_ready_ = false;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::TensorValue latent_;
@@ -1028,7 +1033,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-DramaBoxDitRuntime::DramaBoxDitRuntime(
+DramaBoxDiTRuntime::DramaBoxDiTRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const DramaBoxAssets> assets,
     assets::TensorStorageType weight_storage_type,
@@ -1045,16 +1050,16 @@ DramaBoxDitRuntime::DramaBoxDitRuntime(
     }
 }
 
-DramaBoxDitRuntime::~DramaBoxDitRuntime() = default;
+DramaBoxDiTRuntime::~DramaBoxDiTRuntime() = default;
 
-void DramaBoxDitRuntime::prepare(
+void DramaBoxDiTRuntime::prepare(
     int64_t batch,
     int64_t tokens,
     int64_t context_tokens,
     bool stg_enabled,
     int64_t ref_tokens) const {
     if (!weights_) {
-        weights_ = std::make_unique<DramaBoxDitWeights>(load_dramabox_dit_weights(
+        weights_ = std::make_unique<DramaBoxDiTWeights>(load_dramabox_dit_weights(
             *assets_,
             execution_->backend(),
             execution_->backend_type(),
@@ -1079,7 +1084,7 @@ void DramaBoxDitRuntime::prepare(
     }
 }
 
-void DramaBoxDitRuntime::prepare_static_inputs(
+void DramaBoxDiTRuntime::prepare_static_inputs(
     int64_t batch,
     int64_t tokens,
     bool stg_enabled,
@@ -1097,14 +1102,14 @@ void DramaBoxDitRuntime::prepare_static_inputs(
     graph_->prepare_static_inputs(conditioning, rope_cos, rope_sin, timestep_mask);
 }
 
-std::vector<float> DramaBoxDitRuntime::forward(const DramaBoxDitInputs & inputs) const {
+std::vector<float> DramaBoxDiTRuntime::forward(const DramaBoxDiTInputs & inputs) const {
     if (!graph_) {
         throw std::runtime_error("DramaBox DiT graph was not prepared");
     }
     return graph_->forward(inputs);
 }
 
-void DramaBoxDitRuntime::release_runtime_state() const {
+void DramaBoxDiTRuntime::release_runtime_state() const {
     graph_.reset();
     weights_.reset();
 }

@@ -18,7 +18,11 @@ The flake provides backend-specific builds:
 | `rocm-gfx1151` | AMD ROCm (single target) | Linux    |
 | `metal`        | Apple Metal              | macOS    |
 
-All packages include: **audiocpp_cli**, **audiocpp_server**, **audiocpp_gguf**, and **audiocpp_model_manager**.
+The provided packages enable the optional native model manager and include:
+**audiocpp_cli**, **audiocpp_server**, **audiocpp_gguf**, and
+**audiocpp_model_manager**. Custom package users can set
+`nativeModelManagerSupport = false` to keep the normal server/CLI build free of
+the HTTP/TLS dependency.
 
 ## Build
 

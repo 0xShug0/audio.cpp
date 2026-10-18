@@ -709,6 +709,12 @@ private:
                 ctx,
                 *weights_.f0_mask,
                 engine::core::TensorShape::from_dims({1, channels_, 1}));
+            if (f0_mask.type != GGML_TYPE_F32) {
+                f0_mask = engine::core::wrap_tensor(
+                    ggml_cast(ctx.ggml, f0_mask.tensor, GGML_TYPE_F32),
+                    f0_mask.shape,
+                    GGML_TYPE_F32);
+            }
             auto f0_mask_rep = engine::core::wrap_tensor(
                 ggml_repeat(ctx.ggml, f0_mask.tensor, contiguous(ctx, x).tensor),
                 x.shape,

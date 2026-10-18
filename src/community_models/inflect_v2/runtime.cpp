@@ -1,5 +1,6 @@
 #include "engine/community_models/inflect_v2/runtime.h"
 
+#include "engine/community_models/inflect_v2/rknn_decoder.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -1060,7 +1061,7 @@ ExpandedPrior expand_prior(
 
 }  // namespace
 
-struct InflectV2NativeRuntime::State {
+struct InflectV2VitsRuntime::State {
     struct BackendOwner {
         ggml_backend_t value = nullptr;
         ~BackendOwner() {
@@ -1072,7 +1073,8 @@ struct InflectV2NativeRuntime::State {
 
     State(
         std::shared_ptr<const InflectV2Assets> assets_in,
-        core::BackendConfig backend_config)
+        core::BackendConfig backend_config,
+        const std::string & rknn_decoder_path)
         : assets(std::move(assets_in)),
           threads(std::max(1, backend_config.threads)) {
         if (assets == nullptr) {
@@ -1083,6 +1085,15 @@ struct InflectV2NativeRuntime::State {
         backend_type = core::backend_type(backend.value);
         core::set_backend_threads(backend.value, threads);
         weights = load_weights(assets, backend.value, backend_type);
+        if (!rknn_decoder_path.empty()) {
+            // The engine voices the whole decoder half (inverse flow plus dec), so the ggml
+            // decoder graph is never built and the latent the prior expansion produces is handed
+            // over as-is.
+            rknn = std::make_unique<InflectV2RknnDecoder>(
+                rknn_decoder_path,
+                assets->config.inter_channels,
+                assets->config.hop_length);
+        }
         if (backend_type == core::BackendType::Cuda) {
             // Host duration alignment prevents small TF32 differences from being
             // amplified by monotone expansion while the expensive decoder stays on CUDA.
@@ -1169,18 +1180,23 @@ struct InflectV2NativeRuntime::State {
     std::shared_ptr<const InflectV2BackendWeights> weights;
     BackendOwner duration_backend;
     std::shared_ptr<const InflectV2BackendWeights> duration_weights;
+    std::unique_ptr<InflectV2RknnDecoder> rknn;
     runtime::CacheSlots<int64_t, std::unique_ptr<DurationGraph>> duration_graphs{4};
     runtime::CacheSlots<int64_t, std::unique_ptr<DecoderGraph>> decoder_graphs{2};
 };
 
-InflectV2NativeRuntime::InflectV2NativeRuntime(
+InflectV2VitsRuntime::InflectV2VitsRuntime(
     std::shared_ptr<const InflectV2Assets> assets,
-    core::BackendConfig backend_config)
-    : state_(std::make_unique<State>(std::move(assets), backend_config)) {}
+    core::BackendConfig backend_config,
+    std::string rknn_decoder_path)
+    : state_(std::make_unique<State>(
+          std::move(assets),
+          backend_config,
+          rknn_decoder_path)) {}
 
-InflectV2NativeRuntime::~InflectV2NativeRuntime() = default;
+InflectV2VitsRuntime::~InflectV2VitsRuntime() = default;
 
-runtime::AudioBuffer InflectV2NativeRuntime::synthesize(
+runtime::AudioBuffer InflectV2VitsRuntime::synthesize(
     const std::vector<int32_t> & token_ids,
     const InflectV2GenerationOptions & options) {
     if (token_ids.empty()) {
@@ -1210,22 +1226,29 @@ runtime::AudioBuffer InflectV2NativeRuntime::synthesize(
         log_duration,
         options);
     auto decoder_start = std::chrono::steady_clock::now();
-    auto & decoder_graph = state_->decoder_graph(prior.frames);
-    core::write_tensor_f32(
-        core::wrap_tensor(
-            decoder_graph.latent,
-            core::TensorShape::from_dims({
-                1,
-                state_->assets->config.inter_channels,
-                prior.frames,
-            }),
-            GGML_TYPE_F32),
-        prior.latent);
-    compute_graph(decoder_graph, "Inflect v2 decoder");
     runtime::AudioBuffer out;
     out.sample_rate = static_cast<int>(state_->assets->config.sample_rate);
     out.channels = 1;
-    out.samples = core::read_tensor_f32(decoder_graph.waveform);
+    if (state_->rknn != nullptr) {
+        out.samples = state_->rknn->decode(
+            prior.latent.data(),
+            state_->assets->config.inter_channels,
+            prior.frames);
+    } else {
+        auto & decoder_graph = state_->decoder_graph(prior.frames);
+        core::write_tensor_f32(
+            core::wrap_tensor(
+                decoder_graph.latent,
+                core::TensorShape::from_dims({
+                    1,
+                    state_->assets->config.inter_channels,
+                    prior.frames,
+                }),
+                GGML_TYPE_F32),
+            prior.latent);
+        compute_graph(decoder_graph, "Inflect v2 decoder");
+        out.samples = core::read_tensor_f32(decoder_graph.waveform);
+    }
     engine::debug::timing_log_scalar(
         "inflect_v2.decoder_ms",
         engine::debug::elapsed_ms(decoder_start));

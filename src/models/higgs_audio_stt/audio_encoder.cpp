@@ -67,7 +67,7 @@ struct AudioLayerWeights {
     core::TensorValue fc2_bias;
 };
 
-struct HiggsAudioSTTAudioEncoderWeights {
+struct HiggsAudioSTTWhisperEncoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     Conv1dWeightsData conv1;
     Conv1dWeightsData conv2;
@@ -108,7 +108,7 @@ LinearWeightsData load_linear(
     };
 }
 
-std::shared_ptr<const HiggsAudioSTTAudioEncoderWeights> load_weights(
+std::shared_ptr<const HiggsAudioSTTWhisperEncoderWeights> load_weights(
     const HiggsAudioSTTAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -116,7 +116,7 @@ std::shared_ptr<const HiggsAudioSTTAudioEncoderWeights> load_weights(
     const auto & config = assets.config.audio_encoder;
     const auto & text_config = assets.config.text_decoder;
     const auto & source = *assets.model_weights;
-    auto weights = std::make_shared<HiggsAudioSTTAudioEncoderWeights>();
+    auto weights = std::make_shared<HiggsAudioSTTWhisperEncoderWeights>();
     auto store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -168,7 +168,7 @@ core::TensorValue audio_self_attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const AudioLayerWeights & weights,
-    const HiggsAudioSTTAudioEncoderConfig & config,
+    const HiggsAudioSTTWhisperEncoderConfig & config,
     const core::TensorValue & attention_mask) {
     const int64_t head_dim = config.d_model / config.encoder_attention_heads;
     const modules::LinearModule q_proj({config.d_model, config.d_model, true});
@@ -205,7 +205,7 @@ core::TensorValue audio_encoder_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const AudioLayerWeights & weights,
-    const HiggsAudioSTTAudioEncoderConfig & config,
+    const HiggsAudioSTTWhisperEncoderConfig & config,
     const core::TensorValue & attention_mask) {
     const modules::LayerNormModule norm({config.d_model, 1.0e-5F, true, true});
     auto attn_in = norm.build(ctx, input, {weights.self_attn_norm_weight, weights.self_attn_norm_bias});
@@ -261,11 +261,11 @@ std::vector<float> attention_mask_values(
     return values;
 }
 
-class HiggsAudioSTTAudioEncoderGraph {
+class HiggsAudioSTTWhisperEncoderGraph {
 public:
-    HiggsAudioSTTAudioEncoderGraph(
+    HiggsAudioSTTWhisperEncoderGraph(
         std::shared_ptr<const HiggsAudioSTTAssets> assets,
-        std::shared_ptr<const HiggsAudioSTTAudioEncoderWeights> weights,
+        std::shared_ptr<const HiggsAudioSTTWhisperEncoderWeights> weights,
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         int64_t chunks,
@@ -361,14 +361,14 @@ public:
         debug::trace_log_scalar("higgs_audio_stt.audio_encoder.frames", frames_);
     }
 
-    ~HiggsAudioSTTAudioEncoderGraph() {
+    ~HiggsAudioSTTWhisperEncoderGraph() {
         engine::core::release_backend_graph_resources(backend_, graph_);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
     }
 
-    bool matches(const HiggsAudioSTTAudioEncoderWeights & weights, int64_t chunks, int64_t frames, ggml_backend_t backend, int threads) const {
+    bool matches(const HiggsAudioSTTWhisperEncoderWeights & weights, int64_t chunks, int64_t frames, ggml_backend_t backend, int threads) const {
         return weights_.get() == &weights && chunks_ == chunks && frames_ == frames && backend_ == backend && compute_threads_ == std::max(1, threads);
     }
 
@@ -415,7 +415,7 @@ public:
 
 private:
     std::shared_ptr<const HiggsAudioSTTAssets> assets_;
-    std::shared_ptr<const HiggsAudioSTTAudioEncoderWeights> weights_;
+    std::shared_ptr<const HiggsAudioSTTWhisperEncoderWeights> weights_;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int compute_threads_ = 1;
@@ -432,7 +432,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-HiggsAudioSTTAudioEncoderRuntime::HiggsAudioSTTAudioEncoderRuntime(
+HiggsAudioSTTWhisperEncoderRuntime::HiggsAudioSTTWhisperEncoderRuntime(
     std::shared_ptr<const HiggsAudioSTTAssets> assets,
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
@@ -449,9 +449,9 @@ HiggsAudioSTTAudioEncoderRuntime::HiggsAudioSTTAudioEncoderRuntime(
     weights_ = load_weights(*assets_, execution.backend(), execution.backend_type(), weight_storage_type);
 }
 
-HiggsAudioSTTAudioEncoderRuntime::~HiggsAudioSTTAudioEncoderRuntime() = default;
+HiggsAudioSTTWhisperEncoderRuntime::~HiggsAudioSTTWhisperEncoderRuntime() = default;
 
-HiggsAudioSTTAudioEmbeddings HiggsAudioSTTAudioEncoderRuntime::encode(const HiggsAudioSTTAudioFeatures & features) {
+HiggsAudioSTTAudioEmbeddings HiggsAudioSTTWhisperEncoderRuntime::encode(const HiggsAudioSTTAudioFeatures & features) {
     if (execution_ == nullptr) {
         throw std::runtime_error("Higgs Audio STT audio encoder execution context is null");
     }
@@ -463,7 +463,7 @@ HiggsAudioSTTAudioEmbeddings HiggsAudioSTTAudioEncoderRuntime::encode(const Higg
     }
     const int threads = std::max(1, execution_->config().threads);
     if (graph_ == nullptr || !graph_->matches(*weights_, features.chunks, features.frames, execution_->backend(), threads)) {
-        graph_ = std::make_unique<HiggsAudioSTTAudioEncoderGraph>(
+        graph_ = std::make_unique<HiggsAudioSTTWhisperEncoderGraph>(
             assets_,
             weights_,
             *execution_,

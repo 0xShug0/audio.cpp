@@ -2,7 +2,7 @@
 
 Detailed measurements, methodology, and the reasoning behind what was and
 wasn't optimized. The user-facing model documentation lives in
-[docs/community_models/parakeet_tdt.md](../community_models/parakeet_tdt.md);
+[docs/models/parakeet_tdt.md](../models/parakeet_tdt.md);
 this file is the evidence behind the summary numbers there.
 
 Everything here was measured on one machine, so read the hardware section

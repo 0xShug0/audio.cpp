@@ -1,0 +1,1153 @@
+// Run the actual server handlers with tiny controlled loaders. Barriers force
+// lifecycle overlaps without GPU timing, sleeps in production, or large models.
+#include "parallel_runtime.h"
+#include "engine/framework/audio/wav_writer.h"
+#include "engine/framework/runtime/errors.h"
+#include <chrono>
+#include <condition_variable>
+#include <fstream>
+#include <future>
+#include <iostream>
+#include <map>
+#include <sstream>
+#include <tuple>
+
+using namespace std::chrono_literals;
+namespace rt = engine::runtime;
+namespace srv = minitts::server;
+using engine::io::json::parse;
+
+namespace {
+void require(bool value, const std::string & message) {
+    if (!value) { throw std::runtime_error(message); }
+}
+void concurrent_json_parsing() {
+    std::promise<void> start;
+    auto ready = start.get_future().share();
+    std::vector<std::future<void>> workers;
+    for (int worker = 0; worker < 8; ++worker) {
+        workers.push_back(std::async(std::launch::async, [ready, worker] {
+            ready.wait();
+            for (int wave = 0; wave < 200; ++wave) {
+                const std::string label = std::to_string(worker) + ":" + std::to_string(wave);
+                const auto value = parse("{\"text\":\"" + label + "\",\"requests\":[null,true,1.5,{\"text\":\"hello\"}]}");
+                require(value.require("text").as_string() == label &&
+                        value.require("requests").as_array().size() == 4,
+                        "concurrent JSON parse mixed request contents");
+                require(parse(engine::io::json::stringify(value)).require("text").as_string() == label,
+                        "concurrent JSON round-trip changed request contents");
+                bool rejected = false;
+                try { (void)parse("{\"text\":"); }
+                catch (const std::runtime_error & error) {
+                    rejected = std::string(error.what()).find("failed to parse json at byte ") == 0;
+                }
+                require(rejected, "concurrent invalid JSON lost its own error position");
+            }
+        }));
+    }
+    start.set_value();
+    for (auto & worker : workers) { worker.get(); }
+}
+template<class F> bool observe(F f) {
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (!f()) {
+        if (std::chrono::steady_clock::now() >= deadline) { return false; }
+        std::this_thread::yield();
+    }
+    return true;
+}
+struct Gate {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool enabled = false, entered = false, released = false;
+    void arm() { std::lock_guard<std::mutex> lock(mutex); enabled = true; entered = released = false; }
+    void wait() {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (!enabled) { return; }
+        entered = true;
+        cv.notify_all();
+        // A failing test must still drain its futures and release server state.
+        cv.wait_for(lock, 5s, [&] { return released; });
+    }
+    bool seen() { std::lock_guard<std::mutex> lock(mutex); return entered; }
+    void release() { std::lock_guard<std::mutex> lock(mutex); released = true; cv.notify_all(); }
+};
+struct Control {
+    Gate load, run, destroy;
+    std::atomic<int> loads{0}, destructions{0}, runs{0}, finishes{0};
+    std::atomic<int> sessions{0}, clones{0}, final_text{0};
+    std::atomic<bool> fail_load{false}, null_session{false}, fail_prepare{false}, fail_run{false}, fail_clone{false}, reject_run{false};
+    std::atomic<bool> premature_model_destruction{false}, live_input{false}, no_text{false}; std::optional<rt::Transcript> live_text;
+};
+class Session final : public rt::IOfflineVoiceTaskSession,
+                      public rt::IBatchedOfflineVoiceTaskSession,
+                      public rt::IStreamingVoiceTaskSession,
+                      public rt::IParallelVoiceTaskSessionFactory {
+public:
+    Session(std::shared_ptr<Control> c, rt::TaskSpec task, std::string revision, size_t capacity = 4)
+        : control_(std::move(c)), task_(task), revision_(std::move(revision)), capacity_(capacity) { ++control_->sessions; }
+    ~Session() override { --control_->sessions; }
+    std::string family() const override { return "lifecycle_fixture"; }
+    rt::VoiceTaskKind task_kind() const override { return task_.task; }
+    rt::RunMode run_mode() const override { return task_.mode; }
+    void prepare(const rt::SessionPreparationRequest &) override {
+        if (control_->fail_prepare) { throw std::runtime_error("controlled preparation failure"); }
+    }
+    size_t parallel_session_capacity() const noexcept override { return capacity_; }
+    std::unique_ptr<rt::IVoiceTaskSession> create_parallel_session() const override {
+        if (++control_->clones == 2 && control_->fail_clone) {
+            throw std::runtime_error("controlled partial pool failure");
+        }
+        return std::make_unique<Session>(control_, task_, revision_, capacity_);
+    }
+    rt::TaskResult run(const rt::TaskRequest & request) override {
+        control_->run.wait();
+        ++control_->runs;
+        if (control_->fail_run) { throw std::runtime_error("controlled inference failure"); }
+        if (control_->reject_run) { throw rt::InvalidRequestError("controlled request rejection"); }
+        if (task_.task == rt::VoiceTaskKind::Asr && !request.audio_input) {
+            throw std::runtime_error("replacement ASR requires audio input");
+        }
+        rt::TaskResult result;
+        if (!control_->no_text) { result.text_output = rt::Transcript{revision_, "en"}; }
+        result.audio_output = rt::AudioBuffer{16000, 1, {0.1f, -0.1f}}; result.output_artifacts = request.input_artifacts;
+        return result;
+    }
+    std::vector<rt::TaskResult> run_batch(const std::vector<rt::TaskRequest> & requests) override {
+        std::vector<rt::TaskResult> results;
+        for (const auto & request : requests) { results.push_back(run(request)); }
+        return results;
+    }
+    rt::StreamingPolicy streaming_policy() const override {
+        rt::StreamingPolicy policy;
+        policy.input = control_->live_input ? rt::StreamingInputKind::AudioChunks : rt::StreamingInputKind::None;
+        policy.output = rt::StreamingOutputKind::PullEvents; policy.preferred_audio_chunk_samples = 160;
+        return policy;
+    }
+    void start_stream(const rt::TaskRequest & request) override { result_ = run(request); emitted_ = false; if (control_->live_input) { control_->live_text = request.text_input; } }
+    std::optional<rt::StreamEvent> next_stream_event() override {
+        if (emitted_) { return {}; }
+        emitted_ = true;
+        rt::StreamEvent event;
+        event.audio_output = result_.audio_output;
+        event.partial_text = result_.text_output; if (control_->final_text == 2) { event.partial_text->text += "!"; }
+        event.is_final = true;
+        return event;
+    }
+    void reset() override { emitted_ = false; }
+    rt::StreamEvent process_audio_chunk(const rt::AudioChunk &) override { return {}; }
+    rt::TaskResult finalize() override { ++control_->finishes; auto r = result_; if (control_->final_text == 1) { r.text_output.reset(); } return r; }
+private:
+    std::shared_ptr<Control> control_;
+    rt::TaskSpec task_;
+    std::string revision_;
+    size_t capacity_;
+    rt::TaskResult result_;
+    bool emitted_ = false;
+};
+class Model final : public rt::ILoadedVoiceModel {
+public:
+    Model(std::shared_ptr<Control> c, std::string revision) : control_(std::move(c)), revision_(std::move(revision)) {
+        metadata_.family = "lifecycle_fixture";
+    }
+    ~Model() override {
+        control_->destroy.wait();
+        if (control_->sessions != 0) { control_->premature_model_destruction = true; }
+        ++control_->destructions;
+    }
+    const rt::ModelMetadata & metadata() const noexcept override { return metadata_; }
+    const rt::CapabilitySet & capabilities() const noexcept override { return capabilities_; }
+    std::unique_ptr<rt::IVoiceTaskSession> create_task_session(const rt::TaskSpec & task, const rt::SessionOptions & options) const override {
+        if (control_->null_session) { return nullptr; }
+        const auto cap = options.options.find("fixture_capacity");
+        return std::make_unique<Session>(control_, task, revision_,
+            cap == options.options.end() ? 4 : std::stoul(cap->second));
+    }
+private:
+    std::shared_ptr<Control> control_;
+    std::string revision_;
+    rt::ModelMetadata metadata_;
+    rt::CapabilitySet capabilities_;
+};
+class Loader final : public rt::IVoiceModelLoader {
+public:
+    std::map<std::string, std::shared_ptr<Control>> controls;
+    std::string family() const override { return "lifecycle_fixture"; }
+    bool can_load(const rt::ModelLoadRequest &) const override { return true; }
+    rt::ModelInspection inspect(const rt::ModelLoadRequest &) const override { return {}; }
+    std::unique_ptr<rt::ILoadedVoiceModel> load(const rt::ModelLoadRequest & request) const override {
+        const auto c = controls.at(request.model_path.filename().string());
+        ++c->loads;
+        c->load.wait();
+        if (c->fail_load) { throw std::runtime_error("controlled load failure"); }
+        return std::make_unique<Model>(c, request.model_path.filename().string());
+    }
+};
+std::string quote(const std::string & text) { return engine::io::json::stringify_string(text); }
+srv::HttpResponse post(srv::ParallelServerState & state, const std::string & path, std::string body) {
+    srv::HttpRequest request;
+    request.method = "POST"; request.path = path; request.body = std::move(body);
+    request.headers["content-type"] = "application/json";
+    return state.handle(request);
+}
+srv::HttpResponse run(srv::ParallelServerState & state, const std::string & id) {
+    return post(state, "/v1/tasks/run", "{\"model\":" + quote(id) + ",\"text\":\"old request\"}");
+}
+void success(const srv::HttpResponse & response) {
+    require(response.status == 200, "HTTP " + std::to_string(response.status) + ": " + response.body);
+}
+class Writer final : public srv::HttpStreamWriter {
+public:
+    std::string output;
+    bool disconnected = false;
+    void write(std::string_view s) override {
+        if (disconnected) { throw std::runtime_error("client disconnected"); }
+        output.append(s);
+    }
+};
+}
+
+namespace minitts::server {
+class ServerRuntimeTestAccess {
+public:
+    static void registry(ParallelServerState & state, const std::shared_ptr<Loader> & loader) {
+        state.registry_factory_ = [loader] {
+            rt::ModelRegistry registry; registry.register_loader(loader); return registry;
+        };
+        state.config_.ui_management = true;
+    }
+    static void add(ParallelServerState & state, ServerModelConfig config) {
+        auto model = state.make_model(std::move(config));
+        state.model_index_.emplace(model->registered_id, state.models_.size());
+        state.models_.push_back(std::move(model));
+    }
+    static auto & model(ParallelServerState & state, const std::string & id) {
+        return *state.models_.at(state.model_index_.at(id));
+    }
+    static ModelSlots::State slots(ParallelServerState & state, const std::string & id) { return model(state, id).busy.state(); }
+    static bool resident(ParallelServerState & state, const std::string & id) { return model(state, id).resident(); }
+    static bool loaded(ParallelServerState & state, const std::string & id) { return model(state, id).loaded.load(); }
+    static auto block_metadata(ParallelServerState & state, const std::string & id) {
+        return std::unique_lock<std::shared_mutex>(model(state, id).metadata_mutex);
+    }
+    static auto block_bulk_publication(ParallelServerState & state) {
+        return std::unique_lock<std::mutex>(state.bulk_admission_mutex_);
+    }
+};
+}
+using Access = srv::ServerRuntimeTestAccess;
+
+namespace {
+struct Fixture {
+    std::filesystem::path root;
+    std::shared_ptr<Loader> loader = std::make_shared<Loader>();
+    std::unique_ptr<srv::ParallelServerState> state;
+    int count;
+    Fixture(int slots, int limit = 0) : count(slots) {
+        root = std::filesystem::temp_directory_path() /
+            ("audiocpp-lifecycle-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(root);
+        srv::ServerConfig config; config.backend = engine::core::BackendType::Cpu;
+        config.ui_enabled = false; config.max_loaded_models = limit; config.busy_timeout_ms = 0;
+        state = std::make_unique<srv::ParallelServerState>(config, root);
+        Access::registry(*state, loader);
+    }
+    ~Fixture() {
+        for (const auto & [name, c] : loader->controls) {
+            c->load.release(); c->run.release(); c->destroy.release();
+        }
+        state.reset();
+        std::error_code ec; std::filesystem::remove_all(root, ec);
+    }
+    std::shared_ptr<Control> asset(const std::string & name) {
+        std::ofstream(root / name) << "controlled fixture";
+        auto c = std::make_shared<Control>(); loader->controls.emplace(name, c); return c;
+    }
+    std::shared_ptr<Control> add(const std::string & id, const std::string & mode = "offline") {
+        auto c = asset(id);
+        srv::ServerModelConfig model;
+        model.id = id; model.path = root / id; model.family = loader->family();
+        model.slots = count; model.lazy = true; model.mode = mode;
+        Access::add(*state, model); return c;
+    }
+    auto queued(const std::string & id, int n, bool management = false) {
+        return observe([&] { const auto s = Access::slots(*state, id);
+            return (management ? s.waiting_management : s.waiting_requests) == n; });
+    }
+    srv::HttpResponse replace(const std::string & id, const std::string & asset, const std::string & task = "tts") {
+        return post(*state, "/v1/models/load", "{\"id\":" + quote(id) + ",\"path\":" +
+            quote((root / asset).generic_string()) + ",\"family\":\"lifecycle_fixture\",\"task\":" +
+            quote(task) + ",\"slots\":" + std::to_string(count) + "}");
+    }
+};
+
+void older_work_before_management(int count, bool reconfigure) {
+    Fixture f(count); auto c = f.add("shared"); f.asset("replacement");
+    success(run(*f.state, "shared"));
+    c->run.arm();
+    std::vector<std::future<srv::HttpResponse>> active;
+    for (int i = 0; i < count; ++i) { active.push_back(std::async(std::launch::async, [&] { return run(*f.state, "shared"); })); }
+    require(observe([&] { return Access::slots(*f.state, "shared").active == count; }), "active work not established");
+    auto old = std::async(std::launch::async, [&] { return run(*f.state, "shared"); });
+    const bool old_queued = f.queued("shared", 1);
+    auto manager = std::async(std::launch::async, [&] {
+        return reconfigure ? f.replace("shared", "replacement", "asr") :
+            post(*f.state, "/v1/models/unload", "{\"id\":\"shared\"}");
+    });
+    const bool manager_queued = f.queued("shared", 1, true);
+    c->run.release();
+    for (auto & a : active) { success(a.get()); }
+    const auto result = old.get(); const auto managed = manager.get();
+    require(old_queued && manager_queued, "ordered overlaps not established");
+    success(result); success(managed);
+    require(result.body.find("shared") != std::string::npos, "older request used replacement state");
+    require(c->loads == 1, "queued request reloaded the old model");
+    require(Access::resident(*f.state, "shared") == reconfigure, "incorrect final residency");
+    const auto s = Access::slots(*f.state, "shared");
+    require(s.active == 0 && s.waiting_requests == 0 && s.waiting_management == 0, "ordered drain leaked leases");
+}
+
+void bulk_releases_idle_first(int count, bool hold_metadata) {
+    Fixture f(count); auto slow = f.add("slow"); auto idle = f.add("idle");
+    success(run(*f.state, "idle"));
+    slow->load.arm();
+    auto loading = std::async(std::launch::async, [&] { return run(*f.state, "slow"); });
+    require(observe([&] { return slow->load.seen(); }), "slow initial load did not start");
+    std::optional<std::unique_lock<std::shared_mutex>> metadata;
+    if (hold_metadata) { metadata.emplace(Access::block_metadata(*f.state, "slow")); }
+    auto bulk = std::async(std::launch::async, [&] {
+        return post(*f.state, "/v1/tasks/unload_all_models", "{}");
+    });
+    const bool idle_freed = observe([&] { return idle->destructions == 1; });
+    const bool older_loading = loading.wait_for(0ms) == std::future_status::timeout;
+    // A full status response may wait for this model's metadata, but must not
+    // hold the global registration lock while doing so.
+    std::future<srv::HttpResponse> listing;
+    std::promise<void> listing_started;
+    bool listing_blocked = true;
+    if (hold_metadata) {
+        auto started = listing_started.get_future();
+        listing = std::async(std::launch::async, [&] {
+            srv::HttpRequest request; request.method = "GET"; request.path = "/v1/models";
+            listing_started.set_value();
+            return f.state->handle(request);
+        });
+        started.wait();
+        listing_blocked = listing.wait_for(20ms) == std::future_status::timeout;
+    }
+    srv::HttpRequest voices; voices.method = "GET"; voices.path = "/v1/audio/voices"; voices.query = "model=idle";
+    auto independent = std::async(std::launch::async, [&] { return f.state->handle(voices); });
+    const bool unrelated_progress = independent.wait_for(200ms) == std::future_status::ready;
+    metadata.reset(); slow->load.release();
+    if (listing.valid()) { success(listing.get()); }
+    success(independent.get()); success(loading.get()); success(bulk.get());
+    require(idle_freed && older_loading, "bulk retained idle model behind a blocked initial load");
+    require(listing_blocked && unrelated_progress,
+            "bulk/status held the global registry while waiting for model metadata");
+    require(!Access::resident(*f.state, "idle") && !Access::resident(*f.state, "slow"), "bulk failed to drain residents");
+}
+
+void retiring_resident(int count, int limit) {
+    Fixture f(count, limit); auto retiring = f.add("retiring"); auto keeper = f.add("keeper"); auto incoming = f.add("incoming");
+    success(run(*f.state, "retiring"));
+    if (limit == 2) { success(run(*f.state, "keeper")); }
+    retiring->destroy.arm();
+    auto unload = std::async(std::launch::async, [&] { return post(*f.state, "/v1/models/unload", "{\"id\":\"retiring\"}"); });
+    require(observe([&] { return retiring->destroy.seen(); }), "retirement did not start");
+    const bool released = !Access::resident(*f.state, "retiring") && !Access::loaded(*f.state, "retiring");
+    auto target = std::async(std::launch::async, [&] { return run(*f.state, "incoming"); });
+    const bool concurrent = target.wait_for(500ms) == std::future_status::ready;
+    retiring->destroy.release();
+    success(target.get()); success(unload.get());
+    require(released && concurrent, "retiring model blocked incoming load");
+    if (limit == 2) {
+        require(Access::resident(*f.state, "keeper") && keeper->loads == 1 && keeper->destructions == 0,
+                "retiring model caused unnecessary eviction");
+    }
+    require(incoming->loads == 1, "incoming model retried instead of loading once");
+}
+
+void overlapping_managers(int count) {
+    Fixture f(count); auto c = f.add("shared"); f.asset("first"); f.asset("last");
+    c->run.arm();
+    auto active = std::async(std::launch::async, [&] { return run(*f.state, "shared"); });
+    require(observe([&] { return c->run.seen(); }), "manager test did not start inference");
+    auto first = std::async(std::launch::async, [&] { return f.replace("shared", "first"); });
+    const bool first_queued = f.queued("shared", 1, true);
+    auto last = std::async(std::launch::async, [&] { return f.replace("shared", "last"); });
+    const bool last_queued = f.queued("shared", 2, true);
+    c->run.release();
+    success(active.get()); success(first.get()); success(last.get());
+    require(first_queued && last_queued, "management order was not established");
+    const auto final = run(*f.state, "shared"); success(final);
+    require(final.body.find("last") != std::string::npos, "later manager lost to earlier one");
+}
+
+void deferred_stream_ownership(int count, bool disconnect) {
+    Fixture f(count); auto c = f.add("stream", "streaming"); f.asset("replacement");
+    auto response = post(*f.state, "/v1/audio/speech", "{\"model\":\"stream\",\"input\":\"hello\",\"stream\":true,\"response_format\":\"pcm\"}");
+    success(response); require(bool(response.stream_body), "missing streaming callback");
+    auto manager = std::async(std::launch::async, [&] { return f.replace("stream", "replacement"); });
+    const bool queued = f.queued("stream", 1, true);
+    const bool protected_state = manager.wait_for(0ms) == std::future_status::timeout;
+    Writer writer; writer.disconnected = disconnect;
+    bool threw = false;
+    try { response.stream_body(writer); } catch (const std::runtime_error &) { threw = true; }
+    require(threw == disconnect, "unexpected stream callback result");
+    response.stream_body = {}; // transport drops the callback at exchange end
+    success(manager.get());
+    require(queued && protected_state, "management replaced state before the deferred stream ran");
+    require(c->runs == 1 && c->loads == 1, "stream used a different configuration");
+    if (!disconnect) { require(writer.output.find("speech.audio.done") != std::string::npos, "stream returned replacement output"); }
+    const auto s = Access::slots(*f.state, "stream");
+    require(s.active == 0 && s.waiting_management == 0, "stream completion/disconnect leaked ownership");
+}
+
+void deferred_batch_ownership(int count, bool generic = false) {
+    Fixture f(count); auto c = f.add("batch"); f.asset("replacement");
+    const auto wav_path = f.root / "input.wav";
+    engine::audio::write_pcm16_wav(wav_path, 16000, 1, {0.1f, -0.1f});
+    std::ifstream wav(wav_path, std::ios::binary);
+    const std::string audio{std::istreambuf_iterator<char>(wav), std::istreambuf_iterator<char>()};
+    srv::HttpRequest request;
+    request.method = "POST"; request.path = "/v1/batches/transcriptions";
+    request.headers["content-type"] = "multipart/form-data; boundary=test_boundary";
+    request.body = "--test_boundary\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nbatch\r\n";
+    for (int i = 0; i < 2; ++i) {
+        request.body += "--test_boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"input.wav\"\r\n"
+                        "Content-Type: audio/wav\r\n\r\n" + audio + "\r\n";
+    }
+    request.body += "--test_boundary--\r\n";
+    if (generic) {
+        request.path = "/v1/tasks/batch";
+        request.headers["content-type"] = "application/json";
+        request.body = "{\"model\":\"batch\",\"requests\":[{\"text\":\"first\"},{\"text\":\"second\"}]}";
+    }
+    auto response = f.state->handle(request); success(response);
+    require(bool(response.stream_body), "missing native batch callback");
+    auto manager = std::async(std::launch::async, [&] { return f.replace("batch", "replacement"); });
+    const bool queued = f.queued("batch", 1, true);
+    const bool protected_state = manager.wait_for(0ms) == std::future_status::timeout;
+    Writer writer; response.stream_body(writer); response.stream_body = {};
+    success(manager.get());
+    require(queued && protected_state && c->loads == 1 && c->runs == 2,
+            "batch validation/execution crossed a configuration transition");
+    require(writer.output.find(generic ? "task.batch.done" : "batch.transcription.done") != std::string::npos &&
+            writer.output.find("\"text\":\"batch\"") != std::string::npos,
+            "native batch returned replacement output");
+    require(Access::slots(*f.state, "batch").active == 0, "native batch leaked a lease");
+}
+void generic_batches_hold_independent_slots(int count) {
+    Fixture f(count); auto c = f.add("batch"); f.asset("replacement");
+    const std::string body = "{\"model\":\"batch\",\"requests\":[{\"text\":\"first\"},{\"text\":\"second\"}]}";
+    auto first = post(*f.state, "/v1/tasks/batch", body);
+    auto second = post(*f.state, "/v1/tasks/batch", body);
+    success(first); success(second);
+    require(Access::slots(*f.state, "batch").active == 2, "generic batches did not lease independent slots");
+    auto manager = std::async(std::launch::async, [&] { return f.replace("batch", "replacement"); });
+    const bool queued = f.queued("batch", 1, true);
+    Writer one, two;
+    first.stream_body(one); first.stream_body = {};
+    const bool retained = Access::slots(*f.state, "batch").active == 1 &&
+        manager.wait_for(0ms) == std::future_status::timeout;
+    second.stream_body(two); second.stream_body = {};
+    success(manager.get());
+    require(queued && retained && c->runs == 4, "generic batch management did not wait for both callbacks");
+    require(one.output.find("task.batch.done") != std::string::npos &&
+            two.output.find("task.batch.done") != std::string::npos &&
+            one.output.find("\"text\":\"batch\"") != std::string::npos &&
+            two.output.find("\"text\":\"batch\"") != std::string::npos,
+            "generic batches used replacement state");
+    require(Access::slots(*f.state, "batch").active == 0, "generic batch callbacks stranded ownership");
+}
+
+void generic_batch_single_slot_and_invalid_input() {
+    Fixture f(1); f.add("batch");
+    auto response = post(*f.state, "/v1/tasks/batch",
+        "{\"model\":\"batch\",\"requests\":[{\"text\":\"hello\"}]}");
+    success(response); Writer writer; response.stream_body(writer); response.stream_body = {};
+    require(writer.output.find("task.batch.done") != std::string::npos, "single-slot parallel generic batch failed");
+    require(post(*f.state, "/v1/tasks/batch", "{\"model\":\"batch\",\"requests\":[]}").status == 400,
+            "empty generic batch was accepted");
+    require(Access::slots(*f.state, "batch").active == 0, "single-slot parallel generic batch leaked ownership");
+}
+
+void rejected_preparation_releases_lease(int count) {
+    Fixture f(count); f.add("shared");
+    bool rejected = false;
+    try {
+        const auto invalid = post(*f.state, "/v1/tasks/run",
+            "{\"model\":\"shared\",\"audio\":" + quote((f.root / "missing.wav").generic_string()) + "}");
+        rejected = invalid.status >= 400;
+    } catch (const std::runtime_error &) {
+        // The transport converts general handler exceptions into HTTP errors.
+        rejected = true;
+    }
+    require(rejected, "missing input was accepted");
+    require(Access::slots(*f.state, "shared").active == 0, "failed preparation leaked a bound lease");
+    success(run(*f.state, "shared"));
+}
+
+template<class F> void fails(F action) {
+    bool failed = false;
+    try { failed = action().status >= 400; } catch (const std::exception &) { failed = true; }
+    require(failed, "controlled operation did not fail");
+}
+
+void invalid_reconfiguration_preserves_live_state() {
+    Fixture f(2); auto c = f.add("shared"); f.asset("replacement");
+    success(run(*f.state, "shared"));
+    fails([&] { return f.replace("shared", "replacement", "invalid_task"); });
+    require(Access::resident(*f.state, "shared") && c->destructions == 0,
+            "invalid reconfiguration destroyed live state");
+    const auto result = run(*f.state, "shared"); success(result);
+    require(result.body.find("shared") != std::string::npos && c->loads == 1,
+            "invalid reconfiguration changed the working configuration");
+}
+
+void registration_is_visible_while_loading() {
+    Fixture f(2, 1); auto fresh = f.asset("fresh"); auto other = f.add("other");
+    fresh->load.arm();
+    auto registration = std::async(std::launch::async, [&] { return f.replace("fresh", "fresh"); });
+    require(observe([&] { return fresh->load.seen(); }), "new registration did not start loading");
+    srv::HttpRequest health; health.method = "GET"; health.path = "/health";
+    const auto status = f.state->handle(health); success(status);
+    const bool published = parse(status.body).require("models").as_number() == 2;
+    auto duplicate = std::async(std::launch::async, [&] { return f.replace("fresh", "fresh"); });
+    const bool queued = published && f.queued("fresh", 1, true);
+    fresh->load.release();
+    success(registration.get());
+    bool duplicate_ok = false;
+    try { duplicate_ok = duplicate.get().status == 200; } catch (const std::exception &) {}
+    require(published && queued && duplicate_ok && fresh->loads == 1,
+            "concurrent registration created an invisible/duplicate loaded model");
+    success(run(*f.state, "other"));
+    require(!Access::resident(*f.state, "fresh") && Access::resident(*f.state, "other") && other->loads == 1,
+            "new registration escaped resident-model accounting");
+}
+
+void live_policy_does_not_hold_registry_lock() {
+    Fixture f(1); f.add("blocked"); f.add("independent");
+    auto metadata = Access::block_metadata(*f.state, "blocked");
+    std::promise<void> start; auto started = start.get_future();
+    auto policy = std::async(std::launch::async, [&] {
+        srv::HttpRequest request; request.query = "model=blocked";
+        start.set_value(); return f.state->live_ingest_limits(request);
+    });
+    started.wait();
+    const bool waited_for_metadata = policy.wait_for(20ms) == std::future_status::timeout;
+    auto independent = std::async(std::launch::async, [&] { return run(*f.state, "independent"); });
+    const bool progressed = independent.wait_for(500ms) == std::future_status::ready;
+    metadata.unlock(); policy.get(); success(independent.get());
+    require(waited_for_metadata && progressed, "live policy raced metadata or blocked the unrelated model registry");
+}
+
+void guarded_loading_does_not_block_warm_model(int count) {
+    Fixture f(count, 2); auto warm = f.add("warm"); auto cold = f.add("cold");
+    success(run(*f.state, "warm")); cold->load.arm();
+    auto loading = std::async(std::launch::async, [&] { return run(*f.state, "cold"); });
+    require(observe([&] { return cold->load.seen(); }), "guarded cold load did not start");
+    auto independent = std::async(std::launch::async, [&] { return run(*f.state, "warm"); });
+    const bool progressed = independent.wait_for(500ms) == std::future_status::ready;
+    cold->load.release(); success(loading.get()); success(independent.get());
+    require(progressed && warm->loads == 1, "guarded cold load blocked/reloaded another warm model");
+}
+
+void loading_and_inference_failures_release_ownership(int count) {
+    Fixture f(count); auto c = f.add("shared");
+    c->fail_load = true;
+    fails([&] { return run(*f.state, "shared"); });
+    require(!Access::resident(*f.state, "shared") && Access::slots(*f.state, "shared").active == 0,
+            "load failure published residency or leaked a lease");
+    c->fail_load = false; c->null_session = true;
+    fails([&] { return run(*f.state, "shared"); });
+    require(c->sessions == 0 && c->destructions == 1 && !Access::resident(*f.state, "shared"),
+            "null session did not unwind model ownership");
+    c->null_session = false;
+    if (count == 4) {
+        c->fail_clone = true;
+        fails([&] { return run(*f.state, "shared"); });
+        require(c->sessions == 0 && c->destructions == 2 && !c->premature_model_destruction,
+                "partial pool did not destroy sessions before weights");
+        require(!Access::resident(*f.state, "shared") && Access::slots(*f.state, "shared").active == 0,
+                "partial pool construction published residency or retained a slot");
+        c->fail_clone = false;
+    }
+    success(run(*f.state, "shared"));
+    for (auto * fault : {&c->fail_prepare, &c->fail_run}) {
+        *fault = true;
+        fails([&] { return run(*f.state, "shared"); });
+        require(Access::slots(*f.state, "shared").active == 0, "prepare/run failure retained ownership");
+        *fault = false; success(run(*f.state, "shared"));
+    }
+    // A failed replacement load leaves one valid, unloaded entry that can retry.
+    auto replacement = f.asset("replacement"); replacement->fail_load = true;
+    fails([&] { return f.replace("shared", "replacement"); });
+    if (count > 1) {
+        // Multi-slot capability probing occurs before live state changes.
+        require(Access::resident(*f.state, "shared") && c->sessions == count,
+                "failed capability probe destroyed the working registration");
+        replacement->fail_load = false;
+        success(f.replace("shared", "replacement"));
+    } else {
+        require(!Access::resident(*f.state, "shared") && c->sessions == 0,
+                "replacement failure left stale sessions/weights");
+        replacement->fail_load = false;
+    }
+    require(!c->premature_model_destruction, "replacement destroyed weights before sessions");
+    const auto result = run(*f.state, "shared"); success(result);
+    require(result.body.find("replacement") != std::string::npos, "replacement failed to retry consistently");
+}
+
+// A request the session turns away as sent is the caller's to fix: a 400 on
+// the generic routes in either run mode, with the lease released. Any other
+// failure still leaves the handler for the transport's 500.
+void session_request_errors(int count) {
+    Fixture f(count); auto offline = f.add("offline"); auto stream = f.add("stream", "streaming");
+    offline->reject_run = stream->reject_run = true;
+    for (const auto & [path, model] : std::vector<std::pair<std::string, std::string>>{
+             {"/v1/tasks/run", "offline"}, {"/v1/tasks/run", "stream"}, {"/v1/tasks/stream", "stream"}}) {
+        const auto rejected = post(*f.state, path, "{\"model\":" + quote(model) + ",\"text\":\"hi\"}");
+        require(rejected.status == 400 && rejected.body.find("controlled request rejection") != std::string::npos &&
+                rejected.body.find("invalid_request_error") != std::string::npos,
+                path + " on " + model + " answered a rejected request with HTTP " + std::to_string(rejected.status) + ": " + rejected.body);
+        require(Access::slots(*f.state, model).active == 0, path + " on " + model + " kept its lease after a rejected request");
+    }
+    offline->reject_run = false; offline->fail_run = true;
+    bool server_error = false; std::string outcome;
+    try {
+        const auto failed = run(*f.state, "offline");
+        server_error = failed.status == 500; outcome = "HTTP " + std::to_string(failed.status) + ": " + failed.body;
+    } catch (const std::runtime_error & error) {
+        outcome = error.what(); server_error = outcome == "controlled inference failure";
+    }
+    require(server_error, "a failure that is not a rejected request was answered as " + outcome);
+    offline->fail_run = false; success(run(*f.state, "offline"));
+}
+
+void abandoned_deferred_responses_release_ownership(int count) {
+    Fixture f(count); f.add("stream", "streaming"); f.add("batch");
+    for (const auto & [id, path, body] : std::vector<std::tuple<std::string, std::string, std::string>>{
+        {"stream", "/v1/audio/speech", "{\"model\":\"stream\",\"input\":\"hello\",\"stream\":true,\"response_format\":\"pcm\"}"},
+        {"batch", "/v1/tasks/batch", "{\"model\":\"batch\",\"requests\":[{\"text\":\"hello\"}]}"}}) {
+        auto response = post(*f.state, path, body); success(response);
+        require(bool(response.stream_body) && Access::slots(*f.state, id).active == 1,
+                "deferred response did not own its slot");
+        response = {}; // Dropped without invoking the callback.
+        require(Access::slots(*f.state, id).active == 0, "unstarted response leaked its lease");
+        success(post(*f.state, "/v1/models/unload", "{\"id\":" + quote(id) + "}"));
+    }
+}
+
+void overlapping_bulk_operations(int count) {
+    Fixture f(count); auto a = f.add("a"); auto b = f.add("b"); f.add("unrelated");
+    a->run.arm(); b->run.arm();
+    auto run_a = std::async(std::launch::async, [&] { return run(*f.state, "a"); });
+    auto run_b = std::async(std::launch::async, [&] { return run(*f.state, "b"); });
+    require(observe([&] { return a->run.seen() && b->run.seen(); }), "bulk active requests not established");
+    auto first = std::async(std::launch::async, [&] {
+        return post(*f.state, "/v1/tasks/unload_models", "{\"model_ids\":[\"a\",\"b\",\"a\"]}");
+    });
+    const bool first_queued = f.queued("a", 1, true) && f.queued("b", 1, true);
+    auto second = std::async(std::launch::async, [&] {
+        return post(*f.state, "/v1/tasks/unload_models", "{\"model_ids\":[\"b\",\"a\"]}");
+    });
+    const bool second_queued = f.queued("a", 2, true) && f.queued("b", 2, true);
+    auto independent = std::async(std::launch::async, [&] { return run(*f.state, "unrelated"); });
+    const bool progressed = independent.wait_for(500ms) == std::future_status::ready;
+    a->run.release(); b->run.release();
+    success(run_a.get()); success(run_b.get()); success(independent.get());
+    const auto result = first.get(); success(result); success(second.get());
+    require(first_queued && second_queued && progressed, "bulk barriers duplicated or blocked an unrelated model");
+    require(parse(result.body).require("unloaded").as_array().size() == 2, "bulk response repeated a model id");
+    for (const auto & id : {"a", "b"}) {
+        const auto s = Access::slots(*f.state, id);
+        require(s.active == 0 && s.waiting_management == 0 && s.waiting_requests == 0,
+                "overlapping bulk operations leaked a barrier");
+        success(run(*f.state, id));
+    }
+}
+void bulk_publication_excludes_only_other_bulk_calls(int count) {
+    Fixture f(count); f.add("a"); f.add("b"); f.add("unrelated");
+    auto publication = Access::block_bulk_publication(*f.state);
+    std::promise<void> one, two;
+    auto started_one = one.get_future(); auto started_two = two.get_future();
+    auto first = std::async(std::launch::async, [&] {
+        one.set_value(); return post(*f.state, "/v1/tasks/unload_models", "{\"model_ids\":[\"a\",\"b\"]}");
+    });
+    auto second = std::async(std::launch::async, [&] {
+        two.set_value(); return post(*f.state, "/v1/tasks/unload_models", "{\"model_ids\":[\"b\",\"a\"]}");
+    });
+    started_one.wait(); started_two.wait();
+    const bool excluded = first.wait_for(20ms) == std::future_status::timeout &&
+        second.wait_for(20ms) == std::future_status::timeout &&
+        Access::slots(*f.state, "a").waiting_management == 0 &&
+        Access::slots(*f.state, "b").waiting_management == 0;
+    auto independent = std::async(std::launch::async, [&] { return run(*f.state, "unrelated"); });
+    const bool progressed = independent.wait_for(500ms) == std::future_status::ready;
+    publication.unlock(); success(first.get()); success(second.get()); success(independent.get());
+    require(excluded && progressed, "bulk publication interleaved barriers or blocked normal inference");
+}
+}
+
+void unsupported_capacity_preserves_registration() {
+    for (int count : {1, 2, 4}) {
+        Fixture f(count); auto old = f.add("shared"); auto replacement = f.asset("replacement");
+        success(run(*f.state, "shared"));
+        const auto before = Access::model(*f.state, "shared").sessions.get();
+        const auto reject = [&](const std::string & asset, int slots, const std::string & extra = "") {
+            srv::HttpResponse response;
+            try {
+                response = post(*f.state, "/v1/models/load",
+                    "{\"id\":\"shared\",\"family\":\"lifecycle_fixture\",\"path\":" +
+                    quote((f.root / asset).generic_string()) + ",\"slots\":" + std::to_string(slots) + extra + "}");
+            } catch (const std::exception & error) {
+                response.status = 500; response.body = error.what();
+            }
+            const auto & model = Access::model(*f.state, "shared");
+            require(model.sessions.get() == before && model.config.slots == count &&
+                    model.config.path == f.root / "shared" && Access::resident(*f.state, "shared") &&
+                    old->destructions == 0 && old->loads == 1,
+                    "unsupported capacity destroyed or changed a working registration");
+            require(response.status == 400 && response.body.find("capacity=") != std::string::npos,
+                    "unsupported capacity was not rejected as HTTP 400");
+            success(run(*f.state, "shared"));
+            const auto state = Access::slots(*f.state, "shared");
+            require(state.slots == count && state.active == 0 && state.waiting_management == 0,
+                    "unsupported capacity stranded admission ownership");
+        };
+        // Valid schema but unsupported capacity: the maintainer's slots=5 case.
+        reject("shared", 5);
+        // A different checkpoint or session options can advertise a different cap.
+        reject("replacement", 5);
+        reject("shared", 2, ",\"session_options\":{\"fixture_capacity\":\"1\"}");
+        require(replacement->sessions == 0 && !replacement->premature_model_destruction,
+                "capability probe retained state or destroyed weights before its session");
+        f.count = count == 1 ? 2 : 1;
+        success(f.replace("shared", "shared"));
+        require(Access::slots(*f.state, "shared").slots == f.count,
+                "valid resize after rejection could not recover");
+    }
+}
+
+void dynamic_capacity_changes_use_parallel_lifecycle() {
+    Fixture f(1); f.add("shared");
+    success(run(*f.state, "shared"));
+    for (int count : {2, 1, 4, 1}) {
+        f.count = count;
+        success(f.replace("shared", "shared", "tts"));
+        const auto state = Access::slots(*f.state, "shared");
+        require(state.slots == count, "parallel runtime could not reconfigure through capacity one");
+        success(run(*f.state, "shared"));
+    }
+    for (const std::string value : {"null", "true", "\"2\"", "1.5", "17"}) {
+        bool rejected = false;
+        try {
+            const auto invalid = post(*f.state, "/v1/models/load",
+            "{\"id\":\"shared\",\"family\":\"lifecycle_fixture\",\"path\":" + quote((f.root / "shared").generic_string()) +
+            ",\"slots\":" + value + "}");
+            rejected = invalid.status == 400;
+        } catch (const std::runtime_error & error) {
+            // A direct validation exception must also identify the bad capacity.
+            rejected = std::string(error.what()).find("model slots must be an integer") != std::string::npos;
+        }
+        require(rejected, "parallel registration accepted invalid capacity");
+        require(Access::resident(*f.state, "shared"), "invalid capacity unloaded an existing model");
+    }
+    const auto ordered = post(*f.state, "/v1/models/load",
+        "{\"id\":\"shared\",\"family\":\"lifecycle_fixture\",\"path\":" +
+        quote((f.root / "shared").generic_string()) +
+        ",\"slots\":null,\"load_options\":[]}");
+    require(ordered.status == 400 &&
+            ordered.body.find("model slots must be an integer") != std::string::npos,
+            "parallel registration parsed options before validating capacity");
+}
+
+// An SSE stream's event types in order, its joined text deltas and its final text.
+std::tuple<std::string, std::string, std::string> sse_events(const std::string & sse) {
+    std::string types, deltas, done;
+    for (size_t at = sse.find("data: {"); at != std::string::npos; at = sse.find("data: {", at + 1)) {
+        const auto event = parse(sse.substr(at + 6, sse.find("\n\n", at) - at - 6));
+        const auto type = event.require("type").as_string();
+        if (type == "speech.text.delta") { deltas += event.require("delta").as_string(); }
+        if (type == "speech.text.done") { done = event.require("text").as_string(); }
+        types += (types.empty() ? "" : " ") + type;
+    }
+    return {types, deltas, done};
+}
+
+// With live_input the fixture reads the body as audio chunks, then writes its
+// revision ("live") as text in the one event that carries its audio.
+void live_speech_return_text(int count) {
+    Fixture f(count); auto c = f.add("live", "streaming"); c->live_input = true;
+    std::string error;
+    const auto live = [&](const std::string & query) {
+        std::istringstream pcm(std::string(640, '\0'));
+        srv::HttpRequest request; request.method = "POST"; request.path = "/v1/audio/speech/live";
+        request.query = "model=live&input=hello" + query; request.body_stream = &pcm;
+        auto response = f.state->handle(request);
+        Writer writer; error.clear();
+        try { if (response.stream_body) { response.stream_body(writer); } }
+        catch (const std::runtime_error & e) { error = e.what(); }
+        if (response.stream_body) { response.body = writer.output; response.stream_body = {}; }
+        require(Access::slots(*f.state, "live").active == 0, "live speech '" + query + "' left its lease held");
+        return response;
+    };
+    const auto text = live("&return_text=true"); success(text);
+    const auto [types, deltas, done] = sse_events(text.body);
+    require(deltas == "live" && done == deltas, "return_text did not stream the model's text: " + types);
+    require(types == "speech.text.delta speech.audio.delta speech.text.done speech.audio.done" && error.empty(),
+            "return_text events out of order: " + types);
+    for (const std::string query : {"", "&return_text=false", "&return_text=0"}) {
+        const auto audio = live(query); success(audio);
+        require(std::get<0>(sse_events(audio.body)) == "speech.audio.delta speech.audio.done" && error.empty(),
+                "live speech '" + query + "' streamed text");
+    }
+    for (const auto & [query, message] : std::vector<std::pair<std::string, std::string>>{
+        {"&return_text=yes", "live speech return_text must be true or false"},
+        {"&return_text=true&stream_format=audio", "live speech return_text needs stream_format=sse"}}) {
+        const auto rejected = live(query);
+        require(rejected.status == 400 && rejected.body.find(message) != std::string::npos,
+                "live speech '" + query + "' was not rejected: HTTP " + std::to_string(rejected.status));
+    }
+    // speech.text.done is the model's final text, or the joined deltas when it gives none.
+    for (const auto & [mode, streamed] : std::vector<std::pair<int, std::string>>{{1, "live"}, {2, "live!"}}) {
+        c->final_text = mode;
+        const auto [order, joined, done_text] = sse_events(live("&return_text=true").body);
+        require(joined == streamed && done_text == "live" && order == types && error.empty(),
+                "speech.text.done '" + done_text + "' after deltas '" + joined + "': " + error);
+    }
+    c->final_text = 0; c->no_text = true;
+    const auto silent = live("&return_text=1");
+    require(silent.status == 200 && std::get<0>(sse_events(silent.body)) == "speech.audio.delta" &&
+            error == "live speech model wrote no text; return_text needs a model that writes text",
+            "return_text without model text did not fail after the audio: " + error);
+}
+
+// On the live route `input` is the text a tts model speaks, so it stays
+// required there. An s2s or vc model answers or converts the live audio and
+// takes `input` as an optional prompt: without it the model gets no text_input
+// and uses its own default, as /v1/tasks/run does without `text`.
+void live_speech_optional_input(int count) {
+    Fixture f(count);
+    std::map<std::string, std::shared_ptr<Control>> controls;
+    for (const std::string task : {"s2s", "vc", "tts"}) {
+        auto c = f.asset(task); c->live_input = true; controls[task] = c;
+        srv::ServerModelConfig model;
+        model.id = task; model.path = f.root / task; model.family = f.loader->family();
+        model.task = task; model.mode = "streaming"; model.slots = count; model.lazy = true;
+        Access::add(*f.state, model);
+    }
+    std::string error;
+    const auto live = [&](const std::string & query) {
+        std::istringstream pcm(std::string(640, '\0'));
+        srv::HttpRequest request; request.method = "POST"; request.path = "/v1/audio/speech/live";
+        request.query = query; request.body_stream = &pcm;
+        auto response = f.state->handle(request);
+        Writer writer; error.clear();
+        try { if (response.stream_body) { response.stream_body(writer); } }
+        catch (const std::runtime_error & e) { error = e.what(); }
+        if (response.stream_body) { response.body = writer.output; response.stream_body = {}; }
+        return response;
+    };
+    for (const std::string task : {"s2s", "vc"}) {
+        const auto & c = controls.at(task);
+        for (const std::string input : {"", "&input="}) {
+            c->live_text = rt::Transcript{"stale", ""};
+            const auto response = live("model=" + task + input); success(response);
+            require(std::get<0>(sse_events(response.body)) == "speech.audio.delta speech.audio.done" && error.empty(),
+                    task + " live speech without input did not stream: " + error);
+            require(!c->live_text.has_value(), task + " live speech without input passed a text_input");
+        }
+        success(live("model=" + task + "&input=Be%20brief."));
+        require(c->live_text.has_value() && c->live_text->text == "Be brief.", task + " live speech lost its input");
+        success(live("model=" + task + "&language=ja"));
+        require(c->live_text.has_value() && c->live_text->text.empty() && c->live_text->language == "ja",
+                task + " live speech without input lost its language");
+    }
+    for (const std::string input : {"", "&input="}) {
+        const auto rejected = live("model=tts" + input);
+        require(rejected.status == 400 &&
+                rejected.body.find("live speech requires an 'input' query parameter") != std::string::npos,
+                "tts live speech without input was not rejected: HTTP " + std::to_string(rejected.status));
+    }
+    require(controls.at("tts")->runs == 0, "tts live speech without input reached the model");
+    for (const std::string task : {"s2s", "vc", "tts"}) {
+        require(Access::slots(*f.state, task).active == 0, task + " live speech left its lease held");
+    }
+}
+
+// The generic routes read a request `artifacts` array into input_artifacts. The
+// fixture returns its input artifacts as its result's, so a response shows what
+// the session was given, in order, in the JSON shape the request used.
+void generic_request_artifacts(int count) {
+    Fixture f(count); auto offline = f.add("offline"); auto stream = f.add("stream", "streaming");
+    const auto file = f.root / "reply.bin";
+    std::ofstream(file, std::ios::binary) << std::string("\x01\x00\xff", 3);
+    std::vector<std::vector<std::string>> expected{
+        {"turn.question", "custom", "aGVsbG8="}, {"turn.reply", "acoustic_tokens", "AQD/"},
+        {"turn.question", "custom", "d29ybGQ="}};
+    std::string artifacts = "[{\"id\":\"turn.question\",\"kind\":\"custom\",\"payload\":\"aGVsbG8=\","
+        "\"meta\":{\"format\":\"wav\",\"steps\":3}},"
+        "{\"id\":\"turn.reply\",\"kind\":\"acoustic_tokens\",\"path\":" + quote(file.generic_string()) + "},"
+        "{\"id\":\"turn.question\",\"kind\":\"custom\",\"payload\":\"data:audio/wav;base64,d29ybGQ=\"}";
+    // Every kind name a response writes reads back as the same kind.
+    for (const std::string kind : {"speaker_embedding", "style_embedding", "prompt_embedding", "acoustic_tokens",
+                                   "midi", "transcript_alignment", "diarization_state", "vad_state", "custom"}) {
+        artifacts += ",{\"id\":\"kind\",\"kind\":" + quote(kind) + ",\"payload\":\"\"}";
+        expected.push_back({"kind", kind, ""});
+    }
+    artifacts += "]";
+    const auto check = [&](const engine::io::json::Value & result, const std::string & route) {
+        const auto & out = result.require("artifacts").as_array();
+        require(out.size() == expected.size(), route + " returned " + std::to_string(out.size()) + " artifacts");
+        for (size_t i = 0; i < out.size(); ++i) {
+            require(out[i].require("id").as_string() == expected[i][0] &&
+                    out[i].require("kind").as_string() == expected[i][1] &&
+                    out[i].require("payload").as_string() == expected[i][2],
+                    route + " changed artifact " + std::to_string(i));
+        }
+        const auto & meta = out[0].require("meta");
+        require(meta.as_object().size() == 2 && meta.require("format").as_string() == "wav" &&
+                meta.require("steps").as_string() == "3" && out[1].require("meta").as_object().empty(),
+                route + " changed artifact meta");
+    };
+    const auto body = [&](const std::string & model, bool wrapped) {
+        const std::string request = "\"text\":\"hi\",\"artifacts\":" + artifacts;
+        return "{\"model\":" + quote(model) + (wrapped ? ",\"request\":{" + request + "}}" : "," + request + "}");
+    };
+    for (const bool wrapped : {false, true}) {
+        const auto ran = post(*f.state, "/v1/tasks/run", body("offline", wrapped)); success(ran);
+        check(parse(ran.body), "offline /v1/tasks/run");
+        const auto streamed_run = post(*f.state, "/v1/tasks/run", body("stream", wrapped)); success(streamed_run);
+        check(parse(streamed_run.body), "streaming /v1/tasks/run");
+        const auto streamed = post(*f.state, "/v1/tasks/stream", body("stream", wrapped)); success(streamed);
+        check(parse(streamed.body).require("result"), "/v1/tasks/stream");
+    }
+    auto batch = post(*f.state, "/v1/tasks/batch", "{\"model\":\"offline\",\"requests\":[{\"text\":\"hi\",\"artifacts\":" +
+        artifacts + "},{\"text\":\"plain\"}]}");
+    success(batch); Writer writer; batch.stream_body(writer); batch.stream_body = {};
+    int results = 0;
+    for (size_t at = writer.output.find("data: {"); at != std::string::npos; at = writer.output.find("data: {", at + 1)) {
+        const auto event = parse(writer.output.substr(at + 6, writer.output.find("\n\n", at) - at - 6));
+        if (event.require("type").as_string() != "task.batch.result") { continue; }
+        ++results;
+        const auto & result = event.require("result");
+        if (event.require("index").as_i64() == 0) { check(result, "/v1/tasks/batch"); }
+        else { require(result.find("artifacts") == nullptr, "batch request without artifacts got some"); }
+    }
+    require(results == 2, "batch with artifacts returned " + std::to_string(results) + " results");
+    require(run(*f.state, "offline").body.find("\"artifacts\"") == std::string::npos,
+            "request without artifacts returned some");
+    const int offline_runs = offline->runs, stream_runs = stream->runs;
+    for (const auto & [bad, message] : std::vector<std::pair<std::string, std::string>>{
+        {"{\"id\":\"x\"}", "artifacts must be an array of artifact objects"},
+        {"[{\"id\":\"x\",\"kind\":\"tokens\",\"payload\":\"\"}]", "artifacts[0] (x): unknown kind 'tokens'"},
+        {"[{\"id\":\"x\",\"kind\":\"custom\",\"payload\":\"%%\"}]", "artifacts[0] (x): payload is not valid base64"},
+        {"[{\"id\":\"x\",\"kind\":\"custom\",\"path\":" + quote((f.root / "missing.bin").generic_string()) + "}]",
+         "artifacts[0] (x): path is not a regular file"}}) {
+        for (const auto & [path, request] : std::vector<std::pair<std::string, std::string>>{
+            {"/v1/tasks/run", "{\"model\":\"offline\",\"artifacts\":" + bad + "}"},
+            {"/v1/tasks/run", "{\"model\":\"stream\",\"request\":{\"artifacts\":" + bad + "}}"},
+            {"/v1/tasks/stream", "{\"model\":\"stream\",\"request\":{\"artifacts\":" + bad + "}}"},
+            {"/v1/tasks/batch", "{\"model\":\"offline\",\"requests\":[{\"text\":\"hi\"},{\"artifacts\":" + bad + "}]}"}}) {
+            const auto rejected = post(*f.state, path, request);
+            require(rejected.status == 400 && rejected.body.find(message) != std::string::npos &&
+                    rejected.body.find("invalid_request_error") != std::string::npos,
+                    path + " did not reject artifacts " + bad + ": HTTP " + std::to_string(rejected.status) + " " + rejected.body);
+        }
+    }
+    require(offline->runs == offline_runs && stream->runs == stream_runs, "rejected artifacts reached the model");
+    for (const std::string id : {"offline", "stream"}) {
+        require(Access::slots(*f.state, id).active == 0, id + " left its lease held after artifact requests");
+    }
+}
+
+// With a top-level "stream_format":"sse", /v1/tasks/stream writes each event
+// as the model produces it, as the object the JSON response puts in "events",
+// then the JSON response's "result" and [DONE]. Without the field, or with
+// null, the response is the JSON body. The fixture counts finalize calls, so a
+// writer that records the count at each write shows when an event left.
+void generic_task_stream_sse(int count) {
+    Fixture f(count); auto c = f.add("stream", "streaming");
+    const auto active = [&] { return Access::slots(*f.state, "stream").active; };
+    const auto body = [](const std::string & fields, bool wrapped) {
+        const std::string request = "\"text\":\"hi\",\"artifacts\":[{\"id\":\"turn.reply\",\"kind\":\"acoustic_tokens\","
+            "\"payload\":\"AQD/\",\"meta\":{\"steps\":\"3\"}}]";
+        return "{\"model\":\"stream\"" + fields + (wrapped ? ",\"request\":{" + request + "}}" : "," + request + "}");
+    };
+    const std::string sse = ",\"stream_format\":\"sse\"";
+    const auto stream = [&](const std::string & body_text) { return post(*f.state, "/v1/tasks/stream", body_text); };
+    // The JSON body's event and result as text: a parse and stringify round
+    // trip reorders object keys, so comparisons use the bytes as written.
+    const auto json_parts = [](const srv::HttpResponse & response) {
+        const std::string events = "{\"events\":[", result = "],\"result\":";
+        const auto end = response.body.find(result);
+        require(response.status == 200 && response.content_type == "application/json" && !response.stream_body &&
+                response.body.rfind(events, 0) == 0 && end != std::string::npos,
+                "task stream did not answer its JSON body: HTTP " + std::to_string(response.status) + " " + response.body);
+        const auto from = end + result.size();
+        return std::make_pair(response.body.substr(events.size(), end - events.size()),
+                              response.body.substr(from, response.body.size() - from - 1));
+    };
+    const auto without_ttft = [](std::string json) {
+        const std::string key = "\"ttft_ms\":";
+        const auto at = json.find(key);
+        require(at != std::string::npos, "task stream result has no ttft_ms: " + json);
+        json.erase(at + key.size(), json.find_first_of(",}", at + key.size()) - at - key.size());
+        return json;
+    };
+    struct Recorder final : srv::HttpStreamWriter {
+        explicit Recorder(std::shared_ptr<Control> counted) : control(std::move(counted)) {}
+        void write(std::string_view s) override { writes.emplace_back(control->finishes.load(), std::string(s)); }
+        std::shared_ptr<Control> control;
+        std::vector<std::pair<int, std::string>> writes;
+    };
+    for (const bool wrapped : {false, true}) {
+        const auto [event, result] = json_parts(stream(body("", wrapped)));
+        require(json_parts(stream(body(",\"stream_format\":null", wrapped))).first == event,
+                "a null stream_format changed the task stream's JSON events");
+        auto response = stream(body(sse, wrapped)); success(response);
+        const auto buffering = response.headers.find("X-Accel-Buffering");
+        require(response.content_type == "text/event-stream; charset=utf-8" && bool(response.stream_body) &&
+                response.body.empty() && buffering != response.headers.end() && buffering->second == "no",
+                "task stream with sse did not answer an event stream: " + response.content_type);
+        require(active() == 1, "task stream with sse did not hold its slot before the headers");
+        Recorder writer(c); const int before = c->finishes;
+        response.stream_body(writer);
+        require(active() == 1, "task stream callback released the slot its owner holds");
+        response.stream_body = {}; // transport drops the callback at exchange end
+        require(active() == 0, "task stream with sse leaked its slot");
+        require(writer.writes.size() == 3, "task stream with sse wrote " + std::to_string(writer.writes.size()) + " times");
+        require(writer.writes[0].second == "data: {\"type\":\"task.stream.event\",\"event\":" + event + "}\n\n",
+                "task stream event is not the JSON response's: " + writer.writes[0].second);
+        const std::string done_key = "data: {\"type\":\"task.stream.done\",\"result\":", done_end = "}\n\n";
+        const auto & done = writer.writes[1].second;
+        require(done.size() > done_key.size() + done_end.size() && done.rfind(done_key, 0) == 0 &&
+                done.compare(done.size() - done_end.size(), done_end.size(), done_end) == 0,
+                "task stream done line: " + done);
+        const auto streamed = done.substr(done_key.size(), done.size() - done_key.size() - done_end.size());
+        require(without_ttft(streamed) == without_ttft(result), "task stream result is not the JSON response's: " + streamed);
+        const auto parsed = parse(streamed);
+        const auto & artifacts = parsed.require("artifacts").as_array();
+        require(parsed.require("timing").require("ttft_ms").is_number() && artifacts.size() == 1 &&
+                artifacts[0].require("id").as_string() == "turn.reply" && artifacts[0].require("payload").as_string() == "AQD/",
+                "task stream done event lost the result's timing or artifacts: " + streamed);
+        require(writer.writes[2].second == "data: [DONE]\n\n", "task stream did not end with [DONE]");
+        require(writer.writes[0].first == before && writer.writes[1].first == before + 1,
+                "task stream wrote its event after the run was over");
+    }
+    // Only the top-level field of this route opts in: not the Accept header,
+    // not a field inside `request`, not the field on /v1/tasks/run.
+    srv::HttpRequest accept; accept.method = "POST"; accept.path = "/v1/tasks/stream"; accept.body = body("", true);
+    accept.headers["content-type"] = "application/json"; accept.headers["accept"] = "text/event-stream";
+    (void)json_parts(f.state->handle(accept));
+    (void)json_parts(stream("{\"model\":\"stream\",\"request\":{\"text\":\"hi\",\"stream_format\":\"sse\"}}"));
+    const auto ran = post(*f.state, "/v1/tasks/run", body(sse, true)); success(ran);
+    require(ran.content_type == "application/json" && !ran.stream_body && parse(ran.body).find("artifacts") != nullptr,
+            "/v1/tasks/run read stream_format: " + ran.body);
+    // Errors found before the headers keep their status.
+    const int runs = c->runs;
+    for (const std::string value : {"\"audio\"", "\"SSE\"", "\"\"", "1", "true", "{}", "[]"}) {
+        const auto rejected = stream(body(",\"stream_format\":" + value, true));
+        require(rejected.status == 400 && !rejected.stream_body &&
+                rejected.body.find("task stream stream_format must be sse") != std::string::npos &&
+                rejected.body.find("invalid_request_error") != std::string::npos,
+                "task stream took stream_format " + value + ": HTTP " + std::to_string(rejected.status) + " " + rejected.body);
+    }
+    const auto malformed = [&](const std::string & fields) {
+        return stream("{\"model\":\"stream\"" + fields + ",\"request\":{\"artifacts\":{\"id\":\"x\"}}}");
+    };
+    const auto json_rejected = malformed(""), sse_rejected = malformed(sse);
+    require(json_rejected.status == 400 && sse_rejected.status == 400 && !sse_rejected.stream_body &&
+            sse_rejected.body == json_rejected.body,
+            "task stream with sse answered malformed artifacts differently: " + sse_rejected.body);
+    require(c->runs == runs && active() == 0, "a rejected task stream reached the model or kept its slot");
+    // The slot is bound before the headers, so a busy model is still a 503.
+    std::vector<srv::HttpResponse> held;
+    for (int i = 0; i < count; ++i) {
+        held.push_back(stream(body(sse, true)));
+        require(bool(held.back().stream_body), "task stream with sse did not stream");
+    }
+    require(active() == count, "unstarted task streams did not hold every slot");
+    const auto busy = stream(body(sse + ",\"busy_timeout_ms\":50", true));
+    require(busy.status == 503 && !busy.stream_body && busy.body.find("server_busy") != std::string::npos,
+            "task stream with sse on a busy model answered HTTP " + std::to_string(busy.status) + " " + busy.body);
+    held.clear();
+    require(active() == 0, "dropped task streams kept their slots");
+    // After the headers a failure leaves the callback for the transport's
+    // error event, and a write to a closed connection stops the run.
+    std::string error;
+    c->reject_run = true;
+    auto rejected = stream(body(sse, true)); success(rejected);
+    require(bool(rejected.stream_body), "task stream with sse did not stream");
+    Writer silent;
+    try { rejected.stream_body(silent); } catch (const rt::InvalidRequestError & e) { error = e.what(); }
+    rejected.stream_body = {};
+    require(error == "controlled request rejection" && silent.output.empty() && active() == 0,
+            "a task stream the model turned away ended with '" + error + "' after: " + silent.output);
+    c->reject_run = false;
+    auto dropped = stream(body(sse, true)); success(dropped);
+    require(bool(dropped.stream_body), "task stream with sse did not stream");
+    Writer gone; gone.disconnected = true; error.clear();
+    const int before = c->finishes;
+    try { dropped.stream_body(gone); } catch (const std::runtime_error & e) { error = e.what(); }
+    dropped.stream_body = {};
+    require(error == "client disconnected" && c->finishes == before && active() == 0,
+            "a task stream to a closed connection ended with '" + error + "' and kept running or kept its slot");
+    auto abandoned = stream(body(sse, true));
+    require(bool(abandoned.stream_body) && active() == 1, "unstarted task stream did not own its slot");
+    abandoned = {}; // Dropped without invoking the callback.
+    require(active() == 0, "unstarted task stream leaked its slot");
+}
+
+int main(int argc, char ** argv) {
+    try {
+        engine::io::json::enable_serialized_json_parsing();
+        if (argc == 2) {
+            const std::string test = argv[1];
+            if (test == "audit-capacity") { unsupported_capacity_preserves_registration(); }
+            else if (test == "audit-reconfiguration") { invalid_reconfiguration_preserves_live_state(); }
+            else if (test == "audit-registration") { registration_is_visible_while_loading(); }
+            else if (test == "audit-policy") { live_policy_does_not_hold_registry_lock(); }
+            else { throw std::runtime_error("unknown audit case"); }
+            return 0;
+        }
+        invalid_reconfiguration_preserves_live_state();
+        registration_is_visible_while_loading();
+        live_policy_does_not_hold_registry_lock();
+        concurrent_json_parsing();
+        unsupported_capacity_preserves_registration();
+        dynamic_capacity_changes_use_parallel_lifecycle();
+        generic_batch_single_slot_and_invalid_input();
+        for (int count : {1, 2, 4}) {
+            older_work_before_management(count, false);
+            older_work_before_management(count, true);
+            overlapping_managers(count);
+            bulk_releases_idle_first(count, false);
+            bulk_releases_idle_first(count, true);
+            retiring_resident(count, 1);
+            retiring_resident(count, 2);
+            deferred_stream_ownership(count, false);
+            deferred_stream_ownership(count, true);
+            deferred_batch_ownership(count);
+            deferred_batch_ownership(count, true);
+            if (count > 1) { generic_batches_hold_independent_slots(count); }
+            rejected_preparation_releases_lease(count);
+            loading_and_inference_failures_release_ownership(count);
+            session_request_errors(count);
+            abandoned_deferred_responses_release_ownership(count);
+            overlapping_bulk_operations(count);
+            bulk_publication_excludes_only_other_bulk_calls(count);
+            guarded_loading_does_not_block_warm_model(count);
+            live_speech_return_text(count);
+            live_speech_optional_input(count);
+            generic_request_artifacts(count);
+            generic_task_stream_sse(count);
+            std::cout << "PASS real handlers: slots=" << count
+                      << " queued unload/reconfiguration, manager order, bulk release, global lock,"
+                         " resident limits 1/2, deferred stream/disconnect, live speech return_text and optional input,"
+                         " request artifacts, task stream SSE\n";
+        }
+    } catch (const std::exception & e) { std::cerr << e.what() << '\n'; return 1; }
+}

@@ -2,6 +2,8 @@
 
 #include "execution.h"
 
+#include "engine/framework/audio/wav_writer.h"
+
 #include <cstddef>
 #include <filesystem>
 #include <optional>
@@ -10,6 +12,12 @@
 
 namespace minitts::app {
 
+struct AudioMetricsInfo {
+    int sample_rate = 0;
+    int channels = 0;
+    size_t samples = 0;
+};
+
 struct FileOutputPolicy {
     std::optional<std::filesystem::path> audio_out;
     std::optional<std::filesystem::path> output_dir;
@@ -17,6 +25,7 @@ struct FileOutputPolicy {
     std::optional<std::filesystem::path> turns_base;
     std::optional<std::filesystem::path> words_base;
     std::optional<std::filesystem::path> batch_manifest_out;
+    engine::audio::WavWriteOptions wav_options{};
 };
 
 std::string safe_output_name(const std::string & value);
@@ -28,7 +37,13 @@ void emit_task_result(
     const std::optional<std::filesystem::path> & artifact_out_dir,
     const std::optional<std::filesystem::path> & segments_out,
     const std::optional<std::filesystem::path> & turns_out,
-    const std::optional<std::filesystem::path> & words_out);
+    const std::optional<std::filesystem::path> & words_out,
+    const engine::audio::WavWriteOptions & wav_options = {});
+void emit_task_metrics(
+    const engine::runtime::TaskResult & result,
+    const std::optional<AudioMetricsInfo> & input_audio,
+    double wall_ms,
+    const std::string & prefix = "metrics");
 void emit_batch_item_result(
     size_t index,
     const AppRequestResult & item,

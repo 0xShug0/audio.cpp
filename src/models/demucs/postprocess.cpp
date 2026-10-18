@@ -79,7 +79,7 @@ void HTDemucsPostprocessor::combine_chunk_into(
     const int64_t source_count = static_cast<int64_t>(config_.sources.size());
 
 #ifdef _OPENMP
-    #pragma omp parallel for collapse(2) if(static_cast<int64_t>(config_.sources.size()) * config_.audio_channels >= 4)
+    #pragma omp parallel for collapse(2) num_threads(fft_threads_) if(static_cast<int64_t>(config_.sources.size()) * config_.audio_channels >= 4)
 #endif
     for (int64_t source = 0; source < source_count; ++source) {
         for (int ch = 0; ch < config_.audio_channels; ++ch) {
@@ -128,7 +128,7 @@ void HTDemucsPostprocessor::combine_chunk_into(
         1.0f / static_cast<float>(config_.n_fft),
         fft_threads_);
 #ifdef _OPENMP
-    #pragma omp parallel for if(batch >= 4)
+    #pragma omp parallel for num_threads(fft_threads_) if(batch >= 4)
 #endif
     for (int64_t b = 0; b < batch; ++b) {
         for (int64_t frame_index = 0; frame_index < full_frames; ++frame_index) {
@@ -143,7 +143,7 @@ void HTDemucsPostprocessor::combine_chunk_into(
 
     const int64_t istft_pad = config_.n_fft / 2;
 #ifdef _OPENMP
-    #pragma omp parallel for collapse(2) if(static_cast<int64_t>(config_.sources.size()) * config_.audio_channels >= 4)
+    #pragma omp parallel for collapse(2) num_threads(fft_threads_) if(static_cast<int64_t>(config_.sources.size()) * config_.audio_channels >= 4)
 #endif
     for (int64_t source = 0; source < source_count; ++source) {
         for (int ch = 0; ch < config_.audio_channels; ++ch) {

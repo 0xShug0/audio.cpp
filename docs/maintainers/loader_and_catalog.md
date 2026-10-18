@@ -1,12 +1,15 @@
 # Maintaining Loaders and Model-Spec Packages
 
 For release model downloads, `model_specs/*.json` is the source of truth and
-`tools/model_manager_v2.py` is the only supported manager path.
+both `tools/model_manager_v2.py` and the optional native
+`audiocpp_model_manager` consume that package catalog.
 
 Integrators treat two surfaces as authoritative:
 
 1. **Runtime loaders** — `audiocpp_cli --list-loaders --json`
-2. **Install packages** — `python3 tools/model_manager_v2.py list --json`
+2. **Install packages** — `python3 tools/model_manager_v2.py list --json` and,
+   when native model management is enabled,
+   `audiocpp_model_manager list`
 
 Those surfaces must stay in sync. A package that is installable from
 `model_specs/*.json` but whose `family` is missing from `--list-loaders` looks
@@ -19,7 +22,7 @@ For every installable release package:
 | Field | Must match |
 |---|---|
 | `model_specs/<family>.json` `family` | The family id emitted by the runtime loader registry |
-| `model_specs/<family>.json` `packages[]` | Ready-to-use GGUF package entries installable by `model_manager_v2.py` |
+| `model_specs/<family>.json` `packages[]` | Ready-to-use GGUF package entries installable by the Python and native model managers |
 | `CMakeLists.txt` `LOADERS` entry | `make_<family>_loader` or the family's actual factory name so the generated registry includes it |
 | README supported-model table | Lists the released family and its tested runtime format |
 
@@ -43,6 +46,8 @@ surface until that package exists.
 ```bash
 python3 tools/model_manager_v2.py list --json
 python3 tools/model_manager_v2.py info <family-or-package-id>
+audiocpp_model_manager list
+audiocpp_model_manager info <family-or-package-id>
 build/debug/bin/audiocpp_cli --list-loaders --json
 ```
 

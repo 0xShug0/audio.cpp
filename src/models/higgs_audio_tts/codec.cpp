@@ -62,8 +62,14 @@ constexpr int64_t kCodecDecodeCapacityBucketFrames = 32;
 constexpr int64_t kCodecHopLength = 960;
 constexpr int64_t kCodecPadSamples = kCodecHopLength / 2;
 constexpr int64_t kCodecDecodeWindowFrames = 128;
-constexpr int64_t kCodecDecodeOverlapFrames = 8;
+constexpr int64_t kCodecDecodeContextFrames = 32;
 constexpr int64_t kCodecFullDecodeMaxFrames = 512;
+// The decoder is a non-causal conv stack, so the last frames of a stream see zero padding
+// on their right instead of real context and decode as a rising hiss over the final
+// ~300 ms (worst on short utterances). Repeating the last frame past the end gives those
+// frames context; the extra audio is trimmed again. Eight frames is enough — 16 and 32
+// produce identical samples.
+constexpr int64_t kCodecTailContextFrames = 8;
 constexpr int64_t kResidualDilations[] = {1, 3, 9};
 
 struct GgmlContextDeleter {
@@ -1537,9 +1543,82 @@ HiggsCodecRuntime::encode_reference(const runtime::AudioBuffer & audio) const {
     return encode_graph_->run(acoustic_24k, semantic_16k, frames);
 }
 
+runtime::AudioBuffer HiggsCodecRuntime::decode_streaming_window(
+    const runtime::StreamingAudioWindow<int32_t> & window,
+    size_t frames_per_chunk,
+    bool generation_complete) const {
+    if (window.frame_width != kCodecCodebooks || window.new_frames == 0) {
+        throw std::runtime_error("Higgs TTS invalid streaming codec window");
+    }
+    encode_graph_.reset();
+    // A finishing window can reach the end before it emits the final frame.
+    const bool reaches_end = generation_complete && window.right_frames < streaming_context_frames;
+    const size_t tail = reaches_end ? kCodecTailContextFrames : 0;
+    std::vector<int32_t> codes(window.data, window.data + window.frames() * window.frame_width);
+    if (tail != 0) {
+        const auto last = codes.size() - window.frame_width;
+        codes.reserve(codes.size() + tail * window.frame_width);
+        for (size_t i = 0; i < tail; ++i) {
+            for (size_t book = 0; book < window.frame_width; ++book) {
+                codes.push_back(codes[last + book]);
+            }
+        }
+    }
+    const int64_t frames = static_cast<int64_t>(window.frames() + tail);
+    const bool initial = frames <= kCodecDecodeCapacityBucketFrames;
+    auto & graph = initial ? stream_initial_graph_ : stream_decode_graph_;
+    const int64_t capacity = initial ? kCodecDecodeCapacityBucketFrames :
+        ((static_cast<int64_t>(frames_per_chunk + 2 * streaming_context_frames) +
+          kCodecTailContextFrames + kCodecDecodeCapacityBucketFrames - 1) /
+         kCodecDecodeCapacityBucketFrames) * kCodecDecodeCapacityBucketFrames;
+    if (graph == nullptr || graph->capacity_frames() != capacity) {
+        graph.reset();
+        graph = std::make_unique<HiggsCodecDecodeGraph>(this, capacity);
+    }
+    auto output = graph->run(codes, frames);
+    const size_t begin = window.left_frames * kCodecHopLength;
+    const size_t count = window.new_frames * kCodecHopLength;
+    return runtime::AudioBuffer{output.sample_rate, output.channels,
+        std::vector<float>(output.values.begin() + begin, output.values.begin() + begin + count)};
+}
+
 HiggsCodecDecodeOutput HiggsCodecRuntime::decode_codes(const std::vector<int32_t> & codes,
                                                        int64_t frames,
                                                        int64_t codebooks) const {
+    if (frames <= 0) {
+        throw std::runtime_error("Higgs TTS codec decode requires positive frame count");
+    }
+    if (codebooks != kCodecCodebooks) {
+        throw std::runtime_error("Higgs TTS codec decode requires exactly 8 codebooks");
+    }
+    if (static_cast<int64_t>(codes.size()) != frames * codebooks) {
+        throw std::runtime_error("Higgs TTS codec decode code count mismatch");
+    }
+    if (kCodecTailContextFrames <= 0) {
+        return decode_codes_impl(codes, frames, codebooks);
+    }
+
+    std::vector<int32_t> padded_codes;
+    padded_codes.reserve(static_cast<size_t>((frames + kCodecTailContextFrames) * codebooks));
+    padded_codes.insert(padded_codes.end(), codes.begin(), codes.end());
+    const auto last_frame_begin = codes.end() - static_cast<ptrdiff_t>(codebooks);
+    for (int64_t i = 0; i < kCodecTailContextFrames; ++i) {
+        padded_codes.insert(padded_codes.end(), last_frame_begin, codes.end());
+    }
+
+    auto out = decode_codes_impl(padded_codes, frames + kCodecTailContextFrames, codebooks);
+    const int64_t keep_samples = frames * kCodecHopLength;
+    if (keep_samples <= 0 || keep_samples > static_cast<int64_t>(out.values.size())) {
+        throw std::runtime_error("Higgs TTS codec tail-context decode produced too few samples");
+    }
+    out.values.resize(static_cast<size_t>(keep_samples));
+    out.samples = keep_samples;
+    return out;
+}
+
+HiggsCodecDecodeOutput HiggsCodecRuntime::decode_codes_impl(const std::vector<int32_t> & codes,
+                                                            int64_t frames,
+                                                            int64_t codebooks) const {
     if (frames <= 0) {
         throw std::runtime_error("Higgs TTS codec decode requires positive frame count");
     }
@@ -1584,11 +1663,14 @@ HiggsCodecDecodeOutput HiggsCodecRuntime::decode_codes(const std::vector<int32_t
     std::vector<int32_t> window_codes;
     int64_t emitted_frames = 0;
     while (emitted_frames < frames) {
-        const int64_t window_begin =
-            std::max<int64_t>(0, emitted_frames - kCodecDecodeOverlapFrames);
+        const int64_t emit_begin = emitted_frames;
         const int64_t emit_end =
-            std::min<int64_t>(frames, emitted_frames + kCodecDecodeWindowFrames);
-        const int64_t window_frames = emit_end - window_begin;
+            std::min<int64_t>(frames, emit_begin + kCodecDecodeWindowFrames);
+        const int64_t window_begin =
+            std::max<int64_t>(0, emit_begin - kCodecDecodeContextFrames);
+        const int64_t window_end =
+            std::min<int64_t>(frames, emit_end + kCodecDecodeContextFrames);
+        const int64_t window_frames = window_end - window_begin;
         window_codes.resize(static_cast<size_t>(window_frames * kCodecCodebooks));
         for (int64_t frame = 0; frame < window_frames; ++frame) {
             const auto src =
@@ -1602,9 +1684,9 @@ HiggsCodecDecodeOutput HiggsCodecRuntime::decode_codes(const std::vector<int32_t
         const auto window = run_window(
             window_codes,
             window_frames,
-            kCodecDecodeWindowFrames + kCodecDecodeOverlapFrames);
-        const int64_t trim_frames = emitted_frames - window_begin;
-        const int64_t emit_frames = emit_end - emitted_frames;
+            kCodecDecodeWindowFrames + 2 * kCodecDecodeContextFrames);
+        const int64_t trim_frames = emit_begin - window_begin;
+        const int64_t emit_frames = emit_end - emit_begin;
         const int64_t sample_begin = trim_frames * kCodecHopLength;
         const int64_t sample_count = emit_frames * kCodecHopLength;
         if (sample_begin < 0 || sample_count <= 0 ||

@@ -1,0 +1,153 @@
+# DotTTS
+
+DotTTS is an experimental multilingual TTS, voice-cloning, and speech-editing
+family with SOAR, MeanFlow, and Edit packages. The default download is the
+standalone SOAR Q8 GGUF.
+
+```bash
+python3 tools/model_manager_v2.py install dots_tts_soar_q8_0
+```
+
+Use prompt audio plus `reference_text` for the best clone quality:
+
+```bash
+audiocpp_cli --task tts --family dots_tts \
+  --model models/DotTTS-SOAR-GGUF/dots-tts-soar-q8_0.gguf \
+  --backend cuda \
+  --text "Our field team finished the morning inspection and prepared a concise update." \
+  --voice-ref assets/resources/a.wav \
+  --reference-text "This little work was finished in the year eighteen o three, and intended for immediate publication." \
+  --request-option reference_duration_sec=5 \
+  --out out.wav
+```
+
+MeanFlow uses the same runtime with the MF package, but ignores `guidance_scale` and always uses Euler integration regardless of `sampler_mode`:
+
+```bash
+python3 tools/model_manager_v2.py install dots_tts_mf_q8_0
+
+audiocpp_cli --task tts --family dots_tts \
+  --model models/DotTTS-MF-GGUF/dots-tts-mf-q8_0.gguf \
+  --backend cuda \
+  --text "The release candidate passed the local checks, so the team prepared baseline audio." \
+  --voice-ref assets/resources/b.wav \
+  --reference-text "Some call me nature. Others call me Mother Nature." \
+  --request-option reference_duration_sec=5 \
+  --out mf.wav
+```
+
+DotTTS Edit is offline only and uses a separate Edit GGUF package with `template_name=edit`. It
+takes source audio plus a structured edit instruction. When `source_text` and
+`target_text` are omitted, the runtime derives them from the tagged instruction.
+
+```bash
+python3 tools/model_manager_v2.py install dots_tts_edit_q8_0
+
+audiocpp_cli --task tts --family dots_tts \
+  --model models/DotTTS-Edit-GGUF/dots-tts-edit-q8_0.gguf \
+  --backend cuda \
+  --text 'Hello <sub targ="brave">small</sub> world.' \
+  --request-option source_audio=source.wav \
+  --request-option template_name=edit \
+  --out edited.wav
+```
+
+Use `source_text` and `target_text` to override the derived transcripts.
+`use_xvector=auto` follows the upstream behavior: speaker guidance is disabled
+for pure `emo`, `bg`, or `enhance` edits and enabled for text, pitch, rate,
+pause, speaker-transfer, or mixed edits.
+
+Supported structural tags include `<del>`, `<ins>`, `<sub targ="replacement">`,
+`<emo>`, `<pitch>`, `<rate>`, `<enhance>`, `<bg>`, `<pause/>`, and
+`<spk_transfer/>`.
+
+Streaming mode emits generated audio chunks and a final merged WAV:
+
+```bash
+audiocpp_cli --task tts --mode streaming --family dots_tts \
+  --model models/DotTTS-SOAR-GGUF/dots-tts-soar-q8_0.gguf \
+  --backend cuda \
+  --text "During the workshop, Maya explained the prototype clearly while the group compared audio quality and latency." \
+  --voice-ref assets/resources/b.wav \
+  --reference-text "Some call me nature. Others call me Mother Nature." \
+  --request-option reference_duration_sec=5 \
+  --out stream.wav \
+  --out-dir stream_chunks
+```
+
+DotTTS exposes several synthesis templates:
+
+```bash
+audiocpp_cli --task tts --family dots_tts \
+  --model models/DotTTS-SOAR-GGUF/dots-tts-soar-q8_0.gguf \
+  --backend cuda \
+  --text "The museum guide welcomed visitors and invited questions." \
+  --voice-ref assets/resources/a.wav \
+  --reference-text "This little work was finished in the year eighteen o three, and intended for immediate publication." \
+  --request-option template_name=instruction_tts \
+  --out instruction.wav
+```
+
+For long-form text, DotTTS uses the framework chunker. The default
+`tag_aware` mode preserves leading style or language tags across chunks.
+
+```bash
+audiocpp_cli --task tts --family dots_tts \
+  --model models/DotTTS-SOAR-GGUF/dots-tts-soar-q8_0.gguf \
+  --backend cuda \
+  --text "This longer request checks that several generated chunks keep the same reference voice while the final audio remains clear." \
+  --voice-ref assets/resources/b.wav \
+  --reference-text "Some call me nature. Others call me Mother Nature." \
+  --request-option text_chunk_size=160 \
+  --request-option text_chunk_mode=tag_aware \
+  --out longform.wav
+```
+
+## Common Options (use directly)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--reference-text` | text | empty | Transcript for prompt audio. |
+| `--language` | language code or `none` | `none` | Optional language tag, such as `en` or `zh`. |
+| `--guidance-scale` | float | `1.2` | Classifier-free guidance scale. |
+| `--max-tokens` | integer | `500` | Maximum generated audio patch count per generated segment; default 500. In Edit mode source patches consume this budget; it must exceed the source-patch count. |
+| `--text-chunk-size` | chars | `320` | Long-form chunk size. |
+| `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework chunking mode. |
+| `--seed` | integer | `42` | Prompt latent and flow noise seed. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `reference_text` | text | empty | Transcript for prompt audio. |
+| `reference_duration_sec` | seconds | not set | Trim prompt audio before reference conditioning. |
+| `template_name` | `tts`, `instruction_tts`, `text_to_audio`, `tts_interleave`, `edit` | `tts` | Synthesis template. Use `edit` with the DotTTS Edit package in offline mode. |
+| `source_audio` | WAV path | not set | Source audio for `template_name=edit`. |
+| `instruct` / `instruction` | text | request text | Structured DotTTS Edit instruction. |
+| `source_text` | text | derived | Optional source transcript override for DotTTS Edit. |
+| `target_text` | text | derived | Edit target transcript override. When omitted, explicit instruction plus text input uses that text; otherwise the target is rendered from instruction tags. |
+| `use_xvector` | `auto`, `on`, `off` | `auto` | Speaker-guidance control for DotTTS Edit. |
+| `language` | language code or `none` | `none` | Optional language tag, such as `en` or `zh`. |
+| `num_inference_steps` | integer | `10` | Flow-matching inference steps. |
+| `guidance_scale` | float | `1.2` | Classifier-free guidance scale. |
+| `speaker_scale` | float | `1.5` | Prompt speaker embedding scale. |
+| `sampler_mode` | `euler`, `midpoint`, `rk4` | `euler` | Flow sampler mode. |
+| `max_tokens` | integer | `500` | Maximum generated audio patch count per generated segment; default 500. In Edit mode source patches consume this budget; it must exceed the source-patch count. |
+| `text_chunk_size` | chars | `320` | Long-form chunk size. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework chunking mode. |
+| `vocoder_merge_steps` | integer | `4` | Streaming vocoder latent merge size. |
+| `seed` | integer | `42` | Prompt latent and flow noise seed. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `dots_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared matmul weight storage type. |
+| `dots_tts.speaker_encoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | Speaker encoder matmul weight storage type. |
+| `dots_tts.codec_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | AudioVAE matmul and recurrent weight storage type. |
+| `dots_tts.patch_encoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | Patch encoder matmul weight storage type. |
+| `dots_tts.llm_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | LLM matmul weight storage type. |
+| `dots_tts.flow_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | SOAR or MeanFlow DiT matmul weight storage type. |
+| `dots_tts.codec_conv_weight_type` | `native`, `f32`, `f16` | `native` | AudioVAE convolution weight storage type. |
+| `dots_tts.reference_cache_slots` | integer | `4` | Prepared reference-audio cache slots; use `0` to disable reuse. |
+| `dots_tts.mem_saver` | bool | `false` | Release request-phase components while keeping reference cache slots alive. |

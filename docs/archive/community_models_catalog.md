@@ -1,0 +1,52 @@
+# Community Models
+
+Community model ports live under `community_models` to make the ownership boundary clear while keeping them available through the normal audio.cpp CLI and server paths. Some community-contributed models graduate into the core model tree when they become part of the main release surface.
+
+The review bar for community models is intentionally lighter than core model integrations, so contributors can share useful ports earlier. The model does not need to be fully promoted into the core model tree on day one, but it should still be reproducible and honest about its limits.
+
+Practical expectations:
+
+- RTF should be below 1.0.
+- VRAM usage should stay stable across multiple requests. If memory needs to be optimized, use `mem_saver` to balance performance and VRAM instead of hiding leaks.
+- Long-form generation should work correctly. The shared long-form TTS/clone test cases live in `tools/audiocpp_cli/audiocpp_cli_longform_tts_clone_cases.json`.
+- Use existing framework modules and patterns as much as possible.
+- Include exact build/run commands, generated WAVs or output artifacts, backend coverage, parity or path-test results when available, and timing/memory notes. [PR #19](https://github.com/0xShug0/audio.cpp/pull/19) and [PR #63](https://github.com/0xShug0/audio.cpp/pull/63) are good examples of contributors providing enough detail for maintainers to reproduce and review the model.
+
+## Current Community Models
+
+| Family | Task | Supported language(s) | Contributor | What They Added |
+|---|---|---|---|---|
+| **audio8_asr** | ASR | en, zh, yue, ja, ko, fr, de | [@0xShug0](https://github.com/0xShug0) | [Audio8-ASR-0.1B](../models/audio8_asr.md) compact multilingual autoregressive ASR reusing the Qwen3-ASR encoder with an MLP-tower adapter and an 8-layer Qwen2-style decoder (CC-BY-NC, local conversion only) |
+| **auk** | TTS, audio editing | auto | [@0xShug0](https://github.com/0xShug0) | [AuK Base and AuK-Flash](../models/auk.md) instruction-guided speech generation and editing with separate generator, Qwen conditioner, and VAE components |
+| **chatterbox_turbo** | TTS, voice cloning (testing) | en | [@pannagaps](https://github.com/pannagaps) | [Chatterbox Turbo](../models/chatterbox_turbo.md) Resemble AI's distilled 350M GPT2 T3 backbone + 2-step meanflow S3Gen decoder for fast English TTS; built-in default voice only for now |
+| **echo_tts** | TTS, voice cloning | en | Tym [@5uck1ess](https://github.com/5uck1ess), [@dignome](https://github.com/dignome) | [Echo-TTS](../models/echo_tts.md) 44.1 kHz zero-shot voice cloning: 2.8B diffusion transformer in 80-D PCA space, decoded by the Fish S1-DAC autoencoder. Byte-level text, no phonemiser, no reference transcript |
+| **f5_tts** | TTS, voice cloning | en, ar (Habibi) | Community | [F5-TTS](../models/f5_tts.md) flow-matching DiT — M0 scaffolding, aliases `habibi`/`habibi_tts` |
+| **glm_tts** | TTS, voice cloning | zh, en | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](../models/glm_tts.md) zero-shot synthesis and voice cloning support |
+| **granite5asr** | ASR | en | Community | [IBM Granite Speech 5.0 470M TurboCTC](../models/granite5asr.md) ultra-fast Conformer-CTC ASR with Shaw relative positional embeddings and ByteLevel BPE |
+| **inflect_v2** | TTS | en | Community | [Inflect Micro v2 and Nano v2](../models/inflect_v2.md) native FP32 offline synthesis |
+| **kitten_tts** | TTS | en | Community | [KittenTTS Mini 0.8](../models/kitten_tts.md) native 80M-parameter synthesis with eight built-in voices and the shared eSpeak-ng frontend |
+| **kitten_tts2** | TTS, Clone | en, ar, zh, fr, de, hi, it, pt, ru, es | Community | [Kitten TTS 2](../models/kitten_tts2.md) native Qwen3, S3 meanflow, HiFT, multilingual preset voices, reference-audio cloning, and long-form synthesis |
+| **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](../models/kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |
+| **lfm2_audio** | ASR, TTS, S2S | en, ja | [@ykhrustalev](https://github.com/ykhrustalev) / Liquid AI | [LFM2.5-Audio](../models/lfm2_audio.md) English and Japanese transcription, speech and spoken chat from Liquid AI's published GGUFs: LFM2 hybrid short-conv/attention backbone with a FastConformer encoder for audio input, and a depthformer and LFM2 detokenizer for 24 kHz speech in four built-in English voices; spoken questions get replies of interleaved text and speech; offline or streamed frame by frame |
+| **liveavatar** | Audio-to-video | auto | [@0xShug0](https://github.com/0xShug0) | [LiveAvatar](../models/liveavatar.md) audio-to-video avatar generation with Wan2.2 S2V and an optional low-VRAM denoiser path |
+| **minimax_h3** | Video, Music, TTS/Dialogue | auto | [@0xShug0](https://github.com/0xShug0) | [MiniMax-H3](../models/minimax_h3.md) text-to-audio/video generation with Q4_K and optional INT8 ConvRot DiT |
+| **minimax_music3** | Music | auto | [@0xShug0](https://github.com/0xShug0) | [MiniMax Music 3](../models/minimax_music3.md) text-to-music generation with lyrics conditioning |
+| **mira_tts** | TTS, voice cloning | en | Mirek [@mirek190](https://github.com/mirek190) | [MiraTTS](../models/mira_tts.md) experimental native Qwen2 + ECAPA/Perceiver zero-shot cloning; local conversion only (CC-BY-NC-SA-4.0 weights) |
+| **mms_forced_aligner** | Align | nl (nld), en (eng); pre-romanized Latin | Community | [MMS-300M-1130 Forced Aligner](../models/mms_forced_aligner.md) word-timestamp alignment from a wav2vec2 CTC checkpoint (safetensors or local GGUF) |
+| **moss_tts_local** | TTS, voice cloning | auto, optional language hint | [@justinjohn0306](https://github.com/justinjohn0306) | [MOSS-TTS-Local Transformer v1.5](../models/moss_tts_local.md) support in the core model tree |
+| **moss_tts_v15** | TTS, voice cloning | en, zh | Chris [@christopherthompson81](https://github.com/christopherthompson81) | [MOSS-TTS-v1.5](../models/moss_tts_v15.md) 8B delay-pattern zero-shot cloning from a short reference; voice-attribute instructions are followed only loosely |
+| **moss_ttsd** | TTS, voice cloning | en, zh | Chris [@christopherthompson81](https://github.com/christopherthompson81) | [MOSS-TTSD](../models/moss_ttsd.md) 8B delay-pattern dialogue TTS: speaker-tagged conversation in one take, cloning each speaker by continuation |
+| **moss_voicegen** | Voice design | en, zh | Joost [@jrohde](https://github.com/jrohde) | [MOSS-VoiceGenerator](../models/moss_voicegen.md) voice design from a written instruction, on the MOSS delay architecture |
+| **outetts** | TTS, voice cloning | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | Mirek [@mirek190](https://github.com/mirek190) | [Llama-OuteTTS-1.0-1B](../models/outetts.md) TTS and voice cloning support |
+| **parakeet_tdt** | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](../models/parakeet_tdt.md) offline, long-form, and buffered-streaming ASR support, plus the Orukeet r3 and experimental English-only [Phonon-2](../models/parakeet_tdt.md#phonon-2-parakeet-tdt-variant) weight variants |
+| **piper_tts** | TTS | en | Community | [Piper TTS](../models/piper_tts.md) native VITS synthesis for the Lessac medium voice with the shared eSpeak-ng frontend |
+| **reuse** | Speech restoration | lang agnostic | [@0xShug0](https://github.com/0xShug0) | [RE-USE](../models/reuse.md) sample-rate-independent speech restoration with bidirectional Mamba |
+| **sanotts** | TTS | en, vi, id, cs, de, es, fr, it, pt, ro, ru, tr, ne, hi | Community | [sanoTTS voice family](../models/sanotts.md) eighteen voices from 294k to 2.27M parameters, FP32 offline synthesis |
+| **sense_asr** | ASR | auto, zh, en, yue, ja, ko, pt, ru, es, it, fr, de, nl, pl, tr, ar, hi, vi, th, id, ms, fa, nospeech | Jason Chen [@jasonchen31](https://github.com/jasonchen31), [@LauraGPT](https://github.com/LauraGPT) / FunASR | [SenseVoice-Small](../models/sense_asr.md) offline/streaming SAN-M + CTC transcription with event/emotion/language tags and ITN |
+| **sopro_tts** | TTS, voice cloning | en, pt, fr, de | Community | [Sopro V2 Turbo](../models/sopro_tts.md) 120M zero-shot cloning — SentencePiece text, style-prefix semantic LM over FSQ tokens, two-step rectified-flow acoustic DiT, Vocos ISTFT vocoder at 24 kHz; offline plus segment-level streaming |
+| **sortformer_diar_v2** | Diarization | multilingual | Community | [NVIDIA Sortformer v2.1](../models/sortformer_diar_v2.md) four-speaker streaming diarization with local F32 and mixed-F16 conversion profiles |
+| **vibeasr** | ASR | en | [@XsquirrelC](https://github.com/XsquirrelC) | [VibeASR](../models/vibeasr.md) fully quantized port of [VibeASR.cpp](https://github.com/microsoft/VibeASR.cpp): the VibeVoice acoustic/semantic tokenizers on INT8 weights *and* INT8 activations through the fused `GGML_TYPE_I8_S` ops, feeding a ternary `GGML_TYPE_I2_S` BitNet Qwen2 decoder. Offline, CPU only |
+| **vieneu_v3_turbo** | TTS, voice cloning | vi, en | Bảo [@pnnbao97](https://github.com/pnnbao97) (model author); first port by Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS v3 Turbo](../models/vieneu_v3_turbo.md) 48 kHz Vietnamese/English TTS and voice cloning (formerly `vietneu_tts`) |
+| **voxcpm1** | TTS, voice cloning | zh, en, ja, ko | Community | [VoxCPM1](../models/voxcpm1.md) tokenizer-free 0.5B TTS with 16 kHz output, streaming, and continuation-mode voice cloning |
+| **whistle_asr** | ASR | en, de, fr, es, it, nl, pl | [@bumpyclock](https://github.com/bumpyclock) | [Whistle ASR](../models/whistle_asr.md) experimental offline transcription with FP32 weights, GGML encoder on CPU or Metal; 16 kHz mono, at most 30 seconds; local conversion only |
+| **zipvoice** | TTS, voice cloning | zh, en | Community | [ZipVoice](../models/zipvoice.md) k2-fsa TTSZipformer flow-matching zero-shot cloning with Vocos vocoder; distilled 8-step and base variants, hosted GGUF package; text-chunk streaming |

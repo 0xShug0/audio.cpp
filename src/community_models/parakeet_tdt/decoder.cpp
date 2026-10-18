@@ -1,4 +1,5 @@
 #include "engine/community_models/parakeet_tdt/decoder.h"
+#include "engine/community_models/parakeet_tdt/word_timestamps.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
@@ -34,7 +35,13 @@ int32_t argmax_dur(const std::vector<float>& v, int64_t vocab_sz, int64_t n_dur)
 
 }  // namespace
 
-struct ParakeetDecoderRuntime::StepGraph {
+struct ParakeetTDTDecoderRuntime::StepGraph {
+    // The CUDA/Vulkan decoder path keeps predictor state on the device.
+    // These tensors have independent storage: the graph allocator must never
+    // recycle them as temporary activations between decoder steps.
+    std::unique_ptr<ggml_context, GgmlDeleter> state_ggml;
+    ggml_backend_buffer_t state_buffer = nullptr;
+    engine::core::TensorValue resident_pred_cache;
     std::unique_ptr<ggml_context, GgmlDeleter> ggml;
     ggml_cgraph* graph = nullptr;
     ggml_gallocr_t alloc = nullptr;
@@ -42,10 +49,13 @@ struct ParakeetDecoderRuntime::StepGraph {
     engine::core::TensorValue token_id, enc_frame;
     std::vector<engine::core::TensorValue> h_in, c_in, h_out, c_out;
     engine::core::TensorValue pred_cache, logits;
-    ~StepGraph() { if (alloc) ggml_gallocr_free(alloc); }
+    ~StepGraph() {
+        if (alloc) ggml_gallocr_free(alloc);
+        if (state_buffer) ggml_backend_buffer_free(state_buffer);
+    }
 };
 
-struct ParakeetDecoderRuntime::JointGraph {
+struct ParakeetTDTDecoderRuntime::JointGraph {
     std::unique_ptr<ggml_context, GgmlDeleter> ggml;
     ggml_cgraph* graph = nullptr;
     ggml_gallocr_t alloc = nullptr;
@@ -54,16 +64,16 @@ struct ParakeetDecoderRuntime::JointGraph {
     ~JointGraph() { if (alloc) ggml_gallocr_free(alloc); }
 };
 
-ParakeetDecoderRuntime::ParakeetDecoderRuntime(
+ParakeetTDTDecoderRuntime::ParakeetTDTDecoderRuntime(
     std::shared_ptr<const ParakeetTDTAssets> a, std::shared_ptr<const ParakeetWeights> w,
     engine::core::ExecutionContext& ec, size_t arena)
     : assets_(std::move(a)), weights_(std::move(w)), execution_context_(&ec), graph_arena_bytes_(arena) {
     if (!assets_ || !weights_) throw std::runtime_error("decoder requires assets/weights");
 }
-ParakeetDecoderRuntime::~ParakeetDecoderRuntime() = default;
-void ParakeetDecoderRuntime::prepare() { ensure_step_graph(); ensure_joint_graph(); }
+ParakeetTDTDecoderRuntime::~ParakeetTDTDecoderRuntime() = default;
+void ParakeetTDTDecoderRuntime::prepare() { ensure_step_graph(); ensure_joint_graph(); }
 
-void ParakeetDecoderRuntime::ensure_step_graph() {
+void ParakeetTDTDecoderRuntime::ensure_step_graph() {
     if (step_graph_) return;
     const auto t0 = Clock::now();
     const auto& cfg = assets_->config; const auto& dw = weights_->decoder;
@@ -72,11 +82,29 @@ void ParakeetDecoderRuntime::ensure_step_graph() {
     g->ggml.reset(ggml_init(p));
     engine::core::ModuleBuildContext ctx{g->ggml.get(), "parakeet.decoder", execution_context_->backend_type()};
 
+    const bool resident_state =
+        execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
+        execution_context_->backend_type() == engine::core::BackendType::Cuda;
+    if (resident_state) {
+        g->state_ggml.reset(ggml_init({65536, nullptr, true}));
+        if (!g->state_ggml) throw std::runtime_error("decoder state context allocation failed");
+    }
+    engine::core::ModuleBuildContext state_ctx{
+        resident_state ? g->state_ggml.get() : g->ggml.get(),
+        "parakeet.decoder.state", execution_context_->backend_type()};
+
     g->token_id = engine::core::make_tensor(ctx, GGML_TYPE_I32, engine::core::TensorShape::from_dims({1}));
     g->enc_frame = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.encoder.hidden_size}));
     for (int64_t l = 0; l < cfg.decoder_layers; ++l) {
-        g->h_in.push_back(engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size})));
-        g->c_in.push_back(engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size})));
+        g->h_in.push_back(engine::core::make_tensor(state_ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size})));
+        g->c_in.push_back(engine::core::make_tensor(state_ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size})));
+    }
+    if (resident_state) {
+        g->resident_pred_cache = engine::core::make_tensor(state_ctx, GGML_TYPE_F32,
+            engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size}));
+        g->state_buffer = ggml_backend_alloc_ctx_tensors(g->state_ggml.get(), execution_context_->backend());
+        if (!g->state_buffer) throw std::runtime_error("decoder state buffer allocation failed");
+        ggml_backend_buffer_clear(g->state_buffer, 0);
     }
     ggml_set_input(g->token_id.tensor); ggml_set_input(g->enc_frame.tensor);
     for (int64_t l = 0; l < cfg.decoder_layers; ++l) { ggml_set_input(g->h_in[static_cast<size_t>(l)].tensor); ggml_set_input(g->c_in[static_cast<size_t>(l)].tensor); }
@@ -101,6 +129,17 @@ void ParakeetDecoderRuntime::ensure_step_graph() {
     g->graph = ggml_new_graph(g->ggml.get());
     ggml_build_forward_expand(g->graph, g->logits.tensor); ggml_build_forward_expand(g->graph, g->pred_cache.tensor);
     for (size_t l = 0; l < g->h_out.size(); ++l) { ggml_build_forward_expand(g->graph, g->h_out[l].tensor); ggml_build_forward_expand(g->graph, g->c_out[l].tensor); }
+    if (resident_state) {
+        // Append updates after the complete logits/predictor computation. All
+        // consumers of the old recurrent state therefore run before overwriting
+        // it, including consumers in the next LSTM layer.
+        for (size_t l = 0; l < g->h_out.size(); ++l) {
+            ggml_build_forward_expand(g->graph, ggml_cpy(ctx.ggml, g->h_out[l].tensor, g->h_in[l].tensor));
+            ggml_build_forward_expand(g->graph, ggml_cpy(ctx.ggml, g->c_out[l].tensor, g->c_in[l].tensor));
+        }
+        ggml_build_forward_expand(g->graph,
+            ggml_cpy(ctx.ggml, g->pred_cache.tensor, g->resident_pred_cache.tensor));
+    }
 
     g->alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context_->backend()));
     if (!g->alloc || !ggml_gallocr_alloc_graph(g->alloc, g->graph)) throw std::runtime_error("step graph alloc failed");
@@ -118,7 +157,7 @@ void ParakeetDecoderRuntime::ensure_step_graph() {
     debug::timing_log_scalar("parakeet.decoder.graph_build_ms", engine::debug::elapsed_ms(t0, Clock::now()));
 }
 
-void ParakeetDecoderRuntime::ensure_joint_graph() {
+void ParakeetTDTDecoderRuntime::ensure_joint_graph() {
     if (joint_graph_) return;
     const auto t0 = Clock::now(); const auto& cfg = assets_->config;
     auto g = std::make_unique<JointGraph>();
@@ -126,7 +165,9 @@ void ParakeetDecoderRuntime::ensure_joint_graph() {
     g->ggml.reset(ggml_init(p));
     engine::core::ModuleBuildContext ctx{g->ggml.get(), "parakeet.decoder_joint", execution_context_->backend_type()};
     g->enc_frame = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.encoder.hidden_size}));
-    g->pred_cache = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size}));
+    g->pred_cache = step_graph_ && step_graph_->state_buffer
+        ? step_graph_->resident_pred_cache
+        : engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size}));
     ggml_set_input(g->enc_frame.tensor); ggml_set_input(g->pred_cache.tensor);
     auto proj_enc = engine::modules::LinearModule({cfg.encoder.hidden_size, cfg.decoder_hidden_size, true}).build(ctx, g->enc_frame, weights_->decoder.joint_enc);
     auto joint = engine::modules::AddModule().build(ctx, proj_enc, g->pred_cache);
@@ -142,26 +183,26 @@ void ParakeetDecoderRuntime::ensure_joint_graph() {
     debug::timing_log_scalar("parakeet.decoder.joint_graph_build_ms", engine::debug::elapsed_ms(t0, Clock::now()));
 }
 
-int32_t ParakeetDecoderRuntime::run_joint_step(const float* enc, int32_t* out_dur_id) {
+int32_t ParakeetTDTDecoderRuntime::run_joint_step(const float* enc, int32_t* out_dur_id) {
     auto& g = *joint_graph_;
     const auto& cfg = assets_->config;
     engine::core::write_tensor_f32(g.enc_frame, enc, static_cast<size_t>(cfg.encoder.hidden_size));
-    engine::core::write_tensor_f32(g.pred_cache, decoder_cache_scratch_);
+    if (!step_graph_->state_buffer) engine::core::write_tensor_f32(g.pred_cache, decoder_cache_scratch_);
     if (engine::core::compute_graph(*execution_context_, g.graph, g.plan, "Parakeet joint") != GGML_STATUS_SUCCESS)
         throw std::runtime_error("joint compute failed");
     engine::core::read_tensor_f32_into(g.logits.tensor, logits_scratch_);
     if (out_dur_id) *out_dur_id = argmax_dur(logits_scratch_, assets_->config.vocab_size, static_cast<int64_t>(assets_->config.durations.size()));
-    return argmax_vocab(logits_scratch_, assets_->config.vocab_size);
+    return select_token();
 }
 
-int32_t ParakeetDecoderRuntime::run_step(int32_t tok, const float* enc, bool pred_valid, int32_t* out_dur_id) {
+int32_t ParakeetTDTDecoderRuntime::run_step(int32_t tok, const float* enc, bool pred_valid, int32_t* out_dur_id) {
     auto& g = *step_graph_;
     const auto& cfg = assets_->config;
     const int32_t blank = static_cast<int32_t>(cfg.blank_token_id);
     if (!pred_valid || tok != blank) {
         engine::core::write_tensor_i32(g.token_id, &tok, 1);
         engine::core::write_tensor_f32(g.enc_frame, enc, static_cast<size_t>(cfg.encoder.hidden_size));
-        for (int64_t l = 0; l < cfg.decoder_layers; ++l) {
+        for (int64_t l = 0; !g.state_buffer && l < cfg.decoder_layers; ++l) {
             size_t off = static_cast<size_t>(l * cfg.decoder_hidden_size);
             engine::core::write_tensor_f32(g.h_in[static_cast<size_t>(l)], hidden_scratch_.data() + off, static_cast<size_t>(cfg.decoder_hidden_size));
             engine::core::write_tensor_f32(g.c_in[static_cast<size_t>(l)], cell_scratch_.data() + off, static_cast<size_t>(cfg.decoder_hidden_size));
@@ -169,8 +210,8 @@ int32_t ParakeetDecoderRuntime::run_step(int32_t tok, const float* enc, bool pre
         if (engine::core::compute_graph(*execution_context_, g.graph, g.plan, "Parakeet step") != GGML_STATUS_SUCCESS)
             throw std::runtime_error("step compute failed");
         engine::core::read_tensor_f32_into(g.logits.tensor, logits_scratch_);
-        engine::core::read_tensor_f32_into(g.pred_cache.tensor, decoder_cache_scratch_);
-        for (int64_t l = 0; l < cfg.decoder_layers; ++l) {
+        if (!g.state_buffer) engine::core::read_tensor_f32_into(g.pred_cache.tensor, decoder_cache_scratch_);
+        for (int64_t l = 0; !g.state_buffer && l < cfg.decoder_layers; ++l) {
             size_t off = static_cast<size_t>(l * cfg.decoder_hidden_size);
             engine::core::read_tensor_f32_into(g.h_out[static_cast<size_t>(l)].tensor, hidden_read_scratch_);
             std::copy(hidden_read_scratch_.begin(), hidden_read_scratch_.end(), hidden_scratch_.begin() + static_cast<std::ptrdiff_t>(off));
@@ -181,10 +222,17 @@ int32_t ParakeetDecoderRuntime::run_step(int32_t tok, const float* enc, bool pre
         return run_joint_step(enc, out_dur_id);
     }
     if (out_dur_id) *out_dur_id = argmax_dur(logits_scratch_, assets_->config.vocab_size, static_cast<int64_t>(assets_->config.durations.size()));
-    return argmax_vocab(logits_scratch_, assets_->config.vocab_size);
+    return select_token();
 }
 
-std::string ParakeetDecoderRuntime::decode_text(const std::vector<int32_t>& ids, bool keep_tags) const {
+int32_t ParakeetTDTDecoderRuntime::select_token() {
+    if (!hotwords_) return argmax_vocab(logits_scratch_, assets_->config.vocab_size);
+    const auto token = hotwords_->select(logits_scratch_, hotword_state_);
+    hotword_state_ = hotwords_->step(hotword_state_, token);
+    return token;
+}
+
+std::string ParakeetTDTDecoderRuntime::decode_text(const std::vector<int32_t>& ids, bool keep_tags) const {
     std::vector<int32_t> f; f.reserve(ids.size());
     for (auto id : ids) {
         if (id == static_cast<int32_t>(assets_->config.blank_token_id) || id == static_cast<int32_t>(assets_->config.pad_token_id)) continue;
@@ -194,15 +242,40 @@ std::string ParakeetDecoderRuntime::decode_text(const std::vector<int32_t>& ids,
     return assets_->tokenizer->decode_ids(f);
 }
 
-std::vector<runtime::WordTimestamp> ParakeetDecoderRuntime::build_word_timestamps(
+std::vector<runtime::WordTimestamp> ParakeetTDTDecoderRuntime::build_word_timestamps(
     const std::vector<int32_t>& ids,
     const std::vector<int32_t>& frame_indices,
     const std::vector<int32_t>& durs,
-    int64_t audio_end_frame) const {
+    int64_t audio_end_frame,
+    int64_t audio_end_sample) const {
     std::vector<runtime::WordTimestamp> out;
     const int64_t spf = assets_->config.frontend.hop_length * assets_->config.encoder.subsampling_factor;
     const size_t count = std::min({ids.size(), frame_indices.size(), durs.size()});
     constexpr const char* kSentencePieceSpace = "\xE2\x96\x81";
+
+    if (assets_->config.word_timestamp_mode == "token_duration") {
+        std::vector<TimestampPiece> pieces;
+        pieces.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+            const auto tid = ids[i];
+            if (tid < 0 || tid >= static_cast<int32_t>(assets_->tokenizer->id_to_token().size()) ||
+                tid == assets_->config.blank_token_id || tid == assets_->config.pad_token_id ||
+                (tid < static_cast<int32_t>(assets_->special_token_ids.size()) &&
+                 assets_->special_token_ids[static_cast<size_t>(tid)])) continue;
+            auto text = assets_->tokenizer->id_to_token()[static_cast<size_t>(tid)];
+            size_t pos = 0;
+            while ((pos = text.find(kSentencePieceSpace, pos)) != std::string::npos) {
+                text.replace(pos, 3, " ");
+                ++pos;
+            }
+            const auto & punctuation = assets_->config.punctuation_token_ids;
+            pieces.push_back({std::move(text), frame_indices[i] * spf,
+                              std::max<int32_t>(durs[i], 0) * spf,
+                              std::binary_search(punctuation.begin(), punctuation.end(), tid)});
+        }
+        return token_duration_word_timestamps(
+            pieces, audio_end_sample >= 0 ? audio_end_sample : audio_end_frame * spf);
+    }
 
     std::string current_word;
     int64_t current_start_frame = 0;
@@ -263,17 +336,22 @@ std::vector<runtime::WordTimestamp> ParakeetDecoderRuntime::build_word_timestamp
     return out;
 }
 
-void ParakeetDecoderRuntime::reset_state() {
+void ParakeetTDTDecoderRuntime::reset_state() {
+    hotword_state_ = 0;
+    hotwords_.reset();
     const auto& cfg = assets_->config;
     hidden_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
     cell_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
     decoder_cache_scratch_.assign(static_cast<size_t>(cfg.decoder_hidden_size), 0.f);
+    if (step_graph_ && step_graph_->state_buffer) {
+        ggml_backend_buffer_clear(step_graph_->state_buffer, 0);
+    }
     pending_input_token_ = static_cast<int32_t>(cfg.blank_token_id);
     predictor_cache_valid_ = false;
     state_initialized_ = true;
 }
 
-ParakeetDecodedText ParakeetDecoderRuntime::decode_incremental(
+ParakeetDecodedText ParakeetTDTDecoderRuntime::decode_incremental(
     const ParakeetEncodedAudio& enc,
     const ParakeetDecodeOptions& opts,
     int64_t frame_offset) {
@@ -286,6 +364,7 @@ ParakeetDecodedText ParakeetDecoderRuntime::decode_incremental(
         throw std::runtime_error("incremental decoder frame offset must be non-negative");
     }
     const auto t0 = Clock::now(); ensure_step_graph();
+    hotwords_ = opts.hotwords;
     engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
     const auto& cfg = assets_->config;
     const int64_t max_tok = opts.max_tokens > 0
@@ -347,7 +426,7 @@ ParakeetDecodedText ParakeetDecoderRuntime::decode_incremental(
     return out;
 }
 
-ParakeetDecodedText ParakeetDecoderRuntime::format_tokens(
+ParakeetDecodedText ParakeetTDTDecoderRuntime::format_tokens(
     std::vector<int32_t> token_ids,
     std::vector<int32_t> token_frame_indices,
     std::vector<int32_t> durations,
@@ -362,11 +441,12 @@ ParakeetDecodedText ParakeetDecoderRuntime::format_tokens(
         out.token_ids,
         out.token_frame_indices,
         out.durations,
-        audio_end_frame);
+        audio_end_frame,
+        opts.audio_end_sample);
     return out;
 }
 
-ParakeetDecodedText ParakeetDecoderRuntime::decode(
+ParakeetDecodedText ParakeetTDTDecoderRuntime::decode(
     const ParakeetEncodedAudio& enc,
     const ParakeetDecodeOptions& opts) {
     reset_state();

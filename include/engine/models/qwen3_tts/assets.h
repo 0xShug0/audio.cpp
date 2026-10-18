@@ -60,7 +60,7 @@ struct Qwen3TTSSpeechTokenizerConfig {
     int64_t semantic_codebook_size = 0;
 };
 
-struct Qwen3TTSSpeakerEncoderConfig {
+struct Qwen3TTSEcapaTdnnEncoderConfig {
     int64_t embedding_dim = 0;
     int sample_rate = 0;
 };
@@ -74,7 +74,7 @@ struct Qwen3TTSConfig {
     Qwen3TTSTalkerConfig talker;
     Qwen3TTSCodePredictorConfig code_predictor;
     Qwen3TTSSpeechTokenizerConfig speech_tokenizer;
-    Qwen3TTSSpeakerEncoderConfig speaker_encoder;
+    Qwen3TTSEcapaTdnnEncoderConfig speaker_encoder;
     int64_t tts_bos_token_id = 0;
     int64_t tts_eos_token_id = 0;
     int64_t tts_pad_token_id = 0;

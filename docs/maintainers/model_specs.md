@@ -35,14 +35,14 @@ Top-level fields:
 | `schema_version` | Must be `1`. | No |
 | `family` | Runtime model family id. Must match the filename stem. | Yes, if changing an already published family id |
 | `display_name` | User-facing model family name. | No |
-| `category` | Typed category such as `asr`, `tts`, `audio_generation`, or `community`. | No |
+| `category` | Typed category such as `asr`, `tts`, `audio_generation`, `audio_tools`, or `community`. | No |
 | `status` | Typed status: `supported`, `community`, `experimental`, `wip`, or `unsupported`. | No |
-| `tasks` | Typed task tags such as `asr`, `tts`, `clone`, `vc`, or `align`. | No |
+| `tasks` | Typed task tags such as `asr`, `tts`, `clone`, `vc`, `midi`, or `align`. | No |
 | `modes` | Supported run modes: `offline` and/or `streaming`. | No |
 | `languages` | Family-level language scope, such as `en`, `zh`, `ja`, `multilingual`, or `language_agnostic`. | No |
 | `runtime` | Runtime tags such as `gguf` or `stream`. | No |
 | `capabilities` | Stable task-keyed capability tags. | No |
-| `options` | Typed request/session/load options. | Yes, otherwise new code needs compatibility mapping for old embedded specs |
+| `options` | Typed request/session/load options. | For runtime contract changes; description/default/bound metadata corrections alone do not require reconversion |
 | `package_defaults` | Optional shared package metadata, such as a common download source. | No |
 | `packages` | Installable model packages and download metadata. | No |
 | `dependencies` | Runtime peer models or bundled model assets needed for optional features. | No, but loader/session behavior must support the dependency |
@@ -62,9 +62,13 @@ is available, but the model weights and runtime execution remain valid.
 Fields that can affect runtime behavior are `sources`, `options`, and
 `dependencies`. Changing `sources` changes where files or tensors are resolved
 and requires refreshing any standalone GGUF package that relies on the embedded
-spec. Changing `options` changes the typed runtime contract; either regenerate
-standalone GGUF packages with the updated embedded spec, or add explicit
-compatibility mapping in code for packages that still carry the old spec.
+spec. Changing option names or scopes can change accepted keys in the typed
+runtime contract; either refresh the embedded spec or provide explicit
+compatibility mapping for packages that still carry the old keys. Correcting
+option descriptions, advertised defaults, or numeric bounds is a metadata-only
+change: it does not change parser defaults, runtime value checks, or inference.
+An older embedded spec may still report the old help until its metadata is
+refreshed or overridden.
 Changing `dependencies` must be reviewed with the loader/session behavior that
 consumes it.
 
@@ -84,7 +88,20 @@ used before the model is loaded. Each row has a stable name, typed value,
 explicit `required` flag, and description. Optional rows should include
 `default` when production behavior has a stable literal default. Numeric rows
 should include `min` and/or `max` when the runtime enforces or documents a
-range.
+range. These bounds are read-only discovery metadata, not runtime validation
+rules. The spec schema checks metadata consistency, including `min <= max` and
+whether a declared numeric default lies within those inclusive bounds. Actual
+option values are checked by model parsers and consumers.
+
+Keep useful numeric boundaries and explain endpoint inclusion in `description`:
+`> 0` excludes zero, `(0, 2)` excludes both endpoints, and `(0, 1]` includes 1
+but excludes 0. For conditional constraints, name the controlling option, such
+as "must be > 0 when do_sample=true; ignored when do_sample=false." The current
+schema has no positive numeric type, exclusive-bound fields, or conditional
+numeric bounds. Do not introduce an arbitrary epsilon to express positivity.
+Keep existing handwritten `ModelCliInterface` entries consistent with spec
+metadata without adding runtime spec reads to those tables.
+
 Shared option names carry framework-level contracts: for example `top_k` is an
 integer top-k control, `top_p` is a float nucleus-sampling control, and `route`
 must be an enum. Repeated enum domains should use a preset instead of copying
@@ -156,6 +173,11 @@ packages come from the same repo, put the shared source in
 `package_defaults.download` and keep package-level `download` only for
 overrides.
 
+Experimental ports may use an empty `packages` array while conversion and
+runtime validation are still local-only. In that case `ui.recommended_package`
+is omitted, so model managers do not advertise a download that cannot yet be
+loaded. Community and supported families must publish at least one package.
+
 ```json
 {
   "package_defaults": {
@@ -181,6 +203,15 @@ overrides.
 }
 ```
 
+`kind: "modelscope_snapshot"` downloads the same way from a ModelScope
+(modelscope.cn) repo. It takes the same fields (`repo` required, `revision`
+optional); the only differences are that the default revision is `master`
+(ModelScope's default branch) and the `gated` flag does not apply. The native
+package manager resolves the endpoint through `AUDIOCPP_MS_BASE_URL`
+(default `https://www.modelscope.cn`), mirroring `AUDIOCPP_HF_BASE_URL` for
+Hugging Face. ModelScope requests authenticate with `AUDIOCPP_MS_TOKEN` only;
+the Hugging Face token is never sent to a ModelScope endpoint.
+
 Dependencies describe extra model-level resources required by runtime features.
 Use `kind: "model"` for another model family, and `kind: "bundled_model"` for an
 in-repo bundled model asset. Do not use dependencies for sidecars or tensor
@@ -191,10 +222,13 @@ runtime option key is derived as `<family>.<option>`.
 Required dependencies are unconditional. Optional dependencies must declare
 typed `required_when` rows. Each row is a condition over a public option key.
 Common request keys such as `return_timestamps` stay unprefixed; model-specific
-keys stay namespaced. The dependency is needed when any row matches.
-`dependencies[].option` must name a declared option in the dependency `scope`,
-and every `required_when[].option_key` must refer to a declared public option in
-the referenced scope. Multiple `required_when` rows use OR semantics.
+session/load keys stay namespaced as `<family>.<name>`. Multiple rows are OR'd:
+the dependency is needed when **any** row matches.
+
+`dependencies[].option` must be a local name that already exists under
+`options.<scope>` for the same dependency `scope`. Each
+`required_when[].option_key` must refer to an option declared under
+`options.<required_when.scope>` (using the public key form above).
 
 ```json
 {
@@ -218,7 +252,7 @@ the referenced scope. Multiple `required_when` rows use OR semantics.
       "family": "silero_vad",
       "path": "assets/framework/models/silero_vad",
       "scope": "session",
-      "option": "vad_path",
+      "option": "vad_model_path",
       "required": false,
       "required_when": [
         {

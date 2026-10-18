@@ -127,6 +127,7 @@ engine::runtime::TaskRequest make_request(const engine::io::json::Value & object
     set_optional_option(request, object, "emotion_vector");
     set_optional_option(request, object, "use_emotion_text");
     set_optional_option(request, object, "emotion_text");
+    set_optional_option(request, object, "language");
     set_optional_option(request, object, "use_random_emotion");
     set_optional_option(request, object, "interval_silence_ms");
     set_optional_option(request, object, "text_chunk_size");
@@ -217,7 +218,10 @@ int main(int argc, char ** argv) {
         load_request.model_path = model_path;
         load_request.family_hint = "index_tts2";
         auto registry = engine::runtime::make_default_registry();
+        const auto load_start = Clock::now();
         auto model = registry.load(load_request);
+        const auto load_end = Clock::now();
+        const double load_ms = std::chrono::duration<double, std::milli>(load_end - load_start).count();
 
         engine::runtime::TaskSpec task;
         task.task = engine::runtime::VoiceTaskKind::Tts;
@@ -230,6 +234,7 @@ int main(int argc, char ** argv) {
             session_options.options[key] = value;
         }
         auto requests = parse_requests(request_sequence_json);
+        const auto session_start = Clock::now();
         auto session_base = model->create_task_session(task, session_options);
         auto * session = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(session_base.get());
         if (session == nullptr) {
@@ -247,11 +252,17 @@ int main(int argc, char ** argv) {
             : std::nullopt;
         preparation.options = requests.front().options;
         session->prepare(preparation);
+        const auto session_end = Clock::now();
+        const double session_ms = std::chrono::duration<double, std::milli>(session_end - session_start).count();
 
         std::vector<engine::io::json::Value> steps;
         std::vector<std::string> timing_lines;
         timing_lines.push_back("index_tts2.backend " + backend_name);
         timing_lines.push_back("index_tts2.model_root " + model_path.string());
+        timing_lines.push_back("index_tts2.load_ms " + engine::io::json::stringify_number(load_ms));
+        timing_lines.push_back("index_tts2.session_prepare_ms " + engine::io::json::stringify_number(session_ms));
+        std::cout << "index_tts2.load_ms=" << load_ms << "\n";
+        std::cout << "index_tts2.session_prepare_ms=" << session_ms << "\n";
         for (int i = 0; i < warmup; ++i) {
             (void) session->run(requests.front());
         }

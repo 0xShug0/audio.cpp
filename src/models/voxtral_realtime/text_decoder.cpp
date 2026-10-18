@@ -5,7 +5,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/grouped_query_attention.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -483,6 +483,10 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, capacity_);
         mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, capacity_, capacity_, 1, 1);
         step_index_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
+        // Reused prefill graphs retain these once-uploaded constants. Prevent
+        // the graph allocator from recycling their storage after their last use.
+        ggml_set_output(positions_);
+        ggml_set_output(mask_);
         auto ids = core::wrap_tensor(token_ids_, core::TensorShape::from_dims({capacity_}), GGML_TYPE_I32);
         auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size}).build(ctx, ids, weights_->token_embedding);
         auto audio = core::wrap_tensor(audio_embeddings_, core::TensorShape::from_dims({capacity_, config.hidden_size}), GGML_TYPE_F32);
@@ -545,7 +549,7 @@ public:
             !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
             throw std::runtime_error("failed to allocate VoxTral text decoder graph");
         }
-        const auto positions_values = modules::qwen_position_ids(capacity_);
+        const auto positions_values = modules::decoder_position_ids(capacity_);
         ggml_backend_tensor_set(positions_, positions_values.data(), 0, positions_values.size() * sizeof(int32_t));
         auto mask_values = make_text_mask(capacity_, config.sliding_window);
         ggml_backend_tensor_set(mask_, mask_values.data(), 0, mask_values.size() * sizeof(ggml_fp16_t));

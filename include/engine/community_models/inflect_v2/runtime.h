@@ -4,6 +4,7 @@
 #include "engine/framework/runtime/session.h"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace engine::models::inflect_v2 {
@@ -14,12 +15,16 @@ struct InflectV2GenerationOptions {
     uint32_t seed = 0;
 };
 
-class InflectV2NativeRuntime {
+class InflectV2VitsRuntime {
 public:
-    InflectV2NativeRuntime(
+    // `rknn_decoder_path` selects the Rockchip NPU decoder sidecar (see
+    // engine/community_models/inflect_v2/rknn_decoder.h): the latent is then voiced by that
+    // engine instead of the ggml decoder graph, which is never built.
+    InflectV2VitsRuntime(
         std::shared_ptr<const InflectV2Assets> assets,
-        core::BackendConfig backend_config);
-    ~InflectV2NativeRuntime();
+        core::BackendConfig backend_config,
+        std::string rknn_decoder_path = {});
+    ~InflectV2VitsRuntime();
 
     runtime::AudioBuffer synthesize(
         const std::vector<int32_t> & token_ids,

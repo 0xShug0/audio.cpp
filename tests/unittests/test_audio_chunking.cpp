@@ -640,6 +640,10 @@ void test_audio_chunk_mode_parser() {
     engine::test::require(
         engine::audio::parse_audio_chunk_mode(options) == engine::audio::AudioChunkMode::Vad,
         "vad audio chunk mode");
+    options["audio_chunk_mode"] = "silence";
+    engine::test::require(
+        engine::audio::parse_audio_chunk_mode(options) == engine::audio::AudioChunkMode::Silence,
+        "parse silence mode");
     options["audio_chunk_mode"] = "quiet_energy";
     engine::test::require(
         engine::audio::parse_audio_chunk_mode(options) == engine::audio::AudioChunkMode::QuietEnergy,
@@ -841,16 +845,6 @@ void test_chunk_word_timestamp_merge_rejects_invalid_spans() {
             std::vector<engine::runtime::WordTimestamp> merged;
             engine::audio::append_chunk_word_timestamps(
                 merged,
-                {word("outside", 120, 140)},
-                engine::runtime::TimeSpan{1000, 1100});
-        },
-        "word outside chunk");
-
-    require_throws(
-        []() {
-            std::vector<engine::runtime::WordTimestamp> merged;
-            engine::audio::append_chunk_word_timestamps(
-                merged,
                 {word("bad", 0, 10)},
                 engine::runtime::TimeSpan{1000, 1100},
                 engine::runtime::TimeSpan{900, 1100});
@@ -871,10 +865,107 @@ void test_chunk_word_timestamp_merge_rejects_invalid_spans() {
         "invalid source sample rate");
 }
 
+void test_chunk_word_timestamp_merge_drops_outside_words() {
+    std::vector<engine::runtime::WordTimestamp> merged;
+    engine::audio::append_chunk_word_timestamps(
+        merged,
+        {
+            word("kept", 20, 40),
+            word("outside", 120, 140),
+            word("also_kept", 50, 80),
+        },
+        engine::runtime::TimeSpan{1000, 1100});
+
+    engine::test::require_eq(merged.size(), static_cast<size_t>(2), "outside word dropped");
+    engine::test::require_eq(merged[0].word, std::string("kept"), "first valid word kept");
+    require_span(merged[0].span, 1020, 1040, "first valid word span");
+    engine::test::require_eq(merged[1].word, std::string("also_kept"), "second valid word kept");
+    require_span(merged[1].span, 1050, 1080, "second valid word span");
+}
+
+void test_chunk_speech_metadata_merge_drops_outside_spans() {
+    engine::runtime::TaskResult chunk;
+    auto kept_segment = speech(20, 40);
+    kept_segment.text = "kept segment";
+    chunk.speech_segments.push_back(kept_segment);
+    auto outside_segment = speech(120, 140);
+    outside_segment.text = "outside segment";
+    chunk.speech_segments.push_back(outside_segment);
+
+    engine::runtime::SpeakerTurn kept_turn;
+    kept_turn.span = engine::runtime::TimeSpan{50, 80};
+    kept_turn.speaker_id = "SPEAKER_00";
+    chunk.speaker_turns.push_back(kept_turn);
+    engine::runtime::SpeakerTurn outside_turn;
+    outside_turn.span = engine::runtime::TimeSpan{120, 140};
+    outside_turn.speaker_id = "SPEAKER_01";
+    chunk.speaker_turns.push_back(outside_turn);
+
+    engine::runtime::TaskResult merged;
+    engine::audio::append_chunk_speech_metadata(
+        merged,
+        chunk,
+        engine::runtime::TimeSpan{1000, 1100},
+        engine::runtime::TimeSpan{1000, 1100},
+        16000,
+        16000);
+
+    engine::test::require_eq(merged.speech_segments.size(), static_cast<size_t>(1), "outside speech segment dropped");
+    engine::test::require_eq(merged.speech_segments[0].text, std::string("kept segment"), "valid speech segment kept");
+    require_span(merged.speech_segments[0].span, 1020, 1040, "valid speech segment span");
+    engine::test::require_eq(merged.speaker_turns.size(), static_cast<size_t>(1), "outside speaker turn dropped");
+    engine::test::require_eq(merged.speaker_turns[0].speaker_id, std::string("SPEAKER_00"), "valid speaker turn kept");
+    require_span(merged.speaker_turns[0].span, 1050, 1080, "valid speaker turn span");
+}
+
+void test_silence_chunks() {
+    using engine::audio::plan_silence_audio_chunks;
+    const engine::audio::SilenceAudioChunkOptions options{28 * 16000, 30 * 16000};
+    require_throws([&]() {
+        (void) plan_silence_audio_chunks({}, options);
+    }, "empty silence planner input");
+    require_throws([]() {
+        (void) plan_silence_audio_chunks({1.0F}, {0, 1});
+    }, "zero silence max chunk size");
+    require_throws([]() {
+        (void) plan_silence_audio_chunks({1.0F}, {1, 0});
+    }, "zero silence trigger");
+    auto spans = plan_silence_audio_chunks(std::vector<float>(30 * 16000, 1.0F), options);
+    engine::test::require_eq(spans.size(), size_t{1}, "trigger includes exactly 30 seconds");
+    require_span(spans[0], 0, 30 * 16000, "short input unchanged");
+
+    // No gaps: both continuous sound and complete silence use hard cuts.
+    for (float value : {0.0F, 1.0F}) {
+        spans = plan_silence_audio_chunks(std::vector<float>(60 * 16000, value), options);
+        engine::test::require_eq(spans.size(), size_t{3}, "hard cut count");
+        require_span(spans[0], 0, 28 * 16000, "first hard cut");
+        require_span(spans[1], 28 * 16000, 56 * 16000, "second hard cut");
+        require_span(spans[2], 56 * 16000, 60 * 16000, "remaining audio");
+    }
+
+    std::vector<float> samples(8192, 0.0F);
+    std::fill(samples.begin(), samples.begin() + 2048, 1.0F);
+    std::fill(samples.begin() + 6144, samples.end(), 1.0F);
+    const auto below_trigger = plan_silence_audio_chunks(samples, {6000, 9000});
+    engine::test::require_eq(below_trigger.size(), size_t{1}, "auto policy can retain input above chunk limit");
+    require_span(below_trigger[0], 0, 8192, "auto policy trigger preserves whole input");
+    spans = plan_silence_audio_chunks(samples, {6000, 6000});
+    engine::test::require_eq(spans.size(), size_t{2}, "silence midpoint count");
+    require_span(spans[0], 0, 4352, "centered RMS silence midpoint");
+    require_span(spans[1], 4352, 8192, "silence retained without overlap");
+    for (auto & sample : samples) sample *= 0.125F;
+    const auto scaled = plan_silence_audio_chunks(samples, {6000, 6000});
+    engine::test::require_eq(scaled.size(), spans.size(), "relative threshold count");
+    for (size_t i = 0; i < spans.size(); ++i) {
+        require_span(scaled[i], spans[i].start_sample, spans[i].end_sample, "relative threshold boundaries");
+    }
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_silence_chunks();
         test_fixed_chunks_plan_start_aligned_tail();
         test_fixed_chunks_plan_overlapping_windows();
         test_fixed_chunks_plan_centered_tail_and_copy_zero_pad();
@@ -903,6 +994,8 @@ int main() {
         test_chunk_word_timestamp_merge_rescales_chunk_domain();
         test_chunk_speech_metadata_merge_rescales_chunk_domain();
         test_chunk_word_timestamp_merge_rejects_invalid_spans();
+        test_chunk_word_timestamp_merge_drops_outside_words();
+        test_chunk_speech_metadata_merge_drops_outside_spans();
         std::cout << "audio_chunking_test passed\n";
     } catch (const std::exception & ex) {
         std::cerr << "audio_chunking_test failed: " << ex.what() << "\n";

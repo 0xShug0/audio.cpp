@@ -1,7 +1,7 @@
 #include "engine/community_models/glm_tts/assets.h"
 #include "engine/community_models/glm_tts/frontend.h"
 #include "engine/framework/audio/wav_reader.h"
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 
 #include <exception>
 #include <iomanip>

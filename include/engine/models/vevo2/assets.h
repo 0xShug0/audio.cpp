@@ -12,7 +12,7 @@
 
 namespace engine::models::vevo2 {
 
-struct Vevo2ARConfig {
+struct Vevo2Qwen2ARConfig {
     int64_t vocab_size = 0;
     int64_t hidden_size = 0;
     int64_t intermediate_size = 0;
@@ -92,7 +92,7 @@ struct Vevo2VocoderConfig {
 };
 
 struct Vevo2Config {
-    Vevo2ARConfig ar;
+    Vevo2Qwen2ARConfig ar;
     Vevo2CocoTokenizerConfig prosody_tokenizer;
     Vevo2CocoTokenizerConfig content_style_tokenizer;
     Vevo2FMConfig fm;

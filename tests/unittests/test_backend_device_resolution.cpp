@@ -33,6 +33,7 @@ const char * backend_label(BackendType type) {
     switch (type) {
         case BackendType::Cpu:           return "cpu";
         case BackendType::Cuda:          return "cuda";
+        case BackendType::Hip:           return "hip";
         case BackendType::Vulkan:        return "vulkan";
         case BackendType::Metal:         return "metal";
         case BackendType::BestAvailable: return "best";
@@ -46,11 +47,12 @@ std::optional<BackendType> backend_type_for_reg_name(const char * reg_name) {
     if (reg_name == nullptr) {
         return std::nullopt;
     }
-    // CUDA's registry name follows the ggml build: "ROCm" under HIP, "MUSA" under MUSA.
-    if (std::strcmp(reg_name, "CUDA") == 0 ||
-        std::strcmp(reg_name, "ROCm") == 0 ||
-        std::strcmp(reg_name, "MUSA") == 0) {
+    // CUDA's registry name is "CUDA" or "MUSA" depending on the ggml build.
+    if (std::strcmp(reg_name, "CUDA") == 0 || std::strcmp(reg_name, "MUSA") == 0) {
         return BackendType::Cuda;
+    }
+    if (std::strcmp(reg_name, "ROCm") == 0) {
+        return BackendType::Hip;
     }
     if (std::strcmp(reg_name, "Vulkan") == 0) {
         return BackendType::Vulkan;
@@ -158,7 +160,12 @@ void test_every_enumerated_device_resolves() {
 void test_unregistered_backends_are_rejected() {
     ensure_backends_loaded();
 
-    for (const BackendType type : {BackendType::Cuda, BackendType::Vulkan, BackendType::Metal}) {
+    for (const BackendType type : {
+             BackendType::Cuda,
+             BackendType::Hip,
+             BackendType::Vulkan,
+             BackendType::Metal,
+         }) {
         bool registered = false;
         for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
             ggml_backend_reg_t reg = ggml_backend_reg_get(i);

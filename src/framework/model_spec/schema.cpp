@@ -1,4 +1,5 @@
 #include "engine/framework/model_spec/schema.h"
+#include "engine/framework/runtime/task_vocabulary.h"
 #include "engine/framework/model_spec/options.h"
 
 #include <algorithm>
@@ -65,10 +66,20 @@ void require_spec_number(const json::Value & value, std::string_view path) {
 }
 
 const std::unordered_set<std::string> & tasks() {
-    static const std::unordered_set<std::string> values = {
-        "vad", "asr", "diar", "sep", "music", "sfx", "edit", "tts", "clone", "vc",
-        "s2s", "align", "design", "speaker", "svc", "codec",
-    };
+    // Built from the one vocabulary rather than typed out again. The hand-kept
+    // copy had drifted both ways: it allowed "codec", which no parser maps to a
+    // task kind, and omitted "audio_generation", which the parser accepts.
+    static const std::unordered_set<std::string> values = [] {
+        std::unordered_set<std::string> names;
+        std::size_t count = 0;
+        const auto * entries = engine::runtime::task_vocabulary(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            for (std::size_t alias = 0; alias < entries[i].alias_count; ++alias) {
+                names.emplace(entries[i].aliases[alias]);
+            }
+        }
+        return names;
+    }();
     return values;
 }
 
@@ -97,14 +108,14 @@ const std::unordered_set<std::string> & source_formats() {
 const std::unordered_set<std::string> & precisions() {
     static const std::unordered_set<std::string> values = {
         "native", "orig", "f32", "f16", "bf16",
-        "q8_0", "q6_k", "q5_k_m", "q5_k_s", "q4_k_m", "q4_k_s", "q4_k", "q3_k_m", "q3_k_s", "q2_k",
+        "q8_0", "q6_k", "q5_k_m", "q5_k_s", "q4_k_m", "q4_k_s", "q4_k", "q4_0", "q3_k_m", "q3_k_s", "q2_k",
     };
     return values;
 }
 
 const std::unordered_set<std::string> & download_kinds() {
     static const std::unordered_set<std::string> values = {
-        "huggingface_snapshot", "local_snapshot", "converter", "unsupported",
+        "huggingface_snapshot", "modelscope_snapshot", "local_snapshot", "converter", "unsupported",
     };
     return values;
 }
@@ -139,7 +150,7 @@ const std::unordered_set<std::string> & runtime_tags() {
 const std::unordered_set<std::string> & ui_tags() {
     static const std::unordered_set<std::string> values = {
         "ASR", "TTS", "Clone", "VC", "Align", "VAD", "Diar", "Codec", "Sep", "Music", "SFX",
-        "Edit", "Design", "GGUF", "Stream",
+        "Edit", "Design", "MIDI", "Wake Word", "Classify", "GGUF", "Stream",
     };
     return values;
 }
@@ -152,13 +163,17 @@ const std::unordered_set<std::string> & capabilities_for_task(const std::string 
                  "multi_speaker", "long_form", "built_in_voices"}},
         {"clone", {"speaker_reference", "emotion_control", "style_control", "multi_speaker", "long_form"}},
         {"vc", {"speaker_reference", "singing"}},
-        {"s2s", {"speaker_reference"}},
+        {"s2s", {"speaker_reference", "audio_enhancement"}},
         {"svc", {"speaker_reference", "singing"}},
         {"align", {"word_timestamps"}},
         {"vad", {"speech_segments", "chunk_planning"}},
+        {"wake_word", {"speech_segments", "stream_events"}},
+        {"classify", {"scores"}},
+        {"turn", {"turn_decision"}},
         {"diar", {"speaker_turns"}},
         {"sep", {"stems"}},
-        {"music", {"lyrics", "instrumental", "continuation"}},
+        {"midi", {"note_events", "midi_artifact"}},
+        {"music", {"lyrics", "instrumental", "continuation", "style_control"}},
         {"sfx", {"prompt_generation"}},
         {"edit", {"prompt_editing", "inpaint"}},
         {"design", {"voice_design"}},
@@ -246,6 +261,9 @@ void validate_option(
     }
     const auto type = require_spec_string(require_spec_field(value, "type", path), std::string(path) + ".type");
     validate_enum(type, option_types(), std::string(path) + ".type", "option type");
+    if (scope == "session" && name == "exec_plan" && type != "string") {
+        fail(std::string(path) + ".type", "exec_plan must be a JSON object encoded as a string");
+    }
     if (const auto it = shared_option_contracts().find(name); it != shared_option_contracts().end()) {
         if (it->second.find(type) == it->second.end()) {
             fail(std::string(path) + ".type", "shared option '" + name + "' must use its registered type");
@@ -341,6 +359,39 @@ void validate_option(
     (void) require_spec_string(require_spec_field(value, "description", path), std::string(path) + ".description");
 }
 
+struct DeclaredOptions {
+    // Local option names keyed by scope (dependencies[].option looks here).
+    std::unordered_map<std::string, std::unordered_set<std::string>> local_by_scope;
+    // Public option keys keyed by scope (required_when.option_key looks here).
+    std::unordered_map<std::string, std::unordered_set<std::string>> public_by_scope;
+};
+
+DeclaredOptions collect_declared_options(const json::Value & value, const std::string & family, std::string_view path) {
+    DeclaredOptions declared;
+    require_spec_object(value, path);
+    for (const std::string scope : {"request", "session", "load"}) {
+        const auto child_path = std::string(path) + "." + scope;
+        const auto & rows = require_spec_array(require_spec_field(value, scope, path), child_path);
+        auto & locals = declared.local_by_scope[scope];
+        auto & publics = declared.public_by_scope[scope];
+        for (size_t index = 0; index < rows.size(); ++index) {
+            const auto & row = rows[index];
+            require_spec_object(row, child_path + "[" + std::to_string(index) + "]");
+            const auto name = require_spec_string(
+                require_spec_field(row, "name", child_path + "[" + std::to_string(index) + "]"),
+                child_path + "[" + std::to_string(index) + "].name");
+            if (scope == "request") {
+                locals.insert(name);
+                publics.insert(name);
+            } else {
+                locals.insert(name);
+                publics.insert(family + "." + name);
+            }
+        }
+    }
+    return declared;
+}
+
 void validate_options(const json::Value & value, const std::string & family, std::string_view path) {
     require_spec_object(value, path);
     for (const std::string scope : {"request", "session", "load"}) {
@@ -374,7 +425,7 @@ void validate_runtime(const json::Value & value, std::string_view path) {
     validate_string_array(require_spec_field(value, "tags", path), &runtime_tags(), std::string(path) + ".tags", "runtime tag");
 }
 
-void validate_hf_snapshot_download(const json::Value & value, std::string_view path) {
+void validate_snapshot_download(const json::Value & value, std::string_view path) {
     require_spec_object(value, path);
     (void) require_spec_string(require_spec_field(value, "repo", path), std::string(path) + ".repo");
     if (const auto * revision = value.find("revision")) {
@@ -397,8 +448,8 @@ void validate_download(const json::Value & value, std::string_view path) {
     require_spec_object(value, path);
     const auto kind = require_spec_string(require_spec_field(value, "kind", path), std::string(path) + ".kind");
     validate_enum(kind, download_kinds(), std::string(path) + ".kind", "download kind");
-    if (kind == "huggingface_snapshot") {
-        validate_hf_snapshot_download(value, path);
+    if (kind == "huggingface_snapshot" || kind == "modelscope_snapshot") {
+        validate_snapshot_download(value, path);
     } else if (kind == "local_snapshot") {
         (void) require_spec_string(require_spec_field(value, "path", path), std::string(path) + ".path");
         if (const auto * array = value.find("include")) {
@@ -451,7 +502,7 @@ void validate_layout(const json::Value & value, std::string_view path) {
         }
         (void) require_spec_string(root_value, std::string(path) + ".roots." + root_id);
     }
-    for (const std::string map_name : {"files", "optional_files", "tensors"}) {
+    for (const std::string map_name : {"files", "optional_files", "tensors", "optional_tensors"}) {
         const auto * map_value = value.find(map_name);
         if (map_value == nullptr) {
             continue;
@@ -512,10 +563,14 @@ ValidatedPackage validate_package(const json::Value & value, std::string_view pa
 std::unordered_set<std::string> validate_packages(
     const json::Value & value,
     std::string_view path,
-    bool has_default_download) {
+    bool has_default_download,
+    bool allow_empty) {
     const auto & packages = require_spec_array(value, path);
     if (packages.empty()) {
-        fail(path, "packages must not be empty");
+        if (allow_empty) {
+            return {};
+        }
+        fail(path, "packages must not be empty unless status is experimental");
     }
     bool has_default = false;
     std::unordered_set<std::string> package_ids;
@@ -538,7 +593,11 @@ std::unordered_set<std::string> validate_packages(
     return package_ids;
 }
 
-void validate_dependencies(const json::Value & value, const std::string & family, std::string_view path) {
+void validate_dependencies(
+    const json::Value & value,
+    const std::string & family,
+    const DeclaredOptions & declared,
+    std::string_view path) {
     const auto & dependencies = require_spec_array(value, path);
     for (size_t index = 0; index < dependencies.size(); ++index) {
         const auto item_path = std::string(path) + "[" + std::to_string(index) + "]";
@@ -554,6 +613,11 @@ void validate_dependencies(const json::Value & value, const std::string & family
             fail(item_path + ".option", "dependency option must be local; the public key is derived as " + family + ".<option>");
         }
         validate_request_option_name(family + "." + option, family, item_path + ".option");
+        const auto local_it = declared.local_by_scope.find(scope);
+        if (local_it == declared.local_by_scope.end() || local_it->second.find(option) == local_it->second.end()) {
+            fail(item_path + ".option",
+                 "dependency option '" + option + "' is not declared in options." + scope);
+        }
         const auto required = require_spec_bool(require_spec_field(dependency, "required", item_path), item_path + ".required");
         if (dependency.find("required_for") != nullptr) {
             fail(item_path + ".required_for", "use typed required_when conditions");
@@ -582,6 +646,13 @@ void validate_dependencies(const json::Value & value, const std::string & family
                     require_spec_field(condition, "option_key", condition_path),
                     condition_path + ".option_key");
                 validate_request_option_name(option_key, family, condition_path + ".option_key");
+                const auto public_it = declared.public_by_scope.find(condition_scope);
+                if (public_it == declared.public_by_scope.end() ||
+                    public_it->second.find(option_key) == public_it->second.end()) {
+                    fail(condition_path + ".option_key",
+                         "required_when option_key '" + option_key +
+                             "' is not declared in options." + condition_scope);
+                }
                 const auto & equals = require_spec_field(condition, "equals", condition_path);
                 if (!equals.is_bool() && !equals.is_number() && !equals.is_string()) {
                     fail(condition_path + ".equals", "expected bool, number, or string");
@@ -601,10 +672,14 @@ void validate_dependencies(const json::Value & value, const std::string & family
 
 void validate_ui(const json::Value & value, const std::unordered_set<std::string> & package_ids, std::string_view path) {
     require_spec_object(value, path);
-    const auto recommended = require_spec_string(require_spec_field(value, "recommended_package", path),
-                                            std::string(path) + ".recommended_package");
-    if (package_ids.find(recommended) == package_ids.end()) {
-        fail(std::string(path) + ".recommended_package", "unknown package '" + recommended + "'");
+    if (const auto * recommended_value = value.find("recommended_package")) {
+        const auto recommended = require_spec_string(
+            *recommended_value, std::string(path) + ".recommended_package");
+        if (package_ids.find(recommended) == package_ids.end()) {
+            fail(std::string(path) + ".recommended_package", "unknown package '" + recommended + "'");
+        }
+    } else if (!package_ids.empty()) {
+        fail(std::string(path) + ".recommended_package", "missing required field");
     }
     if (const auto * min_vram = value.find("min_vram_gb")) {
         require_spec_number(*min_vram, std::string(path) + ".min_vram_gb");
@@ -625,8 +700,9 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
     (void) require_spec_string(require_spec_field(spec, "display_name", source_name), std::string(source_name) + ".display_name");
     validate_enum(require_spec_string(require_spec_field(spec, "category", source_name), std::string(source_name) + ".category"),
                   categories(), std::string(source_name) + ".category", "category");
-    validate_enum(require_spec_string(require_spec_field(spec, "status", source_name), std::string(source_name) + ".status"),
-                  statuses(), std::string(source_name) + ".status", "status");
+    const auto status = require_spec_string(
+        require_spec_field(spec, "status", source_name), std::string(source_name) + ".status");
+    validate_enum(status, statuses(), std::string(source_name) + ".status", "status");
     const auto task_ids = validate_nonempty_string_set(
         require_spec_field(spec, "tasks", source_name), &tasks(), std::string(source_name) + ".tasks", "task");
     validate_nonempty_string_set(
@@ -635,7 +711,10 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
         require_spec_field(spec, "languages", source_name), nullptr, std::string(source_name) + ".languages", "language");
     validate_runtime(require_spec_field(spec, "runtime", source_name), std::string(source_name) + ".runtime");
     validate_capabilities(require_spec_field(spec, "capabilities", source_name), task_ids, std::string(source_name) + ".capabilities");
-    validate_options(require_spec_field(spec, "options", source_name), family, std::string(source_name) + ".options");
+    const auto & options_field = require_spec_field(spec, "options", source_name);
+    validate_options(options_field, family, std::string(source_name) + ".options");
+    const auto declared_options =
+        collect_declared_options(options_field, family, std::string(source_name) + ".options");
 
     const bool has_default_download =
         has_spec_field(spec, "package_defaults") && has_spec_field(*spec.find("package_defaults"), "download");
@@ -645,8 +724,13 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
 
     const auto packages_path = std::string(source_name) + ".packages";
     const auto & packages_field = require_spec_field(spec, "packages", source_name);
-    const auto package_ids = validate_packages(packages_field, packages_path, has_default_download);
-    validate_dependencies(require_spec_field(spec, "dependencies", source_name), family, std::string(source_name) + ".dependencies");
+    const auto package_ids = validate_packages(
+        packages_field, packages_path, has_default_download, status == "experimental");
+    validate_dependencies(
+        require_spec_field(spec, "dependencies", source_name),
+        family,
+        declared_options,
+        std::string(source_name) + ".dependencies");
     validate_ui(require_spec_field(spec, "ui", source_name), package_ids, std::string(source_name) + ".ui");
 
     const auto sources_path = std::string(source_name) + ".sources";

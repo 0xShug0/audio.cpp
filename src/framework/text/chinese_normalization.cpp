@@ -120,9 +120,12 @@ std::string correct_index_tts_pinyin(std::string value) {
                        static_cast<unsigned char>(value[2]) == 0xBCU) {
                 value.replace(1, 2, "v");
             }
+            // The official correct_pinyin only uppercases the j/q/x ü->v cases;
+            // other pinyin keeps its original casing.
+            return uppercase_ascii_and_v(std::move(value));
         }
     }
-    return uppercase_ascii_and_v(std::move(value));
+    return value;
 }
 
 bool is_index_tts_pinyin_candidate(const std::string & candidate) {
@@ -168,7 +171,10 @@ std::vector<std::pair<std::string, std::string>> save_regex_matches(
 
     std::vector<std::pair<std::string, std::string>> saved;
     for (size_t i = 0; i < matches.size(); ++i) {
-        const std::string placeholder = "<" + std::string(placeholder_prefix) + "_" + std::to_string(i) + ">";
+        // Letter suffix like the official TextNormalizer: a digit suffix would be
+        // rewritten by the number normalizer and the placeholder would leak.
+        const std::string placeholder =
+            "<" + std::string(placeholder_prefix) + "_" + static_cast<char>('a' + i % 26) + ">";
         text = replace_all(std::move(text), matches[i], placeholder);
         saved.emplace_back(placeholder, matches[i]);
     }
@@ -209,7 +215,9 @@ std::vector<std::pair<std::string, std::string>> save_pinyin_tones(std::string &
 
     std::vector<std::pair<std::string, std::string>> saved;
     for (size_t i = 0; i < matches.size(); ++i) {
-        const std::string placeholder = "<pinyin_" + std::to_string(i) + ">";
+        // Letter suffix like the official TextNormalizer: a digit suffix would be
+        // rewritten by the number normalizer and the placeholder would leak.
+        const std::string placeholder = "<pinyin_" + std::string(1, static_cast<char>('a' + i % 26)) + ">";
         text = replace_all(std::move(text), matches[i], placeholder);
         saved.emplace_back(placeholder, correct_index_tts_pinyin(matches[i]));
     }
@@ -223,9 +231,35 @@ void restore_saved(std::string & text, const std::vector<std::pair<std::string, 
 }
 
 std::string normalize_chinese_numbers(const std::string & text) {
+    // Measure words after which a standalone "2" reads as 两 (wetext zh
+    // cardinal rule): 两个, 两位, 两只, ...
+    static const char * const kMeasureWords[] = {
+        "个", "位", "只", "条", "张", "本", "件", "次", "台", "辆", "块", "颗",
+        "杯", "瓶", "碗", "套", "把", "支", "根", "座", "间", "群", "双", "对",
+        "种", "类", "项", "层", "栋", "扇", "面", "盏", "袋", "箱", "包", "桶",
+    };
     std::string out;
     out.reserve(text.size());
     for (size_t i = 0; i < text.size();) {
+        // "$50" -> "五十美元" (wetext zh currency rule); consumes the "$".
+        if (text[i] == '$' && i + 1 < text.size() && is_ascii_digit(text[i + 1])) {
+            size_t begin = ++i;
+            while (i < text.size() && is_ascii_digit(text[i])) {
+                ++i;
+            }
+            out += chinese_cardinal_from_digits(text.substr(begin, i - begin));
+            if (i < text.size() && text[i] == '.' && i + 1 < text.size() && is_ascii_digit(text[i + 1])) {
+                size_t decimal_end = i + 1;
+                while (decimal_end < text.size() && is_ascii_digit(text[decimal_end])) {
+                    ++decimal_end;
+                }
+                out += "点";
+                out += chinese_digits_individually(text.substr(i + 1, decimal_end - i - 1));
+                i = decimal_end;
+            }
+            out += "美元";
+            continue;
+        }
         if (!is_ascii_digit(text[i])) {
             out.push_back(text[i++]);
             continue;
@@ -236,6 +270,12 @@ std::string normalize_chinese_numbers(const std::string & text) {
             ++i;
         }
         const std::string digits = text.substr(begin, i - begin);
+        // "100km/h" -> "每小时一百公里" (wetext zh measure rule).
+        if (starts_with_at(text, i, "km/h")) {
+            out += "每小时" + chinese_cardinal_from_digits(digits) + "公里";
+            i += 4;
+            continue;
+        }
         if (i < text.size() && text[i] == '.' && i + 1 < text.size() && is_ascii_digit(text[i + 1])) {
             size_t decimal_end = i + 1;
             while (decimal_end < text.size() && is_ascii_digit(text[decimal_end])) {
@@ -249,6 +289,9 @@ std::string normalize_chinese_numbers(const std::string & text) {
         }
         if (digits.size() == 4 && starts_with_at(text, i, "年")) {
             out += chinese_digits_individually(digits);
+        } else if (digits == "2" && std::any_of(std::begin(kMeasureWords), std::end(kMeasureWords),
+                                                [&](const char * word) { return starts_with_at(text, i, word); })) {
+            out += "两";
         } else {
             out += chinese_cardinal_from_digits(digits);
         }

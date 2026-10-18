@@ -4,7 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -388,6 +388,10 @@ public:
         }
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, encoder_steps);
         mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, encoder_steps, encoder_steps, 1, 1);
+        // These constants are uploaded once. Keep their storage intact when the
+        // graph allocator reuses intermediate buffers across transcriptions.
+        ggml_set_output(positions_);
+        ggml_set_output(mask_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({encoder_steps}), GGML_TYPE_I32);
         auto mask = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, encoder_steps, encoder_steps}), GGML_TYPE_F16);
         for (const auto & layer : weights_->layers) {
@@ -420,7 +424,7 @@ public:
             !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
             throw std::runtime_error("failed to allocate VoxTral audio encoder graph");
         }
-        const auto positions_values = modules::qwen_position_ids(encoder_steps);
+        const auto positions_values = modules::decoder_position_ids(encoder_steps);
         ggml_backend_tensor_set(positions_, positions_values.data(), 0, positions_values.size() * sizeof(int32_t));
         auto mask_values = make_causal_sliding_mask(encoder_steps, config.audio.sliding_window);
         ggml_backend_tensor_set(mask_, mask_values.data(), 0, mask_values.size() * sizeof(ggml_fp16_t));

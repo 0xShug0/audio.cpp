@@ -13,7 +13,7 @@
 
 namespace engine::models::supertonic {
 
-class SupertonicNativeRuntime;
+class SupertonicRuntime;
 
 struct SupertonicGenerationOptions {
     int num_inference_steps = 8;
@@ -59,7 +59,7 @@ private:
     SupertonicTextTokenizer tokenizer_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
     std::size_t style_cache_slots_ = 4;
-    std::unique_ptr<SupertonicNativeRuntime> runtime_;
+    std::unique_ptr<SupertonicRuntime> runtime_;
     std::vector<runtime::TaskRequest> stream_chunk_requests_;
     runtime::AudioBuffer stream_merged_audio_;
     std::size_t stream_chunk_index_ = 0;

@@ -38,10 +38,10 @@ emits 90 raw words and is worse.
 
 | Model | Mode | Input audio duration | TTFT | Wall time | RTF | WER | Errors | Peak VRAM |
 |---|---|---|---:|---:|---:|---:|---:|---:|
+| Higgs Audio STT | Offline | 327.600 s | N/A | 11.169 s | 0.0341 | 3.95% | 36 (S/D/I 22/6/8) | 12519 MiB |
+| Higgs Audio STT | Streaming SSE | 327.600 s | 468.386 ms | 14.457 s | N/A | 3.95% | 36 (S/D/I 22/6/8) | 6945 MiB |
 | Nemotron | Offline | 327.600 s | N/A | 2.173 s | 0.00663454 | 3.18% | 29 (S/D/I 24/5/0) | 8294 MiB |
 | Nemotron | Streaming SSE | 327.600 s | 307.591 ms | 11.623 s | N/A | 3.18% | 29 (S/D/I 24/5/0) | 4382 MiB |
 | Nemotron | Streaming One-shot | 1800.000 s | N/A | 53.660 s | 0.0298111 | 3.45% | 172 (S/D/I 130/33/9) | 4167 MiB |
-| Higgs Audio STT | Offline | 327.600 s | N/A | 11.169 s | 0.0341 | 3.95% | 36 (S/D/I 22/6/8) | 12519 MiB |
-| Higgs Audio STT | Streaming SSE | 327.600 s | 468.386 ms | 14.457 s | N/A | 3.95% | 36 (S/D/I 22/6/8) | 6945 MiB |
 | VibeVoice ASR | Offline | 327.600 s | N/A | 19.235 s | 0.0587143 | 0.66% | 6 (S/D/I 5/0/1) | 25833 MiB |
 | VibeVoice ASR | Offline | 1800.000 s | N/A | 123.720 s | 0.0687333 | 1.51% | 75 (S/D/I 32/30/13) | 31209 MiB |

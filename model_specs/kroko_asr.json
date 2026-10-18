@@ -183,7 +183,7 @@
     ],
     "docs": [
       "docs/asr.md",
-      "docs/community_models/kroko_asr.md",
+      "docs/models/kroko_asr.md",
       "docs/gguf.md"
     ]
   }

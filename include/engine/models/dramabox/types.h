@@ -37,7 +37,7 @@ struct DramaBoxTransformerConfig {
     std::string rope_type = "split";
 };
 
-struct DramaBoxAudioVaeConfig {
+struct DramaBoxAudioVAEConfig {
     int64_t latent_channels = 8;
     int64_t latent_mel_bins = 16;
     int64_t mel_bins = 64;
@@ -92,7 +92,7 @@ struct DramaBoxGemma3Config {
 struct DramaBoxConfig {
     std::string model_type = "dramabox-tts";
     DramaBoxTransformerConfig transformer;
-    DramaBoxAudioVaeConfig audio_vae;
+    DramaBoxAudioVAEConfig audio_vae;
     DramaBoxVocoderConfig vocoder;
     DramaBoxGemma3Config gemma;
     int64_t diffusion_steps = 30;

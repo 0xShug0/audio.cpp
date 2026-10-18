@@ -24,7 +24,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Convert original Demucs .th checkpoints into audio.cpp-friendly safetensors + JSON configs."
     )
-    parser.add_argument("--name", default="htdemucs", help="Reference model or bag name, e.g. htdemucs or htdemucs_ft.")
+    parser.add_argument(
+        "--name",
+        default="htdemucs",
+        help="Reference model or bag name, e.g. htdemucs, htdemucs_ft, or htdemucs_6s.",
+    )
     parser.add_argument("--repo", default="models/htdemucs", help="Directory containing original .th checkpoints.")
     parser.add_argument("--output-dir", default="models/htdemucs", help="Directory to write converted artifacts.")
     return parser.parse_args()

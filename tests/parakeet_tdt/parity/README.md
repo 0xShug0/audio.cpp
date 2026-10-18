@@ -26,7 +26,7 @@ production-graph debug taps are deliberately avoided here):
    per-layer function — see `encoder.h`), invoked once in a small isolated
    graph, fed NeMo's own captured `pre_encode`/`pos_emb` for layer 0 and the
    real layer-0 weights.
-3. `enc_out` — `ParakeetEncoderRuntime::encode(...)`, straight through the
+3. `enc_out` — `ParakeetFastConformerEncoderRuntime::encode(...)`, straight through the
    real, unmodified full-encoder entry point (all 24 layers + positional
    encoding, one large production graph).
 
@@ -84,7 +84,7 @@ The first run downloads the `nvidia/parakeet-tdt-0.6b-v3` NeMo checkpoint
 #    the encoder's relative-position self-attention onto
 #    ggml_flash_attn_ext_with_bias_mask instead of the default explicit
 #    QK^T + soft_max_ext path — see the Performance section in
-#    docs/community_models/parakeet_tdt.md for measured numbers (and why it's
+#    docs/models/parakeet_tdt.md for measured numbers (and why it's
 #    not the default despite being numerically validated: it measured
 #    slower, not faster, on the hardware tested).
 build/<preset>/bin/parakeet_parity_dump \

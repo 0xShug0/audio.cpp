@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "family": "sidon",
+  "display_name": "Sidon v0.1",
+  "description": "Single-speaker speech restoration with 48 kHz output.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "s2s"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "s2s": [
+      "audio_enhancement"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "sidon_f32",
+      "display_name": "Sidon v0.1 F32 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "Sidon-GGUF",
+      "files": [
+        "Sidon-GGUF/sidon-v0.1-f32.gguf"
+      ],
+      "strip_prefix": "Sidon-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "sidon_f32",
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/sidon.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {},
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}

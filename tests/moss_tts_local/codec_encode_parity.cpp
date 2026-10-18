@@ -8,7 +8,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/moss/shared/audio_tokenizer_encoder.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 
 #include <cstdint>
 #include <exception>
@@ -16,6 +16,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -115,12 +116,25 @@ int main(int argc, char ** argv) {
         engine::core::ExecutionContext execution_context(backend_config);
 
         std::cout << "loading codec encoder weights...\n" << std::flush;
-        engine::models::moss::MossAudioTokenizerEncoder encoder(
-            codec_dir, execution_context, num_quantizers, kWeightContextBytes, kGraphArenaBytes);
+        auto codec_weights = engine::assets::open_tensor_source(codec_dir);
+        engine::codecs::MossAudioTokenizerCodecRuntime encoder(
+            codec_weights,
+            execution_context,
+            num_quantizers,
+            engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
+                kWeightContextBytes,
+                kGraphArenaBytes,
+                kGraphArenaBytes,
+                false,
+            });
 
         std::cout << "encoding...\n" << std::flush;
-        const auto codes = encoder.encode(stereo);
-        const int64_t frames = codes.empty() ? 0 : static_cast<int64_t>(codes.front().size());
+        const auto encoded = encoder.encode(engine::codecs::MossAudioTokenizerAudio{
+            48000,
+            std::move(stereo),
+        });
+        const auto & codes = encoded.codebooks;
+        const int64_t frames = encoded.frames;
         std::cout << "produced codes [" << codes.size() << "," << frames << "]\n";
 
         const auto ref = read_codes_csv(ref_codes_path);

@@ -2,6 +2,7 @@
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/kaldi_fbank.h"
 
 #include <algorithm>
 #include <cmath>
@@ -28,22 +29,6 @@ int64_t reflect_index(int64_t index, int64_t size) {
         index = index < 0 ? -index - 1 : 2 * size - 1 - index;
     }
     return index;
-}
-
-const std::vector<float> & povey_window() {
-    static const std::vector<float> value = [] {
-        constexpr float kPi = 3.14159265358979323846F;
-        std::vector<float> result(static_cast<size_t>(kWindow), 0.0F);
-        for (int64_t index = 0; index < kWindow; ++index) {
-            const float hann =
-                0.5F - 0.5F * std::cos(
-                    2.0F * kPi * static_cast<float>(index) /
-                    static_cast<float>(kWindow - 1));
-            result[static_cast<size_t>(index)] = std::pow(hann, 0.85F);
-        }
-        return result;
-    }();
-    return value;
 }
 
 const std::vector<float> & filterbank() {
@@ -98,7 +83,7 @@ KrokoFbankFeatures compute_kroko_fbank(
         (static_cast<int64_t>(waveform.size()) + kHop / 2) / kHop;
     std::vector<float> framed(
         static_cast<size_t>(frames * kNfft), 0.0F);
-    const auto & window = povey_window();
+    const auto & window = engine::audio::cached_kaldi_povey_window(kWindow);
     const int64_t samples = static_cast<int64_t>(waveform.size());
     for (int64_t frame = 0; frame < frames; ++frame) {
         const int64_t start = frame * kHop + kHop / 2 - kWindow / 2;

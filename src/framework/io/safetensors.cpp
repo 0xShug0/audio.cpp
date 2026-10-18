@@ -92,10 +92,18 @@ void expect_char(const std::string & text, size_t & pos, char expected) {
     ++pos;
 }
 
-void skip_json_value(const std::string & text, size_t & pos) {
+// Same nesting limit as serde_json, which the reference safetensors loader
+// uses to parse the header. Without a limit, a deeply nested value recurses
+// until the native stack is exhausted.
+constexpr size_t kMaxSkippedJsonDepth = 128;
+
+void skip_json_value(const std::string & text, size_t & pos, size_t depth = 0) {
     skip_ws(text, pos);
     if (pos >= text.size()) {
         throw std::runtime_error("unexpected end of json while skipping value");
+    }
+    if (depth >= kMaxSkippedJsonDepth) {
+        throw std::runtime_error("json value nested too deeply while skipping value");
     }
     const char ch = text[pos];
     if (ch == '"') {
@@ -112,7 +120,7 @@ void skip_json_value(const std::string & text, size_t & pos) {
             }
             (void)parse_string(text, pos);
             expect_char(text, pos, ':');
-            skip_json_value(text, pos);
+            skip_json_value(text, pos, depth + 1);
             skip_ws(text, pos);
             if (pos < text.size() && text[pos] == ',') {
                 ++pos;
@@ -133,7 +141,7 @@ void skip_json_value(const std::string & text, size_t & pos) {
                 ++pos;
                 return;
             }
-            skip_json_value(text, pos);
+            skip_json_value(text, pos, depth + 1);
             skip_ws(text, pos);
             if (pos < text.size() && text[pos] == ',') {
                 ++pos;
@@ -374,9 +382,12 @@ SafeTensorIndex load_safetensors_index(const std::filesystem::path & path) {
     return index;
 }
 
-void write_safetensors_file(
-    const std::filesystem::path & path,
-    const std::vector<SafeTensorWriteEntry> & entries) {
+namespace {
+
+// Validates the entries and returns the header JSON padded to 8 bytes.
+std::string safetensors_header(
+    const std::vector<SafeTensorWriteEntry> & entries,
+    const std::vector<std::pair<std::string, std::string>> & metadata) {
     if (entries.empty()) {
         throw std::runtime_error("safetensors writer requires at least one tensor");
     }
@@ -403,6 +414,17 @@ void write_safetensors_file(
 
     std::ostringstream header_stream;
     header_stream << "{";
+    if (!metadata.empty()) {
+        header_stream << "\"__metadata__\":{";
+        for (size_t i = 0; i < metadata.size(); ++i) {
+            if (i != 0) {
+                header_stream << ",";
+            }
+            header_stream << "\"" << escape_json_string(metadata[i].first) << "\":\""
+                          << escape_json_string(metadata[i].second) << "\"";
+        }
+        header_stream << "},";
+    }
     for (size_t i = 0; i < entries.size(); ++i) {
         if (i != 0) {
             header_stream << ",";
@@ -417,7 +439,35 @@ void write_safetensors_file(
 
     std::string header = header_stream.str();
     header.append((8 - (header.size() % 8)) % 8, ' ');
+    return header;
+}
 
+}  // namespace
+
+std::vector<unsigned char> encode_safetensors(
+    const std::vector<SafeTensorWriteEntry> & entries,
+    const std::vector<std::pair<std::string, std::string>> & metadata) {
+    const std::string header = safetensors_header(entries, metadata);
+    size_t total = 8 + header.size();
+    for (const auto & entry : entries) {
+        total += entry.data.size();
+    }
+    std::vector<unsigned char> out;
+    out.reserve(total);
+    for (int i = 0; i < 8; ++i) {
+        out.push_back(static_cast<unsigned char>((static_cast<uint64_t>(header.size()) >> (8 * i)) & 0xffu));
+    }
+    out.insert(out.end(), header.begin(), header.end());
+    for (const auto & entry : entries) {
+        out.insert(out.end(), entry.data.begin(), entry.data.end());
+    }
+    return out;
+}
+
+void write_safetensors_file(
+    const std::filesystem::path & path,
+    const std::vector<SafeTensorWriteEntry> & entries) {
+    const std::string header = safetensors_header(entries, {});
     const auto parent = path.parent_path();
     if (!parent.empty()) {
         std::filesystem::create_directories(parent);

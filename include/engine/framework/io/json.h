@@ -68,6 +68,8 @@ private:
     std::unique_ptr<Object> object_value_;
 };
 
+// Startup-only opt-in. Call before starting concurrent parser users; no toggle back.
+void enable_serialized_json_parsing();
 Value parse(std::string_view text);
 Value parse_jsonc(std::string_view text);
 Value parse_file(const std::filesystem::path & path);

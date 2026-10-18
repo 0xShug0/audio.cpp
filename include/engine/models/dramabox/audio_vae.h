@@ -18,42 +18,42 @@ class ExecutionContext;
 
 namespace engine::models::dramabox {
 
-struct DramaBoxVaeResnetBlockWeights {
+struct DramaBoxVAEResnetBlockWeights {
     modules::PixelNormCausalConv2dResBlockConfig config;
     modules::PixelNormCausalConv2dResBlockWeights block;
 };
 
-struct DramaBoxVaeUpStageWeights {
-    std::vector<DramaBoxVaeResnetBlockWeights> blocks;
+struct DramaBoxVAEUpStageWeights {
+    std::vector<DramaBoxVAEResnetBlockWeights> blocks;
     std::optional<modules::Conv2dWeights> upsample;
     int64_t channels = 0;
 };
 
-struct DramaBoxAudioVaeDecoderWeights {
+struct DramaBoxAudioVAEDecoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     std::vector<float> latent_mean;
     std::vector<float> latent_std;
     modules::Conv2dWeights conv_in;
-    DramaBoxVaeResnetBlockWeights mid_block_1;
-    DramaBoxVaeResnetBlockWeights mid_block_2;
-    std::vector<DramaBoxVaeUpStageWeights> up;
+    DramaBoxVAEResnetBlockWeights mid_block_1;
+    DramaBoxVAEResnetBlockWeights mid_block_2;
+    std::vector<DramaBoxVAEUpStageWeights> up;
     modules::Conv2dWeights conv_out;
 };
 
-struct DramaBoxVaeDownStageWeights {
-    std::vector<DramaBoxVaeResnetBlockWeights> blocks;
+struct DramaBoxVAEDownStageWeights {
+    std::vector<DramaBoxVAEResnetBlockWeights> blocks;
     std::optional<modules::Conv2dWeights> downsample;
     int64_t channels = 0;
 };
 
-struct DramaBoxAudioVaeEncoderWeights {
+struct DramaBoxAudioVAEEncoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     std::vector<float> latent_mean;
     std::vector<float> latent_std;
     modules::Conv2dWeights conv_in;
-    std::vector<DramaBoxVaeDownStageWeights> down;
-    DramaBoxVaeResnetBlockWeights mid_block_1;
-    DramaBoxVaeResnetBlockWeights mid_block_2;
+    std::vector<DramaBoxVAEDownStageWeights> down;
+    DramaBoxVAEResnetBlockWeights mid_block_1;
+    DramaBoxVAEResnetBlockWeights mid_block_2;
     modules::Conv2dWeights conv_out;
 };
 
@@ -71,14 +71,14 @@ struct DramaBoxEncodedReferenceLatents {
     std::vector<float> values;
 };
 
-DramaBoxAudioVaeDecoderWeights load_dramabox_audio_vae_decoder_weights(
+DramaBoxAudioVAEDecoderWeights load_dramabox_audio_vae_decoder_weights(
     const DramaBoxAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type);
 
-DramaBoxAudioVaeEncoderWeights load_dramabox_audio_vae_encoder_weights(
+DramaBoxAudioVAEEncoderWeights load_dramabox_audio_vae_encoder_weights(
     const DramaBoxAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -92,16 +92,16 @@ std::vector<float> reference_log_mel(
     int threads,
     int64_t & frames_out);
 
-class DramaBoxAudioVaeDecoderRuntime {
+class DramaBoxAudioVAEDecoderRuntime {
 public:
-    DramaBoxAudioVaeDecoderRuntime(
+    DramaBoxAudioVAEDecoderRuntime(
         core::ExecutionContext & execution,
         std::shared_ptr<const DramaBoxAssets> assets,
         assets::TensorStorageType weight_storage_type);
-    ~DramaBoxAudioVaeDecoderRuntime();
+    ~DramaBoxAudioVAEDecoderRuntime();
 
-    DramaBoxAudioVaeDecoderRuntime(const DramaBoxAudioVaeDecoderRuntime &) = delete;
-    DramaBoxAudioVaeDecoderRuntime & operator=(const DramaBoxAudioVaeDecoderRuntime &) = delete;
+    DramaBoxAudioVAEDecoderRuntime(const DramaBoxAudioVAEDecoderRuntime &) = delete;
+    DramaBoxAudioVAEDecoderRuntime & operator=(const DramaBoxAudioVAEDecoderRuntime &) = delete;
 
     void prepare(int64_t batch, int64_t latent_frames) const;
     DramaBoxDecodedMel decode(const std::vector<float> & patch_latents, int64_t batch, int64_t latent_frames) const;
@@ -114,20 +114,20 @@ private:
     core::ExecutionContext * execution_ = nullptr;
     std::shared_ptr<const DramaBoxAssets> assets_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
-    mutable std::unique_ptr<DramaBoxAudioVaeDecoderWeights> weights_;
+    mutable std::unique_ptr<DramaBoxAudioVAEDecoderWeights> weights_;
     mutable std::unique_ptr<Graph> graph_;
 };
 
-class DramaBoxAudioVaeEncoderRuntime {
+class DramaBoxAudioVAEEncoderRuntime {
 public:
-    DramaBoxAudioVaeEncoderRuntime(
+    DramaBoxAudioVAEEncoderRuntime(
         core::ExecutionContext & execution,
         std::shared_ptr<const DramaBoxAssets> assets,
         assets::TensorStorageType weight_storage_type);
-    ~DramaBoxAudioVaeEncoderRuntime();
+    ~DramaBoxAudioVAEEncoderRuntime();
 
-    DramaBoxAudioVaeEncoderRuntime(const DramaBoxAudioVaeEncoderRuntime &) = delete;
-    DramaBoxAudioVaeEncoderRuntime & operator=(const DramaBoxAudioVaeEncoderRuntime &) = delete;
+    DramaBoxAudioVAEEncoderRuntime(const DramaBoxAudioVAEEncoderRuntime &) = delete;
+    DramaBoxAudioVAEEncoderRuntime & operator=(const DramaBoxAudioVAEEncoderRuntime &) = delete;
 
     void prepare(int64_t batch, int64_t mel_frames) const;
     DramaBoxEncodedReferenceLatents encode(const std::vector<float> & mel, int64_t batch, int64_t mel_frames) const;
@@ -139,7 +139,7 @@ private:
     core::ExecutionContext * execution_ = nullptr;
     std::shared_ptr<const DramaBoxAssets> assets_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
-    mutable std::unique_ptr<DramaBoxAudioVaeEncoderWeights> weights_;
+    mutable std::unique_ptr<DramaBoxAudioVAEEncoderWeights> weights_;
     mutable std::unique_ptr<Graph> graph_;
 };
 

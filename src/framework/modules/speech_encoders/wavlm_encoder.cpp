@@ -11,6 +11,7 @@
 #include "engine/framework/modules/structural_modules.h"
 
 #include <ggml.h>
+#include <ggml-alloc.h>
 
 #include <algorithm>
 #include <chrono>
@@ -501,7 +502,7 @@ std::vector<core::TensorValue> build_wavlm_graph_layers(
     }
     int64_t max_output_layer = 0;
     for (const int64_t layer : output_layers) {
-        if (layer <= 0 || layer > config.num_hidden_layers) {
+        if (layer < 0 || layer > config.num_hidden_layers) {
             throw std::runtime_error("WavLM output layer is out of range");
         }
         max_output_layer = std::max(max_output_layer, layer);
@@ -518,7 +519,12 @@ std::vector<core::TensorValue> build_wavlm_graph_layers(
             0,
             1,
             false}).build(ctx, hidden, conv1d_weights(weights, prefix + ".conv", false));
-        if (index == 0) {
+        if (config.conv_feature_layer_norm) {
+            hidden = transpose_bct_btc(ctx, hidden);
+            hidden = LayerNormModule({config.conv_dim[index], config.layer_norm_eps, true, true})
+                         .build(ctx, hidden, norm_weights(weights, prefix + ".layer_norm"));
+            hidden = transpose_bct_btc(ctx, hidden);
+        } else if (index == 0) {
             hidden = masked_group_norm_affine(
                 ctx,
                 hidden,
@@ -545,28 +551,49 @@ std::vector<core::TensorValue> build_wavlm_graph_layers(
         conv1d_weights(weights, "encoder.pos_conv_embed.conv", true),
         config);
     hidden = add_same(ctx, hidden, transpose_bct_btc(ctx, pos));
-    hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
-                 .build(ctx, hidden, norm_weights(weights, "encoder.layer_norm"));
+    if (!config.transformer_layer_norm_first) {
+        hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                     .build(ctx, hidden, norm_weights(weights, "encoder.layer_norm"));
+    }
     hidden = MaskingModule().build(ctx, hidden, token_mask);
 
     std::vector<core::TensorValue> outputs;
     outputs.reserve(output_layers.size());
+    if (std::find(output_layers.begin(), output_layers.end(), 0) != output_layers.end()) {
+        outputs.push_back(hidden);
+    }
     for (int64_t layer = 0; layer < max_output_layer; ++layer) {
         const std::string prefix = "encoder.layers." + std::to_string(layer);
-        auto attn = build_wavlm_self_attention(ctx, hidden, position_bias, attention_mask, weights, layer);
-        hidden = add_same(ctx, hidden, attn);
-        hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
-                     .build(ctx, hidden, norm_weights(weights, prefix + ".self_attn_layer_norm"));
-        hidden = MaskingModule().build(ctx, hidden, token_mask);
-        const auto ff_in = hidden;
-        auto ff = build_feed_forward(ctx, hidden, weights, layer);
-        hidden = add_same(ctx, ff_in, ff);
-        hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
-                     .build(ctx, hidden, norm_weights(weights, prefix + ".final_layer_norm"));
+        if (config.transformer_layer_norm_first) {
+            const auto attn_in = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                                     .build(ctx, hidden, norm_weights(weights, prefix + ".self_attn_layer_norm"));
+            hidden = add_same(ctx, hidden, build_wavlm_self_attention(ctx, attn_in, position_bias, attention_mask, weights, layer));
+            hidden = MaskingModule().build(ctx, hidden, token_mask);
+            const auto ff_in = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                                   .build(ctx, hidden, norm_weights(weights, prefix + ".final_layer_norm"));
+            hidden = add_same(ctx, hidden, build_feed_forward(ctx, ff_in, weights, layer));
+        } else {
+            auto attn = build_wavlm_self_attention(ctx, hidden, position_bias, attention_mask, weights, layer);
+            hidden = add_same(ctx, hidden, attn);
+            hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                         .build(ctx, hidden, norm_weights(weights, prefix + ".self_attn_layer_norm"));
+            hidden = MaskingModule().build(ctx, hidden, token_mask);
+            const auto ff_in = hidden;
+            auto ff = build_feed_forward(ctx, hidden, weights, layer);
+            hidden = add_same(ctx, ff_in, ff);
+            hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                         .build(ctx, hidden, norm_weights(weights, prefix + ".final_layer_norm"));
+        }
         hidden = MaskingModule().build(ctx, hidden, token_mask);
         const int64_t layer_index = layer + 1;
         if (std::find(output_layers.begin(), output_layers.end(), layer_index) != output_layers.end()) {
-            outputs.push_back(hidden);
+            if (config.transformer_layer_norm_first && layer_index == config.num_hidden_layers) {
+                outputs.push_back(
+                    LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                        .build(ctx, hidden, norm_weights(weights, "encoder.layer_norm")));
+            } else {
+                outputs.push_back(hidden);
+            }
         }
     }
     return outputs;
@@ -647,7 +674,25 @@ public:
         }
         auto timing_start = Clock::now();
         std::vector<float> padded_input(static_cast<size_t>(sample_capacity_), 0.0F);
-        std::copy(input_values.begin(), input_values.end(), padded_input.begin());
+        if (weights_->config.normalize_input) {
+            double mean = 0.0;
+            for (const float value : input_values) {
+                mean += static_cast<double>(value);
+            }
+            mean /= static_cast<double>(input_values.size());
+            double variance = 0.0;
+            for (const float value : input_values) {
+                const double centered = static_cast<double>(value) - mean;
+                variance += centered * centered;
+            }
+            variance /= static_cast<double>(input_values.size());
+            const float inv_std = 1.0F / std::sqrt(static_cast<float>(variance) + weights_->config.layer_norm_eps);
+            for (size_t i = 0; i < input_values.size(); ++i) {
+                padded_input[i] = (input_values[i] - static_cast<float>(mean)) * inv_std;
+            }
+        } else {
+            std::copy(input_values.begin(), input_values.end(), padded_input.begin());
+        }
         core::write_tensor_f32(input_, padded_input);
         engine::debug::timing_log_scalar("framework.wavlm.input_upload_ms", engine::debug::elapsed_ms(timing_start));
         timing_start = Clock::now();
@@ -681,9 +726,10 @@ public:
 
 private:
     void release_graph() {
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-            buffer_ = nullptr;
+        if (allocator_ != nullptr) {
+            core::release_backend_graph_resources(weights_->execution_context->backend(), graph_, true);
+            ggml_gallocr_free(allocator_);
+            allocator_ = nullptr;
         }
         if (ggml_ != nullptr) {
             ggml_free(ggml_);
@@ -748,28 +794,35 @@ private:
         input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, samples}));
         ggml_set_input(input_.tensor);
         const int64_t first_conv_frames = wavlm_first_conv_output_frames(samples);
-        first_conv_time_mask_ = core::make_tensor(
-            ctx,
-            GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch, 1, first_conv_frames}));
-        ggml_set_input(first_conv_time_mask_.tensor);
-        first_conv_inv_valid_time_count_ = core::make_tensor(
-            ctx,
-            GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch, 1, 1}));
-        ggml_set_input(first_conv_inv_valid_time_count_.tensor);
+        if (!weights_->config.conv_feature_layer_norm) {
+            first_conv_time_mask_ = core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch, 1, first_conv_frames}));
+            ggml_set_input(first_conv_time_mask_.tensor);
+            first_conv_inv_valid_time_count_ = core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch, 1, 1}));
+            ggml_set_input(first_conv_inv_valid_time_count_.tensor);
+        }
         const int64_t tokens = wavlm_output_frames(samples);
         token_mask_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({batch, tokens}));
         ggml_set_input(token_mask_.tensor);
-        attention_mask_ = core::make_tensor(
-            ctx,
-            GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch, 1, tokens, tokens}));
-        ggml_set_input(attention_mask_.tensor);
-        position_bias_ = core::make_tensor(
-            ctx,
-            GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch, weights_->config.num_attention_heads, tokens, tokens}));
+        if (output_layers.back() > 0) {
+            attention_mask_ = core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch, 1, tokens, tokens}));
+            ggml_set_input(attention_mask_.tensor);
+            position_bias_ = core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch, weights_->config.num_attention_heads, tokens, tokens}));
+            ggml_set_input(position_bias_.tensor);
+            // Uploaded once per graph; keep its storage intact across executions.
+            ggml_set_output(position_bias_.tensor);
+        }
         outputs_ = build_wavlm_graph_layers(
             ctx,
             input_,
@@ -785,15 +838,20 @@ private:
             ggml_set_output(output.tensor);
             ggml_build_forward_expand(graph_, output.tensor);
         }
-        buffer_ = ggml_backend_alloc_ctx_tensors(ggml_, weights_->execution_context->backend());
-        if (buffer_ == nullptr) {
+        allocator_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->execution_context->backend()));
+        if (allocator_ == nullptr || !ggml_gallocr_reserve(allocator_, graph_) ||
+            !ggml_gallocr_alloc_graph(allocator_, graph_)) {
             release_graph();
             throw std::runtime_error("failed to allocate WavLM graph tensors");
         }
+        engine::debug::timing_log_scalar("framework.wavlm.graph.buffer_mb",
+            double(ggml_gallocr_get_buffer_size(allocator_, 0)) / (1024 * 1024));
         const auto position_bias_start = Clock::now();
         bool position_bias_cache_hit = false;
-        const auto position_bias_values = position_bias_values_for_capacity(batch, tokens, position_bias_cache_hit);
-        core::write_tensor_f32(position_bias_, *position_bias_values);
+        if (output_layers.back() > 0) {
+            const auto position_bias_values = position_bias_values_for_capacity(batch, tokens, position_bias_cache_hit);
+            core::write_tensor_f32(position_bias_, *position_bias_values);
+        }
         engine::debug::timing_log_scalar("framework.wavlm.position_bias.cache_hit", position_bias_cache_hit);
         engine::debug::timing_log_scalar("framework.wavlm.position_bias_ms", engine::debug::elapsed_ms(position_bias_start));
         output_layers_ = output_layers;
@@ -809,32 +867,36 @@ private:
     }
 
     void upload_runtime_masks(int64_t actual_samples, int64_t actual_tokens) {
-        const int64_t actual_first_conv_frames = wavlm_first_conv_output_frames(actual_samples);
-        std::vector<float> first_conv_time_mask(static_cast<size_t>(first_conv_frame_capacity_), 0.0F);
-        std::fill(first_conv_time_mask.begin(), first_conv_time_mask.begin() + actual_first_conv_frames, 1.0F);
-        core::write_tensor_f32(first_conv_time_mask_, first_conv_time_mask);
-        const std::vector<float> first_conv_inv_count{
-            1.0F / static_cast<float>(actual_first_conv_frames),
-        };
-        core::write_tensor_f32(first_conv_inv_valid_time_count_, first_conv_inv_count);
+        if (!weights_->config.conv_feature_layer_norm) {
+            const int64_t actual_first_conv_frames = wavlm_first_conv_output_frames(actual_samples);
+            std::vector<float> first_conv_time_mask(static_cast<size_t>(first_conv_frame_capacity_), 0.0F);
+            std::fill(first_conv_time_mask.begin(), first_conv_time_mask.begin() + actual_first_conv_frames, 1.0F);
+            core::write_tensor_f32(first_conv_time_mask_, first_conv_time_mask);
+            const std::vector<float> first_conv_inv_count{
+                1.0F / static_cast<float>(actual_first_conv_frames),
+            };
+            core::write_tensor_f32(first_conv_inv_valid_time_count_, first_conv_inv_count);
+        }
 
         std::vector<int32_t> token_mask(static_cast<size_t>(token_capacity_), 0);
         std::fill(token_mask.begin(), token_mask.begin() + actual_tokens, 1);
         core::write_tensor_i32(token_mask_, token_mask);
 
-        std::vector<float> attention_mask(
-            static_cast<size_t>(batch_ * token_capacity_ * token_capacity_),
-            0.0F);
-        const float neg_inf = -std::numeric_limits<float>::infinity();
-        for (int64_t b = 0; b < batch_; ++b) {
-            for (int64_t q = 0; q < token_capacity_; ++q) {
-                auto * row = attention_mask.data() + static_cast<size_t>((b * token_capacity_ + q) * token_capacity_);
-                for (int64_t k = actual_tokens; k < token_capacity_; ++k) {
-                    row[k] = neg_inf;
+        if (output_layers_.back() > 0) {
+            std::vector<float> attention_mask(
+                static_cast<size_t>(batch_ * token_capacity_ * token_capacity_),
+                0.0F);
+            const float neg_inf = -std::numeric_limits<float>::infinity();
+            for (int64_t b = 0; b < batch_; ++b) {
+                for (int64_t q = 0; q < token_capacity_; ++q) {
+                    auto * row = attention_mask.data() + static_cast<size_t>((b * token_capacity_ + q) * token_capacity_);
+                    for (int64_t k = actual_tokens; k < token_capacity_; ++k) {
+                        row[k] = neg_inf;
+                    }
                 }
             }
+            core::write_tensor_f32(attention_mask_, attention_mask);
         }
-        core::write_tensor_f32(attention_mask_, attention_mask);
     }
 
     int64_t wavlm_first_conv_output_frames(int64_t samples) const {
@@ -861,7 +923,7 @@ private:
     bool reuse_graph_ = true;
     std::mutex mutex_;
     ggml_context * ggml_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t allocator_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     core::TensorValue input_;
     core::TensorValue first_conv_time_mask_;
@@ -912,6 +974,20 @@ WavlmEncoderComponent WavlmEncoderComponent::load_from_tensor_source(
             "feature_extractor.conv_layers." + std::to_string(i) + ".conv.weight",
             "feature_extractor.conv_layers." + std::to_string(i) + ".0.weight",
             {config_ref.conv_dim[static_cast<size_t>(i)], config_ref.conv_dim[static_cast<size_t>(i - 1)], config_ref.conv_kernel[static_cast<size_t>(i)]});
+        if (config_ref.conv_feature_layer_norm) {
+            load_tensor_alias(
+                *weights,
+                source,
+                "feature_extractor.conv_layers." + std::to_string(i) + ".layer_norm.weight",
+                "feature_extractor.conv_layers." + std::to_string(i) + ".2.weight",
+                {config_ref.conv_dim[static_cast<size_t>(i)]});
+            load_tensor_alias(
+                *weights,
+                source,
+                "feature_extractor.conv_layers." + std::to_string(i) + ".layer_norm.bias",
+                "feature_extractor.conv_layers." + std::to_string(i) + ".2.bias",
+                {config_ref.conv_dim[static_cast<size_t>(i)]});
+        }
     }
     load_tensor_alias(*weights, source, "feature_projection.layer_norm.weight", "layer_norm.weight", {config_ref.conv_dim.back()});
     load_tensor_alias(*weights, source, "feature_projection.layer_norm.bias", "layer_norm.bias", {config_ref.conv_dim.back()});

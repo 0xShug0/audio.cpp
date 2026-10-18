@@ -1,0 +1,92 @@
+[TRACE ts=20261003-023156] runtime.model.family yue2
+[TRACE ts=20261003-023156] runtime.model.variant Yue2
+[TRACE ts=20261003-023156] runtime.model.root D:\xiangmu\audio-v0.9.0\models\Yue2-3B-GGUF
+[TRACE ts=20261003-023156] runtime.model.discovered_config_count 4
+[TRACE ts=20261003-023156] runtime.model.discovered_weight_count 3
+[TRACE ts=20261003-023156] runtime.model.task_count 1
+[TRACE ts=20261003-023156] runtime.model.language_count 1
+[TRACE ts=20261003-023156] runtime.model.supports_speaker_reference 0
+[TRACE ts=20261003-023156] runtime.model.supports_style_condition 1
+[TRACE ts=20261003-023156] runtime.model.supports_timestamps 0
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 8187 MiB):
+  Device 0: NVIDIA GeForce RTX 4060 Laptop GPU, compute capability 8.9, VMM: yes, VRAM: 8187 MiB
+load_backend: loaded CUDA backend from D:\xiangmu\audio-v0.9.0\ggml-cuda.dll
+load_backend: loaded CPU backend from D:\xiangmu\audio-v0.9.0\ggml-cpu-alderlake.dll
+[TRACE ts=20261003-023158] yue2.attention.allow_flash 1
+[TRACE ts=20261003-023158] yue2.request seed=12300 cot=full stop_after=audio guidance_scale=1 num_inference_steps=8 context=24576 abc=generated nar_noise=generated semantic_prefix_frames=0
+[TRACE ts=20261003-023158] yue2.sampling.abc temperature=0.7 top_p=0.9 top_k=30 repetition_penalty=1.005 penalty_window=100 min_tokens=32 max_tokens=4096
+[TRACE ts=20261003-023158] yue2.sampling.semantic temperature=1 top_p=0.95 top_k=100 repetition_penalty=1.2 penalty_window=50 min_tokens=200 max_tokens=9000
+[TIMING ts=20261003-023158] yue2.plan_ms 2.2231
+[TIMING ts=20261003-023158] yue2.ar.weights.ctx_reserved_mb 6144
+[TIMING ts=20261003-023158] yue2.ar.weights.ctx_used_mb 0.1084442138671875
+[TIMING ts=20261003-023158] yue2.ar.weights.buffer_mb 1477.96484375
+[TIMING ts=20261003-023158] yue2.ar.weights.buffer_name CUDA0
+[TIMING ts=20261003-023200] yue2.ar.init_ms 1772.4671
+[TIMING ts=20261003-023200] yue2.ar.generation.weights.ctx_reserved_mb 64
+[TIMING ts=20261003-023200] yue2.ar.generation.weights.ctx_used_mb 0.000701904296875
+[TIMING ts=20261003-023200] yue2.ar.generation.weights.buffer_mb 202.9296875
+[TIMING ts=20261003-023200] yue2.ar.generation.weights.buffer_name CUDA0
+[TIMING ts=20261003-023200] yue2.ar.ensure_generation_ms 178.6598
+[TIMING ts=20261003-023200] yue2.ar.generate.prefix_tokens 475
+[TIMING ts=20261003-023201] yue2.ar.decode.graph.build_ms 569.8602
+[TIMING ts=20261003-023201] yue2.ar.decode.graph.ctx_reserved_mb 1536
+[TIMING ts=20261003-023201] yue2.ar.decode.graph.ctx_used_mb 3.052001953125
+[TRACE ts=20261003-023201] yue2.ar.decode.cache_steps 4571
+[TIMING ts=20261003-023201] yue2.ar.prefill.graph.build_ms 110.477
+[TIMING ts=20261003-023201] yue2.ar.prefill.graph.ctx_reserved_mb 4096
+[TIMING ts=20261003-023201] yue2.ar.prefill.graph.ctx_used_mb 3.0130462646484375
+[TRACE ts=20261003-023201] yue2.ar.prefill.steps 475
+[TIMING ts=20261003-023201] yue2.ar.generate.prefill_ms 818.2299
+ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+[TIMING ts=20261003-023221] yue2.ar.generate.sample_ms 586.3433000000001
+[TIMING ts=20261003-023221] yue2.ar.generate.decode_ms 19346.37870000001
+[TIMING ts=20261003-023221] yue2.ar.generate.refill_prefill_ms 0
+[TIMING ts=20261003-023221] yue2.ar.generate.refill_count 0
+[TIMING ts=20261003-023221] yue2.ar.generate.emitted_tokens 2132
+[TIMING ts=20261003-023221] yue2.ar.generate.total_ms 20754.5022
+[TIMING ts=20261003-023221] yue2.semantic.abc_generate_ms 20933.2355
+[TIMING ts=20261003-023221] yue2.semantic.abc_generated_tokens 2132
+[TIMING ts=20261003-023221] yue2.semantic.abc_truncated 0
+[TIMING ts=20261003-023221] yue2.ar.ensure_generation_ms 0.0092
+[TIMING ts=20261003-023221] yue2.ar.generate.prefix_tokens 2609
+[TIMING ts=20261003-023221] yue2.ar.decode.graph.build_ms 441.2809
+[TIMING ts=20261003-023221] yue2.ar.decode.graph.ctx_reserved_mb 1536
+[TIMING ts=20261003-023221] yue2.ar.decode.graph.ctx_used_mb 3.052001953125
+[TRACE ts=20261003-023221] yue2.ar.decode.cache_steps 7729
+[TIMING ts=20261003-023222] yue2.ar.prefill.graph.build_ms 115.0817
+[TIMING ts=20261003-023222] yue2.ar.prefill.graph.ctx_reserved_mb 4096
+[TIMING ts=20261003-023222] yue2.ar.prefill.graph.ctx_used_mb 3.0130462646484375
+[TRACE ts=20261003-023222] yue2.ar.prefill.steps 2609
+[TIMING ts=20261003-023222] yue2.ar.generate.prefill_ms 913.9879
+ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+[TIMING ts=20261003-023318] yue2.ar.decode.graph.build_ms 649.9205
+[TIMING ts=20261003-023318] yue2.ar.decode.graph.ctx_reserved_mb 1536
+[TIMING ts=20261003-023318] yue2.ar.decode.graph.ctx_used_mb 3.052001953125
+[TRACE ts=20261003-023318] yue2.ar.decode.cache_steps 11609
+[TIMING ts=20261003-023318] yue2.ar.prefill.graph.build_ms 167.6936
+[TIMING ts=20261003-023318] yue2.ar.prefill.graph.ctx_reserved_mb 4096
+[TIMING ts=20261003-023318] yue2.ar.prefill.graph.ctx_used_mb 3.0130462646484375
+[TRACE ts=20261003-023318] yue2.ar.prefill.steps 7730
+ggml_backend_cuda_graph_compute: CUDA graph warmup reset
+ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+[TIMING ts=20261003-023321] yue2.ar.generate.sample_ms 617.3898000000003
+[TIMING ts=20261003-023321] yue2.ar.generate.decode_ms 55728.356299999956
+[TIMING ts=20261003-023321] yue2.ar.generate.refill_prefill_ms 2748.1081
+[TIMING ts=20261003-023321] yue2.ar.generate.refill_count 1
+[TIMING ts=20261003-023321] yue2.ar.generate.emitted_tokens 5180
+[TIMING ts=20261003-023321] yue2.ar.generate.total_ms 60011.1487
+[TIMING ts=20261003-023321] yue2.semantic.tokens 5180
+[TIMING ts=20261003-023321] yue2.semantic.truncated 0
+[TIMING ts=20261003-023321] yue2.semantic_ms 82972.3879
+[TIMING ts=20261003-023321] yue2.plan.abc_decode_ms 2.8822
+[TIMING ts=20261003-023321] yue2.nar.weights.ctx_reserved_mb 6144
+[TIMING ts=20261003-023321] yue2.nar.weights.ctx_used_mb 0.111602783203125
+[TIMING ts=20261003-023321] yue2.nar.weights.buffer_mb 861.63720703125
+[TIMING ts=20261003-023321] yue2.nar.weights.buffer_name CUDA0
+[TIMING ts=20261003-023322] yue2.nar.init_ms 909.5426
+[TIMING ts=20261003-023322] yue2.nar.synthesize.codec_tokens 5180
+[TIMING ts=20261003-023322] yue2.nar.synthesize.chunks 1
+[TIMING ts=20261003-023322] yue2.nar.synthesize.context 24576
+D:\a\audio.cpp\audio.cpp\external\ggml\src\ggml.c:1685: GGML_ASSERT(ctx->mem_buffer != NULL) failed
+
+=== EXIT code=3221226505 signal=null ===

@@ -4,18 +4,20 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 
 namespace engine::core {
-
-namespace {
 
 void ensure_backends_loaded() {
     if (ggml_backend_reg_count() == 0) {
         ggml_backend_load_all();
     }
 }
+
+namespace {
 
 // A backend is identified by the name of the ggml registry that owns it. The device type
 // (GPU/IGPU/ACCEL) deliberately plays no part in that: Metal reports GPU rather than ACCEL,
@@ -209,6 +211,19 @@ std::vector<BackendDeviceInfo> list_backend_devices() {
     return devices;
 }
 
+void print_backend_devices(std::ostream & out) {
+    const auto devices = list_backend_devices();
+    out << "available_devices=" << devices.size() << "\n";
+    for (const auto & device : devices) {
+        out << device.backend << ":" << device.index;
+        if (!device.name.empty()) {
+            out << " \"" << device.name << "\"";
+        }
+        out << " [" << device.type << "]\n";
+    }
+    out << "select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n";
+}
+
 ggml_backend_t init_backend(const BackendConfig & config) {
     ensure_backends_loaded();
     switch (config.type) {
@@ -263,6 +278,45 @@ bool is_host_backend(ggml_backend_t backend) {
     return device != nullptr && ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU;
 }
 
+std::vector<ggml_backend_buffer_type_t> cpu_extra_buffer_types(ggml_backend_t backend) {
+    std::vector<ggml_backend_buffer_type_t> out;
+    if (!is_host_backend(backend)) {
+        return out;
+    }
+    // Through the proc address, like the thread count (works with GGML_BACKEND_DL)
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    auto fn = (ggml_backend_dev_get_extra_bufts_t)ggml_backend_reg_get_proc_address(
+        ggml_backend_dev_backend_reg(device), "ggml_backend_dev_get_extra_bufts");
+    if (fn == nullptr) {
+        return out;
+    }
+    for (ggml_backend_buffer_type_t * buffer_type = fn(device); buffer_type != nullptr && *buffer_type != nullptr; ++buffer_type) {
+        out.push_back(*buffer_type);
+    }
+    return out;
+}
+
+bool buffer_type_supports_matmul_weight(
+    ggml_backend_t backend, ggml_backend_buffer_type_t buffer_type, ggml_type type, int64_t ne0, int64_t ne1) {
+    ggml_backend_dev_t device = backend != nullptr ? ggml_backend_get_device(backend) : nullptr;
+    if (device == nullptr || buffer_type == nullptr || ne0 <= 0 || ne1 <= 0 || ne0 % ggml_blck_size(type) != 0) {
+        return false;
+    }
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({4 * ggml_tensor_overhead(), nullptr, true}), ggml_free);
+    if (ctx == nullptr) {
+        throw std::runtime_error("failed to initialize the weight buffer probe context");
+    }
+    ggml_tensor * weight = ggml_new_tensor_2d(ctx.get(), type, ne0, ne1);
+    ggml_tensor * op = ggml_mul_mat(ctx.get(), weight, ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, ne0, 512));
+    // supports_op looks at the buffer type of the weight's buffer, so an
+    // empty buffer of the candidate type stands in for the real one.
+    weight->buffer = ggml_backend_buft_alloc_buffer(buffer_type, 0);
+    const bool supported = ggml_backend_dev_supports_op(device, op);
+    ggml_backend_buffer_free(weight->buffer);
+    weight->buffer = nullptr;
+    return supported;
+}
+
 BackendType backend_type(ggml_backend_t backend) {
     if (is_host_backend(backend)) {
         return BackendType::Cpu;
@@ -305,11 +359,63 @@ static void cuda_clear_graph(ggml_backend_t backend, ggml_cgraph * graph) {
     if (fn != nullptr) fn(backend, graph);
 }
 
-void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph) {
+static void cuda_trim_pools(ggml_backend_t backend) {
+    if (backend == nullptr) return;
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    if (device == nullptr) return;
+    auto fn = (void (*)(ggml_backend_t))
+        ggml_backend_reg_get_proc_address(
+            ggml_backend_dev_backend_reg(device),
+            "ggml_backend_cuda_trim_pools");
+    if (fn != nullptr) fn(backend);
+}
+
+void trim_backend_pools(ggml_backend_t backend) {
+    if (is_cuda_backend_handle(backend) || is_hip_backend_handle(backend)) cuda_trim_pools(backend);
+}
+
+void set_backend_stream_priority(ggml_backend_t backend, int priority) {
+    if (backend == nullptr) return;
+    if (!is_cuda_backend_handle(backend) && !is_hip_backend_handle(backend)) return;
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    if (device == nullptr) return;
+    auto fn = (void (*)(ggml_backend_t, int))
+        ggml_backend_reg_get_proc_address(
+            ggml_backend_dev_backend_reg(device),
+            "ggml_backend_cuda_set_stream_priority");
+    if (fn != nullptr) fn(backend, priority);
+}
+
+void * backend_cuda_stream(ggml_backend_t backend) {
+    if (backend == nullptr) return nullptr;
+    if (!is_cuda_backend_handle(backend) && !is_hip_backend_handle(backend)) return nullptr;
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    if (device == nullptr) {
+        throw std::runtime_error("CUDA backend stream lookup failed: backend has no device");
+    }
+    auto fn = (void * (*)(ggml_backend_t))
+        ggml_backend_reg_get_proc_address(
+            ggml_backend_dev_backend_reg(device),
+            "ggml_backend_cuda_get_stream");
+    if (fn == nullptr) {
+        throw std::runtime_error("CUDA backend stream lookup failed: backend does not export ggml_backend_cuda_get_stream");
+    }
+    return fn(backend);
+}
+
+// evict_cuda_graph_cache defaults to false, preserving historical behavior
+// for existing call sites: before the CUDA backend exported
+// ggml_backend_cuda_clear_graph the lookup resolved nothing, and families
+// that rebuild same-shape graphs between requests inherit a warm CUDA-graph
+// cache from that. Families that prefer bounded memory over the warm
+// carry-over opt in with true.
+void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph, bool evict_cuda_graph_cache) {
+    if (!evict_cuda_graph_cache) return;  // existing callsite/behavior unchanged
     if (is_cuda_backend_handle(backend) || is_hip_backend_handle(backend)) cuda_clear_graph(backend, graph);
 }
 
-void release_backend_graph_resources(BackendType backend_type, ggml_backend_t backend, ggml_cgraph * graph) {
+void release_backend_graph_resources(BackendType backend_type, ggml_backend_t backend, ggml_cgraph * graph, bool evict_cuda_graph_cache) {
+    if (!evict_cuda_graph_cache) return;  // existing callsite/behavior unchanged
     if (backend_type == BackendType::Cuda || backend_type == BackendType::Hip) cuda_clear_graph(backend, graph);
 }
 
@@ -338,6 +444,59 @@ void validate_backend_graph_supported(ggml_backend_t backend, ggml_cgraph * grap
                 "'");
         }
     }
+}
+
+// Whether `tensor` is held in a buffer of one of `buffer_types`.
+static bool held_in(const ggml_tensor * tensor, const std::vector<ggml_backend_buffer_type_t> & buffer_types) {
+    if (tensor == nullptr || tensor->buffer == nullptr) {
+        return false;
+    }
+    const ggml_backend_buffer_type_t buffer_type = ggml_backend_buffer_get_type(tensor->buffer);
+    return std::find(buffer_types.begin(), buffer_types.end(), buffer_type) != buffer_types.end();
+}
+
+static std::string tensor_name_of(const ggml_tensor * tensor) {
+    return tensor->name[0] != '\0' ? tensor->name : "<unnamed>";
+}
+
+void validate_backend_graph_with_cpu_extra_buffers(ggml_backend_t backend, ggml_cgraph * graph, const char * label) {
+    if (backend == nullptr || graph == nullptr) {
+        throw std::runtime_error("Cannot validate backend graph support for null backend or graph");
+    }
+    // A weight in a CPU extra buffer is laid out for that buffer type's own
+    // matmul kernels, which read it whole. The CPU backend accepts views, and
+    // a matmul on a view before the view has a buffer, so a view of such a
+    // weight would read misplaced rows without failing. CPU_REPACK's kernels
+    // also read the input's rows as if each followed the last, whatever its
+    // strides, and its supports_op does not check them. These checks come
+    // before validate_backend_graph_supported, so they name the weight even
+    // where the buffer type's own supports_op (AMX's) turns such a matmul
+    // down.
+    const auto extra_buffer_types = cpu_extra_buffer_types(backend);
+    const int nodes = extra_buffer_types.empty() ? 0 : ggml_graph_n_nodes(graph);
+    for (int i = 0; i < nodes; ++i) {
+        ggml_tensor * node = ggml_graph_node(graph, i);
+        if (node == nullptr) {
+            continue;
+        }
+        const auto misuse = [&](const ggml_tensor * weight, const std::string & what) {
+            throw std::runtime_error(
+                std::string(label != nullptr ? label : "graph") + " " + what + " weight '" + tensor_name_of(weight) + "', held in a " +
+                ggml_backend_buffer_name(weight->buffer) + " buffer, at node " + std::to_string(i) + " tensor '" + tensor_name_of(node) +
+                "'");
+        };
+        // The node itself, or a source that is a view but no node (ggml_view_tensor).
+        for (int src = -1; src < GGML_MAX_SRC; ++src) {
+            const ggml_tensor * tensor = src < 0 ? node : node->src[src];
+            if (tensor != nullptr && held_in(tensor->view_src, extra_buffer_types)) {
+                misuse(tensor->view_src, "views");
+            }
+        }
+        if (node->op == GGML_OP_MUL_MAT && held_in(node->src[0], extra_buffer_types) && !ggml_is_contiguous(node->src[1])) {
+            misuse(node->src[0], "multiplies a non-contiguous input by");
+        }
+    }
+    validate_backend_graph_supported(backend, graph, label);
 }
 
 BackendMemorySnapshot query_backend_memory(ggml_backend_t backend, int device_hint) {
@@ -522,6 +681,54 @@ void write_tensor_bf16(const TensorValue & tensor, const std::vector<float> & va
     write_tensor_bf16(tensor, values.data(), values.size());
 }
 
+void write_tensor_float(const TensorValue & tensor, const float * values, size_t count) {
+    switch (tensor.type) {
+        case GGML_TYPE_F32:
+            write_tensor_f32(tensor, values, count);
+            return;
+        case GGML_TYPE_F16:
+            write_tensor_f16(tensor, values, count);
+            return;
+        case GGML_TYPE_BF16:
+            write_tensor_bf16(tensor, values, count);
+            return;
+        default:
+            throw std::runtime_error("write_tensor_float supports only f32/f16/bf16 tensors");
+    }
+}
+
+void write_tensor_float(const TensorValue & tensor, const std::vector<float> & values) {
+    write_tensor_float(tensor, values.data(), values.size());
+}
+
+void write_tensor_bytes(const TensorValue & tensor, const std::vector<std::byte> & bytes) {
+    if (tensor.tensor == nullptr) {
+        throw std::runtime_error("write_tensor_bytes requires non-null tensor");
+    }
+    const size_t expected = static_cast<size_t>(ggml_nbytes(tensor.tensor));
+    if (bytes.size() != expected) {
+        throw std::runtime_error(
+            "write_tensor_bytes byte count does not match tensor '" +
+            std::string(tensor.tensor->name) +
+            "': expected " + std::to_string(expected) +
+            ", got " + std::to_string(bytes.size()));
+    }
+    ggml_backend_tensor_set(tensor.tensor, bytes.data(), 0, bytes.size());
+}
+
+void round_f32_to_bf16_in_place(float * values, size_t count) {
+    if (count == 0) {
+        return;
+    }
+    std::vector<ggml_bf16_t> bf16_values(count);
+    ggml_fp32_to_bf16_row(values, bf16_values.data(), static_cast<int64_t>(count));
+    ggml_bf16_to_fp32_row(bf16_values.data(), values, static_cast<int64_t>(count));
+}
+
+void round_f32_to_bf16_in_place(std::vector<float> & values) {
+    round_f32_to_bf16_in_place(values.data(), values.size());
+}
+
 void write_tensor_i32(const TensorValue & tensor, const int32_t * values, size_t count) {
     if (tensor.type != GGML_TYPE_I32) {
         throw std::runtime_error("write_tensor_i32 requires GGML_TYPE_I32 tensor");
@@ -605,6 +812,43 @@ std::vector<float> read_tensor_bf16(const ggml_tensor * tensor) {
     std::vector<float> values;
     read_tensor_bf16_into(tensor, values);
     return values;
+}
+
+void read_tensor_float_into(const ggml_tensor * tensor, std::vector<float> & values) {
+    switch (tensor->type) {
+        case GGML_TYPE_F32:
+            read_tensor_f32_into(tensor, values);
+            return;
+        case GGML_TYPE_F16:
+            read_tensor_f16_into(tensor, values);
+            return;
+        case GGML_TYPE_BF16:
+            read_tensor_bf16_into(tensor, values);
+            return;
+        default:
+            throw std::runtime_error("read_tensor_float supports only f32/f16/bf16 tensors");
+    }
+}
+
+std::vector<float> read_tensor_float(const ggml_tensor * tensor) {
+    std::vector<float> values;
+    read_tensor_float_into(tensor, values);
+    return values;
+}
+
+void read_tensor_bytes_into(const ggml_tensor * tensor, std::vector<std::byte> & bytes) {
+    if (tensor == nullptr) {
+        throw std::runtime_error("read_tensor_bytes requires non-null tensor");
+    }
+    const size_t byte_count = static_cast<size_t>(ggml_nbytes(tensor));
+    bytes.resize(byte_count);
+    ggml_backend_tensor_get(tensor, bytes.data(), 0, byte_count);
+}
+
+std::vector<std::byte> read_tensor_bytes(const ggml_tensor * tensor) {
+    std::vector<std::byte> bytes;
+    read_tensor_bytes_into(tensor, bytes);
+    return bytes;
 }
 
 void read_tensor_i32_into(const ggml_tensor * tensor, std::vector<int32_t> & values) {

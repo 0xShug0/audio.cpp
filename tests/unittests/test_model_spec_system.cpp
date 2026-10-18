@@ -1,14 +1,18 @@
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/task_vocabulary.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/model_spec/schema.h"
 #include "engine/framework/io/json.h"
 #include "test_assert.h"
+#include "gguf.h"
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -91,7 +95,46 @@ std::string schema_v1_spec_text(const std::string & dependencies) {
   "languages": ["en"],
   "runtime": {"tags": ["gguf"]},
   "capabilities": {"tts": ["long_form"]},
-  "options": {"request": [], "session": [], "load": []},
+  "options": {
+    "request": [
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "required": false,
+        "default": false,
+        "description": "Return timestamps when supported."
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "values": ["auto", "fixed", "vad", "none"],
+        "required": false,
+        "default": "auto",
+        "description": "Audio chunking mode."
+      },
+      {
+        "name": "vad_path",
+        "type": "path",
+        "required": false,
+        "description": "Optional request-scoped VAD path."
+      }
+    ],
+    "session": [
+      {
+        "name": "peer_model_path",
+        "type": "path",
+        "required": false,
+        "description": "Peer model path."
+      },
+      {
+        "name": "vad_path",
+        "type": "path",
+        "required": false,
+        "description": "Session-scoped VAD path."
+      }
+    ],
+    "load": []
+  },
   "packages": [
     {
       "id": "toy_model_q8",
@@ -186,6 +229,32 @@ void expect_rejects(const std::string & label, const std::string & spec_text, co
         rejected = std::string(error.what()).find(needle) != std::string::npos;
     }
     engine::test::require(rejected, label + " should reject with: " + needle);
+}
+
+std::string spec_with_download(const std::string & download) {
+    auto text = schema_v1_spec_text("[]");
+    const std::string anchor = "\"download\": {\"kind\": \"unsupported\", \"reason\": \"test fixture\"}";
+    const auto at = text.find(anchor);
+    engine::test::require(at != std::string::npos, "download fixture anchor exists");
+    text.replace(at, anchor.size(), "\"download\": " + download);
+    return text;
+}
+
+void test_download_kinds_schema() {
+    // ModelScope snapshot downloads validate like Hugging Face snapshots:
+    // repo is required, revision is optional.
+    engine::model_spec::validate_spec(
+        json::parse(spec_with_download(
+            R"JSON({"kind": "modelscope_snapshot", "repo": "audio-cpp/toy-model"})JSON")),
+        "modelscope_snapshot_repo_only");
+    engine::model_spec::validate_spec(
+        json::parse(spec_with_download(
+            R"JSON({"kind": "modelscope_snapshot", "repo": "audio-cpp/toy-model", "revision": "master"})JSON")),
+        "modelscope_snapshot_with_revision");
+    expect_rejects(
+        "modelscope_snapshot_missing_repo",
+        spec_with_download(R"JSON({"kind": "modelscope_snapshot"})JSON"),
+        "missing required field 'repo'");
 }
 
 void test_legacy_dependencies_schema() {
@@ -343,6 +412,59 @@ void test_legacy_dependencies_schema() {
           }
         ])JSON"),
         "missing required field 'path'");
+    // Dependency options must be declared under options.<scope>.
+    expect_rejects(
+        "undeclared_dependency_option",
+        schema_v1_spec_text(R"JSON([
+          {
+            "kind": "model",
+            "family": "peer_model",
+            "scope": "session",
+            "option": "missing_peer_path",
+            "required": true
+          }
+        ])JSON"),
+        "is not declared in options.session");
+    // required_when option keys must refer to declared options in that scope.
+    expect_rejects(
+        "undeclared_required_when_option",
+        schema_v1_spec_text(R"JSON([
+          {
+            "kind": "model",
+            "family": "peer_model",
+            "scope": "session",
+            "option": "peer_model_path",
+            "required": false,
+            "required_when": [
+              {
+                "scope": "request",
+                "option_key": "unknown_trigger",
+                "equals": true
+              }
+            ]
+          }
+        ])JSON"),
+        "is not declared in options.request");
+    // Session-scoped required_when keys use the public <family>.<name> form.
+    expect_rejects(
+        "required_when_session_local_name",
+        schema_v1_spec_text(R"JSON([
+          {
+            "kind": "model",
+            "family": "peer_model",
+            "scope": "session",
+            "option": "peer_model_path",
+            "required": false,
+            "required_when": [
+              {
+                "scope": "session",
+                "option_key": "peer_model_path",
+                "equals": "/tmp/peer"
+              }
+            ]
+          }
+        ])JSON"),
+        "is not declared in options.session");
 }
 
 void test_typed_schema_renamed_dependencies() {
@@ -363,8 +485,30 @@ void test_typed_schema_renamed_dependencies() {
     "asr": ["word_timestamps"]
   },
   "options": {
-    "request": [],
-    "session": [],
+    "request": [
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "required": false,
+        "default": false,
+        "description": "Return word timestamps."
+      },
+      {
+        "name": "audio_chunk_seconds",
+        "type": "float",
+        "required": false,
+        "default": 15,
+        "description": "Audio chunk duration in seconds."
+      }
+    ],
+    "session": [
+      {
+        "name": "aligner_path",
+        "type": "path",
+        "required": false,
+        "description": "Forced aligner model path."
+      }
+    ],
     "load": []
   },
   "packages": [
@@ -965,13 +1109,81 @@ void test_options_schema() {
         "load option must be local");
 }
 
+void test_component_exec_plan_schema() {
+    const auto options = R"({"request":[],"session":[{
+        "name":"exec_plan","type":"string","description":"Model execution plan.",
+        "required":false,"default":"{}"
+    }],"load":[]})";
+    const auto root = make_temp_root();
+    write_text(root, "toy_model.json", schema_v1_spec_with_options(options));
+    const engine::model_spec::ScopedSpecOverride override(root);
+    const auto cli = engine::model_spec::cli_interface("toy_model");
+    engine::test::require(cli.has_value(), "exec plan spec projects CLI options");
+    engine::test::require_eq(cli->session_options.front().name, std::string("toy_model.exec_plan"),
+                            "exec plan receives exactly one family prefix");
+    const auto contract = engine::model_spec::model_contract("toy_model");
+    engine::test::require(contract && contract->session_option_keys.count("toy_model.exec_plan") == 1,
+                          "exec plan appears in the session contract");
+    expect_rejects("exec_plan_wrong_type", schema_v1_spec_with_options(R"({
+        "request":[],"session":[{"name":"exec_plan","type":"bool","description":"Bad type."}],"load":[]
+    })"), "exec_plan must be a JSON object encoded as a string");
+    expect_rejects("exec_plan_extra_namespace", schema_v1_spec_with_options(R"({
+        "request":[],"session":[{"name":"decoder.exec_plan","type":"string","description":"Bad name."}],"load":[]
+    })"), "session option must be local");
+    std::filesystem::remove_all(root);
+}
+
 void test_option_name_mapping_from_production_spec() {
-    // The production catalog currently points at the legacy source-only specs.
-    const auto omnivoice_cli = engine::model_spec::cli_interface("omnivoice");
-    engine::test::require(!omnivoice_cli.has_value(), "legacy omnivoice spec should not expose CLI metadata");
+    // Reference option tables do not opt legacy loaders into v1 contracts.
+    const auto specs = std::filesystem::path(AUDIOCPP_SOURCE_DIR) / "model_specs";
+    std::vector<std::string> failures;
+    for (const auto & entry : std::filesystem::directory_iterator(specs)) {
+        if (entry.path().extension() != ".json") {
+            continue;
+        }
+        json::Value spec;
+        try {
+            spec = engine::model_spec::load_spec(entry.path());
+            engine::model_spec::validate_spec(spec, entry.path().filename().string());
+        } catch (const std::exception & error) {
+            failures.push_back(error.what());
+            continue;
+        }
+        if (spec.find("schema_version") != nullptr) {
+            continue;
+        }
+        const auto family = entry.path().stem().string();
+        const auto cli = engine::model_spec::cli_interface(family);
+        engine::test::require(!cli.has_value(), "legacy spec should not expose v1 CLI metadata");
+        const auto * options = spec.find("options");
+        if (options == nullptr) {
+            continue;
+        }
+        try {
+            engine::model_spec::validate_spec(
+                json::parse(schema_v1_spec_with_options(json::stringify(*options))), family);
+        } catch (const std::exception & error) {
+            failures.push_back(error.what());
+        }
+    }
+
+    for (const auto & failure : failures) {
+        std::cerr << "  invalid model spec: " << failure << "\n";
+    }
+    engine::test::require(failures.empty(), "all model specs and legacy reference option tables must satisfy the schema");
 
     const auto vibevoice_cli = engine::model_spec::cli_interface("vibevoice");
     engine::test::require(!vibevoice_cli.has_value(), "legacy vibevoice spec should not expose CLI metadata");
+}
+
+void test_echo_text_chunk_size_contract() {
+    const auto specs = std::filesystem::path(AUDIOCPP_SOURCE_DIR) / "model_specs";
+    const engine::model_spec::ScopedSpecOverride spec_override(specs);
+    const auto contract = engine::model_spec::model_contract("echo_tts");
+    engine::test::require(contract.has_value(), "Echo-TTS contract exists");
+    engine::test::require(
+        contract->request_option_keys.count("text_chunk_size") == 1,
+        "Echo-TTS validation must allow its text chunk size consumer");
 }
 
 void test_schema_v1_metadata_projection() {
@@ -1056,6 +1268,96 @@ void test_schema_v1_metadata_projection() {
     std::filesystem::remove_all(root);
 }
 
+void test_contract_projection_ignores_package_metadata_validation() {
+    const auto root = make_temp_root();
+    std::string spec_text = schema_v1_spec_with_options(R"JSON({
+      "request": [
+        {
+          "name": "reference_text",
+          "type": "string",
+          "required": false,
+          "description": "Reference transcript."
+        }
+      ],
+      "session": [],
+      "load": []
+    })JSON");
+    const std::string marker = "\"default\": true";
+    const auto pos = spec_text.find(marker);
+    engine::test::require(pos != std::string::npos, "test fixture package marker");
+    spec_text.replace(pos, marker.size(), "\"default\": true,\n      \"strip_prefix\": \"\"");
+    const auto spec_path = write_text(root, "toy_model.json", spec_text);
+
+    bool full_validation_rejected = false;
+    try {
+        (void) engine::model_spec::load_spec(spec_path);
+    } catch (const std::runtime_error & error) {
+        full_validation_rejected = std::string(error.what()).find("strip_prefix: expected non-empty string") !=
+            std::string::npos;
+    }
+    engine::test::require(
+        full_validation_rejected,
+        "full package/catalog validation should reject empty strip_prefix");
+
+    const engine::model_spec::ScopedSpecOverride spec_override(root);
+    const auto contract = engine::model_spec::model_contract("toy_model");
+    engine::test::require(contract.has_value(), "contract projection should ignore package metadata validation");
+    engine::test::require(contract->metadata.weight_candidates.empty(), "contract metadata should not read packages");
+    engine::test::require(
+        contract->request_option_keys.find("reference_text") != contract->request_option_keys.end(),
+        "contract should include reference_text");
+
+    std::filesystem::remove_all(root);
+}
+
+void test_legacy_spec_contract_behavior_unchanged() {
+    const auto root = make_temp_root();
+    write_text(root, "toy_model.json", legacy_spec_text("[]"));
+
+    const engine::model_spec::ScopedSpecOverride spec_override(root);
+    const auto contract = engine::model_spec::model_contract("toy_model");
+    engine::test::require(!contract.has_value(), "legacy specs should not expose schema v1 contracts");
+
+    std::filesystem::remove_all(root);
+}
+
+void test_experimental_spec_without_installable_package() {
+    const std::string experimental = R"JSON({
+      "schema_version": 1,
+      "family": "local_only_model",
+      "display_name": "Local Only Model",
+      "description": "Requires a local checkpoint conversion.",
+      "category": "tts",
+      "status": "experimental",
+      "tasks": ["tts"],
+      "modes": ["offline"],
+      "languages": ["en"],
+      "runtime": {"tags": ["gguf"]},
+      "capabilities": {},
+      "options": {"request": [], "session": [], "load": []},
+      "packages": [],
+      "dependencies": [],
+      "ui": {"tags": ["TTS"], "docs": ["docs/local.md"]},
+      "sources": [{
+        "format": "safetensors",
+        "roots": {"model": "."},
+        "files": {"config": "model:config.json"},
+        "tensors": {"weights": "model:model.safetensors"}
+      }]
+    })JSON";
+    engine::model_spec::validate_spec(
+        json::parse(experimental), "experimental_local_only");
+
+    auto community = experimental;
+    const auto status = community.find("\"status\": \"experimental\"");
+    engine::test::require(status != std::string::npos, "experimental status fixture");
+    community.replace(status, std::string("\"status\": \"experimental\"").size(),
+                      "\"status\": \"community\"");
+    expect_rejects(
+        "community_requires_package", community,
+        "packages must not be empty unless status is experimental");
+}
+
 void test_contract_spec_prefers_workspace_over_package_local_spec() {
     const auto root = make_temp_root();
     const auto workspace = root / "workspace";
@@ -1087,6 +1389,159 @@ void test_contract_spec_prefers_workspace_over_package_local_spec() {
     std::filesystem::remove_all(root);
 }
 
+void test_contract_spec_priority_with_embedded_gguf() {
+    const auto root = make_temp_root();
+    const auto workspace = root / "workspace";
+    std::filesystem::create_directories(workspace);
+    const auto embedded = schema_v1_spec_with_options(
+        R"JSON({"request": [{"name": "old_option", "type": "string", "required": false, "description": "Existing option."}], "session": [], "load": []})JSON");
+    const auto current = schema_v1_spec_with_options(
+        R"JSON({"request": [{"name": "old_option", "type": "string", "required": false, "description": "Existing option."}, {"name": "new_option", "type": "string", "required": false, "description": "New option."}], "session": [], "load": []})JSON");
+    const auto gguf_path = root / "model.gguf";
+    auto * gguf = gguf_init_empty();
+    engine::test::require(gguf != nullptr, "create embedded-spec fixture");
+    gguf_set_val_u32(gguf, "audiocpp.model_spec.version", 1);
+    gguf_set_val_str(gguf, "audiocpp.model_spec.family", "toy_model");
+    gguf_set_val_str(gguf, "audiocpp.model_spec.json", embedded.c_str());
+    const bool written = gguf_write_to_file(gguf, gguf_path.string().c_str(), true);
+    gguf_free(gguf);
+    engine::test::require(written, "write embedded-spec fixture");
+
+    {
+        ScopedCurrentPath cwd(workspace);
+        const auto external = write_text(workspace, "model_specs/toy_model.json", current);
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope(std::nullopt, gguf_path);
+            engine::test::require_eq(
+                engine::model_spec::default_contract_spec_path("toy_model").string(),
+                std::filesystem::weakly_canonical(external).string(), "external contract wins over embedded");
+            const auto contract = engine::model_spec::model_contract("toy_model");
+            engine::test::require(contract->request_option_keys.count("old_option") == 1,
+                                  "external contract retains existing option");
+            engine::test::require(contract->request_option_keys.count("new_option") == 1,
+                                  "external contract exposes new option");
+            engine::test::require_eq(
+                engine::model_spec::default_package_spec_path("toy_model").generic_string(),
+                std::string("@gguf/toy_model.json"), "package still uses embedded spec");
+        }
+        const auto override_path = write_text(root, "override.json", embedded);
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope("embedded", gguf_path);
+            engine::test::require_eq(
+                engine::model_spec::default_contract_spec_path("toy_model").generic_string(),
+                std::string("@gguf/toy_model.json"), "explicit embedded contract wins over external");
+            const auto contract = engine::model_spec::model_contract("toy_model");
+            engine::test::require(contract->request_option_keys.count("old_option") == 1 &&
+                                  contract->request_option_keys.count("new_option") == 0,
+                                  "explicit embedded selection uses embedded options");
+            engine::test::require_eq(
+                engine::model_spec::default_package_spec_path("toy_model").generic_string(),
+                std::string("@gguf/toy_model.json"), "explicit embedded package selection");
+            bool mismatch_rejected = false;
+            try {
+                (void)engine::model_spec::default_contract_spec_path("different_model");
+            } catch (const std::runtime_error & error) {
+                mismatch_rejected = std::string(error.what()).find("not 'different_model'") != std::string::npos;
+            }
+            engine::test::require(mismatch_rejected, "explicit embedded selection checks family");
+        }
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope(override_path, gguf_path);
+            engine::test::require_eq(
+                engine::model_spec::default_contract_spec_path("toy_model").string(),
+                std::filesystem::weakly_canonical(override_path).string(), "explicit override wins");
+        }
+        write_text(workspace, "model_specs/toy_model.json", "{");
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope("embedded", gguf_path);
+            engine::test::require_eq(
+                engine::model_spec::default_contract_spec_path("toy_model").generic_string(),
+                std::string("@gguf/toy_model.json"), "explicit embedded selection ignores invalid external spec");
+        }
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope(std::nullopt, gguf_path);
+            bool rejected = false;
+            try {
+                (void)engine::model_spec::default_contract_spec_path("toy_model");
+            } catch (const std::exception & error) {
+                rejected = std::string(error.what()).find("invalid candidate model spec") != std::string::npos;
+            }
+            engine::test::require(rejected, "invalid external spec must not silently fall back");
+        }
+        std::filesystem::remove(external);
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope(std::nullopt, gguf_path);
+            engine::test::require_eq(
+                engine::model_spec::default_contract_spec_path("toy_model").generic_string(),
+                std::string("@gguf/toy_model.json"), "standalone embedded contract fallback");
+            const auto contract = engine::model_spec::model_contract("toy_model");
+            engine::test::require(contract->request_option_keys.count("old_option") == 1,
+                                  "embedded fallback retains existing option");
+            engine::test::require(contract->request_option_keys.count("new_option") == 0,
+                                  "embedded fallback uses its own contract");
+        }
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope("embedded", workspace);
+            bool rejected = false;
+            try {
+                (void)engine::model_spec::default_contract_spec_path("kokoro_tts");
+            } catch (const std::runtime_error & error) {
+                rejected = std::string(error.what()).find("requires a GGUF with an embedded model spec") != std::string::npos;
+            }
+            engine::test::require(rejected, "missing embedded spec must not fall back to compiled catalog");
+        }
+        gguf = gguf_init_empty();
+        engine::test::require(gguf != nullptr, "create legacy-spec fixture");
+        gguf_set_val_u32(gguf, "audiocpp.model_spec.version", 1);
+        gguf_set_val_str(gguf, "audiocpp.model_spec.family", "toy_model");
+        gguf_set_val_str(gguf, "audiocpp.model_spec.json", legacy_spec_text("[]").c_str());
+        const bool legacy_written = gguf_write_to_file(gguf, gguf_path.string().c_str(), true);
+        gguf_free(gguf);
+        engine::test::require(legacy_written, "write legacy-spec fixture");
+        {
+            const engine::model_spec::ScopedSpecOverride model_scope("embedded", gguf_path);
+            bool rejected = false;
+            try {
+                (void)engine::model_spec::default_contract_spec_path("toy_model");
+            } catch (const std::runtime_error & error) {
+                rejected = std::string(error.what()).find("requires a schema-v1 embedded contract") != std::string::npos;
+            }
+            engine::test::require(rejected, "explicit embedded legacy contract must fail clearly");
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+void test_unknown_request_option_guidance() {
+    engine::model_spec::ModelContract contract;
+    contract.metadata.family = "kokoro_tts";
+    contract.request_option_keys.insert("speed");
+    engine::runtime::validate_spec_backed_request_options({{"speed", "1.0"}}, contract, "Kokoro TTS");
+    engine::runtime::validate_spec_backed_request_options({}, {{"speed", {"1.0"}}}, contract, "Kokoro TTS");
+
+    const std::string expected =
+        "unknown Kokoro TTS request option: speeed. "
+        "The option may be misspelled or require a newer audio.cpp runtime. "
+        "Supported options: https://github.com/0xShug0/audio.cpp/blob/main/model_specs/kokoro_tts.json. "
+        "Update audio.cpp: https://github.com/0xShug0/audio.cpp/releases";
+    for (const bool list_valued : {false, true}) {
+        bool rejected = false;
+        try {
+            if (list_valued) {
+                engine::runtime::validate_spec_backed_request_options(
+                    {}, {{"speeed", {"1.0"}}}, contract, "Kokoro TTS");
+            } else {
+                engine::runtime::validate_spec_backed_request_options(
+                    {{"speeed", "1.0"}}, contract, "Kokoro TTS");
+            }
+        } catch (const std::runtime_error & error) {
+            engine::test::require_eq(std::string(error.what()), expected, "unknown option guidance");
+            rejected = true;
+        }
+        engine::test::require(rejected, "unknown scalar and list options must still be rejected");
+    }
+}
+
 void test_loading_and_resource_bundle() {
     // Resource bundles resolve required files, tensor source files, and missing optional files.
     const auto root = make_temp_root();
@@ -1112,18 +1567,135 @@ void test_loading_and_resource_bundle() {
     std::filesystem::remove_all(root);
 }
 
+// Every task name is written down once, and the surfaces that read it agree.
+//
+// They did not. The schema allowed "codec", which no parser mapped to a task
+// kind, so model_specs/miocodec.json threw on load; the spec parser accepted
+// "audio_generation", which the schema rejected; include/audiocpp.h documented
+// "diarization" and "alignment", which nothing accepts; and no test read the
+// shipped specs, so none of it surfaced here.
+void test_task_vocabulary_is_consistent() {
+    std::size_t count = 0;
+    const auto * entries = engine::runtime::task_vocabulary(count);
+    engine::test::require(count > 0, "task vocabulary should not be empty");
+
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto & entry = entries[i];
+        const std::string token(entry.token);
+
+        // The canonical token round-trips through the ABI's own parser.
+        engine::test::require(
+            engine::runtime::parse_voice_task_kind(token) == entry.kind,
+            "task token should parse back to its kind: " + token);
+        engine::test::require_eq(
+            std::string(engine::runtime::to_string(entry.kind)),
+            token,
+            "to_string should return the canonical token");
+
+        // Every spec alias maps to that token.
+        engine::test::require(entry.alias_count > 0,
+                              "task kind should have at least one spec name: " + token);
+        for (std::size_t alias = 0; alias < entry.alias_count; ++alias) {
+            const std::string name(entry.aliases[alias]);
+            engine::test::require_eq(
+                std::string(engine::runtime::task_token_for_spec_name(name)),
+                token,
+                "spec name should map to its token: " + name);
+        }
+    }
+
+    // A name that is neither is rejected rather than guessed at.
+    engine::test::require(
+        engine::runtime::task_token_for_spec_name("codec").empty(),
+        "a name that maps to no task kind should report as such");
+    engine::test::require(
+        engine::runtime::task_token_for_spec_name("diarization").empty(),
+        "the header's old example spelling should not silently resolve");
+}
+
+void test_vad_timestamp_capability() {
+    const auto root = make_temp_root();
+    auto spec = json::parse(schema_v1_spec_text("[]")).as_object();
+    spec["category"] = json::Value::make_string("audio_tools");
+    spec["tasks"] = json::parse(R"(["vad"])");
+    for (const bool segments : {false, true}) {
+        spec["capabilities"] = json::parse(segments ? R"({"vad":["speech_segments"]})" : R"({"vad":["chunk_planning"]})");
+        const auto path = write_text(root, "toy_model.json", json::stringify(json::Value::make_object(spec)));
+        (void)engine::model_spec::load_spec(path);
+        const engine::model_spec::ScopedSpecOverride spec_override(root);
+        const auto capabilities = engine::model_spec::advertised_capabilities("toy_model");
+        engine::test::require(capabilities.has_value(), "VAD capabilities should be projected");
+        engine::test::require_eq(capabilities->supports_timestamps, segments,
+                                "only speech_segments should enable VAD timestamps");
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Every task name the shipped specs declare is one the engine can serve.
+//
+// The two that were not -- moss_voicegen declaring the ABI token "vdes" where
+// the spec vocabulary wants "design", and miocodec declaring "codec", which
+// names no task kind -- were found by a binding reading the spec files, not by
+// anything here. Both threw from parse_task_kind at load, so the families were
+// unreachable.
+void test_shipped_model_specs_declare_known_tasks() {
+    const std::filesystem::path specs =
+        std::filesystem::path(AUDIOCPP_SOURCE_DIR) / "model_specs";
+    engine::test::require(std::filesystem::is_directory(specs),
+                          "model_specs should exist at " + specs.string());
+
+    std::vector<std::string> failures;
+    std::size_t checked = 0;
+    for (const auto & entry : std::filesystem::directory_iterator(specs)) {
+        if (entry.path().extension() != ".json") {
+            continue;
+        }
+        const auto spec = engine::model_spec::load_spec(entry.path());
+        const auto * tasks = spec.find("tasks");
+        if (tasks == nullptr || !tasks->is_array()) {
+            continue;
+        }
+        ++checked;
+        for (const auto & task : tasks->as_array()) {
+            const auto name = task.as_string();
+            if (engine::runtime::task_token_for_spec_name(name).empty()) {
+                failures.push_back(entry.path().filename().string() + " declares '" + name + "'");
+            }
+        }
+    }
+
+    for (const auto & failure : failures) {
+        std::cerr << "  unmappable task: " << failure << "\n";
+    }
+    engine::test::require(failures.empty(),
+                          "every shipped spec should declare task names the engine knows (" +
+                              std::to_string(failures.size()) + " did not)");
+    engine::test::require(checked > 0, "should have checked at least one shipped spec");
+}
+
 }  // namespace
 
 int main() {
     try {
         test_legacy_dependencies_schema();
+        test_download_kinds_schema();
         test_typed_schema_renamed_dependencies();
         test_dependency_option_mapping_from_production_spec();
         test_options_schema();
+        test_component_exec_plan_schema();
         test_option_name_mapping_from_production_spec();
+        test_echo_text_chunk_size_contract();
         test_schema_v1_metadata_projection();
+        test_contract_projection_ignores_package_metadata_validation();
+        test_legacy_spec_contract_behavior_unchanged();
+        test_experimental_spec_without_installable_package();
         test_contract_spec_prefers_workspace_over_package_local_spec();
+        test_contract_spec_priority_with_embedded_gguf();
+        test_unknown_request_option_guidance();
         test_loading_and_resource_bundle();
+        test_task_vocabulary_is_consistent();
+        test_vad_timestamp_capability();
+        test_shipped_model_specs_declare_known_tasks();
     } catch (const std::exception & error) {
         std::cerr << "model_spec_system_test failed: " << error.what() << "\n";
         return 1;

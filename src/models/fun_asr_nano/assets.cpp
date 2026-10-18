@@ -12,8 +12,8 @@ namespace engine::models::fun_asr_nano {
 namespace json = engine::io::json;
 namespace {
 
-FunAsrNanoEncoderConfig parse_encoder(const json::Value &value) {
-  FunAsrNanoEncoderConfig config;
+FunAsrNanoSenseVoiceEncoderConfig parse_encoder(const json::Value &value) {
+  FunAsrNanoSenseVoiceEncoderConfig config;
   config.num_mel_bins = json::require_i64(value, "num_mel_bins");
   config.num_stacked_frames = json::optional_i64(value, "num_stacked_frames",
                                                  config.num_stacked_frames);
@@ -52,8 +52,8 @@ FunAsrNanoEncoderConfig parse_encoder(const json::Value &value) {
   return config;
 }
 
-FunAsrNanoTextConfig parse_text(const json::Value &value) {
-  FunAsrNanoTextConfig config;
+FunAsrNanoQwen3DecoderConfig parse_text(const json::Value &value) {
+  FunAsrNanoQwen3DecoderConfig config;
   config.vocab_size = json::require_i64(value, "vocab_size");
   config.hidden_size = json::require_i64(value, "hidden_size");
   config.intermediate_size = json::require_i64(value, "intermediate_size");
@@ -105,7 +105,7 @@ FunAsrNanoTextConfig parse_text(const json::Value &value) {
 }
 
 FunAsrNanoAdaptorConfig parse_adaptor(const json::Value &root,
-                                      const FunAsrNanoTextConfig &text) {
+                                      const FunAsrNanoQwen3DecoderConfig &text) {
   FunAsrNanoAdaptorConfig config;
   const auto *nested = root.find("adaptor_config");
   if (nested != nullptr && nested->is_object()) {
@@ -146,7 +146,7 @@ FunAsrNanoAdaptorConfig parse_adaptor(const json::Value &root,
 
 FunAsrNanoFrontendConfig
 parse_frontend(const assets::ResourceBundle &resources,
-               const FunAsrNanoEncoderConfig &encoder) {
+               const FunAsrNanoSenseVoiceEncoderConfig &encoder) {
   const auto processor = resources.parse_json("processor_config");
   const auto *nested = processor.find("feature_extractor");
   const auto &value =

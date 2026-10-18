@@ -10,6 +10,8 @@
 
 namespace engine::models::seed_vc {
 
+std::vector<float> compute_whisper_log_mel(const std::vector<float> & waveform_16k, size_t threads);
+
 class SeedVcWhisperContentEncoder {
 public:
     SeedVcWhisperContentEncoder() = default;

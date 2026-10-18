@@ -216,6 +216,7 @@ def request_to_args(request: dict[str, Any], repo_root: Path) -> list[str]:
         ("guidance_scale", "--guidance-scale"),
         ("num_inference_steps", "--num-inference-steps"),
         ("text_chunk_size", "--text-chunk-size"),
+        ("text_chunk_mode", "--text-chunk-mode"),
         ("use_prosody_code", "--use-prosody-code"),
         ("predict_target_prosody", "--predict-target-prosody"),
         ("use_pitch_shift", "--use-pitch-shift"),
@@ -248,7 +249,7 @@ def maybe_absolute_path(value: Any) -> Any:
     path = Path(value)
     if path.is_absolute():
         return value
-    if value.startswith(("resources/", "models/", "build/", "reference/")):
+    if value.startswith(("assets/", "resources/", "models/", "build/", "reference/")):
         return str(REPO_ROOT / path)
     return value
 
@@ -296,6 +297,8 @@ def materialize_request_paths(request: dict[str, Any]) -> dict[str, Any]:
         options = dict(out["options"])
         for key, value in options.items():
             if key.endswith("_path") or key.endswith("_file") or key.endswith(".path") or key.endswith(".file"):
+                options[key] = maybe_absolute_path(value)
+            elif key in {"video", "controlfoley.video"}:
                 options[key] = maybe_absolute_path(value)
             elif key in {"voice_samples", "vibevoice.voice_samples"}:
                 options[key] = maybe_absolute_path_list(value)
@@ -376,6 +379,9 @@ def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path
         "--threads",
         str(args.threads),
     ]
+    if args.model_spec_override is not None:
+        override = args.model_spec_override
+        command.extend(["--model-spec-override", "embedded" if str(override) == "embedded" else str(Path(override).resolve())])
     append_key_values(command, "--load-option", case.get("load_options", {}))
     append_key_values(command, "--session-option", case.get("session_options", {}))
     for override in getattr(args, "session_option", []) or []:
@@ -400,7 +406,8 @@ def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path
     if len(requests) != 1:
         raise RuntimeError(f"streaming case {case['id']} must contain exactly one request")
     command.extend(request_to_args(requests[0], REPO_ROOT))
-    command.extend(["--chunk-size", str(case.get("chunk_size", 512))])
+    if "chunk_size" in case:
+        command.extend(["--chunk-size", str(case["chunk_size"])])
     if "audio" in outputs:
         command.extend(["--out", str(case_dir / "outputs" / "stream.wav")])
     if "named_audio" in outputs:
@@ -417,10 +424,23 @@ def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path
 def verify_case(case: dict[str, Any], case_dir: Path, stdout: str) -> None:
     outputs = set(case.get("outputs", []))
     wavs = list((case_dir / "outputs").rglob("*.wav"))
-    if "audio" in outputs and not any(path.stat().st_size > 44 for path in wavs):
+    final_audio = case.get("final_audio")
+    audio_wavs = [path for path in wavs if path.name == final_audio] if final_audio else wavs
+    if "audio" in outputs and not any(path.stat().st_size > 44 for path in audio_wavs):
         raise RuntimeError(f"{case['id']} did not produce a non-empty wav")
-    if "named_audio" in outputs and len([path for path in wavs if path.stat().st_size > 44]) < 1:
-        raise RuntimeError(f"{case['id']} did not produce named wav outputs")
+    if "named_audio" in outputs:
+        named_wavs = [
+            path for path in wavs
+            if path.stat().st_size > 44 and (final_audio is None or path.name != final_audio)
+        ]
+        minimum_named = int(case.get("min_named_audio", 1))
+        if minimum_named < 1:
+            raise RuntimeError(f"{case['id']} min_named_audio must be positive")
+        if len(named_wavs) < minimum_named:
+            raise RuntimeError(
+                f"{case['id']} produced {len(named_wavs)} named wav outputs; "
+                f"expected at least {minimum_named}"
+            )
     if "text" in outputs:
         text_outputs = extract_text_outputs(case, stdout)
         if not text_outputs:
@@ -433,9 +453,12 @@ def verify_case(case: dict[str, Any], case_dir: Path, stdout: str) -> None:
     if "artifact" in outputs and "artifact_out[" not in stdout:
         raise RuntimeError(f"{case['id']} did not write an artifact json")
     if "artifact" in outputs:
-        artifacts = list((case_dir / "outputs").rglob("*.json"))
-        if not artifacts or not any(path.stat().st_size > 2 for path in artifacts):
-            raise RuntimeError(f"{case['id']} did not produce artifact json")
+        artifacts = [
+            path for path in (case_dir / "outputs").rglob("*")
+            if path.is_file() and path.name not in {"stdout.log", "stderr.log"}
+        ]
+        if not artifacts or not any(path.stat().st_size > 0 for path in artifacts):
+            raise RuntimeError(f"{case['id']} did not produce a non-empty artifact file")
     for kind, filename in (("segments", "segments"), ("turns", "turns"), ("words", "words")):
         if kind not in outputs:
             continue
@@ -508,6 +531,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audiocpp-cli-bin", type=Path, default=DEFAULT_AUDIOCPP_CLI_BIN)
     parser.add_argument("--models-root", type=Path, default=DEFAULT_MODELS_ROOT)
     parser.add_argument("--model-path", type=Path, help="Override the model path for every selected case")
+    parser.add_argument("--model-spec-override", help="Model spec file, directory, or embedded for the CLI")
     parser.add_argument("--backend", default="cuda", choices=["cpu", "cuda", "vulkan", "metal", "best"])
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS)

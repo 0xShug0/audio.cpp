@@ -236,7 +236,7 @@ void StableAudioSession::prepare(const runtime::SessionPreparationRequest & requ
             max_batch_);
     }
     if (!rf_dit_) {
-        rf_dit_ = std::make_unique<StableAudioRfDitRuntime>(
+        rf_dit_ = std::make_unique<StableAudioRFDiTRuntime>(
             execution_context(),
             assets_,
             weight_storage_type_);

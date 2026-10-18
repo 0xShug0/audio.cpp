@@ -6,11 +6,12 @@
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/optimizations/fast_kv_modules.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
-#include "engine/models/moss/shared/sampling.h"
+#include "engine/framework/runtime/kv_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -18,9 +19,11 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -57,7 +60,10 @@ core::TensorValue reshape_heads(
     return core::reshape_tensor(ctx, contiguous, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
 }
 
-core::TensorValue attention_from_heads(
+// Attention over a cached K/V prefix. The caller passes a view of the rows that are actually
+// visible, so no attention mask (and no ggml_diag_mask_inf) is needed: a single query row sees
+// exactly the slots it is allowed to see.
+core::TensorValue attention_from_cache_heads(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & q_heads,
     const core::TensorValue & k_heads,
@@ -69,20 +75,28 @@ core::TensorValue attention_from_heads(
         ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(head_dim))),
         scores.shape,
         GGML_TYPE_F32);
-    scores = core::wrap_tensor(ggml_diag_mask_inf(ctx.ggml, scores.tensor, 0), scores.shape, GGML_TYPE_F32);
     scores = core::ensure_backend_addressable_layout(ctx, scores);
-    return matmul.build(ctx, core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32), v_heads);
+    auto attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
+    return matmul.build(ctx, attn, v_heads);
 }
 
-core::TensorValue transformer_layer(
+// Single row through the local transformer: this row's K/V is appended to the frame cache at slot
+// `slot` and the row then attends to the cache prefix [0, visible_steps).
+core::TensorValue cached_local_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const TransformerLayerWeights & weights,
-    const MossTTSNanoLocalTransformerConfig & config) {
+    const MossTTSNanoLocalTransformerConfig & config,
+    const core::TensorValue & cache_keys,
+    const core::TensorValue & cache_values,
+    const core::TensorValue & cache_slot,
+    int64_t visible_steps,
+    const modules::FastKVSetRowsModule & set_rows) {
     const int64_t head_dim = config.hidden_size / config.num_attention_heads;
     const modules::AddModule add;
     const modules::LayerNormModule norm({config.hidden_size, config.layer_norm_epsilon, true, true});
+
     auto x = norm.build(ctx, input, {weights.ln1_weight, weights.ln1_bias});
     auto qkv = modules::LinearModule({config.hidden_size, config.hidden_size * 3, true})
                    .build(ctx, x, {weights.c_attn.weight, weights.c_attn.bias});
@@ -94,15 +108,31 @@ core::TensorValue transformer_layer(
     k = modules::RoPEModule({head_dim, GGML_ROPE_TYPE_NORMAL, config.rope_base})
             .build(ctx, reshape_heads(ctx, k, config.num_attention_heads, head_dim), positions);
     v = reshape_heads(ctx, v, config.num_attention_heads, head_dim);
+
+    const auto k_row = core::ensure_backend_addressable_layout(ctx, k);
+    const auto v_row = core::ensure_backend_addressable_layout(ctx, v);
+    const auto k_cache = set_rows.build(ctx, cache_keys, k_row, cache_slot);
+    const auto v_cache = set_rows.build(ctx, cache_values, v_row, cache_slot);
+    const auto k_used = engine::runtime::view_transformer_kv_cache_steps(
+        ctx, k_cache, 0, visible_steps, config.num_attention_heads, head_dim, "moss_nano.local.k");
+    const auto v_used = engine::runtime::view_transformer_kv_cache_steps(
+        ctx, v_cache, 0, visible_steps, config.num_attention_heads, head_dim, "moss_nano.local.v");
+
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
-    auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, head_dim);
+    auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k_used.shape.rank}).build(ctx, k_used);
+    auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v_used.shape.rank}).build(ctx, v_used);
+    auto context = attention_from_cache_heads(ctx, q_heads, k_heads, v_heads, head_dim);
     context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
     context = core::ensure_backend_addressable_layout(ctx, context);
-    context = core::reshape_tensor(ctx, context, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.hidden_size}));
-    x = add.build(ctx, input, modules::LinearModule({config.hidden_size, config.hidden_size, true})
-                              .build(ctx, context, {weights.c_proj.weight, weights.c_proj.bias}));
+    context = core::reshape_tensor(
+        ctx,
+        context,
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.hidden_size}));
+    x = add.build(
+        ctx,
+        input,
+        modules::LinearModule({config.hidden_size, config.hidden_size, true})
+            .build(ctx, context, {weights.c_proj.weight, weights.c_proj.bias}));
     auto ff = norm.build(ctx, x, {weights.ln2_weight, weights.ln2_bias});
     ff = modules::LinearModule({config.hidden_size, config.intermediate_size, true})
              .build(ctx, ff, {weights.fc_in.weight, weights.fc_in.bias});
@@ -125,206 +155,248 @@ struct MossTTSNanoLocalFrameDecoderRuntime::Weights {
     core::TensorValue final_norm_bias;
 };
 
-struct MossTTSNanoLocalFrameDecoderRuntime::TextGraph {
-    TextGraph(
+// One frame = a chain of single-row forwards over a shared 18-slot K/V cache:
+//
+//   row 0  : the global transformer's hidden vector (gate: "speak" vs end-of-audio)
+//   row 1  : embedding of the assistant slot token           -> codebook 0 logits
+//   row k  : embedding of the token sampled for codebook k-2 -> codebook k-1 logits
+//
+// Positions and cache slots are compile-time constants per row kind, so every row only has to
+// upload its 4-byte token id (or the hidden vector for the gate).
+struct MossTTSNanoLocalFrameDecoderRuntime::FrameGraphs {
+    struct Row {
+        ggml_cgraph * graph = nullptr;
+        ggml_tensor * vector_in = nullptr;  // row 0 only
+        ggml_tensor * id_in = nullptr;      // rows >= 1
+        ggml_tensor * positions = nullptr;  // constant per row kind
+        ggml_tensor * cache_slot = nullptr; // constant per row kind
+        ggml_tensor * logits = nullptr;
+        std::vector<float> logits_values;
+    };
+
+    FrameGraphs(
         std::shared_ptr<const MossTTSNanoAssets> assets,
         const Weights & weights,
         core::ExecutionContext & execution,
-        size_t graph_arena_bytes)
-        : assets_(std::move(assets)),
-          backend_(execution.backend()),
-          backend_type_(execution.backend_type()),
-          compute_threads_(std::max(1, execution.config().threads)) {
-        if (assets_ == nullptr || backend_ == nullptr) {
-            throw std::runtime_error("MOSS local text graph requires assets and backend");
-        }
-        const auto & config = assets_->config.local_transformer;
-        ggml_init_params params{graph_arena_bytes, nullptr, true};
-        ctx_.reset(ggml_init(params));
-        if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize MOSS local text graph context");
-        }
-        core::ModuleBuildContext ctx{ctx_.get(), "moss_tts_nano.local.text", backend_type_};
-        auto hidden = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({config.hidden_size}));
-        global_hidden_ = hidden.tensor;
-        auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1}));
-        positions_ = positions.tensor;
-        position_values_ = {0};
-        auto x = core::reshape_tensor(ctx, hidden, core::TensorShape::from_dims({1, 1, config.hidden_size}));
-        for (const auto & layer : weights.layers) {
-            x = transformer_layer(ctx, x, positions, layer, config);
-        }
-        x = modules::LayerNormModule({config.hidden_size, config.layer_norm_epsilon, true, true})
-                .build(ctx, x, {weights.final_norm_weight, weights.final_norm_bias});
-        x = modules::LinearModule({config.hidden_size, assets_->config.global_transformer.vocab_size, false})
-                .build(ctx, x, {weights.text_lm_head, std::nullopt});
-        logits_ = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({assets_->config.global_transformer.vocab_size})).tensor;
-        logits_values_.resize(static_cast<size_t>(assets_->config.global_transformer.vocab_size));
-        ggml_set_output(logits_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
-        ggml_build_forward_expand(graph_, logits_);
-        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
-        if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
-            throw std::runtime_error("failed to allocate MOSS local text graph");
-        }
-    }
-
-    ~TextGraph() {
-        engine::core::release_backend_graph_resources(backend_, graph_);
-        if (gallocr_ != nullptr) {
-            ggml_gallocr_free(gallocr_);
-        }
-    }
-
-    std::vector<float> run(const std::vector<float> & global_hidden) {
-        if (static_cast<int64_t>(global_hidden.size()) != assets_->config.local_transformer.hidden_size) {
-            throw std::runtime_error("MOSS local text graph hidden size mismatch");
-        }
-        ggml_backend_tensor_set(positions_, position_values_.data(), 0, position_values_.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(global_hidden_, global_hidden.data(), 0, global_hidden.size() * sizeof(float));
-        core::set_backend_threads(backend_, compute_threads_);
-        const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
-        ggml_backend_synchronize(backend_);
-        if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("MOSS local text graph compute failed");
-        }
-        core::read_tensor_f32_into(logits_, logits_values_);
-        return logits_values_;
-    }
-
-    std::shared_ptr<const MossTTSNanoAssets> assets_;
-    ggml_backend_t backend_ = nullptr;
-    core::BackendType backend_type_ = core::BackendType::Cpu;
-    int compute_threads_ = 1;
-    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
-    ggml_cgraph * graph_ = nullptr;
-    ggml_gallocr_t gallocr_ = nullptr;
-    ggml_tensor * global_hidden_ = nullptr;
-    ggml_tensor * positions_ = nullptr;
-    std::vector<int32_t> position_values_;
-    ggml_tensor * logits_ = nullptr;
-    std::vector<float> logits_values_;
-};
-
-struct MossTTSNanoLocalFrameDecoderRuntime::AudioGraph {
-    AudioGraph(
-        std::shared_ptr<const MossTTSNanoAssets> assets,
-        const Weights & weights,
-        core::ExecutionContext & execution,
-        size_t graph_arena_bytes,
-        int64_t codebook)
+        size_t arena_bytes,
+        int64_t active_codebooks)
         : assets_(std::move(assets)),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           compute_threads_(std::max(1, execution.config().threads)),
-          codebook_(codebook) {
+          active_codebooks_(active_codebooks) {
         if (assets_ == nullptr || backend_ == nullptr) {
-            throw std::runtime_error("MOSS local audio graph requires assets and backend");
+            throw std::runtime_error("MOSS local frame graphs require assets and a backend");
+        }
+        if (active_codebooks_ <= 0 || active_codebooks_ > assets_->config.n_vq) {
+            throw std::runtime_error("MOSS local frame graphs active codebooks are out of range");
         }
         const auto & config = assets_->config.local_transformer;
-        if (codebook_ < 0 || codebook_ >= assets_->config.n_vq) {
-            throw std::runtime_error("MOSS local audio graph codebook is out of range");
-        }
-        rows_ = codebook_ + 2;
-        ggml_init_params params{graph_arena_bytes, nullptr, true};
+        const int64_t hidden_size = config.hidden_size;
+        const int64_t head_dim = hidden_size / config.num_attention_heads;
+        cache_steps_ = assets_->config.n_vq + 2;
+
+        ggml_init_params params{arena_bytes, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize MOSS local audio graph context");
+            throw std::runtime_error("failed to initialize MOSS local frame graph context");
         }
-        core::ModuleBuildContext ctx{ctx_.get(), "moss_tts_nano.local.audio", backend_type_};
-        auto global_hidden = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({config.hidden_size}));
-        global_hidden_ = global_hidden.tensor;
-        auto text_id = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1}));
-        text_id_ = text_id.tensor;
-        auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows_}));
-        positions_ = positions.tensor;
-        auto x = core::reshape_tensor(ctx, global_hidden, core::TensorShape::from_dims({1, config.hidden_size}));
-        auto text = modules::EmbeddingModule({assets_->config.global_transformer.vocab_size, config.hidden_size})
-                        .build(ctx, text_id, weights.text_embedding);
-        x = modules::ConcatModule({0}).build(ctx, x, text);
-        if (codebook_ > 0) {
-            auto prev = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({codebook_}));
-            prev_ids_ = prev.tensor;
-            for (int64_t q = 0; q < codebook_; ++q) {
-                auto id = modules::SliceModule({0, q, 1}).build(ctx, prev);
-                if (backend_type_ == core::BackendType::Vulkan) {
-                    id = core::ensure_backend_addressable_layout(ctx, id);
-                }
-                auto emb = modules::EmbeddingModule({assets_->config.audio_codebook_sizes.at(static_cast<size_t>(q)), config.hidden_size})
-                               .build(ctx, id, weights.audio_embeddings.at(static_cast<size_t>(q)));
-                x = modules::ConcatModule({0}).build(ctx, x, emb);
+        core::ModuleBuildContext ctx{ctx_.get(), "moss_tts_nano.local.frame", backend_type_};
+
+        // The shared per-frame cache is created first so that alloc_ctx_tensors assigns its buffer
+        // before any view of it is initialised.
+        for (size_t layer = 0; layer < weights.layers.size(); ++layer) {
+            (void) layer;
+            auto keys = core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({1, cache_steps_, config.num_attention_heads, head_dim}));
+            auto values = core::make_tensor(
+                ctx,
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims({1, cache_steps_, config.num_attention_heads, head_dim}));
+            if (keys.tensor == nullptr || values.tensor == nullptr) {
+                throw std::runtime_error("failed to allocate MOSS local frame K/V cache tensors");
             }
+            cache_keys_.push_back(keys);
+            cache_values_.push_back(values);
         }
-        x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({1, rows_, config.hidden_size}));
-        for (const auto & layer : weights.layers) {
-            x = transformer_layer(ctx, x, positions, layer, config);
+
+        rows_.reserve(static_cast<size_t>(active_codebooks_ + 1));
+        for (int64_t k = 0; k <= active_codebooks_; ++k) {
+            rows_.push_back(build_row(ctx, weights, k));
         }
-        x = modules::LayerNormModule({config.hidden_size, config.layer_norm_epsilon, true, true})
-                .build(ctx, x, {weights.final_norm_weight, weights.final_norm_bias});
-        auto last = modules::SliceModule({1, rows_ - 1, 1}).build(ctx, x);
-        last = modules::LinearModule({config.hidden_size, assets_->config.audio_codebook_sizes.at(static_cast<size_t>(codebook_)), false})
-                   .build(ctx, last, {weights.audio_lm_heads.at(static_cast<size_t>(codebook_)), std::nullopt});
-        logits_ = core::reshape_tensor(ctx, last, core::TensorShape::from_dims({assets_->config.audio_codebook_sizes.at(static_cast<size_t>(codebook_))})).tensor;
-        logits_values_.resize(static_cast<size_t>(assets_->config.audio_codebook_sizes.at(static_cast<size_t>(codebook_))));
-        ggml_set_output(logits_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
-        ggml_build_forward_expand(graph_, logits_);
-        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
-        if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
-            throw std::runtime_error("failed to allocate MOSS local audio graph");
+
+        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
+        if (buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate MOSS local frame graphs");
         }
-        position_values_.resize(static_cast<size_t>(rows_));
-        for (int64_t i = 0; i < rows_; ++i) {
-            position_values_[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+
+        // Row kinds are fixed, so positions/slots are written once at build time.
+        for (size_t k = 0; k < rows_.size(); ++k) {
+            const int32_t slot = static_cast<int32_t>(k);
+            ggml_backend_tensor_set(rows_[k].positions, &slot, 0, sizeof(int32_t));
+            ggml_backend_tensor_set(rows_[k].cache_slot, &slot, 0, sizeof(int32_t));
+        }
+        clear_cache();
+    }
+
+    ~FrameGraphs() {
+        for (auto & row : rows_) {
+            engine::core::release_backend_graph_resources(backend_, row.graph);
+        }
+        if (buffer_ != nullptr) {
+            ggml_backend_buffer_free(buffer_);
+            buffer_ = nullptr;
+        }
+        ctx_.reset();
+    }
+
+    FrameGraphs(const FrameGraphs &) = delete;
+    FrameGraphs & operator=(const FrameGraphs &) = delete;
+
+    // Slots never written hold uninitialised memory; a NaN pattern would survive the softmax
+    // (NaN + -inf stays NaN), so the cache must be zeroed before the first frame.
+    void clear_cache() {
+        for (auto & keys : cache_keys_) {
+            ggml_backend_tensor_memset(keys.tensor, 0, 0, ggml_nbytes(keys.tensor));
+        }
+        for (auto & values : cache_values_) {
+            ggml_backend_tensor_memset(values.tensor, 0, 0, ggml_nbytes(values.tensor));
         }
     }
 
-    ~AudioGraph() {
-        engine::core::release_backend_graph_resources(backend_, graph_);
-        if (gallocr_ != nullptr) {
-            ggml_gallocr_free(gallocr_);
-        }
+    int64_t active_codebooks() const noexcept {
+        return active_codebooks_;
     }
 
-    std::vector<float> run(const std::vector<float> & global_hidden, const std::vector<int32_t> & previous_tokens, int32_t text_token) {
-        if (static_cast<int64_t>(global_hidden.size()) != assets_->config.local_transformer.hidden_size) {
-            throw std::runtime_error("MOSS local audio graph hidden size mismatch");
+    const std::vector<float> & run_gate(const std::vector<float> & global_hidden) {
+        if (global_hidden.size() != rows_[0].logits_values.capacity() && global_hidden.size() == 0) {
+            throw std::runtime_error("MOSS local frame gate requires a hidden vector");
         }
-        if (static_cast<int64_t>(previous_tokens.size()) != codebook_) {
-            throw std::runtime_error("MOSS local audio graph previous token count mismatch");
+        Row & row = rows_[0];
+        ggml_backend_tensor_set(row.vector_in, global_hidden.data(), 0, global_hidden.size() * sizeof(float));
+        return run_row_graph(row);
+    }
+
+    const std::vector<float> & run_row(int64_t k, int32_t token) {
+        if (k <= 0 || k >= static_cast<int64_t>(rows_.size())) {
+            throw std::runtime_error("MOSS local frame row index is out of range");
         }
-        ggml_backend_tensor_set(positions_, position_values_.data(), 0, position_values_.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(global_hidden_, global_hidden.data(), 0, global_hidden.size() * sizeof(float));
-        ggml_backend_tensor_set(text_id_, &text_token, 0, sizeof(text_token));
-        if (codebook_ > 0) {
-            ggml_backend_tensor_set(prev_ids_, previous_tokens.data(), 0, previous_tokens.size() * sizeof(int32_t));
+        Row & row = rows_[static_cast<size_t>(k)];
+        const int64_t table_rows = embedding_rows_for_row(k);
+        if (token < 0 || token >= table_rows) {
+            throw std::runtime_error("MOSS local frame token is outside its embedding table");
         }
+        ggml_backend_tensor_set(row.id_in, &token, 0, sizeof(int32_t));
+        return run_row_graph(row);
+    }
+
+private:
+    int64_t embedding_rows_for_row(int64_t k) const {
+        if (k == 1) {
+            return assets_->config.global_transformer.vocab_size;
+        }
+        return assets_->config.audio_codebook_sizes.at(static_cast<size_t>(k - 2));
+    }
+
+    const std::vector<float> & run_row_graph(Row & row) {
         core::set_backend_threads(backend_, compute_threads_);
-        const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+        const ggml_status status = ggml_backend_graph_compute(backend_, row.graph);
         ggml_backend_synchronize(backend_);
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("MOSS local audio graph compute failed");
+            throw std::runtime_error("MOSS local frame graph compute failed");
         }
-        core::read_tensor_f32_into(logits_, logits_values_);
-        return logits_values_;
+        core::read_tensor_f32_into(row.logits, row.logits_values);
+        return row.logits_values;
+    }
+
+    Row build_row(
+        core::ModuleBuildContext & ctx,
+        const Weights & weights,
+        int64_t k) {
+        const auto & config = assets_->config.local_transformer;
+        const int64_t hidden_size = config.hidden_size;
+        const int64_t head_dim = hidden_size / config.num_attention_heads;
+        Row row;
+        ggml_cgraph * graph = ggml_new_graph_custom(ctx.ggml, 4096, false);
+
+        core::TensorValue x;
+        if (k == 0) {
+            auto vector = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({hidden_size}));
+            ggml_set_input(vector.tensor);
+            row.vector_in = vector.tensor;
+            x = core::reshape_tensor(ctx, vector, core::TensorShape::from_dims({1, 1, hidden_size}));
+        } else {
+            auto id = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1}));
+            ggml_set_input(id.tensor);
+            row.id_in = id.tensor;
+            const bool is_text_row = k == 1;
+            const int64_t table_rows = is_text_row
+                                           ? assets_->config.global_transformer.vocab_size
+                                           : assets_->config.audio_codebook_sizes.at(static_cast<size_t>(k - 2));
+            const auto & table = is_text_row
+                                     ? weights.text_embedding
+                                     : weights.audio_embeddings.at(static_cast<size_t>(k - 2));
+            auto embedding = modules::EmbeddingModule({table_rows, hidden_size}).build(ctx, id, table);
+            x = core::reshape_tensor(ctx, embedding, core::TensorShape::from_dims({1, 1, hidden_size}));
+        }
+
+        auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1}));
+        row.positions = positions.tensor;
+        auto cache_slot = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1}));
+        row.cache_slot = cache_slot.tensor;
+
+        const modules::FastKVSetRowsModule set_rows({modules::FastKVSetRowsMode::Exact});
+        for (size_t layer = 0; layer < weights.layers.size(); ++layer) {
+            x = cached_local_layer(
+                ctx,
+                x,
+                positions,
+                weights.layers[layer],
+                config,
+                cache_keys_[layer],
+                cache_values_[layer],
+                cache_slot,
+                k + 1,
+                set_rows);
+        }
+        x = modules::LayerNormModule({hidden_size, config.layer_norm_epsilon, true, true})
+                .build(ctx, x, {weights.final_norm_weight, weights.final_norm_bias});
+        if (k == 0) {
+            auto logits = modules::LinearModule({hidden_size, assets_->config.global_transformer.vocab_size, false})
+                              .build(ctx, x, {weights.text_lm_head, std::nullopt});
+            row.logits = core::reshape_tensor(
+                             ctx,
+                             logits,
+                             core::TensorShape::from_dims({assets_->config.global_transformer.vocab_size}))
+                             .tensor;
+            row.logits_values.resize(static_cast<size_t>(assets_->config.global_transformer.vocab_size));
+        } else {
+            const size_t codebook = static_cast<size_t>(k - 1);
+            const int64_t codebook_size = assets_->config.audio_codebook_sizes.at(codebook);
+            auto logits = modules::LinearModule({hidden_size, codebook_size, false})
+                              .build(ctx, x, {weights.audio_lm_heads.at(codebook), std::nullopt});
+            row.logits = core::reshape_tensor(ctx, logits, core::TensorShape::from_dims({codebook_size})).tensor;
+            row.logits_values.resize(static_cast<size_t>(codebook_size));
+        }
+        ggml_set_output(row.logits);
+        ggml_build_forward_expand(graph, row.logits);
+        row.graph = graph;
+        return row;
     }
 
     std::shared_ptr<const MossTTSNanoAssets> assets_;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int compute_threads_ = 1;
-    int64_t codebook_ = 0;
-    int64_t rows_ = 0;
+    int64_t active_codebooks_ = 0;
+    int64_t cache_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
-    ggml_cgraph * graph_ = nullptr;
-    ggml_gallocr_t gallocr_ = nullptr;
-    ggml_tensor * global_hidden_ = nullptr;
-    ggml_tensor * text_id_ = nullptr;
-    ggml_tensor * prev_ids_ = nullptr;
-    ggml_tensor * positions_ = nullptr;
-    std::vector<int32_t> position_values_;
-    ggml_tensor * logits_ = nullptr;
-    std::vector<float> logits_values_;
+    ggml_backend_buffer_t buffer_ = nullptr;
+    std::vector<core::TensorValue> cache_keys_;
+    std::vector<core::TensorValue> cache_values_;
+    std::vector<Row> rows_;
 };
 
 MossTTSNanoLocalFrameDecoderRuntime::MossTTSNanoLocalFrameDecoderRuntime(
@@ -397,7 +469,6 @@ MossTTSNanoLocalFrameDecoderRuntime::MossTTSNanoLocalFrameDecoderRuntime(
     weights_->final_norm_weight = weights_->store->load_f32_tensor(source, "local_transformer.ln_f.weight", {config.hidden_size});
     weights_->final_norm_bias = weights_->store->load_f32_tensor(source, "local_transformer.ln_f.bias", {config.hidden_size});
     weights_->store->upload();
-    audio_graphs_.resize(static_cast<size_t>(assets_->config.n_vq));
 }
 
 MossTTSNanoLocalFrameDecoderRuntime::~MossTTSNanoLocalFrameDecoderRuntime() = default;
@@ -405,6 +476,14 @@ MossTTSNanoLocalFrameDecoderRuntime::~MossTTSNanoLocalFrameDecoderRuntime() = de
 void MossTTSNanoLocalFrameDecoderRuntime::prepare(int64_t active_codebooks) {
     if (active_codebooks <= 0 || active_codebooks > assets_->config.n_vq) {
         throw std::runtime_error("MOSS local frame decoder active codebooks are out of range");
+    }
+    if (frame_graphs_ == nullptr || frame_graphs_->active_codebooks() != active_codebooks) {
+        frame_graphs_ = std::make_unique<FrameGraphs>(
+            assets_,
+            *weights_,
+            execution_context_,
+            graph_arena_bytes_,
+            active_codebooks);
     }
 }
 
@@ -427,10 +506,10 @@ std::vector<int32_t> MossTTSNanoLocalFrameDecoderRuntime::generate_frame(
     if (active_codebooks <= 0 || active_codebooks > assets_->config.n_vq) {
         throw std::runtime_error("MOSS local frame decoder active codebooks are out of range");
     }
-    if (text_graph_ == nullptr) {
-        text_graph_ = std::make_unique<TextGraph>(assets_, *weights_, execution_context_, graph_arena_bytes_);
+    if (frame_graphs_ == nullptr || frame_graphs_->active_codebooks() != active_codebooks) {
+        prepare(active_codebooks);
     }
-    const auto text_logits = text_graph_->run(global_hidden);
+    const auto & text_logits = frame_graphs_->run_gate(global_hidden);
     const std::array<int32_t, 2> text_candidates = {
         static_cast<int32_t>(assets_->config.audio_assistant_slot_token_id),
         static_cast<int32_t>(assets_->config.audio_end_token_id),
@@ -439,56 +518,66 @@ std::vector<int32_t> MossTTSNanoLocalFrameDecoderRuntime::generate_frame(
         text_logits.at(static_cast<size_t>(text_candidates[0])),
         text_logits.at(static_cast<size_t>(text_candidates[1])),
     };
+    engine::sampling::HfSampler sampler;
+    engine::sampling::HfSamplingOptions text_sampling;
+    text_sampling.do_sample = sampling.do_sample;
+    text_sampling.temperature = sampling.text_temperature;
+    text_sampling.top_k = sampling.text_top_k;
+    text_sampling.top_p = sampling.text_top_p;
+    const engine::sampling::HfTorchSamplingState text_torch_state{
+        &sampling_policy_,
+        seed,
+        sample_call_index,
+    };
     const int32_t best_text = text_candidates[static_cast<size_t>(
-        sampling.do_sample
-            ? moss::sample_index(
-                  text_candidate_logits,
-                  sampling.text_top_k,
-                  sampling.text_top_p,
-                  sampling.text_temperature,
-                  rng,
-                  "MOSS-TTS-Nano local decoder",
-                  &sampling_policy_,
-                  seed,
-                  sample_call_index++)
-            : moss::argmax_index(text_candidate_logits, "MOSS-TTS-Nano local decoder"))];
+        sampler.sample(
+            text_candidate_logits,
+            {},
+            text_sampling,
+            sampler_scratch_,
+            rng,
+            sampling.do_sample && sampling_policy_.cuda_fast_path ? &text_torch_state : nullptr,
+            "MOSS-TTS-Nano local decoder"))];
+    if (sampling.do_sample) {
+        ++sample_call_index;
+    }
     if (best_text == assets_->config.audio_end_token_id) {
         return {};
     }
 
     std::vector<int32_t> frame(static_cast<size_t>(assets_->config.n_vq), audio_pad_token_id());
-    std::vector<int32_t> previous;
-    previous.reserve(static_cast<size_t>(active_codebooks));
+    int32_t current = best_text;
     for (int64_t q = 0; q < active_codebooks; ++q) {
-        if (audio_graphs_[static_cast<size_t>(q)] == nullptr) {
-            audio_graphs_[static_cast<size_t>(q)] =
-                std::make_unique<AudioGraph>(assets_, *weights_, execution_context_, graph_arena_bytes_, q);
-        }
-        auto logits = audio_graphs_[static_cast<size_t>(q)]->run(global_hidden, previous, best_text);
+        const auto & logits = frame_graphs_->run_row(q + 1, current);
         std::vector<int32_t> codebook_history;
         codebook_history.reserve(history.size() / static_cast<size_t>(assets_->config.n_vq));
-        for (size_t frame = 0; frame * static_cast<size_t>(assets_->config.n_vq) + static_cast<size_t>(q) < history.size(); ++frame) {
-            codebook_history.push_back(history[frame * static_cast<size_t>(assets_->config.n_vq) + static_cast<size_t>(q)]);
+        for (size_t frame_index = 0; frame_index * static_cast<size_t>(assets_->config.n_vq) + static_cast<size_t>(q) < history.size(); ++frame_index) {
+            codebook_history.push_back(history[frame_index * static_cast<size_t>(assets_->config.n_vq) + static_cast<size_t>(q)]);
         }
-        moss::apply_repetition_penalty(
+        engine::sampling::HfSamplingOptions audio_sampling;
+        audio_sampling.do_sample = sampling.do_sample;
+        audio_sampling.temperature = sampling.audio_temperature;
+        audio_sampling.top_k = sampling.audio_top_k;
+        audio_sampling.top_p = sampling.audio_top_p;
+        audio_sampling.repetition_penalty = sampling.audio_repetition_penalty;
+        const engine::sampling::HfTorchSamplingState audio_torch_state{
+            &sampling_policy_,
+            seed,
+            sample_call_index,
+        };
+        const int32_t token = sampler.sample(
             logits,
             codebook_history,
-            sampling.audio_repetition_penalty,
+            audio_sampling,
+            sampler_scratch_,
+            rng,
+            sampling.do_sample && sampling_policy_.cuda_fast_path ? &audio_torch_state : nullptr,
             "MOSS-TTS-Nano local decoder");
-        const int32_t token = sampling.do_sample
-            ? moss::sample_index(
-                  logits,
-                  sampling.audio_top_k,
-                  sampling.audio_top_p,
-                  sampling.audio_temperature,
-                  rng,
-                  "MOSS-TTS-Nano local decoder",
-                  &sampling_policy_,
-                  seed,
-                  sample_call_index++)
-            : moss::argmax_index(logits, "MOSS-TTS-Nano local decoder");
+        if (sampling.do_sample) {
+            ++sample_call_index;
+        }
         frame[static_cast<size_t>(q)] = token;
-        previous.push_back(token);
+        current = token;
     }
     return frame;
 }

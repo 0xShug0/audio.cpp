@@ -85,6 +85,7 @@ struct AceStepRequest {
     std::optional<float> repainting_end_seconds = std::nullopt;
     std::optional<runtime::AudioBuffer> source_audio = std::nullopt;
     std::optional<AceStepReferenceCondition> reference = std::nullopt;
+    bool rewrite_caption = false;
     AceStepGenerationOptions generation;
 };
 

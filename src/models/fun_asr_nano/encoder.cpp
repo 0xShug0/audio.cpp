@@ -52,7 +52,7 @@ engine::modules::SanmBlockWeightsView
 load_sanm_block(engine::core::BackendWeightStore &store,
                 const engine::assets::TensorSource &source,
                 const std::string &prefix, int64_t input_size,
-                const FunAsrNanoEncoderConfig &config,
+                const FunAsrNanoSenseVoiceEncoderConfig &config,
                 engine::assets::TensorStorageType storage_type) {
   return {
       load_norm(store, source, prefix + ".self_attn_layer_norm", input_size),
@@ -74,7 +74,7 @@ load_sanm_block(engine::core::BackendWeightStore &store,
   };
 }
 
-struct EncoderWeights {
+struct SenseVoiceEncoderWeights {
   std::unique_ptr<engine::core::BackendWeightStore> store;
   engine::modules::SanmBlockWeightsView stem;
   std::vector<engine::modules::SanmBlockWeightsView> main_layers;
@@ -83,11 +83,11 @@ struct EncoderWeights {
   engine::modules::NormWeights timestamp_norm;
 };
 
-std::unique_ptr<EncoderWeights>
+std::unique_ptr<SenseVoiceEncoderWeights>
 load_encoder_weights(const FunAsrNanoAssets &assets,
                      engine::core::ExecutionContext &execution_context,
                      engine::assets::TensorStorageType storage_type) {
-  auto weights = std::make_unique<EncoderWeights>();
+  auto weights = std::make_unique<SenseVoiceEncoderWeights>();
   weights->store = std::make_unique<engine::core::BackendWeightStore>(
       execution_context.backend(), execution_context.backend_type(),
       "Fun-ASR-Nano encoder weights", kWeightContextBytes);
@@ -143,7 +143,7 @@ std::vector<float> make_sinusoidal_positions(int64_t frames, int64_t channels) {
 }
 
 engine::modules::SanmBlockConfig
-block_config(const FunAsrNanoEncoderConfig &config, int64_t input_size) {
+block_config(const FunAsrNanoSenseVoiceEncoderConfig &config, int64_t input_size) {
   engine::modules::SanmBlockConfig result;
   result.input_size = input_size;
   result.model_size = config.d_model;
@@ -158,7 +158,7 @@ block_config(const FunAsrNanoEncoderConfig &config, int64_t input_size) {
 
 } // namespace
 
-struct FunAsrNanoEncoderRuntime::Impl {
+struct FunAsrNanoSenseVoiceEncoderRuntime::Impl {
   struct Graph {
     int64_t frames = 0;
     ggml_backend_t backend = nullptr;
@@ -365,24 +365,24 @@ struct FunAsrNanoEncoderRuntime::Impl {
   std::shared_ptr<const FunAsrNanoAssets> assets;
   engine::core::ExecutionContext *execution_context = nullptr;
   size_t graph_arena_bytes = 0;
-  std::unique_ptr<EncoderWeights> weights;
+  std::unique_ptr<SenseVoiceEncoderWeights> weights;
   std::unique_ptr<Graph> cached_graph;
 };
 
-FunAsrNanoEncoderRuntime::FunAsrNanoEncoderRuntime(
+FunAsrNanoSenseVoiceEncoderRuntime::FunAsrNanoSenseVoiceEncoderRuntime(
     std::shared_ptr<const FunAsrNanoAssets> assets,
     engine::core::ExecutionContext &execution_context, size_t graph_arena_bytes,
     engine::assets::TensorStorageType weight_storage)
     : impl_(std::make_unique<Impl>(std::move(assets), execution_context,
                                    graph_arena_bytes, weight_storage)) {}
 
-FunAsrNanoEncoderRuntime::~FunAsrNanoEncoderRuntime() = default;
-FunAsrNanoEncoderRuntime::FunAsrNanoEncoderRuntime(
-    FunAsrNanoEncoderRuntime &&) noexcept = default;
-FunAsrNanoEncoderRuntime &FunAsrNanoEncoderRuntime::operator=(
-    FunAsrNanoEncoderRuntime &&) noexcept = default;
+FunAsrNanoSenseVoiceEncoderRuntime::~FunAsrNanoSenseVoiceEncoderRuntime() = default;
+FunAsrNanoSenseVoiceEncoderRuntime::FunAsrNanoSenseVoiceEncoderRuntime(
+    FunAsrNanoSenseVoiceEncoderRuntime &&) noexcept = default;
+FunAsrNanoSenseVoiceEncoderRuntime &FunAsrNanoSenseVoiceEncoderRuntime::operator=(
+    FunAsrNanoSenseVoiceEncoderRuntime &&) noexcept = default;
 
-void FunAsrNanoEncoderRuntime::prepare_capacity(int64_t frames) {
+void FunAsrNanoSenseVoiceEncoderRuntime::prepare_capacity(int64_t frames) {
   if (impl_ == nullptr) {
     throw std::runtime_error("Fun-ASR-Nano encoder runtime is moved from");
   }
@@ -390,7 +390,7 @@ void FunAsrNanoEncoderRuntime::prepare_capacity(int64_t frames) {
 }
 
 FunAsrNanoEncoderEmbeddings
-FunAsrNanoEncoderRuntime::encode(const FunAsrNanoAudioFeatures &features,
+FunAsrNanoSenseVoiceEncoderRuntime::encode(const FunAsrNanoAudioFeatures &features,
                                  bool capture_stages) {
   if (impl_ == nullptr) {
     throw std::runtime_error("Fun-ASR-Nano encoder runtime is moved from");

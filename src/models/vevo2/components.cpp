@@ -1,4 +1,5 @@
 #include "engine/models/vevo2/components.h"
+#include "engine/framework/debug/trace.h"
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
@@ -986,6 +987,7 @@ struct Vevo2CocoTokenizerGraph {
 
         graph = ggml_new_graph_custom(ctx.get(), 65536, false);
         ggml_build_forward_expand(graph, ids_output);
+        engine::debug::timing_log_context_reservation("vevo2.tokenizer.graph", ctx.get());
         gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
         if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
             throw std::runtime_error("failed to allocate Vevo2 Coco tokenizer graph");
@@ -1049,7 +1051,7 @@ struct Vevo2CocoTokenizerGraph {
     ggml_gallocr_t gallocr = nullptr;
 };
 
-Vevo2ProsodyTokenizerRuntime::Vevo2ProsodyTokenizerRuntime(
+Vevo2CocoProsodyTokenizerRuntime::Vevo2CocoProsodyTokenizerRuntime(
     const Vevo2Assets & assets,
     engine::core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
@@ -1073,9 +1075,9 @@ Vevo2ProsodyTokenizerRuntime::Vevo2ProsodyTokenizerRuntime(
     weight_source_->release_storage();
 }
 
-Vevo2ProsodyTokenizerRuntime::~Vevo2ProsodyTokenizerRuntime() = default;
+Vevo2CocoProsodyTokenizerRuntime::~Vevo2CocoProsodyTokenizerRuntime() = default;
 
-Vevo2CocoTokenizerGraph & Vevo2ProsodyTokenizerRuntime::ensure_graph(
+Vevo2CocoTokenizerGraph & Vevo2CocoProsodyTokenizerRuntime::ensure_graph(
     int64_t feature_frames,
     bool uses_whisper) const {
     if (uses_whisper) {
@@ -1093,7 +1095,7 @@ Vevo2CocoTokenizerGraph & Vevo2ProsodyTokenizerRuntime::ensure_graph(
     return *graph_;
 }
 
-Vevo2TokenSequence Vevo2ProsodyTokenizerRuntime::encode_chromagram_features(
+Vevo2TokenSequence Vevo2CocoProsodyTokenizerRuntime::encode_chromagram_features(
     const std::vector<float> & chromagram_features,
     int64_t feature_frames) const {
     if (static_cast<int64_t>(chromagram_features.size()) != feature_frames * config_.chromagram_dim) {
@@ -1102,7 +1104,7 @@ Vevo2TokenSequence Vevo2ProsodyTokenizerRuntime::encode_chromagram_features(
     return ensure_graph(feature_frames, false).run(chromagram_features, std::nullopt);
 }
 
-Vevo2TokenSequence Vevo2ProsodyTokenizerRuntime::encode(
+Vevo2TokenSequence Vevo2CocoProsodyTokenizerRuntime::encode(
     const runtime::AudioBuffer & prosody_audio,
     const std::optional<runtime::AudioBuffer> & style_ref_audio,
     const Vevo2GenerationOptions & generation) const {
@@ -1148,7 +1150,7 @@ Vevo2TokenSequence Vevo2ProsodyTokenizerRuntime::encode(
     return style_tokens;
 }
 
-Vevo2ContentStyleTokenizerRuntime::Vevo2ContentStyleTokenizerRuntime(
+Vevo2CocoContentStyleTokenizerRuntime::Vevo2CocoContentStyleTokenizerRuntime(
     const Vevo2Assets & assets,
     engine::core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
@@ -1177,9 +1179,9 @@ Vevo2ContentStyleTokenizerRuntime::Vevo2ContentStyleTokenizerRuntime(
     weight_source_->release_storage();
 }
 
-Vevo2ContentStyleTokenizerRuntime::~Vevo2ContentStyleTokenizerRuntime() = default;
+Vevo2CocoContentStyleTokenizerRuntime::~Vevo2CocoContentStyleTokenizerRuntime() = default;
 
-Vevo2CocoTokenizerGraph & Vevo2ContentStyleTokenizerRuntime::ensure_graph(
+Vevo2CocoTokenizerGraph & Vevo2CocoContentStyleTokenizerRuntime::ensure_graph(
     int64_t feature_frames,
     bool uses_whisper) const {
     if (!uses_whisper) {
@@ -1197,7 +1199,7 @@ Vevo2CocoTokenizerGraph & Vevo2ContentStyleTokenizerRuntime::ensure_graph(
     return *graph_;
 }
 
-Vevo2TokenSequence Vevo2ContentStyleTokenizerRuntime::encode_feature_frames(
+Vevo2TokenSequence Vevo2CocoContentStyleTokenizerRuntime::encode_feature_frames(
     const std::vector<float> & whisper_features,
     const std::vector<float> & chromagram_features,
     int64_t feature_frames) const {
@@ -1231,7 +1233,7 @@ Vevo2TokenSequence Vevo2ContentStyleTokenizerRuntime::encode_feature_frames(
         std::optional<std::vector<float>>(std::move(normalized_whisper)));
 }
 
-Vevo2TokenSequence Vevo2ContentStyleTokenizerRuntime::encode_style_reference(
+Vevo2TokenSequence Vevo2CocoContentStyleTokenizerRuntime::encode_style_reference(
     const std::optional<runtime::AudioBuffer> & style_ref_audio,
     const std::optional<std::vector<float>> & whisper_features,
     int64_t feature_frames,
@@ -1253,7 +1255,7 @@ Vevo2TokenSequence Vevo2ContentStyleTokenizerRuntime::encode_style_reference(
         feature_frames);
 }
 
-Vevo2TokenSequence Vevo2ContentStyleTokenizerRuntime::encode_shifted_reference(
+Vevo2TokenSequence Vevo2CocoContentStyleTokenizerRuntime::encode_shifted_reference(
     const runtime::AudioBuffer & audio,
     const std::vector<float> & whisper_features,
     int64_t feature_frames,
@@ -1264,7 +1266,7 @@ Vevo2TokenSequence Vevo2ContentStyleTokenizerRuntime::encode_shifted_reference(
         feature_frames);
 }
 
-Vevo2TokenSequence Vevo2ContentStyleTokenizerRuntime::encode_timbre_reference(
+Vevo2TokenSequence Vevo2CocoContentStyleTokenizerRuntime::encode_timbre_reference(
     const runtime::AudioBuffer & timbre_ref_audio,
     const std::vector<float> & whisper_features,
     int64_t feature_frames) const {

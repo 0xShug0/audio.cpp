@@ -13,18 +13,18 @@ namespace engine::models::higgs_audio_stt {
 
 using HiggsAudioSTTTokenCallback = std::function<void(const HiggsAudioSTTGeneratedTokens &)>;
 
-class HiggsAudioSTTTextDecoderRuntime {
+class HiggsAudioSTTQwen3DecoderRuntime {
 public:
     struct Impl;
 
-    HiggsAudioSTTTextDecoderRuntime(
+    HiggsAudioSTTQwen3DecoderRuntime(
         std::shared_ptr<const HiggsAudioSTTAssets> assets,
         core::ExecutionContext & execution,
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type);
-    ~HiggsAudioSTTTextDecoderRuntime();
+    ~HiggsAudioSTTQwen3DecoderRuntime();
 
     HiggsAudioSTTGeneratedTokens generate(
         const HiggsAudioSTTPrompt & prompt,

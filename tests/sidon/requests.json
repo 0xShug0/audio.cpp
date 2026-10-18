@@ -1,0 +1,9 @@
+{
+  "requests": [
+    {"id": "cold", "audio": "../../assets/resources/sample_16k.wav"},
+    {"id": "warm01", "audio": "../../assets/resources/sample_16k.wav"},
+    {"id": "warm02", "audio": "../../assets/resources/sample_16k.wav"},
+    {"id": "warm03", "audio": "../../assets/resources/sample_16k.wav"},
+    {"id": "warm04", "audio": "../../assets/resources/sample_16k.wav"}
+  ]
+}

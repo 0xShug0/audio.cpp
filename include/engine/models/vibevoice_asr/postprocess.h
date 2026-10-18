@@ -10,6 +10,7 @@ public:
     explicit VibeVoiceASRPostprocessor(const VibeVoiceASRTextTokenizer & tokenizer);
 
     VibeVoiceASRDecoded decode(const VibeVoiceASRGeneratedTokens & tokens) const;
+    std::vector<VibeVoiceASRSegment> decode_speaker_attributed_text(const std::string & text) const;
 
 private:
     const VibeVoiceASRTextTokenizer & tokenizer_;

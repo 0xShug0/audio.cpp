@@ -2,8 +2,8 @@
 
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/moss/shared/audio_tokenizer_decoder.h"
-#include "engine/models/moss/shared/audio_tokenizer_encoder.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 #include "engine/models/moss/moss_tts_nano/assets.h"
 #include "engine/models/moss/moss_tts_nano/generator.h"
 #include "engine/models/moss/moss_tts_nano/global_transformer.h"
@@ -19,7 +19,8 @@ namespace engine::models::moss_tts_nano {
 
 class MossTTSNanoSession final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::StreamingTtsSessionBase {
 public:
     MossTTSNanoSession(
         runtime::TaskSpec task,
@@ -33,9 +34,12 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
-    moss::MossAudioTokenizerEncoder & encoder();
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override;
+    runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);
     MossTTSNanoAudioCodes encode_reference_audio(const runtime::AudioBuffer & audio, int64_t active_codebooks);
-    runtime::AudioBuffer decode_generated_audio(const MossTTSNanoAudioCodes & codes, int64_t active_codebooks);
+    runtime::AudioBuffer decode_generated_audio(
+        const MossTTSNanoAudioCodes & codes, int64_t active_codebooks, bool streaming = false);
     MossTTSNanoRequest make_request(const runtime::TaskRequest & request) const;
     const MossTTSNanoAudioCodes & reference_codes_for_request(const MossTTSNanoRequest & request);
 
@@ -56,11 +60,27 @@ private:
     MossTTSNanoGlobalTransformerRuntime global_transformer_;
     MossTTSNanoLocalFrameDecoderRuntime local_frame_decoder_;
     MossTTSNanoGenerator generator_;
-    moss::MossAudioTokenizerDecoder decoder_;
-    std::unique_ptr<core::ExecutionContext> reference_encoder_execution_context_;
-    std::unique_ptr<moss::MossAudioTokenizerEncoder> encoder_;
+    engine::codecs::MossAudioTokenizerCodecRuntime codec_;
     std::optional<runtime::AudioBuffer> prepared_prompt_audio_;
     std::optional<MossTTSNanoAudioCodes> prepared_reference_codes_;
 };
+
+/* Reference-voice cache bookkeeping.
+ *
+ * Encoding a reference runs the audio tokenizer encoder, so the codes are kept for as
+ * long as the same voice is used again. These two rules are the whole cache: a
+ * prepared reference only invalidates when the audio itself changes, and the codes are
+ * reusable when they were produced for that audio and codebook count. They are free
+ * functions so the rules can be tested without a model. */
+void invalidate_reference_codes_if_changed(
+    std::optional<runtime::AudioBuffer> & cached_audio,
+    std::optional<MossTTSNanoAudioCodes> & cached_codes,
+    const runtime::AudioBuffer & audio);
+
+bool reference_codes_reusable(
+    const std::optional<runtime::AudioBuffer> & cached_audio,
+    const std::optional<MossTTSNanoAudioCodes> & cached_codes,
+    const runtime::AudioBuffer & audio,
+    int64_t active_codebooks);
 
 }  // namespace engine::models::moss_tts_nano

@@ -11,7 +11,7 @@
 
 namespace engine::models::omnivoice {
 
-struct OmniVoiceLLMConfig {
+struct OmniVoiceQwen3DiffusionConfig {
     std::string model_type;
     int64_t vocab_size = 0;
     int64_t hidden_size = 0;
@@ -25,7 +25,7 @@ struct OmniVoiceLLMConfig {
     float rope_theta = 1000000.0F;
 };
 
-struct OmniVoiceAudioTokenizerConfig {
+struct OmniVoiceHiggsAudioV2TokenizerConfig {
     struct SemanticModelConfig {
         int64_t hidden_size = 0;
         int64_t intermediate_size = 0;
@@ -78,8 +78,8 @@ struct OmniVoiceConfig {
     std::vector<float> audio_codebook_weights;
     int64_t eos_token_id = 0;
     int64_t pad_token_id = 0;
-    OmniVoiceLLMConfig llm;
-    OmniVoiceAudioTokenizerConfig audio_tokenizer;
+    OmniVoiceQwen3DiffusionConfig llm;
+    OmniVoiceHiggsAudioV2TokenizerConfig audio_tokenizer;
     std::vector<std::string> supported_languages = {"Auto"};
 };
 

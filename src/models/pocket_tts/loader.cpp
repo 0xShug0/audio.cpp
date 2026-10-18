@@ -2,6 +2,7 @@
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/models/pocket_tts/assets.h"
 #include "engine/models/pocket_tts/session.h"
 
@@ -16,13 +17,16 @@ namespace engine::models::pocket_tts {
 namespace {
 
 std::string requested_language(const runtime::ModelLoadRequest & request) {
-    return runtime::find_option(request.options, {"language"}).value_or("english");
+    const auto options = runtime::apply_option_v1_compatibility(
+        request.options, {{"language", "pocket_tts.language"}}, "PocketTTS", "load");
+    return runtime::find_option(options, {"pocket_tts.language"}).value_or("english");
 }
 
 runtime::CapabilitySet capabilities(const PocketTTSAssets & assets) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
-        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     out.languages = {assets.language};
     out.supports_speaker_reference = true;
@@ -40,12 +44,44 @@ runtime::ModelMetadata metadata(const PocketTTSAssets & assets) {
 
 runtime::ModelCliInterface cli(const PocketTTSAssets &) {
     runtime::ModelCliInterface out;
+    out.request_options = {
+        {"frames_after_eos", "int", "Extra frames after EOS; -1 uses the model-derived value.", false, "-1", "-1"},
+        {"max_frames", "int", "Maximum generated audio frames; zero estimates the cap from text length. Captured during session preparation.", false, "0", "0"},
+        {"text_chunk_tokens", "int", "Tokenizer tokens per text chunk; must be positive, default 50. Set during preparation and overridable per request.", false, "50", "1"},
+        {"temperature", "float", "Positive flow noise temperature; defaults to the model configuration. Captured during session preparation.", false},
+        {"seed", "int", "Noise seed; omitted chooses a random seed. Captured during session preparation.", false, std::nullopt, "0", "4294967295"},
+        {"noise_clamp", "float", "Noise clamp; a negative value disables clamping. Captured during session preparation.", false, "-1"},
+        {"eos_threshold", "float", "EOS detection threshold. Captured during session preparation.", false, "-4"},
+        {"noise_file", "path", "Precomputed noise schedule file. Captured during session preparation.", false},
+        {"voice_embedding_file", "path", "Precomputed voice-state embedding path. Captured during session preparation.", false},
+        {"truncate_clone_audio", "bool", "Truncate voice clone audio. Captured during session preparation.", false, "false"},
+        {"text_chunk_size", "int", "Optional per-request character chunk size; otherwise use sentence/token budgeting.", false},
+        {"export_voice_state_file", "path", "Export the prepared voice state during session preparation.", false},
+    };
     out.session_options = {
-        {
-            "pocket_tts.voice_state_cache_slots",
-            "n",
-            "Prepared voice-state cache slots; default 4, set 0 to disable.",
-        },
+        {"pocket_tts.voice_state_cache_slots", "int", "Prepared voice-state cache slots; default 4, set 0 to disable.", false, "4", "0"},
+        {"pocket_tts.offline_graph_capacity_mode", "fixed|double|tiered|grow", "Offline graph capacity policy; CPU/Metal default tiered, other backends double.", false},
+        {"pocket_tts.prompt_graph_capacity", "int", "Optional reserved prompt capacity.", false, std::nullopt, "1"},
+        {"pocket_tts.generation_graph_capacity", "int", "Optional reserved generation capacity.", false, std::nullopt, "1"},
+        {"pocket_tts.weight_type", "native|f32|f16|bf16|q8_0", "Shared matmul weight storage; component matmul settings inherit it. Convolution storage remains independently native unless overridden."},
+        {"pocket_tts.matmul_weight_type", "native|f32|f16|bf16|q8_0", "Weight storage type; component-specific settings inherit weight_type.", false},
+        {"pocket_tts.conv_weight_type", "native|f32|f16", "Convolution weight storage.", false, "native"},
+        {"pocket_tts.weight_context_mb", "int", "Context or graph arena size in MiB.", false, "64", "1"},
+        {"pocket_tts.flow_weight_context_mb", "int", "Flow weight context in MiB; inherits pocket_tts.weight_context_mb when omitted.", false, std::nullopt, "1"},
+        {"pocket_tts.mimi_encoder_weight_context_mb", "int", "Mimi encoder weight context in MiB; inherits pocket_tts.weight_context_mb when omitted.", false, std::nullopt, "1"},
+        {"pocket_tts.mimi_decoder_weight_context_mb", "int", "Mimi decoder weight context in MiB; inherits pocket_tts.weight_context_mb when omitted.", false, std::nullopt, "1"},
+        {"pocket_tts.flow_weights_view_context_mb", "int", "Context or graph arena size in MiB.", false, "256", "1"},
+        {"pocket_tts.flow_step_graph_arena_mb", "int", "Flow-step host graph-metadata arena size in MiB, not device workspace.", false, "256", "1"},
+        {"pocket_tts.mimi_encoder_graph_arena_mb", "int", "Mimi encoder host graph-metadata arena size in MiB, not device workspace.", false, "512", "1"},
+        {"pocket_tts.mimi_conv_graph_arena_mb", "int", "Mimi convolution host graph-metadata arena size in MiB, not device workspace.", false, "32", "1"},
+        {"pocket_tts.mimi_transformer_graph_arena_mb", "int", "Mimi transformer host graph-metadata arena size in MiB, not device workspace.", false, "96", "1"},
+        {"pocket_tts.mimi_tail_graph_arena_mb", "int", "Mimi tail host graph-metadata arena size in MiB, not device workspace.", false, "512", "1"},
+        {"pocket_tts.mimi_full_chunk_frames", "int", "Full-sequence decoder chunk frames.", false, "90", "1"},
+        {"pocket_tts.mimi_stage2_chunk_frames", "int", "Second-stage decoder chunk frames.", false, "900", "1"},
+        {"pocket_tts.use_full_mimi", "bool", "Use full-sequence Mimi decoding.", false, "true"},
+    };
+    out.load_options = {
+        {"pocket_tts.language", "string", "Model language selection.", false, "english"},
     };
     return out;
 }
@@ -63,7 +99,8 @@ public:
     runtime::CapabilitySet advertised_capabilities() const override {
         runtime::CapabilitySet out;
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
         out.supports_style_condition = true;

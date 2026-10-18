@@ -48,11 +48,18 @@
   "capabilities": {
     "asr": [
       "word_timestamps",
-      "partial_results"
+      "partial_results",
+      "vad_chunking"
     ]
   },
   "options": {
     "request": [
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "description": "Accepted for CLI --words-out compatibility. Word timestamps are always returned, including when false or omitted.",
+        "required": false
+      },
       {
         "name": "max_tokens",
         "type": "int",
@@ -67,6 +74,41 @@
         "description": "Keep language tag tokens in decoded text; default false.",
         "required": false,
         "default": false
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Offline audio chunking mode. vad uses Silero VAD to skip silence; auto keeps Parakeet's existing offline_mode behavior.",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "VAD maximum chunk duration; omitted inherits the session duration. Fixed/long_form windows use the session setting, not this request override.",
+        "required": false,
+        "min": 0.001
+      },
+      {
+        "name": "hotwords",
+        "type": "string",
+        "description": "Phonon-2 only: optional vocabulary list, comma-separated or a JSON array of strings / word-spoken objects. Up to 25 terms; an explicit empty list disables prompt biasing.",
+        "required": false
+      },
+      {
+        "name": "hotwords_score",
+        "type": "float",
+        "description": "Phonon-2 matching-piece logit bonus; duration scores and blank are not biased.",
+        "required": false,
+        "min": 0,
+        "max": 100,
+        "default": 2.0
       }
     ],
     "session": [
@@ -128,26 +170,26 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Center-region duration for buffered streaming in seconds; default 2. Fixed context windows are re-encoded rather than cache-aware.",
+        "description": "Center-region duration for buffered streaming in seconds; default 2. Fixed context windows are re-encoded rather than cache-aware. Also sizes offline fixed/long_form windows.",
         "required": false,
         "min": 0.001,
-        "default": 2.0
+        "default": 2
       },
       {
         "name": "left_context_sec",
         "type": "float",
-        "description": "Past context included when re-encoding each buffered-streaming window in seconds; default 10.",
+        "description": "Past context included when re-encoding each buffered-streaming window in seconds; default 10. Also applies to offline fixed/long_form windows.",
         "required": false,
-        "min": 0.0,
-        "default": 10.0
+        "min": 0,
+        "default": 10
       },
       {
         "name": "right_context_sec",
         "type": "float",
-        "description": "Future lookahead included when re-encoding each buffered-streaming window in seconds; default 2 and adds equivalent partial-result latency.",
+        "description": "Future lookahead included when re-encoding each buffered-streaming window in seconds; default 2 and adds equivalent partial-result latency. Also applies to offline fixed/long_form windows.",
         "required": false,
-        "min": 0.0,
-        "default": 2.0
+        "min": 0,
+        "default": 2
       },
       {
         "name": "streaming_attention_mode",
@@ -178,6 +220,13 @@
         "required": false,
         "min": 0.001,
         "default": 30.0
+      },
+      {
+        "name": "vad_model_path",
+        "type": "path",
+        "description": "Silero VAD model path used by audio_chunk_mode=vad; default assets/framework/models/silero_vad.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
       }
     ],
     "load": []
@@ -213,6 +262,28 @@
         "Parakeet-TDT-0.6B-v3-GGUF/parakeet-tdt-0.6b-v3-f16.gguf"
       ],
       "strip_prefix": "Parakeet-TDT-0.6B-v3-GGUF"
+    },
+    {
+      "id": "orukeet_q8_0",
+      "display_name": "Orukeet r3 Q8_0 GGUF (Parakeet-TDT 0.6B v3 fine-tune)",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Orukeet-GGUF",
+      "files": [
+        "Orukeet-GGUF/orukeet-q8_0.gguf"
+      ],
+      "strip_prefix": "Orukeet-GGUF"
+    },
+    {
+      "id": "orukeet_f16",
+      "display_name": "Orukeet r3 F16 GGUF (Parakeet-TDT 0.6B v3 fine-tune)",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Orukeet-GGUF",
+      "files": [
+        "Orukeet-GGUF/orukeet-f16.gguf"
+      ],
+      "strip_prefix": "Orukeet-GGUF"
     }
   ],
   "dependencies": [],
@@ -223,7 +294,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/parakeet_tdt.md"
+      "docs/models/parakeet_tdt.md"
     ]
   },
   "sources": [

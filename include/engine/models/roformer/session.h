@@ -10,6 +10,7 @@
 
 namespace engine::models::roformer {
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_mel_band_roformer_loader();
 std::shared_ptr<runtime::IVoiceModelLoader> make_bs_roformer_loader();
 
 class RoformerSession final
@@ -18,11 +19,7 @@ class RoformerSession final
 public:
     RoformerSession(
         const runtime::TaskSpec & task,
-        const runtime::SessionOptions & options,
-        std::shared_ptr<const RoformerAssets> assets);
-    RoformerSession(
-        const runtime::TaskSpec & task,
-        const runtime::SessionOptions & options,
+        runtime::SessionOptions options,
         std::shared_ptr<const RoformerAssets> assets,
         std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~RoformerSession() override;
@@ -47,7 +44,6 @@ private:
     std::vector<float> first_chunk_window_;
     std::vector<float> last_chunk_window_;
     std::vector<float> only_chunk_window_;
-    std::vector<float> chunk_planar_work_;
     std::vector<float> result_work_;
     std::vector<float> counter_work_;
     std::vector<float> vocals_planar_work_;

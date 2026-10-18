@@ -37,7 +37,7 @@ private:
     std::shared_ptr<const InflectV2Assets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::unique_ptr<InflectV2Frontend> frontend_;
-    std::unique_ptr<InflectV2NativeRuntime> runtime_;
+    std::unique_ptr<InflectV2VitsRuntime> runtime_;
 };
 
 }  // namespace engine::models::inflect_v2

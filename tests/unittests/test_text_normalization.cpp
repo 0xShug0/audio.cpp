@@ -16,6 +16,10 @@ void test_english_numbers() {
         engine::text::normalize_english_numbers("Use 1/2 now and 123456789012345678901 later."),
         std::string("Use one half now and one two three four five six seven eight nine zero one two three four five six seven eight nine zero one later."),
         "English fraction and overflow-safe long digit spelling");
+    engine::test::require_eq(
+        engine::text::normalize_english_numbers("Use DS4, R2D2, and 4K video."),
+        std::string("Use DS four, R two D two, and four K video."),
+        "English letter-digit token verbalization");
 }
 
 void test_english_index_tts_style() {
@@ -23,10 +27,11 @@ void test_english_index_tts_style() {
     options.expand_common_contractions = true;
     options.index_tts_punctuation = true;
     options.uppercase_ascii = true;
+    options.verbalize_symbols = true;
     engine::test::require_eq(
-        engine::text::normalize_english_text("What's 2.5%？", options),
-        std::string("WHAT IS TWO POINT FIVE PERCENT?"),
-        "IndexTTS-style English normalization");
+        engine::text::normalize_english_text("What's DS4, R2D2, C++_x=y, and 4K？", options),
+        std::string("WHAT IS DS FOUR, R TWO D TWO, C PLUS PLUS UNDERSCORE X EQUAL SIGN Y, AND FOUR K?"),
+        "IndexTTS-style English alphanumeric and symbol normalization");
 }
 
 void test_japanese_katakana() {

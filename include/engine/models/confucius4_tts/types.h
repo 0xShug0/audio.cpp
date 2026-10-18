@@ -46,7 +46,7 @@ struct ConfuciusAudioConfig {
     std::optional<float> fmax = std::nullopt;
 };
 
-struct ConfuciusStyleEncoderConfig {
+struct ConfuciusCampplusStyleEncoderConfig {
     int64_t feat_dim = 80;
     int64_t embedding_size = 192;
 };
@@ -77,7 +77,7 @@ struct ConfuciusConfig {
     ConfuciusT2SConfig t2s;
     ConfuciusS2AConfig s2a;
     ConfuciusAudioConfig audio;
-    ConfuciusStyleEncoderConfig style_encoder;
+    ConfuciusCampplusStyleEncoderConfig style_encoder;
     ConfuciusPreprocessorConfig preprocessor;
     ConfuciusBigVganConfig vocoder;
 };

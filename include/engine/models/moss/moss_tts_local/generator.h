@@ -3,7 +3,7 @@
 #include "engine/models/moss/moss_tts_local/assets.h"
 #include "engine/models/moss/moss_tts_local/backbone.h"
 #include "engine/models/moss/moss_tts_local/depth_transformer.h"
-#include "engine/models/moss/shared/token_rows.h"
+#include "engine/framework/modules/multi_codebook_embedding.h"
 #include "engine/framework/sampling/torch_random.h"
 
 #include <cstddef>
@@ -43,7 +43,7 @@ public:
         core::ExecutionContext & execution_context,
         size_t projection_graph_arena_bytes,
         size_t projection_weight_context_bytes,
-        const MossBackboneRuntime & backbone,
+        const MossTTSLocalQwen3BackboneRuntime & backbone,
         const MossDepthTransformer & depth);
     ~MossGenerator();
 
@@ -61,11 +61,11 @@ public:
 
 private:
     std::shared_ptr<const MossTTSLocalAssets> assets_;
-    const MossBackboneRuntime & backbone_;
+    const MossTTSLocalQwen3BackboneRuntime & backbone_;
     const MossDepthTransformer & depth_;
     int64_t hidden_size_ = 0;
     int64_t num_codebooks_ = 0;
-    std::unique_ptr<moss::AudioCodebookEmbeddings> audio_codebooks_;
+    std::unique_ptr<engine::modules::MultiCodebookEmbedding> audio_codebooks_;
     std::vector<float> local_text_head_;                // [2 * hidden]
     engine::sampling::TorchCudaSamplingPolicy sampling_policy_;
     struct ProjectionRuntime;

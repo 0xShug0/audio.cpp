@@ -1,0 +1,30 @@
+{
+  "_comment": "Replace the directory path, not with a single GGUF. This directory must contain the main GGUF, VAE GGUF and sidecars listed in README.md. Component filenames below are relative to that directory.",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 4,
+  "lazy_load": true,
+  "max_loaded_models": 1,
+  "ui": true,
+  "ui_management": false,
+  "models": [
+    {
+      "id": "yue2",
+      "family": "yue2",
+      "path": "/PATH/TO/Yue2-3B-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "session_options": {
+        "yue2.model_gguf": "yue2-3b-q8_0.gguf",
+        "yue2.vae_gguf": "yue2-vae-f16.gguf"
+      },
+      "default_request_options": {
+        "cot": "off",
+        "seed": 123,
+        "style": "English, warm lead vocal, acoustic pop, gentle drums"
+      }
+    }
+  ]
+}

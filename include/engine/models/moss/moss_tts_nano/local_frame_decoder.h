@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/sampling/hf_sampler.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/moss/moss_tts_nano/assets.h"
 #include "engine/models/moss/moss_tts_nano/types.h"
@@ -37,15 +38,14 @@ public:
 
 private:
     struct Weights;
-    struct TextGraph;
-    struct AudioGraph;
+    struct FrameGraphs;
     std::shared_ptr<const MossTTSNanoAssets> assets_;
     core::ExecutionContext & execution_context_;
     engine::sampling::TorchCudaSamplingPolicy sampling_policy_;
+    engine::sampling::HfSamplerScratch sampler_scratch_;
     std::shared_ptr<Weights> weights_;
     size_t graph_arena_bytes_ = 0;
-    std::unique_ptr<TextGraph> text_graph_;
-    std::vector<std::unique_ptr<AudioGraph>> audio_graphs_;
+    std::unique_ptr<FrameGraphs> frame_graphs_;
 };
 
 }  // namespace engine::models::moss_tts_nano

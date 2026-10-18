@@ -425,7 +425,7 @@ int main(int argc, char ** argv) {
             engine::models::vibevoice::VibeVoiceTextTokenizer text_tokenizer(assets);
             engine::models::vibevoice::VibeVoiceTokenizerWeightsRuntime audio_tokenizer(assets, backend, device, threads);
             engine::models::vibevoice::VibeVoiceConnectorWeightsRuntime connector(assets, backend, device, threads);
-            engine::models::vibevoice::VibeVoiceDecoderWeightsRuntime decoder(assets, backend, device, threads);
+            engine::models::vibevoice::VibeVoiceQwen2WeightsRuntime decoder(assets, backend, device, threads);
             engine::models::vibevoice::VibeVoiceDiffusionHeadWeightsRuntime diffusion_head(assets, backend, device, threads);
             const auto requests = parse_requests(request_sequence_json, *assets, prompt_noise_file, noise_file);
             steps.reserve(requests.size());

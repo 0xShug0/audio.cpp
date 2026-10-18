@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import shutil
 import sys
 import tempfile
-from dataclasses import dataclass
+import threading
+import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -23,6 +26,10 @@ class ManagerError(RuntimeError):
     pass
 
 
+class InstallCancelled(ManagerError):
+    pass
+
+
 @dataclass(frozen=True)
 class PackageRecord:
     family: str
@@ -35,6 +42,14 @@ class PackageRecord:
     strip_prefix: str
     download: dict[str, Any]
     default: bool
+    source_overridden: bool = False
+
+
+@dataclass(frozen=True)
+class RemoteFileInfo:
+    size: int | None
+    revision: str
+    etag: str
 
 
 def huggingface_token() -> str | None:
@@ -49,9 +64,39 @@ def huggingface_token() -> str | None:
     return None
 
 
-def http_headers() -> dict[str, str]:
+def hf_endpoint() -> str:
+    """Base URL for Hugging Face Hub requests.
+
+    Honors the standard HF_ENDPOINT environment variable (e.g.
+    HF_ENDPOINT=https://hf-mirror.com for the hf-mirror mirror). Falls back to
+    https://huggingface.co. Empty values and trailing slashes are tolerated.
+    """
+    endpoint = os.environ.get("HF_ENDPOINT", "").strip().rstrip("/")
+    return endpoint or "https://huggingface.co"
+
+
+def ms_endpoint() -> str:
+    """Base URL for ModelScope requests.
+
+    Honors AUDIOCPP_MS_BASE_URL, mirroring the native C++ package manager.
+    Falls back to https://www.modelscope.cn. Empty values and trailing slashes
+    are tolerated.
+    """
+    endpoint = os.environ.get("AUDIOCPP_MS_BASE_URL", "").strip().rstrip("/")
+    return endpoint or "https://www.modelscope.cn"
+
+
+def modelscope_token() -> str | None:
+    token = os.environ.get("AUDIOCPP_MS_TOKEN", "").strip()
+    return token or None
+
+
+def http_headers(source: str = "huggingface") -> dict[str, str]:
+    # Auth is provider-scoped: HF requests may carry the HF token, ModelScope
+    # requests carry only AUDIOCPP_MS_TOKEN, so one provider's credential is
+    # never sent to the other provider's host.
     headers = {"User-Agent": "audio.cpp model_manager_v2.py"}
-    token = huggingface_token()
+    token = modelscope_token() if source == "modelscope" else huggingface_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
@@ -99,6 +144,47 @@ def merged_download(spec: dict[str, Any], package: dict[str, Any]) -> dict[str, 
     return download
 
 
+def package_kind(package: PackageRecord) -> str:
+    return str(package.download.get("kind", ""))
+
+
+def package_source(package: PackageRecord) -> str:
+    """Download provider for a package: 'modelscope' or 'huggingface'."""
+    return "modelscope" if package_kind(package) == "modelscope_snapshot" else "huggingface"
+
+
+def package_revision(package: PackageRecord) -> str:
+    """Kind-aware revision default: master on ModelScope, main on Hugging Face."""
+    revision = str(package.download.get("revision", "")).strip()
+    if revision:
+        return revision
+    return "master" if package_kind(package) == "modelscope_snapshot" else "main"
+
+
+def apply_source_override(record: PackageRecord, source_repo: str | None) -> PackageRecord:
+    """Redirect a package's download to ModelScope (--source modelscope).
+
+    The repo comes from --source-repo when given, otherwise the spec's own
+    repo is reused on ModelScope. An unset or 'main' spec revision becomes
+    ModelScope's default branch ('master', via the kind-aware default); any
+    other explicit revision passes through unchanged.
+    """
+    download = dict(record.download)
+    download["kind"] = "modelscope_snapshot"
+    if source_repo:
+        download["repo"] = source_repo
+    revision = str(download.get("revision", "")).strip()
+    if not revision or revision == "main":
+        download.pop("revision", None)
+    return replace(record, download=download, source_overridden=True)
+
+
+def source_override_hint(package: PackageRecord) -> str:
+    if package.source_overridden:
+        return "; the spec repo may not exist on ModelScope, name it with --source-repo <namespace/name>"
+    return ""
+
+
 def flatten_packages(specs: list[dict[str, Any]]) -> list[PackageRecord]:
     records: list[PackageRecord] = []
     for spec in specs:
@@ -122,9 +208,11 @@ def flatten_packages(specs: list[dict[str, Any]]) -> list[PackageRecord]:
 
 
 def select_package(records: list[PackageRecord], args: argparse.Namespace) -> PackageRecord:
+    format_filter = getattr(args, "format", None)
+    precision_filter = getattr(args, "precision", None)
     exact = [record for record in records if record.id == args.package]
     if exact:
-        if args.format or args.precision:
+        if format_filter or precision_filter:
             raise ManagerError("format/precision filters are only used when selecting by family")
         return exact[0]
 
@@ -132,10 +220,10 @@ def select_package(records: list[PackageRecord], args: argparse.Namespace) -> Pa
     if not family:
         raise ManagerError(f"unknown package or family: {args.package}")
     candidates = family
-    if args.format:
-        candidates = [record for record in candidates if record.format == args.format]
-    if args.precision:
-        candidates = [record for record in candidates if record.precision == args.precision]
+    if format_filter:
+        candidates = [record for record in candidates if record.format == format_filter]
+    if precision_filter:
+        candidates = [record for record in candidates if record.precision == precision_filter]
     if not candidates:
         raise ManagerError(f"no package for family '{args.package}' matches the requested filters")
     default_candidates = [record for record in candidates if record.default]
@@ -148,97 +236,403 @@ def select_package(records: list[PackageRecord], args: argparse.Namespace) -> Pa
 
 
 def hf_url(repo: str, revision: str, remote_path: str) -> str:
-    return f"https://huggingface.co/{repo}/resolve/{quote(revision, safe='')}/{quote_repo_path(remote_path)}"
+    return f"{hf_endpoint()}/{repo}/resolve/{quote(revision, safe='')}/{quote_repo_path(remote_path)}"
 
 
-def check_remote_file(package: PackageRecord, remote_path: str) -> int | None:
+def ms_url(repo: str, revision: str, remote_path: str) -> str:
+    return f"{ms_endpoint()}/models/{repo}/resolve/{quote(revision, safe='')}/{quote_repo_path(remote_path)}"
+
+
+def ms_files_url(repo: str, revision: str) -> str:
+    return f"{ms_endpoint()}/api/v1/models/{repo}/repo/files?Revision={quote(revision, safe='')}&Recursive=true"
+
+
+def download_url(package: PackageRecord, remote_path: str) -> str:
     repo = package.download["repo"]
-    revision = package.download.get("revision", "main")
+    revision = package_revision(package)
+    if package_kind(package) == "modelscope_snapshot":
+        return ms_url(repo, revision, remote_path)
+    return hf_url(repo, revision, remote_path)
+
+
+# ModelScope resolve HEAD responses carry no Content-Length or ETag, so
+# per-file size and checksum come from the repo file-list API instead. The
+# listing is fetched once per repo+revision and shared through this cache; an
+# empty entry means the listing was unavailable and HEAD fallback applies.
+_MS_LISTING_CACHE: dict[tuple[str, str, str], dict[str, RemoteFileInfo]] = {}
+_MS_LISTING_LOCK = threading.Lock()
+
+
+def ms_repo_listing(repo: str, revision: str) -> dict[str, RemoteFileInfo]:
+    key = (ms_endpoint(), repo, revision)
+    with _MS_LISTING_LOCK:
+        cached = _MS_LISTING_CACHE.get(key)
+    if cached is not None:
+        return cached
+    listing: dict[str, RemoteFileInfo] = {}
+    try:
+        request = Request(ms_files_url(repo, revision), headers=http_headers("modelscope"))
+        with urlopen(request, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if payload.get("Code") != 200:
+            raise ManagerError(f"ModelScope repo listing failed for {repo}: {payload.get('Message', 'unknown error')}")
+        files = payload.get("Data", {}).get("Files")
+        if not isinstance(files, list):
+            raise ManagerError(f"ModelScope repo listing has no file list: {repo}")
+        for item in files:
+            if not isinstance(item, dict) or item.get("Type") != "blob":
+                continue
+            path = item.get("Path")
+            if not path:
+                continue
+            size = item.get("Size")
+            listing[str(path)] = RemoteFileInfo(
+                size=int(size) if size is not None else None,
+                revision="",
+                etag=str(item.get("Sha256") or ""),
+            )
+    except Exception:
+        listing = {}
+    with _MS_LISTING_LOCK:
+        _MS_LISTING_CACHE[key] = listing
+    return listing
+
+
+def check_ms_remote_file(package: PackageRecord, remote_path: str) -> RemoteFileInfo:
+    repo = package.download["repo"]
+    revision = package_revision(package)
+    listing = ms_repo_listing(repo, revision)
+    info = listing.get(remote_path)
+    if info is not None:
+        return info
+    if listing:
+        raise ManagerError(
+            f"remote file is not accessible: {repo}/{remote_path} (not in the ModelScope repo listing)"
+            f"{source_override_hint(package)}"
+        )
+    # The listing API is unreachable; fall back to a HEAD on the resolve URL,
+    # which reports the file checksum as X-Linked-Etag but no size.
+    request = Request(ms_url(repo, revision, remote_path), headers=http_headers("modelscope"), method="HEAD")
+    try:
+        with urlopen(request, timeout=60) as response:
+            return RemoteFileInfo(
+                size=None,
+                revision="",
+                etag=response.headers.get("X-Linked-Etag", "").strip('"'),
+            )
+    except HTTPError as error:
+        raise ManagerError(
+            f"remote file is not accessible: {repo}/{remote_path} ({error.code})"
+            f"{source_override_hint(package)}"
+        ) from error
+
+
+def check_remote_file(package: PackageRecord, remote_path: str) -> RemoteFileInfo:
+    if package_kind(package) == "modelscope_snapshot":
+        return check_ms_remote_file(package, remote_path)
+    repo = package.download["repo"]
+    revision = package_revision(package)
     request = Request(hf_url(repo, revision, remote_path), headers=http_headers(), method="HEAD")
     try:
         with urlopen(request, timeout=60) as response:
             size = response.headers.get("Content-Length")
-            return int(size) if size else None
+            return RemoteFileInfo(
+                size=int(size) if size else None,
+                revision=response.headers.get("X-Repo-Commit", ""),
+                etag=response.headers.get("ETag", "").strip('"'),
+            )
     except HTTPError as error:
         if package.download.get("gated") is True and error.code in (401, 403):
-            return None
+            return RemoteFileInfo(size=None, revision="", etag="")
         raise ManagerError(f"remote file is not accessible: {repo}/{remote_path} ({error.code})") from error
 
 
-def download_file(package: PackageRecord, remote_path: str, output_path: Path) -> None:
+def cancellation_requested(cancel_file: Path | None) -> bool:
+    return cancel_file is not None and cancel_file.is_file()
+
+
+def download_file(
+    package: PackageRecord,
+    remote_path: str,
+    output_path: Path,
+    progress=None,
+    cancel_file: Path | None = None,
+) -> None:
     repo = package.download["repo"]
-    revision = package.download.get("revision", "main")
-    request = Request(hf_url(repo, revision, remote_path), headers=http_headers())
+    request = Request(download_url(package, remote_path), headers=http_headers(package_source(package)))
     try:
         with urlopen(request, timeout=300) as response:
-            expected = response.headers.get("Content-Length")
+            expected_header = response.headers.get("Content-Length")
+            expected = int(expected_header) if expected_header is not None else None
             output_path.parent.mkdir(parents=True, exist_ok=True)
             total = 0
+            last_report = 0
             with output_path.open("wb") as handle:
                 while True:
+                    if cancellation_requested(cancel_file):
+                        raise InstallCancelled("download cancelled by user")
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
                     handle.write(chunk)
                     total += len(chunk)
-            if expected is not None and total != int(expected):
+                    if progress is not None and total - last_report >= 8 * 1024 * 1024:
+                        progress(total, expected)
+                        last_report = total
+            if progress is not None:
+                progress(total, expected)
+            if cancellation_requested(cancel_file):
+                raise InstallCancelled("download cancelled by user")
+            if expected is not None and total != expected:
                 raise ManagerError(f"downloaded size mismatch for {output_path}: {total} != {expected}")
     except HTTPError as error:
         if package.download.get("gated") is True and error.code in (401, 403):
             raise ManagerError(
                 f"{repo}/{remote_path} requires accepted Hugging Face access and a valid HF token"
             ) from error
-        raise ManagerError(f"failed to download {repo}/{remote_path}: HTTP {error.code}") from error
-
-
-def ensure_hf_package(package: PackageRecord) -> None:
-    kind = package.download.get("kind")
-    if kind != "huggingface_snapshot":
+        if package_kind(package) == "modelscope_snapshot" and error.code in (401, 403):
+            raise ManagerError(f"{repo}/{remote_path} requires ModelScope access to this repo") from error
         raise ManagerError(
-            f"{package.id} uses download kind '{kind}'. model_manager_v2 only installs huggingface_snapshot packages; "
+            f"failed to download {repo}/{remote_path}: HTTP {error.code}{source_override_hint(package)}"
+        ) from error
+
+
+def ensure_snapshot_package(package: PackageRecord) -> None:
+    kind = package.download.get("kind")
+    if kind not in ("huggingface_snapshot", "modelscope_snapshot"):
+        raise ManagerError(
+            f"{package.id} uses download kind '{kind}'. model_manager_v2 only installs "
+            "huggingface_snapshot and modelscope_snapshot packages; "
             "use tools/model_manager.py for legacy composite or converter installs."
         )
     if not package.download.get("repo"):
-        raise ManagerError(f"{package.id} has no Hugging Face repo")
+        raise ManagerError(f"{package.id} has no remote repo for download kind '{kind}'")
 
 
-def install_package(package: PackageRecord, args: argparse.Namespace) -> None:
-    ensure_hf_package(package)
+def package_manifest_path(package: PackageRecord, models_root: Path) -> Path:
+    target_dir = validate_relative_path(package.target_directory, "target_directory")
+    return models_root / target_dir / f".audiocpp-package-{package.id}.json"
+
+
+def read_package_manifest(package: PackageRecord, models_root: Path | None) -> dict[str, Any] | None:
+    if models_root is None:
+        return None
+    path = package_manifest_path(package, models_root)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def write_package_manifest(
+    package: PackageRecord,
+    models_root: Path,
+    resolved_revision: str,
+    remote_files: dict[str, RemoteFileInfo],
+) -> None:
+    path = package_manifest_path(package, models_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "package_id": package.id,
+        "repo": package.download.get("repo", ""),
+        "requested_revision": package_revision(package),
+        "resolved_revision": resolved_revision,
+        "installed_at_unix": int(time.time()),
+        "files": {
+            name: {"size": info.size, "etag": info.etag}
+            for name, info in remote_files.items()
+        },
+    }
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def reusable_package_outputs(
+    package: PackageRecord,
+    records: list[PackageRecord],
+    models_root: Path,
+) -> set[Path]:
+    """Return files safely shared with another completely installed package."""
+    target_dir = validate_relative_path(package.target_directory, "target_directory")
+    final_dir = models_root / target_dir
+    requested = {
+        (remote, final_dir / stripped_path(remote, package.strip_prefix))
+        for remote in package.files
+    }
+    reusable: set[Path] = set()
+    for other in records:
+        if other.id == package.id or other.download != package.download:
+            continue
+        if not package_is_installed(other, models_root):
+            continue
+        other_dir = models_root / validate_relative_path(other.target_directory, "target_directory")
+        for remote in other.files:
+            output = other_dir / stripped_path(remote, other.strip_prefix)
+            if (remote, output) in requested:
+                reusable.add(output)
+    return reusable
+
+
+def install_package(package: PackageRecord, records: list[PackageRecord], args: argparse.Namespace) -> None:
+    ensure_snapshot_package(package)
     target_dir = validate_relative_path(package.target_directory, "target_directory")
     models_root = Path(args.models_root)
     final_dir = models_root / target_dir
     plan = [(remote, final_dir / stripped_path(remote, package.strip_prefix)) for remote in package.files]
+    full_plan = list(plan)
 
     print(f"selected {package.id} ({package.family})")
-    print(f"repo {package.download['repo']}@{package.download.get('revision', 'main')}")
+    print(f"repo {package.download['repo']}@{package_revision(package)}")
     print(f"target {final_dir}")
     for remote, output in plan:
         if args.check:
-            size = check_remote_file(package, remote)
-            if size is None and package.download.get("gated") is True:
+            info = check_remote_file(package, remote)
+            if info.size is None and package.download.get("gated") is True:
                 suffix = " gated_access_required"
             else:
-                suffix = f" size={size}" if size is not None else ""
+                suffix = f" size={info.size}" if info.size is not None else ""
             print(f"check {remote}{suffix}")
         else:
             print(f"file remote={remote} local={output.relative_to(models_root)}")
 
     if args.dry_run or args.check:
         return
-    if final_dir.exists() and not args.overwrite:
-        raise ManagerError(f"target already exists: {final_dir} (use --overwrite)")
+    existing_outputs = [output for _remote, output in plan if output.exists()]
+    if existing_outputs and not args.overwrite:
+        if len(existing_outputs) == len(plan) and all(output.is_file() for output in existing_outputs):
+            print(f"already installed {package.id} -> {final_dir}")
+            return
+        reusable = reusable_package_outputs(package, records, models_root)
+        conflicts = [output for output in existing_outputs if output not in reusable]
+        if conflicts:
+            raise ManagerError(f"some package files already exist in: {final_dir} (use --overwrite)")
+        plan = [(remote, output) for remote, output in plan if output not in reusable]
     models_root.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{package.target_directory.replace('/', '_')}.", dir=models_root))
+    cancel_file = Path(args.cancel_file) if getattr(args, "cancel_file", "") else None
     try:
+        if cancellation_requested(cancel_file):
+            raise InstallCancelled("download cancelled by user")
+        progress_enabled = bool(getattr(args, "progress", False))
+        remote_files: dict[str, RemoteFileInfo] = {}
+        if progress_enabled:
+            remote_files = {remote: check_remote_file(package, remote) for remote, _output in plan}
+        elif plan:
+            remote_files[plan[0][0]] = check_remote_file(package, plan[0][0])
+        expected_sizes = [remote_files[remote].size for remote, _output in plan] if progress_enabled else []
+        total_expected = sum(size for size in expected_sizes if size is not None)
+        if any(size is None for size in expected_sizes):
+            total_expected = 0
+        completed = 0
+
+        def emit_progress(downloaded: int) -> None:
+            print(
+                f"AUDIOCPP_PROGRESS downloaded={downloaded} total={total_expected}",
+                flush=True,
+            )
+
+        if progress_enabled:
+            emit_progress(0)
         for remote, output in plan:
-            download_file(package, remote, staging / output.relative_to(final_dir))
-        if final_dir.exists():
-            shutil.rmtree(final_dir)
-        staging.rename(final_dir)
+            destination = staging / output.relative_to(final_dir)
+            if progress_enabled:
+                download_file(
+                    package,
+                    remote,
+                    destination,
+                    lambda file_bytes, _expected, base=completed: emit_progress(base + file_bytes),
+                    cancel_file,
+                )
+                completed += destination.stat().st_size
+                emit_progress(completed)
+            else:
+                download_file(package, remote, destination, cancel_file=cancel_file)
+        if cancellation_requested(cancel_file):
+            raise InstallCancelled("download cancelled by user")
+        # Record every package-owned file, including sidecars reused from a
+        # sibling precision. Version checks compare these per-file ETags and
+        # must not depend on a repository-wide revision.
+        for remote, _output in full_plan:
+            if remote not in remote_files:
+                remote_files[remote] = check_remote_file(package, remote)
+        if not final_dir.exists():
+            final_dir.parent.mkdir(parents=True, exist_ok=True)
+            staging.rename(final_dir)
+        else:
+            # Precision variants commonly share one target directory. Merge the
+            # fully downloaded staging tree so Q8 and F16/BF16 can coexist. An
+            # overwrite replaces only this package's files, preserving siblings.
+            for staged_file in sorted(path for path in staging.rglob("*") if path.is_file()):
+                relative = staged_file.relative_to(staging)
+                destination = final_dir / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists():
+                    if not args.overwrite:
+                        raise ManagerError(f"package file already exists: {destination} (use --overwrite)")
+                    destination.unlink()
+                staged_file.replace(destination)
+            shutil.rmtree(staging)
+        resolved_revision = next(
+            (info.revision for info in remote_files.values() if info.revision),
+            package_revision(package),
+        )
+        write_package_manifest(package, models_root, resolved_revision, remote_files)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
     print(f"installed {package.id} -> {final_dir}")
+
+
+def uninstall_package(package: PackageRecord, records: list[PackageRecord], args: argparse.Namespace) -> None:
+    target_dir = validate_relative_path(package.target_directory, "target_directory")
+    models_root = Path(args.models_root)
+    final_dir = models_root / target_dir
+    package_files = [final_dir / stripped_path(remote, package.strip_prefix) for remote in package.files]
+    manifest_path = package_manifest_path(package, models_root)
+    existing = [path for path in package_files if path.is_file() or path.is_symlink()]
+    if not existing:
+        raise ManagerError(f"package is not installed: {package.id}")
+
+    reusable = reusable_package_outputs(package, records, models_root)
+    for path in existing:
+        if path not in reusable:
+            path.unlink()
+    manifest_path.unlink(missing_ok=True)
+
+    # Remove only directories made empty by this package. Other precision
+    # variants and unrelated files in the shared target remain untouched.
+    cleanup: set[Path] = set()
+    for path in package_files:
+        parent = path.parent
+        while parent != final_dir.parent:
+            cleanup.add(parent)
+            parent = parent.parent
+    for directory in sorted(cleanup, key=lambda path: len(path.parts), reverse=True):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+    print(f"removed {package.id} -> {final_dir}")
+
+
+def clean_partial_package(package: PackageRecord, args: argparse.Namespace) -> None:
+    models_root = Path(args.models_root).resolve()
+    models_root.mkdir(parents=True, exist_ok=True)
+    prefix = f".{package.target_directory.replace('/', '_')}."
+    removed = 0
+    for candidate in models_root.glob(prefix + "*"):
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(models_root)
+        except ValueError as error:
+            raise ManagerError(f"refusing to clean staging path outside models root: {resolved}") from error
+        if candidate.is_dir():
+            shutil.rmtree(candidate)
+            removed += 1
+    print(f"cleaned {removed} partial download director{'y' if removed == 1 else 'ies'} for {package.id}")
 
 
 def command_list(records: list[PackageRecord], args: argparse.Namespace) -> None:
@@ -291,6 +685,143 @@ def command_info(records: list[PackageRecord], args: argparse.Namespace) -> None
         print(f"file: {remote}")
 
 
+def package_is_installed(package: PackageRecord, models_root: Path | None) -> bool:
+    if models_root is None:
+        return False
+    target_dir = validate_relative_path(package.target_directory, "target_directory")
+    final_dir = models_root / target_dir
+    if not final_dir.is_dir():
+        return False
+    return bool(package.files) and all(
+        (final_dir / stripped_path(remote_path, package.strip_prefix)).is_file()
+        for remote_path in package.files
+    )
+
+
+def package_version_state(
+    installed: bool,
+    manifest: dict[str, Any] | None,
+    remote_files: dict[str, RemoteFileInfo],
+) -> str:
+    """Compare only files owned by this package, not the repository commit.
+
+    Hugging Face's X-Repo-Commit changes whenever *any* file in a repository is
+    uploaded. Several audio.cpp packages share one repository, so comparing
+    that repository-wide revision incorrectly marked every installed package
+    as outdated after an unrelated model upload. Per-file ETags identify the
+    actual package payload and avoid that false positive.
+    """
+    if not installed:
+        return "not_installed"
+    manifest_files = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(manifest_files, dict):
+        return "unknown"
+
+    compared = 0
+    for remote_path, stored in manifest_files.items():
+        if not isinstance(stored, dict):
+            continue
+        local_etag = str(stored.get("etag", "")).strip('"')
+        remote_etag = remote_files.get(remote_path, RemoteFileInfo(None, "", "")).etag.strip('"')
+        if not local_etag or not remote_etag:
+            continue
+        compared += 1
+        if local_etag != remote_etag:
+            return "update_available"
+    return "up_to_date" if compared else "unknown"
+
+
+def package_size_record(package: PackageRecord, models_root: Path | None = None) -> dict[str, Any]:
+    installed = package_is_installed(package, models_root)
+    try:
+        ensure_snapshot_package(package)
+        total = 0
+        unknown = False
+        remote_revision = ""
+        remote_files: dict[str, RemoteFileInfo] = {}
+        for remote_path in package.files:
+            info = check_remote_file(package, remote_path)
+            remote_files[remote_path] = info
+            if info.size is None:
+                unknown = True
+            else:
+                total += info.size
+            if not remote_revision and info.revision:
+                remote_revision = info.revision
+        manifest = read_package_manifest(package, models_root)
+        local_revision = str(manifest.get("resolved_revision", "")) if manifest else ""
+        version_state = package_version_state(installed, manifest, remote_files)
+        state = "gated" if unknown and package.download.get("gated") is True else "unknown" if unknown else "ok"
+        return {
+            "id": package.id,
+            "size_bytes": None if unknown else total,
+            "state": state,
+            "message": "Hugging Face access and a valid token are required" if state == "gated" else "",
+            "installed": installed,
+            "version_state": version_state,
+            "local_revision": local_revision,
+            "remote_revision": remote_revision,
+        }
+    except ManagerError as error:
+        return {
+            "id": package.id,
+            "size_bytes": None,
+            "state": "error",
+            "message": str(error),
+            "installed": installed,
+            "version_state": "unknown" if installed else "not_installed",
+            "local_revision": "",
+            "remote_revision": "",
+        }
+
+
+def command_sizes(records: list[PackageRecord], args: argparse.Namespace) -> None:
+    selected = records
+    if args.package:
+        requested = set(args.package)
+        selected = [record for record in records if record.id in requested]
+        missing = sorted(requested - {record.id for record in selected})
+        if missing:
+            raise ManagerError(f"unknown package ids: {', '.join(missing)}")
+    models_root = Path(args.models_root) if args.models_root else None
+    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+        rows = list(pool.map(lambda package: package_size_record(package, models_root), selected))
+    print(json.dumps(rows, ensure_ascii=False))
+
+
+def command_installed(records: list[PackageRecord], args: argparse.Namespace) -> None:
+    models_root = Path(args.models_root)
+    rows = [
+        {
+            "id": package.id,
+            "size_bytes": None,
+            "state": "pending",
+            "message": "",
+            "installed": package_is_installed(package, models_root),
+            "version_state": "unknown" if package_is_installed(package, models_root) else "not_installed",
+            "local_revision": "",
+            "remote_revision": "",
+        }
+        for package in records
+    ]
+    print(json.dumps(rows, ensure_ascii=False))
+
+
+def add_source_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--source",
+        choices=["huggingface", "modelscope"],
+        default="huggingface",
+        help="download source override; 'modelscope' downloads from ModelScope even when the "
+        "spec says huggingface_snapshot (an unset or 'main' revision becomes 'master'). "
+        "Manifest etags are source-specific, so cross-source checks may report updates",
+    )
+    parser.add_argument(
+        "--source-repo",
+        help="ModelScope repo (namespace/name) for --source modelscope; defaults to the spec's repo",
+    )
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Install audio.cpp model packages from model_specs/*.json.")
     parser.add_argument("--specs-dir", default=str(DEFAULT_SPECS_DIR), help="directory containing model spec JSON files")
@@ -305,28 +836,70 @@ def make_parser() -> argparse.ArgumentParser:
     info_parser.add_argument("--precision")
     info_parser.add_argument("--json", action="store_true")
 
-    install_parser = sub.add_parser("install", help="install one Hugging Face snapshot package")
+    sizes_parser = sub.add_parser("sizes", help="check package download sizes without downloading files")
+    sizes_parser.add_argument("package", nargs="*", help="optional package ids; default checks every package")
+    sizes_parser.add_argument("--jobs", type=int, default=12, help="parallel metadata checks")
+    sizes_parser.add_argument("--models-root", help="also report packages whose required files are installed")
+    sizes_parser.add_argument("--json", action="store_true", help="retained for command symmetry; output is JSON")
+    add_source_arguments(sizes_parser)
+
+    installed_parser = sub.add_parser("installed", help="report locally installed packages without network access")
+    installed_parser.add_argument("--models-root", default="models")
+    installed_parser.add_argument("--json", action="store_true", help="retained for command symmetry; output is JSON")
+
+    uninstall_parser = sub.add_parser("uninstall", help="remove only the files belonging to one installed package")
+    uninstall_parser.add_argument("package", help="package id or family")
+    uninstall_parser.add_argument("--format")
+    uninstall_parser.add_argument("--precision")
+    uninstall_parser.add_argument("--models-root", default="models")
+
+    clean_parser = sub.add_parser("clean-partial", help="remove abandoned staging downloads for one package")
+    clean_parser.add_argument("package", help="package id or family")
+    clean_parser.add_argument("--models-root", default="models")
+
+    install_parser = sub.add_parser("install", help="install one Hugging Face or ModelScope snapshot package")
     install_parser.add_argument("package", help="package id or family")
     install_parser.add_argument("--format")
     install_parser.add_argument("--precision")
     install_parser.add_argument("--models-root", default="models")
     install_parser.add_argument("--overwrite", action="store_true")
+    install_parser.add_argument("--cancel-file", default="", help=argparse.SUPPRESS)
     install_parser.add_argument("--dry-run", action="store_true")
     install_parser.add_argument("--check", action="store_true", help="check remote files without downloading")
+    install_parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="emit machine-readable AUDIOCPP_PROGRESS lines while downloading",
+    )
+    add_source_arguments(install_parser)
     return parser
 
 
 def main() -> int:
     parser = make_parser()
     args = parser.parse_args()
+    source = getattr(args, "source", "huggingface")
+    source_repo = getattr(args, "source_repo", None)
+    if source_repo and source != "modelscope":
+        parser.error("--source-repo requires --source modelscope")
     try:
         records = flatten_packages(load_specs(Path(args.specs_dir)))
+        if source == "modelscope":
+            records = [apply_source_override(record, source_repo) for record in records]
         if args.command == "list":
             command_list(records, args)
         elif args.command == "info":
             command_info(records, args)
+        elif args.command == "sizes":
+            command_sizes(records, args)
+        elif args.command == "installed":
+            command_installed(records, args)
+        elif args.command == "uninstall":
+            uninstall_package(select_package(records, args), records, args)
+        elif args.command == "clean-partial":
+            clean_partial_package(select_package(records, args), args)
         elif args.command == "install":
-            install_package(select_package(records, args), args)
+            install_package(select_package(records, args), records, args)
         else:
             raise ManagerError(f"unknown command: {args.command}")
         return 0

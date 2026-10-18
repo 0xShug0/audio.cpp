@@ -1,0 +1,19 @@
+[short]
+Soprano is an extremely lightweight text to speech model.
+Soft lanterns flickered near the rails.
+Rain traced silver lines across the window.
+
+[medium]
+The quick brown fox jumps over the lazy dog. This sentence contains every letter of the alphabet. It has been used for typing practice for many decades.
+Morning barges drifted past the bridge as the clerk reread the notice and tucked the blue envelope in her coat.
+
+[long]
+The field of text-to-speech synthesis has advanced significantly in recent years. Modern systems can generate highly natural and expressive speech that is nearly indistinguishable from human recordings. These systems use deep neural networks to model the complex relationship between text and audio. Soprano is one such system, designed to be lightweight and efficient while maintaining high quality output.
+
+[longform]
+A week ago a friend invited a couple of other couples over for dinner. Eventually, the food, but not the wine, was cleared off the table for what turned out to be some fierce Scrabbling. Heeding the strategy of going for the shorter, more valuable word over the longer cheaper word, our final play was Bon, which, as luck would have it, happens to be a Japanese Buddhist festival, and not, as I had originally asserted while laying the tiles on the board, one half of a chocolate-covered cherry treat. Anyway, the strategy worked. My team only lost by 53 points instead of 58. Just the day before, our host had written of the challenges of writing short. In journalism, my friend's chosen trade, and mostly my own too, Mark Twain\'s observation undoubtedly applies: I didn\'t have time to write a short letter, so I wrote a long one instead. The principle holds across genres, in letters, reporting, and other writing. It is harder to be concise than to blather. Good writing is boiled down, not baked full of air like a souffle. No matter how yummy souffles may be.
+Silver carts wait by the pier.
+Quiet wagons gather by the station.
+Morning barges drifted past the bridge as the clerk reread the notice and tucked the blue envelope in her coat.
+Rain taps softly on the glass roof.
+Small lamps glow along the arcade.

@@ -170,7 +170,7 @@ std::vector<float> make_fourier_freqs() {
 core::TensorValue build_timestep_embedding(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & features,
-    const StableAudioRfDitWeights & weights,
+    const StableAudioRFDiTWeights & weights,
     const StableAudioConfig & config) {
     auto hidden = features;
     hidden = modules::LinearModule({kTimestepFeaturesDim, config.embed_dim, true, GGML_PREC_F32})
@@ -499,7 +499,7 @@ StableAudioRfLayerWeights load_layer(
 
 }  // namespace
 
-StableAudioRfDitWeights load_stable_audio_rf_dit_weights(
+StableAudioRFDiTWeights load_stable_audio_rf_dit_weights(
     const StableAudioAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -507,7 +507,7 @@ StableAudioRfDitWeights load_stable_audio_rf_dit_weights(
     assets::TensorStorageType weight_storage_type) {
     const auto & config = assets.config;
     const auto & source = *assets.model_weights;
-    StableAudioRfDitWeights weights;
+    StableAudioRFDiTWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -540,12 +540,12 @@ StableAudioRfDitWeights load_stable_audio_rf_dit_weights(
     return weights;
 }
 
-class StableAudioRfDitRuntime::Graph {
+class StableAudioRFDiTRuntime::Graph {
 public:
     Graph(
         core::ExecutionContext & execution,
         std::shared_ptr<const StableAudioAssets> assets,
-        const StableAudioRfDitWeights & weights,
+        const StableAudioRFDiTWeights & weights,
         const StableAudioSamplingState & sampling,
         bool use_cfg)
         : backend_(execution.backend()),
@@ -988,7 +988,7 @@ private:
     int64_t latent_tokens_ = 0;
     bool use_cfg_ = false;
     std::vector<float> timestep_freqs_;
-    const StableAudioRfDitWeights & weights_;
+    const StableAudioRFDiTWeights & weights_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::TensorValue x_;
     core::TensorValue timestep_features_;
@@ -1007,7 +1007,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-StableAudioRfDitRuntime::StableAudioRfDitRuntime(
+StableAudioRFDiTRuntime::StableAudioRFDiTRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const StableAudioAssets> assets,
     assets::TensorStorageType weight_storage_type)
@@ -1022,15 +1022,15 @@ StableAudioRfDitRuntime::StableAudioRfDitRuntime(
     }
 }
 
-StableAudioRfDitRuntime::~StableAudioRfDitRuntime() = default;
+StableAudioRFDiTRuntime::~StableAudioRFDiTRuntime() = default;
 
-const StableAudioRfDitWeights & require_rf_weights(
-    std::unique_ptr<StableAudioRfDitWeights> & weights,
+const StableAudioRFDiTWeights & require_rf_weights(
+    std::unique_ptr<StableAudioRFDiTWeights> & weights,
     core::ExecutionContext & execution,
     const std::shared_ptr<const StableAudioAssets> & assets,
     assets::TensorStorageType weight_storage_type) {
     if (!weights) {
-        weights = std::make_unique<StableAudioRfDitWeights>(load_stable_audio_rf_dit_weights(
+        weights = std::make_unique<StableAudioRFDiTWeights>(load_stable_audio_rf_dit_weights(
             *assets,
             execution.backend(),
             execution.backend_type(),
@@ -1040,7 +1040,7 @@ const StableAudioRfDitWeights & require_rf_weights(
     return *weights;
 }
 
-void StableAudioRfDitRuntime::prepare(const StableAudioSamplingState & sampling, float cfg_scale) const {
+void StableAudioRFDiTRuntime::prepare(const StableAudioSamplingState & sampling, float cfg_scale) const {
     const bool use_cfg = cfg_scale != 1.0F;
     const auto & weights = require_rf_weights(weights_, *execution_, assets_, weight_storage_type_);
     if (!graph_ || !graph_->matches(sampling) || !graph_->matches_cfg(use_cfg)) {
@@ -1048,7 +1048,7 @@ void StableAudioRfDitRuntime::prepare(const StableAudioSamplingState & sampling,
     }
 }
 
-std::vector<float> StableAudioRfDitRuntime::sample(
+std::vector<float> StableAudioRFDiTRuntime::sample(
     const StableAudioSamplingState & sampling,
     const StableAudioConditioningInputs & conditioning,
     uint64_t seed,
@@ -1061,7 +1061,7 @@ std::vector<float> StableAudioRfDitRuntime::sample(
     return graph_->sample(sampling, conditioning, seed, rng_offset_blocks, rng_policy, sampler_type, cfg_scale, apg_scale);
 }
 
-void StableAudioRfDitRuntime::release_runtime_graphs() const {
+void StableAudioRFDiTRuntime::release_runtime_graphs() const {
     graph_.reset();
 }
 

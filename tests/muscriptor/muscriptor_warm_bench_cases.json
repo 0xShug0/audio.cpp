@@ -1,0 +1,111 @@
+{
+  "warmup": {
+    "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav"
+  },
+  "cases": {
+    "known_wav_multi_request": {
+      "warmup": {
+        "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav"
+      },
+      "requests": [
+        {
+          "id": "headache_by_lost_deposit_1min_auto",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": ""
+        },
+        {
+          "id": "headache_by_lost_deposit_1min_drums",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": "drums"
+        },
+        {
+          "id": "headache_by_lost_deposit_1min_electric_bass",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": "electric_bass"
+        },
+        {
+          "id": "headache_by_lost_deposit_1min_drums_electric_bass",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": "drums,electric_bass"
+        }
+      ]
+    },
+    "constrained_first_multi_request": {
+      "warmup": {
+        "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav"
+      },
+      "requests": [
+        {
+          "id": "headache_by_lost_deposit_1min_drums_first",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": "drums"
+        },
+        {
+          "id": "headache_by_lost_deposit_1min_electric_bass_second",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": "electric_bass"
+        },
+        {
+          "id": "headache_by_lost_deposit_1min_mixed_third",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": "drums,electric_bass"
+        },
+        {
+          "id": "headache_by_lost_deposit_1min_auto_last",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": ""
+        }
+      ]
+    },
+    "electric_bass_only": {
+      "warmup": {
+        "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav"
+      },
+      "requests": [
+        {
+          "id": "headache_by_lost_deposit_1min_electric_bass",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": "electric_bass"
+        }
+      ]
+    },
+    "sampling_cfg_batched": {
+      "warmup": {
+        "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav"
+      },
+      "requests": [
+        {
+          "id": "headache_by_lost_deposit_sampling_cfg_batched",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": "drums,electric_bass",
+          "use_sampling": true,
+          "temperature": 1e-06,
+          "guidance_scale": 1.2,
+          "num_beams": 1,
+          "batch_size": 4,
+          "prelude_forcing": false,
+          "seed": 3234
+        }
+      ]
+    },
+    "beam_search": {
+      "warmup": {
+        "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav"
+      },
+      "requests": [
+        {
+          "id": "headache_by_lost_deposit_beam",
+          "audio": "build/logs/muscriptor/input/headache_by_lost_deposit_1min_16k.wav",
+          "instruments": "drums,electric_bass",
+          "use_sampling": false,
+          "temperature": 1.0,
+          "guidance_scale": 1.0,
+          "num_beams": 2,
+          "batch_size": 1,
+          "prelude_forcing": false,
+          "seed": 3234
+        }
+      ]
+    }
+  }
+}

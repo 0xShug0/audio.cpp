@@ -1,0 +1,26 @@
+#version 450
+
+#include "generic_head.glsl"
+#include "types.glsl"
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+void main() {
+    const uint i = gl_GlobalInvocationID.z * 262144 + gl_GlobalInvocationID.y * 512 + gl_GlobalInvocationID.x;
+
+    if (i >= p.KX) {
+        return;
+    }
+
+#if defined(DATA_A_BF16)
+    const float x = bf16_to_fp32(uint32_t(data_a[i]));
+#else
+    const float x = float(data_a[i]);
+#endif
+    // Round to bf16 precision and widen back to f32, matching the
+    // f32 -> bf16 -> f32 cast round trip.
+    data_d[i] = D_TYPE(bf16_to_fp32(fp32_to_bf16(x)));
+}

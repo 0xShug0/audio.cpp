@@ -51,13 +51,12 @@ void validate_audio_encoder_weight_storage(engine::assets::TensorStorageType sto
 
 engine::assets::TensorStorageType option_weight_type(
     const runtime::SessionOptions & options,
-    const char * key,
+    std::initializer_list<std::string_view> keys,
     engine::assets::TensorStorageType default_value) {
-    const auto it = options.options.find(key);
-    if (it == options.options.end()) {
-        return default_value;
+    if (const auto value = runtime::find_option(options.options, keys)) {
+        return engine::assets::parse_tensor_storage_type(*value);
     }
-    return engine::assets::parse_tensor_storage_type(it->second);
+    return default_value;
 }
 
 std::filesystem::path default_vad_model_path() {
@@ -81,6 +80,103 @@ bool request_return_timestamps(const runtime::TaskRequest & request) {
     return false;
 }
 
+bool request_clamp_timestamps_to_audio(const runtime::TaskRequest & request) {
+    if (const auto value = runtime::find_option(request.options, {"clamp_timestamps_to_audio"})) {
+        return runtime::parse_bool_option(*value, "clamp_timestamps_to_audio");
+    }
+    return false;
+}
+
+bool request_preserve_punctuation(const runtime::TaskRequest & request) {
+    if (const auto value = runtime::find_option(
+            request.options,
+            {"qwen3_asr.preserve_punctuation", "preserve_punctuation"})) {
+        return runtime::parse_bool_option(*value, "qwen3_asr.preserve_punctuation");
+    }
+    return false;
+}
+
+void log_chunk_word_diagnostics(
+    int64_t chunk_index,
+    int64_t chunk_count,
+    const runtime::TimeSpan & source_span,
+    const runtime::TimeSpan & keep_span,
+    const runtime::TaskResult & item,
+    size_t merged_before,
+    size_t merged_after,
+    int64_t source_sample_rate,
+    int64_t timestamp_sample_rate) {
+    if (!debug::log_enabled()) {
+        return;
+    }
+    const int64_t source_samples = source_sample_rate == timestamp_sample_rate
+        ? source_span.end_sample - source_span.start_sample
+        : static_cast<int64_t>(std::llround(
+            static_cast<double>(source_span.end_sample - source_span.start_sample) *
+            static_cast<double>(timestamp_sample_rate) /
+            static_cast<double>(source_sample_rate)));
+    int64_t outside_count = 0;
+    int64_t first_outside = -1;
+    int64_t max_word_end = 0;
+    for (size_t i = 0; i < item.word_timestamps.size(); ++i) {
+        const auto & word = item.word_timestamps[i];
+        max_word_end = std::max(max_word_end, word.span.end_sample);
+        const int64_t local_start = std::max<int64_t>(word.span.start_sample, 0);
+        const int64_t local_end = std::min<int64_t>(word.span.end_sample, source_samples);
+        if (local_start >= local_end) {
+            if (first_outside < 0) {
+                first_outside = static_cast<int64_t>(i);
+            }
+            ++outside_count;
+        }
+    }
+    std::ostringstream out;
+    out << "qwen3_asr.words_chunk"
+        << " index=" << chunk_index
+        << " count=" << chunk_count
+        << " source_start=" << source_span.start_sample
+        << " source_end=" << source_span.end_sample
+        << " keep_start=" << keep_span.start_sample
+        << " keep_end=" << keep_span.end_sample
+        << " source_sample_rate=" << source_sample_rate
+        << " timestamp_sample_rate=" << timestamp_sample_rate
+        << " raw_words=" << item.word_timestamps.size()
+        << " merged_delta=" << (merged_after - merged_before)
+        << " outside_words=" << outside_count
+        << " source_samples=" << source_samples
+        << " max_word_end=" << max_word_end;
+    if (item.text_output.has_value()) {
+        out << " text_chars=" << item.text_output->text.size();
+    }
+    if (!item.word_timestamps.empty()) {
+        const auto & first = item.word_timestamps.front();
+        const auto & last = item.word_timestamps.back();
+        out << " first_word=\"" << first.word << "\""
+            << " first_start=" << first.span.start_sample
+            << " first_end=" << first.span.end_sample
+            << " last_word=\"" << last.word << "\""
+            << " last_start=" << last.span.start_sample
+            << " last_end=" << last.span.end_sample;
+    }
+    if (first_outside >= 0) {
+        const auto index = static_cast<size_t>(first_outside);
+        const auto append = [&](const char * prefix, int64_t word_index, const runtime::WordTimestamp & word) {
+            out << ' ' << prefix << "_index=" << word_index
+                << ' ' << prefix << "_word=\"" << word.word << "\""
+                << ' ' << prefix << "_start=" << word.span.start_sample
+                << ' ' << prefix << "_end=" << word.span.end_sample;
+        };
+        if (index > 0) {
+            append("prev", first_outside - 1, item.word_timestamps[index - 1]);
+        }
+        append("bad", first_outside, item.word_timestamps[index]);
+        if (index + 1 < item.word_timestamps.size()) {
+            append("next", first_outside + 1, item.word_timestamps[index + 1]);
+        }
+    }
+    debug::log_message(debug::LogLevel::Info, "qwen3_asr", out.str());
+}
+
 }  // namespace
 
 Qwen3ASRSession::Qwen3ASRSession(
@@ -91,17 +187,19 @@ Qwen3ASRSession::Qwen3ASRSession(
       task_(task),
       assets_(require_assets(std::move(assets))),
       audio_encoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"qwen3_asr.audio_encoder_graph_arena_mb"}, 128ull * 1024ull * 1024ull)),
-      thinker_prefill_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"qwen3_asr.thinker_prefill_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
-      thinker_decode_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"qwen3_asr.thinker_decode_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
-      thinker_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"qwen3_asr.thinker_weight_context_mb"}, 64ull * 1024ull * 1024ull)),
-      audio_encoder_weight_storage_type_(option_weight_type(options, "qwen3_asr.audio_encoder_weight_type", engine::assets::TensorStorageType::Native)),
+      thinker_prefill_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"qwen3_asr.text_decoder_prefill_graph_arena_mb", "qwen3_asr.thinker_prefill_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
+      thinker_decode_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"qwen3_asr.text_decoder_decode_graph_arena_mb", "qwen3_asr.thinker_decode_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
+      thinker_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"qwen3_asr.text_decoder_weight_context_mb", "qwen3_asr.thinker_weight_context_mb"}, 64ull * 1024ull * 1024ull)),
+      audio_encoder_weight_storage_type_(option_weight_type(options, {"qwen3_asr.audio_encoder_weight_type"}, engine::assets::TensorStorageType::Native)),
       thinker_weight_storage_type_(option_weight_type(
           options,
-          "qwen3_asr.thinker_weight_type",
-          option_weight_type(options, "qwen3_asr.weight_type", engine::assets::TensorStorageType::Native))),
+          {"qwen3_asr.text_decoder_weight_type", "qwen3_asr.thinker_weight_type"},
+          option_weight_type(options, {"qwen3_asr.weight_type"}, engine::assets::TensorStorageType::Native))),
       tokenizer_(assets_),
       frontend_(assets_),
-      audio_encoder_(assets_, execution_context(), audio_encoder_graph_arena_bytes_, audio_encoder_weight_storage_type_),
+      audio_encoder_(assets_->model_weights, assets_->config.audio_encoder,
+          execution_context(), {audio_encoder_graph_arena_bytes_, audio_encoder_weight_storage_type_, "qwen3_asr.audio_encoder"},
+          assets_->config.audio_encoder_binding),
       thinker_(
           assets_,
           execution_context(),
@@ -111,7 +209,7 @@ Qwen3ASRSession::Qwen3ASRSession(
           thinker_weight_storage_type_),
       prompt_builder_(tokenizer_),
       postprocessor_(tokenizer_),
-      vad_model_path_(runtime::find_option(options.options, {"qwen3_asr.vad_model_path"}).value_or(default_vad_model_path().string())) {
+      vad_model_path_(runtime::find_option(options.options, {"qwen3_asr.vad_model_path", "qwen3_asr.vad_path"}).value_or(default_vad_model_path().string())) {
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Qwen3 ASR only supports VoiceTaskKind::Asr");
     }
@@ -129,6 +227,12 @@ Qwen3ASRSession::Qwen3ASRSession(
             key != "qwen3_asr.thinker_weight_context_mb" &&
             key != "qwen3_asr.audio_encoder_weight_type" &&
             key != "qwen3_asr.thinker_weight_type" &&
+            key != "qwen3_asr.text_decoder_prefill_graph_arena_mb" &&
+            key != "qwen3_asr.text_decoder_decode_graph_arena_mb" &&
+            key != "qwen3_asr.text_decoder_weight_context_mb" &&
+            key != "qwen3_asr.text_decoder_weight_type" &&
+            key != "qwen3_asr.forced_aligner_path" &&
+            key != "qwen3_asr.vad_path" &&
             key != "qwen3_asr.weight_type" &&
             key != "qwen3_asr.forced_aligner_model_path" &&
             key != "qwen3_asr.aligner_model_path" &&
@@ -138,7 +242,7 @@ Qwen3ASRSession::Qwen3ASRSession(
     }
     if (const auto aligner_path = runtime::find_option(
             options.options,
-            {"qwen3_asr.forced_aligner_model_path", "qwen3_asr.aligner_model_path"})) {
+            {"qwen3_asr.forced_aligner_path", "qwen3_asr.forced_aligner_model_path", "qwen3_asr.aligner_model_path"})) {
         runtime::SessionOptions aligner_options;
         aligner_options.backend = options.backend;
         for (const auto & [key, value] : options.options) {
@@ -198,6 +302,7 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
         item_request.audio_input = engine::audio::slice_audio_buffer(audio, chunks.front().source_span);
         auto item = run_single(make_request(item_request));
         std::vector<runtime::WordTimestamp> merged_words;
+        const size_t merged_before = merged_words.size();
         engine::audio::append_chunk_word_timestamps(
             merged_words,
             item.word_timestamps,
@@ -205,12 +310,23 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
             chunks.front().keep_span,
             audio.sample_rate,
             assets_->config.sample_rate);
+        log_chunk_word_diagnostics(
+            0,
+            1,
+            chunks.front().source_span,
+            chunks.front().keep_span,
+            item,
+            merged_before,
+            merged_words.size(),
+            audio.sample_rate,
+            assets_->config.sample_rate);
         item.word_timestamps = std::move(merged_words);
         return item;
     }
     runtime::TaskResult merged;
     std::ostringstream text;
-    for (const auto & chunk : chunks) {
+    for (size_t chunk_index = 0; chunk_index < chunks.size(); ++chunk_index) {
+        const auto & chunk = chunks[chunk_index];
         runtime::TaskRequest item_request = request;
         item_request.audio_input = engine::audio::slice_audio_buffer(audio, chunk.source_span);
         auto item = run_single(make_request(item_request));
@@ -225,6 +341,7 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
                 merged.text_output->language = item.text_output->language;
             }
         }
+        const size_t merged_before = merged.word_timestamps.size();
         engine::audio::append_chunk_word_timestamps(
             merged.word_timestamps,
             item.word_timestamps,
@@ -232,9 +349,20 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
             chunk.keep_span,
             audio.sample_rate,
             assets_->config.sample_rate);
+        log_chunk_word_diagnostics(
+            static_cast<int64_t>(chunk_index),
+            static_cast<int64_t>(chunks.size()),
+            chunk.source_span,
+            chunk.keep_span,
+            item,
+            merged_before,
+            merged.word_timestamps.size(),
+            audio.sample_rate,
+            assets_->config.sample_rate);
     }
     if (merged.text_output.has_value()) {
-        if (request_return_timestamps(request) && !merged.word_timestamps.empty()) {
+        if (request_return_timestamps(request) && !merged.word_timestamps.empty() &&
+            !request_preserve_punctuation(request)) {
             std::ostringstream word_text;
             for (const auto & word : merged.word_timestamps) {
                 if (word_text.tellp() > 0) {
@@ -385,7 +513,8 @@ runtime::TaskResult Qwen3ASRSession::run_single(const Qwen3ASRRequest & asr_requ
     result.text_output = runtime::Transcript{decoded.text, decoded.language};
     result.word_timestamps = decoded.word_timestamps;
     if (asr_request.generation.return_timestamps) {
-        if (!decoded.text.empty()) {
+        if (!decoded.text.empty() &&
+            engine::models::qwen3_forced_aligner::has_alignable_words(decoded.text, decoded.language)) {
             if (decoded.language.empty()) {
                 throw std::runtime_error("Qwen3 ASR timestamp output requires a requested or detected language");
             }
@@ -393,6 +522,9 @@ runtime::TaskResult Qwen3ASRSession::run_single(const Qwen3ASRRequest & asr_requ
             align_request.audio_input = asr_request.audio;
             align_request.text_input = runtime::Transcript{decoded.text, decoded.language};
             align_request.options["audio_chunk_mode"] = "none";
+            if (asr_request.generation.clamp_timestamps_to_audio) {
+                align_request.options["clamp_timestamps_to_audio"] = "true";
+            }
             forced_aligner_session_->prepare(runtime::build_preparation_request(align_request));
             auto aligned = forced_aligner_session_->run(align_request);
             result.word_timestamps = std::move(aligned.word_timestamps);
@@ -608,6 +740,9 @@ Qwen3ASRRequest Qwen3ASRSession::make_request(const runtime::TaskRequest & reque
         out.context = request.text_input->text;
         out.language = request.text_input->language;
     }
+    if (const auto value = runtime::find_option(request.options, {"language"})) {
+        out.language = *value == "Auto" ? "" : *value;
+    }
     if (const auto value = runtime::parse_int_option(request.options, {"max_tokens"})) {
         out.generation.max_new_tokens = *value;
         if (out.generation.max_new_tokens <= 0) {
@@ -617,6 +752,7 @@ Qwen3ASRRequest Qwen3ASRSession::make_request(const runtime::TaskRequest & reque
     if (const auto value = runtime::find_option(request.options, {"return_timestamps"})) {
         out.generation.return_timestamps = runtime::parse_bool_option(*value, "return_timestamps");
     }
+    out.generation.clamp_timestamps_to_audio = request_clamp_timestamps_to_audio(request);
     return out;
 }
 

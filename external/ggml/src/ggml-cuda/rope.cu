@@ -40,7 +40,7 @@ static __device__ void rope_yarn(
     }
 }
 
-template <bool forward, bool has_ff, typename T, typename D>
+template <bool forward, bool has_ff, typename T, typename D, bool packed_rows = false>
 static __global__ void rope_norm(const T *            x,
                                  D *                  dst,
                                  const int            ne00,
@@ -62,13 +62,13 @@ static __global__ void rope_norm(const T *            x,
                                  const float *        freq_factors,
                                  const int64_t *      row_indices,
                                  const int            set_rows_stride) {
-    const int i0 = 2*(blockDim.y*blockIdx.y + threadIdx.y);
+    const int i0 = packed_rows ? 2*threadIdx.x : 2*(blockDim.y*blockIdx.y + threadIdx.y);
 
     if (i0 >= ne00) {
         return;
     }
 
-    const int row_dst = blockDim.x*blockIdx.x + threadIdx.x;
+    const int row_dst = packed_rows ? blockDim.y*blockIdx.x + threadIdx.y : blockDim.x*blockIdx.x + threadIdx.x;
 
     const uint32_t i3 = row_dst / (ne01 * ne02);
     const uint32_t i2 = (row_dst - i3 * ne01 * ne02) / ne01;
@@ -357,6 +357,20 @@ static void rope_norm_cuda(const T *            x,
     const dim3 block_nums(nr, n_blocks_x, 1);
 
     const float theta_scale = powf(freq_base, -2.0f / n_dims);
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    // One warp per 64-wide head, eight rows per block. The generic launch
+    // leaves seven of its eight warps idle for these narrow heads. Keep the
+    // same scalar arithmetic and require full blocks to avoid tail reads.
+    if constexpr (std::is_same_v<T, float> && std::is_same_v<D, float>) {
+        if (ne00 == 64 && nr % 8 == 0 && freq_factors == nullptr && set_rows_stride == 0) {
+            rope_norm<forward, false, T, D, true><<<nr / 8, dim3(32, 8), 0, stream>>>(
+                x, dst, ne00, ne01, ne02, s01, s02, s03, s1, s2, s3, n_dims, pos, freq_scale, ext_factor,
+                attn_factor, corr_dims, theta_scale, freq_factors, row_indices, set_rows_stride);
+            return;
+        }
+    }
+#endif
 
     if (freq_factors == nullptr) {
         rope_norm<forward, false><<<block_nums, block_dims, 0, stream>>>(

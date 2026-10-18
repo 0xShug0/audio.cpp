@@ -120,8 +120,8 @@ void erase_option_aliases(
 
 FoundationRequest parse_foundation_request(const runtime::TaskRequest & request, const StableAudioConfig & config) {
     runtime::TaskRequest shared_request = request;
-    const auto sampler = runtime::find_option(request.options, {"sampler"});
-    erase_option_aliases(shared_request.options, {"sampler"});
+    const auto sampler = runtime::find_option(request.options, {"sampler_mode", "sampler"});
+    erase_option_aliases(shared_request.options, {"sampler_mode", "sampler"});
     FoundationRequest out;
     out.audio = clamp_request_to_model_limit(parse_stable_audio_request(shared_request), config);
     if (sampler.has_value()) {
@@ -129,7 +129,7 @@ FoundationRequest parse_foundation_request(const runtime::TaskRequest & request,
             *sampler != "euler" &&
             *sampler != "dpmpp-2m" &&
             *sampler != "dpmpp-3m-sde") {
-            throw std::runtime_error("Stable Audio Foundation sampler must be pingpong, euler, dpmpp-2m, or dpmpp-3m-sde");
+            throw std::runtime_error("Stable Audio Foundation sampler_mode must be pingpong, euler, dpmpp-2m, or dpmpp-3m-sde");
         }
         out.audio.sampler = *sampler;
     }
@@ -228,7 +228,7 @@ void FoundationSession::prepare(const runtime::SessionPreparationRequest & reque
             max_batch_);
     }
     if (!rf_dit_) {
-        rf_dit_ = std::make_unique<FoundationRfDitRuntime>(
+        rf_dit_ = std::make_unique<FoundationRFDiTRuntime>(
             execution_context(),
             assets_,
             weight_storage_type_);

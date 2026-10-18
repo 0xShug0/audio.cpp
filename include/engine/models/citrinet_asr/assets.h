@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 #include "engine/framework/tokenizers/sentencepiece.h"
 
 #include <cstdint>
@@ -96,6 +97,7 @@ struct CitrinetWeights {
     std::shared_ptr<const assets::TensorSource> source;
     std::vector<float> window;
     std::vector<float> fb;
+    std::shared_ptr<const engine::audio::NemoMelFrontend> frontend;
     std::vector<JasperBlockWeights> blocks;
     Conv1dWeights decoder;
     std::vector<tokenizers::SentencePiecePiece> tokenizer_pieces;

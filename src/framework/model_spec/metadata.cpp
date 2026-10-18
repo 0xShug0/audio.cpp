@@ -1,7 +1,9 @@
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/task_vocabulary.h"
 
 #include "engine/framework/model_spec/options.h"
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/model_spec/schema.h"
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
@@ -18,46 +20,25 @@ namespace {
 namespace json = engine::io::json;
 
 runtime::VoiceTaskKind parse_task_kind(const std::string & value) {
-    if (value == "vad") {
-        return runtime::VoiceTaskKind::Vad;
+    // Spec names, not ABI tokens: "music" here is "gen" there. The mapping is
+    // in runtime::task_vocabulary, which the schema's allowed set reads too, so
+    // a name the schema accepts cannot be one this rejects.
+    const auto token = runtime::task_token_for_spec_name(value);
+    if (!token.empty()) {
+        return runtime::parse_voice_task_kind(std::string(token));
     }
-    if (value == "asr") {
-        return runtime::VoiceTaskKind::Asr;
+    std::string expected;
+    std::size_t count = 0;
+    const auto * entries = runtime::task_vocabulary(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        for (std::size_t alias = 0; alias < entries[i].alias_count; ++alias) {
+            if (!expected.empty()) {
+                expected += ", ";
+            }
+            expected.append(entries[i].aliases[alias]);
+        }
     }
-    if (value == "diar") {
-        return runtime::VoiceTaskKind::Diarization;
-    }
-    if (value == "sep") {
-        return runtime::VoiceTaskKind::SourceSeparation;
-    }
-    if (value == "audio_generation" || value == "music" || value == "sfx" || value == "edit") {
-        return runtime::VoiceTaskKind::AudioGeneration;
-    }
-    if (value == "tts") {
-        return runtime::VoiceTaskKind::Tts;
-    }
-    if (value == "clone") {
-        return runtime::VoiceTaskKind::VoiceCloning;
-    }
-    if (value == "vc") {
-        return runtime::VoiceTaskKind::VoiceConversion;
-    }
-    if (value == "s2s") {
-        return runtime::VoiceTaskKind::SpeechToSpeech;
-    }
-    if (value == "align") {
-        return runtime::VoiceTaskKind::Alignment;
-    }
-    if (value == "design") {
-        return runtime::VoiceTaskKind::VoiceDesign;
-    }
-    if (value == "speaker") {
-        return runtime::VoiceTaskKind::SpeakerRecognition;
-    }
-    if (value == "svc") {
-        return runtime::VoiceTaskKind::Svc;
-    }
-    throw std::runtime_error("unknown model spec task: " + value);
+    throw std::runtime_error("unknown model spec task: " + value + " (expected one of " + expected + ")");
 }
 
 runtime::RunMode parse_run_mode(const std::string & value) {
@@ -92,6 +73,10 @@ std::vector<runtime::TaskCapability> parse_tasks(const json::Value & tasks_value
 
 json::Value load_spec_for_family(std::string_view family) {
     return engine::model_spec::load_spec(engine::model_spec::default_contract_spec_path(family));
+}
+
+json::Value load_contract_spec_for_family(std::string_view family) {
+    return engine::model_spec::load_contract_spec(engine::model_spec::default_contract_spec_path(family));
 }
 
 std::string ref_candidate_path(const std::string & ref) {
@@ -255,7 +240,8 @@ runtime::CapabilitySet capabilities_from_spec(const json::Value & spec) {
     out.supports_style_condition =
         has_capability(*capabilities, "style_control") || has_capability(*capabilities, "emotion_control");
     out.supports_timestamps =
-        has_capability(*capabilities, "word_timestamps") || has_capability(*capabilities, "segments");
+        has_capability(*capabilities, "word_timestamps") || has_capability(*capabilities, "segments") ||
+        has_capability(*capabilities, "speech_segments");
     return out;
 }
 
@@ -297,7 +283,9 @@ std::unordered_set<std::string> option_keys(const std::vector<runtime::CliOption
 
 ModelContract contract_from_spec(const json::Value & spec) {
     ModelContract out;
-    out.metadata = metadata_from_spec(spec);
+    out.metadata.family = json::require_string(spec, "family");
+    out.metadata.variant = json::require_string(spec, "display_name");
+    out.metadata.description = json::require_string(spec, "description");
     out.capabilities = capabilities_from_spec(spec);
     out.cli = cli_from_spec(spec);
     out.request_option_keys = option_keys(out.cli.request_options);
@@ -309,11 +297,23 @@ ModelContract contract_from_spec(const json::Value & spec) {
 }  // namespace
 
 std::optional<ModelContract> model_contract(std::string_view family) {
-    const auto spec = load_spec_for_family(family);
-    if (spec.find("schema_version") == nullptr) {
+    const auto spec = load_contract_spec_for_family(family);
+    const auto * version = spec.find("schema_version");
+    if (version == nullptr) {
         return std::nullopt;
     }
+    if (!version->is_number() || version->as_i64() != kModelSpecSchemaVersion) {
+        throw std::runtime_error(
+            "model spec schema_version: expected " + std::to_string(kModelSpecSchemaVersion));
+    }
     return contract_from_spec(spec);
+}
+
+std::optional<ModelContract> find_model_contract(std::string_view family) {
+    if (!engine::model_spec::find_contract_spec_path(family).has_value()) {
+        return std::nullopt;
+    }
+    return model_contract(family);
 }
 
 std::optional<runtime::CapabilitySet> advertised_capabilities(std::string_view family) {

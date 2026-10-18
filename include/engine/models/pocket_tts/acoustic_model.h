@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <random>
 #include <vector>
 
 namespace engine::models::pocket_tts {
@@ -33,6 +35,17 @@ struct AcousticModelResult {
 struct AcousticPreparedRuntime {
     int64_t prompt_steps = 0;
     std::shared_ptr<FlowLMStepRuntime> step_runtime;
+};
+
+struct AcousticStreamState {
+    AcousticPreparedRuntime runtime;
+    AcousticGenerationConfig config;
+    std::vector<float> current_input;
+    std::mt19937 rng;
+    int step = 0;
+    int eos_step = -1;
+    int generated_steps = 0;
+    bool done = false;
 };
 
 class AcousticModel {
@@ -62,6 +75,16 @@ public:
         const std::vector<float> & text_embeddings,
         const FlowLMState & initial_state,
         const AcousticGenerationConfig & config) const;
+
+    AcousticStreamState start_stream(
+        const AcousticPreparedRuntime & runtime,
+        const PocketTTSAssets & manifest,
+        const PocketTTSBackendWeights & weights,
+        const std::vector<float> & text_embeddings,
+        const FlowLMState & initial_state,
+        const AcousticGenerationConfig & config) const;
+
+    std::optional<FlowLMStepResult> next_stream_step(AcousticStreamState & state) const;
 
     void clear_runtime_cache() const noexcept;
     int64_t prepared_prompt_capacity() const noexcept;

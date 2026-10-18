@@ -337,6 +337,24 @@ RunResult run_conv_transpose_ab_case(
     return runner.run_f32(output);
 }
 
+void require_cuda_or_hip_backend_classification() {
+    static_assert(engine::core::uses_ggml_cuda_or_hip_backend(engine::core::BackendType::Cuda));
+    static_assert(engine::core::uses_ggml_cuda_or_hip_backend(engine::core::BackendType::Hip));
+    static_assert(!engine::core::uses_ggml_cuda_or_hip_backend(engine::core::BackendType::Cpu));
+    static_assert(!engine::core::uses_ggml_cuda_or_hip_backend(engine::core::BackendType::Vulkan));
+    static_assert(!engine::core::uses_ggml_cuda_or_hip_backend(engine::core::BackendType::Metal));
+
+    const ConvTransposeCase test_case{"hip_trigger_condition_probe", 1, 256, 128, 96, 10, 5, true};
+    const auto eligible_config = make_config(test_case);
+    for (const auto backend : {engine::core::BackendType::Hip, engine::core::BackendType::Metal}) {
+        engine::core::ModuleBuildContext ctx{};
+        ctx.backend_type = backend;
+        if (!engine::modules::is_conv_transpose1d_col2im_fast_path_eligible(ctx, eligible_config)) {
+            throw std::runtime_error("expected HIP and Metal conv-transpose config to be col2im fast-path eligible");
+        }
+    }
+}
+
 void require_fast_path_trigger_conditions(engine::core::BackendType backend_type) {
     BackendModuleRunner cuda_runner("conv_transpose_fast_path_test.cuda_trigger", backend_type);
     BackendModuleRunner cpu_runner("conv_transpose_fast_path_test.cpu_trigger", engine::core::BackendType::Cpu);
@@ -459,10 +477,13 @@ int main() {
     try {
         const ConvTransposeCase qwen3_case{"qwen3_decoder_mid_block_biased", 1, 256, 128, 96, 10, 5, true};
         const ConvTransposeCase batched_case{"batched_decoder_block_no_bias", 2, 192, 192, 48, 2, 2, false};
+        require_cuda_or_hip_backend_classification();
 
-        constexpr auto kBackend = engine::core::BackendType::Cuda;
+        const auto kBackend = backend_is_available(engine::core::BackendType::Hip)
+            ? engine::core::BackendType::Hip
+            : engine::core::BackendType::Cuda;
         if (!backend_is_available(kBackend)) {
-            std::cout << "[SKIP] CUDA backend is not available for conv transpose fast-path parity test\n";
+            std::cout << "[SKIP] CUDA/HIP backend is not available for conv transpose fast-path parity test\n";
         } else {
             require_fast_path_trigger_conditions(kBackend);
             run_case(qwen3_case, kBackend);

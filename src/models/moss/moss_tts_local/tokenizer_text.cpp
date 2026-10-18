@@ -51,13 +51,13 @@ struct MossTextProcessor::Impl {
     std::shared_ptr<const MossTTSLocalAssets> assets;
     std::shared_ptr<engine::tokenizers::LlamaBpeTokenizer> tokenizer;
 
-    moss::TokenRowBuilder make_row_builder() const {
-        return moss::TokenRowBuilder(
+    engine::codecs::MossTokenRowBuilder make_row_builder() const {
+        return engine::codecs::MossTokenRowBuilder(
             assets->config.num_codebooks,
             static_cast<int32_t>(assets->config.audio_pad_token_id));
     }
 
-    void push_text(moss::TokenRowBuilder & builder, const std::string & text) const {
+    void push_text(engine::codecs::MossTokenRowBuilder & builder, const std::string & text) const {
         builder.push_text_tokens(tokenizer->encode(text));
     }
 
@@ -66,9 +66,9 @@ struct MossTextProcessor::Impl {
     MossGenerationPrefix build_prefix(
         const std::string & text,
         const std::optional<std::string> & language,
-        const std::function<void(moss::TokenRowBuilder &)> & emit_reference) const {
+        const std::function<void(engine::codecs::MossTokenRowBuilder &)> & emit_reference) const {
         const auto & config = assets->config;
-        moss::TokenRowBuilder builder = make_row_builder();
+        engine::codecs::MossTokenRowBuilder builder = make_row_builder();
         builder.push_text_token(static_cast<int32_t>(config.im_start_token_id));
         push_text(builder, kUserRolePrefix);
         push_text(builder, kUserReferencePrefix);
@@ -108,7 +108,7 @@ MossTextProcessor::~MossTextProcessor() = default;
 MossGenerationPrefix MossTextProcessor::build_generation_prefix(
     const std::string & text,
     const std::optional<std::string> & language) const {
-    return impl_->build_prefix(text, language, [this](moss::TokenRowBuilder & builder) {
+    return impl_->build_prefix(text, language, [this](engine::codecs::MossTokenRowBuilder & builder) {
         impl_->push_text(builder, kNoneValue);
     });
 }
@@ -132,7 +132,7 @@ MossGenerationPrefix MossTextProcessor::build_clone_prefix(
         }
     }
 
-    return impl_->build_prefix(text, language, [&](moss::TokenRowBuilder & builder) {
+    return impl_->build_prefix(text, language, [&](engine::codecs::MossTokenRowBuilder & builder) {
         // "- Reference(s):" slot -> audio_start, one audio_user_slot row per reference
         // frame carrying that frame's codes, then audio_end.
         builder.push_text_token(static_cast<int32_t>(config.audio_start_token_id));

@@ -319,9 +319,7 @@ void validate_codec_weight_anchors(const HeartMuLaAssets & assets) {
 }  // namespace
 
 std::shared_ptr<const HeartMuLaAssets> load_heartmula_assets(const std::filesystem::path & model_path) {
-    auto resources = engine::model_spec::load_resource_bundle(
-        model_path,
-        engine::model_spec::default_spec_path("heartmula"));
+    auto resources = engine::model_spec::load_resource_bundle_for_family(model_path, "heartmula");
     HeartMuLaAssets assets;
     assets.resources = std::move(resources);
     assets.mula_config = parse_mula_config(assets.resources);

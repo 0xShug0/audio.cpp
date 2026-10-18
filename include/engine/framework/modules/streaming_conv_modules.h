@@ -60,6 +60,12 @@ enum class StreamingPadMode {
     Replicate,
 };
 
+enum class StreamingConv1dPaddingMode {
+    StreamingSame,
+    StrictCausal,
+    Explicit,
+};
+
 struct StreamingConv1dConfig {
     int64_t in_channels = 0;
     int64_t out_channels = 0;
@@ -68,6 +74,9 @@ struct StreamingConv1dConfig {
     int dilation = 1;
     bool use_bias = true;
     StreamingPadMode pad_mode = StreamingPadMode::Constant;
+    StreamingConv1dPaddingMode padding_mode = StreamingConv1dPaddingMode::StreamingSame;
+    int64_t explicit_left = 0;
+    int64_t explicit_right = 0;
 };
 
 using StreamingConv1dWeights = Conv1dWeights;
@@ -83,6 +92,12 @@ public:
 private:
     StreamingConv1dConfig config_;
 };
+
+using CausalConv1dPadMode = StreamingPadMode;
+using CausalConv1dPaddingMode = StreamingConv1dPaddingMode;
+using CausalConv1dConfig = StreamingConv1dConfig;
+using CausalConv1dWeights = StreamingConv1dWeights;
+using CausalConv1dModule = StreamingConv1dModule;
 
 struct DepthwiseConvTranspose1dConfig {
     int64_t channels = 0;

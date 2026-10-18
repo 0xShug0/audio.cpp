@@ -1,6 +1,9 @@
 #include "engine/models/moss/moss_tts_nano/prompt_builder.h"
 
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
+
 #include <algorithm>
+#include <cstddef>
 #include <stdexcept>
 #include <utility>
 
@@ -26,41 +29,6 @@ void append_text_tokens(std::vector<int32_t> & out, const MossTTSNanoTextTokeniz
     out.insert(out.end(), tokens.begin(), tokens.end());
 }
 
-void append_text_row(MossTTSNanoPrompt & prompt, int32_t text_token, int64_t audio_pad) {
-    prompt.input_ids.push_back(text_token);
-    for (int64_t i = 0; i < prompt.row_width - 1; ++i) {
-        prompt.input_ids.push_back(static_cast<int32_t>(audio_pad));
-    }
-    prompt.attention_mask.push_back(1);
-    ++prompt.rows;
-}
-
-void append_text_rows(MossTTSNanoPrompt & prompt, const std::vector<int32_t> & text_tokens, int64_t audio_pad) {
-    for (const int32_t token : text_tokens) {
-        append_text_row(prompt, token, audio_pad);
-    }
-}
-
-void append_audio_rows(
-    MossTTSNanoPrompt & prompt,
-    const MossTTSNanoAudioCodes & codes,
-    int64_t text_slot_token,
-    int64_t audio_pad) {
-    if (codes.codebooks != prompt.row_width - 1) {
-        throw std::runtime_error("MOSS-TTS-Nano prompt audio codebook count does not match prompt row width");
-    }
-    for (int64_t frame = 0; frame < codes.frames; ++frame) {
-        prompt.input_ids.push_back(static_cast<int32_t>(text_slot_token));
-        for (int64_t codebook = 0; codebook < codes.codebooks; ++codebook) {
-            const auto index = static_cast<size_t>(frame * codes.codebooks + codebook);
-            const int32_t code = index < codes.token_ids.size() ? codes.token_ids[index] : static_cast<int32_t>(audio_pad);
-            prompt.input_ids.push_back(code);
-        }
-        prompt.attention_mask.push_back(1);
-        ++prompt.rows;
-    }
-}
-
 std::vector<int32_t> build_user_prompt_prefix(
     const MossTTSNanoConfig & config,
     const MossTTSNanoTextTokenizer & tokenizer) {
@@ -80,6 +48,26 @@ std::vector<int32_t> build_assistant_prompt_prefix(
     tokens.push_back(static_cast<int32_t>(config.im_start_token_id));
     append_text_tokens(tokens, tokenizer, kAssistantRolePrefix);
     return tokens;
+}
+
+void append_token_rows(MossTTSNanoPrompt & prompt, const engine::codecs::MossTokenRows & rows) {
+    if (prompt.row_width <= 1) {
+        throw std::runtime_error("MOSS-TTS-Nano prompt row width is invalid");
+    }
+    const auto codebooks = static_cast<size_t>(prompt.row_width - 1);
+    if (rows.audio_codes.size() != rows.text_tokens.size() * codebooks) {
+        throw std::runtime_error("MOSS-TTS-Nano token rows audio code shape mismatch");
+    }
+    for (size_t row = 0; row < rows.text_tokens.size(); ++row) {
+        prompt.input_ids.push_back(rows.text_tokens[row]);
+        const size_t audio_offset = row * codebooks;
+        prompt.input_ids.insert(
+            prompt.input_ids.end(),
+            rows.audio_codes.begin() + static_cast<std::ptrdiff_t>(audio_offset),
+            rows.audio_codes.begin() + static_cast<std::ptrdiff_t>(audio_offset + codebooks));
+        prompt.attention_mask.push_back(1);
+        ++prompt.rows;
+    }
 }
 
 }  // namespace
@@ -103,6 +91,7 @@ MossTTSNanoPrompt MossTTSNanoPromptBuilder::build(
     if (request.text.empty()) {
         throw std::runtime_error("MOSS-TTS-Nano prompt requires target text");
     }
+    engine::codecs::MossTokenRowBuilder builder(config.n_vq, static_cast<int32_t>(config.audio_pad_token_id));
     if (prompt_codes == nullptr) {
         if (!request.prompt_text.empty() || request.has_prompt_audio) {
             throw std::runtime_error("MOSS-TTS-Nano continuation prompt requires matching reference audio codes");
@@ -115,24 +104,34 @@ MossTTSNanoPrompt MossTTSNanoPromptBuilder::build(
         const auto assistant = build_assistant_prompt_prefix(config, tokenizer_);
         tokens.insert(tokens.end(), assistant.begin(), assistant.end());
         tokens.push_back(static_cast<int32_t>(config.audio_start_token_id));
-        append_text_rows(prompt, tokens, config.audio_pad_token_id);
-        if (prompt.rows <= 0 || static_cast<int64_t>(prompt.input_ids.size()) != prompt.rows * prompt.row_width) {
-            throw std::runtime_error("MOSS-TTS-Nano prompt builder produced invalid input shape");
+        builder.push_text_tokens(tokens);
+    } else {
+        if (prompt_codes->codebooks != config.n_vq) {
+            throw std::runtime_error("MOSS-TTS-Nano prompt audio codebook count does not match prompt row width");
         }
-        return prompt;
+        const auto expected = static_cast<size_t>(prompt_codes->frames * prompt_codes->codebooks);
+        if (prompt_codes->token_ids.size() != expected) {
+            throw std::runtime_error("MOSS-TTS-Nano prompt audio code shape mismatch");
+        }
+        auto prefix = build_user_prompt_prefix(config, tokenizer_);
+        prefix.push_back(static_cast<int32_t>(config.audio_start_token_id));
+        builder.push_text_tokens(prefix);
+        for (int64_t frame = 0; frame < prompt_codes->frames; ++frame) {
+            builder.push_audio_row(
+                static_cast<int32_t>(config.audio_user_slot_token_id),
+                prompt_codes->token_ids.data() + static_cast<size_t>(frame * prompt_codes->codebooks),
+                prompt_codes->codebooks);
+        }
+        std::vector<int32_t> suffix{static_cast<int32_t>(config.audio_end_token_id)};
+        append_text_tokens(suffix, tokenizer_, kUserTemplateAfterReference);
+        const auto text_tokens = tokenizer_.encode(request.text);
+        suffix.insert(suffix.end(), text_tokens.begin(), text_tokens.end());
+        const auto assistant = build_assistant_prompt_prefix(config, tokenizer_);
+        suffix.insert(suffix.end(), assistant.begin(), assistant.end());
+        suffix.push_back(static_cast<int32_t>(config.audio_start_token_id));
+        builder.push_text_tokens(suffix);
     }
-    auto prefix = build_user_prompt_prefix(config, tokenizer_);
-    prefix.push_back(static_cast<int32_t>(config.audio_start_token_id));
-    append_text_rows(prompt, prefix, config.audio_pad_token_id);
-    append_audio_rows(prompt, *prompt_codes, config.audio_user_slot_token_id, config.audio_pad_token_id);
-    std::vector<int32_t> suffix{static_cast<int32_t>(config.audio_end_token_id)};
-    append_text_tokens(suffix, tokenizer_, kUserTemplateAfterReference);
-    const auto text_tokens = tokenizer_.encode(request.text);
-    suffix.insert(suffix.end(), text_tokens.begin(), text_tokens.end());
-    const auto assistant = build_assistant_prompt_prefix(config, tokenizer_);
-    suffix.insert(suffix.end(), assistant.begin(), assistant.end());
-    suffix.push_back(static_cast<int32_t>(config.audio_start_token_id));
-    append_text_rows(prompt, suffix, config.audio_pad_token_id);
+    append_token_rows(prompt, builder.finish());
     if (prompt.rows <= 0 || static_cast<int64_t>(prompt.input_ids.size()) != prompt.rows * prompt.row_width) {
         throw std::runtime_error("MOSS-TTS-Nano prompt builder produced invalid input shape");
     }

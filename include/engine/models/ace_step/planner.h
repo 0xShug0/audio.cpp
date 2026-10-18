@@ -14,11 +14,11 @@
 
 namespace engine::models::ace_step {
 
-class PlannerWeightsRuntime;
-class PrefillGraph;
-class DecodeGraph;
-class CfgPrefillGraph;
-class CfgDecodeGraph;
+class Qwen3PlannerWeightsRuntime;
+class Qwen3PlannerPrefillGraph;
+class Qwen3PlannerDecodeGraph;
+class Qwen3PlannerCfgPrefillGraph;
+class Qwen3PlannerCfgDecodeGraph;
 
 struct AceStepPlannerPreparedInput {
     std::string formatted_prompt;
@@ -36,7 +36,7 @@ struct Phase1ConstraintTables {
     std::map<std::vector<int32_t>, std::vector<int32_t>> timesig_prefix_map;
 };
 
-class AceStepPlannerRuntime {
+class AceStepQwen3PlannerRuntime {
 public:
     struct GenerationConfig {
         int64_t max_prompt_tokens = 4096;
@@ -44,18 +44,18 @@ public:
         int64_t max_code_tokens = 4032;
     };
 
-    AceStepPlannerRuntime(
+    AceStepQwen3PlannerRuntime(
         std::shared_ptr<const AceStepAssets> assets,
         core::ExecutionContext & execution);
 
-    AceStepPlannerRuntime(
+    AceStepQwen3PlannerRuntime(
         std::shared_ptr<const AceStepAssets> assets,
         core::ExecutionContext & execution,
         assets::TensorStorageType weight_storage_type,
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
         GenerationConfig generation);
-    ~AceStepPlannerRuntime();
+    ~AceStepQwen3PlannerRuntime();
 
     AceStepPlannerPreparedInput prepare_prompt(const AceStepRequest & request) const;
     AceStepPlan generate(const AceStepRequest & request, bool generate_audio_codes = true) const;
@@ -67,14 +67,14 @@ private:
     std::shared_ptr<const AceStepAssets> assets_;
     AceStepTextTokenizer tokenizer_;
     GenerationConfig generation_;
-    std::shared_ptr<PlannerWeightsRuntime> weights_runtime_;
+    std::shared_ptr<Qwen3PlannerWeightsRuntime> weights_runtime_;
     std::unique_ptr<core::ExecutionContext> host_planner_prefill_execution_;
-    std::shared_ptr<PlannerWeightsRuntime> planner_prefill_weights_runtime_;
+    std::shared_ptr<Qwen3PlannerWeightsRuntime> planner_prefill_weights_runtime_;
     size_t decode_graph_arena_bytes_ = 0;
-    mutable std::unique_ptr<PrefillGraph> prefill_graph_;
-    mutable std::unique_ptr<DecodeGraph> decode_graph_;
-    mutable std::unique_ptr<CfgPrefillGraph> cfg_prefill_graph_;
-    mutable std::unique_ptr<CfgDecodeGraph> cfg_decode_graph_;
+    mutable std::unique_ptr<Qwen3PlannerPrefillGraph> prefill_graph_;
+    mutable std::unique_ptr<Qwen3PlannerDecodeGraph> decode_graph_;
+    mutable std::unique_ptr<Qwen3PlannerCfgPrefillGraph> cfg_prefill_graph_;
+    mutable std::unique_ptr<Qwen3PlannerCfgDecodeGraph> cfg_decode_graph_;
     std::vector<uint8_t> is_audio_code_token_;
     std::vector<int32_t> phase2_candidate_token_ids_;
     Phase1ConstraintTables phase1_constraints_;

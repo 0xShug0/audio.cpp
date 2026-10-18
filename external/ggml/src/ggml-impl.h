@@ -354,6 +354,26 @@ struct ggml_cgraph ggml_graph_view(struct ggml_cgraph * cgraph, int i0, int i1);
 // ggml-alloc.c: true if the operation can reuse memory from its sources
 GGML_API bool ggml_op_can_inplace(enum ggml_op op);
 
+// Bytes a type needs past its payload. Non-zero only for GGML_TYPE_I8_S and
+// GGML_TYPE_I2_S, which append one F32 per-tensor scale; see ggml.c.
+GGML_API size_t ggml_type_extra_bytes(enum ggml_type type);
+
+// The in-band scale of an I8_S or I2_S tensor, which sits immediately after the
+// payload. ggml_nbytes already counts the padded scale, so subtracting it back
+// out gives the payload end without duplicating either type's row arithmetic.
+//
+// The scale is a multiplier in both cases: dequantizing is q * scale.
+static inline float * ggml_inband_scale(struct ggml_tensor * tensor) {
+    const size_t extra = ggml_type_extra_bytes(tensor->type);
+    GGML_ASSERT(extra > 0 && "type has no in-band scale");
+    GGML_ASSERT(ggml_is_contiguous(tensor));
+    return (float *) ((char *) tensor->data + ggml_nbytes(tensor) - extra);
+}
+
+static inline const float * ggml_inband_scale_const(const struct ggml_tensor * tensor) {
+    return ggml_inband_scale((struct ggml_tensor *) tensor);
+}
+
 
 // Memory allocation
 

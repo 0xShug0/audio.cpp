@@ -197,7 +197,7 @@ int main(int argc, char **argv) try {
         "Fun-ASR-Nano frontend accepted a non-16-kHz sample rate");
   }
   engine::core::ExecutionContext execution_context({arguments.backend, 0, 4});
-  engine::models::fun_asr_nano::FunAsrNanoEncoderRuntime runtime(
+  engine::models::fun_asr_nano::FunAsrNanoSenseVoiceEncoderRuntime runtime(
       std::move(assets), execution_context, kGraphArenaBytes);
   const auto output = runtime.encode(features, true);
   if (output.frames != features.frames ||

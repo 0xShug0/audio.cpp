@@ -24,7 +24,7 @@ struct VoxCPM2FeatureGeneratorConfig {
   size_t local_encoder_graph_context_bytes = 512ull * 1024ull * 1024ull;
   size_t dit_graph_context_bytes = 1024ull * 1024ull * 1024ull;
   size_t prompt_cache_slots = 1;
-  bool mem_saver = false;
+  bool mem_saver = true;
   engine::assets::TensorStorageType weight_storage_type =
       engine::assets::TensorStorageType::Native;
 };

@@ -55,7 +55,7 @@ engine::core::TensorValue pad_symmetric_1d(
 engine::core::TensorValue build_fastconformer_conv_module(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & input_btc,
-    const ParakeetEncoderLayerWeights & weights,
+    const ParakeetFastConformerLayerWeights & weights,
     const engine::core::TensorValue & keep_mask,
     int64_t conv_kernel) {
     // pointwise_conv1 runs as a Linear over the feature axis, so it wants plain
@@ -184,7 +184,7 @@ engine::runtime::GraphOptimizationBackend graph_optimizer_backend_for(engine::co
 // single encoder layer in isolation against the exact same code path the
 // production encoder graph uses, instead of maintaining a separate copy that
 // could silently drift out of sync. See
-// ParakeetEncoderRuntime::ensure_graph()'s per-layer loop for the only other
+// ParakeetFastConformerEncoderRuntime::ensure_graph()'s per-layer loop for the only other
 // caller, and tests/parakeet_tdt/parity/ for the isolation harness.
 engine::core::TensorValue build_encoder_layer(
     engine::core::ModuleBuildContext & ctx,
@@ -192,7 +192,7 @@ engine::core::TensorValue build_encoder_layer(
     const engine::core::TensorValue & attention_mask,
     const engine::core::TensorValue & keep_mask,
     const engine::core::TensorValue & projected_pos_emb,
-    const ParakeetEncoderLayerWeights & weights,
+    const ParakeetFastConformerLayerWeights & weights,
     int64_t hidden_size,
     int64_t intermediate_size,
     int64_t heads,
@@ -313,7 +313,7 @@ engine::core::TensorValue build_encoder_layer(
     return engine::modules::LayerNormModule({hidden_size, 1.0e-5f, true, true}).build(ctx, x, weights.norm_out);
 }
 
-struct ParakeetEncoderRuntime::Graph {
+struct ParakeetFastConformerEncoderRuntime::Graph {
     int64_t input_frames = 0;
     int64_t feature_dim = 0;
     int64_t encoded_frames = 0;
@@ -354,7 +354,7 @@ struct ParakeetEncoderRuntime::Graph {
     }
 };
 
-ParakeetEncoderRuntime::ParakeetEncoderRuntime(
+ParakeetFastConformerEncoderRuntime::ParakeetFastConformerEncoderRuntime(
     std::shared_ptr<const ParakeetTDTAssets> assets,
     std::shared_ptr<const ParakeetWeights> weights,
     engine::core::ExecutionContext & execution_context,
@@ -370,12 +370,21 @@ ParakeetEncoderRuntime::ParakeetEncoderRuntime(
     }
 }
 
-ParakeetEncoderRuntime::~ParakeetEncoderRuntime() = default;
+ParakeetFastConformerEncoderRuntime::~ParakeetFastConformerEncoderRuntime() = default;
 
-const std::vector<float> & ParakeetEncoderRuntime::relative_positional_encoding(int64_t frames) {
+const std::vector<float> & ParakeetFastConformerEncoderRuntime::relative_positional_encoding(int64_t frames) {
     auto cached = relative_positional_encoding_cache_.find(frames);
     if (cached != relative_positional_encoding_cache_.end()) {
         return cached->second;
+    }
+    // Bounded: each entry is (2 * frames - 1) * hidden floats -- tens of MB at
+    // conversational lengths -- and the only caller is ensure_graph(), which
+    // rebuilds whenever the request size moves. A clip length that recurs hits
+    // the graph cache and never gets here, so keeping every size this process
+    // has ever seen would grow without bound to no benefit.
+    constexpr size_t kMaxCachedPositionalEncodings = 4;
+    if (relative_positional_encoding_cache_.size() >= kMaxCachedPositionalEncodings) {
+        relative_positional_encoding_cache_.clear();
     }
     auto inserted = relative_positional_encoding_cache_.emplace(
         frames,
@@ -383,36 +392,32 @@ const std::vector<float> & ParakeetEncoderRuntime::relative_positional_encoding(
     return inserted.first->second;
 }
 
-void ParakeetEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_dim) {
+void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_dim) {
     if (input_frames <= 0 || feature_dim <= 0) {
         throw std::runtime_error("Parakeet TDT encoder graph requires positive input shape");
     }
-    // A cached graph is only reused if it is not much bigger than the request.
-    //
-    // The graph runs at its built capacity no matter how short the real audio
-    // is — encode() zero-pads up to it — so an oversized cached graph is paid
-    // for in full on every call. Measured on this encoder: a 7.4s clip costs
-    // 1018 ms on a matched graph and 10928 ms on a 60s-capacity one, while
-    // rebuilding costs ~400 ms once (dominated by the 24 positional
-    // projections; the allocation itself is ~0.4 ms). Rebuilding therefore wins
-    // outright whenever the mismatch is more than a few percent, and it wins by
-    // more with every subsequent call at the new size.
-    //
-    // The tolerance keeps the common case — a stream of clips whose lengths
-    // wobble slightly — from rebuilding on every call, while capping the wasted
-    // compute at roughly the same fraction.
-    constexpr double kMaxGraphOversizeRatio = 1.10;
+    // A cached graph is only reused if it is not much bigger than the request;
+    // see asr_graph_capacity_usable() for why. Measured on this encoder: a 7.4s
+    // clip costs 1018 ms on a matched graph and 10928 ms on a 60s-capacity one,
+    // while rebuilding costs ~400 ms once (dominated by the 24 positional
+    // projections; the allocation itself is ~0.4 ms).
     const bool capacity_usable =
         graph_ != nullptr &&
-        graph_->input_frames >= input_frames &&
-        static_cast<double>(graph_->input_frames) <=
-            kMaxGraphOversizeRatio * static_cast<double>(input_frames);
+        engine::modules::asr_graph_capacity_usable(graph_->input_frames, input_frames);
     if (capacity_usable &&
         graph_->backend == execution_context_->backend() &&
         graph_->feature_dim == feature_dim) {
         debug::timing_log_scalar("parakeet_tdt.encoder.graph_rebuild_ms", 0.0);
         debug::trace_log_scalar("parakeet_tdt.encoder.graph_cache_hit", true);
         return;
+    }
+
+    if (execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
+        execution_context_->backend_type() == engine::core::BackendType::Cuda) {
+        // A mismatched cached graph will never be used again. Release its
+        // allocation before building the replacement instead of overlapping
+        // both full activation/position buffers at the allocation peak.
+        graph_.reset();
     }
 
     const auto build_start = Clock::now();
@@ -579,6 +584,15 @@ void ParakeetEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_
     }
     debug::timing_log_scalar("parakeet_tdt.encoder.pos_copy_ms", engine::debug::elapsed_ms(pos_copy_start, Clock::now()));
 
+    if (execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
+        execution_context_->backend_type() == engine::core::BackendType::Cuda) {
+        // Position projections now live in the main graph's persistent inputs.
+        // Their one-shot producer allocation is redundant for warm inference.
+        ggml_gallocr_free(graph->pos_gallocr);
+        graph->pos_gallocr = nullptr;
+        graph->pos_graph = nullptr;
+    }
+
     graph_ = std::move(graph);
     const double build_ms = engine::debug::elapsed_ms(build_start, Clock::now());
     debug::timing_log_scalar("parakeet_tdt.encoder.graph_build_ms", build_ms);
@@ -588,15 +602,15 @@ void ParakeetEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_encoded_frames", stage3_frames);
 }
 
-void ParakeetEncoderRuntime::prepare_capacity(int64_t input_frames, int64_t feature_dim) {
+void ParakeetFastConformerEncoderRuntime::prepare_capacity(int64_t input_frames, int64_t feature_dim) {
     ensure_graph(input_frames, feature_dim);
 }
 
-void ParakeetEncoderRuntime::release_offline_graph() {
+void ParakeetFastConformerEncoderRuntime::release_offline_graph() {
     graph_.reset();
 }
 
-ParakeetEncodedAudio ParakeetEncoderRuntime::encode(
+ParakeetEncodedAudio ParakeetFastConformerEncoderRuntime::encode(
     const ParakeetFrontendFeatures & features) {
     if (features.frames <= 0 || features.feature_dim <= 0) {
         throw std::runtime_error("Parakeet TDT encoder requires positive frontend shape");

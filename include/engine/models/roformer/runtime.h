@@ -5,6 +5,7 @@
 #include "engine/models/roformer/assets.h"
 
 #include <memory>
+#include <functional>
 #include <vector>
 
 namespace engine::models::roformer {
@@ -19,6 +20,11 @@ public:
 
     const RoformerArchitectureConfig & config() const noexcept;
     const std::vector<float> & separate_chunk(const std::vector<float> & chunk_planar);
+    // Source may run on a CPU worker while sink runs on the caller thread.
+    // Their captured mutable state must be independent. Sink is called in order.
+    void process_chunks(size_t count,
+        const std::function<void(size_t, std::vector<float> &)> & source,
+        const std::function<void(size_t, const std::vector<float> &)> & sink);
 
 private:
     class Impl;

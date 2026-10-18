@@ -429,7 +429,15 @@ extern "C" {
         GGML_TYPE_MXFP4   = 39, // MXFP4 (1 block)
         GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
         GGML_TYPE_Q1_0    = 41,
-        GGML_TYPE_COUNT   = 42,
+        // INT8 / ternary with a single per-tensor scale, stored as one F32
+        // immediately after the payload rather than interleaved per block.
+        // Used by the VibeASR CPU pipeline; see ggml_mul_mat_add().
+        // NOTE: 36/37 are deliberately avoided even though VibeASR's own fork
+        // uses them -- they are retired IQ4_NL_4_4/4_8 slots and reusing an ID
+        // would silently misread GGUF files that still carry the old type.
+        GGML_TYPE_I8_S    = 42,
+        GGML_TYPE_I2_S    = 43,
+        GGML_TYPE_COUNT   = 44,
     };
 
     // precision
@@ -440,8 +448,15 @@ extern "C" {
 
     // op hint
     enum ggml_op_hint {
-        GGML_HINT_NONE             = 0,
-        GGML_HINT_SRC0_IS_HADAMARD = 1,
+        GGML_HINT_NONE                         = 0,
+        GGML_HINT_SRC0_IS_HADAMARD             = 1,
+    };
+
+    enum ggml_mul_mat_lowering {
+        GGML_MUL_MAT_LOWERING_DEFAULT                    = 0,
+        GGML_MUL_MAT_LOWERING_CUDA_NVFP4_F16_ACTIVATION  = 2,
+        GGML_MUL_MAT_LOWERING_CUDA_TILE_F16_ACCUM_OUTPUT = 3,
+        GGML_MUL_MAT_LOWERING_VULKAN_F32_INPUTS           = 4,
     };
 
     // model file types
@@ -558,6 +573,8 @@ extern "C" {
         GGML_OP_FILL,
 
         GGML_OP_FLASH_ATTN_EXT,
+        GGML_OP_SAGE_ATTN2,
+        GGML_OP_SAGE_ATTN2_I8,
         GGML_OP_FLASH_ATTN_BACK,
         GGML_OP_SSM_CONV,
         GGML_OP_SSM_SCAN,
@@ -585,6 +602,23 @@ extern "C" {
         GGML_OP_OPT_STEP_SGD,
 
         GGML_OP_GLU,
+        GGML_OP_CONVROT_LINEAR,
+
+        // VibeASR CPU INT8 pipeline. Appended at the tail so every existing
+        // op keeps its value -- GGML_OP_NAME and GGML_OP_SYMBOL are positional.
+        GGML_OP_ADD_SCALED,
+        GGML_OP_RMS_NORM_SCALED,
+        GGML_OP_MUL_MAT_ADD,
+        GGML_OP_MUL_MAT_ADD_RELU,
+        GGML_OP_IM2COL_ASYM,
+        GGML_OP_CONV_3D_CONCAT_PAD_SPATIAL_GEMM,
+        GGML_OP_RMS_NORM_CHANNELS,
+        GGML_OP_RMS_NORM_CHANNELS_SILU,
+        GGML_OP_RMS_NORM_CHANNELS_ADD_BIAS_SILU,
+        GGML_OP_ROPE_INTERLEAVED_PAIRS,
+        // audio8_tts codec per-tap accumulation and fused snake (audio8 PR).
+        GGML_OP_MUL_MAT_ACC,
+        GGML_OP_SNAKE_1D,
 
         GGML_OP_COUNT,
     };
@@ -612,6 +646,7 @@ extern "C" {
         GGML_UNARY_OP_CEIL,
         GGML_UNARY_OP_ROUND,
         GGML_UNARY_OP_TRUNC,
+        GGML_UNARY_OP_ROUND_BF16,
 
         GGML_UNARY_OP_COUNT,
     };
@@ -656,6 +691,44 @@ extern "C" {
         GGML_TRI_TYPE_UPPER      = 1,
         GGML_TRI_TYPE_LOWER_DIAG = 2,
         GGML_TRI_TYPE_LOWER      = 3
+    };
+
+    enum ggml_concat_lowering {
+        GGML_CONCAT_LOWERING_DEFAULT = 0,
+        GGML_CONCAT_LOWERING_CUDA_CONTIGUOUS_4D = 1,
+    };
+
+    enum ggml_im2col_2d_lowering {
+        GGML_IM2COL_2D_LOWERING_DEFAULT = 0,
+        GGML_IM2COL_2D_LOWERING_CUDA_N_K3_PAD1_X8 = 1,
+        GGML_IM2COL_2D_LOWERING_CUDA_N_K3_NOPAD_X8 = 2,
+        GGML_IM2COL_2D_LOWERING_CUDA_F32_K3_TILED = 3,
+    };
+
+    enum ggml_im2col_3d_lowering {
+        GGML_IM2COL_3D_LOWERING_DEFAULT = 0,
+        GGML_IM2COL_3D_LOWERING_CUDA_N1_K3_NOPAD_X8 = 1,
+    };
+
+    enum ggml_ssm_scan_fusion {
+        GGML_SSM_SCAN_FUSION_NONE = 0,
+        GGML_SSM_SCAN_FUSION_GATE = 1,
+    };
+
+    enum ggml_ssm_conv_fusion {
+        GGML_SSM_CONV_FUSION_NONE = 0,
+        GGML_SSM_CONV_FUSION_CAUSAL_PAD = 1,
+    };
+
+    enum ggml_rms_norm_channels_lowering {
+        GGML_RMS_NORM_CHANNELS_LOWERING_DEFAULT = 0,
+        GGML_RMS_NORM_CHANNELS_LOWERING_CUDA_COALESCED = 1,
+    };
+
+    enum ggml_conv_3d_concat_pad_spatial_gemm_lowering {
+        GGML_CONV_3D_CONCAT_PAD_SPATIAL_GEMM_LOWERING_DEFAULT = 0,
+        GGML_CONV_3D_CONCAT_PAD_SPATIAL_GEMM_LOWERING_CUDA_C48 = 1,
+        GGML_CONV_3D_CONCAT_PAD_SPATIAL_GEMM_LOWERING_CUDA_TILED_C48 = 2,
     };
 
     struct ggml_init_params {
@@ -1090,6 +1163,46 @@ extern "C" {
             struct ggml_tensor  * b,
             int                   dim);
 
+    GGML_API struct ggml_tensor * ggml_rope_interleaved_pairs(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * even,
+            struct ggml_tensor  * odd,
+            struct ggml_tensor  * cos,
+            struct ggml_tensor  * sin);
+
+    GGML_API void ggml_concat_set_lowering(
+            struct ggml_tensor * tensor,
+            enum ggml_concat_lowering lowering);
+
+    GGML_API struct ggml_tensor * ggml_conv_3d_concat_pad_spatial_gemm(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * w,
+            int                  lp0,
+            int                  rp0,
+            int                  lp1,
+            int                  rp1,
+            int                  lp2,
+            int                  rp2);
+
+    GGML_API struct ggml_tensor * ggml_conv_3d_concat_pad_spatial_gemm_ex(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * w,
+            int                  lp0,
+            int                  rp0,
+            int                  lp1,
+            int                  rp1,
+            int                  lp2,
+            int                  rp2,
+            enum ggml_type       dst_type);
+
+    GGML_API void ggml_conv_3d_concat_pad_spatial_gemm_set_lowering(
+            struct ggml_tensor * tensor,
+            enum ggml_conv_3d_concat_pad_spatial_gemm_lowering lowering);
+
     GGML_API struct ggml_tensor * ggml_abs(
             struct ggml_context * ctx,
             struct ggml_tensor  * a);
@@ -1255,6 +1368,12 @@ extern "C" {
             struct ggml_context * ctx,
             struct ggml_tensor  * a);
 
+    // Rounds each element to bf16 precision, stored as f32. Equivalent to a
+    // cast f32 -> bf16 -> f32 round trip, but fused into a single op.
+    GGML_API struct ggml_tensor * ggml_round_bf16(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a);
+
 
 
     // xIELU activation function
@@ -1380,6 +1499,29 @@ extern "C" {
             struct ggml_tensor  * a,
             float                 eps);
 
+    GGML_API struct ggml_tensor * ggml_rms_norm_channels(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * gamma,
+            float                 eps);
+
+    GGML_API struct ggml_tensor * ggml_rms_norm_channels_silu(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * gamma,
+            float                 eps);
+
+    GGML_API struct ggml_tensor * ggml_rms_norm_channels_add_bias_silu(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * bias,
+            struct ggml_tensor  * gamma,
+            float                 eps);
+
+    GGML_API void ggml_rms_norm_channels_set_lowering(
+            struct ggml_tensor * tensor,
+            enum ggml_rms_norm_channels_lowering lowering);
+
     // group normalize along ne0*ne1*n_groups
     // used in stable-diffusion
     GGML_API struct ggml_tensor * ggml_group_norm(
@@ -1422,6 +1564,21 @@ extern "C" {
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
 
+    // accumulate matrix multiplication in-place: acc += a * b
+    // result is a view of acc (which must have the shape of a * b), so the
+    // accumulation lands directly in acc's memory without a separate add pass
+    GGML_API struct ggml_tensor * ggml_mul_mat_acc(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * acc);
+
+    // fused snake activation: dst = a + sin(a * alpha)^2 / alpha, alpha broadcast per channel
+    GGML_API struct ggml_tensor * ggml_snake_1d(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * alpha);
+
     GGML_API struct ggml_tensor * ggml_mul_mat_pack4(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
@@ -1437,6 +1594,10 @@ extern "C" {
     GGML_API void ggml_mul_mat_set_hint(
             struct ggml_tensor * a,
             enum ggml_op_hint    hint);
+
+    GGML_API void ggml_mul_mat_set_lowering(
+            struct ggml_tensor * a,
+            enum ggml_mul_mat_lowering lowering);
 
     // indirect matrix multiplication
     GGML_API struct ggml_tensor * ggml_mul_mat_id(
@@ -2002,6 +2163,10 @@ extern "C" {
             bool                  is_2D,
             enum ggml_type        dst_type);
 
+    GGML_API void ggml_im2col_2d_set_lowering(
+            struct ggml_tensor * tensor,
+            enum ggml_im2col_2d_lowering lowering);
+
     GGML_API struct ggml_tensor * ggml_im2col_back(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,  // convolution kernel
@@ -2098,6 +2263,10 @@ extern "C" {
             int                   d1, // dilation height
             int                   d2, // dilation depth
             enum ggml_type        dst_type);
+
+    GGML_API void ggml_im2col_3d_set_lowering(
+            struct ggml_tensor * tensor,
+            enum ggml_im2col_3d_lowering lowering);
 
     // a: [OC*IC, KD, KH, KW]
     // b: [N*IC, ID, IH, IW]
@@ -2428,6 +2597,118 @@ extern "C" {
             float                 max_bias,
             float                 logit_softcap);
 
+    // CUDA-only SageAttention2 op for contiguous HND input tensors:
+    // q, k, v: [head_dim, seq, n_head, batch]
+    // res:     [head_dim, n_head, seq, batch]
+    GGML_API struct ggml_tensor * ggml_sage_attn2(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q,
+            struct ggml_tensor  * k,
+            struct ggml_tensor  * v,
+            float                 scale,
+            bool                  causal);
+
+    // Prequantized CUDA-only SageAttention2 op:
+    // q_i8, k_i8:       [head_dim, seq, n_head, batch]
+    // v:                [head_dim, seq, n_head_kv, batch]
+    // res:              [head_dim, n_head, seq, batch]
+    // q_scale:          [(seq_q + 127)/128*4, n_head, batch]
+    // k_scale:          [(seq_k +  63)/ 64,   n_head_kv, batch]
+    GGML_API struct ggml_tensor * ggml_sage_attn2_i8(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q_i8,
+            struct ggml_tensor  * k_i8,
+            struct ggml_tensor  * v,
+            struct ggml_tensor  * q_scale,
+            struct ggml_tensor  * k_scale,
+            float                 scale,
+            bool                  causal);
+
+    // CUDA-only ConvRot tensorwise INT8 linear:
+    // weight_i8:     [in_features, out_features]
+    // input:         [in_features, rows, ...], F32
+    // weight_scale:  [out_features, 1], F32
+    // bias:          [out_features], F32, optional
+    // res:           [out_features, rows, ...], F32
+    GGML_API struct ggml_tensor * ggml_convrot_linear(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * weight_i8,
+            struct ggml_tensor  * input,
+            struct ggml_tensor  * weight_scale,
+            struct ggml_tensor  * bias,
+            int                   group_size);
+
+    // VibeASR CPU INT8 pipeline (GGML_TYPE_I8_S / GGML_TYPE_I2_S).
+    //
+    // Ported from https://github.com/microsoft/VibeASR.cpp, an end-to-end INT8
+    // ASR stack (INT8 VAE encoder, ternary-weight language model) built for CPU
+    // inference on edge devices.
+    //
+    // These are CPU-only, mirroring how ggml_convrot_linear and
+    // ggml_sage_attn2_i8 above are CUDA-only.
+    //
+    // Unlike those two, the scale is NOT a separate F32 src tensor. An I8_S
+    // activation's scale is recomputed from that activation at run time, and a
+    // ggml node has exactly one output, so the scale has to travel with the
+    // data: every I8_S/I2_S tensor stores one F32 immediately after its int8
+    // payload (see ggml_type_extra_bytes in ggml.c). Weight scales could have
+    // used the separate-tensor convention, but sharing one representation with
+    // activations keeps a single kernel per op instead of two.
+
+    // y = a*scale + b, fusing a ConvNeXt LayerScale into its residual add.
+    // a and b are I8_S and same-shape, scale is F32 per-channel broadcast on
+    // ne[0]. Output is I8_S and carries a freshly computed per-tensor scale.
+    GGML_API struct ggml_tensor * ggml_add_scaled(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * scale);
+
+    // y = rms_norm(a) * scale, fused. a is I8_S, scale is F32 per-channel,
+    // output is I8_S. Equivalent to ggml_mul(ggml_rms_norm(a), scale) but
+    // avoids materializing the F32 intermediate.
+    GGML_API struct ggml_tensor * ggml_rms_norm_scaled(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * scale,
+            float                 eps);
+
+    // y = a*b + bias, with a I8_S weights and b I8_S activations. bias is F32
+    // and broadcasts on ne[0]. Output is I8_S. The ternary I2_S weights of the
+    // language model go through plain ggml_mul_mat, which has no bias to fuse.
+    //
+    // a with ne[1] == 1 and ne[2] > 1 selects a depthwise contraction: one
+    // length-ne[0] filter per channel, output indexed channel-major.
+    GGML_API struct ggml_tensor * ggml_mul_mat_add(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * bias);
+
+    // As ggml_mul_mat_add, with ReLU folded into the epilogue.
+    GGML_API struct ggml_tensor * ggml_mul_mat_add_relu(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * bias);
+
+    // im2col with independent left/right padding on the width axis. ggml_im2col
+    // only takes a single symmetric p0, so causal 1D convolutions otherwise need
+    // a separate ggml_pad_ext node and a full copy of the activation.
+    GGML_API struct ggml_tensor * ggml_im2col_asym(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            int                   s0,
+            int                   s1,
+            int                   lp0,
+            int                   rp0,
+            int                   p1,
+            int                   d0,
+            int                   d1,
+            bool                  is_2D,
+            enum ggml_type        dst_type);
+
     // MINITTS_FLASH_BIAS_WRAPPER:
     // Helper for models that already assemble a dense additive attention bias
     // (for example relative-position scores). The helper expands an optional
@@ -2470,6 +2751,10 @@ extern "C" {
             struct ggml_tensor  * sx,
             struct ggml_tensor  * c);
 
+    GGML_API void ggml_ssm_conv_set_fusion(
+            struct ggml_tensor         * tensor,
+            enum ggml_ssm_conv_fusion   fusion);
+
     GGML_API struct ggml_tensor * ggml_ssm_scan(
             struct ggml_context * ctx,
             struct ggml_tensor  * s,
@@ -2479,6 +2764,10 @@ extern "C" {
             struct ggml_tensor  * B,
             struct ggml_tensor  * C,
             struct ggml_tensor  * ids);
+
+    GGML_API void ggml_ssm_scan_set_fusion(
+            struct ggml_tensor         * tensor,
+            enum ggml_ssm_scan_fusion   fusion);
 
     // partition into non-overlapping windows with padding if needed
     // example:

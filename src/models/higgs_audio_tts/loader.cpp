@@ -27,7 +27,8 @@ runtime::ModelMetadata metadata(const HiggsAssets &) {
 runtime::CapabilitySet capabilities(const HiggsAssets &) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
-        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     out.supports_speaker_reference = true;
     out.languages = {"Auto"};
@@ -37,25 +38,30 @@ runtime::CapabilitySet capabilities(const HiggsAssets &) {
 runtime::ModelCliInterface cli(const HiggsAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"max_tokens", "n", "Maximum generated AR tokens; default 2048, 0 uses the default."},
-        {"temperature", "float", "AR sampling temperature."},
-        {"top_k", "n", "AR top-k sampling limit."},
-        {"top_p", "float", "AR nucleus sampling probability."},
-        {"repetition_penalty", "float", "Accepted for Python API compatibility; Higgs audio sampling does not consume it."},
-        {"seed", "n", "Torch RNG seed."},
-        {"text_chunk_size", "n", "Long-form text chunk size; default 1024."},
-        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode."},
+        {"reference_text", "text", "Transcript for reference audio.", false, ""},
+        {"max_tokens", "int", "Maximum generated AR tokens; zero uses the default. Must not exceed the configured context length.", false, "2048", "0"},
+        {"temperature", "float", "AR sampling temperature. Must be positive. Default: 0.8.", false, "0.8"},
+        {"top_k", "int", "AR top-k sampling limit. Default: 30.", false, "30", "0"},
+        {"top_p", "float", "AR nucleus sampling probability. Must be positive. Default: 0.8.", false, "0.8"},
+        {"repetition_penalty", "float", "Accepted for Python API compatibility; audio sampling does not consume this value. Compatibility-only, but must be finite and positive. Default: 1.1.", false, "1.1"},
+        {"seed", "n", "Torch RNG seed.", false, std::nullopt, "0"},
+        {"text_chunk_size", "int", "Framework long-form text chunk size. Default: 1024.", false, "1024", "1"},
+        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode.", false, "default"},
+        {"stream_frames_per_event", "n", "Streaming chunk frame cap; default 32.", false, "32", "1"},
+        {"stream_chunk_policy", "grow|fixed", "Streaming chunk schedule; default grow.", false, "grow"},
     };
     out.session_options = {
-        {"higgs_audio_tts.weight_type", "native|f32|f16|bf16|q8_0", "AR and codec weight storage type."},
+        {"higgs_audio_tts.reference_prefill_mode", "auto|exact", "Cached-reference prefill attention; default auto preserves existing behavior. Try exact for excessive repetition or long, mostly silent continuations; may increase prefill time.", false, "auto"},
+        {"higgs_audio_tts.weight_type", "native|f32|f16|bf16|q8_0", "AR and codec weight storage type.", false, "native"},
         {"higgs_audio_tts.ar_weight_type", "native|f32|f16|bf16|q8_0", "Autoregressive decoder weight storage type."},
         {"higgs_audio_tts.codec_weight_type", "native|f32|f16|bf16|q8_0", "Codec weight storage type."},
-        {"higgs_audio_tts.ar_weight_context_mb", "n", "AR weight context size."},
-        {"higgs_audio_tts.codec_weight_context_mb", "n", "Codec weight context size."},
-        {"higgs_audio_tts.ar_decode_graph_arena_mb", "n", "AR decode graph arena size."},
-        {"higgs_audio_tts.codec_decode_graph_arena_mb", "n", "Codec decode graph arena size."},
-        {"higgs_audio_tts.codec_encode_graph_arena_mb", "n", "Codec encode graph arena size."},
-        {"higgs_audio_tts.reference_cache_slots", "n", "Encoded reference-audio cache slots; default 1."},
+        {"higgs_audio_tts.ar_weight_context_mb", "n", "AR weight context in MiB; defaults to 4096 on 64-bit builds, 1024 on 32-bit builds.", false, std::nullopt, "1"},
+        {"higgs_audio_tts.codec_weight_context_mb", "n", "Codec weight context size.", false, "1536", "1"},
+        {"higgs_audio_tts.ar_decode_graph_arena_mb", "n", "AR decode graph arena size.", false, "512", "1"},
+        {"higgs_audio_tts.codec_decode_graph_arena_mb", "n", "Codec decode graph arena size.", false, "128", "1"},
+        {"higgs_audio_tts.codec_encode_graph_arena_mb", "n", "Codec encode graph arena size.", false, "256", "1"},
+        {"higgs_audio_tts.reference_cache_slots", "n", "Encoded reference-audio cache slots; default 1.", false, "1", "0"},
+        {"higgs_audio_tts.attention", "auto|flash|eager", "Attention lowering; auto probes the backend and falls back to eager on GPUs without a flash kernel (e.g. sm70); default auto.", false, "auto"},
     };
     return out;
 }
@@ -69,7 +75,8 @@ public:
     runtime::CapabilitySet advertised_capabilities() const override {
         runtime::CapabilitySet out;
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
         return out;
@@ -133,11 +140,12 @@ const runtime::CapabilitySet & HiggsTTSLoadedModel::capabilities() const noexcep
 std::unique_ptr<runtime::IVoiceTaskSession> HiggsTTSLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Higgs TTS only supports offline sessions");
+    if (task.mode != runtime::RunMode::Offline && task.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("Higgs TTS supports offline and streaming sessions");
     }
-    if (task.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Higgs TTS only supports the Tts task");
+    if (task.task != runtime::VoiceTaskKind::Tts &&
+        task.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("Higgs TTS supports Tts and VoiceCloning tasks");
     }
     return std::make_unique<HiggsTTSSession>(task, options, assets_);
 }

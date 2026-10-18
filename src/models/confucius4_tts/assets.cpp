@@ -54,8 +54,8 @@ ConfuciusAudioConfig parse_audio_config(const yaml::FlattenedDocument & document
     return config;
 }
 
-ConfuciusStyleEncoderConfig parse_style_config(const yaml::FlattenedDocument & document) {
-    ConfuciusStyleEncoderConfig config;
+ConfuciusCampplusStyleEncoderConfig parse_style_config(const yaml::FlattenedDocument & document) {
+    ConfuciusCampplusStyleEncoderConfig config;
     config.feat_dim = yaml::require_i64(document, "paths.style_encoder.init_args.feat_dim");
     config.embedding_size = yaml::require_i64(document, "paths.style_encoder.init_args.embedding_size");
     return config;

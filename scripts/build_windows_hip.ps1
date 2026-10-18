@@ -14,11 +14,21 @@ param(
     [switch]$WithVmm,        # explicitly re-enable VMM
     [switch]$NoNativeCpu,    # build ggml CPU kernels without native host ISA flags (required for distribution)
     [switch]$DeploymentBuild, # compile model_specs into the binary (self-contained deployment, no model_specs/ dir needed)
+    [switch]$NativeModelManager,
+    [switch]$SystemOpenSsl,
+    [string]$BoringSslArchive = "",
     [switch]$Graphs          # enable CUDA graphs (memory-hungry on iGPUs: each cached graph reserves its own VRAM)
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if (-not $NativeModelManager -and $SystemOpenSsl) {
+    throw "-SystemOpenSsl requires -NativeModelManager"
+}
+if (-not $NativeModelManager -and $BoringSslArchive -ne "") {
+    throw "-BoringSslArchive requires -NativeModelManager"
+}
 
 function Invoke-Checked {
     param(
@@ -50,21 +60,40 @@ function Find-FirstFile {
 
 # --- ROCm ---
 if ($RocmPath -eq "") {
-    if ($env:HIP_PATH -and (Test-Path (Join-Path $env:HIP_PATH "bin\clang++.exe"))) {
+    $hipPathHasClang = $env:HIP_PATH -and (
+        (Test-Path (Join-Path $env:HIP_PATH "bin\clang++.exe")) -or
+        (Test-Path (Join-Path $env:HIP_PATH "lib\llvm\bin\clang++.exe"))
+    )
+    if ($hipPathHasClang) {
         $RocmPath = (Resolve-Path $env:HIP_PATH).Path
     } else {
-        $clang = Find-FirstFile @("C:\Program Files\AMD\ROCm\*\bin\clang++.exe")
+        $clang = Find-FirstFile @(
+            "C:\Program Files\AMD\ROCm\*\bin\clang++.exe",
+            "C:\TheRock\build\lib\llvm\bin\clang++.exe"
+        )
         if ($clang -eq "") {
             throw "ROCm was not found. Install the AMD HIP SDK or pass -RocmPath."
         }
-        $RocmPath = (Resolve-Path (Join-Path (Split-Path $clang -Parent) "..")).Path
+        $clangDir = Split-Path $clang -Parent
+        if ($clangDir -like "*\lib\llvm\bin") {
+            $RocmPath = (Resolve-Path (Join-Path $clangDir "..\..\..")).Path
+        } else {
+            $RocmPath = (Resolve-Path (Join-Path $clangDir "..")).Path
+        }
     }
 }
-$clangxx = Join-Path $RocmPath "bin\clang++.exe"
-$clangc  = Join-Path $RocmPath "bin\clang.exe"
-if (-not (Test-Path $clangxx) -or -not (Test-Path $clangc)) {
-    throw "ROCm clang not found under $RocmPath\bin"
+$compilerDir = @(
+    (Join-Path $RocmPath "bin"),
+    (Join-Path $RocmPath "lib\llvm\bin")
+) | Where-Object {
+    (Test-Path (Join-Path $_ "clang.exe")) -and
+    (Test-Path (Join-Path $_ "clang++.exe"))
+} | Select-Object -First 1
+if ($null -eq $compilerDir) {
+    throw "ROCm clang not found under $RocmPath\bin or $RocmPath\lib\llvm\bin"
 }
+$clangxx = Join-Path $compilerDir "clang++.exe"
+$clangc  = Join-Path $compilerDir "clang.exe"
 
 # --- GPU targets ---
 if ($GpuTargets -eq "") {
@@ -110,6 +139,8 @@ $forceMmqValue  = if ($ForceMmq) { "ON" } else { "OFF" }
 $noVmmValue     = if ($WithVmm) { "OFF" } elseif ($NoVmm) { "ON" } else { "OFF" }
 $nativeCpuValue = if ($NoNativeCpu) { "OFF" } else { "ON" }
 $deploymentValue = if ($DeploymentBuild) { "ON" } else { "OFF" }
+$nativeModelManagerValue = if ($NativeModelManager) { "ON" } else { "OFF" }
+$systemOpenSslValue = if ($SystemOpenSsl) { "ON" } else { "OFF" }
 $graphsValue    = if ($Graphs) { "ON" } else { "OFF" }
 
 Write-Host "ROCm:        $RocmPath"
@@ -118,6 +149,15 @@ Write-Host "CMake:       $cmake"
 Write-Host "Ninja:       $ninja"
 Write-Host "Build dir:   $buildDir"
 Write-Host "hipBLASLt GEMM: $hipblasLtValue, FORCE_MMQ: $forceMmqValue, NO_VMM: $noVmmValue, CUDA graphs: $graphsValue, native CPU ISA: $nativeCpuValue, deployment build: $deploymentValue"
+Write-Host "Native model manager: $nativeModelManagerValue"
+if ($NativeModelManager) {
+    Write-Host "System OpenSSL: $systemOpenSslValue"
+    if ($BoringSslArchive -ne "") {
+        Write-Host "BoringSSL archive: $BoringSslArchive"
+    } else {
+        Write-Host "BoringSSL archive: <download at configure time>"
+    }
+}
 
 if ($Clean) {
     Invoke-Checked $cmake @("--build", $buildDir, "--target", "clean")
@@ -126,7 +166,7 @@ if ($Clean) {
 
 $env:HIP_PATH = $RocmPath
 $env:ROCM_PATH = $RocmPath
-$env:PATH = @((Join-Path $RocmPath "bin"), $env:PATH) -join [IO.Path]::PathSeparator
+$env:PATH = @($compilerDir, (Join-Path $RocmPath "bin"), $env:PATH) -join [IO.Path]::PathSeparator
 
 $configureArgs = @(
     "-S", $sourceDir,
@@ -153,8 +193,15 @@ $configureArgs = @(
     "-DGGML_HIP_NO_VMM=$noVmmValue",
     "-DENGINE_ENABLE_NATIVE_CPU=$nativeCpuValue",
     "-DAUDIOCPP_DEPLOYMENT_BUILD=$deploymentValue",
+    "-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=$nativeModelManagerValue",
+    "-DAUDIOCPP_USE_SYSTEM_OPENSSL=$systemOpenSslValue",
+    "-U", "AUDIOCPP_BORINGSSL_ARCHIVE",
     "-DENGINE_ENABLE_CUDA_GRAPHS=$graphsValue"
 )
+$boringSslArchivePath = if ($BoringSslArchive -ne "") { Convert-ToCMakePath $BoringSslArchive } else { "" }
+if ($boringSslArchivePath -ne "") {
+    $configureArgs += "-DAUDIOCPP_BORINGSSL_ARCHIVE=$boringSslArchivePath"
+}
 
 Invoke-Checked $cmake $configureArgs
 

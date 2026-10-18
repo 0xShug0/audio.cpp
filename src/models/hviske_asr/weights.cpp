@@ -86,7 +86,7 @@ engine::modules::RelativeAttentionWeights load_relative_attention(
     return weights;
 }
 
-HviskeEncoderLayerWeights load_encoder_layer(
+HviskeConformerLayerWeights load_encoder_layer(
     engine::core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
     const HviskeConfig & config,
@@ -100,7 +100,7 @@ HviskeEncoderLayerWeights load_encoder_layer(
     const int64_t head_dim = hidden / heads;
     const int64_t kernel = config.encoder.conv_kernel;
 
-    HviskeEncoderLayerWeights layer;
+    HviskeConformerLayerWeights layer;
     layer.norm_feed_forward1 = binding::norm_from_source(store, source, prefix + ".norm_feed_forward1", hidden);
     layer.norm_self_att = binding::norm_from_source(store, source, prefix + ".norm_self_att", hidden);
     layer.norm_conv = binding::norm_from_source(store, source, prefix + ".norm_conv", hidden);
@@ -137,13 +137,13 @@ HviskeEncoderLayerWeights load_encoder_layer(
     return layer;
 }
 
-HviskeEncoderWeights load_encoder_weights(
+HviskeConformerWeights load_encoder_weights(
     engine::core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
     const HviskeConfig & config,
     engine::assets::TensorStorageType matmul_storage_type,
     engine::assets::TensorStorageType conv_storage_type) {
-    HviskeEncoderWeights encoder;
+    HviskeConformerWeights encoder;
     const int64_t channels = config.encoder.subsampling_conv_channels;
     encoder.subsampling.conv0 = binding::conv2d_from_source(
         store,

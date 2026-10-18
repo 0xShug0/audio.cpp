@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "family": "kitten_tts",
+  "display_name": "KittenTTS Mini 0.8",
+  "description": "Native KittenTTS Mini 0.8 English text-to-speech with eight built-in voices and shared eSpeak-ng phonemization.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "built_in_voices",
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "voice_id",
+        "type": "enum",
+        "values": ["Bella","Bruno","Hugo","Jasper","Kiki","Leo","Luna","Rosie","expr-voice-2-f","expr-voice-2-m","expr-voice-3-f","expr-voice-3-m","expr-voice-4-f","expr-voice-4-m","expr-voice-5-f","expr-voice-5-m"],
+        "description": "Built-in voice ID or package alias; structured voice input (CLI --voice-id) takes precedence.",
+        "required": false,
+        "default": "expr-voice-5-m"
+      },
+      {
+        "name": "speed",
+        "type": "float",
+        "description": "Speech speed multiplier; larger values produce faster speech. Must be finite and positive.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Decoder noise seed for the current request; omitted requests choose a fresh random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Long-form text chunking mode.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form chunk.",
+        "required": false,
+        "min": 1,
+        "default": 400
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "description": "Storage type for matrix multiplication weights.",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "preset": "weight_type_conv",
+        "description": "Storage type for convolution weights.",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "graph_capacity_mode",
+        "type": "enum",
+        "description": "Offline graph capacity policy.",
+        "values": [
+          "fixed",
+          "tiered",
+          "grow",
+          "double"
+        ],
+        "required": false,
+        "default": "fixed"
+      },
+      {
+        "name": "max_input_tokens",
+        "type": "int",
+        "description": "Maximum predictor input token capacity; defaults to min(512, checkpoint context_length).",
+        "required": false,
+        "min": 1,
+        "max": 512,
+        "default": 512
+      },
+      {
+        "name": "pre_tail_tokens",
+        "type": "int",
+        "description": "Optional prebuilt predictor tail token capacity.",
+        "required": false,
+        "min": 0,
+        "max": 512,
+        "default": 0
+      },
+      {
+        "name": "espeak_library_path",
+        "type": "path",
+        "description": "Optional explicit path to the eSpeak-ng shared library.",
+        "required": false
+      },
+      {
+        "name": "espeak_data_path",
+        "type": "path",
+        "description": "Optional explicit path to espeak-ng-data.",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "kitten_tts_mini_0_8_orig",
+      "display_name": "KittenTTS Mini 0.8 Original-Dtype GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "KittenTTS-GGUF",
+      "files": [
+        "KittenTTS-GGUF/kitten-tts-mini-0.8-orig.gguf"
+      ],
+      "strip_prefix": "KittenTTS-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "kitten_tts_mini_0_8_orig",
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "builtin_voices": [
+      "Bella",
+      "Jasper",
+      "Luna",
+      "Bruno",
+      "Rosie",
+      "Hugo",
+      "Kiki",
+      "Leo"
+    ],
+    "default_voice": "Leo",
+    "docs": [
+      "docs/models/kitten_tts.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "kitten"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": "model:ggml/kitten_tts.safetensors"
+      }
+    }
+  ]
+}

@@ -14,18 +14,18 @@ namespace engine::models::moss_tts_local {
 // a prefill forward that returns the final hidden states. Text tokens are embedded in
 // the graph; the summed audio-codebook contribution is supplied as a precomputed bias
 // so the depth transformer and the generator can share a single embedding table.
-class MossBackboneRuntime {
+class MossTTSLocalQwen3BackboneRuntime {
 public:
-    MossBackboneRuntime(
+    MossTTSLocalQwen3BackboneRuntime(
         std::shared_ptr<const MossTTSLocalAssets> assets,
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type);
-    ~MossBackboneRuntime();
+    ~MossTTSLocalQwen3BackboneRuntime();
 
-    MossBackboneRuntime(const MossBackboneRuntime &) = delete;
-    MossBackboneRuntime & operator=(const MossBackboneRuntime &) = delete;
+    MossTTSLocalQwen3BackboneRuntime(const MossTTSLocalQwen3BackboneRuntime &) = delete;
+    MossTTSLocalQwen3BackboneRuntime & operator=(const MossTTSLocalQwen3BackboneRuntime &) = delete;
 
     int64_t hidden_size() const noexcept;
 

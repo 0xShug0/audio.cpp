@@ -6,14 +6,19 @@ CONDA_ENV=""
 BUILD_DIR=""
 BUILD_TYPE="RelWithDebInfo"
 CUDA_MODE="auto"
+CUDA_ARCH=""
 VULKAN_MODE="off"
 HIP_MODE="off"
 GPU_TARGETS=""
+USE_CCACHE="OFF"
 WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
 DEPLOYMENT_BUILD_SET="OFF"
+AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="OFF"
+AUDIOCPP_USE_SYSTEM_OPENSSL="OFF"
+AUDIOCPP_BORINGSSL_ARCHIVE=""
 AUDIOCPP_MODEL_SET="full"
 AUDIOCPP_MODELS=""
 NATIVE_CPU="ON"
@@ -74,6 +79,14 @@ while [[ $# -gt 0 ]]; do
             GPU_TARGETS="$2"
             shift 2
             ;;
+        --cuda-arch)
+            CUDA_ARCH="$2"
+            shift 2
+            ;;
+        --ccache)
+            USE_CCACHE="ON"
+            shift
+            ;;
         --with-tests)
             WITH_TESTS="ON"
             shift
@@ -95,6 +108,18 @@ while [[ $# -gt 0 ]]; do
             AUDIOCPP_DEPLOYMENT_BUILD="OFF"
             DEPLOYMENT_BUILD_SET="ON"
             shift
+            ;;
+        --native-model-manager)
+            AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="ON"
+            shift
+            ;;
+        --system-openssl)
+            AUDIOCPP_USE_SYSTEM_OPENSSL="ON"
+            shift
+            ;;
+        --boringssl-archive)
+            AUDIOCPP_BORINGSSL_ARCHIVE="$2"
+            shift 2
             ;;
         --model-set)
             case "$2" in
@@ -156,6 +181,17 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" != "ON" ]]; then
+    if [[ "$AUDIOCPP_USE_SYSTEM_OPENSSL" == "ON" ]]; then
+        echo "--system-openssl requires --native-model-manager" >&2
+        exit 1
+    fi
+    if [[ -n "$AUDIOCPP_BORINGSSL_ARCHIVE" ]]; then
+        echo "--boringssl-archive requires --native-model-manager" >&2
+        exit 1
+    fi
+fi
 
 GENERATOR="Unix Makefiles"
 if command -v ninja >/dev/null 2>&1; then
@@ -318,6 +354,9 @@ fi
 echo "Using generator: $GENERATOR"
 echo "Using build dir: $BUILD_DIR"
 echo "Including CUDA backend: $ENGINE_ENABLE_CUDA"
+if [[ "$ENGINE_ENABLE_CUDA" == "ON" ]]; then
+    echo "CUDA architectures: ${CUDA_ARCH:-<portable default list>}"
+fi
 echo "Including Vulkan backend: $ENGINE_ENABLE_VULKAN"
 echo "Including HIP backend: $ENGINE_ENABLE_HIP"
 if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
@@ -330,6 +369,11 @@ echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
 echo "Building warmbench: $WITH_WARMBENCH"
 echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
+echo "Native model manager: $AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
+if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" == "ON" ]]; then
+    echo "System OpenSSL: $AUDIOCPP_USE_SYSTEM_OPENSSL"
+    echo "BoringSSL archive: ${AUDIOCPP_BORINGSSL_ARCHIVE:-<download at configure time>}"
+fi
 echo "Model composite: $AUDIOCPP_MODEL_SET"
 if [[ -n "$AUDIOCPP_MODELS" ]]; then
     echo "Selected models: $AUDIOCPP_MODELS"
@@ -349,9 +393,37 @@ CMAKE_ARGS=(
     -DENGINE_BUILD_TESTS="$WITH_TESTS"
     -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH"
     -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
+    -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
+    -DAUDIOCPP_USE_SYSTEM_OPENSSL="$AUDIOCPP_USE_SYSTEM_OPENSSL"
+    -UAUDIOCPP_BORINGSSL_ARCHIVE
     -DAUDIOCPP_MODEL_SET="$AUDIOCPP_MODEL_SET"
     -DAUDIOCPP_MODELS="$AUDIOCPP_MODELS"
 )
+if [[ -n "$AUDIOCPP_BORINGSSL_ARCHIVE" ]]; then
+    CMAKE_ARGS+=(-DAUDIOCPP_BORINGSSL_ARCHIVE="$AUDIOCPP_BORINGSSL_ARCHIVE")
+fi
+
+# Opt-in: ggml probes for ccache upstream, but audio.cpp's CMakeLists forces that
+# probe off, so nothing caches anything unless a launcher is wired up by hand.
+# Measured on this tree: ~2% slower on a cold build, ~14x faster on a rebuild.
+# Configure prints a hint when ccache is installed and unused; this is the flag
+# that hint points at. A launcher already set in the environment is left alone --
+# -D wins over both the environment and the existing cache, and this flag means
+# "cache the build", not "use ccache rather than whatever you already chose".
+if [[ "$USE_CCACHE" == "ON" ]]; then
+    if ! command -v ccache >/dev/null 2>&1; then
+        echo "--ccache was passed but ccache is not installed" >&2
+        exit 1
+    fi
+    for lang in C CXX CUDA; do
+        launcher_var="CMAKE_${lang}_COMPILER_LAUNCHER"
+        if [[ -n "${!launcher_var:-}" ]]; then
+            echo "$launcher_var=${!launcher_var} is set; leaving the $lang launcher alone."
+            continue
+        fi
+        CMAKE_ARGS+=("-D${launcher_var}=ccache")
+    done
+fi
 
 if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
     CMAKE_ARGS+=(
@@ -366,10 +438,24 @@ if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
     )
 fi
 
-"${RUNNER[@]}" cmake "${CMAKE_ARGS[@]}"
+if [[ "$ENGINE_ENABLE_CUDA" == "ON" && -n "$CUDA_ARCH" ]]; then
+    CMAKE_ARGS+=(
+        # CMAKE_CUDA_ARCHITECTURES is a sticky cache entry; -U it so a previous
+        # configure's arch list does not win over a new --cuda-arch value
+        # (mirrors the HIP --gpu-targets handling above).
+        -UCMAKE_CUDA_ARCHITECTURES
+        -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH"
+    )
+fi
 
-BUILD_CMD=("${RUNNER[@]}" cmake --build "$BUILD_DIR" --parallel "$JOBS")
-for target in "${TARGETS[@]}"; do
+# RUNNER is empty unless --conda-env is used, and TARGETS is empty unless
+# --target is used. bash 3.2 (stock macOS /bin/bash) and bash < 4.4 report an
+# empty array as unbound under `set -u`; the ${arr[@]+"${arr[@]}"} form expands
+# to nothing instead of failing.
+${RUNNER[@]+"${RUNNER[@]}"} cmake "${CMAKE_ARGS[@]}"
+
+BUILD_CMD=(${RUNNER[@]+"${RUNNER[@]}"} cmake --build "$BUILD_DIR" --parallel "$JOBS")
+for target in ${TARGETS[@]+"${TARGETS[@]}"}; do
     BUILD_CMD+=(--target "$target")
 done
 

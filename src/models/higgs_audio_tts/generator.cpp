@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/higgs_audio_tts/codebooks.h"
@@ -19,22 +20,6 @@ namespace engine::models::higgs_audio_tts {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-constexpr int64_t kInitialGeneratedCacheSteps = 128;
-constexpr int64_t kMinimumCacheBucketSteps = 128;
-
-int64_t bucketed_initial_cache_steps(int64_t prompt_steps, int64_t max_tokens) {
-    const int64_t maximum = prompt_steps + max_tokens;
-    const int64_t required = prompt_steps + std::min(max_tokens, kInitialGeneratedCacheSteps);
-    int64_t bucket = kMinimumCacheBucketSteps;
-    while (bucket < required && bucket <= maximum / 2) {
-        bucket *= 2;
-    }
-    if (bucket < required) {
-        bucket = required;
-    }
-    return std::min(bucket, maximum);
-}
 
 void validate_generation_options(const HiggsGenerationOptions & options) {
     if (options.max_tokens <= 0) {
@@ -141,7 +126,7 @@ HiggsPreparedPrompt make_prepared_prompt(const HiggsPromptEncoding & prompt,
 } // namespace
 
 HiggsGenerator::HiggsGenerator(std::shared_ptr<const HiggsAssets> assets,
-                               std::shared_ptr<HiggsARRuntime> ar,
+                               std::shared_ptr<HiggsQwen3ARRuntime> ar,
                                std::shared_ptr<HiggsCodecRuntime> codec,
                                size_t ar_decode_graph_arena_bytes)
     : assets_([&]() {
@@ -167,6 +152,41 @@ HiggsGenerator::HiggsGenerator(std::shared_ptr<const HiggsAssets> assets,
     if (ar_decode_graph_arena_bytes_ == 0) {
         throw std::runtime_error("Higgs TTS generator graph arena bytes must be non-zero");
     }
+}
+
+void HiggsGenerator::replace_kv_cache(int64_t steps, bool preserve_state) {
+    prefill_graph_.reset();
+    if (ar_->backend_type() != core::BackendType::Cuda) {
+        const auto state = preserve_state ? ar_kv_cache_->export_state() : runtime::TransformerKVState{};
+        decode_graph_.reset();
+        ar_kv_cache_ = std::make_unique<HiggsQwen3KVCache>(ar_, steps);
+        if (preserve_state) {
+            ar_kv_cache_->import_state(state);
+        }
+        return;
+    }
+    std::unique_ptr<HiggsQwen3KVCache> next_cache;
+    std::unique_ptr<HiggsQwen3DecodeGraph> next_graph;
+    // Match the original capacity exactly: changing attention tensor sizes or
+    // retaining a different reference prefix can change sampled audio. One
+    // spare lets repeated requests reuse allocation and graph capture safely.
+    if (spare_kv_cache_ && spare_kv_cache_->can_run(*ar_, steps) &&
+        spare_kv_cache_->cache_steps() == steps) {
+        next_cache = std::move(spare_kv_cache_);
+        next_graph = std::move(spare_decode_graph_);
+    } else {
+        spare_decode_graph_.reset();
+        spare_kv_cache_.reset();
+        next_cache = std::make_unique<HiggsQwen3KVCache>(ar_, steps);
+    }
+    if (preserve_state) {
+        next_cache->retain_prefix(0);
+        next_cache->copy_from(*ar_kv_cache_);
+    }
+    spare_decode_graph_ = std::move(decode_graph_);
+    spare_kv_cache_ = std::move(ar_kv_cache_);
+    ar_kv_cache_ = std::move(next_cache);
+    decode_graph_ = std::move(next_graph);
 }
 
 void HiggsGenerator::prepare(const HiggsGenerationRequest & request) {
@@ -237,7 +257,9 @@ void HiggsGenerator::prepare(const HiggsGenerationRequest & request) {
     }
 }
 
-HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & request) {
+HiggsGenerationResult HiggsGenerator::generate(
+    const HiggsGenerationRequest & request,
+    runtime::StreamingAudioController<int32_t> * stream) {
     const auto & config = assets_->config;
     const bool has_reference = request.reference_frames > 0 || !request.reference_codes.empty();
     if (has_reference) {
@@ -354,13 +376,13 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     engine::debug::trace_log_scalar("higgs_audio_tts.generator.reference_prefix_cache_hit", reference_cache_hit);
     engine::debug::trace_log_scalar("higgs_audio_tts.generator.reference_prefix_steps", prepared.prefix_steps);
     const int64_t max_cache_steps = prompt_steps + request.options.max_tokens;
-    const int64_t initial_cache_steps = bucketed_initial_cache_steps(prompt_steps, request.options.max_tokens);
+    const int64_t initial_cache_steps =
+        engine::runtime::bucketed_cache_steps(prompt_steps, request.options.max_tokens);
     const bool cache_rebuild =
         ar_kv_cache_ == nullptr || !ar_kv_cache_->can_run(*ar_, initial_cache_steps) ||
         ar_kv_cache_->cache_steps() != initial_cache_steps;
     if (cache_rebuild) {
-        decode_graph_.reset();
-        ar_kv_cache_ = std::make_unique<HiggsARKVCache>(ar_, initial_cache_steps);
+        replace_kv_cache(initial_cache_steps, false);
         reference_kv_ready_ = false;
     }
     const bool reference_kv_cache_hit =
@@ -380,15 +402,17 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     if (prefill_graph_ == nullptr ||
         !prefill_graph_->matches(*ar_, prompt_steps, prefill_start_step)) {
         prefill_graph_.reset();
-        prefill_graph_ = std::make_unique<HiggsARPrefillGraph>(
+        prefill_graph_ = std::make_unique<HiggsQwen3PrefillGraph>(
             ar_, prompt_steps, prefill_start_step, ar_kv_cache_.get(), ar_decode_graph_arena_bytes_);
     }
     auto prefill_output = prefill_graph_->run(prepared.ar_input, prefill_start_step);
-    prefill_graph_.reset();
+    if (stream == nullptr) {
+        prefill_graph_.reset();
+    }
     reference_kv_ready_ = reference_cache_hit;
 
     if (decode_graph_ == nullptr || !decode_graph_->can_run(*ar_, ar_kv_cache_->cache_steps())) {
-        decode_graph_ = std::make_unique<HiggsARDecodeGraph>(
+        decode_graph_ = std::make_unique<HiggsQwen3DecodeGraph>(
             ar_, ar_kv_cache_->cache_steps(), *ar_kv_cache_, ar_decode_graph_arena_bytes_);
     }
     if (!prefill_output.wrote_cache) {
@@ -452,25 +476,28 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     decoded.codebook_logits.reserve(
         static_cast<size_t>(config.audio.num_codebooks * config.audio.vocab_size));
     bool logged_decode_step_timing = false;
+    std::vector<int32_t> stream_frame;
+    if (stream != nullptr) {
+        stream_frame.resize(static_cast<size_t>(config.audio.num_codebooks));
+    }
     double sampler_total_ms = 0.0;
     HiggsARDecodeTiming decode_timing_total;
     decode_graph_->begin_decode_run();
     while (!state.generation_done && result.delayed_frames < request.options.max_tokens) {
         if (ar_kv_cache_->valid_steps() >= ar_kv_cache_->cache_steps()) {
             decode_timing_total.add(decode_graph_->timing());
-            const auto kv_state = ar_kv_cache_->export_state();
             const int64_t grown_cache_steps =
                 std::min(max_cache_steps,
                          std::max(ar_kv_cache_->cache_steps() * 2, ar_kv_cache_->valid_steps() + 1));
             if (grown_cache_steps <= ar_kv_cache_->cache_steps()) {
                 throw std::runtime_error("Higgs TTS AR cache cannot grow");
             }
-            decode_graph_.reset();
-            ar_kv_cache_ = std::make_unique<HiggsARKVCache>(ar_, grown_cache_steps);
-            ar_kv_cache_->import_state(kv_state);
+            replace_kv_cache(grown_cache_steps, true);
             engine::debug::trace_log_scalar("higgs_audio_tts.generator.kv_cache_grown_steps", grown_cache_steps);
-            decode_graph_ = std::make_unique<HiggsARDecodeGraph>(
-                ar_, ar_kv_cache_->cache_steps(), *ar_kv_cache_, ar_decode_graph_arena_bytes_);
+            if (decode_graph_ == nullptr) {
+                decode_graph_ = std::make_unique<HiggsQwen3DecodeGraph>(
+                    ar_, ar_kv_cache_->cache_steps(), *ar_kv_cache_, ar_decode_graph_arena_bytes_);
+            }
             decode_graph_->begin_decode_run();
         }
         HiggsARDecodeInput input;
@@ -496,6 +523,16 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
         if (!sampled.empty() && sampled.front() != kHiggsStopCode) {
             result.delayed_codes.insert(result.delayed_codes.end(), sampled.begin(), sampled.end());
             result.delayed_frames += 1;
+            if (stream != nullptr && result.delayed_frames >= config.audio.num_codebooks) {
+                const int64_t frame = result.delayed_frames - config.audio.num_codebooks;
+                for (int64_t book = 0; book < config.audio.num_codebooks; ++book) {
+                    const int32_t code = result.delayed_codes[flat_index(
+                        frame + book, book, config.audio.num_codebooks)];
+                    stream_frame[static_cast<size_t>(book)] =
+                        code >= config.audio.vocab_size - 2 ? 0 : code;
+                }
+                stream->push(stream_frame);
+            }
         }
     }
     decode_timing_total.add(decode_graph_->timing());
@@ -508,7 +545,11 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     engine::debug::timing_log_scalar("higgs_audio_tts.generator.decode_ms",
                                      engine::debug::elapsed_ms(decode_start, Clock::now()));
     if (!state.generation_done) {
-        throw std::runtime_error("Higgs TTS generation reached max_tokens before EOC");
+        throw std::runtime_error(
+            "Higgs TTS generation reached max_tokens (" + std::to_string(request.options.max_tokens) +
+            ") before EOC for this text chunk; raise it with --max-tokens on the CLI or "
+            "the \"max_tokens\" request option on the server, or lower --text-chunk-size / "
+            "\"text_chunk_size\" so each chunk needs fewer generated frames");
     }
 
     result.raw_codes = reverse_higgs_delay_pattern(
@@ -538,15 +579,17 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     engine::debug::trace_log_i32("higgs_audio_tts.generator.raw_codes_for_codec",
                                  {result.raw_frames, config.audio.num_codebooks},
                                  result.raw_codes);
-    const auto codec_start = Clock::now();
-    result.audio =
-        codec_->decode_codes(result.raw_codes, result.raw_frames, config.audio.num_codebooks);
-    engine::debug::trace_log_f32("higgs_audio_tts.codec.decode.output_audio",
-                                 {result.audio.samples},
-                                 result.audio.values);
-    engine::debug::timing_log_scalar("higgs_audio_tts.generator.codec_decode_ms",
-                                     engine::debug::elapsed_ms(codec_start, Clock::now()));
-    codec_->release_runtime_graphs();
+    if (stream == nullptr) {
+        const auto codec_start = Clock::now();
+        result.audio =
+            codec_->decode_codes(result.raw_codes, result.raw_frames, config.audio.num_codebooks);
+        engine::debug::trace_log_f32("higgs_audio_tts.codec.decode.output_audio",
+                                     {result.audio.samples},
+                                     result.audio.values);
+        engine::debug::timing_log_scalar("higgs_audio_tts.generator.codec_decode_ms",
+                                         engine::debug::elapsed_ms(codec_start, Clock::now()));
+        codec_->release_runtime_graphs();
+    }
     return result;
 }
 

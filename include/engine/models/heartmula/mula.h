@@ -170,7 +170,7 @@ public:
         core::BackendType backend_type,
         int device,
         int threads,
-        size_t weight_context_bytes = 512ull * 1024ull * 1024ull,
+        size_t weight_context_bytes = 32ull * 1024ull * 1024ull,
         size_t constant_context_bytes = 256ull * 1024ull * 1024ull,
         size_t backbone_prefill_graph_arena_bytes = 1536ull * 1024ull * 1024ull,
         size_t backbone_step_graph_arena_bytes = 1536ull * 1024ull * 1024ull,

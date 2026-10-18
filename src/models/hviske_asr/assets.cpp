@@ -78,9 +78,7 @@ void validate_config(const HviskeConfig & config) {
 
 std::shared_ptr<const HviskeASRAssets> load_hviske_asr_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<HviskeASRAssets>();
-    assets->resources = engine::model_spec::load_resource_bundle(
-        model_path,
-        engine::model_spec::default_spec_path("hviske_asr"));
+    assets->resources = engine::model_spec::load_resource_bundle_for_family(model_path, "hviske_asr");
     assets->config = parse_config(assets->resources);
     validate_config(assets->config);
     assets->tokenizer_pieces = engine::tokenizers::load_sentencepiece_model(

@@ -31,7 +31,7 @@ modules::TransformerEncoderBlockWeights make_transformer_layer_weights(
 modules::TimedConditionedFlowMLPWeights make_flow_net_weights(
     const models::pocket_tts::PocketTTSBackendWeights & weights,
     const FlowLMConfig & config) {
-    if (static_cast<int64_t>(weights.flow.flow_net.residual_layers.size()) != config.layers) {
+    if (static_cast<int64_t>(weights.flow.flow_net.residual_layers.size()) != config.flow_depth) {
         throw std::runtime_error("PocketTTS FlowNet residual layer count does not match config");
     }
     return weights.flow.flow_net;
@@ -372,7 +372,7 @@ public:
             config_.flow_hidden_size,
             config_.hidden_size,
             config_.latent_size,
-            config_.layers,
+            config_.flow_depth,
             config_.flow_eps,
             true,
         }).build(ctx, condition_, start_time_, end_time_, noise_, weights.flow_net);

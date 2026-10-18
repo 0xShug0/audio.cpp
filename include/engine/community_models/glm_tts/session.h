@@ -6,7 +6,7 @@
 #include "engine/community_models/glm_tts/llama.h"
 #include "engine/community_models/glm_tts/speech_tokenizer.h"
 #include "engine/community_models/glm_tts/tokenizer_text.h"
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 #include "engine/framework/modules/vocoders/hift_vocoder.h"
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/cache_slots.h"

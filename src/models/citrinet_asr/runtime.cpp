@@ -2,6 +2,7 @@
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -78,11 +79,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-struct FeaturePack {
-    std::vector<float> values;
-    int64_t raw_frames = 0;
-    int64_t padded_frames = 0;
-};
+using FeaturePack = CitrinetFrontendFeatures;
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
@@ -374,12 +371,13 @@ class CitrinetRuntime::Graph {
         };
         auto input = core::make_tensor(build_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, weights_->config.n_mels, frames_}));
         input_ = input.tensor;
+        ggml_set_input(input_);
         output_ = build_citrinet_graph(build_ctx, input, *backend_weights_).tensor;
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 16384, false);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
-        if (buffer_ == nullptr) {
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             throw std::runtime_error("failed to allocate graph");
         }
         if (engine::core::uses_host_graph_plan(backend_)) {
@@ -399,8 +397,8 @@ class CitrinetRuntime::Graph {
         if (plan_ != nullptr) {
             engine::core::free_backend_graph_plan(backend_, plan_);
         }
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
         }
     }
 
@@ -466,7 +464,7 @@ class CitrinetRuntime::Graph {
     ggml_cgraph * graph_ = nullptr;
     ggml_backend_t backend_ = nullptr;
     int compute_threads_ = 1;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_graph_plan_t plan_ = nullptr;
     double plan_create_ms_ = 0.0;
     std::vector<float> channels_first_;
@@ -476,35 +474,21 @@ class CitrinetRuntime::Graph {
 
 namespace {
 
-std::vector<float> to_time_major_features(const engine::audio::AudioTensor & features) {
-    if (features.shape.size() != 3 || features.shape[0] != 1) {
-        throw std::runtime_error("expected single-batch audio feature tensor");
-    }
-    const int64_t feature_dim = features.shape[1];
-    const int64_t frames = features.shape[2];
-    std::vector<float> out(static_cast<size_t>(frames * feature_dim), 0.0f);
-    for (int64_t frame = 0; frame < frames; ++frame) {
-        for (int64_t feature = 0; feature < feature_dim; ++feature) {
-            out[static_cast<size_t>(frame * feature_dim + feature)] =
-                features.values[static_cast<size_t>(feature * frames + frame)];
-        }
-    }
-    return out;
-}
-
-FeaturePack compute_citrinet_features(const std::vector<float> & waveform, const CitrinetWeights & weights);
 std::vector<int32_t> greedy_ctc_ids(const CitrinetInferenceResult & result, int32_t blank_id);
 
 FeaturePack extract_feature_pack_from_audio(
     const runtime::AudioBuffer & audio,
     const CitrinetWeights & weights) {
-    return compute_citrinet_features(
-        engine::audio::convert_interleaved_audio_to_mono_linear_resampled(
-            audio.samples,
-            audio.sample_rate,
-            audio.channels,
-            static_cast<int>(weights.config.sample_rate)),
-        weights);
+    const auto start = Clock::now();
+    auto features = weights.frontend->extract_audio(
+            audio.samples, audio.sample_rate, audio.channels,
+            {true, engine::audio::ValidFrameRule::StftFrames});
+    FeaturePack out;
+    out.values = std::move(features.values);
+    out.raw_frames = features.raw_frames;
+    out.padded_frames = features.frames;
+    debug::timing_log_scalar("citrinet.features_ms", engine::debug::elapsed_ms(start));
+    return out;
 }
 
 CitrinetTranscriptionResult make_transcription_result(
@@ -516,73 +500,6 @@ CitrinetTranscriptionResult make_transcription_result(
     result.token_ids = std::move(ids);
     result.inference = std::move(inference);
     return result;
-}
-
-FeaturePack compute_citrinet_features(const std::vector<float> & waveform, const CitrinetWeights & weights) {
-    const auto start = Clock::now();
-    if (waveform.empty()) {
-        throw std::runtime_error("waveform is empty");
-    }
-    const auto & cfg = weights.config;
-    if (weights.window.size() != static_cast<size_t>(cfg.win_length)) {
-        throw std::runtime_error("unexpected window size in checkpoint");
-    }
-    if (weights.fb.size() != static_cast<size_t>(cfg.n_mels * (cfg.n_fft / 2 + 1))) {
-        throw std::runtime_error("unexpected mel filterbank size in checkpoint");
-    }
-    const engine::audio::STFTConfig stft_config{
-        cfg.n_fft,
-        cfg.hop_length,
-        cfg.win_length,
-        true,
-        engine::audio::STFTPadMode::Constant,
-        engine::audio::STFTFamily::Default,
-    };
-    engine::audio::AudioTensor magnitude;
-    const auto stft_start = Clock::now();
-    magnitude = engine::audio::STFT().compute_magnitude(
-        waveform,
-        weights.window,
-        1,
-        static_cast<int64_t>(waveform.size()),
-        stft_config);
-    debug::timing_log_scalar("audio.stft_ms", engine::debug::elapsed_ms(stft_start, Clock::now()));
-    auto sparse_fb = engine::audio::MelFilterbank().prepare_sparse(
-        engine::audio::AudioTensor{weights.fb, {cfg.n_mels, cfg.n_fft / 2 + 1}});
-    auto log_mel = engine::audio::MelFilterbank().compute_custom_sparse_from_magnitude(
-        magnitude.values,
-        1,
-        magnitude.shape[1],
-        magnitude.shape[2],
-        magnitude.shape[2],
-        sparse_fb);
-    constexpr float kLogZeroGuard = 5.960464477539063e-8f;
-    for (float & value : log_mel.values) {
-        value = std::log(value + kLogZeroGuard);
-    }
-    const int64_t raw_frames = log_mel.shape[2];
-
-    FeaturePack out;
-    out.raw_frames = raw_frames;
-    out.padded_frames = raw_frames;
-    auto normalized = engine::audio::FeatureNormalizer().compute(
-        log_mel.values,
-        std::vector<int64_t>{raw_frames},
-        1,
-        cfg.n_mels,
-        raw_frames,
-        engine::audio::FeatureNormalizeType::PerFeature);
-    out.values = to_time_major_features(normalized.normalized);
-    if (cfg.pad_to > 1) {
-        const int64_t padded_frames = ((raw_frames + cfg.pad_to - 1) / cfg.pad_to) * cfg.pad_to;
-        if (padded_frames != raw_frames) {
-            out.values.resize(static_cast<size_t>(padded_frames * cfg.n_mels), 0.0f);
-            out.padded_frames = padded_frames;
-        }
-    }
-    const auto end = Clock::now();
-    debug::timing_log_scalar("citrinet.features_ms", engine::debug::elapsed_ms(start, end));
-    return out;
 }
 
 int64_t compute_output_frames(const CitrinetConfig & cfg, int64_t input_frames) {
@@ -636,11 +553,17 @@ std::vector<int32_t> greedy_ctc_ids(const CitrinetInferenceResult & result, int3
 
 }  // namespace
 
+CitrinetFrontendFeatures extract_citrinet_frontend(
+    const runtime::AudioBuffer & audio,
+    const CitrinetWeights & weights) {
+    return extract_feature_pack_from_audio(audio, weights);
+}
+
 CitrinetInferenceResult infer_runtime_audio(
     CitrinetRuntime & runtime,
     const CitrinetWeights & weights,
     const runtime::AudioBuffer & audio) {
-    const auto pack = extract_feature_pack_from_audio(audio, weights);
+    const auto pack = extract_citrinet_frontend(audio, weights);
     auto result = runtime.infer_features(pack.values, pack.padded_frames);
     result = truncate_result(result, compute_output_frames(weights.config, pack.raw_frames));
     result.input_frames = pack.raw_frames;

@@ -218,7 +218,7 @@ int main(int argc, char **argv) try {
   audio_embeddings.hidden_size = 1024;
 
   engine::core::ExecutionContext execution_context({arguments.backend, 0, 4});
-  engine::models::fun_asr_nano::FunAsrNanoDecoderRuntime decoder(
+  engine::models::fun_asr_nano::FunAsrNanoQwen3DecoderRuntime decoder(
       assets, execution_context, kPrefillGraphArenaBytes,
       kDecodeGraphArenaBytes, kWeightContextBytes,
       engine::assets::TensorStorageType::F32);

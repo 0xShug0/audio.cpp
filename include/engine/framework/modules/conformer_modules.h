@@ -14,6 +14,7 @@ struct ConformerConvModuleConfig {
     bool use_bias = true;
     float eps = 1e-5f;
     int64_t cache_drop_size = 0;
+    bool contiguous_glu_gate = false;
 };
 
 struct ConvSubsamplingConfig {
@@ -37,6 +38,67 @@ struct ConvSubsamplingOutputs {
     core::TensorValue lengths;
 };
 
+struct EspnetConv2dSubsampling8Config {
+    int64_t input_features = 0;
+    int64_t hidden_size = 0;
+    int64_t time_row_alignment = 1;
+};
+
+struct EspnetConv2dSubsampling8Weights {
+    Conv2dWeights conv0;
+    Conv2dWeights conv1;
+    Conv2dWeights conv2;
+    LinearWeights projection;
+};
+
+class EspnetConv2dSubsampling8Module {
+public:
+    explicit EspnetConv2dSubsampling8Module(EspnetConv2dSubsampling8Config config);
+    // Input/output are [batch, time, features]. Three unpadded stride-2 convolutions.
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const EspnetConv2dSubsampling8Weights & weights) const;
+
+private:
+    EspnetConv2dSubsampling8Config config_;
+};
+
+struct DepthwiseConvSubsamplingConfig {
+    int64_t input_features = 0;
+    int64_t output_features = 0;
+    int64_t conv_channels = 0;
+    int kernel_size = 3;
+    int stride = 2;
+    int padding = 1;
+    bool use_bias = true;
+};
+
+struct DepthwiseConvSubsamplingStageWeights {
+    Conv2dWeights depthwise;
+    Conv2dWeights pointwise;
+};
+
+struct DepthwiseConvSubsamplingWeights {
+    Conv2dWeights input_conv;
+    std::vector<DepthwiseConvSubsamplingStageWeights> stages;
+    LinearWeights projection;
+};
+
+class DepthwiseConvSubsamplingModule {
+public:
+    explicit DepthwiseConvSubsamplingModule(DepthwiseConvSubsamplingConfig config);
+    // Input is [batch, time, features]; optional masks cover each downsampling stage.
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const DepthwiseConvSubsamplingWeights & weights,
+        const std::vector<core::TensorValue> & stage_keep_masks = {}) const;
+
+private:
+    DepthwiseConvSubsamplingConfig config_;
+};
+
 class ConvSubsamplingModule {
 public:
     explicit ConvSubsamplingModule(ConvSubsamplingConfig config);
@@ -54,10 +116,7 @@ struct ConformerConvModuleWeights {
     NormWeights norm;
     LinearWeights pointwise_in;
     DepthwiseConv1dWeights depthwise;
-    struct {
-        core::TensorValue scale;
-        core::TensorValue bias;
-    } depthwise_norm;
+    ChannelAffineWeights depthwise_norm;
     LinearWeights pointwise_out;
 };
 
@@ -103,6 +162,7 @@ struct ConformerBlockConfig {
     int64_t left_context = -1;
     int64_t right_context = -1;
     int64_t cache_drop_size = 0;
+    bool contiguous_glu_gate = false;
 };
 
 struct ConformerBlockWeights {

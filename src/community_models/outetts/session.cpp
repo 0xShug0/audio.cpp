@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -31,6 +32,11 @@ constexpr std::string_view kFamily = "outetts";
 constexpr int64_t kDefaultTextChunkSize = 256;
 constexpr int64_t kAutomaticChunkTokenBudget = 4096;
 constexpr size_t kDefaultReferenceCacheSlots = 1;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kDefaultLlamaWeightContextBytes = 1024ull * 1024ull * 1024ull;
+#else
+constexpr size_t kDefaultLlamaWeightContextBytes = 4096ull * 1024ull * 1024ull;
+#endif
 
 std::shared_ptr<const OuteTTSAssets> require_assets(
     std::shared_ptr<const OuteTTSAssets> assets) {
@@ -49,6 +55,8 @@ std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
 
 bool is_legacy_session_option(std::string_view key) {
   return key == "outetts.dac_graph_context_mb" ||
+         key == "outetts.forced_aligner_path" ||
+         key == "outetts.aligner_path" ||
          key == "outetts.aligner_model_path" ||
          key == "outetts.forced_aligner_model_path";
 }
@@ -476,7 +484,7 @@ resolve_aligner_assets(const runtime::SessionOptions &options,
                        const OuteTTSAssets &model_assets) {
   const auto model_path = runtime::find_option(
       options.options,
-      {"outetts.aligner_path", "outetts.aligner_model_path",
+      {"outetts.forced_aligner_path", "outetts.aligner_path", "outetts.aligner_model_path",
        "outetts.forced_aligner_model_path"});
   if (model_path.has_value()) {
     return engine::models::qwen3_asr::load_qwen3_asr_assets(
@@ -563,7 +571,7 @@ OuteTTSLlamaRuntime &OuteTTSSession::llama(bool voice_cloning) {
         std::max(1, options().backend.threads),
         runtime::parse_size_mb_option(options().options,
                                       {"outetts.llama_weight_context_mb"},
-                                      4096ull * 1024ull * 1024ull),
+                                      kDefaultLlamaWeightContextBytes),
         runtime::parse_size_mb_option(options().options,
                                       {"outetts.constant_context_mb"},
                                       256ull * 1024ull * 1024ull),
@@ -625,7 +633,7 @@ OuteTTSVoiceProfile OuteTTSSession::prepare_voice_profile(
       throw std::runtime_error(
           "OuteTTS voice cloning requires a GGUF with an embedded Qwen3 "
           "Forced Aligner or --session-option "
-          "outetts.aligner_path=<path>");
+          "outetts.forced_aligner_path=<path>");
     }
     aligner_session_ = std::make_unique<
         engine::models::qwen3_forced_aligner::Qwen3ForcedAlignerSession>(

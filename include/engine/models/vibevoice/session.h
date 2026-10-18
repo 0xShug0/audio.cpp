@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/models/vibevoice/assets.h"
 #include "engine/models/vibevoice/connector.h"
 #include "engine/models/vibevoice/decoder.h"
@@ -17,7 +18,8 @@ namespace engine::models::vibevoice {
 
 class VibeVoiceSession final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::StreamingTtsSessionBase {
 public:
     VibeVoiceSession(
         runtime::TaskSpec task,
@@ -31,6 +33,10 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override {}
+    runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);
+
     struct ReferenceVoiceStateCacheEntry {
         std::vector<std::string> sample_paths;
         std::vector<runtime::AudioBuffer> audio;
@@ -46,10 +52,10 @@ private:
     VibeVoiceTextTokenizer text_tokenizer_;
     VibeVoiceTokenizerWeightsRuntime audio_tokenizer_;
     VibeVoiceConnectorWeightsRuntime connector_;
-    VibeVoiceDecoderWeightsRuntime decoder_;
+    VibeVoiceQwen2WeightsRuntime decoder_;
     VibeVoiceDiffusionHeadWeightsRuntime diffusion_head_;
-    VibeVoiceDecoderCachedState positive_decoder_cache_;
-    VibeVoiceDecoderCachedState negative_decoder_cache_;
+    VibeVoiceQwen2CachedState positive_decoder_cache_;
+    VibeVoiceQwen2CachedState negative_decoder_cache_;
     mutable std::vector<ReferenceVoiceStateCacheEntry> reference_voice_state_cache_;
 };
 

@@ -169,6 +169,26 @@ std::string lower_ascii(std::string value) {
     return value;
 }
 
+}  // namespace
+
+std::vector<std::string> tokenize_alignable_words(
+    const std::string & text,
+    const std::string & language) {
+    const auto normalized_language = lower_ascii(language);
+    if (normalized_language == "chinese" || normalized_language == "cantonese") {
+        return tokenize_chinese_mixed(text);
+    }
+    return tokenize_space_language(text);
+}
+
+bool has_alignable_words(
+    const std::string & text,
+    const std::string & language) {
+    return !tokenize_alignable_words(text, language).empty();
+}
+
+namespace {
+
 std::vector<int64_t> fix_timestamp(const std::vector<int64_t> & data) {
     const size_t n = data.size();
     if (n == 0) {
@@ -266,13 +286,7 @@ ForcedAlignPrompt Qwen3ForcedAlignProcessor::build_prompt(
     const std::string & text,
     const std::string & language,
     int64_t audio_feature_tokens) const {
-    const auto normalized_language = lower_ascii(language);
-    std::vector<std::string> words;
-    if (normalized_language == "chinese" || normalized_language == "cantonese") {
-        words = tokenize_chinese_mixed(text);
-    } else {
-        words = tokenize_space_language(text);
-    }
+    auto words = tokenize_alignable_words(text, language);
     if (words.empty()) {
         throw std::runtime_error("Qwen3 forced aligner requires non-empty normalized text");
     }
@@ -298,7 +312,9 @@ ForcedAlignPrompt Qwen3ForcedAlignProcessor::build_prompt(
 std::vector<engine::runtime::WordTimestamp> Qwen3ForcedAlignProcessor::parse_timestamps(
     const std::vector<std::string> & words,
     const std::vector<int32_t> & timestamp_ids,
-    int sample_rate) const {
+    int sample_rate,
+    int64_t audio_frames,
+    bool clamp_timestamps_to_audio) const {
     if (timestamp_ids.size() != words.size() * 2) {
         throw std::runtime_error("Qwen3 forced aligner timestamp prediction count mismatch");
     }
@@ -341,13 +357,25 @@ std::vector<engine::runtime::WordTimestamp> Qwen3ForcedAlignProcessor::parse_tim
     int64_t previous_end = 0;
     for (size_t i = 0; i < out.size(); ++i) {
         auto & timestamp = out[i];
+        const int64_t remaining_words = static_cast<int64_t>(out.size() - i - 1);
         timestamp.span.start_sample = std::max(timestamp.span.start_sample, previous_end);
+        if (clamp_timestamps_to_audio && audio_frames > 0) {
+            const int64_t latest_start = std::max<int64_t>(0, audio_frames - remaining_words - 1);
+            timestamp.span.start_sample = std::min(timestamp.span.start_sample, latest_start);
+        }
         if (timestamp.span.end_sample <= timestamp.span.start_sample) {
             const int64_t min_end = timestamp.span.start_sample + min_span_samples;
             if (i + 1 < out.size() && out[i + 1].span.start_sample > timestamp.span.start_sample) {
                 timestamp.span.end_sample = std::min(min_end, out[i + 1].span.start_sample);
             } else {
                 timestamp.span.end_sample = min_end;
+            }
+        }
+        if (clamp_timestamps_to_audio && audio_frames > 0) {
+            const int64_t latest_end = std::max<int64_t>(1, audio_frames - remaining_words);
+            timestamp.span.end_sample = std::min(timestamp.span.end_sample, latest_end);
+            if (timestamp.span.end_sample <= timestamp.span.start_sample) {
+                timestamp.span.start_sample = std::max<int64_t>(0, timestamp.span.end_sample - 1);
             }
         }
         previous_end = timestamp.span.end_sample;

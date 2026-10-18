@@ -11,8 +11,8 @@ namespace engine::models::moss_tts_local {
 namespace json = engine::io::json;
 namespace {
 
-MossBackboneConfig parse_backbone_config(const json::Value & value) {
-    MossBackboneConfig config;
+MossTTSLocalQwen3Config parse_backbone_config(const json::Value & value) {
+    MossTTSLocalQwen3Config config;
     config.hidden_size = json::require_i64(value, "hidden_size");
     config.intermediate_size = json::require_i64(value, "intermediate_size");
     config.num_hidden_layers = json::require_i64(value, "num_hidden_layers");

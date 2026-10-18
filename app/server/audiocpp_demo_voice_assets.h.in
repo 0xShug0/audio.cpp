@@ -1,0 +1,23 @@
+#pragma once
+
+#include <cstddef>
+
+namespace minitts::server {
+
+inline constexpr unsigned char kAudioCppDemo1ManWav[] = {
+@AUDIOCPP_DEMO_1_MAN_BYTES@
+};
+inline constexpr unsigned char kAudioCppDemo2ManWav[] = {
+@AUDIOCPP_DEMO_2_MAN_BYTES@
+};
+inline constexpr unsigned char kAudioCppDemo3WomanWav[] = {
+@AUDIOCPP_DEMO_3_WOMAN_BYTES@
+};
+inline constexpr unsigned char kAudioCppDemo4WomanWav[] = {
+@AUDIOCPP_DEMO_4_WOMAN_BYTES@
+};
+inline constexpr unsigned char kAudioCppDemoVoicePromptText[] = {
+@AUDIOCPP_DEMO_PROMPT_TEXT_BYTES@
+};
+
+}  // namespace minitts::server

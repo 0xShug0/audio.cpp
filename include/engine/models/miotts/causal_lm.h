@@ -10,18 +10,18 @@
 
 namespace engine::models::miotts {
 
-class MioTTSCausalLMRuntime {
+class MioTTSQwen3Runtime {
 public:
     struct Impl;
 
-    MioTTSCausalLMRuntime(
+    MioTTSQwen3Runtime(
         std::shared_ptr<const MioTTSAssets> assets,
         core::ExecutionContext & execution,
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type);
-    ~MioTTSCausalLMRuntime();
+    ~MioTTSQwen3Runtime();
 
     MioTTSGeneratedTokens generate(
         const MioTTSPrompt & prompt,

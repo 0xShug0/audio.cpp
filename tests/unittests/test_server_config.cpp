@@ -1,5 +1,6 @@
 #include "busy_guard.h"
 #include "config.h"
+#include "model_memory.h"
 
 #include "engine/framework/io/json.h"
 
@@ -67,6 +68,12 @@ void test_inline_default_and_named_presets() {
         },
         "builtin": {
           "voice_id": "alba"
+        },
+        "embedding": {
+          "options": {
+            "speaker_embedding_file": "voices/embedding.safetensors",
+            "num_steps": 8
+          }
         }
       }
     }
@@ -80,10 +87,83 @@ void test_inline_default_and_named_presets() {
     require(model.default_voice_preset.has_value(), "inline default preset parsed");
     require(model.default_voice_preset->voice_ref == root / "voices/default.wav", "default voice_ref path resolved");
     require(model.default_voice_preset->reference_text == "default transcript", "default reference_text parsed");
-    require(model.voice_presets.size() == 2, "named presets parsed");
+    require(model.voice_presets.size() == 3, "named presets parsed");
     require(model.voice_presets.at("assistant").voice_ref == root / "voices/assistant.wav", "named voice_ref path resolved");
     require(model.voice_presets.at("assistant").reference_text == "assistant transcript", "named reference_text parsed");
     require(model.voice_presets.at("builtin").voice_id == "alba", "named voice_id parsed");
+    const auto & options = model.voice_presets.at("embedding").options;
+    require(options.size() == 2, "preset options parsed");
+    require(options.at("speaker_embedding_file") == "voices/embedding.safetensors",
+            "preset option values are kept as given, not resolved as paths");
+    require(options.at("num_steps") == "8", "numeric preset option parsed");
+    require(model.voice_presets.at("assistant").options.empty(), "presets without options have none");
+}
+
+void test_bad_preset_options_are_rejected() {
+    const auto root = make_temp_root();
+    const auto not_object = write_config(root, "server_preset_options_type.json", R"JSON({
+  "models": [{"id": "tts", "family": "irodori_tts", "path": "models/irodori",
+              "voice_presets": {"narrator": {"options": "speaker.safetensors"}}}]
+})JSON");
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(not_object);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("options must be an object") != std::string::npos;
+    }
+    require(rejected, "non-object preset options are rejected");
+
+    const auto empty = write_config(root, "server_preset_options_empty.json", R"JSON({
+  "models": [{"id": "tts", "family": "irodori_tts", "path": "models/irodori",
+              "voice_presets": {"narrator": {"options": {}}}}]
+})JSON");
+    rejected = false;
+    try {
+        (void) minitts::server::load_server_config(empty);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("must set voice_id, voice_ref, reference_text, or options") !=
+            std::string::npos;
+    }
+    require(rejected, "a preset with only empty options is rejected");
+    std::filesystem::remove_all(root);
+}
+
+void test_model_spec_override_selection() {
+    const auto root = make_temp_root();
+    const auto path = write_config(root, "spec-override.json", R"JSON({
+      "model_spec_override": "embedded",
+      "models": [
+        {"id": "embedded", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "embedded"},
+        {"id": "file", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "specs/kokoro_tts.json"},
+        {"id": "literal", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "./embedded"}
+      ]
+    })JSON");
+    const auto config = minitts::server::load_server_config(path);
+    require(config.model_spec_override == std::filesystem::path("embedded"), "global embedded selector stays literal");
+    require(config.models[0].model_spec_override == std::filesystem::path("embedded"), "per-model embedded selector stays literal");
+    require(config.models[1].model_spec_override == root / "specs/kokoro_tts.json", "spec file still resolves relative to config");
+    require(config.models[2].model_spec_override == (root / "./embedded"), "literal embedded path stays a path");
+    std::filesystem::remove_all(root);
+}
+
+void test_builtin_utility_model_paths() {
+    const auto root = make_temp_root();
+    const auto absolute = (root / "weights" / "rnnoise.safetensors").generic_string();
+    const auto config_path = write_config(root, "server.json",
+        "{\"models\":["
+        "{\"id\":\"relative\",\"family\":\"builtin_audio_utils\","
+        "\"path\":\"weights/rnnoise.safetensors\",\"task\":\"s2s\","
+        "\"load_options\":{\"utility\":\"rnnoise\"}},"
+        "{\"id\":\"absolute\",\"family\":\"builtin_audio_utils\","
+        "\"path\":\"" + absolute + "\",\"task\":\"s2s\","
+        "\"load_options\":{\"utility\":\"rnnoise\"}}]}");
+    const auto config = minitts::server::load_server_config(config_path);
+    require(config.models.at(0).path == root / "weights/rnnoise.safetensors",
+        "builtin utility relative path resolves against config directory");
+    require(config.models.at(1).path == std::filesystem::path(absolute),
+        "builtin utility absolute path is preserved");
+    require(config.models.at(0).load_options.at("utility") == "rnnoise",
+        "builtin utility selector is forwarded");
 }
 
 void test_default_preset_name() {
@@ -111,6 +191,93 @@ void test_default_preset_name() {
     const auto & model = config.models.front();
     require(model.default_voice_preset_id == "narrator", "default preset name parsed");
     require(!model.default_voice_preset.has_value(), "named default does not create inline preset");
+}
+
+void test_default_request_options() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "server_default_request_options.json",
+        R"JSON({
+  "models": [
+    {
+      "id": "tts",
+      "family": "omnivoice",
+      "path": "models/OmniVoice",
+      "default_request_options": {
+        "num_inference_steps": 8,
+        "temperature": 0.6,
+        "do_sample": false
+      }
+    }
+  ]
+})JSON");
+
+    const auto config = minitts::server::load_server_config(config_path);
+    const auto & options = config.models.front().default_request_options;
+    require(options.at("num_inference_steps") == "8", "integer default request option parsed");
+    require(options.at("temperature") == "0.6", "float default request option parsed");
+    require(options.at("do_sample") == "false", "bool default request option parsed");
+}
+
+void test_default_session_options() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "server_default_session_options.json",
+        R"JSON({
+  "default_session_options": {
+    "irodori_tts.mem_saver": true,
+    "irodori_tts.codec_decode_chunk_steps": 100,
+    "qwen3_asr.max_tokens": 256
+  },
+  "models": [
+    {
+      "id": "tts",
+      "family": "irodori_tts",
+      "path": "models/irodori.gguf",
+      "session_options": {
+        "irodori_tts.codec_decode_chunk_steps": "50"
+      }
+    },
+    {
+      "id": "other",
+      "family": "omnivoice",
+      "path": "models/OmniVoice"
+    }
+  ]
+})JSON");
+
+    const auto config = minitts::server::load_server_config(config_path);
+    require(config.default_session_options.size() == 3, "default session options parsed");
+    const auto & tts = config.models.at(0).session_options;
+    require(tts.at("irodori_tts.mem_saver") == "true", "default fills an unset session option");
+    require(tts.at("irodori_tts.codec_decode_chunk_steps") == "50", "the model's own session option wins");
+    require(tts.count("qwen3_asr.max_tokens") == 0, "defaults of another family are not applied");
+    require(config.models.at(1).session_options.empty(), "a family without defaults is unchanged");
+
+    // Models loaded later (POST /v1/models/load) get the same treatment.
+    minitts::server::ServerModelConfig loaded;
+    loaded.family = "irodori_tts";
+    loaded.session_options["irodori_tts.mem_saver"] = "false";
+    minitts::server::apply_default_session_options(config, loaded);
+    require(loaded.session_options.at("irodori_tts.mem_saver") == "false", "a loaded model's own value wins");
+    require(loaded.session_options.at("irodori_tts.codec_decode_chunk_steps") == "100",
+            "a loaded model gets the family default");
+
+    for (const std::string bad : {R"({"default_session_options": {"mem_saver": true}, "models": []})",
+                                  R"({"default_session_options": {".mem_saver": true}, "models": []})",
+                                  R"({"default_session_options": {"irodori_tts.": true}, "models": []})",
+                                  R"({"default_session_options": ["irodori_tts.mem_saver"], "models": []})"}) {
+        const auto bad_path = write_config(root, "server_bad_default_session_options.json", bad);
+        bool rejected = false;
+        try {
+            (void) minitts::server::load_server_config(bad_path);
+        } catch (const std::runtime_error & error) {
+            rejected = std::string(error.what()).find("default_session_options") != std::string::npos;
+        }
+        require(rejected, "malformed default_session_options is rejected: " + bad);
+    }
 }
 
 void test_missing_default_preset_name_is_rejected() {
@@ -267,6 +434,42 @@ void test_negative_busy_timeout_is_rejected() {
     require(rejected, "negative busy_timeout_ms is rejected");
 }
 
+void test_max_loaded_models_defaults_and_overrides() {
+    const auto root = make_temp_root();
+
+    const auto default_path = write_config(
+        root, "max_loaded_default.json", std::string("{") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(default_path).max_loaded_models == 0,
+        "max_loaded_models defaults to 0 (no limit) when omitted");
+
+    const auto single_path = write_config(
+        root, "max_loaded_single.json", std::string(R"JSON({"max_loaded_models": 1,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(single_path).max_loaded_models == 1,
+        "max_loaded_models accepts 1 to enforce a single resident model");
+
+    const auto multi_path = write_config(
+        root, "max_loaded_multi.json", std::string(R"JSON({"max_loaded_models": 3,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(multi_path).max_loaded_models == 3,
+        "max_loaded_models is read from the config");
+}
+
+void test_negative_max_loaded_models_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root, "max_loaded_negative.json", std::string(R"JSON({"max_loaded_models": -1,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("max_loaded_models") != std::string::npos;
+    }
+    require(rejected, "negative max_loaded_models is rejected");
+}
+
 void test_per_model_busy_timeout() {
     const auto root = make_temp_root();
     const auto config_path = write_config(
@@ -309,6 +512,41 @@ void test_negative_per_model_busy_timeout_is_rejected() {
     require(rejected, "negative per-model busy_timeout_ms is rejected, naming the model");
 }
 
+void test_ui_configuration() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "ui.json",
+        R"JSON({
+  "ui": false,
+  "ui_management": true,
+  "models": []
+})JSON");
+
+    const auto config = minitts::server::load_server_config(config_path);
+    require(!config.ui_enabled, "ui=false disables the embedded WebUI");
+    require(config.ui_management, "ui_management=true enables dynamic model management");
+    require(config.models.empty(), "management hosts may start without configured models");
+}
+
+void test_empty_models_require_ui_management() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "empty_models.json",
+        R"JSON({
+  "models": []
+})JSON");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("ui_management") != std::string::npos;
+    }
+    require(rejected, "an empty static server config requires ui_management");
+}
+
 // A request may shorten its own wait but must never lengthen it past server policy,
 // otherwise a client could reintroduce the unbounded hang the guard prevents.
 void test_request_timeout_is_clamped_to_policy() {
@@ -334,6 +572,66 @@ void test_request_timeout_is_clamped_to_policy() {
         "unbounded on both sides stays unbounded");
 }
 
+void test_idle_unload_ms_defaults_and_overrides() {
+    const auto root = make_temp_root();
+
+    const auto default_path = write_config(
+        root, "idle_unload_default.json", std::string("{") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(default_path).idle_unload_ms == 0,
+        "idle_unload_ms defaults to 0 (disabled) when omitted");
+
+    const auto set_path = write_config(
+        root, "idle_unload_set.json", std::string(R"JSON({"idle_unload_ms": 300000,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(set_path).idle_unload_ms == 300000,
+        "idle_unload_ms is read from the config");
+}
+
+void test_negative_idle_unload_ms_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root, "idle_unload_negative.json", std::string(R"JSON({"idle_unload_ms": -1,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("idle_unload_ms") != std::string::npos;
+    }
+    require(rejected, "negative idle_unload_ms is rejected");
+}
+
+void test_min_free_memory_mb_defaults_and_overrides() {
+    const auto root = make_temp_root();
+
+    const auto default_path = write_config(
+        root, "min_free_default.json", std::string("{") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(default_path).min_free_memory_mb == 0,
+        "min_free_memory_mb defaults to 0 (guard disabled) when omitted");
+
+    const auto set_path = write_config(
+        root, "min_free_set.json", std::string(R"JSON({"min_free_memory_mb": 256,)JSON") + kMinimalModel + "}");
+    require(
+        minitts::server::load_server_config(set_path).min_free_memory_mb == 256,
+        "min_free_memory_mb is read from the config to opt into the guard");
+}
+
+void test_negative_min_free_memory_mb_is_rejected() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root, "min_free_negative.json", std::string(R"JSON({"min_free_memory_mb": -1,)JSON") + kMinimalModel + "}");
+
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(config_path);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("min_free_memory_mb") != std::string::npos;
+    }
+    require(rejected, "negative min_free_memory_mb is rejected");
+}
+
 void test_model_run_overrun_predicate() {
     using minitts::server::model_run_has_overrun;
 
@@ -345,12 +643,146 @@ void test_model_run_overrun_predicate() {
     require(!model_run_has_overrun(1000, 10'000'000, -1), "a non-positive timeout disables the guard");
 }
 
+// Mirror of the estimator's formula: weights * 1.5 plus the fixed floor, so the
+// tests assert absolute values rather than "greater than".
+size_t expected_estimate(size_t weights) {
+    constexpr double kRuntimeOverheadFactor = 1.5;
+    constexpr size_t kFixedOverhead = 128ull * 1024 * 1024;
+    return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead;
+}
+
+void write_file(const std::filesystem::path & path, size_t bytes) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << std::string(bytes, 'x');
+    if (!out) {
+        throw std::runtime_error("failed to write test file: " + path.string());
+    }
+}
+
+void test_model_memory_estimator() {
+    using minitts::server::estimate_model_memory_bytes;
+    using minitts::server::ServerModelConfig;
+    const auto root = make_temp_root();
+
+    // A single-file model contributes that file.
+    {
+        const auto path = root / "single.gguf";
+        write_file(path, 1000);
+        ServerModelConfig model;
+        model.path = path;
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "single-file model has a determinate footprint");
+        require(*estimate == expected_estimate(1000), "single-file estimate sums the file");
+    }
+
+    // A directory with exactly one GGUF contributes that file.
+    {
+        const auto dir = root / "sole";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "variant.gguf", 2000);
+        ServerModelConfig model;
+        model.path = dir;
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "sole-GGUF directory has a determinate footprint");
+        require(*estimate == expected_estimate(2000), "the sole GGUF is selected");
+    }
+
+    // model.gguf disambiguates a multi-GGUF directory, ignoring other variants.
+    {
+        const auto dir = root / "named";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "a.gguf", 3000);
+        write_file(dir / "model.gguf", 4000);
+        ServerModelConfig model;
+        model.path = dir;
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "model.gguf makes the directory determinate");
+        require(*estimate == expected_estimate(4000), "model.gguf wins over the other variants");
+    }
+
+    // Several GGUFs and no model.gguf: the loader rejects the spec-driven case
+    // with its own error, so the footprint is indeterminate and the guard skips.
+    {
+        const auto dir = root / "ambiguous";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "a.gguf", 100);
+        write_file(dir / "b.gguf", 100);
+        ServerModelConfig model;
+        model.path = dir;
+        require(
+            !estimate_model_memory_bytes(model).has_value(),
+            "an ambiguous multi-GGUF directory has an indeterminate footprint");
+    }
+
+    // A directory with no GGUF is a safetensors/HF checkpoint: the tree is summed.
+    {
+        const auto dir = root / "tree";
+        std::filesystem::create_directories(dir / "sub");
+        write_file(dir / "model.safetensors", 5000);
+        write_file(dir / "sub" / "chunk.bin", 6000);
+        ServerModelConfig model;
+        model.path = dir;
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "a no-GGUF directory has a determinate footprint");
+        require(*estimate == expected_estimate(11000), "a checkpoint tree is summed recursively");
+    }
+
+    // Relative auxiliary session files resolve against the model directory.
+    {
+        // Not named "aux": that is a reserved DOS device name and cannot be
+        // created on Windows.
+        const auto dir = root / "sidecar";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        write_file(dir / "head.bin", 8000);
+        ServerModelConfig model;
+        model.path = dir;
+        model.session_options["aux_path"] = "head.bin";
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "an aux-resolved directory has a determinate footprint");
+        require(*estimate == expected_estimate(15000), "a relative aux path resolves against the model directory");
+    }
+}
+
+void test_model_slots() {
+    const auto root = make_temp_root();
+    for (const std::string value : {"1", "2", "16", "0", "-1", "17", "null", "true", "\"2\"", "1.5", "4294967297"}) {
+        const auto text = std::string(R"({"models":[{"id":"higgs","family":"higgs_audio_tts","path":"model.gguf","slots":)")
+            + value + "}]}";
+        const auto path = write_config(root, "slots.json", text);
+        bool legacy_rejected = false;
+        try { (void)minitts::server::load_server_config(path); }
+        catch (const std::runtime_error & error) {
+            legacy_rejected = std::string(error.what()).find("slots requires --parallel-jobs") != std::string::npos;
+        }
+        require(legacy_rejected, "legacy configuration accepted an explicit slots field");
+        bool rejected = false;
+        try {
+            const auto config = minitts::server::load_server_config(path, true);
+            require(config.models.front().slots == std::stoi(value), "slots value was not preserved");
+        } catch (const std::runtime_error &) { rejected = true; }
+        require(rejected == (value != "1" && value != "2" && value != "16"), "parallel capacity validation differs");
+    }
+    const auto path = write_config(root, "default-slots.json",
+        R"({"models":[{"id":"higgs","family":"higgs_audio_tts","path":"model.gguf"}]})");
+    for (bool enabled : {false, true}) {
+        const auto config = minitts::server::load_server_config(path, enabled);
+        require(config.models.front().slots == 1, "default capacity must remain one");
+    }
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_model_slots();
         test_inline_default_and_named_presets();
+        test_model_spec_override_selection();
+        test_builtin_utility_model_paths();
         test_default_preset_name();
+        test_bad_preset_options_are_rejected();
+        test_default_request_options();
+        test_default_session_options();
         test_missing_default_preset_name_is_rejected();
         test_duplicate_json_keys_are_rejected();
         test_busy_timeout_defaults_and_overrides();
@@ -358,10 +790,19 @@ int main() {
         test_negative_max_request_body_is_rejected();
         test_unsafe_numeric_max_request_body_is_rejected();
         test_negative_busy_timeout_is_rejected();
+        test_max_loaded_models_defaults_and_overrides();
+        test_negative_max_loaded_models_is_rejected();
+        test_idle_unload_ms_defaults_and_overrides();
+        test_negative_idle_unload_ms_is_rejected();
+        test_min_free_memory_mb_defaults_and_overrides();
+        test_negative_min_free_memory_mb_is_rejected();
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();
+        test_ui_configuration();
+        test_empty_models_require_ui_management();
         test_request_timeout_is_clamped_to_policy();
         test_model_run_overrun_predicate();
+        test_model_memory_estimator();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;

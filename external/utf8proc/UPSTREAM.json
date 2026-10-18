@@ -1,0 +1,10 @@
+{
+  "tag": "v2.11.3",
+  "commit": "e5e799221b45bbb90f5fdc5c69b6b8dfbf017e78",
+  "files": {
+    "utf8proc.c": "edf80118fd34796bcabef4567cc684adebc7058f2afe8cfdc11b7a78e383ed84",
+    "utf8proc.h": "a4e498b7392c383cf3b22e662da21e0b48f1264806235d87b5d8bd166232f658",
+    "utf8proc_data.c": "950e549dbfc853c4304425f3af1875e72fa9fc9697c273c763400c2da4e380a7",
+    "LICENSE.md": "3b510150d34f248a221bb88e1d811238d6c6c18b51231822c42974c39bb07256"
+  }
+}

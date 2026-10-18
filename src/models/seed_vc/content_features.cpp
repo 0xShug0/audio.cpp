@@ -72,7 +72,7 @@ std::vector<float> seed_vc_wav2vec2_normalize_16k(const std::vector<float> & wav
 }
 
 SeedVcContentFeatureExtractor::SeedVcContentFeatureExtractor(
-    const engine::modules::HubertEncoderComponent * hubert,
+    const engine::modules::Wav2Vec2EncoderRuntime * hubert,
     const SeedVcAstralQuantizer * wide_quantizer,
     const SeedVcAstralQuantizer * narrow_quantizer)
     : hubert_(hubert),

@@ -5,15 +5,16 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/kv_cache.h"
-#include "engine/framework/sampling/decode_modules.h"
+#include "engine/framework/sampling/greedy_decode.h"
 
 
 #include <ggml-backend.h>
@@ -26,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -70,8 +72,8 @@ struct PrefillOutput {
     runtime::TransformerKVState kv_state;
 };
 
-modules::QwenDecoderLayerWeights to_qwen_layer_weights(const TextLayerWeights & weights) {
-    modules::QwenDecoderLayerWeights out;
+modules::DecoderLayerWeights to_qwen3_layer_weights(const TextLayerWeights & weights) {
+    modules::DecoderLayerWeights out;
     out.input_norm = {weights.input_norm, std::nullopt};
     out.self_attention.q_weight = weights.q_proj;
     out.self_attention.k_weight = weights.k_proj;
@@ -86,10 +88,10 @@ modules::QwenDecoderLayerWeights to_qwen_layer_weights(const TextLayerWeights & 
     return out;
 }
 
-modules::QwenCausalDecoderConfig make_qwen_decoder_config(
+modules::CausalDecoderConfig make_qwen3_decoder_config(
     const Qwen3ASRTextDecoderConfig & config,
-    modules::QwenCausalDecoderLogitsMode logits_mode) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderLogitsMode logits_mode) {
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.num_attention_heads;
     out.stack.num_key_value_heads = config.num_key_value_heads;
@@ -99,17 +101,17 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(
     out.stack.rms_norm_eps = config.rms_norm_eps;
     out.stack.rope_theta = config.rope_theta;
     out.stack.use_qk_norm = true;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     out.logits_size = config.output_size;
     out.logits_mode = logits_mode;
     return out;
 }
 
-modules::QwenCausalDecoderWeights make_qwen_decoder_weights(const ThinkerWeights & weights) {
-    modules::QwenCausalDecoderWeights out;
+modules::CausalDecoderWeights make_qwen3_decoder_weights(const ThinkerWeights & weights) {
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(weights.layers.size());
     for (const auto & layer : weights.layers) {
-        out.stack.layers.push_back(to_qwen_layer_weights(layer));
+        out.stack.layers.push_back(to_qwen3_layer_weights(layer));
     }
     out.final_norm = {weights.norm, std::nullopt};
     out.lm_head = {weights.lm_head, std::nullopt};
@@ -192,15 +194,19 @@ ThinkerWeights load_weights(
         weights.layers.push_back(std::move(w));
     }
     weights.norm = weights.store->load_f32_tensor(source, model_prefix + ".norm.weight", {config.hidden_size});
-    if (assets.config.hf_transformers_layout && assets.config.tie_word_embeddings) {
+    const std::string lm_head_name = assets.config.hf_transformers_layout
+        ? "lm_head.weight"
+        : "thinker.lm_head.weight";
+    // Fine-tuned checkpoints saved with tied embeddings (e.g. QwenCleo-ASR) can omit
+    // thinker.lm_head.weight in the legacy layout; the official checkpoints still ship it.
+    const bool tie_output = assets.config.tie_word_embeddings &&
+        (assets.config.hf_transformers_layout || !source.has_tensor(lm_head_name));
+    if (tie_output) {
         if (config.output_size != config.vocab_size) {
             throw std::runtime_error("Qwen3 ASR tied output embedding requires output_size == vocab_size");
         }
         weights.lm_head = weights.token_embedding;
     } else {
-        const std::string lm_head_name = assets.config.hf_transformers_layout
-            ? "lm_head.weight"
-            : "thinker.lm_head.weight";
         weights.lm_head = weights.store->load_tensor(
             source,
             lm_head_name,
@@ -277,6 +283,14 @@ private:
     std::shared_ptr<const ThinkerWeights> weights_;
 };
 
+struct GgmlGallocrDeleter {
+    void operator()(ggml_gallocr_t alloc) const noexcept {
+        if (alloc != nullptr) {
+            ggml_gallocr_free(alloc);
+        }
+    }
+};
+
 class PrefillGraph {
 public:
     PrefillGraph(
@@ -317,36 +331,72 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_steps_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32);
 
-        const auto decoder_weights = make_qwen_decoder_weights(weights);
-        auto decoder_out = modules::QwenCausalDecoderModule(
-                               make_qwen_decoder_config(config, modules::QwenCausalDecoderLogitsMode::LastStep))
+        const auto decoder_weights = make_qwen3_decoder_weights(weights);
+        auto decoder_out = modules::CausalDecoderModule(
+                               make_qwen3_decoder_config(config, modules::CausalDecoderLogitsMode::LastStep))
                                .build(ctx, x, positions, decoder_weights);
         for (const auto & layer : decoder_out.state.layers) {
             if (!layer.key.has_value() || !layer.value.has_value()) {
                 throw std::runtime_error("Qwen3 ASR thinker prefill decoder did not return K/V state");
             }
-            keys_.push_back(layer.key->tensor);
-            values_.push_back(layer.value->tensor);
+            // The graph allocator recycles intermediates, and the decoder K/V is an
+            // intermediate that run() has to read back afterwards. Copy each one into
+            // a tensor of its own and mark it as a graph output, which is what keeps
+            // it off the reuse list. Same shape as CausalDecoderRuntime prefill.
+            auto * key = ggml_cpy(
+                ctx_.get(),
+                layer.key->tensor,
+                ggml_dup_tensor(ctx_.get(), layer.key->tensor));
+            auto * value = ggml_cpy(
+                ctx_.get(),
+                layer.value->tensor,
+                ggml_dup_tensor(ctx_.get(), layer.value->tensor));
+            ggml_set_output(key);
+            ggml_set_output(value);
+            keys_.push_back(key);
+            values_.push_back(value);
         }
         logits_ = decoder_out.logits.tensor;
         ggml_set_output(logits_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, logits_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
-        if (buffer_ == nullptr) {
-            throw std::runtime_error("failed to allocate Qwen3 ASR thinker prefill graph");
+        for (auto * key : keys_) {
+            ggml_build_forward_expand(graph_, key);
         }
-        const auto pos = modules::qwen_position_ids(prompt_steps_);
-        ggml_backend_tensor_set(positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
+        for (auto * value : values_) {
+            ggml_build_forward_expand(graph_, value);
+        }
+        // unique_ptr so a throw below (or from later ctor statements) frees
+        // whatever the allocator already reserved; a throwing constructor
+        // runs no destructor, and each failed rebuild used to leak its
+        // partially reserved arena
+        const auto try_alloc = [&]() {
+            gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
+            return gallocr_ != nullptr &&
+                ggml_gallocr_reserve(gallocr_.get(), graph_) &&
+                ggml_gallocr_alloc_graph(gallocr_.get(), graph_);
+        };
+        // On failure the device may simply be full of idle cached pool
+        // buffers (the legacy pool never shrinks on its own); trim and retry
+        // once before declaring the size impossible
+        if (!try_alloc() &&
+            (engine::core::trim_backend_pools(runtime_->backend()), !try_alloc())) {
+            // Size, not a fault: the graph scales with prompt_steps_, which the
+            // caller controls through the transcription prompt and the length of
+            // the audio. Say which, and by how much, so the remedy is obvious.
+            throw engine::runtime::CapacityError(
+                "Qwen3 ASR prefill graph does not fit in device memory at this size ("
+                + std::to_string(prompt_steps_) + " prompt steps, of which "
+                + std::to_string(audio_tokens_) + " are audio tokens); "
+                "shorten the transcription prompt or the audio");
+        }
+        position_ids_ = modules::decoder_position_ids(prompt_steps_);
         debug::timing_log_scalar("qwen3_asr.thinker.prefill.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("qwen3_asr.thinker.prefill_prompt_steps", prompt_steps_);
     }
 
     ~PrefillGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
     }
 
     bool matches(const ThinkerWeightsRuntime & runtime, int64_t prompt_steps, int64_t audio_tokens) const {
@@ -368,6 +418,10 @@ public:
             throw std::runtime_error("Qwen3 ASR thinker prefill audio position count mismatch");
         }
         auto timing_start = Clock::now();
+        // Re-uploaded on every run: the graph allocator may hand this leaf out to a
+        // later node once the graph has consumed it, so it cannot be written once at
+        // build time and left alone.
+        ggml_backend_tensor_set(positions_, position_ids_.data(), 0, position_ids_.size() * sizeof(int32_t));
         ggml_backend_tensor_set(token_ids_, token_ids.data(), 0, token_ids.size() * sizeof(int32_t));
         if (audio_tokens_ > 0) {
             std::vector<int64_t> positions(audio_positions.begin(), audio_positions.end());
@@ -422,8 +476,9 @@ private:
     ggml_tensor * logits_ = nullptr;
     std::vector<ggml_tensor *> keys_;
     std::vector<ggml_tensor *> values_;
+    std::vector<int32_t> position_ids_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
 };
 
 class PromptClassificationGraph {
@@ -466,29 +521,31 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_steps_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32);
 
-        auto decoder_out = modules::QwenCausalDecoderModule(
-                               make_qwen_decoder_config(config, modules::QwenCausalDecoderLogitsMode::AllSteps))
-                               .build(ctx, x, positions, make_qwen_decoder_weights(weights));
+        auto decoder_out = modules::CausalDecoderModule(
+                               make_qwen3_decoder_config(config, modules::CausalDecoderLogitsMode::AllSteps))
+                               .build(ctx, x, positions, make_qwen3_decoder_weights(weights));
         auto token_ids = engine::sampling::GreedyDecodeModule().build(ctx, decoder_out.logits);
         token_ids_ = token_ids.tensor;
         ggml_set_output(token_ids_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, token_ids_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
-        if (buffer_ == nullptr) {
+        const auto try_alloc = [&]() {
+            gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
+            return gallocr_ != nullptr &&
+                ggml_gallocr_reserve(gallocr_.get(), graph_) &&
+                ggml_gallocr_alloc_graph(gallocr_.get(), graph_);
+        };
+        if (!try_alloc() &&
+            (engine::core::trim_backend_pools(runtime_->backend()), !try_alloc())) {
             throw std::runtime_error("failed to allocate Qwen3 ASR thinker classification graph");
         }
-        const auto pos = modules::qwen_position_ids(prompt_steps_);
-        ggml_backend_tensor_set(positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
+        position_ids_ = modules::decoder_position_ids(prompt_steps_);
         debug::timing_log_scalar("qwen3_asr.thinker.classify.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("qwen3_asr.thinker.classify_prompt_steps", prompt_steps_);
     }
 
     ~PromptClassificationGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
     }
 
     bool matches(const ThinkerWeightsRuntime & runtime, int64_t prompt_steps, int64_t audio_tokens) const {
@@ -510,6 +567,8 @@ public:
             throw std::runtime_error("Qwen3 ASR thinker classification audio position count mismatch");
         }
         auto timing_start = Clock::now();
+        // See PrefillGraph::run: leaves are not pinned by the graph allocator.
+        ggml_backend_tensor_set(positions_, position_ids_.data(), 0, position_ids_.size() * sizeof(int32_t));
         ggml_backend_tensor_set(token_ids_input_, input_ids.data(), 0, input_ids.size() * sizeof(int32_t));
         if (audio_tokens_ > 0) {
             std::vector<int64_t> positions(audio_positions.begin(), audio_positions.end());
@@ -550,8 +609,9 @@ private:
     ggml_tensor * audio_positions_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * token_ids_ = nullptr;
+    std::vector<int32_t> position_ids_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
 };
 
 class DecodeGraph {
@@ -586,14 +646,14 @@ public:
             core::TensorShape::from_dims({1, 1, 1, cache_steps_}),
             GGML_TYPE_F16);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
-        auto decoder_out = modules::QwenCausalDecoderModule(
-                               make_qwen_decoder_config(config, modules::QwenCausalDecoderLogitsMode::LastStep))
+        auto decoder_out = modules::CausalDecoderModule(
+                               make_qwen3_decoder_config(config, modules::CausalDecoderLogitsMode::LastStep))
                                .build_static_cache_tail(
                                    ctx,
                                    graph_,
                                    x,
                                    positions,
-                                   make_qwen_decoder_weights(weights),
+                                   make_qwen3_decoder_weights(weights),
                                    cache_steps_,
                                    attention_mask,
                                    cache_slot);
@@ -603,6 +663,10 @@ public:
         ggml_build_forward_expand(graph_, logits_);
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
         if (buffer_ == nullptr) {
+            engine::core::trim_backend_pools(runtime_->backend());
+            buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
+        }
+        if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate Qwen3 ASR thinker decode graph");
         }
         attention_mask_values_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-INFINITY));
@@ -611,7 +675,7 @@ public:
     }
 
     ~DecodeGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
@@ -635,7 +699,7 @@ public:
         ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
         const int32_t cache_slot = static_cast<int32_t>(step_cache_.valid_steps());
         ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(int32_t));
-        modules::write_qwen_cached_step_mask(
+        modules::write_decoder_cached_step_mask(
             attention_mask_,
             attention_mask_values_,
             cache_steps_,
@@ -725,6 +789,10 @@ struct Qwen3ASRThinkerRuntime::Impl {
         validate_prompt_audio(prompt, audio_embeddings);
         debug::timing_log_scalar("qwen3_asr.thinker.prompt_prepare_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         if (prefill_graph == nullptr || !prefill_graph->matches(*weights, prompt_steps, audio_embeddings.tokens)) {
+            // drop the old graph (and its cuda_graphs cache entry) before
+            // allocating the replacement: assigning over a live unique_ptr
+            // holds both arenas at once at the rebuild peak
+            prefill_graph.reset();
             prefill_graph = std::make_unique<PrefillGraph>(
                 weights,
                 prompt_steps,
@@ -742,6 +810,7 @@ struct Qwen3ASRThinkerRuntime::Impl {
         debug::timing_log_scalar("qwen3_asr.thinker.prefill_total_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         const int64_t required_cache_steps = prompt_steps + options.max_new_tokens;
         if (decode_graph == nullptr || !decode_graph->can_run(*weights, required_cache_steps)) {
+            decode_graph.reset();
             decode_graph = std::make_unique<DecodeGraph>(weights, required_cache_steps, decode_graph_arena_bytes);
         } else {
             debug::timing_log_scalar("qwen3_asr.thinker.decode.graph.build_ms", 0.0);
@@ -780,6 +849,7 @@ struct Qwen3ASRThinkerRuntime::Impl {
         debug::timing_log_scalar("qwen3_asr.thinker.classify_prompt_prepare_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         if (classification_graph == nullptr ||
             !classification_graph->matches(*weights, prompt_steps, audio_embeddings.tokens)) {
+            classification_graph.reset();
             classification_graph = std::make_unique<PromptClassificationGraph>(
                 weights,
                 prompt_steps,

@@ -3,6 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 
 #include <cmath>
+#include <cstdint>
 #include <stdexcept>
 
 #ifndef M_PI
@@ -12,6 +13,12 @@
 namespace engine::models::chatterbox {
 
 namespace {
+
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kDefaultWeightStoreBytes = 1024ull * 1024ull * 1024ull;
+#else
+constexpr size_t kDefaultWeightStoreBytes = 4096ull * 1024ull * 1024ull;
+#endif
 
 T3GraphWeight load_t3_graph_weight(
     engine::core::BackendWeightStore & store,
@@ -90,7 +97,7 @@ std::shared_ptr<const T3InferenceWeights> load_t3_inference_weights(
         execution_context.backend(),
         execution_context.backend_type(),
         "chatterbox.t3.weights",
-        4096ull * 1024ull * 1024ull);
+        kDefaultWeightStoreBytes);
     const auto text_emb_info = source.require_metadata("text_emb.weight");
     const auto speech_emb_info = source.require_metadata("speech_emb.weight");
     const auto text_pos_info = source.require_metadata("text_pos_emb.emb.weight");

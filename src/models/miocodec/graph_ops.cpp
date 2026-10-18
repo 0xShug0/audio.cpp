@@ -82,7 +82,7 @@ core::TensorValue group_norm(
     auto bias = core::reshape_tensor(ctx, *weights.bias, core::TensorShape::from_dims({1, input.shape.dims[1], 1}));
     auto weight_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, weight.tensor, x.tensor), x.shape, GGML_TYPE_F32);
     auto bias_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, bias.tensor, x.tensor), x.shape, GGML_TYPE_F32);
-    x = core::wrap_tensor(ggml_mul(ctx.ggml, x.tensor, weight_rep.tensor), x.shape, GGML_TYPE_F32);
+    x = engine::modules::MulModule{}.build(ctx, x, weight_rep);
     return core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, bias_rep.tensor), x.shape, GGML_TYPE_F32);
 }
 
@@ -95,7 +95,7 @@ core::TensorValue mask_bct(
         core::TensorShape::from_dims({input.shape.dims[0], 1, input.shape.dims[2]}),
         "time mask");
     const auto mask_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, time_mask.tensor, input.tensor), input.shape, GGML_TYPE_F32);
-    return core::wrap_tensor(ggml_mul(ctx.ggml, input.tensor, mask_rep.tensor), input.shape, GGML_TYPE_F32);
+    return engine::modules::MulModule{}.build(ctx, input, mask_rep);
 }
 
 core::TensorValue masked_group_norm(
@@ -123,7 +123,7 @@ core::TensorValue masked_group_norm(
     const int64_t channels = x.shape.dims[1];
     const int64_t channels_per_group = channels / groups;
     auto mask_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, time_mask.tensor, x.tensor), x.shape, GGML_TYPE_F32);
-    auto masked = core::wrap_tensor(ggml_mul(ctx.ggml, x.tensor, mask_rep.tensor), x.shape, GGML_TYPE_F32);
+    auto masked = engine::modules::MulModule{}.build(ctx, x, mask_rep);
     auto grouped = core::reshape_tensor(
         ctx,
         core::ensure_backend_addressable_layout(ctx, masked),
@@ -134,26 +134,26 @@ core::TensorValue masked_group_norm(
         grouped.shape);
     auto sum = engine::modules::ReduceSumModule({2}).build(ctx, grouped);
     auto inv_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, inv_valid_group_values.tensor, sum.tensor), sum.shape, GGML_TYPE_F32);
-    auto mean = core::wrap_tensor(ggml_mul(ctx.ggml, sum.tensor, inv_rep.tensor), sum.shape, GGML_TYPE_F32);
+    auto mean = engine::modules::MulModule{}.build(ctx, sum, inv_rep);
     auto mean_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, mean.tensor, grouped.tensor), grouped.shape, GGML_TYPE_F32);
     auto centered = core::wrap_tensor(ggml_sub(ctx.ggml, grouped.tensor, mean_rep.tensor), grouped.shape, GGML_TYPE_F32);
-    auto centered_masked = core::wrap_tensor(ggml_mul(ctx.ggml, centered.tensor, grouped_mask.tensor), grouped.shape, GGML_TYPE_F32);
+    auto centered_masked = engine::modules::MulModule{}.build(ctx, centered, grouped_mask);
     auto squared = core::wrap_tensor(ggml_sqr(ctx.ggml, centered_masked.tensor), grouped.shape, GGML_TYPE_F32);
     auto variance_sum = engine::modules::ReduceSumModule({2}).build(ctx, squared);
-    auto variance = core::wrap_tensor(ggml_mul(ctx.ggml, variance_sum.tensor, inv_rep.tensor), variance_sum.shape, GGML_TYPE_F32);
+    auto variance = engine::modules::MulModule{}.build(ctx, variance_sum, inv_rep);
     auto stddev = core::wrap_tensor(
         ggml_sqrt(ctx.ggml, ggml_scale_bias(ctx.ggml, variance.tensor, 1.0F, eps)),
         variance.shape,
         GGML_TYPE_F32);
     auto stddev_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, stddev.tensor, grouped.tensor), grouped.shape, GGML_TYPE_F32);
     auto normalized = core::wrap_tensor(ggml_div(ctx.ggml, centered.tensor, stddev_rep.tensor), grouped.shape, GGML_TYPE_F32);
-    normalized = core::wrap_tensor(ggml_mul(ctx.ggml, normalized.tensor, grouped_mask.tensor), grouped.shape, GGML_TYPE_F32);
+    normalized = engine::modules::MulModule{}.build(ctx, normalized, grouped_mask);
     x = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, normalized), x.shape);
     auto weight = core::reshape_tensor(ctx, *weights.weight, core::TensorShape::from_dims({1, input.shape.dims[1], 1}));
     auto bias = core::reshape_tensor(ctx, *weights.bias, core::TensorShape::from_dims({1, input.shape.dims[1], 1}));
     auto weight_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, weight.tensor, x.tensor), x.shape, GGML_TYPE_F32);
     auto bias_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, bias.tensor, x.tensor), x.shape, GGML_TYPE_F32);
-    x = core::wrap_tensor(ggml_mul(ctx.ggml, x.tensor, weight_rep.tensor), x.shape, GGML_TYPE_F32);
+    x = engine::modules::MulModule{}.build(ctx, x, weight_rep);
     x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, bias_rep.tensor), x.shape, GGML_TYPE_F32);
     return mask_bct(ctx, x, time_mask);
 }
@@ -173,7 +173,7 @@ core::TensorValue apply_gamma(
     const core::TensorValue & gamma,
     int64_t hidden) {
     auto repeated = repeat_like(ctx, gamma, input, core::TensorShape::from_dims({1, hidden, 1}));
-    return core::wrap_tensor(ggml_mul(ctx.ggml, input.tensor, repeated.tensor), input.shape, GGML_TYPE_F32);
+    return engine::modules::MulModule{}.build(ctx, input, repeated);
 }
 
 core::TensorValue swiglu(
@@ -191,7 +191,7 @@ core::TensorValue swiglu(
         ctx,
         input,
         weights.feed_forward_w3);
-    auto hidden = core::wrap_tensor(ggml_mul(ctx.ggml, gate.tensor, up.tensor), gate.shape, GGML_TYPE_F32);
+    auto hidden = engine::modules::MulModule{}.build(ctx, gate, up);
     return engine::modules::LinearModule({intermediate_dim, dim, weights.feed_forward_w2.bias.has_value()}).build(
         ctx,
         hidden,
@@ -250,20 +250,12 @@ core::TensorValue apply_rope_exact(
         auto x1 = engine::modules::SliceModule({3, d + 1, 1}).build(ctx, input);
         auto cos_t = repeat_like(ctx, constants.make_f32(trig_shape, cos_values), x0, trig_shape);
         auto sin_t = repeat_like(ctx, constants.make_f32(trig_shape, sin_values), x0, trig_shape);
-        auto y0 = core::wrap_tensor(
-            ggml_sub(
-                ctx.ggml,
-                ggml_mul(ctx.ggml, x0.tensor, cos_t.tensor),
-                ggml_mul(ctx.ggml, x1.tensor, sin_t.tensor)),
-            x0.shape,
-            GGML_TYPE_F32);
-        auto y1 = core::wrap_tensor(
-            ggml_add(
-                ctx.ggml,
-                ggml_mul(ctx.ggml, x0.tensor, sin_t.tensor),
-                ggml_mul(ctx.ggml, x1.tensor, cos_t.tensor)),
-            x1.shape,
-            GGML_TYPE_F32);
+        auto x0_cos = engine::modules::MulModule{}.build(ctx, x0, cos_t);
+        auto x1_sin = engine::modules::MulModule{}.build(ctx, x1, sin_t);
+        auto y0 = core::wrap_tensor(ggml_sub(ctx.ggml, x0_cos.tensor, x1_sin.tensor), x0.shape, GGML_TYPE_F32);
+        auto x0_sin = engine::modules::MulModule{}.build(ctx, x0, sin_t);
+        auto x1_cos = engine::modules::MulModule{}.build(ctx, x1, cos_t);
+        auto y1 = core::wrap_tensor(ggml_add(ctx.ggml, x0_sin.tensor, x1_cos.tensor), x1.shape, GGML_TYPE_F32);
         auto pair = engine::modules::ConcatModule({3}).build(ctx, y0, y1);
         output = output.valid()
             ? engine::modules::ConcatModule({3}).build(ctx, output, pair)
@@ -437,7 +429,8 @@ std::pair<core::TensorValue, std::optional<core::TensorValue>> adaln(
     auto one_plus_scale = core::wrap_tensor(ggml_scale_bias(ctx.ggml, scale.tensor, 1.0F, 1.0F), scale.shape, GGML_TYPE_F32);
     auto scale_full = core::wrap_tensor(ggml_repeat(ctx.ggml, one_plus_scale.tensor, normalized.tensor), normalized.shape, GGML_TYPE_F32);
     auto shift_full = core::wrap_tensor(ggml_repeat(ctx.ggml, shift.tensor, normalized.tensor), normalized.shape, GGML_TYPE_F32);
-    auto out = core::wrap_tensor(ggml_add(ctx.ggml, ggml_mul(ctx.ggml, normalized.tensor, scale_full.tensor), shift_full.tensor), normalized.shape, GGML_TYPE_F32);
+    auto scaled = engine::modules::MulModule{}.build(ctx, normalized, scale_full);
+    auto out = core::wrap_tensor(ggml_add(ctx.ggml, scaled.tensor, shift_full.tensor), normalized.shape, GGML_TYPE_F32);
     if (!return_gate) {
         return {out, std::nullopt};
     }
@@ -487,7 +480,7 @@ core::TensorValue transformer(
         }
         auto attn_out = attention(ctx, constants, mask, positions, normed, layer, weights, exact_rope);
         if (attn_gate.has_value()) {
-            attn_out = core::wrap_tensor(ggml_mul(ctx.ggml, attn_out.tensor, attn_gate->tensor), attn_out.shape, GGML_TYPE_F32);
+            attn_out = engine::modules::MulModule{}.build(ctx, attn_out, *attn_gate);
         }
         x = engine::modules::ResidualAddModule{}.build(ctx, x, attn_out);
 
@@ -505,7 +498,7 @@ core::TensorValue transformer(
         }
         auto ffn_out = swiglu(ctx, ffn_normed, layer, weights.dim, weights.intermediate_dim);
         if (ffn_gate.has_value()) {
-            ffn_out = core::wrap_tensor(ggml_mul(ctx.ggml, ffn_out.tensor, ffn_gate->tensor), ffn_out.shape, GGML_TYPE_F32);
+            ffn_out = engine::modules::MulModule{}.build(ctx, ffn_out, *ffn_gate);
         }
         x = engine::modules::ResidualAddModule{}.build(ctx, x, ffn_out);
     }
@@ -553,7 +546,8 @@ core::TensorValue fsq_quantized(
     const auto half_width = repeat_like(ctx, constants.make_f32(constant_shape, std::vector<float>(std::begin(half_width_values), std::end(half_width_values))), latent, constant_shape);
     auto shifted = core::wrap_tensor(ggml_add(ctx.ggml, latent.tensor, shift.tensor), latent.shape, GGML_TYPE_F32);
     auto bounded = core::wrap_tensor(ggml_tanh(ctx.ggml, shifted.tensor), latent.shape, GGML_TYPE_F32);
-    bounded = core::wrap_tensor(ggml_sub(ctx.ggml, ggml_mul(ctx.ggml, bounded.tensor, half_l.tensor), offset.tensor), latent.shape, GGML_TYPE_F32);
+    auto scaled_bounded = engine::modules::MulModule{}.build(ctx, bounded, half_l);
+    bounded = core::wrap_tensor(ggml_sub(ctx.ggml, scaled_bounded.tensor, offset.tensor), latent.shape, GGML_TYPE_F32);
     auto rounded = core::wrap_tensor(ggml_round(ctx.ggml, bounded.tensor), latent.shape, GGML_TYPE_F32);
     auto normalized = core::wrap_tensor(ggml_div(ctx.ggml, rounded.tensor, half_width.tensor), latent.shape, GGML_TYPE_F32);
     return engine::modules::LinearModule({5, 768, weights.output_projection.bias.has_value()}).build(
@@ -602,11 +596,11 @@ core::TensorValue global_encoder(
     alpha = core::wrap_tensor(ggml_tanh(ctx.ggml, alpha.tensor), alpha.shape, GGML_TYPE_F32);
     alpha = engine::modules::Conv1dModule(weights.attention_conv2.config).build(ctx, alpha, weights.attention_conv2.weights);
     alpha = core::wrap_tensor(ggml_soft_max(ctx.ggml, core::ensure_backend_addressable_layout(ctx, alpha).tensor), alpha.shape, GGML_TYPE_F32);
-    auto weighted = core::wrap_tensor(ggml_mul(ctx.ggml, alpha.tensor, features_bct.tensor), features_bct.shape, GGML_TYPE_F32);
+    auto weighted = engine::modules::MulModule{}.build(ctx, alpha, features_bct);
     auto mean = engine::modules::ReduceSumModule({2}).build(ctx, weighted);
     auto features_contiguous = core::ensure_backend_addressable_layout(ctx, features_bct);
     auto squared = core::wrap_tensor(ggml_sqr(ctx.ggml, features_contiguous.tensor), features_contiguous.shape, GGML_TYPE_F32);
-    auto second = engine::modules::ReduceSumModule({2}).build(ctx, core::wrap_tensor(ggml_mul(ctx.ggml, alpha.tensor, squared.tensor), squared.shape, GGML_TYPE_F32));
+    auto second = engine::modules::ReduceSumModule({2}).build(ctx, engine::modules::MulModule{}.build(ctx, alpha, squared));
     auto mean_sq = core::wrap_tensor(ggml_sqr(ctx.ggml, mean.tensor), mean.shape, GGML_TYPE_F32);
     auto var = core::wrap_tensor(ggml_sub(ctx.ggml, second.tensor, mean_sq.tensor), mean.shape, GGML_TYPE_F32);
     var = core::wrap_tensor(ggml_clamp(ctx.ggml, var.tensor, 1.0e-4F, 1.0e4F), var.shape, GGML_TYPE_F32);
@@ -645,8 +639,8 @@ core::TensorValue dynamic_linear_interpolate_bct(
     right = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, right), core::TensorShape::from_dims({1, target_frames, channels}));
     auto weight = core::wrap_tensor(ggml_repeat(ctx.ggml, right_weight.tensor, left.tensor), left.shape, GGML_TYPE_F32);
     auto left_weight = core::wrap_tensor(ggml_scale_bias(ctx.ggml, weight.tensor, -1.0F, 1.0F), weight.shape, GGML_TYPE_F32);
-    auto left_scaled = core::wrap_tensor(ggml_mul(ctx.ggml, left.tensor, left_weight.tensor), left.shape, GGML_TYPE_F32);
-    auto right_scaled = core::wrap_tensor(ggml_mul(ctx.ggml, right.tensor, weight.tensor), right.shape, GGML_TYPE_F32);
+    auto left_scaled = engine::modules::MulModule{}.build(ctx, left, left_weight);
+    auto right_scaled = engine::modules::MulModule{}.build(ctx, right, weight);
     auto out_btc = core::wrap_tensor(ggml_add(ctx.ggml, left_scaled.tensor, right_scaled.tensor), left.shape, GGML_TYPE_F32);
     return engine::modules::TransposeModule({{0, 2, 1, 3}, out_btc.shape.rank}).build(ctx, out_btc);
 }
@@ -696,10 +690,10 @@ core::TensorValue snake_beta(
     auto inv_beta = core::reshape_tensor(ctx, weights.inv_beta, core::TensorShape::from_dims({1, input_bct.shape.dims[1], 1}));
     auto alpha_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, alpha.tensor, input.tensor), input.shape, GGML_TYPE_F32);
     auto inv_beta_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, inv_beta.tensor, input.tensor), input.shape, GGML_TYPE_F32);
-    auto ax = core::wrap_tensor(ggml_mul(ctx.ggml, input.tensor, alpha_rep.tensor), input.shape, GGML_TYPE_F32);
+    auto ax = engine::modules::MulModule{}.build(ctx, input, alpha_rep);
     ax = core::ensure_backend_addressable_layout(ctx, ax);
     auto periodic = core::wrap_tensor(ggml_sqr(ctx.ggml, ggml_sin(ctx.ggml, ax.tensor)), input.shape, GGML_TYPE_F32);
-    periodic = core::wrap_tensor(ggml_mul(ctx.ggml, periodic.tensor, inv_beta_rep.tensor), input.shape, GGML_TYPE_F32);
+    periodic = engine::modules::MulModule{}.build(ctx, periodic, inv_beta_rep);
     return core::wrap_tensor(ggml_add(ctx.ggml, input.tensor, periodic.tensor), input.shape, GGML_TYPE_F32);
 }
 

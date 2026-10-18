@@ -34,20 +34,22 @@ runtime::ModelMetadata metadata(const MossTTSLocalAssets &) {
 runtime::ModelCliInterface cli(const MossTTSLocalAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"max_tokens", "n", "Maximum generated audio frames."},
-        {"do_sample", "true|false", "Enable stochastic audio-token sampling."},
-        {"temperature", "float", "Audio-token sampling temperature."},
-        {"top_p", "float", "Audio-token nucleus sampling limit."},
-        {"top_k", "n", "Audio-token top-k sampling limit."},
-        {"repetition_penalty", "float", "Audio-token repetition penalty."},
-        {"text_temperature", "float", "Text-gate sampling temperature."},
-        {"text_top_p", "float", "Text-gate nucleus sampling limit."},
-        {"text_top_k", "n", "Text-gate top-k sampling limit."},
-        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode; default splitter."},
+        {"seed", "int", "Sampling seed; omitted chooses a random seed.", false, std::nullopt, "0", "4294967295"},
+        {"max_tokens", "n", "Maximum generated audio frames.", false, "4096", "1"},
+        {"do_sample", "true|false", "Enable stochastic audio-token sampling.", false, "true"},
+        {"temperature", "float", "Audio sampling temperature. Must be finite and positive when sampling. Default: 1.7.", false, "1.7"},
+        {"top_p", "float", "Audio-token nucleus sampling limit.", false, "0.8"},
+        {"top_k", "n", "Audio-token top-k sampling limit.", false, "25"},
+        {"repetition_penalty", "float", "Audio repetition penalty. Must be finite and positive when token history is nonempty. Default: 1.", false, "1"},
+        {"text_temperature", "float", "Text sampling temperature. Must be finite and positive when sampling. Default: 1.", false, "1"},
+        {"text_top_p", "float", "Text-gate nucleus sampling limit.", false, "1"},
+        {"text_top_k", "n", "Text-gate top-k sampling limit.", false, "50"},
+        {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode; default splitter.", false, "default"},
+        {"text_chunk_size", "int", "Framework long-form text chunk size. Default: 2048.", false, "2048", "1"},
     };
     out.session_options = {
-        {"moss_tts_local.weight_type", "auto|native|f32|f16|bf16|q8_0", "Backbone weight storage type."},
-        {"moss_tts_local.reference_cache_slots", "n", "Prepared reference-voice cache slots; default 1, set 0 to disable."},
+        {"moss_tts_local.weight_type", "auto|native|f32|f16|bf16|q4_0|q4_1|q5_0|q5_1|q2_k|q3_k|q4_k|q5_k|q6_k|q8_0|nvfp4", "Backbone weight storage; auto uses F32 on CPU, BF16 on CUDA, native on other backends. Default: auto.", false, "auto"},
+        {"moss_tts_local.reference_cache_slots", "n", "Prepared reference-voice cache slots; default 1, set 0 to disable.", false, "1", "0"},
     };
     return out;
 }

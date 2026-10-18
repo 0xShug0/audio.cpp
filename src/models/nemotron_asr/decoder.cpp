@@ -110,7 +110,7 @@ std::vector<runtime::WordTimestamp> build_token_timestamps(
 
 }  // namespace
 
-struct NemotronDecoderRuntime::Graph {
+struct NemotronRnntDecoderRuntime::Graph {
     std::unique_ptr<ggml_context, GgmlContextDeleter> ggml;
     ggml_cgraph * graph = nullptr;
     ggml_gallocr_t allocator = nullptr;
@@ -131,7 +131,7 @@ struct NemotronDecoderRuntime::Graph {
     }
 };
 
-struct NemotronDecoderRuntime::JointGraph {
+struct NemotronRnntDecoderRuntime::JointGraph {
     std::unique_ptr<ggml_context, GgmlContextDeleter> ggml;
     ggml_cgraph * graph = nullptr;
     ggml_gallocr_t allocator = nullptr;
@@ -147,7 +147,7 @@ struct NemotronDecoderRuntime::JointGraph {
     }
 };
 
-NemotronDecoderRuntime::NemotronDecoderRuntime(
+NemotronRnntDecoderRuntime::NemotronRnntDecoderRuntime(
     std::shared_ptr<const NemotronASRAssets> assets,
     std::shared_ptr<const NemotronWeights> weights,
     engine::core::ExecutionContext & execution_context,
@@ -159,16 +159,19 @@ NemotronDecoderRuntime::NemotronDecoderRuntime(
     if (assets_ == nullptr || weights_ == nullptr) {
         throw std::runtime_error("Nemotron ASR decoder requires assets and weights");
     }
+    const auto & vocab = assets_->tokenizer->id_to_token();
+    const auto unk = std::find(vocab.begin(), vocab.end(), "<unk>");
+    if (unk != vocab.end()) unk_token_id_ = static_cast<int32_t>(unk - vocab.begin());
 }
 
-NemotronDecoderRuntime::~NemotronDecoderRuntime() = default;
+NemotronRnntDecoderRuntime::~NemotronRnntDecoderRuntime() = default;
 
-void NemotronDecoderRuntime::prepare() {
+void NemotronRnntDecoderRuntime::prepare() {
     ensure_graph();
     ensure_joint_graph();
 }
 
-void NemotronDecoderRuntime::ensure_graph() {
+void NemotronRnntDecoderRuntime::ensure_graph() {
     if (graph_ != nullptr) {
         debug::timing_log_scalar("nemotron_asr.decoder.graph_rebuild_ms", 0.0);
         debug::trace_log_scalar("nemotron_asr.decoder.graph_cache_hit", true);
@@ -253,9 +256,6 @@ void NemotronDecoderRuntime::ensure_graph() {
     engine::core::prepare_host_graph_plan(*execution_context_, graph->graph, graph->host_plan);
 
     logits_scratch_.assign(static_cast<size_t>(config.vocab_size), 0.0f);
-    hidden_scratch_.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
-    cell_scratch_.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
-    decoder_cache_scratch_.assign(static_cast<size_t>(config.decoder_hidden_size), 0.0f);
     hidden_read_scratch_.assign(static_cast<size_t>(config.decoder_hidden_size), 0.0f);
     cell_read_scratch_.assign(static_cast<size_t>(config.decoder_hidden_size), 0.0f);
 
@@ -266,7 +266,7 @@ void NemotronDecoderRuntime::ensure_graph() {
     graph_ = std::move(graph);
 }
 
-void NemotronDecoderRuntime::ensure_joint_graph() {
+void NemotronRnntDecoderRuntime::ensure_joint_graph() {
     if (joint_graph_ != nullptr) {
         debug::timing_log_scalar("nemotron_asr.decoder.joint_graph_rebuild_ms", 0.0);
         debug::trace_log_scalar("nemotron_asr.decoder.joint_graph_cache_hit", true);
@@ -315,14 +315,23 @@ void NemotronDecoderRuntime::ensure_joint_graph() {
     joint_graph_ = std::move(graph);
 }
 
-int32_t NemotronDecoderRuntime::run_joint_step(const float * encoder_frame) {
+NemotronPredictorState NemotronRnntDecoderRuntime::initial_predictor_state() const {
+    const auto & config = assets_->config;
+    NemotronPredictorState state;
+    state.hidden.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
+    state.cell.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
+    state.decoder_cache.assign(static_cast<size_t>(config.decoder_hidden_size), 0.0f);
+    return state;
+}
+
+int32_t NemotronRnntDecoderRuntime::run_joint_step(const float * encoder_frame, const NemotronPredictorState & predictor) {
     if (joint_graph_ == nullptr) {
         throw std::runtime_error("Nemotron ASR decoder joint graph is not prepared");
     }
     auto & graph = *joint_graph_;
     const auto & config = assets_->config;
     engine::core::write_tensor_f32(graph.encoder_frame, encoder_frame, static_cast<size_t>(config.decoder_hidden_size));
-    engine::core::write_tensor_f32(graph.decoder_cache_in, decoder_cache_scratch_);
+    engine::core::write_tensor_f32(graph.decoder_cache_in, predictor.decoder_cache);
 
     const auto status = engine::core::compute_graph(*execution_context_, graph.graph, graph.host_plan, "Nemotron ASR decoder joint step");
     if (status != GGML_STATUS_SUCCESS) {
@@ -333,10 +342,11 @@ int32_t NemotronDecoderRuntime::run_joint_step(const float * encoder_frame) {
     return argmax_index(logits_scratch_);
 }
 
-int32_t NemotronDecoderRuntime::run_step(
+int32_t NemotronRnntDecoderRuntime::run_step(
     int32_t input_token,
     const float * encoder_frame,
-    bool decoder_cache_initialized) {
+    bool decoder_cache_initialized,
+    NemotronPredictorState & predictor) {
     if (graph_ == nullptr) {
         throw std::runtime_error("Nemotron ASR decoder graph is not prepared");
     }
@@ -352,7 +362,7 @@ int32_t NemotronDecoderRuntime::run_step(
         if (joint_graph_ == nullptr) {
             ensure_joint_graph();
         }
-        return run_joint_step(encoder_frame);
+        return run_joint_step(encoder_frame, predictor);
     }
 
     engine::core::write_tensor_i32(graph.token_id, &input_token, 1);
@@ -361,11 +371,11 @@ int32_t NemotronDecoderRuntime::run_step(
         const size_t offset = static_cast<size_t>(layer * config.decoder_hidden_size);
         engine::core::write_tensor_f32(
             graph.hidden_in[static_cast<size_t>(layer)],
-            hidden_scratch_.data() + offset,
+            predictor.hidden.data() + offset,
             static_cast<size_t>(config.decoder_hidden_size));
         engine::core::write_tensor_f32(
             graph.cell_in[static_cast<size_t>(layer)],
-            cell_scratch_.data() + offset,
+            predictor.cell.data() + offset,
             static_cast<size_t>(config.decoder_hidden_size));
     }
 
@@ -376,19 +386,19 @@ int32_t NemotronDecoderRuntime::run_step(
 
     engine::core::read_tensor_f32_into(graph.logits.tensor, logits_scratch_);
     if (update_predictor) {
-        engine::core::read_tensor_f32_into(graph.decoder_cache_out.tensor, decoder_cache_scratch_);
+        engine::core::read_tensor_f32_into(graph.decoder_cache_out.tensor, predictor.decoder_cache);
         for (int64_t layer = 0; layer < config.decoder_layers; ++layer) {
             const size_t offset = static_cast<size_t>(layer * config.decoder_hidden_size);
             engine::core::read_tensor_f32_into(graph.hidden_out[static_cast<size_t>(layer)].tensor, hidden_read_scratch_);
-            std::copy(hidden_read_scratch_.begin(), hidden_read_scratch_.end(), hidden_scratch_.begin() + static_cast<std::ptrdiff_t>(offset));
+            std::copy(hidden_read_scratch_.begin(), hidden_read_scratch_.end(), predictor.hidden.begin() + static_cast<std::ptrdiff_t>(offset));
             engine::core::read_tensor_f32_into(graph.cell_out[static_cast<size_t>(layer)].tensor, cell_read_scratch_);
-            std::copy(cell_read_scratch_.begin(), cell_read_scratch_.end(), cell_scratch_.begin() + static_cast<std::ptrdiff_t>(offset));
+            std::copy(cell_read_scratch_.begin(), cell_read_scratch_.end(), predictor.cell.begin() + static_cast<std::ptrdiff_t>(offset));
         }
     }
     return argmax_index(logits_scratch_);
 }
 
-std::string NemotronDecoderRuntime::decode_text(const std::vector<int32_t> & token_ids, bool keep_language_tags) const {
+std::string NemotronRnntDecoderRuntime::decode_text(const std::vector<int32_t> & token_ids, bool keep_language_tags) const {
     std::vector<int32_t> filtered;
     filtered.reserve(token_ids.size());
     for (const int32_t id : token_ids) {
@@ -407,7 +417,7 @@ std::string NemotronDecoderRuntime::decode_text(const std::vector<int32_t> & tok
     return assets_->tokenizer->decode_ids(filtered);
 }
 
-NemotronDecodedText NemotronDecoderRuntime::decode(
+NemotronDecodedText NemotronRnntDecoderRuntime::decode(
     const NemotronEncodedAudio & encoded,
     const NemotronDecodeOptions & options) {
     if (encoded.valid_frames <= 0 || encoded.hidden_size != assets_->config.decoder_hidden_size) {
@@ -420,9 +430,7 @@ NemotronDecodedText NemotronDecoderRuntime::decode(
     const int64_t max_tokens = options.max_tokens > 0
         ? options.max_tokens
         : (encoded.valid_frames * config.max_symbols_per_step + 1);
-    hidden_scratch_.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
-    cell_scratch_.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
-    decoder_cache_scratch_.assign(static_cast<size_t>(config.decoder_hidden_size), 0.0f);
+    auto predictor = initial_predictor_state();
 
     NemotronDecodedText out;
     out.token_ids.reserve(static_cast<size_t>(std::min<int64_t>(max_tokens + 1, 4096)));
@@ -436,7 +444,7 @@ NemotronDecodedText NemotronDecoderRuntime::decode(
     bool decoder_cache_initialized = false;
     while (frame_index < encoded.valid_frames && static_cast<int64_t>(out.token_ids.size()) - 1 < max_tokens) {
         const float * frame = encoded.values.data() + static_cast<std::ptrdiff_t>(frame_index * encoded.hidden_size);
-        const int32_t token = run_step(input_token, frame, decoder_cache_initialized);
+        const int32_t token = run_step(input_token, frame, decoder_cache_initialized, predictor);
         decoder_cache_initialized = true;
         out.token_ids.push_back(token);
         const bool blank = token == static_cast<int32_t>(config.blank_token_id);
@@ -461,106 +469,116 @@ NemotronDecodedText NemotronDecoderRuntime::decode(
     return out;
 }
 
-NemotronDecodedText NemotronDecoderRuntime::decode_streaming(
-    const NemotronDecodeOptions & options,
-    const std::function<bool(NemotronEncodedAudio &)> & next_chunk,
-    const NemotronTextDeltaCallback & on_text_delta) {
-    if (!next_chunk) {
-        throw std::runtime_error("Nemotron ASR streaming decoder requires a chunk producer");
+NemotronDecoderStreamState NemotronRnntDecoderRuntime::make_stream_state(
+    const NemotronDecodeOptions & options) {
+    ensure_graph();
+    ensure_joint_graph();
+    engine::core::set_backend_threads(
+        execution_context_->backend(), execution_context_->config().threads);
+    const auto & config = assets_->config;
+    NemotronDecoderStreamState state;
+    state.options = options;
+    state.predictor = initial_predictor_state();
+    state.input_token = static_cast<int32_t>(config.blank_token_id);
+    state.decoded.token_ids.reserve(4096);
+    state.decoded.durations.reserve(4096);
+    state.decoded.token_ids.push_back(state.input_token);
+    state.decoded.durations.push_back(0);
+    return state;
+}
+
+void NemotronRnntDecoderRuntime::decode_stream_chunk(
+    const NemotronEncodedAudio & encoded,
+    NemotronDecoderStreamState & state) {
+    if (encoded.valid_frames <= 0 ||
+        encoded.hidden_size != assets_->config.decoder_hidden_size) {
+        throw std::runtime_error("Nemotron ASR streaming decoder received invalid encoded chunk");
     }
     const auto wall_start = Clock::now();
-    ensure_graph();
-    engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
     const auto & config = assets_->config;
-    const int64_t max_tokens = options.max_tokens > 0
-        ? options.max_tokens
+    const int64_t max_tokens = state.options.max_tokens > 0
+        ? state.options.max_tokens
         : (std::numeric_limits<int64_t>::max() / 4);
-    hidden_scratch_.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
-    cell_scratch_.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
-    decoder_cache_scratch_.assign(static_cast<size_t>(config.decoder_hidden_size), 0.0f);
-
-    std::vector<float> encoded_values;
-    int64_t encoded_valid_frames = 0;
-    int64_t encoded_hidden_size = 0;
-    bool stream_exhausted = false;
-    auto append_next_chunk = [&]() -> bool {
-        NemotronEncodedAudio chunk;
-        if (!next_chunk(chunk)) {
-            stream_exhausted = true;
-            return false;
-        }
-        if (chunk.valid_frames <= 0 || chunk.hidden_size != config.decoder_hidden_size) {
-            throw std::runtime_error("Nemotron ASR streaming decoder received invalid encoded chunk");
-        }
-        if (encoded_hidden_size == 0) {
-            encoded_hidden_size = chunk.hidden_size;
-        } else if (encoded_hidden_size != chunk.hidden_size) {
-            throw std::runtime_error("Nemotron ASR streaming decoder chunk hidden size mismatch");
-        }
-        encoded_values.insert(
-            encoded_values.end(),
-            chunk.values.begin(),
-            chunk.values.begin() + static_cast<std::ptrdiff_t>(chunk.valid_frames * chunk.hidden_size));
-        encoded_valid_frames += chunk.valid_frames;
-        return true;
-    };
-    if (!append_next_chunk()) {
-        throw std::runtime_error("Nemotron ASR streaming decoder received no encoded chunks");
-    }
-
-    NemotronDecodedText out;
-    out.token_ids.reserve(4096);
-    out.durations.reserve(out.token_ids.capacity());
-    out.token_ids.push_back(static_cast<int32_t>(config.blank_token_id));
-    out.durations.push_back(0);
-    std::string emitted_text;
-
     int64_t frame_index = 0;
-    int64_t symbols_at_frame = 0;
-    int32_t input_token = static_cast<int32_t>(config.blank_token_id);
-    bool decoder_cache_initialized = false;
-    while (static_cast<int64_t>(out.token_ids.size()) - 1 < max_tokens) {
-        while (frame_index >= encoded_valid_frames && !stream_exhausted) {
-            append_next_chunk();
-        }
-        if (frame_index >= encoded_valid_frames) {
-            break;
-        }
-
-        const float * frame = encoded_values.data() + static_cast<std::ptrdiff_t>(frame_index * encoded_hidden_size);
-        const int32_t token = run_step(input_token, frame, decoder_cache_initialized);
-        decoder_cache_initialized = true;
-        out.token_ids.push_back(token);
+    while (frame_index < encoded.valid_frames &&
+           static_cast<int64_t>(state.decoded.token_ids.size()) - 1 < max_tokens) {
+        const float * frame = encoded.values.data() +
+            static_cast<std::ptrdiff_t>(frame_index * encoded.hidden_size);
+        const int32_t token = run_step(
+            state.input_token, frame, state.decoder_cache_initialized, state.predictor);
+        state.decoder_cache_initialized = true;
+        state.decoded.token_ids.push_back(token);
         const bool blank = token == static_cast<int32_t>(config.blank_token_id);
         if (!blank) {
-            ++symbols_at_frame;
+            ++state.symbols_at_frame;
         }
-        const bool force_advance = symbols_at_frame >= config.max_symbols_per_step;
+        const bool force_advance = state.symbols_at_frame >= config.max_symbols_per_step;
         if (blank || force_advance) {
             ++frame_index;
-            symbols_at_frame = 0;
-            out.durations.push_back(1);
+            ++state.encoded_frames;
+            state.symbols_at_frame = 0;
+            state.decoded.durations.push_back(1);
         } else {
-            out.durations.push_back(0);
+            state.decoded.durations.push_back(0);
         }
-        if (on_text_delta && !blank) {
-            const auto current_text = decode_text(out.token_ids, options.keep_language_tags);
-            if (current_text.size() > emitted_text.size() &&
-                current_text.compare(0, emitted_text.size(), emitted_text) == 0) {
-                on_text_delta(current_text.substr(emitted_text.size()));
-                emitted_text = current_text;
-            } else if (current_text != emitted_text) {
-                on_text_delta(current_text);
-                emitted_text = current_text;
+        state.input_token = token;
+    }
+    state.decoded.text = decode_text(
+        state.decoded.token_ids, state.options.keep_language_tags);
+    debug::timing_log_scalar(
+        "nemotron_asr.decoder.stream_ms",
+        engine::debug::elapsed_ms(wall_start, Clock::now()));
+}
+
+std::string NemotronRnntDecoderRuntime::stream_text(
+    const NemotronDecoderStreamState & state, bool keep_language_tags) const {
+    // SentencePiece (NeMo) renders <unk> as " \xE2\x81\x87 "; the tokenizer.json decoder drops it.
+    const auto & ids = state.decoded.token_ids;
+    std::string text;
+    size_t begin = 0;
+    auto flush = [&](size_t end) {
+        const std::vector<int32_t> run(ids.begin() + static_cast<std::ptrdiff_t>(begin), ids.begin() + static_cast<std::ptrdiff_t>(end));
+        std::string decoded = decode_text(run, keep_language_tags);
+        if (!text.empty() && !decoded.empty() && !run.empty()) {
+            // A run that starts at a word boundary lost its leading space to the decoder.
+            for (const int32_t id : run) {
+                if (id == static_cast<int32_t>(assets_->config.blank_token_id)) continue;
+                const auto & piece = assets_->tokenizer->id_to_token()[static_cast<size_t>(id)];
+                if (!assets_->metaspace_replacement.empty() && piece.rfind(assets_->metaspace_replacement, 0) == 0) {
+                    decoded.insert(decoded.begin(), ' ');
+                }
+                break;
             }
         }
-        input_token = token;
+        text += decoded;
+    };
+    for (size_t i = 0; i < ids.size(); ++i) {
+        if (unk_token_id_ >= 0 && ids[i] == unk_token_id_) {
+            flush(i);
+            text += " \xE2\x81\x87 ";
+            begin = i + 1;
+        }
     }
-    out.text = decode_text(out.token_ids, options.keep_language_tags);
+    flush(ids.size());
+    return text;
+}
+
+std::vector<int64_t> NemotronRnntDecoderRuntime::stream_token_frames(const NemotronDecoderStreamState & state) const {
+    std::vector<int64_t> frames;
+    int64_t frame = 0;
+    const auto & ids = state.decoded.token_ids;
+    const auto & durations = state.decoded.durations;
+    for (size_t i = 0; i < std::min(ids.size(), durations.size()); ++i) {
+        if (ids[i] != static_cast<int32_t>(assets_->config.blank_token_id) && i > 0) frames.push_back(frame);
+        frame += std::max<int32_t>(durations[i], 0);
+    }
+    return frames;
+}
+
+NemotronDecodedText NemotronRnntDecoderRuntime::stream_result(
+    const NemotronDecoderStreamState & state) const {
+    NemotronDecodedText out = state.decoded;
     out.token_timestamps = build_token_timestamps(*assets_, out.token_ids, out.durations);
-    debug::timing_log_scalar("nemotron_asr.decoder_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
-    debug::trace_log_scalar("nemotron_asr.decoder.tokens", out.token_ids.size());
-    debug::trace_log_scalar("nemotron_asr.decoder.encoded_valid_frames", encoded_valid_frames);
     return out;
 }
 

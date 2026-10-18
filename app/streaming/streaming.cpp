@@ -13,6 +13,7 @@ namespace {
 void emit_if_nonempty(const engine::runtime::StreamEvent & event, const StreamEventSink & sink) {
     if (event.voice_activity.empty() &&
         !event.partial_text.has_value() &&
+        !event.partial_text_snapshot.has_value() &&
         !event.audio_output.has_value() &&
         event.named_audio_outputs.empty() &&
         event.speaker_turns.empty() &&

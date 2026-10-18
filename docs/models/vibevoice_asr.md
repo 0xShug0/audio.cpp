@@ -1,0 +1,377 @@
+# VibeVoice ASR Models
+
+audio.cpp supports two VibeVoice ASR families:
+
+| Model | Family | Mode(s) | Recommended package |
+|---|---|---|---|
+| VibeVoice ASR | `vibevoice_asr` | offline | `vibevoice_asr_q8_0` |
+| VibeVoice ASR Streaming 1.5B | `vibevoice_asr_streaming` | offline, streaming | `vibevoice_asr_streaming_1_5b_q8_0` |
+| VibeVoice ASR Streaming 7B | `vibevoice_asr_streaming` | offline, streaming | `vibevoice_asr_streaming_7b_q8_0` |
+
+## VibeVoice ASR
+
+VibeVoice ASR is an offline ASR model with greedy, sampling, and beam-search
+decode paths. It can return transcription text and structured segment or
+speaker-turn output when the model produces timestamps.
+
+A fully quantized port of the same model — INT8 activations through the encoder,
+ternary BitNet weights in the decoder — lives under community models as
+`vibeasr`: see [VibeASR](vibeasr.md). It is not a separate
+model, only a CPU-only alternative numeric pipeline for the same weights.
+
+| Field | Value |
+|---|---|
+| Family | `vibevoice_asr` |
+| Model directory | `models/VibeVoice-ASR-GGUF` |
+| Task | `asr` |
+| Modes | `offline` |
+| Required tokenizer files | Embedded in the standalone GGUF |
+| Output | Transcription text; optional segments through `--segments-out`; optional speaker turns through `--turns-out` |
+| Streaming | Not supported |
+| Timestamps | Segment and speaker-turn timestamps when produced |
+
+Install:
+
+```bash
+python3 tools/model_manager_v2.py install vibevoice_asr_q8_0
+```
+
+Offline CLI:
+
+```bash
+audiocpp_cli --task asr \
+  --family vibevoice_asr \
+  --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf \
+  --backend cuda \
+  --audio assets/resources/sample_16k.wav \
+  --text-out transcript.txt \
+  --metrics \
+  --log
+```
+
+Structured output:
+
+```bash
+audiocpp_cli --task asr \
+  --family vibevoice_asr \
+  --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf \
+  --backend cuda \
+  --audio meeting.wav \
+  --text "The recording is a meeting conversation." \
+  --text-out transcript.txt \
+  --segments-out segments.json \
+  --turns-out turns.json \
+  --metrics \
+  --log
+```
+
+With VAD chunking, provide the bundled Silero VAD model:
+
+```bash
+audiocpp_cli --task asr \
+  --family vibevoice_asr \
+  --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf \
+  --backend cuda \
+  --audio assets/resources/sample_16k.wav \
+  --audio-chunk-mode vad \
+  --session-option vibevoice_asr.vad_model_path=assets/framework/models/silero_vad \
+  --text-out transcript.txt \
+  --metrics \
+  --log
+```
+
+Convert from safetensors:
+
+```powershell
+audiocpp_gguf.exe --input models\VibeVoice-ASR\model.safetensors.index.json --output models\VibeVoice-ASR-Q8_0\model.gguf --type q8_0
+```
+
+Configuration and tokenizer assets are embedded by default, so the output
+directory may contain only `model.gguf`.
+
+### Common Options (use directly)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | WAV path | required | Speech input. |
+| `--text` | text | empty string | Context prompt for the ASR request. |
+| `--language` | language code | `auto` | ASR language label. |
+| `--max-tokens` | integer | model default | Maximum generated transcript tokens. |
+| `--temperature` | float | model default | Sampling temperature; `0` uses deterministic decoding. |
+| `--top-p` | float | model default | Nucleus sampling probability. |
+| `--top-k` | integer | model default | Top-k sampling limit; `0` disables top-k filtering. |
+| `--num-beams` | integer | `1` | Beam count for deterministic beam search. |
+| `--repetition-penalty` | float | model default | Generation repetition penalty. |
+| `--seed` | integer | `1234` | Acoustic latent sampling seed. |
+| `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Long-audio chunking mode. `auto` uses fixed chunks. |
+| `--audio-chunk-seconds` | float seconds | `1200` | Fixed audio chunk duration. |
+| `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
+| `--segments-out` | JSON path | not set | Write structured ASR segments when produced. |
+| `--turns-out` | JSON path | not set | Write speaker turns when produced. |
+
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `context` | text | not set | Context hint; context_info is also accepted. |
+| `language` | text | not set | ASR language label. |
+| `max_tokens` | integer >= 1 | `32768` | Maximum generated text tokens. |
+| `temperature` | float | `0` | Sampling temperature; zero uses deterministic decoding. |
+| `top_p` | float | `1` | Nucleus probability in (0, 1]. |
+| `top_k` | integer >= 0 | `50` | Top-k sampling limit; zero disables filtering. |
+| `num_beams` | integer >= 1 | `1` | Deterministic beam search width. |
+| `repetition_penalty` | float | `1` | Positive generation repetition penalty. |
+| `seed` | integer >= 0 | `1234` | Acoustic latent sampling seed. |
+| `audio_chunk_mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Pre-encoder audio splitting; auto uses fixed chunks. |
+| `audio_chunk_duration_sec` | float | `1200` | Positive audio chunk duration in seconds. |
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `vibevoice_asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `vibevoice_asr.tokenizer_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `vibevoice_asr.connector_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `vibevoice_asr.decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `vibevoice_asr.tokenizer_weight_context_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
+| `vibevoice_asr.connector_weight_context_mb` | integer >= 1 | `128` | Context or graph arena size in MiB. |
+| `vibevoice_asr.decoder_weight_context_mb` | integer >= 1 | not set | Decoder weight context in MiB; 4096 on 64-bit builds, 1024 on 32-bit builds. |
+| `vibevoice_asr.max_history_steps` | integer | `0` | Maximum retained decoder history; zero uses the model limit. Cannot exceed checkpoint position capacity; zero uses that capacity. |
+| `vibevoice_asr.vad_model_path` | model directory | `assets/framework/models/silero_vad` | Internal VAD model used by `--audio-chunk-mode vad`. |
+
+## VibeVoice ASR Streaming 1.5B
+
+The 1.5B checkpoint is the smaller sibling of the streaming 7B and runs through
+the **same loader with no code changes**: the layer count, hidden size, and head
+counts are all read from the checkpoint's own `config.json`, and the tensor names
+are identical. It is a drop-in smaller package, not a separate family.
+
+| Field | Value |
+|---|---|
+| Family | `vibevoice_asr_streaming` |
+| Model package | `vibevoice_asr_streaming_1_5b_q8_0` |
+| Model directory | `models/VibeVoice-ASR-Streaming-1.5B-GGUF` |
+| GGUF repo | <https://huggingface.co/christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF> |
+| Upstream weights | <https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-1.5B> |
+| Task, modes, output, timestamps | As [streaming 7B](#vibevoice-asr-streaming-7b) |
+
+Sizes, and word error rate on the four LibriSpeech clips in
+`assets/asr_validation/librispeech/`, greedy decode:
+
+| Package | GGUF size | WER (CUDA) | WER (CPU) |
+|---|---:|---:|---:|
+| `vibevoice_asr_streaming_7b_q4_k` | 5.86 GB | 4.35% | 4.35% |
+| `vibevoice_asr_streaming_1_5b_bf16` | 5.64 GB | 4.35% | 4.35% |
+| `vibevoice_asr_streaming_1_5b_q8_0` | 3.34 GB | 5.80% | 4.35% |
+| `vibevoice_asr_streaming_1_5b_q4_k` | 2.12 GB | 7.25% | 5.80% |
+
+> [!NOTE]
+> **A WER number for a quantized package is only meaningful with its backend.**
+> CPU and CUDA quantize activations differently in upstream ggml — Q4_K weights
+> meet `Q8_K` activations on CPU (one scale per 256) and `Q8_1` on CUDA (scale
+> and sum per 32), and Q8_0 weights meet `Q8_0` against `Q8_1`. The two backends
+> therefore differ slightly but deterministically on every quantized matmul.
+> BF16 quantizes no activations, which is why its two columns agree exactly.
+>
+> On these clips the whole effect is one fragile word, where CPU hears the
+> correct "cutter" and CUDA hears "country". This is expected upstream behavior,
+> not an audio.cpp defect. The 7B not flipping here is four clips, not immunity.
+
+> [!WARNING]
+> Four clips is 69 words. One substitution moves the number by 1.4 points, so
+> these separate "works and is in the right class" from "broken" and nothing
+> finer. The like-for-like pair is the two `q4_k` rows: at equal quantization the
+> 7B is ahead on both backends. Do not read the tie between 7B Q4_K and 1.5B BF16
+> as parity -- different clips happen to sum to the same total.
+
+Install:
+
+```bash
+python3 tools/model_manager_v2.py install vibevoice_asr_streaming_1_5b_q8_0
+```
+
+Offline CLI, identical to the 7B apart from the model path:
+
+```bash
+audiocpp_cli --task asr \
+  --family vibevoice_asr_streaming \
+  --model models/VibeVoice-ASR-Streaming-1.5B-GGUF/vibevoice-asr-streaming-1.5b-q8_0.gguf \
+  --backend cuda \
+  --threads 8 \
+  --audio assets/resources/sample_16k.wav \
+  --text-out transcript.txt \
+  --turns-out speaker_turns.json \
+  --metrics \
+  --log
+```
+
+Convert from safetensors:
+
+```bash
+audiocpp_gguf --input model.safetensors.index.json \
+              --output vibevoice-asr-streaming-1.5b-q8_0.gguf \
+              --type q8_0 --family vibevoice_asr_streaming --root sidecars
+```
+
+### The padded vocabulary differs, and that is fine
+
+`embed_tokens` is `(151936, 1536)` here against `(152064, 3584)` in the 7B: the
+7B's vocabulary row count is padded, the 1.5B's is not. Nothing breaks, because
+the shape is validated against the `vocab_size` in the same checkpoint's config.
+It would only matter to code that treats the 7B's padded count as a constant --
+a shared tokenizer bundle, or a logits slice sized for the 7B -- so keep that in
+mind when adding anything that spans both sizes.
+
+## VibeVoice ASR Streaming 7B
+
+VibeVoice ASR Streaming 7B is the streaming VibeVoice ASR model. It keeps a
+persistent decoder state and can emit speaker-attributed transcript deltas as
+audio arrives. It can also run in offline mode through the same family.
+
+The upstream streaming model emits speaker-attributed text such as
+`Speaker 0: ...`, but it does not emit timestamped segments. In audio.cpp,
+`--turns-out` can expose those speaker/text turns when the model emits speaker
+labels; `--segments-out` is not populated by this streaming model. Use the
+non-streaming `vibevoice_asr` family when timestamped segment output is needed.
+
+> [!WARNING]
+> Speaker-turn segmentation can differ from the offline VibeVoice ASR family.
+> In local validation, the streaming 7B model merged adjacent speech into fewer
+> speaker turns than the offline model; the same behavior was reproduced with
+> the official Python streaming reference.
+
+The recommended audio.cpp package is the Q8_0 GGUF in the dedicated model repo:
+<https://huggingface.co/audio-cpp/VibeVoice-ASR-Streaming-7B-GGUF>. BF16 and
+Q4_K GGUF variants are also available in the same repo.
+
+Upstream lists ten supported language codes for this streaming model: `en`,
+`zh`, `es`, `pt`, `de`, `ja`, `ko`, `fr`, `ru`, and `it`.
+
+| Field | Value |
+|---|---|
+| Family | `vibevoice_asr_streaming` |
+| Model package | `vibevoice_asr_streaming_7b_q8_0` |
+| Model directory | `models/VibeVoice-ASR-Streaming-7B-GGUF` |
+| Task | `asr` |
+| Modes | `offline`, `streaming` |
+| Required tokenizer files | Embedded in the standalone GGUF |
+| Output | Transcript text; speaker/text turns when produced by the model |
+| Timestamps | Not produced by the streaming model |
+| Streaming | Live audio chunks over the `/v1/audio/transcriptions/live` endpoint |
+
+Install:
+
+```bash
+python3 tools/model_manager_v2.py install vibevoice_asr_streaming_7b_q8_0
+```
+
+Offline CLI:
+
+```bash
+audiocpp_cli --task asr \
+  --family vibevoice_asr_streaming \
+  --model models/VibeVoice-ASR-Streaming-7B-GGUF/vibevoice-asr-streaming-7b-q8_0.gguf \
+  --backend cuda \
+  --threads 8 \
+  --audio assets/resources/sample_16k.wav \
+  --text-out transcript.txt \
+  --turns-out speaker_turns.json \
+  --metrics \
+  --log
+```
+
+Server config for live streaming:
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "threads": 8,
+  "models": [
+    {
+      "id": "vibevoice-streaming-7b",
+      "family": "vibevoice_asr_streaming",
+      "path": "models/VibeVoice-ASR-Streaming-7B-GGUF/vibevoice-asr-streaming-7b-q8_0.gguf",
+      "task": "asr",
+      "mode": "streaming"
+    }
+  ]
+}
+```
+
+Start the server:
+
+```bash
+audiocpp_server --config server.json --log
+```
+
+Live streaming request with 16 kHz mono signed 16-bit PCM:
+
+```bash
+ffmpeg -hide_banner -loglevel error -i input.wav -f s16le -ac 1 -ar 16000 - \
+  | curl -N -X POST \
+      -H 'Content-Type: application/octet-stream' \
+      -H 'Transfer-Encoding: chunked' \
+      -H 'Expect:' \
+      -T - \
+      'http://127.0.0.1:8080/v1/audio/transcriptions/live?model=vibevoice-streaming-7b&sample_rate=16000&channels=1&sample_format=s16le'
+```
+
+### Common Options (use directly)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--language` | language label | `auto` | ASR language label. |
+| `--max-tokens` | integer | `256` | Maximum generated transcript tokens per chunk. |
+| `--temperature` | float | `0` | Sampling temperature; `0` uses deterministic decoding. |
+| `--top-p` | float | `1` | Nucleus sampling probability. |
+| `--top-k` | integer | `50` | Top-k sampling limit; `0` disables top-k filtering. |
+| `--num-beams` | integer | `1` | Accepted but ignored by the streaming checkpoint's incremental path, including offline mode. |
+| `--repetition-penalty` | float | `1` | Generation repetition penalty. |
+| `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Ignored by this checkpoint in both offline and streaming modes; processor chunk/lookahead settings determine segmentation. |
+| `--audio-chunk-seconds` | float seconds | `1200` | Ignored by this checkpoint in both offline and streaming modes. |
+
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `context` | text | empty string | Extra context or hotwords injected into the streaming prompt. |
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `vibevoice_asr_streaming.max_history_steps` | integer | `0` (checkpoint capacity) | Rolling window for decoder history, in steps. Refer to [Long streams](#long-streams-and-the-history-window). |
+
+### Long streams and the history window
+
+With `max_history_steps=0`, history capacity comes from the checkpoint's
+`max_position_embeddings`; it is not unlimited. Memory use increases with
+stream length (approximately 0.4 MiB per step on Q8/CUDA) up to that capacity.
+
+Set `max_history_steps` to prevent this. The model then stores only the
+most recent steps. Memory use remains constant for streams of any length.
+
+```bash
+audiocpp_cli --task asr --family vibevoice_asr_streaming \
+  --model models/VibeVoice-ASR-Streaming-7B-GGUF/vibevoice-asr-streaming-7b-q8_0.gguf \
+  --backend cuda --mode streaming --audio - --input-format s16le \
+  --session-option vibevoice_asr_streaming.max_history_steps=4096
+```
+
+The model always stores the streaming prompt. It never removes the prompt.
+New steps replace the oldest stored steps, but not the prompt.
+
+Each step is approximately one audio frame or one generated word part.
+Speech contains approximately ten steps per second. Thus `4096` stores
+approximately ten minutes of speech. At `4096` on Q8/CUDA, total memory
+use is stable at approximately 10.0 GB. Larger windows use more memory.
+The value must not exceed the model position capacity (131072 for the 7B
+model). The program rejects larger values at startup.
+
+Note: A window changes the transcription when compared to full history
+because removed context is not available. The window size also causes very
+small differences in results because the model calculates in a different
+sequence. For reproducible results, do not change the binary or the window
+size.

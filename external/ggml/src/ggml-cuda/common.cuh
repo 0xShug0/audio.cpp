@@ -604,7 +604,8 @@ template <typename T> struct block_reduce_policy<block_reduce_method::MAX, T> {
 };
 
 template <block_reduce_method reduce_method_t, const unsigned int block_size_template = 0, typename T>
-static __device__ T block_reduce(T val, T * shared_vals) {
+static __device__ T block_reduce(T val, [[maybe_unused]] T * shared_vals) {
+    // for multi-warp reductions, callers must not reuse shared_vals until all reads from this invocation have completed
     val                           = block_reduce_policy<reduce_method_t, T>::reduce(val);
     const unsigned int block_size = block_size_template == 0 ? blockDim.x : block_size_template;
     if (block_size > WARP_SIZE) {
@@ -1131,6 +1132,9 @@ struct ggml_cuda_pool {
 
     virtual void * alloc(size_t size, size_t * actual_size) = 0;
     virtual void free(void * ptr, size_t size) = 0;
+    // Release cached device memory back to the driver. Buffers handed out by
+    // alloc() are unaffected; only idle cached capacity is dropped.
+    virtual void clear() {}
 };
 
 template<typename T>
@@ -1443,12 +1447,23 @@ struct ggml_backend_cuda_context {
 
     ggml_cuda_stream_context concurrent_stream_context;
 
+    // Scheduling priority for this context's lazily created streams
+    // (CUDA: numerically lower = higher priority, 0 = default). Set through
+    // ggml_backend_cuda_set_stream_priority(); scoped to this backend
+    // instance, unlike a process-wide environment variable.
+    int stream_priority = 0;
+
     ~ggml_backend_cuda_context();
 
     cudaStream_t stream(int device, int stream) {
         if (streams[device][stream] == nullptr) {
             ggml_cuda_set_device(device);
-            CUDA_CHECK(cudaStreamCreateWithFlags(&streams[device][stream], cudaStreamNonBlocking));
+            if (stream_priority != 0) {
+                CUDA_CHECK(cudaStreamCreateWithPriority(
+                    &streams[device][stream], cudaStreamNonBlocking, stream_priority));
+            } else {
+                CUDA_CHECK(cudaStreamCreateWithFlags(&streams[device][stream], cudaStreamNonBlocking));
+            }
         }
         return streams[device][stream];
     }

@@ -1423,9 +1423,11 @@ std::vector<float> StableAudioSameRuntime::encode(
         }
         const bool first = chunk_index == 0;
         const bool last = chunk_index + 1 == starts.size();
-        const int64_t out_start = last ? latent_tokens - kSameChunkLatents : latent_start;
+        // Starts are already tail-aligned; a padded short chunk contributes only its valid prefix.
+        const int64_t out_start = latent_start;
         const int64_t left = first ? 0 : kSameChunkOverlap / 2;
-        const int64_t right = last ? kSameChunkLatents : kSameChunkLatents - kSameChunkOverlap / 2;
+        const int64_t right = last ? std::min(kSameChunkLatents, latent_tokens - latent_start)
+                                   : kSameChunkLatents - kSameChunkOverlap / 2;
         for (int64_t c = 0; c < config.latent_dim; ++c) {
             for (int64_t t = left; t < right; ++t) {
                 out[static_cast<size_t>(c * latent_tokens + out_start + t)] =

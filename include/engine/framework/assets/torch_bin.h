@@ -11,6 +11,8 @@ namespace engine::assets {
 // tensor source. Only the restricted subset produced by torch.save of a flat
 // OrderedDict[str, Tensor] is supported, and the pickle is walked with a whitelist of
 // globals so no adapter code is ever executed. Tensor storages must be uncompressed.
+// Tensors that are views into a shared storage are read from their storage offset;
+// non-contiguous tensors (e.g. a saved transpose) are rejected.
 std::shared_ptr<const TensorSource> open_torch_bin_tensor_source(const std::filesystem::path & path);
 
 }  // namespace engine::assets

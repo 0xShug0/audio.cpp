@@ -1,0 +1,8 @@
+[
+  {"id":"warmup","audio":"../../assets/resources/sample_16k.wav"},
+  {"id":"nature1","audio":"../../assets/resources/sample_16k.wav"},
+  {"id":"nature2","audio":"../../assets/resources/sample_16k.wav"},
+  {"id":"clean_short","audio":"../../assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav"},
+  {"id":"clean_long","audio":"../../assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav"},
+  {"id":"other_short","audio":"../../assets/asr_validation/librispeech/librispeech_test_other_7902-96591-0000.wav"}
+]

@@ -1,5 +1,6 @@
 #include "engine/models/vibevoice_asr/connector.h"
 
+#include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -123,7 +124,7 @@ public:
     }
 
     ~VibeVoiceConnectorGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
@@ -298,6 +299,12 @@ VibeVoiceConnectorWeightsRuntime::~VibeVoiceConnectorWeightsRuntime() {
     if (backend_ != nullptr) {
         ggml_backend_free(backend_);
     }
+}
+
+void VibeVoiceConnectorWeightsRuntime::release_cached_graphs() const {
+    semantic_graph_.reset();
+    acoustic_graph_.reset();
+    core::trim_backend_pools(backend_);
 }
 
 const VibeVoiceASRAssets & VibeVoiceConnectorWeightsRuntime::assets() const noexcept {

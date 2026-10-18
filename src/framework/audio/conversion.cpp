@@ -143,6 +143,23 @@ std::vector<float> convert_interleaved_audio_to_mono_linear_resampled(
         target_sample_rate_hz);
 }
 
+std::vector<float> convert_interleaved_audio_to_mono_torchaudio_sinc_hann_resampled(
+    const std::vector<float> & interleaved_samples,
+    int sample_rate_hz,
+    int channel_count,
+    int target_sample_rate_hz,
+    const TorchaudioSincHannResampleOptions & options,
+    MonoMixAccumulation accumulation) {
+    if (sample_rate_hz <= 0 || target_sample_rate_hz <= 0) {
+        throw std::runtime_error("audio sample rates must be positive");
+    }
+    auto mono = mixdown_interleaved_to_mono_average(interleaved_samples, channel_count, accumulation);
+    if (sample_rate_hz != target_sample_rate_hz) {
+        mono = resample_mono_torchaudio_sinc_hann(mono, sample_rate_hz, target_sample_rate_hz, options);
+    }
+    return mono;
+}
+
 std::vector<float> read_wav_f32_as_mono_linear_resampled(
     const std::filesystem::path & path,
     int target_sample_rate_hz) {

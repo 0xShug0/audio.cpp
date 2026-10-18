@@ -87,7 +87,7 @@ int main(int argc, char ** argv) {
         engine::core::ExecutionContext execution_context(backend_config);
 
         std::cout << "loading backbone weights (36 layers)...\n" << std::flush;
-        engine::models::moss_tts_local::MossBackboneRuntime backbone(
+        engine::models::moss_tts_local::MossTTSLocalQwen3BackboneRuntime backbone(
             assets, execution_context, kBackboneGraphArenaBytes, kBackboneWeightContextBytes, weight_type);
 
         std::cout << "loading depth transformer weights...\n" << std::flush;

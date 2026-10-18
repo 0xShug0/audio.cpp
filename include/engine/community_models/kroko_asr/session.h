@@ -7,8 +7,8 @@
 #include "engine/community_models/kroko_asr/zipformer.h"
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_asr_session.h"
 
-#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -22,7 +22,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_kroko_asr_loader();
 class KrokoASRSession final
     : public runtime::RuntimeSessionBase,
       public runtime::IOfflineVoiceTaskSession,
-      public runtime::IStreamingVoiceTaskSession {
+      public runtime::StreamingAsrSessionBase {
 public:
     KrokoASRSession(
         runtime::TaskSpec task,
@@ -39,16 +39,13 @@ public:
     runtime::TaskResult run(
         const runtime::TaskRequest & request) override;
     runtime::StreamingPolicy streaming_policy() const override;
-    void start_stream(const runtime::TaskRequest & request) override;
-    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
-    void reset() override;
-    runtime::StreamEvent process_audio_chunk(
-        const runtime::AudioChunk & chunk) override;
-    runtime::TaskResult finish_stream() override;
-    runtime::TaskResult finalize() override;
 
 private:
-    runtime::StreamEvent process_streaming_audio(bool final);
+    void begin_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override;
+    void consume_audio(const runtime::AudioChunk & chunk) override;
+    void complete_stream(runtime::TaskResult & result) override;
+    void process_streaming_audio(bool final);
     runtime::TaskResult make_result(
         const KrokoDecodedTokens & decoded,
         int64_t audio_samples,
@@ -78,7 +75,6 @@ private:
     KrokoDecodedTokens completed_decoded_;
     std::vector<runtime::SpeechSegment> endpoint_segments_;
     runtime::AudioBuffer streaming_audio_;
-    runtime::StreamEventCallback stream_event_sink_;
     std::string streaming_language_;
     std::vector<float> streaming_resampler_source_;
     int64_t processed_feature_offset_ = 0;
@@ -98,8 +94,6 @@ private:
     float endpoint_rule3_utterance_ = 20.0F;
     bool endpoint_enabled_ = false;
     bool streaming_received_audio_ = false;
-    bool stream_started_ = false;
-    std::chrono::steady_clock::time_point stream_start_{};
 };
 
 }  // namespace engine::models::kroko_asr

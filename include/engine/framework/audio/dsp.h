@@ -19,6 +19,8 @@ enum class STFTPadMode {
 enum class STFTFamily {
     Default,
     Kokoro,
+    // Periodic Hann with a float32 angular step and float32 cosine.
+    PeriodicF32,
 };
 
 struct STFTConfig {

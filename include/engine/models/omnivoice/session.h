@@ -88,9 +88,9 @@ private:
     bool mem_saver_ = false;
     OmniVoiceGeneratorPerfMode generator_perf_mode_ = OmniVoiceGeneratorPerfMode::Standard;
     OmniVoiceTextTokenizer tokenizer_;
-    OmniVoiceAudioTokenizerRuntime audio_tokenizer_;
+    OmniVoiceHiggsAudioV2TokenizerRuntime audio_tokenizer_;
     OmniVoicePromptBuilder prompt_builder_;
-    OmniVoiceGeneratorRuntime generator_;
+    OmniVoiceQwen3DiffusionRuntime generator_;
     OmniVoicePostprocessor postprocessor_;
     SessionDefaults session_defaults_;
     std::optional<ReferencePromptCacheEntry> reference_prompt_cache_;

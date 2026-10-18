@@ -159,7 +159,7 @@ ggml_tensor * zero_pad_right(ggml_context * ctx, ggml_tensor * x, int64_t right)
 ggml_tensor * build_stereo_mel_from_wave(
     ggml_context * ctx,
     ggml_tensor * low_wave,
-    const DramaBoxVocoderWeights & weights,
+    const DramaBoxBigVganWeights & weights,
     int64_t padded_samples) {
     ggml_tensor * left = ggml_scale(ctx, repeat_frame(ctx, low_wave, 0, 432), 0.0F);
     ggml_tensor * x = ggml_concat(ctx, left, low_wave, 0);
@@ -187,7 +187,7 @@ ggml_tensor * build_resampler_skip(
     ggml_context * ctx,
     core::BackendType backend_type,
     ggml_tensor * low_wave,
-    const DramaBoxVocoderWeights & weights,
+    const DramaBoxBigVganWeights & weights,
     int64_t padded_samples) {
     const int64_t ratio = 3;
     const int64_t width = 7;
@@ -220,7 +220,7 @@ ggml_tensor * build_resampler_skip(
 
 }  // namespace
 
-DramaBoxVocoderWeights load_dramabox_vocoder_weights(
+DramaBoxBigVganWeights load_dramabox_vocoder_weights(
     const DramaBoxAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -229,7 +229,7 @@ DramaBoxVocoderWeights load_dramabox_vocoder_weights(
     const auto & source = *assets.audio_weights;
     (void)weight_storage_type;
     constexpr auto vocoder_storage_type = assets::TensorStorageType::F32;
-    DramaBoxVocoderWeights weights;
+    DramaBoxBigVganWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -277,9 +277,9 @@ DramaBoxVocoderWeights load_dramabox_vocoder_weights(
     return weights;
 }
 
-class DramaBoxVocoderRuntime::VocoderGraph {
+class DramaBoxBigVganRuntime::BigVganVocoderGraph {
 public:
-    VocoderGraph(core::ExecutionContext & execution, const DramaBoxVocoderWeights & weights, int64_t mel_frames)
+    BigVganVocoderGraph(core::ExecutionContext & execution, const DramaBoxBigVganWeights & weights, int64_t mel_frames)
         : backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
@@ -288,7 +288,7 @@ public:
         build();
     }
 
-    ~VocoderGraph() {
+    ~BigVganVocoderGraph() {
         if (backend_ != nullptr && graph_ != nullptr) {
             core::release_backend_graph_resources(backend_type_, backend_, graph_);
         }
@@ -386,7 +386,7 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
-    const DramaBoxVocoderWeights & weights_;
+    const DramaBoxBigVganWeights & weights_;
     int64_t mel_frames_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
@@ -397,9 +397,9 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-class DramaBoxVocoderRuntime::BweGraph {
+class DramaBoxBigVganRuntime::BigVganBweGraph {
 public:
-    BweGraph(core::ExecutionContext & execution, const DramaBoxVocoderWeights & weights, int64_t low_samples)
+    BigVganBweGraph(core::ExecutionContext & execution, const DramaBoxBigVganWeights & weights, int64_t low_samples)
         : backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
@@ -408,7 +408,7 @@ public:
         build();
     }
 
-    ~BweGraph() {
+    ~BigVganBweGraph() {
         if (backend_ != nullptr && graph_ != nullptr) {
             core::release_backend_graph_resources(backend_type_, backend_, graph_);
         }
@@ -500,7 +500,7 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
-    const DramaBoxVocoderWeights & weights_;
+    const DramaBoxBigVganWeights & weights_;
     int64_t low_samples_ = 0;
     int64_t padded_samples_ = 0;
     int64_t output_samples_ = 0;
@@ -512,7 +512,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-DramaBoxVocoderRuntime::DramaBoxVocoderRuntime(
+DramaBoxBigVganRuntime::DramaBoxBigVganRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const DramaBoxAssets> assets,
     assets::TensorStorageType weight_storage_type)
@@ -527,11 +527,11 @@ DramaBoxVocoderRuntime::DramaBoxVocoderRuntime(
     }
 }
 
-DramaBoxVocoderRuntime::~DramaBoxVocoderRuntime() = default;
+DramaBoxBigVganRuntime::~DramaBoxBigVganRuntime() = default;
 
-void DramaBoxVocoderRuntime::prepare(int64_t mel_frames) const {
+void DramaBoxBigVganRuntime::prepare(int64_t mel_frames) const {
     if (!weights_) {
-        weights_ = std::make_unique<DramaBoxVocoderWeights>(load_dramabox_vocoder_weights(
+        weights_ = std::make_unique<DramaBoxBigVganWeights>(load_dramabox_vocoder_weights(
             *assets_,
             execution_->backend(),
             execution_->backend_type(),
@@ -540,16 +540,16 @@ void DramaBoxVocoderRuntime::prepare(int64_t mel_frames) const {
     }
     if (!vocoder_graph_ || !vocoder_graph_->matches(mel_frames)) {
         vocoder_graph_.reset();
-        vocoder_graph_ = std::make_unique<VocoderGraph>(*execution_, *weights_, mel_frames);
+        vocoder_graph_ = std::make_unique<BigVganVocoderGraph>(*execution_, *weights_, mel_frames);
     }
     const int64_t low_samples = vocoder_graph_->samples();
     if (!bwe_graph_ || !bwe_graph_->matches(low_samples)) {
         bwe_graph_.reset();
-        bwe_graph_ = std::make_unique<BweGraph>(*execution_, *weights_, low_samples);
+        bwe_graph_ = std::make_unique<BigVganBweGraph>(*execution_, *weights_, low_samples);
     }
 }
 
-DramaBoxVocoderOutput DramaBoxVocoderRuntime::synthesize(const DramaBoxDecodedMel & mel) const {
+DramaBoxVocoderOutput DramaBoxBigVganRuntime::synthesize(const DramaBoxDecodedMel & mel) const {
     if (mel.batch != 1 || mel.channels != 2 || mel.mel_bins != 64 ||
         (mel.device_values == nullptr &&
          static_cast<int64_t>(mel.values.size()) != mel.batch * mel.channels * mel.frames * mel.mel_bins)) {
@@ -569,7 +569,7 @@ DramaBoxVocoderOutput DramaBoxVocoderRuntime::synthesize(const DramaBoxDecodedMe
     return out;
 }
 
-void DramaBoxVocoderRuntime::release_runtime_state() const {
+void DramaBoxBigVganRuntime::release_runtime_state() const {
     bwe_graph_.reset();
     vocoder_graph_.reset();
     weights_.reset();

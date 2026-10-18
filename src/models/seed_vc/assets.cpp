@@ -228,9 +228,7 @@ SeedVcConfig parse_config(const assets::ResourceBundle & resources) {
 
 std::shared_ptr<const SeedVcAssets> load_seed_vc_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<SeedVcAssets>();
-    assets->resources = engine::model_spec::load_resource_bundle(
-        model_path,
-        engine::model_spec::default_spec_path("seed_vc"));
+    assets->resources = engine::model_spec::load_resource_bundle_for_family(model_path, "seed_vc");
     assets->config = parse_config(assets->resources);
     assets->v2_ar_weights = assets->resources.open_tensor_source("v2_ar_weights");
     assets->v2_cfm_weights = assets->resources.open_tensor_source("v2_cfm_weights");

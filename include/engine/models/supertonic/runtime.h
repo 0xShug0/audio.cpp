@@ -11,14 +11,14 @@
 
 namespace engine::models::supertonic {
 
-class SupertonicNativeRuntime {
+class SupertonicRuntime {
 public:
-    SupertonicNativeRuntime(
+    SupertonicRuntime(
         std::shared_ptr<const SupertonicAssets> assets,
         core::BackendConfig backend_config,
         assets::TensorStorageType weight_storage_type,
         std::size_t style_cache_slots = 4);
-    ~SupertonicNativeRuntime();
+    ~SupertonicRuntime();
 
     runtime::AudioBuffer synthesize(
         const std::string & text,

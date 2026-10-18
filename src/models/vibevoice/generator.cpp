@@ -144,7 +144,7 @@ std::vector<float> add_embeddings(
 }
 
 std::vector<float> single_token_embedding(
-    const VibeVoiceDecoderWeightsRuntime & decoder,
+    const VibeVoiceQwen2WeightsRuntime & decoder,
     int32_t token,
     int64_t hidden_size) {
     auto embedding = decoder.embed_tokens({token});
@@ -155,7 +155,7 @@ std::vector<float> single_token_embedding(
     return std::move(embedding.values);
 }
 
-int64_t max_generation_steps(const VibeVoicePreparedPrompt & prompt, const VibeVoiceGenerationOptions & options, const VibeVoiceDecoderConfig & config) {
+int64_t max_generation_steps(const VibeVoicePreparedPrompt & prompt, const VibeVoiceGenerationOptions & options, const VibeVoiceQwen2Config & config) {
     if (prompt.steps <= 0 || config.max_position_embeddings <= prompt.steps) {
         throw std::runtime_error("VibeVoice generation prompt exceeds decoder position capacity");
     }
@@ -222,7 +222,7 @@ VibeVoicePreparedPrompt prepare_vibevoice_prompt(
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceTokenizerWeightsRuntime & audio_tokenizer,
     const VibeVoiceConnectorWeightsRuntime & connector,
-    const VibeVoiceDecoderWeightsRuntime & decoder,
+    const VibeVoiceQwen2WeightsRuntime & decoder,
     uint64_t seed,
     uint64_t start_rng_index,
     const std::vector<float> * prompt_noise_values) {
@@ -290,7 +290,7 @@ std::vector<VibeVoicePreparedPrompt> prepare_vibevoice_prompts_batch(
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceTokenizerWeightsRuntime & audio_tokenizer,
     const VibeVoiceConnectorWeightsRuntime & connector,
-    const VibeVoiceDecoderWeightsRuntime & decoder,
+    const VibeVoiceQwen2WeightsRuntime & decoder,
     uint64_t seed,
     uint64_t start_rng_index,
     const std::vector<float> * prompt_noise_values) {
@@ -507,10 +507,10 @@ VibeVoiceResult generate_vibevoice(
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceTokenizerWeightsRuntime & audio_tokenizer,
     const VibeVoiceConnectorWeightsRuntime & connector,
-    const VibeVoiceDecoderWeightsRuntime & decoder,
+    const VibeVoiceQwen2WeightsRuntime & decoder,
     const VibeVoiceDiffusionHeadWeightsRuntime & diffusion_head) {
-    VibeVoiceDecoderCachedState positive_cache;
-    VibeVoiceDecoderCachedState negative_cache;
+    VibeVoiceQwen2CachedState positive_cache;
+    VibeVoiceQwen2CachedState negative_cache;
     return generate_vibevoice(
         request,
         text_tokenizer,
@@ -527,10 +527,11 @@ VibeVoiceResult generate_vibevoice(
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceTokenizerWeightsRuntime & audio_tokenizer,
     const VibeVoiceConnectorWeightsRuntime & connector,
-    const VibeVoiceDecoderWeightsRuntime & decoder,
+    const VibeVoiceQwen2WeightsRuntime & decoder,
     const VibeVoiceDiffusionHeadWeightsRuntime & diffusion_head,
-    VibeVoiceDecoderCachedState & positive_cache,
-    VibeVoiceDecoderCachedState & negative_cache) {
+    VibeVoiceQwen2CachedState & positive_cache,
+    VibeVoiceQwen2CachedState & negative_cache,
+    const std::function<void(const runtime::AudioBuffer &)> & on_audio) {
     const auto & config = decoder.assets().config.decoder;
     const auto prompt_noise_values = load_noise_file(request.generation.prompt_noise_file, "prompt");
     auto prompt = prepare_vibevoice_prompt(
@@ -542,6 +543,7 @@ VibeVoiceResult generate_vibevoice(
         request.generation.seed,
         0,
         prompt_noise_values.empty() ? nullptr : &prompt_noise_values);
+    audio_tokenizer.release_prompt_graphs();
     const int64_t max_steps = max_generation_steps(prompt, request.generation, config);
     engine::debug::timing_log_scalar("vibevoice.generate.max_steps", max_steps);
     engine::debug::timing_log_scalar("vibevoice.generate.prompt_steps", prompt.steps);
@@ -550,6 +552,7 @@ VibeVoiceResult generate_vibevoice(
     auto negative_start = single_token_embedding(decoder, text_tokenizer.speech_start_id(), prompt.hidden_size);
     auto negative = decoder.prefill_embeddings(negative_start, 1);
     decoder.reset_cached_state(negative_cache, std::move(negative.state));
+    decoder.release_prompt_graphs();
     const int64_t latent_size = audio_tokenizer.assets().config.diffusion_head.latent_size;
     if (latent_size != audio_tokenizer.assets().config.acoustic_vae_dim) {
         throw std::runtime_error("VibeVoice generation latent size mismatch");
@@ -580,6 +583,7 @@ VibeVoiceResult generate_vibevoice(
         if (token == text_tokenizer.speech_start_id()) {
             negative = decoder.prefill_embeddings(negative_start, 1);
             decoder.reset_cached_state(negative_cache, std::move(negative.state));
+            decoder.release_prompt_graphs();
         }
         if (token == text_tokenizer.speech_end_id()) {
             acoustic_streaming_state.set_to_zero();
@@ -616,6 +620,7 @@ VibeVoiceResult generate_vibevoice(
                 audio_tokenizer.assets().speech_bias_factor);
             auto chunk = audio_tokenizer.decode_acoustic_streaming(decoder_latents, acoustic_streaming_state);
             append_audio(audio_samples, chunk);
+            if (on_audio) on_audio(chunk);
             auto semantic_features = audio_tokenizer.encode_semantic_streaming(chunk, semantic_streaming_state);
             auto acoustic_embedding = connector.project_acoustic(
                 speech_latents.front().values,
@@ -660,7 +665,7 @@ std::vector<VibeVoiceResult> generate_vibevoice_batch(
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceTokenizerWeightsRuntime & audio_tokenizer,
     const VibeVoiceConnectorWeightsRuntime & connector,
-    const VibeVoiceDecoderWeightsRuntime & decoder,
+    const VibeVoiceQwen2WeightsRuntime & decoder,
     const VibeVoiceDiffusionHeadWeightsRuntime & diffusion_head) {
     if (requests.empty()) {
         throw std::runtime_error("VibeVoice batch generation requires at least one request");
@@ -693,8 +698,8 @@ std::vector<VibeVoiceResult> generate_vibevoice_batch(
         VibeVoicePreparedPrompt prompt;
         VibeVoiceDecoderResult current;
         VibeVoiceDecoderResult negative;
-        VibeVoiceDecoderCachedState positive_cache;
-        VibeVoiceDecoderCachedState negative_cache;
+        VibeVoiceQwen2CachedState positive_cache;
+        VibeVoiceQwen2CachedState negative_cache;
         VibeVoiceTokenizerStreamingState acoustic_streaming_state;
         VibeVoiceTokenizerStreamingState semantic_streaming_state;
         std::vector<float> audio_samples;
@@ -730,6 +735,7 @@ std::vector<VibeVoiceResult> generate_vibevoice_batch(
         first_options.seed,
         0,
         prompt_noise_values.empty() ? nullptr : &prompt_noise_values);
+    audio_tokenizer.release_prompt_graphs();
     uint64_t prompt_rng_index = prompts.front().next_rng_index;
     const int64_t prompt_steps = prompts.front().steps;
     std::vector<std::vector<float>> prompt_embeddings;
@@ -768,6 +774,7 @@ std::vector<VibeVoiceResult> generate_vibevoice_batch(
 
     const auto negative_start = single_token_embedding(decoder, text_tokenizer.speech_start_id(), hidden_size);
     const auto negative_template = decoder.prefill_embeddings(negative_start, 1);
+    decoder.release_prompt_graphs();
     for (auto & state : states) {
         state.negative = negative_template.result;
         decoder.reset_cached_state(state.negative_cache, negative_template.state);
@@ -819,6 +826,7 @@ std::vector<VibeVoiceResult> generate_vibevoice_batch(
             if (token == text_tokenizer.speech_start_id()) {
                 state.negative = negative_template.result;
                 decoder.reset_cached_state(state.negative_cache, negative_template.state);
+                decoder.release_prompt_graphs();
             }
             if (token == text_tokenizer.speech_end_id()) {
                 state.acoustic_streaming_state.set_to_zero();
@@ -912,7 +920,7 @@ std::vector<VibeVoiceResult> generate_vibevoice_batch(
 
         std::vector<size_t> negative_step_indices;
         std::vector<std::vector<float>> negative_step_embeddings;
-        std::vector<VibeVoiceDecoderCachedState *> negative_step_states;
+        std::vector<VibeVoiceQwen2CachedState *> negative_step_states;
         negative_step_indices.reserve(states.size());
         negative_step_embeddings.reserve(states.size());
         negative_step_states.reserve(states.size());
@@ -946,7 +954,7 @@ std::vector<VibeVoiceResult> generate_vibevoice_batch(
 
         std::vector<size_t> cached_step_indices;
         std::vector<std::vector<float>> cached_step_embeddings;
-        std::vector<VibeVoiceDecoderCachedState *> cached_step_states;
+        std::vector<VibeVoiceQwen2CachedState *> cached_step_states;
         cached_step_indices.reserve(states.size());
         cached_step_embeddings.reserve(states.size());
         cached_step_states.reserve(states.size());

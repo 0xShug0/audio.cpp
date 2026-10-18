@@ -59,8 +59,8 @@ private:
     engine::assets::TensorStorageType component_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     ChatterboxMultilingualT3Version multilingual_t3_version_ = ChatterboxMultilingualT3Version::V2;
     bool mem_saver_ = false;
-    std::unique_ptr<ChatterboxTtsComponent> component_;
-    std::unique_ptr<ChatterboxVcComponent> vc_component_;
+    std::unique_ptr<ChatterboxTTSComponent> component_;
+    std::unique_ptr<ChatterboxVCComponent> vc_component_;
     std::optional<std::string> component_language_;
     std::optional<ChatterboxVoiceCloneConfig> voice_clone_config_;
     runtime::CacheSlots<

@@ -23,7 +23,7 @@ struct NemotronFrontendConfig {
     float log_zero_guard = 5.9604644775390625e-8f;
 };
 
-struct NemotronEncoderConfig {
+struct NemotronFastConformerEncoderConfig {
     int64_t hidden_size = 1024;
     int64_t intermediate_size = 4096;
     int64_t layers = 24;
@@ -52,7 +52,7 @@ struct NemotronConfig {
     int64_t num_prompts = 128;
     int64_t prompt_intermediate_size = 2048;
     NemotronFrontendConfig frontend;
-    NemotronEncoderConfig encoder;
+    NemotronFastConformerEncoderConfig encoder;
     std::unordered_map<std::string, int64_t> prompt_dictionary;
 };
 

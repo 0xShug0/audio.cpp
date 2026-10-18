@@ -543,7 +543,7 @@ RvcSynthesizerInput make_synthesizer_input(
 
 }  // namespace
 
-struct RvcNativePipeline::State {
+struct RvcPipeline::State {
     std::shared_ptr<const RvcAssets> assets;
     engine::core::BackendConfig backend;
     engine::assets::TensorStorageType storage_type = engine::assets::TensorStorageType::Native;
@@ -554,7 +554,7 @@ struct RvcNativePipeline::State {
     std::mutex mutex;
 };
 
-RvcNativePipeline::RvcNativePipeline(
+RvcPipeline::RvcPipeline(
     std::shared_ptr<const RvcAssets> assets,
     engine::core::BackendConfig backend,
     engine::assets::TensorStorageType storage_type)
@@ -572,11 +572,11 @@ RvcNativePipeline::RvcNativePipeline(
         state_->storage_type);
 }
 
-RvcNativePipeline::~RvcNativePipeline() = default;
-RvcNativePipeline::RvcNativePipeline(RvcNativePipeline &&) noexcept = default;
-RvcNativePipeline & RvcNativePipeline::operator=(RvcNativePipeline &&) noexcept = default;
+RvcPipeline::~RvcPipeline() = default;
+RvcPipeline::RvcPipeline(RvcPipeline &&) noexcept = default;
+RvcPipeline & RvcPipeline::operator=(RvcPipeline &&) noexcept = default;
 
-runtime::AudioBuffer RvcNativePipeline::infer(
+runtime::AudioBuffer RvcPipeline::infer(
     const runtime::AudioBuffer & source,
     const RvcVoiceModel & voice,
     const RvcInferenceConfig & config,

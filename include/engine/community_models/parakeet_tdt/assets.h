@@ -22,7 +22,7 @@ struct ParakeetFrontendConfig {
     float log_zero_guard = 5.9604644775390625e-8f;
 };
 
-struct ParakeetEncoderConfig {
+struct ParakeetFastConformerConfig {
     int64_t hidden_size = 1024;
     int64_t intermediate_size = 4096;
     int64_t layers = 24;
@@ -36,6 +36,9 @@ struct ParakeetEncoderConfig {
 };
 
 struct ParakeetConfig {
+    std::string variant;
+    std::string word_timestamp_mode = "default";
+    std::vector<int32_t> punctuation_token_ids;
     std::string model_type;
     int64_t vocab_size = 8193;
     int64_t blank_token_id = 8192;
@@ -45,7 +48,7 @@ struct ParakeetConfig {
     int64_t max_symbols_per_step = 10;
     std::vector<int32_t> durations = {0, 1, 2, 3, 4};
     ParakeetFrontendConfig frontend;
-    ParakeetEncoderConfig encoder;
+    ParakeetFastConformerConfig encoder;
 };
 
 struct ParakeetTDTAssets {

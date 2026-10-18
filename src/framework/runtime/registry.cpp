@@ -1,6 +1,8 @@
 #include "engine/framework/runtime/registry.h"
 
+#include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/audio/utilities/utility_api.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/filesystem.h"
@@ -11,7 +13,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <stdexcept>
+#include <system_error>
 
 namespace engine::runtime {
 
@@ -53,7 +57,30 @@ void log_model_load_trace(const ModelInspection & inspection, const ILoadedVoice
     engine::debug::trace_log_scalar("runtime.model.supports_timestamps", model.capabilities().supports_timestamps);
 }
 
+uint64_t discovered_weight_bytes(const ModelInspection & inspection) {
+    std::error_code ec;
+    uint64_t bytes = 0;
+    for (const auto & weight : inspection.discovered_weights) {
+        const uintmax_t size = std::filesystem::file_size(weight.path, ec);
+        if (!ec) {
+            bytes += static_cast<uint64_t>(size);
+        }
+        ec.clear();
+    }
+    return bytes;
+}
+
 }  // namespace
+
+void finish_model_load_trace() {
+    // Opt-in additions only (--load-progress 1): without the flag this is a
+    // no-op and the log matches the pre-load-progress behavior exactly.
+    if (!engine::core::load_progress_enabled() || !engine::debug::trace_log_enabled()) {
+        return;
+    }
+    engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"loaded"});
+    engine::core::end_model_load();
+}
 
 void ModelRegistry::register_loader(std::shared_ptr<IVoiceModelLoader> loader) {
     if (loader == nullptr) {
@@ -84,6 +111,10 @@ std::vector<std::string> ModelRegistry::families() const {
 bool ModelRegistry::supports_family(const std::string & family) const noexcept {
     for (const auto & loader : loaders_) {
         if (loader->family() == family) {
+            return true;
+        }
+        const auto aliases = loader->family_aliases();
+        if (std::find(aliases.begin(), aliases.end(), family) != aliases.end()) {
             return true;
         }
     }
@@ -128,9 +159,27 @@ std::unique_ptr<ILoadedVoiceModel> ModelRegistry::load(const ModelLoadRequest & 
     if (loader == nullptr) {
         throw std::runtime_error("no registered model loader can load: " + request.model_path.string());
     }
-    const auto inspection = engine::debug::trace_log_enabled()
-        ? std::optional<ModelInspection>(loader->inspect(request))
-        : std::nullopt;
+    // Phase brackets + the uploaded-bytes curve give trace-log consumers a
+    // continuous load progress (llama.cpp-style). Opt-in via --load-progress
+    // 1 so the log for existing downstream pipelines stays byte-identical:
+    // the runtime.model.* inspection trace below predates it and keeps its
+    // original trace-log gating. The curve STARTS here and is closed by
+    // finish_model_load_trace() once the host has built its task session:
+    // the actual weight stores upload during session construction, not
+    // inside the registry load.
+    const bool log_traced = engine::debug::trace_log_enabled();
+    const bool progress = engine::core::load_progress_enabled();
+    std::optional<ModelInspection> inspection;
+    if (log_traced) {
+        if (progress) {
+            engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"inspect"});
+        }
+        inspection = loader->inspect(request);
+        if (progress) {
+            engine::core::begin_model_load(discovered_weight_bytes(*inspection));
+            engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"load"});
+        }
+    }
     auto model = loader->load(request);
     if (inspection.has_value()) {
         log_model_load_trace(*inspection, *model);
@@ -145,13 +194,20 @@ std::unique_ptr<ILoadedVoiceModel> ModelRegistry::load(const std::filesystem::pa
 }
 
 void ModelRegistry::validate_request(const ModelLoadRequest & request) const {
-    if (!engine::io::is_existing_file(request.model_path) && !engine::io::is_existing_directory(request.model_path)) {
+    const bool builtin_audio_utility_id =
+        request.family_hint.has_value() &&
+        *request.family_hint == "builtin_audio_utils" &&
+        engine::audio::find_builtin_audio_utility(request.model_path.generic_string()).has_value();
+    if (!builtin_audio_utility_id &&
+        !engine::io::is_existing_file(request.model_path) &&
+        !engine::io::is_existing_directory(request.model_path)) {
         throw std::runtime_error("model path does not exist: " + request.model_path.string());
     }
     if (request.family_hint.has_value() && !supports_family(*request.family_hint)) {
         throw std::runtime_error("unsupported model family hint: " + *request.family_hint);
     }
     if (request.model_spec_override.has_value() &&
+        *request.model_spec_override != "embedded" &&
         !engine::io::is_existing_file(*request.model_spec_override) &&
         !engine::io::is_existing_directory(*request.model_spec_override)) {
         throw std::runtime_error("model spec override path does not exist: " + request.model_spec_override->string());
@@ -160,11 +216,15 @@ void ModelRegistry::validate_request(const ModelLoadRequest & request) const {
 
 const IVoiceModelLoader * ModelRegistry::find_loader(const ModelLoadRequest & request) const {
     for (const auto & loader : loaders_) {
-        if (request.family_hint.has_value() && loader->family() != *request.family_hint) {
-            continue;
-        }
         if (request.family_hint.has_value()) {
-            return loader.get();
+            if (loader->family() == *request.family_hint) {
+                return loader.get();
+            }
+            const auto aliases = loader->family_aliases();
+            if (std::find(aliases.begin(), aliases.end(), *request.family_hint) != aliases.end()) {
+                return loader.get();
+            }
+            continue;
         }
         if (loader->can_load(request)) {
             return loader.get();

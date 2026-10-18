@@ -63,6 +63,8 @@ struct TorchaudioSincHannResampleOptions {
     TorchaudioSincHannAccumulation accumulation = TorchaudioSincHannAccumulation::Float64;
 };
 
+TorchaudioSincHannResampleOptions torchaudio_sinc_hann_float32_options();
+
 std::vector<float> resample_mono_torchaudio_sinc_hann(
     const std::vector<float> & mono_samples,
     int source_sample_rate_hz,

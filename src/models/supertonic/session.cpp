@@ -2,10 +2,12 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/supertonic/runtime.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
@@ -82,7 +84,7 @@ SupertonicSession::SupertonicSession(
     }
     style_cache_slots_ = resolve_style_cache_slots(options);
     validate_session_options(options);
-    runtime_ = std::make_unique<SupertonicNativeRuntime>(assets_, options.backend, weight_storage_type_, style_cache_slots_);
+    runtime_ = std::make_unique<SupertonicRuntime>(assets_, options.backend, weight_storage_type_, style_cache_slots_);
 }
 
 SupertonicSession::~SupertonicSession() = default;
@@ -186,6 +188,10 @@ runtime::TaskResult SupertonicSession::finalize() {
 }
 
 SupertonicGenerationOptions SupertonicSession::generation_options_from_request(const runtime::TaskRequest & request) const {
+    const auto request_options = runtime::apply_option_v1_compatibility(
+        request.options,
+        {{"voice", "voice_id"}, {"supertonic.voice", "voice_id"}, {"speaking_rate", "speed"}},
+        "Supertonic", "request");
     SupertonicGenerationOptions options;
     if (request.text_input.has_value() && !request.text_input->language.empty()) {
         options.language = request.text_input->language;
@@ -195,6 +201,16 @@ SupertonicGenerationOptions SupertonicSession::generation_options_from_request(c
     }
     if (request.voice.has_value() && request.voice->speaker.has_value() && request.voice->speaker->cached_voice_id.has_value()) {
         options.voice = *request.voice->speaker->cached_voice_id;
+    } else {
+        // WebUI model_params send the picked preset as a plain request option
+        // (see webui/configs/model_params.json). Accept it as a fallback so the
+        // voice picker takes effect; unknown ids are rejected downstream by the
+        // voice-style loader.
+        if (const auto preset = runtime::find_option(request_options, {"voice_id"})) {
+            if (!preset->empty()) {
+                options.voice = *preset;
+            }
+        }
     }
     if (const auto value = runtime::parse_i64_option(request.options, {"num_inference_steps"})) {
         if (*value <= 0) {
@@ -202,11 +218,16 @@ SupertonicGenerationOptions SupertonicSession::generation_options_from_request(c
         }
         options.num_inference_steps = static_cast<int>(*value);
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"speaking_rate"})) {
-        if (*value <= 0.0F) {
-            throw std::runtime_error("Supertonic speaking_rate must be positive");
-        }
+    if (const auto value = runtime::parse_positive_finite_float_option(request_options, {"speed"})) {
         options.speaking_rate = *value;
+    }
+    if (request.voice.has_value() && request.voice->style.has_value() &&
+        request.voice->style->speaking_rate.has_value()) {
+        const float rate = *request.voice->style->speaking_rate;
+        if (!std::isfinite(rate) || rate <= 0.0f) {
+            throw std::runtime_error("Supertonic speaking_rate must be positive and finite");
+        }
+        options.speaking_rate = rate;
     }
     if (const auto value = runtime::parse_u32_option(request.options, {"seed"})) {
         options.seed = *value;

@@ -132,7 +132,7 @@ DramaBoxRequest parse_dramabox_request(const runtime::TaskRequest & request, con
         .value_or(out.audio_chunk_duration_sec);
     out.cross_fade_duration_sec = runtime::parse_float_option(request.options, {"cross_fade_duration_sec"})
         .value_or(out.cross_fade_duration_sec);
-    out.seed = runtime::parse_int_option(request.options, {"seed"}).value_or(out.seed);
+    out.seed = runtime::parse_u32_option(request.options, {"seed"}).value_or(static_cast<uint32_t>(out.seed));
     if (const auto value = runtime::find_option(request.options, {"guidance_rescale"})) {
         if (*value != "auto") {
             out.guidance_rescale = runtime::parse_float_option(request.options, {"guidance_rescale"}).value();
@@ -262,8 +262,10 @@ DramaBoxSession::DramaBoxSession(
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("DramaBox currently supports offline sessions");
     }
-    if (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::AudioGeneration) {
-        throw std::runtime_error("DramaBox supports Tts and AudioGeneration tasks");
+    if (task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning &&
+        task_.task != runtime::VoiceTaskKind::AudioGeneration) {
+        throw std::runtime_error("DramaBox supports Tts, VoiceCloning, and AudioGeneration tasks");
     }
     if (const auto it = this->options().options.find("dramabox.perf_mode"); it != this->options().options.end()) {
         perf_mode_ = parse_perf_mode(it->second);
@@ -281,20 +283,20 @@ DramaBoxSession::DramaBoxSession(
         engine::assets::TensorStorageType::Native,
         3,
         perf_mode_);
-    dit_ = std::make_unique<DramaBoxDitRuntime>(
+    dit_ = std::make_unique<DramaBoxDiTRuntime>(
         execution_context(),
         assets_,
         engine::assets::TensorStorageType::Native,
         perf_mode_);
-    audio_encoder_ = std::make_unique<DramaBoxAudioVaeEncoderRuntime>(
+    audio_encoder_ = std::make_unique<DramaBoxAudioVAEEncoderRuntime>(
         execution_context(),
         assets_,
         engine::assets::TensorStorageType::Native);
-    audio_decoder_ = std::make_unique<DramaBoxAudioVaeDecoderRuntime>(
+    audio_decoder_ = std::make_unique<DramaBoxAudioVAEDecoderRuntime>(
         execution_context(),
         assets_,
         engine::assets::TensorStorageType::Native);
-    vocoder_ = std::make_unique<DramaBoxVocoderRuntime>(
+    vocoder_ = std::make_unique<DramaBoxBigVganRuntime>(
         execution_context(),
         assets_,
         engine::assets::TensorStorageType::Native);
@@ -609,7 +611,7 @@ runtime::AudioBuffer DramaBoxSession::generate_audio(const DramaBoxRequest & par
         parsed.guidance_rescale < 0.0F ? auto_rescale_for_cfg(parsed.cfg_scale) : parsed.guidance_rescale;
     std::vector<float> sigma_values(1, 0.0F);
     std::vector<float> sigma_features;
-    DramaBoxDitInputs dit_inputs;
+    DramaBoxDiTInputs dit_inputs;
     dit_inputs.batch = branch_count;
     dit_inputs.tokens = state.tokens;
     dit_inputs.stg_enabled = stg_enabled;
