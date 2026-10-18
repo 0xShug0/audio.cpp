@@ -21,7 +21,15 @@
         "required": false
       }
     ],
-    "session": [],
+    "session": [
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON component execution plans. Component decoder accepts impl host/neon (default host), both on CPU independently of the encoder backend. The experimental neon implementation accelerates the vocabulary projection with the framework NEON library and requires ENGINE_ENABLE_NEON=ON and AArch64 NEON. No artifacts or params are used.",
+        "required": false,
+        "default": "{}"
+      }
+    ],
     "load": []
   },
   "packages": [],

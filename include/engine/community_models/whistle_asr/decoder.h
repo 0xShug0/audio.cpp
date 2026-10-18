@@ -17,7 +17,8 @@ constexpr int64_t kWhistleVocabulary = 8199;
 // history are request-local; immutable decoder weights are retained across requests.
 class WhistleDecoderRuntime {
 public:
-    explicit WhistleDecoderRuntime(std::shared_ptr<const WhistleAssets> assets);
+    explicit WhistleDecoderRuntime(std::shared_ptr<const WhistleAssets> assets,
+        bool use_neon = false, int threads = 1);
     ~WhistleDecoderRuntime();
     WhistleDecoderRuntime(const WhistleDecoderRuntime &) = delete;
     WhistleDecoderRuntime & operator=(const WhistleDecoderRuntime &) = delete;

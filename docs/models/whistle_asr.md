@@ -88,8 +88,7 @@ Engram lookup, projections, gates and greedy argmax also run on the host.
 
 This avoids thousands of small GGML decoder nodes per token. Four-thread CPU
 and Metal sessions benefit on the tested M4 Pro; one-thread decoding is slower
-than the previous one-thread GGML graph. See the
-[host decoder A/B report](../reports/whistle_host_decoder.md).
+than the previous one-thread GGML graph.
 
 ## Build and request options
 
@@ -112,8 +111,20 @@ Use `--backend` to select an available backend; CPU and Metal have been validate
 `--threads` sets the CPU encoder's
 thread count and bounds the host decoder's OpenMP workers; the runtime accepts
 1 to 64. Build with OpenMP enabled for parallel host decoding. Without OpenMP,
-the host decoder runs serially. The spec exposes only the optional `language`
-request option, no model-specific session or load options. Use `--language de` or
+the host decoder runs serially. An experimental decoder implementation reuses
+the framework NEON library for the FP32 vocabulary projection, retaining the
+same host attention, mHC, Hadamard and cache logic. Build with
+`-DENGINE_ENABLE_NEON=ON` on AArch64 and opt in with:
+
+```bash
+--session-option 'whistle_asr.exec_plan={"decoder":{"impl":"neon"}}'
+```
+
+The default is `host`; `impl: "default"` also selects it. Both implementations
+run on CPU independently of the encoder backend and use the session thread
+count. No artifacts or parameters are accepted. Existing embedded GGUF specs
+can use this option without reconversion. The spec exposes the optional `language`
+request option and `exec_plan` session option. Use `--language de` or
 `--request-option language=de` to force German. Omit the language option for model
 language selection. Decoding is greedy, with at most 320 text tokens. The model
 manager has no Whistle package entry because `packages` is empty.

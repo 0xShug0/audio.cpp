@@ -55,10 +55,10 @@ std::shared_ptr<const WhistleAssets> checked(
 }  // namespace
 
 WhistleRuntime::WhistleRuntime(
-    std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context)
+    std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context, bool use_neon)
     : assets_(checked(std::move(assets), execution_context)),
       encoder_(assets_, execution_context),
-      decoder_(assets_),
+      decoder_(assets_, use_neon, execution_context.config().threads),
       frontend_(assets_->mel_filterbank),
       threads_(execution_context.config().threads) {}
 

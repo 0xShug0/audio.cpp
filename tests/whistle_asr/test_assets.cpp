@@ -29,6 +29,7 @@ struct Options {
     std::string wav;
     std::string expected;
     bool full = false;
+    bool use_neon = false;
     std::string reference_dir;
     std::string dump_dir;
     // Allowed max |difference| as a fraction of the reference tensor's largest magnitude.
@@ -64,6 +65,10 @@ Options parse(int argc, char ** argv) {
             }
         } else if (argument == "--threads") {
             options.backend.threads = std::stoi(value());
+        } else if (argument == "--decoder-impl") {
+            const auto impl = value();
+            if (impl != "host" && impl != "neon") throw std::invalid_argument("Unknown decoder implementation: " + impl);
+            options.use_neon = impl == "neon";
         } else if (argument == "--tolerance") {
             options.tolerance = std::stod(value());
         } else {
@@ -73,7 +78,7 @@ Options parse(int argc, char ** argv) {
     if (positional.empty() || positional.size() > 3) {
         throw std::invalid_argument(
             "Pass <GGUF> [16k-mono.wav] [expected transcript] [--full] "
-            "[--reference <dump-dir>] [--tolerance <fraction>] [--dump <dir>] (encoder tensors and decoder logits/tokens/transcript) [--backend cpu|metal] [--threads n]");
+            "[--reference <dump-dir>] [--tolerance <fraction>] [--dump <dir>] (encoder tensors and decoder logits/tokens/transcript) [--backend cpu|metal] [--threads n] [--decoder-impl host|neon]");
     }
     options.gguf = positional[0];
     if (positional.size() > 1) options.wav = positional[1];
@@ -211,7 +216,7 @@ std::string read_text(const std::string & path) {
 void check_decoder(const Options & options, const std::shared_ptr<const whistle::WhistleAssets> & assets,
                    engine::core::ExecutionContext & execution_context) {
     const auto audio = read_audio(options.wav, true);
-    whistle::WhistleRuntime runtime(assets, execution_context);
+    whistle::WhistleRuntime runtime(assets, execution_context, options.use_neon);
     std::vector<whistle::WhistleDecodeStep> steps;
     const auto transcript = runtime.transcribe(audio, "", [&](const whistle::WhistleDecodeStep & step) {
         steps.push_back(step);
@@ -256,7 +261,7 @@ void check_transcription(const Options & options, const std::shared_ptr<const wh
                          engine::core::ExecutionContext & execution_context) {
     const auto audio = read_audio(options.wav, options.full);
     const auto start = std::chrono::steady_clock::now();
-    whistle::WhistleRuntime runtime(assets, execution_context);
+    whistle::WhistleRuntime runtime(assets, execution_context, options.use_neon);
     const auto transcript = runtime.transcribe(audio);
     std::cout << "Whistle: " << transcript.text << " [" << transcript.language << "] in "
               << std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -2,6 +2,10 @@
 
 #include "engine/community_models/whistle_asr/encoder.h"
 
+#ifdef ENGINE_HAVE_NEON
+#include "engine/framework/neon/execution.h"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -25,7 +29,8 @@ namespace {
 // time on the CPU, while the encoder weights live in the backend weight store.
 class HostDecoderWeights {
 public:
-    explicit HostDecoderWeights(const assets::TensorSource & source) {
+    explicit HostDecoderWeights(const assets::TensorSource & source, bool use_neon, int threads)
+        : threads_(threads) {
         for (const auto & metadata : source.tensors()) {
             if (metadata.dtype != "f32" && metadata.dtype != "F32" &&
                 metadata.dtype != "float32") {
@@ -37,7 +42,20 @@ public:
             auto values = source.require_f32(metadata.name, metadata.shape);
             tensors_.emplace(metadata.name, Tensor{metadata.shape, std::move(values)});
         }
+        if (use_neon) {
+#ifdef ENGINE_HAVE_NEON
+            if (!neon::available()) throw std::invalid_argument("Whistle neon decoder requires AArch64 NEON");
+            head_ = std::make_unique<neon::ExecutionPlan>();
+            const auto input = head_->input();
+            // The tied embedding is already row-major [vocabulary, hidden].
+            head_->set_output(head_->add(neon::Linear(512, 8199, tensors_.at("embedding/embedding").values), {input}));
+#else
+            throw std::invalid_argument("Whistle neon decoder requires ENGINE_ENABLE_NEON=ON");
+#endif
+        }
     }
+
+    std::vector<float> project_logits(const std::vector<float> & hidden) const;
 
     struct View {
         const float * values;
@@ -80,6 +98,10 @@ private:
         std::vector<float> values;
     };
     std::unordered_map<std::string, Tensor> tensors_;
+    int threads_;
+#ifdef ENGINE_HAVE_NEON
+    std::unique_ptr<neon::ExecutionPlan> head_;
+#endif
 };
 
 constexpr size_t kDimension = 512;
@@ -87,6 +109,27 @@ constexpr size_t kLanes = 4;
 constexpr int kLayers = 8;
 using View = HostDecoderWeights::View;
 using Rows = std::vector<float>;
+
+std::vector<float> HostDecoderWeights::project_logits(const std::vector<float> & hidden) const {
+#ifdef ENGINE_HAVE_NEON
+    if (head_) {
+        return head_->run({neon::TensorView(hidden, neon::Shape({512, 1}))}, threads_).values;
+    }
+#endif
+    const auto embedding = get("embedding/embedding");
+    Rows logits(8199);
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+    for (int64_t id = 0; id < 8199; ++id) {
+        float score = 0.0f;
+        for (size_t index = 0; index < 512; ++index) {
+            score += hidden[index] * embedding.values[static_cast<size_t>(id) * 512 + index];
+        }
+        logits[static_cast<size_t>(id)] = score;
+    }
+    return logits;
+}
 
 
 View require(const HostDecoderWeights & weights, const std::string & name,
@@ -612,25 +655,14 @@ Rows decoder_step(int32_t token, size_t position, const HostDecoderWeights & wei
     }
     normalize(h, 1, 512,
         require(weights, "stack/final_norm/scale", {512}).values);
-    Rows logits(8199);
-#ifdef _OPENMP
-#pragma omp parallel for
-#endif
-    for (int64_t id = 0; id < 8199; ++id) {
-        float score = 0.0f;
-        for (size_t index = 0; index < 512; ++index) {
-            score += h[index] * embedding.values[static_cast<size_t>(id) * 512 + index];
-        }
-        logits[static_cast<size_t>(id)] = score;
-    }
-    return logits;
+    return weights.project_logits(h);
 }
 
 }  // namespace
 
 struct WhistleDecoderRuntime::Impl {
-    explicit Impl(std::shared_ptr<const WhistleAssets> input)
-        : assets(std::move(input)), weights(*assets->weights) {}
+    explicit Impl(std::shared_ptr<const WhistleAssets> input, bool use_neon, int threads)
+        : assets(std::move(input)), weights(*assets->weights, use_neon, threads) {}
 
     std::shared_ptr<const WhistleAssets> assets;
     HostDecoderWeights weights;
@@ -641,11 +673,11 @@ struct WhistleDecoderRuntime::Impl {
     bool started = false;
 };
 
-WhistleDecoderRuntime::WhistleDecoderRuntime(std::shared_ptr<const WhistleAssets> assets) {
+WhistleDecoderRuntime::WhistleDecoderRuntime(std::shared_ptr<const WhistleAssets> assets, bool use_neon, int threads) {
     if (!assets || !assets->weights) {
         throw std::invalid_argument("Whistle decoder needs verified model assets");
     }
-    impl_ = std::make_unique<Impl>(std::move(assets));
+    impl_ = std::make_unique<Impl>(std::move(assets), use_neon, threads);
 }
 
 WhistleDecoderRuntime::~WhistleDecoderRuntime() = default;

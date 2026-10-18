@@ -32,7 +32,8 @@ using WhistleDecodeObserver = std::function<void(const WhistleDecodeStep &)>;
 
 class WhistleRuntime {
 public:
-    WhistleRuntime(std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context);
+    WhistleRuntime(std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context,
+        bool use_neon = false);
     ~WhistleRuntime();
     WhistleRuntime(const WhistleRuntime &) = delete;
     WhistleRuntime & operator=(const WhistleRuntime &) = delete;
