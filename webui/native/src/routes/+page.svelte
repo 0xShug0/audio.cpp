@@ -1136,7 +1136,7 @@
       !(['vibevoice', 'moss_ttsd'].includes(selected?.family) && spec.name === 'voice_samples') &&
       !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
-    if (selected?.family === 'ace_step' && server?.ui_management === false) {
+    if (selected?.family === 'ace_step' && isConfiguredEntry(selected)) {
       const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
       advancedValues = { ...advancedValues,
         lora: configured?.['ace_step.lora'] ?? '',
@@ -2737,7 +2737,7 @@
         {#if selected.family === 'ace_step'}
           <AceStepPanel modelId={selected.id} bind:text bind:lyrics bind:language bind:duration
             {seed} busy={running || loadingModel} bind:rewritingCaption bind:advancedValues
-            adapterEditable={server?.ui_management === true}
+            adapterEditable={server?.ui_management === true && !isConfiguredEntry(selected)}
             {paramSpecs} bind:outputText bind:outputJson bind:status bind:warningStatus bind:errorStatus
             {ensureLoaded} {requestOptions} {resolveRequestSeed} {setParameterValue} {log} {tr} />
         {:else if modelStudioPanel}
