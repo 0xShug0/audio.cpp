@@ -144,10 +144,6 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
         throw runtime::InvalidRequestError(error.what());
     }
     sampling.seed = seed.value_or(runtime::random_u32_seed());
-    if (const auto v = runtime::parse_int_option(effective.options, {"max_pause_frames"})) sampling.max_pause_frames = *v;
-    if (const auto v = runtime::find_option(effective.options, {"silence_codes"})) sampling.silence_codes = *v;
-    if (const auto v = runtime::parse_finite_float_option(effective.options, {"pause_end_ratio"})) sampling.pause_end_ratio = *v;
-    if (const auto v = runtime::parse_finite_float_option(effective.options, {"pause_cap_ratio"})) sampling.pause_cap_ratio = *v;
     std::vector<Drama3Take> references;
     if (effective.voice && effective.voice->speaker && effective.voice->speaker->cached_voice_id &&
         !effective.voice->speaker->audio) {

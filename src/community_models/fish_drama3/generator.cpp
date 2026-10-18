@@ -6,18 +6,9 @@
 #include "engine/framework/sampling/hf_sampler.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <chrono>
-#include <cstdint>
-#include <cstdlib>
 #include <deque>
-#include <fstream>
-#include <limits>
-#include <sstream>
-#include <mutex>
-#include <unordered_map>
-#include <unordered_set>
 #include <iostream>
 #include <numeric>
 #include <random>
@@ -54,97 +45,6 @@ int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
     }
     std::discrete_distribution<size_t> choice(probabilities.begin(), probabilities.end());
     return order[choice(random)];
-}
-
-// drama3-small pause clamp (request options max_pause_frames / silence_codes / pause_end_ratio /
-// pause_cap_ratio, else AUDIOCPP_DRAMA3_* env). After max_pause_frames consecutive silence-code
-// frames, silence codes are masked from the next main-token draw, so the model must resume speech
-// or emit EOS (21.5 frames = 1 s). 0 = off.
-struct PauseClamp {
-    std::unordered_set<int32_t> codes;
-    int64_t max_pause = 0;
-    // Length guard (with the clamp): a pause after end_ratio x the text's expected frames ends the
-    // take instead of forcing speech; cap_ratio x expected ends it regardless (babble backstop).
-    double end_ratio = 2.0;
-    double cap_ratio = 3.0;
-};
-
-// Expected frames for the spoken text, fitted on clean takes (21.5 frames/s):
-// 3.88 per CJK/kana character + 2.00 per ASCII letter or digit + 23.9 per control span ([...], <...>,
-// each opening bracket) + 8.5. A "Direction: ...\nLine:" prefix is not spoken.
-double expected_frames(const std::string & text) {
-    std::string spoken = text;
-    if (spoken.rfind("Direction:", 0) == 0) {
-        const auto line = spoken.find("\nLine:");
-        if (line != std::string::npos) spoken = spoken.substr(line + 6);
-    }
-    double cjk = 0, latin = 0, spans = 0;
-    int depth_square = 0, depth_angle = 0;
-    for (size_t i = 0; i < spoken.size();) {
-        const unsigned char c = static_cast<unsigned char>(spoken[i]);
-        uint32_t cp = c;
-        size_t len = 1;
-        if (c >= 0xF0 && i + 3 < spoken.size()) { cp = ((c & 0x07) << 18) | ((spoken[i + 1] & 0x3F) << 12) | ((spoken[i + 2] & 0x3F) << 6) | (spoken[i + 3] & 0x3F); len = 4; }
-        else if (c >= 0xE0 && i + 2 < spoken.size()) { cp = ((c & 0x0F) << 12) | ((spoken[i + 1] & 0x3F) << 6) | (spoken[i + 2] & 0x3F); len = 3; }
-        else if (c >= 0xC0 && i + 1 < spoken.size()) { cp = ((c & 0x1F) << 6) | (spoken[i + 1] & 0x3F); len = 2; }
-        i += len;
-        if (cp == '[') { ++depth_square; ++spans; continue; }
-        if (cp == ']') { if (depth_square > 0) --depth_square; continue; }
-        if (cp == '<') { ++depth_angle; ++spans; continue; }
-        if (cp == '>') { if (depth_angle > 0) --depth_angle; continue; }
-        if (depth_square > 0 || depth_angle > 0) continue;
-        const bool cjk_punct = cp == 0x3002 || cp == 0x3001 || cp == 0xFF01 || cp == 0xFF1F || cp == 0x300C ||
-                               cp == 0x300D || cp == 0x2026 || cp == 0x30FB || cp == 0xFF08 || cp == 0xFF09;
-        if (cp >= 0x3000 && !cjk_punct) cjk += 1;
-        else if (cp < 0x80 && std::isalnum(static_cast<int>(cp))) latin += 1;
-        else if (cp >= 0x80 && !cjk_punct) latin += 1;
-    }
-    return 3.88 * cjk + 2.00 * latin + 23.9 * spans + 8.5;
-}
-
-std::unordered_set<int32_t> parse_silence_codes(const std::string & spec) {
-    static std::mutex mutex;
-    static std::unordered_map<std::string, std::unordered_set<int32_t>> cache;
-    std::lock_guard<std::mutex> lock(mutex);
-    if (const auto it = cache.find(spec); it != cache.end()) return it->second;
-    std::string text = spec;
-    if (std::ifstream file(spec); file) {
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        text = buffer.str();
-    }
-    for (char & c : text) {
-        if (!(c >= '0' && c <= '9')) c = ' ';
-    }
-    std::unordered_set<int32_t> codes;
-    std::istringstream values(text);
-    for (int32_t code; values >> code;) codes.insert(code);
-    if (codes.empty()) throw std::runtime_error("Drama 3 silence_codes is empty");
-    return cache.emplace(spec, std::move(codes)).first->second;
-}
-
-// Request options override the AUDIOCPP_DRAMA3_* environment defaults.
-PauseClamp resolve_pause_clamp(const Drama3Sampling & sampling) {
-    PauseClamp clamp;
-    const char * env_frames = std::getenv("AUDIOCPP_DRAMA3_MAX_PAUSE_FRAMES");
-    clamp.max_pause = sampling.max_pause_frames >= 0 ? sampling.max_pause_frames
-                                                     : (env_frames != nullptr ? std::atoll(env_frames) : 0);
-    if (clamp.max_pause <= 0) {
-        clamp.max_pause = 0;
-        return clamp;
-    }
-    std::string spec = sampling.silence_codes;
-    if (spec.empty()) {
-        const char * env_codes = std::getenv("AUDIOCPP_DRAMA3_SILENCE_CODES");
-        if (env_codes == nullptr) throw std::runtime_error("Drama 3 pause clamp needs silence_codes or AUDIOCPP_DRAMA3_SILENCE_CODES");
-        spec = env_codes;
-    }
-    clamp.codes = parse_silence_codes(spec);
-    if (const char * v = std::getenv("AUDIOCPP_DRAMA3_END_RATIO")) clamp.end_ratio = std::atof(v);
-    if (const char * v = std::getenv("AUDIOCPP_DRAMA3_CAP_RATIO")) clamp.cap_ratio = std::atof(v);
-    if (sampling.pause_end_ratio > 0) clamp.end_ratio = sampling.pause_end_ratio;
-    if (sampling.pause_cap_ratio > 0) clamp.cap_ratio = sampling.pause_cap_ratio;
-    return clamp;
 }
 
 std::vector<float> last_hidden(const std::vector<float> & values, int64_t width) {
@@ -318,11 +218,6 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     Drama3Frame current = prompt.back();
     std::mt19937 random(sampling.seed);
     std::deque<int32_t> recent;
-    const PauseClamp clamp = resolve_pause_clamp(sampling);
-    int64_t silent_run = 0;
-    const double expected = expected_frames(text);
-    const auto end_frames = static_cast<int64_t>(clamp.end_ratio * expected);
-    const auto cap_frames = static_cast<int64_t>(clamp.cap_ratio * expected);
     std::vector<Drama3Frame> output_frames;
     Drama3Generation result;
     if (streaming) codec_->reset_decode_stream();
@@ -334,17 +229,6 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         // Both drama3 (lm_head_token_ids) and drama3-small (lm_head_rows) return
         // compact [EOS, semantic 0..N-1] logits from the backbone.
         auto candidates = std::move(logits);
-        if (clamp.max_pause > 0 && step >= cap_frames) {
-            std::cerr << "[fish_drama3] length guard: stopped at " << step << " frames (expected " << expected << ")\n";
-            break;
-        }
-        if (clamp.max_pause > 0 && silent_run >= clamp.max_pause && step >= end_frames) break;  // pause after the text is done
-        if (clamp.max_pause > 0 && silent_run >= clamp.max_pause) {
-            // Long enough silence: the next frame must be speech or EOS (candidate 0).
-            for (const int32_t code : clamp.codes) {
-                if (code + 1 < static_cast<int32_t>(candidates.size())) candidates[static_cast<size_t>(code) + 1] = -std::numeric_limits<float>::infinity();
-            }
-        }
         const int32_t first = sample(candidates, sampling.temperature, sampling.top_k, sampling.top_p, random);
         const int32_t second = sample(candidates, 1.0F, 30, 0.95F, random);
         const int32_t first_token = first == 0 ? assets_->eos : assets_->tower.semantic_begin + first - 1;
@@ -376,7 +260,6 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         component_ms[6] += debug::elapsed_ms(tower_started) - (component_ms[5] - sampling_before_tower);
         output_frames.push_back(next);
         if (step == 0) mark_phase("tower_first_frame_ms");
-        silent_run = clamp.codes.count(next[1]) ? silent_run + 1 : 0;
         recent.push_back(next[0]);
         if (recent.size() > 16) recent.pop_front();
         if (streaming) {
