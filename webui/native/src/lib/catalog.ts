@@ -57,6 +57,7 @@ const exposeAllGgufPackageFamilies = new Set([
   'midashenglm_gen',
   'sanotts',
   'mossformer2',
+  'plapre',
   'voxtral_tts'
 ]);
 

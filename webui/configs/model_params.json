@@ -31,6 +31,15 @@
     {"name":"threshold","type":"number","label":"Detection threshold","minimum":0,"maximum":1,"step":0.05},
     {"name":"sliding_window_size","type":"number","label":"Sliding window frames","minimum":1,"step":1}
   ],
+  "open_wake_word": [
+    {"name":"threshold","type":"number","label":"Detection threshold","default":0.5,"minimum":0,"maximum":1,"step":0.05}
+  ],
+  "plapre": [
+    {"name":"temperature","type":"number","label":"Temperature","default":0.8,"minimum":0,"step":0.05},
+    {"name":"top_p","type":"number","label":"Top-p","default":0.95,"minimum":0.01,"maximum":1,"step":0.01},
+    {"name":"top_k","type":"number","label":"Top-k","default":50,"minimum":-1,"step":1},
+    {"name":"x_vector_only_mode","type":"bool","label":"Reference speaker embedding only","default":false}
+  ],
   "mossformer2": [
     {"name":"audio_chunk_duration_sec","type":"number","label":"Chunk duration (s, 0 = whole recording)","default":2,"minimum":0,"step":0.1},
     {"name":"audio_chunk_overlap_sec","type":"number","label":"Chunk overlap (s)","default":0.5,"minimum":0,"step":0.1},

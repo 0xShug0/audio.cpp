@@ -71,8 +71,7 @@
     const transcript = referenceText.trim();
     let input = singleText.trim();
     if (single) {
-      if (!file) throw context.warning('Choose a reference recording for single-voice cloning.');
-      if (!transcript) throw context.warning('Enter the words spoken in the reference recording.');
+      if (file && !transcript) throw context.warning('Enter the words spoken in the reference recording.');
       if (!input) throw context.warning('Enter the text to generate.');
     } else {
       if (!dialogue.length || dialogue.some((line) => !line.text.trim())) {
@@ -94,11 +93,14 @@
       model: context.modelId, input, seed: context.seed, response_format: 'wav', options
     };
     if (context.maxTokens !== undefined) body.max_tokens = context.maxTokens;
-    context.setStatus('Preparing voice references...');
     if (single) {
-      body.voice_ref = await uploadWav(await browserDecodeToWav(file!), context.signal);
-      body.reference_text = transcript;
+      if (file) {
+        context.setStatus('Preparing voice reference...');
+        body.voice_ref = await uploadWav(await browserDecodeToWav(file), context.signal);
+        body.reference_text = transcript;
+      }
     } else {
+      context.setStatus('Preparing voice references...');
       const used = new Set(dialogue.map((line) => line.speaker));
       const references = [];
       for (const speaker of cast.filter((speaker) => used.has(speaker.id))) {
@@ -110,13 +112,13 @@
       }
       options.multi_reference_cond = JSON.stringify(references);
     }
-    context.setStatus(single ? 'Cloning voice...' : 'Generating multi-speaker dialogue...');
+    context.setStatus(single ? (file ? 'Cloning voice...' : 'Generating speech...') : 'Generating multi-speaker dialogue...');
     const result = await speech(body, context.signal);
     return {
       audio: result.blob,
       text: '',
       json: JSON.stringify({
-        mode: single ? 'single_voice_clone' : 'multi_speaker',
+        mode: single ? (file ? 'single_voice_clone' : 'tts') : 'multi_speaker',
         speakers: single ? 1 : new Set(dialogue.map((line) => line.speaker)).size,
         seed: context.seed, text_chunk_size: options.text_chunk_size,
         wall_ms: result.wallMs, rtf: result.rtf
@@ -130,14 +132,14 @@
 <div class="drama-workspace">
   <div class="mode-switch" role="group" aria-label="Drama 3 mode">
     <button class:chosen={mode === 'single'} aria-pressed={mode === 'single'} disabled={busy}
-      on:click={() => mode = 'single'}><User size={17} />Single-voice clone</button>
+      on:click={() => mode = 'single'}><User size={17} />Single voice</button>
     <button class:chosen={mode === 'multi'} aria-pressed={mode === 'multi'} disabled={busy}
       on:click={() => mode = 'multi'}><Users size={17} />Multi-speaker<span class="test-label">Testing</span></button>
   </div>
 
   {#if mode === 'single'}
     <section aria-label="Single-voice reference" class="reference-section">
-      <h3><User size={17} />Reference voice</h3>
+      <h3><User size={17} />Reference voice (optional)</h3>
       <Drama3Reference id="drama-single" bind:file={referenceFile} bind:transcript={referenceText} {busy} {savedVoices} />
     </section>
     <section class="script-section">

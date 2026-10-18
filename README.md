@@ -95,7 +95,6 @@ Model weights keep the license of their original release, which is separate from
 | **dots_tts** | TTS, Clone, Edit, Ctrl | multilingual | DotTTS SOAR<br>DotTTS MeanFlow<br>DotTTS Edit | GGUF 16/Q8, Stream |
 | **dramabox** | TTS, Clone | en | DramaBox expressive TTS and voice cloning | GGUF Q8 |
 | **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | Fish Audio S2 Pro | GGUF 16/Q8, Stream |
-| **[fish_drama3](docs/models/fish_drama3.md)** | TTS, Clone, Ctrl, Edit | auto | Fish Audio Drama 3 (experimental community port) | Mixed Q2_K/Q3_K/Q4_K GGUF, Stream |
 | **firered_audio** | ASR, TTS, Clone, Design, Ctrl | zh, en | FireRedAudio multimodal speech/audio model with ASR, understanding, cloning, design, and edit paths | GGUF original/Q8 |
 | **fireredtts3** | TTS, Clone, Design, Ctrl | 24 langs + 21 zh dialects | FireRedTTS3 Base<br>FireRedTTS3 Instruct/Voicedesign | GGUF original/Q8 |
 | **higgs_audio_tts** | TTS, Clone, Ctrl | auto | Higgs Audio v3 TTS 4B | GGUF 16/Q8, Stream |
@@ -212,6 +211,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **confucius4_r2t2** | ASR | 30 languages | Safetensors, GGUF F16/Q8/Q4, Stream | [@davidxifeng](https://github.com/davidxifeng) | [Confucius4-R2T2](docs/models/r2t2.md) streaming ASR with context and hotword prompts |
 | **echo_tts** | TTS, Clone | en | GGUF 16/Q8 | [@5uck1ess](https://github.com/5uck1ess) | [Echo-TTS](docs/models/echo_tts.md) 44.1 kHz zero-shot voice cloning with EchoDiT latents and Fish S1-DAC decoding |
 | **f5_tts** | TTS, Clone | en, ar (Habibi) | GGUF | [@tareko](https://github.com/tareko) | [F5-TTS](docs/models/f5_tts.md) flow-matching DiT synthesis and voice cloning, with Habibi Arabic aliases `habibi`/`habibi_tts` |
+| **fish_drama3** | TTS, Clone, Ctrl, Edit | auto | Mixed Q2_K/Q3_K/Q4_K GGUF, IQ3_XXS (small), Stream | [@JarodMica](https://github.com/JarodMica) (base), [@Th-Underscore](https://github.com/Th-Underscore) (small) | Experimental Fish Audio Drama 3 port and Drama3-small variant support |
 | **glm_tts** | TTS, Clone | zh, en | GGUF | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](docs/models/glm_tts.md) zero-shot synthesis and voice cloning support |
 | **zipvoice** | TTS, Clone | zh, en | GGUF F32, Stream | Community | [ZipVoice](docs/models/zipvoice.md) k2-fsa TTSZipformer flow-matching zero-shot voice cloning with Vocos vocoder; jieba + pypinyin Chinese frontend; chunk streaming |
 | **granite5asr** | ASR | en | GGUF Q8 | [@ampersandru](https://github.com/ampersandru) | [IBM Granite Speech 5.0 470M TurboCTC](docs/models/granite5asr.md) ultra-fast Conformer-CTC ASR with Shaw relative positional embeddings and ByteLevel BPE |
