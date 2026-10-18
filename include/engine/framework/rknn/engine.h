@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,14 @@ private:
     int64_t mib_per_unit_ = 0;
     int64_t budget_mib_ = 0;
 };
+
+// Resolves one `exec_plan` artifact path against the directory the model was loaded from. Every
+// sidecar takes its engine as a path the operator types, and the convention everywhere else in the
+// runtime is that a model's files are named relative to the model (a `ResourceBundle` reference, a
+// `miotts` codec, a `chatterbox` sidecar). A relative name is therefore joined onto `model_root`
+// when that file exists; an absolute path, an empty root, and a name that is not under the root are
+// returned unchanged, so a failed load quotes exactly what was asked for.
+std::string resolve_engine_path(const std::string & artifact, const std::filesystem::path & model_root);
 
 #if defined(ENGINE_HAVE_RKNN)
 

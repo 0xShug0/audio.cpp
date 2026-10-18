@@ -384,6 +384,11 @@ or `impl=default` to retain that component's existing selection. Explicit RKNN
 selection requires its compiled files and an RKNN-enabled build; files alone
 do not select RKNN. Unknown fields, unsupported implementations/backends, missing
 required artifacts, unknown components/artifact roles, and unsupported params are errors.
+An artifact path is used as given, except that a name that exists under the model's own
+directory — the directory `--model` names, the same root a GGUF sidecar is found under —
+resolves to it. So an engine installed with the weights is nameable by file
+(`"main":"vocoder_stateful_64b_fp16.rknn"`), while a board path, or a path relative to the
+process working directory, keeps working as before.
 Kokoro's RKNN generator accepts `params.overlap` (nonnegative integer, default 0)
 and `params.gain` (boolean, default false). The other implementations currently
 accept no params. Parameter types and bounds are checked by the model, including
