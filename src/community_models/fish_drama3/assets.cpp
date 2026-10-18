@@ -123,6 +123,7 @@ std::shared_ptr<const Drama3Assets> load_drama3_assets(const std::filesystem::pa
     b.experts = json::require_i64(text, "num_experts");
     b.experts_per_token = json::require_i64(text, "num_experts_per_tok");
     b.layers = json::require_i64(text, "num_hidden_layers");
+    b.experts_per_layer = json::optional_i64_array(text, "num_experts_per_layer", {});
     b.heads = json::require_i64(text, "num_attention_heads");
     b.kv_heads = json::require_i64(text, "num_key_value_heads");
     b.head_dim = json::require_i64(text, "head_dim");
@@ -145,6 +146,16 @@ std::shared_ptr<const Drama3Assets> load_drama3_assets(const std::filesystem::pa
         !json::optional_bool(text, "norm_topk_prob", true) || !json::require_bool(text, "layernorm_zero_centered_gamma")) {
         throw std::runtime_error("unsupported Drama 3 expert or normalization configuration");
     }
+    if (!b.experts_per_layer.empty()) {
+        if (static_cast<int64_t>(b.experts_per_layer.size()) != b.layers) {
+            throw std::runtime_error("Drama 3 num_experts_per_layer needs one entry per layer");
+        }
+        for (const auto count : b.experts_per_layer) {
+            if (count < b.experts_per_token || count > b.experts) {
+                throw std::runtime_error("Drama 3 per-layer expert count out of range");
+            }
+        }
+    }
     const auto & audio = root.require("audio_decoder_config");
     auto & t = out->tower;
     t.hidden_size = json::require_i64(audio, "dim");
@@ -161,6 +172,10 @@ std::shared_ptr<const Drama3Assets> load_drama3_assets(const std::filesystem::pa
     t.rotary_fraction = json::require_f32(audio, "rotary_percent");
     t.semantic_begin = json::require_i32(root, "semantic_start_token_id");
     out->eos = json::require_i32(root, "eos_token_id");
+    b.lm_head_rows = json::optional_i64(root, "semantic_head_rows", 0);
+    if (b.lm_head_rows != 0 && b.lm_head_rows != t.codebook_size + 1) {
+        throw std::runtime_error("Drama 3 semantic head must have codebook_size + 1 rows");
+    }
     if (t.hidden_size != b.hidden_size || t.residual_layers != 9 ||
         json::require_i64(root, "semantic_end_token_id") + 1 - t.semantic_begin != t.codebook_size ||
         !json::require_bool(audio, "rotary_interleaved") ||
