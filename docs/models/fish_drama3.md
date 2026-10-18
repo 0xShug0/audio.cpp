@@ -156,6 +156,17 @@ codec weights. Set `--session-option fish_drama3.codec_encoder_bf16_compute=fals
 to restore the previous encoder arithmetic. This changes reference-conditioned
 generation but does not change codec decoding or backbone inference.
 
+To reduce reference-encoder convolution memory, set
+`--session-option fish_drama3.codec_encoder_chunk_samples=65536`.
+The value is measured in samples at the codec sample rate and must be zero
+(the default, full encoding) or a positive multiple of 512. Chunking starts
+when the padded reference exceeds the chunk size plus 16,384 context samples;
+shorter references use the full graph. Overlapping convolution windows reuse
+one cached graph; the transformer and quantizer still process the full feature
+sequence, so total memory is not constant. Chunking can cost additional time
+and produce small backend-dependent numerical differences. Existing GGUFs
+accept the option without a spec override.
+
 Host memory is required for offloaded weights. Context capacity includes text,
 reference audio frames, prior takes, and the requested generation budget.
 
