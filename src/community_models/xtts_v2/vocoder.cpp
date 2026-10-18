@@ -1,5 +1,10 @@
 // xtts_v2 vocoder -- HiFi-GAN + ResNet speaker encoder
 // Ported from CrispASR xtts_voc.cpp for audio.cpp framework.
+// MSVC's <cmath> only exposes M_PI with _USE_MATH_DEFINES; define it before
+// any include (framework headers may pull <cmath> in transitively).
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
+#endif
 
 #include "engine/community_models/xtts_v2/vocoder.h"
 #include "engine/framework/core/backend.h"

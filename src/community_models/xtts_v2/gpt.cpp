@@ -1,4 +1,8 @@
 // xtts_v2 GPT engine -- GPT-2 AR + ConditioningEncoder + Perceiver resampler
+// MSVC's <cmath> only exposes M_PI with _USE_MATH_DEFINES; define it first.
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
+#endif
 #include "engine/community_models/xtts_v2/gpt.h"
 #include "engine/community_models/xtts_v2/assets.h"
 #include "engine/community_models/xtts_v2/tokenizer_text.h"
@@ -11,6 +15,12 @@
 #include <chrono>
 #include <omp.h>
 #include <cmath>
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+static inline int xtts_ctz32(unsigned v) { unsigned long r; _BitScanForward(&r, v); return (int)r; }
+#else
+static inline int xtts_ctz32(unsigned v) { return __builtin_ctz(v); }
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -96,7 +106,7 @@ static void h_c1d(float* o, const float* W, const float* X, const float* b, int 
 static float gelu_t(float x) { return 0.5f * x * (1.0f + tanhf(x * 0.79788456f + 0.044715f * x * x * x)); }
 static void get_emb(ggml_tensor* w, int t, float* o, int d) {
     int vocab = (int)w->ne[1];
-    if (t < 0 || t >= vocab) { std::fill(o, o + d, 0); return; }
+    if (t < 0 || t >= vocab) { std::fill(o, o + d, 0.0f); return; }
     size_t co = (size_t)t * w->nb[1];
     size_t row_bytes = w->nb[1];
     if (w->type == GGML_TYPE_F32) ggml_backend_tensor_get(w, o, co, d * sizeof(float));
@@ -172,7 +182,7 @@ static std::vector<float> comp_mel(const float* pcm, int ns, int sr, int nfft, i
     int T2 = (int)((pd.size() - nfft) / hop) + 1; if (T2 <= 0) return {};
     std::vector<float> mel(nm * T2, 0);
     // Precompute bit-reversal permutation and twiddles for radix-2 FFT (nfft is a power of 2)
-    const int levels = __builtin_ctz((unsigned)nfft);           // log2(nfft)
+    const int levels = xtts_ctz32((unsigned)nfft);           // log2(nfft)
     std::vector<unsigned> brev(nfft);
     for (unsigned i = 0; i < (unsigned)nfft; i++) { unsigned r = 0; for (int b = 0; b < levels; b++) if (i & (1u << b)) r |= 1u << (levels - 1 - b); brev[i] = r; }
     std::vector<float> cos_t(nfft / 2), sin_t(nfft / 2);
@@ -1046,10 +1056,11 @@ bool XttSv2GptEngine::load(const std::filesystem::path& gpt_path, const std::fil
     impl_ = new Impl(); impl_->n_threads = n_threads;
     impl_->backend = ggml_backend_cpu_init();
     if (!impl_->backend) return false;
-    if (!load_gguf(gpt_path.c_str(), impl_->backend, impl_->gpt_wl)) {
+    const std::string gpt_path_s = gpt_path.string();  // wchar_t-safe on Windows
+    if (!load_gguf(gpt_path_s.c_str(), impl_->backend, impl_->gpt_wl)) {
         ggml_backend_free(impl_->backend); delete impl_; impl_ = nullptr; return false; }
     if (verbose) fprintf(stderr, "xtts_v2: loaded %d tensors from GPT GGUF\n", (int)impl_->gpt_wl.tensors.size());
-    gguf_context* gu = gguf_init_from_file(gpt_path.c_str(), {true, nullptr});
+    gguf_context* gu = gguf_init_from_file(gpt_path_s.c_str(), {true, nullptr});
     if (gu) {
         impl_->hp.n_layers = kv_u32(gu, "xtts.gpt.n_layers", 30);
         impl_->hp.d = kv_u32(gu, "xtts.gpt.d_model", 1024);

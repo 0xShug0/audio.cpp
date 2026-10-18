@@ -8,7 +8,7 @@
 namespace engine::models::xtts_v2 {
 
 // Loader factory function (registered via CMakeLists.txt).
-extern "C" std::shared_ptr<runtime::IVoiceModelLoader> make_xtts_v2_loader();
+std::shared_ptr<runtime::IVoiceModelLoader> make_xtts_v2_loader();
 
 class XttSv2LoadedModel final : public runtime::ILoadedVoiceModel {
 public:
