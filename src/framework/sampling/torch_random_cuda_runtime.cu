@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <map>
 #include <stdexcept>
 #include <string>
 
@@ -320,22 +321,29 @@ void sample_topk_exponential_pairs_cuda(
     if (songs > kMaxSongs) {
         throw std::invalid_argument("torch CUDA top-k exponential sampler song count is too large");
     }
-    static thread_local uint64_t * device_seeds = nullptr;
-    static thread_local uint64_t * device_offsets = nullptr;
-    static thread_local int32_t * device_codes = nullptr;
-    if (device_seeds == nullptr) {
-        check_cuda(cudaMalloc(&device_seeds, kMaxSongs * sizeof(uint64_t)), "cudaMalloc sampler seeds");
-        check_cuda(cudaMalloc(&device_offsets, kMaxSongs * sizeof(uint64_t)), "cudaMalloc sampler offsets");
-        check_cuda(cudaMalloc(&device_codes, kMaxSongs * sizeof(int32_t)), "cudaMalloc sampler codes");
+    struct SamplerBuffers {
+        uint64_t * seeds = nullptr;
+        uint64_t * offsets = nullptr;
+        int32_t * codes = nullptr;
+    };
+    // Serving workers can alternate between models on different GPUs. Cache
+    // allocations per device so pointers are never reused cross-device and a
+    // busy server does not allocate again on every model switch.
+    static thread_local std::map<int, SamplerBuffers> buffers_by_device;
+    auto & buffers = buffers_by_device[policy.cuda_device_index];
+    if (buffers.seeds == nullptr) {
+        check_cuda(cudaMalloc(&buffers.seeds, kMaxSongs * sizeof(uint64_t)), "cudaMalloc sampler seeds");
+        check_cuda(cudaMalloc(&buffers.offsets, kMaxSongs * sizeof(uint64_t)), "cudaMalloc sampler offsets");
+        check_cuda(cudaMalloc(&buffers.codes, kMaxSongs * sizeof(int32_t)), "cudaMalloc sampler codes");
     }
     // seeds/offsets are frame constants: callers pass them only on the first
     // call of a frame (offset_step_blocks advances later calls on device).
     if (seeds != nullptr && offset_blocks != nullptr) {
         check_cuda(
-            cudaMemcpy(device_seeds, seeds, static_cast<size_t>(songs) * sizeof(uint64_t), cudaMemcpyHostToDevice),
+            cudaMemcpy(buffers.seeds, seeds, static_cast<size_t>(songs) * sizeof(uint64_t), cudaMemcpyHostToDevice),
             "cudaMemcpy sampler seeds");
         check_cuda(
-            cudaMemcpy(device_offsets, offset_blocks, static_cast<size_t>(songs) * sizeof(uint64_t), cudaMemcpyHostToDevice),
+            cudaMemcpy(buffers.offsets, offset_blocks, static_cast<size_t>(songs) * sizeof(uint64_t), cudaMemcpyHostToDevice),
             "cudaMemcpy sampler offsets");
     }
     const size_t shared_bytes = static_cast<size_t>(vocab) * 2 * sizeof(float);
@@ -344,14 +352,14 @@ void sample_topk_exponential_pairs_cuda(
         vocab,
         guidance_scale,
         top_k,
-        device_seeds,
-        device_offsets,
+        buffers.seeds,
+        buffers.offsets,
         offset_step_blocks,
         stride,
-        device_codes);
+        buffers.codes);
     check_cuda(cudaGetLastError(), "sample_topk_exponential_pairs_kernel");
     check_cuda(
-        cudaMemcpy(out_codes, device_codes, static_cast<size_t>(songs) * sizeof(int32_t), cudaMemcpyDeviceToHost),
+        cudaMemcpy(out_codes, buffers.codes, static_cast<size_t>(songs) * sizeof(int32_t), cudaMemcpyDeviceToHost),
         "cudaMemcpy sampler codes");
 }
 
@@ -367,9 +375,22 @@ struct DepthFrameBuffers {
     int64_t hidden_size = 0;
 };
 
+struct DepthFrameBufferCache {
+    std::map<int, DepthFrameBuffers> by_device;
+    int active_device = -1;
+};
+
+DepthFrameBufferCache & depth_frame_buffer_cache() {
+    static thread_local DepthFrameBufferCache cache;
+    return cache;
+}
+
 DepthFrameBuffers & depth_frame_buffers() {
-    static thread_local DepthFrameBuffers buffers;
-    return buffers;
+    auto & cache = depth_frame_buffer_cache();
+    if (cache.active_device < 0) {
+        throw std::runtime_error("torch CUDA depth frame buffers were not initialized");
+    }
+    return cache.by_device.at(cache.active_device);
 }
 
 __global__ void depth_frame_residual_kernel(
@@ -393,16 +414,18 @@ __global__ void depth_frame_residual_kernel(
 }  // namespace
 
 void depth_frame_ensure_cuda(int64_t songs, int64_t levels, int64_t hidden_size, const TorchCudaSamplingPolicy & policy) {
-    auto & buffers = depth_frame_buffers();
+    auto & cache = depth_frame_buffer_cache();
+    cache.active_device = policy.cuda_device_index;
+    auto & buffers = cache.by_device[policy.cuda_device_index];
+    check_cuda(cudaSetDevice(policy.cuda_device_index), "cudaSetDevice");
     if (buffers.songs >= songs && buffers.levels >= levels && buffers.hidden_size == hidden_size) {
         return;
     }
-    check_cuda(cudaSetDevice(policy.cuda_device_index), "cudaSetDevice");
     if (buffers.codes != nullptr) {
-        cudaFree(buffers.codes);
-        cudaFree(buffers.hidden);
-        cudaFree(buffers.seeds);
-        cudaFree(buffers.offsets);
+        check_cuda(cudaFree(buffers.codes), "cudaFree frame codes");
+        check_cuda(cudaFree(buffers.hidden), "cudaFree frame hidden");
+        check_cuda(cudaFree(buffers.seeds), "cudaFree frame seeds");
+        check_cuda(cudaFree(buffers.offsets), "cudaFree frame offsets");
     }
     buffers.levels = levels;
     buffers.songs = songs;
