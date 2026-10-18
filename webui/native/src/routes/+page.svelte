@@ -1177,6 +1177,8 @@
     advancedJson = '{}';
   }
 
+  let configuredSelectionInitialized = false;
+
   function syncConfiguredSelection() {
     if (!server || server.ui_management) return;
     const entries = configuredCatalogEntries();
@@ -1186,7 +1188,8 @@
     }
     const current = selectedId ? entries.find((entry) => entry.id === selectedId) : undefined;
     const next = current || entries[0];
-    if (selectedId !== next.id) {
+    const initialize = !configuredSelectionInitialized || selectedId !== next.id;
+    if (initialize) {
       quickStartVoice = '';
       configuredVoices = [];
     }
@@ -1196,9 +1199,12 @@
     workflowSelections = { ...workflowSelections, [activeWorkflow]: next.id };
     modelPath = next.path;
     installed = true;
-    chunkBudget = defaultChunkBudget(next.family);
     localStorage.setItem('audiocpp.ui.model', next.id);
-    resetParams();
+    if (initialize) {
+      chunkBudget = defaultChunkBudget(next.family);
+      resetParams();
+    }
+    configuredSelectionInitialized = true;
   }
 
   async function refresh() {
