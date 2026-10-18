@@ -54,10 +54,12 @@ int64_t engine_memory_mib(const std::string & path, const std::string & label) {
     if (ret != 0) {
         return 0;
     }
+    // `rknn_mem_size` carries the two byte counts as 32-bit, so widen before adding: a 1 GiB weight
+    // set beside a 3.5 GiB workspace is 4.5 GiB, and a 32-bit sum reports 512 MiB.
+    const uint64_t bytes = static_cast<uint64_t>(mem.total_weight_size) + mem.total_internal_size;
     // Round up: the budget is a ceiling, and a resident set measured at its sum should not be
     // admitted by fractions of a megabyte.
-    return static_cast<int64_t>(mem.total_weight_size + mem.total_internal_size + (1ull << 20) - 1) >>
-        20;
+    return static_cast<int64_t>((bytes + (1ull << 20) - 1) >> 20);
 }
 
 Engine::~Engine() {
