@@ -201,7 +201,7 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
             append_take(descriptors);
         }
     }
-    const int64_t chunk_size = runtime::parse_positive_i64_option(effective.options, {"text_chunk_size"}, 200);
+    const int64_t chunk_size = runtime::parse_positive_i64_option(effective.options, {"text_chunk_size"}, 128);
     const auto mode = engine::text::parse_text_chunk_mode_override(effective.options).value_or(engine::text::TextChunkMode::TagAware);
     const auto chunks = runtime::chunk_text_request(effective, chunk_size, mode);
     runtime::TaskResult result;

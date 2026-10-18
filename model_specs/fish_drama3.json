@@ -81,7 +81,7 @@
         "description": "Maximum characters per long-form chunk.",
         "required": false,
         "min": 1,
-        "default": 200
+        "default": 128
       },
       {
         "name": "text_chunk_mode",

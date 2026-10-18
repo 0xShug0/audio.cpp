@@ -296,7 +296,7 @@ synchronously and calls the event sink while audio is generated; `finalize()`
 returns the complete audio and the reusable take artifact. An application can
 invoke generation on its worker thread to keep its UI responsive.
 
-Long-form text uses the framework chunker, with `text_chunk_size=200` and
+Long-form text uses the framework chunker, with `text_chunk_size=128` and
 `text_chunk_mode=tag_aware` by default. Each new chunk includes the previous
 chunk as context. Caller-supplied history remains ordered in every chunk.
 
