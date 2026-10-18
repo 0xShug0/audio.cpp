@@ -726,7 +726,24 @@ private:
     build_encoder();
   }
 
+  // With voxcpm2.audiovae_latent_capacity set, the decoder graph is a
+  // reservation: it starts at that size, doubles until the request fits and is
+  // reused by every shorter request. Without it, the graph is built at the
+  // request's own frame count. The decoder is causal (causal_conv1d and
+  // causal_conv_transpose1d only), so the zero frames a larger graph pads with
+  // never change the kept samples; they only cost compute, and with the
+  // power-of-two growth a request decodes up to twice its length (140 frames
+  // ran a 256-frame graph). Rebuilding costs a few milliseconds and the
+  // allocator below keeps its buffer, so exact sizing is the default.
+  bool exact_decoder_capacity() const {
+    return config_.latent_frame_capacity <= 0;
+  }
+
   int64_t decoder_capacity_for(int64_t latent_frames) const {
+    if (exact_decoder_capacity()) {
+      const int64_t patch = std::max<int64_t>(1, assets_->config.patch_size);
+      return std::max<int64_t>(patch, ((latent_frames + patch - 1) / patch) * patch);
+    }
     const int64_t min_capacity =
         config_.latent_frame_capacity > 0 ? config_.latent_frame_capacity
                                           : assets_->config.patch_size;
@@ -738,7 +755,11 @@ private:
   }
 
   void ensure_decoder_graph(int64_t latent_frames) {
-    if (graph_ != nullptr && latent_frames <= decoder_latent_frame_capacity_) {
+    const bool reusable =
+        exact_decoder_capacity()
+            ? decoder_latent_frame_capacity_ == decoder_capacity_for(latent_frames)
+            : latent_frames <= decoder_latent_frame_capacity_;
+    if (graph_ != nullptr && reusable) {
       engine::debug::timing_log_scalar(
           "voxcpm2.audiovae.decoder.graph.rebuilt", false);
       engine::debug::timing_log_scalar(
@@ -764,11 +785,11 @@ private:
         decoder_latent_frame_capacity_);
   }
 
-  void release_decoder_graph() {
+  void release_decoder_graph(bool keep_allocator = false) {
     if (graph_ != nullptr) {
       core::release_backend_graph_resources(execution_context_.backend(), graph_);
     }
-    if (gallocr_ != nullptr) {
+    if (gallocr_ != nullptr && !keep_allocator) {
       ggml_gallocr_free(gallocr_);
       gallocr_ = nullptr;
     }
@@ -786,7 +807,9 @@ private:
       throw std::runtime_error(
           "VoxCPM2 AudioVAE decoder graph capacity must be positive");
     }
-    release_decoder_graph();
+    // Keep the allocator across size changes: ggml_gallocr_reserve only
+    // reallocates its buffer when the new graph needs more than it holds.
+    release_decoder_graph(/*keep_allocator=*/true);
     if (config_.graph_context_bytes == 0) {
       throw std::runtime_error(
           "VoxCPM2 AudioVAE graph context bytes must be non-zero");
@@ -822,8 +845,10 @@ private:
     ggml_set_output(output_);
     graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
     ggml_build_forward_expand(graph_, output_);
-    gallocr_ = ggml_gallocr_new(
-        ggml_backend_get_default_buffer_type(execution_context_.backend()));
+    if (gallocr_ == nullptr) {
+      gallocr_ = ggml_gallocr_new(
+          ggml_backend_get_default_buffer_type(execution_context_.backend()));
+    }
     if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) ||
         !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
       release_decoder_graph();
