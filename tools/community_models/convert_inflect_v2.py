@@ -224,8 +224,11 @@ def convert(
             raise ValueError(f"{name} has shape {actual}, expected {shape}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # The ONNX exports carry a `model.` module prefix on every initializer, and the runtime's
+    # `expected_tensors` (src/community_models/inflect_v2/assets.cpp) names are unprefixed. The
+    # inventory above is checked against the ONNX names; what ships is the runtime's spelling.
     save_file(
-        tensors,
+        {name.removeprefix("model."): value for name, value in tensors.items()},
         output_path,
         metadata={
             "format": "pt",

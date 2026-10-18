@@ -21,9 +21,9 @@ Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio 
 
 > [!IMPORTANT]
 >
-> **v0.9.1 highlights:** **LFM2.5-Audio** brings speech recognition, speech generation, and speech-to-speech conversations to audio.cpp. **Higgs Audio TTS runs faster at around 6 GB VRAM**, and the WebUI adds **experimental generation history** to revisit your results!
+> **v0.9.2 highlights:** New and improved streaming for Qwen3 TTS, BreezeTTS2, Higgs Audio, VibeVoice, and Fish Audio. **Expect roughly 85-90% lower BreezeTTS2 time to first audio.** This release also improves BreezeTTS2 longform voice consistency and adds a shared Voice Library with refreshed Studio, Arena, and model-download pages. Selected models also gain ARM CPU optimizations for devices such as Raspberry Pi and Rockchip NPU acceleration.
 >
-> <img src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20logo%20only.png" alt="Unsloth logo" width="28" align="absmiddle"> **Unsloth integration:** audio.cpp now powers speech, music, and speech-to-text in [Unsloth Studio](https://github.com/unslothai/unsloth#audiocpp-audio-engine)!
+> <img src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20logo%20only.png" alt="Unsloth logo" width="48" align="absmiddle"> **Unsloth integration:** audio.cpp now powers speech, music, and speech-to-text in [Unsloth Studio](https://github.com/unslothai/unsloth#audiocpp-audio-engine)!
 >
 > **110+ audio model families and 190+ variants, running locally.** Explore TTS, ASR, music generation, voice conversion, separation, and more through a shared CLI, server API, and WebUI. Built with contributions from the community.
 >
@@ -62,7 +62,7 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
-> **2026-10-07 - Release v0.9.1:** New models include LFM2.5-Audio, Audio Flamingo 3/Next, OWSM/OWSM-CTC, Index-Echo translation, CrisperWhisper2, KittenTTS2, KugelAudio, RE-USE, Sidon, and Smart Turn. The WebUI adds more models, elapsed-time tracking, settings import/export, and experimental generation history. This release also improves CPU/GPU performance, memory use, streaming, and cross-platform compatibility. Thanks to everyone contributing code, testing, and feedback!
+> **Release v0.9.2:** New models include Voxtral TTS, TF-GridNet, MossFormer2, Hviske v6, FireRed VAD, AST, CED, and wake-word detection models. This release expands TTS streaming, adds multi-turn LFM2.5-Audio conversations, and improves model performance and compatibility. The WebUI gains a shared Voice Library and layout improvements. Downloadable C API libraries, Windows Vulkan portable builds, and packaged server configuration examples make integration easier. Thanks to everyone contributing code, testing, and feedback!
 >
 > **2026-09-30 - Release v0.9.0:** **100+ audio models**, an enhancement and denoising WebUI tab, speaker-tagged ASR, and performance and memory improvements. Explore the [Architecture Atlas](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas). Thanks to our community!
 >
@@ -90,11 +90,12 @@ Model weights keep the license of their original release, which is separate from
 |---|---|---|---|---|
 | **breeze_tts** | TTS, Clone, Design, Ctrl | zh, en | BreezeTTS 2 instruction-conditioned TTS and prompt-audio voice cloning | GGUF BF16/Q8/Q4_0, Stream |
 | **chatterbox** | TTS, Clone, VC| ar, da, de, el, en, es, fi, fr, hi, it, ko, ms, nl, no, pl, pt, sv, sw, tr | Chatterbox with 0.5B backbone | GGUF 16/Q8 |
-| **confucius4_tts** | Clone | zh, en, ja, ko, de, fr, es, id, it, th, pt, ru, ms, vi | Confucius4-TTS multilingual voice cloning | GGUF F32, Stream |
+| **confucius4_tts** | TTS, Clone | zh, en, ja, ko, de, fr, es, id, it, th, pt, ru, ms, vi | Confucius4-TTS multilingual voice cloning | GGUF F32, Stream |
 | **cosyvoice3** | TTS, Clone | zh, en, ja, ko, de, es, fr, it, ru, yue | Fun-CosyVoice3 zero-shot, cross-lingual, and instruction-conditioned TTS | GGUF F32/Q8 |
 | **dots_tts** | TTS, Clone, Edit, Ctrl | multilingual | DotTTS SOAR<br>DotTTS MeanFlow<br>DotTTS Edit | GGUF 16/Q8, Stream |
 | **dramabox** | TTS, Clone | en | DramaBox expressive TTS and voice cloning | GGUF Q8 |
 | **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | Fish Audio S2 Pro | GGUF 16/Q8, Stream |
+| **[fish_drama3](docs/models/fish_drama3.md)** | TTS, Clone, Ctrl, Edit | auto | Fish Audio Drama 3 (experimental community port) | Mixed Q2_K/Q3_K/Q4_K GGUF, Stream |
 | **firered_audio** | ASR, TTS, Clone, Design, Ctrl | zh, en | FireRedAudio multimodal speech/audio model with ASR, understanding, cloning, design, and edit paths | GGUF original/Q8 |
 | **fireredtts3** | TTS, Clone, Design, Ctrl | 24 langs + 21 zh dialects | FireRedTTS3 Base<br>FireRedTTS3 Instruct/Voicedesign | GGUF original/Q8 |
 | **higgs_audio_tts** | TTS, Clone, Ctrl | auto | Higgs Audio v3 TTS 4B | GGUF 16/Q8, Stream |
@@ -207,7 +208,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **reuse** | S2S | lang agnostic | GGUF F32/F16/Q8_0 | [@0xShug0](https://github.com/0xShug0) | RE-USE speech restoration |
 | **chatterbox_turbo** | TTS (testing) | en | GGUF 16/Q8 | [@pannagaps](https://github.com/pannagaps) | [Chatterbox Turbo](docs/models/chatterbox_turbo.md) distilled 350M GPT2 T3 backbone + 2-step meanflow S3Gen decoder; built-in voice |
 | **confucius4_r2t2** | ASR | 30 languages | Safetensors, GGUF F16/Q8/Q4, Stream | [@davidxifeng](https://github.com/davidxifeng) | [Confucius4-R2T2](docs/models/r2t2.md) streaming ASR with context and hotword prompts |
-| **echo_tts** | Clone | en | GGUF 16/Q8 | [@5uck1ess](https://github.com/5uck1ess) | [Echo-TTS](docs/models/echo_tts.md) 44.1 kHz zero-shot voice cloning with EchoDiT latents and Fish S1-DAC decoding |
+| **echo_tts** | TTS, Clone | en | GGUF 16/Q8 | [@5uck1ess](https://github.com/5uck1ess) | [Echo-TTS](docs/models/echo_tts.md) 44.1 kHz zero-shot voice cloning with EchoDiT latents and Fish S1-DAC decoding |
 | **f5_tts** | TTS, Clone | en, ar (Habibi) | GGUF | [@tareko](https://github.com/tareko) | [F5-TTS](docs/models/f5_tts.md) flow-matching DiT synthesis and voice cloning, with Habibi Arabic aliases `habibi`/`habibi_tts` |
 | **glm_tts** | TTS, Clone | zh, en | GGUF | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](docs/models/glm_tts.md) zero-shot synthesis and voice cloning support |
 | **zipvoice** | TTS, Clone | zh, en | GGUF F32, Stream | Community | [ZipVoice](docs/models/zipvoice.md) k2-fsa TTSZipformer flow-matching zero-shot voice cloning with Vocos vocoder; jieba + pypinyin Chinese frontend; chunk streaming |
@@ -421,6 +422,8 @@ scripts/build_linux.sh --backend cuda --native-model-manager --target audiocpp_s
 ```
 
 For direct CMake commands, see [docs/build/linux.md](docs/build/linux.md).
+For the opt-in Rockchip NPU (RKNN) decoder path, see
+[docs/build/rockchip-npu.md](docs/build/rockchip-npu.md).
 
 </details>
 

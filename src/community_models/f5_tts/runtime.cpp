@@ -31,46 +31,12 @@ namespace engine::models::f5_tts {
 namespace {
 
 namespace core = engine::core;
-namespace modules = engine::modules;
 
 // Column convention throughout: tensors are [features, seq] (ggml ne0 =
 // features), so ggml_norm == LayerNorm over features and ggml_mul_mat(W, X)
 // matches torch X @ W^T with torch weights stored [out, in].
 
-struct F5Linear {
-    core::TensorValue weight;
-    core::TensorValue bias;
-};
-
-struct F5ConvNeXt {
-    modules::DepthwiseConv1dWeights dwconv;
-    core::TensorValue norm_w, norm_b;
-    F5Linear pw1, pw2;
-    std::vector<float> grn_gamma, grn_beta;
-};
-
-struct F5Block {
-    F5Linear attn_norm;  // -> 6*dim
-    F5Linear to_q, to_k, to_v, to_out;
-    F5Linear ff0, ff2;
-};
-
-struct F5Weights {
-    std::shared_ptr<core::BackendWeightStore> store;
-    core::TensorValue text_embedding;  // [512, 2731]
-    F5Linear input_proj;
-    modules::Conv1dWeights cpe0, cpe2;  // grouped k31 g16
-    F5Linear time0, time2;
-    std::vector<float> inv_freq;
-    std::vector<F5ConvNeXt> text_blocks;
-    std::vector<F5Block> blocks;
-    F5Linear norm_out;
-    F5Linear proj_out;
-};
-
 struct LoadedModel {
-    F5Weights w;
-    F5Architecture arch;
     ggml_backend_t backend = nullptr;            // backend owning the weight store
     core::BackendType backend_type = core::BackendType::Cpu;
 };
@@ -82,78 +48,6 @@ struct BackendOwner {
     // Leaking a few backends at process exit is harmless.
     ~BackendOwner() = default;
 };
-
-F5Weights load_weights(
-    const engine::assets::TensorSource & source,
-    ggml_backend_t backend,
-    core::BackendType backend_type,
-    bool fp16_linears) {
-    F5Weights w;
-    w.store = std::make_shared<core::BackendWeightStore>(
-        backend, backend_type, "f5_tts.weights", 2ULL * 1024ULL * 1024ULL * 1024ULL);
-    const auto f32 = [&](const std::string & n) {
-        return w.store->load_f32_tensor(
-            source, n, source.require_metadata(n).shape);
-    };
-    // Linear weights consumed only by ggml_mul_mat: FP16 storage halves GEMM
-    // time on tensor cores (mul_mat returns F32 regardless of weight dtype).
-    // Everything else (embeddings consumed by get_rows, dwconv kernels read
-    // on host, biases/norms broadcast) stays F32.
-    const auto gemm_w = [&](const std::string & n) {
-        if (fp16_linears) {
-            return w.store->load_tensor(
-                source, n, engine::assets::TensorStorageType::F16,
-                source.require_metadata(n).shape);
-        }
-        return f32(n);
-    };
-    const auto lin_f32bias = [&](const std::string & n) {
-        return F5Linear{gemm_w(n + ".weight"), f32(n + ".bias")};
-    };
-
-    w.text_embedding = f32("text_embed.text_embed.weight");  // get_rows consumer: keep F32
-    w.input_proj = lin_f32bias("input_embed.proj");
-    w.cpe0.weight = gemm_w("input_embed.conv_pos_embed.conv1d.0.weight");
-    w.cpe0.bias = f32("input_embed.conv_pos_embed.conv1d.0.bias");
-    w.cpe2.weight = gemm_w("input_embed.conv_pos_embed.conv1d.2.weight");
-    w.cpe2.bias = f32("input_embed.conv_pos_embed.conv1d.2.bias");
-    w.time0 = lin_f32bias("time_embed.time_mlp.0");
-    w.time2 = lin_f32bias("time_embed.time_mlp.2");
-    w.inv_freq = source.require_f32("rotary_embed.inv_freq");
-
-    w.text_blocks.reserve(4);
-    for (int i = 0; i < 4; ++i) {
-        const std::string p = "text_embed.text_blocks." + std::to_string(i);
-        F5ConvNeXt b;
-        b.dwconv.weight = f32(p + ".dwconv.weight");   // host-side kernel read
-        b.dwconv.bias = f32(p + ".dwconv.bias");
-        b.norm_w = f32(p + ".norm.weight");
-        b.norm_b = f32(p + ".norm.bias");
-        b.pw1 = lin_f32bias(p + ".pwconv1");
-        b.pw2 = lin_f32bias(p + ".pwconv2");
-        b.grn_gamma = source.require_f32(p + ".grn.gamma");
-        b.grn_beta = source.require_f32(p + ".grn.beta");
-        w.text_blocks.push_back(std::move(b));
-    }
-    w.blocks.reserve(22);
-    for (int i = 0; i < 22; ++i) {
-        const std::string p = "transformer_blocks." + std::to_string(i);
-        F5Block b;
-        b.attn_norm = lin_f32bias(p + ".attn_norm.linear");
-        b.to_q = lin_f32bias(p + ".attn.to_q");
-        b.to_k = lin_f32bias(p + ".attn.to_k");
-        b.to_v = lin_f32bias(p + ".attn.to_v");
-        b.to_out = lin_f32bias(p + ".attn.to_out.0");
-        b.ff0 = lin_f32bias(p + ".ff.ff.0.0");
-        b.ff2 = lin_f32bias(p + ".ff.ff.2");
-        w.blocks.push_back(std::move(b));
-    }
-    w.norm_out = lin_f32bias("norm_out.linear");
-    w.proj_out = lin_f32bias("proj_out");
-    w.store->upload();
-    source.release_storage();
-    return w;
-}
 
 // write a small view that strips that dotted prefix.
 class StrippedView final : public engine::assets::TensorSource {
@@ -273,7 +167,6 @@ const LoadedModel & load_model_once(const std::string & path, const F5ComputeDev
     if (const auto found = cache->find(key); found != cache->end()) {
         return found->second;
     }
-    auto stripped = open_dit_source(path);
     auto owner = std::make_unique<BackendOwner>();
     const core::BackendType type = dev.use_cuda ? core::BackendType::Cuda : core::BackendType::Cpu;
     core::BackendConfig cfg{type, dev.use_cuda ? dev.device : 0, dev.use_cuda ? 1 : std::max(1, dev.threads)};
@@ -282,12 +175,8 @@ const LoadedModel & load_model_once(const std::string & path, const F5ComputeDev
         core::set_backend_threads(owner->value, std::max(1, dev.threads));
     }
     LoadedModel model;
-    model.arch = F5Architecture{};
     model.backend = owner->value;
     model.backend_type = type;
-    // FP16 linear weights on CUDA only (CPU mul_mat with F16 weights is slow
-    // via the fallback path; CUDA hits tensor cores).
-    model.w = load_weights(*stripped, owner->value, type, dev.use_cuda && dev.fp16_weights);
     owners.push_back(std::move(owner));
     return cache->emplace(key, std::move(model)).first->second;
 }
@@ -328,14 +217,35 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         ggml_tensor * th_t = nullptr;     // [256, 1]
         ggml_tensor * output = nullptr;   // [MEL, N] (half 0, conditioned)
         ggml_tensor * out_u = nullptr;    // [MEL, N] (half 1, uncond)
+        // The staged graph constants this build created (pe table, masks,
+        // per-block ones rows). On CUDA each carries a private backend buffer
+        // allocated in const_stage_bind: the eviction path destroys the
+        // unique_ptr, and nothing else frees them.
+        std::vector<engine::models::f5_tts::ConstStage> * stage = nullptr;
+        ~CfgGraph() {
+            // Cache eviction (more than two distinct (N, NT) keys in one process,
+            // i.e. every chunk past the second of a chunked request) destroys the
+            // unique_ptr, and without this the context pool, the gallocr arena and
+            // the io buffer of every evicted graph were leaked: measured 24.5 GiB
+            // peak RSS for a four-chunk CPU request, unchanged when the cache bound
+            // was lowered from 2 to 1 (more evictions, same leaks).
+            if (gallocr != nullptr) ggml_gallocr_free(gallocr);
+            if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
+            if (ctx != nullptr) ggml_free(ctx);
+            const_stage_free(stage);
+        }
     };
     static auto * cache = new std::map<std::tuple<const LoadedModel *, int, int>, std::unique_ptr<CfgGraph>>();
     const auto ckey = std::make_tuple(&model, N, NT);
     auto it = cache->find(ckey);
     if (it == cache->end()) {
         auto gnew = std::make_unique<CfgGraph>();
+        // Measured on CPU the pool has to hold the staged DiT constants plus the graph
+        // objects at ~8 MiB per mel frame (9664 MiB at 1216 frames, 12302 MiB at 1856),
+        // so 9 MiB/frame carries ~12% headroom over the measured need; at 8 MiB/frame the
+        // pool was exactly full and a longer pass died on GGML_ASSERT(obj_new).
         const size_t ctx_bytes = std::min<size_t>(
-            std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (8ULL << 20)),
+            std::max<size_t>(1536ULL << 20, static_cast<size_t>(N) * (9ULL << 20)),
             12288ULL << 20);
         gnew->ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
         ggml_context * ctx = gnew->ctx;
@@ -352,6 +262,7 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
             ctx, dit_w, arch, N, NT, model.backend_type);
         const_stage_end(stage);
         cfg_staged = stage;
+        gnew->stage = stage;
         // Mark I/O explicitly: without ggml_set_input/output the gallocr
         // treats leaves as scratch and may clobber them across replays.
         ggml_set_input(io.x.tensor);
@@ -391,9 +302,12 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
         }
         it = cache->emplace(ckey, std::move(gnew)).first;
         // bound the graph cache: each entry holds a CUDA io buffer + gallocr
-        // arena (~1-5 GiB at N~1000). Keep at most 2; evict the oldest
-        // (map order == insertion order), never the entry just added.
-        while (cache->size() > 2) {
+        // arena (~1-5 GiB at N~1000). Keep at most 1: on CPU the entries are
+        // host RAM and the graph pool is the ceiling that trips, on CUDA a miss
+        // re-captures the arena and costs ~50 ms (measured +3.4% on a 3.55 s
+        // request) while a second entry retains 96 MiB for the whole session.
+        // Evict the oldest (map order == insertion order), never the new entry.
+        while (cache->size() > 1) {
             bool evicted = false;
             for (auto cit = cache->begin(); cit != cache->end(); ++cit) {
                 if (cit->first != ckey) {
@@ -521,12 +435,17 @@ std::vector<float> f5_dit_forward(
         ggml_tensor * tap_time_embed = nullptr;
         ggml_tensor * tap_block0 = nullptr;
         ggml_tensor * tap_block21 = nullptr;
+        // The staged graph constants this build created (pe table, per-block ones
+        // rows). On CUDA each carries a private backend buffer from
+        // const_stage_bind, so the vector has to die with the graph.
+        std::vector<engine::models::f5_tts::ConstStage> * stage = nullptr;
         ~DiTGraph() {
             // Leaked by design when cached (freed only on program-graph reset);
             // destroyed here only when construction throws mid-build.
             if (gallocr != nullptr) ggml_gallocr_free(gallocr);
             if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
             if (ctx != nullptr) ggml_free(ctx);
+            const_stage_free(stage);
         }
     };
 
@@ -569,6 +488,7 @@ std::vector<float> f5_dit_forward(
     const_stage_end(stage);
     // staged constants upload after ggml_backend_alloc_ctx_tensors below
     staged_module_consts = stage;
+    gnew->stage = stage;
     ggml_set_input(io.x.tensor);
     ggml_set_input(io.cond.tensor);
     ggml_set_input(io.text_ids.tensor);

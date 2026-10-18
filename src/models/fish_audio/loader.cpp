@@ -23,6 +23,7 @@ runtime::CapabilitySet capabilities(const FishAudioAssets &) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     out.languages = {"en", "zh", "auto"};
     out.supports_speaker_reference = true;
@@ -48,6 +49,7 @@ runtime::ModelCliInterface cli(const FishAudioAssets &) {
         {"fish_audio.reference_cache_slots", "n", "Prepared reference-audio cache slots; default 1.", false, "1", "0"},
         {"fish_audio.weight_type", "native|f32|f16|bf16|q8_0", "AR matmul weight storage type; default native.", false, "native"},
         {"fish_audio.codec_weight_type", "native|f32|f16|q8_0", "Codec conv/matmul weight storage type; default native.", false, "native"},
+        {"fish_audio.codec_encoder_bf16_compute", "true|false", "Use BF16 reference-encoder arithmetic on CUDA with F16/BF16 codec weights; default false. Decoding is unchanged.", false, "false"},
         {"fish_audio.ar_graph_arena_mb", "int", "AR runtime graph arena size in MiB; default 512.", false, "512", "1"},
         {"fish_audio.ar_weight_context_mb", "int", "AR weight context size in MiB; default 32.", false, "32", "1"},
         {"fish_audio.codec_graph_arena_mb", "int", "Codec encode/decode graph arena size in MiB; default 512.", false, "512", "1"},
@@ -66,6 +68,7 @@ public:
         runtime::CapabilitySet out;
         out.supported_tasks = {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
         out.supports_style_condition = true;
@@ -130,9 +133,10 @@ const runtime::CapabilitySet & FishAudioLoadedModel::capabilities() const noexce
 std::unique_ptr<runtime::IVoiceTaskSession> FishAudioLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.task != runtime::VoiceTaskKind::Tts ||
+    if ((task.task != runtime::VoiceTaskKind::Tts &&
+         task.task != runtime::VoiceTaskKind::VoiceCloning) ||
         (task.mode != runtime::RunMode::Offline && task.mode != runtime::RunMode::Streaming)) {
-        throw std::runtime_error("Fish Audio S2-Pro supports offline and streaming TTS sessions");
+        throw std::runtime_error("Fish Audio S2-Pro supports offline and streaming TTS and voice cloning sessions");
     }
     return std::make_unique<FishAudioSession>(task, options, assets_);
 }

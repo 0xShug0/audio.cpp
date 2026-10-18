@@ -51,10 +51,13 @@ const exposeAllGgufPackageFamilies = new Set([
   'firered_audio',
   'fireredtts3',
   'irodori_tts',
+  'kitten_tts2',
   'kokoro_tts',
   'meanvc2',
   'midashenglm_gen',
-  'sanotts'
+  'sanotts',
+  'mossformer2',
+  'voxtral_tts'
 ]);
 
 const hanCharacters = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u;

@@ -116,22 +116,21 @@ audiocpp_cli --task tts --family sanotts \
 - `text_chunk_size` (request, default 280) — maximum codepoints per long-form
   chunk; chunks split on sentence punctuation first, and a chunk that
   phonemizes past the voice's token limit is bisected at whitespace.
-- `sanotts.cpu_decoder` (session, `auto`, `ggml` or `neon`, default `auto`) —
-  for nano voices, `auto` selects NEON when the resolved backend is CPU and
-  the build supports AArch64 NEON; otherwise it uses GGML. Set `ggml` to
-  explicitly retain the original graph. `neon` runs the frame stage and decoder
+- `sanotts.exec_plan` (session, JSON object of component plans encoded as a string, default `{}`) —
+  for nano voices, the default selects NEON when the resolved backend is CPU and
+  the build supports AArch64 NEON; otherwise it uses GGML. Set
+  `decoder.impl` to `ggml` to explicitly retain the original graph.
+  `{"decoder":{"impl":"neon"}}` runs the frame stage and decoder
   with hand-written AArch64 NEON kernels instead of the GGML graph (see
   Performance). Durations, the token stage, the iSTFT and the DC block are
   unchanged. Explicit `neon` requires CPU and an AArch64 NEON build; failures
-  are not retried with GGML. Piperlite voices ignore the selection.
-  Existing GGUFs accept this option without conversion or a spec override.
-  Model-specific `--family sanotts --model <path> --help` lists session options
-  from the loaded spec; older embedded specs may omit this entry even though
-  the runtime accepts it.
+  are not retried with GGML. Explicit NEON is rejected for Piperlite voices.
+  No artifact files or implementation-specific `params` are used. An optional `decoder.backend` must match the session
+  backend; NEON only supports CPU. See [component execution plans](../build/rockchip-npu.md#component-execution-plans).
   When a NEON decoder starts it decodes 24 fixed frames through both the
   NEON code and the GGML graph (logged as `sanotts.neon_self_check_max_diff`,
   ~1e-5 for heart and heart-nano; ~20 ms once per session). If they disagree,
-  `auto` falls back to GGML and explicit `neon` fails.
+  the default selection falls back to GGML and explicit `neon` fails.
   `sanotts_neon_decoder_test` compares the NEON decoder with a
   double-precision reference on random weights.
 
@@ -222,7 +221,13 @@ long-form text:
 A 806-character German paragraph through `sanotts_de_orig` on the same host:
 37.7 s of audio in 2.7 s wall, ~14× real time.
 
-### ARM: `sanotts.cpu_decoder=neon`
+### ARM: NEON decoder
+
+The existing local NEON implementation remains the default build. Opt in to the
+shared NEON library with `-DENGINE_ENABLE_NEON=ON`; this preserves the same
+decoder selection contract.
+
+Select it with `--session-option 'sanotts.exec_plan={"decoder":{"impl":"neon"}}'`.
 
 Raspberry Pi 400 (Cortex-A72, 4 GB), CPU backend, `--threads 3` pinned to
 three cores, whole `audiocpp_cli` process, best of 3. Same build for both

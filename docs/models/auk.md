@@ -51,6 +51,8 @@ For zero-shot TTS, provide reference speech with `--voice-ref`. Without
 `instruct`, `--text` must contain the complete upstream instruction, not
 just the words to speak.
 
+`--task clon` is an alias to the same reference-conditioned synthesis path.
+
 ## Audio Editing
 
 Editing uses the CLI generation route, `--task gen`, with the instruction

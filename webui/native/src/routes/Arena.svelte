@@ -623,7 +623,7 @@
 </section>
 
 <div class="arena-grid">
-  <section class="panel arena-inputs">
+  <section class="arena-inputs">
     <div class="section-title">
       <div><span>{tr('arena.input.label')}</span><h2>{tr('arena.input.title')}</h2></div>
       <span class="task-chip">{arenaModeText}</span>
@@ -717,7 +717,7 @@
     </details>
   </section>
 
-  <section class="panel arena-queue">
+  <section class="arena-queue">
     <div class="section-title">
       <div><span>{tr('arena.queue.label')}</span><h2>{tr('arena.queue.title')}</h2></div>
       <span class="task-chip">{arenaItems.length}</span>
@@ -766,33 +766,27 @@
       <div class="empty-output"><p>{tr('arena.queue.empty')}</p></div>
     {/if}
 
-    <div class="runbar arena-runbar">
-      <button class="run" disabled={running || !arenaItems.length} on:click={runArena}>
-        <span>{running ? tr('run.working') : tr('arena.run')}</span>
-        <kbd>Ctrl Enter</kbd>
-      </button>
-      <button disabled={!running} on:click={cancel}>{tr('run.cancel')}</button>
-      <button disabled={running || !arenaItems.length} on:click={resetArena}>{tr('arena.queue.clear')}</button>
-    </div>
-    <div class="status" class:busy={running}>{status || tr('status.ready')}</div>
   </section>
 
-  <section class="panel arena-results">
+  <section class="arena-results">
     <div class="section-title">
       <div><span>{tr('result.label')}</span><h2>{tr('arena.results.title')}</h2></div>
-      <span class="task-chip">{arenaItems.filter((item) => item.status === 'done').length}</span>
+      <span class="task-chip">{arenaItems.filter((item) => item.status === 'done').length} / {arenaItems.length}</span>
     </div>
 
     {#if arenaItems.length}
+      <p class="arena-result-order">{arenaItems.every((item) => ['done', 'failed', 'skipped'].includes(item.status))
+        ? tr('arena.results.orderRtf') : tr('arena.results.orderSelection')}</p>
       <div class="arena-result-list">
-        {#each arenaResultItems as item}
+        {#each arenaResultItems as item, index}
           <article class:done={item.status === 'done'} class:failed={item.status === 'failed'} class:skipped={item.status === 'skipped'}>
             <header>
-              <div>
+              <span class="arena-result-number">{String(index + 1).padStart(2, '0')}</span>
+              <div class="arena-result-identity">
                 <strong>{item.label}</strong>
                 <span>{item.packageLabel}</span>
               </div>
-              <span>{arenaStatusLabel(item.status)}</span>
+              <span class="arena-status">{arenaStatusLabel(item.status)}</span>
             </header>
             {#if item.outputUrl}
               <audio controls src={item.outputUrl}></audio>
@@ -801,11 +795,11 @@
               <pre class="arena-text-output">{item.outputText}</pre>
             {/if}
             {#if item.outputUrl || item.outputText || item.wallMs || item.rtf || item.wer}
-              <div class="arena-metrics">
-                <span>{tr('arena.metric.wall')} {item.wallMs || '?'}</span>
-                <span>{tr('arena.metric.rtf')} {item.rtf || '?'}</span>
-                {#if item.wer}<span>{tr('arena.metric.wer')} {item.wer}</span>{/if}
-              </div>
+              <dl class="arena-metrics">
+                <div><dt>{tr('arena.metric.wall')}</dt><dd>{item.wallMs || '?'}</dd></div>
+                <div><dt>{tr('arena.metric.rtf')}</dt><dd>{item.rtf || '?'}</dd></div>
+                {#if item.wer}<div><dt>{tr('arena.metric.wer')}</dt><dd>{item.wer}</dd></div>{/if}
+              </dl>
             {/if}
             {#if item.note}<p>{item.note}</p>{/if}
             {#if item.error}<p class="arena-error">{item.error}</p>{/if}
@@ -816,4 +810,15 @@
       <div class="empty-output"><div class="wave">~</div><p>{tr('arena.results.empty')}</p></div>
     {/if}
   </section>
+  <div class="arena-actions">
+    <div class="runbar arena-runbar">
+      <button class="run" disabled={running || !arenaItems.length} on:click={runArena}>
+        <span>{running ? tr('run.working') : tr('arena.run')}</span>
+        <kbd>Ctrl Enter</kbd>
+      </button>
+      <button disabled={!running} on:click={cancel}>{tr('run.cancel')}</button>
+      <button disabled={running || !arenaItems.length} on:click={resetArena}>{tr('arena.queue.clear')}</button>
+    </div>
+    <div class="status" class:busy={running}>{status || tr('status.ready')}</div>
+  </div>
 </div>

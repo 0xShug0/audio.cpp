@@ -170,8 +170,9 @@ ConfuciusSession::ConfuciusSession(
         conv_weight_storage_type_,
         {T::Native, T::F32, T::F16});
     mem_saver_ = mem_saver_from_options(options);
-    if (task_.task != runtime::VoiceTaskKind::VoiceCloning) {
-        throw std::runtime_error("Confucius4-TTS supports the VoiceCloning task");
+    if (task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("Confucius4-TTS supports Tts and VoiceCloning tasks");
     }
 
     semantic_encoder_ = std::make_unique<ConfuciusWav2Vec2BertRuntime>(

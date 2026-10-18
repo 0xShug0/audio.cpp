@@ -63,7 +63,7 @@ void print_task_list_help() {
         << "    --list-devices  List available backend devices and exit\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
         << "    --registry-config <path>\n"
-        << "    --model-spec-override <json-or-directory>  Override package-spec resolution\n"
+        << "    --model-spec-override <json-or-directory|embedded>  Select a spec file/directory or the GGUF's embedded spec\n"
         << "    --config <id>\n"
         << "    --weight <id>\n"
         << "    --log  Stream framework progress and timing logs to stdout\n"
@@ -156,7 +156,7 @@ void print_task_list_help() {
         << "    --vad-chunk-padding-seconds <float>  Pad each VAD span before chunking, default 0.25\n"
         << "    --turns-out <json>\n"
         << "    --words-out <json>\n"
-        << "    --voice-state-out <safetensors>  Export PocketTTS voice state from --voice-ref\n"
+        << "    --voice-state-out <safetensors>  Export a prepared voice state when supported by the model\n"
         << "  Streaming:\n"
         << "    --mode streaming uses the selected model's default streaming policy\n"
         << "  Utility:\n"
@@ -954,18 +954,14 @@ int audiocpp_cli_main(int argc, char ** argv) {
             request.options["return_timestamps"] = "true";
         }
         if (voice_state_out.has_value()) {
-            if (session->family() != "pocket_tts") {
-                throw std::runtime_error("--voice-state-out is only supported by PocketTTS");
-            }
-            if (task_spec.task != engine::runtime::VoiceTaskKind::Tts) {
-                throw std::runtime_error("--voice-state-out requires --task tts");
-            }
-            request.options["pocket_tts.export_voice_state_path"] = voice_state_out->string();
+            request.options["export_voice_state_file"] = voice_state_out->string();
         }
         require_known_args(argc, argv);
         const auto session_start = std::chrono::steady_clock::now();
         session->prepare(engine::runtime::build_preparation_request(request));
         if (voice_state_out.has_value()) {
+            engine::debug::timing_log_scalar(
+                "session.wall_ms", duration_ms(std::chrono::steady_clock::now() - session_start));
             std::cout << "family=" << session->family() << "\n";
             std::cout << "voice_state_out=" << voice_state_out->string() << "\n";
             return 0;

@@ -129,6 +129,7 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
         request.options.find("reference_text") == request.options.end()) {
       request.options["reference_text"] = *preset->reference_text;
     }
+    request = apply_default_request_options(preset->options, std::move(request));
   }
 
   const bool has_explicit_voice_ref = body.find("voice_ref") != nullptr;
@@ -426,7 +427,9 @@ model_config_from_json(const Value &body,
   model.mode = engine::io::json::optional_string(body, "mode", model.mode);
   model.lazy = lazy;
   if (const auto *value = body.find("model_spec_override")) {
-    model.model_spec_override = resolve_path(request_base, value->as_string());
+    const auto &selection = value->as_string();
+    model.model_spec_override = selection == "embedded"
+        ? std::filesystem::path(selection) : resolve_path(request_base, selection);
   }
   if (const auto *value = body.find("config")) {
     model.config_id = value->as_string();

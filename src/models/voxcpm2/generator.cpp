@@ -12,6 +12,7 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/errors.h"
+#include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/voxcpm2/assets.h"
 #include "engine/models/voxcpm2/minicpm.h"
@@ -1210,12 +1211,7 @@ public:
         text_embedding_(weights_, config.text_embedding_graph_context_bytes,
                         config.mem_saver),
         prefill_(weights_, config.lm_step_graph_context_bytes),
-        base_lm_(weights_, VoxCPM2MiniCPMKind::BaseLM,
-                 assets_->config.max_length,
-                 config.lm_step_graph_context_bytes),
-        residual_lm_(weights_, VoxCPM2MiniCPMKind::ResidualLM,
-                     assets_->config.max_length,
-                     config.lm_step_graph_context_bytes),
+        lm_step_graph_context_bytes_(config.lm_step_graph_context_bytes),
         projection_(weights_, config.projection_graph_context_bytes,
                     config.mem_saver),
         cfm_(weights_, config.dit_graph_context_bytes, config.mem_saver),
@@ -1280,8 +1276,36 @@ public:
 
   void release_runtime_memory() {
     prefill_.release_runtime_memory();
-    base_lm_.release_runtime_memory();
-    residual_lm_.release_runtime_memory();
+    if (base_lm_) {
+      base_lm_->release_runtime_memory();
+    }
+    if (residual_lm_) {
+      residual_lm_->release_runtime_memory();
+    }
+  }
+
+  // The step graphs are sized by what the request can fill, not by the model's
+  // cache length: cache_steps_ is a graph dimension, so an 8192-row cache means
+  // every generated patch attends over 8192 rows and 36 layers x 8192 x 256
+  // f32 keys and values stay resident (1.21 GiB on the shipped package) even for
+  // a three-second phrase. Rebuild only when the bucket changes.
+  void replace_step_runtimes(int64_t cache_steps, bool preserve_state) {
+    const auto base_state =
+        preserve_state && base_lm_ ? base_lm_->export_state()
+                                   : engine::runtime::TransformerKVState{};
+    const auto residual_state =
+        preserve_state && residual_lm_ ? residual_lm_->export_state()
+                                       : engine::runtime::TransformerKVState{};
+    base_lm_ = std::make_unique<VoxCPM2MiniCPMStepRuntime>(
+        weights_, VoxCPM2MiniCPMKind::BaseLM, cache_steps,
+        lm_step_graph_context_bytes_);
+    residual_lm_ = std::make_unique<VoxCPM2MiniCPMStepRuntime>(
+        weights_, VoxCPM2MiniCPMKind::ResidualLM, cache_steps,
+        lm_step_graph_context_bytes_);
+    if (preserve_state) {
+      base_lm_->import_state(base_state);
+      residual_lm_->import_state(residual_state);
+    }
   }
 
 private:
@@ -1507,8 +1531,15 @@ private:
           + std::to_string(max_tokens) + " requested tokens, limit "
           + std::to_string(config.max_length) + "); shorten the input text");
     }
-    base_lm_.reset();
-    residual_lm_.reset();
+    const int64_t prefill_steps = static_cast<int64_t>(prefill.rows.size());
+    const int64_t max_cache_steps = prefill_steps + max_tokens;
+    const int64_t cache_steps =
+        engine::runtime::bucketed_cache_steps(prefill_steps, max_tokens);
+    if (base_lm_ == nullptr || base_lm_->cache_steps() != cache_steps) {
+      replace_step_runtimes(cache_steps, false);
+    }
+    base_lm_->reset();
+    residual_lm_->reset();
 
     std::vector<float> zero_hidden(static_cast<size_t>(hidden_size), 0.0F);
     std::vector<float> zero_patch(static_cast<size_t>(patch_elems), 0.0F);
@@ -1548,8 +1579,8 @@ private:
       prefill_input.audio_mask.push_back(row.audio_mask ? 1.0F : 0.0F);
     }
     const auto prefill_output = prefill_.run(prefill_input);
-    base_lm_.import_state(prefill_output.base_state);
-    residual_lm_.import_state(prefill_output.residual_state);
+    base_lm_->import_state(prefill_output.base_state);
+    residual_lm_->import_state(prefill_output.residual_state);
     std::vector<float> lm_hidden = prefill_output.lm_hidden;
     std::vector<float> residual_hidden = prefill_output.residual_hidden;
 
@@ -1621,12 +1652,29 @@ private:
       }
 
       const auto curr_embed = local_encoder_.encode_patch(patch);
-      const auto next_lm = base_lm_.run_step(curr_embed).hidden;
+      if (base_lm_->valid_steps() >= base_lm_->cache_steps()) {
+        // The bucket filled up: rebuild both step graphs at the next bucket and
+        // carry the state over. max_cache_steps is the request's own bound, so
+        // the last bucket is exactly what the request can fill.
+        const int64_t grown = std::min<int64_t>(
+            max_cache_steps,
+            std::max<int64_t>(base_lm_->cache_steps() * 2,
+                              base_lm_->valid_steps() + 1));
+        if (grown <= base_lm_->cache_steps()) {
+          throw engine::runtime::CapacityError(
+              "VoxCPM2 generation exceeds the model cache length ("
+              + std::to_string(base_lm_->valid_steps()) + " cache rows filled, "
+              + std::to_string(max_cache_steps) + " available, limit "
+              + std::to_string(config.max_length) + "); raise max_tokens");
+        }
+        replace_step_runtimes(grown, true);
+      }
+      const auto next_lm = base_lm_->run_step(curr_embed).hidden;
       const auto next_projected =
           projection_.run(next_lm, residual_hidden, curr_embed);
       lm_hidden = next_projected.fsq_hidden;
       residual_hidden =
-          residual_lm_.run_step(next_projected.residual_input).hidden;
+          residual_lm_->run_step(next_projected.residual_input).hidden;
     }
     return result;
   }
@@ -1636,8 +1684,9 @@ private:
   VoxCPM2TextTokenizer tokenizer_;
   VoxCPM2TextEmbeddingRuntime text_embedding_;
   VoxCPM2PromptPrefillRuntime prefill_;
-  VoxCPM2MiniCPMStepRuntime base_lm_;
-  VoxCPM2MiniCPMStepRuntime residual_lm_;
+  size_t lm_step_graph_context_bytes_ = 0;
+  std::unique_ptr<VoxCPM2MiniCPMStepRuntime> base_lm_;
+  std::unique_ptr<VoxCPM2MiniCPMStepRuntime> residual_lm_;
   VoxCPM2StepProjectionRuntime projection_;
   VoxCPM2CFMRuntime cfm_;
   VoxCPM2LocalEncoderRuntime local_encoder_;

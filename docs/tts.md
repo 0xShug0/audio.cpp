@@ -2,19 +2,20 @@
 
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
-| AuK (experimental) | `auk` | `tts`, `gen` editing | [AuK](models/auk.md) |
+| AuK (experimental) | `auk` | `tts`, `clon`, `gen` editing | [AuK](models/auk.md) |
 | BreezeTTS 2 | `breeze_tts` | `tts`, `clon` | [BreezeTTS 2](models/breeze_tts.md) |
-| Chatterbox | `chatterbox` | `clon`, `vc` | [Chatterbox](#chatterbox) |
-| Confucius4-TTS | `confucius4_tts` | `clon` | [Confucius4-TTS](#confucius4-tts) |
+| Chatterbox | `chatterbox` | `tts`, `clon`, `vc` | [Chatterbox](#chatterbox) |
+| Confucius4-TTS | `confucius4_tts` | `tts`, `clon` | [Confucius4-TTS](#confucius4-tts) |
 | CosyVoice3 | `cosyvoice3` | `tts`, `clon` | [CosyVoice3](models/cosyvoice3.md) |
 | DotTTS | `dots_tts` | `tts`, `clon` | [DotTTS](#dottts) |
 | DramaBox | `dramabox` | `tts`, `clon` | [DramaBox](#dramabox) |
+| Echo-TTS | `echo_tts` | `tts`, `clon` | [Echo-TTS](models/echo_tts.md) |
 | F5-TTS | `f5_tts` | `tts`, `clon` | [F5-TTS](models/f5_tts.md) |
 | FireRedAudio | `firered_audio` | `asr`, `tts`, `clon`, `vdes` | [FireRedAudio](models/firered_audio.md) |
 | FireRedTTS3 | `fireredtts3` | `tts`, `clon`, `vdes` | [FireRedTTS3](models/fireredtts3.md) |
-| Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
+| Fish Audio S2 Pro | `fish_audio` | `tts`, `clon` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
-| Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](models/higgs_audio_tts.md) |
+| Higgs Audio v3 TTS | `higgs_audio_tts` | `tts`, `clon` | [Higgs Audio v3 TTS](models/higgs_audio_tts.md) |
 | IndexTTS2 | `index_tts2` | `tts` | [IndexTTS](models/index_tts2.md) |
 | IndexTTS2.5 | `index_tts2` (variant `2.5`) | `tts` | [IndexTTS](models/index_tts2.md) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
@@ -25,25 +26,25 @@
 | KugelAudio-0-Open | `kugelaudio` | `tts` | [KugelAudio](models/kugelaudio.md) |
 | LFM2.5-Audio | `lfm2_audio` | `asr`, `tts`, `s2s` | [LFM2.5-Audio](models/lfm2_audio.md) |
 | MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
-| Maya1 | `maya1` | `tts` | [Maya1](models/maya1.md) |
+| Maya1 | `maya1` | `tts`, `vdes` | [Maya1](models/maya1.md) |
 | MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](models/minimax_h3.md) |
-| MioTTS | `miotts` | `tts` | [MioTTS](models/miotts.md) |
+| MioTTS | `miotts` | `tts`, `clon` | [MioTTS](models/miotts.md) |
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
 | MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
 | MOSS-TTS-v1.5 | `moss_tts_v15` | `tts`, `clon` | [MOSS-TTS-v1.5](models/moss_tts_v15.md) |
 | MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](models/moss_voicegen.md) |
 | NeuTTS | `neutts` | `tts` | [NeuTTS](#neutts) |
-| OmniVoice | `omnivoice` | `tts` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
+| OmniVoice | `omnivoice` | `tts`, `clon`, `vdes` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
 | Piper TTS | `piper_tts` | `tts` | [Piper TTS](models/piper_tts.md) |
-| PocketTTS | `pocket_tts` | `tts` | [PocketTTS](#pockettts) |
-| Qwen3 TTS | `qwen3_tts` | `tts`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
+| PocketTTS | `pocket_tts` | `tts`, `clon` | [PocketTTS](#pockettts) |
+| Qwen3 TTS | `qwen3_tts` | `tts`, `clon`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
 | sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
 | VieNeu-TTS v3 Turbo | `vieneu_v3_turbo` (alias `vietneu_tts`) | `tts`, `clon` | [VieNeu-TTS v3 Turbo](models/vieneu_v3_turbo.md) |
-| VoxCPM1 | `voxcpm1` | `tts` | [VoxCPM1](#voxcpm1) |
-| VoxCPM2 | `voxcpm2` | `tts` | [VoxCPM2](#voxcpm2) |
+| VoxCPM1 | `voxcpm1` | `tts`, `clon` | [VoxCPM1](#voxcpm1) |
+| VoxCPM2 | `voxcpm2` | `tts`, `clon`, `vdes` | [VoxCPM2](#voxcpm2) |
 | Voxtral 4B TTS | `voxtral_tts` | `tts` | [Voxtral TTS](models/voxtral_tts.md) |
 
 This page covers speech TTS-style families. MiniMax-H3 appears here for prompt-driven dialogue audio, but it uses the generation route (`--task gen`) rather than the normal speech route (`--task tts`). Detailed route manuals live under `docs/models/` or `docs/models/` when a model needs more space.
@@ -74,7 +75,7 @@ Chatterbox is a voice-clone TTS model with an audio-to-audio voice-conversion pa
 |---|---|
 | Family | `chatterbox` |
 | Model directory | `models/chatterbox` |
-| Tasks | `clon`, `vc` |
+| Tasks | `tts`, `clon`, `vc` |
 | Modes | `offline` |
 | Languages | `ar`, `da`, `de`, `el`, `en`, `es`, `fi`, `fr`, `hi`, `it`, `ko`, `ms`, `nl`, `no`, `pl`, `pt`, `sv`, `sw`, `tr` |
 | Voice input | Required reference WAV through `--voice-ref`; VC also requires source audio through `--audio` |
@@ -85,6 +86,8 @@ Voice clone:
 ```bash
 audiocpp_cli --task clon --family chatterbox --model models/chatterbox --backend cuda --text "Hello from Chatterbox." --voice-ref assets/resources/b.wav --out out.wav
 ```
+
+`tts` is an alias to the same voice-cloning synthesis path.
 
 Voice conversion:
 
@@ -199,7 +202,7 @@ Confucius4-TTS is an experimental multilingual voice-cloning TTS model packaged 
 |---|---|
 | Family | `confucius4_tts` |
 | GGUF model | `models/Confucius4-TTS-GGUF/confucius4-tts-orig.gguf` |
-| Task | `clon` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | `zh`, `en`, `ja`, `ko`, `de`, `fr`, `es`, `id`, `it`, `th`, `pt`, `ru`, `ms`, `vi` |
 | Voice input | Required reference WAV through `--voice-ref` |
@@ -213,6 +216,9 @@ Voice clone:
 ```bash
 audiocpp_cli --task clon --family confucius4_tts --model models/Confucius4-TTS-GGUF/confucius4-tts-orig.gguf --backend cuda --language en --text "Hello from Confucius four TTS." --voice-ref assets/resources/b.wav --out out.wav
 ```
+
+`tts` remains available as an alias to the same synthesis path. Route selection
+does not change the model's existing input requirements.
 
 Streaming session:
 
@@ -320,7 +326,7 @@ speaker-tagged turns, and the full option list.
 |---|---|
 | Family | `fish_audio` |
 | Model path | `models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf` when installed through the model manager |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | Model auto-handles language; tested paths cover English and Chinese-style prompts |
 | Voice input | Optional reference WAV through `--voice-ref`; transcript through `--reference-text` when known |
@@ -335,13 +341,13 @@ audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGU
 Reference voice clone:
 
 ```bash
-audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The final render is ready for review." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
+audiocpp_cli --task clon --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The final render is ready for review." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
 ```
 
 Multiple reference pairs:
 
 ```bash
-audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The review is ready, and I will check the final numbers." --request-option 'multi_reference_cond=[{"audio":"assets/resources/a.wav","text":"First reference transcript."},{"audio":"assets/resources/b.wav","text":"Second reference transcript."}]' --out out.wav
+audiocpp_cli --task clon --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The review is ready, and I will check the final numbers." --request-option 'multi_reference_cond=[{"audio":"assets/resources/a.wav","text":"First reference transcript."},{"audio":"assets/resources/b.wav","text":"Second reference transcript."}]' --out out.wav
 ```
 
 The model manager installs the Q8_0 standalone GGUF package by default:
@@ -559,7 +565,7 @@ OmniVoice supports multilingual TTS, voice cloning, voice design, non-verbal tag
 |---|---|
 | Family | `omnivoice` |
 | Model directory | `models/OmniVoice` |
-| Task | `tts` |
+| Tasks | `tts`, `clon`, `vdes` |
 | Modes | `offline`, `streaming` |
 | Languages | 600+ languages handled by the model |
 | Voice input | `--voice-ref` plus optional `--reference-text`, or instruction text through `--instruct` |
@@ -627,7 +633,7 @@ Use the GGUF package for the desired language. French is available as a distille
 |---|---|
 | Family | `pocket_tts` |
 | Model directory | `models/pocket-tts` |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | `english`, `french`, `german`, `italian`, `portuguese`, `spanish` |
 | Voice input | Built-in voice id or reference WAV |
@@ -654,10 +660,13 @@ Voice clone:
 audiocpp_cli --task tts --family pocket_tts --model models/pocket-tts --backend cuda --text "Hello from PocketTTS." --voice-ref assets/resources/b.wav --out out.wav
 ```
 
+`clon` is an alias to the same synthesis path. Route selection does not change
+the existing reference-audio or preset behavior.
+
 To reuse a cloned voice across runs, export its prepared state once. This skips reference-audio encoding and voice-state preparation on subsequent runs:
 
 ```bash
-audiocpp_cli --task tts --family pocket_tts \
+audiocpp_cli --task clon --family pocket_tts \
   --model models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
   --backend cuda --voice-ref assets/resources/b.wav \
   --voice-state-out models/PocketTTS-GGUF/english/embeddings/my_voice.safetensors
@@ -914,7 +923,7 @@ VoxCPM1 supports offline and streaming TTS plus short-reference voice cloning. I
 |---|---|
 | Family | `voxcpm1` |
 | Model directory | `models/VoxCPM1-GGUF` (0.5B) |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Optional reference WAV; optional transcript through `--reference-text` |
@@ -931,6 +940,9 @@ Voice clone:
 ```bash
 audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --text "Hello from VoxCPM1." --voice-ref assets/resources/b.wav --out out.wav
 ```
+
+`clon` is an alias to the same synthesis path. Route selection does not change
+the existing reference-audio or continuation-prompt behavior.
 
 Streaming output:
 
@@ -951,13 +963,13 @@ audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b
 
 ## VoxCPM2
 
-VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. Cloning and voice design both use `--task tts`. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
+VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
 
 | Field | Value |
 |---|---|
 | Family | `voxcpm2` |
 | Model directory | `models/VoxCPM2` |
-| Task | `tts` |
+| Tasks | `tts`, `clon`, `vdes` |
 | Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Optional reference WAV; optional transcript through `--reference-text` |
@@ -980,6 +992,9 @@ Ultimate clone:
 ```bash
 audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --text "Hello from VoxCPM2." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
 ```
+
+`clon` and `vdes` are aliases to the same synthesis implementation. Route
+selection does not add or remove reference-audio, prompt, or style inputs.
 
 Streaming output:
 

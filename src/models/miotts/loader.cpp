@@ -21,6 +21,7 @@ runtime::CapabilitySet capabilities(const MioTTSAssets &) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
     };
     out.supports_speaker_reference = true;
     out.supports_timestamps = false;
@@ -74,6 +75,7 @@ public:
         runtime::CapabilitySet out;
         out.supported_tasks = {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
         };
         out.supports_speaker_reference = true;
         out.supports_timestamps = true;
@@ -139,8 +141,9 @@ const runtime::CapabilitySet & MioTTSLoadedModel::capabilities() const noexcept 
 std::unique_ptr<runtime::IVoiceTaskSession> MioTTSLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("MioTTS only supports the Tts task");
+    if (task.task != runtime::VoiceTaskKind::Tts &&
+        task.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("MioTTS supports TTS and voice cloning");
     }
     if (task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("MioTTS currently supports offline sessions");

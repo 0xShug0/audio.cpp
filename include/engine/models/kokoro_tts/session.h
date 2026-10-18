@@ -85,6 +85,11 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::shared_ptr<const kokoro_ggml::KokoroWeights> weights_;
     runtime::GraphCapacityController graph_capacity_controller_;
+    // artifacts.main from kokoro_tts.exec_plan.generator when RKNN is selected.
+    std::string rknn_generator_path_;
+    // exec_plan.generator params: overlap-blend / per-window loudness correction.
+    int64_t rknn_generator_overlap_ = 0;
+    bool rknn_generator_gain_ = false;
     int64_t fixed_token_capacity_ = 0;
     int64_t pre_tail_token_capacity_ = 0;
     uint64_t rng_seed_ = 0;

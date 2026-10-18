@@ -13,6 +13,7 @@
 | Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](models/granite5asr.md) |
 | Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](models/higgs_audio_stt.md) |
 | Hviske ASR | `hviske_asr` | offline | [Hviske ASR](#hviske-asr) |
+| Hviske v6 | `hviske_asr_v6` | offline | [Hviske v6](models/hviske_asr_v6.md) |
 | Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
 | LFM2.5-Audio | `lfm2_audio` | offline | [LFM2.5-Audio](models/lfm2_audio.md) |
 | Moonshine Streaming ASR | `moonshine_asr` | offline, streaming | [Moonshine Streaming ASR](models/moonshine_asr.md) |

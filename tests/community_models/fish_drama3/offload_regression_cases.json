@@ -1,0 +1,304 @@
+{
+  "cases": [
+    {
+      "id": "cuda_offload_after",
+      "family": "fish_drama3",
+      "model": "Drama-3-GGUF/drama-3-backbone-4bit-experts-Q4_K_S.gguf",
+      "task": "clon",
+      "outputs": [
+        "audio"
+      ],
+      "session_options": {
+        "fish_drama3.context_length": 4096,
+        "fish_drama3.cpu_expert_layers": 0,
+        "fish_drama3.disk_experts": true,
+        "fish_drama3.pin_experts": true,
+        "fish_drama3.expert_cache_size": 8,
+        "fish_drama3.codec_backend": "same"
+      },
+      "requests": [
+        {
+          "id": "warmup",
+          "text": "Hello. The recording equipment is ready, and we can begin.",
+          "options": {
+            "seed": 1234,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication."
+        },
+        {
+          "id": "request_a",
+          "text": "At the observatory, the evening began with a careful inspection of the telescope. Maya checked the tracking motors while Daniel compared the star charts with the weather forecast. A thin band of cloud was moving east, leaving the southern sky clear. They planned to photograph a distant galaxy, but first they recorded several calibration images. These ordinary preparations mattered as much as the observation itself: without a reliable reference, a beautiful picture could still lead to the wrong conclusion.",
+          "options": {
+            "seed": 1234,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication."
+        },
+        {
+          "id": "repeat_a",
+          "text": "At the observatory, the evening began with a careful inspection of the telescope. Maya checked the tracking motors while Daniel compared the star charts with the weather forecast. A thin band of cloud was moving east, leaving the southern sky clear. They planned to photograph a distant galaxy, but first they recorded several calibration images. These ordinary preparations mattered as much as the observation itself: without a reliable reference, a beautiful picture could still lead to the wrong conclusion.",
+          "options": {
+            "seed": 1234,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication."
+        },
+        {
+          "id": "shorter_b",
+          "text": "The library opens at nine tomorrow morning. Please return the borrowed maps at the front desk. Thank you. I will bring them back before lunch, and leave the reading lamp switched off when I go.",
+          "options": {
+            "seed": 1234,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/b.wav",
+          "reference_text": "Some call me nature, others call me Mother Nature. I've been here for over four point five billion years, twenty-two thousand five hundred times longer than you."
+        },
+        {
+          "id": "longer_c",
+          "text": "A city depends on systems that most people rarely notice. Clean water arrives through pipes beneath the streets, trains follow signals maintained through the night, and food reaches neighborhood shops before the morning rush. Each service relies on careful planning, but it also relies on people who recognize when the plan no longer fits the situation. During a severe winter storm, a delivery driver may discover that the usual road is closed. A station supervisor may need to guide passengers toward a different platform. A repair crew may choose to replace a worn valve before a small leak becomes a major interruption. These decisions are rarely dramatic, yet together they make daily life more dependable. Good engineering supports such judgment rather than pretending that every possibility can be predicted in advance. It provides clear measurements, understandable controls, and enough room to recover from mistakes. When the storm finally passes, the most useful question is not whether the original schedule survived unchanged. It is whether people stayed safe and the essential services continued to work.",
+          "options": {
+            "seed": 1234,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/c.wav",
+          "reference_text": "Oh hi, I'm Nanashi Mumei from Hololive English Council. I'm that forgetful owl who only remembers the things that really matter."
+        }
+      ],
+      "coverage": "Standard five-request session: warmup, A, repeat A, shorter B, longer C"
+    },
+    {
+      "id": "drama3_unconditioned_offload",
+      "family": "fish_drama3",
+      "model": "Drama-3-GGUF/drama-3-backbone-4bit-experts-Q4_K_S.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "session_options": {
+        "fish_drama3.cpu_expert_layers": 0,
+        "fish_drama3.disk_experts": true,
+        "fish_drama3.pin_experts": true,
+        "fish_drama3.expert_cache_size": 8
+      },
+      "requests": [
+        {
+          "id": "seed_1234",
+          "text": "I like basketball, i hold the ball with my hand, dribble and take a shot. it is all very exciting.",
+          "options": {
+            "seed": 1234
+          }
+        },
+        {
+          "id": "seed_42",
+          "text": "I like basketball, i hold the ball with my hand, dribble and take a shot. it is all very exciting.",
+          "options": {
+            "seed": 42
+          }
+        },
+        {
+          "id": "seed_2026",
+          "text": "I like basketball, i hold the ball with my hand, dribble and take a shot. it is all very exciting.",
+          "options": {
+            "seed": 2026
+          }
+        }
+      ],
+      "coverage": "Previously noisy no-reference outputs at seeds 1234, 42, and 2026"
+    },
+    {
+      "id": "observatory_a_b_a",
+      "family": "fish_drama3",
+      "model": "Drama-3-GGUF/drama-3-backbone-4bit-experts-Q4_K_S.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "session_options": {
+        "fish_drama3.context_length": 4096,
+        "fish_drama3.cpu_expert_layers": 0,
+        "fish_drama3.disk_experts": true,
+        "fish_drama3.pin_experts": true,
+        "fish_drama3.expert_cache_size": 8,
+        "fish_drama3.codec_backend": "same"
+      },
+      "requests": [
+        {
+          "id": "long_first",
+          "text": "At the observatory, the evening began with a careful inspection of the telescope. Maya checked the tracking motors while Daniel compared the star charts with the weather forecast. A thin band of cloud was moving east, leaving the southern sky clear. They planned to photograph a distant galaxy, but first they recorded several calibration images. These ordinary preparations mattered as much as the observation itself: without a reliable reference, a beautiful picture could still lead to the wrong conclusion.",
+          "options": {
+            "seed": 1234,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication."
+        },
+        {
+          "id": "short",
+          "text": "The kitchen clock has stopped. Please put fresh batteries in it before dinner, and leave the old ones beside the recycling box.",
+          "options": {
+            "seed": 1235,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/b.wav",
+          "reference_text": "Some call me nature, others call me Mother Nature. I've been here for over four point five billion years, twenty-two thousand five hundred times longer than you."
+        },
+        {
+          "id": "long_after",
+          "text": "At the observatory, the evening began with a careful inspection of the telescope. Maya checked the tracking motors while Daniel compared the star charts with the weather forecast. A thin band of cloud was moving east, leaving the southern sky clear. They planned to photograph a distant galaxy, but first they recorded several calibration images. These ordinary preparations mattered as much as the observation itself: without a reliable reference, a beautiful picture could still lead to the wrong conclusion.",
+          "options": {
+            "seed": 1234,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication."
+        }
+      ],
+      "coverage": "Previously working long-short-long: observatory, voices A-B-A"
+    },
+    {
+      "id": "city_c_a_c",
+      "family": "fish_drama3",
+      "model": "Drama-3-GGUF/drama-3-backbone-4bit-experts-Q4_K_S.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "session_options": {
+        "fish_drama3.context_length": 4096,
+        "fish_drama3.cpu_expert_layers": 0,
+        "fish_drama3.disk_experts": true,
+        "fish_drama3.pin_experts": true,
+        "fish_drama3.expert_cache_size": 8,
+        "fish_drama3.codec_backend": "same"
+      },
+      "requests": [
+        {
+          "id": "long_first",
+          "text": "A city depends on systems that most people rarely notice. Clean water arrives through pipes beneath the streets, trains follow signals maintained through the night, and food reaches neighborhood shops before the morning rush. Each service relies on careful planning, but it also relies on people who recognize when the plan no longer fits the situation. During a severe winter storm, a delivery driver may discover that the usual road is closed. A station supervisor may need to guide passengers toward a different platform. A repair crew may choose to replace a worn valve before a small leak becomes a major interruption. These decisions are rarely dramatic, yet together they make daily life more dependable. Good engineering supports such judgment rather than pretending that every possibility can be predicted in advance. It provides clear measurements, understandable controls, and enough room to recover from mistakes. When the storm finally passes, the most useful question is not whether the original schedule survived unchanged. It is whether people stayed safe and the essential services continued to work.",
+          "options": {
+            "seed": 42,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/c.wav",
+          "reference_text": "Oh hi, I'm Nanashi Mumei from Hololive English Council. I'm that forgetful owl who only remembers the things that really matter."
+        },
+        {
+          "id": "short",
+          "text": "Our hiking group will meet beside the station at seven. Bring drinking water and a raincoat. We will return before sunset.",
+          "options": {
+            "seed": 43,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/a.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication."
+        },
+        {
+          "id": "long_after",
+          "text": "A city depends on systems that most people rarely notice. Clean water arrives through pipes beneath the streets, trains follow signals maintained through the night, and food reaches neighborhood shops before the morning rush. Each service relies on careful planning, but it also relies on people who recognize when the plan no longer fits the situation. During a severe winter storm, a delivery driver may discover that the usual road is closed. A station supervisor may need to guide passengers toward a different platform. A repair crew may choose to replace a worn valve before a small leak becomes a major interruption. These decisions are rarely dramatic, yet together they make daily life more dependable. Good engineering supports such judgment rather than pretending that every possibility can be predicted in advance. It provides clear measurements, understandable controls, and enough room to recover from mistakes. When the storm finally passes, the most useful question is not whether the original schedule survived unchanged. It is whether people stayed safe and the essential services continued to work.",
+          "options": {
+            "seed": 42,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/c.wav",
+          "reference_text": "Oh hi, I'm Nanashi Mumei from Hololive English Council. I'm that forgetful owl who only remembers the things that really matter."
+        }
+      ],
+      "coverage": "Previously working long-short-long: city, voices C-A-C"
+    },
+    {
+      "id": "computing_b_c_b",
+      "family": "fish_drama3",
+      "model": "Drama-3-GGUF/drama-3-backbone-4bit-experts-Q4_K_S.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "session_options": {
+        "fish_drama3.context_length": 4096,
+        "fish_drama3.cpu_expert_layers": 0,
+        "fish_drama3.disk_experts": true,
+        "fish_drama3.pin_experts": true,
+        "fish_drama3.expert_cache_size": 8,
+        "fish_drama3.codec_backend": "same"
+      },
+      "requests": [
+        {
+          "id": "long_first",
+          "text": "A computer represents information using patterns of bits. A single pattern can describe a number, a letter, or part of a sound, depending on the rules used to interpret it. Programs combine these simple representations into useful operations. When a document is saved, the computer records both the content and enough structure to find it again. Reliable storage also needs a way to detect mistakes. A damaged cable, an interrupted write, or a failing drive can change data without making the problem immediately obvious. Engineers therefore use checksums, backups, and careful recovery procedures. These measures do not make a system perfect, but they make failures easier to discover and correct. The practical goal is not merely to finish one operation quickly. It is to preserve the right information through many operations, even when the workload changes.",
+          "options": {
+            "seed": 2026,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/b.wav",
+          "reference_text": "Some call me nature, others call me Mother Nature. I've been here for over four point five billion years, twenty-two thousand five hundred times longer than you."
+        },
+        {
+          "id": "short",
+          "text": "The musicians are ready for the rehearsal. Open the windows, turn down the hallway lights, and place the spare microphone near the piano.",
+          "options": {
+            "seed": 2027,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/c.wav",
+          "reference_text": "Oh hi, I'm Nanashi Mumei from Hololive English Council. I'm that forgetful owl who only remembers the things that really matter."
+        },
+        {
+          "id": "long_after",
+          "text": "A computer represents information using patterns of bits. A single pattern can describe a number, a letter, or part of a sound, depending on the rules used to interpret it. Programs combine these simple representations into useful operations. When a document is saved, the computer records both the content and enough structure to find it again. Reliable storage also needs a way to detect mistakes. A damaged cable, an interrupted write, or a failing drive can change data without making the problem immediately obvious. Engineers therefore use checksums, backups, and careful recovery procedures. These measures do not make a system perfect, but they make failures easier to discover and correct. The practical goal is not merely to finish one operation quickly. It is to preserve the right information through many operations, even when the workload changes.",
+          "options": {
+            "seed": 2026,
+            "text_chunk_size": 256
+          },
+          "voice_ref": "assets/resources/b.wav",
+          "reference_text": "Some call me nature, others call me Mother Nature. I've been here for over four point five billion years, twenty-two thousand five hundred times longer than you."
+        }
+      ],
+      "coverage": "Previously failing long-short-long: computing, voices B-C-B"
+    },
+    {
+      "id": "drama3_unconditioned",
+      "family": "fish_drama3",
+      "model": "Drama-3-GGUF/drama-3-backbone-4bit-experts-Q4_K_S.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "session_options": {
+        "fish_drama3.cpu_expert_layers": 0
+      },
+      "requests": [
+        {
+          "id": "seed_1234",
+          "text": "I like basketball, i hold the ball with my hand, dribble and take a shot. it is all very exciting.",
+          "options": {
+            "seed": 1234
+          }
+        },
+        {
+          "id": "seed_42",
+          "text": "I like basketball, i hold the ball with my hand, dribble and take a shot. it is all very exciting.",
+          "options": {
+            "seed": 42
+          }
+        },
+        {
+          "id": "seed_2026",
+          "text": "I like basketball, i hold the ball with my hand, dribble and take a shot. it is all very exciting.",
+          "options": {
+            "seed": 2026
+          }
+        }
+      ],
+      "coverage": "Full-resident unchanged-path controls for the three noise-case seeds"
+    }
+  ]
+}

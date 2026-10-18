@@ -41,3 +41,23 @@ file, or if VAD fails, transcription uses fixed chunks.
 
 Streaming mode buffers incoming audio and transcribes it when the input closes.
 It returns a final transcript rather than incremental text.
+
+## Word timestamps
+
+Word timestamps are produced. `supports_timestamps` is true.
+
+The grid is 80 ms (1280 samples at the model's 16 kHz rate). Indexes are samples in the session buffer at that buffer's own sample rate, so input at 8 kHz or 48 kHz reports the same times in seconds as 16 kHz input.
+
+A token ends at the next different label, including blank. A word runs from its first subword piece through its last, so blanks between those pieces are inside the word. Blanks between words are in neither word.
+
+`confidence` is the geometric mean of the greedy-class probability on the non-blank frames of that word.
+
+Streaming attaches the words to the final result.
+
+Limits:
+
+- The frame is 80 ms, so word boundaries are only as precise as one frame at any input rate.
+- Confidence is the greedy-class probability, not a marginal CTC probability.
+- A repeated non-blank label occupies every frame of that run.
+- Blanks between subword pieces of one word are inside the word's time span and outside its confidence.
+- Streaming words arrive on the final result only.

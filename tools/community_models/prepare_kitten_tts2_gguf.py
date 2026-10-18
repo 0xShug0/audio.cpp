@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Convert local Kitten TTS 2 assets into a self-contained audio.cpp GGUF.
 
-No network access or Python model loading. The native converter preserves the
-HF tensor names and embeds the native decoder, tokenizer, and speaker weights.
+No network access. Conversion uses NumPy, PyTorch and safetensors offline.
+Inference remains native, with no Python or LibTorch runtime dependency.
 """
 from __future__ import annotations
 
@@ -82,6 +82,10 @@ def prepare_voices(args, model: Path, s3gen: Path, root: Path, required: set[str
     absent = required - prepared.keys()
     if absent:
         raise ValueError(f"prepared voice index is missing registered presets: {', '.join(sorted(absent))}")
+    from kitten_tts2_weights import refresh_voice_projections
+    refresh_voice_projections(model, prepared)
+    base = root / "voices-refreshed.json"
+    base.write_text(json.dumps(prepared, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     if args.voices_output:
         args.voices_output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(base, args.voices_output)
@@ -95,7 +99,8 @@ def main() -> None:
     parser.add_argument("--converter", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--overwrite", action="store_true", help="Replace an existing output GGUF.")
-    parser.add_argument("--type", choices=("orig", "f16", "q8_0"), default="q8_0")
+    parser.add_argument("--type", choices=("bf16", "q8_0", "q4_0"), default="q8_0",
+                        help="Export type (default q8_0): bf16 preserves full BF16; q8_0 unpacks the ternary checkpoint exactly; q4_0 packs the full BF16 body exactly with a Q8_0 embedding. All use the default decoder.")
     parser.add_argument("--s3gen", type=Path, help="Official s3gen_meanflow.safetensors (defaults to MODEL/native/).")
     parser.add_argument("--s3-license", type=Path, help="Chatterbox LICENSE (defaults to MODEL/native/LICENSE).")
     parser.add_argument("--voice-preparer", type=Path, help="Native voice preparer (defaults to the converter's sibling executable).")
@@ -115,7 +120,7 @@ def main() -> None:
     s3gen = (args.s3gen or model / "native" / "s3gen_meanflow.safetensors").resolve()
     s3_license = (args.s3_license or model / "native" / "LICENSE").resolve()
     speaker = model / "speaker" / "model.safetensors"
-    source = model / "lm" / "model.safetensors"
+    source = model / "lm" / ("model-ternary.safetensors" if args.type == "q8_0" else "model.safetensors")
     spec_path = Path(__file__).resolve().parents[2] / "model_specs" / "kitten_tts2.json"
     if json.loads((model / "config.json").read_text(encoding="utf-8"))["type"] != "KITTEN2":
         parser.error("--model must name a Kitten TTS 2 repository")
@@ -125,19 +130,26 @@ def main() -> None:
         "lm/tokenizer_config.json": model / "lm" / "tokenizer_config.json",
         "lm/tokenizer.json": model / "lm" / "tokenizer.json",
         "cpp/default/voices.json": args.prepared_voices or decoder_dir / "voices.json",
-        "LICENSE.md": model / "LICENSE.md",
+        "LICENSE": model / "LICENSE.md",
         "speaker/LICENSE": model / "speaker" / "LICENSE",
         "native/LICENSE": s3_license,
     }
-    for path in [source, s3gen, speaker, args.converter, *sidecars.values()]:
+    for path in [source, model / "lm/model.safetensors", s3gen, speaker, args.converter, *sidecars.values()]:
         if not path.is_file():
             parser.error(f"missing input: {path}")
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="kitten-gguf-", dir=args.output.parent) as directory:
         root = Path(directory)
+        import torch
+        torch.set_num_threads(args.threads)
         required = set(next(option["values"] for option in spec["options"]["request"] if option["name"] == "voice_id"))
         sidecars["cpp/default/voices.json"] = prepare_voices(args, model, s3gen, root, required)
+        if args.type in ("q8_0", "q4_0"):
+            from kitten_tts2_weights import stage_language_model
+            staged_lm = root / "language-model.gguf"
+            stage_language_model(source, staged_lm, args.type)
+            source = staged_lm
         # Keep preparation manifests (including local WAV paths) outside the
         # converter root: only publish the explicit runtime sidecars below.
         package_root = root / "package"
@@ -158,8 +170,9 @@ def main() -> None:
         sidecars["NOTICE"] = notice
         command = [str(args.converter.resolve()), "--input", f"language_model={source}",
                    "--input", f"s3gen={s3gen}", "--input", f"speaker={speaker}",
-                   "--output", str(args.output.resolve()), "--type", args.type,
-                   "--keep-type", "language_model/model.embed_tokens.weight=f16",
+                   "--output", str(args.output.resolve()), "--type", "orig",
+                   "--keep-type", "language_model/model.embed_tokens.weight=" +
+                       ("q8_0" if args.type == "q4_0" else "orig"),
                    "--keep-type", "language_model/spk_proj.*=orig",
                    # These checkpoints are F32, with scalar I64 batch counters.
                    # Preserve both; forcing scalar counters to F32 is unsupported.

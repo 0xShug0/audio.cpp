@@ -285,6 +285,7 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
     }
     auto requested = model_config_from_json(body, request_base_, false);
     requested.path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
+    apply_default_session_options(config_, requested);
 
     LoadedModel * existing = nullptr;
     {
@@ -538,6 +539,7 @@ RuntimeVoicePreset ServerState::load_runtime_voice_preset(
     RuntimeVoicePreset out;
     out.voice_id = preset.voice_id;
     out.reference_text = preset.reference_text;
+    out.options = preset.options;
     if (preset.voice_ref.has_value()) {
         out.audio = minitts::cli::read_audio_buffer(*preset.voice_ref);
     }

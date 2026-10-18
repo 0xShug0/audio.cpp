@@ -357,6 +357,7 @@ HttpResponse ParallelServerState::handle_model_load(const std::string & body_tex
         requested.slots = static_cast<int>(slots->as_number());
     }
     requested.path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
+    apply_default_session_options(config_, requested);
 
     // Validate metadata/presets before replacing any live state. A failed
     // validation leaves the existing configuration and sessions intact.
@@ -635,6 +636,7 @@ RuntimeVoicePreset ParallelServerState::load_runtime_voice_preset(
     RuntimeVoicePreset out;
     out.voice_id = preset.voice_id;
     out.reference_text = preset.reference_text;
+    out.options = preset.options;
     if (preset.voice_ref.has_value()) {
         out.audio = minitts::cli::read_audio_buffer(*preset.voice_ref);
     }
@@ -2555,7 +2557,9 @@ void ParallelServerState::unload_registered_models(
     parallel.reserve(registered.size());
     {
         std::lock_guard<std::mutex> admission_lock(bulk_admission_mutex_);
-        for (const auto & [id, model] : registered) {
+        for (const auto & entry : registered) {
+            const auto & id = entry.first;
+            auto * model = entry.second;
             if (std::any_of(parallel.begin(), parallel.end(), [model](const Drain & d) { return d.model == model; })) {
                 continue;
             }

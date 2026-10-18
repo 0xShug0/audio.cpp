@@ -37,6 +37,8 @@ struct ServerModelConfig {
         std::optional<std::string> voice_id;
         std::optional<std::filesystem::path> voice_ref;
         std::optional<std::string> reference_text;
+        // Request options the preset supplies, passed to the model as given.
+        std::unordered_map<std::string, std::string> options;
     };
 
     std::string id;
@@ -110,6 +112,10 @@ struct ServerConfig {
     std::string frontend_listener;
     ServerFrontendOptions frontend_options;
     std::optional<std::filesystem::path> model_spec_override;
+    // Session options for every model of a family that does not set them itself:
+    // the configured models and the ones loaded later through POST /v1/models/load
+    // (the WebUI). Keys are family-qualified, e.g. "irodori_tts.mem_saver".
+    std::unordered_map<std::string, std::string> default_session_options;
     // Voice library shared across all TTS models: *.wav files plus a `prompt_text`
     // mapping file (<basename>|<transcript>). A request `voice` name that is not a
     // model preset resolves to <voice_dir>/<name>.wav as the cloning reference.
@@ -120,5 +126,8 @@ struct ServerConfig {
 engine::core::BackendType parse_server_backend(const std::string & value);
 ServerConfig load_server_config(const std::filesystem::path & path);
 ServerConfig load_server_config(const std::filesystem::path & path, bool parallel_jobs);
+// Adds the config.default_session_options entries for model.family that the model's
+// own session_options do not set.
+void apply_default_session_options(const ServerConfig & config, ServerModelConfig & model);
 
 }  // namespace minitts::server

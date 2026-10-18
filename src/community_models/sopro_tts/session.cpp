@@ -178,7 +178,7 @@ std::string SoproTTSSession::family() const {
 }
 
 runtime::VoiceTaskKind SoproTTSSession::task_kind() const {
-    return runtime::VoiceTaskKind::Tts;
+    return task_.task;
 }
 
 runtime::RunMode SoproTTSSession::run_mode() const {

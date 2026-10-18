@@ -13,7 +13,7 @@ by default, its transcript. To use reference audio without a transcript, pass
 |---|---|
 | Family | `qwen3_tts` |
 | Model directory | `models/Qwen3-TTS-12Hz-1.7B-Base` |
-| Task | `tts` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Voice input | Reference WAV through `--voice-ref` |
 | Transcript | `--reference-text` required unless `x_vector_only_mode=true` |
@@ -21,6 +21,8 @@ by default, its transcript. To use reference audio without a transcript, pass
 ```bash
 audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Base --backend cuda --text "Hello from Qwen3 TTS." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
 ```
+
+`tts` and `clon` enter the same Base synthesis implementation.
 
 ### Common Options (use directly)
 
@@ -30,7 +32,7 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Ba
 | `--voice-ref` | WAV path | required | Voice clone reference audio. |
 | `--reference-text` | text | required by default | Transcript for reference audio; optional with `x_vector_only_mode=true`. |
 | `--language` | language code | empty string | Text language hint. |
-| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
+| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. Each chunk is voiced separately; with the session option `qwen3_tts.stitch_decode=true` the talker still runs per chunk but the codes of all chunks are voiced in one decoder pass. |
 | `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS CustomVoice
@@ -59,7 +61,7 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Cu
 | `--speaker` | packaged speaker name | required | Built-in speaker id, such as `Vivian` or `Ryan`. |
 | `--instruct` | text | empty string | Style or emotion instruction. |
 | `--language` | language code | empty string | Text language hint. |
-| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
+| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. Each chunk is voiced separately; with the session option `qwen3_tts.stitch_decode=true` the talker still runs per chunk but the codes of all chunks are voiced in one decoder pass. |
 | `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS VoiceDesign
@@ -70,7 +72,7 @@ Qwen3 VoiceDesign creates a voice from an instruction. It does not require a spe
 |---|---|
 | Family | `qwen3_tts` |
 | Model directory | `models/Qwen3-TTS-12Hz-1.7B-VoiceDesign` |
-| Task | `vdes` |
+| Tasks | `tts`, `vdes` |
 | Modes | `offline`, `streaming` |
 | Voice input | Instruction text through `--instruct` |
 | Reference audio | Not required |
@@ -79,6 +81,8 @@ Qwen3 VoiceDesign creates a voice from an instruction. It does not require a spe
 audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-VoiceDesign --backend cuda --text "Hello from a designed voice." --instruct "A warm adult narrator" --out out.wav
 ```
 
+`tts` and `vdes` enter the same VoiceDesign synthesis implementation.
+
 ### Common Options (use directly)
 
 | Option | Values | Default | Meaning |
@@ -86,7 +90,7 @@ audiocpp_cli --task vdes --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-V
 | `--text` | text | required | Text to synthesize. |
 | `--instruct` | text | empty string | Optional voice design instruction. |
 | `--language` | language code | empty string | Text language hint. |
-| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. |
+| `--text-chunk-size` | integer chars | `8192` | Long-form text chunk size. Each chunk is voiced separately; with the session option `qwen3_tts.stitch_decode=true` the talker still runs per chunk but the codes of all chunks are voiced in one decoder pass. |
 | `--max-tokens` | positive integer | checkpoint generation config (`2048` if absent) | Maximum generated speech tokens per chunk. |
 
 ## Qwen3 TTS Streaming
@@ -152,6 +156,7 @@ constant-context sizes are in MiB.
 |---|---|---:|---|
 | `qwen3_tts.mem_saver` | bool | `false` | Release the talker cached-step graph after each request. Voice-prompt, prefill, code-predictor, and speech-decoder caches remain reusable. |
 | `qwen3_tts.perf_mode` | `off`, `flash_attention` | `off` | Opt-in attention optimization; `flash_attention` requires Q8_0 weights in both the talker and speech tokenizer. |
+| `qwen3_tts.stitch_decode` | bool | `false` | Voice the concatenated speech codes of all text chunks in one decoder pass instead of voicing each chunk separately. Per-chunk voicing voices the voice-clone reference once per chunk and zeroes the stateful vocoder cache at every chunk boundary (measured on RK3588, 300 characters, 22.5 s reference: 7 vocoder runs for 159.9 s against 1 run for 57.5 s); the stitched pass costs device memory proportional to the utterance, since one decode call builds a vocoder graph sized by its frame count. |
 | `qwen3_tts.voice_prompt_cache_slots` | nonnegative integer | `1` | Cached voice-clone prompts; `0` disables prompt caching. |
 | `qwen3_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Talker weight storage fallback. |
 | `qwen3_tts.talker_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit talker weight storage override. |
@@ -165,4 +170,29 @@ constant-context sizes are in MiB.
 | `qwen3_tts.talker_constant_context_mb` | positive integer | `4` | Talker constant tensor context. |
 | `qwen3_tts.code_predictor_constant_context_mb` | positive integer | `4` | Code predictor constant tensor context. |
 | `qwen3_tts.speech_decoder_constant_context_mb` | positive integer | `4` | Speech decoder constant tensor context. |
+| `qwen3_tts.exec_plan` | JSON object of component plans, encoded as a string | `{}` | `{"speech_decoder":{"impl":"rknn","artifacts":{"main":"/models/decoder.rknn","first":"/models/decoder-first.rknn"}}}` selects the NPU decoder and skips GGML decoder weights. `main` is required; `first` optionally uses a smaller engine for the first streaming group. No decoder-specific params. See [component execution plans](../build/rockchip-npu.md#component-execution-plans). |
+
+## Rockchip NPU decoder
+
+The speech decoder stage can run on a Rockchip NPU through `librknnrt` instead
+of ggml. The path is opt-in at build time:
+
+```bash
+cmake -S . -B build -DENGINE_ENABLE_RKNN=ON \
+  -DENGINE_RKNN_INCLUDE_DIR=/usr/local/include \
+  -DENGINE_RKNN_LIBRARY=/usr/lib/librknnrt.so
+```
+
+The `.rknn` must be the stateful fp16 vocoder export for the same checkpoint
+and target SoC: inputs `audio_codes`, `freqs_in`, `cache_valid`, `cache_in`;
+outputs `audio_values` and `cache_out`; 1920 samples per token at 24 kHz, with
+the convolution and KV cache carried across steps in the graph I/O. The
+optional first-group model runs the first token group at a smaller compiled
+batch; the cache layout is batch-independent, so its cache feeds the main
+model directly. A `.rknn` is compiled per SoC and is not portable between
+chips. Build the file with
+[`tools/rknn/prepare_qwen3_tts_rknn_vocoder.py`](../../tools/rknn/prepare_qwen3_tts_rknn_vocoder.py)
+and see [the Rockchip NPU build guide](../build/rockchip-npu.md) for the toolkit
+venv, the measured numbers, and the limits of this path. This path is opt-in
+and validated only on RK3588.
 

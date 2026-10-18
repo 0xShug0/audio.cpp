@@ -139,9 +139,10 @@ Maya1Session::Maya1Session(
   }
   runtime::validate_spec_backed_session_options(options, *contract_, kFamily,
                                                 "Maya1");
-  if (task_.task != runtime::VoiceTaskKind::Tts ||
+  if ((task_.task != runtime::VoiceTaskKind::Tts &&
+       task_.task != runtime::VoiceTaskKind::VoiceDesign) ||
       task_.mode != runtime::RunMode::Offline) {
-    throw std::runtime_error("Maya1 currently implements offline TTS");
+    throw std::runtime_error("Maya1 currently implements offline TTS and voice design");
   }
   auto shared_storage = assets::TensorStorageType::Native;
   if (const auto value =
@@ -173,7 +174,7 @@ Maya1Session::~Maya1Session() = default;
 std::string Maya1Session::family() const { return std::string(kFamily); }
 
 runtime::VoiceTaskKind Maya1Session::task_kind() const {
-  return runtime::VoiceTaskKind::Tts;
+  return task_.task;
 }
 
 runtime::RunMode Maya1Session::run_mode() const { return task_.mode; }

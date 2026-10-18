@@ -13,7 +13,7 @@ autoencoder: [jordand/fish-s1-dac-min](https://huggingface.co/jordand/fish-s1-da
 | Model directory | `models/echo-tts` |
 | Modes | offline |
 | Sample rate | 44 100 Hz |
-| Tasks | `clon` |
+| Tasks | `tts`, `clon` |
 
 ## Text Chunk Size
 
@@ -262,6 +262,9 @@ audiocpp_cli \
     --text "[S1] Alright, I'm going to demo this new model." \
     --out out.wav
 ```
+
+`tts` is an alias to the same synthesis path. Route selection does not change
+the model's existing input requirements.
 
 The speaker reference is `--voice-ref`, not `--target-voice`; the latter is for
 path-based voice conversion. No transcript of the reference is needed. Useful

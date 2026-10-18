@@ -1,5 +1,12 @@
 # Moonshine Streaming ASR
 
+Build with `-DENGINE_ENABLE_NEON=ON` (default OFF) to enable the native path.
+On ARM CPU, `--session-option 'moonshine_asr.exec_plan={"decoder":{"impl":"neon"}}'` selects the complete
+NEON decoder, including embedding lookup, cross-KV preparation and cached
+autoregressive steps. The encoder and sampling policy stay unchanged. Omission,
+an empty plan, or `decoder.impl=default/ggml` preserves the graph path. Explicit
+NEON requires an AArch64 CPU session. No artifacts or params are accepted.
+
 [Moonshine](https://huggingface.co/moonshine-ai) is an English streaming ASR
 family. audio.cpp supports the upstream tiny, small, and medium streaming
 checkpoints through the `moonshine_asr` family.

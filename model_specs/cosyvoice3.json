@@ -174,6 +174,13 @@
         "description": "Release cached runtime graphs after each request to reduce peak VRAM; default false.",
         "required": false,
         "default": false
+      },
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Component: flow. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. GGML keeps the session backend. RKNN requires artifacts.main, a comma-separated ladder of estimator engines compiled one per sequence length (tools/rknn/prepare_cosyvoice3_rknn_flow.py), and ENGINE_ENABLE_RKNN; omit backend. An utterance longer than the largest engine runs the CPU graph. Neither implementation takes params.",
+        "required": false,
+        "default": "{}"
       }
     ],
     "load": []

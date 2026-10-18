@@ -3,6 +3,8 @@
 | Model | Family | Task | Quick Start |
 |---|---|---|---|
 | AST AudioSet | `ast_audioset` | `cls` | [Model guide](models/ast_audioset.md) |
+| CED Audio Tagging | `ced` | `cls` | [Model guide](models/ced.md) |
+| FireRed VAD / Stream-VAD | `firered_vad` | `vad` | [Model guide](models/firered_vad.md) |
 | MarbleNet VAD | `marblenet_vad` | `vad` | [MarbleNet VAD](#marblenet-vad) |
 | microWakeWord | `micro_wake_word` | `wake` | [Model guide](models/micro_wake_word.md) |
 | MMS Forced Aligner | `mms_forced_aligner` | `align` | [MMS Forced Aligner](#mms-forced-aligner) |

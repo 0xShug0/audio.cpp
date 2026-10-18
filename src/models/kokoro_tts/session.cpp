@@ -12,7 +12,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -56,7 +58,36 @@ KokoroTTSSession::KokoroTTSSession(
                             "kokoro_tts.predictor_tail_graph_mb"}) {
         validation_options.options.erase(key);
     }
+    // Older embedded contracts omit exec_plan; parse_exec_plan validates its value.
+    if (contract_->session_option_keys.find("kokoro_tts.exec_plan") == contract_->session_option_keys.end()) {
+        validation_options.options.erase("kokoro_tts.exec_plan");
+    }
     runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "kokoro_tts.exec_plan",
+        {{"generator", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}},
+           {"rknn", {}, {"main"}, {}, {"overlap", "gain"}}}}});
+    const auto & generator_plan = exec_plan.at("generator");
+    if (generator_plan.impl == "rknn") {
+        rknn_generator_path_ = generator_plan.artifacts.at("main");
+    }
+    if (const auto overlap = generator_plan.params.find("overlap"); overlap != generator_plan.params.end()) {
+        const auto & value = overlap->second;
+        if (!value.is_number() || !std::isfinite(value.as_number()) || value.as_number() < 0 ||
+            value.as_number() >= static_cast<double>(std::numeric_limits<int64_t>::max()) ||
+            std::floor(value.as_number()) != value.as_number()) {
+            throw std::runtime_error("kokoro_tts.exec_plan.generator.params.overlap must be a nonnegative integer");
+        }
+        rknn_generator_overlap_ = value.as_i64();
+    }
+    if (const auto gain = generator_plan.params.find("gain"); gain != generator_plan.params.end()) {
+        if (!gain->second.is_bool()) {
+            throw std::runtime_error("kokoro_tts.exec_plan.generator.params.gain must be a boolean");
+        }
+        rknn_generator_gain_ = gain->second.as_bool();
+    }
     if (task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("Kokoro TTS only supports tts tasks");
     }
@@ -244,7 +275,10 @@ void KokoroTTSSession::prepare_decoder_graph_capacity(int64_t capacity) {
                 threads,
                 use_device_backend,
                 rng_seed_,
-                decoder_contract);
+                decoder_contract,
+                rknn_generator_path_,
+                rknn_generator_overlap_,
+                rknn_generator_gain_);
         });
     }
     prepared_decoder_capacity_ = capacity;

@@ -129,6 +129,12 @@ OpenAI-compatible speech endpoint, pass streaming options inside the request
 }
 ```
 
+> **Streaming playback:** The default `grow` policy with zero lookahead lowers
+> time to first audio, but small early chunks may cause playback underruns or
+> audible clicks on slow devices. If this occurs, try `stream_chunk_policy=fixed`
+> with `stream_frames_per_event=16` and `stream_lookahead_margin=12`, at the cost
+> of higher initial latency. Offline generation is unaffected.
+
 Quantized weight storage is the largest measured speedup and applies to CUDA
 and HIP alike: `q8_0` cut the fixed 100-token regression case from RTF ~1.5 to
 ~0.95 on gfx1151 and from ~0.77 to ~0.56 on an RTX 2080 Ti, and `q4_k` reached

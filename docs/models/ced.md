@@ -56,7 +56,7 @@ Download an official `mispeech/ced-*` checkpoint and the AudioSet
 `class_labels_indices.csv` used by its Python configuration. Then run:
 
 ```bash
-conda run -n qwen3-tts python tools/models/ced/convert_gguf.py \
+conda run -n qwen3-tts python tools/models/convert_ced_gguf.py \
   --source /path/to/ced-tiny \
   --labels-csv /path/to/class_labels_indices.csv \
   --output /path/to/audio.cpp-gguf/CED-GGUF/ced-tiny-f32.gguf

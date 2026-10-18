@@ -249,10 +249,18 @@ void const_stage_upload(std::vector<ConstStage> * stage, ggml_backend_t backend)
     }
 }
 void const_stage_end(std::vector<ConstStage> * stage) {
-    // detach only; the vector is deliberately leaked (a few KB per graph
-    // build) to avoid ownership hazards across build paths.
+    // detach only; ownership of the staged constants was handed to the graph that
+    // built them (const_stage_free runs with that graph's destructor).
     t_const_stage = nullptr;
     (void)stage;
+}
+
+void const_stage_free(std::vector<ConstStage> * stage) {
+    if (stage == nullptr) return;
+    for (auto & c : *stage) {
+        if (c.owned_buffer != nullptr) ggml_backend_buffer_free(c.owned_buffer);
+    }
+    delete stage;
 }
 
 

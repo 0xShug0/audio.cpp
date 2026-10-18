@@ -6,6 +6,7 @@
   "category": "tts",
   "status": "experimental",
   "tasks": [
+    "tts",
     "clone"
   ],
   "modes": [

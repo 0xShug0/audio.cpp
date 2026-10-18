@@ -68,6 +68,12 @@ void test_inline_default_and_named_presets() {
         },
         "builtin": {
           "voice_id": "alba"
+        },
+        "embedding": {
+          "options": {
+            "speaker_embedding_file": "voices/embedding.safetensors",
+            "num_steps": 8
+          }
         }
       }
     }
@@ -81,10 +87,63 @@ void test_inline_default_and_named_presets() {
     require(model.default_voice_preset.has_value(), "inline default preset parsed");
     require(model.default_voice_preset->voice_ref == root / "voices/default.wav", "default voice_ref path resolved");
     require(model.default_voice_preset->reference_text == "default transcript", "default reference_text parsed");
-    require(model.voice_presets.size() == 2, "named presets parsed");
+    require(model.voice_presets.size() == 3, "named presets parsed");
     require(model.voice_presets.at("assistant").voice_ref == root / "voices/assistant.wav", "named voice_ref path resolved");
     require(model.voice_presets.at("assistant").reference_text == "assistant transcript", "named reference_text parsed");
     require(model.voice_presets.at("builtin").voice_id == "alba", "named voice_id parsed");
+    const auto & options = model.voice_presets.at("embedding").options;
+    require(options.size() == 2, "preset options parsed");
+    require(options.at("speaker_embedding_file") == "voices/embedding.safetensors",
+            "preset option values are kept as given, not resolved as paths");
+    require(options.at("num_steps") == "8", "numeric preset option parsed");
+    require(model.voice_presets.at("assistant").options.empty(), "presets without options have none");
+}
+
+void test_bad_preset_options_are_rejected() {
+    const auto root = make_temp_root();
+    const auto not_object = write_config(root, "server_preset_options_type.json", R"JSON({
+  "models": [{"id": "tts", "family": "irodori_tts", "path": "models/irodori",
+              "voice_presets": {"narrator": {"options": "speaker.safetensors"}}}]
+})JSON");
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(not_object);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("options must be an object") != std::string::npos;
+    }
+    require(rejected, "non-object preset options are rejected");
+
+    const auto empty = write_config(root, "server_preset_options_empty.json", R"JSON({
+  "models": [{"id": "tts", "family": "irodori_tts", "path": "models/irodori",
+              "voice_presets": {"narrator": {"options": {}}}}]
+})JSON");
+    rejected = false;
+    try {
+        (void) minitts::server::load_server_config(empty);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("must set voice_id, voice_ref, reference_text, or options") !=
+            std::string::npos;
+    }
+    require(rejected, "a preset with only empty options is rejected");
+    std::filesystem::remove_all(root);
+}
+
+void test_model_spec_override_selection() {
+    const auto root = make_temp_root();
+    const auto path = write_config(root, "spec-override.json", R"JSON({
+      "model_spec_override": "embedded",
+      "models": [
+        {"id": "embedded", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "embedded"},
+        {"id": "file", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "specs/kokoro_tts.json"},
+        {"id": "literal", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "./embedded"}
+      ]
+    })JSON");
+    const auto config = minitts::server::load_server_config(path);
+    require(config.model_spec_override == std::filesystem::path("embedded"), "global embedded selector stays literal");
+    require(config.models[0].model_spec_override == std::filesystem::path("embedded"), "per-model embedded selector stays literal");
+    require(config.models[1].model_spec_override == root / "specs/kokoro_tts.json", "spec file still resolves relative to config");
+    require(config.models[2].model_spec_override == (root / "./embedded"), "literal embedded path stays a path");
+    std::filesystem::remove_all(root);
 }
 
 void test_builtin_utility_model_paths() {
@@ -159,6 +218,66 @@ void test_default_request_options() {
     require(options.at("num_inference_steps") == "8", "integer default request option parsed");
     require(options.at("temperature") == "0.6", "float default request option parsed");
     require(options.at("do_sample") == "false", "bool default request option parsed");
+}
+
+void test_default_session_options() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "server_default_session_options.json",
+        R"JSON({
+  "default_session_options": {
+    "irodori_tts.mem_saver": true,
+    "irodori_tts.codec_decode_chunk_steps": 100,
+    "qwen3_asr.max_tokens": 256
+  },
+  "models": [
+    {
+      "id": "tts",
+      "family": "irodori_tts",
+      "path": "models/irodori.gguf",
+      "session_options": {
+        "irodori_tts.codec_decode_chunk_steps": "50"
+      }
+    },
+    {
+      "id": "other",
+      "family": "omnivoice",
+      "path": "models/OmniVoice"
+    }
+  ]
+})JSON");
+
+    const auto config = minitts::server::load_server_config(config_path);
+    require(config.default_session_options.size() == 3, "default session options parsed");
+    const auto & tts = config.models.at(0).session_options;
+    require(tts.at("irodori_tts.mem_saver") == "true", "default fills an unset session option");
+    require(tts.at("irodori_tts.codec_decode_chunk_steps") == "50", "the model's own session option wins");
+    require(tts.count("qwen3_asr.max_tokens") == 0, "defaults of another family are not applied");
+    require(config.models.at(1).session_options.empty(), "a family without defaults is unchanged");
+
+    // Models loaded later (POST /v1/models/load) get the same treatment.
+    minitts::server::ServerModelConfig loaded;
+    loaded.family = "irodori_tts";
+    loaded.session_options["irodori_tts.mem_saver"] = "false";
+    minitts::server::apply_default_session_options(config, loaded);
+    require(loaded.session_options.at("irodori_tts.mem_saver") == "false", "a loaded model's own value wins");
+    require(loaded.session_options.at("irodori_tts.codec_decode_chunk_steps") == "100",
+            "a loaded model gets the family default");
+
+    for (const std::string bad : {R"({"default_session_options": {"mem_saver": true}, "models": []})",
+                                  R"({"default_session_options": {".mem_saver": true}, "models": []})",
+                                  R"({"default_session_options": {"irodori_tts.": true}, "models": []})",
+                                  R"({"default_session_options": ["irodori_tts.mem_saver"], "models": []})"}) {
+        const auto bad_path = write_config(root, "server_bad_default_session_options.json", bad);
+        bool rejected = false;
+        try {
+            (void) minitts::server::load_server_config(bad_path);
+        } catch (const std::runtime_error & error) {
+            rejected = std::string(error.what()).find("default_session_options") != std::string::npos;
+        }
+        require(rejected, "malformed default_session_options is rejected: " + bad);
+    }
 }
 
 void test_missing_default_preset_name_is_rejected() {
@@ -658,9 +777,12 @@ int main() {
     try {
         test_model_slots();
         test_inline_default_and_named_presets();
+        test_model_spec_override_selection();
         test_builtin_utility_model_paths();
         test_default_preset_name();
+        test_bad_preset_options_are_rejected();
         test_default_request_options();
+        test_default_session_options();
         test_missing_default_preset_name_is_rejected();
         test_duplicate_json_keys_are_rejected();
         test_busy_timeout_defaults_and_overrides();

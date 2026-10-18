@@ -2,6 +2,70 @@
 
 Powered by Stellon Labs.
 
+## Updated BF16, Q8 and hybrid Q4 (2026-10-16)
+
+Base: audio.cpp `624cf918`. Upstream weights:
+`f2eee74f4467855ad58fe16f1fb7b7df473263fd`. All exports use the default S3 MeanFlow
+decoder. Shared framework, S3, ggml and CMake files are unchanged.
+Windows x64, Ryzen AI 9 HX 470, RTX 4060 Ti 16 GB, CUDA 13.3, eight CPU threads.
+
+### Conversion and runtime validation
+
+- Seven preparation/packing unit tests passed.
+- Small end-to-end exports verified `--type bf16`, `--type q8_0`, `--type q4_0`
+  and the Q8 default. Tensor bytes matched the established conversion recipes;
+  unsupported options were rejected.
+- The regenerated GGUFs omit custom LM export metadata. Every tensor's shape,
+  type and payload matches its previous export, and all 48 prepared voice
+  entries retain identical conditioning. The Q8 filename and package ID retain
+  `v2`.
+- All 196 body matrices preserve full BF16 values exactly in Q8_0/Q4_0 storage.
+  The Q4 embedding's relative L2 error against BF16 is 0.00442545 overall and
+  0.00405134 on speech-token rows. These are weight errors, not quality scores.
+- CPU and CUDA session checks passed for all three storage combinations:
+  preset synthesis, seeded repeat, voice switching, long-form chunks, cloning,
+  cached clone repeat, changed reference, and invalid-input handling. Outputs
+  were finite, non-silent mono 24 kHz.
+- CPU and CUDA builds passed for the CLI and session probe; the CUDA server
+  was rebuilt with the updated WebUI.
+
+Q4 CUDA down projections load as BF16 to avoid non-finite quantized execution,
+adding about 483 MiB of resident weights. CPU retains Q4. No student decoder or
+upstream TL2/emb4 format is used.
+
+### Model contract and WebUI defaults
+
+The contract defaults projection storage to `native`. Q8 is the sole default
+package and UI recommendation. All three packages share `models/kitten-tts2-v2/`
+and keep distinct GGUF filenames.
+
+- Model-manager inspection selected `kitten_tts2_q8_v2`.
+- Rechecked on 2026-10-17 with an isolated package-manager fixture containing
+  an existing `models/kitten-tts2/` installation: all three updated packages
+  installed under `models/kitten-tts2-v2/` without overwrite. Installing and
+  removing them preserved the old folder, sibling GGUFs, shared sidecars and
+  unrelated files. Downloads were mocked for this check.
+- The existing frontend catalog resolved all three new paths and retained Q8
+  as the default without WebUI source changes.
+- Frontend catalog and Studio function checks exposed all three packages with
+  distinct labels and submitted no precision override by default.
+- Svelte checks passed with zero errors/warnings; the WebUI build passed.
+- Final GGUFs produced identical seeded PCM with the weight-type option omitted
+  versus explicit `native`, for all three files on both CPU and CUDA.
+
+### English quality spot-check
+
+Earlier Voxtral Realtime ASR checks recovered the requested words in short preset
+and clone samples for Q8 and hybrid Q4 on both backends. In the 40-word
+chunked passage, Q4 CPU and Q8 CUDA omitted "A small bird sings outside the
+window" (17.5% normalized WER); Q8 CPU and Q4 CUDA recovered the whole text.
+This demonstrates output sensitivity to quantized/backend arithmetic and the
+need for broader listening review. It does not establish perceptual parity or
+superiority of either quantization. An additional Q4 Bella sample omitted
+"sings outside the window"; Q8 recovered the complete text.
+
+Reproduction: [updated-profile validation](README.md#updated-bf16-q8-and-hybrid-q4).
+
 ## Post-merge timing and model-local cleanup (2026-10-04)
 
 Baseline: upstream `d3ab9df288131aeb83a3c361f0eb1e464b41dea0`, which includes
@@ -147,13 +211,6 @@ Changes outside those model-specific files are limited to:
   `749d1c1a46eb10492095d68fbcf55691ccf137cd`, SHA-256
   `d65cb687a2ed581ee6cc297e919ffefa63386944f42364ae13b78a594945514f`.
 
-The tested [published multilingual GGUF](https://huggingface.co/dignome/kitten_tts2)
-is 3,282,123,776 bytes, SHA-256
-`e97920ca5053f9fcd4de638dcd8114ed2510d4291a93257473a8843c3ff349ad`.
-It contains Q8_0 LM projections, F16 embedding/head, original BF16 speaker
-projection, and F32 S3/speaker weights. The package has 48 prepared voice entries,
-three tensor namespaces and ten runtime sidecars, including licenses/NOTICE.
-
 The full inference path is native C++/GGML. Python, PyTorch, TorchScript and
 ONNX Runtime are not runtime dependencies. The default `decoder.pt` export is
 used only by the Python comparison script.
@@ -241,7 +298,7 @@ further reducing error. This evidence is also recorded in #778.
 
 ## Session timings without a TF32 override
 
-The published Q8 package, eight threads and seed 1234 were used. Model/session
+These historical measurements used eight threads and seed 1234. Model/session
 loading is excluded; the first clone includes lazy reference-encoder loading.
 Tracing was enabled. These are individual desktop measurements with other
 activity, not isolated benchmark averages or a performance comparison.

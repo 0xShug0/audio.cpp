@@ -4,7 +4,7 @@ The `sherpa_kws` family runs streaming Zipformer transducer keyword-spotting
 exports. Convert a model directory with:
 
 ```bash
-conda run -n qwen3-tts python tools/models/sherpa_kws/convert_onnx_to_gguf.py \
+conda run -n qwen3-tts python tools/models/convert_sherpa_kws_gguf.py \
   /path/to/sherpa-onnx-kws-model /path/to/sherpa-kws-f32.gguf
 ```
 
@@ -13,6 +13,11 @@ files. The default self-contained package is
 `Sherpa-KWS-GGUF/sherpa-kws-zipformer-zh-en-3m-f32.gguf` under
 `audio-cpp/audio.cpp-gguf`; it embeds configuration, tokens, keywords, and the
 model spec. Only F32 is packaged.
+
+The default checkpoint is
+[sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20](https://modelscope.cn/models/pkufool/icefall-kws-zipformer-zh-en-3M-2025-12-20).
+Its model author [confirmed Apache-2.0 licensing](https://github.com/k2-fsa/sherpa-onnx/issues/3802#issuecomment-6052663364).
+Other sherpa-onnx exports may have different model-weight licenses.
 
 ```bash
 build/debug/bin/audiocpp_cli --family sherpa_kws --task wake \
