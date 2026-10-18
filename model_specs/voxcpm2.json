@@ -143,6 +143,13 @@
         "default": 3
       },
       {
+        "name": "ultimate_clone",
+        "type": "bool",
+        "description": "Use the voice reference itself as the continuation prompt, with reference_text as its transcript (upstream's ultimate clone). Default: false.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "prompt_text",
         "type": "string",
         "description": "Transcript for continuation prompt audio, distinct from the base voice reference.",
@@ -320,6 +327,12 @@
         "description": "Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count.",
         "required": false,
         "min": 1
+      },
+      {
+        "name": "prompt_cache_dir",
+        "type": "path",
+        "description": "Directory where encoded prompts are kept across restarts, named by a hash of their inputs. Unset: memory only.",
+        "required": false
       },
       {
         "name": "exec_plan",

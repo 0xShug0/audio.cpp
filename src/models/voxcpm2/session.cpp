@@ -13,6 +13,9 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <deque>
 #include <exception>
 #include <mutex>
@@ -257,6 +260,7 @@ void validate_session_options(
         key == "voxcpm2.audiovae_latent_capacity" ||
         key == "voxcpm2.audiovae_tile_frames" ||
         key == "voxcpm2.exec_plan" ||
+        key == "voxcpm2.prompt_cache_dir" ||
         key == "voxcpm2.audiovae_encoder_sample_capacity" ||
         key == "voxcpm2.weight_type" ||
         key == "voxcpm2.audiovae_weight_type" ||
@@ -371,6 +375,13 @@ VoxCPM2SessionBase::VoxCPM2SessionBase(runtime::TaskSpec task,
         runtime::parse_bool_option(*mem_saver, "voxcpm2.mem_saver");
   }
 
+  if (const auto dir =
+          runtime::find_option(options.options, {"voxcpm2.prompt_cache_dir"})) {
+    prompt_cache_dir_ = *dir;
+    if (!prompt_cache_dir_.empty()) {
+      std::filesystem::create_directories(prompt_cache_dir_);
+    }
+  }
   const auto exec_plan = runtime::parse_exec_plan(
       options.options, "voxcpm2.exec_plan",
       {{"audiovae", "ggml",
@@ -457,8 +468,9 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
     reference_audio = *request.voice->speaker->audio;
   }
   const VoxCPM2EncodedPrompt *prompt =
-      encoded_prompt_for_request(request.audio_input, prompt_text,
-                                 reference_audio);
+      encoded_prompt_for_request(
+          prompt_audio_for_request(request, reference_audio, prompt_text),
+          prompt_text, reference_audio);
 
   runtime::TaskResult result;
   double generator_ms = 0.0;
@@ -552,8 +564,9 @@ VoxCPM2SessionBase::run_streaming_request(
     reference_audio = *request.voice->speaker->audio;
   }
   const VoxCPM2EncodedPrompt *prompt =
-      encoded_prompt_for_request(request.audio_input, prompt_text,
-                                 reference_audio);
+      encoded_prompt_for_request(
+          prompt_audio_for_request(request, reference_audio, prompt_text),
+          prompt_text, reference_audio);
 
   runtime::TaskResult result;
   runtime::StreamingAudioConfig stream_config;
@@ -743,6 +756,153 @@ void VoxCPM2SessionBase::release_request_runtime_memory() {
   decoder_->release_runtime_memory();
 }
 
+namespace {
+
+// On-disk encoded prompts (voxcpm2.prompt_cache_dir). The file name is a hash
+// of everything the encoding depends on, so a changed clip, transcript or
+// AudioVAE storage type reads as a miss, never as a stale hit; a file that does
+// not parse is encoded again and replaced. Requests cannot name a path.
+constexpr char kPromptFileMagic[8] = {'V', 'X', 'C', 'P', 'M', 'P', '0', '1'};
+
+void fnv1a(uint64_t &h, const void *data, size_t bytes) {
+  const auto *p = static_cast<const unsigned char *>(data);
+  for (size_t i = 0; i < bytes; ++i) {
+    h ^= p[i];
+    h *= 1099511628211ULL;
+  }
+}
+
+void hash_audio(uint64_t &h, const std::optional<runtime::AudioBuffer> &audio) {
+  const uint8_t present = audio.has_value() ? 1 : 0;
+  fnv1a(h, &present, 1);
+  if (!audio) {
+    return;
+  }
+  const int64_t meta[3] = {static_cast<int64_t>(audio->sample_rate),
+                           static_cast<int64_t>(audio->channels),
+                           static_cast<int64_t>(audio->samples.size())};
+  fnv1a(h, meta, sizeof(meta));
+  fnv1a(h, audio->samples.data(), audio->samples.size() * sizeof(float));
+}
+
+uint64_t prompt_inputs_hash(const std::optional<runtime::AudioBuffer> &prompt_audio,
+                            const std::string &prompt_text,
+                            const std::optional<runtime::AudioBuffer> &reference_audio,
+                            int storage_type) {
+  uint64_t h = 1469598103934665603ULL;
+  fnv1a(h, kPromptFileMagic, sizeof(kPromptFileMagic));
+  fnv1a(h, &storage_type, sizeof(storage_type));
+  const uint64_t n = prompt_text.size();
+  fnv1a(h, &n, sizeof(n));
+  fnv1a(h, prompt_text.data(), prompt_text.size());
+  hash_audio(h, prompt_audio);
+  hash_audio(h, reference_audio);
+  return h;
+}
+
+template <class T> void put(std::ostream &out, const T &v) {
+  out.write(reinterpret_cast<const char *>(&v), sizeof(v));
+}
+template <class T> bool get(std::istream &in, T &v) {
+  return static_cast<bool>(in.read(reinterpret_cast<char *>(&v), sizeof(v)));
+}
+void put_floats(std::ostream &out, const std::vector<float> &v) {
+  put<uint64_t>(out, v.size());
+  out.write(reinterpret_cast<const char *>(v.data()),
+            static_cast<std::streamsize>(v.size() * sizeof(float)));
+}
+bool get_floats(std::istream &in, std::vector<float> &v, uint64_t limit) {
+  uint64_t n = 0;
+  if (!get(in, n) || n > limit) {
+    return false;
+  }
+  v.resize(static_cast<size_t>(n));
+  return static_cast<bool>(in.read(reinterpret_cast<char *>(v.data()),
+                                   static_cast<std::streamsize>(n * sizeof(float))));
+}
+
+std::optional<VoxCPM2EncodedPrompt> read_prompt_file(const std::filesystem::path &path,
+                                                     uint64_t hash) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    return std::nullopt;
+  }
+  char magic[8] = {};
+  uint64_t stored = 0, text_size = 0;
+  if (!in.read(magic, sizeof(magic)) ||
+      !std::equal(std::begin(magic), std::end(magic), std::begin(kPromptFileMagic)) ||
+      !get(in, stored) || stored != hash || !get(in, text_size) ||
+      text_size > (1u << 20)) {
+    return std::nullopt;
+  }
+  VoxCPM2EncodedPrompt out;
+  out.prompt_text.resize(static_cast<size_t>(text_size));
+  constexpr uint64_t kMaxFloats = 64ull << 20;
+  if (!in.read(out.prompt_text.data(), static_cast<std::streamsize>(text_size)) ||
+      !get(in, out.prompt_patches) || !get_floats(in, out.prompt_features, kMaxFloats) ||
+      !get(in, out.reference_patches) ||
+      !get_floats(in, out.reference_features, kMaxFloats) ||
+      out.prompt_patches < 0 || out.reference_patches < 0) {
+    return std::nullopt;
+  }
+  return out;
+}
+
+void write_prompt_file(const std::filesystem::path &path, uint64_t hash,
+                       const VoxCPM2EncodedPrompt &prompt) {
+  const auto tmp = path.string() + ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if (!out) {
+      return;
+    }
+    out.write(kPromptFileMagic, sizeof(kPromptFileMagic));
+    put<uint64_t>(out, hash);
+    put<uint64_t>(out, prompt.prompt_text.size());
+    out.write(prompt.prompt_text.data(), static_cast<std::streamsize>(prompt.prompt_text.size()));
+    put(out, prompt.prompt_patches);
+    put_floats(out, prompt.prompt_features);
+    put(out, prompt.reference_patches);
+    put_floats(out, prompt.reference_features);
+    if (!out) {
+      std::remove(tmp.c_str());
+      return;
+    }
+  }
+  std::error_code ec;
+  std::filesystem::rename(tmp, path, ec);
+  if (ec) {
+    std::remove(tmp.c_str());
+  }
+}
+
+} // namespace
+
+std::optional<runtime::AudioBuffer> VoxCPM2SessionBase::prompt_audio_for_request(
+    const runtime::TaskRequest &request,
+    const std::optional<runtime::AudioBuffer> &reference_audio,
+    const std::string &prompt_text) const {
+  if (request.audio_input.has_value()) {
+    return request.audio_input;
+  }
+  // Ultimate clone (upstream VoxCPM2's prompt_wav_path + prompt_text together
+  // with reference_wav_path): the reference clip is also the continuation
+  // prompt, so every request starts from the same audio and transcript. Without
+  // it a reference_text sent with voice_ref names no prompt audio and is unused.
+  const auto ultimate =
+      runtime::find_option(request.options, {"voxcpm2.ultimate_clone", "ultimate_clone"});
+  if (ultimate.has_value() &&
+      runtime::parse_bool_option(*ultimate, "ultimate_clone")) {
+    if (!reference_audio.has_value() || prompt_text.empty()) {
+      throw std::invalid_argument(
+          "VoxCPM2 ultimate_clone needs a voice reference and its transcript "
+          "(reference_text)");
+    }
+    return reference_audio;
+  }
+  return std::nullopt;
+}
+
 const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(
     const std::optional<runtime::AudioBuffer> &prompt_audio,
     const std::string &prompt_text,
@@ -768,8 +928,29 @@ const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(
 
   const auto encode_start = Clock::now();
   EncodedPromptCacheEntry entry;
-  entry.encoded =
-      decoder_->encode_prompt_audio(prompt_audio, prompt_text, reference_audio);
+  std::optional<std::filesystem::path> disk_path;
+  uint64_t disk_hash = 0;
+  bool from_disk = false;
+  if (!prompt_cache_dir_.empty()) {
+    disk_hash = prompt_inputs_hash(prompt_audio, prompt_text, reference_audio,
+                                   static_cast<int>(decoder_config_.weight_storage_type));
+    char name[48];
+    std::snprintf(name, sizeof(name), "voxcpm2-prompt-%016llx.bin",
+                  static_cast<unsigned long long>(disk_hash));
+    disk_path = std::filesystem::path(prompt_cache_dir_) / name;
+    if (auto loaded = read_prompt_file(*disk_path, disk_hash)) {
+      entry.encoded = std::move(*loaded);
+      from_disk = true;
+    }
+  }
+  if (!from_disk) {
+    entry.encoded =
+        decoder_->encode_prompt_audio(prompt_audio, prompt_text, reference_audio);
+    if (disk_path) {
+      write_prompt_file(*disk_path, disk_hash, entry.encoded);
+    }
+  }
+  debug::trace_log_scalar("voxcpm2.prompt_cache.disk_hit", from_disk);
   const double encode_ms = engine::debug::elapsed_ms(encode_start);
   if (encoded_prompt_cache_.capacity() == 0) {
     uncached_encoded_prompt_ = std::move(entry);
