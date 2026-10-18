@@ -670,12 +670,18 @@ Three consequences for anyone extending this path:
   before the weight set does.
 - A ladder of engines has to be lazy. Four engines that each load on their own fail at `rknn_init`
   when all four are resident at once, so the ladder loads on demand and evicts. How many rungs share
-  the aperture is a measurement, not a rule: the cost of a context is its compiled length, not its
-  image size, and the rungs co-resident on this board are S=200 x3, 250+250+110 and 110 x4 (all at
-  <= 1.81 GiB) while S=400 coexists only with 110/200 and S=500 with nothing. The accounting for that
-  is shared (`rknn::ApertureBudget`, `include/engine/framework/rknn/engine.h`) and the numbers are
-  not: the per-unit cost and the budget are measurements of one engine on one board, and they live
-  with the sidecar that measured them.
+  the aperture is a measurement, not a rule: the driver reports what a context will occupy (`rknn::
+  engine_memory_mib`: a `RKNN_FLAG_COLLECT_MODEL_INFO_ONLY` init plus `RKNN_QUERY_MEM_SIZE`, ~0.5 s
+  per engine, no network built), and for this estimator that is 786 MiB at S=110, 1129 at 200, 1426
+  at 250, 2615 at 400, 3752 at 500 and 1039 at 900 -- all of them 661-714 MB images, so a context
+  costs its graph and not its image, and the cost is not a function of the compiled length (S=900
+  costs less than S=500). Against a 3900 MiB per-process ceiling, measured by initializing the sets
+  in one process, the sets that admit are 110+200+250 (3341), 110 x4 (3144), 200 x3 (3387),
+  250+250+110 (3638), 110+400 (3401) and 200+400 (3744), while 250+400 (4041), 110+500 (4538) and
+  every set holding an S>=900 engine return -4. The accounting for that is shared
+  (`rknn::ApertureBudget`, `include/engine/framework/rknn/engine.h`) and the numbers are not: the
+  per-engine cost and the budget are measurements of one engine on one board, and they live with the
+  sidecar that measured them.
 - The failure is at init, so it is cheap to detect and cannot corrupt output: `rknn_init` returns -4
   and dmesg names the byte count.
 

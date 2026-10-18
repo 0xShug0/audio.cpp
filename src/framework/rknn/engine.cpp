@@ -34,6 +34,32 @@ std::string status(const std::string & label, const char * what, int code) {
 
 #if defined(ENGINE_HAVE_RKNN)
 
+int64_t engine_memory_mib(const std::string & path, const std::string & label) {
+    (void)label;
+    std::vector<char> model;
+    try {
+        model = read_engine(path, label);
+    } catch (const std::exception &) {
+        return 0;
+    }
+    rknn_context ctx = 0;
+    if (rknn_init(
+            &ctx, model.data(), static_cast<uint32_t>(model.size()),
+            RKNN_FLAG_COLLECT_MODEL_INFO_ONLY, nullptr) != 0) {
+        return 0;
+    }
+    rknn_mem_size mem{};
+    const int ret = rknn_query(ctx, RKNN_QUERY_MEM_SIZE, &mem, sizeof(mem));
+    rknn_destroy(ctx);
+    if (ret != 0) {
+        return 0;
+    }
+    // Round up: the budget is a ceiling, and a resident set measured at its sum should not be
+    // admitted by fractions of a megabyte.
+    return static_cast<int64_t>(mem.total_weight_size + mem.total_internal_size + (1ull << 20) - 1) >>
+        20;
+}
+
 Engine::~Engine() {
     release();
 }

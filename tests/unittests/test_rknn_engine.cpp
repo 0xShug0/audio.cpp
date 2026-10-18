@@ -67,11 +67,22 @@ void test_status() {
 // The aperture accounting a ladder of engines spends, on the numbers CosyVoice3's flow estimator
 // measured on RK3588 (5 MiB per compiled frame, a 2800 MiB resident budget) and the trace that
 // board stand served: rungs 110/200/250/400/500/900, requests at 118/158/202/192/220/228 frames.
-// The board measured two `rknn_init` calls and a 450-frame resident set for that sequence, so a
-// budget that evicts a short rung it should keep shows up here.
+// The board measured the per-engine residency the driver reports (786 MiB at S=110, 1129 at 200,
+// 1426 at 250, 2615 at 400, 3752 at 500, 1039 at 900) against a 3900 MiB aperture, and the sets that
+// initialize together in one process are the ones the accounting admits -- so a budget that evicts a
+// short rung it should keep, or admits a set the driver refuses, shows up here.
 void test_aperture_budget_ladder() {
     const std::vector<int64_t> rungs = {110, 200, 250, 400, 500, 900};
-    engine::rknn::ApertureBudget budget(5, 2800);
+    const std::vector<int64_t> cost = {786, 1129, 1426, 2615, 3752, 1039};
+    engine::rknn::ApertureBudget budget(3900);
+    const auto cost_of = [&rungs, &cost](int64_t frames) {
+        for (size_t i = 0; i < rungs.size(); ++i) {
+            if (rungs[i] == frames) {
+                return cost[i];
+            }
+        }
+        return int64_t{0};
+    };
     std::vector<bool> loaded(rungs.size(), false);
     int loads = 0;
     for (const int64_t frames : {118, 158, 202, 192, 220, 228}) {
@@ -80,23 +91,24 @@ void test_aperture_budget_ladder() {
                 continue;
             }
             if (!loaded[i]) {
-                if (!budget.fits(rungs[i])) {
+                if (!budget.fits(cost_of(rungs[i]))) {
                     std::fill(loaded.begin(), loaded.end(), false);
                     budget.clear();
                 }
                 loaded[i] = true;
-                budget.reserve(rungs[i]);
+                budget.reserve(cost_of(rungs[i]));
                 ++loads;
             }
             break;
         }
     }
     require_eq(loads, 2, "the served ladder trace loads two engines");
-    require_eq(budget.resident(), int64_t{450}, "the resident set is the two short rungs");
-    require(!budget.fits(500), "a 500-frame rung does not fit beside 200+250");
+    require_eq(budget.resident(), int64_t{2555}, "the resident set is the two short rungs");
+    require(!budget.fits(3752), "S=500 does not fit beside 200+250");
     budget.clear();
-    require(budget.fits(500), "a 500-frame rung fits the aperture alone");
-    require(!budget.fits(900), "the longest rung exceeds the aperture on its own");
+    require(budget.fits(1129 + 2615), "200+400 fits the aperture, as it does on the board");
+    require(!budget.fits(1426 + 2615), "250+400 does not, as it does not on the board");
+    require(budget.fits(1039), "S=900's own cost fits the aperture; it fails at init on its own ceiling");
 }
 
 }  // namespace

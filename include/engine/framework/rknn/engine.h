@@ -27,25 +27,25 @@ std::vector<char> read_engine(const std::string & path, const std::string & labe
 std::string status(const std::string & label, const char * what, int code);
 
 // Aperture accounting for a sidecar that keeps more than one compiled engine resident: the resident
-// set is the sum of the units each loaded engine reserves, and a new engine is pinned only while the
-// whole set stays inside the budget; a unit that cannot share the aperture with the set evicts it and
-// is itself evicted by the next change of shape. What a unit costs and what the board fits are both
-// measurements of one engine on one board, so both are passed in by the model: this type is the
-// accounting, not the policy, and it holds no ceiling of its own.
+// set is the sum of the residency each loaded engine reports, and a new engine is pinned only while
+// the whole set stays inside the budget; a unit that cannot share the aperture with the set evicts it
+// and is itself evicted by the next change of shape. What an engine costs and what the board fits are
+// both measurements of one engine on one board, so both are passed in by the model: this type is the
+// accounting, not the policy, and it holds no ceiling of its own. It counts MiB and nothing else --
+// the model derives that number from the driver's own report (`engine_memory_mib`) or from a proxy it
+// owns, and the accounting stays free of any assumption about how a cost is estimated.
 class ApertureBudget {
 public:
-    ApertureBudget(int64_t mib_per_unit, int64_t budget_mib)
-        : mib_per_unit_(mib_per_unit), budget_mib_(budget_mib) {}
+    explicit ApertureBudget(int64_t budget_mib) : budget_mib_(budget_mib) {}
 
-    // Would adding an engine of `units` compiled length keep the resident set inside the aperture?
-    bool fits(int64_t units) const { return (resident_ + units) * mib_per_unit_ <= budget_mib_; }
-    void reserve(int64_t units) { resident_ += units; }
-    void clear() { resident_ = 0; }
-    int64_t resident() const { return resident_; }
+    // Would adding an engine of `mib` resident megabytes keep the set inside the aperture?
+    bool fits(int64_t mib) const { return resident_mib_ + mib <= budget_mib_; }
+    void reserve(int64_t mib) { resident_mib_ += mib; }
+    void clear() { resident_mib_ = 0; }
+    int64_t resident() const { return resident_mib_; }
 
 private:
-    int64_t resident_ = 0;
-    int64_t mib_per_unit_ = 0;
+    int64_t resident_mib_ = 0;
     int64_t budget_mib_ = 0;
 };
 
@@ -61,6 +61,14 @@ struct Input {
     rknn_tensor_type type = RKNN_TENSOR_FLOAT32;
     uint32_t pass_through = 0;
 };
+
+// What a compiled engine will occupy once it is resident, in MiB, read from the driver itself:
+// `rknn_init` with `RKNN_FLAG_COLLECT_MODEL_INFO_ONLY` parses the image without building the network
+// (~0.5 s per engine on RK3588, no NPU memory allocated) and `rknn_query(RKNN_QUERY_MEM_SIZE)` then
+// reports `total_weight_size + total_internal_size` -- the bytes the real init goes on to allocate,
+// less a per-context slack of 30-50 MiB. Returns 0 when the driver cannot say, so a sidecar can keep
+// a proxy for that case.
+int64_t engine_memory_mib(const std::string & path, const std::string & label);
 
 // One compiled engine: a `rknn_context` plus its input/output counts.
 class Engine {
