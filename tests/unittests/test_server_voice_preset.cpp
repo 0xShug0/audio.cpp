@@ -90,6 +90,36 @@ int main() {
         expect(request.voice.has_value() && request.voice->speaker.has_value() &&
                    request.voice->speaker->cached_voice_id == "alba",
                "a voice that is not a preset should stay a model-native voice id");
+
+        // Instruction aliases follow request > preset > model precedence.
+        for (const std::string key : {"instruct", "instruction"}) {
+            const std::string alias = key == "instruct" ? "instruction" : "instruct";
+            RuntimeVoicePreset styled = narrator;
+            styled.options[key] = "calm";
+            const std::unordered_map<std::string, RuntimeVoicePreset> styled_presets{{"styled", styled}};
+            const std::unordered_map<std::string, std::string> styled_defaults{{alias, "serious"}};
+            auto check = [&](const std::string & body, const std::optional<RuntimeVoicePreset> & selected,
+                             const std::string & expected_key, const std::string & expected_value) {
+                const auto result = speech(styled_presets, selected, styled_defaults, body);
+                expect(result.options.at(expected_key) == expected_value, "instruction precedence changed");
+                expect(result.options.count(expected_key == "instruct" ? "instruction" : "instruct") == 0,
+                       "lower-priority instruction alias survived");
+                expect(result.options.at("num_steps") == "8", "unrelated preset option changed");
+                expect(result.options.at("speaker_embedding_file") == "/voices/narrator.speaker.safetensors",
+                       "unrelated voice option changed");
+            };
+            check(R"({"input":"x","voice":"styled"})", no_default, key, "calm");
+            check(R"({"input":"x"})", styled, key, "calm");
+            for (const std::string request_key : {key, alias}) {
+                check("{\"input\":\"x\",\"voice\":\"styled\",\"options\":{\"" + request_key + "\":\"cheerful\"}}",
+                      no_default, request_key, "cheerful");
+                check("{\"input\":\"x\",\"options\":{\"" + request_key + "\":\"cheerful\"}}",
+                      styled, request_key, "cheerful");
+                const std::string field = request_key == "instruct" ? "instruct" : "instructions";
+                check("{\"input\":\"x\",\"voice\":\"styled\",\"" + field + "\":\"cheerful\"}",
+                      no_default, request_key, "cheerful");
+            }
+        }
     } catch (const std::exception & error) {
         std::cerr << "voice preset test failed: " << error.what() << "\n";
         return 1;

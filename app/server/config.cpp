@@ -370,6 +370,15 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         model.load_options = options_from_object(item.find("load_options"));
         model.session_options = options_from_object(item.find("session_options"));
         model.default_request_options = options_from_object(item.find("default_request_options"));
+        if (const auto * value = item.find("instruct")) {
+            if (model.default_request_options.find("instruct") != model.default_request_options.end() ||
+                model.default_request_options.find("instruction") != model.default_request_options.end()) {
+                throw std::runtime_error(
+                    "instruct for model " + model.id
+                    + " conflicts with an instruction in default_request_options");
+            }
+            model.default_request_options.emplace("instruct", value->as_string());
+        }
         if (const auto * voice_presets = item.find("voice_presets")) {
             if (!voice_presets->is_object()) {
                 throw std::runtime_error("voice_presets for model " + model.id + " must be an object");
