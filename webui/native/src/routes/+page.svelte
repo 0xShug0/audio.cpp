@@ -22,6 +22,7 @@
     stopModelInstall,
         transcription,
         unloadModel,
+        releaseModels,
         uploadFile,
         uploadWav,
         voicePreviewUrl,
@@ -425,12 +426,20 @@
     return left.localeCompare(right, 'en', { sensitivity: 'base', numeric: true });
   }
 
-  function configuredCatalogEntries() {
-    return loadedModels.map((model) => {
+  // With UI management only the server config's models under ids the catalog
+  // lacks are added; a catalog id stays the catalog's entry, and a WebUI load of
+  // it keeps what the server config sets for it.
+  function configuredCatalogEntries(outsideCatalog = false) {
+    const models = outsideCatalog
+      ? loadedModels.filter((model) => model.configured && !catalog.some((entry) => entry.id === model.id))
+      : loadedModels;
+    return models.map((model) => {
       const exact = loadedCatalogEntry(model);
       const familyMatch = catalog.find((entry) =>
         entry.family === model.family && entry.task === model.task);
       const base = exact || familyMatch;
+      // Beside the catalog, the id tells the entry apart from the catalog's.
+      const named = (name: string | undefined) => name && outsideCatalog ? `${name} (${model.id})` : name;
       return {
         ...(base || {
           id: model.id,
@@ -441,15 +450,24 @@
           mode: model.mode
         }),
         id: model.id,
-        display_name: exact ? exact.display_name : inferredLoadedModelName(model, base),
-        display_name_en: exact ? exact.display_name_en : base?.display_name_en,
+        display_name: named(exact ? exact.display_name : inferredLoadedModelName(model, base)),
+        display_name_en: named(exact ? exact.display_name_en : base?.display_name_en),
         family: model.family,
         path: model.path,
         task: model.task,
         mode: model.mode,
-        install_packages: []
+        install_packages: [],
+        configured: true
       } as CatalogEntry;
     });
+  }
+
+  // A configured entry is used as the server config sets it: it loads on its
+  // first request and is never reloaded from the catalog. Without UI management
+  // every entry is one.
+  function isConfiguredEntry(entry: CatalogEntry | undefined) {
+    if (!server || !entry) return false;
+    return !server.ui_management || entry.configured === true;
   }
 
   function groupCatalog(entries: CatalogEntry[]): ModelGroup[] {
@@ -474,7 +492,9 @@
 
   class StatusWarning extends Error {}
 
-  $: activeCatalog = server && !server.ui_management ? configuredCatalogEntries() : catalog;
+  $: activeCatalog = server && !server.ui_management
+    ? configuredCatalogEntries()
+    : [...catalog, ...configuredCatalogEntries(true)];
   $: modelGroups = groupCatalog(activeCatalog);
   $: selected = activeCatalog.find((entry) => entry.id === selectedId) || activeCatalog[0] || catalog[0];
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
@@ -519,14 +539,14 @@
   $: referenceTextRequired = (requiresRequestOption(selected, 'reference_text') &&
     !(allowsQuickStartVoice && quickStartVoice)) ||
     (Boolean(voiceFile) && isQwenBase);
-  $: quickStartVoices = server && !server.ui_management
+  // A model with built-in voices also lists the server's voices (presets), but
+  // not the embedded demo wavs, which such a model cannot clone.
+  $: quickStartVoices = usesBuiltInVoiceSelector
     ? Array.from(new Set([
-        ...configuredVoices,
-        ...(usesBuiltInVoiceSelector ? selected?.builtin_voices || [] : [])
+        ...configuredVoices.filter((voice) => !(voice in demoVoiceSources)),
+        ...(selected?.builtin_voices || [])
       ]))
-    : usesBuiltInVoiceSelector
-      ? selected?.builtin_voices || []
-      : configuredVoices;
+    : configuredVoices;
   // The list holds server voices in both modes. Names without a library wav
   // (presets, embeddings) have no preview; MediaPreview hides it then.
   $: quickStartVoicePreview = quickStartVoice && server && !usesBuiltInVoiceSelector
@@ -548,7 +568,7 @@
   $: modelInventoryLoading = server === null ||
     (Boolean(server.ui_management) && Object.keys(packageSizes).length === 0 && packageSizeState !== 'failed');
   $: selectableModelIds = new Set(activeCatalog.filter((entry) => {
-    if (server && !server.ui_management) return true;
+    if (isConfiguredEntry(entry)) return true;
     if (loadedModels.some((model) => model.id === entry.id && model.loaded)) return true;
     if (entry.id === selectedId && installed === true) return true;
     const choices = entry.install_packages || [];
@@ -588,7 +608,7 @@
   }
 
   function selectedModelPath(entry: CatalogEntry) {
-    if (server && !server.ui_management) return entry.path;
+    if (isConfiguredEntry(entry)) return entry.path;
     return resolveCatalogPath(selectedPackageChoice(entry)?.path || entry.path);
   }
 
@@ -1034,7 +1054,7 @@
   }
 
   function clearUnavailableModelSelection(ignoreResident = false) {
-    if (server && !server.ui_management) return false;
+    if (isConfiguredEntry(selected)) return false;
     if (!selectedId || (!ignoreResident && isLoaded) || installed !== false) return false;
     clearModelSelection();
     return true;
@@ -1119,7 +1139,7 @@
       duration = 30;
     }
     if (selected?.family === 'yue2') {
-      if (server?.ui_management === false) {
+      if (isConfiguredEntry(selected)) {
         const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
         advancedValues = {
           ...advancedValues,
@@ -1182,7 +1202,7 @@
       installed = null;
       return;
     }
-    if (server && !server.ui_management) {
+    if (isConfiguredEntry(selected)) {
       installed = loadedModels.some((model) => model.id === selectedId);
       return;
     }
@@ -1248,8 +1268,10 @@
       errorStatus = '';
       return;
     }
-    if (!server?.ui_management) {
-      status = 'This server was not started with UI management enabled.';
+    if (isConfiguredEntry(selected)) {
+      status = server?.ui_management
+        ? 'This model is configured by the server and loads on its first request.'
+        : 'This server was not started with UI management enabled.';
       warningStatus = status;
       errorStatus = '';
       return;
@@ -1293,17 +1315,12 @@
   }
 
   async function doUnload() {
-    if (!server?.ui_management) {
-      status = 'Model unload is disabled for this configured server.';
-      warningStatus = status;
-      errorStatus = '';
-      return;
-    }
     if (!selectedId) return;
     const modelName = selected.display_name;
     loadingModel = true;
     try {
-      await unloadModel(selected.id);
+      if (isConfiguredEntry(selected)) await releaseModels([selected.id]);
+      else await unloadModel(selected.id);
       await refresh();
       await refreshConfiguredVoices();
       const selectionCleared = clearUnavailableModelSelection(true);
@@ -1563,7 +1580,7 @@
   $: trimGenerationHistory($uiConfiguration.historyLimit);
 
   async function ensureLoaded() {
-    if (!server?.ui_management) {
+    if (isConfiguredEntry(selected)) {
       if (settingsReloadRequired) {
         throw new Error('The imported model settings require a reload through the server configuration.');
       }
@@ -1684,7 +1701,7 @@
     warningStatus = files.length ? status : '';
     errorStatus = '';
     log(status);
-    if (settingsReloadRequired && server?.ui_management &&
+    if (settingsReloadRequired && server?.ui_management && !isConfiguredEntry(selected) &&
         window.confirm('The imported model settings differ from the loaded model. Reload now?')) {
       await ensureLoaded();
     }
@@ -1705,7 +1722,7 @@
   }
 
   async function ensureLoadedMode(mode: string) {
-    if (!server?.ui_management) {
+    if (isConfiguredEntry(selected)) {
       if (!loadedModels.some((model) => model.id === selectedId && model.mode === mode)) {
         throw new Error(`Configured model is not registered in ${mode} mode.`);
       }
@@ -1932,7 +1949,7 @@
   // it stops once the request's entry is no longer selected, so that it
   // does not load the entry the user selected meanwhile.
   async function ensurePanelLoaded(modelId: string, mode: string) {
-    if (!server?.ui_management) return ensureLoaded();
+    if (isConfiguredEntry(selected)) return ensureLoaded();
     const stillSelected = () => {
       if (selectedId !== modelId) throw new Error('The model changed while it loaded; press Run again.');
     };
@@ -2265,6 +2282,8 @@
       }
       running = false;
       aborter = null;
+      // A configured entry loads with its first request; show it as resident.
+      if (isConfiguredEntry(selected) && !isLoaded) refresh();
     }
   }
 
@@ -2693,7 +2712,7 @@
         </div>
 
         <div class="studio-model-packages">
-        {#if selected.family === 'builtin_audio_utils' && server?.ui_management}
+        {#if selected.family === 'builtin_audio_utils' && server?.ui_management && !isConfiguredEntry(selected)}
           <label for="utility-weights">Weights path on server</label>
           <input id="utility-weights" bind:value={modelPath} on:change={inspectPath} disabled={isLoaded || loadingModel || running} />
           <a class="utility-weights-link" href={selected.weights_url} target="_blank" rel="noreferrer">Download SafeTensors weights</a>
@@ -2717,10 +2736,12 @@
           </div>
         {:else}
           <button class="single-model-toggle" class:resident={isLoaded}
-            disabled={!selectedId || loadingModel || modelPanelUploading || installed === false || !server?.ui_management}
-            title={!server?.ui_management ? 'Configured by server config' : isLoaded ? tr('studio.unload') : tr('studio.load')}
+            disabled={!selectedId || loadingModel || modelPanelUploading || installed === false ||
+              (isConfiguredEntry(selected) && !isLoaded)}
+            title={isConfiguredEntry(selected) && !isLoaded ? 'Configured by server config' :
+              isLoaded ? tr('studio.unload') : tr('studio.load')}
             on:click={toggleSingleModel}>
-            {!server?.ui_management ? (isLoaded ? tr('studio.bundledLoaded') : 'Configured') :
+            {isConfiguredEntry(selected) ? (loadingModel ? tr('studio.working') : isLoaded ? tr('studio.bundledLoaded') : 'Configured') :
               loadingModel ? tr('studio.working') : isLoaded ? tr(selected.family === 'builtin_audio_utils' ? 'studio.unload' : 'studio.bundledLoaded') : tr('studio.load')}
           </button>
         {/if}
@@ -2784,7 +2805,7 @@
               setPanelRunner={registerPanelRunner}
               modelPathFor={selectedModelPath}
               sessionOptionsFor={mergedSessionOptions}
-              refreshModels={selected.family === 'yue2' && !server?.ui_management
+              refreshModels={selected.family === 'yue2' && isConfiguredEntry(selected)
                 ? async () => { loadedModels = await models(); }
                 : refresh}
               {log}
