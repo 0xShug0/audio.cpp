@@ -284,6 +284,41 @@ private:
     std::vector<float> weight_, bias_;
 };
 
+class ConfiguredDepthwiseConv1dKernel final : public detail::Kernel {
+public:
+    ConfiguredDepthwiseConv1dKernel(Conv1dConfig config, std::vector<float> weight, std::vector<float> bias)
+        : config_(config), weight_(std::move(weight)), bias_(std::move(bias)) {
+        if (config.input_channels <= 0 || config.input_channels != config.output_channels || config.kernel_size <= 0 ||
+            config.stride <= 0 || config.dilation <= 0 || config.padding_left < 0 || config.padding_right < 0 ||
+            weight_.size() != size_t(config.input_channels) * config.kernel_size ||
+            (!bias_.empty() && bias_.size() != size_t(config.input_channels))) {
+            throw std::invalid_argument("NEON depthwise convolution configuration invalid");
+        }
+    }
+    Shape output_shape(const std::vector<Shape> &inputs) const override {
+        auto shape = unary_shape(inputs, 2);
+        const auto &c = config_;
+        if (shape.rank != 2 || shape.dimensions[0] != c.input_channels) {
+            throw std::invalid_argument("NEON depthwise convolution input shape invalid");
+        }
+        const int64_t span = int64_t(shape.dimensions[1]) + c.padding_left + c.padding_right -
+            int64_t(c.dilation) * (c.kernel_size - 1) - 1;
+        if (span < 0 || span / c.stride >= std::numeric_limits<int>::max()) {
+            throw std::invalid_argument("NEON depthwise convolution output extent invalid");
+        }
+        shape.dimensions[1] = int(span / c.stride + 1);
+        return shape;
+    }
+    void compute(const std::vector<detail::BufferView> &inputs, float *output, const Shape &shape,
+                 detail::Workspace &, detail::WorkerContext &worker) const noexcept override {
+        detail::depthwise_conv1d(inputs[0].data, weight_.data(), bias_.empty() ? nullptr : bias_.data(), output,
+                                config_, inputs[0].shape->dimensions[1], shape.dimensions[1], worker);
+    }
+private:
+    Conv1dConfig config_;
+    std::vector<float> weight_, bias_;
+};
+
 class LayerNormKernel final : public detail::Kernel {
 public:
     LayerNormKernel(std::vector<float> weight, std::vector<float> bias, float epsilon)
@@ -320,7 +355,8 @@ private:
 class ActivationKernel final : public detail::Kernel {
 public:
     ActivationKernel(ActivationKind kind, float slope) : kind_(kind), slope_(slope) {
-        if ((kind != ActivationKind::SiLU && kind != ActivationKind::GELU && kind != ActivationKind::LeakyReLU) ||
+        if ((kind != ActivationKind::SiLU && kind != ActivationKind::GELU && kind != ActivationKind::LeakyReLU &&
+             kind != ActivationKind::Sigmoid) ||
             !std::isfinite(slope)) {
             throw std::invalid_argument("ARM activation configuration invalid");
         }
@@ -347,6 +383,8 @@ public:
             detail::apply_gelu(output, begin, end);
         } else if (kind_ == ActivationKind::SiLU) {
             detail::apply_silu(output, begin, end);
+        } else if (kind_ == ActivationKind::Sigmoid) {
+            for (int i = begin; i < end; ++i) output[i] = 1.0F / (1.0F + std::exp(-output[i]));
         } else {
             detail::apply_leaky_relu_clamp(output, begin, end, slope_, -std::numeric_limits<float>::infinity());
         }
@@ -678,6 +716,8 @@ DepthwiseConv1d::DepthwiseConv1d(int channels, int kernel, const std::vector<flo
     : Operator(std::make_shared<DepthwiseConv1dKernel>(channels, kernel, weight, bias)) {}
 LayerNorm::LayerNorm(const std::vector<float> &weight, const std::vector<float> &bias, float epsilon)
     : Operator(std::make_shared<LayerNormKernel>(weight, bias, epsilon)) {}
+DepthwiseConv1d::DepthwiseConv1d(Conv1dConfig config, const std::vector<float> &weight, const std::vector<float> &bias)
+    : Operator(std::make_shared<ConfiguredDepthwiseConv1dKernel>(config, weight, bias)) {}
 Activation::Activation(ActivationKind kind, float slope) : Operator(std::make_shared<ActivationKernel>(kind, slope)) {}
 ClampMin::ClampMin(float minimum) : Operator(std::make_shared<ClampMinKernel>(minimum)) {}
 MaxPool2d::MaxPool2d(int kh, int kw, int sh, int sw) : Operator(std::make_shared<MaxPool2dKernel>(kh, kw, sh, sw)) {}

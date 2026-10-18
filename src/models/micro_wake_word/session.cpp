@@ -22,6 +22,12 @@ struct Assets {
     io::json::Value config;
 };
 
+bool use_neon_network(const runtime::SessionOptions &options, core::BackendType backend) {
+    const auto plan = runtime::parse_exec_plan(options.options, "micro_wake_word.exec_plan",
+        {{"network", "ggml", {{"ggml", {backend}, {}, {}}, {"neon", {core::BackendType::Cpu}, {}, {}}}}});
+    return plan.at("network").impl == "neon";
+}
+
 class Session final : public runtime::RuntimeSessionBase,
                       public runtime::IOfflineVoiceTaskSession,
                       public runtime::IStreamingVoiceTaskSession {
@@ -32,7 +38,7 @@ public:
         : RuntimeSessionBase(options), mode_(mode), assets_(std::move(assets)),
           contract_(std::move(contract)),
           network_(assets_->resources.open_tensor_source("weights"), assets_->config,
-                   execution_context()) {}
+                   execution_context(), use_neon_network(options, execution_context().backend_type())) {}
 
     std::string family() const override { return "micro_wake_word"; }
     runtime::VoiceTaskKind task_kind() const override { return runtime::VoiceTaskKind::WakeWord; }
@@ -234,8 +240,12 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_micro_wake_word_loader() {
         if (task.task != runtime::VoiceTaskKind::WakeWord) {
             throw std::runtime_error("microWakeWord supports the wake-word task");
         }
+        auto validation_options = options;
+        if (!contract->session_option_keys.count("micro_wake_word.exec_plan")) {
+            validation_options.options.erase("micro_wake_word.exec_plan");
+        }
         runtime::validate_spec_backed_session_options(
-            options, *contract, "micro_wake_word", "microWakeWord");
+            validation_options, *contract, "micro_wake_word", "microWakeWord");
         return std::make_unique<Session>(options, task.mode, std::move(assets), std::move(contract));
     };
     return runtime::make_spec_backed_voice_loader(std::move(config));

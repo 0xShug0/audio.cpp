@@ -1,4 +1,7 @@
 #include "engine/models/micro_wake_word/runtime.h"
+#ifdef ENGINE_HAVE_NEON
+#include "engine/models/micro_wake_word/neon_network.h"
+#endif
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -20,13 +23,7 @@ namespace engine::models::micro_wake_word {
 namespace json = engine::io::json;
 namespace {
 
-struct TensorInfo {
-    std::vector<int64_t> tflite_shape;
-    std::string type;
-    std::optional<float> scale;
-    int64_t zero_point = 0;
-    bool per_channel_quantized = false;
-};
+using TensorInfo = NetworkTensorInfo;
 
 struct StateInfo {
     std::string name;
@@ -125,9 +122,12 @@ struct Runtime::Impl {
     float input_scale = 0.0F;
     int64_t input_zero_point = 0;
     ggml_cgraph * graph = nullptr;
+#ifdef ENGINE_HAVE_NEON
+    std::unique_ptr<NeonNetwork> neon_network;
+#endif
 
     Impl(const assets::TensorSource & source, const json::Value & root,
-         core::ExecutionContext & execution_context)
+         core::ExecutionContext & execution_context, bool use_neon)
         : execution(execution_context),
           store(execution.backend(), execution.backend_type(), "micro_wake_word.weights", 1024 * 1024) {
         if (json::require_string(root, "format") != "micro_wake_word_tflite_v1") {
@@ -170,17 +170,26 @@ struct Runtime::Impl {
             throw std::runtime_error("microWakeWord input/output tensor index is invalid");
         }
 
-        context.reset(ggml_init({8 * 1024 * 1024, nullptr, true}));
-        if (!context) throw std::runtime_error("microWakeWord graph context allocation failed");
-        core::ModuleBuildContext ctx{context.get(), "micro_wake_word", execution.backend_type()};
-        input = core::make_tensor(ctx, GGML_TYPE_F32, native_shape(infos[input_index].tflite_shape));
-        ggml_set_input(input.tensor);
         if (!infos[input_index].scale.has_value() || infos[input_index].per_channel_quantized ||
             infos[input_index].type != "i8") {
             throw std::runtime_error("microWakeWord input quantization metadata is unsupported");
         }
         input_scale = *infos[input_index].scale;
         input_zero_point = infos[input_index].zero_point;
+        if (use_neon) {
+#ifdef ENGINE_HAVE_NEON
+            if (!neon::available()) throw std::runtime_error("microWakeWord neon network requires AArch64 NEON");
+            neon_network = std::make_unique<NeonNetwork>(source, root, infos, execution.config().threads);
+            return;
+#else
+            throw std::runtime_error("microWakeWord neon network requires ENGINE_ENABLE_NEON=ON");
+#endif
+        }
+        context.reset(ggml_init({8 * 1024 * 1024, nullptr, true}));
+        if (!context) throw std::runtime_error("microWakeWord graph context allocation failed");
+        core::ModuleBuildContext ctx{context.get(), "micro_wake_word", execution.backend_type()};
+        input = core::make_tensor(ctx, GGML_TYPE_F32, native_shape(infos[input_index].tflite_shape));
+        ggml_set_input(input.tensor);
         std::unordered_map<int, core::TensorValue> values;
         values.emplace(input_index, input);
 
@@ -360,7 +369,7 @@ struct Runtime::Impl {
         clear();
     }
 
-    ~Impl() { core::release_backend_graph_resources(execution.backend(), graph, true); }
+    ~Impl() { if (graph) core::release_backend_graph_resources(execution.backend(), graph, true); }
 
     float run(const std::vector<float> & features) {
         if (features.size() != static_cast<size_t>(model.input_frames * model.feature_dim)) {
@@ -377,13 +386,21 @@ struct Runtime::Impl {
                     (static_cast<float>(quantized) - static_cast<float>(input_zero_point)) * input_scale;
             }
         }
-        core::write_tensor_f32(input, channel_major);
+        if (graph) core::write_tensor_f32(input, channel_major);
         const auto started = std::chrono::steady_clock::now();
-        if (core::compute_graph(execution, graph, plan, "micro_wake_word") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("microWakeWord graph compute failed");
+        std::vector<float> result;
+#ifdef ENGINE_HAVE_NEON
+        if (neon_network) {
+            result = {neon_network->infer(channel_major)};
+        } else
+#endif
+        {
+            if (core::compute_graph(execution, graph, plan, "micro_wake_word") != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("microWakeWord graph compute failed");
+            }
         }
         debug::timing_log_scalar("micro_wake_word.network_ms", debug::elapsed_ms(started));
-        const auto result = core::read_tensor_f32(output.tensor);
+        if (graph) result = core::read_tensor_f32(output.tensor);
         if (result.size() != 1 || !std::isfinite(result[0])) {
             throw std::runtime_error("microWakeWord produced an invalid probability");
         }
@@ -392,6 +409,9 @@ struct Runtime::Impl {
     }
 
     void clear() {
+#ifdef ENGINE_HAVE_NEON
+        if (neon_network) { neon_network->reset(); return; }
+#endif
         for (const auto & state : state_inputs) {
             ggml_backend_tensor_memset(state.tensor, 0, 0, ggml_nbytes(state.tensor));
         }
@@ -400,8 +420,8 @@ struct Runtime::Impl {
 
 Runtime::Runtime(std::shared_ptr<const assets::TensorSource> source,
                  const io::json::Value & config,
-                 core::ExecutionContext & execution)
-    : impl_(std::make_unique<Impl>(*source, config, execution)) {}
+                 core::ExecutionContext & execution, bool use_neon)
+    : impl_(std::make_unique<Impl>(*source, config, execution, use_neon)) {}
 Runtime::~Runtime() = default;
 const ModelConfig & Runtime::config() const noexcept { return impl_->model; }
 float Runtime::infer(const std::vector<float> & features) { return impl_->run(features); }
