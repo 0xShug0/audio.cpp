@@ -66,8 +66,9 @@ runtime::ModelCliInterface cli(const VoxCPM2Assets &) {
       {"voxcpm2.audiovae_weight_context_mb", "int", "Context or graph arena size in MiB.", false, "768", "1"},
       {"voxcpm2.audiovae_graph_arena_mb", "int", "AudioVAE decoder host graph-metadata arena size in MiB, not device workspace.", false, "1024", "1"},
       {"voxcpm2.audiovae_encoder_graph_arena_mb", "int", "AudioVAE encoder host graph-metadata arena size in MiB, not device workspace.", false, "1024", "1"},
-      {"voxcpm2.audiovae_latent_capacity", "int", "Optional reserved latent frame capacity; omitted selects automatically.", false, std::nullopt, "1"},
+      {"voxcpm2.audiovae_latent_capacity", "int", "Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count.", false, std::nullopt, "1"},
       {"voxcpm2.audiovae_encoder_sample_capacity", "int", "Reserved encoder sample capacity.", false, "240000", "1"},
+      {"voxcpm2.audiovae_threads", "int", "CPU only: run the AudioVAE on its own CPU backend with this many threads, so streaming decodes the previous window while the generator runs; also the thread count for offline decoding and prompt encoding. 0 (default) shares the session backend and its threads.", false, "0", "0"},
   };
   return out;
 }
