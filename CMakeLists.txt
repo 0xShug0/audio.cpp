@@ -479,6 +479,7 @@ if (ENGINE_ENABLE_NEON)
     add_library(engine_neon OBJECT
         src/framework/neon/tensor.cpp
         src/framework/neon/operators.cpp
+        src/framework/neon/tensor_operators.cpp
         src/framework/neon/execution.cpp
         src/framework/neon/worker_team.cpp
         src/framework/neon/blocks.cpp
@@ -971,6 +972,9 @@ audiocpp_add_model(micro_wake_word
     LOADERS
         engine::models::micro_wake_word::make_micro_wake_word_loader
 )
+if(ENGINE_ENABLE_NEON)
+    target_sources(engine_model_micro_wake_word PRIVATE src/models/micro_wake_word/neon_network.cpp)
+endif()
 
 audiocpp_add_model(sherpa_kws
     SOURCES
@@ -3382,6 +3386,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(neon_library_test PRIVATE tests/unittests)
         target_link_libraries(neon_library_test PRIVATE engine_neon)
         add_test(NAME neon_library_test COMMAND neon_library_test)
+        add_executable(neon_tensor_ops_test tests/unittests/test_neon_tensor_ops.cpp)
+        target_link_libraries(neon_tensor_ops_test PRIVATE engine_neon)
+        add_test(NAME neon_tensor_ops_test COMMAND neon_tensor_ops_test)
     endif()
     if (sanotts IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(sanotts_neon_decoder_test tests/unittests/test_sanotts_neon_decoder.cpp)

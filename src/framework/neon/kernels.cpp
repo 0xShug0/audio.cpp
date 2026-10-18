@@ -25,6 +25,36 @@ bool available() noexcept {
 #endif
 }
 
+void quantize_dequantize(const float *input, float *output, size_t count, float scale,
+                        float minimum, float maximum) noexcept {
+    const float inverse = 1.0F / scale;
+    size_t i = 0;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+    for (; i + 4 <= count; i += 4) {
+        auto value = vrndaq_f32(vmulq_n_f32(vld1q_f32(input + i), inverse));
+        value = vmaxq_f32(vdupq_n_f32(minimum), vminq_f32(vdupq_n_f32(maximum), value));
+        vst1q_f32(output + i, vmulq_n_f32(value, scale));
+    }
+#endif
+    for (; i < count; ++i) output[i] = std::clamp(std::round(input[i] * inverse), minimum, maximum) * scale;
+}
+
+void depthwise_conv1d(const float *input, const float *weight, const float *bias, float *output,
+                      const Conv1dConfig &config, int frames, int output_frames, WorkerContext &worker) noexcept {
+    int begin, end;
+    split_range(config.input_channels, worker.index, worker.count, begin, end);
+    for (int channel = begin; channel < end; ++channel) {
+        for (int frame = 0; frame < output_frames; ++frame) {
+            float value = bias ? bias[channel] : 0.0F;
+            for (int tap = 0; tap < config.kernel_size; ++tap) {
+                const int at = frame * config.stride - config.padding_left + tap * config.dilation;
+                if (at >= 0 && at < frames) value += input[channel * frames + at] * weight[channel * config.kernel_size + tap];
+            }
+            output[channel * output_frames + frame] = value;
+        }
+    }
+}
+
 PackedConvWeights pack_conv_weights(const float *w, const float *b, int cin, int cout, int kernel) {
     if (!w || cin <= 0 || cout <= 0 || cout > std::numeric_limits<int>::max() - 3 || kernel <= 0 ||
         cin > std::numeric_limits<int>::max() / kernel) {

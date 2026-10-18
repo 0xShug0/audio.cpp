@@ -45,7 +45,15 @@
         "min": 1
       }
     ],
-    "session": [],
+    "session": [
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON component execution plans. Component network accepts impl ggml/neon (default ggml). GGML retains the session backend; neon runs the stateful CNN on CPU and requires ENGINE_ENABLE_NEON=ON and AArch64 NEON. Frontend and detection logic are unchanged. No artifacts or params are used.",
+        "required": false,
+        "default": "{}"
+      }
+    ],
     "load": []
   },
   "package_defaults": {

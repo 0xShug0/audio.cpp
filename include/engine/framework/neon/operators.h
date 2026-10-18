@@ -86,6 +86,7 @@ public:
 class DepthwiseConv1d : public Operator {
 public:
     DepthwiseConv1d(int channels, int kernel_size, const std::vector<float> &weight, const std::vector<float> &bias);
+    DepthwiseConv1d(Conv1dConfig config, const std::vector<float> &weight, const std::vector<float> &bias);
 };
 
 class LayerNorm : public Operator {
@@ -93,7 +94,7 @@ public:
     LayerNorm(const std::vector<float> &weight, const std::vector<float> &bias, float epsilon);
 };
 
-enum class ActivationKind { SiLU, GELU, LeakyReLU };
+enum class ActivationKind { SiLU, GELU, LeakyReLU, Sigmoid };
 
 class Activation : public Operator {
 public:
@@ -119,6 +120,39 @@ public:
 class ConcatChannels : public Operator {
 public:
     ConcatChannels();
+};
+
+// Logical-axis operations on contiguous channel-first tensors.
+class Concat : public Operator {
+public:
+    explicit Concat(int axis);
+};
+
+class Slice : public Operator {
+public:
+    Slice(int axis, int start, int length);
+};
+
+class Reshape : public Operator {
+public:
+    explicit Reshape(Shape shape);
+};
+
+// Matrix transpose: [channels, frames] becomes [frames, channels].
+class Transpose2d : public Operator {
+public:
+    Transpose2d();
+};
+
+class Clamp : public Operator {
+public:
+    Clamp(float minimum, float maximum);
+};
+
+// Round ties away from zero, clamp to integer bounds, then dequantize.
+class QuantizeDequantize : public Operator {
+public:
+    QuantizeDequantize(float scale, int zero_point, int minimum, int maximum);
 };
 
 // Spatial dimensions follow the input; values do not depend on its contents.

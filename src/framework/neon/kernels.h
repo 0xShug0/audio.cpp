@@ -10,6 +10,11 @@
 
 namespace engine::neon::detail {
 
+void quantize_dequantize(const float *input, float *output, size_t count, float scale,
+                        float minimum, float maximum) noexcept;
+void depthwise_conv1d(const float *input, const float *weight, const float *bias, float *output,
+                      const Conv1dConfig &config, int frames, int output_frames, WorkerContext &worker) noexcept;
+
 bool available() noexcept;
 
 struct PackedConvWeights {

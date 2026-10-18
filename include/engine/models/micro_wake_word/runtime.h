@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -20,11 +21,19 @@ struct ModelConfig {
     std::string wake_phrase;
 };
 
+struct NetworkTensorInfo {
+    std::vector<int64_t> tflite_shape;
+    std::string type;
+    std::optional<float> scale;
+    int64_t zero_point = 0;
+    bool per_channel_quantized = false;
+};
+
 class Runtime {
 public:
     Runtime(std::shared_ptr<const assets::TensorSource> source,
             const io::json::Value & config,
-            core::ExecutionContext & execution);
+            core::ExecutionContext & execution, bool use_neon = false);
     ~Runtime();
 
     Runtime(const Runtime &) = delete;
