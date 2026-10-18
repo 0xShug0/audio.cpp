@@ -50,6 +50,13 @@ protected:
       const std::optional<runtime::AudioBuffer> &prompt_audio,
       const std::string &prompt_text,
       const std::optional<runtime::AudioBuffer> &reference_audio);
+  /** request.audio_input, or with `ultimate_clone` the voice reference itself (with its transcript as prompt_text). */
+  std::optional<runtime::AudioBuffer> prompt_audio_for_request(
+      const runtime::TaskRequest &request,
+      const std::optional<runtime::AudioBuffer> &reference_audio,
+      const std::string &prompt_text) const;
+  /** voxcpm2.prompt_cache_dir: encoded prompts kept on disk, named by a hash of their inputs. */
+  std::string prompt_cache_dir_;
 
   runtime::TaskResult run_offline_request(const runtime::TaskRequest &request);
   runtime::TaskResult run_streaming_request(
