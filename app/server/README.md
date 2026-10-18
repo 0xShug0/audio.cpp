@@ -223,6 +223,11 @@ Always set `family`, `task`, and `mode` explicitly rather than relying on inferr
 names or defaults. Several entries can use the same family with different GGUFs,
 tasks, or modes, provided each entry has a unique `id`.
 
+For instruction-conditioned models, per-model `"instruct": "..."` is a shortcut
+for `"default_request_options": {"instruct": "..."}`. Use one form or the other;
+setting the shortcut together with `instruct` or `instruction` in
+`default_request_options` is rejected as ambiguous.
+
 ### Default session options
 
 Top-level `"default_session_options"` sets session options for every model of a
@@ -296,6 +301,14 @@ endpoint, or `request.options` on generic task endpoints.
 | `--seed 1234`, `--max-tokens 512` | `default_request_options`: `seed`, `max_tokens` | Speech also accepts these as top-level fields. |
 | `--instruct "..."` | `default_request_options`: use the model's documented option, usually `instruct` | `options.instruct` for a model accepting `instruct`; see the speech endpoint for the distinct `instructions` field. |
 | `--voice-ref` and `--reference-text` | `default_voice_preset` / `voice_presets` | Speech `voice_ref` and `reference_text`; see [voices](#voices). |
+
+For instruction-conditioned speech requests, the normalized top-level `instruct`
+field maps to the model option `instruct`, matching CLI `--instruct`. The existing
+`instructions` field remains supported and maps to `instruction` for backward
+compatibility. Each top-level field overrides its corresponding option under
+`options`. An explicit request instruction overrides either configured spelling,
+preserving the request spelling for model compatibility. Do not send both
+top-level spellings in one request; the server rejects that ambiguity.
 
 Keep family prefixes on session/load option names where the model's docs require
 them. The server does not automatically prefix arbitrary keys or translate every
