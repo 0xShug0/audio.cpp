@@ -2,7 +2,7 @@
 // the same decoder, on small random weights. No model files needed. On builds without AArch64
 // NEON it only checks that the decoder reports itself unavailable and refuses to construct.
 
-#include "neon_decoder.h"
+#include "engine/community_models/sanotts/neon_decoder.h"
 
 #include "test_assert.h"
 
@@ -207,7 +207,11 @@ int main() try {
     if (!SanoTtsNeonDecoder::available()) {
         bool threw = false;
         try {
+#ifdef ENGINE_HAVE_NEON
+            SanoTtsNeonDecoder decoder(cfg, engine::models::sanotts::load_sanotts_neon_weights(cfg, reader, 1));
+#else
             SanoTtsNeonDecoder decoder(cfg, reader, 1);
+#endif
         } catch (const std::exception &) {
             threw = true;
         }
@@ -216,7 +220,12 @@ int main() try {
         return 0;
     }
 
+#ifdef ENGINE_HAVE_NEON
+    const auto bound = engine::models::sanotts::load_sanotts_neon_weights(cfg, reader, 2);
+    SanoTtsNeonDecoder decoder(cfg, bound);
+#else
     SanoTtsNeonDecoder decoder(cfg, reader, 2);
+#endif
     const int H = static_cast<int>(cfg.acoustic_hidden), N = static_cast<int>(cfg.noise_channels);
     const int OUT = static_cast<int>(cfg.n_fft + 2);
     std::mt19937 rng(7);

@@ -8,6 +8,8 @@
 #include <cstddef>
 #include <string>
 #include <unordered_map>
+#include <memory>
+
 
 namespace engine::core {
 class ExecutionContext;
@@ -18,6 +20,7 @@ namespace engine::models::moonshine_asr {
 struct MoonshineAssets;
 struct MoonshineConfig;
 struct MoonshineWeights;
+class MoonshineNeonDecoder;
 
 struct MoonshineRuntimeConfig {
     size_t weight_context_bytes = 256ull * 1024ull * 1024ull;
@@ -27,6 +30,7 @@ struct MoonshineRuntimeConfig {
     engine::assets::TensorStorageType decoder_weight_storage_type = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type = engine::assets::TensorStorageType::Native;
     bool cpu_blas_scheduler = true;
+    std::shared_ptr<MoonshineNeonDecoder> neon_decoder;
 };
 
 MoonshineRuntimeConfig make_moonshine_runtime_config(

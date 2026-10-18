@@ -1,7 +1,7 @@
 #include "engine/community_models/sanotts/runtime.h"
 
 #include "graph_common.h"
-#include "neon_decoder.h"
+#include "engine/community_models/sanotts/neon_decoder.h"
 
 #include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/modules/linear_module.h"
@@ -494,6 +494,13 @@ SanoTtsNativeRuntime::SanoTtsNativeRuntime(
         }
         // The weights already live in host memory on the CPU backend; copy them out once.
         const auto setup_start = std::chrono::steady_clock::now();
+#ifdef ENGINE_HAVE_NEON
+        const auto native_weights = load_sanotts_neon_weights(
+            state_->assets->config, state_->weights->tensors, state_->threads);
+        state_->neon_decoder = std::make_unique<SanoTtsNeonDecoder>(
+            state_->assets->config,
+            native_weights);
+#else
         const auto & weights = *state_->weights;
         state_->neon_decoder = std::make_unique<SanoTtsNeonDecoder>(
             state_->assets->config,
@@ -504,6 +511,7 @@ SanoTtsNativeRuntime::SanoTtsNativeRuntime(
                 return values;
             },
             state_->threads);
+#endif
         engine::debug::timing_log_scalar(
             "sanotts.neon_decoder_setup_ms",
             engine::debug::elapsed_ms(setup_start));

@@ -3,6 +3,9 @@
 #include "engine/models/moonshine_asr/runtime.h"
 #include "engine/models/moonshine_asr/assets.h"
 #include "engine/models/moonshine_asr/weights.h"
+#ifdef ENGINE_HAVE_NEON
+#include "engine/models/moonshine_asr/neon_decoder.h"
+#endif
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -74,6 +77,10 @@ runtime::SessionOptions require_supported_session_options(
     if (checked_contract->session_option_keys.find("moonshine_asr.vad_model_path") ==
         checked_contract->session_option_keys.end()) {
         validation_options.options.erase("moonshine_asr.vad_model_path");
+    }
+    // Older embedded contracts omit exec_plan; parse_exec_plan validates it below.
+    if (!checked_contract->session_option_keys.count("moonshine_asr.exec_plan")) {
+        validation_options.options.erase("moonshine_asr.exec_plan");
     }
     runtime::validate_spec_backed_session_options(validation_options, *checked_contract, kFamily, "Moonshine ASR");
     return options;
@@ -203,6 +210,23 @@ MoonshineSTTSession::MoonshineSTTSession(
         assets_->config,
         execution_context().backend_type(),
         RuntimeSessionBase::options().options);
+    const auto backend = execution_context().backend_type();
+    const auto exec_plan = runtime::parse_exec_plan(
+        RuntimeSessionBase::options().options, "moonshine_asr.exec_plan",
+        {{"decoder", "ggml",
+          {{"ggml", {backend}, {}, {}}, {"neon", {core::BackendType::Cpu}, {}, {}}}}});
+    const auto & decoder_plan = exec_plan.at("decoder");
+    if (decoder_plan.impl == "neon") {
+#ifdef ENGINE_HAVE_NEON
+        if (backend != core::BackendType::Cpu || !neon::available()) {
+            throw std::runtime_error("moonshine_asr.exec_plan.decoder: impl neon requires CPU with AArch64 NEON");
+        }
+        auto bound = load_moonshine_neon_decoder_weights(*assets_, runtime_config_.decoder_weight_storage_type);
+        runtime_config_.neon_decoder = std::make_shared<MoonshineNeonDecoder>(assets_->config.decoder, std::move(bound));
+#else
+        throw std::runtime_error("moonshine_asr.exec_plan.decoder: impl neon requires ENGINE_ENABLE_NEON=ON");
+#endif
+    }
     vad_model_path_ = runtime::find_option(RuntimeSessionBase::options().options, {"moonshine_asr.vad_model_path"})
         .value_or(default_vad_model_path().string());
     weights_ = load_moonshine_asr_weights(
@@ -212,7 +236,8 @@ MoonshineSTTSession::MoonshineSTTSession(
         runtime_config_.encoder_weight_storage_type,
         runtime_config_.decoder_weight_storage_type,
         runtime_config_.conv_weight_storage_type,
-        runtime_config_.weight_context_bytes);
+        runtime_config_.weight_context_bytes,
+        runtime_config_.neon_decoder == nullptr);
 }
 
 MoonshineSTTSession::~MoonshineSTTSession() = default;
