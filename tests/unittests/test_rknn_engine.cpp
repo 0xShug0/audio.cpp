@@ -3,6 +3,7 @@
 // arithmetic and the artifact-path resolver. The context calls need librknnrt and a
 // compiled engine, so they are exercised on the board, not here.
 #include "engine/framework/rknn/engine.h"
+#include "engine/framework/runtime/options.h"
 
 #include "test_assert.h"
 
@@ -141,6 +142,33 @@ void test_resolve_engine_path(const std::filesystem::path & dir) {
                "an unset artifact stays unset");
 }
 
+// What a family reads out of its own `exec_plan` to answer a resource question (the reader lives in
+// runtime/options.cpp because the shared library cannot know which option carries a plan): the
+// grammar, i.e. a ladder packed into one artifact value, several components, an artifact that is
+// not a string, a value that is not JSON at all. Residency prices are the driver's, so in a build
+// without an RKNN runtime every requirement reports 0 and the caller keeps its own proxy.
+void test_exec_plan_engine_requirements(const std::filesystem::path & dir) {
+    write_file(dir / "flow_seq110.rknn", std::string("RKNN\x01\x00\x00\x00", 8));
+    const auto elsewhere = dir / "flow_seq200.rknn";
+    write_file(elsewhere, std::string("RKNN\x01\x00\x00\x00", 8));
+    // generic_string(): on Windows the native separators are backslashes, invalid in JSON.
+    const auto requirements = engine::runtime::exec_plan_engine_requirements(
+        R"({"flow":{"impl":"rknn","artifacts":{"main":"flow_seq110.rknn,)" +
+            elsewhere.generic_string() + R"(","first":5}},"prompt_encoder":{"impl":"ggml"}})",
+        dir);
+    require_eq(requirements.size(), size_t{2}, "a ladder contributes every engine, a non-string artifact none");
+    require_eq(requirements[0].path, dir / "flow_seq110.rknn", "a bare name resolves under the model root");
+    require_eq(requirements[1].path, elsewhere, "an absolute path is used as given");
+    require_eq(requirements[0].resident_mib, int64_t{0}, "a build without the runtime prices nothing");
+    require(
+        engine::runtime::exec_plan_engine_requirements("{not json", dir).empty(),
+        "a malformed plan contributes nothing");
+    require(
+        engine::runtime::exec_plan_engine_requirements(
+            R"({"flow":{"impl":"rknn","artifacts":{"main":""}}})", dir).empty(),
+        "an unset ladder contributes nothing");
+}
+
 }  // namespace
 
 #if defined(ENGINE_HAVE_RKNN)
@@ -178,6 +206,7 @@ int main() {
     test_status();
     test_aperture_budget_ladder();
     test_resolve_engine_path(dir);
+    test_exec_plan_engine_requirements(dir);
 #if defined(ENGINE_HAVE_RKNN)
     test_engine_memory_unknown(dir);
 #endif
