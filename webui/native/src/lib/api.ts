@@ -50,6 +50,15 @@ export async function unloadModel(id: string): Promise<void> {
   });
 }
 
+// Frees the models' memory and keeps them registered as configured; the next
+// request loads them again. Unlike unloadModel it needs no UI management.
+export async function releaseModels(ids: string[]): Promise<void> {
+  await jsonRequest('/v1/tasks/unload_models', {
+    method: 'POST',
+    body: JSON.stringify({ model_ids: ids })
+  });
+}
+
 export async function pathStatus(path: string): Promise<{ exists: boolean; directory: boolean; file: boolean }> {
   return jsonRequest('/v1/ui/path-status', {
     method: 'POST',

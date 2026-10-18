@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/rknn/engine.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -114,7 +115,9 @@ PiperTtsSession::PiperTtsSession(
     runtime_ = std::make_unique<PiperVitsRuntime>(
         assets_,
         options.backend,
-        decoder_plan.impl == "rknn" ? decoder_plan.artifacts.at("main") : std::string{},
+        decoder_plan.impl == "rknn"
+            ? engine::rknn::resolve_engine_path(decoder_plan.artifacts.at("main"), assets_->resources.model_directory())
+            : std::string{},
         exec_plan.at("duration_encoder").backend,
         exec_plan.at("duration_flows").backend);
 }

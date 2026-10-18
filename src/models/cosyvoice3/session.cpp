@@ -1,6 +1,7 @@
 #include "engine/models/cosyvoice3/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/rknn/engine.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -167,9 +168,12 @@ CosyVoice3Session::CosyVoice3Session(
           {{"ggml", {options.backend.type}, {}, {}},
            {"rknn", {}, {"main"}, {}}}}});
     const auto & flow_plan = exec_plan.at("flow");
-    const std::vector<std::string> rknn_flow_engines = flow_plan.impl == "rknn"
+    std::vector<std::string> rknn_flow_engines = flow_plan.impl == "rknn"
         ? split_paths(flow_plan.artifacts.at("main"))
         : std::vector<std::string>{};
+    for (auto & engine_path : rknn_flow_engines) {
+        engine_path = engine::rknn::resolve_engine_path(engine_path, assets_->resources.model_directory());
+    }
     flow_ = std::make_unique<CosyVoice3DiTFlowRuntime>(
         assets_,
         execution_context(),

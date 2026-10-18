@@ -175,8 +175,14 @@
     return actual === expected || actual.endsWith(`/${expected}`);
   }
 
+  // Used as the server config sets it, as in the Studio: every entry without UI
+  // management, and a configured entry with it.
+  function isConfiguredEntry(entry: CatalogEntry) {
+    return Boolean(server) && (!server?.ui_management || entry.configured === true);
+  }
+
   function modelPathForChoice(entry: CatalogEntry, choice?: InstallPackageChoice) {
-    if (server && !server.ui_management) return entry.path;
+    if (isConfiguredEntry(entry)) return entry.path;
     return resolveCatalogPath(choice?.path || entry.path);
   }
 
@@ -392,7 +398,7 @@
   }
 
   async function ensureArenaItemLoaded(entry: CatalogEntry, choice?: InstallPackageChoice) {
-    if (!server?.ui_management) {
+    if (isConfiguredEntry(entry)) {
       if (!loadedModels.some((model) => model.id === entry.id && model.loaded)) {
         throw new Error(tr('arena.error.unregistered'));
       }

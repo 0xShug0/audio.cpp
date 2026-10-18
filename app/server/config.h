@@ -75,6 +75,9 @@ struct ServerConfig {
     int port = 8080;
     std::string cors_origins = "";
     bool ui_enabled = true;
+    // Whether the UI was asked for (--ui, or "ui": true in the config file) rather
+    // than on by default.
+    bool ui_requested = false;
     bool ui_management = false;
     engine::core::BackendType backend = engine::core::BackendType::Cuda;
     int device = 0;
@@ -132,5 +135,9 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
 // Adds the config.default_session_options entries for model.family that the model's
 // own session_options do not set.
 void apply_default_session_options(const ServerConfig & config, ServerModelConfig & model);
+// A WebUI load describes a model only by what its request carries. For an id the
+// server config defines, takes the fields such a request cannot carry from that
+// definition, while the load is still the same kind of model (family and task).
+void inherit_configured_model_fields(const ServerModelConfig & configured, ServerModelConfig & model);
 
 }  // namespace minitts::server

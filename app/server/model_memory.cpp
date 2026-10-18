@@ -1,9 +1,11 @@
 #include "model_memory.h"
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/io/json.h"
 
 #include <filesystem>
 #include <functional>
+#include <set>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -13,6 +15,9 @@ namespace minitts::server {
 std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & model) {
     size_t weights = 0;
     std::error_code ec;
+    // A compiled engine can be declared by a session option and also sit inside a checkpoint tree
+    // that gets summed, so each path is counted once.
+    std::set<std::filesystem::path> counted;
     // Checkpoint trees (safetensors / HF-style directories) are summed recursively
     // with hard limits so a pathological tree cannot stall the load path or blow the
     // counter; anything beyond the limits contributes 0, while the fixed floor
@@ -23,6 +28,9 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
     size_t visited_files = 0;
     const auto add_file = [&](const std::filesystem::path & path) {
         if (!std::filesystem::is_regular_file(path, ec)) {
+            return;
+        }
+        if (!counted.insert(std::filesystem::weakly_canonical(path, ec)).second) {
             return;
         }
         // A file that disappears or becomes unreadable mid-scan contributes 0
@@ -87,7 +95,57 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
     const std::filesystem::path aux_base =
         std::filesystem::is_directory(model.path, ec) ? model.path : model.path.parent_path();
     for (const auto & [key, value] : model.session_options) {
-        (void)key;
+        // A compiled engine declared through an exec_plan is resident weight memory the loader
+        // reads, and the option's value is JSON, so the path scan below sees nothing: walk the
+        // artifact strings instead. A plan is declared per component role, and CosyVoice3's flow
+        // ladder packs several engines into one comma-separated value.
+        if (key.size() >= 10 && key.compare(key.size() - 10, 10, ".exec_plan") == 0) {
+            const auto plan = [&]() -> engine::io::json::Value {
+                try {
+                    return engine::io::json::parse(value);
+                } catch (const std::exception &) {
+                    // The session reports a malformed plan itself; the guard stays silent.
+                    return {};
+                }
+            }();
+            if (!plan.is_object()) {
+                continue;
+            }
+            for (const auto & [_, component] : plan.as_object()) {
+                if (!component.is_object()) {
+                    continue;
+                }
+                const auto & members = component.as_object();
+                const auto artifacts = members.find("artifacts");
+                if (artifacts == members.end() || !artifacts->second.is_object()) {
+                    continue;
+                }
+                for (const auto & [_, artifact] : artifacts->second.as_object()) {
+                    if (!artifact.is_string()) {
+                        continue;
+                    }
+                    const std::string & declared = artifact.as_string();
+                    size_t start = 0;
+                    while (start <= declared.size()) {
+                        const auto end = declared.find(',', start);
+                        const auto stop = end == std::string::npos ? declared.size() : end;
+                        if (stop > start) {
+                            std::filesystem::path engine_path =
+                                std::filesystem::path(declared.substr(start, stop - start));
+                            if (engine_path.is_relative()) {
+                                engine_path = aux_base / engine_path;
+                            }
+                            add_file(engine_path);
+                        }
+                        if (end == std::string::npos) {
+                            break;
+                        }
+                        start = end + 1;
+                    }
+                }
+            }
+            continue;
+        }
         std::filesystem::path aux(value);
         if (aux.is_relative()) {
             aux = aux_base / aux;

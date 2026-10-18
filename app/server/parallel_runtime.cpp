@@ -55,7 +55,6 @@ using minitts::app::base64_encode;
 
 using Clock = std::chrono::steady_clock;
 
-#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 void materialize_embedded_demo_voices(const std::filesystem::path & voice_dir) {
     std::filesystem::create_directories(voice_dir);
     for (const auto & voice : embedded_demo_voices()) {
@@ -80,7 +79,6 @@ void materialize_embedded_demo_voices(const std::filesystem::path & voice_dir) {
         throw std::runtime_error("failed to write embedded demo voice prompt_text");
     }
 }
-#endif
 }  // namespace
 
 ParallelServerState::ParallelServerState(
@@ -118,16 +116,20 @@ ParallelServerState::ParallelServerState(
         std::cerr
             << "native WebUI model root: " << models_root_ << "\n"
             << "native WebUI package resources: " << repository_root_ << "\n";
-        if (!config_.voice_dir.has_value()) {
-            const auto embedded_voices = upload_root_ / "demo_voices";
-            materialize_embedded_demo_voices(embedded_voices);
-            config_.voice_dir = embedded_voices;
-        }
         model_installer_ = std::make_unique<ModelInstaller>(
             repository_root_,
             models_root_);
     }
 #endif
+    // Demo voices start the WebUI's voice list when the server has no voice
+    // library. Without UI management they are added only when the UI was asked
+    // for, so a server that has the UI on by default does not gain voices.
+    if ((config_.ui_management || (config_.ui_enabled && config_.ui_requested)) &&
+        !config_.voice_dir.has_value()) {
+        const auto embedded_voices = upload_root_ / "demo_voices";
+        materialize_embedded_demo_voices(embedded_voices);
+        config_.voice_dir = embedded_voices;
+    }
     register_static_server_frontends(frontends_);
     load_models();
     if (config_.idle_unload_ms > 0) {
@@ -195,6 +197,7 @@ HttpResponse ParallelServerState::handle_health() const {
 void ParallelServerState::load_models() {
     int eager_loaded = 0;
     for (auto & config : config_.models) {
+        configured_models_.emplace(config.id, config);
         auto loaded = make_model(std::move(config));
         if (!model_index_.emplace(loaded->config.id, models_.size()).second) {
             throw std::runtime_error("duplicate server model id: " + loaded->config.id);
@@ -358,6 +361,9 @@ HttpResponse ParallelServerState::handle_model_load(const std::string & body_tex
     }
     requested.path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
     apply_default_session_options(config_, requested);
+    if (const auto configured = configured_models_.find(requested.id); configured != configured_models_.end()) {
+        inherit_configured_model_fields(configured->second, requested);
+    }
 
     // Validate metadata/presets before replacing any live state. A failed
     // validation leaves the existing configuration and sessions intact.
@@ -2412,6 +2418,7 @@ std::string ParallelServerState::models_json(bool include_session_options, bool 
             << ",\"queued_requests\":" << slot_state.waiting_requests
             << ",\"max_parallel_slots\":" << (parallel_capacity ? std::to_string(parallel_capacity) : "null")
             << ",\"loaded\":" << (model.loaded.load() ? "true" : "false")
+            << ",\"configured\":" << (configured_models_.count(model.config.id) != 0 ? "true" : "false")
             << ",\"path\":" << json_quote(model.config.path.string());
         if (include_session_options) {
             out << ",\"session_options\":" << options_json(model.config.session_options);

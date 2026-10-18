@@ -117,7 +117,8 @@
     // or key press: a browser starts audio only then.
     player.beginTurn(liveAudio);
     // A server with a config file keeps the entry in its configured mode.
-    const live = server?.ui_management === true ||
+    const configured = catalogEntries.find((entry) => entry.id === context.modelId)?.configured === true;
+    const live = (server?.ui_management === true && !configured) ||
       loadedModels.some((model) => model.id === context.modelId && model.mode === 'streaming');
     // A reply that plays as it streams in is not heard over another player,
     // such as an earlier turn's or the Result column's.
@@ -134,7 +135,7 @@
     // parameters: S2S turns their chunking options away, and their
     // max_tokens would clash with the request's Max tokens.
     if (familySpecs) for (const spec of paramSpecs) delete options[spec.name];
-    const { turn, history } = addTurn(context.modelId, server?.ui_management ? 'loading' : 'uploading', context.seed);
+    const { turn, history } = addTurn(context.modelId, server?.ui_management && !configured ? 'loading' : 'uploading', context.seed);
 
     const controller = new AbortController();
     const abort = () => controller.abort();

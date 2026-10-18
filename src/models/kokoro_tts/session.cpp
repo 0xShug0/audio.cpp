@@ -1,6 +1,7 @@
 #include "engine/models/kokoro_tts/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/rknn/engine.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
@@ -71,7 +72,8 @@ KokoroTTSSession::KokoroTTSSession(
            {"rknn", {}, {"main"}, {}, {"overlap", "gain"}}}}});
     const auto & generator_plan = exec_plan.at("generator");
     if (generator_plan.impl == "rknn") {
-        rknn_generator_path_ = generator_plan.artifacts.at("main");
+        rknn_generator_path_ = engine::rknn::resolve_engine_path(
+            generator_plan.artifacts.at("main"), assets_->resources.model_directory());
     }
     if (const auto overlap = generator_plan.params.find("overlap"); overlap != generator_plan.params.end()) {
         const auto & value = overlap->second;

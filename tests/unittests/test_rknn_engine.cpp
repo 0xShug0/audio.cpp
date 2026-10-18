@@ -1,7 +1,7 @@
 // Shared RKNN plumbing (src/framework/rknn/engine.cpp): the part that is testable without
-// a board, i.e. the engine-image reader, the driver-status formatter and the aperture budget
-// arithmetic. The context calls need librknnrt and a compiled engine, so they are exercised
-// on the board, not here.
+// a board, i.e. the engine-image reader, the driver-status formatter, the aperture budget
+// arithmetic and the artifact-path resolver. The context calls need librknnrt and a
+// compiled engine, so they are exercised on the board, not here.
 #include "engine/framework/rknn/engine.h"
 
 #include "test_assert.h"
@@ -99,6 +99,29 @@ void test_aperture_budget_ladder() {
     require(!budget.fits(900), "the longest rung exceeds the aperture on its own");
 }
 
+void test_resolve_engine_path(const std::filesystem::path & dir) {
+    const auto engine_path = dir / "flow_estimator_seq200.rknn";
+    write_file(engine_path, std::string("RKNN\x01\x00\x00\x00", 8));
+
+    // What an operator writes in `exec_plan` has to work in both spellings: the board-absolute
+    // path it has always taken, and the bare file name of an engine installed next to the weights.
+    require_eq(engine::rknn::resolve_engine_path("flow_estimator_seq200.rknn", dir),
+               engine_path.string(),
+               "a name that exists under the model root resolves to it");
+    require_eq(engine::rknn::resolve_engine_path(engine_path.string(), dir),
+               engine_path.string(),
+               "an absolute path is used as given");
+    require_eq(engine::rknn::resolve_engine_path("absent.rknn", dir),
+               std::string("absent.rknn"),
+               "a name with no engine under the root is returned unchanged");
+    require_eq(engine::rknn::resolve_engine_path("flow_estimator_seq200.rknn", std::filesystem::path{}),
+               std::string("flow_estimator_seq200.rknn"),
+               "an empty root resolves nothing");
+    require_eq(engine::rknn::resolve_engine_path(std::string(), dir),
+               std::string(),
+               "an unset artifact stays unset");
+}
+
 }  // namespace
 
 int main() {
@@ -109,6 +132,7 @@ int main() {
     test_read_engine_empty(dir);
     test_status();
     test_aperture_budget_ladder();
+    test_resolve_engine_path(dir);
     std::filesystem::remove_all(dir);
     return 0;
 }

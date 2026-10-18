@@ -84,6 +84,14 @@ const std::filesystem::path & ResourceBundle::model_root() const noexcept {
     return model_root_;
 }
 
+void ResourceBundle::set_model_directory(std::filesystem::path path) {
+    model_directory_ = std::move(path);
+}
+
+const std::filesystem::path & ResourceBundle::model_directory() const noexcept {
+    return model_directory_.empty() ? model_root_ : model_directory_;
+}
+
 bool ResourceBundle::has_file(std::string_view id) const noexcept {
     return files_.find(std::string(id)) != files_.end();
 }
