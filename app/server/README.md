@@ -132,7 +132,7 @@ Pick the mode that matches the behavior you want:
 |---|---|---|---|
 | API/config-driven server, no UI | default build | `audiocpp_server --config server.json --no-ui` | Uses models declared in the config; does not serve the UI. |
 | UI for configured models | default build | `audiocpp_server --config server.json --ui` | Browser UI can run configured models, without downloads, deletes, or dynamic package management. |
-| Full UI with downloads and model switching | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | UI can browse packages, download models, load/unload models, delete packages, and use temporary uploads. |
+| Full UI with downloads and model switching | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | UI can browse packages, download models, load/unload models, delete packages, and use temporary uploads. Models from a `--config` stay available as configured ([details](#configured-models-with-ui-management)). |
 | Standalone deployed binary without local `model_specs/` | `-DAUDIOCPP_DEPLOYMENT_BUILD=ON` | `audiocpp_server --config server.json` | Binary carries compiled package specs for fallback model-spec lookup. |
 
 Native model management uses bundled BoringSSL by default. Normal server builds
@@ -251,6 +251,22 @@ options:
 
 A key without a family prefix is rejected when the config loads. A value for a
 family that never loads is ignored.
+
+### Configured models with UI management
+
+With `--ui-management` and a `--config`, the WebUI offers the catalog and the
+config's models. A config model whose `id` the catalog does not have is listed
+as its own entry and used as configured, as without UI management: it loads on
+its first request, and the WebUI releases its memory with
+[`POST /v1/tasks/unload_models`](api.md#post-v1tasksunload_models) instead of
+reloading it from the catalog. A config model under a catalog `id` stays that
+catalog entry, so the WebUI can load another format of it.
+
+A WebUI load of an `id` the config defines carries only the path, the family,
+the task, the mode and the load and session options. When its family and task
+match the config's, the model keeps the config's `default_request_options`,
+`voice_presets`, `default_voice_preset`, `busy_timeout_ms` and `live_ingest`;
+a load of another family or task under that `id` gets none of them.
 
 ### Paths and model specs
 

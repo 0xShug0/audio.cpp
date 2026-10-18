@@ -430,4 +430,16 @@ void apply_default_session_options(const ServerConfig & config, ServerModelConfi
     }
 }
 
+void inherit_configured_model_fields(const ServerModelConfig & configured, ServerModelConfig & model) {
+    if (configured.family != model.family || configured.task != model.task) {
+        return;
+    }
+    model.busy_timeout_ms = configured.busy_timeout_ms;
+    model.live_ingest = configured.live_ingest;
+    model.default_request_options = configured.default_request_options;
+    model.voice_presets = configured.voice_presets;
+    model.default_voice_preset = configured.default_voice_preset;
+    model.default_voice_preset_id = configured.default_voice_preset_id;
+}
+
 }  // namespace minitts::server

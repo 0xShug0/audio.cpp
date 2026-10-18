@@ -194,6 +194,7 @@ HttpResponse ServerState::handle_health() const {
 void ServerState::load_models() {
     int eager_loaded = 0;
     for (auto & config : config_.models) {
+        configured_models_.emplace(config.id, config);
         auto loaded = make_model(std::move(config));
         if (!model_index_.emplace(loaded->config.id, models_.size()).second) {
             throw std::runtime_error("duplicate server model id: " + loaded->config.id);
@@ -286,6 +287,9 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
     auto requested = model_config_from_json(body, request_base_, false);
     requested.path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
     apply_default_session_options(config_, requested);
+    if (const auto configured = configured_models_.find(requested.id); configured != configured_models_.end()) {
+        inherit_configured_model_fields(configured->second, requested);
+    }
 
     LoadedModel * existing = nullptr;
     {
@@ -2236,6 +2240,7 @@ std::string ServerState::models_json(bool include_session_options, bool include_
             << ",\"task\":" << json_quote(engine::runtime::to_string(model.task.task))
             << ",\"mode\":" << json_quote(engine::runtime::to_string(model.task.mode))
             << ",\"loaded\":" << (model.loaded.load() ? "true" : "false")
+            << ",\"configured\":" << (configured_models_.count(model.config.id) != 0 ? "true" : "false")
             << ",\"path\":" << json_quote(model.config.path.string());
         if (include_session_options) {
             out << ",\"session_options\":" << options_json(model.config.session_options);
