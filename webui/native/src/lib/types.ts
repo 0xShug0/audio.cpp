@@ -33,6 +33,8 @@ export interface CatalogEntry {
   required_request_options?: string[];
   builtin_voices?: string[];
   default_voice?: string;
+  // A model the server config defines under an id the catalog does not have.
+  configured?: boolean;
 }
 
 export interface ParamSpec {
@@ -62,6 +64,8 @@ export interface LoadedModel {
   path: string;
   session_options?: StringMap;
   loaded: boolean;
+  // Registered from the server config rather than loaded through the UI.
+  configured?: boolean;
 }
 
 export interface ServerHealth {
