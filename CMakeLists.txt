@@ -454,10 +454,13 @@ function(audiocpp_configure_runtime_object target_name)
 endfunction()
 
 function(audiocpp_add_model target_name)
-    cmake_parse_arguments(ARG "" "" "SOURCES;INCLUDES;LOADERS;ALIASES;DEPENDS" ${ARGN})
+    cmake_parse_arguments(ARG "" "" "SOURCES;INCLUDES;LOADERS;ALIASES;DEPENDS;OBJECT_LIBRARIES" ${ARGN})
     add_library(engine_model_${target_name} OBJECT ${ARG_SOURCES})
     set_target_properties(engine_model_${target_name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
     audiocpp_configure_runtime_object(engine_model_${target_name})
+    if (ARG_OBJECT_LIBRARIES)
+        target_link_libraries(engine_model_${target_name} PRIVATE ${ARG_OBJECT_LIBRARIES})
+    endif()
     if (ENGINE_ENABLE_NEON)
         target_compile_definitions(engine_model_${target_name} PRIVATE ENGINE_HAVE_NEON=1)
     endif()
@@ -465,6 +468,7 @@ function(audiocpp_add_model target_name)
     set(AUDIOCPP_MODEL_${target_name}_INCLUDES "${ARG_INCLUDES}" PARENT_SCOPE)
     set(AUDIOCPP_MODEL_${target_name}_LOADERS "${ARG_LOADERS}" PARENT_SCOPE)
     set(AUDIOCPP_MODEL_${target_name}_DEPENDS "${ARG_DEPENDS}" PARENT_SCOPE)
+    set(AUDIOCPP_MODEL_${target_name}_OBJECT_LIBRARIES "${ARG_OBJECT_LIBRARIES}" PARENT_SCOPE)
     set(AUDIOCPP_MODEL_ALIAS_${target_name} ${target_name} PARENT_SCOPE)
     foreach(alias IN LISTS ARG_ALIASES)
         set(AUDIOCPP_MODEL_ALIAS_${alias} ${target_name} PARENT_SCOPE)
@@ -1541,8 +1545,9 @@ audiocpp_add_model(plapre
         engine/models/plapre/session.h
     LOADERS
         engine::models::plapre::make_plapre_loader
+    OBJECT_LIBRARIES
+        utf8proc_vendor
 )
-target_link_libraries(engine_model_plapre PRIVATE utf8proc_vendor)
 
 audiocpp_add_model(fish_drama3
     SOURCES
@@ -1558,9 +1563,9 @@ audiocpp_add_model(fish_drama3
         engine/community_models/fish_drama3/loader.h
     LOADERS
         engine::models::fish_drama3::make_fish_drama3_loader
+    OBJECT_LIBRARIES
+        utf8proc_vendor
 )
-
-target_link_libraries(engine_model_fish_drama3 PRIVATE utf8proc_vendor)
 
 audiocpp_add_model(audio8_tts
     SOURCES
@@ -2670,12 +2675,15 @@ set(AUDIOCPP_RUNTIME_OBJECTS
 if (ENGINE_ENABLE_NEON)
     list(APPEND AUDIOCPP_RUNTIME_OBJECTS $<TARGET_OBJECTS:engine_neon>)
 endif()
+set(AUDIOCPP_MODEL_OBJECT_LIBRARIES "")
 foreach(model_name IN LISTS AUDIOCPP_LINKED_MODELS)
     list(APPEND AUDIOCPP_RUNTIME_OBJECTS $<TARGET_OBJECTS:engine_model_${model_name}>)
+    list(APPEND AUDIOCPP_MODEL_OBJECT_LIBRARIES ${AUDIOCPP_MODEL_${model_name}_OBJECT_LIBRARIES})
 endforeach()
-if("fish_drama3" IN_LIST AUDIOCPP_LINKED_MODELS OR "plapre" IN_LIST AUDIOCPP_LINKED_MODELS)
-    list(APPEND AUDIOCPP_RUNTIME_OBJECTS $<TARGET_OBJECTS:utf8proc_vendor>)
-endif()
+list(REMOVE_DUPLICATES AUDIOCPP_MODEL_OBJECT_LIBRARIES)
+foreach(object_library IN LISTS AUDIOCPP_MODEL_OBJECT_LIBRARIES)
+    list(APPEND AUDIOCPP_RUNTIME_OBJECTS $<TARGET_OBJECTS:${object_library}>)
+endforeach()
 
 message(STATUS "audio.cpp model composite: ${AUDIOCPP_MODEL_SET} selected [${AUDIOCPP_ENABLED_MODELS}] linked [${AUDIOCPP_LINKED_MODELS}]")
 add_library(engine_runtime STATIC
