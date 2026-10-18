@@ -317,7 +317,7 @@ void ParallelServerState::validate_replacement_slots(
         }
         engine::runtime::SessionOptions options;
         options.backend.type = config_.backend;
-        options.backend.device = config_.device;
+        options.backend.device = candidate.config.device.value_or(config_.device);
         options.backend.threads = config_.threads;
         options.options = candidate.config.session_options;
         auto primary = source->create_task_session(candidate.task, options);
@@ -393,11 +393,15 @@ HttpResponse ParallelServerState::handle_model_load(const std::string & body_tex
     if (candidate != nullptr) {
         registration_lease.reset();
         ModelSlots::Lock run_lock = acquire_model_run(*existing, std::nullopt, true);
+        if (!candidate->config.device.has_value()) {
+            candidate->config.device = existing->config.device;
+        }
         const bool changed =
             existing->config.path != candidate->config.path ||
             existing->config.family != candidate->config.family ||
             existing->config.task != candidate->config.task ||
             existing->config.mode != candidate->config.mode ||
+            existing->config.device != candidate->config.device ||
             existing->config.slots != candidate->config.slots ||
             existing->config.config_id != candidate->config.config_id ||
             existing->config.weight_id != candidate->config.weight_id ||
@@ -750,7 +754,7 @@ void ParallelServerState::ensure_model_loaded_locked(LoadedModel & model) {
 
     engine::runtime::SessionOptions session_options;
     session_options.backend.type = config_.backend;
-    session_options.backend.device = config_.device;
+    session_options.backend.device = model.config.device.value_or(config_.device);
     session_options.backend.threads = config_.threads;
     session_options.options = model.config.session_options;
 
@@ -2408,6 +2412,7 @@ std::string ParallelServerState::models_json(bool include_session_options, bool 
             << ",\"family\":" << json_quote(model.config.family)
             << ",\"task\":" << json_quote(engine::runtime::to_string(model.task.task))
             << ",\"mode\":" << json_quote(engine::runtime::to_string(model.task.mode))
+            << ",\"device\":" << model.config.device.value_or(config_.device)
             << ",\"slots\":" << model.config.slots
             << ",\"active_slots\":" << slot_state.active
             << ",\"queued_requests\":" << slot_state.waiting_requests
@@ -2542,7 +2547,7 @@ void ParallelServerState::ensure_model_fits_memory(const ServerModelConfig & mod
     engine::core::ensure_backends_loaded();
     const engine::core::BackendMemorySnapshot device =
         engine::core::query_backend_memory(engine::core::BackendConfig{
-            config_.backend, config_.device, config_.threads});
+            config_.backend, model.device.value_or(config_.device), config_.threads});
     if (device.available && *estimate + headroom > static_cast<size_t>(device.free_bytes)) {
         throw InsufficientMemoryError(
             "cannot load model '" + model.id + "': estimated " + format_bytes(*estimate) +

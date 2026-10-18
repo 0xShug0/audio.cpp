@@ -305,11 +305,18 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
     if (existing != nullptr) {
         BusyGuard::Lock run_lock = acquire_model_run(*existing, std::nullopt);
         std::unique_lock<std::shared_mutex> metadata_lock(existing->metadata_mutex);
+        // The WebUI re-posts model metadata when it loads a configured model.
+        // Treat an omitted device as "keep the registration's assignment" so
+        // that action cannot silently move the model back to the server default.
+        if (!requested.device.has_value()) {
+            requested.device = existing->config.device;
+        }
         const bool changed =
             existing->config.path != requested.path ||
             existing->config.family != requested.family ||
             existing->config.task != requested.task ||
             existing->config.mode != requested.mode ||
+            existing->config.device != requested.device ||
             existing->config.load_options != requested.load_options ||
             existing->config.session_options != requested.session_options ||
             existing->config.model_spec_override != requested.model_spec_override;
@@ -652,7 +659,7 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
 
     engine::runtime::SessionOptions session_options;
     session_options.backend.type = config_.backend;
-    session_options.backend.device = config_.device;
+    session_options.backend.device = model.config.device.value_or(config_.device);
     session_options.backend.threads = config_.threads;
     session_options.options = model.config.session_options;
 
@@ -2241,6 +2248,7 @@ std::string ServerState::models_json(bool include_session_options, bool include_
             << ",\"family\":" << json_quote(model.config.family)
             << ",\"task\":" << json_quote(engine::runtime::to_string(model.task.task))
             << ",\"mode\":" << json_quote(engine::runtime::to_string(model.task.mode))
+            << ",\"device\":" << model.config.device.value_or(config_.device)
             << ",\"loaded\":" << (model.loaded.load() ? "true" : "false")
             << ",\"configured\":" << (configured_models_.count(model.config.id) != 0 ? "true" : "false")
             << ",\"path\":" << json_quote(model.config.path.string());
@@ -2368,7 +2376,7 @@ void ServerState::ensure_model_fits_memory(const ServerModelConfig & model) {
     engine::core::ensure_backends_loaded();
     const engine::core::BackendMemorySnapshot device =
         engine::core::query_backend_memory(engine::core::BackendConfig{
-            config_.backend, config_.device, config_.threads});
+            config_.backend, model.device.value_or(config_.device), config_.threads});
     if (device.available && *estimate + headroom > static_cast<size_t>(device.free_bytes)) {
         throw InsufficientMemoryError(
             "cannot load model '" + model.id + "': estimated " + format_bytes(*estimate) +

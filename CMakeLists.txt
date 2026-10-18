@@ -3444,6 +3444,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_ENABLE_CUDA)
+        add_engine_unittest(torch_random_cuda_multi_device_test
+            tests/unittests/test_torch_random_cuda_multi_device.cu)
+        target_include_directories(torch_random_cuda_multi_device_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_link_libraries(torch_random_cuda_multi_device_test PRIVATE CUDA::cudart)
+        add_test(NAME torch_random_cuda_multi_device_test COMMAND torch_random_cuda_multi_device_test)
+        set_tests_properties(torch_random_cuda_multi_device_test PROPERTIES SKIP_RETURN_CODE 77)
+
         add_engine_unittest(cuda_bias_fusion_test tests/unittests/test_cuda_bias_fusion.cpp)
         add_test(NAME cuda_bias_fusion_test COMMAND cuda_bias_fusion_test)
         set_tests_properties(cuda_bias_fusion_test PROPERTIES SKIP_RETURN_CODE 77)

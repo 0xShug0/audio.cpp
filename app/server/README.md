@@ -215,6 +215,7 @@ JSON
 | `path` | An existing GGUF file or the complete package directory required by that family. Multi-component models may need additional package files. |
 | `task` | The model's documented route, such as `tts`, `clon`, `vdes`, `asr`, or `align`. Capabilities such as voice cloning do not imply an identically named route. |
 | `mode` | `offline` or `streaming`, supported by that model. It selects the session created by the server. |
+| `device` | Optional backend device index for this model. When omitted, the top-level `device` is used. |
 | `load_options` | Options consumed while loading weights/assets. |
 | `session_options` | Options consumed when creating the reusable session. |
 | `default_request_options` | Defaults for the model's inference requests; request values with the same key override them. |
@@ -227,6 +228,33 @@ For instruction-conditioned models, per-model `"instruct": "..."` is a shortcut
 for `"default_request_options": {"instruct": "..."}`. Use one form or the other;
 setting the shortcut together with `instruct` or `instruction` in
 `default_request_options` is rejected as ambiguous.
+
+### Per-model devices
+
+Servers with more than one accelerator can keep different models resident on
+different devices. Set the top-level `device` as the default and override it on
+individual model entries:
+
+```json
+{
+  "backend": "cuda",
+  "device": 0,
+  "max_loaded_models": 0,
+  "models": [
+    {"id":"speech","family":"kokoro_tts","path":"models/kokoro.gguf","device":0},
+    {"id":"music","family":"stable_audio","path":"models/stable-audio","device":1}
+  ]
+}
+```
+
+The indices use audio.cpp's backend device order; run the server with
+`--list-devices` to inspect it. Each model remains wholly on one device: this
+setting assigns models independently and does not split one model across GPUs.
+`GET /v1/models` reports the effective `device` for every entry. Dynamic loads
+may also send `device`; when a registered model is reloaded and the field is
+omitted, its existing assignment is retained. Set `max_loaded_models` high
+enough for the number of models that should remain resident, or use `0` for no
+global residency limit.
 
 ### Default session options
 

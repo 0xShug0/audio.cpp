@@ -433,6 +433,14 @@ model_config_from_json(const Value &body,
   model.task = engine::io::json::optional_string(body, "task", model.task);
   model.mode = engine::io::json::optional_string(body, "mode", model.mode);
   model.lazy = lazy;
+  if (body.find("device") != nullptr) {
+    const int device = engine::io::json::optional_i32(body, "device", 0);
+    if (device < 0) {
+      throw engine::runtime::InvalidRequestError(
+          "device for model " + model.id + " must be >= 0");
+    }
+    model.device = device;
+  }
   if (const auto *value = body.find("model_spec_override")) {
     const auto &selection = value->as_string();
     model.model_spec_override = selection == "embedded"
