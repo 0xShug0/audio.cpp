@@ -686,7 +686,10 @@ Three consequences for anyone extending this path:
   every set holding an S>=900 engine return -4. The accounting for that is shared
   (`rknn::ApertureBudget`, `include/engine/framework/rknn/engine.h`) and the numbers are not: the
   per-engine cost and the budget are measurements of one engine on one board, and they live with the
-  sidecar that measured them.
+  sidecar that measured them. `AUDIOCPP_RKNN_APERTURE_MIB` overrides that ceiling, in the spirit of
+  `AUDIOCPP_RKNN_CORE_MASK`: set it to the number your board admits, or to 0 to drop the accounting
+  and pin every rung you declared — the safe setting where the aperture has not been measured, at the
+  price of a `-4` from `rknn_init` if the declared set turns out to be wider than the hardware.
 - The failure is at init, so it is cheap to detect and cannot corrupt output: `rknn_init` returns -4
   and dmesg names the byte count.
 

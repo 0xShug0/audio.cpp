@@ -8,8 +8,10 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -47,6 +49,23 @@ constexpr int64_t kApertureMiBPerFrame = 5;  // only if the driver cannot say
 // not a board property: the accounting is shared (rknn::ApertureBudget), the numbers are this
 // engine's.
 constexpr int64_t kAperturePinBudgetMiB = 3900;
+
+// The ceiling is a measurement of one board, so the board gets to say it:
+// `AUDIOCPP_RKNN_APERTURE_MIB` overrides it in the spirit of `AUDIOCPP_RKNN_CORE_MASK`. Zero -- also
+// the reading of a malformed value, so a typo cannot silently mean "one megabyte" -- turns the
+// accounting off and pins every rung the deployment declares, the setting for hardware whose aperture
+// has not been measured, at the price of a failed `rknn_init` when the declared set is wider than the
+// hardware: on this board, going off admits 200+400 (3744 MiB, which fits) and then the next rung
+// longer than the set dies at init with -6.
+int64_t aperture_budget_mib() {
+    const char * const env = std::getenv("AUDIOCPP_RKNN_APERTURE_MIB");
+    if (env == nullptr) {
+        return kAperturePinBudgetMiB;
+    }
+    const char * end = env;
+    const long long value = std::strtoll(env, &end, 10);
+    return value > 0 && *end == '\0' ? static_cast<int64_t>(value) : 0;
+}
 
 // Graph order, as tools/rknn/prepare_cosyvoice3_rknn_flow.py compiles it.
 const char * const kInputNames[] = {"x", "mask", "mu", "t", "spks", "cond"};
@@ -267,6 +286,12 @@ struct CosyVoice3RknnFlow::Impl {
         if (slots.empty()) {
             throw std::runtime_error(std::string(kLabel) + ": no engine paths given");
         }
+        // Read once per process, at the point the ladder is known: a board that has not been measured
+        // sets 0 and pins every rung it declares.
+        const int64_t budget_mib = aperture_budget_mib();
+        budget_ = engine::rknn::ApertureBudget(
+            budget_mib > 0 ? budget_mib : std::numeric_limits<int64_t>::max());
+        debug::trace_log_scalar("cosyvoice3.flow.dit.rknn.aperture_budget_mib", budget_mib);
     }
 
     // The smallest engine that fits `frames`. The long-sequence engines are loaded on demand and
