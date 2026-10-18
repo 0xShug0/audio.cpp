@@ -810,7 +810,10 @@ void test_model_memory_estimator() {
 
     // An exec_plan engine is counted by name: the option value is JSON, so the
     // path scan above sees nothing, and a name relative to the model directory is
-    // how a deployment spells an engine installed with the weights.
+    // how a deployment spells an engine installed with the weights. The names here
+    // are not engine images and this gate has no NPU runtime, so the driver cannot
+    // price them and they fall back to their file size -- which is what every
+    // non-RKNN deployment, and this test, must keep estimating.
     {
         const auto dir = root / "plan";
         std::filesystem::create_directories(dir);

@@ -240,6 +240,12 @@ std::string driver_report() {
     return {};
 }
 
+int64_t engine_memory_mib(const std::string & /* path */, const std::string & /* label */) {
+    // No driver to ask, so every engine reports "unknown" -- the answer a caller's proxy is written
+    // to fall back on.
+    return 0;
+}
+
 #endif  // ENGINE_HAVE_RKNN
 
 }  // namespace engine::rknn

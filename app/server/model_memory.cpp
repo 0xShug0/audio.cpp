@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/rknn/engine.h"
 
 #include <filesystem>
 #include <functional>
@@ -14,6 +15,10 @@ namespace minitts::server {
 
 std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & model) {
     size_t weights = 0;
+    // What the NPU driver reports for the engines a plan declares, in total. Counted apart from
+    // `weights` because the runtime factor below prices ggml graphs and KV state, while the driver's
+    // number is already the allocation.
+    size_t aperture = 0;
     std::error_code ec;
     // A compiled engine can be declared by a session option and also sit inside a checkpoint tree
     // that gets summed, so each path is counted once.
@@ -41,6 +46,25 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
             return;
         }
         weights += static_cast<size_t>(size);
+        ++visited_files;
+    };
+    // A compiled engine is resident at what the driver reports, not at its image size: every engine
+    // of the CosyVoice3 flow ladder is a 661-714 MB file that occupies 0.78-3.75 GiB once loaded.
+    // Ask the driver, and fall back to the file size where it cannot say -- which is every build
+    // without an RKNN runtime, so a PC estimate is unchanged. A ladder is priced by the sum of its
+    // engines, i.e. as if every declared rung were resident: the model evicts to stay inside the NPU
+    // aperture, whose ceiling is the model's own policy and not knowable here, and a guard that
+    // guesses low is the failure mode this estimate has already been caught in once.
+    const auto add_engine = [&](const std::filesystem::path & path) {
+        const auto mib = engine::rknn::engine_memory_mib(path.string(), "load estimate RKNN");
+        if (mib <= 0 || !std::filesystem::is_regular_file(path, ec)) {
+            add_file(path);
+            return;
+        }
+        if (!counted.insert(std::filesystem::weakly_canonical(path, ec)).second) {
+            return;
+        }
+        aperture += static_cast<size_t>(mib) * (1024u * 1024u);
         ++visited_files;
     };
     const std::function<void(const std::filesystem::path &, size_t)> add_tree =
@@ -135,7 +159,7 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
                             if (engine_path.is_relative()) {
                                 engine_path = aux_base / engine_path;
                             }
-                            add_file(engine_path);
+                            add_engine(engine_path);
                         }
                         if (end == std::string::npos) {
                             break;
@@ -156,7 +180,8 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
     // KV state, plus a fixed floor for per-model bookkeeping.
     constexpr double kRuntimeOverheadFactor = 1.5;
     constexpr size_t kFixedOverhead = 128ull * 1024 * 1024;
-    return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead;
+    return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead +
+        aperture;
 }
 
 }  // namespace minitts::server
