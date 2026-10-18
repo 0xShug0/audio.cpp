@@ -129,7 +129,14 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
         request.options.find("reference_text") == request.options.end()) {
       request.options["reference_text"] = *preset->reference_text;
     }
+    const bool has_instruct = request.options.count("instruct") != 0;
+    const bool has_instruction = request.options.count("instruction") != 0;
     request = apply_default_request_options(preset->options, std::move(request));
+    if (has_instruct && !has_instruction) {
+      request.options.erase("instruction");
+    } else if (has_instruction && !has_instruct) {
+      request.options.erase("instruct");
+    }
   }
 
   const bool has_explicit_voice_ref = body.find("voice_ref") != nullptr;
