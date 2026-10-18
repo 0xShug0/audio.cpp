@@ -61,6 +61,8 @@
       {"name": "audio_codes", "type": "string", "description": "ACE semantic code text to bypass planner generation.", "required": false}
     ],
     "session": [
+      {"name": "lora", "type": "string", "description": "DiT decoder LoRA/LoKr adapter file or PEFT directory, merged during weight loading.", "required": false},
+      {"name": "lora_scale", "type": "float", "description": "Adapter strength multiplied by its metadata scale; zero disables the adapter.", "required": false, "default": 1.0},
       {"name": "weight_type", "type": "enum", "preset": "weight_type_full", "description": "Shared weight storage type.", "required": false, "default": "native"},
       {"name": "dit_weight_type", "type": "enum", "preset": "weight_type_full", "description": "DiT override of weight_type; f16 is promoted to bf16.", "required": false},
       {"name": "planner_weight_type", "type": "enum", "preset": "weight_type_full", "description": "Planner override of weight_type.", "required": false},

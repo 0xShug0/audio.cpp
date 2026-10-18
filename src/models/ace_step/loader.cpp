@@ -85,6 +85,8 @@ runtime::ModelCliInterface cli(const AceStepAssets &) {
         {"dcw_enabled", "bool", "Status: experimental dynamic-cfg wavelet path; keep disabled unless validating that path.", false, "false"},
     };
     out.session_options = {
+        {"ace_step.lora", "path", "DiT decoder LoRA/LoKr adapter file or PEFT directory, merged while loading weights."},
+        {"ace_step.lora_scale", "float", "Adapter strength; multiplied by its alpha/r scale. Zero disables the adapter.", false, "1.0"},
         {"ace_step.weight_type", "native|f32|f16|bf16|q8_0", "Shared ACE-Step weight storage type.", false, "native"},
         {"ace_step.dit_weight_type", "native|f32|f16|bf16|q8_0", "DiT override of ace_step.weight_type; f16 is promoted to bf16."},
         {"ace_step.planner_weight_type", "native|f32|f16|bf16|q8_0", "Planner override of ace_step.weight_type."},

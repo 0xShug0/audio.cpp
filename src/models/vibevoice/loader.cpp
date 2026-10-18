@@ -50,11 +50,11 @@ runtime::ModelCliInterface cli(const VibeVoiceAssets &) {
         {"vibevoice.connector_weight_type", "native|f32|f16|bf16|q8_0", "Acoustic and semantic connector weight storage type."},
         {"vibevoice.decoder_weight_type", "native|f32|f16|bf16|q8_0", "Language decoder weight storage type."},
         {"vibevoice.diffusion_head_weight_type", "native|f32|f16|bf16|q8_0", "Diffusion prediction head weight storage type."},
-        {"vibevoice.lora", "path", "Adapter directory applied when creating the session; do not also supply the load option."},
+        {"vibevoice.lora", "path", "Decoder adapter file or PEFT directory applied when creating the session; do not also supply the load option."},
         {"vibevoice.lora_scale", "float", "Session adapter scale override; omitted uses lora_alpha / r. Must be strictly positive when an adapter is supplied."},
     };
     out.load_options = {
-        {"vibevoice.lora", "path", "Fine-tune adapter dir (LM LoRA + diffusion head + acoustic/semantic connectors) merged at load time."},
+        {"vibevoice.lora", "path", "Decoder adapter file or PEFT directory, with optional diffusion-head and connector sidecars, merged at load time."},
         {"vibevoice.lora_scale", "float", "LoRA scale override; omitted uses lora_alpha / r. Must be strictly positive when an adapter is supplied."},
     };
     return out;

@@ -1,4 +1,4 @@
-#include "engine/framework/assets/lora_tensor_source.h"
+#include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/safetensors.h"
@@ -86,18 +86,15 @@ void run(const std::filesystem::path & root) {
         {"untouched", "F32", {2, 32}, bytes(weights)},
         {"step", "I64", {1}, bytes(std::vector<int64_t>{42})}
     });
-    io::write_safetensors_file(root / "adapter.safetensors", {
-        {"a", "F32", {2, 32}, bytes(a)}, {"b", "F32", {2, 2}, bytes(b)}
-    });
     const auto base = assets::open_tensor_source(root / "base.safetensors");
-    const auto adapter = assets::open_tensor_source(root / "adapter.safetensors");
-    require(assets::make_lora_tensor_source(base, {}).get() == base.get(), "empty overlay must be identity");
-    auto delta = assets::load_lora_tensor_delta(*base, *adapter, "weight", "a", "b", 1.0F);
-    auto overlay = assets::make_lora_tensor_source(base, {{"weight", delta}});
+    require(assets::make_weight_adapter_source(base, {}).get() == base.get(), "empty overlay must be identity");
+    assets::LowRankWeightUpdate delta{a, b, 2, 32, 2};
+    assets::WeightUpdate update{delta, 1.0F, assets::WeightMergeMode::RankWiseF32};
+    auto overlay = assets::make_weight_adapter_source(base, {{{"weight", update}}, {}});
     auto expected = weights;
     for (int o = 0; o < 2; ++o) {
         for (int k = 0; k < 2; ++k) {
-            const float scaled_b = delta.scale * b[o * 2 + k];
+            const float scaled_b = update.scale * b[o * 2 + k];
             for (int i = 0; i < 32; ++i) expected[o * 32 + i] += scaled_b * a[k * 32 + i];
         }
     }
@@ -105,9 +102,9 @@ void run(const std::filesystem::path & root) {
     require(overlay->require_f32("weight") == expected, "merge arithmetic changed");
     require(overlay->require_f32("weight") == expected, "repeated read applies adapter twice");
     require(base->require_f32("weight") == weights, "overlay changed base storage");
-    auto rounded_delta = delta;
-    rounded_delta.merge_mode = assets::LoraMergeMode::RoundedBF16Delta;
-    auto rounded = assets::make_lora_tensor_source(base, {{"weight", rounded_delta}});
+    auto rounded_delta = update;
+    rounded_delta.merge_mode = assets::WeightMergeMode::RoundedBF16Delta;
+    auto rounded = assets::make_weight_adapter_source(base, {{{"weight", rounded_delta}}, {}});
     auto rounded_expected = weights;
     for (int o = 0; o < 2; ++o) {
         for (int i = 0; i < 32; ++i) {
@@ -130,19 +127,17 @@ void run(const std::filesystem::path & root) {
     require(!overlay->optional_f32("missing"), "missing optional tensor should remain absent");
     require(overlay->optional_f32("weight").value() == expected, "optional merge differs");
     rejects([&] { (void)overlay->require_f32("weight", {32, 2}); });
-    rejects([&] { assets::load_lora_tensor_delta(*base, *adapter, "weight", "a", "a", 1.0F); });
-    rejects([&] { assets::load_lora_tensor_delta(*base, *adapter, "weight", "a", "missing", 1.0F); });
     auto bad = delta;
     bad.a.pop_back();
-    rejects([&] { assets::make_lora_tensor_source(base, {{"weight", bad}}); });
+    rejects([&] { assets::make_weight_adapter_source(base, {{{"weight", {bad, 1.0F, assets::WeightMergeMode::RankWiseF32}}}, {}}); });
 
     const std::vector<float> replacement(64, 0.75F);
-    auto overridden = assets::make_lora_tensor_source(base, {{"weight", delta}},
-        {{"weight", {{2, 32}, replacement}}});
+    auto overridden = assets::make_weight_adapter_source(base, {{{"weight", update}},
+        {{"weight", {{2, 32}, replacement}}}});
     require(overridden->require_f32("weight") == replacement, "full override must win over delta");
     rejects([&] { (void)overridden->require_f32("weight", {32, 2}); });
-    rejects([&] { assets::make_lora_tensor_source(base, {}, {{"weight", {{2, 32}, {1.0F}}}}); });
-    rejects([&] { assets::make_lora_tensor_source(base, {}, {{"missing", {{2, 32}, replacement}}}); });
+    rejects([&] { assets::make_weight_adapter_source(base, {{}, {{"weight", {{2, 32}, {1.0F}}}}}); });
+    rejects([&] { assets::make_weight_adapter_source(base, {{}, {{"missing", {{2, 32}, replacement}}}}); });
     for (auto type : {assets::TensorStorageType::F32, assets::TensorStorageType::F16,
                       assets::TensorStorageType::BF16, assets::TensorStorageType::Q8_0,
                       assets::TensorStorageType::Q4_0}) {
@@ -154,12 +149,12 @@ void run(const std::filesystem::path & root) {
     overlay->release_storage();
     require(overlay->require_f32("weight") == expected, "release/reopen changed merge");
 
-    for (auto mode : {assets::LoraMergeMode::AccumulateF32, assets::LoraMergeMode::RoundedBF16Delta}) {
+    for (auto mode : {assets::WeightMergeMode::RankWiseF32, assets::WeightMergeMode::RoundedBF16Delta}) {
         auto counted = std::make_shared<CountingSource>(base);
-        auto cached_delta = delta;
+        auto cached_delta = update;
         cached_delta.merge_mode = mode;
-        auto reference = assets::make_lora_tensor_source(base, {{"weight", cached_delta}});
-        auto cached = assets::make_lora_tensor_source(counted, {{"weight", cached_delta}}, {}, "cached", true);
+        auto reference = assets::make_weight_adapter_source(base, {{{"weight", cached_delta}}, {}});
+        auto cached = assets::make_weight_adapter_source(counted, {{{"weight", cached_delta}}, {}}, "cached", true);
         size_t expected_reads = 0;
         for (auto type : {assets::TensorStorageType::F32, assets::TensorStorageType::F16,
                           assets::TensorStorageType::BF16, assets::TensorStorageType::Q8_0,
@@ -173,7 +168,7 @@ void run(const std::filesystem::path & root) {
                 require(counted->reads == expected_reads, "cached upload re-read/re-merged weights");
             }
         }
-        auto uncached = assets::make_lora_tensor_source(counted, {{"weight", cached_delta}});
+        auto uncached = assets::make_weight_adapter_source(counted, {{{"weight", cached_delta}}, {}});
         for (int repeat = 0; repeat < 2; ++repeat) {
             check_upload(*uncached, "weight", {2, 32}, assets::TensorStorageType::Q8_0, reference.get());
             require(counted->reads == ++expected_reads, "default overlay unexpectedly caches weights");
@@ -187,13 +182,14 @@ void run(const std::filesystem::path & root) {
         {"weight", "F32", {1024, 1024}, bytes(large_weights)}
     });
     auto large_base = assets::open_tensor_source(root / "large.safetensors");
-    assets::LoraTensorDelta large_delta;
+    assets::LowRankWeightUpdate large_delta;
     large_delta.in = large_delta.out = 1024;
     large_delta.r = 1;
     large_delta.a.assign(1024, 0.123F);
     large_delta.b.assign(1024, -0.456F);
-    auto large_cached = assets::make_lora_tensor_source(large_base, {{"weight", large_delta}}, {}, "large", true);
-    auto large_reference = assets::make_lora_tensor_source(large_base, {{"weight", large_delta}});
+    assets::WeightUpdate large_update{large_delta, 1.0F, assets::WeightMergeMode::RankWiseF32};
+    auto large_cached = assets::make_weight_adapter_source(large_base, {{{"weight", large_update}}, {}}, "large", true);
+    auto large_reference = assets::make_weight_adapter_source(large_base, {{{"weight", large_update}}, {}});
     for (auto type : {assets::TensorStorageType::F16, assets::TensorStorageType::BF16}) {
         check_upload(*large_reference, "weight", {1024, 1024}, type);
         check_upload(*large_cached, "weight", {1024, 1024}, type, large_reference.get());
@@ -203,13 +199,13 @@ void run(const std::filesystem::path & root) {
 }  // namespace
 
 int main(int argc, char ** argv) {
-    const auto root = std::filesystem::temp_directory_path() / "audiocpp_lora_tensor_source_test";
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp_weight_adapter_source_test";
     try {
         debug::configure_logging({argc > 1 && std::string(argv[1]) == "--log", std::nullopt});
         std::filesystem::create_directories(root);
         run(root);
         std::filesystem::remove_all(root);
-        std::cout << "lora_tensor_source_test passed\n";
+        std::cout << "weight_adapter_source_test passed\n";
     } catch (const std::exception & e) {
         std::filesystem::remove_all(root);
         std::cerr << e.what() << '\n';

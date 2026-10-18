@@ -86,6 +86,14 @@ and set **Weights path on server** before loading. Keep the original filenames;
 the default paths are under `Audio-Utilities/` in the selected models folder.
 Then choose an input recording and run it from the studio.
 
+### ACE-Step adapters
+
+In Studio, expand **LoRA** and enter the adapter's server path and strength.
+For PEFT, use the directory containing `adapter_model.safetensors` and
+`adapter_config.json`. Changing or clearing the adapter reloads the model on
+the next Run when UI management is enabled. Config-driven servers must update
+their session configuration instead.
+
 ### Drama 3
 
 Select **Fish Audio Drama 3** in the **Text to speech** Studio tab. Its

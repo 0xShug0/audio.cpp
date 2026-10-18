@@ -849,7 +849,7 @@ VibeVoice is a long-form multi-speaker TTS model, available in 1.5B and 7B sizes
 | Voice input | Up to four speaker reference WAVs through `voice_samples` |
 | Text format | Lines like `Speaker 1: ... Speaker 2: ...`; ids are normalized internally |
 | Long-form | No text chunking; generation uses the model long-form path |
-| LoRA | Optional PEFT decoder adapter through `--load-option vibevoice.lora` |
+| LoRA | Optional decoder adapter through `--load-option vibevoice.lora` or the matching session option |
 
 Use `--mode streaming` to emit native audio chunks during generation, including
 speaker changes. The completed audio uses the same generation path as offline
@@ -901,18 +901,24 @@ audiocpp_cli --task tts --family vibevoice --model models/VibeVoice-1.5B --backe
 | `vibevoice.connector_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
 | `vibevoice.decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
 | `vibevoice.diffusion_head_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
-| `vibevoice.lora` | path | not set | Adapter directory applied when creating the session; do not also supply the load option. |
+| `vibevoice.lora` | path | not set | Decoder adapter file or PEFT directory applied when creating the session; do not also supply the load option. |
 | `vibevoice.lora_scale` | float | not set | Session adapter scale override; omitted uses lora_alpha / r. |
 
 ### Load Options (use with `--load-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `vibevoice.lora` | path | not set | Adapter directory, merged at load time. |
+| `vibevoice.lora` | path | not set | Decoder adapter file or PEFT directory, merged at load time. |
 | `vibevoice.lora_scale` | float | not set | LoRA scale override; omitted uses lora_alpha / r. |
 
 
 The adapter follows the PEFT training layout: `adapter_model.safetensors` + `adapter_config.json` for the language-model LoRA, plus optional `diffusion_head/model.safetensors` (or `diffusion_head_full.bin`), `acoustic_connector/pytorch_model.bin`, and `semantic_connector/pytorch_model.bin` for the fully fine-tuned components. Everything is applied at load time, so it composes with the `vibevoice.*_weight_type` quantization options and adds no per-step cost; the overlay is logged with `--log`. Use a 1.5B adapter with `VibeVoice-1.5B` and a 7B adapter with `VibeVoice-7B`; a size mismatch is rejected with a descriptive error. The same option may instead be passed as `--session-option vibevoice.lora` (but not via both at once).
+
+Native A/B and ComfyUI up/down files with matching decoder targets are also
+accepted. Per-tensor alpha supplies scaling without a PEFT config; otherwise
+provide `vibevoice.lora_scale` when no config is present. Ordinary matrix LoKr
+factors are supported; unsupported adapter algorithms fail explicitly. Optional
+component sidecars are resolved beside the adapter file or inside its directory.
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.
 
