@@ -690,6 +690,28 @@ Three consequences for anyone extending this path:
 - The failure is at init, so it is cheap to detect and cannot corrupt output: `rknn_init` returns -4
   and dmesg names the byte count.
 
+## Who refused: the versions a failure names
+
+Every `RKNN_*` failure a sidecar reports goes through one formatter, and once any context in the
+process has initialized, the message carries the versions the driver gave it. Measured on this board,
+with the aperture accounting switched off so the ladder pins every rung it declares:
+
+```
+CosyVoice3 flow estimator RKNN: rknn_init failed with code -6 (driver 0.9.8, api 2.3.2 (429f97ae6b@2025-04-09T09:09:27))
+```
+
+The code names what was refused and nobody: `-13` is a target-platform mismatch, `-4` and `-6` are
+the driver refusing an init (the IOVA ceiling above, an aperture overrun here). `api` is the runtime
+library the sidecar links (`librknnrt`), `driver` is the kernel NPU driver, and Rockchip versions
+them apart -- the pair above is a working RK3588 on SDK 2.3.2, not a skew. The third version an
+operator has to line up, the `rknn-toolkit2` that compiled the `.rknn`, is not queryable from the
+board, so this line is the half of the comparison the board can state; the other half is what the
+converter reported when it built the image.
+
+The report is taken from the first context the driver builds (`RKNN_QUERY_SDK_VERSION` is
+per-context) and cached for the ones that fail to build, so the first engine of a process fails
+without it and every failure after it carries it.
+
 ## What this path is not for
 
 The talker and the code predictor stay on the CPU. Moving the code predictor to the same NPU was

@@ -24,8 +24,19 @@ namespace engine::rknn {
 // stage that failed ("Qwen3 speech decoder RKNN: ...").
 std::vector<char> read_engine(const std::string & path, const std::string & label);
 
-// Formats one `RKNN_*` return code the same way every sidecar does.
+// Formats one `RKNN_*` return code the same way every sidecar does. Where the driver has answered in
+// this process, the message names it (`... failed with code -6 (driver 0.9.8, api 2.3.2 ...)`),
+// because the code alone says what was refused and not who refused it: a `.rknn` is compiled per SoC
+// and per SDK generation, and the runtime library and the kernel driver are versioned apart (a
+// working RK3588 reports `api 2.3.2` beside `driver 0.9.8`), with the toolkit that built the image
+// as the third version an operator has to line up. See `driver_report()`.
 std::string status(const std::string & label, const char * what, int code);
+
+// What the driver said it is, as one phrase, once any context in this process has reported it;
+// empty where no driver can answer (a build without an RKNN runtime, an engine that never
+// initialized). Asked of the first context the driver builds -- `rknn_query(RKNN_QUERY_SDK_VERSION)`
+// is per-context -- and cached, so a later failure carries it at no round trip.
+std::string driver_report();
 
 // Aperture accounting for a sidecar that keeps more than one compiled engine resident: the resident
 // set is the sum of the residency each loaded engine reports, and a new engine is pinned only while

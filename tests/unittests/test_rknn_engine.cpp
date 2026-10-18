@@ -57,7 +57,13 @@ void test_read_engine_empty(const std::filesystem::path & dir) {
     }
 }
 
+// The format every sidecar reports a failure in, plus the rule that the driver's versions are
+// appended only when a driver answered: this gate has no RKNN runtime, so `driver_report()` is empty
+// and the message stays exactly the bare form a PC build has always produced.
 void test_status() {
+    require(
+        engine::rknn::driver_report().empty(),
+        "a build without an RKNN runtime has no driver report");
     require_eq(
         engine::rknn::status("Piper TTS decoder RKNN", "rknn_run", -5),
         std::string("Piper TTS decoder RKNN: rknn_run failed with code -5"),
