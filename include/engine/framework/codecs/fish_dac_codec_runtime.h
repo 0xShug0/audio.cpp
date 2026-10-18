@@ -79,7 +79,8 @@ public:
         core::BackendConfig backend,
         int threads,
         size_t graph_arena_bytes,
-        bool encoder_f32_accumulation = false);
+        bool encoder_f32_accumulation = false,
+        int64_t encoder_chunk_samples = 0);
     ~FishDacCodecRuntime();
 
     FishDacCodecRuntime(const FishDacCodecRuntime &) = delete;

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <cstdlib>
 #include <deque>
 #include <iostream>
 #include <numeric>
@@ -103,8 +104,12 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_encoder_f32_accumulation"})) {
         codec_encoder_f32_accumulation = runtime::parse_bool_option(*value, "fish_drama3.codec_encoder_f32_accumulation");
     }
+    int64_t codec_encoder_chunk_samples = 0;
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_encoder_chunk_samples"})) {
+        codec_encoder_chunk_samples = std::atoll(value->c_str());
+    }
     codec_ = std::make_unique<codecs::FishDacCodecRuntime>(component, codec_backend,
-        codec_backend.threads, codec_options.graph_arena_bytes, codec_encoder_f32_accumulation);
+        codec_backend.threads, codec_options.graph_arena_bytes, codec_encoder_f32_accumulation, codec_encoder_chunk_samples);
     assets_->model_weights->release_storage();
     assets_->codec_weights->release_storage();
 }
