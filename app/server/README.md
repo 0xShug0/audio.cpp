@@ -622,9 +622,11 @@ is model-specific. Top-level `reference_text` overrides the preset/library text.
 [`GET /v1/audio/voices`](api.md#get-v1audiovoicesmodelid) lists library WAV
 basenames, deduplicated against configured preset and cached voice names.
 
-With native UI management enabled and no configured `voice_dir`, the server
-provides embedded demo recordings in a temporary reference library. Those names
-are reference recordings, not the selected model's built-in speaker IDs.
+With native UI management enabled, or with the UI asked for (`--ui`, or
+`"ui": true` in the config), and no configured `voice_dir`, the server provides
+embedded demo recordings in a temporary reference library. A server whose UI is
+only on by default does not get them. Those names are reference recordings, not
+the selected model's built-in speaker IDs.
 
 Use distinct library filenames and model preset names. The library is shared
 across configured models; naming a reference WAV after a model-native speaker

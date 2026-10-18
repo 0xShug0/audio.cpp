@@ -72,6 +72,9 @@ struct ServerConfig {
     int port = 8080;
     std::string cors_origins = "";
     bool ui_enabled = true;
+    // Whether the UI was asked for (--ui, or "ui": true in the config file) rather
+    // than on by default.
+    bool ui_requested = false;
     bool ui_management = false;
     engine::core::BackendType backend = engine::core::BackendType::Cuda;
     int device = 0;

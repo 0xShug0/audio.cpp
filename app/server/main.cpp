@@ -215,9 +215,11 @@ int main(int argc, char ** argv) {
         }
         if (ui_requested) {
             config.ui_enabled = true;
+            config.ui_requested = true;
         }
         if (has_arg(argc, argv, "--no-ui")) {
             config.ui_enabled = false;
+            config.ui_requested = false;
         }
         if (has_arg(argc, argv, "--ui-management")) {
             config.ui_management = true;

@@ -525,8 +525,22 @@ void test_ui_configuration() {
 
     const auto config = minitts::server::load_server_config(config_path);
     require(!config.ui_enabled, "ui=false disables the embedded WebUI");
+    require(!config.ui_requested, "ui=false does not ask for the WebUI");
     require(config.ui_management, "ui_management=true enables dynamic model management");
     require(config.models.empty(), "management hosts may start without configured models");
+
+    const auto default_path = write_config(root, "ui_default.json", R"JSON({
+  "models": [{"id": "tts", "family": "pocket_tts", "path": "models/pocket-tts"}]
+})JSON");
+    const auto by_default = minitts::server::load_server_config(default_path);
+    require(by_default.ui_enabled && !by_default.ui_requested, "the WebUI is on by default but not asked for");
+
+    const auto asked_path = write_config(root, "ui_asked.json", R"JSON({
+  "ui": true,
+  "models": [{"id": "tts", "family": "pocket_tts", "path": "models/pocket-tts"}]
+})JSON");
+    const auto asked = minitts::server::load_server_config(asked_path);
+    require(asked.ui_enabled && asked.ui_requested, "ui=true asks for the WebUI");
 }
 
 void test_configured_model_fields_are_inherited() {

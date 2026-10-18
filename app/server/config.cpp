@@ -241,6 +241,7 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
     config.port = engine::io::json::optional_i32(root, "port", config.port);
     config.cors_origins = engine::io::json::optional_string(root, "cors_origins", config.cors_origins);
     config.ui_enabled = engine::io::json::optional_bool(root, "ui", config.ui_enabled);
+    config.ui_requested = engine::io::json::optional_bool(root, "ui", false);
     config.ui_management = engine::io::json::optional_bool(root, "ui_management", config.ui_management);
     config.backend = parse_server_backend(engine::io::json::optional_string(root, "backend", "cuda"));
     config.device = engine::io::json::optional_i32(root, "device", config.device);
