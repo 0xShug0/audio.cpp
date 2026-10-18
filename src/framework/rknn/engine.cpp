@@ -48,6 +48,34 @@ std::string resolve_engine_path(const std::string & artifact, const std::filesys
 
 #if defined(ENGINE_HAVE_RKNN)
 
+int64_t engine_memory_mib(const std::string & path, const std::string & label) {
+    (void)label;
+    std::vector<char> model;
+    try {
+        model = read_engine(path, label);
+    } catch (const std::exception &) {
+        return 0;
+    }
+    rknn_context ctx = 0;
+    if (rknn_init(
+            &ctx, model.data(), static_cast<uint32_t>(model.size()),
+            RKNN_FLAG_COLLECT_MODEL_INFO_ONLY, nullptr) != 0) {
+        return 0;
+    }
+    rknn_mem_size mem{};
+    const int ret = rknn_query(ctx, RKNN_QUERY_MEM_SIZE, &mem, sizeof(mem));
+    rknn_destroy(ctx);
+    if (ret != 0) {
+        return 0;
+    }
+    // `rknn_mem_size` carries the two byte counts as 32-bit, so widen before adding: a 1 GiB weight
+    // set beside a 3.5 GiB workspace is 4.5 GiB, and a 32-bit sum reports 512 MiB.
+    const uint64_t bytes = static_cast<uint64_t>(mem.total_weight_size) + mem.total_internal_size;
+    // Round up: the budget is a ceiling, and a resident set measured at its sum should not be
+    // admitted by fractions of a megabyte.
+    return static_cast<int64_t>((bytes + (1ull << 20) - 1) >> 20);
+}
+
 Engine::~Engine() {
     release();
 }
