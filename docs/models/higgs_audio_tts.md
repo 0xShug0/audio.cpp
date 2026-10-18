@@ -5,6 +5,10 @@ the framework chunker for long text and keeps the reference prompt state in the
 model session. Use `clon` for voice-cloning requests; the existing `tts` route
 remains an alias to the same model path for compatibility.
 
+For chunked generation without reference audio, the first generated chunk's
+audio codes and transcript condition the remaining chunks to preserve its voice.
+This reference is local to the request; supplied reference audio takes precedence.
+
 ## Install
 
 The model manager installs the Q8_0 standalone GGUF package by default:
