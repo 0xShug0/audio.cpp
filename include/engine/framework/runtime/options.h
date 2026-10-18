@@ -1,14 +1,17 @@
 #pragma once
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/runtime/model.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <initializer_list>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace engine::assets {
 enum class TensorStorageType;
@@ -52,6 +55,16 @@ std::unordered_map<std::string, ComponentExecPlan> parse_exec_plan(
     const std::unordered_map<std::string, std::string> & options,
     std::string_view key,
     std::initializer_list<ComponentExecSpec> components);
+
+// The compiled engines one `exec_plan` value declares: every artifact string, comma-separated
+// ladders included, resolved against `model_root` the way a sidecar resolves it
+// (`rknn::resolve_engine_path`) and priced by the target runtime, which reports 0 when it cannot
+// say. A family uses this to answer IVoiceModelLoader::model_resources without re-deriving its
+// component vocabulary, so plan parsing lives in one place: an absent option, a malformed plan and
+// a non-string artifact all contribute nothing.
+std::vector<ModelEngineRequirement> exec_plan_engine_requirements(
+    const std::string & exec_plan_value,
+    const std::filesystem::path & model_root);
 
 std::optional<OptionMatch> find_option_match(
     const std::unordered_map<std::string, std::string> & options,

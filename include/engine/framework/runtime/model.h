@@ -116,6 +116,29 @@ struct LoaderAdvertisement {
     std::vector<std::string> api_endpoints;
 };
 
+/**
+ * One compiled engine a model will hold resident, and what it costs. `resident_mib` is the
+ * figure the target runtime reports for the engine (for RKNN: a model-info-only init plus
+ * `RKNN_QUERY_MEM_SIZE`); 0 means the runtime could not say, and the caller keeps its own
+ * proxy for that case.
+ */
+struct ModelEngineRequirement {
+    std::filesystem::path path;
+    int64_t resident_mib = 0;
+};
+
+/**
+ * What a model's session options ask for beyond its weight files, reported by the model that
+ * owns them: the compiled engines its execution plans declare, and the ceiling its own
+ * residency policy enforces on that set (a ladder that evicts to share a hardware aperture
+ * has one; 0 means the whole set is resident at once). A host consumer (the server's load
+ * guard) prices and de-duplicates the paths; interpreting the plan is the model's job.
+ */
+struct ModelResourcePlan {
+    std::vector<ModelEngineRequirement> engines;
+    int64_t resident_cap_mib = 0;
+};
+
 /** Map advertised capabilities to the HTTP surfaces they normally use. */
 std::vector<std::string> default_api_endpoints_for_capabilities(const CapabilitySet & capabilities);
 
@@ -138,6 +161,19 @@ public:
     virtual std::string advertised_instructions_policy() const;
     virtual std::vector<std::string> advertised_api_endpoints() const;
     LoaderAdvertisement advertise() const;
+
+    /**
+     * The artifacts this family will hold resident for one load of `model_path` under these
+     * session options, priced by the family. A family whose stages are all ggml graphs reports
+     * nothing: its host-consumer estimate is the weight files plus the caller's runtime factor.
+     */
+    virtual ModelResourcePlan model_resources(
+        const std::filesystem::path & model_path,
+        const std::unordered_map<std::string, std::string> & session_options) const {
+        (void)model_path;
+        (void)session_options;
+        return {};
+    }
 };
 
 }  // namespace engine::runtime

@@ -4,6 +4,7 @@
 
 #include "engine/framework/io/json.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -11,6 +12,18 @@
 #include <string>
 
 namespace {
+
+void set_env(const char * name, const char * value) {
+#ifdef _WIN32
+    _putenv_s(name, value == nullptr ? "" : value);
+#else
+    if (value == nullptr) {
+        unsetenv(name);
+    } else {
+        setenv(name, value, 1);
+    }
+#endif
+}
 
 void require(bool condition, const std::string & message) {
     if (!condition) {
@@ -808,12 +821,12 @@ void test_model_memory_estimator() {
         require(*estimate == expected_estimate(15000), "a relative aux path resolves against the model directory");
     }
 
-    // An exec_plan engine is counted by name: the option value is JSON, so the
-    // path scan above sees nothing, and a name relative to the model directory is
-    // how a deployment spells an engine installed with the weights. The names here
-    // are not engine images and this gate has no NPU runtime, so the driver cannot
-    // price them and they fall back to their file size -- which is what every
-    // non-RKNN deployment, and this test, must keep estimating.
+    // An exec_plan engine is counted by name, through the family's loader: the option value is JSON,
+    // so the path scan sees nothing, and a name relative to the model directory is how a deployment
+    // spells an engine installed with the weights. The names here are not engine images and this
+    // gate has no NPU runtime, so the runtime cannot price them and they fall back to their file
+    // size -- at 1.0, not the runtime factor, because a compiled engine is resident at its own
+    // allocation and builds no graph.
     {
         const auto dir = root / "plan";
         std::filesystem::create_directories(dir);
@@ -823,6 +836,7 @@ void test_model_memory_estimator() {
         const auto elsewhere = root / "plan-abs.rknn";
         write_file(elsewhere, 500);
         ServerModelConfig model;
+        model.family = "cosyvoice3";
         model.path = dir;
         // generic_string(), not string(): on Windows the native separators are
         // backslashes, which are invalid escapes inside the JSON plan.
@@ -832,8 +846,69 @@ void test_model_memory_estimator() {
         const auto estimate = estimate_model_memory_bytes(model);
         require(estimate.has_value(), "an exec_plan model has a determinate footprint");
         require(
-            *estimate == expected_estimate(7000 + 900 + 1100 + 500),
+            *estimate == expected_estimate(7000) + 900 + 1100 + 500,
             "exec_plan engines resolve relative to the model directory, and an absolute path is used as given");
+    }
+
+    // A plan on a family that states no residency policy is priced by the sum of its engines, and
+    // the engines of a ladder are not multiplied by the runtime factor.
+    {
+        const auto dir = root / "plan-sum";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        std::string declared;
+        for (const std::string rung : {"flow_seq250.rknn", "flow_seq400.rknn"}) {
+            write_file(dir / rung, 1);  // resize_file needs the file to exist; the rest stays sparse
+            std::filesystem::resize_file(dir / rung, 3ull * 1024 * 1024 * 1024);
+            if (!declared.empty()) {
+                declared += ',';
+            }
+            declared += rung;
+        }
+        ServerModelConfig model;
+        model.family = "piper_tts";
+        model.path = dir;
+        model.session_options["piper_tts.exec_plan"] =
+            R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":")" + declared + R"("}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(
+            estimate.has_value() && *estimate == expected_estimate(7000) + 6ull * 1024 * 1024 * 1024,
+            "a family without a residency policy is priced by the sum of its engines, at 1.0");
+    }
+
+    // The ceiling a family states for its engines caps the priced set: a ladder that evicts to stay
+    // inside an NPU aperture is not resident at the sum of its parts. The ceiling CosyVoice3 states is
+    // the aperture budget, so the knob that sets it (AUDIOCPP_RKNN_APERTURE_MIB, see rknn_flow.h) is
+    // how this gate states a ceiling at all -- the family reports no cap of its own in a build without
+    // an RKNN runtime.
+    {
+        const auto dir = root / "plan-capped";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        std::string declared;
+        for (const std::string rung : {"flow_seq110.rknn", "flow_seq200.rknn", "flow_seq250.rknn"}) {
+            write_file(dir / rung, 1);
+            std::filesystem::resize_file(dir / rung, 1024ull * 1024 * 1024);
+            if (!declared.empty()) {
+                declared += ',';
+            }
+            declared += rung;
+        }
+        ServerModelConfig model;
+        model.family = "cosyvoice3";
+        model.path = dir;
+        model.session_options["cosyvoice3.exec_plan"] =
+            R"({"flow":{"impl":"rknn","artifacts":{"main":")" + declared + R"("}}})";
+        const auto uncapped = estimate_model_memory_bytes(model);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", "1024");
+        const auto capped = estimate_model_memory_bytes(model);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", nullptr);
+        require(
+            uncapped.has_value() && *uncapped == expected_estimate(7000) + 3ull * 1024 * 1024 * 1024,
+            "a ladder under its ceiling is priced by the sum of its engines");
+        require(
+            capped.has_value() && *capped == expected_estimate(7000) + 1024ull * 1024 * 1024,
+            "a family's residency ceiling caps the engines it prices");
     }
 
     // An engine inside a summed checkpoint tree is counted once, not once by the
@@ -844,8 +919,9 @@ void test_model_memory_estimator() {
         write_file(dir / "model.safetensors", 5000);
         write_file(dir / "vocoder.rknn", 600);
         ServerModelConfig model;
+        model.family = "piper_tts";
         model.path = dir;
-        model.session_options["qwen3_tts.exec_plan"] =
+        model.session_options["piper_tts.exec_plan"] =
             R"({"decoder":{"impl":"rknn","artifacts":{"main":"vocoder.rknn","first":"absent.rknn"}}})";
         const auto estimate = estimate_model_memory_bytes(model);
         require(
@@ -858,6 +934,7 @@ void test_model_memory_estimator() {
         const auto path = root / "malformed.gguf";
         write_file(path, 1000);
         ServerModelConfig model;
+        model.family = "piper_tts";
         model.path = path;
         model.session_options["piper_tts.exec_plan"] = "{not json";
         const auto estimate = estimate_model_memory_bytes(model);

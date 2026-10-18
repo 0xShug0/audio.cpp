@@ -1,9 +1,9 @@
 #include "model_memory.h"
 
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/framework/io/json.h"
-#include "engine/framework/rknn/engine.h"
+#include "engine/framework/runtime/registry.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <functional>
 #include <set>
@@ -48,23 +48,30 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
         weights += static_cast<size_t>(size);
         ++visited_files;
     };
-    // A compiled engine is resident at what the driver reports, not at its image size: every engine
-    // of the CosyVoice3 flow ladder is a 661-714 MB file that occupies 0.78-3.75 GiB once loaded.
-    // Ask the driver, and fall back to the file size where it cannot say -- which is every build
-    // without an RKNN runtime, so a PC estimate is unchanged. A ladder is priced by the sum of its
-    // engines, i.e. as if every declared rung were resident: the model evicts to stay inside the NPU
-    // aperture, whose ceiling is the model's own policy and not knowable here, and a guard that
-    // guesses low is the failure mode this estimate has already been caught in once.
-    const auto add_engine = [&](const std::filesystem::path & path) {
-        const auto mib = engine::rknn::engine_memory_mib(path.string(), "load estimate RKNN");
-        if (mib <= 0 || !std::filesystem::is_regular_file(path, ec)) {
-            add_file(path);
+    // What the model's own resource plan reports for the compiled engines it will hold resident.
+    // Counted apart from `weights`, and at 1.0 and not at the runtime factor, because a compiled
+    // engine is resident at its own allocation: it builds no ggml graph and holds no KV state. Where
+    // the target runtime cannot price an engine -- every build without an RKNN runtime, every path
+    // that is not an engine image -- it is priced at its file size.
+    const auto add_engine = [&](const std::filesystem::path & path, int64_t resident_mib) {
+        if (!std::filesystem::is_regular_file(path, ec)) {
             return;
         }
+        // A compiled engine can be declared by a session option and also sit inside a checkpoint tree
+        // that gets summed, so each path is counted once.
         if (!counted.insert(std::filesystem::weakly_canonical(path, ec)).second) {
             return;
         }
-        aperture += static_cast<size_t>(mib) * (1024u * 1024u);
+        const auto size = [&]() -> size_t {
+            if (resident_mib > 0) {
+                return static_cast<size_t>(resident_mib) * (1024u * 1024u);
+            }
+            // A file that vanished mid-scan reports (uintmax_t)-1 with `ec` set; contribute 0
+            // rather than wrapping the counter.
+            const auto bytes = std::filesystem::file_size(path, ec);
+            return ec ? 0 : static_cast<size_t>(bytes);
+        }();
+        aperture += size;
         ++visited_files;
     };
     const std::function<void(const std::filesystem::path &, size_t)> add_tree =
@@ -118,63 +125,28 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
     // is a directory, and against the model file's parent when it is a file.
     const std::filesystem::path aux_base =
         std::filesystem::is_directory(model.path, ec) ? model.path : model.path.parent_path();
-    for (const auto & [key, value] : model.session_options) {
-        // A compiled engine declared through an exec_plan is resident weight memory the loader
-        // reads, and the option's value is JSON, so the path scan below sees nothing: walk the
-        // artifact strings instead. A plan is declared per component role, and CosyVoice3's flow
-        // ladder packs several engines into one comma-separated value.
-        if (key.size() >= 10 && key.compare(key.size() - 10, 10, ".exec_plan") == 0) {
-            const auto plan = [](const std::string & option_value) -> engine::io::json::Value {
-                try {
-                    return engine::io::json::parse(option_value);
-                } catch (const std::exception &) {
-                    // The session reports a malformed plan itself; the guard stays silent.
-                    return {};
-                }
-            }(value);
-            if (!plan.is_object()) {
-                continue;
-            }
-            for (const auto & [_, component] : plan.as_object()) {
-                if (!component.is_object()) {
-                    continue;
-                }
-                const auto & members = component.as_object();
-                const auto artifacts = members.find("artifacts");
-                if (artifacts == members.end() || !artifacts->second.is_object()) {
-                    continue;
-                }
-                for (const auto & [_, artifact] : artifacts->second.as_object()) {
-                    if (!artifact.is_string()) {
-                        continue;
-                    }
-                    const std::string & declared = artifact.as_string();
-                    size_t start = 0;
-                    while (start <= declared.size()) {
-                        const auto end = declared.find(',', start);
-                        const auto stop = end == std::string::npos ? declared.size() : end;
-                        if (stop > start) {
-                            std::filesystem::path engine_path =
-                                std::filesystem::path(declared.substr(start, stop - start));
-                            if (engine_path.is_relative()) {
-                                engine_path = aux_base / engine_path;
-                            }
-                            add_engine(engine_path);
-                        }
-                        if (end == std::string::npos) {
-                            break;
-                        }
-                        start = end + 1;
-                    }
-                }
-            }
-            continue;
-        }
-        std::filesystem::path aux(value);
+    for (const auto & option : model.session_options) {
+        // A session option names an auxiliary artifact, so its value is scanned as a path. An
+        // `exec_plan` value is JSON rather than a path, and the engines it declares are reported by
+        // the model below: the scan sees a string that is no file and contributes nothing.
+        std::filesystem::path aux(option.second);
         if (aux.is_relative()) {
             aux = aux_base / aux;
         }
         add_tree(aux, 0);
+    }
+    // The family's own resource plan: the compiled engines its execution plans declare, priced by
+    // the target runtime. Priced apart from the weights because a family can cap the set its engines
+    // hold resident at once, and that ceiling must not meet the runtime factor that prices ggml
+    // graphs and KV state.
+    const auto resources = engine::runtime::make_default_registry().model_resources(
+        model.family, model.path, model.session_options);
+    for (const auto & requirement : resources.engines) {
+        add_engine(requirement.path, requirement.resident_mib);
+    }
+    if (resources.resident_cap_mib > 0) {
+        aperture = std::min(
+            aperture, static_cast<size_t>(resources.resident_cap_mib) * (1024u * 1024u));
     }
     // Weights plus a runtime factor for Metal/GPU buffers, activation graphs and
     // KV state, plus a fixed floor for per-model bookkeeping.

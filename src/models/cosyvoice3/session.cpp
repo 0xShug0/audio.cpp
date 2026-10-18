@@ -9,6 +9,7 @@
 #include "engine/models/cosyvoice3/flow.h"
 #include "engine/models/cosyvoice3/frontend.h"
 #include "engine/models/cosyvoice3/hift.h"
+#include "engine/models/cosyvoice3/rknn_flow.h"
 
 #include <chrono>
 #include <stdexcept>
@@ -304,6 +305,10 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_cosyvoice3_loader() {
     config.family = kFamily;
     config.load_assets = load_cosyvoice3_assets;
     config.create_session = create_cosyvoice3_session;
+    // The ladder's residency policy, stated by the family that owns it: the engines its plan
+    // declares share one NPU aperture and evict to stay inside it, so a host consumer must not price
+    // the set by its sum. The ceiling is the sidecar's (see rknn_flow.h).
+    config.residency_cap_mib = rknn_aperture_budget_mib();
     return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 

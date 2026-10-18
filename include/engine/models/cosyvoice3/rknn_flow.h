@@ -60,4 +60,10 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// The resident-set ceiling this sidecar enforces on its ladder, in MiB: the value
+// `AUDIOCPP_RKNN_APERTURE_MIB` sets, else this board's measured ceiling, and 0 when the accounting
+// is off and every declared rung is pinned. A host consumer (the server's load guard) asks for it
+// through the loader's resource plan, which is where a family's residency policy belongs.
+int64_t rknn_aperture_budget_mib();
+
 }  // namespace engine::models::cosyvoice3
