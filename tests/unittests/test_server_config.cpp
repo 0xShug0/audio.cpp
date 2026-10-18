@@ -525,8 +525,73 @@ void test_ui_configuration() {
 
     const auto config = minitts::server::load_server_config(config_path);
     require(!config.ui_enabled, "ui=false disables the embedded WebUI");
+    require(!config.ui_requested, "ui=false does not ask for the WebUI");
     require(config.ui_management, "ui_management=true enables dynamic model management");
     require(config.models.empty(), "management hosts may start without configured models");
+
+    const auto default_path = write_config(root, "ui_default.json", R"JSON({
+  "models": [{"id": "tts", "family": "pocket_tts", "path": "models/pocket-tts"}]
+})JSON");
+    const auto by_default = minitts::server::load_server_config(default_path);
+    require(by_default.ui_enabled && !by_default.ui_requested, "the WebUI is on by default but not asked for");
+
+    const auto asked_path = write_config(root, "ui_asked.json", R"JSON({
+  "ui": true,
+  "models": [{"id": "tts", "family": "pocket_tts", "path": "models/pocket-tts"}]
+})JSON");
+    const auto asked = minitts::server::load_server_config(asked_path);
+    require(asked.ui_enabled && asked.ui_requested, "ui=true asks for the WebUI");
+}
+
+void test_configured_model_fields_are_inherited() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(root, "inherit.json", R"JSON({
+  "models": [
+    {
+      "id": "tts",
+      "family": "irodori_tts",
+      "path": "models/irodori",
+      "busy_timeout_ms": 90000,
+      "default_request_options": {"num_steps": "16"},
+      "voice_presets": {"narrator": {"voice_ref": "voices/narrator.wav"}},
+      "default_voice_preset": "narrator"
+    }
+  ]
+})JSON");
+    const auto config = minitts::server::load_server_config(config_path);
+    const auto & configured = config.models.front();
+
+    // What a WebUI load request carries: no request options or presets.
+    minitts::server::ServerModelConfig loaded;
+    loaded.id = "tts";
+    loaded.family = "irodori_tts";
+    loaded.path = "models/other-irodori";
+    loaded.session_options = {{"irodori_tts.mem_saver", "true"}};
+    minitts::server::inherit_configured_model_fields(configured, loaded);
+    require(loaded.default_request_options.at("num_steps") == "16", "request options come from the config");
+    require(loaded.voice_presets.count("narrator") == 1, "voice presets come from the config");
+    require(loaded.default_voice_preset_id.value_or("") == "narrator", "the default preset comes from the config");
+    require(loaded.busy_timeout_ms.value_or(0) == 90000, "the busy timeout comes from the config");
+    require(loaded.path == "models/other-irodori", "the load keeps its own path");
+    require(loaded.session_options.at("irodori_tts.mem_saver") == "true", "the load keeps its own session options");
+
+    minitts::server::ServerModelConfig other;
+    other.id = "tts";
+    other.family = "pocket_tts";
+    other.path = "models/pocket-tts";
+    minitts::server::inherit_configured_model_fields(configured, other);
+    require(other.default_request_options.empty() && other.voice_presets.empty() &&
+                !other.default_voice_preset_id.has_value() && !other.busy_timeout_ms.has_value(),
+            "a load of another family takes nothing from the config");
+
+    minitts::server::ServerModelConfig design;
+    design.id = "tts";
+    design.family = "irodori_tts";
+    design.task = "vdes";
+    design.path = "models/irodori";
+    minitts::server::inherit_configured_model_fields(configured, design);
+    require(design.voice_presets.empty(), "a load of another task takes nothing from the config");
+    std::filesystem::remove_all(root);
 }
 
 void test_empty_models_require_ui_management() {
@@ -854,6 +919,7 @@ int main() {
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();
         test_ui_configuration();
+        test_configured_model_fields_are_inherited();
         test_empty_models_require_ui_management();
         test_request_timeout_is_clamped_to_policy();
         test_model_run_overrun_predicate();
