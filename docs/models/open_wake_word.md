@@ -4,6 +4,17 @@ Experimental wake-word detection using the official OpenWakeWord speech embeddin
 CNN and Alexa classifier. Offline and streaming inference use the same 80 ms
 audio cadence. Input is mono PCM audio at 16 kHz.
 
+## GGUF Package
+
+| Package | Precision | Contents |
+|---|---|---|
+| `OpenWakeWord-GGUF/open-wake-word-alexa-f32.gguf` | F32 | Frontend coefficients, speech embedding CNN, Alexa classifier, configuration, initial history, and v1 spec. |
+
+This is a single-file package; Python and ONNX Runtime are not needed for C++
+inference. The default classifier detects `Alexa`, not arbitrary wake phrases.
+The pretrained weights are [CC-BY-NC-SA-4.0](https://github.com/dscripka/openWakeWord#license),
+not the upstream code's Apache-2.0 license.
+
 ## Conversion
 
 Download `melspectrogram.onnx`, `embedding_model.onnx` and `alexa_v0.1.onnx` from

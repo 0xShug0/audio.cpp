@@ -126,6 +126,7 @@ Status labels:
 | `nemotron_asr` | Done | Pass | --- | Pass | Pass (minor filler drift) |
 | `neutts` | Done | Pass | --- | Pass | --- |
 | `omnivoice` | Done | Pass | --- | Pass (drift) | Pass (drift) |
+| `open_wake_word` | Done | --- | Pass (F32) | --- | --- |
 | `outetts` | Done | Pass (TTS + clone) | --- | --- | Pass (TTS + clone) |
 | `owsm` | Done | --- | Pass | --- | Pass (drift) |
 | `parakeet_tdt` | Done | Pass | Pass | Pass | Pass |
