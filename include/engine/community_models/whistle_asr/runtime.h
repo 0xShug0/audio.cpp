@@ -32,7 +32,8 @@ using WhistleDecodeObserver = std::function<void(const WhistleDecodeStep &)>;
 
 class WhistleRuntime {
 public:
-    WhistleRuntime(std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context);
+    WhistleRuntime(std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context,
+        bool use_neon = false);
     ~WhistleRuntime();
     WhistleRuntime(const WhistleRuntime &) = delete;
     WhistleRuntime & operator=(const WhistleRuntime &) = delete;
@@ -44,11 +45,9 @@ public:
 private:
     std::shared_ptr<const WhistleAssets> assets_;
     WhistleEncoderRuntime encoder_;
-    // The decoder step graph runs on one CPU thread regardless of the session
-    // backend; see decoder.h.
-    std::unique_ptr<core::ExecutionContext> decoder_context_;
     WhistleDecoderRuntime decoder_;
     WhistleFrontend frontend_;
+    int threads_;
 };
 
 }  // namespace engine::community_models::whistle_asr

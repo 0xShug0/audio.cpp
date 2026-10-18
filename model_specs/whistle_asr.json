@@ -2,14 +2,28 @@
   "schema_version": 1,
   "family": "whistle_asr",
   "display_name": "Whistle ASR",
-  "description": "Whistle offline speech recognition with locally converted FP32 GGUF weights on CPU or Metal.",
+  "description": "Whistle offline speech recognition with FP32 GGUF weights, a GGML encoder and a host decoder.",
   "category": "asr",
   "status": "experimental",
-  "tasks": ["asr"],
-  "modes": ["offline"],
-  "languages": ["en", "de", "fr", "es", "it", "nl", "pl"],
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "de",
+    "fr",
+    "es",
+    "it",
+    "nl",
+    "pl"
+  ],
   "runtime": {
-    "tags": ["gguf", "cpu", "metal"]
+    "tags": [
+      "gguf"
+    ]
   },
   "capabilities": {},
   "options": {
@@ -21,14 +35,49 @@
         "required": false
       }
     ],
-    "session": [],
+    "session": [
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON component execution plans. Component decoder accepts impl host/neon (default host), both on CPU independently of the encoder backend. The experimental neon implementation accelerates the vocabulary projection with the framework NEON library and requires ENGINE_ENABLE_NEON=ON and AArch64 NEON. No artifacts or params are used.",
+        "required": false,
+        "default": "{}"
+      }
+    ],
     "load": []
   },
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "whistle_asr_f32",
+      "display_name": "Whistle ASR GGUF F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "Whistle-GGUF",
+      "files": [
+        "Whistle-GGUF/whistle-f32.gguf"
+      ],
+      "strip_prefix": "Whistle-GGUF"
+    }
+  ],
   "dependencies": [],
   "ui": {
-    "tags": ["ASR", "GGUF"],
-    "docs": ["docs/models/whistle_asr.md"]
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/whistle_asr.md"
+    ],
+    "recommended_package": "whistle_asr_f32"
   },
   "sources": [
     {

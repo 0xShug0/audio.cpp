@@ -1,6 +1,7 @@
 #include "engine/community_models/whistle_asr/session.h"
 
 #include "engine/framework/runtime/spec_backed_model.h"
+#include "engine/framework/runtime/options.h"
 
 #include <stdexcept>
 #include <utility>
@@ -14,17 +15,22 @@ runtime::SessionOptions require_supported_session(
     if (task.task != runtime::VoiceTaskKind::Asr || task.mode != runtime::RunMode::Offline) {
         throw std::invalid_argument("Whistle currently supports offline ASR only");
     }
-    // The encoder graph is validated against the reference dumps on these backends only;
-    // the decoder step graph always runs on a CPU context of its own.
-    if (options.backend.type != engine::core::BackendType::Cpu &&
-        options.backend.type != engine::core::BackendType::Metal) {
-        throw std::invalid_argument("Whistle currently supports the CPU and Metal backends only");
-    }
     if (!contract) {
         throw std::invalid_argument("Whistle needs a model specification");
     }
-    runtime::validate_spec_backed_session_options(options, *contract, "whistle_asr", "Whistle");
+    auto validation_options = options;
+    if (!contract->session_option_keys.count("whistle_asr.exec_plan")) {
+        validation_options.options.erase("whistle_asr.exec_plan");
+    }
+    runtime::validate_spec_backed_session_options(validation_options, *contract, "whistle_asr", "Whistle");
     return options;
+}
+
+bool use_neon_decoder(const runtime::SessionOptions & options) {
+    const auto plan = runtime::parse_exec_plan(options.options, "whistle_asr.exec_plan",
+        {{"decoder", "host", {{"host", {core::BackendType::Cpu}, {}, {}},
+                              {"neon", {core::BackendType::Cpu}, {}, {}}}}});
+    return plan.at("decoder").impl == "neon";
 }
 
 }  // namespace
@@ -37,7 +43,7 @@ WhistleAsrSession::WhistleAsrSession(
     : RuntimeSessionBase(require_supported_session(task, options, contract)),
       task_(task),
       contract_(std::move(contract)),
-      runtime_(std::move(assets), execution_context()) {}
+      runtime_(std::move(assets), execution_context(), use_neon_decoder(options)) {}
 
 std::string WhistleAsrSession::family() const { return "whistle_asr"; }
 runtime::VoiceTaskKind WhistleAsrSession::task_kind() const { return task_.task; }

@@ -2,8 +2,8 @@
 
 The `whistle_asr` family runs [Cactus Compute Whistle](https://huggingface.co/Cactus-Compute/whistle)
 locally through audio.cpp. The current implementation supports **offline**
-transcription of 16 kHz mono WAV files up to 30 seconds on the CPU and Metal
-backends. It detects one of the
+transcription of 16 kHz mono WAV files up to 30 seconds. The encoder uses the
+selected backend and the decoder runs on the host CPU. It detects one of the
 model's seven languages (English, German, French, Spanish, Italian, Dutch, or
 Polish); `--language en`, `de`, `fr`, `es`, `it`, `nl`, or `pl` forces a language.
 These are supported language codes, not seven-language validation evidence.
@@ -13,8 +13,25 @@ clip checked through automatic and forced-language CLI requests. See the
 [five-language spot checks](../../tests/whistle_asr/MULTILINGUAL_VALIDATION.md).
 This limited coverage does not qualify general accuracy in all seven languages.
 
-There is no downloadable audio.cpp GGUF package yet. Convert the official
-model locally. Use the exact revision
+## GGUF package
+
+The default package is `whistle_asr_f32`, containing
+`Whistle-GGUF/whistle-f32.gguf` in
+[`audio-cpp/audio.cpp-gguf`](https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/main/Whistle-GGUF)
+(about 211 MiB).
+
+```bash
+audiocpp_cli --task asr --family whistle_asr --backend cuda --threads 4 \
+  --model models/Whistle-GGUF/whistle-f32.gguf \
+  --audio assets/resources/sample_16k.wav --log --metrics
+```
+
+Use `--backend vulkan`, `cpu`, or `metal` for those backends. The decoder
+runs on the host CPU in every case.
+
+## Local conversion
+
+To convert the official model locally, use the exact revision
 `b358ddadd89b7a713b5aa131f23032d3cca1b251` and put
 `checkpoints/whistle.safetensors` in a dedicated directory as
 `whistle.safetensors`, together with `config.json` and `LICENSE`. Keep
@@ -32,7 +49,7 @@ python3 tools/community_models/whistle_asr/convert.py \
   --output /path/to/whistle-f32.gguf
 audiocpp_cli --task asr --family whistle_asr --backend cpu \
   --model /path/to/whistle-f32.gguf \
-  --audio assets/resources/sample_16k.wav
+  --audio assets/resources/sample_16k.wav --log --metrics
 ```
 
 The official `.cact` uses Cactus Quants. The GGUF stores the published
@@ -45,8 +62,8 @@ Conversion and inference do not require the Cactus engine, ONNX Runtime, or
 Python at recognition time.
 
 Streaming, keyword biasing, word timestamps, speech embeddings, resampling, and
-longer recordings are not supported by this family. CUDA, HIP, and Vulkan are
-not validated and are rejected at session creation.
+longer recordings are not supported by this family. CPU, Metal, CUDA, and Vulkan
+are supported encoder backends. HIP has not been validated.
 The runtime rejects unsupported sample rates, channel counts, and durations
 rather than silently changing the input.
 Decoding uses the checkpoint's 320-token ceiling; a non-terminating decode
@@ -72,30 +89,23 @@ framework `Conv2dModule`, `DepthwiseConv2dModule`, `DepthwiseConv1dModule`,
 `SigmoidModule`, `SoftmaxModule`, and `GLUModule`. The stem does not use the shared
 `DepthwiseConvSubsamplingModule` because that module hardcodes ReLU and Whistle's
 stem uses SiLU. Whistle-specific math stays model-local in `graph.cpp`, shared by
-the encoder and decoder graphs: the four-lane manifold hyper-connection mixing with
+the encoder graph: the four-lane manifold hyper-connection mixing with
 its Sinkhorn normalization, the conditioned Kronecker-factored Hadamard MLP with its
 two fixed permutations, and the per-head RMS norm and rotary embedding over 48-wide
 heads. Checkpoint tensors are JAX `[in, out]` kernels; the loader transposes them
 once into the backend weight store.
 
-The autoregressive decoder runs as one persistent GGML step graph. It has its own
-CPU backend with one thread, whatever backend the session uses. Each step feeds
-one token. A step is 4738 small graph nodes, so its cost is per-node overhead
-rather than arithmetic. On the 14 s sample the 42 decoder steps took 134 to 140 ms
-on one CPU thread, 550 to 560 ms on Metal, and 1014 to 1111 ms with two CPU
-threads, because each node synchronizes the threads.
+The autoregressive decoder uses the original host implementation from PR #824,
+with OpenMP workers bounded by `--threads`. Its weights are retained across
+requests; self-attention caches and three-tap projection history reset for each
+recording. The encoder graph computes cross-attention keys and values, which
+are transferred to the host decoder once per request. Grouped-query and
+cross-attention preserve the model's 48-wide queries/keys and 64-wide values.
+Engram lookup, projections, gates and greedy argmax also run on the host.
 
-Self-attention keys and values stay on the decoder backend in a
-`TransformerKVCache` written with `FastKVSetRowsModule`. A per-layer history of
-raw query/key/value projections feeds the three-tap mixing with the previous two
-steps. Grouped-query and cross-attention use 48-wide queries/keys and 64-wide
-values. The shared attention modules cannot express this because they assume one
-head size. The encoder graph computes the cross-attention keys and values. The
-decoder copies them to its own backend tensors once per request.
-
-The n-gram engram tables stay on the host because their lookup hashes the token
-history. Each step uploads the gathered rows, and the graph applies the engram
-projections and gates. The argmax over the logits also runs on the host.
+This avoids thousands of small GGML decoder nodes per token. Four-thread CPU
+and Metal sessions benefit on the tested M4 Pro; one-thread decoding is slower
+than the previous one-thread GGML graph.
 
 ## Build and request options
 
@@ -114,14 +124,26 @@ On macOS the Metal helper configures the same model set:
 scripts/build_metal.sh --build-dir build/whistle --build-type Release --openmp auto --with-tests --deployment-build --model-set custom --models whistle_asr --target audiocpp_cli --target audiocpp_gguf
 ```
 
-Use `--backend cpu` or `--backend metal`. `--threads` sets the ggml CPU backend
-thread count for the encoder graph; the runtime accepts 1 to 64. The decoder step
-graph always runs on one CPU thread (see above). Use `--backend cpu --threads 1`
-for a portable inference baseline. The spec exposes only the optional `language`
-request option, no model-specific session or load options. Use `--language de` or
+Use `--backend` to select an available backend: `cpu`, `metal`, `cuda`, or `vulkan`.
+`--threads` sets the CPU encoder's
+thread count and bounds the host decoder's OpenMP workers; the runtime accepts
+1 to 64. Build with OpenMP enabled for parallel host decoding. Without OpenMP,
+the host decoder runs serially. An experimental decoder implementation reuses
+the framework NEON library for the FP32 vocabulary projection, retaining the
+same host attention, mHC, Hadamard and cache logic. Build with
+`-DENGINE_ENABLE_NEON=ON` on AArch64 and opt in with:
+
+```bash
+--session-option 'whistle_asr.exec_plan={"decoder":{"impl":"neon"}}'
+```
+
+The default is `host`; `impl: "default"` also selects it. Both implementations
+run on CPU independently of the encoder backend and use the session thread
+count. No artifacts or parameters are accepted. Existing embedded GGUF specs
+can use this option without reconversion. The spec exposes the optional `language`
+request option and `exec_plan` session option. Use `--language de` or
 `--request-option language=de` to force German. Omit the language option for model
-language selection. Decoding is greedy, with at most 320 text tokens. The model
-manager has no Whistle package entry because `packages` is empty.
+language selection. Decoding is greedy, with at most 320 text tokens.
 
 ## Provenance and licensing
 
@@ -140,7 +162,7 @@ unresolved questions. No weights or extracted assets are included in this port.
 - `whistle_tokenizer_test` checks byte-fallback UTF-8 replacement and metaspace decoding without model weights.
 - `whistle_assets_test <gguf> assets/resources/sample_16k.wav
   "Some call me Nature."` checks a converted GGUF against the public
-  sample's first three seconds. `--backend cpu|metal` and `--threads n` select
+  sample's first three seconds. `--backend cpu|metal|cuda|vulkan` and `--threads n` select
   the backend; `--full` uses the whole recording.
 - `whistle_assets_test <gguf> <wav> --reference <dir> [--tolerance f]` compares
   the mel features, encoder memory, and cross-attention keys/values against

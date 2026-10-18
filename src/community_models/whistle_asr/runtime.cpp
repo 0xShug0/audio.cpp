@@ -13,11 +13,24 @@
 #include <utility>
 #include <vector>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace engine::community_models::whistle_asr {
 namespace {
 
 constexpr int kTextVocabulary = 8192;
 constexpr std::array<const char *, 7> kLanguages = {"en", "de", "fr", "es", "it", "nl", "pl"};
+
+#ifdef _OPENMP
+struct ScopedThreadCount {
+    explicit ScopedThreadCount(int threads)
+        : previous(omp_get_max_threads()) { omp_set_num_threads(threads); }
+    ~ScopedThreadCount() { omp_set_num_threads(previous); }
+    int previous;
+};
+#endif
 
 void require_f32_checkpoint(const assets::TensorSource & source) {
     for (const auto & metadata : source.tensors()) {
@@ -42,12 +55,12 @@ std::shared_ptr<const WhistleAssets> checked(
 }  // namespace
 
 WhistleRuntime::WhistleRuntime(
-    std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context)
+    std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context, bool use_neon)
     : assets_(checked(std::move(assets), execution_context)),
       encoder_(assets_, execution_context),
-      decoder_context_(std::make_unique<core::ExecutionContext>(core::BackendConfig{core::BackendType::Cpu, 0, 1})),
-      decoder_(assets_, *decoder_context_),
-      frontend_(assets_->mel_filterbank) {}
+      decoder_(assets_, use_neon, execution_context.config().threads),
+      frontend_(assets_->mel_filterbank),
+      threads_(execution_context.config().threads) {}
 
 WhistleRuntime::~WhistleRuntime() = default;
 
@@ -79,10 +92,13 @@ WhistleTranscript WhistleRuntime::transcribe(
     }
     const auto encode_started = std::chrono::steady_clock::now();
     const auto mel = frontend_.extract(audio.samples);
-    const WhistleEncoderOutput encoder = encoder_.encode(mel);
+    WhistleEncoderOutput encoder = encoder_.encode(mel);
     debug::timing_log_scalar("whistle_asr.encode_ms", debug::elapsed_ms(encode_started));
+#ifdef _OPENMP
+    ScopedThreadCount thread_count(threads_);
+#endif
     const auto decode_started = std::chrono::steady_clock::now();
-    decoder_.start(encoder);
+    decoder_.start(std::move(encoder));
     std::vector<int32_t> tokens{2};
     std::vector<int32_t> text;
     std::string detected_language;
@@ -114,7 +130,6 @@ WhistleTranscript WhistleRuntime::transcribe(
         text.push_back(next);
         tokens.push_back(next);
     }
-    decoder_.log_timings();
     debug::timing_log_scalar("whistle_asr.decode_ms", debug::elapsed_ms(decode_started));
     if (!ended) {
         // The C API has no partial-result status; do not present capped text as complete speech.
