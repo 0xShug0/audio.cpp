@@ -11,26 +11,26 @@ Usage:
 
 Quantization (requires llama.cpp built with llama-quantize):
 
-    llama-quantize \\
-        --override-kv general.architecture=str:gpt2 \\
-        --override-kv gpt2.context_length=int:2048 \\
-        --override-kv gpt2.embedding_length=int:1024 \\
-        --override-kv gpt2.block_count=int:30 \\
-        --override-kv gpt2.feed_forward_length=int:4096 \\
-        --override-kv gpt2.attention.head_count=int:16 \\
-        --override-kv gpt2.attention.layer_norm_epsilon=float:0.00001 \\
-        /path/to/xtts-v2-gpt.gguf /path/to/xtts-v2-gpt-q8_0.gguf q8_0 16
+    llama-quantize \
+        --override-kv general.architecture=str:gpt2 \
+        --override-kv gpt2.context_length=int:2048 \
+        --override-kv gpt2.embedding_length=int:1024 \
+        --override-kv gpt2.block_count=int:30 \
+        --override-kv gpt2.feed_forward_length=int:4096 \
+        --override-kv gpt2.attention.head_count=int:16 \
+        --override-kv gpt2.attention.layer_norm_epsilon=float:0.00001 \
+        /path/to/xtts-v2-gpt.gguf /path/to/xtts-v2-gpt-q8_0.gguf q8_0
 
     # Q4_0 is also supported:
-    llama-quantize \\
-        --override-kv general.architecture=str:gpt2 \\
-        --override-kv gpt2.context_length=int:2048 \\
-        --override-kv gpt2.embedding_length=int:1024 \\
-        --override-kv gpt2.block_count=int:30 \\
-        --override-kv gpt2.feed_forward_length=int:4096 \\
-        --override-kv gpt2.attention.head_count=int:16 \\
-        --override-kv gpt2.attention.layer_norm_epsilon=float:0.00001 \\
-        /path/to/xtts-v2-gpt.gguf /path/to/xtts-v2-gpt-q4_0.gguf q4_0 16
+    llama-quantize \
+        --override-kv general.architecture=str:gpt2 \
+        --override-kv gpt2.context_length=int:2048 \
+        --override-kv gpt2.embedding_length=int:1024 \
+        --override-kv gpt2.block_count=int:30 \
+        --override-kv gpt2.feed_forward_length=int:4096 \
+        --override-kv gpt2.attention.head_count=int:16 \
+        --override-kv gpt2.attention.layer_norm_epsilon=float:0.00001 \
+        /path/to/xtts-v2-gpt.gguf /path/to/xtts-v2-gpt-q4_0.gguf q4_0
 
     The vocoder GGUF (~76 MB) is kept as F16. Only the GPT GGUF (~1.7 GB) is quantized.
 

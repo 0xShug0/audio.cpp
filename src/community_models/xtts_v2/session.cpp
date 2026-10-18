@@ -135,7 +135,6 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
         const int spk_ns = (int)std::min<size_t>(ref_pcm.size(), (size_t)max_ref_ns);
         spk = c.vocoder.speaker_embed(ref_pcm.data(), spk_ns);
         if (spk.empty()) throw std::runtime_error("xtts_v2: speaker encoder failed on reference audio");
-        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: cond+spk (cache miss) = %.2f s\n", std::chrono::duration<double>(std::chrono::steady_clock::now()-xtts_cache_t0).count());
         c.ref_cache = Impl::RefCache{std::move(ref_pcm), std::move(cond), std::move(spk)};
     }
     const auto& cond_latents = c.ref_cache.cond;
@@ -201,13 +200,8 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
                     latents_cm[(size_t)ch * T_mel + t] = latents[(size_t)(off + t) * 1024 + ch];
         }
 
-        const auto xtts_t2 = std::chrono::steady_clock::now();
         auto chunk_wave = c.vocoder.generate(latents_cm.data(), T_mel,
                                              spk_emb.empty() ? nullptr : spk_emb.data());
-        const auto xtts_t3 = std::chrono::steady_clock::now();
-        if (getenv("XTTS_TIMING")) fprintf(stderr, "xtts_timing: chunk gen+latents=%.2f vocoder=%.2f\n",
-            std::chrono::duration<double>(xtts_t2-xtts_chunk_t0).count(),
-            std::chrono::duration<double>(xtts_t3-xtts_t2).count());
         if (chunk_wave.empty()) {
             throw std::runtime_error("xtts_v2: vocoder produced no output");
         }

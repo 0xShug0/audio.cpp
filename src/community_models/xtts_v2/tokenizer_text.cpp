@@ -365,14 +365,6 @@ bool load_xtts_v2_tokenizer(XttSv2BpeVocab* tok, const std::filesystem::path& gg
     gguf_free(g);
     fprintf(stderr, "xtts_v2: tokenizer loaded %zu tokens, %zu merges, %zu special\n",
             tok->id_to_token.size(), tok->merges.size(), tok->special_tokens.size());
-    if (getenv("XTTS_DEBUG")) {
-        for (auto& [str, id] : tok->special_tokens)
-            fprintf(stderr, "xtts_dbg: special '%s' = %d\n", str.c_str(), id);
-        for (int i = 0; i < 25 && i < (int)tok->id_to_token.size(); i++)
-            fprintf(stderr, "xtts_dbg: vocab[%d] = '%s'\n", i, tok->id_to_token[i].c_str());
-        for (int i = 6660; i < 6681 && i < (int)tok->id_to_token.size(); i++)
-            fprintf(stderr, "xtts_dbg: vocab[%d] = '%s'\n", i, tok->id_to_token[i].c_str());
-    }
     return true;
 }
 

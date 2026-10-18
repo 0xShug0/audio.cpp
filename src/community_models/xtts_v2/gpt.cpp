@@ -156,17 +156,6 @@ static std::vector<float> comp_mel(const float* pcm, int ns, int sr, int nfft, i
             if (fq >= mp[m] && fq <= mp[m + 2]) fb[m * nf + f] = (fq <= mp[m + 1] ? (fq - mp[m]) / (mp[m + 1] - mp[m] + 1e-12f) : (mp[m + 2] - fq) / (mp[m + 2] - mp[m + 1] + 1e-12f)) * enorm;
         }
     }
-    if (getenv("XTTS_DUMP_FB")) {
-        FILE* ff = fopen("/tmp/fb_cpp.txt", "w");
-        for (int k = 0; k < 6; k++) {
-            fprintf(ff, "bin%d f=%.2f:", k, (float)sr * k / nfft);
-            for (int m = 0; m < 4; m++) fprintf(ff, " %.5f", fb[m * nf + k]);
-            fprintf(ff, "\n");
-        }
-        float s0 = 0; for (int k = 0; k < nf; k++) s0 += fb[0 * nf + k];
-        fprintf(ff, "mel0 sum: %f\n", s0);
-        fclose(ff);
-    }
     // center=True, reflect padding of nfft/2 on both sides (torch.nn.functional.pad reflect:
     // edge sample NOT repeated; indices reflect into the valid region)
     int pad = nfft / 2;
@@ -208,13 +197,7 @@ static std::vector<float> comp_mel(const float* pcm, int ns, int sr, int nfft, i
             }
         }
         for (int k = 0; k < nf; k++) { re[k] = fr[k]; im[k] = fi[k]; }
-        if (getenv("XTTS_DUMP_PWR") && t == 65) {
-            FILE* ff = fopen("/tmp/pwr_cpp.bin", "wb");
-            if (ff) { for (int f = 0; f < nf; f++) { float p = re[f]*re[f] + im[f]*im[f]; fwrite(&p, 4, 1, ff); } fclose(ff); }
-            FILE* fg = fopen("/tmp/seg_cpp.bin", "wb");
-            if (fg) { fwrite(pd.data() + (size_t)t * hop, 4, nfft, fg); fclose(fg); }
-        }
-        for (int m = 0; m < nm; m++) { float s = 0; for (int f = 0; f < nf; f++) s += fb[m * nf + f] * (re[f] * re[f] + im[f] * im[f]);
+            for (int m = 0; m < nm; m++) { float s = 0; for (int f = 0; f < nf; f++) s += fb[m * nf + f] * (re[f] * re[f] + im[f] * im[f]);
             mel[m * T2 + t] = logf(std::max(s, 1e-5f)); } }  // torch.log(torch.clamp(mel, min=1e-5))
     return mel;
 }
@@ -260,16 +243,6 @@ struct GM { ggml_tensor* te, *me, *tp, *mp; std::vector<GB> bl;
 static bool xtts_bind_tensors(GM& m, const std::map<std::string, ggml_tensor*>& ts, const XttSv2HyperParams& hp) {
     m.te = req(ts, "gpt.text_embedding.weight"); m.me = req(ts, "gpt.mel_embedding.weight");
     m.tp = req(ts, "gpt.text_pos.weight"); m.mp = req(ts, "gpt.mel_pos.weight");
-    if (getenv("XTTS_DEBUG")) {
-        auto dmp = [](ggml_tensor* t, const char* nm2) {
-            if (!t) { fprintf(stderr, "xtts_dbg: %s MISSING\n", nm2); return; }
-            fprintf(stderr, "xtts_dbg: %s ne=[%lld,%lld] type=%s\n", nm2, (long long)t->ne[0], (long long)t->ne[1], ggml_type_name(t->type));
-        };
-        dmp(m.te, "text_embedding"); dmp(m.me, "mel_embedding"); dmp(m.tp, "text_pos"); dmp(m.mp, "mel_pos");
-        dmp(m.bl.empty() ? nullptr : m.bl[0].qkw, "h0.c_attn.w");
-        dmp(m.bl.empty() ? nullptr : m.bl[0].fcw, "h0.c_fc.w");
-        dmp(m.bl.empty() ? nullptr : m.bl[0].fpw, "h0.c_proj.w");
-    }
     m.bl.resize(hp.n_layers);
     for (uint32_t i = 0; i < hp.n_layers; i++) { auto& b = m.bl[i]; char buf2[128];
         auto f = [&](int idx, const char* s) { snprintf(buf2, sizeof(buf2), "gpt.gpt.h.%d.%s", idx, s); return std::string(buf2); };
@@ -283,13 +256,6 @@ static bool xtts_bind_tensors(GM& m, const std::map<std::string, ggml_tensor*>& 
     m.lfw = T(ts, "gpt.gpt.ln_f.weight"); m.lfb = T(ts, "gpt.gpt.ln_f.bias");
     m.fnw = req(ts, "gpt.final_norm.weight"); m.fnb = T(ts, "gpt.final_norm.bias");
     m.lmw = req(ts, "gpt.mel_head.weight"); m.lmb = T(ts, "gpt.mel_head.bias");
-    if (getenv("XTTS_DEBUG") && !m.bl.empty() && m.bl[0].qkw && m.bl[0].fcw && m.bl[0].fpw && m.lmw) {
-        fprintf(stderr, "xtts_dbg: h0.c_attn.w ne=[%lld,%lld] type=%s | h0.c_fc.w ne=[%lld,%lld] | h0.c_proj.w ne=[%lld,%lld] | mel_head ne=[%lld,%lld]\n",
-                (long long)m.bl[0].qkw->ne[0], (long long)m.bl[0].qkw->ne[1], ggml_type_name(m.bl[0].qkw->type),
-                (long long)m.bl[0].fcw->ne[0], (long long)m.bl[0].fcw->ne[1],
-                (long long)m.bl[0].fpw->ne[0], (long long)m.bl[0].fpw->ne[1],
-                (long long)m.lmw->ne[0], (long long)m.lmw->ne[1]);
-    }
     m.ciw = T(ts, "gpt.cond_enc.init.weight"); m.cib = T(ts, "gpt.cond_enc.init.bias");
     m.ciwc = tconv1d(m.ciw);
     std::vector<float> cib_c;
@@ -502,15 +468,6 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
                 q[(size_t)n * inner + r] = s;
             }
         }
-        if (getenv("XTTS_DUMP_PERC") && l == 0) {
-            char pq[512], pk[512], pv[512];
-            snprintf(pq, sizeof(pq), "%s.c%d.L0.q", getenv("XTTS_DUMP_PERC"), chunk_idx);
-            snprintf(pk, sizeof(pk), "%s.c%d.L0.k", getenv("XTTS_DUMP_PERC"), chunk_idx);
-            snprintf(pv, sizeof(pv), "%s.c%d.L0.v", getenv("XTTS_DUMP_PERC"), chunk_idx);
-            if (FILE* f = fopen(pq, "wb")) { fwrite(q.data(), 4, q.size(), f); fclose(f); }
-            if (FILE* f = fopen(pk, "wb")) { fwrite(k.data(), 4, k.size(), f); fclose(f); }
-            if (FILE* f = fopen(pv, "wb")) { fwrite(v.data(), 4, v.size(), f); fclose(f); }
-        }
         // Multi-head attention: N queries attend to KT keys
 #pragma omp parallel for schedule(static)
         for (int n = 0; n < N; n++) {
@@ -545,18 +502,8 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
                 lat[(size_t)n * D + r] += s;
             }
         }
-        if (getenv("XTTS_DUMP_PERC") && l == 0) {
-            char pa[512];
-            snprintf(pa, sizeof(pa), "%s.c%d.L0.attn_out", getenv("XTTS_DUMP_PERC"), chunk_idx);
-            FILE* fa = fopen(pa, "wb"); if (fa) { fwrite(attn_out.data(), 4, attn_out.size(), fa); fclose(fa); }
-            char pl[512];
-            snprintf(pl, sizeof(pl), "%s.c%d.L0.lat_after_attn", getenv("XTTS_DUMP_PERC"), chunk_idx);
-            FILE* fl = fopen(pl, "wb"); if (fl) { fwrite(lat.data(), 4, lat.size(), fl); fclose(fl); }
-        }
         // FFN: Linear(dim, dim_inner*2) -> GEGLU -> Linear(dim_inner, dim), residual
-        std::vector<float> ffn_h1_dump;
-        if (getenv("XTTS_DUMP_PERC") && l == 0) ffn_h1_dump.resize((size_t)N * ffn_dim);
-#pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static)
         for (int n = 0; n < N; n++) {
             std::vector<float> ffn_h(ffn_dim);
             const float* xn = &lat[(size_t)n * D];
@@ -565,34 +512,17 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
                 for (int c = 0; c < D; c++) s += W[c] * xn[c];
                 ffn_h[r] = s + p.ffn_b_c[r];
             }
-            if (getenv("XTTS_DUMP_PERC") && l == 0)
-                std::copy(ffn_h.begin(), ffn_h.end(), ffn_h1_dump.begin() + (size_t)n * ffn_dim);
             // GEGLU: chunk into [value=first half, gate=second half]; out = gelu(gate) * value
             // F.gelu default = exact erf gelu: gelu(x) = 0.5*x*(1+erf(x/sqrt(2)))
             for (int r = 0; r < gelu_dim; r++) {
                 float val = ffn_h[r], gate = ffn_h[gelu_dim + r];
                 ffn_h[r] = 0.5f * gate * (1.0f + erff(gate * 0.70710678118654752440f)) * val;
             }
-            if (getenv("XTTS_DUMP_PERC") && l == 0 && n == 0) {
-                char pg[512];
-                snprintf(pg, sizeof(pg), "%s.c%d.L0.ffn_geglu", getenv("XTTS_DUMP_PERC"), chunk_idx);
-                FILE* fg = fopen(pg, "wb"); if (fg) { fwrite(ffn_h.data(), 4, gelu_dim, fg); fclose(fg); }
-                fprintf(stderr, "xtts_dbg: perc L0 n0 GEGLU: val[0..2]=%.3f,%.3f,%.3f gate[0..2]=%.3f,%.3f,%.3f gelu_out[0..2]=%.3f,%.3f,%.3f gelu_dim=%d ffn_dim=%d\n",
-                        ffn_h[0], ffn_h[1], ffn_h[2], ffn_h[gelu_dim], ffn_h[gelu_dim+1], ffn_h[gelu_dim+2],
-                        0.5f*ffn_h[0]*(1.0f+erff(ffn_h[gelu_dim]*0.70710678f)), 0.5f*ffn_h[1]*(1.0f+erff(ffn_h[gelu_dim+1]*0.70710678f)), 0.5f*ffn_h[2]*(1.0f+erff(ffn_h[gelu_dim+2]*0.70710678f)), gelu_dim, ffn_dim);
-            }
             for (int r = 0; r < D; r++) {
                 float s = 0; const float* W = p.ffn2_w_c.data() + (size_t)r * gelu_dim;
                 for (int c = 0; c < gelu_dim; c++) s += W[c] * ffn_h[c];
                 lat[(size_t)n * D + r] += s + p.ffn2_b_c[r];
             }
-        }
-        if (getenv("XTTS_DUMP_PERC") && l == 0) {
-            char pf[512], ph[512];
-            snprintf(pf, sizeof(pf), "%s.c%d.L0.lat_after_ffn", getenv("XTTS_DUMP_PERC"), chunk_idx);
-            snprintf(ph, sizeof(ph), "%s.c%d.L0.ffn_h1", getenv("XTTS_DUMP_PERC"), chunk_idx);
-            FILE* ff2 = fopen(pf, "wb"); if (ff2) { fwrite(lat.data(), 4, lat.size(), ff2); fclose(ff2); }
-            FILE* fh = fopen(ph, "wb"); if (fh) { fwrite(ffn_h1_dump.data(), 4, ffn_h1_dump.size(), fh); fclose(fh); }
         }
     }
     // Final RMSNorm: normalize(x) * sqrt(D) * gamma
@@ -603,11 +533,6 @@ static std::vector<float> perceiver_fwd(const GM& m, const float* cl, int CL, in
             float inv = 1.0f / (sqrtf(ss) + 1e-12f);  // 1/||x||_2, then *sqrt(D)*gamma
             for (int j = 0; j < D; j++) x[j] = x[j] * inv * sqrtf((float)D) * (m.perc_norm_gamma_c.empty() ? 1.f : m.perc_norm_gamma_c[j]);
         }
-    }
-    if (getenv("XTTS_DUMP_PERC")) {
-        char pf[512];
-        snprintf(pf, sizeof(pf), "%s.c%d.final", getenv("XTTS_DUMP_PERC"), chunk_idx);
-        FILE* ff = fopen(pf, "wb"); if (ff) { fwrite(lat.data(), 4, lat.size(), ff); fclose(ff); }
     }
     lat.resize((size_t)N * D);
     return lat;
@@ -773,7 +698,6 @@ static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const
         int max_n, int n_threads, std::vector<float>* hiddens_out = nullptr) {
     std::vector<int> codes;
     const int D = (int)hp.d, V = (int)hp.mel_vocab;
-    const bool timing = getenv("XTTS_TIMING") != nullptr;
     if (ggml_backend_is_cpu(be) && n_threads > 0) ggml_backend_cpu_set_n_threads(be, n_threads);
 
     // --- Prefix embeddings: [cond_latents | text+pos | start_mel+mel_pos0] ---
@@ -816,30 +740,21 @@ static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const
     };
 
     // --- Prefill (one pass over the whole prefix) ---
-    const double tp0 = omp_get_wtime();
     {
         GptGraph pg;
         if (!gpt_build_graph(pg, be, m, hp, kv, Tpre, round_up_i(Tpre, KV_BUCKET))) { fprintf(stderr, "xtts: prefill graph build failed\n"); return codes; }
         gpt_fill_mask(pg, 0);
         if (!run(pg, E.data(), 0, hiddens_out)) { fprintf(stderr, "xtts: prefill compute failed\n"); return codes; }
     }
-    if (timing) fprintf(stderr, "xtts_timing:   prefix batch (%d pos) = %.2f s\n", Tpre, omp_get_wtime() - tp0);
-    if (getenv("XTTS_DUMP_LOGITS")) {
-        FILE* f = fopen(getenv("XTTS_DUMP_LOGITS"), "wb");
-        if (f) { fwrite(logits.data(), 4, logits.size(), f); fclose(f); }
-    }
-
+    
     // --- Decode ---
     GptGraph dg;                    // (n_tok=1, n_kv=bucket) graph, rebuilt only at bucket boundaries
     int seq_pos = Tpre;             // absolute position of the NEXT token
     int mel_pos = 1;                // start_mel consumed mel position 0 during prefill
-    int n_steps = 0, n_rebuilds = 0;
-    double t_dec = 0, t_sample = 0, t_build = 0;
     std::vector<float> scaled, me(D), mp(D);
     for (int g = 0; g < max_n; g++) {
         if ((int)codes.size() >= max_n) break;
         // ---- sample ----
-        const double ts0 = omp_get_wtime();
         scaled = logits;
         if (temp > 0) for (auto& l2 : scaled) l2 /= temp;
         if (rep_pen != 1.0f && !codes.empty()) {
@@ -878,9 +793,6 @@ static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const
         double r = (double)rand() / RAND_MAX; float cum = 0; int st = 0;
         for (int j = 0; j < (int)scaled.size(); j++) { cum += scaled[j]; if (r <= cum) { st = j; break; } }
         codes.push_back(st);
-        t_sample += omp_get_wtime() - ts0;
-        if (getenv("XTTS_DEBUG") && (g < 20 || g % 100 == 0))
-            fprintf(stderr, "xtts_dbg: step %d code=%d p=%.3f maxlogit=%.2f\n", g, st, scaled[st], mx);
         if (st == (int)hp.stop_mel_token) break;
 
         // ---- next token: mel_embedding(st) + mel_pos_embedding(mel_pos) ----
@@ -890,24 +802,17 @@ static std::vector<int> gpt_gen(ggml_backend_t be, GptKV& kv, const GM& m, const
         for (int j = 0; j < D; j++) me[j] += mp[j];
         mel_pos++;
 
-        const double td0 = omp_get_wtime();
         const int want_kv = std::min(kv.n_ctx, round_up_i(seq_pos + 1, KV_BUCKET));
         if (!dg.gf || dg.n_kv != want_kv) {
-            const double tb0 = omp_get_wtime();
             if (!gpt_build_graph(dg, be, m, hp, kv, 1, want_kv)) { fprintf(stderr, "xtts: decode graph build failed\n"); break; }
-            n_rebuilds++; t_build += omp_get_wtime() - tb0;
         }
         // Refill the whole mask every step: gallocr may reassign the mask tensor's
         // buffer region between computes, so incremental single-element updates are
         // not durable. The refill is O(n_kv) F16 bytes (~512 B) - negligible.
         gpt_fill_mask(dg, seq_pos);
         if (!run(dg, me.data(), seq_pos, hiddens_out)) { fprintf(stderr, "xtts: decode compute failed\n"); break; }
-        seq_pos++; n_steps++;
-        t_dec += omp_get_wtime() - td0;
+        seq_pos++;
     }
-    if (timing)
-        fprintf(stderr, "xtts_timing:   decode steps=%d total=%.2f s (%.2f ms/step) sample=%.3f s graph_rebuilds=%d (%.3f s)\n",
-                n_steps, t_dec, n_steps ? 1000.0 * t_dec / n_steps : 0.0, t_sample, n_rebuilds, t_build);
     return codes;
 }
 // GPT-2 latent extraction via GGML graph
@@ -946,11 +851,6 @@ static std::vector<float> gpt_extract(ggml_context* ctx, ggml_backend_t be, cons
       memcpy(emb->data, embs.data(), ggml_nbytes(emb)); }
     auto* x = emb;
     // Shared causal mask for all layers: [T keys, T queries], additive F16.
-    if (getenv("XTTS_DUMP_INPUT_EMBS")) {
-        FILE* f = fopen(getenv("XTTS_DUMP_INPUT_EMBS"), "wb");
-        if (f) { fwrite(embs.data(), 4, embs.size(), f); fclose(f); }
-        fprintf(stderr, "xtts_dbg: dumped %zu input embs (T=%d)\n", embs.size(), T);
-    }
     // Element (key j, query i) = 0 if j <= i else -INF (decoder-only causal attention).
     ggml_tensor* causal_mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, T, T);
     ggml_set_name(causal_mask, "attn_causal_mask");
@@ -1005,8 +905,7 @@ static std::vector<float> gpt_extract(ggml_context* ctx, ggml_backend_t be, cons
     snprintf(nm, sizeof(nm), "lnf_out"); ggml_set_name(lnf, nm);
     auto* out = ggml_layer_norm(ctx, lnf, m.fnw, m.fnb);
     ggml_set_name(out, "gpt_lat_out"); ggml_build_forward_expand(gr, out);
-    if (getenv("XTTS_DUMP_LNF")) ggml_build_forward_expand(gr, lnf);
-        // Simple plan/compute pattern (no sched, no gallocr): tensors created with
+    // Simple plan/compute pattern (no sched, no gallocr): tensors created with
     // noalloc=false live in the ctx pool; graph compute writes intermediates there.
     // Only the weight tensors live in the backend buffer; graph data flows via ctx pool.
     {
@@ -1016,14 +915,6 @@ static std::vector<float> gpt_extract(ggml_context* ctx, ggml_backend_t be, cons
         ggml_graph_compute(gr, &plan);
     }
     std::vector<float> res(T * hp.d);
-    if (getenv("XTTS_DUMP_LNF")) {
-        std::vector<float> x0((size_t)T * hp.d);
-        memcpy(x0.data(), lnf->data, (size_t)T * hp.d * sizeof(float));
-        FILE* f = fopen(getenv("XTTS_DUMP_LNF"), "wb");
-        if (f) { fwrite(x0.data(), 4, (size_t)T * hp.d, f); fclose(f); }
-        double s0 = 0; for (int j = 0; j < (int)hp.d; j++) s0 += (double)x0[j] * x0[j];
-        fprintf(stderr, "xtts_dbg: dumped lnf_out (T=%d) pos0 rms=%.4f\n", T, std::sqrt(s0 / (double)hp.d));
-    }
     memcpy(res.data(), out->data, T * hp.d * sizeof(float));
     return res;
 }
@@ -1157,12 +1048,6 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
     }
     if (n_chunks == 0) return false;
     for (auto& v : acc) v /= (float)n_chunks;
-    if (getenv("XTTS_DEBUG")) {
-        float mn = acc[0], mx = acc[0], sum = 0;
-        for (auto v : acc) { mn = std::min(mn, v); mx = std::max(mx, v); sum += v * v; }
-        fprintf(stderr, "xtts_dbg: cond latents (mean of %d chunks) n=%d min=%.4f max=%.4f rms=%.4f\n",
-                n_chunks, (int)acc.size(), mn, mx, sqrtf(sum / acc.size()));
-    }
     out = std::move(acc);
     return true;
 }
