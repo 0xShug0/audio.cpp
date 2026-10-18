@@ -26,7 +26,9 @@ Returns server readiness and the number of configured models.
 
 ## `GET /v1/models`
 
-Returns OpenAI-style model entries for the configured audio.cpp model ids.
+Returns OpenAI-style model entries for the configured audio.cpp model ids. Each
+entry includes `device`, the effective backend device index after applying an
+optional per-model override to the server default.
 
 Two opt-in query flags add to each entry:
 

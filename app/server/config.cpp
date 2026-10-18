@@ -337,6 +337,13 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);
         model.lazy = engine::io::json::optional_bool(item, "lazy", config.lazy_load);
+        if (item.find("device") != nullptr) {
+            const int device = engine::io::json::optional_i32(item, "device", config.device);
+            if (device < 0) {
+                throw std::runtime_error("device for model " + model.id + " must be >= 0");
+            }
+            model.device = device;
+        }
         if (!parallel_jobs && item.find("slots") != nullptr) {
             throw std::runtime_error("slots requires --parallel-jobs at server startup");
         }

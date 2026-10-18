@@ -76,6 +76,7 @@ struct Control {
     Gate load, run, destroy;
     std::atomic<int> loads{0}, destructions{0}, runs{0}, finishes{0};
     std::atomic<int> sessions{0}, clones{0}, final_text{0};
+    std::atomic<int> last_device{-1};
     std::atomic<bool> fail_load{false}, null_session{false}, fail_prepare{false}, fail_run{false}, fail_clone{false}, reject_run{false};
     std::atomic<bool> premature_model_destruction{false}, live_input{false}, no_text{false}; std::optional<rt::Transcript> live_text;
 };
@@ -159,6 +160,7 @@ public:
     const rt::CapabilitySet & capabilities() const noexcept override { return capabilities_; }
     std::unique_ptr<rt::IVoiceTaskSession> create_task_session(const rt::TaskSpec & task, const rt::SessionOptions & options) const override {
         if (control_->null_session) { return nullptr; }
+        control_->last_device = options.backend.device;
         const auto cap = options.options.find("fixture_capacity");
         return std::make_unique<Session>(control_, task, revision_,
             cap == options.options.end() ? 4 : std::stoul(cap->second));
@@ -243,11 +245,11 @@ struct Fixture {
     std::shared_ptr<Loader> loader = std::make_shared<Loader>();
     std::unique_ptr<srv::ParallelServerState> state;
     int count;
-    Fixture(int slots, int limit = 0) : count(slots) {
+    Fixture(int slots, int limit = 0, int device = 0) : count(slots) {
         root = std::filesystem::temp_directory_path() /
             ("audiocpp-lifecycle-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root);
-        srv::ServerConfig config; config.backend = engine::core::BackendType::Cpu;
+        srv::ServerConfig config; config.backend = engine::core::BackendType::Cpu; config.device = device;
         config.ui_enabled = false; config.max_loaded_models = limit; config.busy_timeout_ms = 0;
         state = std::make_unique<srv::ParallelServerState>(config, root);
         Access::registry(*state, loader);
@@ -280,6 +282,37 @@ struct Fixture {
             quote(task) + ",\"slots\":" + std::to_string(count) + "}");
     }
 };
+
+void per_model_device_selection() {
+    Fixture f(1, 0, 3);
+    auto inherited = f.add("inherited");
+    auto overridden = f.add("overridden");
+    Access::model(*f.state, "overridden").config.device = 7;
+
+    success(run(*f.state, "inherited"));
+    success(run(*f.state, "overridden"));
+    require(inherited->last_device == 3, "model without override did not use the server device");
+    require(overridden->last_device == 7, "model override did not reach SessionOptions");
+
+    srv::HttpRequest list; list.method = "GET"; list.path = "/v1/models";
+    const auto listed = f.state->handle(list);
+    success(listed);
+    const auto data = parse(listed.body).require("data").as_array();
+    require(data.size() == 2 && data[0].require("device").as_number() == 3 &&
+            data[1].require("device").as_number() == 7,
+            "model listing did not expose effective devices: " + listed.body);
+
+    f.asset("replacement");
+    success(f.replace("overridden", "replacement"));
+    require(overridden->last_device == 7,
+            "reloading a configured model without device discarded its assignment");
+
+    const auto invalid = post(*f.state, "/v1/models/load",
+        "{\"id\":\"bad\",\"path\":" + quote((f.root / "replacement").generic_string()) +
+        ",\"family\":\"lifecycle_fixture\",\"device\":-1,\"slots\":1}");
+    require(invalid.status == 400 && invalid.body.find("device for model bad") != std::string::npos,
+            "dynamic load accepted a negative model device: " + invalid.body);
+}
 
 void older_work_before_management(int count, bool reconfigure) {
     Fixture f(count); auto c = f.add("shared"); f.asset("replacement");
@@ -1117,6 +1150,7 @@ int main(int argc, char ** argv) {
         registration_is_visible_while_loading();
         live_policy_does_not_hold_registry_lock();
         concurrent_json_parsing();
+        per_model_device_selection();
         unsupported_capacity_preserves_registration();
         dynamic_capacity_changes_use_parallel_lifecycle();
         generic_batch_single_slot_and_invalid_input();

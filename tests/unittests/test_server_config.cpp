@@ -771,10 +771,36 @@ void test_model_slots() {
     }
 }
 
+void test_per_model_devices() {
+    const auto root = make_temp_root();
+    const auto path = write_config(root, "devices.json", R"JSON({
+      "device": 2,
+      "models": [
+        {"id":"inherited","family":"kokoro_tts","path":"a.gguf"},
+        {"id":"overridden","family":"kokoro_tts","path":"b.gguf","device":1}
+      ]
+    })JSON");
+    const auto config = minitts::server::load_server_config(path);
+    require(config.device == 2, "server device is preserved");
+    require(!config.models[0].device.has_value(), "model without device inherits at runtime");
+    require(config.models[1].device == 1, "per-model device is parsed");
+
+    const auto bad = write_config(root, "negative-device.json", R"JSON({
+      "models":[{"id":"bad","family":"kokoro_tts","path":"m.gguf","device":-1}]
+    })JSON");
+    bool rejected = false;
+    try { (void)minitts::server::load_server_config(bad); }
+    catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("device for model bad") != std::string::npos;
+    }
+    require(rejected, "negative per-model device is rejected with the model id");
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_per_model_devices();
         test_model_slots();
         test_inline_default_and_named_presets();
         test_model_spec_override_selection();

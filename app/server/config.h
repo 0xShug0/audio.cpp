@@ -48,6 +48,9 @@ struct ServerModelConfig {
     std::string task = "tts";
     std::string mode = "offline";
     bool lazy = false;
+    // Overrides ServerConfig::device for this model. When absent the server-wide
+    // device remains the default, preserving existing single-device configs.
+    std::optional<int> device;
     int slots = 1; // Capacity read only by the startup-selected parallel runtime.
     // Overrides ServerConfig::busy_timeout_ms for this model, and acts as the ceiling
     // a per-request busy_timeout_ms is clamped to. Model runtimes differ by orders of
