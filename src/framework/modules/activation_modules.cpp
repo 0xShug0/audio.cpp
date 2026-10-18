@@ -66,6 +66,16 @@ const core::ModuleSchema kSqrtSchema = {
     "Applies square root elementwise.",
 };
 
+const core::ModuleSchema kBf16RoundSchema = {
+    "Bf16Round",
+    "tensor.precision",
+    kActivationInputs,
+    1,
+    kActivationOutputs,
+    1,
+    "Rounds activations to BF16 values while retaining F32 storage.",
+};
+
 const core::ModuleSchema kGeluSchema = {
     "GELU",
     "nn.activation",
@@ -416,6 +426,18 @@ core::TensorValue SqrtModule::build(core::ModuleBuildContext & ctx, const core::
 
 const core::ModuleSchema & SqrtModule::static_schema() noexcept {
     return kSqrtSchema;
+}
+
+const core::ModuleSchema & Bf16RoundModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue Bf16RoundModule::build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const {
+    return build_unary(ctx, input, ggml_round_bf16);
+}
+
+const core::ModuleSchema & Bf16RoundModule::static_schema() noexcept {
+    return kBf16RoundSchema;
 }
 
 GeluModule::GeluModule(GeluConfig config) : config_(config) {

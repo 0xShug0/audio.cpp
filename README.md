@@ -111,6 +111,7 @@ Model weights keep the license of their original release, which is separate from
 | **neutts** | TTS, Ctrl | en | NeuTTS 2E with built-in speaker prompts and emotion control | GGUF original precision, Stream |
 | **omnivoice** | TTS, Clone, Design, Ctrl | 646+ langs | OmniVoice, Qwen3-0.6B based<br>VoiceTut-TTS (Egyptian Arabic fine-tune) | GGUF 16/Q8, Stream |
 | **personaplex** | Dialogue, S2S | en | PersonaPlex 7B v1 speech-to-speech conversational model with packaged voice/persona prompts | GGUF Q4/Q8, Stream |
+| **[plapre](docs/models/plapre.md)** | TTS, Clone, Ctrl, Edit | da | Plapre 3, five preset voices | GGUF F32/BF16, Stream |
 | **pocket_tts** | TTS, Clone | en, fr, de, it, pt, es | PocketTTS-100M English/French/German/Italian/Portuguese/Spanish | GGUF 16/Q8, Stream |
 | **qwen3_tts** | TTS, Clone, Design, Ctrl | zh, en, fr, de, it, ja, ko, pt, ru, es | Qwen3-TTS-12Hz-0.6B-Base<br>Qwen3-TTS-12Hz-1.7B-Base<br>Qwen3-TTS-12Hz-1.7B-CustomVoice<br>Qwen3-TTS-12Hz-1.7B-VoiceDesign | GGUF 16/Q8, Stream |
 | **supertonic** | TTS | en, ko, ja, ar, bg, cs, da, de, el, es, et, fi, fr, hi, hr, hu, id, it, lt, lv, nl, pl, pt, ro, ru, sk, sl, sv, tr, uk, vi, na | Supertonic 3 | GGUF F32, Stream |

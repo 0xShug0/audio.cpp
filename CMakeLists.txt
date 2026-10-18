@@ -1524,6 +1524,26 @@ audiocpp_add_model(fish_audio
         engine::models::fish_audio::make_fish_audio_loader
 )
 
+add_library(utf8proc_vendor OBJECT external/utf8proc/utf8proc.c)
+set_target_properties(utf8proc_vendor PROPERTIES EXCLUDE_FROM_ALL TRUE POSITION_INDEPENDENT_CODE ON)
+target_include_directories(utf8proc_vendor PUBLIC external/utf8proc)
+target_compile_definitions(utf8proc_vendor PUBLIC UTF8PROC_STATIC)
+
+audiocpp_add_model(plapre
+    SOURCES
+        src/models/plapre/assets.cpp
+        src/models/plapre/frontend.cpp
+        src/models/plapre/generator.cpp
+        src/models/plapre/kanade.cpp
+        src/models/plapre/prompt.cpp
+        src/models/plapre/session.cpp
+    INCLUDES
+        engine/models/plapre/session.h
+    LOADERS
+        engine::models::plapre::make_plapre_loader
+)
+target_link_libraries(engine_model_plapre PRIVATE utf8proc_vendor)
+
 audiocpp_add_model(fish_drama3
     SOURCES
         src/community_models/fish_drama3/assets.cpp
@@ -1534,15 +1554,13 @@ audiocpp_add_model(fish_drama3
         src/community_models/fish_drama3/session.cpp
         src/community_models/fish_drama3/tokenizer_text.cpp
         src/community_models/fish_drama3/tower.cpp
-        external/utf8proc/utf8proc.c
     INCLUDES
         engine/community_models/fish_drama3/loader.h
     LOADERS
         engine::models::fish_drama3::make_fish_drama3_loader
 )
 
-target_include_directories(engine_model_fish_drama3 PRIVATE external/utf8proc)
-target_compile_definitions(engine_model_fish_drama3 PRIVATE UTF8PROC_STATIC)
+target_link_libraries(engine_model_fish_drama3 PRIVATE utf8proc_vendor)
 
 audiocpp_add_model(audio8_tts
     SOURCES
@@ -2655,6 +2673,9 @@ endif()
 foreach(model_name IN LISTS AUDIOCPP_LINKED_MODELS)
     list(APPEND AUDIOCPP_RUNTIME_OBJECTS $<TARGET_OBJECTS:engine_model_${model_name}>)
 endforeach()
+if("fish_drama3" IN_LIST AUDIOCPP_LINKED_MODELS OR "plapre" IN_LIST AUDIOCPP_LINKED_MODELS)
+    list(APPEND AUDIOCPP_RUNTIME_OBJECTS $<TARGET_OBJECTS:utf8proc_vendor>)
+endif()
 
 message(STATUS "audio.cpp model composite: ${AUDIOCPP_MODEL_SET} selected [${AUDIOCPP_ENABLED_MODELS}] linked [${AUDIOCPP_LINKED_MODELS}]")
 add_library(engine_runtime STATIC
@@ -4008,6 +4029,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS)
+        if("plapre" IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(plapre_codec_parity EXCLUDE_FROM_ALL tests/plapre/codec_parity.cpp)
+            target_link_libraries(plapre_codec_parity PRIVATE engine_runtime ggml)
+        endif()
+
         if (sanotts IN_LIST AUDIOCPP_LINKED_MODELS AND inflect_v2 IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(espeak_frontend_probe tests/unittests/espeak_frontend_probe.cpp)
             if(AUDIOCPP_STATIC_ESPEAK)

@@ -1,6 +1,34 @@
 {
   "cases": [
     {
+      "id": "plapre_conditioning",
+      "coverage": "Danish voices, reference conditioning, speaker-only cloning, chunking, growing decode capacity and repeated requests",
+      "family": "plapre",
+      "model": "models/Plapre-3-GGUF/plapre-3-bf16.gguf",
+      "task": "tts",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "base", "text": "Hej, hvordan har du det?", "seed": 42, "options": {"temperature": 0, "max_tokens": 128}},
+        {"id": "base_repeat", "text": "Hej, hvordan har du det?", "seed": 42, "options": {"temperature": 0, "max_tokens": 128}},
+        {"id": "reference", "text": "I morgen kommer jeg igen.", "voice_ref": "resources/hviske_asr/danish_unified_00.wav", "seed": 42, "options": {"temperature": 0, "max_tokens": 1000}},
+        {"id": "speaker_only", "text": "I morgen kommer jeg igen.", "voice_ref": "resources/hviske_asr/danish_unified_00.wav", "seed": 42, "options": {"temperature": 0, "x_vector_only_mode": true}},
+        {"id": "chunked", "text": "Godmorgen. I dag skinner solen over byen. Hej, hvordan har du det?", "seed": 42, "options": {"temperature": 0, "voice_id": "ida", "text_chunk_size": 40}},
+        {"id": "repeat", "text": "Hej, hvordan har du det?", "seed": 42, "options": {"temperature": 0, "max_tokens": 128}}
+      ]
+    },
+    {
+      "id": "plapre_streaming",
+      "coverage": "Completed text-chunk audio deltas and streaming finalization",
+      "family": "plapre",
+      "model": "models/Plapre-3-GGUF/plapre-3-bf16.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "sentences", "text": "Godmorgen. I dag skinner solen over byen.\nHej, hvordan har du det?", "seed": 42, "options": {"temperature": 0, "text_chunk_mode": "endline"}}
+      ]
+    },
+    {
       "id": "ced_classification",
       "coverage": "CED classification, changing graph shapes, long audio pooling, top-k selection and repeat requests",
       "family": "ced",

@@ -131,6 +131,7 @@ Status labels:
 | `parakeet_tdt` | Done | Pass | Pass | Pass | Pass |
 | `personaplex` | Done | --- | --- | --- | Pass |
 | `piper_tts` | Done | Pass | Pass | --- | --- |
+| `plapre` | Done | --- | Pass (F32; TTS + clone) | Pass (BF16; TTS + clone) | --- |
 | `pocket_tts` | Done | Pass | --- | Pass | Pass (drift) |
 | `pulsevad` | Done | Pass | Pass | --- | --- |
 | `qwen3_asr` | Done | Pass | --- | Pass | Pass |
