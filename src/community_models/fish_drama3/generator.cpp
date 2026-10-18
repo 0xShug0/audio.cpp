@@ -103,8 +103,10 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_encoder_f32_accumulation"})) {
         codec_encoder_f32_accumulation = runtime::parse_bool_option(*value, "fish_drama3.codec_encoder_f32_accumulation");
     }
+    const int64_t codec_encoder_chunk_samples = runtime::parse_i64_option(
+        options.options, {"fish_drama3.codec_encoder_chunk_samples"}).value_or(0);
     codec_ = std::make_unique<codecs::FishDacCodecRuntime>(component, codec_backend,
-        codec_backend.threads, codec_options.graph_arena_bytes, codec_encoder_f32_accumulation);
+        codec_backend.threads, codec_options.graph_arena_bytes, codec_encoder_f32_accumulation, codec_encoder_chunk_samples);
     assets_->model_weights->release_storage();
     assets_->codec_weights->release_storage();
 }

@@ -76,13 +76,6 @@
         "default": 1024
       },
       {
-        "name": "max_new_tokens",
-        "type": "int",
-        "description": "Alias of max_tokens.",
-        "required": false,
-        "min": 1
-      },
-      {
         "name": "text_chunk_size",
         "type": "int",
         "description": "Maximum characters per long-form chunk.",
@@ -210,6 +203,14 @@
         "description": "Use BF16 reference-encoder arithmetic on CUDA with F16/BF16 codec weights; default true. Decoding is unchanged.",
         "required": false,
         "default": true
+      },
+      {
+        "name": "codec_encoder_chunk_samples",
+        "type": "int",
+        "description": "Reference-encoder convolution chunk size in samples at the codec sample rate. Use 0 for full encoding or a positive multiple of 512; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
       },
       {
         "name": "codec_backend",
