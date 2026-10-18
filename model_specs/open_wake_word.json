@@ -5,25 +5,97 @@
   "description": "OpenWakeWord wake-word detection with a shared speech embedding CNN and a converted classifier.",
   "category": "audio_tools",
   "status": "experimental",
-  "tasks": ["wake_word"],
-  "modes": ["offline", "streaming"],
-  "languages": ["en"],
-  "capabilities": {"wake_word": ["speech_segments", "stream_events"]},
-  "runtime": {"tags": ["gguf", "stream"]},
+  "tasks": [
+    "wake_word"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {
+    "wake_word": [
+      "speech_segments",
+      "stream_events"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
   "options": {
-    "request": [{"name":"threshold", "type":"float", "required":false, "min":0, "max":1,
-                 "description":"Wake-word detection probability threshold."}],
-    "session": [{"name":"exec_plan", "type":"string", "required":false, "default":"{}",
-                 "description":"JSON component execution plans. Component embedding accepts impl default/ggml/neon and optional backend. Default retains GGML on the session backend; neon requires ENGINE_ENABLE_NEON=ON and an AArch64 NEON CPU session. No artifacts or params are used."}],
+    "request": [
+      {
+        "name": "threshold",
+        "type": "float",
+        "required": false,
+        "min": 0,
+        "max": 1,
+        "description": "Wake-word detection probability threshold."
+      }
+    ],
+    "session": [
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "required": false,
+        "default": "{}",
+        "description": "JSON component execution plans. Component embedding accepts impl default/ggml/neon and optional backend. Default retains GGML on the session backend; neon requires ENGINE_ENABLE_NEON=ON and an AArch64 NEON CPU session. No artifacts or params are used."
+      }
+    ],
     "load": []
   },
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "open_wake_word_alexa_f32",
+      "display_name": "OpenWakeWord Alexa GGUF F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "OpenWakeWord-GGUF",
+      "files": [
+        "OpenWakeWord-GGUF/open-wake-word-alexa-f32.gguf"
+      ],
+      "strip_prefix": "OpenWakeWord-GGUF"
+    }
+  ],
   "dependencies": [],
-  "ui": {"tags":["Wake Word", "GGUF", "Stream"], "docs":["docs/models/open_wake_word.md"]},
-  "sources": [{
-    "format":"gguf",
-    "roots":{"model":".", "weights":"$gguf"},
-    "files":{"config":"model:config.json"},
-    "tensors":{"weights":"weights:"}
-  }]
+  "ui": {
+    "tags": [
+      "Wake Word",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/models/open_wake_word.md"
+    ],
+    "recommended_package": "open_wake_word_alexa_f32"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    }
+  ]
 }
