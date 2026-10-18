@@ -239,7 +239,7 @@ private:
         const int64_t frames = input->ne[1];
         ggml_tensor * c = ops_.gemma_norm(input, w.conv_norm, kWhistleDimension);
         c = ops_.linear(c, w.pw1, kWhistleDimension, 2 * kWhistleDimension);
-        c = modules::GLUModule().build(ctx_, rows_2d(c)).tensor;
+        c = modules::GLUModule({true}).build(ctx_, rows_2d(c)).tensor;
         auto time_major = core::wrap_tensor(
             ggml_cont(ctx_.ggml, ggml_transpose(ctx_.ggml, c)),
             TensorShape::from_dims({1, kWhistleDimension, frames}), GGML_TYPE_F32);

@@ -13,8 +13,25 @@ clip checked through automatic and forced-language CLI requests. See the
 [five-language spot checks](../../tests/whistle_asr/MULTILINGUAL_VALIDATION.md).
 This limited coverage does not qualify general accuracy in all seven languages.
 
-There is no downloadable audio.cpp GGUF package yet. Convert the official
-model locally. Use the exact revision
+## GGUF package
+
+The default package is `whistle_asr_f32`, containing
+`Whistle-GGUF/whistle-f32.gguf` in
+[`audio-cpp/audio.cpp-gguf`](https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/main/Whistle-GGUF)
+(about 211 MiB).
+
+```bash
+audiocpp_cli --task asr --family whistle_asr --backend cuda --threads 4 \
+  --model models/Whistle-GGUF/whistle-f32.gguf \
+  --audio assets/resources/sample_16k.wav --log --metrics
+```
+
+Use `--backend vulkan`, `cpu`, or `metal` for those backends. The decoder
+runs on the host CPU in every case.
+
+## Local conversion
+
+To convert the official model locally, use the exact revision
 `b358ddadd89b7a713b5aa131f23032d3cca1b251` and put
 `checkpoints/whistle.safetensors` in a dedicated directory as
 `whistle.safetensors`, together with `config.json` and `LICENSE`. Keep
@@ -32,7 +49,7 @@ python3 tools/community_models/whistle_asr/convert.py \
   --output /path/to/whistle-f32.gguf
 audiocpp_cli --task asr --family whistle_asr --backend cpu \
   --model /path/to/whistle-f32.gguf \
-  --audio assets/resources/sample_16k.wav
+  --audio assets/resources/sample_16k.wav --log --metrics
 ```
 
 The official `.cact` uses Cactus Quants. The GGUF stores the published
@@ -45,8 +62,8 @@ Conversion and inference do not require the Cactus engine, ONNX Runtime, or
 Python at recognition time.
 
 Streaming, keyword biasing, word timestamps, speech embeddings, resampling, and
-longer recordings are not supported by this family. CUDA, HIP, and Vulkan are
-not validated and are rejected at session creation.
+longer recordings are not supported by this family. CPU, Metal, CUDA, and Vulkan
+are supported encoder backends. HIP has not been validated.
 The runtime rejects unsupported sample rates, channel counts, and durations
 rather than silently changing the input.
 Decoding uses the checkpoint's 320-token ceiling; a non-terminating decode
@@ -107,7 +124,7 @@ On macOS the Metal helper configures the same model set:
 scripts/build_metal.sh --build-dir build/whistle --build-type Release --openmp auto --with-tests --deployment-build --model-set custom --models whistle_asr --target audiocpp_cli --target audiocpp_gguf
 ```
 
-Use `--backend` to select an available backend; CPU and Metal have been validated.
+Use `--backend` to select an available backend: `cpu`, `metal`, `cuda`, or `vulkan`.
 `--threads` sets the CPU encoder's
 thread count and bounds the host decoder's OpenMP workers; the runtime accepts
 1 to 64. Build with OpenMP enabled for parallel host decoding. Without OpenMP,
@@ -126,8 +143,7 @@ count. No artifacts or parameters are accepted. Existing embedded GGUF specs
 can use this option without reconversion. The spec exposes the optional `language`
 request option and `exec_plan` session option. Use `--language de` or
 `--request-option language=de` to force German. Omit the language option for model
-language selection. Decoding is greedy, with at most 320 text tokens. The model
-manager has no Whistle package entry because `packages` is empty.
+language selection. Decoding is greedy, with at most 320 text tokens.
 
 ## Provenance and licensing
 
@@ -146,7 +162,7 @@ unresolved questions. No weights or extracted assets are included in this port.
 - `whistle_tokenizer_test` checks byte-fallback UTF-8 replacement and metaspace decoding without model weights.
 - `whistle_assets_test <gguf> assets/resources/sample_16k.wav
   "Some call me Nature."` checks a converted GGUF against the public
-  sample's first three seconds. `--backend cpu|metal` and `--threads n` select
+  sample's first three seconds. `--backend cpu|metal|cuda|vulkan` and `--threads n` select
   the backend; `--full` uses the whole recording.
 - `whistle_assets_test <gguf> <wav> --reference <dir> [--tolerance f]` compares
   the mel features, encoder memory, and cross-attention keys/values against

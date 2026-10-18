@@ -165,7 +165,7 @@ Status labels:
 | `voxcpm2` | Done | Pass | Pass | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `voxtral_realtime` | Done | Pass | --- | Pass | Pass |
 | `voxtral_tts` | Done | --- | --- | Pass (BF16) | Pass |
-| `whistle_asr` | Done | --- | --- | --- | --- |
+| `whistle_asr` | Done | --- | Pass (F32) | --- | --- |
 
 Additional lower-bit checks:
 
