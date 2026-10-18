@@ -203,7 +203,8 @@
     'kitten_tts2',
     'kokoro_tts',
     'meanvc2',
-    'midashenglm_gen'
+    'midashenglm_gen',
+    'plapre'
   ]);
   const noGenericControlReplacements: GenericControlReplacements = {};
 
@@ -2941,14 +2942,14 @@
 
             {#if (needsVoice || selected.family === 'kugelaudio') && !usesVibeVoiceSpeakerFiles && !replacesGenericControls.voice}
           {#if allowsQuickStartVoice && quickStartVoices.length}
-            <label for="quick-start-voice">{selected.family === 'kugelaudio' ? tr('voice.preset') : server?.ui_management === false || !quickStartVoicesAreDemos ? tr('voice.configured') : tr('voice.quickStart')}</label>
+            <label for="quick-start-voice">{usesBuiltInVoiceSelector || selected.family === 'kugelaudio' ? tr('voice.preset') : server?.ui_management === false || !quickStartVoicesAreDemos ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
               on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
               {#if selected.family !== 'kugelaudio'}<option value="">{tr('voice.useReference')}</option>{/if}
               {#each quickStartVoices as voice}<option value={voice}>{voice}</option>{/each}
             </select>
             {#if quickStartVoice}
-              {#if selected.family !== 'kugelaudio'}<div class="quick-voice-note">
+              {#if !usesBuiltInVoiceSelector && selected.family !== 'kugelaudio'}<div class="quick-voice-note">
                 {tr('voice.bundledNote')}
               </div>{/if}
               {#if quickStartVoicePreview}

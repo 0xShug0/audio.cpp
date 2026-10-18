@@ -283,6 +283,20 @@
       "precision": "q4_k",
       "target_directory": "Drama-3-GGUF",
       "files": ["drama-3-backbone-4bit-experts-Q4_K_S.gguf"]
+    },
+    {
+      "id": "fish_drama3_small_iq3_xxs",
+      "display_name": "Drama3-small IQ3_XXS",
+      "format": "gguf",
+      "precision": "iq3_xxs",
+      "target_directory": "Drama3-small-GGUF",
+      "files": ["drama3-small-IQ3_XXS.gguf"],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "pentacoxian-dev/drama3-small-GGUF",
+        "revision": "main",
+        "gated": false
+      }
     }
   ],
   "sources": [
