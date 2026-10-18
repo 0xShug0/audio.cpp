@@ -79,6 +79,13 @@ public:
     static const core::ModuleSchema & static_schema() noexcept;
 };
 
+class Bf16RoundModule {
+public:
+    const core::ModuleSchema & schema() const noexcept;
+    core::TensorValue build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
+    static const core::ModuleSchema & static_schema() noexcept;
+};
+
 class GeluModule {
 public:
     explicit GeluModule(GeluConfig config = {});

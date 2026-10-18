@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "family": "plapre",
+  "display_name": "Plapre 3",
+  "description": "Danish speech synthesis with a Llama autoregressive decoder and Kanade audio codec. Streaming emits completed text chunks, not incremental codec frames.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "da"
+  ],
+  "capabilities": {
+    "tts": [
+      "long_form",
+      "speaker_reference",
+      "built_in_voices"
+    ],
+    "clone": [
+      "speaker_reference",
+      "long_form"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "voice_id",
+        "type": "enum",
+        "description": "Built-in speaker.",
+        "required": false,
+        "default": "tor",
+        "values": [
+          "tor",
+          "ida",
+          "liv",
+          "ask",
+          "kaj"
+        ]
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript of the reference audio, used for voice cloning.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "x_vector_only_mode",
+        "type": "bool",
+        "description": "Use only the reference speaker embedding, without the reference transcript/audio-token prefix.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "word_duration_frames",
+        "type": "string",
+        "description": "JSON array of per-word integer durations, from 0 to 399 frames at 25 Hz. Duration-controlled text is generated in one chunk.",
+        "required": false
+      },
+      {
+        "name": "context_text",
+        "type": "string",
+        "description": "Previous utterance for prosodic context.",
+        "required": false
+      },
+      {
+        "name": "context_audio_file",
+        "type": "audio_path",
+        "description": "Optional previous-utterance WAV accompanying context_text.",
+        "required": false
+      },
+      {
+        "name": "same_speaker",
+        "type": "bool",
+        "description": "Whether context_text belongs to the target speaker.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "pronunciations",
+        "type": "string",
+        "description": "Ordered JSON array of pronunciation references: [{\"word\":\"morgen\",\"audio_file\":\"morgen.wav\"}]. Up to 10 references, 60 codes each and 200 total codes are used.",
+        "required": false
+      },
+      {
+        "name": "edit_start_frame",
+        "type": "int",
+        "description": "Start of the masked span in voice_ref, in 25-Hz codec frames. Supply both edit boundaries and the complete desired text.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "edit_end_frame",
+        "type": "int",
+        "description": "Exclusive end of the masked span in voice_ref. Editing runs in one text chunk.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated tokens per text chunk; each audio token represents 40 ms.",
+        "required": false,
+        "default": 500,
+        "min": 1
+      },
+      {
+        "name": "min_tokens",
+        "type": "int",
+        "description": "Minimum generated tokens before a stop token can be selected.",
+        "required": false,
+        "default": 0,
+        "min": 0
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Sampling temperature; zero selects greedy decoding.",
+        "required": false,
+        "default": 0.8,
+        "min": 0
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus sampling probability in (0, 1].",
+        "required": false,
+        "default": 0.95,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling; -1 or zero disables filtering.",
+        "required": false,
+        "default": 50,
+        "min": -1
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling and vocoder noise seed.",
+        "required": false,
+        "default": 0,
+        "min": 0
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk.",
+        "required": false,
+        "default": 300,
+        "min": 1
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking policy.",
+        "required": false,
+        "default": "default",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ]
+      },
+      {
+        "name": "silence_duration_sec",
+        "type": "float",
+        "description": "Silence inserted between text chunks.",
+        "required": false,
+        "default": 0.1,
+        "min": 0
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "plapre_3_bf16",
+      "display_name": "Plapre 3 BF16",
+      "format": "gguf",
+      "precision": "bf16",
+      "default": true,
+      "target_directory": "Plapre-3-GGUF",
+      "files": [
+        "Plapre-3-GGUF/plapre-3-bf16.gguf"
+      ],
+      "strip_prefix": "Plapre-3-GGUF"
+    },
+    {
+      "id": "plapre_3_f32",
+      "display_name": "Plapre 3 F32",
+      "format": "gguf",
+      "precision": "f32",
+      "default": false,
+      "target_directory": "Plapre-3-GGUF",
+      "files": [
+        "Plapre-3-GGUF/plapre-3-f32.gguf"
+      ],
+      "strip_prefix": "Plapre-3-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "plapre_3_bf16",
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/plapre.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "kanade_config": "model:kanade_config.json",
+        "speakers": "model:speakers.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "tensors": {
+        "ar": "weights:",
+        "speaker_projection": {
+          "source": "weights:",
+          "prefix": "speaker_proj"
+        },
+        "kanade": {
+          "source": "weights:",
+          "prefix": "kanade"
+        },
+        "wavlm": {
+          "source": "weights:",
+          "prefix": "wavlm"
+        },
+        "hift": {
+          "source": "weights:",
+          "prefix": "hift"
+        }
+      }
+    }
+  ]
+}
