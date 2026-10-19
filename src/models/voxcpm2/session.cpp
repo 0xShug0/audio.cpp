@@ -8,6 +8,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <deque>
+#include <exception>
+#include <mutex>
+#include <thread>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -206,6 +214,8 @@ void validate_session_options(
         key == "voxcpm2.audiovae_encoder_graph_context_mb" ||
         key == "voxcpm2.audiovae_encoder_graph_arena_mb" ||
         key == "voxcpm2.audiovae_latent_capacity" ||
+        key == "voxcpm2.audiovae_threads" ||
+        key == "voxcpm2.prompt_cache_dir" ||
         key == "voxcpm2.audiovae_encoder_sample_capacity" ||
         key == "voxcpm2.weight_type" ||
         key == "voxcpm2.audiovae_weight_type" ||
@@ -308,10 +318,37 @@ VoxCPM2SessionBase::VoxCPM2SessionBase(runtime::TaskSpec task,
         runtime::parse_bool_option(*mem_saver, "voxcpm2.mem_saver");
   }
 
+  if (const auto dir =
+          runtime::find_option(options.options, {"voxcpm2.prompt_cache_dir"})) {
+    prompt_cache_dir_ = *dir;
+    if (!prompt_cache_dir_.empty()) {
+      std::filesystem::create_directories(prompt_cache_dir_);
+    }
+  }
+  if (const auto audiovae_threads = runtime::parse_i64_option(
+          options.options, {"voxcpm2.audiovae_threads"})) {
+    if (*audiovae_threads < 0) {
+      throw std::runtime_error("voxcpm2.audiovae_threads must be >= 0");
+    }
+    if (*audiovae_threads > 0) {
+      if (execution_context().backend_type() != core::BackendType::Cpu) {
+        throw std::runtime_error(
+            "voxcpm2.audiovae_threads is only supported on the CPU backend");
+      }
+      core::BackendConfig decoder_backend = execution_context().config();
+      decoder_backend.threads = static_cast<int>(*audiovae_threads);
+      decoder_execution_context_ =
+          std::make_unique<core::ExecutionContext>(decoder_backend);
+    }
+  }
+
   generator_ = std::make_unique<VoxCPM2FeatureGeneratorRuntime>(
       assets_, execution_context(), generator_config_);
   decoder_ = std::make_unique<VoxCPM2AudioVAEDecoderRuntime>(
-      assets_, execution_context(), decoder_config_);
+      assets_,
+      decoder_execution_context_ ? *decoder_execution_context_
+                                 : execution_context(),
+      decoder_config_);
 }
 
 VoxCPM2SessionBase::~VoxCPM2SessionBase() = default;
@@ -363,8 +400,9 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
     reference_audio = *request.voice->speaker->audio;
   }
   const VoxCPM2EncodedPrompt *prompt =
-      encoded_prompt_for_request(request.audio_input, prompt_text,
-                                 reference_audio);
+      encoded_prompt_for_request(
+          prompt_audio_for_request(request, reference_audio, prompt_text),
+          prompt_text, reference_audio);
 
   runtime::TaskResult result;
   double generator_ms = 0.0;
@@ -458,8 +496,9 @@ VoxCPM2SessionBase::run_streaming_request(
     reference_audio = *request.voice->speaker->audio;
   }
   const VoxCPM2EncodedPrompt *prompt =
-      encoded_prompt_for_request(request.audio_input, prompt_text,
-                                 reference_audio);
+      encoded_prompt_for_request(
+          prompt_audio_for_request(request, reference_audio, prompt_text),
+          prompt_text, reference_audio);
 
   runtime::TaskResult result;
   runtime::StreamingAudioConfig stream_config;
@@ -500,30 +539,137 @@ VoxCPM2SessionBase::run_streaming_request(
     return audio;
   };
   bool started = false;
+  auto feed = [&](const std::vector<float> &reference,
+                  const std::vector<float> &frames) {
+    if (!started) {
+      streaming_audio_.begin(stream_config, decode, publish, reference);
+      started = true;
+    }
+    streaming_audio_.push(frames);
+  };
+
+  // With a dedicated AudioVAE backend, decoding (and publishing) moves to a
+  // worker thread fed in patch order, so the generator never waits for the
+  // decoder. Only the worker touches streaming_audio_ and the sink, and it is
+  // joined before this function returns, so callbacks stay sequential and
+  // never outlive the request.
+  const bool async_decode = decoder_execution_context_ != nullptr;
+  std::mutex queue_mutex;
+  std::condition_variable queue_cv;
+  struct PendingFrames {
+    std::vector<float> reference;
+    std::vector<float> frames;
+  };
+  std::deque<PendingFrames> queue;
+  bool generation_done = false;
+  std::exception_ptr worker_error;
+  std::thread worker;
+  if (async_decode) {
+    worker = std::thread([&] {
+      try {
+        for (;;) {
+          PendingFrames item;
+          {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+            queue_cv.wait(lock, [&] { return generation_done || !queue.empty(); });
+            if (queue.empty()) {
+              break;
+            }
+            item = std::move(queue.front());
+            queue.pop_front();
+          }
+          feed(item.reference, item.frames);
+        }
+        result.audio_output = streaming_audio_.finish();
+      } catch (...) {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        worker_error = std::current_exception();
+        queue.clear();
+      }
+    });
+  }
+  auto stop_worker = [&] {
+    if (!worker.joinable()) {
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex);
+      generation_done = true;
+    }
+    queue_cv.notify_one();
+    worker.join();
+  };
+  struct WorkerJoin {
+    decltype(stop_worker) &stop;
+    ~WorkerJoin() { stop(); }
+  } worker_join{stop_worker};
+
+  bool queued_reference = false;
   auto emit_chunk = [&](const VoxCPM2StreamingChunk &chunk) {
     const auto new_begin = chunk.decode_features.begin() +
         static_cast<std::ptrdiff_t>(chunk.context_patches * stream_config.frame_width);
-    if (!started) {
-      streaming_audio_.begin(stream_config, decode, publish,
-          std::vector<float>(chunk.decode_features.begin(), new_begin));
-      started = true;
+    std::vector<float> reference;
+    // In async mode `started` belongs to the worker; the generator side only
+    // tracks whether it already queued the first (reference-carrying) item.
+    if (async_decode ? !queued_reference : !started) {
+      reference.assign(chunk.decode_features.begin(), new_begin);
     }
-    streaming_audio_.push(std::vector<float>(new_begin, chunk.decode_features.end()));
+    std::vector<float> frames(new_begin, chunk.decode_features.end());
+    if (!async_decode) {
+      feed(reference, frames);
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex);
+      if (worker_error) {
+        // The decoder or the sink failed (e.g. the client went away): stop
+        // generating; the error is rethrown after the join.
+        throw std::runtime_error("VoxCPM2 streaming decoder stopped");
+      }
+      queue.push_back({std::move(reference), std::move(frames)});
+      queued_reference = true;
+    }
+    queue_cv.notify_one();
   };
 
   const auto generator_start = Clock::now();
-  (void)generator_->generate_streaming(request.text_input->text, prompt,
-                                       generation_options, emit_chunk);
-  result.audio_output = streaming_audio_.finish();
+  double decode_wait_ms = 0.0;
+  try {
+    (void)generator_->generate_streaming(request.text_input->text, prompt,
+                                         generation_options, emit_chunk);
+  } catch (...) {
+    stop_worker();
+    if (worker_error) {
+      std::rethrow_exception(worker_error);
+    }
+    throw;
+  }
+  const auto generation_end = Clock::now();
+  if (async_decode) {
+    stop_worker();
+    decode_wait_ms = engine::debug::elapsed_ms(generation_end, Clock::now());
+    if (worker_error) {
+      std::rethrow_exception(worker_error);
+    }
+  } else {
+    result.audio_output = streaming_audio_.finish();
+  }
   const auto generator_end = Clock::now();
   const double generator_with_callbacks_ms =
       engine::debug::elapsed_ms(generator_start, generator_end);
 
   const auto wall_end = Clock::now();
   const double decoder_ms = streaming_audio_.decode_ms();
-  debug::timing_log_scalar(
-      "voxcpm2.generator_ms",
-      std::max(0.0, generator_with_callbacks_ms - decoder_ms));
+  if (async_decode) {
+    debug::timing_log_scalar(
+        "voxcpm2.generator_ms",
+        engine::debug::elapsed_ms(generator_start, generation_end));
+    debug::timing_log_scalar("voxcpm2.audiovae_decode_wait_ms", decode_wait_ms);
+  } else {
+    debug::timing_log_scalar(
+        "voxcpm2.generator_ms",
+        std::max(0.0, generator_with_callbacks_ms - decoder_ms));
+  }
   debug::timing_log_scalar("voxcpm2.generator_streaming_callbacks_ms",
                            generator_with_callbacks_ms);
   debug::timing_log_scalar("voxcpm2.audiovae_decoder_ms", decoder_ms);
@@ -540,6 +686,153 @@ void VoxCPM2SessionBase::release_request_runtime_memory() {
   }
   generator_->release_runtime_memory();
   decoder_->release_runtime_memory();
+}
+
+namespace {
+
+// On-disk encoded prompts (voxcpm2.prompt_cache_dir). The file name is a hash
+// of everything the encoding depends on, so a changed clip, transcript or
+// AudioVAE storage type reads as a miss, never as a stale hit; a file that does
+// not parse is encoded again and replaced. Requests cannot name a path.
+constexpr char kPromptFileMagic[8] = {'V', 'X', 'C', 'P', 'M', 'P', '0', '1'};
+
+void fnv1a(uint64_t &h, const void *data, size_t bytes) {
+  const auto *p = static_cast<const unsigned char *>(data);
+  for (size_t i = 0; i < bytes; ++i) {
+    h ^= p[i];
+    h *= 1099511628211ULL;
+  }
+}
+
+void hash_audio(uint64_t &h, const std::optional<runtime::AudioBuffer> &audio) {
+  const uint8_t present = audio.has_value() ? 1 : 0;
+  fnv1a(h, &present, 1);
+  if (!audio) {
+    return;
+  }
+  const int64_t meta[3] = {static_cast<int64_t>(audio->sample_rate),
+                           static_cast<int64_t>(audio->channels),
+                           static_cast<int64_t>(audio->samples.size())};
+  fnv1a(h, meta, sizeof(meta));
+  fnv1a(h, audio->samples.data(), audio->samples.size() * sizeof(float));
+}
+
+uint64_t prompt_inputs_hash(const std::optional<runtime::AudioBuffer> &prompt_audio,
+                            const std::string &prompt_text,
+                            const std::optional<runtime::AudioBuffer> &reference_audio,
+                            int storage_type) {
+  uint64_t h = 1469598103934665603ULL;
+  fnv1a(h, kPromptFileMagic, sizeof(kPromptFileMagic));
+  fnv1a(h, &storage_type, sizeof(storage_type));
+  const uint64_t n = prompt_text.size();
+  fnv1a(h, &n, sizeof(n));
+  fnv1a(h, prompt_text.data(), prompt_text.size());
+  hash_audio(h, prompt_audio);
+  hash_audio(h, reference_audio);
+  return h;
+}
+
+template <class T> void put(std::ostream &out, const T &v) {
+  out.write(reinterpret_cast<const char *>(&v), sizeof(v));
+}
+template <class T> bool get(std::istream &in, T &v) {
+  return static_cast<bool>(in.read(reinterpret_cast<char *>(&v), sizeof(v)));
+}
+void put_floats(std::ostream &out, const std::vector<float> &v) {
+  put<uint64_t>(out, v.size());
+  out.write(reinterpret_cast<const char *>(v.data()),
+            static_cast<std::streamsize>(v.size() * sizeof(float)));
+}
+bool get_floats(std::istream &in, std::vector<float> &v, uint64_t limit) {
+  uint64_t n = 0;
+  if (!get(in, n) || n > limit) {
+    return false;
+  }
+  v.resize(static_cast<size_t>(n));
+  return static_cast<bool>(in.read(reinterpret_cast<char *>(v.data()),
+                                   static_cast<std::streamsize>(n * sizeof(float))));
+}
+
+std::optional<VoxCPM2EncodedPrompt> read_prompt_file(const std::filesystem::path &path,
+                                                     uint64_t hash) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    return std::nullopt;
+  }
+  char magic[8] = {};
+  uint64_t stored = 0, text_size = 0;
+  if (!in.read(magic, sizeof(magic)) ||
+      !std::equal(std::begin(magic), std::end(magic), std::begin(kPromptFileMagic)) ||
+      !get(in, stored) || stored != hash || !get(in, text_size) ||
+      text_size > (1u << 20)) {
+    return std::nullopt;
+  }
+  VoxCPM2EncodedPrompt out;
+  out.prompt_text.resize(static_cast<size_t>(text_size));
+  constexpr uint64_t kMaxFloats = 64ull << 20;
+  if (!in.read(out.prompt_text.data(), static_cast<std::streamsize>(text_size)) ||
+      !get(in, out.prompt_patches) || !get_floats(in, out.prompt_features, kMaxFloats) ||
+      !get(in, out.reference_patches) ||
+      !get_floats(in, out.reference_features, kMaxFloats) ||
+      out.prompt_patches < 0 || out.reference_patches < 0) {
+    return std::nullopt;
+  }
+  return out;
+}
+
+void write_prompt_file(const std::filesystem::path &path, uint64_t hash,
+                       const VoxCPM2EncodedPrompt &prompt) {
+  const auto tmp = path.string() + ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if (!out) {
+      return;
+    }
+    out.write(kPromptFileMagic, sizeof(kPromptFileMagic));
+    put<uint64_t>(out, hash);
+    put<uint64_t>(out, prompt.prompt_text.size());
+    out.write(prompt.prompt_text.data(), static_cast<std::streamsize>(prompt.prompt_text.size()));
+    put(out, prompt.prompt_patches);
+    put_floats(out, prompt.prompt_features);
+    put(out, prompt.reference_patches);
+    put_floats(out, prompt.reference_features);
+    if (!out) {
+      std::remove(tmp.c_str());
+      return;
+    }
+  }
+  std::error_code ec;
+  std::filesystem::rename(tmp, path, ec);
+  if (ec) {
+    std::remove(tmp.c_str());
+  }
+}
+
+} // namespace
+
+std::optional<runtime::AudioBuffer> VoxCPM2SessionBase::prompt_audio_for_request(
+    const runtime::TaskRequest &request,
+    const std::optional<runtime::AudioBuffer> &reference_audio,
+    const std::string &prompt_text) const {
+  if (request.audio_input.has_value()) {
+    return request.audio_input;
+  }
+  // Ultimate clone (upstream VoxCPM2's prompt_wav_path + prompt_text together
+  // with reference_wav_path): the reference clip is also the continuation
+  // prompt, so every request starts from the same audio and transcript. Without
+  // it a reference_text sent with voice_ref names no prompt audio and is unused.
+  const auto ultimate =
+      runtime::find_option(request.options, {"voxcpm2.ultimate_clone", "ultimate_clone"});
+  if (ultimate.has_value() &&
+      runtime::parse_bool_option(*ultimate, "ultimate_clone")) {
+    if (!reference_audio.has_value() || prompt_text.empty()) {
+      throw std::invalid_argument(
+          "VoxCPM2 ultimate_clone needs a voice reference and its transcript "
+          "(reference_text)");
+    }
+    return reference_audio;
+  }
+  return std::nullopt;
 }
 
 const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(
@@ -567,8 +860,29 @@ const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(
 
   const auto encode_start = Clock::now();
   EncodedPromptCacheEntry entry;
-  entry.encoded =
-      decoder_->encode_prompt_audio(prompt_audio, prompt_text, reference_audio);
+  std::optional<std::filesystem::path> disk_path;
+  uint64_t disk_hash = 0;
+  bool from_disk = false;
+  if (!prompt_cache_dir_.empty()) {
+    disk_hash = prompt_inputs_hash(prompt_audio, prompt_text, reference_audio,
+                                   static_cast<int>(decoder_config_.weight_storage_type));
+    char name[48];
+    std::snprintf(name, sizeof(name), "voxcpm2-prompt-%016llx.bin",
+                  static_cast<unsigned long long>(disk_hash));
+    disk_path = std::filesystem::path(prompt_cache_dir_) / name;
+    if (auto loaded = read_prompt_file(*disk_path, disk_hash)) {
+      entry.encoded = std::move(*loaded);
+      from_disk = true;
+    }
+  }
+  if (!from_disk) {
+    entry.encoded =
+        decoder_->encode_prompt_audio(prompt_audio, prompt_text, reference_audio);
+    if (disk_path) {
+      write_prompt_file(*disk_path, disk_hash, entry.encoded);
+    }
+  }
+  debug::trace_log_scalar("voxcpm2.prompt_cache.disk_hit", from_disk);
   const double encode_ms = engine::debug::elapsed_ms(encode_start);
   if (encoded_prompt_cache_.capacity() == 0) {
     uncached_encoded_prompt_ = std::move(entry);

@@ -143,6 +143,13 @@
         "default": 3
       },
       {
+        "name": "ultimate_clone",
+        "type": "bool",
+        "description": "Use the voice reference itself as the continuation prompt, with reference_text as its transcript (upstream's ultimate clone). Default: false.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "prompt_text",
         "type": "string",
         "description": "Transcript for continuation prompt audio, distinct from the base voice reference.",
@@ -285,9 +292,23 @@
       {
         "name": "audiovae_latent_capacity",
         "type": "int",
-        "description": "Optional reserved latent frame capacity; omitted selects automatically.",
+        "description": "Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count.",
         "required": false,
         "min": 1
+      },
+      {
+        "name": "prompt_cache_dir",
+        "type": "path",
+        "description": "Directory where encoded prompts are kept across restarts, named by a hash of their inputs. Unset: memory only.",
+        "required": false
+      },
+      {
+        "name": "audiovae_threads",
+        "type": "int",
+        "description": "CPU only: run the AudioVAE on its own CPU backend with this many threads, so streaming decodes the previous window while the generator runs; also the thread count for offline decoding and prompt encoding. 0 (default) shares the session backend and its threads.",
+        "required": false,
+        "min": 0,
+        "default": 0
       },
       {
         "name": "audiovae_encoder_sample_capacity",

@@ -48,6 +48,7 @@ runtime::ModelCliInterface cli(const VoxCPM2Assets &) {
       {"stream_frames_per_event", "int", "Maximum generated latent patches per streaming decoder event. Set to 1 for one-patch emission. Ignored offline.", false, "4", "1"},
       {"stream_left_context", "int", "Previous patches decoded as streaming left context.", false, "3", "0", "8"},
       {"prompt_text", "string", "Transcript for continuation prompt audio, distinct from the base voice reference.", false},
+      {"ultimate_clone", "bool", "Use the voice reference itself as the continuation prompt, with reference_text as its transcript (upstream's ultimate clone). Default: false.", false, "false"},
       {"chunk_strategy", "continuation|stateless", "Long-form continuation or independent generation per chunk. Offline only. Default: continuation.", false, "continuation"},
       {"text_chunk_size", "int", "Framework long-form text chunk size. Offline only. Default: 2048.", false, "2048"},
       {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode. Offline only. Default: tag_aware.", false, "tag_aware"},
@@ -66,8 +67,10 @@ runtime::ModelCliInterface cli(const VoxCPM2Assets &) {
       {"voxcpm2.audiovae_weight_context_mb", "int", "Context or graph arena size in MiB.", false, "768", "1"},
       {"voxcpm2.audiovae_graph_arena_mb", "int", "AudioVAE decoder host graph-metadata arena size in MiB, not device workspace.", false, "1024", "1"},
       {"voxcpm2.audiovae_encoder_graph_arena_mb", "int", "AudioVAE encoder host graph-metadata arena size in MiB, not device workspace.", false, "1024", "1"},
-      {"voxcpm2.audiovae_latent_capacity", "int", "Optional reserved latent frame capacity; omitted selects automatically.", false, std::nullopt, "1"},
+      {"voxcpm2.audiovae_latent_capacity", "int", "Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count.", false, std::nullopt, "1"},
       {"voxcpm2.audiovae_encoder_sample_capacity", "int", "Reserved encoder sample capacity.", false, "240000", "1"},
+      {"voxcpm2.prompt_cache_dir", "path", "Directory where encoded prompts are kept across restarts, named by a hash of their inputs. Unset: memory only.", false},
+      {"voxcpm2.audiovae_threads", "int", "CPU only: run the AudioVAE on its own CPU backend with this many threads, so streaming decodes the previous window while the generator runs; also the thread count for offline decoding and prompt encoding. 0 (default) shares the session backend and its threads.", false, "0", "0"},
   };
   return out;
 }

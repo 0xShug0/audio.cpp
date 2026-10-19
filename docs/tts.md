@@ -1040,6 +1040,7 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `stream_chunk_policy` | `grow`, `fixed` | `grow` | Streaming only. Grow emits one patch first, then doubles toward `stream_frames_per_event`; fixed waits for the configured patch count. |
 | `stream_frames_per_event` | integer >= 1 | `4` | Maximum generated latent patches per streaming audio event. Set to `1` for the original one-patch cadence. Ignored offline. |
 | `prompt_text` | text | not set | Transcript for continuation prompt audio, distinct from the base voice reference. |
+| `ultimate_clone` | bool | `false` | Use the voice reference itself as the continuation prompt, with `reference_text` as its transcript (upstream's ultimate clone). Without it, a `reference_text` sent with a voice reference has no prompt audio to describe and is unused. |
 | `chunk_strategy` | `continuation`, `stateless` | `continuation` | Long-form continuation or independent generation per chunk. Offline only. |
 | `text_chunk_size` | integer | `2048` | Framework long-form text chunk size. Offline only. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode. Offline only. |
@@ -1061,5 +1062,7 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `voxcpm2.audiovae_weight_context_mb` | integer >= 1 | `768` | Context or graph arena size in MiB. |
 | `voxcpm2.audiovae_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_graph_context_mb` accepted with the same family prefix. |
 | `voxcpm2.audiovae_encoder_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_encoder_graph_context_mb` accepted with the same family prefix. |
-| `voxcpm2.audiovae_latent_capacity` | integer >= 1 | not set | Optional reserved latent frame capacity; omitted selects automatically. |
+| `voxcpm2.audiovae_latent_capacity` | integer >= 1 | not set | Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count. |
+| `voxcpm2.prompt_cache_dir` | path | not set | Keep encoded prompts on disk across restarts, one file per input set, named by a hash of the clip(s), transcript and AudioVAE storage type. A changed input is a miss, an unreadable file is encoded again. |
+| `voxcpm2.audiovae_threads` | integer >= 0 | `0` | CPU only: run the AudioVAE on its own CPU backend with this many threads, so streaming decodes the previous window while the generator runs; also the thread count for offline decoding and prompt encoding. 0 (default) shares the session backend and its threads. |
 | `voxcpm2.audiovae_encoder_sample_capacity` | integer >= 1 | `240000` | Reserved encoder sample capacity. |
