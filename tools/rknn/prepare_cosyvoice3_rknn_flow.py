@@ -211,7 +211,7 @@ def convert_rknn(
     # FP16 with no quantization: the flow estimator is the stage the reference port keeps on the NPU,
     # and quantizing it (int8) is what pushes the mel off enough to need a hand-tuned offset.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from rknn_build import build_engine
+    from rknn_build import build_engine, report_engine
 
     build_engine(
         onnx_path,
@@ -222,8 +222,8 @@ def convert_rknn(
         opt_level=opt_level,
         gate_label=f"build {output.name}",
     )
-    print(f"wrote {output} ({output.stat().st_size / 1e6:.1f} MB, seq_len {seq_len}, "
-          f"{target}, optimization_level {opt_level})")
+    report_engine(
+        output, f"seq_len {seq_len}", f"{target}", f"optimization_level {opt_level}")
 
 
 def main() -> int:

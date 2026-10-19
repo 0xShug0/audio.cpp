@@ -737,10 +737,9 @@ def export_onnx(
     if rewritten:
         onnx.save(graph, str(output))
     onnx.checker.check_model(str(output))
-    print(
-        f"wrote {output} ({output.stat().st_size / 1e6:.1f} MB, window {window}, "
-        f"{rewritten} sin -> polynomial)"
-    )
+    from rknn_build import report_engine
+
+    report_engine(output, f"window {window}", f"{rewritten} sin -> polynomial")
 
 
 def convert_rknn(onnx_path: Path, output: Path, target: str) -> None:
@@ -753,10 +752,10 @@ def convert_rknn(onnx_path: Path, output: Path, target: str) -> None:
         for value in graph.graph.input
     ]
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from rknn_build import build_engine
+    from rknn_build import build_engine, report_engine
 
     build_engine(onnx_path, output, target, names=names, shapes=sizes)
-    print(f"wrote {output} ({output.stat().st_size / 1e6:.1f} MB, inputs {names})")
+    report_engine(output, f"inputs {names}")
 
 
 def main() -> int:

@@ -251,6 +251,7 @@ def build_stateful_decoder(dec, B):
 
 
 def export_onnx(args):
+    from rknn_build import report_engine
     import numpy as np
     import torch
 
@@ -322,7 +323,7 @@ def export_onnx(args):
         do_constant_folding=True,
         dynamo=False,
     )
-    print(f"saved {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
+    report_engine(out)
 
     # Preflight for the converter stage: rknn-toolkit2 2.3.2's fold_constant aborts (core dump,
     # no Python traceback) on the decomposed LayerNorm/Softmax patterns a recent torch emits.
@@ -393,7 +394,7 @@ def convert_rknn(args, onnx_path, cache_numel, head_dim, kv_len):
     # FP16 (w16a16), not quantized: the Snake activation makes Q8/INT8 audibly noisy
     # (SNR 9.5-13.4 dB) for 1.75x the speed, while fp16 measures lossless (56.8 dB).
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from rknn_build import build_engine
+    from rknn_build import build_engine, report_engine
 
     build_engine(
         onnx_path,
@@ -411,7 +412,7 @@ def convert_rknn(args, onnx_path, cache_numel, head_dim, kv_len):
         gate_label=f"build {os.path.basename(out)}",
         gate_log=out + ".build.log",
     )
-    print(f"saved {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
+    report_engine(out)
     print(
         f"\nDeploy (per-SoC file, not portable between chips):\n"
         f"  scp {out} <board>:/root/tts-rknn/vocoder/\n"

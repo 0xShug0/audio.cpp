@@ -53,6 +53,7 @@ import onnx
 from onnx import TensorProto, helper
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rknn_build import report_engine
 from rknn_graph import decoder_channels, decoder_channels_of, graph_input_names
 
 CHUNK = 192
@@ -191,7 +192,7 @@ def slice_decoder(
     if risky:
         print(f"  note: folded graph still contains {risky}; if rknn.build aborts in "
               "fold_constant, the exporting torch/onnx pair is too new for the toolkit")
-    print(f"wrote {output}")
+    report_engine(output)
 
 
 def decode_window(session, z: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -494,12 +495,10 @@ def convert_rknn(
         raise SystemExit(f"{onnx_path}: expected inputs ['z', 'y_mask'], got {names}")
     # No input declarations: the slice stage pinned the window, so the graph is static and
     # re-declaring shapes here would only warn.
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from rknn_build import build_engine
+    from rknn_build import build_engine, report_engine
 
     build_engine(onnx_path, output, target)
-    print(f"wrote {output} ({output.stat().st_size / 1e6:.1f} MB, inputs {names}, "
-          f"window {window})")
+    report_engine(output, f"inputs {names}", f"window {window}")
 
 
 def main() -> int:
