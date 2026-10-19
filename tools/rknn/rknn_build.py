@@ -14,6 +14,15 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 
+def report_engine(output, *details: str) -> None:
+    """One summary line per written artefact, the same everywhere: ``wrote <path> (<size> MB)``
+    plus any per-converter details the caller wants on the line. Scripts parse nothing off
+    these; they exist so the five converters report one way."""
+    output = Path(output)
+    detail = "".join(f", {d}" for d in details)
+    print(f"wrote {output} ({output.stat().st_size / 1e6:.1f} MB{detail})")
+
+
 def build_engine(
     onnx_path: Path,
     output: Path,

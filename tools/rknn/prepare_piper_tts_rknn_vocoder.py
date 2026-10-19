@@ -37,6 +37,7 @@ import onnx
 from onnx import TensorProto, helper
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rknn_build import report_engine
 from rknn_graph import decoder_channels, graph_input_names
 
 CHUNK = 45
@@ -129,7 +130,7 @@ def slice_decoder(voice_onnx: Path, output: Path, window: int, dec_mask: bool = 
     if risky:
         print(f"  note: graph contains {risky}; if rknn.build aborts in fold_constant, "
               "the exporting torch/onnx pair is too new for the toolkit")
-    print(f"wrote {output}")
+    report_engine(output)
 
 
 def mask_decoder_graph(model) -> int:
@@ -439,12 +440,10 @@ def convert_rknn(
             sizes.append([1, 1, window])
         elif name == "g":
             sizes.append([1, 512, 1])
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from rknn_build import build_engine
+    from rknn_build import build_engine, report_engine
 
     build_engine(onnx_path, output, target, names=names, shapes=sizes)
-    print(f"wrote {output} ({output.stat().st_size / 1e6:.1f} MB, inputs {names}, "
-          f"window {window})")
+    report_engine(output, f"inputs {names}", f"window {window}")
 
 
 def main() -> int:
