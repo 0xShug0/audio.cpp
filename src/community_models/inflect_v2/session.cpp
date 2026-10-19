@@ -231,14 +231,20 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_inflect_v2_loader() {
         if (option == options.end()) {
             return runtime::ModelResourcePlan{};
         }
-        const auto plan = io::json::parse(option->second);
-        const auto * decoder = plan.find("decoder");
-        const auto * impl = decoder ? decoder->find("impl") : nullptr;
-        if (!impl || impl->as_string() != "rknn") {
+        std::vector<std::string> artifacts;
+        try {
+            const auto plan = io::json::parse(option->second);
+            const auto * decoder = plan.find("decoder");
+            const auto * impl = decoder ? decoder->find("impl") : nullptr;
+            if (!impl || impl->as_string() != "rknn") {
+                return runtime::ModelResourcePlan{};
+            }
+            artifacts.push_back(io::json::require_string(decoder->require("artifacts"), "main"));
+        } catch (const std::runtime_error &) {
+            // Session loading reports invalid execution plans.
             return runtime::ModelResourcePlan{};
         }
-        return rknn::engine_resources(
-            {io::json::require_string(decoder->require("artifacts"), "main")}, path);
+        return rknn::engine_resources(artifacts, path);
     };
     config.create_session = [](
                                 const runtime::TaskSpec & task,

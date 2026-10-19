@@ -3,6 +3,7 @@
 #include "model_memory.h"
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/registry.h"
 
 #include <cstdlib>
@@ -999,23 +1000,6 @@ void test_model_memory_estimator() {
             "a custom loader reports its plan's engines through the same hook");
     }
 
-    // Resource reporting must not silently reinterpret malformed JSON as a default plan.
-    {
-        const auto path = root / "malformed.gguf";
-        write_file(path, 1000);
-        ServerModelConfig model;
-        model.family = "piper_tts";
-        model.path = path;
-        model.session_options["piper_tts.exec_plan"] = "{not json";
-        bool rejected = false;
-        try {
-            (void)estimate_model_memory_bytes(model);
-        } catch (const std::exception &) {
-            rejected = true;
-        }
-        require(rejected == family_compiled("piper_tts"), "a compiled family reports malformed JSON");
-    }
-
     // Every RKNN family explicitly owns its resource reporting. Unselected components and
     // artifacts on a ggml implementation do not become resident RKNN engines.
     for (const auto & family_component : {
@@ -1044,6 +1028,29 @@ void test_model_memory_estimator() {
                 family + " does not price artifacts for an unselected RKNN implementation");
         model.session_options.clear();
         require(estimate_model_memory_bytes(model) == ggml_estimate, family + " keeps its default estimate");
+        std::vector<std::string> invalid_plans{
+            "{not json",
+            "{\"" + component + R"(":{"impl":"rknn"}})",
+            "{\"" + component + R"(":{"impl":"rknn","artifacts":{}}})",
+            "{\"" + component + R"(":{"impl":"rknn","artifacts":{"main":false}}})"};
+        if (family == "qwen3_tts") {
+            invalid_plans.push_back(
+                R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":"engine.rknn","first":5}}})");
+        }
+        for (const auto & invalid : invalid_plans) {
+            model.session_options[family + ".exec_plan"] = invalid;
+            require(estimate_model_memory_bytes(model) == ggml_estimate,
+                    family + " defers invalid-plan errors during estimation");
+            bool rejected = false;
+            try {
+                (void)engine::runtime::parse_exec_plan(
+                    model.session_options, family + ".exec_plan",
+                    {{component, "ggml", {{"ggml", {}, {}, {}}, {"rknn", {}, {"main"}, {"first"}}}}});
+            } catch (const std::runtime_error &) {
+                rejected = true;
+            }
+            require(rejected, family + " plan validation still rejects the invalid input");
+        }
     }
 }
 

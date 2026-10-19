@@ -149,8 +149,10 @@ void test_engine_resources(const std::filesystem::path & dir) {
     const auto resources = engine::rknn::engine_resources(
         {"flow_seq110.rknn," + elsewhere.string(), "flow_seq110.rknn", "missing.rknn"}, dir / "model.gguf");
     require_eq(resources.engines.size(), size_t{2}, "selected files are deduplicated; missing files await load");
-    require_eq(resources.engines[0].path, dir / "flow_seq110.rknn", "a bare name resolves under the model root");
-    require_eq(resources.engines[1].path, elsewhere, "an absolute path is used as given");
+    require_eq(resources.engines[0].path, std::filesystem::weakly_canonical(dir / "flow_seq110.rknn"),
+               "a bare name resolves under the model root");
+    require_eq(resources.engines[1].path, std::filesystem::weakly_canonical(elsewhere),
+               "an absolute path resolves to the same file");
     require_eq(resources.resident_bytes, size_t{16}, "unpriced engines use their file sizes once");
     require(engine::rknn::engine_resources({"", ",,"}, dir).engines.empty(), "empty lists add no engines");
 }
@@ -193,6 +195,9 @@ int main() {
     test_aperture_budget_ladder();
     test_resolve_engine_path(dir);
     test_engine_resources(dir);
+#if defined(ENGINE_HAVE_RKNN)
+    test_engine_memory_unknown(dir);
+#endif
     std::filesystem::remove_all(dir);
     return 0;
 }

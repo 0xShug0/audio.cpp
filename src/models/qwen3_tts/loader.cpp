@@ -160,16 +160,22 @@ public:
         if (option == session_options.end()) {
             return plan;
         }
-        const auto value = io::json::parse(option->second);
-        const auto * decoder = value.find("speech_decoder");
-        const auto * impl = decoder ? decoder->find("impl") : nullptr;
-        if (!impl || impl->as_string() != "rknn") {
+        std::vector<std::string> paths;
+        try {
+            const auto value = io::json::parse(option->second);
+            const auto * decoder = value.find("speech_decoder");
+            const auto * impl = decoder ? decoder->find("impl") : nullptr;
+            if (!impl || impl->as_string() != "rknn") {
+                return plan;
+            }
+            const auto & artifacts = decoder->require("artifacts");
+            paths.push_back(io::json::require_string(artifacts, "main"));
+            if (const auto * first = artifacts.find("first")) {
+                paths.push_back(first->as_string());
+            }
+        } catch (const std::runtime_error &) {
+            // Session loading reports invalid execution plans.
             return plan;
-        }
-        const auto & artifacts = decoder->require("artifacts");
-        std::vector<std::string> paths{io::json::require_string(artifacts, "main")};
-        if (const auto * first = artifacts.find("first")) {
-            paths.push_back(first->as_string());
         }
         return rknn::engine_resources(paths, model_path);
     }

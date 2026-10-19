@@ -314,14 +314,20 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_cosyvoice3_loader() {
         if (option == options.end()) {
             return runtime::ModelResourcePlan{};
         }
-        const auto plan = io::json::parse(option->second);
-        const auto * flow = plan.find("flow");
-        const auto * impl = flow ? flow->find("impl") : nullptr;
-        if (!impl || impl->as_string() != "rknn") {
+        std::vector<std::string> artifacts;
+        try {
+            const auto plan = io::json::parse(option->second);
+            const auto * flow = plan.find("flow");
+            const auto * impl = flow ? flow->find("impl") : nullptr;
+            if (!impl || impl->as_string() != "rknn") {
+                return runtime::ModelResourcePlan{};
+            }
+            artifacts.push_back(io::json::require_string(flow->require("artifacts"), "main"));
+        } catch (const std::runtime_error &) {
+            // Session loading reports invalid execution plans.
             return runtime::ModelResourcePlan{};
         }
-        auto resources = rknn::engine_resources(
-            {io::json::require_string(flow->require("artifacts"), "main")}, path);
+        auto resources = rknn::engine_resources(artifacts, path);
         const auto budget_mib = aperture_budget_mib();
         if (budget_mib > 0) {
             size_t largest = 0;

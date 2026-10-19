@@ -796,14 +796,20 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_kokoro_tts_loader() {
         if (option == options.end()) {
             return runtime::ModelResourcePlan{};
         }
-        const auto plan = io::json::parse(option->second);
-        const auto * generator = plan.find("generator");
-        const auto * impl = generator ? generator->find("impl") : nullptr;
-        if (!impl || impl->as_string() != "rknn") {
+        std::vector<std::string> artifacts;
+        try {
+            const auto plan = io::json::parse(option->second);
+            const auto * generator = plan.find("generator");
+            const auto * impl = generator ? generator->find("impl") : nullptr;
+            if (!impl || impl->as_string() != "rknn") {
+                return runtime::ModelResourcePlan{};
+            }
+            artifacts.push_back(io::json::require_string(generator->require("artifacts"), "main"));
+        } catch (const std::runtime_error &) {
+            // Session loading reports invalid execution plans.
             return runtime::ModelResourcePlan{};
         }
-        return rknn::engine_resources(
-            {io::json::require_string(generator->require("artifacts"), "main")}, path);
+        return rknn::engine_resources(artifacts, path);
     };
     config.load_assets = [](const std::filesystem::path & model_path) {
         return load_kokoro_assets(model_path);
