@@ -127,6 +127,24 @@
         "Piper-TTS-GGUF/piper-en-us-lessac-medium-orig.gguf"
       ],
       "strip_prefix": "Piper-TTS-GGUF"
+    },
+    {
+      "id": "piper_lessac_medium_decoder_rk3588",
+      "display_name": "Piper Lessac Medium NPU Decoder RKNN (RK3588)",
+      "format": "rknn",
+      "precision": "f16",
+      "target_directory": "Piper-TTS-GGUF",
+      "files": [
+        "rk3588/piper-lessac-w93.rknn"
+      ],
+      "strip_prefix": "rk3588",
+      "description": "Pre-compiled RK3588 engine for the piper_tts RKNN decoder sidecar (piper_tts.exec_plan, artifacts.main); installs beside the GGUF weights and is named by bare file name. Built by tools/rknn from the en_US-lessac-medium streaming decoder export; see docs/build/rockchip-npu.md.",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "wOvANAI/rknn-tts-engines",
+        "revision": "main",
+        "gated": false
+      }
     }
   ],
   "dependencies": [],

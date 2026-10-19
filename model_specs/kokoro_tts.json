@@ -179,6 +179,24 @@
         "Kokoro-82M-GGUF/kokoro-82m-bf16.gguf"
       ],
       "strip_prefix": "Kokoro-82M-GGUF"
+    },
+    {
+      "id": "kokoro_82m_generator_rk3588",
+      "display_name": "Kokoro 82M NPU Generator RKNN (RK3588)",
+      "format": "rknn",
+      "precision": "f16",
+      "target_directory": "Kokoro-82M-GGUF",
+      "files": [
+        "rk3588/generator_w512.rknn"
+      ],
+      "strip_prefix": "rk3588",
+      "description": "Pre-compiled RK3588 engine for the kokoro_tts RKNN generator sidecar (kokoro_tts.exec_plan, artifacts.main); installs beside the GGUF weights and is named by bare file name. Built by tools/rknn from the Kokoro-82M iSTFTNet generator export; see docs/build/rockchip-npu.md.",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "wOvANAI/rknn-tts-engines",
+        "revision": "main",
+        "gated": false
+      }
     }
   ],
   "dependencies": [],
