@@ -52,6 +52,9 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rknn_graph import decoder_channels, decoder_channels_of, graph_input_names
+
 CHUNK = 192
 PADDING = 32
 DEPOP_COMPARE = 24
@@ -189,24 +192,6 @@ def slice_decoder(
         print(f"  note: folded graph still contains {risky}; if rknn.build aborts in "
               "fold_constant, the exporting torch/onnx pair is too new for the toolkit")
     print(f"wrote {output}")
-
-
-def graph_input_names(onnx_path: Path) -> list[str]:
-    return [value.name for value in onnx.load(str(onnx_path)).graph.input]
-
-
-def decoder_channels_of(graph) -> int:
-    """Latent channel count read back from the sliced graph."""
-    for value in graph.input:
-        if value.name == "z":
-            dims = [d.dim_value for d in value.type.tensor_type.shape.dim]
-            if len(dims) == 3 and dims[1] > 0:
-                return int(dims[1])
-    raise SystemExit("input z must be [1, channels, frames]")
-
-
-def decoder_channels(onnx_path: Path) -> int:
-    return decoder_channels_of(onnx.load(str(onnx_path)).graph)
 
 
 def decode_window(session, z: np.ndarray, mask: np.ndarray) -> np.ndarray:

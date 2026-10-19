@@ -36,6 +36,9 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rknn_graph import decoder_channels, graph_input_names
+
 CHUNK = 45
 PADDING = 24
 DEPOP_COMPARE = 24
@@ -177,21 +180,6 @@ def mask_decoder_graph(model) -> int:
     del graph.node[:]
     graph.node.extend(rebuilt)
     return injected
-
-
-def graph_input_names(onnx_path: Path) -> list[str]:
-    return [value.name for value in onnx.load(str(onnx_path)).graph.input]
-
-
-def decoder_channels(onnx_path: Path) -> int:
-    """Latent channel count read back from the sliced graph."""
-    model = onnx.load(str(onnx_path))
-    for value in model.graph.input:
-        if value.name == "z":
-            dims = [d.dim_value for d in value.type.tensor_type.shape.dim]
-            if len(dims) == 3 and dims[1] > 0:
-                return int(dims[1])
-    raise SystemExit(f"{onnx_path}: input z must be [1, channels, frames]")
 
 
 def decode_window(session, z: np.ndarray, mask: np.ndarray) -> np.ndarray:
