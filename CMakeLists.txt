@@ -4075,6 +4075,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             # engine travels as a configure-time path and the test self-skips without one.
             add_executable(rknn_sidecar_test tests/unittests/test_rknn_sidecar.cpp)
             target_compile_definitions(rknn_sidecar_test PRIVATE ENGINE_HAVE_RKNN=1)
+            # The fake-engine section covers one sidecar per model, and sidecars are
+            # compiled per linked model -- so the section compiles per linked model too,
+            # or a composite without inflect_v2 (the default CI set) fails to link.
+            foreach(model IN LISTS AUDIOCPP_LINKED_MODELS)
+                string(TOUPPER "${model}" model_upper)
+                target_compile_definitions(rknn_sidecar_test PRIVATE
+                    "AUDIOCPP_TEST_HAS_MODEL_${model_upper}=1")
+            endforeach()
             if (ENGINE_RKNN_INCLUDE_DIR)
                 target_include_directories(rknn_sidecar_test PRIVATE ${ENGINE_RKNN_INCLUDE_DIR})
             endif()
