@@ -158,6 +158,8 @@ option(ENGINE_BUILD_WARMBENCH "Build warmbench helper binaries" OFF)
 option(AUDIOCPP_BUILD_C_API "Build the C ABI (include/audiocpp.h) as a shared library" OFF)
 set(AUDIOCPP_C_API_MODEL_ROOT "" CACHE PATH
     "Models root for the C API model test. Unset leaves the test registered but skipping.")
+set(AUDIOCPP_RKNN_TEST_ENGINE "" CACHE PATH
+    "A .rknn engine compiled for the build host's SoC, for the RKNN sidecar test. Unset leaves the test registered but skipping.")
 set(AUDIOCPP_GGML_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/external/ggml"
     CACHE PATH "ggml source tree to build with AudioCPP")
@@ -3382,6 +3384,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     add_test(NAME cpu_extra_buffers_test COMMAND cpu_extra_buffers_test)
     add_engine_unittest(rknn_engine_test tests/unittests/test_rknn_engine.cpp)
     add_test(NAME rknn_engine_test COMMAND rknn_engine_test)
+    if (ENGINE_ENABLE_RKNN)
+        # The driver-priced cases in the file compile only where a runtime is linked; they ask
+        # the same header the engine itself compiles against.
+        target_compile_definitions(rknn_engine_test PRIVATE ENGINE_HAVE_RKNN=1)
+        if (ENGINE_RKNN_INCLUDE_DIR)
+            target_include_directories(rknn_engine_test PRIVATE ${ENGINE_RKNN_INCLUDE_DIR})
+        endif()
+    endif()
     if (ENGINE_ENABLE_NEON)
         add_engine_unittest(neon_blocks_test tests/unittests/test_neon_blocks.cpp)
         target_include_directories(neon_blocks_test PRIVATE src/framework/neon)
@@ -4058,6 +4068,19 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS)
+        if (ENGINE_ENABLE_RKNN)
+            # The board-only half of the RKNN path: residency pricing, the driver's cached
+            # self-report and a real context build. The repo ships no compiled engines, so the
+            # engine travels as a configure-time path and the test self-skips without one.
+            add_executable(rknn_sidecar_test tests/unittests/test_rknn_sidecar.cpp)
+            target_compile_definitions(rknn_sidecar_test PRIVATE ENGINE_HAVE_RKNN=1)
+            if (ENGINE_RKNN_INCLUDE_DIR)
+                target_include_directories(rknn_sidecar_test PRIVATE ${ENGINE_RKNN_INCLUDE_DIR})
+            endif()
+            target_link_libraries(rknn_sidecar_test PRIVATE engine_runtime ggml)
+            add_test(NAME rknn_sidecar_test COMMAND rknn_sidecar_test "${AUDIOCPP_RKNN_TEST_ENGINE}")
+            set_tests_properties(rknn_sidecar_test PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
         if("plapre" IN_LIST AUDIOCPP_LINKED_MODELS)
             add_executable(plapre_codec_parity EXCLUDE_FROM_ALL tests/plapre/codec_parity.cpp)
             target_link_libraries(plapre_codec_parity PRIVATE engine_runtime ggml)

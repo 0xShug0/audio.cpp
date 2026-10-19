@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -30,6 +31,14 @@ std::vector<char> read_engine(const std::string & path, const std::string & labe
 std::string status(const std::string & label, const char * what, int code) {
     std::ostringstream out;
     out << label << ": " << what << " failed with code " << code;
+    // The versions are the diagnosis a `RKNN_ERR_*` code invites: -13 says the image targets a
+    // platform this SoC is not, -6 and -4 say the driver refused, and none of them says who refused:
+    // the runtime library and the kernel driver are versioned apart, and the toolkit that built the
+    // image is a third version an operator has to line up against them.
+    const auto report = driver_report();
+    if (!report.empty()) {
+        out << " (" << report << ")";
+    }
     return out.str();
 }
 
@@ -47,6 +56,33 @@ std::string resolve_engine_path(const std::string & artifact, const std::filesys
 }
 
 #if defined(ENGINE_HAVE_RKNN)
+namespace {
+
+// The driver's self-report, cached the first time any context answers: `RKNN_QUERY_SDK_VERSION` is
+// per-context, so it is taken from a context that exists and kept for the ones that fail to build.
+std::mutex g_report_mutex;
+std::string g_driver_report;
+
+void note_driver_versions(rknn_context ctx) {
+    rknn_sdk_version sdk{};
+    if (rknn_query(ctx, RKNN_QUERY_SDK_VERSION, &sdk, sizeof(sdk)) != 0) {
+        return;
+    }
+    const std::string api = sdk.api_version;
+    const std::string driver = sdk.drv_version;
+    if (api.empty() && driver.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_report_mutex);
+    g_driver_report = "driver " + driver + ", api " + api;
+}
+
+}  // namespace
+
+std::string driver_report() {
+    std::lock_guard<std::mutex> lock(g_report_mutex);
+    return g_driver_report;
+}
 
 int64_t engine_memory_mib(const std::string & path, const std::string & label) {
     (void)label;
@@ -64,6 +100,7 @@ int64_t engine_memory_mib(const std::string & path, const std::string & label) {
     }
     rknn_mem_size mem{};
     const int ret = rknn_query(ctx, RKNN_QUERY_MEM_SIZE, &mem, sizeof(mem));
+    note_driver_versions(ctx);
     rknn_destroy(ctx);
     if (ret != 0) {
         return 0;
@@ -89,6 +126,7 @@ void Engine::load(const std::string & path, const std::string & label) {
         ctx_ = 0;
         throw std::runtime_error(status(label_, "rknn_init", ret));
     }
+    note_driver_versions(ctx_);
     if (const char * mask = std::getenv("AUDIOCPP_RKNN_CORE_MASK"); mask != nullptr) {
         if (rknn_set_core_mask(ctx_, static_cast<rknn_core_mask>(std::atoi(mask))) != 0) {
             rknn_set_core_mask(ctx_, RKNN_NPU_CORE_AUTO);
@@ -193,6 +231,13 @@ void Engine::run(const std::vector<Input> & inputs, std::vector<std::vector<floa
         outputs[index].assign(begin, begin + count);
     }
     rknn_outputs_release(ctx_, n_output_, driver_outputs.data());
+}
+
+#else
+
+std::string driver_report() {
+    // Nothing asked, nothing answered: `status()` keeps the exact shape it always had.
+    return {};
 }
 
 #endif  // ENGINE_HAVE_RKNN

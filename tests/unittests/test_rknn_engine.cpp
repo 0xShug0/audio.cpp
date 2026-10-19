@@ -57,7 +57,14 @@ void test_read_engine_empty(const std::filesystem::path & dir) {
     }
 }
 
+// The format every sidecar reports a failure in, plus the rule that the driver's versions are
+// appended only when a driver answered: this case runs before any context is built, so
+// `driver_report()` is empty in every build -- a PC build by construction (there is no runtime to
+// ask), a board build by order -- and the message stays exactly the bare form it always produced.
 void test_status() {
+    require(
+        engine::rknn::driver_report().empty(),
+        "no driver has answered in this process yet");
     require_eq(
         engine::rknn::status("Piper TTS decoder RKNN", "rknn_run", -5),
         std::string("Piper TTS decoder RKNN: rknn_run failed with code -5"),
@@ -136,6 +143,32 @@ void test_resolve_engine_path(const std::filesystem::path & dir) {
 
 }  // namespace
 
+#if defined(ENGINE_HAVE_RKNN)
+namespace {
+
+// A fixture built like a real engine -- the RKNN magic the parser checks first, then a body no
+// image parser can read. The point is the branch, not the refusal: `INVALID RKNN_MAGIC` and
+// `model is too small` are different driver verdicts, and every caller that prices residency
+// (a sidecar ladder, the plan reader) must treat both as the same "unknown" and keep its own
+// proxy. Only a runtime-enabled build asks the driver, so only one is registered in the other.
+void test_engine_memory_unknown(const std::filesystem::path & dir) {
+    const auto magic_path = dir / "magic.rknn";
+    write_file(magic_path, std::string("RKNN\x01\x00\x00\x00", 8));
+    require_eq(
+        engine::rknn::engine_memory_mib(magic_path.string(), "Test stage RKNN"),
+        int64_t{0},
+        "an image the driver parses the magic of and cannot load is priced as unknown");
+    const auto junk_path = dir / "junk.rknn";
+    write_file(junk_path, "not an rknn image at all");
+    require_eq(
+        engine::rknn::engine_memory_mib(junk_path.string(), "Test stage RKNN"),
+        int64_t{0},
+        "an image the driver refuses on the magic is priced the same");
+}
+
+}  // namespace
+#endif  // ENGINE_HAVE_RKNN
+
 int main() {
     const auto dir = std::filesystem::temp_directory_path() / "audio.cpp_rknn_engine_test";
     std::filesystem::create_directories(dir);
@@ -145,6 +178,9 @@ int main() {
     test_status();
     test_aperture_budget_ladder();
     test_resolve_engine_path(dir);
+#if defined(ENGINE_HAVE_RKNN)
+    test_engine_memory_unknown(dir);
+#endif
     std::filesystem::remove_all(dir);
     return 0;
 }
