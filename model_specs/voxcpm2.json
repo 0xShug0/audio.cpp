@@ -285,9 +285,16 @@
       {
         "name": "audiovae_latent_capacity",
         "type": "int",
-        "description": "Optional reserved latent frame capacity; omitted selects automatically.",
+        "description": "Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count.",
         "required": false,
         "min": 1
+      },
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON component execution plans. audiovae: impl=default/ggml; backend must match the session; no artifacts. params.threads is a nonnegative int: positive values require a CPU session and enable a dedicated AudioVAE backend with streaming decode overlap; also controls offline decoding and prompt encoding threads. Omitted/0 shares the session backend.",
+        "required": false,
+        "default": "{}"
       },
       {
         "name": "audiovae_encoder_sample_capacity",

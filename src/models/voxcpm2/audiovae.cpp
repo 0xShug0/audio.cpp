@@ -418,16 +418,56 @@ core::TensorValue causal_pad_left(core::ModuleBuildContext &ctx,
       ctx, zeros_like_prefix(ctx, input, frames), input);
 }
 
+// Snake: x + sin(alpha * x)^2 / (alpha + 1e-9), alpha per channel. alpha and its
+// denominator are [1, C, 1] and broadcast inside ggml_mul / ggml_div instead of
+// being repeated to the activation's full [1, C, T] size first: the same
+// per-element operations in the same order (bit-identical output), without two
+// full-size broadcast tensors and a full-size scale_bias per activation.
+// The same Snake as one pass over the activation (CPU only): per row the same
+// float operations in the same order as the ggml graph below - x * a, sinf,
+// s * s, / (a * 1 + 1e-9), x + - so the output is bit-identical. Rows are split
+// across the graph's threads.
+void voxcpm2_snake_cpu(ggml_tensor *dst, const ggml_tensor *x,
+                       const ggml_tensor *alpha, int ith, int nth, void *) {
+  const int64_t channels = x->ne[1];
+  const int64_t rows = channels * x->ne[2];
+  for (int64_t row = rows * ith / nth; row < rows * (ith + 1) / nth; ++row) {
+    const int64_t c = row % channels;
+    const float a = static_cast<const float *>(alpha->data)[c];
+    const float denom = a * 1.0F + 1.0e-9F;
+    const auto *src = reinterpret_cast<const float *>(
+        static_cast<const char *>(x->data) + c * x->nb[1] +
+        (row / channels) * x->nb[2]);
+    auto *out = reinterpret_cast<float *>(
+        static_cast<char *>(dst->data) + c * dst->nb[1] +
+        (row / channels) * dst->nb[2]);
+    for (int64_t t = 0; t < x->ne[0]; ++t) {
+      const float ax = src[t] * a;
+      const float s = std::sin(ax);
+      const float square = s * s;
+      out[t] = src[t] + square / denom;
+    }
+  }
+}
+
 core::TensorValue snake_exact(core::ModuleBuildContext &ctx,
                               const core::TensorValue &input,
                               const VAESnakeWeights &weights,
                               int64_t channels) {
   const auto input_f32 = core::ensure_backend_addressable_layout(ctx, input);
+  if (ctx.backend_type == core::BackendType::Cpu &&
+      input_f32.tensor->type == GGML_TYPE_F32 &&
+      weights.alpha.tensor->type == GGML_TYPE_F32 &&
+      ggml_is_contiguous(input_f32.tensor) &&
+      ggml_is_contiguous(weights.alpha.tensor) &&
+      ggml_nelements(weights.alpha.tensor) == channels) {
+    return core::wrap_tensor(
+        ggml_map_custom2(ctx.ggml, input_f32.tensor, weights.alpha.tensor,
+                         voxcpm2_snake_cpu, GGML_N_TASKS_MAX, nullptr),
+        input.shape, GGML_TYPE_F32);
+  }
   auto alpha = core::reshape_tensor(
       ctx, weights.alpha, core::TensorShape::from_dims({1, channels, 1}));
-  alpha =
-      core::wrap_tensor(ggml_repeat(ctx.ggml, alpha.tensor, input_f32.tensor),
-                        input.shape, GGML_TYPE_F32);
   auto ax =
       core::wrap_tensor(ggml_mul(ctx.ggml, input_f32.tensor, alpha.tensor),
                         input.shape, GGML_TYPE_F32);
@@ -437,7 +477,7 @@ core::TensorValue snake_exact(core::ModuleBuildContext &ctx,
                               input.shape, GGML_TYPE_F32);
   auto denom =
       core::wrap_tensor(ggml_scale_bias(ctx.ggml, alpha.tensor, 1.0F, 1.0e-9F),
-                        input.shape, GGML_TYPE_F32);
+                        alpha.shape, GGML_TYPE_F32);
   auto frac = core::wrap_tensor(ggml_div(ctx.ggml, s2.tensor, denom.tensor),
                                 input.shape, GGML_TYPE_F32);
   return core::wrap_tensor(ggml_add(ctx.ggml, input_f32.tensor, frac.tensor),
@@ -450,13 +490,8 @@ core::TensorValue apply_sr_condition(
   const auto input_f32 = core::ensure_backend_addressable_layout(ctx, input);
   auto scale = core::reshape_tensor(
       ctx, weights.scale, core::TensorShape::from_dims({1, channels, 1}));
-  scale =
-      core::wrap_tensor(ggml_repeat(ctx.ggml, scale.tensor, input_f32.tensor),
-                        input.shape, GGML_TYPE_F32);
   auto bias = core::reshape_tensor(
       ctx, weights.bias, core::TensorShape::from_dims({1, channels, 1}));
-  bias = core::wrap_tensor(ggml_repeat(ctx.ggml, bias.tensor, input_f32.tensor),
-                           input.shape, GGML_TYPE_F32);
   auto scaled =
       core::wrap_tensor(ggml_mul(ctx.ggml, input_f32.tensor, scale.tensor),
                         input.shape, GGML_TYPE_F32);
@@ -726,7 +761,24 @@ private:
     build_encoder();
   }
 
+  // With voxcpm2.audiovae_latent_capacity set, the decoder graph is a
+  // reservation: it starts at that size, doubles until the request fits and is
+  // reused by every shorter request. Without it, the graph is built at the
+  // request's own frame count. The decoder is causal (causal_conv1d and
+  // causal_conv_transpose1d only), so the zero frames a larger graph pads with
+  // never change the kept samples; they only cost compute, and with the
+  // power-of-two growth a request decodes up to twice its length (140 frames
+  // ran a 256-frame graph). Rebuilding costs a few milliseconds and the
+  // allocator below keeps its buffer, so exact sizing is the default.
+  bool exact_decoder_capacity() const {
+    return config_.latent_frame_capacity <= 0;
+  }
+
   int64_t decoder_capacity_for(int64_t latent_frames) const {
+    if (exact_decoder_capacity()) {
+      const int64_t patch = std::max<int64_t>(1, assets_->config.patch_size);
+      return std::max<int64_t>(patch, ((latent_frames + patch - 1) / patch) * patch);
+    }
     const int64_t min_capacity =
         config_.latent_frame_capacity > 0 ? config_.latent_frame_capacity
                                           : assets_->config.patch_size;
@@ -738,7 +790,11 @@ private:
   }
 
   void ensure_decoder_graph(int64_t latent_frames) {
-    if (graph_ != nullptr && latent_frames <= decoder_latent_frame_capacity_) {
+    const bool reusable =
+        exact_decoder_capacity()
+            ? decoder_latent_frame_capacity_ == decoder_capacity_for(latent_frames)
+            : latent_frames <= decoder_latent_frame_capacity_;
+    if (graph_ != nullptr && reusable) {
       engine::debug::timing_log_scalar(
           "voxcpm2.audiovae.decoder.graph.rebuilt", false);
       engine::debug::timing_log_scalar(
@@ -764,11 +820,11 @@ private:
         decoder_latent_frame_capacity_);
   }
 
-  void release_decoder_graph() {
+  void release_decoder_graph(bool keep_allocator = false) {
     if (graph_ != nullptr) {
       core::release_backend_graph_resources(execution_context_.backend(), graph_);
     }
-    if (gallocr_ != nullptr) {
+    if (gallocr_ != nullptr && !keep_allocator) {
       ggml_gallocr_free(gallocr_);
       gallocr_ = nullptr;
     }
@@ -786,7 +842,9 @@ private:
       throw std::runtime_error(
           "VoxCPM2 AudioVAE decoder graph capacity must be positive");
     }
-    release_decoder_graph();
+    // Keep the allocator across size changes: ggml_gallocr_reserve only
+    // reallocates its buffer when the new graph needs more than it holds.
+    release_decoder_graph(/*keep_allocator=*/true);
     if (config_.graph_context_bytes == 0) {
       throw std::runtime_error(
           "VoxCPM2 AudioVAE graph context bytes must be non-zero");
@@ -822,8 +880,10 @@ private:
     ggml_set_output(output_);
     graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
     ggml_build_forward_expand(graph_, output_);
-    gallocr_ = ggml_gallocr_new(
-        ggml_backend_get_default_buffer_type(execution_context_.backend()));
+    if (gallocr_ == nullptr) {
+      gallocr_ = ggml_gallocr_new(
+          ggml_backend_get_default_buffer_type(execution_context_.backend()));
+    }
     if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) ||
         !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
       release_decoder_graph();
