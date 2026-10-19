@@ -414,10 +414,13 @@ The optional free-memory guard checks host memory and GPU memory where available
 Its load estimate covers the selected weight file/package plus session auxiliary
 files, with a runtime overhead factor and fixed floor. A family that holds
 compiled engines resident reports them through its loader, together with the
-ceiling its own residency policy enforces on that set, so the guard reads no
-`exec_plan` of its own; each reported engine is resolved relative to the model
-directory and counted once even when the plan declares a file the tree scan
-already summed. Engines are counted at 1.0 and never at the runtime overhead
+sharing budget its own residency policy enforces on that set, so the guard reads
+no `exec_plan` of its own; each reported engine is resolved relative to the model
+directory, priced before the file scans, and skipped by them when the same path
+sits inside a checkpoint tree. A reported budget caps the sum of the engines it
+bounds, floored at the largest single engine, because the eviction rule the budget
+describes admits one engine wider than the budget by evicting the rest. Engines
+are counted at 1.0 and never at the runtime overhead
 factor, because a compiled engine is resident at its own allocation and builds no
 compute graph: where an NPU runtime is built in, at the residency its driver
 reports for the engine rather than at its image size -- a `.rknn` is a fraction of

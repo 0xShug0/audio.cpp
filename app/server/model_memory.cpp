@@ -85,6 +85,18 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
                 }
             }
         };
+    // The family's own resource plan is applied before any file scan, so a compiled engine the
+    // plan declares is priced by the target runtime (its file size only where the runtime cannot
+    // say), and the scans below skip the same path in the `counted` set instead of repricing it
+    // at the weights factor.
+    const auto resources = engine::runtime::make_default_registry().model_resources(
+        model.family, model.path, model.session_options);
+    size_t largest_engine = 0;
+    for (const auto & requirement : resources.engines) {
+        const auto before = aperture;
+        add_engine(requirement.path, requirement.resident_mib);
+        largest_engine = std::max(largest_engine, aperture - before);
+    }
     // Estimate only what the loader will actually read from model.path, so the
     // guard neither overestimates nor masks the loader's own error:
     //  - a single-file model contributes that file;
@@ -127,26 +139,24 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
         std::filesystem::is_directory(model.path, ec) ? model.path : model.path.parent_path();
     for (const auto & option : model.session_options) {
         // A session option names an auxiliary artifact, so its value is scanned as a path. An
-        // `exec_plan` value is JSON rather than a path, and the engines it declares are reported by
-        // the model below: the scan sees a string that is no file and contributes nothing.
+        // `exec_plan` value is JSON rather than a path, and the engines it declares were priced
+        // by the model's plan above: the scan sees a string that is no file and contributes
+        // nothing.
         std::filesystem::path aux(option.second);
         if (aux.is_relative()) {
             aux = aux_base / aux;
         }
         add_tree(aux, 0);
     }
-    // The family's own resource plan: the compiled engines its execution plans declare, priced by
-    // the target runtime. Priced apart from the weights because a family can cap the set its engines
-    // hold resident at once, and that ceiling must not meet the runtime factor that prices ggml
-    // graphs and KV state.
-    const auto resources = engine::runtime::make_default_registry().model_resources(
-        model.family, model.path, model.session_options);
-    for (const auto & requirement : resources.engines) {
-        add_engine(requirement.path, requirement.resident_mib);
-    }
+    // The family's residency policy, applied last. A cap is a sharing budget for engines that
+    // evict to stay inside it -- the set's sum is the steady-state footprint -- but the same rule
+    // lets one engine wider than the budget in by evicting the rest, so the budget floors at the
+    // largest single engine rather than capping it.
     if (resources.resident_cap_mib > 0) {
-        aperture = std::min(
-            aperture, static_cast<size_t>(resources.resident_cap_mib) * (1024u * 1024u));
+        aperture = std::max(
+            largest_engine,
+            std::min(aperture,
+                     static_cast<size_t>(resources.resident_cap_mib) * (1024u * 1024u)));
     }
     // Weights plus a runtime factor for Metal/GPU buffers, activation graphs and
     // KV state, plus a fixed floor for per-model bookkeeping.

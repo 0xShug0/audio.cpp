@@ -129,10 +129,12 @@ struct ModelEngineRequirement {
 
 /**
  * What a model's session options ask for beyond its weight files, reported by the model that
- * owns them: the compiled engines its execution plans declare, and the ceiling its own
- * residency policy enforces on that set (a ladder that evicts to share a hardware aperture
- * has one; 0 means the whole set is resident at once). A host consumer (the server's load
- * guard) prices and de-duplicates the paths; interpreting the plan is the model's job.
+ * owns them: the compiled engines its execution plans declare, and the sharing budget its own
+ * residency policy enforces on that set (a ladder that evicts to share a hardware aperture has
+ * one; 0 means the whole set is resident at once). A host consumer (the server's load guard)
+ * prices and de-duplicates the paths; interpreting the plan is the model's job. A consumer
+ * applying the budget must floor it at the largest single engine: the eviction rule the budget
+ * describes admits one engine wider than the budget by evicting the rest.
  */
 struct ModelResourcePlan {
     std::vector<ModelEngineRequirement> engines;

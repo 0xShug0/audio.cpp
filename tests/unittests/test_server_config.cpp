@@ -924,10 +924,47 @@ void test_model_memory_estimator() {
         require(
             capped.has_value() && *capped == expected_estimate(7000) + ceiling,
             "a family's residency ceiling caps the engines it prices");
+
+        // The eviction rule the ceiling describes admits one engine wider than the ceiling by
+        // evicting the rest, so the cap is a sharing budget, not a hard ceiling: the priced set
+        // floors at the largest single engine. A 3 GiB rung next to a 1 GiB one: with the
+        // ladder's own default budget the 4 GiB sum caps to that budget, and with a 1 GiB
+        // budget it caps to 1 GiB -- in both cases the floor lifts the estimate back to the
+        // 3 GiB rung that the eviction rule can hold alone.
+        const auto wide_dir = root / "plan-capped-wide";
+        std::filesystem::create_directories(wide_dir);
+        write_file(wide_dir / "model.gguf", 7000);
+        const auto small_rung = wide_dir / "flow_seq110.rknn";
+        const auto big_rung = wide_dir / "flow_seq1000.rknn";
+        write_file(small_rung, 1);
+        std::filesystem::resize_file(small_rung, 1024ull * 1024 * 1024);
+        write_file(big_rung, 1);
+        std::filesystem::resize_file(big_rung, 3ull * 1024 * 1024 * 1024);
+        ServerModelConfig wide;
+        wide.family = "cosyvoice3";
+        wide.path = wide_dir;
+        wide.session_options["cosyvoice3.exec_plan"] =
+            R"({"flow":{"impl":"rknn","artifacts":{"main":"flow_seq110.rknn,flow_seq1000.rknn"}}})";
+        const auto wide_default = estimate_model_memory_bytes(wide);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", "1024");
+        const auto wide_capped = estimate_model_memory_bytes(wide);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", nullptr);
+        const auto default_budget = family_compiled("cosyvoice3")
+            ? 3900ull * 1024 * 1024
+            : size_t{0};
+        const auto wide_floor = family_compiled("cosyvoice3") ? 3ull * 1024 * 1024 * 1024 : size_t{0};
+        require(
+            wide_default.has_value() && *wide_default == expected_estimate(7000) + default_budget,
+            "the sum of the set meets the ladder's own default budget when it fits above the floor");
+        require(
+            wide_capped.has_value() && *wide_capped == expected_estimate(7000) + wide_floor,
+            "a ceiling floors at the largest single engine the eviction rule admits alone");
     }
 
-    // An engine inside a summed checkpoint tree is counted once, not once by the
-    // tree scan and again by the plan.
+    // An engine inside a summed checkpoint tree is priced by the plan, once: the plan is applied
+    // before the scans, so the engine is counted at the engine price (the driver's residency, here
+    // the file size) and the tree scan skips the same path -- it is not repriced at the runtime
+    // factor the weights carry.
     {
         const auto dir = root / "plan-tree";
         std::filesystem::create_directories(dir);
@@ -939,9 +976,33 @@ void test_model_memory_estimator() {
         model.session_options["piper_tts.exec_plan"] =
             R"({"decoder":{"impl":"rknn","artifacts":{"main":"vocoder.rknn","first":"absent.rknn"}}})";
         const auto estimate = estimate_model_memory_bytes(model);
+        const auto priced = family_compiled("piper_tts")
+            ? expected_estimate(5000) + 600
+            : expected_estimate(5600);
         require(
-            estimate.has_value() && *estimate == expected_estimate(5600),
-            "an engine already counted by the tree scan is not counted twice, and an absent engine adds nothing");
+            estimate.has_value() && *estimate == priced,
+            "an engine declared by the plan is priced once, as an engine, and the tree scan skips it");
+    }
+
+    // A custom (non-spec-backed) loader answers the same hook: Qwen3-TTS's loader reads its own
+    // plan, so its declared speech decoder reaches the guard the same way.
+    {
+        const auto dir = root / "plan-qwen3";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        const auto vocoder = dir / "vocoder.rknn";
+        write_file(vocoder, 1);
+        std::filesystem::resize_file(vocoder, 1024ull * 1024 * 1024);
+        ServerModelConfig model;
+        model.family = "qwen3_tts";
+        model.path = dir;
+        model.session_options["qwen3_tts.exec_plan"] =
+            R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":"vocoder.rknn"}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        const auto priced = family_compiled("qwen3_tts") ? 1024ull * 1024 * 1024 : size_t{0};
+        require(
+            estimate.has_value() && *estimate == expected_estimate(7000) + priced,
+            "a custom loader reports its plan's engines through the same hook");
     }
 
     // A malformed plan is the session's error to report, not the guard's.
