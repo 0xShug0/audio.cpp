@@ -2,6 +2,7 @@
 
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/rknn/engine_resources.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/options.h"
 
@@ -265,7 +266,7 @@ public:
         const auto model_root = std::filesystem::is_directory(model_path, ec)
             ? model_path
             : model_path.parent_path();
-        plan.engines = exec_plan_engine_requirements(option->second, model_root);
+        plan.engines = rknn::exec_plan_engine_requirements(option->second, model_root);
         plan.resident_cap_mib = config_.residency_cap_mib;
         return plan;
     }

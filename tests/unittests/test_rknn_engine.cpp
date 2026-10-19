@@ -1,9 +1,9 @@
-// Shared RKNN plumbing (src/framework/rknn/engine.cpp): the part that is testable without
-// a board, i.e. the engine-image reader, the driver-status formatter, the aperture budget
-// arithmetic and the artifact-path resolver. The context calls need librknnrt and a
-// compiled engine, so they are exercised on the board, not here.
+// Shared RKNN plumbing (src/framework/rknn/): the part that is testable without a board, i.e.
+// the engine-image reader, the driver-status formatter, the aperture budget arithmetic, the
+// artifact-path resolver and the exec_plan artifact-list reader. The context calls need
+// librknnrt and a compiled engine, so they are exercised on the board, not here.
 #include "engine/framework/rknn/engine.h"
-#include "engine/framework/runtime/options.h"
+#include "engine/framework/rknn/engine_resources.h"
 
 #include "test_assert.h"
 
@@ -152,7 +152,7 @@ void test_exec_plan_engine_requirements(const std::filesystem::path & dir) {
     const auto elsewhere = dir / "flow_seq200.rknn";
     write_file(elsewhere, std::string("RKNN\x01\x00\x00\x00", 8));
     // generic_string(): on Windows the native separators are backslashes, invalid in JSON.
-    const auto requirements = engine::runtime::exec_plan_engine_requirements(
+    const auto requirements = engine::rknn::exec_plan_engine_requirements(
         R"({"flow":{"impl":"rknn","artifacts":{"main":"flow_seq110.rknn,)" +
             elsewhere.generic_string() + R"(","first":5}},"prompt_encoder":{"impl":"ggml"}})",
         dir);
@@ -161,10 +161,10 @@ void test_exec_plan_engine_requirements(const std::filesystem::path & dir) {
     require_eq(requirements[1].path, elsewhere, "an absolute path is used as given");
     require_eq(requirements[0].resident_mib, int64_t{0}, "a build without the runtime prices nothing");
     require(
-        engine::runtime::exec_plan_engine_requirements("{not json", dir).empty(),
+        engine::rknn::exec_plan_engine_requirements("{not json", dir).empty(),
         "a malformed plan contributes nothing");
     require(
-        engine::runtime::exec_plan_engine_requirements(
+        engine::rknn::exec_plan_engine_requirements(
             R"({"flow":{"impl":"rknn","artifacts":{"main":""}}})", dir).empty(),
         "an unset ladder contributes nothing");
 }

@@ -547,6 +547,7 @@ add_library(engine_core OBJECT
     src/framework/debug/trace.cpp
     src/framework/debug/profiler.cpp
     src/framework/rknn/engine.cpp
+    src/framework/rknn/engine_resources.cpp
     src/framework/decoders/moss_tts_delay/backbone.cpp
     src/framework/decoders/moss_tts_delay/config.cpp
     src/framework/decoders/moss_tts_delay/delay_decoder.cpp
