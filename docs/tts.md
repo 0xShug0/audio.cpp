@@ -1062,5 +1062,11 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `voxcpm2.audiovae_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_graph_context_mb` accepted with the same family prefix. |
 | `voxcpm2.audiovae_encoder_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_encoder_graph_context_mb` accepted with the same family prefix. |
 | `voxcpm2.audiovae_latent_capacity` | integer >= 1 | not set | Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count. |
-| `voxcpm2.audiovae_threads` | integer >= 0 | `0` | CPU only: run the AudioVAE on its own CPU backend with this many threads, so streaming decodes the previous window while the generator runs; also the thread count for offline decoding and prompt encoding. 0 (default) shares the session backend and its threads. |
+| `voxcpm2.exec_plan` | JSON string | `{}` | Component `audiovae`: `impl` is `default`/`ggml`; `backend`, if supplied, must match the session; no artifacts. `params.threads` is a nonnegative int. Positive values require a CPU session and create a dedicated AudioVAE backend, enabling streaming decode overlap; also controls offline decoding and prompt encoding threads. Omitted/0 shares the session backend. |
 | `voxcpm2.audiovae_encoder_sample_capacity` | integer >= 1 | `240000` | Reserved encoder sample capacity. |
+
+For a CPU session with a four-thread AudioVAE worker, add:
+
+```bash
+--session-option 'voxcpm2.exec_plan={"audiovae":{"impl":"ggml","backend":"cpu","params":{"threads":4}}}'
+```

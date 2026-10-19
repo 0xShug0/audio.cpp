@@ -290,12 +290,11 @@
         "min": 1
       },
       {
-        "name": "audiovae_threads",
-        "type": "int",
-        "description": "CPU only: run the AudioVAE on its own CPU backend with this many threads, so streaming decodes the previous window while the generator runs; also the thread count for offline decoding and prompt encoding. 0 (default) shares the session backend and its threads.",
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON component execution plans. audiovae: impl=default/ggml; backend must match the session; no artifacts. params.threads is a nonnegative int: positive values require a CPU session and enable a dedicated AudioVAE backend with streaming decode overlap; also controls offline decoding and prompt encoding threads. Omitted/0 shares the session backend.",
         "required": false,
-        "min": 0,
-        "default": 0
+        "default": "{}"
       },
       {
         "name": "audiovae_encoder_sample_capacity",

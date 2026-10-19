@@ -8,12 +8,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <exception>
 #include <mutex>
 #include <thread>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -211,7 +213,7 @@ void validate_session_options(
         key == "voxcpm2.audiovae_encoder_graph_context_mb" ||
         key == "voxcpm2.audiovae_encoder_graph_arena_mb" ||
         key == "voxcpm2.audiovae_latent_capacity" ||
-        key == "voxcpm2.audiovae_threads" ||
+        key == "voxcpm2.exec_plan" ||
         key == "voxcpm2.audiovae_encoder_sample_capacity" ||
         key == "voxcpm2.weight_type" ||
         key == "voxcpm2.audiovae_weight_type" ||
@@ -314,18 +316,29 @@ VoxCPM2SessionBase::VoxCPM2SessionBase(runtime::TaskSpec task,
         runtime::parse_bool_option(*mem_saver, "voxcpm2.mem_saver");
   }
 
-  if (const auto audiovae_threads = runtime::parse_i64_option(
-          options.options, {"voxcpm2.audiovae_threads"})) {
-    if (*audiovae_threads < 0) {
-      throw std::runtime_error("voxcpm2.audiovae_threads must be >= 0");
+  const auto exec_plan = runtime::parse_exec_plan(
+      options.options, "voxcpm2.exec_plan",
+      {{"audiovae", "ggml",
+        {{"ggml", {execution_context().backend_type()}, {}, {}, {"threads"}}}}});
+  const auto &audiovae_plan = exec_plan.at("audiovae");
+  if (const auto threads = audiovae_plan.params.find("threads");
+      threads != audiovae_plan.params.end()) {
+    const auto &value = threads->second;
+    if (!value.is_number() || !std::isfinite(value.as_number()) ||
+        value.as_number() < 0 ||
+        value.as_number() > std::numeric_limits<int>::max() ||
+        std::floor(value.as_number()) != value.as_number()) {
+      throw std::runtime_error(
+          "voxcpm2.exec_plan.audiovae.params.threads must be a nonnegative int");
     }
-    if (*audiovae_threads > 0) {
+    const auto audiovae_threads = static_cast<int>(value.as_i64());
+    if (audiovae_threads > 0) {
       if (execution_context().backend_type() != core::BackendType::Cpu) {
         throw std::runtime_error(
-            "voxcpm2.audiovae_threads is only supported on the CPU backend");
+            "voxcpm2.exec_plan.audiovae.params.threads > 0 requires a CPU session");
       }
       core::BackendConfig decoder_backend = execution_context().config();
-      decoder_backend.threads = static_cast<int>(*audiovae_threads);
+      decoder_backend.threads = audiovae_threads;
       decoder_execution_context_ =
           std::make_unique<core::ExecutionContext>(decoder_backend);
     }
