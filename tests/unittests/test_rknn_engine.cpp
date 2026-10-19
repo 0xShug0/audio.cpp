@@ -1,8 +1,9 @@
-// Shared RKNN plumbing (src/framework/rknn/engine.cpp): the part that is testable without
-// a board, i.e. the engine-image reader, the driver-status formatter, the aperture budget
-// arithmetic and the artifact-path resolver. The context calls need librknnrt and a
-// compiled engine, so they are exercised on the board, not here.
+// Shared RKNN plumbing (src/framework/rknn/): the part that is testable without a board, i.e.
+// the engine-image reader, the driver-status formatter, the aperture budget arithmetic, the
+// artifact-path resolver and selected-resource accounting. The context calls need
+// librknnrt and a compiled engine, so they are exercised on the board, not here.
 #include "engine/framework/rknn/engine.h"
+#include "engine/framework/rknn/engine_resources.h"
 
 #include "test_assert.h"
 
@@ -141,6 +142,21 @@ void test_resolve_engine_path(const std::filesystem::path & dir) {
                "an unset artifact stays unset");
 }
 
+void test_engine_resources(const std::filesystem::path & dir) {
+    write_file(dir / "flow_seq110.rknn", std::string("RKNN\x01\x00\x00\x00", 8));
+    const auto elsewhere = dir / "flow_seq200.rknn";
+    write_file(elsewhere, std::string("RKNN\x01\x00\x00\x00", 8));
+    const auto resources = engine::rknn::engine_resources(
+        {"flow_seq110.rknn," + elsewhere.string(), "flow_seq110.rknn", "missing.rknn"}, dir / "model.gguf");
+    require_eq(resources.engines.size(), size_t{2}, "selected files are deduplicated; missing files await load");
+    require_eq(resources.engines[0].path, std::filesystem::weakly_canonical(dir / "flow_seq110.rknn"),
+               "a bare name resolves under the model root");
+    require_eq(resources.engines[1].path, std::filesystem::weakly_canonical(elsewhere),
+               "an absolute path resolves to the same file");
+    require_eq(resources.resident_bytes, size_t{16}, "unpriced engines use their file sizes once");
+    require(engine::rknn::engine_resources({"", ",,"}, dir).engines.empty(), "empty lists add no engines");
+}
+
 }  // namespace
 
 #if defined(ENGINE_HAVE_RKNN)
@@ -178,6 +194,7 @@ int main() {
     test_status();
     test_aperture_budget_ladder();
     test_resolve_engine_path(dir);
+    test_engine_resources(dir);
 #if defined(ENGINE_HAVE_RKNN)
     test_engine_memory_unknown(dir);
 #endif

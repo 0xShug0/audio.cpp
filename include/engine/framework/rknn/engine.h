@@ -69,6 +69,16 @@ private:
 // returned unchanged, so a failed load quotes exactly what was asked for.
 std::string resolve_engine_path(const std::string & artifact, const std::filesystem::path & model_root);
 
+// What a compiled engine will occupy once it is resident, in MiB, read from the driver itself:
+// `rknn_init` with `RKNN_FLAG_COLLECT_MODEL_INFO_ONLY` parses the image without building the network
+// (~0.5 s per engine on RK3588, no NPU memory allocated) and `rknn_query(RKNN_QUERY_MEM_SIZE)` then
+// reports `total_weight_size + total_internal_size` -- the bytes the real init goes on to allocate,
+// less a per-context slack of 30-50 MiB. Returns 0 when the driver cannot say, so a caller can keep
+// a proxy for that case; a build without an RKNN runtime is that case for every engine, so the
+// declaration is not conditional and a consumer (a sidecar, or the server's load guard) needs no
+// preprocessor test of its own to ask.
+int64_t engine_memory_mib(const std::string & path, const std::string & label);
+
 #if defined(ENGINE_HAVE_RKNN)
 
 // One graph input for `Engine::run`. `size` is the size of the buffer in bytes: with
@@ -81,14 +91,6 @@ struct Input {
     rknn_tensor_type type = RKNN_TENSOR_FLOAT32;
     uint32_t pass_through = 0;
 };
-
-// What a compiled engine will occupy once it is resident, in MiB, read from the driver itself:
-// `rknn_init` with `RKNN_FLAG_COLLECT_MODEL_INFO_ONLY` parses the image without building the network
-// (~0.5 s per engine on RK3588, no NPU memory allocated) and `rknn_query(RKNN_QUERY_MEM_SIZE)` then
-// reports `total_weight_size + total_internal_size` -- the bytes the real init goes on to allocate,
-// less a per-context slack of 30-50 MiB. Returns 0 when the driver cannot say, so a sidecar can keep
-// a proxy for that case.
-int64_t engine_memory_mib(const std::string & path, const std::string & label);
 
 // One compiled engine: a `rknn_context` plus its input/output counts.
 class Engine {

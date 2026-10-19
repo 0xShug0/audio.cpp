@@ -33,6 +33,9 @@ struct SpecBackedVoiceModelConfig {
         const SessionOptions &,
         std::shared_ptr<const Assets>,
         std::shared_ptr<const engine::model_spec::ModelContract>)> create_session;
+    std::function<ModelResourcePlan(
+        const std::filesystem::path &,
+        const std::unordered_map<std::string, std::string> &)> model_resources;
 };
 
 inline std::shared_ptr<const engine::model_spec::ModelContract> require_model_contract(std::string family) {
@@ -241,6 +244,14 @@ public:
             config_,
             std::move(contract),
             std::move(assets));
+    }
+
+    ModelResourcePlan model_resources(
+        const std::filesystem::path & model_path,
+        const std::unordered_map<std::string, std::string> & session_options) const override {
+        return config_.model_resources
+            ? config_.model_resources(model_path, session_options)
+            : ModelResourcePlan{};
     }
 
 private:

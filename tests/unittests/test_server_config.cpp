@@ -3,7 +3,10 @@
 #include "model_memory.h"
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/registry.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -11,6 +14,18 @@
 #include <string>
 
 namespace {
+
+void set_env(const char * name, const char * value) {
+#ifdef _WIN32
+    _putenv_s(name, value == nullptr ? "" : value);
+#else
+    if (value == nullptr) {
+        unsetenv(name);
+    } else {
+        setenv(name, value, 1);
+    }
+#endif
+}
 
 void require(bool condition, const std::string & message) {
     if (!condition) {
@@ -716,6 +731,15 @@ size_t expected_estimate(size_t weights) {
     return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead;
 }
 
+// The engines a plan declares are priced by the loader that owns the family, so a build that did not
+// compile that family has no loader to ask and the guard has nothing to price: CI's sanitizer builds
+// link one family (`builtin_audio_utils`), which reports no engines by contract. The cases below
+// therefore state the priced expectation when the family is in this registry, and the empty-plan
+// contract when it is not -- which is the same contract, seen from the other side.
+bool family_compiled(const std::string & family) {
+    return engine::runtime::make_default_registry().supports_family(family);
+}
+
 void write_file(const std::filesystem::path & path, size_t bytes) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out << std::string(bytes, 'x');
@@ -808,9 +832,12 @@ void test_model_memory_estimator() {
         require(*estimate == expected_estimate(15000), "a relative aux path resolves against the model directory");
     }
 
-    // An exec_plan engine is counted by name: the option value is JSON, so the
-    // path scan above sees nothing, and a name relative to the model directory is
-    // how a deployment spells an engine installed with the weights.
+    // An exec_plan engine is counted by name, through the family's loader: the option value is JSON,
+    // so the path scan sees nothing, and a name relative to the model directory is how a deployment
+    // spells an engine installed with the weights. The names here are not engine images and this
+    // gate has no NPU runtime, so the runtime cannot price them and they fall back to their file
+    // size -- at 1.0, not the runtime factor, because a compiled engine is resident at its own
+    // allocation and builds no graph.
     {
         const auto dir = root / "plan";
         std::filesystem::create_directories(dir);
@@ -820,6 +847,7 @@ void test_model_memory_estimator() {
         const auto elsewhere = root / "plan-abs.rknn";
         write_file(elsewhere, 500);
         ServerModelConfig model;
+        model.family = "cosyvoice3";
         model.path = dir;
         // generic_string(), not string(): on Windows the native separators are
         // backslashes, which are invalid escapes inside the JSON plan.
@@ -827,40 +855,202 @@ void test_model_memory_estimator() {
             R"({"flow":{"impl":"rknn","artifacts":{"main":"flow_seq110.rknn,flow_seq200.rknn,)" +
             elsewhere.generic_string() + R"("}}})";
         const auto estimate = estimate_model_memory_bytes(model);
+        const auto priced = family_compiled("cosyvoice3") ? size_t{900 + 1100 + 500} : size_t{0};
         require(estimate.has_value(), "an exec_plan model has a determinate footprint");
         require(
-            *estimate == expected_estimate(7000 + 900 + 1100 + 500),
+            *estimate == expected_estimate(7000) + priced,
             "exec_plan engines resolve relative to the model directory, and an absolute path is used as given");
     }
 
-    // An engine inside a summed checkpoint tree is counted once, not once by the
-    // tree scan and again by the plan.
+    // A plan on a family that states no residency policy is priced by the sum of its engines, and
+    // the engines of a ladder are not multiplied by the runtime factor.
+    {
+        const auto dir = root / "plan-sum";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        for (const std::string rung : {"flow_seq250.rknn", "flow_seq400.rknn"}) {
+            write_file(dir / rung, 1);  // resize_file needs the file to exist; the rest stays sparse
+            std::filesystem::resize_file(dir / rung, 3ull * 1024 * 1024 * 1024);
+        }
+        ServerModelConfig model;
+        model.family = "qwen3_tts";
+        model.path = dir;
+        model.session_options["qwen3_tts.exec_plan"] =
+            R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":"flow_seq250.rknn","first":"flow_seq400.rknn"}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        const auto priced =
+            family_compiled("qwen3_tts") ? 6ull * 1024 * 1024 * 1024 : size_t{0};
+        require(
+            estimate.has_value() && *estimate == expected_estimate(7000) + priced,
+            "a family without a residency policy is priced by the sum of its engines, at 1.0");
+    }
+
+    // The ceiling a family states for its engines caps the priced set: a ladder that evicts to stay
+    // inside an NPU aperture is not resident at the sum of its parts. The ceiling CosyVoice3 states is
+    // the aperture budget, so the knob that sets it (AUDIOCPP_RKNN_APERTURE_MIB, see rknn_flow.h) is
+    // how this gate exercises the model-local policy with file-size residency on this host.
+    {
+        const auto dir = root / "plan-capped";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        std::string declared;
+        for (const std::string rung : {"flow_seq110.rknn", "flow_seq200.rknn", "flow_seq250.rknn"}) {
+            write_file(dir / rung, 1);
+            std::filesystem::resize_file(dir / rung, 1024ull * 1024 * 1024);
+            if (!declared.empty()) {
+                declared += ',';
+            }
+            declared += rung;
+        }
+        ServerModelConfig model;
+        model.family = "cosyvoice3";
+        model.path = dir;
+        model.session_options["cosyvoice3.exec_plan"] =
+            R"({"flow":{"impl":"rknn","artifacts":{"main":")" + declared + R"("}}})";
+        const auto uncapped = estimate_model_memory_bytes(model);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", "1024");
+        const auto capped = estimate_model_memory_bytes(model);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", nullptr);
+        const auto sum = family_compiled("cosyvoice3") ? 3ull * 1024 * 1024 * 1024 : size_t{0};
+        const auto ceiling = family_compiled("cosyvoice3") ? 1024ull * 1024 * 1024 : size_t{0};
+        require(
+            uncapped.has_value() && *uncapped == expected_estimate(7000) + sum,
+            "a ladder under its ceiling is priced by the sum of its engines");
+        require(
+            capped.has_value() && *capped == expected_estimate(7000) + ceiling,
+            "a family's residency ceiling caps the engines it prices");
+
+        // The eviction rule the ceiling describes admits one engine wider than the ceiling by
+        // evicting the rest, so the cap is a sharing budget, not a hard ceiling: the priced set
+        // floors at the largest single engine. A 3 GiB rung next to a 1 GiB one: with the
+        // ladder's own default budget the 4 GiB sum caps to that budget, and with a 1 GiB
+        // budget it caps to 1 GiB -- in both cases the floor lifts the estimate back to the
+        // 3 GiB rung that the eviction rule can hold alone.
+        const auto wide_dir = root / "plan-capped-wide";
+        std::filesystem::create_directories(wide_dir);
+        write_file(wide_dir / "model.gguf", 7000);
+        const auto small_rung = wide_dir / "flow_seq110.rknn";
+        const auto big_rung = wide_dir / "flow_seq1000.rknn";
+        write_file(small_rung, 1);
+        std::filesystem::resize_file(small_rung, 1024ull * 1024 * 1024);
+        write_file(big_rung, 1);
+        std::filesystem::resize_file(big_rung, 3ull * 1024 * 1024 * 1024);
+        ServerModelConfig wide;
+        wide.family = "cosyvoice3";
+        wide.path = wide_dir;
+        wide.session_options["cosyvoice3.exec_plan"] =
+            R"({"flow":{"impl":"rknn","artifacts":{"main":"flow_seq110.rknn,flow_seq1000.rknn"}}})";
+        const auto wide_default = estimate_model_memory_bytes(wide);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", "1024");
+        const auto wide_capped = estimate_model_memory_bytes(wide);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", nullptr);
+        const auto default_budget = family_compiled("cosyvoice3")
+            ? 3900ull * 1024 * 1024
+            : size_t{0};
+        const auto wide_floor = family_compiled("cosyvoice3") ? 3ull * 1024 * 1024 * 1024 : size_t{0};
+        require(
+            wide_default.has_value() && *wide_default == expected_estimate(7000) + default_budget,
+            "the sum of the set meets the ladder's own default budget when it fits above the floor");
+        require(
+            wide_capped.has_value() && *wide_capped == expected_estimate(7000) + wide_floor,
+            "a ceiling floors at the largest single engine the eviction rule admits alone");
+    }
+
+    // An engine inside a summed checkpoint tree is priced by the plan, once: the plan is applied
+    // before the scans, so the engine is counted at the engine price (the driver's residency, here
+    // the file size) and the tree scan skips the same path -- it is not repriced at the runtime
+    // factor the weights carry.
     {
         const auto dir = root / "plan-tree";
         std::filesystem::create_directories(dir);
         write_file(dir / "model.safetensors", 5000);
         write_file(dir / "vocoder.rknn", 600);
         ServerModelConfig model;
+        model.family = "piper_tts";
         model.path = dir;
-        model.session_options["qwen3_tts.exec_plan"] =
+        model.session_options["piper_tts.exec_plan"] =
             R"({"decoder":{"impl":"rknn","artifacts":{"main":"vocoder.rknn","first":"absent.rknn"}}})";
         const auto estimate = estimate_model_memory_bytes(model);
+        const auto priced = family_compiled("piper_tts")
+            ? expected_estimate(5000) + 600
+            : expected_estimate(5600);
         require(
-            estimate.has_value() && *estimate == expected_estimate(5600),
-            "an engine already counted by the tree scan is not counted twice, and an absent engine adds nothing");
+            estimate.has_value() && *estimate == priced,
+            "an engine declared by the plan is priced once, as an engine, and the tree scan skips it");
     }
 
-    // A malformed plan is the session's error to report, not the guard's.
+    // A custom (non-spec-backed) loader answers the same hook: Qwen3-TTS's loader reads its own
+    // plan, so its declared speech decoder reaches the guard the same way.
     {
-        const auto path = root / "malformed.gguf";
-        write_file(path, 1000);
+        const auto dir = root / "plan-qwen3";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        const auto vocoder = dir / "vocoder.rknn";
+        write_file(vocoder, 1);
+        std::filesystem::resize_file(vocoder, 1024ull * 1024 * 1024);
         ServerModelConfig model;
-        model.path = path;
-        model.session_options["piper_tts.exec_plan"] = "{not json";
+        model.family = "qwen3_tts";
+        model.path = dir;
+        model.session_options["qwen3_tts.exec_plan"] =
+            R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":"vocoder.rknn"}}})";
         const auto estimate = estimate_model_memory_bytes(model);
+        const auto priced = family_compiled("qwen3_tts") ? 1024ull * 1024 * 1024 : size_t{0};
         require(
-            estimate.has_value() && *estimate == expected_estimate(1000),
-            "a malformed exec plan contributes nothing to the estimate");
+            estimate.has_value() && *estimate == expected_estimate(7000) + priced,
+            "a custom loader reports its plan's engines through the same hook");
+    }
+
+    // Every RKNN family explicitly owns its resource reporting. Unselected components and
+    // artifacts on a ggml implementation do not become resident RKNN engines.
+    for (const auto & family_component : {
+             std::pair<std::string, std::string>{"piper_tts", "decoder"},
+             {"inflect_v2", "decoder"}, {"kokoro_tts", "generator"},
+             {"qwen3_tts", "speech_decoder"}, {"cosyvoice3", "flow"}}) {
+        const auto & family = family_component.first;
+        const auto & component = family_component.second;
+        const auto dir = root / ("selected-" + family);
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        write_file(dir / "engine.rknn", 600);
+        ServerModelConfig model;
+        model.family = family;
+        model.path = dir;
+        const std::string artifacts = R"(,"artifacts":{"main":"engine.rknn"}}})";
+        model.session_options[family + ".exec_plan"] =
+            "{\"" + component + R"(":{"impl":"rknn")" + artifacts;
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate && *estimate == expected_estimate(7000) + (family_compiled(family) ? 600 : 0),
+                family + " reports its selected engine");
+        model.session_options[family + ".exec_plan"] =
+            "{\"" + component + R"(":{"impl":"ggml")" + artifacts;
+        const auto ggml_estimate = estimate_model_memory_bytes(model);
+        require(ggml_estimate && *ggml_estimate == expected_estimate(7000),
+                family + " does not price artifacts for an unselected RKNN implementation");
+        model.session_options.clear();
+        require(estimate_model_memory_bytes(model) == ggml_estimate, family + " keeps its default estimate");
+        std::vector<std::string> invalid_plans{
+            "{not json",
+            "{\"" + component + R"(":{"impl":"rknn"}})",
+            "{\"" + component + R"(":{"impl":"rknn","artifacts":{}}})",
+            "{\"" + component + R"(":{"impl":"rknn","artifacts":{"main":false}}})"};
+        if (family == "qwen3_tts") {
+            invalid_plans.push_back(
+                R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":"engine.rknn","first":5}}})");
+        }
+        for (const auto & invalid : invalid_plans) {
+            model.session_options[family + ".exec_plan"] = invalid;
+            require(estimate_model_memory_bytes(model) == ggml_estimate,
+                    family + " defers invalid-plan errors during estimation");
+            bool rejected = false;
+            try {
+                (void)engine::runtime::parse_exec_plan(
+                    model.session_options, family + ".exec_plan",
+                    {{component, "ggml", {{"ggml", {}, {}, {}}, {"rknn", {}, {"main"}, {"first"}}}}});
+            } catch (const std::runtime_error &) {
+                rejected = true;
+            }
+            require(rejected, family + " plan validation still rejects the invalid input");
+        }
     }
 }
 

@@ -8,14 +8,25 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace engine::models::cosyvoice3 {
+
+// 3900 MiB is where this board's driver puts the per-process ceiling, measured by initializing the
+// sets in one process: 110+200+250 (3341 MiB), 110x4 (3144), 200x3 (3387), 250+250+110 (3638),
+// 110+400 (3401) and 200+400 (3744) all initialize together, while 250+400 (4041), 110+500 (4538)
+// and every set holding an S>=900 engine fail at `rknn_init` with -4. The proxy refused 200+400,
+// which this board admits; the measured cost reproduces all twelve outcomes. Measured on this board,
+// not a board property: the accounting is shared (rknn::ApertureBudget), the numbers are this
+// engine's.
+constexpr int64_t kAperturePinBudgetMiB = 3900;
 
 namespace {
 
@@ -38,15 +49,6 @@ constexpr int64_t kCfgBatch = 2;
 // than S=500). The linear proxy this replaces charged 5 MiB per frame, which over-pins the short
 // rungs by up to 11x and under-pins S=500.
 constexpr int64_t kApertureMiBPerFrame = 5;  // only if the driver cannot say
-
-// 3900 MiB is where this board's driver puts the per-process ceiling, measured by initializing the
-// sets in one process: 110+200+250 (3341 MiB), 110x4 (3144), 200x3 (3387), 250+250+110 (3638),
-// 110+400 (3401) and 200+400 (3744) all initialize together, while 250+400 (4041), 110+500 (4538)
-// and every set holding an S>=900 engine fail at `rknn_init` with -4. The proxy refused 200+400,
-// which this board admits; the measured cost reproduces all twelve outcomes. Measured on this board,
-// not a board property: the accounting is shared (rknn::ApertureBudget), the numbers are this
-// engine's.
-constexpr int64_t kAperturePinBudgetMiB = 3900;
 
 // Graph order, as tools/rknn/prepare_cosyvoice3_rknn_flow.py compiles it.
 const char * const kInputNames[] = {"x", "mask", "mu", "t", "spks", "cond"};
@@ -267,6 +269,11 @@ struct CosyVoice3RknnFlow::Impl {
         if (slots.empty()) {
             throw std::runtime_error(std::string(kLabel) + ": no engine paths given");
         }
+        // The board states its own ceiling; 0 means pin every rung the deployment declares.
+        const int64_t budget_mib = aperture_budget_mib();
+        budget_ = engine::rknn::ApertureBudget(
+            budget_mib > 0 ? budget_mib : std::numeric_limits<int64_t>::max());
+        debug::trace_log_scalar("cosyvoice3.flow.dit.rknn.aperture_budget_mib", budget_mib);
     }
 
     // The smallest engine that fits `frames`. The long-sequence engines are loaded on demand and
@@ -372,6 +379,20 @@ std::vector<float> CosyVoice3RknnFlow::run(
     (void)frames;
     throw std::runtime_error("CosyVoice3 flow estimator RKNN: built without ENGINE_ENABLE_RKNN");
 #endif
+}
+
+// The ceiling the ladder evicts to, read once per call: a board states its own aperture with
+// `AUDIOCPP_RKNN_APERTURE_MIB` in the spirit of `AUDIOCPP_RKNN_CORE_MASK`, and 0 (also the reading of
+// a malformed value, so a typo cannot silently mean one megabyte) turns the accounting off and pins
+// every rung the deployment declares.
+int64_t aperture_budget_mib() {
+    const char * const env = std::getenv("AUDIOCPP_RKNN_APERTURE_MIB");
+    if (env == nullptr) {
+        return kAperturePinBudgetMiB;
+    }
+    char * end = nullptr;
+    const long long value = std::strtoll(env, &end, 10);
+    return value > 0 && *end == '\0' ? static_cast<int64_t>(value) : 0;
 }
 
 }  // namespace engine::models::cosyvoice3

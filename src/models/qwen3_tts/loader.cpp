@@ -1,9 +1,12 @@
 #include "engine/models/qwen3_tts/loader.h"
 
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/io/json.h"
+#include "engine/framework/rknn/engine_resources.h"
 #include "engine/models/qwen3_tts/session.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <stdexcept>
 #include <utility>
 
@@ -147,6 +150,34 @@ public:
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
         return load_qwen3_tts_model(request.model_path);
+    }
+
+    runtime::ModelResourcePlan model_resources(
+        const std::filesystem::path & model_path,
+        const std::unordered_map<std::string, std::string> & session_options) const override {
+        runtime::ModelResourcePlan plan;
+        const auto option = session_options.find("qwen3_tts.exec_plan");
+        if (option == session_options.end()) {
+            return plan;
+        }
+        std::vector<std::string> paths;
+        try {
+            const auto value = io::json::parse(option->second);
+            const auto * decoder = value.find("speech_decoder");
+            const auto * impl = decoder ? decoder->find("impl") : nullptr;
+            if (!impl || impl->as_string() != "rknn") {
+                return plan;
+            }
+            const auto & artifacts = decoder->require("artifacts");
+            paths.push_back(io::json::require_string(artifacts, "main"));
+            if (const auto * first = artifacts.find("first")) {
+                paths.push_back(first->as_string());
+            }
+        } catch (const std::runtime_error &) {
+            // Session loading reports invalid execution plans.
+            return plan;
+        }
+        return rknn::engine_resources(paths, model_path);
     }
 };
 

@@ -1,7 +1,7 @@
 #include "model_memory.h"
 
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/framework/io/json.h"
+#include "engine/framework/runtime/registry.h"
 
 #include <filesystem>
 #include <functional>
@@ -54,6 +54,12 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
                 }
             }
         };
+    // The model reports final residency; its resource files must not be counted again as weights.
+    const auto resources = engine::runtime::make_default_registry().model_resources(
+        model.family, model.path, model.session_options);
+    for (const auto & requirement : resources.engines) {
+        counted.insert(std::filesystem::weakly_canonical(requirement.path));
+    }
     // Estimate only what the loader will actually read from model.path, so the
     // guard neither overestimates nor masks the loader's own error:
     //  - a single-file model contributes that file;
@@ -94,59 +100,9 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
     // is a directory, and against the model file's parent when it is a file.
     const std::filesystem::path aux_base =
         std::filesystem::is_directory(model.path, ec) ? model.path : model.path.parent_path();
-    for (const auto & [key, value] : model.session_options) {
-        // A compiled engine declared through an exec_plan is resident weight memory the loader
-        // reads, and the option's value is JSON, so the path scan below sees nothing: walk the
-        // artifact strings instead. A plan is declared per component role, and CosyVoice3's flow
-        // ladder packs several engines into one comma-separated value.
-        if (key.size() >= 10 && key.compare(key.size() - 10, 10, ".exec_plan") == 0) {
-            const auto plan = [](const std::string & option_value) -> engine::io::json::Value {
-                try {
-                    return engine::io::json::parse(option_value);
-                } catch (const std::exception &) {
-                    // The session reports a malformed plan itself; the guard stays silent.
-                    return {};
-                }
-            }(value);
-            if (!plan.is_object()) {
-                continue;
-            }
-            for (const auto & [_, component] : plan.as_object()) {
-                if (!component.is_object()) {
-                    continue;
-                }
-                const auto & members = component.as_object();
-                const auto artifacts = members.find("artifacts");
-                if (artifacts == members.end() || !artifacts->second.is_object()) {
-                    continue;
-                }
-                for (const auto & [_, artifact] : artifacts->second.as_object()) {
-                    if (!artifact.is_string()) {
-                        continue;
-                    }
-                    const std::string & declared = artifact.as_string();
-                    size_t start = 0;
-                    while (start <= declared.size()) {
-                        const auto end = declared.find(',', start);
-                        const auto stop = end == std::string::npos ? declared.size() : end;
-                        if (stop > start) {
-                            std::filesystem::path engine_path =
-                                std::filesystem::path(declared.substr(start, stop - start));
-                            if (engine_path.is_relative()) {
-                                engine_path = aux_base / engine_path;
-                            }
-                            add_file(engine_path);
-                        }
-                        if (end == std::string::npos) {
-                            break;
-                        }
-                        start = end + 1;
-                    }
-                }
-            }
-            continue;
-        }
-        std::filesystem::path aux(value);
+    for (const auto & option : model.session_options) {
+        // Only file-valued options contribute; opaque values are not interpreted here.
+        std::filesystem::path aux(option.second);
         if (aux.is_relative()) {
             aux = aux_base / aux;
         }
@@ -156,7 +112,8 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
     // KV state, plus a fixed floor for per-model bookkeeping.
     constexpr double kRuntimeOverheadFactor = 1.5;
     constexpr size_t kFixedOverhead = 128ull * 1024 * 1024;
-    return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead;
+    return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead +
+        resources.resident_bytes;
 }
 
 }  // namespace minitts::server
