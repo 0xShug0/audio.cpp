@@ -478,13 +478,20 @@
     {
       "format": "gguf",
       "roots": {
-        "model": "."
+        "model": ".",
+        "weights": "$gguf"
       },
       "files": {
         "model_config": "model:sidecars/yue2-model-config.json",
         "generation_config": "model:sidecars/yue2-generation-config.json",
         "tiktoken": "model:sidecars/yue2-qwen.tiktoken",
         "vae_config": "model:sidecars/yue2-vae-config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        }
       }
     },
     {

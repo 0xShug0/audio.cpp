@@ -86,6 +86,14 @@ leaks into the output.
 
 ### Converting checkpoints to GGUF
 
+For LoRA support, reconvert the matching original checkpoint with the current
+converter; do not use the currently published F5-TTS GGUF packages as the base.
+PEFT DiT adapters can then be loaded with `--session-option f5_tts.lora=<path>`.
+Keep `adapter_config.json` beside the adapter weights. The optional
+`f5_tts.lora_scale` multiplies alpha/r and defaults to `1`. Adapted weights and
+DiT graph caches are session-owned; the Vocos vocoder is not adapted.
+See the [LoRA routing table](../lora.md).
+
 `tools/community_models/convert_f5_tts.py` wraps `audiocpp_gguf` and produces one self-contained GGUF per
 checkpoint (`transformer` + `vocos` namespaces) plus the standalone vocoder package:
 

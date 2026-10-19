@@ -128,7 +128,12 @@ WeightAdapter read_weight_adapter(const std::filesystem::path & path, const Weig
     if (!std::isfinite(options.strength) || (options.scale_override && !std::isfinite(*options.scale_override))) {
         throw std::runtime_error("adapter strength and scale must be finite");
     }
-    const auto file = io::is_existing_directory(path) ? path / "adapter_model.safetensors" : path;
+    auto file = path;
+    if (io::is_existing_directory(path)) {
+        const auto resolved = find_tensor_file(path, "adapter_model");
+        if (!resolved) throw std::runtime_error("missing adapter_model checkpoint in " + path.string());
+        file = *resolved;
+    }
     const auto config_path = file.parent_path() / "adapter_config.json";
     const bool has_config = io::is_existing_file(config_path);
     const auto source = open_tensor_source(file);

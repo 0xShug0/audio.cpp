@@ -90,4 +90,8 @@ struct Qwen3TTSAssets {
 
 std::shared_ptr<const Qwen3TTSAssets> load_qwen3_tts_assets(const std::filesystem::path & model_path);
 
+std::shared_ptr<const Qwen3TTSAssets> apply_qwen3_tts_lora(
+    std::shared_ptr<const Qwen3TTSAssets> assets,
+    const std::unordered_map<std::string, std::string> & options);
+
 }  // namespace engine::models::qwen3_tts

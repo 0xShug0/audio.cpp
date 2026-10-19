@@ -1,6 +1,5 @@
 #include "engine/models/vibevoice/lora.h"
 
-#include "engine/framework/assets/torch_bin.h"
 #include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
@@ -35,19 +34,13 @@ std::filesystem::path resolve_adapter_dir(const std::filesystem::path & adapter_
     return adapter_path.parent_path();
 }
 
-// Opens the diffusion-head fine-tune weights, preferring safetensors over the pickled variants.
+// Preserve the upstream package locations; shared I/O selects the container.
 std::shared_ptr<const assets::TensorSource> open_diffusion_head_source(const std::filesystem::path & adapter_dir) {
-    const auto safetensors = adapter_dir / "diffusion_head" / "model.safetensors";
-    if (engine::io::is_existing_file(safetensors)) {
-        return assets::open_tensor_source(safetensors);
-    }
-    const auto bin = adapter_dir / "diffusion_head_full.bin";
-    if (engine::io::is_existing_file(bin)) {
-        return assets::open_torch_bin_tensor_source(bin);
-    }
-    const auto nested_bin = adapter_dir / "diffusion_head" / "diffusion_head_full.bin";
-    if (engine::io::is_existing_file(nested_bin)) {
-        return assets::open_torch_bin_tensor_source(nested_bin);
+    for (const auto * name : {"diffusion_head/model", "diffusion_head_full", "diffusion_head/diffusion_head_full"}) {
+        const auto logical = adapter_dir / name;
+        if (const auto file = assets::find_tensor_file(logical.parent_path(), logical.filename().string())) {
+            return assets::open_tensor_source(*file);
+        }
     }
     return nullptr;
 }
@@ -87,12 +80,12 @@ void add_connector_overrides(
     std::string_view base_prefix,
     const char * label,
     std::map<std::string, OverrideTensor> & overrides) {
-    const auto path = adapter_dir / subdir / "pytorch_model.bin";
-    if (!engine::io::is_existing_file(path)) {
+    const auto path = assets::find_tensor_file(adapter_dir / subdir, "pytorch_model");
+    if (!path) {
         log_line(std::string(label) + ": not present, skipped");
         return;
     }
-    const auto source = assets::open_torch_bin_tensor_source(path);
+    const auto source = assets::open_tensor_source(*path);
     const int count = add_full_overrides(base, *source, base_prefix, overrides);
     log_line(std::string(label) + ": overrode " + std::to_string(count) + " tensors");
 }

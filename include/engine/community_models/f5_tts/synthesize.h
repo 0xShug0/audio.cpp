@@ -27,6 +27,7 @@ struct F5SynthesisRequest {
     int threads = 0;  // 0 = hardware concurrency
     bool use_cuda = false;
     int cuda_device = 0;
+    std::shared_ptr<F5RuntimeState> runtime_state;
 };
 
 struct F5SynthesisResult {

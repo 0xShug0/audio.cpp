@@ -95,6 +95,8 @@ this is output streaming, not incremental text input.
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `fish_audio.mem_saver` | bool | `false` | Release cached AR runtime graphs after each request. |
+| `fish_audio.lora` | checkpoint file | not set | Prepared Fish Speech adapter. Slow/fast decoder projections and embeddings are supported; codec weights are unchanged. |
+| `fish_audio.lora_scale` | finite float | `1` | Multiplier for the adapter's alpha/r scaling. |
 | `fish_audio.reference_cache_slots` | integer | `1` | Prepared reference-audio cache slots. |
 | `fish_audio.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | AR matmul weight storage type. |
 | `fish_audio.codec_weight_type` | `native`, `f32`, `f16`, `q8_0` | `native` | Codec conv/matmul weight storage type. |
@@ -103,6 +105,15 @@ this is output streaming, not incremental text input.
 | `fish_audio.ar_weight_context_mb` | integer MiB >= 1 | `32` | AR weight context size. |
 | `fish_audio.codec_graph_arena_mb` | integer MiB >= 1 | `512` | Codec graph arena size. |
 | `fish_audio.codec_weight_context_mb` | integer MiB >= 1 | `32` | Codec weight context size. |
+
+To prepare a Fish Speech Lightning checkpoint, use its training alpha (not alpha/r):
+
+```bash
+python tools/lora/prepare_fish_audio_adapter.py --input lora.ckpt --alpha 16 --output adapter.safetensors
+```
+
+The exporter transposes embedding factors to the runtime's matrix convention and
+stores alpha with every target. Use an adapter trained for the exact base checkpoint.
 
 ## Multi-Reference Conditioning
 

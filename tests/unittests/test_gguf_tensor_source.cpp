@@ -1,5 +1,6 @@
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/safetensors.h"
@@ -7,6 +8,7 @@
 #include "test_assert.h"
 
 #include <cstring>
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
@@ -532,6 +534,62 @@ void test_malformed_embedded_sidecars_are_rejected_by_the_name_reader() {
     std::filesystem::remove_all(root);
 }
 
+void test_weight_adapter_conversion() {
+    using namespace engine;
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp_gguf_adapter_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    const auto original = root / "original.safetensors";
+    io::write_safetensors_file(original, {
+        {"projection.weight", "F32", {2, 32}, bytes_for(std::vector<float>(64, 0.25F))},
+        {"untouched.weight", "F32", {2, 32}, bytes_for(std::vector<float>(64, 0.5F))},
+        {"step", "F32", {}, bytes_for(std::vector<float>{42.0F})},
+    });
+    const auto base_path = root / "base.gguf";
+    assets::convert_tensor_sources_to_gguf({{original, ""}}, base_path, assets::TensorStorageType::F16,
+        false, false);
+    const auto base = assets::open_tensor_source(base_path);
+    const auto original_bytes = base->require_tensor_data("projection.weight").bytes;
+    auto adapter = std::make_shared<assets::WeightAdapter>();
+    adapter->updates.emplace("projection.weight", assets::WeightUpdate{
+        assets::LowRankWeightUpdate{std::vector<float>(32, 0.5F), {1.0F, -1.0F}, 1, 32, 2},
+        0.5F, assets::WeightMergeMode::DeltaF32});
+    const auto overlay = assets::make_weight_adapter_source(base, *adapter);
+    int index = 0;
+    for (auto type : {assets::TensorStorageType::Native, assets::TensorStorageType::F16,
+                     assets::TensorStorageType::BF16, assets::TensorStorageType::Q8_0}) {
+        assets::GgufConversionOptions options;
+        options.weight_adapter = adapter;
+        const auto output = root / (std::to_string(index++) + ".gguf");
+        assets::convert_tensor_sources_to_gguf({{base_path, ""}}, output, type, false, false,
+            {}, {}, std::nullopt, options);
+        const auto actual = assets::open_tensor_source(output);
+        test::require(actual->require_tensor_data("step").bytes == base->require_tensor_data("step").bytes,
+            "Adapter conversion must preserve untouched scalar metadata");
+        for (const auto & name : {"projection.weight", "untouched.weight"}) {
+            const auto expected = overlay->require_tensor(name, type, {2, 32});
+            test::require(actual->require_tensor_data(name).bytes == expected.bytes,
+                "GGUF adapter must merge before dtype conversion, including orig");
+        }
+    }
+    test::require(base->require_tensor_data("projection.weight").bytes == original_bytes,
+        "GGUF adapter conversion changed base weights");
+    auto replacement = std::make_shared<assets::WeightAdapter>();
+    replacement->replacements.emplace("projection.weight",
+        assets::WeightReplacement{{2, 32}, std::vector<float>(64, 0.1001F)});
+    assets::GgufConversionOptions replacement_options;
+    replacement_options.weight_adapter = replacement;
+    replacement_options.weight_adapter_merge_mode = assets::WeightMergeMode::RoundedBF16Delta;
+    const auto replacement_path = root / "replacement.gguf";
+    assets::convert_tensor_sources_to_gguf({{base_path, ""}}, replacement_path,
+        assets::TensorStorageType::F32, false, false, {}, {}, std::nullopt, replacement_options);
+    const auto rounded = assets::open_tensor_source(replacement_path)->require_f32("projection.weight");
+    const float want = ggml_bf16_to_fp32(ggml_fp32_to_bf16(0.1001F));
+    test::require(std::all_of(rounded.begin(), rounded.end(), [want](float value) { return value == want; }),
+        "Replacement-only export must retain the selected BF16 merge policy");
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -546,6 +604,7 @@ int main() {
         test_release_named_gguf_directory_selects_the_gguf_source();
         test_package_spec_errors_name_selected_spec();
         test_malformed_embedded_sidecars_are_rejected_by_the_name_reader();
+        test_weight_adapter_conversion();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;
