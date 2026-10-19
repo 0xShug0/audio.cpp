@@ -1,9 +1,10 @@
-#include "engine/framework/assets/lora_tensor_source.h"
+#include "engine/framework/assets/weight_adapter.h"
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -16,22 +17,52 @@ namespace {
 constexpr int64_t kParallelLoraMergeWorkItems = 1ll << 20;
 #endif
 
-struct LoraMergeResult {
+struct WeightMergeResult {
     std::vector<float> values;
     double base_read_ms = 0.0;
     double compute_ms = 0.0;
 };
 
-LoraMergeResult merged_f32_values(
+std::vector<int64_t> update_shape(const WeightUpdate & update) {
+    if (const auto * low = std::get_if<LowRankWeightUpdate>(&update.factors)) return {low->out, low->in};
+    const auto & kron = std::get<KroneckerWeightUpdate>(update.factors);
+    return {kron.left_rows * kron.right_rows, kron.left_cols * kron.right_cols};
+}
+
+WeightMergeResult merged_f32_values(
     const TensorSource & base,
     const std::string & name,
-    const LoraTensorDelta & delta) {
+    const WeightUpdate & update) {
     const auto base_read_started = std::chrono::steady_clock::now();
-    auto values = base.require_f32(name, std::optional<std::vector<int64_t>>({delta.out, delta.in}));
+    auto values = base.require_f32(name, update_shape(update));
     const double base_read_ms = engine::debug::elapsed_ms(base_read_started);
     // values[o, i] += scale * sum_k B[o, k] * A[k, i]
     const auto compute_started = std::chrono::steady_clock::now();
-    if (delta.merge_mode == LoraMergeMode::RoundedBF16Delta) {
+    const auto * low = std::get_if<LowRankWeightUpdate>(&update.factors);
+    if (low == nullptr) {
+        const auto & kron = std::get<KroneckerWeightUpdate>(update.factors);
+        const auto rows = kron.left_rows * kron.right_rows;
+        const auto cols = kron.left_cols * kron.right_cols;
+        #ifdef _OPENMP
+        #pragma omp parallel for if(rows * cols >= kParallelLoraMergeWorkItems) schedule(static)
+        #endif
+        for (int64_t o = 0; o < rows; ++o) {
+            for (int64_t i = 0; i < cols; ++i) {
+                float delta = update.scale * (
+                    kron.left[(o / kron.right_rows) * kron.left_cols + i / kron.right_cols] *
+                    kron.right[(o % kron.right_rows) * kron.right_cols + i % kron.right_cols]);
+                if (update.merge_mode == WeightMergeMode::RoundedBF16Delta) {
+                    delta = ggml_bf16_to_fp32(ggml_fp32_to_bf16(delta));
+                    values[o * cols + i] = ggml_bf16_to_fp32(ggml_fp32_to_bf16(values[o * cols + i] + delta));
+                } else {
+                    values[o * cols + i] += delta;
+                }
+            }
+        }
+        return {std::move(values), base_read_ms, engine::debug::elapsed_ms(compute_started)};
+    }
+    const auto & delta = *low;
+    if (update.merge_mode != WeightMergeMode::RankWiseF32) {
         std::vector<float> product(values.size(), 0.0F);
         #ifdef _OPENMP
         const int64_t merge_work_items = delta.out * delta.in * delta.r;
@@ -45,8 +76,13 @@ LoraMergeResult merged_f32_values(
                 for (int64_t i = 0; i < delta.in; ++i) product[row + i] += b * a[i];
             }
             for (int64_t i = 0; i < delta.in; ++i) {
-                const float update = ggml_bf16_to_fp32(ggml_fp32_to_bf16(delta.scale * product[row + i]));
-                values[row + i] = ggml_bf16_to_fp32(ggml_fp32_to_bf16(values[row + i] + update));
+                const float scaled = update.scale * product[row + i];
+                if (update.merge_mode == WeightMergeMode::RoundedBF16Delta) {
+                    const float rounded = ggml_bf16_to_fp32(ggml_fp32_to_bf16(scaled));
+                    values[row + i] = ggml_bf16_to_fp32(ggml_fp32_to_bf16(values[row + i] + rounded));
+                } else {
+                    values[row + i] += scaled;
+                }
             }
         }
         return {std::move(values), base_read_ms, engine::debug::elapsed_ms(compute_started)};
@@ -58,7 +94,7 @@ LoraMergeResult merged_f32_values(
     for (int64_t o = 0; o < delta.out; ++o) {
         const int64_t row = o * delta.in;
         for (int64_t k = 0; k < delta.r; ++k) {
-            const float b = delta.scale * delta.b[static_cast<size_t>(o * delta.r + k)];
+            const float b = update.scale * delta.b[static_cast<size_t>(o * delta.r + k)];
             if (b == 0.0F) {
                 continue;
             }
@@ -68,22 +104,21 @@ LoraMergeResult merged_f32_values(
             }
         }
     }
-    return LoraMergeResult{std::move(values), base_read_ms, engine::debug::elapsed_ms(compute_started)};
+    return WeightMergeResult{std::move(values), base_read_ms, engine::debug::elapsed_ms(compute_started)};
 }
 
 // A weight source that overlays a fine-tune adapter onto a base source: full overrides replace a
-// base tensor outright, LoRA deltas add B*A to it, everything else falls through to the base.
-class LoraTensorSource final : public TensorSource {
+// base tensor outright, updates merge into it, and untouched tensors pass through.
+class WeightAdapterSource final : public TensorSource {
 public:
-    LoraTensorSource(
+    WeightAdapterSource(
         std::shared_ptr<const TensorSource> base,
-        std::unordered_map<std::string, LoraTensorDelta> deltas,
-        std::unordered_map<std::string, TensorOverride> overrides,
+        WeightAdapter adapter,
         std::string log_prefix,
         bool cache_backend_weights)
         : base_(std::move(base)),
-          deltas_(std::move(deltas)),
-          overrides_(std::move(overrides)), log_prefix_(std::move(log_prefix)),
+          deltas_(std::move(adapter.updates)),
+          overrides_(std::move(adapter.replacements)), log_prefix_(std::move(log_prefix)),
           cache_backend_weights_(cache_backend_weights) {}
 
     const std::filesystem::path & source_path() const noexcept override {
@@ -120,7 +155,7 @@ public:
         }
         auto merged = merged_f32_values(*base_, key, delta->second);
         record_decoder_merge(merged.base_read_ms, merged.compute_ms, merged.values.size());
-        return raw_from_f32(key, {delta->second.out, delta->second.in}, merged.values);
+        return raw_from_f32(key, update_shape(delta->second), merged.values);
     }
 
     void set_backend_tensor(
@@ -145,7 +180,7 @@ public:
             base_->set_backend_tensor(tensor, name, storage_type, expected_shape);
             return;
         }
-        if (expected_shape != std::vector<int64_t>({delta->second.out, delta->second.in})) {
+        if (expected_shape != update_shape(delta->second)) {
             throw std::runtime_error("tensor shape mismatch for " + key);
         }
         std::unique_lock<std::mutex> lock(upload_cache_mutex_, std::defer_lock);
@@ -297,8 +332,8 @@ private:
     }
 
     std::shared_ptr<const TensorSource> base_;
-    std::unordered_map<std::string, LoraTensorDelta> deltas_;
-    std::unordered_map<std::string, TensorOverride> overrides_;
+    std::map<std::string, WeightUpdate> deltas_;
+    std::map<std::string, WeightReplacement> overrides_;
     std::string log_prefix_;
     bool cache_backend_weights_;
     mutable std::mutex upload_cache_mutex_;
@@ -323,53 +358,38 @@ private:
 
 }  // namespace
 
-LoraTensorDelta load_lora_tensor_delta(
-    const TensorSource & base, const TensorSource & adapter,
-    const std::string & base_name, const std::string & a_name,
-    const std::string & b_name, float scale) {
-    const auto a_meta = adapter.require_metadata(a_name);
-    const auto b_meta = adapter.require_metadata(b_name);
-    if (a_meta.shape.size() != 2 || b_meta.shape.size() != 2) {
-        throw std::runtime_error("LoRA A/B tensors must be rank-2: " + base_name);
-    }
-    LoraTensorDelta delta;
-    delta.r = a_meta.shape[0];
-    delta.in = a_meta.shape[1];
-    delta.out = b_meta.shape[0];
-    delta.scale = scale;
-    if (b_meta.shape[1] != delta.r) {
-        throw std::runtime_error("LoRA A/B rank mismatch for " + base_name);
-    }
-    if (base.require_metadata(base_name).shape != std::vector<int64_t>({delta.out, delta.in})) {
-        throw std::runtime_error(
-            "LoRA shape mismatch for " + base_name + " (adapter is trained for a different model size)");
-    }
-    delta.a = adapter.require_f32(a_name, std::optional<std::vector<int64_t>>({delta.r, delta.in}));
-    delta.b = adapter.require_f32(b_name, std::optional<std::vector<int64_t>>({delta.out, delta.r}));
-    return delta;
-}
-
-std::shared_ptr<const TensorSource> make_lora_tensor_source(
+std::shared_ptr<const TensorSource> make_weight_adapter_source(
     std::shared_ptr<const TensorSource> base,
-    std::unordered_map<std::string, LoraTensorDelta> deltas,
-    std::unordered_map<std::string, TensorOverride> overrides,
+    WeightAdapter adapter,
     std::string log_prefix,
     bool cache_backend_weights) {
     if (!base) {
-        throw std::runtime_error("LoRA overlay requires a base tensor source");
+        throw std::runtime_error("weight adapter requires a base tensor source");
     }
-    if (deltas.empty() && overrides.empty()) {
+    if (adapter.updates.empty() && adapter.replacements.empty()) {
         return base;
     }
-    for (const auto & [name, delta] : deltas) {
-        if (delta.r <= 0 || delta.in <= 0 || delta.out <= 0 ||
-            delta.a.size() % delta.r != 0 || delta.a.size() / delta.r != static_cast<size_t>(delta.in) ||
-            delta.b.size() % delta.r != 0 || delta.b.size() / delta.r != static_cast<size_t>(delta.out)) {
-            throw std::runtime_error("LoRA A/B dimensions or values mismatch for " + name);
+    for (const auto & [name, update] : adapter.updates) {
+        if (!std::isfinite(update.scale)) throw std::runtime_error("adapter scale is not finite: " + name);
+        if (const auto * low = std::get_if<LowRankWeightUpdate>(&update.factors)) {
+            if (low->r <= 0 || low->in <= 0 || low->out <= 0 ||
+                low->a.size() % low->r != 0 || low->a.size() / low->r != static_cast<size_t>(low->in) ||
+                low->b.size() % low->r != 0 || low->b.size() / low->r != static_cast<size_t>(low->out)) {
+                throw std::runtime_error("adapter A/B dimensions or values mismatch for " + name);
+            }
+        } else {
+            const auto & k = std::get<KroneckerWeightUpdate>(update.factors);
+            if (k.left_rows <= 0 || k.left_cols <= 0 || k.right_rows <= 0 || k.right_cols <= 0 ||
+                k.left.size() / k.left_rows != static_cast<size_t>(k.left_cols) || k.left.size() % k.left_rows != 0 ||
+                k.right.size() / k.right_rows != static_cast<size_t>(k.right_cols) || k.right.size() % k.right_rows != 0 ||
+                k.left_rows > std::numeric_limits<int64_t>::max() / k.right_rows ||
+                k.left_cols > std::numeric_limits<int64_t>::max() / k.right_cols) {
+                throw std::runtime_error("adapter LoKr dimensions or values mismatch for " + name);
+            }
         }
-        require_tensor_shape(*base, name, {delta.out, delta.in});
+        require_tensor_shape(*base, name, update_shape(update));
     }
-    for (const auto & [name, tensor] : overrides) {
+    for (const auto & [name, tensor] : adapter.replacements) {
         require_tensor_shape(*base, name, tensor.shape);
         size_t count = 1;
         for (const auto dim : tensor.shape) {
@@ -382,8 +402,8 @@ std::shared_ptr<const TensorSource> make_lora_tensor_source(
             throw std::runtime_error("override value count mismatch for " + name);
         }
     }
-    return std::make_shared<LoraTensorSource>(
-        std::move(base), std::move(deltas), std::move(overrides), std::move(log_prefix), cache_backend_weights);
+    return std::make_shared<WeightAdapterSource>(
+        std::move(base), std::move(adapter), std::move(log_prefix), cache_backend_weights);
 }
 
 }  // namespace engine::assets

@@ -36,6 +36,7 @@
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
   import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
+  import AceStepPanel from '$lib/models/ace_step/AceStepPanel.svelte';
   import type { PanelRunner } from '$lib/models/panel_runner';
   import { prepareLiveAvatarOutput } from '$lib/models/liveavatar/video';
   import Arena from './Arena.svelte';
@@ -300,7 +301,11 @@
 
   function setParameterValue(spec: ParamSpec, value: unknown) {
     advancedValues = { ...advancedValues, [spec.name]: value };
-    if (['auk', 'yue2', 'liveavatar', 'fish_drama3'].includes(selected?.family || '') && spec.scope === 'session') {
+    if (selected?.family === 'ace_step' && spec.name === 'lora' && value === '') {
+      importedSessionOptions = { ...importedSessionOptions };
+      delete importedSessionOptions['ace_step.lora'];
+    }
+    if (['auk', 'yue2', 'liveavatar', 'fish_drama3', 'ace_step'].includes(selected?.family || '') && spec.scope === 'session') {
       isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
         modelMatchesSelectedPackage(model, selected));
     }
@@ -506,6 +511,8 @@
     modelMatchesSelectedPackage(model, selected));
   $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family, selected?.task);
   $: modelStudioPanel = modelStudioPanelConfig?.component;
+  $: genericParamSpecs = selected?.family === 'ace_step'
+    ? paramSpecs.filter((spec) => !['lora', 'lora_scale'].includes(spec.name)) : paramSpecs;
   $: replacesGenericControls = (modelStudioPanelConfig?.replacesGenericControls || noGenericControlReplacements) as GenericControlReplacements;
   $: usesYue2Request = modelStudioPanelConfig?.requestMode === 'yue2';
   $: usesPanelRequest = modelStudioPanelConfig?.requestMode === 'panel';
@@ -1129,6 +1136,12 @@
       !(['vibevoice', 'moss_ttsd'].includes(selected?.family) && spec.name === 'voice_samples') &&
       !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
+    if (selected?.family === 'ace_step' && isConfiguredEntry(selected)) {
+      const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
+      advancedValues = { ...advancedValues,
+        lora: configured?.['ace_step.lora'] ?? '',
+        lora_scale: Number(configured?.['ace_step.lora_scale'] ?? 1) };
+    }
     if (selected?.family in asrTokenDefaults) asrMaxTokens = asrTokenDefaults[selected.family];
     if (selected?.family === 'confucius4_r2t2') language = 'Auto';
     else if (['owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'smart_turn', 'reuse', 'sidon', 'hviske_asr_v6', 'voxtral_tts'].includes(selected?.family)) language = '';
@@ -1164,6 +1177,8 @@
     advancedJson = '{}';
   }
 
+  let configuredSelectionInitialized = false;
+
   function syncConfiguredSelection() {
     if (!server || server.ui_management) return;
     const entries = configuredCatalogEntries();
@@ -1173,7 +1188,8 @@
     }
     const current = selectedId ? entries.find((entry) => entry.id === selectedId) : undefined;
     const next = current || entries[0];
-    if (selectedId !== next.id) {
+    const initialize = !configuredSelectionInitialized || selectedId !== next.id;
+    if (initialize) {
       quickStartVoice = '';
       configuredVoices = [];
     }
@@ -1183,9 +1199,12 @@
     workflowSelections = { ...workflowSelections, [activeWorkflow]: next.id };
     modelPath = next.path;
     installed = true;
-    chunkBudget = defaultChunkBudget(next.family);
     localStorage.setItem('audiocpp.ui.model', next.id);
-    resetParams();
+    if (initialize) {
+      chunkBudget = defaultChunkBudget(next.family);
+      resetParams();
+    }
+    configuredSelectionInitialized = true;
   }
 
   async function refresh() {
@@ -1420,74 +1439,6 @@
       options['auk.variant'] = generator.startsWith('auk-flash-') ? 'flash' : 'base';
     }
     return options;
-  }
-
-  function base64Text(value: string): string {
-    const binary = atob(value);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    return new TextDecoder().decode(bytes);
-  }
-
-  function acePlanFromResult(result: Record<string, unknown>): Record<string, unknown> {
-    if (Array.isArray(result.artifacts)) {
-      const artifact = result.artifacts.find((entry): entry is { id: string; payload: string } =>
-        typeof entry === 'object' && entry !== null &&
-          (entry as { id?: unknown }).id === 'ace_step_caption_plan' &&
-          typeof (entry as { payload?: unknown }).payload === 'string');
-      if (artifact) return JSON.parse(base64Text(artifact.payload));
-    }
-    if (typeof result.text === 'string') return { caption: result.text };
-    return {};
-  }
-
-  async function rewriteAceCaption() {
-    if (selected?.family !== 'ace_step' || running || rewritingCaption) return;
-    if (!text.trim() && !lyrics.trim()) {
-      status = 'Enter a caption or lyrics to rewrite.';
-      warningStatus = status;
-      errorStatus = '';
-      return;
-    }
-    rewritingCaption = true;
-    warningStatus = '';
-    errorStatus = '';
-    status = tr('request.rewritingCaption');
-    try {
-      await ensureLoaded();
-      const options = { ...requestOptions(), rewrite_caption: true };
-      const request: Record<string, unknown> = {
-        text,
-        seed: resolveRequestSeed(seed),
-        duration_seconds: duration,
-        options
-      };
-      if (language.trim()) request.language = language;
-      if (lyrics.trim()) request.lyrics = lyrics;
-      const result = await runTask({ model: selected.id, request });
-      const plan = acePlanFromResult(result);
-      if (typeof plan.caption === 'string' && plan.caption.trim()) text = plan.caption;
-      if (typeof plan.language === 'string' && plan.language.trim()) language = plan.language;
-      if (typeof plan.duration_seconds === 'number' && Number.isFinite(plan.duration_seconds) && plan.duration_seconds > 0) {
-        duration = plan.duration_seconds;
-      }
-      const nextAdvanced = { ...advancedValues };
-      if (typeof plan.bpm === 'number' && Number.isFinite(plan.bpm)) nextAdvanced.bpm = plan.bpm;
-      if (typeof plan.keyscale === 'string') nextAdvanced.keyscale = plan.keyscale;
-      if (typeof plan.timesignature === 'string') nextAdvanced.timesignature = plan.timesignature;
-      advancedValues = nextAdvanced;
-      outputText = typeof result.text === 'string' ? result.text : '';
-      outputJson = JSON.stringify(plan, null, 2);
-      status = 'Caption rewritten.';
-    } catch (error) {
-      status = error instanceof Error ? error.message : String(error);
-      errorStatus = status;
-      log(`Caption rewrite failed: ${status}`);
-    } finally {
-      rewritingCaption = false;
-    }
   }
 
   function clearOutput() {
@@ -2001,7 +1952,7 @@
   }
 
   async function run() {
-    if (running || modelPanelUploading || restoringHistory) return;
+    if (running || rewritingCaption || modelPanelUploading || restoringHistory) return;
     if (!selectedId) {
       status = 'Choose an installed model before running a request.';
       warningStatus = status;
@@ -2789,7 +2740,13 @@
           </div>
         {/if}
 
-        {#if modelStudioPanel}
+        {#if selected.family === 'ace_step'}
+          <AceStepPanel modelId={selected.id} bind:text bind:lyrics bind:language bind:duration
+            {seed} busy={running || loadingModel} bind:rewritingCaption bind:advancedValues
+            adapterEditable={server?.ui_management === true && !isConfiguredEntry(selected)}
+            {paramSpecs} bind:outputText bind:outputJson bind:status bind:warningStatus bind:errorStatus
+            {ensureLoaded} {requestOptions} {resolveRequestSeed} {setParameterValue} {log} {tr} />
+        {:else if modelStudioPanel}
           <svelte:component
               this={modelStudioPanel}
               task={selected.task}
@@ -2825,16 +2782,6 @@
           <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
           <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
             aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
-        {/if}
-        {#if selected.task === 'gen'}
-          {#if selected.family === 'ace_step'}
-            <div class="media-actions">
-              <button type="button" disabled={running || rewritingCaption || (!text.trim() && !lyrics.trim())}
-                on:click={rewriteAceCaption}>
-                {rewritingCaption ? tr('request.rewritingCaption') : tr('request.rewriteCaption')}
-              </button>
-            </div>
-          {/if}
         {/if}
 
         {#if selected.task === 'asr' && !['samsone', 'audio_flamingo', 'index_echo'].includes(selected.family)}
@@ -3060,11 +3007,11 @@
           </div>
         {/if}
 
-        {#if paramSpecs.length && !replacesGenericControls.params}
+        {#if genericParamSpecs.length && !replacesGenericControls.params}
           <details>
-            <summary>{tr('options.modelParameters')} <span>{paramSpecs.length}</span></summary>
+            <summary>{tr('options.modelParameters')} <span>{genericParamSpecs.length}</span></summary>
             <div class="parameter-grid">
-              {#each paramSpecs as spec}
+              {#each genericParamSpecs as spec}
                 <div class:wide={spec.type === 'text'}>
                   <label for={'param-' + spec.name}>{localizedParameterText(spec, 'label', tr)}</label>
                   {#if spec.type === 'bool'}
@@ -3109,7 +3056,7 @@
         {/if}
 
         <div class="runbar">
-          <button class="run" disabled={!selectedId || running || restoringHistory || modelPanelUploading || (!isLoaded && installed === false)} on:click={run}
+          <button class="run" disabled={!selectedId || running || rewritingCaption || restoringHistory || modelPanelUploading || (!isLoaded && installed === false)} on:click={run}
             title={!selectedId ? tr('run.chooseModel') : !isLoaded && installed === false ? tr('run.installModel') : ''}>
             <span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>
