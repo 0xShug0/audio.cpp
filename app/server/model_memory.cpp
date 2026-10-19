@@ -100,14 +100,14 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
         // artifact strings instead. A plan is declared per component role, and CosyVoice3's flow
         // ladder packs several engines into one comma-separated value.
         if (key.size() >= 10 && key.compare(key.size() - 10, 10, ".exec_plan") == 0) {
-            const auto plan = [&]() -> engine::io::json::Value {
+            const auto plan = [](const std::string & option_value) -> engine::io::json::Value {
                 try {
-                    return engine::io::json::parse(value);
+                    return engine::io::json::parse(option_value);
                 } catch (const std::exception &) {
                     // The session reports a malformed plan itself; the guard stays silent.
                     return {};
                 }
-            }();
+            }(value);
             if (!plan.is_object()) {
                 continue;
             }
