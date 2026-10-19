@@ -270,7 +270,7 @@ struct CosyVoice3RknnFlow::Impl {
             throw std::runtime_error(std::string(kLabel) + ": no engine paths given");
         }
         // The board states its own ceiling; 0 means pin every rung the deployment declares.
-        const int64_t budget_mib = rknn_aperture_budget_mib();
+        const int64_t budget_mib = aperture_budget_mib();
         budget_ = engine::rknn::ApertureBudget(
             budget_mib > 0 ? budget_mib : std::numeric_limits<int64_t>::max());
         debug::trace_log_scalar("cosyvoice3.flow.dit.rknn.aperture_budget_mib", budget_mib);
@@ -385,7 +385,7 @@ std::vector<float> CosyVoice3RknnFlow::run(
 // `AUDIOCPP_RKNN_APERTURE_MIB` in the spirit of `AUDIOCPP_RKNN_CORE_MASK`, and 0 (also the reading of
 // a malformed value, so a typo cannot silently mean one megabyte) turns the accounting off and pins
 // every rung the deployment declares.
-int64_t rknn_aperture_budget_mib() {
+int64_t aperture_budget_mib() {
     const char * const env = std::getenv("AUDIOCPP_RKNN_APERTURE_MIB");
     if (env == nullptr) {
         return kAperturePinBudgetMiB;
