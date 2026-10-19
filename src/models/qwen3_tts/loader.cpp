@@ -170,8 +170,10 @@ public:
             }
             const auto & artifacts = decoder->require("artifacts");
             paths.push_back(io::json::require_string(artifacts, "main"));
-            if (const auto * first = artifacts.find("first")) {
-                paths.push_back(first->as_string());
+            for (const char * const role : {"first", "window"}) {
+                if (const auto * artifact = artifacts.find(role)) {
+                    paths.push_back(artifact->as_string());
+                }
             }
         } catch (const std::runtime_error &) {
             // Session loading reports invalid execution plans.

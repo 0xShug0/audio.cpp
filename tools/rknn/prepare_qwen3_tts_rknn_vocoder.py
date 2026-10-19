@@ -307,6 +307,9 @@ def export_onnx(args):
         return None
 
     out = args.output or f"vocoder_stateful_{B}.onnx"
+    if out.endswith(".rknn"):
+        # --output names the compiled engine; the ONNX lands beside it.
+        out = os.path.splitext(out)[0] + ".onnx"
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     dummy_c = torch.randint(0, 2048, (1, 16, B), dtype=torch.int64)
     dummy_cache = torch.zeros(step.cache_numel, dtype=torch.float32)

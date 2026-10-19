@@ -337,7 +337,7 @@ Qwen3TTSSession::Qwen3TTSSession(
         "qwen3_tts.exec_plan",
         {{"speech_decoder", "ggml",
           {{"ggml", {options.backend.type}, {}, {}},
-           {"rknn", {}, {"main"}, {"first"}}}}});
+           {"rknn", {}, {"main"}, {"first", "window"}}}}});
     const auto & decoder_plan = exec_plan.at("speech_decoder");
     if (decoder_plan.impl == "rknn") {
         const auto & model_dir = assets_->resources.model_directory();
@@ -345,6 +345,10 @@ Qwen3TTSSession::Qwen3TTSSession(
             decoder_plan.artifacts.at("main"), model_dir);
         if (const auto first = decoder_plan.artifacts.find("first"); first != decoder_plan.artifacts.end()) {
             rknn_decoder_.first_model_path = engine::rknn::resolve_engine_path(first->second, model_dir);
+        }
+        if (const auto window = decoder_plan.artifacts.find("window");
+            window != decoder_plan.artifacts.end()) {
+            rknn_decoder_.window_path = engine::rknn::resolve_engine_path(window->second, model_dir);
         }
     }
     if (perf_mode_ == Qwen3TTSPerfMode::FlashAttention &&

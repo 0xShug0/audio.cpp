@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -136,6 +137,11 @@ struct RknnSpeechDecoder::Impl {
 
     Step main;
     Step first;
+    // Streaming window engine: a stateful export run at a zeroed cache so each
+    // call is a full decode over its whole input. It may be the main model's
+    // file itself, which is aliased rather than loaded a second time.
+    Step window;
+    bool window_from_main = false;
     int64_t num_quantizers = 0;
     int64_t kv_len = 0;
     std::vector<float> inv_freq;
@@ -211,6 +217,7 @@ void RknnSpeechDecoder::Impl::voice(
 RknnSpeechDecoder::RknnSpeechDecoder(
     const std::string & model_path,
     const std::string & first_model_path,
+    const std::string & window_path,
     int64_t num_quantizers,
     int64_t head_dim,
     int64_t sliding_window,
@@ -237,14 +244,36 @@ RknnSpeechDecoder::RknnSpeechDecoder(
             throw std::runtime_error("Qwen3 speech decoder RKNN: first-group cache size differs from the main model");
         }
     }
+    if (!window_path.empty()) {
+        // Files are compared, not strings: the residency accounting canonicalizes paths
+        // (`engine_resources`), so a string comparison here lets the same file spelled two
+        // ways load two contexts and be counted as one.
+        std::error_code ec;
+        if (std::filesystem::equivalent(window_path, model_path, ec)) {
+            // The main engine voices the windows too (its B covers the default
+            // 25 + 12): one resident context, not two.
+            impl_->window_from_main = true;
+        } else {
+            impl_->window.load(window_path, num_quantizers, head_dim / 2);
+            if (impl_->window.cache_numel != impl_->main.cache_numel) {
+                throw std::runtime_error("Qwen3 speech decoder RKNN: window cache size differs from the main model");
+            }
+        }
+    }
     debug::timing_log_scalar("qwen3_tts.speech_decoder.rknn.group", impl_->main.group);
     debug::timing_log_scalar(
         "qwen3_tts.speech_decoder.rknn.first_group",
         impl_->first.engine.loaded() ? impl_->first.group : 0);
+    debug::timing_log_scalar(
+        "qwen3_tts.speech_decoder.rknn.window_group",
+        impl_->window_from_main
+            ? impl_->main.group
+            : (impl_->window.engine.loaded() ? impl_->window.group : 0));
     debug::timing_log_scalar("qwen3_tts.speech_decoder.rknn.cache_numel", impl_->main.cache_numel);
 #else
     (void)model_path;
     (void)first_model_path;
+    (void)window_path;
     (void)num_quantizers;
     (void)head_dim;
     (void)sliding_window;
@@ -321,6 +350,56 @@ std::vector<float> RknnSpeechDecoder::step(
         throw std::runtime_error("Qwen3 speech decoder RKNN: invalid streaming codec shape");
     }
     std::vector<float> out;
+    // Windowed streaming: voice the whole [context + new] window on the
+    // fixed-shape engine from a zeroed cache — a standalone full decode over
+    // the window, the function the ggml streaming path computes per chunk,
+    // context re-voiced every event — and drop the context's audio. Nothing is
+    // buffered, so flush voices nothing.
+    if (s.window_from_main || s.window.engine.loaded()) {
+        if (codes == nullptr || flush) {
+            return out;
+        }
+        const int64_t total = context_frames + new_frames;
+        // The context-free first window rides the small first-group engine:
+        // fewer frames per step is the audio the listener waits for.
+        Impl::Step & voice_step =
+            s.first.engine.loaded() && context_frames == 0 && total <= s.first.group
+            ? s.first
+            : (s.window_from_main ? s.main : s.window);
+        if (total > voice_step.group) {
+            throw std::runtime_error(
+                "Qwen3 speech decoder RKNN: window of " + std::to_string(total) +
+                " frames exceeds the " + std::to_string(voice_step.group) + "-frame window engine");
+        }
+        std::vector<int64_t> fed(static_cast<size_t>(s.num_quantizers) * voice_step.group, 0);
+        for (int64_t frame = 0; frame < total; ++frame) {
+            for (int64_t g = 0; g < s.num_quantizers; ++g) {
+                fed[static_cast<size_t>(g * voice_step.group + frame)] = codes[frame * num_quantizers + g];
+            }
+        }
+        // RoPE positions restart at 0 every window: each event is a full decode
+        // of its own window, not a continuation of the last one.
+        std::vector<float> freqs(static_cast<size_t>(voice_step.group * voice_step.freqs_width), 0.0F);
+        for (int64_t frame = 0; frame < total; ++frame) {
+            for (int64_t i = 0; i < voice_step.freqs_width; ++i) {
+                freqs[static_cast<size_t>(frame * voice_step.freqs_width + i)] = static_cast<float>(
+                    std::fmod(static_cast<double>(frame) * s.inv_freq[static_cast<size_t>(i)], 2.0 * M_PI));
+            }
+        }
+        std::vector<float> audio;
+        std::vector<float> cache_out;
+        const auto start = Clock::now();
+        voice_step.run(fed.data(), freqs.data(), 0.0F, s.cache.data(), audio, cache_out);
+        s.compute_ms += std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+        ++s.steps;
+        const int64_t keep = total * kSamplesPerToken;
+        const int64_t drop = context_frames * kSamplesPerToken;
+        if (keep > static_cast<int64_t>(audio.size())) {
+            throw std::runtime_error("Qwen3 speech decoder RKNN: window engine returned a short waveform");
+        }
+        out.assign(audio.begin() + drop, audio.begin() + keep);
+        return out;
+    }
     // The window carries left context, and a stateful model cannot voice a token
     // twice (the cache would hold it twice and pos would run ahead), so the
     // context is normally skipped as already covered by the cache. The first

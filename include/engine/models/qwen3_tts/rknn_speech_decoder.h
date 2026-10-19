@@ -31,9 +31,22 @@ public:
     // waits for. The cache layout is B-independent, so the small model's cache
     // feeds the big one. `num_quantizers` and `sliding_window` come from the
     // checkpoint's speech_tokenizer_config.
+    //
+    // `window_path` (optional) switches streaming to window semantics: the same
+    // stateful export run at zero cache and `cache_valid` 0 over the whole
+    // [left context + new] window, which is exactly the full decode over the
+    // window — the function the ggml streaming path computes per chunk, context
+    // re-voiced every event. The first window (no context) rides the
+    // first-group model when one is loaded. The context frames' audio is
+    // dropped, flush is a no-op, and the stateful streaming state stays unused.
+    // A `window_path` naming the same file as `model_path` (compared as files,
+    // as the residency accounting compares them, not as strings) aliases the
+    // main engine (one resident context voices groups offline and windows
+    // streaming).
     RknnSpeechDecoder(
         const std::string & model_path,
         const std::string & first_model_path,
+        const std::string & window_path,
         int64_t num_quantizers,
         int64_t head_dim,
         int64_t sliding_window,
@@ -55,7 +68,9 @@ public:
     // Streaming step. `codes` holds `context_frames + new_frames` row-major
     // frames of which the first `context_frames` were already voiced and live in
     // the cache; only the tail is fed. `flush` voices the buffered remainder
-    // (< one group) with zero padding and resets the utterance.
+    // (< one group) with zero padding and resets the utterance. With a window
+    // engine loaded the context is fed too (re-voiced, not cache-covered), its
+    // audio is dropped, and `flush` returns nothing.
     std::vector<float> step(
         const int32_t * codes,
         int64_t context_frames,
