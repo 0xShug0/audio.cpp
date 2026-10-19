@@ -298,6 +298,7 @@ runtime::TaskResult HiggsTTSSession::synthesize(const runtime::TaskRequest & req
         auto generation_request = make_generation_request(chunk_request, reference_codes);
         if (generated_reference.has_value()) {
             generation_request.reference_text = chunk_requests.front().text_input->text;
+            generator_->prepare(generation_request);
         }
         HiggsGenerationResult result;
         if (streaming) {
