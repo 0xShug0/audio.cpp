@@ -63,8 +63,23 @@ the flag off, selecting RKNN in `qwen3_tts.exec_plan` fails with
 
 ## Model preparation
 
-The `.rknn` is not downloadable and nothing in the runtime produces it. Build it on the host from
-the `Qwen/Qwen3-TTS-12Hz-0.6B-Base` checkpoint (the `speech_tokenizer` subdirectory, the same
+Prebuilt engines for RK3588 ship as `rknn` packages in the model specs, for the three families
+whose engines are validated on that board — install them like any other package and name the
+files by bare file name in the plan:
+
+```bash
+python3 tools/model_manager_v2.py install piper_lessac_medium_decoder_rk3588
+python3 tools/model_manager_v2.py install kokoro_82m_generator_rk3588
+python3 tools/model_manager_v2.py install qwen3_tts_0_6b_base_speech_decoder_rk3588
+```
+
+Each installs into the family's GGUF weight directory, so an `exec_plan` artifact can name it by
+file alone. The engines are compiled per SoC: these are RK3588 images, and the converter runs
+below are the path for any other target (and for rebuilding from the source checkpoints).
+
+Outside those packages, a `.rknn` is not downloadable and nothing in the runtime produces it.
+Build it on the host from the `Qwen/Qwen3-TTS-12Hz-0.6B-Base` checkpoint (the `speech_tokenizer`
+subdirectory, the same
 weights the GGUF package was converted from):
 
 ```bash
