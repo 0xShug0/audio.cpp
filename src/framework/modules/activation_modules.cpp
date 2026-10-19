@@ -96,6 +96,16 @@ const core::ModuleSchema kSiluSchema = {
     "Applies SiLU activation elementwise.",
 };
 
+const core::ModuleSchema kGegluSchema = {
+    "GEGLU",
+    "nn.activation",
+    kActivationInputs,
+    1,
+    kActivationOutputs,
+    1,
+    "Applies exact-erf GELU to the second half and multiplies by the first half.",
+};
+
 const core::ModuleSchema kSeluSchema = {
     "SELU",
     "nn.activation",
@@ -468,11 +478,39 @@ const core::ModuleSchema & GeluModule::static_schema() noexcept {
     return kGeluSchema;
 }
 
+const core::ModuleSchema & GegluModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue GegluModule::build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");
+    if (input.shape.last_dim() % 2 != 0 ||
+        (input.type != GGML_TYPE_F16 && input.type != GGML_TYPE_F32)) {
+        throw std::runtime_error("GEGLU requires an even last dimension and F16 or F32 input");
+    }
+    const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
+    auto output_shape = input.shape;
+    output_shape.dims[output_shape.rank - 1] /= 2;
+    return core::wrap_tensor(ggml_geglu_erf_swapped(ctx.ggml, contiguous.tensor), output_shape, input.type);
+}
+
+const core::ModuleSchema & GegluModule::static_schema() noexcept {
+    return kGegluSchema;
+}
+
 const core::ModuleSchema & SiluModule::schema() const noexcept {
     return static_schema();
 }
 
 core::TensorValue SiluModule::build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const {
+    if (preserve_input_type_) {
+        core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");
+        const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
+        return core::wrap_tensor(ggml_silu(ctx.ggml, contiguous.tensor), input.shape, input.type);
+    }
     return build_unary(ctx, input, ggml_silu);
 }
 

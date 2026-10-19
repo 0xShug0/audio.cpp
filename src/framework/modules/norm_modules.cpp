@@ -158,16 +158,22 @@ core::TensorValue apply_affine(
             throw std::runtime_error("weight is required when NormConfig.use_weight is true");
         }
         core::validate_shape(*weights.weight, core::TensorShape::from_dims({config.hidden_size}), "weight");
-        const auto weight = ensure_f32(ctx, *weights.weight);
-        result = core::wrap_tensor(ggml_mul(ctx.ggml, result.tensor, weight.tensor), result.shape, GGML_TYPE_F32);
+        const auto weight = config.cuda_f16_output
+            ? ggml_cast(ctx.ggml, weights.weight->tensor, GGML_TYPE_F16)
+            : ensure_f32(ctx, *weights.weight).tensor;
+        result = core::wrap_tensor(ggml_mul(ctx.ggml, result.tensor, weight), result.shape,
+            config.cuda_f16_output ? GGML_TYPE_F16 : GGML_TYPE_F32);
     }
     if (config.use_bias) {
         if (!weights.bias.has_value()) {
             throw std::runtime_error("bias is required when NormConfig.use_bias is true");
         }
         core::validate_shape(*weights.bias, core::TensorShape::from_dims({config.hidden_size}), "bias");
-        const auto bias = ensure_f32(ctx, *weights.bias);
-        result = core::wrap_tensor(ggml_add(ctx.ggml, result.tensor, bias.tensor), result.shape, GGML_TYPE_F32);
+        const auto bias = config.cuda_f16_output
+            ? ggml_cast(ctx.ggml, weights.bias->tensor, GGML_TYPE_F16)
+            : ensure_f32(ctx, *weights.bias).tensor;
+        result = core::wrap_tensor(ggml_add(ctx.ggml, result.tensor, bias), result.shape,
+            config.cuda_f16_output ? GGML_TYPE_F16 : GGML_TYPE_F32);
     }
     return result;
 }
@@ -193,10 +199,21 @@ core::TensorValue build_norm(
     }
     core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");
     core::validate_last_dim(input, config.hidden_size, "input");
+    if (config.cuda_f16_output && (ctx.backend_type != core::BackendType::Cuda || input.type != GGML_TYPE_F16)) {
+        throw std::runtime_error("FP16 normalization requires CUDA and FP16 input");
+    }
     const auto norm_input = config.preserve_input_layout
         ? input
         : tensor_layout::ensure_contiguous_layout_if_needed(ctx, input);
-    core::TensorValue normalized = core::wrap_tensor(fn(ctx.ggml, norm_input.tensor, config.eps), input.shape, GGML_TYPE_F32);
+    auto * normalized_tensor = fn(ctx.ggml, norm_input.tensor, config.eps);
+    if (config.cuda_f16_output) {
+        if (normalized_tensor->op != GGML_OP_NORM) {
+            throw std::runtime_error("FP16 normalization is supported only for LayerNorm");
+        }
+        ggml_norm_set_cuda_f16(normalized_tensor);
+    }
+    core::TensorValue normalized = core::wrap_tensor(normalized_tensor, input.shape,
+        config.cuda_f16_output ? GGML_TYPE_F16 : GGML_TYPE_F32);
     return apply_affine(ctx, normalized, config, weights);
 }
 
@@ -376,6 +393,23 @@ core::TensorValue GroupNormModule::build(
         throw std::runtime_error("GroupNorm input channel count mismatch");
     }
 
+    if (config_.cuda_f16_output && (ctx.backend_type != core::BackendType::Cuda ||
+            input.shape.rank != 4 || input.type != GGML_TYPE_F16)) {
+        throw std::runtime_error("FP16 GroupNorm requires a rank-4 CUDA FP16 input");
+    }
+    if (config_.cuda_f16_output) {
+        if (!config_.use_weight || !config_.use_bias || !weights.weight || !weights.bias) {
+            throw std::runtime_error("FP16 GroupNorm requires weight and bias");
+        }
+        core::validate_shape(*weights.weight, core::TensorShape::from_dims({config_.channels}), "weight");
+        core::validate_shape(*weights.bias, core::TensorShape::from_dims({config_.channels}), "bias");
+        auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
+        auto * gamma = ggml_cast(ctx.ggml, weights.weight->tensor, GGML_TYPE_F16);
+        auto * beta = ggml_cast(ctx.ggml, weights.bias->tensor, GGML_TYPE_F16);
+        auto * normalized = ggml_group_norm(ctx.ggml, contiguous.tensor, config_.groups, config_.eps);
+        ggml_group_norm_set_cuda_affine_f16(normalized, gamma, beta);
+        return core::wrap_tensor(normalized, input.shape, GGML_TYPE_F16);
+    }
     auto x = core::ensure_backend_addressable_layout(ctx, ensure_f32(ctx, input));
     if (x.shape.rank == 3) {
         auto x_4d = ggml_reshape_4d(

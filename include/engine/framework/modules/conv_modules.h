@@ -71,6 +71,8 @@ struct Conv2dConfig {
     bool cuda_fast_lowering = false;
     bool cuda_large_shape_lowering = false;
     bool cuda_tile_f16_accum_output_lowering = false;
+    bool cuda_cudnn = false;
+    bool cuda_f16_output = false;
 };
 
 struct Conv2dWeights {
@@ -81,6 +83,7 @@ struct Conv2dWeights {
 class Conv2dModule {
 public:
     explicit Conv2dModule(Conv2dConfig config);
+    Conv2dModule(Conv2dConfig config, bool cuda_cudnn, bool cuda_f16_output = false);
 
     const Conv2dConfig & config() const noexcept;
     const core::ModuleSchema & schema() const noexcept;

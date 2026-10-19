@@ -19,6 +19,9 @@ public:
 
 class AddModule {
 public:
+    AddModule() = default;
+    explicit AddModule(bool preserve_input_type, bool allow_broadcast = false)
+        : preserve_input_type_(preserve_input_type), allow_broadcast_(allow_broadcast) {}
     const core::ModuleSchema & schema() const noexcept;
     core::TensorValue build(
         core::ModuleBuildContext & ctx,
@@ -26,6 +29,9 @@ public:
         const core::TensorValue & rhs) const;
 
     static const core::ModuleSchema & static_schema() noexcept;
+private:
+    bool preserve_input_type_ = false;
+    bool allow_broadcast_ = false;
 };
 
 class MulModule {

@@ -234,6 +234,18 @@ void set_runner_backend(ModuleRunner & runner, engine::core::BackendType type) {
     runner.backend = engine::core::init_backend(runner.backend_config);
 }
 
+void test_cuda_f16_lowerings_default_off() {
+    using namespace engine;
+    require(!modules::LinearConfig{}.cuda_f16_output, "FP16 Linear must be opt-in");
+    require(!modules::NormConfig{}.cuda_f16_output, "FP16 LayerNorm must be opt-in");
+    require(!modules::GroupNormConfig{}.cuda_f16_output, "FP16 GroupNorm must be opt-in");
+    require(!modules::Conv2dConfig{}.cuda_cudnn && !modules::Conv2dConfig{}.cuda_f16_output,
+        "cuDNN Conv2D and FP16 output must be opt-in");
+    static_assert(static_cast<int>(modules::ScaledDotProductAttentionLowering::ExplicitCpuPerHead) == 3);
+    (void) []() -> modules::SiluModule { return {}; }();
+    (void) []() -> modules::AddModule { return {}; }();
+}
+
 void test_graph_optimizer_elides_metadata_nodes_without_changing_output() {
     CpuModuleRunner runner;
     auto input = runner.make_f32(engine::core::TensorShape::from_dims({2, 2}));
@@ -1169,6 +1181,7 @@ void test_prelu_broadcasting() {
 
 int main() {
     try {
+        test_cuda_f16_lowerings_default_off();
         test_weighted_statistics_and_scale_bias();
         test_convnext_default_matches_composition();
         test_prelu_broadcasting();

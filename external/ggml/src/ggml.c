@@ -1138,9 +1138,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "ROPE_INTERLEAVED_PAIRS",
     "MUL_MAT_ACC",
     "SNAKE_1D",
+    "FLASH_ATTN_F16_HEAD40",
 };
 
-static_assert(GGML_OP_COUNT == 114, "GGML_OP_COUNT != 114");
+static_assert(GGML_OP_COUNT == 115, "GGML_OP_COUNT != 115");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1267,9 +1268,10 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "rope_interleaved_pairs(even, odd, cos, sin)",
     "mul_mat_acc(a, b, acc)",
     "snake_1d(a, alpha)",
+    "flash_attn_f16_head40(q, k, v)",
 };
 
-static_assert(GGML_OP_COUNT == 114, "GGML_OP_COUNT != 114");
+static_assert(GGML_OP_COUNT == 115, "GGML_OP_COUNT != 115");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -3303,6 +3305,11 @@ struct ggml_tensor * ggml_norm(
     return ggml_norm_impl(ctx, a, eps, false);
 }
 
+void ggml_norm_set_cuda_f16(struct ggml_tensor * tensor) {
+    GGML_ASSERT(tensor && tensor->op == GGML_OP_NORM && tensor->type == GGML_TYPE_F16);
+    ggml_set_op_params_i32(tensor, 1, 1);
+}
+
 struct ggml_tensor * ggml_norm_inplace(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
@@ -3450,6 +3457,18 @@ struct ggml_tensor * ggml_group_norm(
     return ggml_group_norm_impl(ctx, a, n_groups, eps, false);
 }
 
+void ggml_group_norm_set_cuda_affine_f16(
+        struct ggml_tensor * tensor,
+        struct ggml_tensor * scale,
+        struct ggml_tensor * bias) {
+    GGML_ASSERT(tensor && tensor->op == GGML_OP_GROUP_NORM && tensor->type == GGML_TYPE_F16);
+    GGML_ASSERT(scale && bias && scale->type == GGML_TYPE_F16 && bias->type == GGML_TYPE_F16);
+    GGML_ASSERT(scale->ne[0] == tensor->ne[2] && bias->ne[0] == tensor->ne[2]);
+    tensor->src[1] = scale;
+    tensor->src[2] = bias;
+    ggml_set_op_params_i32(tensor, 2, 1);
+}
+
 struct ggml_tensor * ggml_group_norm_inplace(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
@@ -3499,15 +3518,16 @@ static inline bool ggml_can_mul_mat(const struct ggml_tensor * t0, const struct 
            (t1->ne[3]%t0->ne[3] == 0);
 }
 
-struct ggml_tensor * ggml_mul_mat(
+static struct ggml_tensor * ggml_mul_mat_impl(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
-        struct ggml_tensor  * b) {
+        struct ggml_tensor  * b,
+        enum ggml_type type) {
     GGML_ASSERT(ggml_can_mul_mat(a, b));
     GGML_ASSERT(!ggml_is_transposed(a));
 
     const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
-    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+    struct ggml_tensor * result = ggml_new_tensor(ctx, type, 4, ne);
 
     result->op     = GGML_OP_MUL_MAT;
     result->src[0] = a;
@@ -3577,6 +3597,21 @@ struct ggml_tensor * ggml_mul_mat_pack4(
     result->src[1] = b;
 
     return result;
+}
+
+struct ggml_tensor * ggml_mul_mat(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b) {
+    return ggml_mul_mat_impl(ctx, a, b, GGML_TYPE_F32);
+}
+
+struct ggml_tensor * ggml_mul_mat_f16(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b) {
+    GGML_ASSERT(a->type == GGML_TYPE_F16 && b->type == GGML_TYPE_F16);
+    return ggml_mul_mat_impl(ctx, a, b, GGML_TYPE_F16);
 }
 
 void ggml_mul_mat_set_prec(
@@ -5784,6 +5819,41 @@ struct ggml_tensor * ggml_flash_attn_ext(
     result->src[3] = mask;
 
     return result;
+}
+
+struct ggml_tensor * ggml_flash_attn_f16_head40(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * q,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * v,
+        float                 scale) {
+    GGML_ASSERT(q && k && v);
+    GGML_ASSERT(q->type == GGML_TYPE_F16 && k->type == GGML_TYPE_F16 && v->type == GGML_TYPE_F16);
+    GGML_ASSERT(q->ne[0] == 40 && k->ne[0] == 40 && v->ne[0] == 40);
+    GGML_ASSERT(q->ne[2] == k->ne[2] && q->ne[2] == v->ne[2]);
+    GGML_ASSERT(q->ne[3] == k->ne[3] && q->ne[3] == v->ne[3]);
+    GGML_ASSERT(k->ne[1] == v->ne[1] && scale > 0.0f);
+
+    const int64_t ne[4] = {40, q->ne[2], q->ne[1], q->ne[3]};
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F16, 4, ne);
+    ggml_set_op_params(result, &scale, sizeof(scale));
+    result->op = GGML_OP_FLASH_ATTN_F16_HEAD40;
+    result->src[0] = q;
+    result->src[1] = k;
+    result->src[2] = v;
+    return result;
+}
+
+void ggml_conv_2d_direct_set_cudnn(struct ggml_tensor * tensor) {
+    GGML_ASSERT(tensor && tensor->op == GGML_OP_CONV_2D);
+    ggml_set_op_params_i32(tensor, 7, 1);
+}
+
+void ggml_conv_2d_direct_set_cudnn_bias(struct ggml_tensor * tensor, struct ggml_tensor * bias) {
+    GGML_ASSERT(tensor && tensor->op == GGML_OP_CONV_2D);
+    GGML_ASSERT(ggml_get_op_params_i32(tensor, 7) == 1);
+    GGML_ASSERT(bias && bias->type == GGML_TYPE_F16 && ggml_nelements(bias) == tensor->ne[2]);
+    tensor->src[2] = bias;
 }
 
 struct ggml_tensor * ggml_sage_attn2(
