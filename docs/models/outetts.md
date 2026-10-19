@@ -114,6 +114,8 @@ audiocpp_cli --task tts --family outetts \
 The legacy session keys `outetts.aligner_model_path` and
 `outetts.dac_graph_context_mb` remain accepted for backward compatibility.
 | `--session-option outetts.reference_cache_slots=<n>` | integer | `1` | LRU slots for prepared reference profiles (alignment, DAC codes, and word features). Set `0` to disable reuse. |
+| `--session-option outetts.lora=<path>` | directory or checkpoint file | not set | PEFT LoRA for the same Llama-OuteTTS checkpoint. Keep `adapter_config.json` beside its weights. DAC weights are unchanged. |
+| `--session-option outetts.lora_scale=<value>` | finite float | `1` | Multiplier for the adapter's alpha/r scaling. |
 | `--session-option outetts.mem_saver=true\|false` | bool | `false` | Release the reusable Llama cached-step graph after each generated chunk and release the aligner runtime after preparing a reference. Model and DAC weights stay resident; later requests rebuild released state. |
 
 With logging enabled, OuteTTS reports framework chunk count and token budget, per-chunk word/character counts, recommended and effective generation limits, the natural stop reason, reference-profile cache hits/evictions, Llama runtime and step-graph rebuild/reuse, released cache capacity, and timings for reference alignment, DAC encode/decode, prompt construction, generation, and the complete session request. See [OuteTTS validation](../reports/outetts_validation.md) for the reproducible long-lived session and memory test.

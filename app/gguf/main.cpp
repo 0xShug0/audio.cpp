@@ -1,6 +1,9 @@
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/assets/weight_adapter.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/runtime/options.h"
 
 #include <algorithm>
 #include <cctype>
@@ -578,6 +581,9 @@ void print_usage() {
                  "[--bnb-nf4-type q8_0] [--exclude-prefix <logical-prefix>] "
                  "[--keep-type <tensor-prefix>*=<type>] "
                  "[--fold-weight-norm <tensor-prefix>*] "
+                 "[--weight-adapter <normalized.safetensors>] [--adapter-strength <float>] "
+                 "[--adapter-merge-mode delta_f32|rankwise_f32|rounded_bf16_delta] "
+                 "[--log] "
                  "[--overwrite] [--no-sidecars] "
                  "[--allow-missing-model-spec]\n"
         << "       audiocpp_gguf --inspect <model.gguf>\n";
@@ -596,6 +602,11 @@ int main(int argc, char ** argv) {
         std::optional<std::string> family;
         std::string type;
         engine::assets::GgufConversionOptions conversion_options;
+        std::filesystem::path adapter_path;
+        engine::assets::WeightAdapterReadOptions adapter_options;
+        adapter_options.require_scaling_metadata = true;
+        auto adapter_mode = engine::assets::WeightMergeMode::DeltaF32;
+        bool adapter_options_set = false;
         bool overwrite = false;
         bool embed_sidecars = true;
         bool allow_missing_model_spec = false;
@@ -604,6 +615,10 @@ int main(int argc, char ** argv) {
             if (arg == "--help" || arg == "-h") {
                 print_usage();
                 return 0;
+            }
+            if (arg == "--log") {
+                engine::debug::configure_logging({true});
+                continue;
             }
             if (arg == "--overwrite") {
                 overwrite = true;
@@ -620,6 +635,7 @@ int main(int argc, char ** argv) {
             if ((arg == "--input" || arg == "--output" || arg == "--type" || arg == "--inspect" || arg == "--root" ||
                  arg == "--sidecar" || arg == "--family" || arg == "--model-spec" || arg == "--model-spec-override" ||
                  arg == "--bnb-nf4-type" || arg == "--exclude-prefix" || arg == "--keep-type" ||
+                 arg == "--weight-adapter" || arg == "--adapter-strength" || arg == "--adapter-merge-mode" ||
                  arg == "--fold-weight-norm") &&
                 i + 1 < argc) {
                 const std::string value = argv[++i];
@@ -633,6 +649,19 @@ int main(int argc, char ** argv) {
                     output = value;
                 else if (arg == "--type")
                     type = value;
+                else if (arg == "--weight-adapter")
+                    adapter_path = std::filesystem::u8path(value);
+                else if (arg == "--adapter-strength") {
+                    adapter_options.strength = *engine::runtime::parse_finite_float_option(
+                        {{"adapter_strength", value}}, {"adapter_strength"});
+                    adapter_options_set = true;
+                } else if (arg == "--adapter-merge-mode") {
+                    if (value == "delta_f32") adapter_mode = engine::assets::WeightMergeMode::DeltaF32;
+                    else if (value == "rankwise_f32") adapter_mode = engine::assets::WeightMergeMode::RankWiseF32;
+                    else if (value == "rounded_bf16_delta") adapter_mode = engine::assets::WeightMergeMode::RoundedBF16Delta;
+                    else throw std::runtime_error("unsupported adapter merge mode: " + value);
+                    adapter_options_set = true;
+                }
                 else if (arg == "--bnb-nf4-type")
                     conversion_options.bnb_nf4_type = engine::assets::parse_tensor_storage_type(value);
                 else if (arg == "--exclude-prefix")
@@ -736,6 +765,20 @@ int main(int argc, char ** argv) {
         if (conversion_options.bnb_nf4_type.has_value() &&
             *conversion_options.bnb_nf4_type != engine::assets::TensorStorageType::Q8_0) {
             throw std::runtime_error("--bnb-nf4-type currently supports q8_0");
+        }
+        if (adapter_path.empty() && adapter_options_set) {
+            throw std::runtime_error("adapter strength/mode requires --weight-adapter");
+        }
+        if (!adapter_path.empty()) {
+            auto adapter = engine::assets::read_weight_adapter(adapter_path, adapter_options);
+            if (adapter.updates.empty() && adapter.replacements.empty()) {
+                throw std::runtime_error("weight adapter contains no updates or replacements");
+            }
+            for (auto & entry : adapter.updates) {
+                entry.second.merge_mode = adapter_mode;
+            }
+            conversion_options.weight_adapter = std::make_shared<engine::assets::WeightAdapter>(std::move(adapter));
+            conversion_options.weight_adapter_merge_mode = adapter_mode;
         }
         engine::assets::convert_tensor_sources_to_gguf(inputs, output, storage_type, overwrite, embed_sidecars,
                                                        resolved_sidecar_root, sidecars, embedded_model_spec,

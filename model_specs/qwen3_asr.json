@@ -110,6 +110,19 @@
     ],
     "session": [
       {
+        "name": "lora",
+        "type": "path",
+        "description": "PEFT LoRA adapter directory or checkpoint file; merged into matching encoder/decoder weights at session creation.",
+        "required": false
+      },
+      {
+        "name": "lora_scale",
+        "type": "float",
+        "description": "Multiplier for the adapter's alpha/r scaling; default 1.",
+        "required": false,
+        "default": 1.0
+      },
+      {
         "name": "forced_aligner_path",
         "type": "path",
         "description": "Optional Qwen3 ForcedAligner model path required for return_timestamps.",

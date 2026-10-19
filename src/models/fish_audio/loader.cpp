@@ -45,6 +45,8 @@ runtime::ModelCliInterface cli(const FishAudioAssets &) {
         {"seed", "N", "Sampling seed for reproducible output; omitted uses a random seed.", false, std::nullopt, "0"},
     };
     out.session_options = {
+        {"fish_audio.lora", "path", "Prepared Fish Speech adapter checkpoint; merged into slow/fast decoder and embedding weights at session creation. Codec weights are unchanged.", false},
+        {"fish_audio.lora_scale", "float", "Multiplier for the adapter's alpha/r scaling; default 1.", false, "1"},
         {"fish_audio.mem_saver", "true|false", "Release cached AR runtime graphs after each request; default false.", false, "false"},
         {"fish_audio.reference_cache_slots", "n", "Prepared reference-audio cache slots; default 1.", false, "1", "0"},
         {"fish_audio.weight_type", "native|f32|f16|bf16|q8_0", "AR matmul weight storage type; default native.", false, "native"},

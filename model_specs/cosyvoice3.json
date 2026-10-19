@@ -129,6 +129,19 @@
     ],
     "session": [
       {
+        "name": "lora",
+        "type": "path",
+        "description": "PEFT adapter with adapter_config.json, or native lora_weights with config.json and speech_embedding/llm_decoder sidecars. Checkpoints may use safetensors or PyTorch containers.",
+        "required": false
+      },
+      {
+        "name": "lora_scale",
+        "type": "float",
+        "description": "Multiplier for the adapter's alpha/r scaling; default 1. Full-weight replacements are not scaled.",
+        "required": false,
+        "default": 1.0
+      },
+      {
         "name": "weight_type",
         "type": "enum",
         "description": "CosyVoice3 matmul weight storage type; default native.",

@@ -155,6 +155,8 @@ constant-context sizes are in MiB.
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `qwen3_tts.mem_saver` | bool | `false` | Release the talker cached-step graph after each request. Voice-prompt, prefill, code-predictor, and speech-decoder caches remain reusable. |
+| `qwen3_tts.lora` | adapter directory or checkpoint file | not set | Load a PEFT Talker/Subtalker adapter at session creation. Keep `adapter_config.json` beside its weights. A trained custom voice may also provide `speaker_embedding` and `tts_config.json` sidecars; select its name with `voice_id`. |
+| `qwen3_tts.lora_scale` | finite float | `1` | Strength multiplier applied after the adapter's alpha/r scaling. Speaker embedding replacements are not scaled. |
 | `qwen3_tts.perf_mode` | `off`, `flash_attention` | `off` | Opt-in attention optimization; `flash_attention` requires Q8_0 weights in both the talker and speech tokenizer. |
 | `qwen3_tts.stitch_decode` | bool | `false` | Voice the concatenated speech codes of all text chunks in one decoder pass instead of voicing each chunk separately. Per-chunk voicing voices the voice-clone reference once per chunk and zeroes the stateful vocoder cache at every chunk boundary (measured on RK3588, 300 characters, 22.5 s reference: 7 vocoder runs for 159.9 s against 1 run for 57.5 s); the stitched pass costs device memory proportional to the utterance, since one decode call builds a vocoder graph sized by its frame count. |
 | `qwen3_tts.voice_prompt_cache_slots` | nonnegative integer | `1` | Cached voice-clone prompts; `0` disables prompt caching. |

@@ -23,6 +23,7 @@
 // rather than read in storage order.
 
 #include "engine/framework/assets/torch_bin.h"
+#include "engine/framework/assets/weight_adapter.h"
 
 #include <cstdint>
 #include <cstring>
@@ -223,6 +224,30 @@ void test_views_honour_storage_offset() {
                 format(tail));
 }
 
+void test_container_extensions_do_not_select_adapter_layout() {
+    const auto original = write_checkpoint({
+        {"projection.lora_A", 0, {1, 4}, {4, 1}},
+        {"projection.lora_B", 4, {3, 1}, {1, 1}}}, 7);
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp_tensor_container_test";
+    std::filesystem::create_directories(root);
+    for (const auto * extension : {".pt", ".pth", ".bin", ".ckpt"}) {
+        const auto file = root / (std::string("adapter_model") + extension);
+        std::filesystem::copy_file(original, file, std::filesystem::copy_options::overwrite_existing);
+        require(engine::assets::find_tensor_file(root, "adapter_model") == file,
+            "logical checkpoint resolution differs by container extension");
+        const auto source = engine::assets::open_tensor_source(file);
+        require(source->require_f32("projection.lora_B") == iota(4, 3),
+            "generic tensor reader lost storage offsets");
+        const auto adapter = engine::assets::read_weight_adapter(root);
+        const auto & factors = std::get<engine::assets::LowRankWeightUpdate>(adapter.updates.at("projection").factors);
+        require(factors.a == iota(0, 4) && factors.b == iota(4, 3),
+            "adapter factors differ by container extension");
+        std::filesystem::remove(file);
+    }
+    std::filesystem::remove_all(root);
+    std::filesystem::remove(original);
+}
+
 void test_chunked_matrix_honours_storage_offset() {
     // w = torch.arange(18.).reshape(6, 3); q, k = w.chunk(2, 0); torch.save({"q": q, "k": k}, path)
     // k is w[3:]: storage_offset 9, shape (3, 3), stride (3, 1).
@@ -270,6 +295,7 @@ void test_unsupported_views_are_rejected() {
 int main() {
     try {
         test_views_honour_storage_offset();
+        test_container_extensions_do_not_select_adapter_layout();
         test_chunked_matrix_honours_storage_offset();
         test_size_one_dims_ignore_stride();
         test_unsupported_views_are_rejected();

@@ -288,7 +288,7 @@ Qwen3TTSSession::Qwen3TTSSession(
     std::shared_ptr<const Qwen3TTSAssets> assets)
     : RuntimeSessionBase(options),
       task_(task),
-      assets_(require_assets(std::move(assets))),
+      assets_(apply_qwen3_tts_lora(require_assets(std::move(assets)), options.options)),
       mem_saver_(mem_saver_from_options(options)),
       stitch_decode_(stitch_decode_from_options(options)),
       perf_mode_(perf_mode_from_options(options)),
@@ -362,6 +362,8 @@ Qwen3TTSSession::Qwen3TTSSession(
             key != "qwen3_tts.code_predictor_constant_context_mb" &&
             key != "qwen3_tts.speech_decoder_constant_context_mb" &&
             key != "qwen3_tts.weight_type" &&
+            key != "qwen3_tts.lora" &&
+            key != "qwen3_tts.lora_scale" &&
             key != "qwen3_tts.conv_weight_type" &&
             key != "qwen3_tts.talker_weight_type" &&
             key != "qwen3_tts.speech_encoder_weight_type" &&

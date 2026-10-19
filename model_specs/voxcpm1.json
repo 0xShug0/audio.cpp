@@ -117,6 +117,19 @@
     ],
     "session": [
       {
+        "name": "lora",
+        "type": "path",
+        "description": "Native LoRA directory or checkpoint file with adjacent lora_config.json; merged into generator weights at session creation.",
+        "required": false
+      },
+      {
+        "name": "lora_scale",
+        "type": "float",
+        "description": "Multiplier for the adapter's configured alpha/r scaling; default 1.",
+        "required": false,
+        "default": 1.0
+      },
+      {
         "name": "mem_saver",
         "type": "bool",
         "description": "Use tighter graph workspaces and release request runtime graphs; default false.",

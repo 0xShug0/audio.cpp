@@ -1,5 +1,7 @@
 # TTS Models
 
+For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
+
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
 | AuK (experimental) | `auk` | `tts`, `clon`, `gen` editing | [AuK](models/auk.md) |
@@ -1052,6 +1054,8 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `voxcpm2.audiovae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | AudioVAE weight storage; defaults independently to native, not the shared weight_type. |
 | `voxcpm2.prompt_cache_slots` | integer >= 0 | `1` | Cached encoded prompt slots; zero disables reuse. |
 | `voxcpm2.mem_saver` | bool | `true` | Release staged runtime graphs. |
+| `voxcpm2.lora` | directory or checkpoint file | not set | Native LoRA weights with adjacent `lora_config.json`; merged at session creation without changing the AudioVAE. |
+| `voxcpm2.lora_scale` | finite float | `1` | Multiplier for the adapter's configured alpha/r scaling. |
 | `voxcpm2.weight_context_mb` | integer >= 1 | `3072` | Context or graph arena size in MiB. |
 | `voxcpm2.text_embedding_graph_arena_mb` | integer >= 1 | `64` | Host graph-metadata arena size in MiB; legacy `text_embedding_graph_context_mb` accepted with the same family prefix. |
 | `voxcpm2.lm_step_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `lm_step_graph_context_mb` accepted with the same family prefix. |

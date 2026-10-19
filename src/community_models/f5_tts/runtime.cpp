@@ -6,7 +6,9 @@
 #include "engine/community_models/f5_tts/weights.h"
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/conv_modules.h"
@@ -120,6 +122,82 @@ private:
     std::unordered_map<std::string, std::string> routes_;
 };
 
+struct CfgGraph {
+    ggml_context * ctx = nullptr;
+    ggml_cgraph * graph = nullptr;
+    ggml_gallocr_t gallocr = nullptr;
+    ggml_backend_buffer_t io_buffer = nullptr;
+    ggml_tensor * x = nullptr;        // [MEL, N, 1, 2]
+    ggml_tensor * cond = nullptr;     // [MEL, N, 1, 2]
+    ggml_tensor * text_ids = nullptr; // [NT, 1, 2, 1] (per-half ids)
+    ggml_tensor * th_t = nullptr;     // [256, 1]
+    ggml_tensor * output = nullptr;   // [MEL, N] (half 0, conditioned)
+    ggml_tensor * out_u = nullptr;    // [MEL, N] (half 1, uncond)
+    // The staged graph constants this build created (pe table, masks,
+    // per-block ones rows). On CUDA each carries a private backend buffer
+    // allocated in const_stage_bind: the eviction path destroys the
+    // unique_ptr, and nothing else frees them.
+    std::vector<engine::models::f5_tts::ConstStage> * stage = nullptr;
+    ~CfgGraph() {
+        // Cache eviction (more than two distinct (N, NT) keys in one process,
+        // i.e. every chunk past the second of a chunked request) destroys the
+        // unique_ptr, and without this the context pool, the gallocr arena and
+        // the io buffer of every evicted graph were leaked: measured 24.5 GiB
+        // peak RSS for a four-chunk CPU request, unchanged when the cache bound
+        // was lowered from 2 to 1 (more evictions, same leaks).
+        if (gallocr != nullptr) ggml_gallocr_free(gallocr);
+        if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
+        if (ctx != nullptr) ggml_free(ctx);
+        const_stage_free(stage);
+    }
+};
+
+struct DiTGraph {
+    ggml_context * ctx = nullptr;
+    ggml_cgraph * graph = nullptr;
+    ggml_gallocr_t gallocr = nullptr;
+    ggml_backend_buffer_t io_buffer = nullptr;  // CUDA leaves buffer
+    core::HostGraphPlan host_plan;              // CPU plan reuse
+    ggml_tensor * x = nullptr;
+    ggml_tensor * cond = nullptr;
+    ggml_tensor * text_ids = nullptr;
+    ggml_tensor * th_t = nullptr;
+    ggml_tensor * output = nullptr;
+    ggml_tensor * tap_text_embed = nullptr;
+    ggml_tensor * tap_text_convnext = nullptr;
+    ggml_tensor * tap_text_padded = nullptr;
+    ggml_tensor * tap_input_embed = nullptr;
+    ggml_tensor * tap_time_embed = nullptr;
+    ggml_tensor * tap_block0 = nullptr;
+    ggml_tensor * tap_block21 = nullptr;
+    // The staged graph constants this build created (pe table, per-block ones
+    // rows). On CUDA each carries a private backend buffer from
+    // const_stage_bind, so the vector has to die with the graph.
+    std::vector<engine::models::f5_tts::ConstStage> * stage = nullptr;
+    ~DiTGraph() {
+        // Session-owned graphs are destroyed before their backend.
+        if (gallocr != nullptr) ggml_gallocr_free(gallocr);
+        if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
+        if (ctx != nullptr) ggml_free(ctx);
+        const_stage_free(stage);
+    }
+};
+
+}  // namespace
+
+struct F5RuntimeState {
+    core::ExecutionContext execution;
+    LoadedModel model;
+    F5DiTWeights weights;
+    std::map<std::tuple<const LoadedModel *, int, int>, std::unique_ptr<CfgGraph>> cfg_graphs;
+    std::map<std::tuple<const LoadedModel *, int, int, bool>, std::unique_ptr<DiTGraph>> dit_graphs;
+
+    explicit F5RuntimeState(const core::BackendConfig & config)
+        : execution(config), model{execution.backend(), config.type} {}
+};
+
+namespace {
+
 const LoadedModel & load_model_once(const std::string & path, const F5ComputeDevice & dev);
 
 // Open the DiT checkpoint as a stripped-name tensor source. Safetensors
@@ -140,6 +218,9 @@ std::shared_ptr<const engine::assets::TensorSource> open_dit_source(const std::s
 // the raw-weight cache: CUDA buffers cannot be freed after driver shutdown.
 const F5DiTWeights & load_dit_weights_once(
     const std::string & path, const F5ComputeDevice & dev) {
+    if (dev.state) {
+        return dev.state->weights;
+    }
     struct Entry { F5DiTWeights w; };
     static auto * cache = new std::unordered_map<std::string, Entry>();
     const std::string key =
@@ -156,6 +237,9 @@ const F5DiTWeights & load_dit_weights_once(
 }
 
 const LoadedModel & load_model_once(const std::string & path, const F5ComputeDevice & dev) {
+    if (dev.state) {
+        return dev.state->model;
+    }
     // Deliberately leaked at exit (never destroyed): CUDA weight buffers must
     // be freed before driver shutdown; static destruction order cannot
     // guarantee that. Model caches are process-lifetime anyway.
@@ -183,6 +267,31 @@ const LoadedModel & load_model_once(const std::string & path, const F5ComputeDev
 
 }  // namespace
 
+std::shared_ptr<F5RuntimeState> create_f5_lora_state(
+    const std::string & weights_path, const std::filesystem::path & adapter_path,
+    float strength, const F5ComputeDevice & device) {
+    auto source = open_dit_source(weights_path);
+    engine::assets::WeightAdapterReadOptions options;
+    options.strength = strength;
+    options.require_scaling_metadata = true;
+    auto adapter = engine::assets::read_weight_adapter(adapter_path, options);
+    engine::assets::WeightAdapterBindings bindings;
+    for (const auto & tensor : source->tensors()) {
+        bindings.add(tensor.name, tensor.name);
+        bindings.add("transformer." + tensor.name, tensor.name);
+    }
+    auto plan = engine::assets::bind_weight_adapter(
+        *source, std::move(adapter), bindings, engine::assets::WeightMergeMode::DeltaF32);
+    source = engine::assets::make_weight_adapter_source(std::move(source), std::move(plan), "f5_tts.lora");
+    const core::BackendConfig config{
+        device.use_cuda ? core::BackendType::Cuda : core::BackendType::Cpu,
+        device.use_cuda ? device.device : 0,
+        device.use_cuda ? 1 : std::max(1, device.threads)};
+    auto state = std::make_shared<F5RuntimeState>(config);
+    state->weights = load_dit_weights(*source, state->model.backend, state->model.backend_type);
+    return state;
+}
+
 // Batched CFG forward: one graph, ne3=2 batch (half 0 = conditioned with
 // text_ids, half 1 = uncond: filler text ids + zeroed cond, uploaded from
 // the host — matches python cfg_infer drop_audio_cond=True/drop_text=True).
@@ -206,36 +315,8 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
     const int NT = static_cast<int>(text_in.size());
     const bool is_cuda = model.backend_type == core::BackendType::Cuda;
 
-    struct CfgGraph {
-        ggml_context * ctx = nullptr;
-        ggml_cgraph * graph = nullptr;
-        ggml_gallocr_t gallocr = nullptr;
-        ggml_backend_buffer_t io_buffer = nullptr;
-        ggml_tensor * x = nullptr;        // [MEL, N, 1, 2]
-        ggml_tensor * cond = nullptr;     // [MEL, N, 1, 2]
-        ggml_tensor * text_ids = nullptr; // [NT, 1, 2, 1] (per-half ids)
-        ggml_tensor * th_t = nullptr;     // [256, 1]
-        ggml_tensor * output = nullptr;   // [MEL, N] (half 0, conditioned)
-        ggml_tensor * out_u = nullptr;    // [MEL, N] (half 1, uncond)
-        // The staged graph constants this build created (pe table, masks,
-        // per-block ones rows). On CUDA each carries a private backend buffer
-        // allocated in const_stage_bind: the eviction path destroys the
-        // unique_ptr, and nothing else frees them.
-        std::vector<engine::models::f5_tts::ConstStage> * stage = nullptr;
-        ~CfgGraph() {
-            // Cache eviction (more than two distinct (N, NT) keys in one process,
-            // i.e. every chunk past the second of a chunked request) destroys the
-            // unique_ptr, and without this the context pool, the gallocr arena and
-            // the io buffer of every evicted graph were leaked: measured 24.5 GiB
-            // peak RSS for a four-chunk CPU request, unchanged when the cache bound
-            // was lowered from 2 to 1 (more evictions, same leaks).
-            if (gallocr != nullptr) ggml_gallocr_free(gallocr);
-            if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
-            if (ctx != nullptr) ggml_free(ctx);
-            const_stage_free(stage);
-        }
-    };
-    static auto * cache = new std::map<std::tuple<const LoadedModel *, int, int>, std::unique_ptr<CfgGraph>>();
+    static auto * default_cache = new std::map<std::tuple<const LoadedModel *, int, int>, std::unique_ptr<CfgGraph>>();
+    auto * cache = dev.state ? &dev.state->cfg_graphs : default_cache;
     const auto ckey = std::make_tuple(&model, N, NT);
     auto it = cache->find(ckey);
     if (it == cache->end()) {
@@ -417,42 +498,11 @@ std::vector<float> f5_dit_forward(
     // Taps change the graph (extra roots), so key on their presence. The
     // per-call leaves (x, cond, text_ids, th) are uploaded each invocation;
     // everything else (pos ids, pe, ones, constants) is uploaded once.
-    struct DiTGraph {
-        ggml_context * ctx = nullptr;
-        ggml_cgraph * graph = nullptr;
-        ggml_gallocr_t gallocr = nullptr;
-        ggml_backend_buffer_t io_buffer = nullptr;  // CUDA leaves buffer
-        core::HostGraphPlan host_plan;              // CPU plan reuse
-        ggml_tensor * x = nullptr;
-        ggml_tensor * cond = nullptr;
-        ggml_tensor * text_ids = nullptr;
-        ggml_tensor * th_t = nullptr;
-        ggml_tensor * output = nullptr;
-        ggml_tensor * tap_text_embed = nullptr;
-        ggml_tensor * tap_text_convnext = nullptr;
-        ggml_tensor * tap_text_padded = nullptr;
-        ggml_tensor * tap_input_embed = nullptr;
-        ggml_tensor * tap_time_embed = nullptr;
-        ggml_tensor * tap_block0 = nullptr;
-        ggml_tensor * tap_block21 = nullptr;
-        // The staged graph constants this build created (pe table, per-block ones
-        // rows). On CUDA each carries a private backend buffer from
-        // const_stage_bind, so the vector has to die with the graph.
-        std::vector<engine::models::f5_tts::ConstStage> * stage = nullptr;
-        ~DiTGraph() {
-            // Leaked by design when cached (freed only on program-graph reset);
-            // destroyed here only when construction throws mid-build.
-            if (gallocr != nullptr) ggml_gallocr_free(gallocr);
-            if (io_buffer != nullptr) ggml_backend_buffer_free(io_buffer);
-            if (ctx != nullptr) ggml_free(ctx);
-            const_stage_free(stage);
-        }
-    };
-
     // Graph cache is process-lifetime (CUDA buffers cannot be safely freed
     // after driver shutdown in static destruction).
-    static auto * graph_cache =
+    static auto * default_graph_cache =
         new std::map<std::tuple<const LoadedModel *, int, int, bool>, std::unique_ptr<DiTGraph>>();
+    auto * graph_cache = dev.state ? &dev.state->dit_graphs : default_graph_cache;
     const bool want_taps = taps != nullptr;
     const auto cache_key = std::make_tuple(&model, N, NT, want_taps);
     auto it = graph_cache->find(cache_key);

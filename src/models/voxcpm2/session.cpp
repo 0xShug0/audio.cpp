@@ -1,5 +1,8 @@
 #include "engine/models/voxcpm2/session.h"
 
+#include "engine/framework/assets/weight_adapter.h"
+#include "engine/framework/io/filesystem.h"
+#include "engine/framework/io/json.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/text.h"
 #include "engine/framework/runtime/errors.h"
@@ -62,11 +65,49 @@ const char *chunk_strategy_name(ChunkStrategy strategy) {
 }
 
 std::shared_ptr<const VoxCPM2Assets>
-require_assets(std::shared_ptr<const VoxCPM2Assets> assets) {
+require_assets(std::shared_ptr<const VoxCPM2Assets> assets,
+               const runtime::SessionOptions & options) {
   if (assets == nullptr) {
     throw std::runtime_error("VoxCPM2 session requires assets");
   }
-  return assets;
+  const auto path = runtime::find_option(options.options, {"voxcpm2.lora"});
+  if (!path || path->empty()) {
+    return assets;
+  }
+  const auto adapter_path = std::filesystem::u8path(*path);
+  auto file = adapter_path;
+  if (io::is_existing_directory(adapter_path)) {
+    const auto resolved = engine::assets::find_tensor_file(adapter_path, "lora_weights");
+    if (!resolved) throw std::runtime_error("VoxCPM2 lora_weights checkpoint is missing in " + adapter_path.string());
+    file = *resolved;
+  }
+  const auto config = io::json::parse_file(file.parent_path() / "lora_config.json");
+  const auto & lora = config.require("lora_config");
+  const auto rank = io::json::require_i64(lora, "r");
+  if (rank <= 0) {
+    throw std::runtime_error("VoxCPM2 LoRA rank must be positive");
+  }
+  engine::assets::WeightAdapterReadOptions read_options;
+  read_options.scale_override = io::json::require_f32(lora, "alpha") / static_cast<float>(rank);
+  read_options.strength = runtime::parse_finite_float_option(
+      options.options, {"voxcpm2.lora_scale"}).value_or(1.0F);
+  auto adapter = engine::assets::read_weight_adapter(file, read_options);
+  for (const auto & [name, update] : adapter.updates) {
+    const auto * factors = std::get_if<engine::assets::LowRankWeightUpdate>(&update.factors);
+    if (factors == nullptr || factors->r != rank) {
+      throw std::runtime_error("VoxCPM2 LoRA factors do not match lora_config.json: " + name);
+    }
+  }
+  engine::assets::WeightAdapterBindings bindings;
+  for (const auto & tensor : assets->model_weights->tensors()) {
+    bindings.add(tensor.name, tensor.name);
+  }
+  auto plan = engine::assets::bind_weight_adapter(
+      *assets->model_weights, std::move(adapter), bindings, engine::assets::WeightMergeMode::DeltaF32);
+  auto adapted = std::make_shared<VoxCPM2Assets>(*assets);
+  adapted->model_weights = engine::assets::make_weight_adapter_source(
+      assets->model_weights, std::move(plan), "voxcpm2.lora");
+  return adapted;
 }
 
 void reject_enabled_denoise(
@@ -196,7 +237,8 @@ void validate_session_options(
     if (key.rfind("voxcpm2.", 0) != 0) {
       continue;
     }
-    if (key == "voxcpm2.weight_context_mb" ||
+    if (key == "voxcpm2.lora" || key == "voxcpm2.lora_scale" ||
+        key == "voxcpm2.weight_context_mb" ||
         key == "voxcpm2.text_embedding_graph_context_mb" ||
         key == "voxcpm2.text_embedding_graph_arena_mb" ||
         key == "voxcpm2.lm_step_graph_context_mb" ||
@@ -251,7 +293,7 @@ VoxCPM2SessionBase::VoxCPM2SessionBase(runtime::TaskSpec task,
                                        runtime::SessionOptions options,
                                        std::shared_ptr<const VoxCPM2Assets> assets)
     : RuntimeSessionBase(options), task_(task),
-      assets_(require_assets(std::move(assets))),
+      assets_(require_assets(std::move(assets), options)),
       encoded_prompt_cache_(prompt_cache_slots_from_options(options.options)) {
   if (task_.mode != runtime::RunMode::Offline &&
       task_.mode != runtime::RunMode::Streaming) {

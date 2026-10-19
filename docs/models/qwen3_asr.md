@@ -78,6 +78,8 @@ audiocpp_gguf --input models/QwenCleo-ASR/model.safetensors --root models/QwenCl
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `qwen3_asr.lora` | adapter directory or checkpoint file | not set | Load a PEFT LoRA at session creation. Encoder and decoder targets are supported; use an adapter trained for the same checkpoint size. Keep `adapter_config.json` beside the weights. |
+| `qwen3_asr.lora_scale` | finite float | `1` | Strength multiplier applied after the adapter's alpha/r scaling. |
 | `--audio` | WAV path | required | Speech audio; use 16 kHz WAV for the examples. |
 | `--text` | text | empty string | Context prompt. |
 | `--language` | language code | empty string | Recognition language hint. |

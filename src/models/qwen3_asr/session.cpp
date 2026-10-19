@@ -1,6 +1,7 @@
 #include "engine/models/qwen3_asr/session.h"
 
 #include "engine/framework/audio/chunking.h"
+#include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/models/qwen3_forced_aligner/session.h"
@@ -22,11 +23,40 @@ constexpr double kTimestampFixedChunkContextSeconds = 1.0;
 constexpr double kPreferredStreamingFeedSeconds = 1.0;
 constexpr float kDefaultStreamingWindowSeconds = 30.0F;
 
-std::shared_ptr<const Qwen3ASRAssets> require_assets(std::shared_ptr<const Qwen3ASRAssets> assets) {
+std::shared_ptr<const Qwen3ASRAssets> require_assets(
+    std::shared_ptr<const Qwen3ASRAssets> assets, const runtime::SessionOptions & options) {
     if (assets == nullptr) {
         throw std::runtime_error("Qwen3 ASR session requires assets");
     }
-    return assets;
+    const auto path = runtime::find_option(options.options, {"qwen3_asr.lora"});
+    if (!path || path->empty()) {
+        return assets;
+    }
+    engine::assets::WeightAdapterReadOptions read_options;
+    read_options.require_scaling_metadata = true;
+    read_options.strength = runtime::parse_finite_float_option(
+        options.options, {"qwen3_asr.lora_scale"}).value_or(1.0F);
+    auto adapter = engine::assets::read_weight_adapter(std::filesystem::u8path(*path), read_options);
+    engine::assets::WeightAdapterBindings bindings;
+    for (const auto & tensor : assets->model_weights->tensors()) {
+        bindings.add(tensor.name, tensor.name);
+        if (tensor.name.rfind("thinker.", 0) == 0) {
+            bindings.add(tensor.name.substr(8), tensor.name);
+        }
+        if (assets->config.hf_transformers_layout) {
+            if (tensor.name.rfind("model.language_model.", 0) == 0) {
+                bindings.add("model." + tensor.name.substr(21), tensor.name);
+            } else if (tensor.name.rfind("model.audio_tower.", 0) == 0) {
+                bindings.add(tensor.name.substr(6), tensor.name);
+            }
+        }
+    }
+    auto plan = engine::assets::bind_weight_adapter(
+        *assets->model_weights, std::move(adapter), bindings, engine::assets::WeightMergeMode::DeltaF32);
+    auto adapted = std::make_shared<Qwen3ASRAssets>(*assets);
+    adapted->model_weights = engine::assets::make_weight_adapter_source(
+        assets->model_weights, std::move(plan), "qwen3_asr.lora");
+    return adapted;
 }
 
 void validate_matmul_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
@@ -185,7 +215,7 @@ Qwen3ASRSession::Qwen3ASRSession(
     std::shared_ptr<const Qwen3ASRAssets> assets)
     : RuntimeSessionBase(options),
       task_(task),
-      assets_(require_assets(std::move(assets))),
+      assets_(require_assets(std::move(assets), options)),
       audio_encoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"qwen3_asr.audio_encoder_graph_arena_mb"}, 128ull * 1024ull * 1024ull)),
       thinker_prefill_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"qwen3_asr.text_decoder_prefill_graph_arena_mb", "qwen3_asr.thinker_prefill_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
       thinker_decode_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"qwen3_asr.text_decoder_decode_graph_arena_mb", "qwen3_asr.thinker_decode_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
@@ -234,6 +264,8 @@ Qwen3ASRSession::Qwen3ASRSession(
             key != "qwen3_asr.forced_aligner_path" &&
             key != "qwen3_asr.vad_path" &&
             key != "qwen3_asr.weight_type" &&
+            key != "qwen3_asr.lora" &&
+            key != "qwen3_asr.lora_scale" &&
             key != "qwen3_asr.forced_aligner_model_path" &&
             key != "qwen3_asr.aligner_model_path" &&
             key != "qwen3_asr.vad_model_path") {
