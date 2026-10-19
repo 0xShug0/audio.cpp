@@ -14,10 +14,13 @@
   } from '$lib/api';
   import type { Translator } from '$lib/i18n';
   import MediaPreview from '$lib/MediaPreview.svelte';
+  import VoicePicker from '$lib/VoicePicker.svelte';
+  import type { SavedVoice } from '$lib/voices';
   import type { CatalogEntry, InstallPackageChoice, LoadedModel, ServerHealth } from '$lib/types';
 
   export let activeCatalog: CatalogEntry[] = [];
   export let loadedModels: LoadedModel[] = [];
+  export let savedVoices: SavedVoice[] = [];
   export let server: ServerHealth | null = null;
   export let modelsFolder = '';
   export let maxTokens = 1024;
@@ -67,6 +70,7 @@
   let arenaGroundTruthText = '';
   let arenaVoiceMode: ArenaVoiceMode = 'default';
   let arenaBuiltinVoice = '';
+  let arenaSavedVoiceId = '';
   let arenaVoiceFile: File | null = null;
   let arenaVoiceInput: HTMLInputElement | null = null;
   let arenaReferenceText = '';
@@ -278,19 +282,27 @@
     return tr(`arena.itemStatus.${status}`, {}, status);
   }
 
-  function chooseArenaVoiceMode(mode: ArenaVoiceMode) {
-    arenaVoiceMode = mode;
-    if (mode !== 'reference') {
-      arenaVoiceFile = null;
-      arenaReferenceText = '';
-      if (arenaVoiceInput) arenaVoiceInput.value = '';
-    }
-    if (mode !== 'builtin') {
-      arenaBuiltinVoice = '';
+  function chooseArenaVoice(value: string) {
+    clearArenaReference();
+    if (value.startsWith('saved:')) {
+      const voice = savedVoices.find((entry) => entry.id === value.slice(6));
+      if (!voice) return;
+      arenaSavedVoiceId = voice.id;
+      arenaVoiceMode = 'reference';
+      arenaVoiceFile = new File([voice.audio], `${voice.name}.wav`, { type: voice.audio.type || 'audio/wav' });
+      arenaReferenceText = voice.transcript;
+    } else if (value.startsWith('preset:')) {
+      arenaVoiceMode = 'builtin';
+      arenaBuiltinVoice = value.slice(7);
+    } else if (value === 'reference') {
+      arenaVoiceMode = 'reference';
     }
   }
 
   function chooseArenaReferenceVoice(file: File | null) {
+    if (arenaSavedVoiceId || arenaBuiltinVoice) arenaReferenceText = '';
+    arenaSavedVoiceId = '';
+    arenaBuiltinVoice = '';
     arenaVoiceFile = file;
     if (file) arenaVoiceMode = 'reference';
   }
@@ -302,6 +314,7 @@
 
   function clearArenaReference() {
     arenaVoiceMode = 'default';
+    arenaSavedVoiceId = '';
     arenaBuiltinVoice = '';
     arenaVoiceFile = null;
     arenaReferenceText = '';
@@ -671,16 +684,14 @@
       {/if}
     </div>
 
-    {#if arenaMode === 'tts'}
+    {#if arenaMode !== 'asr'}
       <div class="reference-input-grid">
         <div>
-          <label for="arena-voice-mode">{tr('arena.voice.label')} <span>{tr('arena.shared')}</span></label>
-          <select id="arena-voice-mode" value={arenaVoiceMode}
-            on:change={(event) => chooseArenaVoiceMode(event.currentTarget.value as ArenaVoiceMode)}>
-            <option value="default">{tr('arena.voice.modelDefault')}</option>
-            {#if builtinVoices.length}<option value="builtin">{tr('arena.voice.builtin')}</option>{/if}
-            <option value="reference">{tr('arena.voice.reference')}</option>
-          </select>
+          <VoicePicker id="arena-voice-mode"
+            value={arenaSavedVoiceId ? `saved:${arenaSavedVoiceId}` : arenaVoiceMode === 'builtin' ? `preset:${arenaBuiltinVoice}` : arenaVoiceMode === 'reference' ? 'reference' : ''}
+            presets={arenaMode === 'tts' ? builtinVoices : []} {savedVoices}
+            presetLabel={tr('arena.voice.builtin')} emptyLabel={tr('arena.voice.modelDefault')}
+            allowEmpty={arenaMode === 'tts'} referenceOption {tr} disabled={running} onselect={chooseArenaVoice} />
         </div>
         <div>
           <label for="arena-reference-text">{tr('voice.referenceText')} <span>{tr('request.optional')}</span></label>
@@ -690,12 +701,6 @@
     {/if}
 
     {#if arenaVoiceMode === 'builtin'}
-      <label for="arena-builtin-voice">{tr('arena.voice.builtin')}</label>
-      <select id="arena-builtin-voice" bind:value={arenaBuiltinVoice}>
-        {#each builtinVoices as voice}
-          <option value={voice}>{voice}</option>
-        {/each}
-      </select>
       <div class="quick-voice-note">
         {tr('arena.voice.builtinNote')}
       </div>

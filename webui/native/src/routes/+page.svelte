@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { onDestroy, onMount } from 'svelte';
+  import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Mic, Play, SlidersHorizontal, Square, Trash2, User, Users, Video } from '@lucide/svelte';
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
     base64AudioUrl,
@@ -33,6 +34,7 @@
   import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
   import MediaPreview from '$lib/MediaPreview.svelte';
+  import VoicePicker from '$lib/VoicePicker.svelte';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
   import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
@@ -53,9 +55,7 @@
     ServerHealth
   } from '$lib/types';
   import {
-    deleteVoice as deleteSavedVoice,
     listVoices,
-    saveVoice,
     type SavedVoice
   } from '$lib/voices';
   import '../app.css';
@@ -138,7 +138,6 @@
   let chunkBudget = defaultChunkBudget(selected?.family || '');
   let savedVoices: SavedVoice[] = [];
   let savedVoiceId = '';
-  let voiceName = '';
   let recorder: MediaRecorder | null = null;
   let recordingTarget: 'source' | 'voice' | null = null;
   let recordingStream: MediaStream | null = null;
@@ -748,7 +747,6 @@
     quickStartVoice = '';
     savedVoiceId = '';
     voiceFile = null;
-    voiceName = '';
     referenceTextFile = null;
     referenceText = '';
     if (voiceInput) voiceInput.value = '';
@@ -780,7 +778,6 @@
     if (!voice) return;
     savedVoiceId = '';
     voiceFile = null;
-    voiceName = '';
     referenceTextFile = null;
     referenceText = '';
     if (voiceInput) voiceInput.value = '';
@@ -1773,25 +1770,10 @@
     }
   }
 
-  async function storeCurrentVoice() {
-    if (!voiceFile) {
-      status = 'Choose or record a voice reference first.';
-      return;
-    }
-    const name = voiceName.trim() || voiceFile.name.replace(/\.[^.]+$/, '');
-    const wav = await browserDecodeToWav(voiceFile);
-    const id = crypto.randomUUID();
-    await saveVoice({
-      id,
-      name,
-      transcript: referenceText,
-      audio: wav,
-      createdAt: Date.now()
-    });
-    await refreshVoices();
-    savedVoiceId = id;
-    voiceName = name;
-    status = `Saved voice “${name}” in this browser.`;
+  function chooseStudioVoice(value: string) {
+    if (value.startsWith('saved:')) chooseSavedVoice(value.slice(6));
+    else if (value.startsWith('preset:')) chooseQuickStartVoice(value.slice(7));
+    else clearVoiceReference();
   }
 
   function chooseSavedVoice(id: string) {
@@ -1804,17 +1786,7 @@
     if (voiceInput) voiceInput.value = '';
     if (referenceTextInput) referenceTextInput.value = '';
     referenceText = voice.transcript;
-    voiceName = voice.name;
     status = `Selected saved voice “${voice.name}”.`;
-  }
-
-  async function removeCurrentVoice() {
-    if (!savedVoiceId) return;
-    const voice = savedVoices.find((entry) => entry.id === savedVoiceId);
-    await deleteSavedVoice(savedVoiceId);
-    savedVoiceId = '';
-    await refreshVoices();
-    status = `Deleted saved voice “${voice?.name || ''}”.`;
   }
 
   async function transcribeLiveSlice(blob: Blob) {
@@ -2713,7 +2685,7 @@
             <span class="task-chip">{selected?.task}</span>
             {#if !replacesGenericControls.settingsImport}
               <button type="button" class="settings-import" disabled={running || loadingModel || restoringHistory}
-                on:click={() => settingsInput?.click()}>{tr('settings.load')}</button>
+                on:click={() => settingsInput?.click()}><FolderOpen size={14} />{tr('settings.load')}</button>
             {/if}
           </div>
         </div>
@@ -2721,9 +2693,11 @@
           on:change={(event) => loadSettingsFile(event.currentTarget.files?.[0] || null)} />
 
         {#if showsText}
-          <label for="text">{selected.task === 'gen' ? tr('request.prompt') : selected.task === 'align' ? tr('request.alignmentText') : tr('request.text')}</label>
+          <section class="studio-input-section">
+          <label class="studio-section-label" for="text"><MessageSquare size={17} />{selected.task === 'gen' ? tr('request.prompt') : selected.task === 'align' ? tr('request.alignmentText') : tr('request.text')}</label>
           <textarea id="text" rows={selected.task === 'gen' ? 3 : 4} bind:value={text}
             placeholder={selected.task === 'gen' ? tr('request.soundPlaceholder') : tr('request.textPlaceholder')}></textarea>
+          </section>
         {/if}
 
         {#if ['tts', 'clon'].includes(selected.task) && selected.family !== 'moss_ttsd' && !replacesGenericControls.chunking}
@@ -2785,12 +2759,12 @@
         {/if}
 
         {#if selected.task === 'asr' && !['samsone', 'audio_flamingo', 'index_echo'].includes(selected.family)}
-          <label for="context">{tr('request.context')} <span>{tr('request.contextHint')}</span></label>
+          <label class="studio-section-label" for="context"><FileText size={17} />{tr('request.context')} <span>{tr('request.contextHint')}</span></label>
           <textarea id="context" rows="2" bind:value={context}></textarea>
         {/if}
 
         {#if selected.task === 'vdes'}
-          <label for="instructions">{tr('request.voiceDescription')}</label>
+          <label class="studio-section-label" for="instructions"><MessageSquare size={17} />{tr('request.voiceDescription')}</label>
           <textarea id="instructions" rows="2" bind:value={instructions}
             placeholder={tr('request.voiceDescriptionPlaceholder')}></textarea>
         {/if}
@@ -2841,19 +2815,20 @@
         </div>
 
             {#if acceptsSource && selected.family !== 'liveavatar'}
-              <label for="source">{tr('request.sourceAudio')} {needsSource ? '' : `(${tr('request.optional')})`}</label>
+              <section class="studio-input-section">
+              <label class="studio-section-label" for="source"><AudioLines size={17} />{tr('request.sourceAudio')} <span>{needsSource ? '' : `(${tr('request.optional')})`}</span></label>
               <input id="source" class="file file-native" type="file" accept="audio/*"
                 bind:this={sourceInput}
                 on:change={(event) => sourceFile = event.currentTarget.files?.[0] || null} />
-          <label class="file-picker" for="source"><strong>{tr('file.choose')}</strong><span>{sourceFile?.name || tr('file.none')}</span></label>
+          <label class="file-picker" for="source"><FolderOpen size={16} /><strong>{tr('file.choose')}</strong><span>{sourceFile?.name || tr('file.none')}</span></label>
           <div class="media-actions">
             {#if recordingTarget === 'source'}
-              <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
+              <button class="danger" type="button" on:click={stopRecording}><Square size={14} />{tr('request.stopRecording')}</button>
               <span class="recording-dot">{tr('request.recordingMicrophone')}</span>
             {:else}
               <button type="button" disabled={Boolean(recorder) || liveRecording}
-                on:click={() => startRecording('source')}>{tr('request.recordMicrophone')}</button>
-              <button type="button" disabled={!sourceFile} on:click={clearSourceFile}>{tr('file.clear')}</button>
+                on:click={() => startRecording('source')}><Mic size={14} />{tr('request.recordMicrophone')}</button>
+              <button class="studio-icon-button" type="button" disabled={!sourceFile} title={tr('file.clear')} aria-label={tr('file.clear')} on:click={clearSourceFile}><Trash2 size={15} /></button>
               {#if sourceFile}<span>{sourceFile.name}</span>{/if}
             {/if}
           </div>
@@ -2872,10 +2847,12 @@
               {/if}
                 </div>
               {/if}
+              </section>
             {/if}
 
             {#if acceptsVideo}
-              <label for="video">Video <span>{tr('request.optional')}</span></label>
+              <section class="studio-input-section">
+              <label class="studio-section-label" for="video"><Video size={17} />Video <span>{tr('request.optional')}</span></label>
               <input id="video" class="file file-native" type="file" accept="video/*"
                 bind:this={videoInput}
                 on:change={(event) => videoFile = event.currentTarget.files?.[0] || null} />
@@ -2885,16 +2862,19 @@
                 {#if videoFile}<span>{videoFile.name}</span>{/if}
               </div>
               <MediaPreview file={videoFile} kind="video" label={tr('file.preview')} />
+              </section>
             {/if}
 
             {#if (needsVoice || selected.family === 'kugelaudio') && !usesVibeVoiceSpeakerFiles && !replacesGenericControls.voice}
+          <section class="studio-input-section studio-voice-section" aria-label={tr('voice.reference')}>
+          <h3 class="studio-section-label"><User size={17} />{tr('voice.reference')}</h3>
+            <VoicePicker id="quick-start-voice" value={savedVoiceId ? `saved:${savedVoiceId}` : quickStartVoice ? `preset:${quickStartVoice}` : ''}
+              presets={allowsQuickStartVoice ? quickStartVoices : []}
+              savedVoices={selected.family === 'kugelaudio' ? [] : savedVoices}
+              presetLabel={usesBuiltInVoiceSelector || selected.family === 'kugelaudio' ? tr('voice.preset') : server?.ui_management === false || !quickStartVoicesAreDemos ? tr('voice.configured') : tr('voice.quickStart')}
+              emptyLabel={tr('voice.useReference')} allowEmpty={selected.family !== 'kugelaudio'}
+              {tr} onselect={chooseStudioVoice} />
           {#if allowsQuickStartVoice && quickStartVoices.length}
-            <label for="quick-start-voice">{usesBuiltInVoiceSelector || selected.family === 'kugelaudio' ? tr('voice.preset') : server?.ui_management === false || !quickStartVoicesAreDemos ? tr('voice.configured') : tr('voice.quickStart')}</label>
-            <select id="quick-start-voice" value={quickStartVoice}
-              on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
-              {#if selected.family !== 'kugelaudio'}<option value="">{tr('voice.useReference')}</option>{/if}
-              {#each quickStartVoices as voice}<option value={voice}>{voice}</option>{/each}
-            </select>
             {#if quickStartVoice}
               {#if !usesBuiltInVoiceSelector && selected.family !== 'kugelaudio'}<div class="quick-voice-note">
                 {tr('voice.bundledNote')}
@@ -2911,7 +2891,7 @@
                 <input id="voice" class="file file-native" type="file" accept="audio/*"
                   bind:this={voiceInput}
                   on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
-                <label class="file-picker" for="voice"><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
+                <label class="file-picker" for="voice"><FolderOpen size={16} /><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
               </div>
               {#if selected.family !== 'auk'}
                 <div>
@@ -2919,7 +2899,7 @@
                   <input id="reference-file" class="file file-native" type="file" accept=".txt,text/plain"
                     bind:this={referenceTextInput}
                     on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
-                  <label class="file-picker" for="reference-file"><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
+                  <label class="file-picker" for="reference-file"><FileText size={16} /><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
                 </div>
               {/if}
             </div>
@@ -2931,7 +2911,7 @@
                 <span class="recording-dot">{tr('voice.recording')}</span>
               {:else}
                 <button type="button" disabled={Boolean(recorder) || liveRecording}
-                  on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
+                  on:click={() => startRecording('voice')}><Mic size={14} />{tr('request.recordMicrophone')}</button>
                 <button type="button"
                   disabled={!quickStartVoice && !savedVoiceId && !voiceFile && !referenceTextFile && !referenceText.trim()}
                   on:click={clearVoiceReference}>{tr('voice.clearReference')}</button>
@@ -2949,37 +2929,12 @@
                 placeholder={tr('voice.transcriptPlaceholder')}></textarea>
             {/if}
           {/if}
-          <!--
-            Saved voices keep a named reference recording and transcript for reuse. They are persisted only
-            in this browser's IndexedDB, are never uploaded until the user runs a request, do not sync to
-            another browser/device, and are removed if this site's browser data is cleared.
-          -->
-          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
-          <div class="voice-library">
-            <div>
-              <label for="saved-voice">{tr('voice.saved')} <span>{tr('voice.browserOnly')}</span></label>
-              <select id="saved-voice" value={savedVoiceId}
-                on:change={(event) => chooseSavedVoice(event.currentTarget.value)}>
-                <option value="">{tr('voice.chooseSaved')}</option>
-                {#each savedVoices as voice}<option value={voice.id}>{voice.name}</option>{/each}
-              </select>
-            </div>
-            <div>
-              <label for="voice-name">{tr('voice.libraryName')}</label>
-              <input id="voice-name" bind:value={voiceName} placeholder={tr('voice.namePlaceholder')} />
-            </div>
-            <div class="library-actions">
-              <button type="button" disabled={!voiceFile} on:click={storeCurrentVoice}>{tr('voice.save')}</button>
-              <button class="danger" type="button" disabled={!savedVoiceId}
-                on:click={removeCurrentVoice}>{tr('common.delete')}</button>
-            </div>
-          </div>
-          {/if}
+          </section>
         {/if}
 
         {#if usesVibeVoiceSpeakerFiles}
           <div class="vibevoice-speakers">
-            <div class="field-label">{tr('voice.speakerReferences')} <span>{tr('voice.upToFour')}</span></div>
+            <div class="studio-section-label"><Users size={17} />{tr('voice.speakerReferences')} <span>{tr('voice.upToFour')}</span></div>
             <div class="reference-input-grid">
               {#each [0, 1, 2, 3] as speaker}
                 <div>
@@ -3008,8 +2963,8 @@
         {/if}
 
         {#if genericParamSpecs.length && !replacesGenericControls.params}
-          <details>
-            <summary>{tr('options.modelParameters')} <span>{genericParamSpecs.length}</span></summary>
+          <details class="studio-options">
+            <summary><SlidersHorizontal size={16} />{tr('options.modelParameters')} <span>{genericParamSpecs.length}</span></summary>
             <div class="parameter-grid">
               {#each genericParamSpecs as spec}
                 <div class:wide={spec.type === 'text'}>
@@ -3049,8 +3004,8 @@
         {/if}
 
         {#if !replacesGenericControls.advancedJson}
-          <details>
-            <summary>{tr('options.additional')} <span>JSON</span></summary>
+          <details class="studio-options">
+            <summary><Code size={16} />{tr('options.additional')} <span>JSON</span></summary>
             <textarea class="code" rows="3" bind:value={advancedJson}></textarea>
           </details>
         {/if}
@@ -3058,10 +3013,10 @@
         <div class="runbar">
           <button class="run" disabled={!selectedId || running || rewritingCaption || restoringHistory || modelPanelUploading || (!isLoaded && installed === false)} on:click={run}
             title={!selectedId ? tr('run.chooseModel') : !isLoaded && installed === false ? tr('run.installModel') : ''}>
-            <span>{running ? tr('run.working') : tr('run.run')}</span>
+            <Play size={15} /><span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>
           </button>
-          <button disabled={!running} on:click={cancel}>{tr('run.cancel')}</button>
+          <button disabled={!running} on:click={cancel}><Square size={14} />{tr('run.cancel')}</button>
           <div class="status" class:busy={running}
             class:warning={!running && status === warningStatus}
             class:error={!running && status === errorStatus}>
@@ -3141,6 +3096,7 @@
       bind:this={arenaComponent}
       {activeCatalog}
       {loadedModels}
+      {savedVoices}
       {server}
       {modelsFolder}
       {maxTokens}
