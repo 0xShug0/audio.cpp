@@ -270,10 +270,20 @@ core::TensorValue AddModule::build(
     if (ctx.ggml == nullptr) {
         throw std::runtime_error("ModuleBuildContext.ggml is null");
     }
-    validate_same_shape(lhs, rhs, "Add rhs");
+    if (allow_broadcast_) {
+        if (!ggml_can_repeat(rhs.tensor, lhs.tensor)) {
+            throw std::runtime_error("Add rhs shape cannot broadcast to lhs");
+        }
+    } else {
+        validate_same_shape(lhs, rhs, "Add rhs");
+    }
+    if (preserve_input_type_ && lhs.type != rhs.type) {
+        throw std::runtime_error("Add input types must match when preserving the result type");
+    }
     const auto lhs_contiguous = tensor_layout::ensure_contiguous_nontransposed_layout_if_needed(ctx, lhs);
     const auto rhs_contiguous = tensor_layout::ensure_contiguous_nontransposed_layout_if_needed(ctx, rhs);
-    return core::wrap_tensor(ggml_add(ctx.ggml, lhs_contiguous.tensor, rhs_contiguous.tensor), lhs.shape, GGML_TYPE_F32);
+    return core::wrap_tensor(ggml_add(ctx.ggml, lhs_contiguous.tensor, rhs_contiguous.tensor), lhs.shape,
+        preserve_input_type_ ? lhs.type : GGML_TYPE_F32);
 }
 
 const core::ModuleSchema & AddModule::static_schema() noexcept {

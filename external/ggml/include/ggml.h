@@ -619,6 +619,7 @@ extern "C" {
         // audio8_tts codec per-tap accumulation and fused snake (audio8 PR).
         GGML_OP_MUL_MAT_ACC,
         GGML_OP_SNAKE_1D,
+        GGML_OP_FLASH_ATTN_F16_HEAD40,
 
         GGML_OP_COUNT,
     };
@@ -1484,6 +1485,8 @@ extern "C" {
             struct ggml_tensor  * a,
             float                 eps);
 
+    GGML_API void ggml_norm_set_cuda_f16(struct ggml_tensor * tensor);
+
     GGML_API struct ggml_tensor * ggml_norm_inplace(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
@@ -1530,6 +1533,11 @@ extern "C" {
             int                   n_groups,
             float                 eps);
 
+    GGML_API void ggml_group_norm_set_cuda_affine_f16(
+            struct ggml_tensor * tensor,
+            struct ggml_tensor * scale,
+            struct ggml_tensor * bias);
+
     GGML_API struct ggml_tensor * ggml_group_norm_inplace(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
@@ -1560,6 +1568,12 @@ extern "C" {
     // B: k columns, m rows  (i.e. we transpose it internally) => [ne03 * x, ne02 * y, m, k]
     // result is n columns, m rows => [ne03 * x, ne02 * y, m, n]
     GGML_API struct ggml_tensor * ggml_mul_mat(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b);
+
+    // CUDA-only FP16 output variant. Both operands must be FP16.
+    GGML_API struct ggml_tensor * ggml_mul_mat_f16(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
@@ -2358,6 +2372,9 @@ extern "C" {
             int                   d0,  // dilation dimension 0
             int                   d1); // dilation dimension 1
 
+    GGML_API void ggml_conv_2d_direct_set_cudnn(struct ggml_tensor * tensor);
+    GGML_API void ggml_conv_2d_direct_set_cudnn_bias(struct ggml_tensor * tensor, struct ggml_tensor * bias);
+
     GGML_API struct ggml_tensor * ggml_conv_3d_direct(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,   // kernel [KW, KH, KD, IC * OC]
@@ -2596,6 +2613,15 @@ extern "C" {
             float                 scale,
             float                 max_bias,
             float                 logit_softcap);
+
+    // CUDA-only, noncausal FP16 attention for 40-wide heads. Padding to the
+    // tensor-core tile width is internal to this operation.
+    GGML_API struct ggml_tensor * ggml_flash_attn_f16_head40(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q,
+            struct ggml_tensor  * k,
+            struct ggml_tensor  * v,
+            float                 scale);
 
     // CUDA-only SageAttention2 op for contiguous HND input tensors:
     // q, k, v: [head_dim, seq, n_head, batch]

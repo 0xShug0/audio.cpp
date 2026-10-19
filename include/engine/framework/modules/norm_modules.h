@@ -12,6 +12,7 @@ struct NormConfig {
     bool use_weight = true;
     bool use_bias = true;
     bool preserve_input_layout = false;
+    bool cuda_f16_output = false;
 };
 
 struct NormWeights {
@@ -84,6 +85,7 @@ struct GroupNormConfig {
     float eps = 1e-5F;
     bool use_weight = true;
     bool use_bias = true;
+    bool cuda_f16_output = false;
 };
 
 class GroupNormModule {

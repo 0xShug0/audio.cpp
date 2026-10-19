@@ -13,6 +13,7 @@ enum class ScaledDotProductAttentionLowering {
     Flash,
     FlashPreserveViews,
     ExplicitCpuPerHead,
+    CudaFlashF16Head40,
 };
 
 enum class AttentionCausality {
