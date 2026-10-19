@@ -1,7 +1,9 @@
 #include "engine/models/cosyvoice3/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/json.h"
 #include "engine/framework/rknn/engine.h"
+#include "engine/framework/rknn/engine_resources.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -11,6 +13,7 @@
 #include "engine/models/cosyvoice3/hift.h"
 #include "engine/models/cosyvoice3/rknn_flow.h"
 
+#include <algorithm>
 #include <chrono>
 #include <stdexcept>
 #include <string>
@@ -305,10 +308,31 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_cosyvoice3_loader() {
     config.family = kFamily;
     config.load_assets = load_cosyvoice3_assets;
     config.create_session = create_cosyvoice3_session;
-    // The ladder's residency policy, stated by the family that owns it: the engines its plan
-    // declares share one NPU aperture and evict to stay inside it, so a host consumer must not price
-    // the set by its sum. The ceiling is the sidecar's (see rknn_flow.h).
-    config.residency_cap_mib = aperture_budget_mib();
+    config.model_resources = [](const std::filesystem::path & path,
+                                const std::unordered_map<std::string, std::string> & options) {
+        const auto option = options.find("cosyvoice3.exec_plan");
+        if (option == options.end()) {
+            return runtime::ModelResourcePlan{};
+        }
+        const auto plan = io::json::parse(option->second);
+        const auto * flow = plan.find("flow");
+        const auto * impl = flow ? flow->find("impl") : nullptr;
+        if (!impl || impl->as_string() != "rknn") {
+            return runtime::ModelResourcePlan{};
+        }
+        auto resources = rknn::engine_resources(
+            {io::json::require_string(flow->require("artifacts"), "main")}, path);
+        const auto budget_mib = aperture_budget_mib();
+        if (budget_mib > 0) {
+            size_t largest = 0;
+            for (const auto & engine : resources.engines) {
+                largest = std::max(largest, engine.resident_bytes);
+            }
+            const size_t budget_bytes = static_cast<size_t>(budget_mib) * (1024ull * 1024ull);
+            resources.resident_bytes = std::max(largest, std::min(resources.resident_bytes, budget_bytes));
+        }
+        return resources;
+    };
     return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 

@@ -3,7 +3,6 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/io/json.h"
-#include "engine/framework/rknn/engine.h"
 
 #include <algorithm>
 #include <chrono>

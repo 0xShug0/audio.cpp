@@ -1,13 +1,13 @@
 #include "engine/models/qwen3_tts/loader.h"
 
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/io/json.h"
 #include "engine/framework/rknn/engine_resources.h"
 #include "engine/models/qwen3_tts/session.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <stdexcept>
-#include <system_error>
 #include <utility>
 
 namespace engine::models::qwen3_tts {
@@ -152,10 +152,6 @@ public:
         return load_qwen3_tts_model(request.model_path);
     }
 
-    // The speech decoder's exec_plan can name compiled RKNN engines; they ride the shared plan
-    // reader beside the RKNN module. No residency cap: the vocoder sidecar keeps every engine the
-    // plan declares (the B=64 stream and the B=16 first chunk) resident at once, so the sum is the
-    // footprint.
     runtime::ModelResourcePlan model_resources(
         const std::filesystem::path & model_path,
         const std::unordered_map<std::string, std::string> & session_options) const override {
@@ -164,12 +160,18 @@ public:
         if (option == session_options.end()) {
             return plan;
         }
-        std::error_code ec;
-        const auto model_root = std::filesystem::is_directory(model_path, ec)
-            ? model_path
-            : model_path.parent_path();
-        plan.engines = rknn::exec_plan_engine_requirements(option->second, model_root);
-        return plan;
+        const auto value = io::json::parse(option->second);
+        const auto * decoder = value.find("speech_decoder");
+        const auto * impl = decoder ? decoder->find("impl") : nullptr;
+        if (!impl || impl->as_string() != "rknn") {
+            return plan;
+        }
+        const auto & artifacts = decoder->require("artifacts");
+        std::vector<std::string> paths{io::json::require_string(artifacts, "main")};
+        if (const auto * first = artifacts.find("first")) {
+            paths.push_back(first->as_string());
+        }
+        return rknn::engine_resources(paths, model_path);
     }
 };
 

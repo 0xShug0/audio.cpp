@@ -9,12 +9,9 @@ namespace minitts::server {
 
 // Estimated resident bytes a model will occupy once loaded (weights plus a
 // runtime overhead factor for GPU buffers / compute graphs). A family that
-// declares compiled engines through an `exec_plan` reports them, and the
-// residency it will keep of them, through its loader's resource plan: the target
-// runtime prices each engine, and where it cannot answer (every build without an
-// RKNN runtime) the engine is priced at its file size. Engines are priced at 1.0
-// and never at the runtime factor, and the family's ceiling caps that set. The
-// server reads both plans and applies no plan grammar of its own.
+// declares auxiliary resources reports their paths and final resident bytes
+// through its loader. The server excludes those paths from weight scans and adds
+// the reported bytes without interpreting execution plans or residency policies.
 // Returns nullopt
 // when the footprint is indeterminate: a model directory holding several GGUFs
 // and no model.gguf. The guard must not refuse such a load with a 503 -- the

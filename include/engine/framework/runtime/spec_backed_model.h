@@ -2,12 +2,9 @@
 
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/model_spec/package.h"
-#include "engine/framework/rknn/engine_resources.h"
 #include "engine/framework/runtime/model.h"
-#include "engine/framework/runtime/options.h"
 
 #include <algorithm>
-#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <initializer_list>
@@ -16,7 +13,6 @@
 #include <string>
 #include <vector>
 #include <string_view>
-#include <system_error>
 #include <unordered_map>
 #include <utility>
 
@@ -37,9 +33,9 @@ struct SpecBackedVoiceModelConfig {
         const SessionOptions &,
         std::shared_ptr<const Assets>,
         std::shared_ptr<const engine::model_spec::ModelContract>)> create_session;
-    // Ceiling on the engines a plan declares, in MiB, for a family that evicts to share a hardware
-    // aperture (CosyVoice3's flow ladder). 0 = no ceiling, every declared engine is resident.
-    int64_t residency_cap_mib = 0;
+    std::function<ModelResourcePlan(
+        const std::filesystem::path &,
+        const std::unordered_map<std::string, std::string> &)> model_resources;
 };
 
 inline std::shared_ptr<const engine::model_spec::ModelContract> require_model_contract(std::string family) {
@@ -250,25 +246,12 @@ public:
             std::move(assets));
     }
 
-    // The engines this family's execution plan declares, priced by the target runtime and capped by
-    // the family's own residency policy if it has one. The plan travels as a session option, so the
-    // model -- which wrote both the plan's grammar and the eviction rule -- is what reads it; a host
-    // consumer prices the paths and applies its own de-duplication.
     ModelResourcePlan model_resources(
         const std::filesystem::path & model_path,
         const std::unordered_map<std::string, std::string> & session_options) const override {
-        ModelResourcePlan plan;
-        const auto option = session_options.find(config_.family + ".exec_plan");
-        if (option == session_options.end()) {
-            return plan;
-        }
-        std::error_code ec;
-        const auto model_root = std::filesystem::is_directory(model_path, ec)
-            ? model_path
-            : model_path.parent_path();
-        plan.engines = rknn::exec_plan_engine_requirements(option->second, model_root);
-        plan.resident_cap_mib = config_.residency_cap_mib;
-        return plan;
+        return config_.model_resources
+            ? config_.model_resources(model_path, session_options)
+            : ModelResourcePlan{};
     }
 
 private:

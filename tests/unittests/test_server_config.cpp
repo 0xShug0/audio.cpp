@@ -867,23 +867,18 @@ void test_model_memory_estimator() {
         const auto dir = root / "plan-sum";
         std::filesystem::create_directories(dir);
         write_file(dir / "model.gguf", 7000);
-        std::string declared;
         for (const std::string rung : {"flow_seq250.rknn", "flow_seq400.rknn"}) {
             write_file(dir / rung, 1);  // resize_file needs the file to exist; the rest stays sparse
             std::filesystem::resize_file(dir / rung, 3ull * 1024 * 1024 * 1024);
-            if (!declared.empty()) {
-                declared += ',';
-            }
-            declared += rung;
         }
         ServerModelConfig model;
-        model.family = "piper_tts";
+        model.family = "qwen3_tts";
         model.path = dir;
-        model.session_options["piper_tts.exec_plan"] =
-            R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":")" + declared + R"("}}})";
+        model.session_options["qwen3_tts.exec_plan"] =
+            R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":"flow_seq250.rknn","first":"flow_seq400.rknn"}}})";
         const auto estimate = estimate_model_memory_bytes(model);
         const auto priced =
-            family_compiled("piper_tts") ? 6ull * 1024 * 1024 * 1024 : size_t{0};
+            family_compiled("qwen3_tts") ? 6ull * 1024 * 1024 * 1024 : size_t{0};
         require(
             estimate.has_value() && *estimate == expected_estimate(7000) + priced,
             "a family without a residency policy is priced by the sum of its engines, at 1.0");
@@ -892,8 +887,7 @@ void test_model_memory_estimator() {
     // The ceiling a family states for its engines caps the priced set: a ladder that evicts to stay
     // inside an NPU aperture is not resident at the sum of its parts. The ceiling CosyVoice3 states is
     // the aperture budget, so the knob that sets it (AUDIOCPP_RKNN_APERTURE_MIB, see rknn_flow.h) is
-    // how this gate states a ceiling at all -- the family reports no cap of its own in a build without
-    // an RKNN runtime.
+    // how this gate exercises the model-local policy with file-size residency on this host.
     {
         const auto dir = root / "plan-capped";
         std::filesystem::create_directories(dir);
@@ -1005,7 +999,7 @@ void test_model_memory_estimator() {
             "a custom loader reports its plan's engines through the same hook");
     }
 
-    // A malformed plan is the session's error to report, not the guard's.
+    // Resource reporting must not silently reinterpret malformed JSON as a default plan.
     {
         const auto path = root / "malformed.gguf";
         write_file(path, 1000);
@@ -1013,10 +1007,43 @@ void test_model_memory_estimator() {
         model.family = "piper_tts";
         model.path = path;
         model.session_options["piper_tts.exec_plan"] = "{not json";
+        bool rejected = false;
+        try {
+            (void)estimate_model_memory_bytes(model);
+        } catch (const std::exception &) {
+            rejected = true;
+        }
+        require(rejected == family_compiled("piper_tts"), "a compiled family reports malformed JSON");
+    }
+
+    // Every RKNN family explicitly owns its resource reporting. Unselected components and
+    // artifacts on a ggml implementation do not become resident RKNN engines.
+    for (const auto & family_component : {
+             std::pair<std::string, std::string>{"piper_tts", "decoder"},
+             {"inflect_v2", "decoder"}, {"kokoro_tts", "generator"},
+             {"qwen3_tts", "speech_decoder"}, {"cosyvoice3", "flow"}}) {
+        const auto & family = family_component.first;
+        const auto & component = family_component.second;
+        const auto dir = root / ("selected-" + family);
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        write_file(dir / "engine.rknn", 600);
+        ServerModelConfig model;
+        model.family = family;
+        model.path = dir;
+        const std::string artifacts = R"(,"artifacts":{"main":"engine.rknn"}}})";
+        model.session_options[family + ".exec_plan"] =
+            "{\"" + component + R"(":{"impl":"rknn")" + artifacts;
         const auto estimate = estimate_model_memory_bytes(model);
-        require(
-            estimate.has_value() && *estimate == expected_estimate(1000),
-            "a malformed exec plan contributes nothing to the estimate");
+        require(estimate && *estimate == expected_estimate(7000) + (family_compiled(family) ? 600 : 0),
+                family + " reports its selected engine");
+        model.session_options[family + ".exec_plan"] =
+            "{\"" + component + R"(":{"impl":"ggml")" + artifacts;
+        const auto ggml_estimate = estimate_model_memory_bytes(model);
+        require(ggml_estimate && *ggml_estimate == expected_estimate(7000),
+                family + " does not price artifacts for an unselected RKNN implementation");
+        model.session_options.clear();
+        require(estimate_model_memory_bytes(model) == ggml_estimate, family + " keeps its default estimate");
     }
 }
 

@@ -413,18 +413,11 @@ The next request reloads the model.
 The optional free-memory guard checks host memory and GPU memory where available.
 Its load estimate covers the selected weight file/package plus session auxiliary
 files, with a runtime overhead factor and fixed floor. A family that holds
-compiled engines resident reports them through its loader, together with the
-sharing budget its own residency policy enforces on that set, so the guard reads
-no `exec_plan` of its own; each reported engine is resolved relative to the model
-directory, priced before the file scans, and skipped by them when the same path
-sits inside a checkpoint tree. A reported budget caps the sum of the engines it
-bounds, floored at the largest single engine, because the eviction rule the budget
-describes admits one engine wider than the budget by evicting the rest. Engines
-are counted at 1.0 and never at the runtime overhead
-factor, because a compiled engine is resident at its own allocation and builds no
-compute graph: where an NPU runtime is built in, at the residency its driver
-reports for the engine rather than at its image size -- a `.rknn` is a fraction of
-what loading it occupies -- and at the file size everywhere else. A directory normally
+compiled engines resident reports its selected resource paths and final residency
+through its loader. The family resolves its execution plan and applies its own
+eviction policy; the guard only adds the reported bytes and excludes those files
+from the weight scan. RKNN engines use driver-reported residency where available,
+otherwise file size, without the weight runtime factor. A directory normally
 selects `model.gguf` or its sole GGUF; several GGUFs without `model.gguf` are
 ambiguous to the estimator. Unsupported family-specific layouts may skip the
 guard with a log message, while an invalid spec-driven package can still fail

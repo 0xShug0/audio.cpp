@@ -2,6 +2,7 @@
 
 #include "engine/framework/runtime/session.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <memory>
@@ -117,28 +118,20 @@ struct LoaderAdvertisement {
 };
 
 /**
- * One compiled engine a model will hold resident, and what it costs. `resident_mib` is the
- * figure the target runtime reports for the engine (for RKNN: a model-info-only init plus
- * `RKNN_QUERY_MEM_SIZE`); 0 means the runtime could not say, and the caller keeps its own
- * proxy for that case.
+ * One selected resource, with its model-reported resident cost in bytes.
  */
 struct ModelEngineRequirement {
     std::filesystem::path path;
-    int64_t resident_mib = 0;
+    size_t resident_bytes = 0;
 };
 
 /**
- * What a model's session options ask for beyond its weight files, reported by the model that
- * owns them: the compiled engines its execution plans declare, and the sharing budget its own
- * residency policy enforces on that set (a ladder that evicts to share a hardware aperture has
- * one; 0 means the whole set is resident at once). A host consumer (the server's load guard)
- * prices and de-duplicates the paths; interpreting the plan is the model's job. A consumer
- * applying the budget must floor it at the largest single engine: the eviction rule the budget
- * describes admits one engine wider than the budget by evicting the rest.
+ * Resources beyond weight files and their aggregate residency. The model applies its own
+ * residency policy; consumers use the paths for deduplication and add resident_bytes as given.
  */
 struct ModelResourcePlan {
     std::vector<ModelEngineRequirement> engines;
-    int64_t resident_cap_mib = 0;
+    size_t resident_bytes = 0;
 };
 
 /** Map advertised capabilities to the HTTP surfaces they normally use. */

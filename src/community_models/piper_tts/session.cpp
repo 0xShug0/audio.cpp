@@ -2,7 +2,9 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/json.h"
 #include "engine/framework/rknn/engine.h"
+#include "engine/framework/rknn/engine_resources.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -229,6 +231,21 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_piper_tts_loader() {
     runtime::SpecBackedVoiceModelConfig<PiperTtsAssets> config;
     config.family = kFamily;
     config.load_assets = load_piper_tts_assets;
+    config.model_resources = [](const std::filesystem::path & path,
+                                const std::unordered_map<std::string, std::string> & options) {
+        const auto option = options.find("piper_tts.exec_plan");
+        if (option == options.end()) {
+            return runtime::ModelResourcePlan{};
+        }
+        const auto plan = io::json::parse(option->second);
+        const auto * decoder = plan.find("decoder");
+        const auto * impl = decoder ? decoder->find("impl") : nullptr;
+        if (!impl || impl->as_string() != "rknn") {
+            return runtime::ModelResourcePlan{};
+        }
+        return rknn::engine_resources(
+            {io::json::require_string(decoder->require("artifacts"), "main")}, path);
+    };
     config.create_session = [](
                                 const runtime::TaskSpec & task,
                                 const runtime::SessionOptions & options,
