@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -104,7 +105,8 @@ PiperTtsSession::PiperTtsSession(
           {{"ggml", {options.backend.type}, {}, {}},
            {"rknn", {}, {"main"}, {}}}},
          {"duration_encoder", "ggml",
-          {{"ggml", {core::BackendType::Cpu, options.backend.type}, {}, {}}}},
+          {{"ggml", {core::BackendType::Cpu, options.backend.type}, {}, {}},
+           {"rknn", {}, {"main"}, {}}}},
          {"duration_flows", "ggml",
           {{"ggml", {core::BackendType::Cpu, options.backend.type}, {}, {}}}}});
     const auto & decoder_plan = exec_plan.at("decoder");
@@ -121,7 +123,30 @@ PiperTtsSession::PiperTtsSession(
             ? engine::rknn::resolve_engine_path(decoder_plan.artifacts.at("main"), assets_->resources.model_directory())
             : std::string{},
         exec_plan.at("duration_encoder").backend,
-        exec_plan.at("duration_flows").backend);
+        exec_plan.at("duration_flows").backend,
+        // The encoder artifact names a comma-separated ladder of engines; each is
+        // named relative to the model like any other artifact.
+        [&]() {
+            const auto & encoder_plan = exec_plan.at("duration_encoder");
+            if (encoder_plan.impl != "rknn") {
+                return std::string{};
+            }
+            std::string out;
+            std::istringstream stream(encoder_plan.artifacts.at("main"));
+            for (std::string artifact; std::getline(stream, artifact, ',');) {
+                const auto at = artifact.find_first_not_of(" \t");
+                if (at == std::string::npos) {
+                    continue;
+                }
+                artifact = artifact.substr(at, artifact.find_last_not_of(" \t") - at + 1);
+                if (!out.empty()) {
+                    out += ",";
+                }
+                out += engine::rknn::resolve_engine_path(
+                    artifact, assets_->resources.model_directory());
+            }
+            return out;
+        }());
 }
 
 PiperTtsSession::~PiperTtsSession() = default;
@@ -240,12 +265,28 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_piper_tts_loader() {
         std::vector<std::string> artifacts;
         try {
             const auto plan = io::json::parse(option->second);
-            const auto * decoder = plan.find("decoder");
-            const auto * impl = decoder ? decoder->find("impl") : nullptr;
-            if (!impl || impl->as_string() != "rknn") {
-                return runtime::ModelResourcePlan{};
+            for (const char * const component : {"decoder", "duration_encoder"}) {
+                const auto * stage = plan.find(component);
+                const auto * impl = stage ? stage->find("impl") : nullptr;
+                if (!impl || impl->as_string() != "rknn") {
+                    continue;
+                }
+                // The encoder artifact is a comma-separated ladder of engines; every
+                // engine of a pinned stage is resident once the session loads.
+                const auto * stage_artifacts = stage->find("artifacts");
+                if (!stage_artifacts) {
+                    continue;
+                }
+                std::istringstream stream(
+                    io::json::require_string(*stage_artifacts, "main"));
+                for (std::string artifact; std::getline(stream, artifact, ',');) {
+                    const auto at = artifact.find_first_not_of(" \t");
+                    if (at != std::string::npos) {
+                        artifacts.push_back(
+                            artifact.substr(at, artifact.find_last_not_of(" \t") - at + 1));
+                    }
+                }
             }
-            artifacts.push_back(io::json::require_string(decoder->require("artifacts"), "main"));
         } catch (const std::runtime_error &) {
             // Session loading reports invalid execution plans.
             return runtime::ModelResourcePlan{};

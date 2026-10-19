@@ -23,6 +23,12 @@ The window contract (window 93 latent slices, 45 emitted + 24+24 real context, z
 mask-zeroed at the end that has no data) is the same one the runtime implements in
 src/community_models/piper_tts/rknn_decoder.cpp; change it here and there together. 24 is
 measured: at the 8+8 paroli ships, interior windows score 8-60 dB against a full-length decode.
+
+`--encoder` compiles the other half — the duration encoder — for a fixed phoneme-token width
+(`--frames`, piper tokens = 2*phonemes + 3):
+
+    <rknn-venv>/bin/python tools/rknn/prepare_piper_tts_rknn_vocoder.py \
+        --voice-onnx en_US-lessac-medium.onnx --encoder --frames 128
 """
 
 from __future__ import annotations
@@ -181,6 +187,242 @@ def mask_decoder_graph(model) -> int:
     del graph.node[:]
     graph.node.extend(rebuilt)
     return injected
+
+
+ENCODER_INPUTS = ["input", "input_lengths"]
+
+
+def slice_encoder(voice_onnx: Path, output: Path) -> None:
+    """Slice the duration encoder (text encoder + duration discriminator) at its seam.
+
+    The seam is `enc_p.proj` (the 2x-inter_channels prior stats) and `dp.proj` (the flow
+    conditioning): the two arrays the runtime's flow graphs and length regulator consume.
+    Piper's export carries the frame mask inside the encoder (attention biases and the
+    x_mask muls are wired to `input_lengths`), so a right-padded fixed-width run reproduces
+    the exact-length run on the real frames — measured 117-130 dB fp32 — the same
+    pad-to-compile recipe the decoder window uses, with no mask surgery.
+    `scales` is not an input of the slice: all three scalars (noise_scale, length_scale,
+    noise_scale_w) feed the sampling, the duration ceiling and the discriminator's flow
+    noise, which sit strictly downstream of the seam — the slice is deterministic.
+    """
+    model = onnx.load(str(voice_onnx), load_external_data=False)
+    stats = next((n for n in model.graph.node if n.name == "/enc_p/proj/Conv"), None)
+    conditioning = next((n for n in model.graph.node if n.name == "/dp/proj/Conv"), None)
+    if stats is None or conditioning is None:
+        raise SystemExit(
+            "no /enc_p/proj/Conv + /dp/proj/Conv: this ONNX is not a Piper/VITS voice"
+        )
+    onnx.utils.extract_model(
+        str(voice_onnx), str(output), ENCODER_INPUTS, [stats.output[0], conditioning.output[0]])
+    sliced = onnx.load(str(output))
+    onnx.checker.check_model(sliced, full_check=False)
+    onnx.save(sliced, str(output))
+    ops: dict[str, int] = {}
+    for node in sliced.graph.node:
+        ops[node.op_type] = ops.get(node.op_type, 0) + 1
+    print(
+        f"sliced {voice_onnx.name} at {stats.output[0]!r} + {conditioning.output[0]!r}:"
+        f" {len(sliced.graph.node)} nodes, inputs {ENCODER_INPUTS},"
+        f" outputs {[o.name for o in sliced.graph.output]}"
+    )
+    risky = sorted(
+        op for op in ops
+        if op in {"Pad", "Exp", "Shape", "ConstantOfShape", "Split", "Atan", "Erf"}
+    )
+    if risky:
+        print(f"  note: graph contains {risky}; if rknn.build aborts in fold_constant, "
+              "the exporting torch/onnx pair is too new for the toolkit")
+    report_engine(output)
+
+
+def check_encoder(onnx_path: Path, raw_path: Path, frames: int) -> None:
+    """Right-padding the folded fixed-`frames` graph must not move the real frames.
+
+    Exact-width runs come from the raw dynamic slice (the folded graph is fixed-shape by
+    construction); >= 100 dB fp32 against them is the pad-safety gate, on the graph the
+    engine is actually compiled from.
+    """
+    exact_session = ort_session(raw_path)
+    pad_session = ort_session(onnx_path)
+    rng = np.random.default_rng(7)
+    for n in (17, 61, frames - 1):
+        tokens = rng.integers(3, 250, size=(1, n), dtype=np.int64)
+        padded = rng.integers(0, 250, size=(1, frames), dtype=np.int64)
+        padded[:, :n] = tokens[0]
+        lengths = np.array([n], np.int64)
+        exact = exact_session.run(None, {"input": tokens, "input_lengths": lengths})
+        pad = pad_session.run(None, {"input": padded, "input_lengths": lengths})
+        for out, a, b in zip(pad_session.get_outputs(), exact, pad):
+            a = np.asarray(a).reshape(a.shape[0], -1, a.shape[-1])[..., :n]
+            b = np.asarray(b).reshape(b.shape[0], -1, b.shape[-1])[..., :n]
+            snr = _snr(a.astype(np.float64), b.astype(np.float64))
+            print(f"  {out.name} n={n} padded to {frames}: SNR {snr:.1f} dB")
+            if snr < 100:
+                raise SystemExit(f"right-padding moves the encoder output at n={n} ({snr:.1f} dB)")
+
+
+def fold_encoder(onnx_path: Path, output: Path, frames: int) -> None:
+    """Static-crop and constant-fold the encoder slice with ONNX Runtime's graph optimizer.
+
+    The sliced graph computes its own masks and pads from the dynamic frame axis (25 Shape,
+    48 Pad, 1 Range), and rknn-toolkit2's C++ rewriter aborts without a message on exactly
+    those shape-computation chains — the crash family of the qwen3 full-decode export. With
+    the frame axis pinned to `frames` the chains become constant, the optimizer folds them
+    into initializers, and the toolkit gets the static graph it can compile. The pad-safety
+    self-check runs on the folded graph, so a fold that moved anything is caught here.
+    """
+    import onnxruntime as ort
+
+    model = onnx.load(str(onnx_path))
+    for value in model.graph.input:
+        dims = value.type.tensor_type.shape.dim
+        for dim in dims:
+            dim.dim_param = ""
+            dim.dim_value = 0
+        if value.name == "input":
+            dims[0].dim_value = 1
+            dims[1].dim_value = frames
+        elif value.name == "input_lengths":
+            dims[0].dim_value = 1
+        else:
+            raise SystemExit(f"unexpected encoder input {value.name!r}")
+    for value in model.graph.output:
+        for dim in value.type.tensor_type.shape.dim:
+            dim.dim_param = ""
+            dim.dim_value = 0
+    pinned = output.with_suffix(".pinned.onnx")
+    onnx.save(model, str(pinned))
+
+    options = ort.SessionOptions()
+    options.log_severity_level = 3
+    # BASIC, not ALL: the extended levels emit the com.microsoft fusion ops (FusedConv,
+    # FusedMatMul, Gelu) into the saved model, and the RKNN toolkit drowns on them.
+    # Constant folding — the point of the pass — runs at BASIC.
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+    options.optimized_model_filepath = str(output)
+    ort.InferenceSession(str(pinned), options, providers=["CPUExecutionProvider"])
+
+    folded = onnx.load(str(output))
+    onnx.checker.check_model(folded, full_check=False)
+    ops: dict[str, int] = {}
+    for node in folded.graph.node:
+        ops[node.op_type] = ops.get(node.op_type, 0) + 1
+    shapes = sorted(
+        op for op in ("Shape", "Range", "ConstantOfShape", "NonZero", "GatherND", "ScatterND")
+        if op in ops
+    )
+    print(
+        f"folded to fixed {frames}-token width: {len(folded.graph.node)} nodes, "
+        f"shape ops {shapes or 'none'}"
+    )
+
+
+def matrix_form_encoder(onnx_path: Path, output: Path, frames: int) -> None:
+    """Rewrite the per-row relative-shift chains of the attention layers into gathers.
+
+    With the frame axis pinned, every piper attention layer shifts its [N, 2N-1]
+    relative-position slabs by one step per query row (Pad + Reshape + Slice, unrolled per
+    row), and the RKNN NPU kernels compute exactly those chains as garbage on the board:
+    probes show the flatten-Pad tails filled with uninitialized memory (NaN, ±65504) and
+    one such layer drags the engine to 0.4 dB end to end, while the PC simulator computes
+    the same graph at 56 dB. The two chains are exact gathers with constant indices:
+
+        bias[b,h,w,t] = rel_logits[b,h,w,(N-1)+t-w]                     (GatherElements)
+        rel_out[w]    = sum_j probs[b,h,w,j] * rel_v[(N-1)+j-w]  (Gather + Mul + ReduceSum)
+
+    The indices are constants, so the toolkit folds them back into weights at build:
+    the shift costs O(N^3) per layer — measured engines 137 MB at N=128, 402 MB at 192,
+    2.9 GB at 384, and N=512 exhausts 31 GB of converter RAM. Compile narrow bins only
+    and leave the wider widths to the host encoder.
+    """
+    from onnx import numpy_helper, shape_inference
+
+    model = shape_inference.infer_shapes(
+        onnx.load(str(onnx_path), load_external_data=True), strict_mode=True)
+    heads = next(
+        (list(v.type.tensor_type.shape.dim)[1].dim_value
+         for v in model.graph.value_info
+         if v.name == "/enc_p/encoder/attn_layers.0/Softmax_output_0"), 0)
+    if not heads:
+        raise SystemExit("no attn_layers.0/Softmax shape: not a folded piper encoder")
+    producers = {output_tensor: node for node in model.graph.node for output_tensor in node.output}
+    consumers: dict[str, list] = {}
+    for node in model.graph.node:
+        for i in node.input:
+            consumers.setdefault(i, []).append(node)
+    shift = (frames - 1) + np.arange(frames)[None, :] - np.arange(frames)[:, None]
+    drop, added, inits = set(), [], []
+    for layer in range(6):
+        p = f"/enc_p/encoder/attn_layers.{layer}/"
+        bias_t = producers[p + "Add_1_output_0"].input[1]
+        chain, t = [], bias_t
+        while producers[t].name != p + "Pad_1":
+            chain.append(producers[t])
+            t = producers[t].input[0]
+        chain.append(producers[t])
+        relv = producers[p + "MatMul_3_output_0"]
+        rel_v = next(i for i in relv.input if i != p + "Slice_8_output_0")
+        if len(consumers[p + "Slice_8_output_0"]) != 1:
+            raise SystemExit(f"{p}Slice_8 has foreign consumers; unexpected fold shape")
+        drop.update(id(n) for n in chain)
+        for x in (p + "Pad_3_output_0", p + "Reshape_13_output_0", p + "Pad_4_output_0",
+                  p + "Reshape_16_output_0", p + "Slice_8_output_0"):
+            drop.add(id(producers[x]))
+        drop.add(id(relv))
+        added.append(helper.make_node(
+            "GatherElements", [producers[p + "Pad_1_output_0"].input[0], p + "idxE"],
+            [bias_t], axis=3, name=p + "RelBiasGather"))
+        inits.append(numpy_helper.from_array(
+            np.broadcast_to(shift, (1, heads, frames, frames)).astype(np.int64), p + "idxE"))
+        added.append(helper.make_node(
+            "Gather", [rel_v, p + "idxG"], [p + "G_gathered"], axis=2, name=p + "RelVGather"))
+        inits.append(numpy_helper.from_array(shift.astype(np.int64), p + "idxG"))
+        added.append(helper.make_node(
+            "Unsqueeze", [p + "Softmax_output_0", "/enc_p/encoder/Axes4"],
+            [p + "ProbsUnsq"], name=p + "ProbsUnsq"))
+        added.append(helper.make_node(
+            "Mul", [p + "ProbsUnsq", p + "G_gathered"], [p + "RelVProd"], name=p + "RelVMul"))
+        added.append(helper.make_node(
+            "ReduceSum", [p + "RelVProd", "/enc_p/encoder/Axes3"],
+            [p + "MatMul_3_output_0"], name=p + "RelVSum", keepdims=0))
+    model.graph.initializer.extend([
+        numpy_helper.from_array(np.array([4], np.int64), "/enc_p/encoder/Axes4"),
+        numpy_helper.from_array(np.array([3], np.int64), "/enc_p/encoder/Axes3"),
+    ])
+    model.graph.initializer.extend(inits)
+    # rknn-toolkit2's fold_constant walks the node list once, in order: hand it a
+    # topologically sorted graph.
+    nodes = [n for n in model.graph.node if id(n) not in drop] + added
+    available = {i.name for i in model.graph.initializer} | {i.name for i in model.graph.input}
+    ordered, pending = [], list(nodes)
+    while pending:
+        ready = [n for n in pending if all(not i or i in available for i in n.input)]
+        if not ready:
+            raise SystemExit("cycle in the rewritten encoder graph")
+        for n in ready:
+            pending.remove(n)
+        available.update(o for n in ready for o in n.output)
+        ordered.extend(ready)
+    del model.graph.node[:]
+    model.graph.node.extend(ordered)
+    del model.graph.value_info[:]
+    model = shape_inference.infer_shapes(model, strict_mode=True)
+    onnx.save(model, str(output))
+    print(f"rewrote {6} attention shift chains to gathers: {len(model.graph.node)} nodes")
+
+
+def convert_rknn_encoder(
+    onnx_path: Path,
+    output: Path,
+    target: str,
+    frames: int,
+    opt_level: int | None = None,
+) -> None:
+    from rknn_build import build_engine, report_engine
+
+    # The folded graph is static: declare nothing (see build_engine).
+    build_engine(onnx_path, output, target, opt_level=opt_level)
+    report_engine(output, "inputs input/input_lengths", f"frames {frames}")
 
 
 def decode_window(session, z: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -446,6 +688,50 @@ def convert_rknn(
     report_engine(output, f"inputs {names}", f"window {window}")
 
 
+def verify_encoder(
+    onnx_path: Path,
+    raw_path: Path,
+    frames: int,
+    target: str,
+    seed: int = 7,
+) -> None:
+    """The fp16 cost of the compiled encoder, measured on the PC simulator.
+
+    Rebuilt from the folded ONNX rather than run from the exported `.rknn`: a
+    `load_rknn` engine cannot be inferred on the simulator (see the cosyvoice3
+    flow converter), and `load_onnx` + `build` with the same config produces the
+    same fp16 graph the board runs. Reference: the raw dynamic slice at exact
+    width, fp32.
+    """
+    from rknn.api import RKNN
+
+    exact = ort_session(raw_path)
+    rng = np.random.default_rng(seed)
+    rknn = RKNN(verbose=False)
+    rknn.config(target_platform=target)
+    if rknn.load_onnx(model=str(onnx_path)) != 0:
+        raise SystemExit("load_onnx failed")
+    if rknn.build(do_quantization=False) != 0:
+        raise SystemExit("build failed")
+    if rknn.init_runtime() != 0:
+        raise SystemExit("init_runtime (PC simulator) failed")
+    for n in (17, 61, frames - 1):
+        tokens = rng.integers(3, 250, size=(1, n), dtype=np.int64)
+        padded = rng.integers(0, 250, size=(1, frames), dtype=np.int64)
+        padded[:, :n] = tokens[0]
+        lengths = np.array([n], np.int64)
+        want = exact.run(None, {"input": tokens, "input_lengths": lengths})
+        got = rknn.inference(inputs=[padded, lengths])
+        for out, a, b in zip(exact.get_outputs(), want, got):
+            a = np.asarray(a).reshape(a.shape[0], -1, a.shape[-1])[..., :n]
+            b = np.asarray(b).reshape(b.shape[0], -1, b.shape[-1])[..., :n]
+            snr = _snr(a.astype(np.float64), b.astype(np.float64))
+            print(f"  {out.name} n={n} fp16 engine vs fp32 slice: SNR {snr:.1f} dB")
+            if snr < 30:
+                raise SystemExit(f"compiled encoder moved at n={n} ({snr:.1f} dB)")
+    rknn.release()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--voice-onnx", type=Path, help="Piper voice ONNX (text in, PCM out)")
@@ -456,6 +742,21 @@ def main() -> int:
     parser.add_argument("--skip-rknn", action="store_true", help="slice and check only")
     parser.add_argument("--skip-check", action="store_true")
     parser.add_argument(
+        "--encoder", action="store_true",
+        help="slice/compile the duration encoder (enc_p.proj + dp.proj seam, phoneme-width "
+             f"bin --frames) instead of the vocoder window")
+    parser.add_argument(
+        "--frames", type=int, default=128,
+        help="--encoder: compiled phoneme-token width (piper tokens = 2*phonemes + 3)")
+    parser.add_argument(
+        "--verify-sim", action="store_true",
+        help="--encoder: after compiling, infer the engine on the PC simulator against "
+             "the fp32 slice (fp16 cost of the encoder)")
+    parser.add_argument(
+        "--opt-level", type=int, default=None,
+        help="--encoder: rknn optimization level (wide bins whose kernels overflow the "
+             "NPU register fields at the default level: try 2)")
+    parser.add_argument(
         "--dec-mask", action="store_true",
         help="slice stage: multiply every decoder conv output by the (rate-upsampled) y_mask, "
              "so a zero-padded tail window reproduces the full decode's implicit-zero end "
@@ -464,8 +765,35 @@ def main() -> int:
 
     if args.voice_onnx is None and args.onnx is None:
         parser.error("pass --voice-onnx and/or --onnx")
-    if args.window <= CHUNK:
-        parser.error("--window must exceed the emitted chunk size (45)")
+    if not args.encoder:
+        if args.window <= CHUNK:
+            parser.error("--window must exceed the emitted chunk size (45)")
+
+    if args.encoder:
+        sliced = args.onnx
+        if args.voice_onnx is not None:
+            sliced = (args.output
+                      if args.output and args.output.suffix == ".onnx"
+                      else Path(f"encoder_n{args.frames}.onnx"))
+            slice_encoder(args.voice_onnx, sliced)
+        if sliced is None:
+            parser.error("--onnx is required (or pass --voice-onnx to slice one)")
+        folded = sliced.with_name(sliced.stem + "_static.onnx")
+        fold_encoder(sliced, folded, args.frames)
+        matrix = sliced.with_name(sliced.stem + "_matrix.onnx")
+        matrix_form_encoder(folded, matrix, args.frames)
+        if not args.skip_check:
+            print("self-check: encoder pad vs exact (matrix-form graph)")
+            check_encoder(matrix, sliced, args.frames)
+        if args.skip_rknn:
+            return 0
+        output = args.output if args.output and args.output.suffix == ".rknn" else Path(
+            sliced.with_suffix(".rknn"))
+        convert_rknn_encoder(matrix, output, args.target, args.frames, args.opt_level)
+        if args.verify_sim:
+            print("verify: compiled fp16 encoder on the PC simulator")
+            verify_encoder(matrix, sliced, args.frames, args.target)
+        return 0
 
     sliced = args.onnx
     if args.voice_onnx is not None:

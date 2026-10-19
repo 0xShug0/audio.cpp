@@ -1119,6 +1119,7 @@ audiocpp_add_model(piper_tts
         src/community_models/piper_tts/frontend.cpp
         src/community_models/piper_tts/vits_runtime.cpp
         src/community_models/piper_tts/rknn_decoder.cpp
+        src/community_models/piper_tts/rknn_duration_encoder.cpp
         src/community_models/piper_tts/session.cpp
     INCLUDES
         engine/community_models/piper_tts/session.h

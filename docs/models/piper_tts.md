@@ -39,13 +39,17 @@ audiocpp_cli --task tts --family piper_tts \
 |---|---|
 | `piper_tts.espeak_library_path` | Explicit path to the eSpeak-ng shared library. |
 | `piper_tts.espeak_data_path` | Explicit path to `espeak-ng-data`. |
-| `piper_tts.exec_plan` | JSON object of component execution plans. Default `{}` keeps existing execution. Select the RKNN decoder with `{"decoder":{"impl":"rknn","artifacts":{"main":"/models/decoder.rknn"}}}`, and pin the duration stages to the host with `{"duration_encoder":{"backend":"cpu"},"duration_flows":{"backend":"cpu"}}`. No params. RKNN requires `ENGINE_ENABLE_RKNN=ON`; see [Rockchip NPU](../build/rockchip-npu.md#component-execution-plans). |
+| `piper_tts.exec_plan` | JSON object of component execution plans. Default `{}` keeps existing execution. Select the RKNN decoder with `{"decoder":{"impl":"rknn","artifacts":{"main":"/models/decoder.rknn"}}}`, move the duration encoder onto the NPU over a comma-separated ladder of per-width engines with `{"duration_encoder":{"impl":"rknn","artifacts":{"main":"/models/enc_n128.rknn,/models/enc_n192.rknn"}}}` (narrow bins only: wide widths drift the duration sum; chunks above the widest engine stay on ggml), and pin the duration stages to the host with `{"duration_encoder":{"backend":"cpu"},"duration_flows":{"backend":"cpu"}}`. No params. RKNN requires `ENGINE_ENABLE_RKNN=ON`; see [Rockchip NPU](../build/rockchip-npu.md#component-execution-plans). |
 
 On RK3588 the decoder is 75% of the runtime, so the NPU path is worth the extra file: measured
 RTF 0.198 → 0.0696 and peak RSS 299 → 175 MB on `en_US-lessac-medium`.
 
 The two duration stages are components of the same option, so each can run on the host while the
-decoder stays on the device. `duration_encoder` already runs on the host on CUDA by default: host
+decoder stays on the device. `duration_encoder` can also run on the NPU
+(`impl: rknn`, a comma-separated ladder of per-width engines from the decoder's producer script
+with `--encoder`): the narrow bins measure 1.25-1.35x over the host encoder, wide bins are slower
+and shift the duration sum, so keep the ladder narrow and let the fallback cover the rest.
+`duration_encoder` already runs on the host on CUDA by default: host
 duration alignment keeps small TF32 differences from being amplified by `expand_prior` while the
 expensive decoder stays on the device. `duration_flows` runs on the device by default, and it is
 the stage worth watching on a device backend, because the flows are the sampler: a rounding
