@@ -53,7 +53,8 @@ generation, conversion, separation, VAD, diarization, alignment, and voice desig
 - embedded demo voices with matching transcripts;
 - a Voices page for importing, previewing, editing, downloading, and deleting
   reference recordings and transcripts stored in browser IndexedDB; select
-  **Use in Studio** or use Studio's saved-voice selector;
+  **Use in Studio**, or select a saved voice alongside demo voices in Studio
+  and Arena's voice dropdowns;
 - multilingual UI resources under `native/lang/`;
 - structured results, generated artifacts, and request timing.
 
