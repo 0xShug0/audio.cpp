@@ -2852,6 +2852,12 @@ function(audiocpp_use_utf8_codepage target)
     endif()
 endfunction()
 
+file(GLOB AUDIOCPP_RECIPE_PLUGIN_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/app/recipe/plugins/*.cpp")
+set(AUDIOCPP_RECIPE_SOURCES
+    app/recipe/recipe.cpp
+    ${AUDIOCPP_RECIPE_PLUGIN_SOURCES})
+
 add_executable(audiocpp_cli
     app/common/base64.cpp
     app/common/build_info.cpp
@@ -2861,6 +2867,8 @@ add_executable(audiocpp_cli
     app/cli/request.cpp
     app/streaming/pcm_source.cpp
     app/streaming/streaming.cpp
+    ${AUDIOCPP_RECIPE_SOURCES}
+    app/recipe/cli_recipe.cpp
     app/workflow/execution.cpp
     app/workflow/file_sink.cpp
     app/workflow/pipeline.cpp
@@ -3124,6 +3132,7 @@ add_executable(audiocpp_server
     app/cli/request.cpp
     app/streaming/pcm_source.cpp
     app/streaming/streaming.cpp
+    ${AUDIOCPP_RECIPE_SOURCES}
 )
 
 target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
@@ -3429,6 +3438,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(moonshine_neon_decoder_test PRIVATE engine_neon)
         add_test(NAME moonshine_neon_decoder_test COMMAND moonshine_neon_decoder_test)
     endif()
+    add_engine_unittest(recipe_test tests/unittests/test_recipe.cpp)
+    target_sources(recipe_test PRIVATE ${AUDIOCPP_RECIPE_SOURCES})
+    target_include_directories(recipe_test PRIVATE app/recipe)
+    add_test(NAME recipe_test COMMAND recipe_test)
     if (ENGINE_ENABLE_VULKAN)
         add_engine_unittest(vulkan_shared_weight_cache_test tests/unittests/test_vulkan_shared_weight_cache.cpp)
         add_test(NAME vulkan_shared_weight_cache_test COMMAND vulkan_shared_weight_cache_test)

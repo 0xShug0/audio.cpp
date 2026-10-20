@@ -10,6 +10,7 @@
 #endif
 
 #include "../streaming/streaming.h"
+#include "../recipe/recipe.h"
 
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/model.h"
@@ -203,6 +204,11 @@ private:
     HttpResponse handle_generic_run(const std::string & body_text);
     HttpResponse handle_generic_batch(const std::string & body_text);
     HttpResponse handle_generic_stream(const std::string & body_text);
+    HttpResponse handle_recipe_run(const std::string & body_text);
+    TimedTaskResult run_recipe(
+        const engine::io::json::Value & body,
+        const minitts::app::RecipeEventSink & event_sink = {});
+    std::string recipes_json() const;
     HttpResponse handle_voices(const HttpRequest & request) const;
     HttpResponse handle_unload_models(const std::string & body_text);
     HttpResponse handle_unload_all_models();
@@ -242,6 +248,7 @@ private:
     std::atomic<bool> idle_unload_shutdown_{false};
     std::thread idle_unload_thread_;
     ServerFrontendRegistry frontends_;
+    minitts::app::RecipeRegistry recipes_;
 };
 
 }  // namespace minitts::server

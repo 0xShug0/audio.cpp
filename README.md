@@ -746,6 +746,7 @@ Useful CLI features:
 - `--pipeline <json>` runs a workflow instead of a raw task
 - `--list-pipelines` prints registered workflows
 - `--workflow-input key=value` overrides pipeline inputs
+- `--recipe <name>` runs a built-in multi-model composition without a workflow file; see [Built-in recipes](docs/recipes.md)
 - `--log` streams framework logs to stdout
 - `--log-file <path>` streams framework logs to a file in real time
 - `--segments-out`, `--turns-out`, and `--words-out` write structured JSON outputs

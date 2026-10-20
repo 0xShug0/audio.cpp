@@ -127,6 +127,7 @@ void print_help() {
         << "  GET  /                           embedded WebUI (enabled by default with a config)\n"
         << "  GET  /health\n"
         << "  GET  /v1/models\n"
+        << "  GET  /v1/recipes\n"
         << "  POST /v1/models/load             available with --ui-management\n"
         << "  POST /v1/models/unload           available with --ui-management\n"
         << "  POST /v1/ui/upload               temporary browser upload for WebUI requests\n"
@@ -156,7 +157,9 @@ void print_help() {
         << "  POST /v1/tasks/run\n"
         << "  POST /v1/tasks/batch\n"
         << "  POST /v1/tasks/stream\n"
-        << "       events and result in one JSON body, or as SSE with stream_format=sse\n";
+        << "       events and result in one JSON body, or as SSE with stream_format=sse\n"
+        << "  POST /v1/recipes/run\n"
+        << "       run a built-in multi-model recipe; set stream=true for SSE\n";
 }
 
 }  // namespace

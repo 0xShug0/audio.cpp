@@ -37,6 +37,24 @@ int main() {
         }
         std::cout << "legacy registration and frontend forwarding boundary passed\n";
 
+        for (bool forwarded : {false, true}) {
+            minitts::server::HttpRequest recipes;
+            recipes.method = "GET";
+            recipes.path = "/v1/recipes";
+            const auto listed = forwarded ? state.forward_to_core(recipes) : state.handle(recipes);
+            if (listed.status != 200 ||
+                engine::io::json::parse(listed.body).require("data").as_array().empty()) {
+                throw std::runtime_error("recipe listing was not dispatched");
+            }
+            recipes.method = "POST";
+            recipes.path = "/v1/recipes/run";
+            recipes.body = "{\"recipe\":\"unknown-recipe\"}";
+            const auto rejected = forwarded ? state.forward_to_core(recipes) : state.handle(recipes);
+            if (rejected.status != 400 || rejected.body.find("unknown recipe") == std::string::npos) {
+                throw std::runtime_error("recipe errors bypassed shared HTTP handling");
+            }
+        }
+
         // Live speech needs `input` only for a model that speaks it. The entries
         // are lazy and the streams are never run, so no model loads and the
         // body is never read.
