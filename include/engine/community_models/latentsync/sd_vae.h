@@ -1,11 +1,13 @@
 #pragma once
 
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/conv_modules.h"
-#include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/norm_modules.h"
 
 #include <array>
+#include <memory>
 #include <vector>
 
 namespace engine::models::latentsync {
@@ -58,6 +60,21 @@ private:
     core::TensorValue build_mid(core::ModuleBuildContext & ctx,
         const core::TensorValue & input, const SdVaeTowerWeights & weights) const;
     LatentSyncSdVaeConfig config_;
+};
+
+class LatentSyncSdVaeRuntime {
+public:
+    LatentSyncSdVaeRuntime(core::ExecutionContext & execution, const assets::TensorSource & source,
+        assets::TensorStorageType weight_type, int64_t resolution = 512,
+        bool cuda_cudnn = false, bool cuda_f16_activations = false,
+        bool share_graph_workspace = false);
+    ~LatentSyncSdVaeRuntime();
+    std::vector<float> encode_moments(const std::vector<float> & image);
+    std::vector<float> encode(const std::vector<float> & image, const std::vector<float> & posterior_noise);
+    std::vector<float> decode(const std::vector<float> & scaled_latent);
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace engine::models::latentsync

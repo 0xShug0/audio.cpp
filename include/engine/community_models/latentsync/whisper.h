@@ -1,10 +1,30 @@
 #pragma once
 
-#include "engine/community_models/latentsync/whisper_encoder.h"
+#include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/modules/speech_encoders/whisper_embedding.h"
+
 #include <memory>
 
 namespace engine::models::latentsync {
+
+modules::WhisperEmbeddingWeights load_whisper_encoder_weights(
+    core::BackendWeightStore & store, const assets::TensorSource & source,
+    const modules::WhisperEmbeddingConfig & config, assets::TensorStorageType type);
+
+class LatentSyncWhisperEncoder {
+public:
+    explicit LatentSyncWhisperEncoder(modules::WhisperEmbeddingConfig config);
+
+    // Returns [batch, time, embedding_layer, channels], before ln_post.
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & mel,
+        const modules::WhisperEmbeddingWeights & weights) const;
+
+private:
+    modules::WhisperEmbeddingConfig config_;
+};
 
 class LatentSyncWhisperRuntime {
 public:

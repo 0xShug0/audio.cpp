@@ -1230,20 +1230,12 @@ audiocpp_add_model(minimax_h3
 
 audiocpp_add_model(latentsync
     SOURCES
-        src/community_models/latentsync/whisper_encoder.cpp
-        src/community_models/latentsync/whisper_runtime.cpp
-        src/community_models/latentsync/unet_attention.cpp
+        src/community_models/latentsync/whisper.cpp
         src/community_models/latentsync/unet.cpp
-        src/community_models/latentsync/unet_runtime.cpp
+        src/community_models/latentsync/sd_vae.cpp
+        src/community_models/latentsync/face.cpp
         src/community_models/latentsync/sampling.cpp
         src/community_models/latentsync/pipeline.cpp
-        src/community_models/latentsync/face_landmarks.cpp
-        src/community_models/latentsync/scrfd.cpp
-        src/community_models/latentsync/face_runtime.cpp
-        src/community_models/latentsync/face_alignment.cpp
-        src/community_models/latentsync/face_restore.cpp
-        src/community_models/latentsync/sd_vae.cpp
-        src/community_models/latentsync/sd_vae_runtime.cpp
         src/community_models/latentsync/video.cpp
         src/community_models/latentsync/session.cpp
     INCLUDES
