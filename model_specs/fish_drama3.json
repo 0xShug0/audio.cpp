@@ -76,19 +76,12 @@
         "default": 1024
       },
       {
-        "name": "max_new_tokens",
-        "type": "int",
-        "description": "Alias of max_tokens.",
-        "required": false,
-        "min": 1
-      },
-      {
         "name": "text_chunk_size",
         "type": "int",
         "description": "Maximum characters per long-form chunk.",
         "required": false,
         "min": 1,
-        "default": 200
+        "default": 128
       },
       {
         "name": "text_chunk_mode",
@@ -118,10 +111,10 @@
       {
         "name": "top_k",
         "type": "int",
-        "description": "Top-k candidate count.",
+        "description": "Top-k candidate count. The default 4097 keeps every candidate (no cap), as Fish's Drama 3 Space does; 30 can stall in long silences.",
         "required": false,
         "min": 1,
-        "default": 30
+        "default": 4097
       },
       {
         "name": "seed",
@@ -212,6 +205,14 @@
         "default": true
       },
       {
+        "name": "codec_encoder_chunk_samples",
+        "type": "int",
+        "description": "Reference-encoder convolution chunk size in samples at the codec sample rate. Use 0 for full encoding or a positive multiple of 512; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
         "name": "codec_backend",
         "type": "enum",
         "description": "Run the codec on the selected backend or on CPU.",
@@ -282,6 +283,20 @@
       "precision": "q4_k",
       "target_directory": "Drama-3-GGUF",
       "files": ["drama-3-backbone-4bit-experts-Q4_K_S.gguf"]
+    },
+    {
+      "id": "fish_drama3_small_iq3_xxs",
+      "display_name": "Drama3-small IQ3_XXS",
+      "format": "gguf",
+      "precision": "iq3_xxs",
+      "target_directory": "Drama3-small-GGUF",
+      "files": ["drama3-small-IQ3_XXS.gguf"],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "pentacoxian-dev/drama3-small-GGUF",
+        "revision": "main",
+        "gated": false
+      }
     }
   ],
   "sources": [

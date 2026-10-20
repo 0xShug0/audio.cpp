@@ -135,7 +135,7 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
     try {
         sampling.temperature = runtime::parse_finite_float_option(effective.options, {"temperature"}).value_or(1.0F);
         sampling.top_p = runtime::parse_finite_float_option(effective.options, {"top_p"}).value_or(0.9F);
-        sampling.top_k = runtime::parse_int_option(effective.options, {"top_k"}).value_or(30);
+        sampling.top_k = runtime::parse_int_option(effective.options, {"top_k"}).value_or(4097);
         sampling.max_frames = runtime::parse_positive_i64_option(effective.options, {"max_tokens", "max_new_tokens"}, 1024);
         seed = runtime::parse_u32_option(effective.options, {"seed"});
     } catch (const std::runtime_error & error) {
@@ -201,7 +201,7 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
             append_take(descriptors);
         }
     }
-    const int64_t chunk_size = runtime::parse_positive_i64_option(effective.options, {"text_chunk_size"}, 200);
+    const int64_t chunk_size = runtime::parse_positive_i64_option(effective.options, {"text_chunk_size"}, 128);
     const auto mode = engine::text::parse_text_chunk_mode_override(effective.options).value_or(engine::text::TextChunkMode::TagAware);
     const auto chunks = runtime::chunk_text_request(effective, chunk_size, mode);
     runtime::TaskResult result;

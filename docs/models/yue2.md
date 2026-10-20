@@ -78,8 +78,9 @@ The component paths are relative to `--model`; absolute paths are rejected.
 ## AR and NAR LoRA
 
 Use `yue2.ar_lora` for score/semantic planning and `yue2.nar_lora` for acoustic
-rendering. Either adapter can be used alone or both together. Use unfused
-SafeTensors files, not the `_comfyui` layouts. Changing adapters requires a new
+rendering. Either adapter can be used alone or both together. Native A/B,
+PEFT A/B, and ComfyUI up/down SafeTensors layouts are supported, including
+the instrumental adapter's fused QKV and gate/up projections. Changing adapters requires a new
 session; merged weights are cached within that session, not merged per request.
 
 For example, add the acoustic adapter alongside the AR adapter:
@@ -95,7 +96,7 @@ deltas. Its scale applies only to deltas; replacements are loaded at full streng
 A scale of `0` disables the entire adapter, including replacements. No separate
 audio-tokenizer head is needed for text-to-music generation.
 
-Load an unfused YuE2 AR adapter with session options:
+Load a YuE2 AR adapter with session options:
 
 ```bash
 --session-option yue2.ar_lora=/path/to/ar_lora_inst_v3abc.safetensors \
@@ -105,14 +106,15 @@ Load an unfused YuE2 AR adapter with session options:
 
 Both FP32 and BF16 adapter files are supported. Use the standard A/B files from
 [the instrumental adapter repository](https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras),
-not its ComfyUI fused file. NAR adapters are not supported by this option.
+including its ComfyUI fused file. Use `yue2.nar_lora` for NAR adapters.
 Relative adapter paths resolve under the model root. Reload the session after
 changing the adapter or scale; `0` disables it. With no adapter, weight loading
 and generation are unchanged.
 
 The adapter modifies AR attention and MLP projections at load time, using
-`BF16(W + BF16(scale * (B @ A)))`. There is no extra alpha/rank scaling or
-per-token adapter computation. NAR and VAE weights are unchanged.
+`BF16(W + BF16(scale * (B @ A)))`. Native YuE2 adapters retain their direct
+scale; other layouts apply their alpha/rank metadata when present. There is
+no per-token adapter computation. AR adapters leave NAR and VAE weights unchanged.
 Merged AR tensors are cached in CPU memory in their upload dtype for the session,
 so later requests skip merging. Only one dtype per adapted tensor is retained;
 unloading the session frees the cache. AR weights are still released from VRAM
@@ -357,9 +359,9 @@ checkpoint does not override them.
 |---|---|---:|---|
 | `yue2.model_gguf` | relative GGUF path | `yue2-3b-q8_0.gguf` | Main AR/NAR component. |
 | `yue2.vae_gguf` | relative GGUF path | `yue2-vae-f16.gguf` | VAE component. |
-| `yue2.ar_lora` | safetensors path | none | Unfused AR adapter; relative paths use the model root. |
+| `yue2.ar_lora` | safetensors path | none | AR adapter; native, PEFT, and ComfyUI layouts. Relative paths use the model root. |
 | `yue2.ar_lora_scale` | finite float | `1.0` | Adapter delta scale; `0` disables it. |
-| `yue2.nar_lora` | safetensors path | none | Unfused NAR adapter; relative paths use the model root. |
+| `yue2.nar_lora` | safetensors path | none | NAR adapter; relative paths use the model root. |
 | `yue2.nar_lora_scale` | finite float | `1.0` | NAR delta scale; replacements stay at full strength. `0` disables the entire adapter. |
 | `yue2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Shared weight storage fallback for the main model and VAE. |
 | `yue2.model_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | see description | YuE2 MoT weight storage type. Omitted inherits weight_type. |

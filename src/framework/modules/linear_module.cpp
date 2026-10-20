@@ -81,13 +81,19 @@ core::TensorValue LinearModule::build(
     core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");
     core::validate_last_dim(input, config_.in_features, "input");
     validate_weight_shape(config_, weights);
-
+    if (config_.cuda_f16_output && (ctx.backend_type != core::BackendType::Cuda ||
+            input.type != GGML_TYPE_F16 || weights.weight.type != GGML_TYPE_F16 ||
+            config_.precision != GGML_PREC_DEFAULT || config_.cuda_nvfp4_f16_activation_lowering)) {
+        throw std::runtime_error("FP16 linear output requires CUDA, FP16 operands, and default precision");
+    }
     const core::TensorValue contiguous_input = core::ensure_backend_addressable_layout(ctx, input);
 
     const core::TensorShape matrix_input_shape = flatten_to_matrix_shape(contiguous_input.shape);
     core::TensorValue matrix_input = core::reshape_tensor(ctx, contiguous_input, matrix_input_shape);
 
-    ggml_tensor * projected_raw = ggml_mul_mat(ctx.ggml, weights.weight.tensor, matrix_input.tensor);
+    ggml_tensor * projected_raw = config_.cuda_f16_output
+        ? ggml_mul_mat_f16(ctx.ggml, weights.weight.tensor, matrix_input.tensor)
+        : ggml_mul_mat(ctx.ggml, weights.weight.tensor, matrix_input.tensor);
     if (config_.precision != GGML_PREC_DEFAULT) {
         ggml_mul_mat_set_prec(projected_raw, config_.precision);
     }
@@ -100,14 +106,14 @@ core::TensorValue LinearModule::build(
     core::TensorValue projected = core::wrap_tensor(
         projected_raw,
         core::TensorShape::from_dims({matrix_input_shape.at(0), config_.out_features}),
-        GGML_TYPE_F32);
-
+        config_.cuda_f16_output ? GGML_TYPE_F16 : GGML_TYPE_F32);
     if (config_.use_bias) {
-        ggml_tensor * biased_raw = ggml_add(ctx.ggml, projected.tensor, weights.bias->tensor);
+        ggml_tensor * bias = config_.cuda_f16_output
+            ? ggml_cast(ctx.ggml, weights.bias->tensor, GGML_TYPE_F16) : weights.bias->tensor;
+        ggml_tensor * biased_raw = ggml_add(ctx.ggml, projected.tensor, bias);
         projected = core::wrap_tensor(
-            biased_raw,
-            core::TensorShape::from_dims({matrix_input_shape.at(0), config_.out_features}),
-            GGML_TYPE_F32);
+            biased_raw, projected.shape,
+            config_.cuda_f16_output ? GGML_TYPE_F16 : GGML_TYPE_F32);
     }
 
     return core::reshape_tensor(ctx, projected, input.shape.with_last_dim(config_.out_features));

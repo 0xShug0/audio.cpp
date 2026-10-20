@@ -1,6 +1,11 @@
 #include "engine/models/cosyvoice3/session.h"
 
+#include "engine/framework/assets/weight_adapter.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/json.h"
+#include "engine/framework/rknn/engine.h"
+#include "engine/framework/rknn/engine_resources.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -8,7 +13,9 @@
 #include "engine/models/cosyvoice3/flow.h"
 #include "engine/models/cosyvoice3/frontend.h"
 #include "engine/models/cosyvoice3/hift.h"
+#include "engine/models/cosyvoice3/rknn_flow.h"
 
+#include <algorithm>
 #include <chrono>
 #include <stdexcept>
 #include <string>
@@ -23,11 +30,80 @@ constexpr const char * kModelName = "CosyVoice3";
 constexpr int64_t kDefaultTextChunkSize = 600;
 constexpr size_t kDefaultReferenceCacheSlots = 4;
 
-std::shared_ptr<const CosyVoice3Assets> require_assets(std::shared_ptr<const CosyVoice3Assets> assets) {
+std::shared_ptr<const CosyVoice3Assets> require_assets(
+    std::shared_ptr<const CosyVoice3Assets> assets, const runtime::SessionOptions & options) {
     if (assets == nullptr) {
         throw std::runtime_error("CosyVoice3 session requires assets");
     }
-    return assets;
+    const auto path = runtime::find_option(options.options, {"cosyvoice3.lora"});
+    if (!path || path->empty()) {
+        return assets;
+    }
+    const auto adapter_path = std::filesystem::u8path(*path);
+    const auto directory = io::is_existing_directory(adapter_path) ? adapter_path : adapter_path.parent_path();
+    const bool native_package = io::is_existing_directory(adapter_path)
+        ? engine::assets::find_tensor_file(directory, "lora_weights").has_value()
+        : adapter_path.stem() == "lora_weights";
+    const bool native = io::is_existing_file(directory / "config.json") &&
+        (native_package || !io::is_existing_file(directory / "adapter_config.json"));
+    auto file = adapter_path;
+    if (io::is_existing_directory(adapter_path)) {
+        const auto resolved = engine::assets::find_tensor_file(directory, native ? "lora_weights" : "adapter_model");
+        if (!resolved) throw std::runtime_error("CosyVoice3 adapter checkpoint is missing in " + directory.string());
+        file = *resolved;
+    }
+    engine::assets::WeightAdapterReadOptions read_options;
+    read_options.require_scaling_metadata = true;
+    read_options.strength = runtime::parse_finite_float_option(
+        options.options, {"cosyvoice3.lora_scale"}).value_or(1.0F);
+    int64_t native_rank = 0;
+    if (native) {
+        const auto config = io::json::parse_file(directory / "config.json");
+        const auto & training = config.require("config");
+        native_rank = io::json::require_i64(training, "lora_r");
+        if (native_rank <= 0) {
+            throw std::runtime_error("CosyVoice3 LoRA rank must be positive");
+        }
+        read_options.scale_override = io::json::require_f32(training, "lora_alpha") / static_cast<float>(native_rank);
+    }
+    auto adapter = engine::assets::read_weight_adapter(file, read_options);
+    if (native) {
+        for (const auto & [name, update] : adapter.updates) {
+            const auto * factors = std::get_if<engine::assets::LowRankWeightUpdate>(&update.factors);
+            if (factors == nullptr || factors->r != native_rank) {
+                throw std::runtime_error("CosyVoice3 LoRA factors do not match configured lora_r=" +
+                    std::to_string(native_rank) + ": " + name);
+            }
+        }
+    }
+    engine::assets::WeightAdapterBindings bindings;
+    for (const auto & tensor : assets->llm_weights->tensors()) {
+        bindings.add(tensor.name, tensor.name);
+        if (tensor.name.rfind("llm.model.", 0) == 0) {
+            bindings.add(tensor.name.substr(10), tensor.name);
+        }
+    }
+    auto plan = engine::assets::bind_weight_adapter(
+        *assets->llm_weights, std::move(adapter), bindings, engine::assets::WeightMergeMode::DeltaF32);
+    if (native) {
+        for (const auto & module : {"speech_embedding", "llm_decoder"}) {
+            const auto file = engine::assets::find_tensor_file(directory, module);
+            if (!file) throw std::runtime_error("CosyVoice3 adapter is missing " + std::string(module));
+            const auto source = engine::assets::open_tensor_source(*file);
+            for (const auto & tensor : source->tensors()) {
+                const auto name = std::string(module) + "." + tensor.name;
+                engine::assets::require_tensor_shape(*assets->llm_weights, name, tensor.shape);
+                if (!plan.replacements.emplace(name, engine::assets::WeightReplacement{
+                        tensor.shape, source->require_f32(tensor.name)}).second) {
+                    throw std::runtime_error("CosyVoice3 adapter supplies duplicate replacement: " + name);
+                }
+            }
+        }
+    }
+    auto adapted = std::make_shared<CosyVoice3Assets>(*assets);
+    adapted->llm_weights = engine::assets::make_weight_adapter_source(
+        assets->llm_weights, std::move(plan), "cosyvoice3.lora");
+    return adapted;
 }
 
 std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
@@ -101,12 +177,14 @@ CosyVoice3Session::CosyVoice3Session(
     std::shared_ptr<const engine::model_spec::ModelContract> contract)
     : runtime::RuntimeSessionBase(options),
       task_(task),
-      assets_(require_assets(std::move(assets))),
+      assets_(require_assets(std::move(assets), options)),
       contract_(require_contract(std::move(contract))),
       tokenizer_(std::make_unique<CosyVoice3TextTokenizer>(assets_)) {
     auto validation_options = options;
     // This previously advertised option never selected convolution storage.
     validation_options.options.erase("cosyvoice3.conv_weight_type");
+    validation_options.options.erase("cosyvoice3.lora");
+    validation_options.options.erase("cosyvoice3.lora_scale");
     // Older embedded contracts omit exec_plan; parse_exec_plan validates its value.
     if (contract_->session_option_keys.find("cosyvoice3.exec_plan") == contract_->session_option_keys.end()) {
         validation_options.options.erase("cosyvoice3.exec_plan");
@@ -167,9 +245,12 @@ CosyVoice3Session::CosyVoice3Session(
           {{"ggml", {options.backend.type}, {}, {}},
            {"rknn", {}, {"main"}, {}}}}});
     const auto & flow_plan = exec_plan.at("flow");
-    const std::vector<std::string> rknn_flow_engines = flow_plan.impl == "rknn"
+    std::vector<std::string> rknn_flow_engines = flow_plan.impl == "rknn"
         ? split_paths(flow_plan.artifacts.at("main"))
         : std::vector<std::string>{};
+    for (auto & engine_path : rknn_flow_engines) {
+        engine_path = engine::rknn::resolve_engine_path(engine_path, assets_->resources.model_directory());
+    }
     flow_ = std::make_unique<CosyVoice3DiTFlowRuntime>(
         assets_,
         execution_context(),
@@ -300,6 +381,37 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_cosyvoice3_loader() {
     config.family = kFamily;
     config.load_assets = load_cosyvoice3_assets;
     config.create_session = create_cosyvoice3_session;
+    config.model_resources = [](const std::filesystem::path & path,
+                                const std::unordered_map<std::string, std::string> & options) {
+        const auto option = options.find("cosyvoice3.exec_plan");
+        if (option == options.end()) {
+            return runtime::ModelResourcePlan{};
+        }
+        std::vector<std::string> artifacts;
+        try {
+            const auto plan = io::json::parse(option->second);
+            const auto * flow = plan.find("flow");
+            const auto * impl = flow ? flow->find("impl") : nullptr;
+            if (!impl || impl->as_string() != "rknn") {
+                return runtime::ModelResourcePlan{};
+            }
+            artifacts.push_back(io::json::require_string(flow->require("artifacts"), "main"));
+        } catch (const std::runtime_error &) {
+            // Session loading reports invalid execution plans.
+            return runtime::ModelResourcePlan{};
+        }
+        auto resources = rknn::engine_resources(artifacts, path);
+        const auto budget_mib = aperture_budget_mib();
+        if (budget_mib > 0) {
+            size_t largest = 0;
+            for (const auto & engine : resources.engines) {
+                largest = std::max(largest, engine.resident_bytes);
+            }
+            const size_t budget_bytes = static_cast<size_t>(budget_mib) * (1024ull * 1024ull);
+            resources.resident_bytes = std::max(largest, std::min(resources.resident_bytes, budget_bytes));
+        }
+        return resources;
+    };
     return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 

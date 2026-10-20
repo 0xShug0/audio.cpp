@@ -53,6 +53,8 @@ runtime::ModelCliInterface cli(const VoxCPM2Assets &) {
       {"text_chunk_mode", "default|tag_aware|japanese|endline", "Framework text chunking mode. Offline only. Default: tag_aware.", false, "tag_aware"},
   };
   out.session_options = {
+      {"voxcpm2.lora", "path", "Native LoRA directory or checkpoint file with adjacent lora_config.json; merged into generator weights at session creation.", false},
+      {"voxcpm2.lora_scale", "float", "Multiplier for the adapter's configured alpha/r scaling; default 1.", false, "1"},
       {"voxcpm2.weight_type", "native|f32|f16|bf16|q8_0", "Language-model weight storage; does not override AudioVAE storage.", false},
       {"voxcpm2.audiovae_weight_type", "native|f32|f16|bf16|q8_0", "AudioVAE weight storage; defaults independently to native, not the shared weight_type."},
       {"voxcpm2.prompt_cache_slots", "int", "Prompt and prompt-audio embedding cache slots; default 1.", false, "1", "0"},
@@ -66,8 +68,9 @@ runtime::ModelCliInterface cli(const VoxCPM2Assets &) {
       {"voxcpm2.audiovae_weight_context_mb", "int", "Context or graph arena size in MiB.", false, "768", "1"},
       {"voxcpm2.audiovae_graph_arena_mb", "int", "AudioVAE decoder host graph-metadata arena size in MiB, not device workspace.", false, "1024", "1"},
       {"voxcpm2.audiovae_encoder_graph_arena_mb", "int", "AudioVAE encoder host graph-metadata arena size in MiB, not device workspace.", false, "1024", "1"},
-      {"voxcpm2.audiovae_latent_capacity", "int", "Optional reserved latent frame capacity; omitted selects automatically.", false, std::nullopt, "1"},
+      {"voxcpm2.audiovae_latent_capacity", "int", "Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count.", false, std::nullopt, "1"},
       {"voxcpm2.audiovae_encoder_sample_capacity", "int", "Reserved encoder sample capacity.", false, "240000", "1"},
+      {"voxcpm2.exec_plan", "string", "JSON component execution plans. audiovae: impl=default/ggml; backend must match the session; no artifacts. params.threads is a nonnegative int: positive values require a CPU session and enable a dedicated AudioVAE backend with streaming decode overlap; omitted/0 shares the session backend.", false, "{}"},
   };
   return out;
 }

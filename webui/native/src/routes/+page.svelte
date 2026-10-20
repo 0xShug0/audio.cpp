@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { onDestroy, onMount } from 'svelte';
+  import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Mic, Play, SlidersHorizontal, Square, Trash2, User, Users, Video } from '@lucide/svelte';
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
     base64AudioUrl,
@@ -22,6 +23,7 @@
     stopModelInstall,
         transcription,
         unloadModel,
+        releaseModels,
         uploadFile,
         uploadWav,
         voicePreviewUrl,
@@ -32,9 +34,11 @@
   import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
   import MediaPreview from '$lib/MediaPreview.svelte';
+  import VoicePicker from '$lib/VoicePicker.svelte';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
   import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
+  import AceStepPanel from '$lib/models/ace_step/AceStepPanel.svelte';
   import type { PanelRunner } from '$lib/models/panel_runner';
   import { prepareLiveAvatarOutput } from '$lib/models/liveavatar/video';
   import Arena from './Arena.svelte';
@@ -51,9 +55,7 @@
     ServerHealth
   } from '$lib/types';
   import {
-    deleteVoice as deleteSavedVoice,
     listVoices,
-    saveVoice,
     type SavedVoice
   } from '$lib/voices';
   import '../app.css';
@@ -136,7 +138,6 @@
   let chunkBudget = defaultChunkBudget(selected?.family || '');
   let savedVoices: SavedVoice[] = [];
   let savedVoiceId = '';
-  let voiceName = '';
   let recorder: MediaRecorder | null = null;
   let recordingTarget: 'source' | 'voice' | null = null;
   let recordingStream: MediaStream | null = null;
@@ -202,7 +203,8 @@
     'kitten_tts2',
     'kokoro_tts',
     'meanvc2',
-    'midashenglm_gen'
+    'midashenglm_gen',
+    'plapre'
   ]);
   const noGenericControlReplacements: GenericControlReplacements = {};
 
@@ -298,7 +300,11 @@
 
   function setParameterValue(spec: ParamSpec, value: unknown) {
     advancedValues = { ...advancedValues, [spec.name]: value };
-    if (['auk', 'yue2', 'liveavatar', 'fish_drama3'].includes(selected?.family || '') && spec.scope === 'session') {
+    if (selected?.family === 'ace_step' && spec.name === 'lora' && value === '') {
+      importedSessionOptions = { ...importedSessionOptions };
+      delete importedSessionOptions['ace_step.lora'];
+    }
+    if (['auk', 'yue2', 'liveavatar', 'fish_drama3', 'ace_step'].includes(selected?.family || '') && spec.scope === 'session') {
       isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
         modelMatchesSelectedPackage(model, selected));
     }
@@ -425,12 +431,20 @@
     return left.localeCompare(right, 'en', { sensitivity: 'base', numeric: true });
   }
 
-  function configuredCatalogEntries() {
-    return loadedModels.map((model) => {
+  // With UI management only the server config's models under ids the catalog
+  // lacks are added; a catalog id stays the catalog's entry, and a WebUI load of
+  // it keeps what the server config sets for it.
+  function configuredCatalogEntries(outsideCatalog = false) {
+    const models = outsideCatalog
+      ? loadedModels.filter((model) => model.configured && !catalog.some((entry) => entry.id === model.id))
+      : loadedModels;
+    return models.map((model) => {
       const exact = loadedCatalogEntry(model);
       const familyMatch = catalog.find((entry) =>
         entry.family === model.family && entry.task === model.task);
       const base = exact || familyMatch;
+      // Beside the catalog, the id tells the entry apart from the catalog's.
+      const named = (name: string | undefined) => name && outsideCatalog ? `${name} (${model.id})` : name;
       return {
         ...(base || {
           id: model.id,
@@ -441,15 +455,24 @@
           mode: model.mode
         }),
         id: model.id,
-        display_name: exact ? exact.display_name : inferredLoadedModelName(model, base),
-        display_name_en: exact ? exact.display_name_en : base?.display_name_en,
+        display_name: named(exact ? exact.display_name : inferredLoadedModelName(model, base)),
+        display_name_en: named(exact ? exact.display_name_en : base?.display_name_en),
         family: model.family,
         path: model.path,
         task: model.task,
         mode: model.mode,
-        install_packages: []
+        install_packages: [],
+        configured: true
       } as CatalogEntry;
     });
+  }
+
+  // A configured entry is used as the server config sets it: it loads on its
+  // first request and is never reloaded from the catalog. Without UI management
+  // every entry is one.
+  function isConfiguredEntry(entry: CatalogEntry | undefined) {
+    if (!server || !entry) return false;
+    return !server.ui_management || entry.configured === true;
   }
 
   function groupCatalog(entries: CatalogEntry[]): ModelGroup[] {
@@ -474,7 +497,9 @@
 
   class StatusWarning extends Error {}
 
-  $: activeCatalog = server && !server.ui_management ? configuredCatalogEntries() : catalog;
+  $: activeCatalog = server && !server.ui_management
+    ? configuredCatalogEntries()
+    : [...catalog, ...configuredCatalogEntries(true)];
   $: modelGroups = groupCatalog(activeCatalog);
   $: selected = activeCatalog.find((entry) => entry.id === selectedId) || activeCatalog[0] || catalog[0];
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
@@ -485,6 +510,8 @@
     modelMatchesSelectedPackage(model, selected));
   $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family, selected?.task);
   $: modelStudioPanel = modelStudioPanelConfig?.component;
+  $: genericParamSpecs = selected?.family === 'ace_step'
+    ? paramSpecs.filter((spec) => !['lora', 'lora_scale'].includes(spec.name)) : paramSpecs;
   $: replacesGenericControls = (modelStudioPanelConfig?.replacesGenericControls || noGenericControlReplacements) as GenericControlReplacements;
   $: usesYue2Request = modelStudioPanelConfig?.requestMode === 'yue2';
   $: usesPanelRequest = modelStudioPanelConfig?.requestMode === 'panel';
@@ -519,14 +546,14 @@
   $: referenceTextRequired = (requiresRequestOption(selected, 'reference_text') &&
     !(allowsQuickStartVoice && quickStartVoice)) ||
     (Boolean(voiceFile) && isQwenBase);
-  $: quickStartVoices = server && !server.ui_management
+  // A model with built-in voices also lists the server's voices (presets), but
+  // not the embedded demo wavs, which such a model cannot clone.
+  $: quickStartVoices = usesBuiltInVoiceSelector
     ? Array.from(new Set([
-        ...configuredVoices,
-        ...(usesBuiltInVoiceSelector ? selected?.builtin_voices || [] : [])
+        ...configuredVoices.filter((voice) => !(voice in demoVoiceSources)),
+        ...(selected?.builtin_voices || [])
       ]))
-    : usesBuiltInVoiceSelector
-      ? selected?.builtin_voices || []
-      : configuredVoices;
+    : configuredVoices;
   // The list holds server voices in both modes. Names without a library wav
   // (presets, embeddings) have no preview; MediaPreview hides it then.
   $: quickStartVoicePreview = quickStartVoice && server && !usesBuiltInVoiceSelector
@@ -548,7 +575,7 @@
   $: modelInventoryLoading = server === null ||
     (Boolean(server.ui_management) && Object.keys(packageSizes).length === 0 && packageSizeState !== 'failed');
   $: selectableModelIds = new Set(activeCatalog.filter((entry) => {
-    if (server && !server.ui_management) return true;
+    if (isConfiguredEntry(entry)) return true;
     if (loadedModels.some((model) => model.id === entry.id && model.loaded)) return true;
     if (entry.id === selectedId && installed === true) return true;
     const choices = entry.install_packages || [];
@@ -588,7 +615,7 @@
   }
 
   function selectedModelPath(entry: CatalogEntry) {
-    if (server && !server.ui_management) return entry.path;
+    if (isConfiguredEntry(entry)) return entry.path;
     return resolveCatalogPath(selectedPackageChoice(entry)?.path || entry.path);
   }
 
@@ -720,7 +747,6 @@
     quickStartVoice = '';
     savedVoiceId = '';
     voiceFile = null;
-    voiceName = '';
     referenceTextFile = null;
     referenceText = '';
     if (voiceInput) voiceInput.value = '';
@@ -752,7 +778,6 @@
     if (!voice) return;
     savedVoiceId = '';
     voiceFile = null;
-    voiceName = '';
     referenceTextFile = null;
     referenceText = '';
     if (voiceInput) voiceInput.value = '';
@@ -1034,7 +1059,7 @@
   }
 
   function clearUnavailableModelSelection(ignoreResident = false) {
-    if (server && !server.ui_management) return false;
+    if (isConfiguredEntry(selected)) return false;
     if (!selectedId || (!ignoreResident && isLoaded) || installed !== false) return false;
     clearModelSelection();
     return true;
@@ -1108,6 +1133,12 @@
       !(['vibevoice', 'moss_ttsd'].includes(selected?.family) && spec.name === 'voice_samples') &&
       !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
+    if (selected?.family === 'ace_step' && isConfiguredEntry(selected)) {
+      const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
+      advancedValues = { ...advancedValues,
+        lora: configured?.['ace_step.lora'] ?? '',
+        lora_scale: Number(configured?.['ace_step.lora_scale'] ?? 1) };
+    }
     if (selected?.family in asrTokenDefaults) asrMaxTokens = asrTokenDefaults[selected.family];
     if (selected?.family === 'confucius4_r2t2') language = 'Auto';
     else if (['owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'smart_turn', 'reuse', 'sidon', 'hviske_asr_v6', 'voxtral_tts'].includes(selected?.family)) language = '';
@@ -1119,7 +1150,7 @@
       duration = 30;
     }
     if (selected?.family === 'yue2') {
-      if (server?.ui_management === false) {
+      if (isConfiguredEntry(selected)) {
         const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
         advancedValues = {
           ...advancedValues,
@@ -1143,6 +1174,8 @@
     advancedJson = '{}';
   }
 
+  let configuredSelectionInitialized = false;
+
   function syncConfiguredSelection() {
     if (!server || server.ui_management) return;
     const entries = configuredCatalogEntries();
@@ -1152,7 +1185,8 @@
     }
     const current = selectedId ? entries.find((entry) => entry.id === selectedId) : undefined;
     const next = current || entries[0];
-    if (selectedId !== next.id) {
+    const initialize = !configuredSelectionInitialized || selectedId !== next.id;
+    if (initialize) {
       quickStartVoice = '';
       configuredVoices = [];
     }
@@ -1162,9 +1196,12 @@
     workflowSelections = { ...workflowSelections, [activeWorkflow]: next.id };
     modelPath = next.path;
     installed = true;
-    chunkBudget = defaultChunkBudget(next.family);
     localStorage.setItem('audiocpp.ui.model', next.id);
-    resetParams();
+    if (initialize) {
+      chunkBudget = defaultChunkBudget(next.family);
+      resetParams();
+    }
+    configuredSelectionInitialized = true;
   }
 
   async function refresh() {
@@ -1182,7 +1219,7 @@
       installed = null;
       return;
     }
-    if (server && !server.ui_management) {
+    if (isConfiguredEntry(selected)) {
       installed = loadedModels.some((model) => model.id === selectedId);
       return;
     }
@@ -1248,8 +1285,10 @@
       errorStatus = '';
       return;
     }
-    if (!server?.ui_management) {
-      status = 'This server was not started with UI management enabled.';
+    if (isConfiguredEntry(selected)) {
+      status = server?.ui_management
+        ? 'This model is configured by the server and loads on its first request.'
+        : 'This server was not started with UI management enabled.';
       warningStatus = status;
       errorStatus = '';
       return;
@@ -1293,17 +1332,12 @@
   }
 
   async function doUnload() {
-    if (!server?.ui_management) {
-      status = 'Model unload is disabled for this configured server.';
-      warningStatus = status;
-      errorStatus = '';
-      return;
-    }
     if (!selectedId) return;
     const modelName = selected.display_name;
     loadingModel = true;
     try {
-      await unloadModel(selected.id);
+      if (isConfiguredEntry(selected)) await releaseModels([selected.id]);
+      else await unloadModel(selected.id);
       await refresh();
       await refreshConfiguredVoices();
       const selectionCleared = clearUnavailableModelSelection(true);
@@ -1404,74 +1438,6 @@
     return options;
   }
 
-  function base64Text(value: string): string {
-    const binary = atob(value);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    return new TextDecoder().decode(bytes);
-  }
-
-  function acePlanFromResult(result: Record<string, unknown>): Record<string, unknown> {
-    if (Array.isArray(result.artifacts)) {
-      const artifact = result.artifacts.find((entry): entry is { id: string; payload: string } =>
-        typeof entry === 'object' && entry !== null &&
-          (entry as { id?: unknown }).id === 'ace_step_caption_plan' &&
-          typeof (entry as { payload?: unknown }).payload === 'string');
-      if (artifact) return JSON.parse(base64Text(artifact.payload));
-    }
-    if (typeof result.text === 'string') return { caption: result.text };
-    return {};
-  }
-
-  async function rewriteAceCaption() {
-    if (selected?.family !== 'ace_step' || running || rewritingCaption) return;
-    if (!text.trim() && !lyrics.trim()) {
-      status = 'Enter a caption or lyrics to rewrite.';
-      warningStatus = status;
-      errorStatus = '';
-      return;
-    }
-    rewritingCaption = true;
-    warningStatus = '';
-    errorStatus = '';
-    status = tr('request.rewritingCaption');
-    try {
-      await ensureLoaded();
-      const options = { ...requestOptions(), rewrite_caption: true };
-      const request: Record<string, unknown> = {
-        text,
-        seed: resolveRequestSeed(seed),
-        duration_seconds: duration,
-        options
-      };
-      if (language.trim()) request.language = language;
-      if (lyrics.trim()) request.lyrics = lyrics;
-      const result = await runTask({ model: selected.id, request });
-      const plan = acePlanFromResult(result);
-      if (typeof plan.caption === 'string' && plan.caption.trim()) text = plan.caption;
-      if (typeof plan.language === 'string' && plan.language.trim()) language = plan.language;
-      if (typeof plan.duration_seconds === 'number' && Number.isFinite(plan.duration_seconds) && plan.duration_seconds > 0) {
-        duration = plan.duration_seconds;
-      }
-      const nextAdvanced = { ...advancedValues };
-      if (typeof plan.bpm === 'number' && Number.isFinite(plan.bpm)) nextAdvanced.bpm = plan.bpm;
-      if (typeof plan.keyscale === 'string') nextAdvanced.keyscale = plan.keyscale;
-      if (typeof plan.timesignature === 'string') nextAdvanced.timesignature = plan.timesignature;
-      advancedValues = nextAdvanced;
-      outputText = typeof result.text === 'string' ? result.text : '';
-      outputJson = JSON.stringify(plan, null, 2);
-      status = 'Caption rewritten.';
-    } catch (error) {
-      status = error instanceof Error ? error.message : String(error);
-      errorStatus = status;
-      log(`Caption rewrite failed: ${status}`);
-    } finally {
-      rewritingCaption = false;
-    }
-  }
-
   function clearOutput() {
     if (selectedGenerationId === null) {
       for (const output of outputAudio) URL.revokeObjectURL(output.url);
@@ -1495,13 +1461,13 @@
 
   async function selectGeneration(entry: GenerationHistoryEntry, restoreParameters = false): Promise<void> {
     if (entry.modelId !== selectedId || entry.task !== selected.task) {
-      historyError = `Cannot open history for ${entry.label}: the current model is ${selected.display_name}.`;
+      historyError = tr('history.wrongModel', { label: entry.label, model: selected.display_name });
       log(historyError);
       return;
     }
     if (restoreParameters) {
       if (running || loadingModel || restoringHistory) {
-        historyError = 'Wait for the current request or settings restore to finish.';
+        historyError = tr('history.wait');
         return;
       }
       restoringHistory = true;
@@ -1563,7 +1529,7 @@
   $: trimGenerationHistory($uiConfiguration.historyLimit);
 
   async function ensureLoaded() {
-    if (!server?.ui_management) {
+    if (isConfiguredEntry(selected)) {
       if (settingsReloadRequired) {
         throw new Error('The imported model settings require a reload through the server configuration.');
       }
@@ -1684,7 +1650,7 @@
     warningStatus = files.length ? status : '';
     errorStatus = '';
     log(status);
-    if (settingsReloadRequired && server?.ui_management &&
+    if (settingsReloadRequired && server?.ui_management && !isConfiguredEntry(selected) &&
         window.confirm('The imported model settings differ from the loaded model. Reload now?')) {
       await ensureLoaded();
     }
@@ -1705,7 +1671,7 @@
   }
 
   async function ensureLoadedMode(mode: string) {
-    if (!server?.ui_management) {
+    if (isConfiguredEntry(selected)) {
       if (!loadedModels.some((model) => model.id === selectedId && model.mode === mode)) {
         throw new Error(`Configured model is not registered in ${mode} mode.`);
       }
@@ -1804,25 +1770,10 @@
     }
   }
 
-  async function storeCurrentVoice() {
-    if (!voiceFile) {
-      status = 'Choose or record a voice reference first.';
-      return;
-    }
-    const name = voiceName.trim() || voiceFile.name.replace(/\.[^.]+$/, '');
-    const wav = await browserDecodeToWav(voiceFile);
-    const id = crypto.randomUUID();
-    await saveVoice({
-      id,
-      name,
-      transcript: referenceText,
-      audio: wav,
-      createdAt: Date.now()
-    });
-    await refreshVoices();
-    savedVoiceId = id;
-    voiceName = name;
-    status = `Saved voice “${name}” in this browser.`;
+  function chooseStudioVoice(value: string) {
+    if (value.startsWith('saved:')) chooseSavedVoice(value.slice(6));
+    else if (value.startsWith('preset:')) chooseQuickStartVoice(value.slice(7));
+    else clearVoiceReference();
   }
 
   function chooseSavedVoice(id: string) {
@@ -1835,17 +1786,7 @@
     if (voiceInput) voiceInput.value = '';
     if (referenceTextInput) referenceTextInput.value = '';
     referenceText = voice.transcript;
-    voiceName = voice.name;
     status = `Selected saved voice “${voice.name}”.`;
-  }
-
-  async function removeCurrentVoice() {
-    if (!savedVoiceId) return;
-    const voice = savedVoices.find((entry) => entry.id === savedVoiceId);
-    await deleteSavedVoice(savedVoiceId);
-    savedVoiceId = '';
-    await refreshVoices();
-    status = `Deleted saved voice “${voice?.name || ''}”.`;
   }
 
   async function transcribeLiveSlice(blob: Blob) {
@@ -1932,7 +1873,7 @@
   // it stops once the request's entry is no longer selected, so that it
   // does not load the entry the user selected meanwhile.
   async function ensurePanelLoaded(modelId: string, mode: string) {
-    if (!server?.ui_management) return ensureLoaded();
+    if (isConfiguredEntry(selected)) return ensureLoaded();
     const stillSelected = () => {
       if (selectedId !== modelId) throw new Error('The model changed while it loaded; press Run again.');
     };
@@ -1983,7 +1924,7 @@
   }
 
   async function run() {
-    if (running || modelPanelUploading || restoringHistory) return;
+    if (running || rewritingCaption || modelPanelUploading || restoringHistory) return;
     if (!selectedId) {
       status = 'Choose an installed model before running a request.';
       warningStatus = status;
@@ -2265,6 +2206,8 @@
       }
       running = false;
       aborter = null;
+      // A configured entry loads with its first request; show it as resident.
+      if (isConfiguredEntry(selected) && !isLoaded) refresh();
     }
   }
 
@@ -2616,7 +2559,7 @@
     {/if}
     <button class:active={tab === 'logs'} on:click={() => openPage('logs')}>{tr('nav.runtime')}</button>
     <button class:active={tab === 'configuration'} disabled={restoringHistory}
-      on:click={() => openPage('configuration')}>Configuration</button>
+      on:click={() => openPage('configuration')}>{tr('nav.configuration')}</button>
   </nav>
   <label class="language-picker">
     <span>{tr('language.label')}</span>
@@ -2693,14 +2636,14 @@
         </div>
 
         <div class="studio-model-packages">
-        {#if selected.family === 'builtin_audio_utils' && server?.ui_management}
-          <label for="utility-weights">Weights path on server</label>
+        {#if selected.family === 'builtin_audio_utils' && server?.ui_management && !isConfiguredEntry(selected)}
+          <label for="utility-weights">{tr('studio.weightsPath')}</label>
           <input id="utility-weights" bind:value={modelPath} on:change={inspectPath} disabled={isLoaded || loadingModel || running} />
-          <a class="utility-weights-link" href={selected.weights_url} target="_blank" rel="noreferrer">Download SafeTensors weights</a>
+          <a class="utility-weights-link" href={selected.weights_url} target="_blank" rel="noreferrer">{tr('studio.downloadWeights')}</a>
         {/if}
 
         {#if selectedId && (selected.install_packages || []).length && !replacesGenericControls.packageButtons}
-          <div class="studio-package-buttons" aria-label="Model format">
+          <div class="studio-package-buttons" aria-label={tr('studio.format')}>
             {#each studioPackageSlots(selected) as slot}
               {@const choice = slot.choice}
               {@const available = Boolean(choice && packageIsAvailable(selected, choice, loadedModels, packageSizes))}
@@ -2708,8 +2651,8 @@
               <button class:resident class:selected-package={Boolean(choice && available &&
                   packageIsSelected(selected, choice))}
                 disabled={loadingModel || !available}
-                title={resident ? `Unload ${choice?.label}` : available ? `Load ${choice?.label}` :
-                  `${choice?.label || slot.label} is not downloaded`}
+                title={tr(resident ? 'studio.unloadPackage' : available ? 'studio.loadPackage' :
+                  'studio.packageNotDownloaded', { package: choice?.label || slot.label })}
                 on:click={() => choice && toggleStudioPackage(choice)}>
                 {choice?.label || slot.label}
               </button>
@@ -2717,10 +2660,12 @@
           </div>
         {:else}
           <button class="single-model-toggle" class:resident={isLoaded}
-            disabled={!selectedId || loadingModel || modelPanelUploading || installed === false || !server?.ui_management}
-            title={!server?.ui_management ? 'Configured by server config' : isLoaded ? tr('studio.unload') : tr('studio.load')}
+            disabled={!selectedId || loadingModel || modelPanelUploading || installed === false ||
+              (isConfiguredEntry(selected) && !isLoaded)}
+            title={isConfiguredEntry(selected) && !isLoaded ? tr('studio.serverConfigured') :
+              isLoaded ? tr('studio.unload') : tr('studio.load')}
             on:click={toggleSingleModel}>
-            {!server?.ui_management ? (isLoaded ? tr('studio.bundledLoaded') : 'Configured') :
+            {isConfiguredEntry(selected) ? (loadingModel ? tr('studio.working') : isLoaded ? tr('studio.bundledLoaded') : tr('studio.configured')) :
               loadingModel ? tr('studio.working') : isLoaded ? tr(selected.family === 'builtin_audio_utils' ? 'studio.unload' : 'studio.bundledLoaded') : tr('studio.load')}
           </button>
         {/if}
@@ -2740,7 +2685,7 @@
             <span class="task-chip">{selected?.task}</span>
             {#if !replacesGenericControls.settingsImport}
               <button type="button" class="settings-import" disabled={running || loadingModel || restoringHistory}
-                on:click={() => settingsInput?.click()}>Load settings JSON</button>
+                on:click={() => settingsInput?.click()}><FolderOpen size={14} />{tr('settings.load')}</button>
             {/if}
           </div>
         </div>
@@ -2748,9 +2693,11 @@
           on:change={(event) => loadSettingsFile(event.currentTarget.files?.[0] || null)} />
 
         {#if showsText}
-          <label for="text">{selected.task === 'gen' ? tr('request.prompt') : selected.task === 'align' ? tr('request.alignmentText') : tr('request.text')}</label>
+          <section class="studio-input-section">
+          <label class="studio-section-label" for="text"><MessageSquare size={17} />{selected.task === 'gen' ? tr('request.prompt') : selected.task === 'align' ? tr('request.alignmentText') : tr('request.text')}</label>
           <textarea id="text" rows={selected.task === 'gen' ? 3 : 4} bind:value={text}
             placeholder={selected.task === 'gen' ? tr('request.soundPlaceholder') : tr('request.textPlaceholder')}></textarea>
+          </section>
         {/if}
 
         {#if ['tts', 'clon'].includes(selected.task) && selected.family !== 'moss_ttsd' && !replacesGenericControls.chunking}
@@ -2767,7 +2714,13 @@
           </div>
         {/if}
 
-        {#if modelStudioPanel}
+        {#if selected.family === 'ace_step'}
+          <AceStepPanel modelId={selected.id} bind:text bind:lyrics bind:language bind:duration
+            {seed} busy={running || loadingModel} bind:rewritingCaption bind:advancedValues
+            adapterEditable={server?.ui_management === true && !isConfiguredEntry(selected)}
+            {paramSpecs} bind:outputText bind:outputJson bind:status bind:warningStatus bind:errorStatus
+            {ensureLoaded} {requestOptions} {resolveRequestSeed} {setParameterValue} {log} {tr} />
+        {:else if modelStudioPanel}
           <svelte:component
               this={modelStudioPanel}
               task={selected.task}
@@ -2784,7 +2737,7 @@
               setPanelRunner={registerPanelRunner}
               modelPathFor={selectedModelPath}
               sessionOptionsFor={mergedSessionOptions}
-              refreshModels={selected.family === 'yue2' && !server?.ui_management
+              refreshModels={selected.family === 'yue2' && isConfiguredEntry(selected)
                 ? async () => { loadedModels = await models(); }
                 : refresh}
               {log}
@@ -2804,24 +2757,14 @@
           <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
             aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
         {/if}
-        {#if selected.task === 'gen'}
-          {#if selected.family === 'ace_step'}
-            <div class="media-actions">
-              <button type="button" disabled={running || rewritingCaption || (!text.trim() && !lyrics.trim())}
-                on:click={rewriteAceCaption}>
-                {rewritingCaption ? tr('request.rewritingCaption') : tr('request.rewriteCaption')}
-              </button>
-            </div>
-          {/if}
-        {/if}
 
         {#if selected.task === 'asr' && !['samsone', 'audio_flamingo', 'index_echo'].includes(selected.family)}
-          <label for="context">{tr('request.context')} <span>{tr('request.contextHint')}</span></label>
+          <label class="studio-section-label" for="context"><FileText size={17} />{tr('request.context')} <span>{tr('request.contextHint')}</span></label>
           <textarea id="context" rows="2" bind:value={context}></textarea>
         {/if}
 
         {#if selected.task === 'vdes'}
-          <label for="instructions">{tr('request.voiceDescription')}</label>
+          <label class="studio-section-label" for="instructions"><MessageSquare size={17} />{tr('request.voiceDescription')}</label>
           <textarea id="instructions" rows="2" bind:value={instructions}
             placeholder={tr('request.voiceDescriptionPlaceholder')}></textarea>
         {/if}
@@ -2872,19 +2815,20 @@
         </div>
 
             {#if acceptsSource && selected.family !== 'liveavatar'}
-              <label for="source">{tr('request.sourceAudio')} {needsSource ? '' : `(${tr('request.optional')})`}</label>
+              <section class="studio-input-section">
+              <label class="studio-section-label" for="source"><AudioLines size={17} />{tr('request.sourceAudio')} <span>{needsSource ? '' : `(${tr('request.optional')})`}</span></label>
               <input id="source" class="file file-native" type="file" accept="audio/*"
                 bind:this={sourceInput}
                 on:change={(event) => sourceFile = event.currentTarget.files?.[0] || null} />
-          <label class="file-picker" for="source"><strong>{tr('file.choose')}</strong><span>{sourceFile?.name || tr('file.none')}</span></label>
+          <label class="file-picker" for="source"><FolderOpen size={16} /><strong>{tr('file.choose')}</strong><span>{sourceFile?.name || tr('file.none')}</span></label>
           <div class="media-actions">
             {#if recordingTarget === 'source'}
-              <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
+              <button class="danger" type="button" on:click={stopRecording}><Square size={14} />{tr('request.stopRecording')}</button>
               <span class="recording-dot">{tr('request.recordingMicrophone')}</span>
             {:else}
               <button type="button" disabled={Boolean(recorder) || liveRecording}
-                on:click={() => startRecording('source')}>{tr('request.recordMicrophone')}</button>
-              <button type="button" disabled={!sourceFile} on:click={clearSourceFile}>{tr('file.clear')}</button>
+                on:click={() => startRecording('source')}><Mic size={14} />{tr('request.recordMicrophone')}</button>
+              <button class="studio-icon-button" type="button" disabled={!sourceFile} title={tr('file.clear')} aria-label={tr('file.clear')} on:click={clearSourceFile}><Trash2 size={15} /></button>
               {#if sourceFile}<span>{sourceFile.name}</span>{/if}
             {/if}
           </div>
@@ -2903,10 +2847,12 @@
               {/if}
                 </div>
               {/if}
+              </section>
             {/if}
 
             {#if acceptsVideo}
-              <label for="video">Video <span>{tr('request.optional')}</span></label>
+              <section class="studio-input-section">
+              <label class="studio-section-label" for="video"><Video size={17} />Video <span>{tr('request.optional')}</span></label>
               <input id="video" class="file file-native" type="file" accept="video/*"
                 bind:this={videoInput}
                 on:change={(event) => videoFile = event.currentTarget.files?.[0] || null} />
@@ -2916,18 +2862,21 @@
                 {#if videoFile}<span>{videoFile.name}</span>{/if}
               </div>
               <MediaPreview file={videoFile} kind="video" label={tr('file.preview')} />
+              </section>
             {/if}
 
             {#if (needsVoice || selected.family === 'kugelaudio') && !usesVibeVoiceSpeakerFiles && !replacesGenericControls.voice}
+          <section class="studio-input-section studio-voice-section" aria-label={tr('voice.reference')}>
+          <h3 class="studio-section-label"><User size={17} />{tr('voice.reference')}</h3>
+            <VoicePicker id="quick-start-voice" value={savedVoiceId ? `saved:${savedVoiceId}` : quickStartVoice ? `preset:${quickStartVoice}` : ''}
+              presets={allowsQuickStartVoice ? quickStartVoices : []}
+              savedVoices={selected.family === 'kugelaudio' ? [] : savedVoices}
+              presetLabel={usesBuiltInVoiceSelector || selected.family === 'kugelaudio' ? tr('voice.preset') : server?.ui_management === false || !quickStartVoicesAreDemos ? tr('voice.configured') : tr('voice.quickStart')}
+              emptyLabel={tr('voice.useReference')} allowEmpty={selected.family !== 'kugelaudio'}
+              {tr} onselect={chooseStudioVoice} />
           {#if allowsQuickStartVoice && quickStartVoices.length}
-            <label for="quick-start-voice">{selected.family === 'kugelaudio' ? 'Voice preset' : server?.ui_management === false || !quickStartVoicesAreDemos ? tr('voice.configured') : tr('voice.quickStart')}</label>
-            <select id="quick-start-voice" value={quickStartVoice}
-              on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
-              {#if selected.family !== 'kugelaudio'}<option value="">{tr('voice.useReference')}</option>{/if}
-              {#each quickStartVoices as voice}<option value={voice}>{voice}</option>{/each}
-            </select>
             {#if quickStartVoice}
-              {#if selected.family !== 'kugelaudio'}<div class="quick-voice-note">
+              {#if !usesBuiltInVoiceSelector && selected.family !== 'kugelaudio'}<div class="quick-voice-note">
                 {tr('voice.bundledNote')}
               </div>{/if}
               {#if quickStartVoicePreview}
@@ -2942,7 +2891,7 @@
                 <input id="voice" class="file file-native" type="file" accept="audio/*"
                   bind:this={voiceInput}
                   on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
-                <label class="file-picker" for="voice"><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
+                <label class="file-picker" for="voice"><FolderOpen size={16} /><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
               </div>
               {#if selected.family !== 'auk'}
                 <div>
@@ -2950,7 +2899,7 @@
                   <input id="reference-file" class="file file-native" type="file" accept=".txt,text/plain"
                     bind:this={referenceTextInput}
                     on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
-                  <label class="file-picker" for="reference-file"><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
+                  <label class="file-picker" for="reference-file"><FileText size={16} /><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
                 </div>
               {/if}
             </div>
@@ -2962,10 +2911,10 @@
                 <span class="recording-dot">{tr('voice.recording')}</span>
               {:else}
                 <button type="button" disabled={Boolean(recorder) || liveRecording}
-                  on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
+                  on:click={() => startRecording('voice')}><Mic size={14} />{tr('request.recordMicrophone')}</button>
                 <button type="button"
                   disabled={!quickStartVoice && !savedVoiceId && !voiceFile && !referenceTextFile && !referenceText.trim()}
-                  on:click={clearVoiceReference}>Clear reference</button>
+                  on:click={clearVoiceReference}>{tr('voice.clearReference')}</button>
                 {#if voiceFile}<span>{voiceFile.name}</span>{/if}
               {/if}
             </div>
@@ -2980,41 +2929,16 @@
                 placeholder={tr('voice.transcriptPlaceholder')}></textarea>
             {/if}
           {/if}
-          <!--
-            Saved voices keep a named reference recording and transcript for reuse. They are persisted only
-            in this browser's IndexedDB, are never uploaded until the user runs a request, do not sync to
-            another browser/device, and are removed if this site's browser data is cleared.
-          -->
-          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
-          <div class="voice-library">
-            <div>
-              <label for="saved-voice">{tr('voice.saved')} <span>{tr('voice.browserOnly')}</span></label>
-              <select id="saved-voice" value={savedVoiceId}
-                on:change={(event) => chooseSavedVoice(event.currentTarget.value)}>
-                <option value="">{tr('voice.chooseSaved')}</option>
-                {#each savedVoices as voice}<option value={voice.id}>{voice.name}</option>{/each}
-              </select>
-            </div>
-            <div>
-              <label for="voice-name">{tr('voice.libraryName')}</label>
-              <input id="voice-name" bind:value={voiceName} placeholder={tr('voice.namePlaceholder')} />
-            </div>
-            <div class="library-actions">
-              <button type="button" disabled={!voiceFile} on:click={storeCurrentVoice}>{tr('voice.save')}</button>
-              <button class="danger" type="button" disabled={!savedVoiceId}
-                on:click={removeCurrentVoice}>{tr('common.delete')}</button>
-            </div>
-          </div>
-          {/if}
+          </section>
         {/if}
 
         {#if usesVibeVoiceSpeakerFiles}
           <div class="vibevoice-speakers">
-            <div class="field-label">Speaker references <span>optional, up to 4</span></div>
+            <div class="studio-section-label"><Users size={17} />{tr('voice.speakerReferences')} <span>{tr('voice.upToFour')}</span></div>
             <div class="reference-input-grid">
               {#each [0, 1, 2, 3] as speaker}
                 <div>
-                  <label for={'vibevoice-speaker-' + speaker}>Speaker {speaker + 1}</label>
+                  <label for={'vibevoice-speaker-' + speaker}>{tr('voice.speaker', { number: speaker + 1 })}</label>
                   <input id={'vibevoice-speaker-' + speaker} class="file file-native" type="file" accept="audio/*"
                     bind:this={vibeVoiceSpeakerInputs[speaker]}
                     on:change={(event) => chooseVibeVoiceSpeaker(speaker, event.currentTarget.files?.[0] || null)} />
@@ -3031,18 +2955,18 @@
               {/each}
             </div>
             {#if selected.family === 'moss_ttsd'}
-              <label for="dialogue-reference">Reference transcript</label>
+              <label for="dialogue-reference">{tr('voice.transcript')}</label>
               <textarea id="dialogue-reference" rows="2" bind:value={referenceText}
-                placeholder="[S1] Words spoken in Speaker 1's reference. [S2] Words spoken in Speaker 2's reference."></textarea>
+                placeholder={tr('voice.dialoguePlaceholder')}></textarea>
             {/if}
           </div>
         {/if}
 
-        {#if paramSpecs.length && !replacesGenericControls.params}
-          <details>
-            <summary>{tr('options.modelParameters')} <span>{paramSpecs.length}</span></summary>
+        {#if genericParamSpecs.length && !replacesGenericControls.params}
+          <details class="studio-options">
+            <summary><SlidersHorizontal size={16} />{tr('options.modelParameters')} <span>{genericParamSpecs.length}</span></summary>
             <div class="parameter-grid">
-              {#each paramSpecs as spec}
+              {#each genericParamSpecs as spec}
                 <div class:wide={spec.type === 'text'}>
                   <label for={'param-' + spec.name}>{localizedParameterText(spec, 'label', tr)}</label>
                   {#if spec.type === 'bool'}
@@ -3080,23 +3004,23 @@
         {/if}
 
         {#if !replacesGenericControls.advancedJson}
-          <details>
-            <summary>{tr('options.additional')} <span>JSON</span></summary>
+          <details class="studio-options">
+            <summary><Code size={16} />{tr('options.additional')} <span>JSON</span></summary>
             <textarea class="code" rows="3" bind:value={advancedJson}></textarea>
           </details>
         {/if}
 
         <div class="runbar">
-          <button class="run" disabled={!selectedId || running || restoringHistory || modelPanelUploading || (!isLoaded && installed === false)} on:click={run}
-            title={!selectedId ? 'Choose an installed model first' : !isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
-            <span>{running ? tr('run.working') : tr('run.run')}</span>
+          <button class="run" disabled={!selectedId || running || rewritingCaption || restoringHistory || modelPanelUploading || (!isLoaded && installed === false)} on:click={run}
+            title={!selectedId ? tr('run.chooseModel') : !isLoaded && installed === false ? tr('run.installModel') : ''}>
+            <Play size={15} /><span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>
           </button>
-          <button disabled={!running} on:click={cancel}>{tr('run.cancel')}</button>
+          <button disabled={!running} on:click={cancel}><Square size={14} />{tr('run.cancel')}</button>
           <div class="status" class:busy={running}
             class:warning={!running && status === warningStatus}
             class:error={!running && status === errorStatus}>
-            {#if running}<strong style="font-variant-numeric: tabular-nums" aria-label="Elapsed generation time">{generationElapsedSeconds.toFixed(1)} s · </strong>{/if}
+            {#if running}<strong style="font-variant-numeric: tabular-nums" aria-label={tr('run.elapsed')}>{generationElapsedSeconds.toFixed(1)} s · </strong>{/if}
             {localizedStatus(status, tr)}
           </div>
         </div>
@@ -3113,7 +3037,7 @@
       <section class="output">
         <div class="section-title">
           <div><span>{tr('result.label')}</span><h2>{tr('result.title')}</h2></div>
-          {#if outputSettings}<a class="settings-download" href={outputSettings.url} download={outputSettings.filename}>Save settings JSON</a>{/if}
+          {#if outputSettings}<a class="settings-download" href={outputSettings.url} download={outputSettings.filename}>{tr('settings.save')}</a>{/if}
           {#if outputAudio.length}<span class="task-chip">{outputAudio.length} {outputAudio.length === 1 ? tr('result.track') : tr('result.tracks')}</span>{/if}
         </div>
         {#if outputAudio.length}
@@ -3130,10 +3054,10 @@
           <div class="audio-list">
             {#each outputArtifacts as artifact}
               <article>
-                <div><strong>{artifact.id}</strong><a href={artifact.url} download={`${outputModelId}-${selectedGenerationId || 'output'}-${artifact.id}.${artifact.extension}`}>Save {artifact.extension.toUpperCase()}</a></div>
+                <div><strong>{artifact.id}</strong><a href={artifact.url} download={`${outputModelId}-${selectedGenerationId || 'output'}-${artifact.id}.${artifact.extension}`}>{tr('result.saveArtifact', { format: artifact.extension.toUpperCase() })}</a></div>
                 {#if artifact.mime.startsWith('video/')}
                   <MediaPreview src={artifact.url} name={`${selected.id}-${artifact.id}.${artifact.extension}`}
-                    kind="video" label="Video preview" />
+                    kind="video" label={tr('result.videoPreview')} />
                 {/if}
               </article>
             {/each}
@@ -3146,20 +3070,20 @@
         {#if outputJson}<details class="studio-response-details"><summary>Response JSON</summary><pre>{outputJson}</pre></details>{/if}
         {#if generationHistory.length}
           <details class="generation-history">
-            <summary>Run history (Experimental) <span>{generationHistory.length}/{$uiConfiguration.historyLimit}</span></summary>
+            <summary>{tr('history.title')} <span>{generationHistory.length}/{$uiConfiguration.historyLimit}</span></summary>
             {#if historyError}<div class="history-error" role="alert">{historyError}</div>{/if}
-            <div class="history-actions"><button type="button" disabled={restoringHistory} on:click={clearGenerationHistory}>Clear history</button></div>
+            <div class="history-actions"><button type="button" disabled={restoringHistory} on:click={clearGenerationHistory}>{tr('history.clear')}</button></div>
             <ul>
               {#each generationHistory as entry (entry.id)}
                 <li class:active={selectedGenerationId === entry.id}>
                   <button type="button" class="history-select" aria-pressed={selectedGenerationId === entry.id}
                     disabled={restoringHistory} on:click={() => selectGeneration(entry, true)}>
                     <strong>{entry.label}</strong>
-                    <small>{new Date(entry.createdAt).toLocaleTimeString()} · {localizedTaskLabel(entry.task)}{#if ['gen', 'tts', 'clon', 'vdes'].includes(entry.task)} · Seed {entry.seed}{/if}</small>
+                    <small>{new Date(entry.createdAt).toLocaleTimeString()} · {localizedTaskLabel(entry.task)}{#if ['gen', 'tts', 'clon', 'vdes'].includes(entry.task)} · {tr('request.seed')} {entry.seed}{/if}</small>
                   </button>
-                  <button type="button" title={`Delete generation ${entry.id}`}
+                  <button type="button" title={tr('history.deleteRun', { id: entry.id })}
                     disabled={restoringHistory}
-                    aria-label={`Delete generation ${entry.id}`} on:click={() => deleteGeneration(entry.id)}>Delete</button>
+                    aria-label={tr('history.deleteRun', { id: entry.id })} on:click={() => deleteGeneration(entry.id)}>{tr('common.delete')}</button>
                 </li>
               {/each}
             </ul>
@@ -3172,6 +3096,7 @@
       bind:this={arenaComponent}
       {activeCatalog}
       {loadedModels}
+      {savedVoices}
       {server}
       {modelsFolder}
       {maxTokens}
@@ -3210,7 +3135,7 @@
       tab = 'studio';
     }}/>
   {:else if tab === 'configuration'}
-    <Configuration />
+    <Configuration {tr} />
   {:else}
     <section class="page-head"><p class="eyebrow">{tr('runtime.eyebrow')}</p><h1>{tr('runtime.title')}</h1><p>{tr('runtime.subtitle')}</p></section>
     <section class="panel log-panel">

@@ -1,79 +1,54 @@
 #include "engine/community_models/xtts_v2/loader.h"
 #include "engine/community_models/xtts_v2/assets.h"
 #include "engine/community_models/xtts_v2/session.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 
 namespace engine::models::xtts_v2 {
 namespace {
 
-runtime::ModelMetadata make_metadata() {
-    runtime::ModelMetadata out;
-    out.family = "xtts_v2";
-    out.description = "xTTS-v2 (Coqui) cross-lingual TTS engine.";
-    return out;
-}
-
-runtime::CapabilitySet make_capabilities() {
-    runtime::CapabilitySet out;
-    out.supported_tasks = {{runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}}};
-    out.supports_speaker_reference = true;
-    out.languages = {"English", "German", "French", "Spanish", "Italian",
-        "Portuguese", "Polish", "Turkish", "Russian", "Dutch",
-        "Czech", "Arabic", "Hungarian", "Chinese", "Japanese",
-        "Korean", "Hindi"};
-    return out;
-}
-
-}  // namespace
-
+// XTTS packages contain two GGUFs; identify the pair rather than treating an
+// arbitrary model directory as a standalone GGUF source.
 class XttSv2Loader final : public runtime::IVoiceModelLoader {
 public:
     std::string family() const override { return "xtts_v2"; }
 
-    bool can_load(const runtime::ModelLoadRequest& request) const override {
-        std::filesystem::path g, v;
-        return discover_xtts_v2_files(request.model_path, g, v);
+    bool can_load(const runtime::ModelLoadRequest & request) const override {
+        if (request.family_hint && *request.family_hint != family()) return false;
+        return find_xtts_v2_gpt_file(request.model_path).has_value();
     }
 
-    runtime::ModelInspection inspect(const runtime::ModelLoadRequest& request) const override {
+    runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
+        const auto assets = load_xtts_v2_assets(request.model_path);
+        const auto contract = runtime::require_model_contract(family());
         runtime::ModelInspection out;
-        out.metadata = make_metadata();
-        out.capabilities = make_capabilities();
-        out.cli.session_options = {
-            {"temperature", "float", "Sampling temperature (default 0.75)"},
-            {"top_k", "n", "Top-k sampling (default 50)"},
-            {"top_p", "float", "Top-p sampling (default 0.85)"},
-            {"repetition_penalty", "float", "Repetition penalty (default 5.0)"},
-            {"max_mel_tokens", "n", "Max mel tokens (default 1500)"},
-            {"language", "text", "Source language code"},
-        };
+        out.model_root = assets->resources.model_root();
+        out.metadata = contract->metadata;
+        out.capabilities = contract->capabilities;
+        out.cli = contract->cli;
+        out.discovered_weights = {{"gpt", assets->gpt_gguf_path}, {"vocoder", assets->vocoder_gguf_path}};
         return out;
     }
 
-    std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest& request) const override {
+    std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
         auto assets = load_xtts_v2_assets(request.model_path);
-        if (!assets) return nullptr;
-        auto ptr = std::make_shared<const XttSv2Assets>(std::move(*assets));
-        return std::make_unique<XttSv2LoadedModel>(std::move(ptr));
+        runtime::SpecBackedVoiceModelConfig<XttSv2Assets> config;
+        config.family = family();
+        config.create_session = [](const runtime::TaskSpec & task, const runtime::SessionOptions & options,
+            std::shared_ptr<const XttSv2Assets> assets,
+            std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+            return std::make_unique<XttSv2TtsSession>(task, std::move(assets), options, std::move(contract));
+        };
+        return std::make_unique<runtime::SpecBackedLoadedVoiceModel<XttSv2Assets>>(
+            std::move(config), runtime::require_model_contract(family()), std::move(assets));
     }
 
-    runtime::CapabilitySet advertised_capabilities() const override { return make_capabilities(); }
+    runtime::CapabilitySet advertised_capabilities() const override {
+        return runtime::require_model_contract(family())->capabilities;
+    }
 };
+}  // namespace
 
-XttSv2LoadedModel::XttSv2LoadedModel(std::shared_ptr<const XttSv2Assets> assets)
-    : assets_(std::move(assets)) {
-    metadata_ = make_metadata();
-    caps_ = make_capabilities();
+std::shared_ptr<runtime::IVoiceModelLoader> make_xtts_v2_loader() {
+    return std::make_shared<XttSv2Loader>();
 }
-
-const runtime::ModelMetadata& XttSv2LoadedModel::metadata() const noexcept { return metadata_; }
-const runtime::CapabilitySet& XttSv2LoadedModel::capabilities() const noexcept { return caps_; }
-
-std::unique_ptr<runtime::IVoiceTaskSession> XttSv2LoadedModel::create_task_session(
-    const runtime::TaskSpec& task, const runtime::SessionOptions& options) const {
-    if (task.task != runtime::VoiceTaskKind::Tts) return nullptr;
-    return std::make_unique<XttSv2TtsSession>(assets_, options);
-}
-
-std::shared_ptr<runtime::IVoiceModelLoader> make_xtts_v2_loader() { return std::make_shared<XttSv2Loader>(); }
-
 }  // namespace engine::models::xtts_v2

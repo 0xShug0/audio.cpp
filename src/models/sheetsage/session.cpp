@@ -204,6 +204,7 @@ SheetSage2DecoderRuntimeOptions decoder_options_from_session_options(const runti
         runtime::parse_size_mb_option(options.options, {"sheetsage2.weight_context_mb"}, out.weight_context_bytes);
     out.graph_arena_bytes =
         runtime::parse_size_mb_option(options.options, {"sheetsage2.decoder_graph_arena_mb"}, out.graph_arena_bytes);
+    out.attention_tile_rows = runtime::parse_i64_option(options.options, {"sheetsage2.attention_tile_rows"}).value_or(0);
     return out;
 }
 

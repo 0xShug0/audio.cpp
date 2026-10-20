@@ -28,4 +28,3 @@ std::string normalize_xtts_v2_text(const std::string & text, const char * langua
 int xtts_v2_language_index(const char * language);
 
 }  // namespace engine::models::xtts_v2
-

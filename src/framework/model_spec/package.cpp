@@ -564,7 +564,12 @@ assets::ResourceBundle load_resource_bundle(
     const std::filesystem::path & spec_path) {
     auto selected = require_selected_source(model_path, spec_path);
     try {
-        return load_source(selected.model_root, selected.source, selected.roots);
+        auto bundle = load_source(selected.model_root, selected.source, selected.roots);
+        // A GGUF that embeds its sidecars gets a materialized root, so the bundle root is not
+        // always the directory the model lives in. Keep that one too: it is what an operator
+        // names an installed file by.
+        bundle.set_model_directory(resolve_model_root(model_path));
+        return bundle;
     } catch (const std::exception & error) {
         throw std::runtime_error("failed to load model resources using " + selected.spec_description +
                                  " source '" + selected.source_format + "': " + error.what());

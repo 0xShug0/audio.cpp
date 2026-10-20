@@ -1232,6 +1232,7 @@ F5SynthesisResult f5_synthesize(
     dev.use_cuda = request.use_cuda;
     dev.device = request.cuda_device;
     dev.threads = request.threads;
+    dev.state = request.runtime_state;
 
     // ---- chunk long texts instead of truncating: each chunk is sized by
     // the DURATION budget (frames/char from the reference, capped) so no

@@ -1,5 +1,5 @@
 #include "engine/framework/modules/transformers/causal_decoder_runtime.h"
-#include "engine/framework/debug/trace.h"
+#include "engine/framework/debug/profiler.h"
 
 #include <cmath>
 #include <algorithm>
@@ -26,6 +26,7 @@ void close(const std::vector<float> & actual, const std::vector<float> & expecte
 }
 
 int main(int argc, char ** argv) {
+    const auto started = std::chrono::steady_clock::now();
     try {
         engine::core::BackendConfig backend;
         backend.threads = 8;
@@ -105,6 +106,27 @@ int main(int argc, char ** argv) {
                 state.layers[0].value = pattern(steps * 4, -.7f);
                 legacy.import_state(state);
                 lazy.import_state(state);
+                if (steps > 0) {
+                    ggml_tensor key = *values[0].tensor;
+                    ggml_tensor value = *values[1].tensor;
+                    key.ne[2] = value.ne[2] = steps;
+                    key.nb[3] = key.nb[2] * steps;
+                    value.nb[3] = value.nb[2] * steps;
+                    const auto shape = engine::core::TensorShape::from_dims({1, steps, 1, 4});
+                    device_zero.import_prefix(
+                        {engine::core::wrap_tensor(&key, shape, values[0].type)},
+                        {engine::core::wrap_tensor(&value, shape, values[1].type)}, steps);
+                    for (size_t kind = 0; kind < 2; ++kind) {
+                        const auto bytes = ggml_nbytes(values[kind].tensor);
+                        std::vector<unsigned char> expected(bytes), actual(bytes);
+                        ggml_backend_tensor_get(values[kind].tensor, expected.data(), 0, bytes);
+                        ggml_backend_tensor_get(values[kind + 2].tensor, actual.data(), 0, bytes);
+                        if (actual != expected) throw std::runtime_error("backend prefix import changed values or tail");
+                    }
+                    if (device_zero.current_end() != steps || device_zero.valid_steps() != steps) {
+                        throw std::runtime_error("backend prefix import changed positions");
+                    }
+                }
                 if (lazy.current_end() != legacy.current_end() || lazy.valid_steps() != legacy.valid_steps()) {
                     throw std::runtime_error("lazy cache import changed positions");
                 }
@@ -215,8 +237,10 @@ int main(int argc, char ** argv) {
         saver.release_runtime_graphs();
         if (saver.decode_current_end() != 0) { throw std::runtime_error("reset failed"); }
         std::cout << "PASS chunk boundaries, repeated prefill, kept prefix, decode, reset, capacity, reference parity\n";
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         return 0;
     } catch (const std::exception & error) {
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         std::cerr << error.what() << '\n';
         return 1;
     }

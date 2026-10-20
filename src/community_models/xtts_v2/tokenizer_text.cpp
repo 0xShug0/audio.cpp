@@ -1,5 +1,7 @@
 #include "engine/community_models/xtts_v2/tokenizer_text.h"
 #include "engine/community_models/xtts_v2/assets.h"
+#include "engine/framework/text/utf8.h"
+#include "engine/framework/text/text_normalization.h"
 
 #include <algorithm>
 #include <cctype>
@@ -178,34 +180,13 @@ static std::string lowercase(const std::string& text) {
     return result;
 }
 
-static std::string collapse_whitespace(const std::string& text) {
-    std::string result;
-    result.reserve(text.size());
-    bool last_ws = false;
-    for (char c : text) {
-        if (std::isspace(static_cast<unsigned char>(c))) {
-            if (!last_ws) { result += ' '; last_ws = true; }
-        } else { result += c; last_ws = false; }
-    }
-    while (!result.empty() && std::isspace(static_cast<unsigned char>(result.front())))
-        result.erase(result.begin());
-    while (!result.empty() && std::isspace(static_cast<unsigned char>(result.back())))
-        result.pop_back();
-    return result;
-}
-
 // ---------- GGUF metadata reader (minimal, no external dep) ----------
-static uint32_t gguf_kv_u32(gguf_context* gctx, const char* key, uint32_t def) {
-    int ki = gguf_find_key(gctx, key);
-    if (ki < 0) return def;
-    if (gguf_get_kv_type(gctx, ki) != GGUF_TYPE_UINT32) return def;
-    const auto* data = static_cast<const uint32_t*>(gguf_get_arr_data(gctx, ki));
-    return data[0];
-}
-
 static std::vector<std::string> gguf_kv_str_array(gguf_context* gctx, const char* key) {
     int ki = gguf_find_key(gctx, key);
     if (ki < 0) return {};
+    if (gguf_get_kv_type(gctx, ki) != GGUF_TYPE_ARRAY || gguf_get_arr_type(gctx, ki) != GGUF_TYPE_STRING) {
+        throw std::runtime_error(std::string("XTTS v2 requires a string array: ") + key);
+    }
     size_t n = gguf_get_arr_n(gctx, ki);
     std::vector<std::string> out;
     out.reserve(n);
@@ -264,9 +245,13 @@ static std::vector<int32_t> bpe_encode(const XttSv2BpeVocab* tok, const std::str
             struct sym { std::string text; int next = -1; };
             std::vector<sym> symbols;
             symbols.reserve(seg.text.size());
-            for (size_t i = 0; i < seg.text.size(); i++) {
-                symbols.push_back({std::string(1, seg.text[i]),
-                    i + 1 < seg.text.size() ? static_cast<int>(i + 1) : -1});
+            engine::text::utf8_codepoint_count(seg.text, "XTTS v2 text");
+            for (size_t i = 0; i < seg.text.size();) {
+                size_t end = i + 1;
+                while (end < seg.text.size() && engine::text::is_utf8_continuation(static_cast<unsigned char>(seg.text[end]))) ++end;
+                symbols.push_back({seg.text.substr(i, end - i),
+                    end < seg.text.size() ? static_cast<int>(symbols.size() + 1) : -1});
+                i = end;
             }
 
             bool changed = true;
@@ -322,15 +307,6 @@ bool load_xtts_v2_tokenizer(XttSv2BpeVocab* tok, const std::filesystem::path& gg
             tok->merges.push_back({line.substr(0, sp), line.substr(sp + 1)});
     }
 
-    // Scores
-    { int ki = gguf_find_key(g, "tokenizer.ggml.scores");
-      if (ki >= 0 && gguf_get_kv_type(g, ki) == GGML_TYPE_F32) {
-          int n = gguf_get_arr_n(g, ki);
-          const float* sd = static_cast<const float*>(gguf_get_arr_data(g, ki));
-          tok->scores.assign(sd, sd + n);
-      }
-    }
-
     // Language tokens
     tok->lang_tokens.clear();
     for (int i = 0; i < k_n_languages; i++) {
@@ -362,6 +338,13 @@ bool load_xtts_v2_tokenizer(XttSv2BpeVocab* tok, const std::filesystem::path& gg
             [](const auto& a, const auto& b) { return a.first.size() > b.first.size(); });
     }
 
+    tok->token_ids.clear();
+    tok->merge_ranks.clear();
+    for (size_t i = 0; i < tok->id_to_token.size(); ++i) tok->token_ids[tok->id_to_token[i]] = i;
+    for (size_t i = 0; i < tok->merges.size(); ++i) {
+        const auto & pair = tok->merges[i];
+        tok->merge_ranks[pair.first + char(1) + pair.second] = i;
+    }
     gguf_free(g);
     fprintf(stderr, "xtts_v2: tokenizer loaded %zu tokens, %zu merges, %zu special\n",
             tok->id_to_token.size(), tok->merges.size(), tok->special_tokens.size());
@@ -380,19 +363,7 @@ std::vector<int32_t> tokenize_xtts_v2(const XttSv2BpeVocab* tok, const std::stri
         else processed += c;
     }
 
-    // Build vocab cache
-    std::unordered_map<std::string, int32_t> vocab_cache;
-    for (int i = 0; i < (int)tok->id_to_token.size(); i++)
-        vocab_cache[tok->id_to_token[i]] = i;
-
-    // Build merge rank map
-    std::unordered_map<std::string, int> merge_rank;
-    for (int i = 0; i < (int)tok->merges.size(); i++) {
-        std::string key = tok->merges[i].first; key += (char)0x01; key += tok->merges[i].second;
-        merge_rank[key] = i;
-    }
-
-    return bpe_encode(tok, processed, vocab_cache, merge_rank);
+    return bpe_encode(tok, processed, tok->token_ids, tok->merge_ranks);
 }
 
 // ---------- number expansion (reference: num2words(lang='en')) ----------
@@ -558,7 +529,7 @@ std::string normalize_xtts_v2_text(const std::string& text, const char* language
     if (lang_idx == 0 || lang_idx == -1) result = expand_numbers_en(result);
     result = expand_abbreviations(result, lang_idx);
     result = expand_symbols(result, lang_idx);
-    result = collapse_whitespace(result);
+    result = engine::text::collapse_ascii_whitespace(result);
     return result;
 }
 
@@ -567,4 +538,3 @@ int xtts_v2_language_index(const char* language) {
 }
 
 } // namespace engine::models::xtts_v2
-

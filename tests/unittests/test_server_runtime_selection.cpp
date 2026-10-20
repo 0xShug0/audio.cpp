@@ -37,11 +37,30 @@ int main() {
         }
         std::cout << "legacy registration and frontend forwarding boundary passed\n";
 
+        for (bool forwarded : {false, true}) {
+            minitts::server::HttpRequest recipes;
+            recipes.method = "GET";
+            recipes.path = "/v1/recipes";
+            const auto listed = forwarded ? state.forward_to_core(recipes) : state.handle(recipes);
+            if (listed.status != 200 ||
+                engine::io::json::parse(listed.body).require("data").as_array().empty()) {
+                throw std::runtime_error("recipe listing was not dispatched");
+            }
+            recipes.method = "POST";
+            recipes.path = "/v1/recipes/run";
+            recipes.body = "{\"recipe\":\"unknown-recipe\"}";
+            const auto rejected = forwarded ? state.forward_to_core(recipes) : state.handle(recipes);
+            if (rejected.status != 400 || rejected.body.find("unknown recipe") == std::string::npos) {
+                throw std::runtime_error("recipe errors bypassed shared HTTP handling");
+            }
+        }
+
         // Live speech needs `input` only for a model that speaks it. The entries
         // are lazy and the streams are never run, so no model loads and the
         // body is never read.
         minitts::server::ServerConfig live_config;
         live_config.backend = engine::core::BackendType::Cpu;
+        live_config.device = 3;
         live_config.ui_enabled = false;
         for (const std::string task : {"tts", "s2s", "vc"}) {
             minitts::server::ServerModelConfig model;
@@ -51,9 +70,19 @@ int main() {
             model.task = task;
             model.mode = "streaming";
             model.lazy = true;
+            if (task == "vc") model.device = 7;
             live_config.models.push_back(model);
         }
         minitts::server::ServerState live(live_config, std::filesystem::current_path());
+        minitts::server::HttpRequest live_list;
+        live_list.method = "GET";
+        live_list.path = "/v1/models";
+        const auto live_models = engine::io::json::parse(live.handle(live_list).body).require("data").as_array();
+        if (live_models.size() != 3 || live_models[0].require("device").as_number() != 3 ||
+            live_models[1].require("device").as_number() != 3 ||
+            live_models[2].require("device").as_number() != 7) {
+            throw std::runtime_error("legacy model listing did not resolve per-model devices");
+        }
         for (const std::string task : {"tts", "s2s", "vc"}) {
             for (const std::string input : {"", "&input="}) {
                 std::istream pcm(nullptr);

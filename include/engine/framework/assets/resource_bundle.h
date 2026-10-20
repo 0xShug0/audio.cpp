@@ -51,6 +51,13 @@ public:
     void add_model_files(std::initializer_list<ResourceSpec> specs);
 
     [[nodiscard]] const std::filesystem::path & model_root() const noexcept;
+    // The directory the operator's model path lives in. `model_root()` is where a package's
+    // resources live, which for a GGUF that embeds its sidecars is a materialized directory
+    // derived from the file, not the one on disk; this is the external directory, and it is what
+    // a deployment names a file it installed next to the model by. Falls back to `model_root()`
+    // for a bundle that was never given one.
+    void set_model_directory(std::filesystem::path path);
+    [[nodiscard]] const std::filesystem::path & model_directory() const noexcept;
     [[nodiscard]] bool has_file(std::string_view id) const noexcept;
     [[nodiscard]] const std::filesystem::path * find_file(std::string_view id) const noexcept;
     [[nodiscard]] const std::filesystem::path & require_file(std::string_view id) const;
@@ -65,6 +72,7 @@ public:
 
 private:
     std::filesystem::path model_root_;
+    std::filesystem::path model_directory_;
     std::unordered_map<std::string, std::filesystem::path> files_;
     std::unordered_map<std::string, TensorResource> tensor_resources_;
     mutable std::unordered_map<std::string, std::shared_ptr<const TensorSource>> tensor_sources_;

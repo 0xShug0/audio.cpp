@@ -158,6 +158,8 @@ option(ENGINE_BUILD_WARMBENCH "Build warmbench helper binaries" OFF)
 option(AUDIOCPP_BUILD_C_API "Build the C ABI (include/audiocpp.h) as a shared library" OFF)
 set(AUDIOCPP_C_API_MODEL_ROOT "" CACHE PATH
     "Models root for the C API model test. Unset leaves the test registered but skipping.")
+set(AUDIOCPP_RKNN_TEST_ENGINE "" CACHE PATH
+    "A .rknn engine compiled for the build host's SoC, for the RKNN sidecar test. Unset leaves the test registered but skipping.")
 set(AUDIOCPP_GGML_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/external/ggml"
     CACHE PATH "ggml source tree to build with AudioCPP")
@@ -498,7 +500,8 @@ add_library(engine_core OBJECT
     src/framework/model_spec/schema.cpp
     src/framework/assets/tensor_source.cpp
     src/framework/assets/weight_norm_folding.cpp
-    src/framework/assets/lora_tensor_source.cpp
+    src/framework/assets/weight_adapter.cpp
+    src/framework/assets/weight_adapter_source.cpp
     src/framework/assets/torch_bin.cpp
     src/framework/core/module.cpp
     src/framework/core/backend.cpp
@@ -544,6 +547,7 @@ add_library(engine_core OBJECT
     src/framework/debug/trace.cpp
     src/framework/debug/profiler.cpp
     src/framework/rknn/engine.cpp
+    src/framework/rknn/engine_resources.cpp
     src/framework/decoders/moss_tts_delay/backbone.cpp
     src/framework/decoders/moss_tts_delay/config.cpp
     src/framework/decoders/moss_tts_delay/delay_decoder.cpp
@@ -1115,6 +1119,7 @@ audiocpp_add_model(piper_tts
         src/community_models/piper_tts/frontend.cpp
         src/community_models/piper_tts/vits_runtime.cpp
         src/community_models/piper_tts/rknn_decoder.cpp
+        src/community_models/piper_tts/rknn_duration_encoder.cpp
         src/community_models/piper_tts/session.cpp
     INCLUDES
         engine/community_models/piper_tts/session.h
@@ -2617,6 +2622,7 @@ audiocpp_add_model(lfm2_audio
 audiocpp_add_model(xtts_v2
     SOURCES
         src/community_models/xtts_v2/assets.cpp
+        src/community_models/xtts_v2/frontend.cpp
         src/community_models/xtts_v2/gpt.cpp
         src/community_models/xtts_v2/loader.cpp
         src/community_models/xtts_v2/session.cpp
@@ -2861,6 +2867,12 @@ function(audiocpp_use_utf8_codepage target)
     endif()
 endfunction()
 
+file(GLOB AUDIOCPP_RECIPE_PLUGIN_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/app/recipe/plugins/*.cpp")
+set(AUDIOCPP_RECIPE_SOURCES
+    app/recipe/recipe.cpp
+    ${AUDIOCPP_RECIPE_PLUGIN_SOURCES})
+
 add_executable(audiocpp_cli
     app/common/base64.cpp
     app/common/build_info.cpp
@@ -2870,6 +2882,8 @@ add_executable(audiocpp_cli
     app/cli/request.cpp
     app/streaming/pcm_source.cpp
     app/streaming/streaming.cpp
+    ${AUDIOCPP_RECIPE_SOURCES}
+    app/recipe/cli_recipe.cpp
     app/workflow/execution.cpp
     app/workflow/file_sink.cpp
     app/workflow/pipeline.cpp
@@ -3133,6 +3147,7 @@ add_executable(audiocpp_server
     app/cli/request.cpp
     app/streaming/pcm_source.cpp
     app/streaming/streaming.cpp
+    ${AUDIOCPP_RECIPE_SOURCES}
 )
 
 target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
@@ -3395,6 +3410,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     add_test(NAME cpu_extra_buffers_test COMMAND cpu_extra_buffers_test)
     add_engine_unittest(rknn_engine_test tests/unittests/test_rknn_engine.cpp)
     add_test(NAME rknn_engine_test COMMAND rknn_engine_test)
+    if (ENGINE_ENABLE_RKNN)
+        # The driver-priced cases in the file compile only where a runtime is linked; they ask
+        # the same header the engine itself compiles against.
+        target_compile_definitions(rknn_engine_test PRIVATE ENGINE_HAVE_RKNN=1)
+        if (ENGINE_RKNN_INCLUDE_DIR)
+            target_include_directories(rknn_engine_test PRIVATE ${ENGINE_RKNN_INCLUDE_DIR})
+        endif()
+    endif()
     if (ENGINE_ENABLE_NEON)
         add_engine_unittest(neon_blocks_test tests/unittests/test_neon_blocks.cpp)
         target_include_directories(neon_blocks_test PRIVATE src/framework/neon)
@@ -3430,6 +3453,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(moonshine_neon_decoder_test PRIVATE engine_neon)
         add_test(NAME moonshine_neon_decoder_test COMMAND moonshine_neon_decoder_test)
     endif()
+    add_engine_unittest(recipe_test tests/unittests/test_recipe.cpp)
+    target_sources(recipe_test PRIVATE ${AUDIOCPP_RECIPE_SOURCES})
+    target_include_directories(recipe_test PRIVATE app/recipe)
+    add_test(NAME recipe_test COMMAND recipe_test)
     if (ENGINE_ENABLE_VULKAN)
         add_engine_unittest(vulkan_shared_weight_cache_test tests/unittests/test_vulkan_shared_weight_cache.cpp)
         add_test(NAME vulkan_shared_weight_cache_test COMMAND vulkan_shared_weight_cache_test)
@@ -3458,6 +3485,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_ENABLE_CUDA)
+        add_engine_unittest(torch_random_cuda_multi_device_test
+            tests/unittests/test_torch_random_cuda_multi_device.cu)
+        target_include_directories(torch_random_cuda_multi_device_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_link_libraries(torch_random_cuda_multi_device_test PRIVATE CUDA::cudart)
+        add_test(NAME torch_random_cuda_multi_device_test COMMAND torch_random_cuda_multi_device_test)
+        set_tests_properties(torch_random_cuda_multi_device_test PROPERTIES SKIP_RETURN_CODE 77)
+
         add_engine_unittest(cuda_bias_fusion_test tests/unittests/test_cuda_bias_fusion.cpp)
         add_test(NAME cuda_bias_fusion_test COMMAND cuda_bias_fusion_test)
         set_tests_properties(cuda_bias_fusion_test PROPERTIES SKIP_RETURN_CODE 77)
@@ -3826,8 +3861,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
         target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME gguf_tensor_source_test COMMAND gguf_tensor_source_test)
-        add_engine_unittest(lora_tensor_source_test tests/unittests/test_lora_tensor_source.cpp)
-        add_test(NAME lora_tensor_source_test COMMAND lora_tensor_source_test --log)
+        add_engine_unittest(weight_adapter_source_test tests/unittests/test_weight_adapter_source.cpp)
+        add_test(NAME weight_adapter_source_test COMMAND weight_adapter_source_test --log)
+        add_engine_unittest(weight_adapter_test tests/unittests/test_weight_adapter.cpp)
+        add_test(NAME weight_adapter_test COMMAND weight_adapter_test --log)
 
         add_engine_unittest(transformer_kv_ring_test tests/unittests/test_transformer_kv_ring.cpp)
         add_test(NAME transformer_kv_ring_test COMMAND transformer_kv_ring_test)
@@ -4061,6 +4098,27 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS)
+        if (ENGINE_ENABLE_RKNN)
+            # The board-only half of the RKNN path: residency pricing, the driver's cached
+            # self-report and a real context build. The repo ships no compiled engines, so the
+            # engine travels as a configure-time path and the test self-skips without one.
+            add_executable(rknn_sidecar_test tests/unittests/test_rknn_sidecar.cpp)
+            target_compile_definitions(rknn_sidecar_test PRIVATE ENGINE_HAVE_RKNN=1)
+            # The fake-engine section covers one sidecar per model, and sidecars are
+            # compiled per linked model -- so the section compiles per linked model too,
+            # or a composite without inflect_v2 (the default CI set) fails to link.
+            foreach(model IN LISTS AUDIOCPP_LINKED_MODELS)
+                string(TOUPPER "${model}" model_upper)
+                target_compile_definitions(rknn_sidecar_test PRIVATE
+                    "AUDIOCPP_TEST_HAS_MODEL_${model_upper}=1")
+            endforeach()
+            if (ENGINE_RKNN_INCLUDE_DIR)
+                target_include_directories(rknn_sidecar_test PRIVATE ${ENGINE_RKNN_INCLUDE_DIR})
+            endif()
+            target_link_libraries(rknn_sidecar_test PRIVATE engine_runtime ggml)
+            add_test(NAME rknn_sidecar_test COMMAND rknn_sidecar_test "${AUDIOCPP_RKNN_TEST_ENGINE}")
+            set_tests_properties(rknn_sidecar_test PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
         if("plapre" IN_LIST AUDIOCPP_LINKED_MODELS)
             add_executable(plapre_codec_parity EXCLUDE_FROM_ALL tests/plapre/codec_parity.cpp)
             target_link_libraries(plapre_codec_parity PRIVATE engine_runtime ggml)
@@ -4562,6 +4620,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             NAME minimax_music3_graph_release_policy_test
             COMMAND minimax_music3_graph_release_policy_test
         )
+
+        if (qwen3_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+        # Real-weight integration test; invoked explicitly with --model GGUF.
+        add_engine_unittest(qwen3_tts_decoder_streaming_test tests/qwen3_tts/test_speech_decoder_streaming.cpp)
+        endif()
 
         if (qwen3_forced_aligner IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(qwen3_forced_aligner_processor_test tests/unittests/test_qwen3_forced_aligner_processor.cpp)

@@ -1,8 +1,12 @@
 #include "engine/models/qwen3_tts/assets.h"
 
+#include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/runtime/options.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -150,6 +154,64 @@ void validate_config(const Qwen3TTSConfig & config) {
 }
 
 }  // namespace
+
+std::shared_ptr<const Qwen3TTSAssets> apply_qwen3_tts_lora(
+    std::shared_ptr<const Qwen3TTSAssets> assets,
+    const std::unordered_map<std::string, std::string> & options) {
+    const auto path = runtime::find_option(options, {"qwen3_tts.lora"});
+    if (!path || path->empty()) {
+        return assets;
+    }
+    engine::assets::WeightAdapterReadOptions read_options;
+    read_options.require_scaling_metadata = true;
+    read_options.strength = runtime::parse_finite_float_option(options, {"qwen3_tts.lora_scale"}).value_or(1.0F);
+    const auto adapter_path = std::filesystem::u8path(*path);
+    auto adapter = engine::assets::read_weight_adapter(adapter_path, read_options);
+    engine::assets::WeightAdapterBindings bindings;
+    for (const auto & tensor : assets->model_weights->tensors()) {
+        bindings.add(tensor.name, tensor.name);
+        if (tensor.name.rfind("talker.", 0) == 0) {
+            bindings.add(tensor.name.substr(7), tensor.name);
+        }
+    }
+    auto plan = engine::assets::bind_weight_adapter(
+        *assets->model_weights, std::move(adapter), bindings, engine::assets::WeightMergeMode::DeltaF32);
+    auto adapted = std::make_shared<Qwen3TTSAssets>(*assets);
+    const auto directory = io::is_existing_directory(adapter_path) ? adapter_path : adapter_path.parent_path();
+    const auto speaker_file = engine::assets::find_tensor_file(directory, "speaker_embedding");
+    if (speaker_file) {
+        const auto config = json::parse_file(directory / "tts_config.json");
+        if (json::require_string(config, "tts_model_type") != "custom_voice") {
+            throw std::runtime_error("Qwen3 TTS adapter speaker embedding requires a custom_voice tts_config.json");
+        }
+        const auto talker = parse_talker_config(config.require("talker_config"));
+        if (talker.hidden_size != assets->config.talker.hidden_size ||
+            talker.vocab_size != assets->config.talker.vocab_size || talker.speaker_id.size() != 1) {
+            throw std::runtime_error("Qwen3 TTS adapter speaker embedding requires one speaker and matching base dimensions");
+        }
+        const auto id = talker.speaker_id.begin()->second;
+        if (id < 0 || id >= talker.vocab_size) {
+            throw std::runtime_error("Qwen3 TTS adapter speaker ID is outside the codec embedding vocabulary");
+        }
+        const auto speaker_source = engine::assets::open_tensor_source(*speaker_file);
+        const auto speaker = speaker_source->require_f32("speaker_embedding", {talker.hidden_size});
+        const std::string name = "talker.model.codec_embedding.weight";
+        if (plan.updates.count(name) || plan.replacements.count(name)) {
+            throw std::runtime_error("Qwen3 TTS adapter supplies both codec embedding updates and a speaker sidecar");
+        }
+        auto embedding = assets->model_weights->require_f32(name, {talker.vocab_size, talker.hidden_size});
+        std::copy(speaker.begin(), speaker.end(), embedding.begin() + id * talker.hidden_size);
+        plan.replacements.emplace(name, engine::assets::WeightReplacement{
+            {talker.vocab_size, talker.hidden_size}, std::move(embedding)});
+        adapted->config.variant = Qwen3TTSVariant::CustomVoice;
+        adapted->config.tts_model_type = "custom_voice";
+        adapted->config.talker.speaker_id = talker.speaker_id;
+        adapted->config.talker.speaker_dialect = talker.speaker_dialect;
+    }
+    adapted->model_weights = engine::assets::make_weight_adapter_source(
+        assets->model_weights, std::move(plan), "qwen3_tts.lora");
+    return adapted;
+}
 
 std::shared_ptr<const Qwen3TTSAssets> load_qwen3_tts_assets(const std::filesystem::path & model_path) {
     auto resources = engine::model_spec::load_resource_bundle(

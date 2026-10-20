@@ -1,5 +1,8 @@
 <script lang="ts">
   import { saveUiConfiguration, uiConfiguration, uiConfigurationError } from '$lib/configuration';
+  import type { Translator } from '$lib/i18n';
+
+  export let tr: Translator;
 
   let historyLimit = $uiConfiguration.historyLimit;
   let status = '';
@@ -8,7 +11,7 @@
   function save() {
     try {
       saveUiConfiguration({ historyLimit });
-      status = 'Configuration saved.';
+      status = 'configuration.saved';
     } catch (error) {
       uiConfigurationError.set(error instanceof Error ? error.message : String(error));
       status = '';
@@ -17,14 +20,14 @@
 </script>
 
 <section class="configuration-page">
-  <h1>Configuration</h1>
+  <h1>{tr('nav.configuration')}</h1>
   <form on:submit|preventDefault={save}>
-    <h2>Run History</h2>
-    <label for="history-limit">Maximum retained runs</label>
+    <h2>{tr('configuration.history')}</h2>
+    <label for="history-limit">{tr('configuration.historyLimit')}</label>
     <input id="history-limit" type="number" min="1" step="1" required bind:value={historyLimit} />
-    <button type="submit">Save configuration</button>
+    <button type="submit">{tr('configuration.save')}</button>
     {#if $uiConfigurationError}<div class="configuration-error" role="alert">{$uiConfigurationError}</div>{/if}
-    {#if status}<div role="status">{status}</div>{/if}
+    {#if status}<div role="status">{tr(status)}</div>{/if}
   </form>
 </section>
 

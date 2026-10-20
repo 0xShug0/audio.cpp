@@ -240,7 +240,7 @@
       {
         "name": "ar_lora",
         "type": "string",
-        "description": "Unfused AR LoRA safetensors file. Absolute path or relative to the model root. Requires session reload.",
+        "description": "AR adapter safetensors file; native, PEFT, and ComfyUI LoRA layouts. Absolute path or relative to the model root. Requires session reload.",
         "required": false
       },
       {
@@ -253,7 +253,7 @@
       {
         "name": "nar_lora",
         "type": "string",
-        "description": "Unfused NAR adapter safetensors file. Absolute path or relative to the model root. Requires session reload.",
+        "description": "NAR adapter safetensors file. Absolute path or relative to the model root. Requires session reload.",
         "required": false
       },
       {
@@ -478,13 +478,20 @@
     {
       "format": "gguf",
       "roots": {
-        "model": "."
+        "model": ".",
+        "weights": "$gguf"
       },
       "files": {
         "model_config": "model:sidecars/yue2-model-config.json",
         "generation_config": "model:sidecars/yue2-generation-config.json",
         "tiktoken": "model:sidecars/yue2-qwen.tiktoken",
         "vae_config": "model:sidecars/yue2-vae-config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        }
       }
     },
     {

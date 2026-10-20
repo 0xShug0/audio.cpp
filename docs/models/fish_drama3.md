@@ -156,6 +156,24 @@ codec weights. Set `--session-option fish_drama3.codec_encoder_bf16_compute=fals
 to restore the previous encoder arithmetic. This changes reference-conditioned
 generation but does not change codec decoding or backbone inference.
 
+To reduce reference-encoder convolution memory, set
+`--session-option fish_drama3.codec_encoder_chunk_samples=65536`.
+The value is measured in samples at the codec sample rate and must be zero
+(the default, full encoding) or a positive multiple of 512. Chunking starts
+when the padded reference exceeds the chunk size plus 16,384 context samples;
+shorter references use the full graph. Overlapping convolution windows reuse
+one cached graph; the transformer and quantizer still process the full feature
+sequence, so total memory is not constant. Chunking can cost additional time
+and produce small backend-dependent numerical differences. Existing GGUFs
+accept the option without a spec override.
+
+Sampling defaults to `top_k=4097`, which keeps every candidate for the semantic
+token and each tower codebook, so only `top_p=0.9` filters. This matches Fish's
+official Drama 3 Space, which dropped the top-k cap because `top_k=30` left takes
+stuck in silence. With `--request-option top_k=30`, long chunked requests can
+stall for about 9-21 s. The repetition-avoiding resample keeps its own
+`top_k=30`, `top_p=0.95`.
+
 Host memory is required for offloaded weights. Context capacity includes text,
 reference audio frames, prior takes, and the requested generation budget.
 
@@ -278,7 +296,7 @@ synchronously and calls the event sink while audio is generated; `finalize()`
 returns the complete audio and the reusable take artifact. An application can
 invoke generation on its worker thread to keep its UI responsive.
 
-Long-form text uses the framework chunker, with `text_chunk_size=200` and
+Long-form text uses the framework chunker, with `text_chunk_size=128` and
 `text_chunk_mode=tag_aware` by default. Each new chunk includes the previous
 chunk as context. Caller-supplied history remains ordered in every chunk.
 

@@ -1,9 +1,11 @@
 #include "model_memory.h"
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/runtime/registry.h"
 
 #include <filesystem>
 #include <functional>
+#include <set>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -13,6 +15,9 @@ namespace minitts::server {
 std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & model) {
     size_t weights = 0;
     std::error_code ec;
+    // A compiled engine can be declared by a session option and also sit inside a checkpoint tree
+    // that gets summed, so each path is counted once.
+    std::set<std::filesystem::path> counted;
     // Checkpoint trees (safetensors / HF-style directories) are summed recursively
     // with hard limits so a pathological tree cannot stall the load path or blow the
     // counter; anything beyond the limits contributes 0, while the fixed floor
@@ -23,6 +28,9 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
     size_t visited_files = 0;
     const auto add_file = [&](const std::filesystem::path & path) {
         if (!std::filesystem::is_regular_file(path, ec)) {
+            return;
+        }
+        if (!counted.insert(std::filesystem::weakly_canonical(path, ec)).second) {
             return;
         }
         // A file that disappears or becomes unreadable mid-scan contributes 0
@@ -46,6 +54,12 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
                 }
             }
         };
+    // The model reports final residency; its resource files must not be counted again as weights.
+    const auto resources = engine::runtime::make_default_registry().model_resources(
+        model.family, model.path, model.session_options);
+    for (const auto & requirement : resources.engines) {
+        counted.insert(std::filesystem::weakly_canonical(requirement.path));
+    }
     // Estimate only what the loader will actually read from model.path, so the
     // guard neither overestimates nor masks the loader's own error:
     //  - a single-file model contributes that file;
@@ -86,9 +100,9 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
     // is a directory, and against the model file's parent when it is a file.
     const std::filesystem::path aux_base =
         std::filesystem::is_directory(model.path, ec) ? model.path : model.path.parent_path();
-    for (const auto & [key, value] : model.session_options) {
-        (void)key;
-        std::filesystem::path aux(value);
+    for (const auto & option : model.session_options) {
+        // Only file-valued options contribute; opaque values are not interpreted here.
+        std::filesystem::path aux(option.second);
         if (aux.is_relative()) {
             aux = aux_base / aux;
         }
@@ -98,7 +112,8 @@ std::optional<size_t> estimate_model_memory_bytes(const ServerModelConfig & mode
     // KV state, plus a fixed floor for per-model bookkeeping.
     constexpr double kRuntimeOverheadFactor = 1.5;
     constexpr size_t kFixedOverhead = 128ull * 1024 * 1024;
-    return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead;
+    return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead +
+        resources.resident_bytes;
 }
 
 }  // namespace minitts::server

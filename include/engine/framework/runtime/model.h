@@ -2,6 +2,7 @@
 
 #include "engine/framework/runtime/session.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <memory>
@@ -116,6 +117,23 @@ struct LoaderAdvertisement {
     std::vector<std::string> api_endpoints;
 };
 
+/**
+ * One selected resource, with its model-reported resident cost in bytes.
+ */
+struct ModelEngineRequirement {
+    std::filesystem::path path;
+    size_t resident_bytes = 0;
+};
+
+/**
+ * Resources beyond weight files and their aggregate residency. The model applies its own
+ * residency policy; consumers use the paths for deduplication and add resident_bytes as given.
+ */
+struct ModelResourcePlan {
+    std::vector<ModelEngineRequirement> engines;
+    size_t resident_bytes = 0;
+};
+
 /** Map advertised capabilities to the HTTP surfaces they normally use. */
 std::vector<std::string> default_api_endpoints_for_capabilities(const CapabilitySet & capabilities);
 
@@ -138,6 +156,19 @@ public:
     virtual std::string advertised_instructions_policy() const;
     virtual std::vector<std::string> advertised_api_endpoints() const;
     LoaderAdvertisement advertise() const;
+
+    /**
+     * The artifacts this family will hold resident for one load of `model_path` under these
+     * session options, priced by the family. A family whose stages are all ggml graphs reports
+     * nothing: its host-consumer estimate is the weight files plus the caller's runtime factor.
+     */
+    virtual ModelResourcePlan model_resources(
+        const std::filesystem::path & model_path,
+        const std::unordered_map<std::string, std::string> & session_options) const {
+        (void)model_path;
+        (void)session_options;
+        return {};
+    }
 };
 
 }  // namespace engine::runtime

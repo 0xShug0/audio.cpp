@@ -84,9 +84,42 @@
         "required": false,
         "min": 1,
         "default": 605
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted selects a random seed.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per framework text chunk; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "preset": "text_chunk_mode_full",
+        "required": false,
+        "default": "word_budget"
       }
     ],
-    "session": [],
+    "session": [
+      {
+        "name": "conditionals_cache_slots",
+        "type": "int",
+        "description": "Prepared voice-conditioning cache slots; 0 disables caching.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
     "load": []
   },
   "runtime": {
@@ -101,15 +134,15 @@
         "model": ".",
         "weights": "$gguf"
       },
-      "files": {},
+      "files": {
+        "vocoder": "model:xtts-v2-vocoder-f16.gguf"
+      },
       "tensors": {
         "gpt_weights": {
-          "source": "weights:",
-          "prefix": "gpt"
+          "source": "weights:"
         },
         "vocoder_weights": {
-          "source": "weights:",
-          "prefix": "hifigan_decoder"
+          "source": "model:xtts-v2-vocoder-f16.gguf"
         }
       }
     }
@@ -123,24 +156,27 @@
       "precision": "q8_0",
       "target_directory": "XTTS-v2-Q8",
       "files": [
-        "Text to Speech (TTS)/xtts-v2-gpt-q8_0.gguf",
-        "Text to Speech (TTS)/xtts-v2-vocoder-f16.gguf"
+        "q8_0/xtts-v2-gpt-q8_0.gguf",
+        "q8_0/xtts-v2-vocoder-f16.gguf",
+        "q8_0/mel_norms.bin"
       ],
       "download": {
         "kind": "huggingface_snapshot",
         "repo": "onicubag/xTTSv2-GGUF"
-      }
+      },
+      "strip_prefix": "q8_0"
     },
     {
       "id": "xtts_v2_gguf",
-      "display_name": "XTTS v2 GGUF (F16)",
+      "display_name": "XTTS v2 GGUF (Original)",
       "default": false,
       "format": "gguf",
-      "precision": "f16",
+      "precision": "orig",
       "target_directory": "XTTS-v2",
       "files": [
-        "Text to Speech (TTS)/xtts-v2-gpt.gguf",
-        "Text to Speech (TTS)/xtts-v2-vocoder-f16.gguf"
+        "xtts-v2-gpt.gguf",
+        "xtts-v2-vocoder-f16.gguf",
+        "mel_norms.bin"
       ],
       "download": {
         "kind": "huggingface_snapshot",
@@ -155,13 +191,15 @@
       "precision": "q4_k_m",
       "target_directory": "XTTS-v2-Q4_K_M",
       "files": [
-        "Text to Speech (TTS)/xtts-v2-gpt-q4_k_m.gguf",
-        "Text to Speech (TTS)/xtts-v2-vocoder-f16.gguf"
+        "q4_k_m/xtts-v2-gpt-q4_k_m.gguf",
+        "q4_k_m/xtts-v2-vocoder-f16.gguf",
+        "q4_k_m/mel_norms.bin"
       ],
       "download": {
         "kind": "huggingface_snapshot",
         "repo": "onicubag/xTTSv2-GGUF"
-      }
+      },
+      "strip_prefix": "q4_k_m"
     }
   ],
   "dependencies": [],

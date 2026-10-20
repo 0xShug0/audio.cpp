@@ -259,6 +259,26 @@ core::TensorValue build_flash_preserve_views(
         GGML_TYPE_F32);
 }
 
+core::TensorValue build_cuda_flash_f16_head40(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & q_heads,
+    const core::TensorValue & k_heads,
+    const core::TensorValue & v_heads,
+    const std::optional<core::TensorValue> & attention_mask,
+    float scale) {
+    if (ctx.backend_type != core::BackendType::Cuda ||
+        q_heads.type != GGML_TYPE_F16 || k_heads.type != GGML_TYPE_F16 ||
+        v_heads.type != GGML_TYPE_F16 || q_heads.shape.dims[3] != 40 ||
+        attention_mask.has_value()) {
+        throw std::runtime_error("CUDA FP16 head-40 attention requires FP16 Q/K/V and no mask");
+    }
+    auto * result = ggml_flash_attn_f16_head40(
+        ctx.ggml, q_heads.tensor, k_heads.tensor, v_heads.tensor, scale);
+    return core::wrap_tensor(result,
+        core::TensorShape::from_dims({q_heads.shape.dims[0], q_heads.shape.dims[2],
+            q_heads.shape.dims[1], q_heads.shape.dims[3]}), GGML_TYPE_F16);
+}
+
 }  // namespace
 
 ScaledDotProductAttentionModule::ScaledDotProductAttentionModule(ScaledDotProductAttentionConfig config)
@@ -303,6 +323,11 @@ core::TensorValue ScaledDotProductAttentionModule::build(
             return build_flash(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
         case ScaledDotProductAttentionLowering::FlashPreserveViews:
             return build_flash_preserve_views(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
+        case ScaledDotProductAttentionLowering::CudaFlashF16Head40:
+            if (config_.causality != AttentionCausality::NonCausal) {
+                throw std::runtime_error("CUDA FP16 head-40 attention does not support causal attention");
+            }
+            return build_cuda_flash_f16_head40(ctx, q_heads, k_heads, v_heads, attention_mask, scale);
     }
     throw std::runtime_error("Unsupported scaled dot-product attention lowering");
 }

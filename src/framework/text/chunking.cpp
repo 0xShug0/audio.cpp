@@ -58,6 +58,24 @@ bool is_sentence_break(std::string_view token) {
            token == u8"。" || token == u8"！" || token == u8"？";
 }
 
+// Closing quotes and brackets that end a sentence together with the stop before
+// them: `money."`, `ready?)`, `»`, `」`. Tag-aware units end at the stop, so
+// without this the closer opened the next sentence and chunk.
+bool is_sentence_closer(std::string_view token) {
+    return token == "\"" || token == "'" || token == ")" ||
+           token == u8"”" || token == u8"’" || token == u8"»" ||
+           token == u8"」" || token == u8"』" || token == u8"）";
+}
+
+// True when spans [start, end) end in a sentence stop, optionally followed by
+// closing quotes or brackets.
+bool ends_sentence(const std::vector<Utf8Span> & spans, size_t start, size_t end) {
+    while (end > start && is_sentence_closer(spans[end - 1].text)) {
+        --end;
+    }
+    return end > start && is_sentence_break(spans[end - 1].text);
+}
+
 bool is_clause_break(std::string_view token) {
     return token == "," || token == ";" || token == ":" ||
            token == u8"，" || token == u8"、" || token == u8"；" || token == u8"：";
@@ -76,6 +94,27 @@ bool is_cjk_punctuation_delimiter(std::string_view token) noexcept {
 
 bool is_tag_open(std::string_view token) {
     return token == "[" || token == "<";
+}
+
+// End of the closing quotes and brackets that belong to the sentence stop just
+// before `pos`. `"`, `'` and `’` also open words (`'Tis`, `’90s`, a quote right
+// after a stop), so they belong to the stop only when the run of closers ends at
+// whitespace, the end of the text or a tag, or when an unambiguous closer
+// follows them.
+size_t sentence_closers_end(const std::vector<Utf8Span> & spans, size_t pos) {
+    size_t end = pos;
+    size_t run_end = pos;
+    while (run_end < spans.size() && is_sentence_closer(spans[run_end].text)) {
+        const auto token = spans[run_end].text;
+        ++run_end;
+        if (token != "\"" && token != "'" && token != u8"’") {
+            end = run_end;
+        }
+    }
+    if (run_end == spans.size() || is_ascii_space(spans[run_end].text) || is_tag_open(spans[run_end].text)) {
+        end = run_end;
+    }
+    return end;
 }
 
 bool is_tag_close(std::string_view token, std::string_view open) {
@@ -196,16 +235,18 @@ std::vector<TextUnit> split_tag_aware_units(const std::vector<Utf8Span> & spans)
                    !is_sentence_break(spans[span_pos - 1].text)) {
                 ++span_pos;
             }
+            if (is_sentence_break(spans[span_pos - 1].text)) {
+                span_pos = sentence_closers_end(spans, span_pos);
+            }
         }
 
-        const auto last = spans[span_pos - 1].text;
         units.push_back({
             unit_start,
             span_pos,
             spans[unit_start].start,
             spans[span_pos - 1].end,
             tag,
-            !tag && is_sentence_break(last),
+            !tag && ends_sentence(spans, unit_start, span_pos),
         });
     }
     return units;

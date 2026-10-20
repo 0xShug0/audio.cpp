@@ -11,6 +11,7 @@
 #include "helper_utils.h"
 
 #include <ggml-backend.h>
+#include <ggml-alloc.h>
 #include <ggml.h>
 
 #include <algorithm>
@@ -107,9 +108,6 @@ public:
         ~Graph() {
             if (backend_ != nullptr && graph_ != nullptr) {
                 engine::core::release_backend_graph_resources(backend_, graph_);
-            }
-            if (buffer_ != nullptr) {
-                ggml_backend_buffer_free(buffer_);
             }
         }
 
@@ -282,10 +280,22 @@ public:
             ggml_set_output(output_);
             graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
             ggml_build_forward_expand(graph_, output_);
-            buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
-            if (buffer_ == nullptr) {
+            // Allocate by tensor lifetime, as in the lyric encoder. Keep the
+            // uploaded constants live across chunks and repeated requests,
+            // including either attention mask when a variant does not use it.
+            for (auto * input : {input_, special_tokens_, positions_, full_attention_mask_, sliding_attention_mask_}) {
+                ggml_set_input(input);
+                ggml_build_forward_expand(graph_, input);
+                if (input != input_) {
+                    ggml_set_output(input);
+                }
+            }
+            graph_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+            if (!graph_allocator_ || !ggml_gallocr_alloc_graph(graph_allocator_.get(), graph_)) {
                 throw std::runtime_error("ACE-Step detokenizer backend buffer allocation failed");
             }
+            engine::debug::trace_log_scalar("ace_step.detokenizer.graph_bytes",
+                static_cast<int64_t>(ggml_gallocr_get_buffer_size(graph_allocator_.get(), 0)));
 
             std::vector<int32_t> position_values(static_cast<size_t>(config.pool_window_size), 0);
             for (int64_t i = 0; i < config.pool_window_size; ++i) {
@@ -338,7 +348,7 @@ public:
         core::TensorValue input_value_;
         ggml_tensor * output_ = nullptr;
         ggml_cgraph * graph_ = nullptr;
-        ggml_backend_buffer_t buffer_ = nullptr;
+        std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator_{nullptr, ggml_gallocr_free};
     };
 
     Impl(

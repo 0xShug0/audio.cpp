@@ -2,6 +2,9 @@
 
 #include "engine/community_models/inflect_v2/rknn_decoder.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/json.h"
+#include "engine/framework/rknn/engine.h"
+#include "engine/framework/rknn/engine_resources.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/utf8.h"
@@ -119,13 +122,15 @@ InflectV2Session::InflectV2Session(
         {{"decoder", "ggml",
           {{"ggml", {options.backend.type}, {}, {}},
            {"rknn", {}, {"main"}, {}}}}});
+    const auto & decoder_plan = exec_plan.at("decoder");
+    const std::string rknn_decoder_path = decoder_plan.impl == "rknn"
+        ? engine::rknn::resolve_engine_path(
+              decoder_plan.artifacts.at("main"), assets_->resources.model_directory())
+        : std::string{};
     runtime_ = std::make_unique<InflectV2VitsRuntime>(
         assets_,
         options.backend,
-        [&exec_plan] {
-            const auto & decoder = exec_plan.at("decoder");
-            return decoder.impl == "rknn" ? decoder.artifacts.at("main") : std::string{};
-        }());
+        rknn_decoder_path);
 }
 
 InflectV2Session::~InflectV2Session() = default;
@@ -220,6 +225,27 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_inflect_v2_loader() {
     runtime::SpecBackedVoiceModelConfig<InflectV2Assets> config;
     config.family = kFamily;
     config.load_assets = load_inflect_v2_assets;
+    config.model_resources = [](const std::filesystem::path & path,
+                                const std::unordered_map<std::string, std::string> & options) {
+        const auto option = options.find("inflect_v2.exec_plan");
+        if (option == options.end()) {
+            return runtime::ModelResourcePlan{};
+        }
+        std::vector<std::string> artifacts;
+        try {
+            const auto plan = io::json::parse(option->second);
+            const auto * decoder = plan.find("decoder");
+            const auto * impl = decoder ? decoder->find("impl") : nullptr;
+            if (!impl || impl->as_string() != "rknn") {
+                return runtime::ModelResourcePlan{};
+            }
+            artifacts.push_back(io::json::require_string(decoder->require("artifacts"), "main"));
+        } catch (const std::runtime_error &) {
+            // Session loading reports invalid execution plans.
+            return runtime::ModelResourcePlan{};
+        }
+        return rknn::engine_resources(artifacts, path);
+    };
     config.create_session = [](
                                 const runtime::TaskSpec & task,
                                 const runtime::SessionOptions & options,

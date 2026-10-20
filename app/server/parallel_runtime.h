@@ -253,6 +253,8 @@ private:
     std::filesystem::path request_base_;
     std::vector<std::unique_ptr<LoadedModel>> models_;
     std::unordered_map<std::string, size_t> model_index_;
+    // The server config's model definitions by id, kept for WebUI loads of those ids.
+    std::unordered_map<std::string, ServerModelConfig> configured_models_;
     mutable std::mutex models_mutex_;
     // Serializes framework loads while max_loaded_models or the memory guard
     // (min_free_memory_mb) is active, so two concurrent lazy loads cannot both

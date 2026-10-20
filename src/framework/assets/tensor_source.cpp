@@ -1,4 +1,6 @@
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/assets/weight_adapter.h"
+#include "engine/framework/assets/torch_bin.h"
 
 #include "engine/framework/io/binary.h"
 #include "engine/framework/io/filesystem.h"
@@ -22,9 +24,20 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace engine::assets {
 namespace {
+
+enum class TensorContainer { Safetensors, Torch, Gguf };
+constexpr std::pair<std::string_view, TensorContainer> kTensorContainers[] = {
+    {".safetensors", TensorContainer::Safetensors},
+    {".pt", TensorContainer::Torch},
+    {".pth", TensorContainer::Torch},
+    {".bin", TensorContainer::Torch},
+    {".ckpt", TensorContainer::Torch},
+    {".gguf", TensorContainer::Gguf},
+};
 
 constexpr int64_t kParallelF32ConvertElements = 1ll << 20;
 constexpr int64_t kF32ConvertChunkElements = 1ll << 16;
@@ -1650,6 +1663,15 @@ std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::pa
     return open_tensor_source(path, TensorSourceOptions{});
 }
 
+std::optional<std::filesystem::path> find_tensor_file(
+    const std::filesystem::path & directory, std::string_view stem) {
+    for (const auto & entry : kTensorContainers) {
+        const auto candidate = directory / (std::string(stem) + std::string(entry.first));
+        if (io::is_existing_file(candidate)) return candidate;
+    }
+    return std::nullopt;
+}
+
 std::shared_ptr<const TensorSource> open_tensor_source(
     const std::filesystem::path & path, TensorSourceOptions options) {
     const std::string file_name = lower_ascii(path.filename().string());
@@ -1659,11 +1681,13 @@ std::shared_ptr<const TensorSource> open_tensor_source(
         return open_indexed_tensor_source(path, path.parent_path(), options);
     }
     const std::string extension = lower_ascii(path.extension().string());
-    if (extension == ".safetensors") {
-        return std::make_shared<SafeTensorSource>(path, options);
-    }
-    if (extension == ".gguf") {
-        return std::make_shared<GgufTensorSource>(path, options);
+    for (const auto & entry : kTensorContainers) {
+        if (extension != entry.first) continue;
+        switch (entry.second) {
+            case TensorContainer::Safetensors: return std::make_shared<SafeTensorSource>(path, options);
+            case TensorContainer::Torch: return open_torch_bin_tensor_source(path);
+            case TensorContainer::Gguf: return std::make_shared<GgufTensorSource>(path, options);
+        }
     }
     throw std::runtime_error("unsupported tensor source format: " + path.string());
 }
@@ -1957,6 +1981,25 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
         source = make_weight_norm_folded_tensor_source(
             std::move(source),
             options.folded_weight_norm_patterns);
+    }
+    std::unordered_set<std::string> adapted_tensors;
+    if (options.weight_adapter) {
+        const auto & adapter = *options.weight_adapter;
+        const auto mode = options.weight_adapter_merge_mode.value_or(adapter.updates.empty()
+            ? WeightMergeMode::DeltaF32 : adapter.updates.begin()->second.merge_mode);
+        WeightAdapterBindings bindings;
+        for (const auto & tensor : source->tensors()) {
+            bindings.add(tensor.name, tensor.name);
+        }
+        for (const auto & entry : adapter.updates) {
+            if (entry.second.merge_mode != mode) {
+                throw std::runtime_error("GGUF conversion requires one adapter merge policy");
+            }
+        }
+        auto plan = bind_weight_adapter(*source, adapter, bindings, mode);
+        for (const auto & entry : plan.updates) adapted_tensors.insert(entry.first);
+        for (const auto & entry : plan.replacements) adapted_tensors.insert(entry.first);
+        source = make_weight_adapter_source(std::move(source), std::move(plan), "gguf.lora");
     }
     const auto metadata = source->tensors();
     if (metadata.empty()) {
@@ -2281,7 +2324,8 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 RawTensorData raw;
                 if (convert_bnb_nf4 && source->has_tensor(bnb_nf4_quant_state_name(item.metadata.name))) {
                     raw = convert_bnb_nf4_weight(*source, item.metadata, item.storage_type);
-                } else if (item.storage_type == TensorStorageType::Native) {
+                } else if (item.storage_type == TensorStorageType::Native &&
+                           adapted_tensors.count(item.metadata.name) == 0) {
                     raw = source->require_tensor_data(item.metadata.name);
                 } else {
                     const auto tensor = source->require_tensor(

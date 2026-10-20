@@ -3,6 +3,7 @@
 #include "engine/community_models/f5_tts/synthesize.h"
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
@@ -139,6 +140,15 @@ F5TTSSession::F5TTSSession(
     use_cuda_ = options.backend.type == core::BackendType::Cuda;
     cuda_device_ = options.backend.device;
     threads_ = options.backend.threads;
+    if (const auto path = runtime::find_option(options.options, {"f5_tts.lora"}); path && !path->empty()) {
+        F5ComputeDevice device;
+        device.use_cuda = use_cuda_;
+        device.device = cuda_device_;
+        device.threads = threads_;
+        const float strength = runtime::parse_finite_float_option(
+            options.options, {"f5_tts.lora_scale"}).value_or(1.0F);
+        runtime_state_ = create_f5_lora_state(assets_->checkpoint.string(), std::filesystem::u8path(*path), strength, device);
+    }
 }
 
 std::string F5TTSSession::family() const noexcept {
@@ -209,9 +219,11 @@ runtime::TaskResult F5TTSSession::run(const runtime::TaskRequest & request) {
     req.frame_budget = frame_budget_;
     req.cuda_device = cuda_device_;
     req.threads = threads_;
+    req.runtime_state = runtime_state_;
 
     const auto out = f5_synthesize(
         assets_->checkpoint.string(), vocos_path_, req);
+    engine::debug::timing_log_scalar("session.wall_ms", out.generation_seconds * 1000.0);
 
     runtime::TaskResult result;
     runtime::AudioBuffer audio;

@@ -7,7 +7,10 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/errors.h"
 
+#include <functional>
+#include <optional>
 #include <string>
+#include <utility>
 
 namespace minitts::server {
 
@@ -16,7 +19,9 @@ namespace minitts::server {
 struct RequestDispatcher {
   template <typename State>
   static HttpResponse handle(State &state, const HttpRequest &request,
-                             bool use_frontends) {
+                             bool use_frontends,
+                             const std::function<std::optional<HttpResponse>(const HttpRequest &)> &
+                                 additional_routes = {}) {
     HttpResponse response;
     const std::string allowed_origin = state.get_allowed_origin(request);
     try {
@@ -142,8 +147,13 @@ struct RequestDispatcher {
                  request.path == "/v1/tasks/unload_all_models") {
         response = state.handle_unload_all_models();
       } else {
-        response = error_response(404, "unknown endpoint: " + request.path,
-                                  "not_found");
+        auto additional = additional_routes ? additional_routes(request) : std::nullopt;
+        if (additional) {
+          response = std::move(*additional);
+        } else {
+          response = error_response(404, "unknown endpoint: " + request.path,
+                                    "not_found");
+        }
       }
     } catch (const engine::runtime::CapacityError &ex) {
       // The request is too big for the device, which is the caller's to fix --

@@ -1,5 +1,7 @@
 # ASR Models
 
+For Qwen3-ASR adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
+
 | Model | Family | Mode(s) | Quick Start |
 |---|---|---|---|
 | Audio Flamingo 3 / Next | `audio_flamingo` | offline | [Audio Flamingo](models/audio_flamingo.md) |

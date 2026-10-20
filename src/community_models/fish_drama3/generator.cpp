@@ -103,8 +103,10 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_encoder_f32_accumulation"})) {
         codec_encoder_f32_accumulation = runtime::parse_bool_option(*value, "fish_drama3.codec_encoder_f32_accumulation");
     }
+    const int64_t codec_encoder_chunk_samples = runtime::parse_i64_option(
+        options.options, {"fish_drama3.codec_encoder_chunk_samples"}).value_or(0);
     codec_ = std::make_unique<codecs::FishDacCodecRuntime>(component, codec_backend,
-        codec_backend.threads, codec_options.graph_arena_bytes, codec_encoder_f32_accumulation);
+        codec_backend.threads, codec_options.graph_arena_bytes, codec_encoder_f32_accumulation, codec_encoder_chunk_samples);
     assets_->model_weights->release_storage();
     assets_->codec_weights->release_storage();
 }
@@ -223,9 +225,12 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     if (streaming) codec_->reset_decode_stream();
     for (int64_t step = 0; step < sampling.max_frames; ++step) {
         component_started = ProfileClock::now();
-        const auto candidates = backbone_->lm_head(hidden);
+        auto logits = backbone_->lm_head(hidden);
         component_ms[4] += debug::elapsed_ms(component_started);
         component_started = ProfileClock::now();
+        // Both drama3 (lm_head_token_ids) and drama3-small (lm_head_rows) return
+        // compact [EOS, semantic 0..N-1] logits from the backbone.
+        auto candidates = std::move(logits);
         const int32_t first = sample(candidates, sampling.temperature, sampling.top_k, sampling.top_p, random);
         const int32_t second = sample(candidates, 1.0F, 30, 0.95F, random);
         const int32_t first_token = first == 0 ? assets_->eos : assets_->tower.semantic_begin + first - 1;

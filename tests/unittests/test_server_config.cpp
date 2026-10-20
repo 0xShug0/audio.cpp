@@ -3,7 +3,10 @@
 #include "model_memory.h"
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/registry.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -11,6 +14,18 @@
 #include <string>
 
 namespace {
+
+void set_env(const char * name, const char * value) {
+#ifdef _WIN32
+    _putenv_s(name, value == nullptr ? "" : value);
+#else
+    if (value == nullptr) {
+        unsetenv(name);
+    } else {
+        setenv(name, value, 1);
+    }
+#endif
+}
 
 void require(bool condition, const std::string & message) {
     if (!condition) {
@@ -525,8 +540,73 @@ void test_ui_configuration() {
 
     const auto config = minitts::server::load_server_config(config_path);
     require(!config.ui_enabled, "ui=false disables the embedded WebUI");
+    require(!config.ui_requested, "ui=false does not ask for the WebUI");
     require(config.ui_management, "ui_management=true enables dynamic model management");
     require(config.models.empty(), "management hosts may start without configured models");
+
+    const auto default_path = write_config(root, "ui_default.json", R"JSON({
+  "models": [{"id": "tts", "family": "pocket_tts", "path": "models/pocket-tts"}]
+})JSON");
+    const auto by_default = minitts::server::load_server_config(default_path);
+    require(by_default.ui_enabled && !by_default.ui_requested, "the WebUI is on by default but not asked for");
+
+    const auto asked_path = write_config(root, "ui_asked.json", R"JSON({
+  "ui": true,
+  "models": [{"id": "tts", "family": "pocket_tts", "path": "models/pocket-tts"}]
+})JSON");
+    const auto asked = minitts::server::load_server_config(asked_path);
+    require(asked.ui_enabled && asked.ui_requested, "ui=true asks for the WebUI");
+}
+
+void test_configured_model_fields_are_inherited() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(root, "inherit.json", R"JSON({
+  "models": [
+    {
+      "id": "tts",
+      "family": "irodori_tts",
+      "path": "models/irodori",
+      "busy_timeout_ms": 90000,
+      "default_request_options": {"num_steps": "16"},
+      "voice_presets": {"narrator": {"voice_ref": "voices/narrator.wav"}},
+      "default_voice_preset": "narrator"
+    }
+  ]
+})JSON");
+    const auto config = minitts::server::load_server_config(config_path);
+    const auto & configured = config.models.front();
+
+    // What a WebUI load request carries: no request options or presets.
+    minitts::server::ServerModelConfig loaded;
+    loaded.id = "tts";
+    loaded.family = "irodori_tts";
+    loaded.path = "models/other-irodori";
+    loaded.session_options = {{"irodori_tts.mem_saver", "true"}};
+    minitts::server::inherit_configured_model_fields(configured, loaded);
+    require(loaded.default_request_options.at("num_steps") == "16", "request options come from the config");
+    require(loaded.voice_presets.count("narrator") == 1, "voice presets come from the config");
+    require(loaded.default_voice_preset_id.value_or("") == "narrator", "the default preset comes from the config");
+    require(loaded.busy_timeout_ms.value_or(0) == 90000, "the busy timeout comes from the config");
+    require(loaded.path == "models/other-irodori", "the load keeps its own path");
+    require(loaded.session_options.at("irodori_tts.mem_saver") == "true", "the load keeps its own session options");
+
+    minitts::server::ServerModelConfig other;
+    other.id = "tts";
+    other.family = "pocket_tts";
+    other.path = "models/pocket-tts";
+    minitts::server::inherit_configured_model_fields(configured, other);
+    require(other.default_request_options.empty() && other.voice_presets.empty() &&
+                !other.default_voice_preset_id.has_value() && !other.busy_timeout_ms.has_value(),
+            "a load of another family takes nothing from the config");
+
+    minitts::server::ServerModelConfig design;
+    design.id = "tts";
+    design.family = "irodori_tts";
+    design.task = "vdes";
+    design.path = "models/irodori";
+    minitts::server::inherit_configured_model_fields(configured, design);
+    require(design.voice_presets.empty(), "a load of another task takes nothing from the config");
+    std::filesystem::remove_all(root);
 }
 
 void test_empty_models_require_ui_management() {
@@ -651,6 +731,15 @@ size_t expected_estimate(size_t weights) {
     return static_cast<size_t>(static_cast<double>(weights) * kRuntimeOverheadFactor) + kFixedOverhead;
 }
 
+// The engines a plan declares are priced by the loader that owns the family, so a build that did not
+// compile that family has no loader to ask and the guard has nothing to price: CI's sanitizer builds
+// link one family (`builtin_audio_utils`), which reports no engines by contract. The cases below
+// therefore state the priced expectation when the family is in this registry, and the empty-plan
+// contract when it is not -- which is the same contract, seen from the other side.
+bool family_compiled(const std::string & family) {
+    return engine::runtime::make_default_registry().supports_family(family);
+}
+
 void write_file(const std::filesystem::path & path, size_t bytes) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out << std::string(bytes, 'x');
@@ -742,6 +831,227 @@ void test_model_memory_estimator() {
         require(estimate.has_value(), "an aux-resolved directory has a determinate footprint");
         require(*estimate == expected_estimate(15000), "a relative aux path resolves against the model directory");
     }
+
+    // An exec_plan engine is counted by name, through the family's loader: the option value is JSON,
+    // so the path scan sees nothing, and a name relative to the model directory is how a deployment
+    // spells an engine installed with the weights. The names here are not engine images and this
+    // gate has no NPU runtime, so the runtime cannot price them and they fall back to their file
+    // size -- at 1.0, not the runtime factor, because a compiled engine is resident at its own
+    // allocation and builds no graph.
+    {
+        const auto dir = root / "plan";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        write_file(dir / "flow_seq110.rknn", 900);
+        write_file(dir / "flow_seq200.rknn", 1100);
+        const auto elsewhere = root / "plan-abs.rknn";
+        write_file(elsewhere, 500);
+        ServerModelConfig model;
+        model.family = "cosyvoice3";
+        model.path = dir;
+        // generic_string(), not string(): on Windows the native separators are
+        // backslashes, which are invalid escapes inside the JSON plan.
+        model.session_options["cosyvoice3.exec_plan"] =
+            R"({"flow":{"impl":"rknn","artifacts":{"main":"flow_seq110.rknn,flow_seq200.rknn,)" +
+            elsewhere.generic_string() + R"("}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        const auto priced = family_compiled("cosyvoice3") ? size_t{900 + 1100 + 500} : size_t{0};
+        require(estimate.has_value(), "an exec_plan model has a determinate footprint");
+        require(
+            *estimate == expected_estimate(7000) + priced,
+            "exec_plan engines resolve relative to the model directory, and an absolute path is used as given");
+    }
+
+    // A plan on a family that states no residency policy is priced by the sum of its engines, and
+    // the engines of a ladder are not multiplied by the runtime factor.
+    {
+        const auto dir = root / "plan-sum";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        for (const std::string rung : {"flow_seq250.rknn", "flow_seq400.rknn"}) {
+            write_file(dir / rung, 1);  // resize_file needs the file to exist; the rest stays sparse
+            std::filesystem::resize_file(dir / rung, 3ull * 1024 * 1024 * 1024);
+        }
+        ServerModelConfig model;
+        model.family = "qwen3_tts";
+        model.path = dir;
+        model.session_options["qwen3_tts.exec_plan"] =
+            R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":"flow_seq250.rknn","first":"flow_seq400.rknn"}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        const auto priced =
+            family_compiled("qwen3_tts") ? 6ull * 1024 * 1024 * 1024 : size_t{0};
+        require(
+            estimate.has_value() && *estimate == expected_estimate(7000) + priced,
+            "a family without a residency policy is priced by the sum of its engines, at 1.0");
+    }
+
+    // The ceiling a family states for its engines caps the priced set: a ladder that evicts to stay
+    // inside an NPU aperture is not resident at the sum of its parts. The ceiling CosyVoice3 states is
+    // the aperture budget, so the knob that sets it (AUDIOCPP_RKNN_APERTURE_MIB, see rknn_flow.h) is
+    // how this gate exercises the model-local policy with file-size residency on this host.
+    {
+        const auto dir = root / "plan-capped";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        std::string declared;
+        for (const std::string rung : {"flow_seq110.rknn", "flow_seq200.rknn", "flow_seq250.rknn"}) {
+            write_file(dir / rung, 1);
+            std::filesystem::resize_file(dir / rung, 1024ull * 1024 * 1024);
+            if (!declared.empty()) {
+                declared += ',';
+            }
+            declared += rung;
+        }
+        ServerModelConfig model;
+        model.family = "cosyvoice3";
+        model.path = dir;
+        model.session_options["cosyvoice3.exec_plan"] =
+            R"({"flow":{"impl":"rknn","artifacts":{"main":")" + declared + R"("}}})";
+        const auto uncapped = estimate_model_memory_bytes(model);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", "1024");
+        const auto capped = estimate_model_memory_bytes(model);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", nullptr);
+        const auto sum = family_compiled("cosyvoice3") ? 3ull * 1024 * 1024 * 1024 : size_t{0};
+        const auto ceiling = family_compiled("cosyvoice3") ? 1024ull * 1024 * 1024 : size_t{0};
+        require(
+            uncapped.has_value() && *uncapped == expected_estimate(7000) + sum,
+            "a ladder under its ceiling is priced by the sum of its engines");
+        require(
+            capped.has_value() && *capped == expected_estimate(7000) + ceiling,
+            "a family's residency ceiling caps the engines it prices");
+
+        // The eviction rule the ceiling describes admits one engine wider than the ceiling by
+        // evicting the rest, so the cap is a sharing budget, not a hard ceiling: the priced set
+        // floors at the largest single engine. A 3 GiB rung next to a 1 GiB one: with the
+        // ladder's own default budget the 4 GiB sum caps to that budget, and with a 1 GiB
+        // budget it caps to 1 GiB -- in both cases the floor lifts the estimate back to the
+        // 3 GiB rung that the eviction rule can hold alone.
+        const auto wide_dir = root / "plan-capped-wide";
+        std::filesystem::create_directories(wide_dir);
+        write_file(wide_dir / "model.gguf", 7000);
+        const auto small_rung = wide_dir / "flow_seq110.rknn";
+        const auto big_rung = wide_dir / "flow_seq1000.rknn";
+        write_file(small_rung, 1);
+        std::filesystem::resize_file(small_rung, 1024ull * 1024 * 1024);
+        write_file(big_rung, 1);
+        std::filesystem::resize_file(big_rung, 3ull * 1024 * 1024 * 1024);
+        ServerModelConfig wide;
+        wide.family = "cosyvoice3";
+        wide.path = wide_dir;
+        wide.session_options["cosyvoice3.exec_plan"] =
+            R"({"flow":{"impl":"rknn","artifacts":{"main":"flow_seq110.rknn,flow_seq1000.rknn"}}})";
+        const auto wide_default = estimate_model_memory_bytes(wide);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", "1024");
+        const auto wide_capped = estimate_model_memory_bytes(wide);
+        set_env("AUDIOCPP_RKNN_APERTURE_MIB", nullptr);
+        const auto default_budget = family_compiled("cosyvoice3")
+            ? 3900ull * 1024 * 1024
+            : size_t{0};
+        const auto wide_floor = family_compiled("cosyvoice3") ? 3ull * 1024 * 1024 * 1024 : size_t{0};
+        require(
+            wide_default.has_value() && *wide_default == expected_estimate(7000) + default_budget,
+            "the sum of the set meets the ladder's own default budget when it fits above the floor");
+        require(
+            wide_capped.has_value() && *wide_capped == expected_estimate(7000) + wide_floor,
+            "a ceiling floors at the largest single engine the eviction rule admits alone");
+    }
+
+    // An engine inside a summed checkpoint tree is priced by the plan, once: the plan is applied
+    // before the scans, so the engine is counted at the engine price (the driver's residency, here
+    // the file size) and the tree scan skips the same path -- it is not repriced at the runtime
+    // factor the weights carry.
+    {
+        const auto dir = root / "plan-tree";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.safetensors", 5000);
+        write_file(dir / "vocoder.rknn", 600);
+        ServerModelConfig model;
+        model.family = "piper_tts";
+        model.path = dir;
+        model.session_options["piper_tts.exec_plan"] =
+            R"({"decoder":{"impl":"rknn","artifacts":{"main":"vocoder.rknn","first":"absent.rknn"}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        const auto priced = family_compiled("piper_tts")
+            ? expected_estimate(5000) + 600
+            : expected_estimate(5600);
+        require(
+            estimate.has_value() && *estimate == priced,
+            "an engine declared by the plan is priced once, as an engine, and the tree scan skips it");
+    }
+
+    // A custom (non-spec-backed) loader answers the same hook: Qwen3-TTS's loader reads its own
+    // plan, so its declared speech decoder reaches the guard the same way.
+    {
+        const auto dir = root / "plan-qwen3";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        const auto vocoder = dir / "vocoder.rknn";
+        write_file(vocoder, 1);
+        std::filesystem::resize_file(vocoder, 1024ull * 1024 * 1024);
+        ServerModelConfig model;
+        model.family = "qwen3_tts";
+        model.path = dir;
+        model.session_options["qwen3_tts.exec_plan"] =
+            R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":"vocoder.rknn"}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        const auto priced = family_compiled("qwen3_tts") ? 1024ull * 1024 * 1024 : size_t{0};
+        require(
+            estimate.has_value() && *estimate == expected_estimate(7000) + priced,
+            "a custom loader reports its plan's engines through the same hook");
+    }
+
+    // Every RKNN family explicitly owns its resource reporting. Unselected components and
+    // artifacts on a ggml implementation do not become resident RKNN engines.
+    for (const auto & family_component : {
+             std::pair<std::string, std::string>{"piper_tts", "decoder"},
+             {"inflect_v2", "decoder"}, {"kokoro_tts", "generator"},
+             {"qwen3_tts", "speech_decoder"}, {"cosyvoice3", "flow"}}) {
+        const auto & family = family_component.first;
+        const auto & component = family_component.second;
+        const auto dir = root / ("selected-" + family);
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        write_file(dir / "engine.rknn", 600);
+        ServerModelConfig model;
+        model.family = family;
+        model.path = dir;
+        const std::string artifacts = R"(,"artifacts":{"main":"engine.rknn"}}})";
+        model.session_options[family + ".exec_plan"] =
+            "{\"" + component + R"(":{"impl":"rknn")" + artifacts;
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate && *estimate == expected_estimate(7000) + (family_compiled(family) ? 600 : 0),
+                family + " reports its selected engine");
+        model.session_options[family + ".exec_plan"] =
+            "{\"" + component + R"(":{"impl":"ggml")" + artifacts;
+        const auto ggml_estimate = estimate_model_memory_bytes(model);
+        require(ggml_estimate && *ggml_estimate == expected_estimate(7000),
+                family + " does not price artifacts for an unselected RKNN implementation");
+        model.session_options.clear();
+        require(estimate_model_memory_bytes(model) == ggml_estimate, family + " keeps its default estimate");
+        std::vector<std::string> invalid_plans{
+            "{not json",
+            "{\"" + component + R"(":{"impl":"rknn"}})",
+            "{\"" + component + R"(":{"impl":"rknn","artifacts":{}}})",
+            "{\"" + component + R"(":{"impl":"rknn","artifacts":{"main":false}}})"};
+        if (family == "qwen3_tts") {
+            invalid_plans.push_back(
+                R"({"speech_decoder":{"impl":"rknn","artifacts":{"main":"engine.rknn","first":5}}})");
+        }
+        for (const auto & invalid : invalid_plans) {
+            model.session_options[family + ".exec_plan"] = invalid;
+            require(estimate_model_memory_bytes(model) == ggml_estimate,
+                    family + " defers invalid-plan errors during estimation");
+            bool rejected = false;
+            try {
+                (void)engine::runtime::parse_exec_plan(
+                    model.session_options, family + ".exec_plan",
+                    {{component, "ggml", {{"ggml", {}, {}, {}}, {"rknn", {}, {"main"}, {"first"}}}}});
+            } catch (const std::runtime_error &) {
+                rejected = true;
+            }
+            require(rejected, family + " plan validation still rejects the invalid input");
+        }
+    }
 }
 
 void test_model_slots() {
@@ -771,10 +1081,36 @@ void test_model_slots() {
     }
 }
 
+void test_per_model_devices() {
+    const auto root = make_temp_root();
+    const auto path = write_config(root, "devices.json", R"JSON({
+      "device": 2,
+      "models": [
+        {"id":"inherited","family":"kokoro_tts","path":"a.gguf"},
+        {"id":"overridden","family":"kokoro_tts","path":"b.gguf","device":1}
+      ]
+    })JSON");
+    const auto config = minitts::server::load_server_config(path);
+    require(config.device == 2, "server device is preserved");
+    require(!config.models[0].device.has_value(), "model without device inherits at runtime");
+    require(config.models[1].device == 1, "per-model device is parsed");
+
+    const auto bad = write_config(root, "negative-device.json", R"JSON({
+      "models":[{"id":"bad","family":"kokoro_tts","path":"m.gguf","device":-1}]
+    })JSON");
+    bool rejected = false;
+    try { (void)minitts::server::load_server_config(bad); }
+    catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("device for model bad") != std::string::npos;
+    }
+    require(rejected, "negative per-model device is rejected with the model id");
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_per_model_devices();
         test_model_slots();
         test_inline_default_and_named_presets();
         test_model_spec_override_selection();
@@ -799,6 +1135,7 @@ int main() {
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();
         test_ui_configuration();
+        test_configured_model_fields_are_inherited();
         test_empty_models_require_ui_management();
         test_request_timeout_is_clamped_to_policy();
         test_model_run_overrun_predicate();

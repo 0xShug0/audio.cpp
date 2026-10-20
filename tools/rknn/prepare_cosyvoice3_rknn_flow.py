@@ -63,7 +63,12 @@ def input_shapes(seq_len: int) -> list[list[int]]:
     ]
 
 
-def graph_input_names(onnx_path: Path) -> list[str]:
+def check_graph_inputs(onnx_path: Path) -> list[str]:
+    """The export's feeder set, validated against the ladder this converter compiles.
+
+    Not the shared reader in `rknn_graph.py`: a reader reports names, this one refuses an export
+    whose names are not the expected ladder.
+    """
     model = onnx.load(str(onnx_path), load_external_data=False)
     names = [i.name for i in model.graph.input]
     # Initializers can appear as graph inputs in older exports; only the real feeders count.
@@ -202,11 +207,11 @@ def convert_rknn(
     opt_level: int,
     seq_len: int,
 ) -> None:
-    names = graph_input_names(onnx_path)
+    names = check_graph_inputs(onnx_path)
     # FP16 with no quantization: the flow estimator is the stage the reference port keeps on the NPU,
     # and quantizing it (int8) is what pushes the mel off enough to need a hand-tuned offset.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from rknn_build import build_engine
+    from rknn_build import build_engine, report_engine
 
     build_engine(
         onnx_path,
@@ -217,8 +222,8 @@ def convert_rknn(
         opt_level=opt_level,
         gate_label=f"build {output.name}",
     )
-    print(f"wrote {output} ({output.stat().st_size / 1e6:.1f} MB, seq_len {seq_len}, "
-          f"{target}, optimization_level {opt_level})")
+    report_engine(
+        output, f"seq_len {seq_len}", f"{target}", f"optimization_level {opt_level}")
 
 
 def main() -> int:

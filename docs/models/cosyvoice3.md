@@ -88,6 +88,8 @@ audiocpp_cli \
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `cosyvoice3.reference_cache_slots` | integer >= 0 | `4` | Prepared reference-audio cache slots. |
+| `cosyvoice3.lora` | adapter directory or file | not set | PEFT LoRA, or a native checkpoint containing `lora_weights.pt`, `config.json`, `speech_embedding.pt`, and `llm_decoder.pt`. Only LLM weights are adapted. |
+| `cosyvoice3.lora_scale` | finite float | `1` | Multiplier for alpha/r. Full embedding/head replacements are not scaled. |
 | `cosyvoice3.mem_saver` | bool | `false` | Release cached runtime graphs after request phases. |
 | `cosyvoice3.exec_plan` | JSON object | `{}` | Component execution plans. The only component is `flow`; see the RKNN section. |
 

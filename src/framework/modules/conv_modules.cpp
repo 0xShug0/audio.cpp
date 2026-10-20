@@ -632,6 +632,14 @@ Conv2dModule::Conv2dModule(Conv2dConfig config) : config_(config) {
     if (config_.stride_height <= 0 || config_.stride_width <= 0 || config_.dilation_height <= 0 || config_.dilation_width <= 0) {
         throw std::runtime_error("Conv2d stride and dilation must be positive");
     }
+    if (config_.cuda_f16_output && !config_.cuda_cudnn) {
+        throw std::runtime_error("FP16 Conv2D output requires cuDNN lowering");
+    }
+}
+
+Conv2dModule::Conv2dModule(Conv2dConfig config, bool cuda_cudnn, bool cuda_f16_output) : Conv2dModule(config) {
+    config_.cuda_cudnn = cuda_cudnn;
+    config_.cuda_f16_output = cuda_f16_output;
 }
 
 const Conv2dConfig & Conv2dModule::config() const noexcept {
@@ -675,6 +683,43 @@ core::TensorValue Conv2dModule::build(
             config_.padding_width,
             config_.dilation_width),
     });
+    if (config_.cuda_cudnn) {
+        const auto input_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, input);
+        const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "Conv2dModule");
+        if (ctx.backend_type != core::BackendType::Cuda || weight_contiguous.type != GGML_TYPE_F16) {
+            throw std::runtime_error("cuDNN Conv2D requires CUDA and F16 weights");
+        }
+        auto * f16_input = input_contiguous.type == GGML_TYPE_F16 ? input_contiguous.tensor :
+            ggml_cast(ctx.ggml, input_contiguous.tensor, GGML_TYPE_F16);
+        auto * f16_output = ggml_conv_2d_direct(ctx.ggml, weight_contiguous.tensor, f16_input,
+            config_.stride_width, config_.stride_height, config_.padding_width, config_.padding_height,
+            config_.dilation_width, config_.dilation_height);
+        ggml_conv_2d_direct_set_cudnn(f16_output);
+        if (config_.use_bias) {
+            if (!weights.bias.has_value()) {
+                throw std::runtime_error("bias is required when Conv2dConfig.use_bias is true");
+            }
+            core::validate_shape(*weights.bias, core::TensorShape::from_dims({config_.out_channels}), "bias");
+            if (config_.cuda_f16_output) {
+                ggml_conv_2d_direct_set_cudnn_bias(f16_output,
+                    ggml_cast(ctx.ggml, weights.bias->tensor, GGML_TYPE_F16));
+            }
+        }
+        auto output = config_.cuda_f16_output
+            ? core::wrap_tensor(f16_output, output_shape, GGML_TYPE_F16)
+            : core::wrap_tensor(ggml_cast(ctx.ggml, f16_output, GGML_TYPE_F32), output_shape, GGML_TYPE_F32);
+        if (config_.use_bias && !config_.cuda_f16_output) {
+            const auto output_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, output);
+            const auto bias_view = core::reshape_tensor(
+                ctx, *weights.bias, core::TensorShape::from_dims({1, config_.out_channels, 1, 1}));
+            const auto bias_expanded =
+                core::wrap_tensor(ggml_repeat(ctx.ggml, bias_view.tensor, output_contiguous.tensor), output.shape, GGML_TYPE_F32);
+            output = core::wrap_tensor(
+                ggml_add(ctx.ggml, output_contiguous.tensor, bias_expanded.tensor), output.shape, GGML_TYPE_F32);
+        }
+        return output;
+    }
+
     const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
     const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "Conv2dModule");
     auto output = core::wrap_tensor(

@@ -227,6 +227,14 @@
   "dependencies": [],
   "ui": {
     "recommended_package": "plapre_3_bf16",
+    "builtin_voices": [
+      "tor",
+      "ida",
+      "liv",
+      "ask",
+      "kaj"
+    ],
+    "default_voice": "tor",
     "tags": [
       "TTS",
       "GGUF"

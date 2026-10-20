@@ -182,6 +182,19 @@
     ],
     "session": [
       {
+        "name": "lora",
+        "type": "path",
+        "description": "Native LoRA directory or checkpoint file with adjacent lora_config.json; merged into generator weights at session creation.",
+        "required": false
+      },
+      {
+        "name": "lora_scale",
+        "type": "float",
+        "description": "Multiplier for the adapter's configured alpha/r scaling; default 1.",
+        "required": false,
+        "default": 1.0
+      },
+      {
         "name": "weight_type",
         "type": "enum",
         "description": "Language-model weight storage; does not override AudioVAE storage.",
@@ -285,9 +298,16 @@
       {
         "name": "audiovae_latent_capacity",
         "type": "int",
-        "description": "Optional reserved latent frame capacity; omitted selects automatically.",
+        "description": "Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count.",
         "required": false,
         "min": 1
+      },
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON component execution plans. audiovae: impl=default/ggml; backend must match the session; no artifacts. params.threads is a nonnegative int: positive values require a CPU session and enable a dedicated AudioVAE backend with streaming decode overlap; also controls offline decoding and prompt encoding threads. Omitted/0 shares the session backend.",
+        "required": false,
+        "default": "{}"
       },
       {
         "name": "audiovae_encoder_sample_capacity",

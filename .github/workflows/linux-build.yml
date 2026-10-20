@@ -25,12 +25,20 @@ jobs:
         include:
           - backend: cpu
             enable_vulkan: "OFF"
+            cc: gcc-13
+            cxx: g++-13
           - backend: vulkan
             enable_vulkan: "ON"
+            cc: gcc-13
+            cxx: g++-13
+          - backend: cpu-clang
+            enable_vulkan: "OFF"
+            cc: clang-18
+            cxx: clang++-18
 
     env:
-      CC: gcc-13
-      CXX: g++-13
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
       BUILD_DIR: build/ci-linux-${{ matrix.backend }}
 
     steps:
@@ -46,6 +54,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-13 g++-13 cmake make glslc libvulkan-dev spirv-headers
+
+      - name: Install Clang
+        if: matrix.backend == 'cpu-clang'
+        run: sudo apt-get install -y clang-18 libomp-18-dev
 
       - name: Configure
         run: |

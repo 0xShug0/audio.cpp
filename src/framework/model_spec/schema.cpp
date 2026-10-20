@@ -101,7 +101,9 @@ const std::unordered_set<std::string> & statuses() {
 }
 
 const std::unordered_set<std::string> & source_formats() {
-    static const std::unordered_set<std::string> values = {"safetensors", "gguf", "onnx", "ggml", "pytorch"};
+    // `rknn` is the compiled RKNPU2 engine image: a per-SoC, per-stage artefact the RKNN sidecar
+    // paths load next to the GGUF weights they accelerate (docs/build/rockchip-npu.md).
+    static const std::unordered_set<std::string> values = {"safetensors", "gguf", "onnx", "ggml", "pytorch", "rknn"};
     return values;
 }
 
@@ -109,6 +111,7 @@ const std::unordered_set<std::string> & precisions() {
     static const std::unordered_set<std::string> values = {
         "native", "orig", "f32", "f16", "bf16",
         "q8_0", "q6_k", "q5_k_m", "q5_k_s", "q4_k_m", "q4_k_s", "q4_k", "q4_0", "q3_k_m", "q3_k_s", "q2_k",
+        "iq2_xxs", "iq2_xs", "iq2_s", "iq3_xxs", "iq3_s", "iq4_nl", "iq4_xs",
     };
     return values;
 }

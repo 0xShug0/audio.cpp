@@ -1,5 +1,6 @@
 #include "engine/models/fish_audio/session.h"
 
+#include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/core/execution_context.h"
@@ -35,11 +36,46 @@ constexpr int64_t kDefaultReferenceCacheSlots = 1;
 constexpr const char * kReferenceTextOption = "reference_text";
 constexpr const char * kMultiReferenceCondOption = "multi_reference_cond";
 
-std::shared_ptr<const FishAudioAssets> require_assets(std::shared_ptr<const FishAudioAssets> assets) {
+std::shared_ptr<const FishAudioAssets> require_assets(
+    std::shared_ptr<const FishAudioAssets> assets, const runtime::SessionOptions & options) {
     if (assets == nullptr) {
         throw std::runtime_error("Fish Audio session requires assets");
     }
-    return assets;
+    const auto path = runtime::find_option(options.options, {"fish_audio.lora"});
+    if (!path || path->empty()) {
+        return assets;
+    }
+    engine::assets::WeightAdapterReadOptions read_options;
+    read_options.require_scaling_metadata = true;
+    read_options.strength = runtime::parse_finite_float_option(
+        options.options, {"fish_audio.lora_scale"}).value_or(1.0F);
+    auto adapter = engine::assets::read_weight_adapter(std::filesystem::u8path(*path), read_options);
+    engine::assets::WeightAdapterBindings bindings;
+    const std::string suffix = ".q_proj.weight";
+    for (const auto & tensor : assets->model_weights->tensors()) {
+        bindings.add(tensor.name, tensor.name);
+        bindings.add("model." + tensor.name, tensor.name);
+        if (tensor.name.size() < suffix.size() ||
+            tensor.name.compare(tensor.name.size() - suffix.size(), suffix.size(), suffix) != 0) {
+            continue;
+        }
+        const auto prefix = tensor.name.substr(0, tensor.name.size() - suffix.size());
+        const auto q_rows = tensor.shape.at(0);
+        const auto k_name = prefix + ".k_proj.weight";
+        const auto v_name = prefix + ".v_proj.weight";
+        const auto k_rows = assets->model_weights->require_metadata(k_name).shape.at(0);
+        const auto v_rows = assets->model_weights->require_metadata(v_name).shape.at(0);
+        const std::vector<engine::assets::WeightAdapterTarget> targets{
+            {tensor.name, 0, q_rows}, {k_name, q_rows, k_rows}, {v_name, q_rows + k_rows, v_rows}};
+        bindings.add(prefix + ".wqkv", targets);
+        bindings.add("model." + prefix + ".wqkv", targets);
+    }
+    auto plan = engine::assets::bind_weight_adapter(
+        *assets->model_weights, std::move(adapter), bindings, engine::assets::WeightMergeMode::DeltaF32);
+    auto adapted = std::make_shared<FishAudioAssets>(*assets);
+    adapted->model_weights = engine::assets::make_weight_adapter_source(
+        assets->model_weights, std::move(plan), "fish_audio.lora");
+    return adapted;
 }
 
 assets::TensorStorageType option_weight_type(
@@ -305,7 +341,7 @@ FishAudioSession::FishAudioSession(
     std::shared_ptr<const FishAudioAssets> assets)
     : RuntimeSessionBase(options),
       task_(task),
-      assets_(require_assets(std::move(assets))),
+      assets_(require_assets(std::move(assets), options)),
       reference_cache_(resolve_reference_cache_slots(this->options())) {
     if ((task_.task != runtime::VoiceTaskKind::Tts &&
          task_.task != runtime::VoiceTaskKind::VoiceCloning) ||

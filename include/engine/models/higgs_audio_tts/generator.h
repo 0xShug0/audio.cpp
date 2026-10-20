@@ -16,6 +16,7 @@ namespace engine::models::higgs_audio_tts {
 
 struct HiggsGenerationOptions {
     int64_t max_tokens = 2048;
+    bool allow_incomplete_generation = false;
     float temperature = 1.0F;
     std::optional<float> top_p;
     std::optional<int64_t> top_k;

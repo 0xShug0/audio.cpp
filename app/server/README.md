@@ -132,7 +132,7 @@ Pick the mode that matches the behavior you want:
 |---|---|---|---|
 | API/config-driven server, no UI | default build | `audiocpp_server --config server.json --no-ui` | Uses models declared in the config; does not serve the UI. |
 | UI for configured models | default build | `audiocpp_server --config server.json --ui` | Browser UI can run configured models, without downloads, deletes, or dynamic package management. |
-| Full UI with downloads and model switching | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | UI can browse packages, download models, load/unload models, delete packages, and use temporary uploads. |
+| Full UI with downloads and model switching | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | UI can browse packages, download models, load/unload models, delete packages, and use temporary uploads. Models from a `--config` stay available as configured ([details](#configured-models-with-ui-management)). |
 | Standalone deployed binary without local `model_specs/` | `-DAUDIOCPP_DEPLOYMENT_BUILD=ON` | `audiocpp_server --config server.json` | Binary carries compiled package specs for fallback model-spec lookup. |
 
 Native model management uses bundled BoringSSL by default. Normal server builds
@@ -215,6 +215,7 @@ JSON
 | `path` | An existing GGUF file or the complete package directory required by that family. Multi-component models may need additional package files. |
 | `task` | The model's documented route, such as `tts`, `clon`, `vdes`, `asr`, or `align`. Capabilities such as voice cloning do not imply an identically named route. |
 | `mode` | `offline` or `streaming`, supported by that model. It selects the session created by the server. |
+| `device` | Optional backend device index for this model. When omitted, the top-level `device` is used. |
 | `load_options` | Options consumed while loading weights/assets. |
 | `session_options` | Options consumed when creating the reusable session. |
 | `default_request_options` | Defaults for the model's inference requests; request values with the same key override them. |
@@ -227,6 +228,33 @@ For instruction-conditioned models, per-model `"instruct": "..."` is a shortcut
 for `"default_request_options": {"instruct": "..."}`. Use one form or the other;
 setting the shortcut together with `instruct` or `instruction` in
 `default_request_options` is rejected as ambiguous.
+
+### Per-model devices
+
+Servers with more than one accelerator can keep different models resident on
+different devices. Set the top-level `device` as the default and override it on
+individual model entries:
+
+```json
+{
+  "backend": "cuda",
+  "device": 0,
+  "max_loaded_models": 0,
+  "models": [
+    {"id":"speech","family":"kokoro_tts","path":"models/kokoro.gguf","device":0},
+    {"id":"music","family":"stable_audio","path":"models/stable-audio","device":1}
+  ]
+}
+```
+
+The indices use audio.cpp's backend device order; run the server with
+`--list-devices` to inspect it. Each model remains wholly on one device: this
+setting assigns models independently and does not split one model across GPUs.
+`GET /v1/models` reports the effective `device` for every entry. Dynamic loads
+may also send `device`; when a registered model is reloaded and the field is
+omitted, its existing assignment is retained. Set `max_loaded_models` high
+enough for the number of models that should remain resident, or use `0` for no
+global residency limit.
 
 ### Default session options
 
@@ -251,6 +279,22 @@ options:
 
 A key without a family prefix is rejected when the config loads. A value for a
 family that never loads is ignored.
+
+### Configured models with UI management
+
+With `--ui-management` and a `--config`, the WebUI offers the catalog and the
+config's models. A config model whose `id` the catalog does not have is listed
+as its own entry and used as configured, as without UI management: it loads on
+its first request, and the WebUI releases its memory with
+[`POST /v1/tasks/unload_models`](api.md#post-v1tasksunload_models) instead of
+reloading it from the catalog. A config model under a catalog `id` stays that
+catalog entry, so the WebUI can load another format of it.
+
+A WebUI load of an `id` the config defines carries only the path, the family,
+the task, the mode and the load and session options. When its family and task
+match the config's, the model keeps the config's `default_request_options`,
+`voice_presets`, `default_voice_preset`, `busy_timeout_ms` and `live_ingest`;
+a load of another family or task under that `id` gets none of them.
 
 ### Paths and model specs
 
@@ -368,7 +412,12 @@ The next request reloads the model.
 
 The optional free-memory guard checks host memory and GPU memory where available.
 Its load estimate covers the selected weight file/package plus session auxiliary
-files, with a runtime overhead factor and fixed floor. A directory normally
+files, with a runtime overhead factor and fixed floor. A family that holds
+compiled engines resident reports its selected resource paths and final residency
+through its loader. The family resolves its execution plan and applies its own
+eviction policy; the guard only adds the reported bytes and excludes those files
+from the weight scan. RKNN engines use driver-reported residency where available,
+otherwise file size, without the weight runtime factor. A directory normally
 selects `model.gguf` or its sole GGUF; several GGUFs without `model.gguf` are
 ambiguous to the estimator. Unsupported family-specific layouts may skip the
 guard with a log message, while an invalid spec-driven package can still fail
@@ -606,9 +655,11 @@ is model-specific. Top-level `reference_text` overrides the preset/library text.
 [`GET /v1/audio/voices`](api.md#get-v1audiovoicesmodelid) lists library WAV
 basenames, deduplicated against configured preset and cached voice names.
 
-With native UI management enabled and no configured `voice_dir`, the server
-provides embedded demo recordings in a temporary reference library. Those names
-are reference recordings, not the selected model's built-in speaker IDs.
+With native UI management enabled, or with the UI asked for (`--ui`, or
+`"ui": true` in the config), and no configured `voice_dir`, the server provides
+embedded demo recordings in a temporary reference library. A server whose UI is
+only on by default does not get them. Those names are reference recordings, not
+the selected model's built-in speaker IDs.
 
 Use distinct library filenames and model preset names. The library is shared
 across configured models; naming a reference WAV after a model-native speaker

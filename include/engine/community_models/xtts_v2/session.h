@@ -1,6 +1,7 @@
 #pragma once
 
-#include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/session_base.h"
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/community_models/xtts_v2/assets.h"
 
 #include <memory>
@@ -10,9 +11,11 @@ namespace engine::models::xtts_v2 {
 class XttSv2GptEngine;
 class XttSv2Vocoder;
 
-class XttSv2TtsSession final : public runtime::IOfflineVoiceTaskSession {
+class XttSv2TtsSession final : public runtime::IOfflineVoiceTaskSession, private runtime::RuntimeSessionBase {
 public:
-    XttSv2TtsSession(std::shared_ptr<const XttSv2Assets> assets, const runtime::SessionOptions& session_options);
+    XttSv2TtsSession(const runtime::TaskSpec & task, std::shared_ptr<const XttSv2Assets> assets,
+        const runtime::SessionOptions & options,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~XttSv2TtsSession() override;
 
     XttSv2TtsSession(const XttSv2TtsSession &) = delete;
@@ -30,4 +33,3 @@ private:
 };
 
 }  // namespace engine::models::xtts_v2
-

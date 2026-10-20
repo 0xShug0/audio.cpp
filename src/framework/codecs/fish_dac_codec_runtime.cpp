@@ -711,6 +711,21 @@ core::TensorValue build_convnext(
     return out;
 }
 
+core::TensorValue build_encoder_conv_block(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const EncoderBlockWeights & block,
+    int64_t channels,
+    int stride,
+    bool bf16_input) {
+    auto x = build_residual_unit(ctx, input, block.residual1, channels, 1, nullptr, bf16_input);
+    x = build_residual_unit(ctx, x, block.residual3, channels, 3, nullptr, bf16_input);
+    x = build_residual_unit(ctx, x, block.residual9, channels, 9, nullptr, bf16_input);
+    x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
+    if (bf16_input) x = core::wrap_tensor(ggml_round_bf16(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
+    return causal_conv1d(ctx, x, block.conv, channels, channels * 2, 2 * stride, stride, 1, true, nullptr, bf16_input);
+}
+
 core::TensorValue build_encoder(
     core::ModuleBuildContext & ctx,
     core::ConstantTensorCache & constants,
@@ -726,17 +741,62 @@ core::TensorValue build_encoder(
     const int strides[] = {2, 4, 8, 8};
     for (size_t index = 0; index < weights.encoder_blocks.size(); ++index) {
         const auto & block = weights.encoder_blocks[index];
-        x = build_residual_unit(ctx, x, block.residual1, channels, 1, nullptr, bf16_input);
-        x = build_residual_unit(ctx, x, block.residual3, channels, 3, nullptr, bf16_input);
-        x = build_residual_unit(ctx, x, block.residual9, channels, 9, nullptr, bf16_input);
-        x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
-        if (bf16_input) x = core::wrap_tensor(ggml_round_bf16(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
-        x = causal_conv1d(ctx, x, block.conv, channels, channels * 2, 2 * strides[index], strides[index], 1, true, nullptr, bf16_input);
+        x = build_encoder_conv_block(ctx, x, block, channels, strides[index], bf16_input);
         channels *= 2;
         if (block.transformer.has_value()) {
             x = build_window_transformer(ctx, constants, x, *block.transformer, 512, nullptr, bf16_input);
         }
     }
+    x = modules::Snake1dModule({channels}).build(ctx, x, weights.encoder_final_snake);
+    if (bf16_input) x = core::wrap_tensor(ggml_round_bf16(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
+    return causal_conv1d(ctx, x, weights.encoder_final, channels, kCodecDim, 3, 1, 1, true, nullptr, bf16_input);
+}
+
+// Bound convolution workspace with overlapping causal windows. The transformer
+// and quantizer still process the complete feature sequence.
+constexpr int64_t kEncoderConvHop = 512;            // product of encoder strides {2, 4, 8, 8}
+constexpr int64_t kEncodeContextSamples = 16384;    // >= conv receptive field (~6.4k samples)
+
+bool encoder_is_chunkable(const FishCodecWeights & weights) {
+    for (size_t index = 0; index + 1 < weights.encoder_blocks.size(); ++index) {
+        if (weights.encoder_blocks[index].transformer.has_value()) {
+            return false;
+        }
+    }
+    return !weights.encoder_blocks.empty();
+}
+
+core::TensorValue build_encoder_convs(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const FishCodecWeights & weights,
+    bool bf16_input) {
+    auto encoder_input = bf16_input
+        ? core::wrap_tensor(ggml_round_bf16(ctx.ggml, input.tensor), input.shape, GGML_TYPE_F32)
+        : input;
+    auto x = causal_conv1d(ctx, encoder_input, weights.encoder_first, 1, 64, 7, 1, 1, true, nullptr, bf16_input);
+    int64_t channels = 64;
+    const int strides[] = {2, 4, 8, 8};
+    for (size_t index = 0; index < weights.encoder_blocks.size(); ++index) {
+        const auto & block = weights.encoder_blocks[index];
+        x = build_encoder_conv_block(ctx, x, block, channels, strides[index], bf16_input);
+        channels *= 2;
+    }
+    return x;
+}
+
+core::TensorValue build_encoder_tail(
+    core::ModuleBuildContext & ctx,
+    core::ConstantTensorCache & constants,
+    const core::TensorValue & features,
+    const FishCodecWeights & weights,
+    bool bf16_input) {
+    auto x = features;
+    const auto & last = weights.encoder_blocks.back();
+    if (last.transformer.has_value()) {
+        x = build_window_transformer(ctx, constants, x, *last.transformer, 512, nullptr, bf16_input);
+    }
+    const int64_t channels = features.shape.dims[1];
     x = modules::Snake1dModule({channels}).build(ctx, x, weights.encoder_final_snake);
     if (bf16_input) x = core::wrap_tensor(ggml_round_bf16(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
     return causal_conv1d(ctx, x, weights.encoder_final, channels, kCodecDim, 3, 1, 1, true, nullptr, bf16_input);
@@ -1394,6 +1454,23 @@ private:
     core::ConstantTensorCache constants_;
 };
 
+void set_encoder_matmul_precision(
+    ggml_cgraph * graph,
+    core::BackendType backend_type,
+    bool encoder_f32_accumulation) {
+    if (!encoder_f32_accumulation || backend_type != core::BackendType::Vulkan) {
+        return;
+    }
+    // Preserve F16 storage while avoiding F16 accumulation during reference encoding.
+    for (int node = 0; node < ggml_graph_n_nodes(graph); ++node) {
+        auto * tensor = ggml_graph_node(graph, node);
+        if (tensor->op == GGML_OP_MUL_MAT && tensor->src[0]->type == GGML_TYPE_F16 &&
+            tensor->src[1]->type == GGML_TYPE_F16) {
+            ggml_mul_mat_set_prec(tensor, GGML_PREC_F32);
+        }
+    }
+}
+
 struct EncodeGraph {
     EncodeGraph(
         FishDacCodecConfig config,
@@ -1442,17 +1519,7 @@ struct EncodeGraph {
         for (ggml_tensor * code_output : code_outputs_) {
             ggml_build_forward_expand(graph_, code_output);
         }
-        // Vulkan defaults F16 convolution GEMMs to F16 accumulation. Reference
-        // quantization needs F32 accumulation: changed code IDs can derail AR
-        // conditioning. Keep F16 storage and leave all decode graphs unchanged.
-        if (encoder_f32_accumulation && backend_type_ == core::BackendType::Vulkan) {
-            for (int node = 0; node < ggml_graph_n_nodes(graph_); ++node) {
-                auto * tensor = ggml_graph_node(graph_, node);
-                if (tensor->op == GGML_OP_MUL_MAT && tensor->src[0]->type == GGML_TYPE_F16 &&
-                    tensor->src[1]->type == GGML_TYPE_F16)
-                    ggml_mul_mat_set_prec(tensor, GGML_PREC_F32);
-            }
-        }
+        set_encoder_matmul_precision(graph_, backend_type_, encoder_f32_accumulation);
         constants_.finish_graph();
         constants_.ensure_uploaded();
         gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
@@ -1542,6 +1609,171 @@ private:
     core::ConstantTensorCache constants_;
 };
 
+// One cached waveform window -> convolution features.
+struct EncodeConvGraph {
+    EncodeConvGraph(
+        std::shared_ptr<const FishCodecWeights> weights,
+        core::ExecutionContext & execution_context,
+        size_t graph_arena_bytes,
+        int64_t window_samples,
+        bool bf16_input,
+        bool encoder_f32_accumulation)
+        : weights_(std::move(weights)),
+          backend_(execution_context.backend()),
+          backend_type_(execution_context.backend_type()),
+          threads_(std::max(1, execution_context.config().threads)),
+          window_samples_(window_samples),
+          bf16_input_(bf16_input) {
+        ggml_init_params params{graph_arena_bytes, nullptr, true};
+        ctx_.reset(ggml_init(params));
+        if (ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize Fish DAC codec encode-conv graph context");
+        }
+        core::ModuleBuildContext ctx{ctx_.get(), "fish_audio.codec.encode_convs", backend_type_};
+        input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, window_samples_}));
+        ggml_set_input(input_.tensor);
+        auto features = build_encoder_convs(ctx, input_, *weights_, bf16_input_);
+        channels_ = features.shape.dims[1];
+        frames_ = features.shape.dims[2];
+        output_ = core::ensure_backend_addressable_layout(ctx, features).tensor;
+        ggml_set_output(output_);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
+        ggml_build_forward_expand(graph_, output_);
+        set_encoder_matmul_precision(graph_, backend_type_, encoder_f32_accumulation);
+        gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+        if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
+            throw std::runtime_error("failed to allocate Fish DAC codec encode-conv graph");
+        }
+    }
+
+    ~EncodeConvGraph() {
+        engine::core::release_backend_graph_resources(backend_, graph_);
+    }
+
+    bool matches(int64_t window_samples, ggml_backend_t backend, int threads) const {
+        return window_samples_ == window_samples && backend_ == backend && threads_ == std::max(1, threads);
+    }
+
+    int64_t window_samples() const { return window_samples_; }
+    int64_t channels() const { return channels_; }
+    int64_t frames() const { return frames_; }
+
+    // Returns channel-major features: value(c, t) at index c * frames() + t.
+    std::vector<float> run(const std::vector<float> & window) {
+        core::write_tensor_f32(input_, window);
+        core::set_backend_threads(backend_, threads_);
+        const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+        ggml_backend_synchronize(backend_);
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("Fish DAC codec encode-conv graph compute failed");
+        }
+        return core::read_tensor_f32(output_);
+    }
+
+private:
+    std::shared_ptr<const FishCodecWeights> weights_;
+    ggml_backend_t backend_ = nullptr;
+    core::BackendType backend_type_ = core::BackendType::Cpu;
+    int threads_ = 1;
+    int64_t window_samples_ = 0;
+    bool bf16_input_ = false;
+    int64_t channels_ = 0;
+    int64_t frames_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    core::TensorValue input_;
+    ggml_tensor * output_ = nullptr;
+    ggml_cgraph * graph_ = nullptr;
+    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
+};
+
+// Complete convolution features -> reference codes.
+struct EncodeTailGraph {
+    EncodeTailGraph(
+        std::shared_ptr<const FishCodecWeights> weights,
+        core::ExecutionContext & execution_context,
+        size_t graph_arena_bytes,
+        int64_t channels,
+        int64_t feature_frames,
+        bool bf16_input,
+        bool encoder_f32_accumulation)
+        : weights_(std::move(weights)),
+          backend_(execution_context.backend()),
+          backend_type_(execution_context.backend_type()),
+          threads_(std::max(1, execution_context.config().threads)),
+          feature_frames_(feature_frames),
+          bf16_input_(bf16_input),
+          constants_(backend_, threads_, "Fish DAC codec encode-tail constants") {
+        ggml_init_params params{graph_arena_bytes, nullptr, true};
+        ctx_.reset(ggml_init(params));
+        if (ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize Fish DAC codec encode-tail graph context");
+        }
+        core::ModuleBuildContext ctx{ctx_.get(), "fish_audio.codec.encode_tail", backend_type_};
+        constants_.begin_graph();
+        input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, channels, feature_frames_}));
+        ggml_set_input(input_.tensor);
+        auto encoded = build_encoder_tail(ctx, constants_, input_, *weights_, bf16_input_);
+        build_encode_quantizer(ctx, constants_, encoded, *weights_, code_outputs_, nullptr);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
+        for (ggml_tensor * code_output : code_outputs_) {
+            ggml_build_forward_expand(graph_, code_output);
+        }
+        set_encoder_matmul_precision(graph_, backend_type_, encoder_f32_accumulation);
+        constants_.finish_graph();
+        constants_.ensure_uploaded();
+        gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+        if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
+            throw std::runtime_error("failed to allocate Fish DAC codec encode-tail graph");
+        }
+    }
+
+    ~EncodeTailGraph() {
+        engine::core::release_backend_graph_resources(backend_, graph_);
+    }
+
+    bool matches(int64_t feature_frames, ggml_backend_t backend, int threads) const {
+        return feature_frames_ == feature_frames && backend_ == backend && threads_ == std::max(1, threads);
+    }
+
+    FishDacCodes run(const std::vector<float> & features, int64_t frames) {
+        core::write_tensor_f32(input_, features);
+        core::set_backend_threads(backend_, threads_);
+        const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+        ggml_backend_synchronize(backend_);
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("Fish DAC codec encode-tail graph compute failed");
+        }
+        FishDacCodes out;
+        out.codebooks = static_cast<int64_t>(code_outputs_.size());
+        out.frames = frames;
+        out.codes.resize(static_cast<size_t>(out.codebooks * out.frames));
+        for (int64_t codebook = 0; codebook < out.codebooks; ++codebook) {
+            auto values = core::read_tensor_i32(code_outputs_[static_cast<size_t>(codebook)]);
+            if (static_cast<int64_t>(values.size()) < frames) {
+                throw std::runtime_error("Fish DAC codec encode-tail produced too few frames");
+            }
+            for (int64_t frame = 0; frame < frames; ++frame) {
+                out.codes[static_cast<size_t>(codebook * frames + frame)] = values[static_cast<size_t>(frame)];
+            }
+        }
+        return out;
+    }
+
+private:
+    std::shared_ptr<const FishCodecWeights> weights_;
+    ggml_backend_t backend_ = nullptr;
+    core::BackendType backend_type_ = core::BackendType::Cpu;
+    int threads_ = 1;
+    int64_t feature_frames_ = 0;
+    bool bf16_input_ = false;
+    core::ConstantTensorCache constants_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    core::TensorValue input_;
+    std::vector<ggml_tensor *> code_outputs_;
+    ggml_cgraph * graph_ = nullptr;
+    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
+};
+
 }  // namespace
 
 struct FishDacCodecComponent::Impl {
@@ -1556,14 +1788,24 @@ public:
         core::BackendConfig backend,
         int threads,
         size_t graph_arena_bytes,
-        bool encoder_f32_accumulation)
+        bool encoder_f32_accumulation,
+        int64_t encoder_chunk_samples)
         : component_(std::move(component)),
           execution_(std::move(backend)),
           threads_(std::max(1, threads)),
           graph_arena_bytes_(graph_arena_bytes),
-          encoder_f32_accumulation_(encoder_f32_accumulation) {
+          encoder_f32_accumulation_(encoder_f32_accumulation),
+          encoder_chunk_samples_(encoder_chunk_samples) {
         if (component_ == nullptr || component_->impl_ == nullptr || component_->impl_->weights == nullptr) {
             throw std::runtime_error("Fish DAC codec runtime requires a loaded codec component");
+        }
+        if (encoder_chunk_samples_ < 0 || encoder_chunk_samples_ % kEncoderConvHop != 0) {
+            throw std::invalid_argument("Fish DAC codec encoder_chunk_samples must be 0 or a positive multiple of 512 samples");
+        }
+        if (encoder_chunk_samples_ > 0 &&
+            (component_->impl_->config.frame_length % kEncoderConvHop != 0 ||
+             !encoder_is_chunkable(*component_->impl_->weights))) {
+            throw std::invalid_argument("Fish DAC codec chunked encoding requires hop-aligned frames and a convolution stack with no intermediate transformers");
         }
     }
 
@@ -1572,6 +1814,10 @@ public:
         auto mono = prepare_codec_mono(audio, config.sample_rate);
         const int64_t samples = ceil_div(static_cast<int64_t>(mono.size()), config.frame_length) * config.frame_length;
         const int64_t frames = ceil_div(static_cast<int64_t>(mono.size()), config.frame_length);
+        if (encoder_chunk_samples_ > 0 && samples > encoder_chunk_samples_ &&
+            samples - encoder_chunk_samples_ > kEncodeContextSamples) {
+            return encode_codes_chunked(std::move(mono), samples, frames, encoder_chunk_samples_);
+        }
         if (encode_graph_ == nullptr || !encode_graph_->matches(samples, frames, execution_.backend(), threads_, false)) {
             encode_graph_.reset();
             encode_graph_ = std::make_unique<EncodeGraph>(
@@ -1585,6 +1831,56 @@ public:
                 encoder_f32_accumulation_);
         }
         return encode_graph_->run(audio);
+    }
+
+    // Keep the first window's boundary padding; subsequent windows discard left context.
+    FishDacCodes encode_codes_chunked(std::vector<float> mono, int64_t samples, int64_t frames, int64_t chunk) {
+        const auto & weights = component_->impl_->weights;
+        const int64_t window = kEncodeContextSamples + chunk;
+        mono.resize(static_cast<size_t>(samples), 0.0F);
+        const bool bf16 = weights->encoder_bf16_compute &&
+            (weights->encoder_first.weight.type == GGML_TYPE_BF16 || weights->encoder_first.weight.type == GGML_TYPE_F16);
+        if (encode_conv_graph_ == nullptr || !encode_conv_graph_->matches(window, execution_.backend(), threads_)) {
+            encode_conv_graph_.reset();
+            encode_conv_graph_ = std::make_unique<EncodeConvGraph>(
+                weights, execution_, graph_arena_bytes_, window, bf16, encoder_f32_accumulation_);
+        }
+        const int64_t channels = encode_conv_graph_->channels();
+        const int64_t window_frames = encode_conv_graph_->frames();
+        if (window_frames * kEncoderConvHop != window) {
+            throw std::runtime_error("Fish DAC codec encode-conv window is not hop-aligned");
+        }
+        const int64_t total_frames = samples / kEncoderConvHop;
+        std::vector<float> features(static_cast<size_t>(channels * total_frames), 0.0F);
+        std::vector<float> buffer(static_cast<size_t>(window));
+        for (int64_t k = 0;; ++k) {
+            const int64_t start = k * chunk;
+            const int64_t keep_from = k == 0 ? 0 : kEncodeContextSamples / kEncoderConvHop;
+            const int64_t global0 = (start / kEncoderConvHop) + keep_from;
+            std::fill(buffer.begin(), buffer.end(), 0.0F);
+            const int64_t n = std::min(window, samples - start);
+            std::copy_n(mono.begin() + start, n, buffer.begin());
+            const auto values = encode_conv_graph_->run(buffer);
+            for (int64_t c = 0; c < channels; ++c) {
+                for (int64_t t = keep_from; t < window_frames; ++t) {
+                    const int64_t g = global0 + (t - keep_from);
+                    if (g >= total_frames) {
+                        break;
+                    }
+                    features[static_cast<size_t>(c * total_frames + g)] =
+                        values[static_cast<size_t>(c * window_frames + t)];
+                }
+            }
+            if (start + window >= samples) {
+                break;
+            }
+        }
+        if (encode_tail_graph_ == nullptr || !encode_tail_graph_->matches(total_frames, execution_.backend(), threads_)) {
+            encode_tail_graph_.reset();
+            encode_tail_graph_ = std::make_unique<EncodeTailGraph>(
+                weights, execution_, graph_arena_bytes_, channels, total_frames, bf16, encoder_f32_accumulation_);
+        }
+        return encode_tail_graph_->run(features, frames);
     }
 
     FishDacLatents encode_latents(const runtime::AudioBuffer & audio) {
@@ -1666,10 +1962,14 @@ public:
 
     void release_encode_graph() {
         encode_graph_.reset();
+        encode_conv_graph_.reset();
+        encode_tail_graph_.reset();
     }
 
     void release_runtime_graphs() {
         encode_graph_.reset();
+        encode_conv_graph_.reset();
+        encode_tail_graph_.reset();
         decode_graph_.reset();
         latent_decode_graph_.reset();
         stream_decode_graph_.reset();
@@ -1681,7 +1981,10 @@ private:
     int threads_ = 1;
     size_t graph_arena_bytes_ = 0;
     bool encoder_f32_accumulation_ = false;
+    int64_t encoder_chunk_samples_ = 0;
     std::unique_ptr<EncodeGraph> encode_graph_;
+    std::unique_ptr<EncodeConvGraph> encode_conv_graph_;
+    std::unique_ptr<EncodeTailGraph> encode_tail_graph_;
     std::unique_ptr<DecodeGraph> decode_graph_;
     std::unique_ptr<DecodeGraph> stream_decode_graph_;
     std::unique_ptr<LatentDecodeGraph> latent_decode_graph_;
@@ -1727,13 +2030,15 @@ FishDacCodecRuntime::FishDacCodecRuntime(
     core::BackendConfig backend,
     int threads,
     size_t graph_arena_bytes,
-    bool encoder_f32_accumulation)
+    bool encoder_f32_accumulation,
+    int64_t encoder_chunk_samples)
     : impl_(std::make_unique<Impl>(
           std::move(component),
           std::move(backend),
           threads,
           graph_arena_bytes,
-          encoder_f32_accumulation)) {}
+          encoder_f32_accumulation,
+          encoder_chunk_samples)) {}
 
 FishDacCodecRuntime::~FishDacCodecRuntime() = default;
 

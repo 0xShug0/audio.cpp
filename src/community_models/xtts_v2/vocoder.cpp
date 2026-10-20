@@ -1,586 +1,350 @@
-// xtts_v2 vocoder -- HiFi-GAN + ResNet speaker encoder
-// Ported from CrispASR xtts_voc.cpp for audio.cpp framework.
-// MSVC's <cmath> only exposes M_PI with _USE_MATH_DEFINES; define it before
-// any include (framework headers may pull <cmath> in transitively).
-#ifndef _USE_MATH_DEFINES
-#define _USE_MATH_DEFINES
-#endif
-
 #include "engine/community_models/xtts_v2/vocoder.h"
-#include "engine/framework/core/backend.h"
+#include "engine/community_models/xtts_v2/frontend.h"
+#include "engine/framework/audio/waveform_ops.h"
+#include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/constant_tensor_cache.h"
+#include "engine/framework/debug/trace.h"
+#include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/lookup_modules.h"
+#include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/modules/weight_binding.h"
 
-#include "ggml-backend.h"
-#include "ggml-cpu.h"
-#include "ggml.h"
-#include "gguf.h"
-
+#include <ggml-alloc.h>
 #include <algorithm>
-#include <chrono>
+#include <array>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <map>
 #include <memory>
-#include <numeric>
-#include <string>
-#include <vector>
+#include <stdexcept>
+#include <utility>
 
 namespace engine::models::xtts_v2 {
 namespace {
+namespace binding = modules::binding;
+using core::TensorShape;
+using core::TensorValue;
+constexpr auto native = assets::TensorStorageType::Native;
+constexpr std::array<int, 4> rates{8, 8, 2, 2}, kernels{16, 16, 4, 4};
+constexpr std::array<int, 3> residual_kernels{3, 7, 11}, dilations{1, 3, 5};
 
-static ggml_tensor* T(const std::map<std::string, ggml_tensor*>& m, const std::string& name) {
-    auto it = m.find(name);
-    return (it != m.end()) ? it->second : nullptr;
-}
-
-static ggml_tensor* conv1d(ggml_context* ctx, ggml_tensor* x, ggml_tensor* w,
-    ggml_tensor* b, int stride, int padding, int dilation) {
-    ggml_tensor* y = ggml_conv_1d(ctx, w, x, stride, padding, dilation);
-    if (b) y = ggml_add(ctx, y, ggml_reshape_2d(ctx, b, 1, (int)b->ne[0]));
-    return y;
-}
-
-static ggml_tensor* conv_t1d(ggml_context* ctx, ggml_tensor* x, ggml_tensor* w,
-    ggml_tensor* b, int stride, int padding) {
-    ggml_tensor* y = ggml_conv_transpose_1d(ctx, w, x, stride, 0, 1);
-    if (padding > 0) {
-        int64_t Tt = y->ne[0] - 2 * padding;
-        y = ggml_cont(ctx, ggml_view_2d(ctx, y, Tt, y->ne[1], y->nb[1], padding * ggml_element_size(y)));
-    }
-    if (b) y = ggml_add(ctx, y, ggml_reshape_2d(ctx, b, 1, (int)b->ne[0]));
-    return y;
-}
-
-static ggml_tensor* resblock(ggml_context* ctx, ggml_tensor* x,
-    const std::map<std::string, ggml_tensor*>& ts, const std::string& p,
-    int ks, const std::vector<int>& dil, float sl) {
-    for (int d = 0; d < (int)dil.size(); d++) {
-        ggml_tensor* r = x;
-        x = ggml_leaky_relu(ctx, x, sl, false);
-        x = conv1d(ctx, x, T(ts, p + ".c1." + std::to_string(d)),
-                   T(ts, p + ".c1." + std::to_string(d) + ".bias"),
-                   1, dil[d] * (ks - 1) / 2, dil[d]);
-        x = ggml_leaky_relu(ctx, x, sl, false);
-        x = conv1d(ctx, x, T(ts, p + ".c2." + std::to_string(d)),
-                   T(ts, p + ".c2." + std::to_string(d) + ".bias"), 1, (ks - 1) / 2, 1);
-        x = ggml_add(ctx, x, r);
-    }
-    return x;
-}
-
-static ggml_tensor* bn4d(ggml_context* ctx, ggml_tensor* x, const std::string& pfx) {
-    // placeholder - actual BN inline
-    return x;
-}
-
-// HiFi-GAN graph
-static ggml_cgraph* build_hifigan(ggml_context* ctx0,
-    const std::map<std::string, ggml_tensor*>& ts, int T_mel, bool use_spk, ggml_tensor* spk_in) {
-    ggml_cgraph* gf = ggml_new_graph(ctx0);
-    // T_mel here is the ALREADY-upsampled frame count (host-side linear interp above);
-    // the graph input is [frames, 1024] channel-major.
-    ggml_tensor* x = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, T_mel, 1024);
-    ggml_set_name(x, "voc_input"); ggml_set_input(x);
-    x = conv1d(ctx0, x, T(ts, "hifigan_decoder.dec.conv_pre.weight"),
-               T(ts, "hifigan_decoder.dec.conv_pre.bias"), 1, 3, 1);
-    if (use_spk) {
-        auto* c = T(ts, "hifigan_decoder.dec.cond_layer.weight");
-        auto* s = spk_in;  // shared input tensor for all 5 conditioning points
-        auto* p = ggml_cont(ctx0, ggml_transpose(ctx0,
-            ggml_mul_mat(ctx0, ggml_reshape_2d(ctx0, c, (int)c->ne[1], (int)c->ne[2]),
-                         ggml_reshape_2d(ctx0, s, 512, 1))));
-        if (auto* cb = T(ts, "hifigan_decoder.dec.cond_layer.bias"))
-            p = ggml_add(ctx0, p, ggml_reshape_2d(ctx0, cb, 1, (int)ggml_nelements(cb)));
-        x = ggml_add(ctx0, x, ggml_repeat(ctx0, p, x));
-    }
-    int rates[4] = {8,8,2,2}, ks[4] = {16,16,4,4}, rks[3] = {3,7,11};
-    std::vector<int> dil = {1,3,5};
-    for (int i = 0; i < 4; i++) {
-        x = ggml_leaky_relu(ctx0, x, 0.1f, false);
-        std::string u = "hifigan_decoder.dec.ups." + std::to_string(i);
-        x = conv_t1d(ctx0, x, T(ts, u), T(ts, u + ".bias"), rates[i], (ks[i] - rates[i]) / 2);
-        if (use_spk) {
-            std::string cw = "hifigan_decoder.dec.conds." + std::to_string(i) + ".weight";
-            auto* w = T(ts, cw);
-            auto* s = spk_in;  // same shared input tensor
-            auto* p = ggml_cont(ctx0, ggml_transpose(ctx0,
-                ggml_mul_mat(ctx0, ggml_reshape_2d(ctx0, w, (int)w->ne[1], (int)w->ne[2]),
-                             ggml_reshape_2d(ctx0, s, 512, 1))));
-            if (auto* cb = T(ts, cw + ".bias"))
-                p = ggml_add(ctx0, p, ggml_reshape_2d(ctx0, cb, 1, (int)ggml_nelements(cb)));
-            x = ggml_add(ctx0, x, ggml_repeat(ctx0, p, x));
-        }
-        ggml_tensor* rs = nullptr;
-        for (int j = 0; j < 3; j++) {
-            std::string rp = "hifigan_decoder.dec.resb." + std::to_string(i * 3 + j);
-            auto* rb = resblock(ctx0, x, ts, rp, rks[j], dil, 0.1f);
-            rs = rs ? ggml_add(ctx0, rs, rb) : rb;
-        }
-        x = ggml_scale(ctx0, rs, 1.0f / 3);
-    }
-    x = ggml_leaky_relu(ctx0, x, 0.1f, false);
-    x = conv1d(ctx0, x, T(ts, "hifigan_decoder.dec.conv_post.weight"),
-               T(ts, "hifigan_decoder.dec.conv_post.bias"), 1, 3, 1);
-    x = ggml_tanh(ctx0, x);
-    ggml_set_name(x, "voc_output"); ggml_set_output(x);
-    ggml_build_forward_expand(gf, x);
-    return gf;
-}
-
-// BN apply for conv2d: (x - rm) / sqrt(rv) * w + b
-static ggml_tensor* apply_bn4d(ggml_context* ctx, ggml_tensor* x,
-    ggml_tensor* rm, ggml_tensor* rv, ggml_tensor* w, ggml_tensor* b) {
-    auto* rm4 = ggml_reshape_4d(ctx, rm, 1, 1, (int)x->ne[2], 1);
-    auto* rv4 = ggml_reshape_4d(ctx, rv, 1, 1, (int)x->ne[2], 1);
-    auto* w4 = ggml_reshape_4d(ctx, w, 1, 1, (int)x->ne[2], 1);
-    auto* b4 = ggml_reshape_4d(ctx, b, 1, 1, (int)x->ne[2], 1);
-    auto* m = ggml_repeat(ctx, rm4, x);
-    // BN eps (1e-5) is pre-folded into .rv tensors at load time
-    auto* v = ggml_repeat(ctx, ggml_sqrt(ctx, rv4), x);
-    return ggml_add(ctx, ggml_mul(ctx, ggml_div(ctx, ggml_sub(ctx, x, m), v),
-                   ggml_repeat(ctx, w4, x)), ggml_repeat(ctx, b4, x));
-}
-
-static ggml_tensor* se_blk(ggml_context* ctx, ggml_tensor* x, int C,
-    ggml_tensor* f0w, ggml_tensor* f0b, ggml_tensor* f2w, ggml_tensor* f2b) {
-    int64_t sp = x->ne[0] * x->ne[1];
-    ggml_tensor* xr = ggml_reshape_3d(ctx, x, sp, C, 1);
-    ggml_tensor* mn = ggml_scale(ctx, ggml_sum_rows(ctx, xr), 1.0f / sp);
-    ggml_tensor* mT = ggml_cont(ctx, ggml_transpose(ctx, mn)); // [C,1,1]
-    ggml_tensor* h = ggml_relu(ctx, ggml_add(ctx, ggml_mul_mat(ctx, f0w, mT), f0b));
-    ggml_tensor* g = ggml_sigmoid(ctx, ggml_add(ctx, ggml_mul_mat(ctx, f2w, h), f2b));
-    ggml_tensor* g4 = ggml_reshape_4d(ctx, g, 1, 1, C, 1);
-    return ggml_mul(ctx, x, ggml_repeat(ctx, g4, x));
-}
-
-static ggml_tensor* se_basic(ggml_context* ctx, ggml_tensor* x,
-    const std::map<std::string, ggml_tensor*>& ts, const std::string& p,
-    int C, bool ds) {
-    ggml_tensor* res = x;
-    // reference: conv1 -> relu -> bn1
-    ggml_tensor* h = ggml_conv_2d(ctx, T(ts, p + ".conv1.weight"), x,
-        ds ? 2 : 1, ds ? 2 : 1, 1, 1, 1, 1);
-    h = ggml_relu(ctx, h);
-    h = apply_bn4d(ctx, h, T(ts, p + ".bn1.rm"), T(ts, p + ".bn1.rv"),
-                   T(ts, p + ".bn1.weight"), T(ts, p + ".bn1.bias"));
-    h = ggml_conv_2d(ctx, T(ts, p + ".conv2.weight"), h, 1, 1, 1, 1, 1, 1);
-    h = apply_bn4d(ctx, h, T(ts, p + ".bn2.rm"), T(ts, p + ".bn2.rv"),
-                   T(ts, p + ".bn2.weight"), T(ts, p + ".bn2.bias"));
-    h = se_blk(ctx, h, C, T(ts, p + ".se.fc.0.weight"), T(ts, p + ".se.fc.0.bias"),
-               T(ts, p + ".se.fc.2.weight"), T(ts, p + ".se.fc.2.bias"));
-    if (ds) {
-        ggml_tensor* dc = ggml_conv_2d(ctx, T(ts, p + ".downsample.0.weight"), res, 2, 2, 0, 0, 1, 1);
-        if (T(ts, p + ".downsample.1.weight")) {
-            dc = apply_bn4d(ctx, dc, T(ts, p + ".downsample.1.rm"), T(ts, p + ".downsample.1.rv"),
-                           T(ts, p + ".downsample.1.weight"), T(ts, p + ".downsample.1.bias"));
-        }
-        res = dc;
-    }
-    // reference: out += residual; out = relu(out)
-    return ggml_relu(ctx, ggml_add(ctx, h, res));
-}
-
-// Speaker encoder graph
-static ggml_cgraph* build_spk_enc(ggml_context* ctx0,
-    const std::map<std::string, ggml_tensor*>& ts, int T_mel) {
-    ggml_cgraph* gf = ggml_new_graph(ctx0);
-    // GGML conv_2d expects feature maps as ne=[W(time), H(mels), C, N]
-    // data layout: element (t, ch) at t + ch*T_mel -> matches mel[ch*Tm + t]
-    ggml_tensor* x = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, T_mel, 64, 1, 1);
-    ggml_set_name(x, "speaker_mel"); ggml_set_input(x);
-    // reference stem: conv1 -> relu -> bn1
-    ggml_tensor* h = ggml_conv_2d(ctx0, T(ts, "hifigan_decoder.se.conv1.weight"), x, 1, 1, 1, 1, 1, 1);
-    h = ggml_add(ctx0, h, ggml_repeat(ctx0, ggml_reshape_4d(ctx0, T(ts, "hifigan_decoder.se.conv1.bias"), 1, 1, (int)h->ne[2], 1), h));
-    h = ggml_relu(ctx0, h);
-    h = apply_bn4d(ctx0, h, T(ts, "hifigan_decoder.se.bn1.rm"), T(ts, "hifigan_decoder.se.bn1.rv"),
-                   T(ts, "hifigan_decoder.se.bn1.weight"), T(ts, "hifigan_decoder.se.bn1.bias"));
-    int lf[4] = {32,64,128,256}, lb[4] = {3,4,6,3};
-    for (int ly = 0; ly < 4; ly++) {
-        for (int bl = 0; bl < lb[ly]; bl++) {
-            std::string pfx = "hifigan_decoder.se.layer" + std::to_string(ly + 1) + "." + std::to_string(bl);
-            h = se_basic(ctx0, h, ts, pfx, lf[ly], (bl == 0 && ly > 0));
-        }
-    }
-    int Ws = (int)h->ne[0], Hs = (int)h->ne[1], Cs = (int)h->ne[2];
-    // Flatten conv output to [Ws, Cs*Hs]: row r = c*Hs + h (PyTorch reshape(B, -1, T) order).
-    // GGML element (w,h,c) at w + h*Ws + c*Ws*Hs == 2D view (w, r=c*Hs+h) at w + r*Ws. Exact match.
-    ggml_tensor* xf = ggml_reshape_2d(ctx0, h, Ws, Cs * Hs);
-    // ASP attention: Conv1d(2048,128,1) -> ReLU -> BN1d(128) -> Conv1d(128,2048,1) -> softmax(time)
-    ggml_tensor* a1 = conv1d(ctx0, xf, T(ts, "hifigan_decoder.se.attention.0.weight"),
-                             T(ts, "hifigan_decoder.se.attention.0.bias"), 1, 0, 1);
-    a1 = ggml_relu(ctx0, a1);
-    // BN1d over channels: a1 is [Ws, 128]; normalize per channel over time
-    {
-        auto* rm = T(ts, "hifigan_decoder.se.attention.2.rm");
-        auto* rv = T(ts, "hifigan_decoder.se.attention.2.rv");
-        auto* w  = T(ts, "hifigan_decoder.se.attention.2.weight");
-        auto* b  = T(ts, "hifigan_decoder.se.attention.2.bias");
-        auto* rm2 = ggml_reshape_2d(ctx0, rm, 1, (int)a1->ne[1]);
-        auto* rv2 = ggml_reshape_2d(ctx0, rv, 1, (int)a1->ne[1]);
-        auto* w2  = ggml_reshape_2d(ctx0, w, 1, (int)a1->ne[1]);
-        auto* b2  = ggml_reshape_2d(ctx0, b, 1, (int)a1->ne[1]);
-        auto* mn = ggml_repeat(ctx0, rm2, a1);
-        auto* sd = ggml_repeat(ctx0, ggml_sqrt(ctx0, rv2), a1);
-        a1 = ggml_add(ctx0, ggml_mul(ctx0, ggml_div(ctx0, ggml_sub(ctx0, a1, mn), sd), w2), b2);
-    }
-    ggml_tensor* a2 = conv1d(ctx0, a1, T(ts, "hifigan_decoder.se.attention.3.weight"),
-                             T(ts, "hifigan_decoder.se.attention.3.bias"), 1, 0, 1);
-    // softmax over time (ne[0]); w sums to 1 per channel row
-    a2 = ggml_soft_max(ctx0, a2);
-    // mu = sum_t x*w  [2048], sg = sqrt(clamp(sum_t x^2*w - mu^2))  [2048]
-    ggml_tensor* xw = ggml_mul(ctx0, xf, a2);
-    int CH = Cs * Hs;
-    ggml_tensor* mu = ggml_reshape_2d(ctx0, ggml_sum_rows(ctx0, xw), CH, 1);   // [2048, 1]
-    ggml_tensor* x2w = ggml_mul(ctx0, ggml_mul(ctx0, xf, xf), a2);
-    ggml_tensor* var = ggml_sub(ctx0, ggml_reshape_2d(ctx0, ggml_sum_rows(ctx0, x2w), CH, 1),
-                                ggml_mul(ctx0, mu, mu));
-    ggml_tensor* sg = ggml_sqrt(ctx0, ggml_clamp(ctx0, var, 1e-5f, 1e30f));
-    ggml_tensor* asp = ggml_concat(ctx0, mu, sg, 0);                 // [4096, 1]
-    ggml_tensor* emb = ggml_mul_mat(ctx0, T(ts, "hifigan_decoder.se.fc.weight"), asp);
-    if (T(ts, "hifigan_decoder.se.fc.bias"))
-        emb = ggml_add(ctx0, emb, T(ts, "hifigan_decoder.se.fc.bias"));
-    // L2 normalize
-    ggml_tensor* nm = ggml_sqrt(ctx0, ggml_sum_rows(ctx0, ggml_mul(ctx0, emb, emb)));
-    emb = ggml_div(ctx0, emb, nm);
-    ggml_set_name(emb, "speaker_embedding");
-    ggml_build_forward_expand(gf, emb);
-    return gf;
-}
-
-// GGUF weight loader
-struct WL { ggml_context* ctx = nullptr; ggml_backend_buffer_t buf = nullptr;
-            std::map<std::string, ggml_tensor*> tensors; };
-
-static bool load_gguf(const char* path, ggml_backend_t be, WL& wl) {
-    gguf_init_params gp = {true, &wl.ctx};
-    gguf_context* gu = gguf_init_from_file(path, gp);
-    if (!gu || !wl.ctx) { if (gu) gguf_free(gu); return false; }
-    auto buf = ggml_backend_alloc_ctx_tensors(wl.ctx, be);
-    if (!buf) { gguf_free(gu); ggml_free(wl.ctx); wl.ctx = nullptr; return false; }
-    wl.buf = buf;
-    FILE* fp = fopen(path, "rb");
-    if (!fp) { ggml_backend_buffer_free(buf); gguf_free(gu); ggml_free(wl.ctx); wl.ctx = nullptr; return false; }
-    size_t doff = gguf_get_data_offset(gu);
-    for (ggml_tensor* t = ggml_get_first_tensor(wl.ctx); t; t = ggml_get_next_tensor(wl.ctx, t)) {
-        int64_t tid = gguf_find_tensor(gu, ggml_get_name(t));
-        if (tid < 0) continue;
-        size_t off = gguf_get_tensor_offset(gu, tid), nbytes = ggml_nbytes(t);
-        std::vector<uint8_t> tbuf(nbytes);
-        if (fseek(fp, doff + off, SEEK_SET) != 0 || fread(tbuf.data(), 1, nbytes, fp) != nbytes) break;
-        ggml_backend_tensor_set(t, tbuf.data(), 0, nbytes);
-    }
-    fclose(fp); gguf_free(gu);
-    // Fold BatchNorm eps (1e-5) into running_var tensors: PyTorch eval does sqrt(var + eps)
-    for (ggml_tensor* t = ggml_get_first_tensor(wl.ctx); t; t = ggml_get_next_tensor(wl.ctx, t)) {
-        std::string nm = ggml_get_name(t);
-        if (nm.size() > 3 && nm.compare(nm.size() - 3, 3, ".rv") == 0 && t->type == GGML_TYPE_F32) {
-            int64_t n = ggml_nelements(t);
-            std::vector<float> tmp(n);
-            ggml_backend_tensor_get(t, tmp.data(), 0, n * sizeof(float));
-            for (int64_t i = 0; i < n; i++) tmp[i] += 1e-5f;
-            ggml_backend_tensor_set(t, tmp.data(), 0, n * sizeof(float));
-        }
-    }
-    for (ggml_tensor* t = ggml_get_first_tensor(wl.ctx); t; t = ggml_get_next_tensor(wl.ctx, t))
-        wl.tensors[ggml_get_name(t)] = t;
-    return true;
-}
-
-// Mel spectrogram (simple DFT-based, for conditioning only)
-// Speaker-encoder mel: hamming window, centered frames, power mel, NO log
-// (matches torchaudio MelSpectrogram with hamming_window + PreEmphasis(0.97) applied upstream)
-static std::vector<float> compute_mel_hamming(const float* pcm, int ns, int sr, int nfft,
-    int hop, int win, int nm, float fmin, float fmax) {
-    // torch.hamming_window(win) default: PERIODIC (denominator win-1)
-    std::vector<float> ham(win);
-    for (int i = 0; i < win; i++) ham[i] = 0.54f - 0.46f * cosf(2.0f * (float)M_PI * i / (win - 1));
-    // torchaudio center=True, pad_mode="reflect": reflect padding of nfft/2 on both sides
-    int pad = nfft / 2;
-    std::vector<float> padded(2 * pad + ns, 0);
-    for (int i = 1; i <= pad; i++) {
-        int li = i, ri = i;
-        while (li >= ns) li = 2 * (ns - 1) - li;
-        while (ri >= ns) ri = 2 * (ns - 1) - ri;
-        padded[pad - i] = pcm[li];
-        padded[pad + ns - 1 + i] = pcm[ns - 1 - ri];
-    }
-    std::memcpy(padded.data() + pad, pcm, ns * sizeof(float));
-    int T = (int)((padded.size() - nfft) / hop) + 1;
-    if (T <= 0) return {};
-    int nf = nfft / 2 + 1;
-    auto mscl = [](float f){ return 1127.01048f * logf(1.0f + f / 700.0f); };
-    float fmin_m = mscl(fmin), fmax_m = mscl(fmax);
-    std::vector<float> mpts(nm + 2);
-    for (int i = 0; i <= nm + 1; i++)
-        mpts[i] = 700.0f * (expf((fmin_m + (fmax_m - fmin_m) * i / (nm + 1)) / 1127.01048f) - 1.0f);
-    std::vector<float> fb(nm * nf, 0);
-    for (int m = 0; m < nm; m++) for (int f = 0; f < nf; f++) {
-        float freq = (float)sr * f / nfft;
-        if (freq >= mpts[m] && freq <= mpts[m + 2])
-            fb[m * nf + f] = freq <= mpts[m + 1] ?
-                (freq - mpts[m]) / (mpts[m + 1] - mpts[m] + 1e-12f) :
-                (mpts[m + 2] - freq) / (mpts[m + 2] - mpts[m + 1] + 1e-12f);
-    }
-    std::vector<float> mel(nm * T, 0);
-    std::vector<float> frame(nfft);
-    // torchaudio centers the (short) window inside the n_fft frame
-    const int wpad = (nfft - win) / 2;
-    for (int t = 0; t < T; t++) {
-        for (int n = 0; n < nfft; n++) {
-            int wi = n - wpad;
-            frame[n] = padded[(size_t)t * hop + n] * ((wi >= 0 && wi < win) ? ham[wi] : 0.0f);
-        }
-        // radix-2 FFT (nfft=512), iterative Cooley-Tukey: requires bit-reversed input order
-        std::vector<float> re(frame), im(nfft, 0);
-        for (int i = 1, j = 0; i < nfft; i++) {
-            int bit = nfft >> 1;
-            for (; j & bit; bit >>= 1) j ^= bit;
-            j ^= bit;
-            if (i < j) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
-        }
-        for (int len = 2; len <= nfft; len <<= 1) {
-            int half = len >> 1;
-            float wr = cosf(-2.0f * (float)M_PI / len), wi = sinf(-2.0f * (float)M_PI / len);
-            for (int i = 0; i < nfft; i += len) {
-                float cr = 1, ci = 0;
-                for (int j = 0; j < half; j++) {
-                    int a = i + j, b = i + j + half;
-                    float tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
-                    re[b] = re[a] - tr; im[b] = im[a] - ti;
-                    re[a] += tr; im[a] += ti;
-                    float nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
-                }
-            }
-        }
-        for (int m = 0; m < nm; m++) {
-            float s = 0;
-            for (int f = 0; f < nf; f++) s += fb[m * nf + f] * (re[f] * re[f] + im[f] * im[f]);
-            mel[m * T + t] = s;
-        }
-    }
-    return mel;
-}
-
-static std::vector<float> compute_mel(const float* pcm, int ns, int sr, int nfft,
-    int hop, int win, int nm, float fmin, float fmax, bool log_flag) {
-    std::vector<float> hann(win);
-    for (int i = 0; i < win; i++) hann[i] = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / win));
-    int nf = nfft / 2 + 1;
-    auto mscl = [](float f){ return 1127.01048f * logf(1.0f + f / 700.0f); };
-    float fmin_m = mscl(fmin), fmax_m = mscl(fmax);
-    std::vector<float> mpts(nm + 2);
-    for (int i = 0; i <= nm + 1; i++)
-        mpts[i] = 700.0f * (expf((fmin_m + (fmax_m - fmin_m) * i / (nm + 1)) / 1127.01048f) - 1.0f);
-    std::vector<float> fb(nm * nf, 0);
-    for (int m = 0; m < nm; m++) for (int f = 0; f < nf; f++) {
-        float freq = (float)sr * f / nfft;
-        if (freq >= mpts[m] && freq <= mpts[m + 2])
-            fb[m * nf + f] = freq <= mpts[m + 1] ?
-                (freq - mpts[m]) / (mpts[m + 1] - mpts[m] + 1e-12f) :
-                (mpts[m + 2] - freq) / (mpts[m + 2] - mpts[m + 1] + 1e-12f);
-    }
-    std::vector<float> padded(ns + nfft - 1, 0);
-    std::memcpy(padded.data() + (nfft - 1) / 2, pcm, ns * sizeof(float));
-    int T = (int)((padded.size() - nfft) / hop) + 1;
-    if (T <= 0) return {};
-    std::vector<float> mel(nm * T, 0);
-    for (int t = 0; t < T; t++) {
-        std::vector<float> re(nf, 0), im(nf, 0);
-        for (int k = 0; k < nf; k++) for (int n = 0; n < nfft; n++) {
-            float a = -2.0f * (float)M_PI * k * n / nfft;
-            re[k] += padded[t * hop + n] * (n < win ? hann[n] : 0.0f) * cosf(a);
-            im[k] += padded[t * hop + n] * (n < win ? hann[n] : 0.0f) * sinf(a);
-        }
-        for (int m = 0; m < nm; m++) {
-            float s = 0;
-            for (int f = 0; f < nf; f++) s += fb[m * nf + f] * (re[f] * re[f] + im[f] * im[f]);
-            mel[m * T + t] = log_flag ? logf(s + 1e-7f) : s;
-        }
-    }
-    return mel;
-}
-
-} // namespace
-
-struct XttSv2Vocoder::Impl {
-    ggml_backend_t backend_cpu = nullptr;
-    ggml_context* ctx_w = nullptr;
-    ggml_backend_buffer_t buf_w = nullptr;
-    std::map<std::string, ggml_tensor*> tensors;
-    std::vector<uint8_t> compute_meta;
-    int n_threads = 4;
-    ~Impl() {
-        if (ctx_w) ggml_free(ctx_w);
-        if (buf_w) ggml_backend_buffer_free(buf_w);
-        if (backend_cpu) ggml_backend_free(backend_cpu);
-    }
+struct DecoderStage {
+    int channels = 0;
+    modules::ConvTranspose1dWeights up;
+    modules::Conv1dWeights speaker;
+    std::array<std::array<std::pair<modules::Conv1dWeights, modules::Conv1dWeights>, 3>, 3> residuals;
 };
 
-XttSv2Vocoder::~XttSv2Vocoder() {
-    if (impl_) { delete impl_; impl_ = nullptr; }
+struct SpeakerBlock {
+    int in_channels = 0, channels = 0, stride = 1;
+    modules::Conv2dWeights conv1, conv2;
+    modules::ChannelAffineWeights norm1, norm2;
+    modules::LinearWeights se1, se2;
+    std::optional<modules::Conv2dWeights> downsample;
+    std::optional<modules::ChannelAffineWeights> downsample_norm;
+};
+
+struct VocoderWeights {
+    modules::Conv1dWeights pre, post, speaker;
+    std::array<DecoderStage, 4> decoder;
+    modules::Conv2dWeights speaker_stem;
+    modules::ChannelAffineWeights speaker_stem_norm, attention_norm;
+    std::vector<SpeakerBlock> speaker_blocks;
+    modules::Conv1dWeights attention1, attention2;
+    modules::LinearWeights projection;
+};
+
+// Cached graphs own their constants, allocation and backend capture resources.
+// Neural operations below are built through framework modules.
+struct AudioGraph {
+    AudioGraph(core::ExecutionContext & execution, const char * name)
+        : backend(execution.backend()), constants(backend, execution.config().threads, name, 64 * 1024) {
+        ctx = ggml_init({8 * 1024 * 1024, nullptr, true});
+        if (!ctx) throw std::runtime_error("XTTS v2 audio graph context allocation failed");
+    }
+    ~AudioGraph() {
+        if (graph) core::release_backend_graph_resources(backend, graph);
+        if (allocator) ggml_gallocr_free(allocator);
+        if (ctx) ggml_free(ctx);
+    }
+    void allocate() {
+        graph = ggml_new_graph_custom(ctx, 8192, false);
+        ggml_set_output(output.tensor);
+        ggml_build_forward_expand(graph, output.tensor);
+        constants.ensure_uploaded();
+        allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (!allocator || !ggml_gallocr_alloc_graph(allocator, graph)) {
+            throw std::runtime_error("XTTS v2 audio graph allocation failed");
+        }
+    }
+    std::vector<float> run(const std::vector<float> & input_values, const float * speaker_values = nullptr) {
+        ggml_backend_tensor_set(input.tensor, input_values.data(), 0, input_values.size() * sizeof(float));
+        if (speaker.valid()) ggml_backend_tensor_set(speaker.tensor, speaker_values, 0, 512 * sizeof(float));
+        if (core::compute_backend_graph(backend, graph) != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("XTTS v2 audio graph compute failed");
+        }
+        std::vector<float> values(output.shape.num_elements());
+        ggml_backend_tensor_get(output.tensor, values.data(), 0, values.size() * sizeof(float));
+        return values;
+    }
+    ggml_backend_t backend;
+    ggml_context * ctx = nullptr;
+    ggml_cgraph * graph = nullptr;
+    ggml_gallocr_t allocator = nullptr;
+    core::ConstantTensorCache constants;
+    TensorValue input, speaker, output;
+    int frames = 0;
+};
+
+std::unique_ptr<AudioGraph> build_decoder(core::ExecutionContext & execution, const VocoderWeights & weights, int frames) {
+    auto graph = std::make_unique<AudioGraph>(execution, "xtts_v2.decoder.constants");
+    graph->frames = frames;
+    core::ModuleBuildContext ctx{graph->ctx, "xtts_v2.decoder", execution.backend_type()};
+    graph->input = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, 1024, frames}));
+    graph->speaker = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, 512, 1}));
+    ggml_set_input(graph->input.tensor);
+    ggml_set_input(graph->speaker.tensor);
+
+    // Keep the two upstream align_corners=False interpolation stages. The first
+    // is an exact integer scale. The second uses the requested 24000/22050
+    // factor, rather than recomputing a scale from its rounded output length.
+    const int first_frames = 4 * frames;
+    const double scale = 24000.0 / 22050.0;
+    const int output_frames = static_cast<int>(first_frames * scale);
+    auto first = modules::Interpolate1dModule({first_frames, modules::Interpolate1dMode::Linear}).build(ctx, graph->input);
+    auto rows = modules::TransposeModule({{1, 0}, 2}).build(ctx,
+        core::reshape_tensor(ctx, first, TensorShape::from_dims({1024, first_frames})));
+    rows = core::ensure_backend_addressable_layout(ctx, rows);
+    std::vector<int32_t> left(output_frames), right(output_frames);
+    std::vector<float> left_weight(output_frames), right_weight(output_frames);
+    for (int t = 0; t < output_frames; ++t) {
+        const float position = std::clamp(static_cast<float>((t + .5) / scale - .5), 0.f, float(first_frames - 1));
+        left[t] = static_cast<int>(position);
+        right[t] = std::min(left[t] + 1, first_frames - 1);
+        right_weight[t] = position - left[t];
+        left_weight[t] = 1.f - right_weight[t];
+    }
+    const auto index_shape = TensorShape::from_dims({output_frames});
+    auto left_index = graph->constants.make_tensor(index_shape, GGML_TYPE_I32, left.data(), left.size() * sizeof(int32_t));
+    auto right_index = graph->constants.make_tensor(index_shape, GGML_TYPE_I32, right.data(), right.size() * sizeof(int32_t));
+    const auto coefficient_shape = TensorShape::from_dims({output_frames, 1});
+    auto a = graph->constants.make_f32(coefficient_shape, left_weight);
+    auto b = graph->constants.make_f32(coefficient_shape, right_weight);
+    const modules::EmbeddingModule lookup({first_frames, 1024});
+    auto left_values = lookup.build(ctx, left_index, rows);
+    auto right_values = lookup.build(ctx, right_index, rows);
+    a = modules::RepeatModule({left_values.shape}).build(ctx, a);
+    b = modules::RepeatModule({right_values.shape}).build(ctx, b);
+    auto interpolated = modules::AddModule().build(ctx,
+        modules::MulModule().build(ctx, left_values, a), modules::MulModule().build(ctx, right_values, b));
+    auto x = modules::TransposeModule({{1, 0}, 2}).build(ctx, interpolated);
+    x = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, x), TensorShape::from_dims({1, 1024, output_frames}));
+    x = modules::Conv1dModule({1024, 512, 7, 1, 3, 1}).build(ctx, x, weights.pre);
+    auto speaker = modules::Conv1dModule({512, 512, 1, 1, 0, 1}).build(ctx, graph->speaker, weights.speaker);
+    x = modules::AddModule().build(ctx, x, modules::RepeatModule({x.shape}).build(ctx, speaker));
+    for (size_t stage = 0; stage < weights.decoder.size(); ++stage) {
+        const auto & w = weights.decoder[stage];
+        x = modules::LeakyReluModule({.1f}).build(ctx, x);
+        const int padding = (kernels[stage] - rates[stage]) / 2;
+        // Native CPU transposed convolution requires zero padding; symmetric
+        // slicing is equivalent to PyTorch's padding (also used by Sam Audio).
+        const int backend_padding = execution.backend_type() == core::BackendType::Cpu ? 0 : padding;
+        x = modules::ConvTranspose1dModule({2 * w.channels, w.channels, kernels[stage], rates[stage],
+            backend_padding}).build(ctx, x, w.up);
+        if (backend_padding == 0 && padding != 0) {
+            x = modules::SliceModule({2, padding, x.shape.dims[2] - 2 * padding}).build(ctx, x);
+        }
+        speaker = modules::Conv1dModule({512, w.channels, 1, 1, 0, 1}).build(ctx, graph->speaker, w.speaker);
+        x = modules::AddModule().build(ctx, x, modules::RepeatModule({x.shape}).build(ctx, speaker));
+        std::optional<TensorValue> sum;
+        for (size_t kernel = 0; kernel < residual_kernels.size(); ++kernel) {
+            auto block = x;
+            for (size_t dilation = 0; dilation < dilations.size(); ++dilation) {
+                auto residual = block;
+                block = modules::LeakyReluModule({.1f}).build(ctx, block);
+                block = modules::Conv1dModule({w.channels, w.channels, residual_kernels[kernel], 1,
+                    dilations[dilation] * (residual_kernels[kernel] - 1) / 2, dilations[dilation]}).build(ctx, block, w.residuals[kernel][dilation].first);
+                block = modules::LeakyReluModule({.1f}).build(ctx, block);
+                block = modules::Conv1dModule({w.channels, w.channels, residual_kernels[kernel], 1,
+                    (residual_kernels[kernel] - 1) / 2, 1}).build(ctx, block, w.residuals[kernel][dilation].second);
+                block = modules::ResidualAddModule().build(ctx, block, residual);
+            }
+            sum = sum ? modules::AddModule().build(ctx, *sum, block) : block;
+        }
+        x = modules::ScaleBiasModule({1.f / 3, 0}).build(ctx, *sum);
+    }
+    x = modules::LeakyReluModule({.01f}).build(ctx, x);
+    x = modules::Conv1dModule({32, 1, 7, 1, 3, 1, false}).build(ctx, x, weights.post);
+    graph->output = modules::TanhModule().build(ctx, x);
+    graph->allocate();
+    return graph;
 }
 
-bool XttSv2Vocoder::load(const std::filesystem::path& path, const core::BackendConfig& backend_config) {
-    n_threads_ = backend_config.threads;
-    if (impl_) { delete impl_; impl_ = nullptr; }
-    impl_ = new Impl();
-    auto& c = *impl_;
-    c.backend_cpu = core::init_backend(backend_config);
-    if (!c.backend_cpu) return false;
-    core::set_backend_threads(c.backend_cpu, backend_config.threads);
-    WL wl;
-    if (!load_gguf(path.string().c_str(), c.backend_cpu, wl)) {
-        fprintf(stderr, "xtts_v2: failed to load vocoder GGUF: %s\n", path.string().c_str());
-        return false;
+std::unique_ptr<AudioGraph> build_speaker(core::ExecutionContext & execution, const VocoderWeights & weights, int frames) {
+    auto graph = std::make_unique<AudioGraph>(execution, "xtts_v2.speaker.constants");
+    graph->frames = frames;
+    core::ModuleBuildContext ctx{graph->ctx, "xtts_v2.speaker", execution.backend_type()};
+    graph->input = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, 64, frames}));
+    ggml_set_input(graph->input.tensor);
+    auto x = modules::GroupNormModule({64, 64, 1e-5f, false, false}).build(ctx, graph->input, {});
+    x = core::reshape_tensor(ctx, x, TensorShape::from_dims({1, 1, 64, frames}));
+    x = modules::Conv2dModule({1, 32, 3, 3, 1, 1, 1, 1}).build(ctx, x, weights.speaker_stem);
+    x = modules::ReluModule().build(ctx, x);
+    x = modules::BatchNorm2dEvalModule({32}).build(ctx, x, {weights.speaker_stem_norm.scale, weights.speaker_stem_norm.bias});
+    for (const auto & w : weights.speaker_blocks) {
+        auto residual = x;
+        x = modules::Conv2dModule({w.in_channels, w.channels, 3, 3, w.stride, w.stride, 1, 1, 1, 1, false}).build(ctx, x, w.conv1);
+        x = modules::ReluModule().build(ctx, x);
+        x = modules::BatchNorm2dEvalModule({w.channels}).build(ctx, x, {w.norm1.scale, w.norm1.bias});
+        x = modules::Conv2dModule({w.channels, w.channels, 3, 3, 1, 1, 1, 1, 1, 1, false}).build(ctx, x, w.conv2);
+        x = modules::BatchNorm2dEvalModule({w.channels}).build(ctx, x, {w.norm2.scale, w.norm2.bias});
+        auto pooled = core::reshape_tensor(ctx, x, TensorShape::from_dims({1, w.channels, x.shape.dims[2] * x.shape.dims[3]}));
+        pooled = modules::ReduceMeanModule({2}).build(ctx, pooled);
+        pooled = core::reshape_tensor(ctx, pooled, TensorShape::from_dims({1, w.channels}));
+        pooled = modules::LinearModule({w.channels, w.channels / 8, true}).build(ctx, pooled, w.se1);
+        pooled = modules::ReluModule().build(ctx, pooled);
+        pooled = modules::LinearModule({w.channels / 8, w.channels, true}).build(ctx, pooled, w.se2);
+        pooled = modules::SigmoidModule().build(ctx, pooled);
+        pooled = core::reshape_tensor(ctx, pooled, TensorShape::from_dims({1, w.channels, 1, 1}));
+        x = modules::MulModule().build(ctx, x, modules::RepeatModule({x.shape}).build(ctx, pooled));
+        if (w.downsample) {
+            residual = modules::Conv2dModule({w.in_channels, w.channels, 1, 1, 2, 2, 0, 0, 1, 1, false}).build(ctx, residual, *w.downsample);
+            residual = modules::BatchNorm2dEvalModule({w.channels}).build(ctx, residual,
+                {w.downsample_norm->scale, w.downsample_norm->bias});
+        }
+        x = modules::ReluModule().build(ctx, modules::ResidualAddModule().build(ctx, x, residual));
     }
-    c.ctx_w = wl.ctx;
-    c.tensors = std::move(wl.tensors);
-    { gguf_context* g = gguf_init_from_file(path.string().c_str(), {true, 0});
-      if (g) {
-          int ki = gguf_find_key(g, "xtts.mel_stats");
-          if (ki >= 0 && gguf_get_kv_type(g, ki) == GGUF_TYPE_FLOAT32) {
-              int n = gguf_get_arr_n(g, ki);
-              const float* d = static_cast<const float*>(gguf_get_arr_data(g, ki));
-              mel_stats_.assign(d, d + n);
-          }
-          gguf_free(g);
-      }
+    x = core::reshape_tensor(ctx, x, TensorShape::from_dims({1, 2048, x.shape.dims[3]}));
+    auto attention = modules::Conv1dModule({2048, 128, 1}).build(ctx, x, weights.attention1);
+    attention = modules::ReluModule().build(ctx, attention);
+    attention = modules::BatchNorm1dEvalModule({128}).build(ctx, attention, {weights.attention_norm.scale, weights.attention_norm.bias});
+    attention = modules::Conv1dModule({128, 2048, 1}).build(ctx, attention, weights.attention2);
+    attention = modules::SoftmaxModule().build(ctx, attention);
+    auto statistics = modules::WeightedStatisticsModule({2, 1e-5f, 1e30f}).build(ctx, x, attention);
+    auto pooled = modules::ConcatModule({1}).build(ctx, statistics.mean, statistics.stddev);
+    pooled = core::reshape_tensor(ctx, pooled, TensorShape::from_dims({1, 4096}));
+    pooled = modules::LinearModule({4096, 512, true}).build(ctx, pooled, weights.projection);
+    // The framework RMSNorm/PixelNorm epsilon rules differ from F.normalize.
+    graph->output = core::wrap_tensor(ggml_l2_norm(ctx.ggml, pooled.tensor, 1e-12f), pooled.shape);
+    graph->allocate();
+    return graph;
+}
+}  // namespace
+
+struct XttSv2Vocoder::Impl {
+    core::ExecutionContext * execution = nullptr;
+    std::shared_ptr<core::BackendWeightStore> store;
+    VocoderWeights weights;
+    std::unique_ptr<AudioGraph> decoder, speaker;
+    MelFrontend frontend{MelPurpose::Speaker};
+};
+
+XttSv2Vocoder::XttSv2Vocoder() = default;
+XttSv2Vocoder::~XttSv2Vocoder() = default;
+
+bool XttSv2Vocoder::load(const XttSv2Assets & assets, core::ExecutionContext & execution) {
+    impl_ = std::make_unique<Impl>();
+    auto & c = *impl_;
+    c.execution = &execution;
+    c.store = std::make_shared<core::BackendWeightStore>(execution.backend(), execution.backend_type(), "xtts_v2.vocoder.weights", 8 * 1024 * 1024);
+    const auto & source = *assets.vocoder_source;
+    auto & store = *c.store;
+    auto & w = c.weights;
+    // This published GGUF calls the BatchNorm statistics rm/rv. Fold its
+    // model-specific names locally; execution still uses framework BatchNorm.
+    auto batch_norm = [&](const std::string & name, int channels) {
+        const auto gamma = source.require_f32(name + ".weight", {channels});
+        const auto beta = source.require_f32(name + ".bias", {channels});
+        const auto mean = source.require_f32(name + ".rm", {channels});
+        const auto variance = source.require_f32(name + ".rv", {channels});
+        std::vector<float> scale(channels), bias(channels);
+        for (int i = 0; i < channels; ++i) {
+            scale[i] = gamma[i] / std::sqrt(variance[i] + 1e-5f);
+            bias[i] = beta[i] - mean[i] * scale[i];
+        }
+        const auto shape = TensorShape::from_dims({channels});
+        return modules::ChannelAffineWeights{store.make_f32(shape, std::move(scale)),
+            store.make_f32(shape, std::move(bias))};
+    };
+    const std::string prefix = "hifigan_decoder.";
+    w.pre = binding::conv1d_from_named_source(store, source, prefix + "dec.conv_pre.weight", prefix + "dec.conv_pre.bias", native);
+    // Legacy GGUF omits the leading singleton output-channel dimension.
+    w.post.weight = store.load_tensor_as_shape(source, prefix + "dec.conv_post.weight", native,
+        {32, 7}, TensorShape::from_dims({1, 32, 7}));
+    w.speaker = binding::conv1d_from_named_source(store, source, prefix + "dec.cond_layer.weight", prefix + "dec.cond_layer.bias", native);
+    for (size_t stage = 0; stage < w.decoder.size(); ++stage) {
+        auto & dst = w.decoder[stage];
+        dst.channels = 256 >> stage;
+        const auto p = prefix + "dec.ups." + std::to_string(stage);
+        dst.up = binding::conv_transpose1d_from_named_source(store, source, p, p + ".bias", native);
+        const auto speaker = prefix + "dec.conds." + std::to_string(stage);
+        dst.speaker = binding::conv1d_from_named_source(store, source, speaker + ".weight", speaker + ".bias", native);
+        for (size_t kernel = 0; kernel < residual_kernels.size(); ++kernel) {
+            for (size_t dilation = 0; dilation < dilations.size(); ++dilation) {
+                const auto p = prefix + "dec.resb." + std::to_string(3 * stage + kernel);
+                const auto first = p + ".c1." + std::to_string(dilation), second = p + ".c2." + std::to_string(dilation);
+                dst.residuals[kernel][dilation] = {
+                    binding::conv1d_from_named_source(store, source, first, first + ".bias", native),
+                    binding::conv1d_from_named_source(store, source, second, second + ".bias", native)};
+            }
+        }
     }
-    fprintf(stderr, "xtts_v2: vocoder loaded from %s (%zu tensors)\n",
-            path.string().c_str(), c.tensors.size());
+    w.speaker_stem = binding::conv2d_from_source(store, source, prefix + "se.conv1", native, 32, 1, 3, 3, true);
+    w.speaker_stem_norm = batch_norm(prefix + "se.bn1", 32);
+    const std::array<int, 4> channels{32, 64, 128, 256}, layers{3, 4, 6, 3};
+    int in_channels = 32;
+    for (size_t stage = 0; stage < layers.size(); ++stage) {
+        for (int block = 0; block < layers[stage]; ++block) {
+            SpeakerBlock dst;
+            dst.in_channels = in_channels;
+            dst.channels = channels[stage];
+            dst.stride = stage > 0 && block == 0 ? 2 : 1;
+            const auto p = prefix + "se.layer" + std::to_string(stage + 1) + "." + std::to_string(block);
+            dst.conv1 = binding::conv2d_from_source(store, source, p + ".conv1", native, dst.channels, in_channels, 3, 3, false);
+            dst.conv2 = binding::conv2d_from_source(store, source, p + ".conv2", native, dst.channels, dst.channels, 3, 3, false);
+            dst.norm1 = batch_norm(p + ".bn1", dst.channels);
+            dst.norm2 = batch_norm(p + ".bn2", dst.channels);
+            dst.se1 = binding::linear_from_source(store, source, p + ".se.fc.0", native, dst.channels / 8, dst.channels, true);
+            dst.se2 = binding::linear_from_source(store, source, p + ".se.fc.2", native, dst.channels, dst.channels / 8, true);
+            if (dst.stride == 2) {
+                dst.downsample = binding::conv2d_from_source(store, source, p + ".downsample.0", native, dst.channels, in_channels, 1, 1, false);
+                dst.downsample_norm = batch_norm(p + ".downsample.1", dst.channels);
+            }
+            w.speaker_blocks.push_back(std::move(dst));
+            in_channels = channels[stage];
+        }
+    }
+    w.attention1 = binding::conv1d_from_named_source(store, source, prefix + "se.attention.0.weight", prefix + "se.attention.0.bias", native);
+    w.attention2 = binding::conv1d_from_named_source(store, source, prefix + "se.attention.3.weight", prefix + "se.attention.3.bias", native);
+    w.attention_norm = batch_norm(prefix + "se.attention.2", 128);
+    w.projection = binding::linear_from_source(store, source, prefix + "se.fc", native, 512, 4096, true);
+    store.upload();
     return true;
 }
 
-std::vector<float> XttSv2Vocoder::generate(const float* latent, int T, const float* spk_emb) const {
-    if (!impl_ || !latent || T <= 0) return {};
-    auto& c = *impl_;
-    // Reference HifiDecoder.forward: TWO chained linear interpolates (align_corners=False):
-    //   Stage 1) scale_factor = ar_mel_length_compression / output_hop_length = 1024/256 = 4
-    //   Stage 2) scale_factor = output_sample_rate / input_sample_rate = 24000/22050
-    // PyTorch align_corners=False: output len = floor(input * scale),
-    //   src_pos = (dst + 0.5) / scale - 0.5
-    // These must NOT be fused into one: the intermediate discrete length matters.
-    const double s1 = 4.0;
-    const double s2 = 24000.0 / 22050.0;
-    int T1 = (int)(T * s1);
-    std::vector<float> stage1(1024 * T1, 0);
-    for (int ch = 0; ch < 1024; ch++)
-        for (int to = 0; to < T1; to++) {
-            float pos = (float)((to + 0.5) / s1 - 0.5);
-            if (pos < 0) pos = 0;
-            if (pos > T - 1) pos = T - 1;
-            int t0 = (int)pos, t1 = std::min(t0 + 1, T - 1);
-            float f = pos - t0;
-            stage1[(size_t)ch * T1 + to] = latent[(size_t)ch * T + t0] * (1.0f - f) + latent[(size_t)ch * T + t1] * f;
-        }
-    int Tu = (int)(T1 * s2);
-    std::vector<float> ups(1024 * Tu, 0);
-    for (int ch = 0; ch < 1024; ch++)
-        for (int to = 0; to < Tu; to++) {
-            float pos = (float)((to + 0.5) / s2 - 0.5);
-            if (pos < 0) pos = 0;
-            if (pos > T1 - 1) pos = T1 - 1;
-            int t0 = (int)pos, t1 = std::min(t0 + 1, T1 - 1);
-            float f = pos - t0;
-            ups[(size_t)ch * Tu + to] = stage1[(size_t)ch * T1 + t0] * (1.0f - f) + stage1[(size_t)ch * T1 + t1] * f;
-        }
-    size_t need = 128 * 1024 * 1024;
-    if (c.compute_meta.size() < need) c.compute_meta.resize(need);
-    ggml_context* ctx0 = ggml_init({need, c.compute_meta.data(), true});
-    // Single shared speaker_emb input tensor (used by cond_layer + 4 conds.N blocks)
-    ggml_tensor* spk_t = nullptr;
-    if (spk_emb) {
-        spk_t = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, 512);
-        ggml_set_name(spk_t, "speaker_emb"); ggml_set_input(spk_t);
-    }
-    ggml_cgraph* gf = build_hifigan(ctx0, c.tensors, Tu, spk_emb != nullptr, spk_t);
-    // Allocate input tensors (tracked for cleanup)
-    ggml_backend_buffer_t vin_buf = nullptr;
-    ggml_backend_buffer_t spk_buf = nullptr;
-    { ggml_tensor* vin = ggml_graph_get_tensor(gf, "voc_input");
-      vin_buf = ggml_backend_alloc_buffer(c.backend_cpu, ggml_nbytes(vin));
-      vin->buffer = vin_buf;
-      vin->data = (void*)ggml_backend_buffer_get_base(vin_buf);
-      ggml_backend_tensor_set(vin, ups.data(), 0, ggml_nbytes(vin)); }
-    if (spk_t) {
-        spk_buf = ggml_backend_alloc_buffer(c.backend_cpu, ggml_nbytes(spk_t));
-        spk_t->buffer = spk_buf;
-        spk_t->data = (void*)ggml_backend_buffer_get_base(spk_buf);
-        ggml_backend_tensor_set(spk_t, spk_emb, 0, 512 * sizeof(float));
-    }
-    ggml_gallocr_t ga = ggml_gallocr_new(ggml_backend_get_default_buffer_type(c.backend_cpu));
-    if (!ga || !ggml_gallocr_reserve(ga, gf)) {
-        ggml_backend_buffer_free(vin_buf); ggml_backend_buffer_free(spk_buf);
-        if (ga) ggml_gallocr_free(ga); ggml_free(ctx0); return {}; }
-    if (!ggml_gallocr_alloc_graph(ga, gf) ||
-        ggml_backend_graph_compute(c.backend_cpu, gf) != GGML_STATUS_SUCCESS) {
-        ggml_backend_buffer_free(vin_buf); ggml_backend_buffer_free(spk_buf);
-        ggml_gallocr_free(ga); ggml_free(ctx0); return {};
-    }
-    ggml_tensor* out = ggml_graph_node(gf, ggml_graph_n_nodes(gf) - 1);
-    int64_t Ta = out->ne[0];
-    if (Ta <= 0) {
-        ggml_backend_buffer_free(vin_buf); ggml_backend_buffer_free(spk_buf);
-        ggml_gallocr_free(ga); ggml_free(ctx0); return {}; }
-    std::vector<float> result(Ta);
-    ggml_backend_tensor_get(out, result.data(), 0, Ta * sizeof(float));
-    ggml_backend_buffer_free(vin_buf);
-    ggml_backend_buffer_free(spk_buf);
-    ggml_gallocr_free(ga); ggml_free(ctx0);
-    return result;
+std::vector<float> XttSv2Vocoder::generate(const float * latent, int frames, const float * speaker) const {
+    if (!impl_ || !latent || !speaker || frames <= 0) throw std::runtime_error("XTTS v2 requires decoder latents and a speaker embedding");
+    auto & c = *impl_;
+    if (!c.decoder || c.decoder->frames != frames) c.decoder = build_decoder(*c.execution, c.weights, frames);
+    return c.decoder->run(std::vector<float>(latent, latent + 1024 * frames), speaker);
 }
 
-std::vector<float> XttSv2Vocoder::speaker_embed(const float* ref_pcm, int n_samples) const {
-    if (!impl_ || !ref_pcm || n_samples <= 0) return {};
-    auto& c = *impl_;
-    // Resample 22050->16000
-    std::vector<float> pcm16;
-    { double r = 22050.0 / 16000.0; int ol = (int)std::round(n_samples / r);
-      pcm16.resize(ol);
-      for (int i = 0; i < ol; i++) {
-          double s = i * r; int idx = (int)s; double f = s - idx;
-          if (idx + 1 < n_samples) pcm16[i] = (float)((1.0 - f) * ref_pcm[idx] + f * ref_pcm[idx + 1]);
-          else if (idx < n_samples) pcm16[i] = ref_pcm[idx];
-      }
-    }
-    // Reference torch_spec: PreEmphasis(0.97) -> MelSpectrogram(16k, n_fft=512, win=400,
-    // hop=160, hamming, n_mels=64, power=2.0), then ResNetSpeakerEncoder log_input=True:
-    // x = (x + 1e-6).log(), then InstanceNorm1d(64)
-    std::vector<float> pre(pcm16.size());
-    for (int i = (int)pcm16.size() - 1; i > 0; i--) pre[i] = pcm16[i] - 0.97f * pcm16[i - 1];
-    if (!pcm16.empty()) pre[0] = pcm16[0];
-    auto mel = compute_mel_hamming(pre.data(), (int)pre.size(), 16000, 512, 160, 400, 64, 0, 8000);
-    for (auto& v : mel) v = logf(v + 1e-6f); // LOGFIX
-    int Tm = (int)mel.size() / 64;
-    // InstanceNorm1d(64): per-channel zero-mean unit-variance over time
-    for (int ch = 0; ch < 64; ch++) {
-        float* row = mel.data() + (size_t)ch * Tm;
-        double mean = 0; for (int t = 0; t < Tm; t++) mean += row[t];
-        mean /= Tm;
-        double var = 0; for (int t = 0; t < Tm; t++) var += (row[t] - mean) * (row[t] - mean);
-        var /= Tm;
-        float inv = (float)(1.0 / sqrt(var + 1e-5));
-        for (int t = 0; t < Tm; t++) row[t] = (row[t] - (float)mean) * inv;
-    }
-    size_t need = 64 * 1024 * 1024;
-    if (c.compute_meta.size() < need) c.compute_meta.resize(need);
-    ggml_context* ctx0 = ggml_init({need, c.compute_meta.data(), true});
-    ggml_cgraph* gf = build_spk_enc(ctx0, c.tensors, Tm);
-    ggml_gallocr_t ga = ggml_gallocr_new(ggml_backend_get_default_buffer_type(c.backend_cpu));
-    if (!ga || !ggml_gallocr_reserve(ga, gf)) { if (ga) ggml_gallocr_free(ga); ggml_free(ctx0); return {}; }
-    if (!ggml_gallocr_alloc_graph(ga, gf)) { ggml_gallocr_free(ga); ggml_free(ctx0); return {}; }
-    ggml_tensor* mel_in = ggml_graph_get_tensor(gf, "speaker_mel");
-    ggml_backend_tensor_set(mel_in, mel.data(), 0, mel.size() * sizeof(float));
-    if (ggml_backend_graph_compute(c.backend_cpu, gf) != GGML_STATUS_SUCCESS) {
-        ggml_gallocr_free(ga); ggml_free(ctx0); return {};
-    }
-    ggml_tensor* out = ggml_graph_node(gf, ggml_graph_n_nodes(gf) - 1);
-    std::vector<float> result(512);
-    ggml_backend_tensor_get(out, result.data(), 0, 512 * sizeof(float));
-    ggml_gallocr_free(ga); ggml_free(ctx0);
+std::vector<float> XttSv2Vocoder::speaker_embed(const float * pcm, int samples) const {
+    if (!impl_) throw std::runtime_error("XTTS v2 speaker weights are not loaded");
+    auto & c = *impl_;
+    auto audio = audio::resample_mono_torchaudio_sinc_hann(std::vector<float>(pcm, pcm + samples), 22050, 16000);
+    if (audio.size() < 2) throw std::runtime_error("XTTS v2 speaker reference is too short");
+    const float first = audio[0] - .97f * audio[1];
+    audio::apply_preemphasis_in_place(audio, .97f);
+    audio[0] = first;
+    auto mel = c.frontend.compute(audio, c.execution->config().threads);
+    const int frames = mel.size() / 64;
+    debug::trace_log_f32("xtts_v2.speaker.power_mel", {64, frames}, mel);
+    for (auto & value : mel) value = std::log(value + 1e-6f);
+    if (!c.speaker || c.speaker->frames != frames) c.speaker = build_speaker(*c.execution, c.weights, frames);
+    auto result = c.speaker->run(mel);
+    debug::trace_log_f32("xtts_v2.speaker.embedding", {512}, result);
     return result;
 }
-
-} // namespace engine::models::xtts_v2
-
+}  // namespace engine::models::xtts_v2

@@ -1,55 +1,12 @@
 #!/usr/bin/env python3
-"""XTTS v2 PyTorch -> GGUF converter.
-
-Produces two GGUF files (GPT + vocoder) compatible with audio.cpp loader.
-Tensor ordering is copied from the original GGUFs to ensure exact file layout.
+"""Convert an official Coqui XTTS v2 checkpoint to GPT and vocoder GGUFs.
 
 Usage:
-    python convert_xtts_v2_to_gguf.py --checkpoint /path/to/xtts_model.pth \
-        --config /path/to/config.json --vocab /path/to/vocab.json \
-        --output-dir /path/to/output
+    python convert_xtts_v2_to_gguf.py model.pth config.json vocab.json output_dir
 
-Quantization (requires llama.cpp built with llama-quantize):
-
-    llama-quantize \
-        --override-kv general.architecture=str:gpt2 \
-        --override-kv gpt2.context_length=int:2048 \
-        --override-kv gpt2.embedding_length=int:1024 \
-        --override-kv gpt2.block_count=int:30 \
-        --override-kv gpt2.feed_forward_length=int:4096 \
-        --override-kv gpt2.attention.head_count=int:16 \
-        --override-kv gpt2.attention.layer_norm_epsilon=float:0.00001 \
-        /path/to/xtts-v2-gpt.gguf /path/to/xtts-v2-gpt-q8_0.gguf q8_0
-
-    # Q4_0 is also supported:
-    llama-quantize \
-        --override-kv general.architecture=str:gpt2 \
-        --override-kv gpt2.context_length=int:2048 \
-        --override-kv gpt2.embedding_length=int:1024 \
-        --override-kv gpt2.block_count=int:30 \
-        --override-kv gpt2.feed_forward_length=int:4096 \
-        --override-kv gpt2.attention.head_count=int:16 \
-        --override-kv gpt2.attention.layer_norm_epsilon=float:0.00001 \
-        /path/to/xtts-v2-gpt.gguf /path/to/xtts-v2-gpt-q4_0.gguf q4_0
-
-    The vocoder GGUF (~76 MB) is kept as F16. Only the GPT GGUF (~1.7 GB) is quantized.
-
-Size reduction:
-    F16/F32: 1.7 GB GPT + 76 MB vocoder = ~1.8 GB
-    Q8_0:    492 MB GPT + 76 MB vocoder = ~568 MB  (3.1x smaller)
-    Q4_0:    290 MB GPT + 76 MB vocoder = ~366 MB  (4.9x smaller)
-
-Notes:
-    - The --override-kv flags fake a gpt2 architecture so llama-quantize accepts
-      the otherwise unknown xtts.gpt model. The gpt2 metadata is harmless since
-      audio.cpp loads tensors by name, not by architecture.
-    - 15 tensors with unusual shapes (non-32-aligned columns) fall back to F16.
-    - The tconv1d() function in gpt.cpp handles quantized types via
-      ggml_get_type_traits()->to_float for dequantization.
-    - WARNING: ik_llama.cpp (llama.cpp fork) around commit c40d4a7728cb5324e194be9ebd0c4d496ff41c2f
-      has been observed to produce incorrect quantized GGUFs for xTTS v2 models.
-      The resulting files may cause truncated audio output. Use the upstream
-      llama.cpp llama-quantize binary instead.
+An optional fifth positional argument selects an existing GGUF directory solely
+for reproducing its tensor order. It is not required for conversion.
+The converter requires Coqui TTS, torch, numpy and gguf in its Python environment.
 """
 
 import sys, os, json
@@ -66,10 +23,13 @@ def load_xtts_model(checkpoint_path, config_path, vocab_path):
         k['weights_only'] = False
         return _orig(*a, **k)
     torch.load = _load
-    cfg = XttsConfig(); cfg.load_json(config_path)
-    model = Xtts.init_from_config(cfg)
-    model.load_checkpoint(cfg, checkpoint_dir=os.path.dirname(checkpoint_path),
-                          checkpoint_path=checkpoint_path, vocab_path=vocab_path, eval=True)
+    try:
+        cfg = XttsConfig(); cfg.load_json(config_path)
+        model = Xtts.init_from_config(cfg)
+        model.load_checkpoint(cfg, checkpoint_dir=os.path.dirname(checkpoint_path),
+                              checkpoint_path=checkpoint_path, vocab_path=vocab_path, eval=True)
+    finally:
+        torch.load = _orig
     return model, cfg
 
 
@@ -103,7 +63,9 @@ def write_gpt_gguf(model, cfg, vocab_path, output_path, original_path=None):
     w = GGUFWriter(output_path, "XTTS v2 GPT")
     gpt = model.gpt
     ma = cfg.model_args if hasattr(cfg, 'model_args') else cfg
-    def _g(a, d): return getattr(ma, a, None) if hasattr(ma, a) else d
+    def _g(a, d):
+        value = getattr(ma, a, None)
+        return d if value is None else value
 
     n_layers = _g('gpt_layers', 30)
     cond_enc_blocks = len(gpt.conditioning_encoder.attn)
@@ -140,7 +102,9 @@ def write_gpt_gguf(model, cfg, vocab_path, output_path, original_path=None):
     with open(vocab_path) as f: vd=json.load(f)
     tokens=vd['model']['vocab']; merges=vd['model']['merges']
     tl=[]; ts=[]; tt=[]
-    for tok,idx in tokens.items():
+    for tok,idx in sorted(tokens.items(), key=lambda pair: pair[1]):
+        if idx != len(tl):
+            raise ValueError("XTTS tokenizer IDs must be contiguous")
         tl.append(tok); ts.append(0.0)
         tt.append(5 if (tok.startswith('<') and tok.endswith('>')) or (tok.startswith('[') and tok.endswith(']')) else 4)
     ml=[f"{m.split()[0]} {m.split()[1]}" for m in merges if len(m.split())==2]
@@ -332,7 +296,7 @@ def write_vocoder_gguf(model, cfg, output_path, original_path=None):
         ("xtts.vocoder.mel_bins",80),("xtts.vocoder.speaker_sr",16000),
         ("xtts.sampling_rate",22050),("xtts.output_sample_rate",24000),
         ("xtts.output_hop_length",256),("xtts.code_stride_len",getattr(ma,'gpt_code_stride_len',1024)),
-        ("xtts.vocoder.upsample_rates",[u.kernel_size[0] for u in wd.ups]),
+        ("xtts.vocoder.upsample_rates",[u.stride[0] for u in wd.ups]),
         ("xtts.vocoder.upsample_kernel_sizes",[u.kernel_size[0] for u in wd.ups]),
         ("xtts.vocoder.resblock_kernel_sizes",[3,7,11]),
         ("xtts.vocoder.resblock_dilation_sizes",[1,3,5,1,3,5,1,3,5]),
@@ -353,7 +317,8 @@ def write_vocoder_gguf(model, cfg, output_path, original_path=None):
             nm = t.name if isinstance(t.name, str) else t.name.decode()
             orig_tensors[nm] = (t.tensor_type, [int(d) for d in t.shape])
     else:
-        raise ValueError("Original vocoder GGUF path required for correct tensor ordering")
+        orig_names = None
+        orig_tensors = {}
 
     # State dict key mapping for vocoder
     sd_map = {}
@@ -417,67 +382,51 @@ def write_vocoder_gguf(model, cfg, output_path, original_path=None):
     if "hifigan_decoder.waveform_decoder.conv_post.bias" in state:
         sd_map["hifigan_decoder.dec.conv_post.bias"] = "hifigan_decoder.waveform_decoder.conv_post.bias"
 
-    # Write tensors in original order
+    if orig_names is None:
+        orig_names = sorted(sd_map)
     for gguf_name in orig_names:
         sd_key = sd_map[gguf_name]
-        orig_dtype, orig_shape = orig_tensors[gguf_name]
-
-        # Get tensor data
-        if 'parametrizations' in sd_key:
-            # Should not happen - we use the base key
-            pass
-
-        # Check if this is a WeightNorm tensor
-        base_sd = sd_key.rsplit('.parametrizations', 1)[0] if '.parametrizations' in sd_key else sd_key
-        wn_key = f"{sd_key}.parametrizations.weight.original0"
-        if wn_key in state:
-            t = _wn(state, sd_key)
-        else:
+        base = sd_key.removesuffix(".weight")
+        if base + ".parametrizations.weight.original0" in state:
+            t = _wn(state, base)
+        elif sd_key in state:
             t = state[sd_key].detach().cpu().float().numpy()
-
-        # GGUF shape convention: ne[0] is fastest-varying dim (reverse of NumPy)
-        target_np_shape = tuple(reversed(orig_shape))
-        if t.shape != target_np_shape:
-            if len(target_np_shape) == len(t.shape):
-                from itertools import permutations
-                found = False
-                for perm in permutations(range(len(t.shape))):
-                    if np.transpose(t, perm).shape == target_np_shape:
-                        t = np.ascontiguousarray(np.transpose(t, perm))
-                        found = True
-                        break
-                if not found:
-                    t = t.reshape(target_np_shape)
-            else:
-                t = t.reshape(target_np_shape)
-
-        # Apply dtype
-        if orig_dtype == GGMLQuantizationType.F16:
-            t = np.float16(t)
-        elif orig_dtype == GGMLQuantizationType.F32:
-            t = np.float32(t)
-        # else use whatever dtype the array already has
-
-        w.add_tensor(gguf_name, t)
+        else:
+            # The GGUF names transposed-convolution and residual kernels without
+            # a .weight suffix; PyTorch stores the explicit parameter name.
+            t = state[base + ".weight"].detach().cpu().float().numpy()
+        if gguf_name in orig_tensors:
+            dtype, shape = orig_tensors[gguf_name]
+            if tuple(t.shape) != tuple(reversed(shape)):
+                raise ValueError(f"Vocoder tensor shape mismatch: {gguf_name}: {t.shape} vs {shape}")
+        else:
+            dtype = GGMLQuantizationType.F16 if t.ndim >= 2 else GGMLQuantizationType.F32
+        if dtype not in (GGMLQuantizationType.F16, GGMLQuantizationType.F32):
+            raise ValueError("Use an unquantized reference GGUF for export ordering")
+        w.add_tensor(gguf_name, np.ascontiguousarray(t, dtype=np.float16 if dtype == GGMLQuantizationType.F16 else np.float32))
 
     w.write_header_to_file(); w.write_kv_data_to_file(); w.write_tensors_to_file(); w.close()
     print(f"  Written: {output_path} ({len(orig_names)} tensors)")
 
 
 def main():
-    if len(sys.argv) < 6:
-        print("Usage: python convert_xtts_v2_to_gguf.py <model.pth> <config.json> <vocab.json> <output_dir> <original_gguf_dir>")
-        print("  original_gguf_dir: path to original GGUF files for exact tensor ordering")
-        sys.exit(1)
-
-    cp = sys.argv[1]; cfp = sys.argv[2]; vp = sys.argv[3]; od = sys.argv[4]; orig_dir = sys.argv[5]
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("checkpoint")
+    parser.add_argument("config")
+    parser.add_argument("vocab")
+    parser.add_argument("output_dir")
+    parser.add_argument("original_gguf_dir", nargs="?")
+    args = parser.parse_args()
+    cp, cfp, vp, od = args.checkpoint, args.config, args.vocab, args.output_dir
+    orig_dir = args.original_gguf_dir
     os.makedirs(od, exist_ok=True)
 
     print("Loading XTTS v2 model...")
     model, cfg = load_xtts_model(cp, cfp, vp)
 
-    orig_gpt = os.path.join(orig_dir, "xtts-v2-gpt.gguf")
-    orig_voc = os.path.join(orig_dir, "xtts-v2-vocoder-f16.gguf")
+    orig_gpt = os.path.join(orig_dir, "xtts-v2-gpt.gguf") if orig_dir else None
+    orig_voc = os.path.join(orig_dir, "xtts-v2-vocoder-f16.gguf") if orig_dir else None
 
     print("Converting GPT...")
     write_gpt_gguf(model, cfg, vp, os.path.join(od, "xtts-v2-gpt.gguf"), orig_gpt)

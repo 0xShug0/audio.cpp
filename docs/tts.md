@@ -1,5 +1,7 @@
 # TTS Models
 
+For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
+
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
 | AuK (experimental) | `auk` | `tts`, `clon`, `gen` editing | [AuK](models/auk.md) |
@@ -849,7 +851,7 @@ VibeVoice is a long-form multi-speaker TTS model, available in 1.5B and 7B sizes
 | Voice input | Up to four speaker reference WAVs through `voice_samples` |
 | Text format | Lines like `Speaker 1: ... Speaker 2: ...`; ids are normalized internally |
 | Long-form | No text chunking; generation uses the model long-form path |
-| LoRA | Optional PEFT decoder adapter through `--load-option vibevoice.lora` |
+| LoRA | Optional decoder adapter through `--load-option vibevoice.lora` or the matching session option |
 
 Use `--mode streaming` to emit native audio chunks during generation, including
 speaker changes. The completed audio uses the same generation path as offline
@@ -901,18 +903,24 @@ audiocpp_cli --task tts --family vibevoice --model models/VibeVoice-1.5B --backe
 | `vibevoice.connector_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
 | `vibevoice.decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
 | `vibevoice.diffusion_head_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
-| `vibevoice.lora` | path | not set | Adapter directory applied when creating the session; do not also supply the load option. |
+| `vibevoice.lora` | path | not set | Decoder adapter file or PEFT directory applied when creating the session; do not also supply the load option. |
 | `vibevoice.lora_scale` | float | not set | Session adapter scale override; omitted uses lora_alpha / r. |
 
 ### Load Options (use with `--load-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `vibevoice.lora` | path | not set | Adapter directory, merged at load time. |
+| `vibevoice.lora` | path | not set | Decoder adapter file or PEFT directory, merged at load time. |
 | `vibevoice.lora_scale` | float | not set | LoRA scale override; omitted uses lora_alpha / r. |
 
 
 The adapter follows the PEFT training layout: `adapter_model.safetensors` + `adapter_config.json` for the language-model LoRA, plus optional `diffusion_head/model.safetensors` (or `diffusion_head_full.bin`), `acoustic_connector/pytorch_model.bin`, and `semantic_connector/pytorch_model.bin` for the fully fine-tuned components. Everything is applied at load time, so it composes with the `vibevoice.*_weight_type` quantization options and adds no per-step cost; the overlay is logged with `--log`. Use a 1.5B adapter with `VibeVoice-1.5B` and a 7B adapter with `VibeVoice-7B`; a size mismatch is rejected with a descriptive error. The same option may instead be passed as `--session-option vibevoice.lora` (but not via both at once).
+
+Native A/B and ComfyUI up/down files with matching decoder targets are also
+accepted. Per-tensor alpha supplies scaling without a PEFT config; otherwise
+provide `vibevoice.lora_scale` when no config is present. Ordinary matrix LoKr
+factors are supported; unsupported adapter algorithms fail explicitly. Optional
+component sidecars are resolved beside the adapter file or inside its directory.
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.
 
@@ -1046,6 +1054,8 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `voxcpm2.audiovae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | AudioVAE weight storage; defaults independently to native, not the shared weight_type. |
 | `voxcpm2.prompt_cache_slots` | integer >= 0 | `1` | Cached encoded prompt slots; zero disables reuse. |
 | `voxcpm2.mem_saver` | bool | `true` | Release staged runtime graphs. |
+| `voxcpm2.lora` | directory or checkpoint file | not set | Native LoRA weights with adjacent `lora_config.json`; merged at session creation without changing the AudioVAE. |
+| `voxcpm2.lora_scale` | finite float | `1` | Multiplier for the adapter's configured alpha/r scaling. |
 | `voxcpm2.weight_context_mb` | integer >= 1 | `3072` | Context or graph arena size in MiB. |
 | `voxcpm2.text_embedding_graph_arena_mb` | integer >= 1 | `64` | Host graph-metadata arena size in MiB; legacy `text_embedding_graph_context_mb` accepted with the same family prefix. |
 | `voxcpm2.lm_step_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `lm_step_graph_context_mb` accepted with the same family prefix. |
@@ -1055,5 +1065,12 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `voxcpm2.audiovae_weight_context_mb` | integer >= 1 | `768` | Context or graph arena size in MiB. |
 | `voxcpm2.audiovae_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_graph_context_mb` accepted with the same family prefix. |
 | `voxcpm2.audiovae_encoder_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_encoder_graph_context_mb` accepted with the same family prefix. |
-| `voxcpm2.audiovae_latent_capacity` | integer >= 1 | not set | Optional reserved latent frame capacity; omitted selects automatically. |
+| `voxcpm2.audiovae_latent_capacity` | integer >= 1 | not set | Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count. |
+| `voxcpm2.exec_plan` | JSON string | `{}` | Component `audiovae`: `impl` is `default`/`ggml`; `backend`, if supplied, must match the session; no artifacts. `params.threads` is a nonnegative int. Positive values require a CPU session and create a dedicated AudioVAE backend, enabling streaming decode overlap; also controls offline decoding and prompt encoding threads. Omitted/0 shares the session backend. |
 | `voxcpm2.audiovae_encoder_sample_capacity` | integer >= 1 | `240000` | Reserved encoder sample capacity. |
+
+For a CPU session with a four-thread AudioVAE worker, add:
+
+```bash
+--session-option 'voxcpm2.exec_plan={"audiovae":{"impl":"ggml","backend":"cpu","params":{"threads":4}}}'
+```

@@ -10,7 +10,7 @@ namespace engine::models::fish_drama3 {
 struct Drama3Sampling {
     float temperature = 1.0F;
     float top_p = 0.9F;
-    int top_k = 30;
+    int top_k = 4097;
     int64_t max_frames = 1024;
     uint32_t seed = 0;
 };

@@ -69,7 +69,11 @@ public:
 
     SoxrApi() {
         handle_ = io::open_dynamic_library(
-            {"libsoxr.so.0", "libsoxr.so", "libsoxr.dylib", "soxr.dll", "libsoxr.dll"});
+            {"libsoxr.so.0", "libsoxr.so", "libsoxr.dylib", "soxr.dll", "libsoxr.dll",
+#if defined(__APPLE__)
+             "/opt/homebrew/lib/libsoxr.dylib", "/usr/local/lib/libsoxr.dylib",
+#endif
+            });
         if (handle_ == nullptr) {
             return;
         }

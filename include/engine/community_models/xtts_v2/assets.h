@@ -1,6 +1,6 @@
 #pragma once
 
-// Assets & configuration for xTTS v2 (Coqui/XTTS-v2, CC-BY-NC 4.0).
+// Assets & configuration for xTTS v2 (Coqui/XTTS-v2, Coqui Public Model License).
 //
 // Two GGUF files expected:
 //   xtts-v2-gpt.gguf     — GPT-2 AR model + ConditioningEncoder + Perceiver resampler
@@ -19,6 +19,8 @@
 #include <filesystem>
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
+#include "engine/framework/assets/resource_bundle.h"
 
 namespace engine::models::xtts_v2 {
 
@@ -29,18 +31,12 @@ struct XttSv2HyperParams {
     uint32_t n_heads = 16;
     uint32_t head_dim = 64;
     uint32_t ff_dim = 4096;
-    // Aliases used by GPT code
-    uint32_t d = 1024;
-    uint32_t ffn = 4096;
 
     // Vocab / embeddings
     uint32_t text_vocab_size = 6681;
     uint32_t mel_vocab_size = 1026;
     uint32_t text_pos_size = 404;
     uint32_t mel_pos_size = 608;
-    // Aliases
-    uint32_t text_vocab = 6681;
-    uint32_t mel_vocab = 1026;
 
     // Special tokens
     uint32_t start_text_token = 261;
@@ -49,7 +45,6 @@ struct XttSv2HyperParams {
     uint32_t stop_mel_token = 1025;
     uint32_t max_mel_tokens = 605;
     uint32_t code_stride = 1024;
-    uint32_t cond_latents = 32;
 
     // Conditioning
     uint32_t cond_d_model = 1024;
@@ -57,13 +52,13 @@ struct XttSv2HyperParams {
     uint32_t cond_n_heads = 16;
     uint32_t perceiver_n_layers = 2;
     uint32_t perceiver_n_latents = 32;
-    uint32_t perceiver_head_dim = 512;
 };
 
 struct XttSv2BpeVocab {
     std::vector<std::string> id_to_token;
     std::vector<std::pair<std::string, std::string>> merges;
-    std::vector<float> scores;
+    std::unordered_map<std::string, int32_t> token_ids;
+    std::unordered_map<std::string, int> merge_ranks;
     std::vector<std::pair<std::string, int32_t>> special_tokens; // sorted by length desc
 
     int32_t stop_token = 0;
@@ -74,25 +69,25 @@ struct XttSv2BpeVocab {
 };
 
 struct XttSv2Assets {
-    std::filesystem::path model_root;
+    assets::ResourceBundle resources;
 
     std::filesystem::path gpt_gguf_path;
     std::filesystem::path vocoder_gguf_path;
 
+    std::shared_ptr<const assets::TensorSource> gpt_source;
+    std::shared_ptr<const assets::TensorSource> vocoder_source;
+
     XttSv2HyperParams hyper_params;
     XttSv2BpeVocab vocab;
 
-    // Mel normalization stats (loaded from vocoder GGUF)
+    // Mel normalization stats from GGUF metadata or a legacy package sidecar
     std::vector<float> mel_stats;
 };
 
-// Discover GGUF files under the model directory.
-bool discover_xtts_v2_files(const std::filesystem::path & root,
-                             std::filesystem::path & out_gpt,
-                             std::filesystem::path & out_vocoder);
+// Published packages have two GGUFs; identify the GPT by its tensor schema.
+std::optional<std::filesystem::path> find_xtts_v2_gpt_file(const std::filesystem::path & path);
 
 // Load assets from a discovered model directory.
-std::optional<XttSv2Assets> load_xtts_v2_assets(const std::filesystem::path & root);
+std::shared_ptr<const XttSv2Assets> load_xtts_v2_assets(const std::filesystem::path & root);
 
 }  // namespace engine::models::xtts_v2
-

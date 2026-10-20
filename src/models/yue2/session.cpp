@@ -204,9 +204,9 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"semantic_max_tokens", "int", "Maximum semantic codec tokens. Zero is allowed when min_tokens is also zero.", false, std::nullopt, "0"},
     };
     out.session_options = {
-        {"yue2.ar_lora", "path", "Unfused AR LoRA safetensors file; relative paths use the model root."},
+        {"yue2.ar_lora", "path", "AR adapter safetensors file; native, PEFT, and ComfyUI LoRA layouts. Relative paths use the model root."},
         {"yue2.ar_lora_scale", "float", "AR LoRA delta scale; zero disables the adapter.", false, "1.0"},
-        {"yue2.nar_lora", "path", "Unfused NAR LoRA safetensors file; relative paths use the model root."},
+        {"yue2.nar_lora", "path", "NAR adapter safetensors file; relative paths use the model root."},
         {"yue2.nar_lora_scale", "float", "NAR delta scale; full projection replacements are unscaled. Zero disables the adapter.", false, "1.0"},
         {"yue2.model_gguf", "string", "Yue2 main AR/NAR component GGUF file relative to the model root.", false, "yue2-3b-q8_0.gguf"},
         {"yue2.vae_gguf", "string", "Yue2 VAE component GGUF file relative to the model root.", false, "yue2-vae-f16.gguf"},

@@ -241,6 +241,7 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
     config.port = engine::io::json::optional_i32(root, "port", config.port);
     config.cors_origins = engine::io::json::optional_string(root, "cors_origins", config.cors_origins);
     config.ui_enabled = engine::io::json::optional_bool(root, "ui", config.ui_enabled);
+    config.ui_requested = engine::io::json::optional_bool(root, "ui", false);
     config.ui_management = engine::io::json::optional_bool(root, "ui_management", config.ui_management);
     config.backend = parse_server_backend(engine::io::json::optional_string(root, "backend", "cuda"));
     config.device = engine::io::json::optional_i32(root, "device", config.device);
@@ -337,6 +338,13 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);
         model.lazy = engine::io::json::optional_bool(item, "lazy", config.lazy_load);
+        if (item.find("device") != nullptr) {
+            const int device = engine::io::json::optional_i32(item, "device", config.device);
+            if (device < 0) {
+                throw std::runtime_error("device for model " + model.id + " must be >= 0");
+            }
+            model.device = device;
+        }
         if (!parallel_jobs && item.find("slots") != nullptr) {
             throw std::runtime_error("slots requires --parallel-jobs at server startup");
         }
@@ -428,6 +436,18 @@ void apply_default_session_options(const ServerConfig & config, ServerModelConfi
             model.session_options.emplace(key, value);
         }
     }
+}
+
+void inherit_configured_model_fields(const ServerModelConfig & configured, ServerModelConfig & model) {
+    if (configured.family != model.family || configured.task != model.task) {
+        return;
+    }
+    model.busy_timeout_ms = configured.busy_timeout_ms;
+    model.live_ingest = configured.live_ingest;
+    model.default_request_options = configured.default_request_options;
+    model.voice_presets = configured.voice_presets;
+    model.default_voice_preset = configured.default_voice_preset;
+    model.default_voice_preset_id = configured.default_voice_preset_id;
 }
 
 }  // namespace minitts::server

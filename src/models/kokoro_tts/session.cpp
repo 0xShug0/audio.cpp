@@ -1,6 +1,9 @@
 #include "engine/models/kokoro_tts/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/json.h"
+#include "engine/framework/rknn/engine.h"
+#include "engine/framework/rknn/engine_resources.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
@@ -71,7 +74,8 @@ KokoroTTSSession::KokoroTTSSession(
            {"rknn", {}, {"main"}, {}, {"overlap", "gain"}}}}});
     const auto & generator_plan = exec_plan.at("generator");
     if (generator_plan.impl == "rknn") {
-        rknn_generator_path_ = generator_plan.artifacts.at("main");
+        rknn_generator_path_ = engine::rknn::resolve_engine_path(
+            generator_plan.artifacts.at("main"), assets_->resources.model_directory());
     }
     if (const auto overlap = generator_plan.params.find("overlap"); overlap != generator_plan.params.end()) {
         const auto & value = overlap->second;
@@ -786,6 +790,27 @@ runtime::TaskResult KokoroTTSSession::synthesize(const runtime::TaskRequest & re
 std::shared_ptr<runtime::IVoiceModelLoader> make_kokoro_tts_loader() {
     runtime::SpecBackedVoiceModelConfig<KokoroAssets> config;
     config.family = kFamily;
+    config.model_resources = [](const std::filesystem::path & path,
+                                const std::unordered_map<std::string, std::string> & options) {
+        const auto option = options.find("kokoro_tts.exec_plan");
+        if (option == options.end()) {
+            return runtime::ModelResourcePlan{};
+        }
+        std::vector<std::string> artifacts;
+        try {
+            const auto plan = io::json::parse(option->second);
+            const auto * generator = plan.find("generator");
+            const auto * impl = generator ? generator->find("impl") : nullptr;
+            if (!impl || impl->as_string() != "rknn") {
+                return runtime::ModelResourcePlan{};
+            }
+            artifacts.push_back(io::json::require_string(generator->require("artifacts"), "main"));
+        } catch (const std::runtime_error &) {
+            // Session loading reports invalid execution plans.
+            return runtime::ModelResourcePlan{};
+        }
+        return rknn::engine_resources(artifacts, path);
+    };
     config.load_assets = [](const std::filesystem::path & model_path) {
         return load_kokoro_assets(model_path);
     };

@@ -1,6 +1,7 @@
 #include "engine/models/ace_step/session.h"
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/options.h"
@@ -146,6 +147,29 @@ bool mem_saver_from_options(const runtime::SessionOptions & options) {
     return false;
 }
 
+std::shared_ptr<const AceStepAssets> assets_with_adapter(
+    std::shared_ptr<const AceStepAssets> assets, const runtime::SessionOptions & options) {
+    const auto path = runtime::find_option(options.options, {"ace_step.lora"});
+    if (!path || path->empty()) return assets;
+    auto file = std::filesystem::u8path(*path);
+    if (file.is_relative()) file = assets->resources.model_root() / file;
+    assets::WeightAdapterReadOptions read_options;
+    read_options.strength = runtime::parse_finite_float_option(options.options, {"ace_step.lora_scale"}).value_or(1.0F);
+    auto adapter = assets::read_weight_adapter(file, read_options);
+    assets::WeightAdapterBindings bindings;
+    for (const auto & tensor : assets->dit_weights->tensors()) {
+        if (tensor.name.rfind("decoder.", 0) != 0) continue;
+        bindings.add(tensor.name, tensor.name);
+        bindings.add(tensor.name.substr(8), tensor.name);
+    }
+    auto plan = assets::bind_weight_adapter(*assets->dit_weights, std::move(adapter), bindings,
+        assets::WeightMergeMode::DeltaF32);
+    if (read_options.strength == 0.0F) return assets;
+    auto selected = std::make_shared<AceStepAssets>(*assets);
+    selected->dit_weights = assets::make_weight_adapter_source(assets->dit_weights, std::move(plan), "ace_step.lora", true);
+    return selected;
+}
+
 bool rewrite_caption_requested(const std::unordered_map<std::string, std::string> & options) {
     const auto value = runtime::find_option(options, {"rewrite_caption"});
     return value.has_value() && runtime::parse_bool_option(*value, "rewrite_caption");
@@ -185,7 +209,7 @@ AceStepSession::AceStepSession(runtime::TaskSpec task, runtime::SessionOptions o
                                std::shared_ptr<const AceStepAssets> assets)
     : RuntimeSessionBase(options),
       task_(task),
-      assets_(require_assets(std::move(assets))),
+      assets_(assets_with_adapter(require_assets(std::move(assets)), RuntimeSessionBase::options())),
       planner_weight_storage_type_(
           weight_type_from_options(RuntimeSessionBase::options(), "ace_step.planner_weight_type")),
       text_encoder_weight_storage_type_(

@@ -192,12 +192,25 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `ace_step.lora` | adapter path | none | DiT decoder adapter file or PEFT directory; merged during weight loading. |
+| `ace_step.lora_scale` | finite float | `1.0` | Adapter strength multiplied by metadata scaling; zero disables it. |
 | `ace_step.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared weight storage type. |
 | `ace_step.dit_weight_type` | same as above | inherits `ace_step.weight_type` | DiT override; `f16` is promoted to `bf16`. |
 | `ace_step.planner_weight_type` | same as above | inherits `ace_step.weight_type` | Planner LM override. |
 | `ace_step.text_encoder_weight_type` | same as above | inherits `ace_step.weight_type` | Text encoder override. |
 | `ace_step.vae_weight_type` | same as above | inherits `ace_step.weight_type` | VAE override. |
 | `ace_step.mem_saver` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+
+## Weight Adapters
+
+DiT LoRA/LoKr adapters can be selected with
+`--session-option ace_step.lora=/path/to/adapter`. PEFT directories use
+`adapter_model.safetensors` and `adapter_config.json`; SafeTensors files may use
+native A/B, ComfyUI up/down, or ordinary matrix LoKr factors. Only decoder
+targets are adapted; the planner, conditioning encoders, and VAE remain unchanged.
+Paths relative to the model root are accepted. Adapter changes require a new
+session. Merging a quantized base dequantizes and requantizes the adapted weights;
+it is not equivalent to adapting the original full-precision checkpoint first.
 
 ## Load Options (use with `--load-option`)
 

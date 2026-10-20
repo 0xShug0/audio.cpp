@@ -193,6 +193,20 @@ std::unique_ptr<ILoadedVoiceModel> ModelRegistry::load(const std::filesystem::pa
     return load(request);
 }
 
+ModelResourcePlan ModelRegistry::model_resources(
+    const std::string & family,
+    const std::filesystem::path & model_path,
+    const std::unordered_map<std::string, std::string> & session_options) const {
+    for (const auto & loader : loaders_) {
+        const auto aliases = loader->family_aliases();
+        if (loader->family() == family ||
+            std::find(aliases.begin(), aliases.end(), family) != aliases.end()) {
+            return loader->model_resources(model_path, session_options);
+        }
+    }
+    return {};
+}
+
 void ModelRegistry::validate_request(const ModelLoadRequest & request) const {
     const bool builtin_audio_utility_id =
         request.family_hint.has_value() &&

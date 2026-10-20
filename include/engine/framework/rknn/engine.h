@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -23,31 +24,60 @@ namespace engine::rknn {
 // stage that failed ("Qwen3 speech decoder RKNN: ...").
 std::vector<char> read_engine(const std::string & path, const std::string & label);
 
-// Formats one `RKNN_*` return code the same way every sidecar does.
+// Formats one `RKNN_*` return code the same way every sidecar does. Where the driver has answered in
+// this process, the message names it (`... failed with code -6 (driver 0.9.8, api 2.3.2 ...)`),
+// because the code alone says what was refused and not who refused it: a `.rknn` is compiled per SoC
+// and per SDK generation, and the runtime library and the kernel driver are versioned apart (a
+// working RK3588 reports `api 2.3.2` beside `driver 0.9.8`), with the toolkit that built the image
+// as the third version an operator has to line up. See `driver_report()`.
 std::string status(const std::string & label, const char * what, int code);
 
+// What the driver said it is, as one phrase, once any context in this process has reported it;
+// empty where no driver can answer (a build without an RKNN runtime, an engine that never
+// initialized). Asked of the first context the driver builds -- `rknn_query(RKNN_QUERY_SDK_VERSION)`
+// is per-context -- and cached, so a later failure carries it at no round trip.
+std::string driver_report();
+
 // Aperture accounting for a sidecar that keeps more than one compiled engine resident: the resident
-// set is the sum of the units each loaded engine reserves, and a new engine is pinned only while the
-// whole set stays inside the budget; a unit that cannot share the aperture with the set evicts it and
-// is itself evicted by the next change of shape. What a unit costs and what the board fits are both
-// measurements of one engine on one board, so both are passed in by the model: this type is the
-// accounting, not the policy, and it holds no ceiling of its own.
+// set is the sum of the residency each loaded engine reports, and a new engine is pinned only while
+// the whole set stays inside the budget; a unit that cannot share the aperture with the set evicts it
+// and is itself evicted by the next change of shape. What an engine costs and what the board fits are
+// both measurements of one engine on one board, so both are passed in by the model: this type is the
+// accounting, not the policy, and it holds no ceiling of its own. It counts MiB and nothing else --
+// the model derives that number from the driver's own report (`engine_memory_mib`) or from a proxy it
+// owns, and the accounting stays free of any assumption about how a cost is estimated.
 class ApertureBudget {
 public:
-    ApertureBudget(int64_t mib_per_unit, int64_t budget_mib)
-        : mib_per_unit_(mib_per_unit), budget_mib_(budget_mib) {}
+    explicit ApertureBudget(int64_t budget_mib) : budget_mib_(budget_mib) {}
 
-    // Would adding an engine of `units` compiled length keep the resident set inside the aperture?
-    bool fits(int64_t units) const { return (resident_ + units) * mib_per_unit_ <= budget_mib_; }
-    void reserve(int64_t units) { resident_ += units; }
-    void clear() { resident_ = 0; }
-    int64_t resident() const { return resident_; }
+    // Would adding an engine of `mib` resident megabytes keep the set inside the aperture?
+    bool fits(int64_t mib) const { return resident_mib_ + mib <= budget_mib_; }
+    void reserve(int64_t mib) { resident_mib_ += mib; }
+    void clear() { resident_mib_ = 0; }
+    int64_t resident() const { return resident_mib_; }
 
 private:
-    int64_t resident_ = 0;
-    int64_t mib_per_unit_ = 0;
+    int64_t resident_mib_ = 0;
     int64_t budget_mib_ = 0;
 };
+
+// Resolves one `exec_plan` artifact path against the directory the model was loaded from. Every
+// sidecar takes its engine as a path the operator types, and the convention everywhere else in the
+// runtime is that a model's files are named relative to the model (a `ResourceBundle` reference, a
+// `miotts` codec, a `chatterbox` sidecar). A relative name is therefore joined onto `model_root`
+// when that file exists; an absolute path, an empty root, and a name that is not under the root are
+// returned unchanged, so a failed load quotes exactly what was asked for.
+std::string resolve_engine_path(const std::string & artifact, const std::filesystem::path & model_root);
+
+// What a compiled engine will occupy once it is resident, in MiB, read from the driver itself:
+// `rknn_init` with `RKNN_FLAG_COLLECT_MODEL_INFO_ONLY` parses the image without building the network
+// (~0.5 s per engine on RK3588, no NPU memory allocated) and `rknn_query(RKNN_QUERY_MEM_SIZE)` then
+// reports `total_weight_size + total_internal_size` -- the bytes the real init goes on to allocate,
+// less a per-context slack of 30-50 MiB. Returns 0 when the driver cannot say, so a caller can keep
+// a proxy for that case; a build without an RKNN runtime is that case for every engine, so the
+// declaration is not conditional and a consumer (a sidecar, or the server's load guard) needs no
+// preprocessor test of its own to ask.
+int64_t engine_memory_mib(const std::string & path, const std::string & label);
 
 #if defined(ENGINE_HAVE_RKNN)
 

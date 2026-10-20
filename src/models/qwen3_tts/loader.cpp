@@ -1,9 +1,12 @@
 #include "engine/models/qwen3_tts/loader.h"
 
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/io/json.h"
+#include "engine/framework/rknn/engine_resources.h"
 #include "engine/models/qwen3_tts/session.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <stdexcept>
 #include <utility>
 
@@ -78,9 +81,13 @@ runtime::ModelCliInterface cli(const Qwen3TTSAssets &) {
         {"text_chunk_size", "int", "Maximum UTF-8 codepoints per long-form text chunk; default 8192.", false, "8192", "1"},
     };
     out.session_options = {
+        {"qwen3_tts.lora", "path", "PEFT LoRA adapter directory or checkpoint file; optional speaker_embedding and tts_config.json sidecars provide a trained custom voice.", false},
+        {"qwen3_tts.lora_scale", "float", "Multiplier for the adapter's alpha/r scaling; default 1.", false, "1"},
         {"qwen3_tts.mem_saver", "bool", "Release the talker cached-step graph after each request; default false.", false, "false"},
         {"qwen3_tts.stitch_decode", "bool", "Voice the concatenated speech codes of all text chunks in one decoder pass instead of voicing each chunk separately; default false. Per-chunk voicing re-voices the voice-clone reference once per chunk and restarts the stateful vocoder cache at every chunk boundary; the stitched pass costs device memory proportional to the utterance.", false, "false"},
-        {"qwen3_tts.perf_mode", "off|flash_attention", "Q8_0-only attention performance mode; default off keeps the exact-safe path.", false, "off"},
+        {"qwen3_tts.perf_mode", "off|flash_attention|optimized", "Performance preset; default off. flash_attention enables flash attention; optimized also defaults convolution weights to f16 and streaming decoding to stateful. Explicit session options override those defaults. May change audio and increase VRAM.", false, "off"},
+        {"qwen3_tts.talker_kv_cache_alignment", "int", "Round talker KV capacity to this many rows. Larger alignments can enable faster attention kernels but may use more memory and change numerical results; default 256.", false, "256", "1"},
+        {"qwen3_tts.stream_decoder", "windowed|stateful", "GGML streaming decoder; stateful carries convolution and attention history and caches graphs for exact chunk lengths. Uses more graph memory and can change audio; default windowed preserves existing behavior.", false, "windowed"},
         {"qwen3_tts.voice_prompt_cache_slots", "int", "Voice prompt cache slots; default 1.", false, "1", "0"},
         {"qwen3_tts.weight_type", "native|f32|f16|bf16|q8_0", "Shared talker matmul weight storage type; default native.", false, "native"},
         {"qwen3_tts.talker_weight_type", "native|f32|f16|bf16|q8_0", "Talker weight storage type; defaults to weight_type when set, otherwise native.", false},
@@ -147,6 +154,36 @@ public:
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
         return load_qwen3_tts_model(request.model_path);
+    }
+
+    runtime::ModelResourcePlan model_resources(
+        const std::filesystem::path & model_path,
+        const std::unordered_map<std::string, std::string> & session_options) const override {
+        runtime::ModelResourcePlan plan;
+        const auto option = session_options.find("qwen3_tts.exec_plan");
+        if (option == session_options.end()) {
+            return plan;
+        }
+        std::vector<std::string> paths;
+        try {
+            const auto value = io::json::parse(option->second);
+            const auto * decoder = value.find("speech_decoder");
+            const auto * impl = decoder ? decoder->find("impl") : nullptr;
+            if (!impl || impl->as_string() != "rknn") {
+                return plan;
+            }
+            const auto & artifacts = decoder->require("artifacts");
+            paths.push_back(io::json::require_string(artifacts, "main"));
+            for (const char * const role : {"first", "window"}) {
+                if (const auto * artifact = artifacts.find(role)) {
+                    paths.push_back(artifact->as_string());
+                }
+            }
+        } catch (const std::runtime_error &) {
+            // Session loading reports invalid execution plans.
+            return plan;
+        }
+        return rknn::engine_resources(paths, model_path);
     }
 };
 

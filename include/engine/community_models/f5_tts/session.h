@@ -11,6 +11,8 @@
 
 namespace engine::models::f5_tts {
 
+struct F5RuntimeState;
+
 // F5-TTS community model assets: resource bundle + resolved checkpoint path.
 // Weights are loaded lazily by the runtime on first synthesis (graph cache).
 struct F5TTSAssets {
@@ -44,6 +46,7 @@ private:
     bool use_cuda_ = false;
     int cuda_device_ = 0;
     int threads_ = 0;
+    std::shared_ptr<F5RuntimeState> runtime_state_;
 };
 
 std::shared_ptr<const F5TTSAssets> load_f5_tts_assets(

@@ -29,6 +29,16 @@ public:
     std::unique_ptr<ILoadedVoiceModel> load(const ModelLoadRequest & request) const;
     std::unique_ptr<ILoadedVoiceModel> load(const std::filesystem::path & model_path) const;
 
+    /**
+     * What the named family's session options ask for beyond weight files, from the loader that
+     * owns the family (see IVoiceModelLoader::model_resources). A family with no loader registered
+     * in this registry -- or one that reports nothing -- yields an empty plan.
+     */
+    ModelResourcePlan model_resources(
+        const std::string & family,
+        const std::filesystem::path & model_path,
+        const std::unordered_map<std::string, std::string> & session_options) const;
+
 private:
     void validate_request(const ModelLoadRequest & request) const;
     const IVoiceModelLoader * find_loader(const ModelLoadRequest & request) const;

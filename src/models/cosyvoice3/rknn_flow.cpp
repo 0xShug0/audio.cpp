@@ -8,14 +8,25 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace engine::models::cosyvoice3 {
+
+// 3900 MiB is where this board's driver puts the per-process ceiling, measured by initializing the
+// sets in one process: 110+200+250 (3341 MiB), 110x4 (3144), 200x3 (3387), 250+250+110 (3638),
+// 110+400 (3401) and 200+400 (3744) all initialize together, while 250+400 (4041), 110+500 (4538)
+// and every set holding an S>=900 engine fail at `rknn_init` with -4. The proxy refused 200+400,
+// which this board admits; the measured cost reproduces all twelve outcomes. Measured on this board,
+// not a board property: the accounting is shared (rknn::ApertureBudget), the numbers are this
+// engine's.
+constexpr int64_t kAperturePinBudgetMiB = 3900;
 
 namespace {
 
@@ -30,22 +41,14 @@ const char * const kLabel = "CosyVoice3 flow estimator RKNN";
 // unconditioned one, and the ODE loop mixes them outside the engine.
 constexpr int64_t kCfgBatch = 2;
 
-// The aperture accounting of this sidecar, in a linear proxy measured on RK3588. With every context
-// of the ladder resident in one process, the estimator engines occupy 0.27 GiB at S=110, 0.48 at
-// 200, 0.77 at 250, 1.93 at 400, 3.04 at 500 and 4.39 at 900, while all of their files are 661-714
-// MB -- a context costs its compiled length, not its image size. 5 MiB per frame over-estimates the
-// short rungs by ~2x and is within 5% of the long ones, so the budget is a statement about the long
-// rungs with a safety margin on the short ones.
-constexpr int64_t kApertureMiBPerFrame = 5;
-
-// 2800 MiB of that proxy is the largest resident set this board's I/O aperture fits: the short rungs
-// are genuinely co-resident (S=200 x3, 250+250+110 and 110 x4 all initialize together, at
-// <= 1.81 GiB) and the long ones are not (400 coexists only with 110/200, 500 with nothing);
-// 110+200+250 = 1.52 GiB real (three engines fit 1.81 GiB) and 110+400 = 2.20 GiB (two fit 2.42),
-// while 200+400 = 2.41 GiB is refused by the proxy although it measures just inside the two-engine
-// ceiling -- the proxy under-pins, never over-pins. Measured on this board, not a board property:
-// the accounting is shared (rknn::ApertureBudget), the numbers are this engine's.
-constexpr int64_t kAperturePinBudgetMiB = 2800;
+// The aperture accounting of this sidecar, in the driver's own units: each engine's residency is
+// read from the runtime (`rknn::engine_memory_mib`, a model-info-only init plus
+// `RKNN_QUERY_MEM_SIZE`), which on this board reports 786 MiB at S=110, 1129 at 200, 1426 at 250,
+// 2615 at 400, 3752 at 500 and 1039 at 900 -- all of them 661-714 MB files, so a context costs its
+// graph and not its image, and the cost is not a function of the compiled length (S=900 costs less
+// than S=500). The linear proxy this replaces charged 5 MiB per frame, which over-pins the short
+// rungs by up to 11x and under-pins S=500.
+constexpr int64_t kApertureMiBPerFrame = 5;  // only if the driver cannot say
 
 // Graph order, as tools/rknn/prepare_cosyvoice3_rknn_flow.py compiles it.
 const char * const kInputNames[] = {"x", "mask", "mu", "t", "spks", "cond"};
@@ -87,6 +90,9 @@ struct CosyVoice3RknnFlow::Impl {
         int64_t frames = 0;    // the sequence length this engine covers
         int64_t channels = 0;
 #if defined(ENGINE_HAVE_RKNN)
+        // What this engine will occupy once resident, read from the driver at registration; 0 means
+        // the driver could not say, and the linear proxy is used for it.
+        int64_t aperture_mib = 0;
         engine::rknn::Engine engine;
         bool loaded = false;
         std::vector<float> x;
@@ -225,8 +231,8 @@ struct CosyVoice3RknnFlow::Impl {
     std::vector<std::unique_ptr<Slot>> slots;
     int64_t channels = 0;
 #if defined(ENGINE_HAVE_RKNN)
-    // Resident-set accounting for the ladder, in the shared proxy arithmetic.
-    engine::rknn::ApertureBudget budget_{kApertureMiBPerFrame, kAperturePinBudgetMiB};
+    // Resident-set accounting for the ladder, in the driver's own units (see kAperturePinBudgetMiB).
+    engine::rknn::ApertureBudget budget_{kAperturePinBudgetMiB};
 #endif
 
 #if defined(ENGINE_HAVE_RKNN)
@@ -249,6 +255,12 @@ struct CosyVoice3RknnFlow::Impl {
             slot->path = path;
             slot->frames = frames;
             slot->channels = expected_channels;
+            // Ask the driver what this engine will cost before deciding to keep it: a model-info-only
+            // init parses the image without allocating the network (~0.5 s per engine, once at
+            // startup), which is what makes the per-engine table a measurement instead of a guess.
+            slot->aperture_mib = engine::rknn::engine_memory_mib(path, kLabel);
+            debug::trace_log_scalar(
+                "cosyvoice3.flow.dit.rknn.aperture_mib", slot->aperture_mib);
             slots.push_back(std::move(slot));
         }
         std::sort(slots.begin(), slots.end(), [](const auto & a, const auto & b) {
@@ -257,6 +269,11 @@ struct CosyVoice3RknnFlow::Impl {
         if (slots.empty()) {
             throw std::runtime_error(std::string(kLabel) + ": no engine paths given");
         }
+        // The board states its own ceiling; 0 means pin every rung the deployment declares.
+        const int64_t budget_mib = aperture_budget_mib();
+        budget_ = engine::rknn::ApertureBudget(
+            budget_mib > 0 ? budget_mib : std::numeric_limits<int64_t>::max());
+        debug::trace_log_scalar("cosyvoice3.flow.dit.rknn.aperture_budget_mib", budget_mib);
     }
 
     // The smallest engine that fits `frames`. The long-sequence engines are loaded on demand and
@@ -275,8 +292,10 @@ struct CosyVoice3RknnFlow::Impl {
                 // The rung is kept (and the new one pinned) only while the whole resident set stays
                 // inside the aperture; a rung above the budget can never share it with anything, so
                 // it evicts everything and is itself evicted by the next length change.
-                // ponytail: linear aperture proxy; a per-engine measured table would pin ~2x more.
-                const bool fits = budget_.fits(slot.frames);
+                const int64_t cost_mib = slot.aperture_mib > 0
+                    ? slot.aperture_mib
+                    : slot.frames * kApertureMiBPerFrame;
+                const bool fits = budget_.fits(cost_mib);
                 if (!fits) {
                     for (auto & other : slots) {
                         if (other->loaded) {
@@ -287,9 +306,9 @@ struct CosyVoice3RknnFlow::Impl {
                     budget_.clear();
                 }
                 slot.load(channels);
-                budget_.reserve(slot.frames);
+                budget_.reserve(cost_mib);
                 debug::trace_log_scalar(
-                    "cosyvoice3.flow.dit.rknn.resident_frames", budget_.resident());
+                    "cosyvoice3.flow.dit.rknn.resident_mib", budget_.resident());
             }
             return slot;
         }
@@ -360,6 +379,20 @@ std::vector<float> CosyVoice3RknnFlow::run(
     (void)frames;
     throw std::runtime_error("CosyVoice3 flow estimator RKNN: built without ENGINE_ENABLE_RKNN");
 #endif
+}
+
+// The ceiling the ladder evicts to, read once per call: a board states its own aperture with
+// `AUDIOCPP_RKNN_APERTURE_MIB` in the spirit of `AUDIOCPP_RKNN_CORE_MASK`, and 0 (also the reading of
+// a malformed value, so a typo cannot silently mean one megabyte) turns the accounting off and pins
+// every rung the deployment declares.
+int64_t aperture_budget_mib() {
+    const char * const env = std::getenv("AUDIOCPP_RKNN_APERTURE_MIB");
+    if (env == nullptr) {
+        return kAperturePinBudgetMiB;
+    }
+    char * end = nullptr;
+    const long long value = std::strtoll(env, &end, 10);
+    return value > 0 && *end == '\0' ? static_cast<int64_t>(value) : 0;
 }
 
 }  // namespace engine::models::cosyvoice3

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/streaming_audio.h"
@@ -60,6 +61,11 @@ protected:
   std::shared_ptr<const VoxCPM2Assets> assets_;
   VoxCPM2FeatureGeneratorConfig generator_config_;
   VoxCPM2AudioVAEDecoderConfig decoder_config_;
+  // Set by voxcpm2.exec_plan.audiovae.params.threads: the AudioVAE runs on its own CPU backend
+  // with its own threads, so streaming can decode a patch window while the
+  // generator works on the next patch. Declared before decoder_ so the decoder
+  // is destroyed first.
+  std::unique_ptr<engine::core::ExecutionContext> decoder_execution_context_;
   std::unique_ptr<VoxCPM2FeatureGeneratorRuntime> generator_;
   std::unique_ptr<VoxCPM2AudioVAEDecoderRuntime> decoder_;
   runtime::CacheSlots<EncodedPromptCacheKey, EncodedPromptCacheEntry,

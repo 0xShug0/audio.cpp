@@ -2444,7 +2444,13 @@ static void ggml_cuda_mul_mat_batched_cublas_impl(ggml_backend_cuda_context & ct
                                                                                   || cc == GGML_CUDA_CC_VOLTA
                                                                                   || force_compute_type.fp32);
 
-    if (dst->op_params[0] == GGML_PREC_DEFAULT && !need_compute_32f) {
+    if (dst->type == GGML_TYPE_F16) {
+        GGML_ASSERT(src0_type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F16);
+        dst_t = (char *) dst->data;
+        cu_compute_type = CUBLAS_COMPUTE_32F;
+        alpha = batched_mul_mat_traits<GGML_TYPE_F32>::get_alpha();
+        beta = batched_mul_mat_traits<GGML_TYPE_F32>::get_beta();
+    } else if (dst->op_params[0] == GGML_PREC_DEFAULT && !need_compute_32f) {
         if constexpr (src0_type == GGML_TYPE_F32) {
             dst_t = (char *) dst_ddf;  // Direct F32 output
         } else {
@@ -2555,7 +2561,7 @@ static void ggml_cuda_mul_mat_batched_cublas_impl(ggml_backend_cuda_context & ct
     }
 
     // Convert output back to F32 if needed
-    if (dst->op_params[0] == GGML_PREC_DEFAULT && cu_data_type != CUDA_R_32F) {
+    if (dst->type == GGML_TYPE_F32 && dst->op_params[0] == GGML_PREC_DEFAULT && cu_data_type != CUDA_R_32F) {
         const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(traits::ggml_type_val);
         to_fp32_cuda(dst_temp.get(), dst_ddf, ne_dst, main_stream);
     }
@@ -2742,6 +2748,13 @@ static bool ggml_cuda_should_fuse_mul_mat_vec_q(const ggml_tensor * tensor) {
 
 static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     const bool split = ggml_backend_buft_is_cuda_split(src0->buffer->buft);
+
+    if (dst->type == GGML_TYPE_F16) {
+        GGML_ASSERT(!split && src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F16);
+        GGML_ASSERT(!ggml_is_transposed(src0) && !ggml_is_transposed(src1));
+        ggml_cuda_mul_mat_batched_cublas(ctx, src0, src1, dst);
+        return;
+    }
 
     // If src0 is a temporary compute buffer it may have some padding that needs to be cleared for mul_mat_vec_q or mul_mat_q.
     // But if src0 is also a view of another tensor then this cannot be done safely because it may overwrite valid tensor data.
@@ -3303,6 +3316,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_FLASH_ATTN_EXT:
             ggml_cuda_flash_attn_ext(ctx, dst);
+            break;
+        case GGML_OP_FLASH_ATTN_F16_HEAD40:
+            ggml_cuda_flash_attn_f16_head40(ctx, dst);
             break;
         case GGML_OP_SAGE_ATTN2:
             ggml_cuda_sage_attn2(ctx, dst);
@@ -5949,6 +5965,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
 #endif // GGML_USE_MUSA
         case GGML_OP_FLASH_ATTN_EXT:
             return ggml_cuda_flash_attn_ext_supported(dev_ctx->device, op);
+        case GGML_OP_FLASH_ATTN_F16_HEAD40:
+            return ggml_cuda_flash_attn_f16_head40_supported(dev_ctx->device, op);
         case GGML_OP_SAGE_ATTN2:
             return ggml_cuda_sage_attn2_supported(dev_ctx->device, op);
         case GGML_OP_SAGE_ATTN2_I8:

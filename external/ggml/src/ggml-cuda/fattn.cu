@@ -566,3 +566,28 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
 bool ggml_cuda_flash_attn_ext_supported(int device, const ggml_tensor * dst) {
     return ggml_cuda_get_best_fattn_kernel(device, dst) != BEST_FATTN_KERNEL_NONE;
 }
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+bool ggml_cuda_flash_attn_f16_head40_supported(int device, const ggml_tensor * dst) {
+    const ggml_tensor * q = dst->src[0];
+    const ggml_tensor * k = dst->src[1];
+    const ggml_tensor * v = dst->src[2];
+    return GGML_CUDA_CC_IS_NVIDIA(ggml_cuda_info().devices[device].cc) &&
+        turing_mma_available(ggml_cuda_info().devices[device].cc) &&
+        dst->type == GGML_TYPE_F16 && q->type == GGML_TYPE_F16 &&
+        k->type == GGML_TYPE_F16 && v->type == GGML_TYPE_F16 &&
+        q->ne[0] == 40 && k->ne[0] == 40 && v->ne[0] == 40 &&
+        dst->src[3] == nullptr;
+}
+
+void ggml_cuda_flash_attn_f16_head40(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    ggml_cuda_set_device(ctx.device);
+    GGML_ASSERT(ggml_cuda_flash_attn_f16_head40_supported(ctx.device, dst));
+    ggml_cuda_flash_attn_f16_head40_mma<128>(ctx, dst);
+}
+#else
+bool ggml_cuda_flash_attn_f16_head40_supported(int, const ggml_tensor *) { return false; }
+void ggml_cuda_flash_attn_f16_head40(ggml_backend_cuda_context &, ggml_tensor *) {
+    GGML_ABORT("FP16 head-40 attention is supported only on NVIDIA CUDA");
+}
+#endif

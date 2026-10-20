@@ -143,6 +143,17 @@ if (CUDAToolkit_FOUND)
                              ${GGML_SOURCES_CUDA}
                             )
 
+    if (GGML_CUDA_CUDNN_CONV2D)
+        find_path(CUDNN_INCLUDE_DIR cudnn.h HINTS ${CUDNN_ROOT} PATH_SUFFIXES include)
+        find_library(CUDNN_LIBRARY NAMES cudnn HINTS ${CUDNN_ROOT} PATH_SUFFIXES lib lib64)
+        if (NOT CUDNN_INCLUDE_DIR OR NOT CUDNN_LIBRARY)
+            message(FATAL_ERROR "GGML_CUDA_CUDNN_CONV2D requires cuDNN; set CUDNN_ROOT")
+        endif()
+        target_include_directories(ggml-cuda PRIVATE ${CUDNN_INCLUDE_DIR})
+        target_link_libraries(ggml-cuda PRIVATE ${CUDNN_LIBRARY})
+        target_compile_definitions(ggml-cuda PRIVATE GGML_CUDA_CUDNN_CONV2D=1)
+    endif()
+
     if (GGML_CUDA_SAGE_ATTN2_ENABLED)
         target_compile_definitions(ggml-cuda PRIVATE GGML_CUDA_SAGE_ATTN2_ENABLED)
     endif()
