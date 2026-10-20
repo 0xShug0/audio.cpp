@@ -3859,6 +3859,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(kokoro_word_timings_test PRIVATE engine_model_kokoro_tts)
         add_test(NAME kokoro_word_timings_test COMMAND kokoro_word_timings_test)
 
+        if (kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(kokoro_voice_blending_test tests/unittests/test_kokoro_voice_blending.cpp)
+        add_test(NAME kokoro_voice_blending_test COMMAND kokoro_voice_blending_test)
+        endif()
+
         add_engine_unittest(quantize_chunking_test tests/unittests/test_quantize_chunking.cpp)
         add_test(NAME quantize_chunking_test COMMAND quantize_chunking_test)
 

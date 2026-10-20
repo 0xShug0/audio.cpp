@@ -90,6 +90,37 @@ selects the language family:
 The request language must match the selected voice. For example, use
 `--language zh` with `zf_*` or `zm_*` voices.
 
+### Voice Blending
+
+Use `af_heart+af_bella` for equal weights, or `af_heart(1)+jf_alpha(0.5)`
+for a weighted blend. Weights are finite, nonnegative, and normalized by their
+sum, which must be positive. Blending averages voice style embeddings, not WAVs.
+The first voice selects the phonemizer language, including cross-language blends;
+an explicit language must match that first voice.
+
+```bash
+audiocpp_cli --task tts --family kokoro_tts \
+  --model models/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf --backend metal \
+  --voice-id 'af_heart(1)+jf_alpha(0.5)' \
+  --text "Hello, testing combined Kokoro voices." --out blended.wav
+```
+
+The same expression works through `--request-option voice_id=...` or the
+`voice` field of `/v1/audio/speech`, with existing GGUFs:
+
+```json
+{
+  "model": "kokoro-audiocpp",
+  "input": "Hello, testing combined Kokoro voices.",
+  "voice": "af_heart(1)+jf_alpha(0.5)",
+  "response_format": "wav",
+  "speed": 1
+}
+```
+
+MP3 output uses the existing optional `mp3_encode`
+[server frontend](../../app/server/api.md).
+
 ## Runtime Resources
 
 The release GGUF includes model weights, config, vocabulary, all voice packs,
@@ -113,7 +144,7 @@ package.
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--language` | language code | voice prefix | Language selection precedence: voice-style language, transcript language (CLI --language), request-option language, then voice prefix. Must match the selected voice. |
-| `--voice-id` | voice ID listed above | `af_heart` | Built-in voice pack. |
+| `--voice-id` | voice ID or blend expression | `af_heart` | Built-in voice pack or normalized blend. |
 | `--seed` | integer | random | Decoder noise seed for the current request; omitted requests choose a fresh random seed. |
 | `--speaking-rate` | positive float | `1.0` | Speech speed multiplier. |
 | `--text-chunk-size` | integer chars | `240` | Long-form chunk size. |
@@ -124,7 +155,7 @@ package.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `voice_id` | packaged voice ID | `af_heart` | Built-in voice pack, also selectable with `--voice-id`. |
+| `voice_id` | packaged voice ID or blend expression | `af_heart` | Built-in voice pack or normalized blend, also selectable with `--voice-id`. |
 | `language` | language code | voice prefix | Language selection precedence: voice-style language, transcript language (CLI --language), request-option language, then voice prefix. Must match the selected voice. |
 | `seed` | integer | random | Decoder noise seed for the current request; omitted requests choose a fresh random seed. |
 | `speed` | positive float | `1.0` | Speech speed multiplier; default 1.0. Must be finite and positive. |

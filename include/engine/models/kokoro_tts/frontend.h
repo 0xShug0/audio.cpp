@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace engine::models::kokoro_tts {
@@ -23,7 +24,7 @@ struct KokoroSynthesisInput {
 struct KokoroFrontendSessionState {
     std::string voice_id;
     std::string language_code;
-    const KokoroVoicePack * voice_pack = nullptr;
+    std::vector<std::pair<const KokoroVoicePack *, double>> voices;
     float speaking_rate = 1.0f;
 };
 

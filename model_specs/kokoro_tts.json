@@ -27,7 +27,7 @@
       {
         "name": "language",
         "type": "string",
-        "description": "Language selection precedence: voice-style language, transcript language (CLI --language), request-option language, then voice prefix. Must match the selected voice.",
+        "description": "Language selection precedence: voice-style language, transcript language (CLI --language), request-option language, then voice prefix. Must match the first voice in a blend.",
         "required": false
       },
       {

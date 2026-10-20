@@ -5,8 +5,12 @@
 #include "engine/framework/debug/trace.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cmath>
 #include <cstring>
+#include <regex>
+#include <sstream>
 #include <stdexcept>
 
 namespace engine::models::kokoro_tts {
@@ -65,18 +69,55 @@ std::string voice_language_code(const std::string & voice_id) {
 }
 
 std::string resolve_voice_id(
-    const std::optional<runtime::VoiceCondition> & voice,
-    const KokoroAssets & assets) {
+    const std::optional<runtime::VoiceCondition> & voice) {
     std::string voice_id = default_voice_id();
     if (voice.has_value() && voice->speaker.has_value() && voice->speaker->cached_voice_id.has_value()) {
         voice_id = *voice->speaker->cached_voice_id;
     }
-    if (assets.voices.find(voice_id) == assets.voices.end()) {
-        throw std::runtime_error("unknown Kokoro voice id: " + voice_id);
-    }
-    const std::string language_code = voice_language_code(voice_id);
-    (void) resolve_language_code_alias(language_code);
     return voice_id;
+}
+
+std::vector<std::pair<const KokoroVoicePack *, double>> resolve_voice_blend(
+    const std::string & expression,
+    const KokoroAssets & assets) {
+    if (const auto it = assets.voices.find(expression); it != assets.voices.end()) {
+        return {{&it->second, 1.0}};
+    }
+    static const std::regex component(R"(\s*([^+()\s]+)\s*(?:\(([^()]*)\)\s*)?)");
+    std::vector<std::pair<const KokoroVoicePack *, double>> voices;
+    double total_weight = 0.0;
+    auto begin = expression.begin();
+    while (begin != expression.end()) {
+        std::match_results<std::string::const_iterator> match;
+        if (!std::regex_search(begin, expression.end(), match, component, std::regex_constants::match_continuous)) {
+            throw std::runtime_error("invalid Kokoro voice blend: " + expression);
+        }
+        const auto id = match[1].str();
+        const auto it = assets.voices.find(id);
+        if (it == assets.voices.end()) {
+            throw std::runtime_error("unknown Kokoro voice id: " + id);
+        }
+        double weight = 1.0;
+        if (match[2].matched) {
+            std::istringstream number(trim_ascii(match[2].str()));
+            if (!(number >> weight) || number.peek() != std::char_traits<char>::eof() ||
+                !std::isfinite(weight) || weight < 0.0) {
+                throw std::runtime_error("Kokoro voice weights must be finite and nonnegative: " + expression);
+            }
+        }
+        voices.emplace_back(&it->second, weight);
+        total_weight += weight;
+        begin = match[0].second;
+        if (begin == expression.end()) break;
+        if (*begin++ != '+' || begin == expression.end()) {
+            throw std::runtime_error("invalid Kokoro voice blend: " + expression);
+        }
+    }
+    if (!std::isfinite(total_weight) || total_weight <= 0.0) {
+        throw std::runtime_error("Kokoro voice weights must have a positive finite sum: " + expression);
+    }
+    for (auto & entry : voices) entry.second /= total_weight;
+    return voices;
 }
 
 std::string resolve_language_code(
@@ -237,13 +278,9 @@ KokoroFrontendSessionState resolve_kokoro_frontend_session_state(
         transcript = *text;
     }
     KokoroFrontendSessionState state;
-    state.voice_id = resolve_voice_id(voice, assets);
-    state.language_code = resolve_language_code(transcript, voice, state.voice_id);
-    const auto voice_it = assets.voices.find(state.voice_id);
-    if (voice_it == assets.voices.end()) {
-        throw std::runtime_error("unknown Kokoro voice id: " + state.voice_id);
-    }
-    state.voice_pack = &voice_it->second;
+    state.voice_id = resolve_voice_id(voice);
+    state.voices = resolve_voice_blend(state.voice_id, assets);
+    state.language_code = resolve_language_code(transcript, voice, state.voices.front().first->id);
     state.speaking_rate = resolve_speaking_rate(voice);
     return state;
 }
@@ -253,7 +290,7 @@ KokoroSynthesisInput build_kokoro_synthesis_input(
     const KokoroFrontendSessionState & state,
     const KokoroAssets & assets,
     std::optional<std::string_view> phoneme_override) {
-    if (state.voice_pack == nullptr) {
+    if (state.voices.empty()) {
         throw std::runtime_error("Kokoro frontend session voice pack was not prepared");
     }
     const bool supplied = phoneme_override.has_value();
@@ -284,7 +321,16 @@ KokoroSynthesisInput build_kokoro_synthesis_input(
     input.language_code = state.language_code;
     input.phonemes = phonemes;
     input.input_ids = encoded.ids;
-    input.style = style_for_phoneme_count(*state.voice_pack, encoded.phoneme_count);
+    if (state.voices.size() == 1) {
+        input.style = style_for_phoneme_count(*state.voices.front().first, encoded.phoneme_count);
+    } else {
+        std::array<double, 256> blended{};
+        for (const auto & [pack, weight] : state.voices) {
+            const auto style = style_for_phoneme_count(*pack, encoded.phoneme_count);
+            for (size_t i = 0; i < blended.size(); ++i) blended[i] += weight * style[i];
+        }
+        input.style.assign(blended.begin(), blended.end());
+    }
     input.speaking_rate = state.speaking_rate;
     if (static_cast<int64_t>(input.input_ids.size()) > assets.context_length) {
         throw std::runtime_error("Kokoro tokenized input exceeds model context length");
