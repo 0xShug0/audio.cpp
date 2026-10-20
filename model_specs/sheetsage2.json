@@ -37,6 +37,14 @@
     ],
     "session": [
       {
+        "name": "attention_tile_rows",
+        "type": "int",
+        "description": "Query rows per encoder attention tile on any backend; 0 disables tiling. Use 1024 to bound each score tensor below 512 MiB for the 300-second window.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
         "name": "weight_type",
         "type": "enum",
         "description": "Encoder and decoder weight storage override.",

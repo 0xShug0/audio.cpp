@@ -643,7 +643,8 @@ core::TensorValue encoder_attention(
     const core::TensorValue & cos,
     const core::TensorValue & sin,
     const SheetSage2AttentionWeights & weights,
-    const SheetSage2DecoderConfig & config) {
+    const SheetSage2DecoderConfig & config,
+    int64_t query_tile_rows) {
     const int64_t head_dim = config.encoder_hidden_size / config.encoder_attention_heads;
     auto q = modules::LinearModule({config.encoder_hidden_size, config.encoder_hidden_size, true}).build(ctx, hidden, weights.q_proj);
     auto k = modules::LinearModule({config.encoder_hidden_size, config.encoder_hidden_size, true}).build(ctx, hidden, weights.k_proj);
@@ -653,12 +654,28 @@ core::TensorValue encoder_attention(
     v = split_heads(ctx, v, config.encoder_attention_heads, head_dim);
     q = modules::SplitRoPEModule({head_dim}).build(ctx, q, cos, sin);
     k = modules::SplitRoPEModule({head_dim}).build(ctx, k, cos, sin);
-    auto context = modules::ScaledDotProductAttentionModule({
+    const modules::ScaledDotProductAttentionModule attention({
         head_dim,
         modules::ScaledDotProductAttentionLowering::Explicit,
         GGML_PREC_F32,
         modules::AttentionCausality::NonCausal,
-    }).build(ctx, q, k, v);
+    });
+    core::TensorValue context;
+    // The padded 300-second window has 7,500 positions: full FP32 attention
+    // scores occupy 3.6 GB, exceeding some Vulkan devices' per-buffer limit.
+    // Explicit tiling splits only query rows on any backend; every row still
+    // attends to all keys and values. Zero retains the original full attention.
+    if (query_tile_rows > 0 && q.shape.dims[2] > query_tile_rows) {
+        for (int64_t first = 0; first < q.shape.dims[2]; first += query_tile_rows) {
+            const int64_t rows = std::min(query_tile_rows, q.shape.dims[2] - first);
+            auto query = modules::SliceModule({2, first, rows}).build(ctx, q);
+            query = core::ensure_backend_addressable_layout(ctx, query);
+            auto tile = attention.build(ctx, query, k, v);
+            context = context.valid() ? modules::ConcatModule({1}).build(ctx, context, tile) : tile;
+        }
+    } else {
+        context = attention.build(ctx, q, k, v);
+    }
     context = merge_heads(ctx, context, config.encoder_hidden_size);
     return modules::LinearModule({config.encoder_hidden_size, config.encoder_hidden_size, true}).build(ctx, context, weights.out_proj);
 }
@@ -681,7 +698,8 @@ core::TensorValue conformer_layer(
     const core::TensorValue & sin,
     const core::TensorValue & half,
     const SheetSage2EncoderLayerWeights & weights,
-    const SheetSage2DecoderConfig & config) {
+    const SheetSage2DecoderConfig & config,
+    int64_t attention_tile_rows) {
     auto hidden = modules::LayerNormModule({config.encoder_hidden_size, config.encoder_layer_norm_eps, true, true}).build(ctx, input, weights.ffn1_norm);
     hidden = feed_forward(ctx, hidden, weights.ffn1_w1, weights.ffn1_w2, config);
     auto out = modules::ResidualAddModule().build(
@@ -689,7 +707,7 @@ core::TensorValue conformer_layer(
         modules::MulModule().build(ctx, hidden, modules::RepeatModule({hidden.shape}).build(ctx, half)),
         input);
     hidden = modules::LayerNormModule({config.encoder_hidden_size, config.encoder_layer_norm_eps, true, true}).build(ctx, out, weights.attn_norm);
-    hidden = encoder_attention(ctx, hidden, cos, sin, weights.attn, config);
+    hidden = encoder_attention(ctx, hidden, cos, sin, weights.attn, config, attention_tile_rows);
     out = modules::ResidualAddModule().build(ctx, hidden, out);
     hidden = modules::LayerNormModule({config.encoder_hidden_size, config.encoder_layer_norm_eps, true, true}).build(ctx, out, weights.conv_norm);
     hidden = modules::TransposeModule({{0, 2, 1, 3}, hidden.shape.rank}).build(ctx, hidden);
@@ -731,6 +749,9 @@ struct Mert2EncoderRuntime::Impl {
           options(options) {
         if (!this->source) {
             throw std::runtime_error("MERT2 encoder runtime requires tensor source");
+        }
+        if (options.attention_tile_rows < 0) {
+            throw std::runtime_error("SheetSage2 attention_tile_rows must be nonnegative");
         }
         validate_config(this->config);
     }
@@ -887,7 +908,8 @@ private:
                 rope_sin_,
                 weights_.half,
                 weights_.layers[static_cast<size_t>(i)],
-                config_);
+                config_,
+                options_.attention_tile_rows);
             const auto layer_weight = modules::RepeatModule({hidden.shape}).build(
                 ctx,
                 weights_.layer_weights[static_cast<size_t>(i + 1)]);
