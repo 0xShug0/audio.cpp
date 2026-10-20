@@ -11,6 +11,7 @@
 #include "engine/models/omnivoice/tokenizer_text.h"
 
 #include <cstddef>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -103,6 +104,7 @@ private:
     int64_t stream_chunk_codebooks_ = 0;
     bool stream_started_ = false;
     bool stream_has_reference_audio_ = false;
+    std::chrono::steady_clock::time_point stream_wall_start_;
 };
 
 }  // namespace engine::models::omnivoice

@@ -131,7 +131,9 @@ core::TensorValue attention_from_heads(
     if (perf_mode == OmniVoiceGeneratorPerfMode::FlashAttention) {
         return modules::ScaledDotProductAttentionModule({
             dim,
-            modules::ScaledDotProductAttentionLowering::Flash,
+            ctx.backend_type == core::BackendType::Cuda
+                ? modules::ScaledDotProductAttentionLowering::FlashPreserveViews
+                : modules::ScaledDotProductAttentionLowering::Flash,
             GGML_PREC_F32,
             modules::AttentionCausality::NonCausal,
         }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
@@ -1391,7 +1393,7 @@ OmniVoiceGeneratedAudioTokens OmniVoiceQwen3DiffusionRuntime::generate(
         }
         ++executed_steps;
 
-        const auto batched_logits = impl_->forward_graph->compute_logits(compute_ms, readback_ms);
+        const auto & batched_logits = impl_->forward_graph->compute_logits(compute_ms, readback_ms);
         struct Candidate {
             float score = -std::numeric_limits<float>::infinity();
             int32_t predicted = 0;
