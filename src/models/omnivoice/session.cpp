@@ -557,6 +557,7 @@ void OmniVoiceSession::start_stream(const runtime::TaskRequest & request) {
         throw std::runtime_error("OmniVoice start_stream requires a streaming session");
     }
     reset();
+    stream_wall_start_ = Clock::now();
     initialize_streaming_request(request);
     stream_started_ = true;
 }
@@ -578,6 +579,10 @@ std::optional<runtime::StreamEvent> OmniVoiceSession::next_stream_event() {
         std::move(chunk_audio),
         {},
     });
+    if (chunk_index == 0) {
+        engine::debug::timing_log_scalar(
+            "omnivoice.session.first_audio_ms", engine::debug::elapsed_ms(stream_wall_start_, Clock::now()));
+    }
     return event;
 }
 
@@ -594,6 +599,7 @@ runtime::TaskResult OmniVoiceSession::finish_stream() {
     runtime::TaskResult task_result;
     const auto result = postprocessor_.finalize(stream_merged_audio_, *stream_request_);
     task_result.audio_output = result.audio;
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_, Clock::now()));
     reset();
     return task_result;
 }
@@ -826,7 +832,13 @@ runtime::AudioBuffer OmniVoiceSession::synthesize_stream_chunk(size_t chunk_inde
     }
 
     const auto chunk_prompt = prompt_builder_.build(chunk_request);
+    const auto generate_start = Clock::now();
     auto chunk_tokens = generator_.generate(chunk_prompt, chunk_request.generation);
+    engine::debug::timing_log_scalar("omnivoice.session.generate_ms", engine::debug::elapsed_ms(generate_start, Clock::now()));
+    engine::debug::timing_log_scalar("omnivoice.generator.compute_ms", chunk_tokens.compute_ms);
+    engine::debug::timing_log_scalar("omnivoice.generator.readback_ms", chunk_tokens.readback_ms);
+    engine::debug::timing_log_scalar("omnivoice.generator.scoring_ms", chunk_tokens.scoring_ms);
+    engine::debug::timing_log_scalar("omnivoice.generator.graph.rebuild_ms", generator_.last_stats().rebuild_ms);
     if (mem_saver_) {
         generator_.release_runtime_graphs();
     }
@@ -843,7 +855,9 @@ runtime::AudioBuffer OmniVoiceSession::synthesize_stream_chunk(size_t chunk_inde
         stream_first_chunk_reference_ = std::move(chunk_ref);
         stream_first_chunk_text_ = stream_text_chunks_.front();
     }
+    const auto decode_start = Clock::now();
     auto chunk_audio = audio_tokenizer_.decode_audio_tokens(chunk_tokens);
+    engine::debug::timing_log_scalar("omnivoice.session.decode_ms", engine::debug::elapsed_ms(decode_start, Clock::now()));
     if (mem_saver_) {
         audio_tokenizer_.release_runtime_graphs();
     }
