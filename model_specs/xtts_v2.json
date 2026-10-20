@@ -128,7 +128,7 @@
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "mirek190/audio.cpp"
+        "repo": "onicubag/xTTSv2-GGUF"
       }
     },
     {
@@ -144,7 +144,7 @@
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "mirek190/audio.cpp"
+        "repo": "onicubag/xTTSv2-GGUF"
       }
     },
     {
@@ -160,7 +160,7 @@
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "mirek190/audio.cpp"
+        "repo": "onicubag/xTTSv2-GGUF"
       }
     }
   ],

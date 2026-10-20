@@ -969,6 +969,17 @@ bool XttSv2GptEngine::load(const std::filesystem::path& gpt_path, const std::fil
         impl_->hp.stop_mel_token = (int)kv_u32(gu, "xtts.gpt.stop_mel_token", 1025);
         impl_->hp.cond_latents = (int)kv_u32(gu, "xtts.gpt.condition_num_latent", 32);
         impl_->hp.code_stride = (int)kv_u32(gu, "xtts.gpt.code_stride_len", 1024);
+        // Mel normalization stats embedded in GGUF metadata (xtts.mel_stats, 80 F32 array).
+        {
+            int ki = gguf_find_key(gu, "xtts.mel_stats");
+            if (ki >= 0 && gguf_get_kv_type(gu, ki) == GGUF_TYPE_ARRAY &&
+                gguf_get_arr_type(gu, ki) == GGUF_TYPE_FLOAT32) {
+                int n = gguf_get_arr_n(gu, ki);
+                const float* d = static_cast<const float*>(gguf_get_arr_data(gu, ki));
+                impl_->mel_norms.assign(d, d + n);
+                fprintf(stderr, "xtts_v2: mel_norms loaded from GGUF metadata (%d values)\n", n);
+            }
+        }
         gguf_free(gu);
     }
     if (!xtts_bind_tensors(impl_->model, impl_->gpt_wl.tensors, impl_->hp)) return false;
@@ -976,15 +987,6 @@ bool XttSv2GptEngine::load(const std::filesystem::path& gpt_path, const std::fil
         impl_->vocab.merges.resize(impl_->hp.text_vocab);
     }
     impl_->graph_ctx = ggml_init({1 << 24, nullptr, false});
-    // Conditioning mel stats live next to the GGUF (mel_norms.bin, 80 F32).
-    std::filesystem::path mn = gpt_path.parent_path() / "mel_norms.bin";
-    if (FILE* f = fopen(mn.string().c_str(), "rb")) {
-        impl_->mel_norms.resize(80);
-        size_t rd = fread(impl_->mel_norms.data(), 4, 80, f);
-        fclose(f);
-        if (rd != 80) impl_->mel_norms.clear();
-        else fprintf(stderr, "xtts_v2: mel_norms loaded from %s (80 values)\n", mn.string().c_str());
-    }
     return true;
 }
 

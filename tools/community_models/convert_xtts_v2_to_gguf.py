@@ -46,6 +46,10 @@ Notes:
     - 15 tensors with unusual shapes (non-32-aligned columns) fall back to F16.
     - The tconv1d() function in gpt.cpp handles quantized types via
       ggml_get_type_traits()->to_float for dequantization.
+    - WARNING: ik_llama.cpp (llama.cpp fork) around commit c40d4a7728cb5324e194be9ebd0c4d496ff41c2f
+      has been observed to produce incorrect quantized GGUFs for xTTS v2 models.
+      The resulting files may cause truncated audio output. Use the upstream
+      llama.cpp llama-quantize binary instead.
 """
 
 import sys, os, json
@@ -128,6 +132,9 @@ def write_gpt_gguf(model, cfg, vocab_path, output_path, original_path=None):
         ("xtts.output_sample_rate",_g('output_sample_rate',24000)),
         ("xtts.output_hop_length",_g('output_hop_length',256)),
     ]: _kv(w,k,v)
+    # Embed mel normalization stats directly in the GGUF (80 float32 values)
+    ms = model.mel_stats.detach().cpu().numpy().tolist()
+    w.add_array("xtts.mel_stats", ms)
 
     # Tokenizer
     with open(vocab_path) as f: vd=json.load(f)
@@ -478,11 +485,7 @@ def main():
     print("Converting Vocoder...")
     write_vocoder_gguf(model, cfg, os.path.join(od, "xtts-v2-vocoder-f16.gguf"), orig_voc)
 
-    # mel_norms
-    ms = model.mel_stats.detach().cpu().numpy()
-    with open(os.path.join(od, "mel_norms.bin"), "wb") as f:
-        f.write(ms.tobytes())
-    print(f"  Written: {os.path.join(od, 'mel_norms.bin')} (80 floats)")
+    # mel_stats are now embedded in the GPT GGUF (xtts.mel_stats key)
 
     print("Done.")
 

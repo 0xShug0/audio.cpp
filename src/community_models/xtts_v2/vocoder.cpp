@@ -457,21 +457,35 @@ std::vector<float> XttSv2Vocoder::generate(const float* latent, int T, const flo
     if (!impl_ || !latent || T <= 0) return {};
     auto& c = *impl_;
     // Reference HifiDecoder.forward: TWO chained linear interpolates (align_corners=False):
-    //   1) scale_factor = ar_mel_length_compression / output_hop_length = 1024/256 = 4
-    //   2) scale_factor = output_sample_rate / input_sample_rate = 24000/22050 = 1.08844
-    // Total: 4.35374x. Each GPT code (1024 samples @ 22050 = 46.4ms) becomes
-    // 4*24000/22050 = 4.354 vocoder frames (hop 256 @ 24kHz), so output duration matches.
-    const double scale_total = 4.0 * (24000.0 / 22050.0);
-    int Tu = (int)(T * scale_total);
+    //   Stage 1) scale_factor = ar_mel_length_compression / output_hop_length = 1024/256 = 4
+    //   Stage 2) scale_factor = output_sample_rate / input_sample_rate = 24000/22050
+    // PyTorch align_corners=False: output len = floor(input * scale),
+    //   src_pos = (dst + 0.5) / scale - 0.5
+    // These must NOT be fused into one: the intermediate discrete length matters.
+    const double s1 = 4.0;
+    const double s2 = 24000.0 / 22050.0;
+    int T1 = (int)(T * s1);
+    std::vector<float> stage1(1024 * T1, 0);
+    for (int ch = 0; ch < 1024; ch++)
+        for (int to = 0; to < T1; to++) {
+            float pos = (float)((to + 0.5) / s1 - 0.5);
+            if (pos < 0) pos = 0;
+            if (pos > T - 1) pos = T - 1;
+            int t0 = (int)pos, t1 = std::min(t0 + 1, T - 1);
+            float f = pos - t0;
+            stage1[(size_t)ch * T1 + to] = latent[(size_t)ch * T + t0] * (1.0f - f) + latent[(size_t)ch * T + t1] * f;
+        }
+    int Tu = (int)(T1 * s2);
     std::vector<float> ups(1024 * Tu, 0);
-    for (int ch = 0; ch < 1024; ch++) for (int to = 0; to < Tu; to++) {
-        float pos = (float)((to + 0.5) / scale_total - 0.5);
-        if (pos < 0) pos = 0;
-        if (pos > T - 1) pos = T - 1;
-        int t0 = (int)pos, t1 = std::min(t0 + 1, T - 1);
-        float f = pos - t0;
-        ups[(size_t)ch * Tu + to] = latent[(size_t)ch * T + t0] * (1.0f - f) + latent[(size_t)ch * T + t1] * f;
-    }
+    for (int ch = 0; ch < 1024; ch++)
+        for (int to = 0; to < Tu; to++) {
+            float pos = (float)((to + 0.5) / s2 - 0.5);
+            if (pos < 0) pos = 0;
+            if (pos > T1 - 1) pos = T1 - 1;
+            int t0 = (int)pos, t1 = std::min(t0 + 1, T1 - 1);
+            float f = pos - t0;
+            ups[(size_t)ch * Tu + to] = stage1[(size_t)ch * T1 + t0] * (1.0f - f) + stage1[(size_t)ch * T1 + t1] * f;
+        }
     size_t need = 128 * 1024 * 1024;
     if (c.compute_meta.size() < need) c.compute_meta.resize(need);
     ggml_context* ctx0 = ggml_init({need, c.compute_meta.data(), true});
@@ -482,27 +496,38 @@ std::vector<float> XttSv2Vocoder::generate(const float* latent, int T, const flo
         ggml_set_name(spk_t, "speaker_emb"); ggml_set_input(spk_t);
     }
     ggml_cgraph* gf = build_hifigan(ctx0, c.tensors, Tu, spk_emb != nullptr, spk_t);
-    // Allocate input tensors
+    // Allocate input tensors (tracked for cleanup)
+    ggml_backend_buffer_t vin_buf = nullptr;
+    ggml_backend_buffer_t spk_buf = nullptr;
     { ggml_tensor* vin = ggml_graph_get_tensor(gf, "voc_input");
-      vin->buffer = ggml_backend_alloc_buffer(c.backend_cpu, ggml_nbytes(vin));
-      vin->data = (void*)ggml_backend_buffer_get_base(vin->buffer);
+      vin_buf = ggml_backend_alloc_buffer(c.backend_cpu, ggml_nbytes(vin));
+      vin->buffer = vin_buf;
+      vin->data = (void*)ggml_backend_buffer_get_base(vin_buf);
       ggml_backend_tensor_set(vin, ups.data(), 0, ggml_nbytes(vin)); }
     if (spk_t) {
-        spk_t->buffer = ggml_backend_alloc_buffer(c.backend_cpu, ggml_nbytes(spk_t));
-        spk_t->data = (void*)ggml_backend_buffer_get_base(spk_t->buffer);
+        spk_buf = ggml_backend_alloc_buffer(c.backend_cpu, ggml_nbytes(spk_t));
+        spk_t->buffer = spk_buf;
+        spk_t->data = (void*)ggml_backend_buffer_get_base(spk_buf);
         ggml_backend_tensor_set(spk_t, spk_emb, 0, 512 * sizeof(float));
     }
     ggml_gallocr_t ga = ggml_gallocr_new(ggml_backend_get_default_buffer_type(c.backend_cpu));
-    if (!ga || !ggml_gallocr_reserve(ga, gf)) { if (ga) ggml_gallocr_free(ga); ggml_free(ctx0); return {}; }
+    if (!ga || !ggml_gallocr_reserve(ga, gf)) {
+        ggml_backend_buffer_free(vin_buf); ggml_backend_buffer_free(spk_buf);
+        if (ga) ggml_gallocr_free(ga); ggml_free(ctx0); return {}; }
     if (!ggml_gallocr_alloc_graph(ga, gf) ||
         ggml_backend_graph_compute(c.backend_cpu, gf) != GGML_STATUS_SUCCESS) {
+        ggml_backend_buffer_free(vin_buf); ggml_backend_buffer_free(spk_buf);
         ggml_gallocr_free(ga); ggml_free(ctx0); return {};
     }
     ggml_tensor* out = ggml_graph_node(gf, ggml_graph_n_nodes(gf) - 1);
     int64_t Ta = out->ne[0];
-    if (Ta <= 0) { ggml_gallocr_free(ga); ggml_free(ctx0); return {}; }
+    if (Ta <= 0) {
+        ggml_backend_buffer_free(vin_buf); ggml_backend_buffer_free(spk_buf);
+        ggml_gallocr_free(ga); ggml_free(ctx0); return {}; }
     std::vector<float> result(Ta);
     ggml_backend_tensor_get(out, result.data(), 0, Ta * sizeof(float));
+    ggml_backend_buffer_free(vin_buf);
+    ggml_backend_buffer_free(spk_buf);
     ggml_gallocr_free(ga); ggml_free(ctx0);
     return result;
 }
