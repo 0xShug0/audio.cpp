@@ -124,6 +124,17 @@ public:
             if (bias) projection.bias = parameter(prefix + ".bias", core::TensorShape::from_dims({out}));
             modules::LinearConfig config{input.shape.last_dim(), out, bias, GGML_PREC_F32};
             config.vulkan_f32_activation_lowering = execution.backend_type() == core::BackendType::Vulkan && preserve_f32_inputs;
+            if (execution.backend_type() == core::BackendType::Metal && preserve_f32_inputs) {
+                // Metal's matrix kernel narrows operands to FP16. Batches <= 8
+                // use the vector kernel, preserving the Perceiver's FP32 range.
+                core::TensorValue result;
+                for (int64_t row = 0; row < input.shape.at(0); row += 8) {
+                    auto rows = modules::SliceModule({0, row, std::min<int64_t>(8, input.shape.at(0) - row)}).build(build, input);
+                    auto projected = modules::LinearModule(config).build(build, rows, projection);
+                    result = row == 0 ? projected : modules::ConcatModule({0}).build(build, result, projected);
+                }
+                return result;
+            }
             return modules::LinearModule(config).build(build, input, projection);
         };
         input_ = ggml_new_tensor_2d(ctx_, GGML_TYPE_F32, 80, frames);
@@ -201,6 +212,16 @@ public:
                 ggml_mul_mat_set_prec(context.tensor, GGML_PREC_F32);
                 ggml_mul_mat_set_lowering(context.tensor, GGML_MUL_MAT_LOWERING_VULKAN_F32_INPUTS);
                 context = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(build, context);
+            } else if (execution.backend_type() == core::BackendType::Metal) {
+                // Each query is independent; keep both attention products on
+                // Metal's full-range vector path without changing softmax.
+                const modules::ScaledDotProductAttentionModule attention({dim_head,
+                    modules::ScaledDotProductAttentionLowering::Explicit});
+                for (int row = 0; row < N; row += 8) {
+                    auto queries = modules::SliceModule({2, row, std::min(8, N - row)}).build(build, q);
+                    auto values = attention.build(build, queries, k, v);
+                    context = row == 0 ? values : modules::ConcatModule({1}).build(build, context, values);
+                }
             } else {
                 context = modules::ScaledDotProductAttentionModule({dim_head,
                     modules::ScaledDotProductAttentionLowering::Explicit}).build(build, q, k, v);
