@@ -1,6 +1,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/models/sheetsage/runtime.h"
 
 #include <algorithm>
@@ -115,19 +116,40 @@ void compare(const std::vector<float> & got, const std::vector<float> & ref) {
 
 int main(int argc, char ** argv) {
     try {
+        engine::debug::configure_logging({std::any_of(argv + 1, argv + argc,
+            [](const char * arg) { return std::string(arg) == "--log"; })});
         const auto model = std::filesystem::path(require_arg(argc, argv, "--model"));
-        const auto mixed_path = std::filesystem::path(require_arg(argc, argv, "--mixed"));
-        const auto ids_path = std::filesystem::path(require_arg(argc, argv, "--ids"));
         const auto output_path = std::filesystem::path(optional_arg(argc, argv, "--output", ""));
         const auto reference_path = std::filesystem::path(optional_arg(argc, argv, "--reference", ""));
-        const int64_t memory_steps = require_i64(argc, argv, "--memory-steps");
         const int threads = static_cast<int>(std::stoll(optional_arg(argc, argv, "--threads", "8")));
         engine::core::ExecutionContext execution({parse_backend(optional_arg(argc, argv, "--backend", "cpu")), 0, threads});
         auto source = engine::assets::open_tensor_source(resolve_tensor_file(model));
-        engine::models::sheetsage::SheetSage2DecoderRuntime runtime(source, execution);
-        const auto mixed = read_binary<float>(mixed_path);
-        const auto ids = read_binary<int32_t>(ids_path);
-        const auto logits = runtime.decode_logits(mixed, memory_steps, ids);
+        std::vector<float> logits;
+        const auto component = optional_arg(argc, argv, "--component", "decoder");
+        const auto started = std::chrono::steady_clock::now();
+        if (component == "encoder") {
+            const auto mel = read_binary<float>(require_arg(argc, argv, "--mel"));
+            const int64_t mel_frames = require_i64(argc, argv, "--mel-frames");
+            const int64_t runs = std::stoll(optional_arg(argc, argv, "--runs", "1"));
+            if (runs <= 0) throw std::runtime_error("--runs must be positive");
+            engine::models::sheetsage::SheetSage2DecoderRuntimeOptions options;
+            options.attention_tile_rows = std::stoll(optional_arg(argc, argv, "--attention-tile-rows", "0"));
+            engine::models::sheetsage::Mert2EncoderRuntime runtime(source, execution, {}, options);
+            runtime.prepare(1, mel_frames);
+            for (int64_t run = 0; run < runs; ++run) {
+                const auto begin = std::chrono::steady_clock::now();
+                logits = runtime.encode_mel(mel, mel_frames);
+                engine::debug::timing_log_scalar("sheetsage2.encoder.total_ms", engine::debug::elapsed_ms(begin));
+            }
+        } else if (component == "decoder") {
+            engine::models::sheetsage::SheetSage2DecoderRuntime runtime(source, execution);
+            const auto mixed = read_binary<float>(require_arg(argc, argv, "--mixed"));
+            const auto ids = read_binary<int32_t>(require_arg(argc, argv, "--ids"));
+            logits = runtime.decode_logits(mixed, require_i64(argc, argv, "--memory-steps"), ids);
+        } else {
+            throw std::runtime_error("--component must be encoder or decoder");
+        }
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         if (!output_path.empty()) {
             write_f32(output_path, logits);
         }

@@ -37,6 +37,7 @@ struct SheetSage2DecoderRuntimeOptions {
     size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
     size_t weight_context_bytes = 1024ull * 1024ull * 1024ull;
     assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
+    int64_t attention_tile_rows = 0;
 };
 
 }  // namespace engine::models::sheetsage

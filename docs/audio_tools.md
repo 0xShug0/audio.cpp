@@ -525,6 +525,25 @@ audiocpp_cli --task midi --family sheetsage2 \
 Use the original-precision package; Q8 is not supported. The resulting score can
 condition [YuE2](models/yue2.md) through `abc_file` with `cot=melody` or `cot=full`.
 
+### Encoder attention memory
+
+| Session option | Values | Default | Description |
+|---|---|---|---|
+| `sheetsage2.attention_tile_rows` | integer >= 0 | `0` | Maximum query rows per encoder attention tile on any backend. `0` disables tiling and retains full attention. |
+
+If Vulkan reports that a requested buffer exceeds the device limit, add this
+option to the command above:
+
+```bash
+--session-option sheetsage2.attention_tile_rows=1024
+```
+
+The published model pads audio to a 300-second window, so even short inputs can
+require a 3.6 GB full attention score tensor. Setting `1024` keeps each score
+tensor below 512 MiB while retaining all keys and values, FP32 attention, and the
+full window. This bounds individual score tensors, not total GPU memory. Tiling
+can reduce throughput; it is opt-in on CPU, CUDA, Vulkan, and Metal.
+
 ## VeVo2
 
 VeVo2 covers speech, singing, voice conversion, singing conversion, and editing routes. See [VeVo2](models/vevo2.md) for the full route manual.
