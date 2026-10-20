@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "family": "xtts_v2",
+  "display_name": "XTTS v2",
+  "description": "Coqui XTTS v2 cross-lingual text-to-speech with voice cloning: GPT-2 mel-code generator, perceiver conditioning resampler, HiFi-GAN decoder, and speaker encoder.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "es",
+    "fr",
+    "de",
+    "it",
+    "pt",
+    "pl",
+    "tr",
+    "ru",
+    "nl",
+    "cs",
+    "ar",
+    "zh-cn",
+    "hu",
+    "ko",
+    "ja",
+    "hi"
+  ],
+  "capabilities": {
+    "tts": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Source language for text conditioning (e.g. 'en'); also selects tokenizer normalization.",
+        "required": false,
+        "default": "en"
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "AR sampling temperature; official default 0.75.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.75
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "AR top-k sampling; official default 50.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "AR nucleus sampling threshold; official default 0.85.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.85
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "AR repetition penalty; official default 10.0.",
+        "required": false,
+        "min": 1.0,
+        "default": 10.0
+      },
+      {
+        "name": "max_mel_tokens",
+        "type": "int",
+        "description": "Maximum mel codes to generate; official default 605.",
+        "required": false,
+        "min": 1,
+        "default": 605
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted selects a random seed.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per framework text chunk; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "preset": "text_chunk_mode_full",
+        "required": false,
+        "default": "word_budget"
+      }
+    ],
+    "session": [
+      {
+        "name": "conditionals_cache_slots",
+        "type": "int",
+        "description": "Prepared voice-conditioning cache slots; 0 disables caching.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "vocoder": "model:xtts-v2-vocoder-f16.gguf"
+      },
+      "tensors": {
+        "gpt_weights": {
+          "source": "weights:"
+        },
+        "vocoder_weights": {
+          "source": "model:xtts-v2-vocoder-f16.gguf"
+        }
+      }
+    }
+  ],
+  "packages": [
+    {
+      "id": "xtts_v2_gguf_q8_0",
+      "display_name": "XTTS v2 GGUF (Q8_0)",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "XTTS-v2-Q8",
+      "files": [
+        "q8_0/xtts-v2-gpt-q8_0.gguf",
+        "q8_0/xtts-v2-vocoder-f16.gguf",
+        "q8_0/mel_norms.bin"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "onicubag/xTTSv2-GGUF"
+      },
+      "strip_prefix": "q8_0"
+    },
+    {
+      "id": "xtts_v2_gguf",
+      "display_name": "XTTS v2 GGUF (Original)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "XTTS-v2",
+      "files": [
+        "xtts-v2-gpt.gguf",
+        "xtts-v2-vocoder-f16.gguf",
+        "mel_norms.bin"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "onicubag/xTTSv2-GGUF"
+      }
+    },
+    {
+      "id": "xtts_v2_gguf_q4_k_m",
+      "display_name": "XTTS v2 GGUF (Q4_K_M)",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_k_m",
+      "target_directory": "XTTS-v2-Q4_K_M",
+      "files": [
+        "q4_k_m/xtts-v2-gpt-q4_k_m.gguf",
+        "q4_k_m/xtts-v2-vocoder-f16.gguf",
+        "q4_k_m/mel_norms.bin"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "onicubag/xTTSv2-GGUF"
+      },
+      "strip_prefix": "q4_k_m"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/xtts_v2.md"
+    ],
+    "recommended_package": "xtts_v2_gguf_q8_0"
+  }
+}

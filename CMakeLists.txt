@@ -2619,6 +2619,21 @@ audiocpp_add_model(lfm2_audio
         engine::community_models::lfm2_audio::make_lfm2_audio_loader
 )
 
+audiocpp_add_model(xtts_v2
+    SOURCES
+        src/community_models/xtts_v2/assets.cpp
+        src/community_models/xtts_v2/frontend.cpp
+        src/community_models/xtts_v2/gpt.cpp
+        src/community_models/xtts_v2/loader.cpp
+        src/community_models/xtts_v2/session.cpp
+        src/community_models/xtts_v2/tokenizer_text.cpp
+        src/community_models/xtts_v2/vocoder.cpp
+    INCLUDES
+        engine/community_models/xtts_v2/loader.h
+    LOADERS
+        engine::models::xtts_v2::make_xtts_v2_loader
+)
+
 set(AUDIOCPP_ENABLED_MODELS "")
 if (AUDIOCPP_MODEL_SET STREQUAL "full")
     set(AUDIOCPP_ENABLED_MODELS ${AUDIOCPP_MODEL_TARGETS})
