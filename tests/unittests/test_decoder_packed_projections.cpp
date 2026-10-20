@@ -59,7 +59,8 @@ struct LayerResult {
 
 LayerResult run_layer(bool packed,
     engine::core::BackendType backend_type = engine::core::BackendType::Cpu,
-    bool batched_decode = false) {
+    bool batched_decode = false,
+    bool fused_mlp = false) {
     const int64_t batch = batched_decode ? 2 : 1;
     const int64_t steps = batched_decode ? 1 : 3;
     constexpr int64_t cache_steps = 8;
@@ -87,6 +88,7 @@ LayerResult run_layer(bool packed,
     ggml_backend_buffer_t buffer = nullptr;
     try {
         engine::core::ModuleBuildContext ctx{ggml, "qwen_packed_projection_test", backend_type};
+        ctx.elide_identity_reshapes = fused_mlp;
         auto make_f32 = [&](std::initializer_list<int64_t> dims) {
             return engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims(dims));
         };
@@ -135,7 +137,7 @@ LayerResult run_layer(bool packed,
             : engine::modules::DecoderQKVLayout::Separate;
         config.runtime.mlp.mode = packed
             ? engine::modules::DecoderMLPMode::PackedGateUp
-            : engine::modules::DecoderMLPMode::Exact;
+            : (fused_mlp ? engine::modules::DecoderMLPMode::FusedSwiGLU : engine::modules::DecoderMLPMode::Exact);
         config.use_qk_norm = false;
         config.runtime.attention.prefill_mode = engine::modules::DecoderAttentionMode::ManualRepeat;
 
@@ -620,12 +622,16 @@ void test_higgs_decode_graph_exposes_cuda_fast_paths() {
 }  // namespace
 
 int main(int argc, char ** argv) {
+    const auto started = std::chrono::steady_clock::now();
     try {
         bool vulkan = false;
+        bool cuda = false;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--vulkan") {
                 vulkan = true;
+            } else if (arg == "--cuda") {
+                cuda = true;
             } else if (arg == "--log") {
                 engine::debug::configure_logging({true, ""});
             } else {
@@ -633,6 +639,20 @@ int main(int argc, char ** argv) {
             }
         }
         test_packed_qkv_and_gate_up_match_separate_projections();
+        for (const bool batched : {false, true}) {
+            const auto reference = run_layer(false, engine::core::BackendType::Cpu, batched);
+            const auto fused = run_layer(false, engine::core::BackendType::Cpu, batched, true);
+            require_allclose(fused.output, reference.output, 2.0e-5f, "fused MLP decoder output");
+            if (cuda) {
+                const auto actual = run_layer(false, engine::core::BackendType::Cuda, batched, true);
+                require_allclose(actual.output, reference.output, 2.0e-5f, "CUDA fused MLP decoder output");
+            }
+            if (vulkan) {
+                const auto backend_reference = run_layer(false, engine::core::BackendType::Vulkan, batched);
+                const auto actual = run_layer(false, engine::core::BackendType::Vulkan, batched, true);
+                require_allclose(actual.output, backend_reference.output, 2.0e-5f, "Vulkan fused MLP decoder output");
+            }
+        }
         for (bool packed : {false, true}) {
             const auto reference = run_layer(packed, engine::core::BackendType::Cpu, true);
             if (vulkan) {
@@ -648,8 +668,10 @@ int main(int argc, char ** argv) {
         test_fast_projection_accepts_cuda_or_hip_backends();
         test_higgs_decode_graph_exposes_cuda_fast_paths();
         std::cout << "decoder_packed_projection_test: ok\n";
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         return 0;
     } catch (const std::exception & ex) {
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         std::cerr << "decoder_packed_projection_test: failed: " << ex.what() << "\n";
         return 1;
     }

@@ -1,5 +1,6 @@
 #include "engine/framework/core/module.h"
 
+#include <algorithm>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -169,6 +170,10 @@ TensorValue reshape_tensor(ModuleBuildContext & ctx, const TensorValue & value, 
     }
 
     const auto ggml_dims = to_ggml_dims(new_shape);
+    if (ctx.elide_identity_reshapes && ggml_is_contiguous(value.tensor) &&
+        std::equal(ggml_dims.begin(), ggml_dims.end(), value.tensor->ne)) {
+        return wrap_tensor(value.tensor, new_shape, value.type);
+    }
     ggml_tensor * reshaped = nullptr;
     switch (new_shape.rank) {
         case 1:

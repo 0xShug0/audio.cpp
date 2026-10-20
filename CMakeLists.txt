@@ -4606,6 +4606,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             COMMAND minimax_music3_graph_release_policy_test
         )
 
+        if (qwen3_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+        # Real-weight integration test; invoked explicitly with --model GGUF.
+        add_engine_unittest(qwen3_tts_decoder_streaming_test tests/qwen3_tts/test_speech_decoder_streaming.cpp)
+        endif()
+
         if (qwen3_forced_aligner IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(qwen3_forced_aligner_processor_test tests/unittests/test_qwen3_forced_aligner_processor.cpp)
         target_sources(qwen3_forced_aligner_processor_test PRIVATE

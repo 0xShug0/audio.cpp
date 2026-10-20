@@ -77,7 +77,8 @@ public:
         size_t talker_constant_context_bytes,
         size_t code_predictor_constant_context_bytes,
         engine::assets::TensorStorageType weight_storage_type,
-        Qwen3TTSPerfMode perf_mode) const;
+        Qwen3TTSPerfMode perf_mode,
+        int64_t kv_cache_alignment = 256) const;
 
     std::shared_ptr<Qwen3TalkerStepRuntime> create_step_runtime(
         std::shared_ptr<const Qwen3TalkerWeightsRuntime> weights,
