@@ -229,8 +229,6 @@ static ggml_cgraph* build_spk_enc(ggml_context* ctx0,
     // softmax over time (ne[0]); w sums to 1 per channel row
     a2 = ggml_soft_max(ctx0, a2);
     // mu = sum_t x*w  [2048], sg = sqrt(clamp(sum_t x^2*w - mu^2))  [2048]
-    fprintf(stderr, "xtts_spk_dbg: xf=[%lld,%lld] a1=[%lld,%lld] a2=[%lld,%lld]\n",
-        (long long)xf->ne[0], (long long)xf->ne[1], (long long)a1->ne[0], (long long)a1->ne[1], (long long)a2->ne[0], (long long)a2->ne[1]);
     ggml_tensor* xw = ggml_mul(ctx0, xf, a2);
     int CH = Cs * Hs;
     ggml_tensor* mu = ggml_reshape_2d(ctx0, ggml_sum_rows(ctx0, xw), CH, 1);   // [2048, 1]
