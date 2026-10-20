@@ -7,7 +7,6 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
-#include "engine/framework/runtime/graph_optimizer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -644,13 +643,6 @@ private:
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(graph_ctx_.get(), 131072, false);
         ggml_build_forward_expand(graph_, output_);
-        if (weights_.config.optimize_cpu_graph && weights_.execution_context->backend_type() == core::BackendType::Cpu) {
-            auto options = runtime::graph_optimization_options_for_backend(runtime::GraphOptimizationBackend::Cpu);
-            // Gallocr still needs metadata views when sizing its bookkeeping.
-            options.elide_noop_nodes = false;
-            options.elide_metadata_only_ops = false;
-            runtime::optimize_graph(*graph_, options);
-        }
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), weights_.execution_context->backend());
         if (input_buffer_ == nullptr) {
             release_graph();

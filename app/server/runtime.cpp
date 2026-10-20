@@ -54,6 +54,26 @@ using minitts::app::base64_encode;
 
 using Clock = std::chrono::steady_clock;
 
+class CallbackRecipeModelExecutor final : public minitts::app::IRecipeModelExecutor {
+public:
+    using Run = std::function<engine::runtime::TaskResult(
+        std::string_view,
+        const engine::runtime::TaskSpec &,
+        const engine::runtime::TaskRequest &)>;
+
+    explicit CallbackRecipeModelExecutor(Run run) : run_(std::move(run)) {}
+
+    engine::runtime::TaskResult run(
+        std::string_view role,
+        const engine::runtime::TaskSpec & task,
+        const engine::runtime::TaskRequest & request) override {
+        return run_(role, task, request);
+    }
+
+private:
+    Run run_;
+};
+
 void materialize_embedded_demo_voices(const std::filesystem::path & voice_dir) {
     std::filesystem::create_directories(voice_dir);
     for (const auto & voice : embedded_demo_voices()) {
@@ -85,7 +105,8 @@ ServerState::ServerState(
     std::filesystem::path request_base,
     std::filesystem::path ui_resource_anchor)
     : config_(std::move(config)),
-      request_base_(std::filesystem::absolute(std::move(request_base)).lexically_normal()) {
+      request_base_(std::filesystem::absolute(std::move(request_base)).lexically_normal()),
+      recipes_(minitts::app::make_recipe_registry()) {
 #if !defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     (void) ui_resource_anchor;
 #endif
@@ -177,7 +198,16 @@ std::unique_ptr<ServerFrontendListener> ServerState::make_frontend_listener(std:
 }
 
 HttpResponse ServerState::handle_request(const HttpRequest & request, bool use_frontends) {
-    return RequestDispatcher::handle(*this, request, use_frontends);
+    return RequestDispatcher::handle(*this, request, use_frontends,
+        [this](const HttpRequest & extra) -> std::optional<HttpResponse> {
+            if (extra.method == "GET" && extra.path == "/v1/recipes") {
+                return json_response(recipes_json());
+            }
+            if (extra.method == "POST" && extra.path == "/v1/recipes/run") {
+                return handle_recipe_run(extra.body);
+            }
+            return std::nullopt;
+        });
 }
 
 HttpResponse ServerState::handle_health() const {
@@ -2168,6 +2198,126 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
         ? task_result_json_with_timing(timed_result.result, "{\"ttft_ms\":null}")
         : streaming_task_result_json(timed_result.result, timed_result.ttft_ms)) << "}";
     return json_response(out.str());
+}
+
+ServerState::TimedTaskResult ServerState::run_recipe(
+    const Value & body,
+    const minitts::app::RecipeEventSink & event_sink) {
+    const auto recipe_id = engine::io::json::require_string(body, "recipe");
+    const minitts::app::IRecipe * recipe_ptr = nullptr;
+    try {
+        recipe_ptr = &recipes_.require(recipe_id);
+    } catch (const std::runtime_error &) {
+        throw engine::runtime::InvalidRequestError("unknown recipe: " + recipe_id);
+    }
+    const auto & recipe = *recipe_ptr;
+    const auto * models = body.find("models");
+    if (models == nullptr || !models->is_object()) {
+        throw engine::runtime::InvalidRequestError("recipe request requires a 'models' object");
+    }
+
+    std::unordered_map<std::string, std::string> model_ids;
+    for (const auto & role : recipe.roles()) {
+        const auto * value = models->find(role.name);
+        if (value == nullptr || !value->is_string() || value->as_string().empty()) {
+            throw engine::runtime::InvalidRequestError(
+                "recipe '" + recipe_id + "' requires model role '" + role.name + "'");
+        }
+        model_ids.emplace(role.name, value->as_string());
+    }
+
+    const auto * request_json = body.find("request");
+    if (request_json == nullptr || !request_json->is_object()) {
+        throw engine::runtime::InvalidRequestError("recipe request requires a 'request' object");
+    }
+    auto request = minitts::cli::build_request_from_json(*request_json, request_base_);
+    const auto busy_timeout_ms = parse_busy_timeout_override(body);
+
+    CallbackRecipeModelExecutor executor([
+        this,
+        &model_ids,
+        busy_timeout_ms](
+            std::string_view role,
+            const engine::runtime::TaskSpec & task,
+            const engine::runtime::TaskRequest & stage_request) {
+        const auto selected = model_ids.find(std::string(role));
+        if (selected == model_ids.end()) {
+            throw std::runtime_error("recipe requested an undeclared model role: " + std::string(role));
+        }
+        Value::Object model_field;
+        model_field.emplace("model", Value::make_string(selected->second));
+        auto & model = require_model(Value::make_object(std::move(model_field)));
+        engine::runtime::TaskRequest effective_request;
+        {
+            std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+            if (model.task.task != task.task || model.task.mode != task.mode) {
+                throw engine::runtime::InvalidRequestError(
+                    "recipe role '" + std::string(role) + "' requires " +
+                    engine::runtime::to_string(task.task) + "/" +
+                    engine::runtime::to_string(task.mode) + ", but model '" +
+                    model.config.id + "' is configured as " +
+                    engine::runtime::to_string(model.task.task) + "/" +
+                    engine::runtime::to_string(model.task.mode));
+            }
+            effective_request = apply_default_request_options(model.config.default_request_options, stage_request);
+        }
+        return run_model(model, effective_request, busy_timeout_ms).result;
+    });
+
+    const auto started = Clock::now();
+    auto result = recipe.run(executor, request, event_sink);
+    return TimedTaskResult{std::move(result), elapsed_ms(started), std::nullopt};
+}
+
+HttpResponse ServerState::handle_recipe_run(const std::string & body_text) {
+    const auto body = engine::io::json::parse(body_text);
+    if (!bool_field(body, "stream", false)) {
+        const auto timed = run_recipe(body);
+        return json_response(task_result_json(timed.result, timed.wall_ms));
+    }
+
+    return sse_response([this, body_text](HttpStreamWriter & writer) {
+        const auto stream_body = engine::io::json::parse(body_text);
+        const auto timed = run_recipe(
+            stream_body,
+            [&](const engine::runtime::StreamEvent & event) {
+                write_sse(writer, task_stream_event_line(stream_event_json(event, false)));
+            });
+        write_sse(
+            writer,
+            task_stream_done_line(task_result_json_with_timing(
+                timed.result,
+                "{\"wall_ms\":" + std::to_string(timed.wall_ms) + "}")));
+        write_sse_done(writer);
+    });
+}
+
+std::string ServerState::recipes_json() const {
+    std::ostringstream out;
+    out << "{\"object\":\"list\",\"data\":[";
+    const auto ids = recipes_.ids();
+    for (size_t i = 0; i < ids.size(); ++i) {
+        if (i != 0) {
+            out << ",";
+        }
+        const auto & recipe = recipes_.require(ids[i]);
+        out << "{\"id\":" << json_quote(ids[i])
+            << ",\"description\":" << json_quote(recipe.description())
+            << ",\"roles\":[";
+        const auto roles = recipe.roles();
+        for (size_t r = 0; r < roles.size(); ++r) {
+            if (r != 0) {
+                out << ",";
+            }
+            out << "{\"name\":" << json_quote(roles[r].name)
+                << ",\"task\":" << json_quote(engine::runtime::to_string(roles[r].task.task))
+                << ",\"mode\":" << json_quote(engine::runtime::to_string(roles[r].task.mode))
+                << "}";
+        }
+        out << "]}";
+    }
+    out << "]}";
+    return out.str();
 }
 
 // Cached-voice discovery for the "voice"/cached_voice_id request field. Families that

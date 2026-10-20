@@ -305,7 +305,6 @@ struct ToneColorRuntime::State {
         config.tensor_prefix = "dec";
         config.global_conditioning.channels = 256;
         config.lower_padded_conv_transpose_as_crop = ctx.backend_type() == core::BackendType::Cpu;
-        config.optimize_cpu_graph = ctx.backend_type() == core::BackendType::Cpu;
         decoder = modules::HifiGanVocoderComponent::load_from_tensor_source(source, backend, config);
     }
 };
