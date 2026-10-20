@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -545,11 +546,21 @@ HiggsGenerationResult HiggsGenerator::generate(
     engine::debug::timing_log_scalar("higgs_audio_tts.generator.decode_ms",
                                      engine::debug::elapsed_ms(decode_start, Clock::now()));
     if (!state.generation_done) {
-        throw std::runtime_error(
+        if (!request.options.allow_incomplete_generation) {
+            throw std::runtime_error(
+                "Higgs TTS generation reached max_tokens (" + std::to_string(request.options.max_tokens) +
+                ") before EOC for this text chunk; raise it with --max-tokens on the CLI or "
+                "the \"max_tokens\" request option on the server, or lower --text-chunk-size / "
+                "\"text_chunk_size\" so each chunk needs fewer generated frames");
+        }
+        const std::string warning =
             "Higgs TTS generation reached max_tokens (" + std::to_string(request.options.max_tokens) +
-            ") before EOC for this text chunk; raise it with --max-tokens on the CLI or "
-            "the \"max_tokens\" request option on the server, or lower --text-chunk-size / "
-            "\"text_chunk_size\" so each chunk needs fewer generated frames");
+            ") before EOC for this text chunk; returning incomplete audio because "
+            "allow_incomplete_generation=true. Audio may be truncated or contain silence/noise.";
+        engine::debug::log_message(engine::debug::LogLevel::Warning, "higgs_audio_tts", warning);
+        if (!engine::debug::log_enabled()) {
+            std::cerr << "[warning][higgs_audio_tts] " << warning << '\n';
+        }
     }
 
     result.raw_codes = reverse_higgs_delay_pattern(

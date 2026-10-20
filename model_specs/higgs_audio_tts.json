@@ -45,6 +45,13 @@
         "default": 2048
       },
       {
+        "name": "allow_incomplete_generation",
+        "type": "bool",
+        "description": "Return generated audio with a warning instead of failing when max_tokens is reached before EOC. Audio may be truncated or contain silence/noise.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "temperature",
         "type": "float",
         "description": "AR sampling temperature. Must be positive.",

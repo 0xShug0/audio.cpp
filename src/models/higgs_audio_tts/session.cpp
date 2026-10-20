@@ -113,6 +113,9 @@ HiggsGenerationOptions generation_options_from_request(
             options.max_tokens = *value;
         }
     }
+    if (const auto value = runtime::find_option(request.options, {"allow_incomplete_generation"})) {
+        options.allow_incomplete_generation = runtime::parse_bool_option(*value, "allow_incomplete_generation");
+    }
     if (const auto value = runtime::parse_float_option(request.options, {"temperature"})) {
         options.temperature = *value;
     }
