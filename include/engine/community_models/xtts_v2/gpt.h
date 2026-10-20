@@ -9,6 +9,7 @@
 //   4. GPT-2 forward (return_latent): text + mel codes -> hidden states [d_model, T_mel]
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/execution_context.h"
 #include "engine/community_models/xtts_v2/assets.h"
 
 #include <cstdint>
@@ -31,7 +32,7 @@ public:
     // Load from GGUF. Returns true on success.
     bool load(const std::filesystem::path & gpt_path,
               const std::filesystem::path & vocoder_path,
-              int n_threads, bool use_gpu);
+              const core::BackendConfig & backend_config);
 
     // Compute conditioning latents and speaker embedding from reference audio.
     // ref_pcm: mono 22050 Hz float32 PCM.

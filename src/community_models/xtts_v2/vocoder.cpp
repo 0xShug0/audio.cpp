@@ -423,13 +423,14 @@ XttSv2Vocoder::~XttSv2Vocoder() {
     if (impl_) { delete impl_; impl_ = nullptr; }
 }
 
-bool XttSv2Vocoder::load(const std::filesystem::path& path, int n_threads, bool use_gpu) {
-    n_threads_ = n_threads;
+bool XttSv2Vocoder::load(const std::filesystem::path& path, const core::BackendConfig& backend_config) {
+    n_threads_ = backend_config.threads;
     if (impl_) { delete impl_; impl_ = nullptr; }
     impl_ = new Impl();
     auto& c = *impl_;
-    c.backend_cpu = ggml_backend_cpu_init();
-    ggml_backend_cpu_set_n_threads(c.backend_cpu, n_threads);
+    c.backend_cpu = core::init_backend(backend_config);
+    if (!c.backend_cpu) return false;
+    core::set_backend_threads(c.backend_cpu, backend_config.threads);
     WL wl;
     if (!load_gguf(path.string().c_str(), c.backend_cpu, wl)) {
         fprintf(stderr, "xtts_v2: failed to load vocoder GGUF: %s\n", path.string().c_str());

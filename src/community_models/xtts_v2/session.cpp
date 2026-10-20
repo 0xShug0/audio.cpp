@@ -4,6 +4,7 @@
 #include "engine/community_models/xtts_v2/vocoder.h"
 #include "engine/community_models/xtts_v2/tokenizer_text.h"
 #include "engine/framework/audio/resampling.h"
+#include "engine/framework/core/backend.h"
 #include "engine/framework/text/chunking.h"
 #include <stdexcept>
 #include <chrono>
@@ -36,13 +37,21 @@ static T parse_opt(const std::string& s, T def) {
     } catch (...) { return def; }
 }
 
+// Resolve an option: use request-level override if present, otherwise session default.
+static std::string resolve_opt(const runtime::TaskRequest& req, const std::string& key,
+                                const std::string& session_default) {
+    auto it = req.options.find(key);
+    if (it != req.options.end() && !it->second.empty()) return it->second;
+    return session_default;
+}
+
 } // namespace
 
 struct XttSv2TtsSession::Impl {
     std::shared_ptr<const XttSv2Assets> assets;
+    engine::core::BackendConfig backend_config;
     XttSv2GptEngine gpt;
     XttSv2Vocoder vocoder;
-    int n_threads = 4;
     float temperature = 0.75f;
     int top_k = 50;
     float top_p = 0.85f;
@@ -62,7 +71,7 @@ struct XttSv2TtsSession::Impl {
 XttSv2TtsSession::XttSv2TtsSession(std::shared_ptr<const XttSv2Assets> assets, const runtime::SessionOptions& session_options)
     : impl_(std::make_unique<Impl>()) {
     impl_->assets = std::move(assets);
-    impl_->n_threads = session_options.backend.threads > 0 ? session_options.backend.threads : impl_->n_threads;
+    impl_->backend_config = session_options.backend;
 }
 
 XttSv2TtsSession::~XttSv2TtsSession() = default;
@@ -76,10 +85,10 @@ void XttSv2TtsSession::prepare(const runtime::SessionPreparationRequest& request
     c.max_mel_tokens = parse_opt<int>(get_opt(request, "max_mel_tokens", "605"), 605);
     c.language = get_opt(request, "language", "en");
 
-    if (!c.gpt.load(c.assets->gpt_gguf_path, c.assets->vocoder_gguf_path, c.n_threads, false)) {
+    if (!c.gpt.load(c.assets->gpt_gguf_path, c.assets->vocoder_gguf_path, c.backend_config)) {
         throw std::runtime_error("xtts_v2: failed to load GPT weights from " + c.assets->gpt_gguf_path.string());
     }
-    if (!c.vocoder.load(c.assets->vocoder_gguf_path, c.n_threads, false)) {
+    if (!c.vocoder.load(c.assets->vocoder_gguf_path, c.backend_config)) {
         throw std::runtime_error("xtts_v2: failed to load vocoder weights from " + c.assets->vocoder_gguf_path.string());
     }
     c.prepared = true;
@@ -95,9 +104,15 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
     if (request.text_input) text = request.text_input->text;
     if (text.empty()) throw std::runtime_error("xtts_v2: request has no text input");
 
-    std::string lang = c.language;
+    // Resolve per-request options, falling back to prepare-time defaults.
+    std::string lang = resolve_opt(request, "language", c.language);
     if (request.text_input && !request.text_input->language.empty())
         lang = request.text_input->language;
+    float temperature = parse_opt<float>(resolve_opt(request, "temperature", std::to_string(c.temperature)), c.temperature);
+    int top_k = parse_opt<int>(resolve_opt(request, "top_k", std::to_string(c.top_k)), c.top_k);
+    float top_p = parse_opt<float>(resolve_opt(request, "top_p", std::to_string(c.top_p)), c.top_p);
+    float repetition_penalty = parse_opt<float>(resolve_opt(request, "repetition_penalty", std::to_string(c.repetition_penalty)), c.repetition_penalty);
+    int max_mel_tokens = parse_opt<int>(resolve_opt(request, "max_mel_tokens", std::to_string(c.max_mel_tokens)), c.max_mel_tokens);
 
     // Reference audio (voice cloning requires it)
     const runtime::AudioBuffer* ref_buf = nullptr;
@@ -113,7 +128,6 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
 
     // Resample the reference to 22.05 kHz once; reuse cached conditioning when the
     // reference content is unchanged across requests (frequent-graph reuse).
-    const auto xtts_cache_t0 = std::chrono::steady_clock::now();
     std::vector<float> ref_pcm;
     if (ref_buf->sample_rate != 22050) {
         ref_pcm = engine::audio::resample_mono_torchaudio_sinc_hann(
@@ -158,10 +172,9 @@ runtime::TaskResult XttSv2TtsSession::run(const runtime::TaskRequest& request) {
         // during decoding; these are exactly what a teacher-forced second pass
         // (extract_latents) would recompute, so the second pass is skipped.
         std::vector<float> decode_hiddens;   // [start_mel, c1, c2, ...] x 1024
-        const auto xtts_chunk_t0 = std::chrono::steady_clock::now();
         auto mel_codes = c.gpt.generate_mel_codes(
-            text_tokens, cond_latents, c.temperature, c.top_k, c.top_p,
-            c.repetition_penalty, c.max_mel_tokens, &decode_hiddens);
+            text_tokens, cond_latents, temperature, top_k, top_p,
+            repetition_penalty, max_mel_tokens, &decode_hiddens);
         if (mel_codes.empty()) {
             throw std::runtime_error("xtts_v2: mel code generation produced no output");
         }

@@ -28,7 +28,7 @@ public:
     XttSv2Vocoder & operator=(const XttSv2Vocoder &) = delete;
 
     // Load from GGUF. Returns true on success.
-    bool load(const std::filesystem::path & path, int n_threads, bool use_gpu);
+    bool load(const std::filesystem::path & path, const core::BackendConfig & backend_config);
 
     // Generate waveform from GPT hidden states.
     // latent: [d_model, T] float array (channels-first, d_model=1024).
