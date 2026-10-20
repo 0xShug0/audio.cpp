@@ -13,6 +13,7 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/sampling/torch_random.h"
+#include "engine/framework/sampling/hf_sampler.h"
 
 #include "engine/framework/core/constant_tensor_cache.h"
 
@@ -247,6 +248,7 @@ modules::CausalDecoderConfig make_qwen3_decoder_config(
         out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
         out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
     }
+    out.stack.runtime.mlp.mode = modules::DecoderMLPMode::FusedSwiGLU;
     out.logits_size = logits_size;
     out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     return out;
@@ -911,13 +913,18 @@ public:
         size_t talker_constant_context_bytes,
         size_t code_predictor_constant_context_bytes,
         engine::assets::TensorStorageType weight_storage_type,
-        Qwen3TTSPerfMode perf_mode)
+        Qwen3TTSPerfMode perf_mode,
+        int64_t kv_cache_alignment)
         : assets_(std::move(assets)),
           threads_(threads),
           graph_arena_bytes_(graph_arena_bytes),
-          perf_mode_(perf_mode) {
+          perf_mode_(perf_mode),
+          kv_cache_alignment_(kv_cache_alignment) {
         if (assets_ == nullptr) {
             throw std::runtime_error("Qwen3 talker weights runtime requires assets");
+        }
+        if (kv_cache_alignment_ <= 0) {
+            throw std::runtime_error("Qwen3 KV cache alignment must be positive");
         }
         if (threads_ <= 0) {
             throw std::runtime_error("Qwen3 talker weights runtime requires positive thread count");
@@ -991,12 +998,17 @@ public:
         return perf_mode_;
     }
 
+    int64_t talker_kv_cache_alignment() const noexcept {
+        return kv_cache_alignment_;
+    }
+
 private:
     std::shared_ptr<const Qwen3TTSAssets> assets_;
     std::shared_ptr<const Qwen3TalkerWeights> weights_;
     int threads_ = 1;
     size_t graph_arena_bytes_ = 0;
     Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
+    int64_t kv_cache_alignment_ = 256;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     engine::sampling::TorchCudaSamplingPolicy sampling_policy_;
@@ -1022,6 +1034,7 @@ public:
         const auto & config = weights_->assets().config.talker;
         const auto & tensor_weights = weights_->weights();
         core::ModuleBuildContext ctx{ctx_.get(), "qwen3_tts.talker.prefill"};
+        ctx.elide_identity_reshapes = true;
         auto x = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, prompt_capacity_, config.hidden_size}));
         input_ = x.tensor;
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_capacity_);
@@ -1065,7 +1078,7 @@ public:
         ggml_set_output(logits_output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, logits_output_);
-        // The CPU exports every layer's K/V after execution, not just logits.
+        // Retain every layer's K/V for the cached-step graph's prefix import.
         for (size_t layer = 0; layer < keys_.size(); ++layer) {
             for (auto * output : {keys_[layer], values_[layer]}) {
                 ggml_set_output(output);
@@ -1102,7 +1115,10 @@ public:
 
     struct OutputWithCache {
         Qwen3TalkerPrefillResult result;
-        runtime::TransformerKVState state;
+        int64_t steps = 0;
+        // Borrowed from this graph, whose output allocations remain retained.
+        std::vector<core::TensorValue> keys;
+        std::vector<core::TensorValue> values;
     };
 
     OutputWithCache run_with_state(const std::vector<float> & embeddings) {
@@ -1125,17 +1141,12 @@ public:
         out.result.last_hidden.dims = config.hidden_size;
         out.result.last_hidden.values.resize(static_cast<size_t>(config.hidden_size));
         ggml_backend_tensor_get(hidden_output_, out.result.last_hidden.values.data(), 0, out.result.last_hidden.values.size() * sizeof(float));
-        out.state.current_end = prompt_capacity_;
-        out.state.layers.resize(keys_.size());
-        const size_t layer_values = static_cast<size_t>(
-            prompt_capacity_ * config.num_key_value_heads * attention_head_dim(config));
+        out.steps = prompt_capacity_;
+        const auto cache_shape = core::TensorShape::from_dims(
+            {1, prompt_capacity_, config.num_key_value_heads, attention_head_dim(config)});
         for (size_t layer = 0; layer < keys_.size(); ++layer) {
-            auto & state_layer = out.state.layers[layer];
-            state_layer.valid_steps = prompt_capacity_;
-            state_layer.key.resize(layer_values);
-            state_layer.value.resize(layer_values);
-            ggml_backend_tensor_get(keys_[layer], state_layer.key.data(), 0, state_layer.key.size() * sizeof(float));
-            ggml_backend_tensor_get(values_[layer], state_layer.value.data(), 0, state_layer.value.size() * sizeof(float));
+            out.keys.push_back(core::wrap_tensor(keys_[layer], cache_shape, GGML_TYPE_F32));
+            out.values.push_back(core::wrap_tensor(values_[layer], cache_shape, GGML_TYPE_F32));
         }
         return out;
     }
@@ -1165,6 +1176,12 @@ public:
         if (cache_steps_ <= 0) {
             throw std::runtime_error("Qwen3 talker cached step graph requires positive cache capacity");
         }
+        const int64_t alignment = weights_->talker_kv_cache_alignment();
+        const int64_t padding = (alignment - cache_steps_ % alignment) % alignment;
+        if (cache_steps_ > std::numeric_limits<int64_t>::max() - padding) {
+            throw std::runtime_error("Qwen3 talker KV cache alignment exceeds supported capacity");
+        }
+        cache_steps_ += padding;
         ggml_init_params params{weights_->graph_arena_bytes(), nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
@@ -1173,6 +1190,7 @@ public:
         const auto & config = weights_->assets().config.talker;
         const auto & tensor_weights = weights_->weights();
         core::ModuleBuildContext ctx{ctx_.get(), "qwen3_tts.talker.cached_step"};
+        ctx.elide_identity_reshapes = true;
         auto x = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.hidden_size}));
         input_ = x.tensor;
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
@@ -1235,8 +1253,10 @@ public:
         return cache_steps_;
     }
 
-    void import_prefill_state(const runtime::TransformerKVState & state) {
-        step_cache_.import_state(state);
+    void import_prefill_state(const TalkerPrefillGraph::OutputWithCache & prefill,
+                             const runtime::TransformerKVState * migrated) {
+        if (migrated != nullptr) step_cache_.import_state(*migrated);
+        else step_cache_.import_prefix(prefill.keys, prefill.values, prefill.steps);
     }
 
     runtime::TransformerKVState export_state() const {
@@ -1333,73 +1353,20 @@ int32_t sample_index(
     std::mt19937 & rng,
     const engine::sampling::TorchCudaSamplingPolicy & sampling_policy,
     uint64_t seed,
-    uint64_t call_index) {
-    if (temperature <= 0.0F) {
-        throw std::runtime_error("Qwen3 sampler temperature must be positive");
-    }
-    std::vector<int32_t> indices;
-    indices.reserve(logits.size());
-    for (size_t i = 0; i < logits.size(); ++i) {
-        if (std::isfinite(logits[i])) {
-            indices.push_back(static_cast<int32_t>(i));
-        }
-    }
-    if (indices.empty()) {
-        throw std::runtime_error("Qwen3 sampler has no finite logits");
-    }
-    std::sort(indices.begin(), indices.end(), [&](int32_t lhs, int32_t rhs) {
-        return logits[static_cast<size_t>(lhs)] > logits[static_cast<size_t>(rhs)];
-    });
-    if (top_k > 0 && static_cast<int>(indices.size()) > top_k) {
-        indices.resize(static_cast<size_t>(top_k));
-    }
-
-    const float max_logit = logits[static_cast<size_t>(indices.front())] / temperature;
-    std::vector<double> weights;
-    weights.reserve(indices.size());
-    double total = 0.0;
-    for (const int32_t index : indices) {
-        const double weight = std::exp(static_cast<double>(logits[static_cast<size_t>(index)] / temperature - max_logit));
-        weights.push_back(weight);
-        total += weight;
-    }
-    if (top_p > 0.0F && top_p < 1.0F) {
-        double cumulative = 0.0;
-        size_t keep = weights.size();
-        for (size_t i = 0; i < weights.size(); ++i) {
-            cumulative += weights[i] / total;
-            if (cumulative >= top_p) {
-                keep = i + 1;
-                break;
-            }
-        }
-        indices.resize(keep);
-        weights.resize(keep);
-    }
-    if (sampling_policy.cuda_fast_path) {
-        double best_rank = -std::numeric_limits<double>::infinity();
-        int32_t best_token = -1;
-        for (size_t i = 0; i < indices.size(); ++i) {
-            const float exponential = engine::sampling::torch_cuda_tensor_iterator_exponential_element(
-                seed,
-                static_cast<uint64_t>(logits.size()),
-                static_cast<uint64_t>(indices[i]),
-                call_index,
-                sampling_policy.multiprocessor_count,
-                sampling_policy.max_threads_per_multiprocessor);
-            const double rank = weights[i] / static_cast<double>(exponential);
-            if (rank > best_rank) {
-                best_rank = rank;
-                best_token = indices[i];
-            }
-        }
-        if (best_token < 0) {
-            throw std::runtime_error("Qwen3 CUDA sampler failed to select a token");
-        }
-        return best_token;
-    }
-    std::discrete_distribution<size_t> distribution(weights.begin(), weights.end());
-    return indices[distribution(rng)];
+    uint64_t call_index,
+    engine::sampling::HfSamplerScratch & scratch) {
+    engine::sampling::HfSamplingOptions options;
+    options.top_k = top_k;
+    options.top_p = top_p > 0.0F ? top_p : 1.0F;
+    options.temperature = temperature;
+    engine::sampling::HfTorchSamplingState state;
+    state.policy = &sampling_policy;
+    state.seed = seed;
+    state.call_index = call_index;
+    // Qwen uses std::mt19937 on CPU; only CUDA uses Torch-compatible draws.
+    return engine::sampling::HfSampler{}.sample(
+        logits, {}, options, scratch, rng,
+        sampling_policy.cuda_fast_path ? &state : nullptr, "Qwen3 TTS");
 }
 
 void apply_main_talker_processors(
@@ -1479,6 +1446,7 @@ public:
         const auto & config = weights_->assets().config.code_predictor;
         const int64_t head_dim = attention_head_dim(config);
         core::ModuleBuildContext ctx{ctx_.get(), "qwen3_tts.talker.code_predictor"};
+        ctx.elide_identity_reshapes = true;
         cache_keys_.reserve(static_cast<size_t>(config.num_hidden_layers));
         cache_values_.reserve(static_cast<size_t>(config.num_hidden_layers));
         const int64_t cache_capacity = code_groups_;
@@ -1505,12 +1473,23 @@ public:
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate Qwen3 code predictor graph");
         }
-        step_attention_mask_buffer_.assign(static_cast<size_t>(code_groups_), ggml_fp32_to_fp16(-INFINITY));
+        std::vector<ggml_fp16_t> step_mask(static_cast<size_t>(code_groups_), ggml_fp32_to_fp16(-INFINITY));
         int32_t prefill_positions[2] = {0, 1};
         ggml_backend_tensor_set(prefill_positions_, prefill_positions, 0, sizeof(prefill_positions));
         if (prefill_attention_mask_ != nullptr) {
             auto mask = modules::causal_prefill_mask_values(1, 2);
             ggml_backend_tensor_set(prefill_attention_mask_, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
+        }
+        // Each graph represents one codebook position; these inputs never change.
+        for (size_t group = 0; group < step_graphs_.size(); ++group) {
+            auto & step = step_graphs_[group];
+            const int32_t position = static_cast<int32_t>(group + 2);
+            ggml_backend_tensor_set(step.position, &position, 0, sizeof(position));
+            ggml_backend_tensor_set(step.cache_slot, &position, 0, sizeof(position));
+            std::fill(step_mask.begin(), step_mask.end(), ggml_fp32_to_fp16(-INFINITY));
+            std::fill_n(step_mask.begin(), position + 1, ggml_fp32_to_fp16(0.0F));
+            ggml_backend_tensor_set(step.attention_mask, step_mask.data(), 0,
+                                    step_mask.size() * sizeof(ggml_fp16_t));
         }
     }
 
@@ -1544,7 +1523,8 @@ public:
                 rng,
                 weights_->sampling_policy(),
                 options.seed,
-                sample_call_index++)
+                sample_call_index++,
+                sampling_scratch_)
             : argmax_index(logits.values);
         out.codes.push_back(code);
         for (int64_t group = 1; group < code_groups_ - 1; ++group) {
@@ -1562,7 +1542,8 @@ public:
                     rng,
                     weights_->sampling_policy(),
                     options.seed,
-                    sample_call_index++)
+                    sample_call_index++,
+                    sampling_scratch_)
                 : argmax_index(logits.values);
             out.codes.push_back(code);
         }
@@ -1713,7 +1694,6 @@ private:
             throw std::runtime_error("Qwen3 code predictor prefill graph compute failed");
         }
         valid_steps_ = 2;
-        current_end_ = 2;
         return read_logits(prefill_logits_);
     }
 
@@ -1731,20 +1711,6 @@ private:
         auto & step_graph = step_graphs_.at(static_cast<size_t>(group - 1));
         auto timing_start = Clock::now();
         ggml_backend_tensor_set(step_graph.input, embedding.data(), 0, embedding.size() * sizeof(float));
-        const int32_t position = static_cast<int32_t>(current_end_);
-        ggml_backend_tensor_set(step_graph.position, &position, 0, sizeof(position));
-        const int32_t cache_slot = static_cast<int32_t>(valid_steps_);
-        ggml_backend_tensor_set(step_graph.cache_slot, &cache_slot, 0, sizeof(cache_slot));
-        std::fill(step_attention_mask_buffer_.begin(), step_attention_mask_buffer_.end(), ggml_fp32_to_fp16(-INFINITY));
-        for (int64_t i = 0; i < valid_steps_; ++i) {
-            step_attention_mask_buffer_[static_cast<size_t>(i)] = ggml_fp32_to_fp16(0.0F);
-        }
-        step_attention_mask_buffer_[static_cast<size_t>(cache_slot)] = ggml_fp32_to_fp16(0.0F);
-        ggml_backend_tensor_set(
-            step_graph.attention_mask,
-            step_attention_mask_buffer_.data(),
-            0,
-            step_attention_mask_buffer_.size() * sizeof(ggml_fp16_t));
         timing_.input_upload_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
@@ -1754,7 +1720,6 @@ private:
             throw std::runtime_error("Qwen3 code predictor step graph compute failed");
         }
         ++valid_steps_;
-        ++current_end_;
         return read_logits(step_graph.logits);
     }
 
@@ -1780,11 +1745,10 @@ private:
     ggml_tensor * prefill_logits_ = nullptr;
     ggml_cgraph * prefill_graph_ = nullptr;
     std::vector<StepGraph> step_graphs_;
-    std::vector<ggml_fp16_t> step_attention_mask_buffer_;
     int64_t valid_steps_ = 0;
-    int64_t current_end_ = 0;
     ggml_backend_buffer_t buffer_ = nullptr;
     CodePredictorTiming timing_;
+    engine::sampling::HfSamplerScratch sampling_scratch_;
 };
 
 class Qwen3TalkerStepRuntime::Impl {
@@ -1853,7 +1817,7 @@ public:
         double import_prefill_state_ms = 0.0;
         int64_t cached_step_capacity = 0;
         runtime::TransformerKVState exported_cached_state;
-        const runtime::TransformerKVState * cached_state = &prefill_output.state;
+        const runtime::TransformerKVState * cached_state = nullptr;
         bool cached_graph_has_state = false;
         auto ensure_cached_step_capacity = [&](int64_t required_capacity) {
             if (cached_step_graph_ != nullptr && cached_graph_has_state &&
@@ -1881,7 +1845,7 @@ public:
             }
             if (!cached_graph_has_state) {
                 const auto import_start = Clock::now();
-                cached_step_graph_->import_prefill_state(*cached_state);
+                cached_step_graph_->import_prefill_state(prefill_output, cached_state);
                 import_prefill_state_ms += engine::debug::elapsed_ms(import_start, Clock::now());
                 cached_graph_has_state = true;
             }
@@ -1913,7 +1877,8 @@ public:
                     rng,
                     weights_->sampling_policy(),
                     options.seed,
-                    sample_call_index++)
+                    sample_call_index++,
+                    sampling_scratch_)
                 : argmax_index(logits);
             processor_ms += engine::debug::elapsed_ms(processor_start, Clock::now());
             if (first_code == config.codec_eos_token_id) {
@@ -2007,6 +1972,8 @@ private:
         const bool graph_cache_hit = graph_ != nullptr && graph_->matches(*weights_, prompt_steps);
         if (!graph_cache_hit) {
             const auto build_start = Clock::now();
+            // Cached K/V views borrow this graph's allocations.
+            cached_prefill_output_.reset();
             graph_.reset();
             graph_ = std::make_unique<TalkerPrefillGraph>(weights_, prompt_steps);
             graph_build_ms = engine::debug::elapsed_ms(build_start, Clock::now());
@@ -2025,6 +1992,7 @@ private:
     std::optional<PromptEmbeddingState> cached_prompt_state_;
     std::unique_ptr<Qwen3TalkerTextProjectionGraph> text_projection_;
     std::optional<TalkerPrefillGraph::OutputWithCache> cached_prefill_output_;
+    engine::sampling::HfSamplerScratch sampling_scratch_;
 };
 
 Qwen3TalkerStepRuntime::Qwen3TalkerStepRuntime(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {
@@ -2062,7 +2030,8 @@ std::shared_ptr<const Qwen3TalkerWeightsRuntime> Qwen3Talker::create_weights_run
     size_t talker_constant_context_bytes,
     size_t code_predictor_constant_context_bytes,
     engine::assets::TensorStorageType weight_storage_type,
-    Qwen3TTSPerfMode perf_mode) const {
+    Qwen3TTSPerfMode perf_mode,
+    int64_t kv_cache_alignment) const {
     return std::make_shared<Qwen3TalkerWeightsRuntime>(
         std::move(assets),
         backend_type,
@@ -2072,7 +2041,8 @@ std::shared_ptr<const Qwen3TalkerWeightsRuntime> Qwen3Talker::create_weights_run
         talker_constant_context_bytes,
         code_predictor_constant_context_bytes,
         weight_storage_type,
-        perf_mode);
+        perf_mode,
+        kv_cache_alignment);
 }
 
 std::shared_ptr<Qwen3TalkerStepRuntime> Qwen3Talker::create_step_runtime(

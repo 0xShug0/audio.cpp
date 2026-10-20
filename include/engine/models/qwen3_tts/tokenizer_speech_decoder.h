@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -22,6 +23,7 @@ namespace qwen3_tts {
 struct Qwen3SpeechTokenizerDecoderWeights;
 class Qwen3SpeechTokenizerDecoderGraph;
 class RknnSpeechDecoder;
+class Qwen3SpeechDecoderStreamState;
 
 // Optional Rockchip NPU backend for the decoder stage: the path(s) of the
 // stateful step export. Empty `rknn_model_path` keeps the ggml graph.
@@ -45,7 +47,8 @@ public:
         engine::assets::TensorStorageType linear_weight_storage_type,
         engine::assets::TensorStorageType conv_weight_storage_type,
         Qwen3TTSPerfMode perf_mode,
-        Qwen3SpeechTokenizerDecoderRknn rknn = {});
+        Qwen3SpeechTokenizerDecoderRknn rknn = {},
+        bool stateful_stream = false);
     ~Qwen3SpeechTokenizerDecoderRuntime();
 
     runtime::AudioBuffer decode(const Qwen3SpeechCodes & codec_codes) const;
@@ -58,7 +61,7 @@ public:
         int64_t frames_per_chunk) const;
 
     // Streaming state hooks, wired to the streaming audio controller's
-    // reset/drain callbacks. No-ops on the stateless ggml path; on the stateful
+    // reset/drain callbacks. Reset clears the GGML stateful mode; on the stateful
     // RKNN path they zero the carried cache and voice the sub-group tail left
     // in the buffer at the end of an utterance.
     void reset_stream() const;
@@ -71,6 +74,9 @@ private:
     size_t graph_arena_bytes_ = 0;
     Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
     std::unique_ptr<core::ConstantTensorCache> constants_;
+    std::unique_ptr<Qwen3SpeechDecoderStreamState> stream_state_;
+    mutable int64_t stream_graph_capacity_ = 0;
+    mutable std::map<int64_t, std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph>> stateful_graphs_;
     mutable std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph> graph_;
     mutable std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph> stream_graph_;
     mutable std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph> stream_initial_graph_;

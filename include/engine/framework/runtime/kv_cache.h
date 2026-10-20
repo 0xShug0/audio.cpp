@@ -79,6 +79,12 @@ public:
         TransformerKVCacheOptions options);
 
     void import_state(const TransformerKVState & state);
+    // Import a contiguous, same-precision prefix starting at position zero.
+    // Backend copies preserve device residency; unused cache rows are zeroed.
+    void import_prefix(
+        const std::vector<core::TensorValue> & keys,
+        const std::vector<core::TensorValue> & values,
+        int64_t steps);
     void clear_on_backend();
     TransformerKVState export_state() const;
 

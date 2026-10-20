@@ -53,6 +53,9 @@ struct ModuleBuildContext {
     ggml_context * ggml = nullptr;
     const char * module_instance_name = nullptr;
     BackendType backend_type = BackendType::Cpu;
+    // Preserve logical shapes while omitting physical identity views. Opt-in:
+    // removing those views can enable backend fusion and change rounding.
+    bool elide_identity_reshapes = false;
 };
 
 enum class PortKind {
