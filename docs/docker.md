@@ -17,6 +17,12 @@
 - For Vulkan:
   - The host must expose a working Vulkan device to Docker, typically through `/dev/dri` on Linux.
   - The container user needs access to the host render/video device groups.
+- For Rockchip NPU (RKNN):
+  - The host must expose the NPU device nodes: `/dev/dri` on a mainline
+    (rocket DRM) kernel, `/dev/rknpu` on a vendor BSP kernel, plus `/dev/dma_heap`
+    for the shared-buffer allocator.
+  - The image is arm64-only (the Rockchip runtime library is), and `.rknn` engines are
+    compiled per SoC, so engines must match the board (see `docs/build/rockchip-npu.md`).
 
 ## Image Variants
 
@@ -29,6 +35,7 @@ The following backends are supported:
 - **cuda13**
 - **vulkan**
 - **cpu**
+- **rockchip** (Rockchip NPU; arm64 only, local build)
 
 The following architectures are supported:
 - **amd64**
@@ -88,6 +95,18 @@ docker build -f .devops/vulkan.Dockerfile -t local/audio.cpp:full-vulkan .
 docker build -f .devops/cpu.Dockerfile -t local/audio.cpp:full-cpu .
 ```
 
+### Rockchip NPU (RKNN)
+
+Arm64 only (the Rockchip runtime library is aarch64): build on the board, on an
+arm64 runner, or under binfmt emulation. The build stage downloads `librknnrt.so`
+and its headers from the pinned `airockchip/rknn-toolkit2` tag (an ARG, with a
+sha256 pin), so the runtime version is explicit and the engines you install must
+be converted with the matching toolkit version.
+
+```bash
+docker build --platform linux/arm64 -f .devops/rockchip.Dockerfile -t local/audio.cpp:full-rockchip .
+```
+
 ## Usage
 
 For CLI use, mount the model directory `<models-dir>` into the container.
@@ -145,6 +164,26 @@ already exist in the configured path.
 ```bash
 docker run --rm -v "<models-dir>:/models:ro" ghcr.io/0xshug0/audio.cpp:full-cpu <cli|server> --model /models/<model> <...>
 ```
+
+### Rockchip NPU (RKNN)
+
+Pass the NPU device nodes (straced on an RK3588 board: the driver opens the DRM
+cards on a mainline kernel; a vendor BSP kernel exposes `/dev/rknpu` — add that
+`--device` there) and name the per-SoC engines in the family's `exec_plan`.
+Prebuilt RK3588 engines install next to the family weights through the model
+manager, so a bare file name resolves:
+
+```bash
+docker run --rm --device /dev/dri --device /dev/dma_heap \
+  -v "<models-dir>:/app/models" \
+  local/audio.cpp:full-rockchip \
+  cli --task tts --family piper_tts --model /app/models/<model>.gguf \
+  --session-option 'piper_tts.exec_plan={"decoder":{"impl":"rknn","artifacts":{"main":"<decoder>.rknn"}}}' \
+  --text "<text>" --out /app/models/out.wav
+```
+
+Without the device nodes the run fails loudly — `rknn_init failed with code -1`
+on the first plan step — rather than falling back silently.
 
 See the fully working [examples](#examples) below.
 

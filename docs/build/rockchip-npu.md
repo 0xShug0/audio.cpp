@@ -61,6 +61,10 @@ cmake --build build --parallel --target audiocpp_cli
 the flag off, selecting RKNN in `qwen3_tts.exec_plan` fails with
 `Qwen3 speech decoder RKNN: built without ENGINE_ENABLE_RKNN` rather than falling back silently.
 
+The same build ships as a Docker image: `.devops/rockchip.Dockerfile` (arm64-only; the
+`librknnrt.so` + headers are fetched at build time from the pinned SDK tag), and the container
+reaches the NPU through the driver's own device nodes — see `docs/docker.md`.
+
 ## Model preparation
 
 Prebuilt engines for RK3588 ship as `rknn` packages in the model specs, for the three families
