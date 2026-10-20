@@ -40,6 +40,7 @@ runtime::ModelCliInterface cli(const HiggsAssets &) {
     out.request_options = {
         {"reference_text", "text", "Transcript for reference audio.", false, ""},
         {"max_tokens", "int", "Maximum generated AR tokens; zero uses the default. Must not exceed the configured context length.", false, "2048", "0"},
+        {"allow_incomplete_generation", "bool", "Return generated audio with a warning instead of failing when max_tokens is reached before EOC. Audio may be truncated or contain silence/noise.", false, "false"},
         {"temperature", "float", "AR sampling temperature. Must be positive. Default: 0.8.", false, "0.8"},
         {"top_k", "int", "AR top-k sampling limit. Default: 30.", false, "30", "0"},
         {"top_p", "float", "AR nucleus sampling probability. Must be positive. Default: 0.8.", false, "0.8"},

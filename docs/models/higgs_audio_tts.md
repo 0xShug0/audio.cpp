@@ -53,6 +53,7 @@ audiocpp_cli --task clon --family higgs_audio_tts --model models/Higgs-Audio-v3-
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `max_tokens` | integer >= 0 | `2048` | Maximum generated AR tokens; zero uses the default. Must not exceed the configured context length. |
+| `allow_incomplete_generation` | boolean | `false` | Return generated audio with a warning instead of failing when `max_tokens` is reached before EOC. Audio may be truncated or contain silence/noise. |
 | `temperature` | float | `0.8` | AR sampling temperature. Must be positive. |
 | `top_p` | float | `0.8` | AR nucleus sampling probability. Must be positive. |
 | `top_k` | integer | `30` | AR top-k sampling limit. |
@@ -63,6 +64,12 @@ audiocpp_cli --task clon --family higgs_audio_tts --model models/Higgs-Audio-v3-
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 | `stream_frames_per_event` | integer >= 1 | `32` | Streaming audio frame cap; each codec frame contains 40 ms of audio. |
 | `stream_chunk_policy` | `grow`, `fixed` | `grow` | Start with one frame and grow to the cap, or emit fixed-size chunks. Streaming only. |
+
+For best-effort output when the model does not finish within the token budget, use
+`--request-option allow_incomplete_generation=true`. On the server, set
+`"allow_incomplete_generation": true` in the request's `options` object.
+This applies to offline and streaming generation. Normal EOC stopping is unchanged;
+without the option, reaching the limit before EOC still fails.
 
 ## Streaming
 
