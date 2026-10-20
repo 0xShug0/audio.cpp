@@ -25,9 +25,13 @@ class RknnSpeechDecoder;
 
 // Optional Rockchip NPU backend for the decoder stage: the path(s) of the
 // stateful step export. Empty `rknn_model_path` keeps the ggml graph.
+// `window_path` (optional) is a larger-B export used to voice each whole
+// streaming window from a zeroed cache — window semantics matching the ggml
+// streaming path, at the cost of re-voicing the left context per event.
 struct Qwen3SpeechTokenizerDecoderRknn {
     std::string model_path;
     std::string first_model_path;
+    std::string window_path;
 };
 
 class Qwen3SpeechTokenizerDecoderRuntime {

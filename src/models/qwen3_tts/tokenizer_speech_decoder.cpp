@@ -1175,6 +1175,7 @@ Qwen3SpeechTokenizerDecoderRuntime::Qwen3SpeechTokenizerDecoderRuntime(
         rknn_ = std::make_unique<RknnSpeechDecoder>(
             std::move(rknn.model_path),
             std::move(rknn.first_model_path),
+            std::move(rknn.window_path),
             weights_->config.num_quantizers,
             weights_->config.head_dim,
             weights_->config.sliding_window,
@@ -1305,9 +1306,11 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode_stream_chunk(
     }
     const auto begin = Clock::now();
     if (rknn_ != nullptr) {
-        // Stateful NPU path: the left context is already in the carried cache,
-        // so only the tail is fed, and audio comes out in whole model groups
-        // (the controller drops empty chunks).
+        // NPU path: on the stateful engines the left context is already in the
+        // carried cache, so only the tail is fed and audio comes out in whole
+        // model groups (the controller drops empty chunks); with a window engine
+        // loaded the whole window is voiced per event from a zeroed cache and
+        // the context's audio is dropped (see RknnSpeechDecoder::step).
         auto samples = rknn_->step(
             codec_codes.codes.data(),
             context_frames,

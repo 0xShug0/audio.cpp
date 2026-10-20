@@ -172,7 +172,7 @@ constant-context sizes are in MiB.
 | `qwen3_tts.talker_constant_context_mb` | positive integer | `4` | Talker constant tensor context. |
 | `qwen3_tts.code_predictor_constant_context_mb` | positive integer | `4` | Code predictor constant tensor context. |
 | `qwen3_tts.speech_decoder_constant_context_mb` | positive integer | `4` | Speech decoder constant tensor context. |
-| `qwen3_tts.exec_plan` | JSON object of component plans, encoded as a string | `{}` | `{"speech_decoder":{"impl":"rknn","artifacts":{"main":"/models/decoder.rknn","first":"/models/decoder-first.rknn"}}}` selects the NPU decoder and skips GGML decoder weights. `main` is required; `first` optionally uses a smaller engine for the first streaming group. No decoder-specific params. See [component execution plans](../build/rockchip-npu.md#component-execution-plans). |
+| `qwen3_tts.exec_plan` | JSON object of component plans, encoded as a string | `{}` | `{"speech_decoder":{"impl":"rknn","artifacts":{"main":"/models/decoder.rknn","first":"/models/decoder-first.rknn","window":"/models/decoder-window.rknn"}}}` selects the NPU decoder and skips GGML decoder weights. `main` is required; `first` optionally uses a smaller engine for the first streaming group; `window` optionally streams with window semantics. No decoder-specific params. See [component execution plans](../build/rockchip-npu.md#component-execution-plans). |
 
 ## Rockchip NPU decoder
 
@@ -191,7 +191,15 @@ outputs `audio_values` and `cache_out`; 1920 samples per token at 24 kHz, with
 the convolution and KV cache carried across steps in the graph I/O. The
 optional first-group model runs the first token group at a smaller compiled
 batch; the cache layout is batch-independent, so its cache feeds the main
-model directly. A `.rknn` is compiled per SoC and is not portable between
+model directly. The optional window model (`artifacts.window`) streams with the
+ggml path's window semantics instead: every event runs a full decode of its
+whole `[left context + new]` window from a zeroed cache and drops the context
+frames' audio, so each event reproduces the CPU streaming function exactly
+(25 frames re-voiced per event, at one NPU step of `25 + frames_per_event`
+tokens). Naming the same file as `main` aliases it: the resident engine covers
+the default 25 + 12 window; a dedicated export compiled at `--codes-length
+25 + stream_frames_per_event` is cheaper per event. Offline decoding keeps
+using `main`. A `.rknn` is compiled per SoC and is not portable between
 chips. Build the file with
 [`tools/rknn/prepare_qwen3_tts_rknn_vocoder.py`](../../tools/rknn/prepare_qwen3_tts_rknn_vocoder.py)
 and see [the Rockchip NPU build guide](../build/rockchip-npu.md) for the toolkit

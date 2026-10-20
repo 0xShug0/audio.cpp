@@ -383,7 +383,7 @@ the configurable components:
 | Piper `decoder` | `piper_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
 | Piper `duration_encoder` / `duration_flows` | `piper_tts.exec_plan` | `ggml` | None (`backend` may name `cpu`) |
 | Kokoro `generator` | `kokoro_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
-| Qwen3 `speech_decoder` | `qwen3_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main`, optional `first` |
+| Qwen3 `speech_decoder` | `qwen3_tts.exec_plan` | `ggml`, `rknn` | RKNN: required `main`, optional `first`, `window` |
 | sanoTTS `decoder` | `sanotts.exec_plan` | `default`, `ggml`, `neon` | None |
 | Inflect v2 `decoder` | `inflect_v2.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
 | CosyVoice3 `flow` | `cosyvoice3.exec_plan` | `ggml`, `rknn` | RKNN: required `main` (comma-separated ladder of per-length engines) |
@@ -442,6 +442,16 @@ CLI session options carry JSON text. Server configs also accept a JSON object:
 `artifacts.first` is optional and only affects streaming: the first token group runs on the
 small-batch model, which is what cuts time-to-first-audio. When the RKNN decoder is active the
 ggml decoder weights are not loaded at all, which is where most of the memory saving comes from.
+
+`artifacts.window` switches streaming to the ggml path's window semantics: every event runs a
+full decode of its whole `[left context + new]` window from a zeroed cache (the stateful graph
+again, so `cache_out` is ignored) and the left context's audio is dropped. The stateful default
+voices each token once, which is why it beats the CPU streaming decoder on speed and misses it on
+waveform; the window role re-voices the context and reproduces the CPU streaming function
+per chunk. It costs one engine step of `25 + frames_per_event` tokens per event. Naming the main
+engine (`"window":"vocoder_stateful_64b_fp16.rknn"`) aliases it — the resident B=64 step covers
+the default 25 + 12 window at one resident context; a dedicated smaller export compiled with
+`--codes-length 25+stream_frames_per_event` is cheaper per event. Offline decoding is unaffected.
 
 Piper takes one option and is offline only:
 
@@ -504,9 +514,12 @@ model's latent channel count and its samples-per-frame hop at init.
 | offline, RKNN B=64 | 2.17 | 2560 MB | 64.1 |
 | streaming, ggml decoder | 151.2 s | - | 365 |
 | streaming, RKNN 16+64 | 57.7 s, first audio 0.88 s | - | 62.4 |
+| streaming, RKNN 16+64 window (main aliased) | 93.2 s, first chunk 3.07 s | - | 47.9 |
 
 Streaming gains more than offline because the ggml streaming decoder re-voices the left-context
-tokens in every window, while the stateful model voices each token once.
+tokens in every window, while the stateful model voices each token once. The window role buys the
+quality back at that same price: the same run re-voicing every window costs the extra 48 s of
+decoder and lands at 47.4 dB against the ggml streaming render instead of 16.4 dB.
 
 Quality, split by what varies, because the numbers below are not comparable to each other and one
 of the rows is not about the NPU at all:
@@ -516,6 +529,7 @@ of the rows is not about the NPU at all:
 | backend, offline, 185 chars | 27 dB | - |
 | backend, offline, 307 chars | 25.1 dB | 0.9999 |
 | backend, streaming, 307 chars | 16.4 dB | 0.9988 |
+| backend, streaming window, 307 chars | 47.4 dB | - |
 | backend, RKNN B=16 vs B=64 | 57 dB | - |
 | mode, same backend (streaming vs offline), 307 chars | -2.2 dB | 0.187 |
 
