@@ -3904,6 +3904,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)
         add_test(NAME hf_sampler_test COMMAND hf_sampler_test)
 
+        if (higgs_audio_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(higgs_audio_tts_greedy_sampler_test
+                tests/unittests/test_higgs_audio_tts_greedy_sampler.cpp)
+            add_test(NAME higgs_audio_tts_greedy_sampler_test
+                COMMAND higgs_audio_tts_greedy_sampler_test)
+        endif()
+
         add_engine_unittest(diffusion_math_test tests/unittests/test_diffusion_math.cpp)
         add_test(NAME diffusion_math_test COMMAND diffusion_math_test)
 
