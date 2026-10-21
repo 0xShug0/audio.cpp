@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "id": "ming_audio_vulkan_asr",
+      "family": "ming3_audio",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {
+          "id": "short_zh",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "options": {"max_tokens": 128}
+        }
+      ]
+    },
+    {
+      "id": "ming_audio_vulkan_tts",
+      "family": "ming3_audio",
+      "task": "tts",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "short_en",
+          "text": "The sun warms the earth, and a soft breeze moves through the garden.",
+          "options": {"voice_id": "US_James", "language": "en", "seed": 42}
+        },
+        {
+          "id": "short_clone_en",
+          "text": "Please leave the lamp beside the window.",
+          "voice_ref": "resources/a.wav",
+          "options": {"language": "en", "seed": 42}
+        }
+      ]
+    }
+  ]
+}

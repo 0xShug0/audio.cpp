@@ -215,8 +215,10 @@ core::TensorValue build_norm(
     core::TensorValue normalized = core::wrap_tensor(normalized_tensor, input.shape,
         config.cuda_f16_output ? GGML_TYPE_F16 : GGML_TYPE_F32);
     if (config.normalized_round_type.has_value()) {
-        normalized.tensor = ggml_cast(ctx.ggml,
-            ggml_cast(ctx.ggml, normalized.tensor, *config.normalized_round_type), GGML_TYPE_F32);
+        normalized.tensor = *config.normalized_round_type == GGML_TYPE_BF16
+            ? ggml_round_bf16(ctx.ggml, normalized.tensor)
+            : ggml_cast(ctx.ggml,
+                ggml_cast(ctx.ggml, normalized.tensor, *config.normalized_round_type), GGML_TYPE_F32);
         normalized.type = GGML_TYPE_F32;
     }
     return apply_affine(ctx, normalized, config, weights);

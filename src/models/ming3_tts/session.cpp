@@ -1,7 +1,7 @@
 #include "engine/models/ming3_tts/session.h"
 
 #include "engine/models/ming3_tts/assets.h"
-#include "engine/models/ming3_tts/audio_codec.h"
+#include "engine/framework/codecs/ming_audio_vae_runtime.h"
 #include "engine/models/ming3_tts/generator.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/reference_audio_frontend.h"
@@ -196,7 +196,7 @@ private:
         const auto * cached = cache().find<MingReference>("ming3_tts.reference");
         if (reference_cache_ && cached && cached->audio.sample_rate == audio.sample_rate && cached->audio.channels == audio.channels &&
             cached->audio.samples == audio.samples) return *cached;
-        if (!encoder_) encoder_ = std::make_unique<MingAudioEncoder>(assets_->model_weights,
+        if (!encoder_) encoder_ = std::make_unique<modules::MingAudioEncoder>(assets_->model_weights,
             assets_->config.codec, execution_context());
         if (!speaker_) {
             modules::CampplusEncoderConfig config;
@@ -233,8 +233,8 @@ private:
     std::shared_ptr<const model_spec::ModelContract> contract_;
     MingPromptBuilder prompts_;
     MingGenerator generator_;
-    MingAudioDecoder decoder_;
-    std::unique_ptr<MingAudioEncoder> encoder_;
+    modules::MingAudioDecoder decoder_;
+    std::unique_ptr<modules::MingAudioEncoder> encoder_;
     std::unique_ptr<modules::CampplusEncoderComponent> speaker_;
     int sample_rate_ = 0;
     bool reference_cache_ = true;

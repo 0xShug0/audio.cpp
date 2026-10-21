@@ -5,8 +5,8 @@
 namespace engine::models::ming3_tts {
 namespace {
 
-MingBackboneConfig parse_backbone(const io::json::Value & value) {
-    MingBackboneConfig config;
+modules::MingBackboneConfig parse_backbone(const io::json::Value & value) {
+    modules::MingBackboneConfig config;
     config.hidden_size = value.require("hidden_size").as_i64();
     config.intermediate_size = value.require("intermediate_size").as_i64();
     config.layers = value.require("num_hidden_layers").as_i64();
@@ -17,8 +17,8 @@ MingBackboneConfig parse_backbone(const io::json::Value & value) {
     return config;
 }
 
-MingPatchNetworkConfig parse_patch_network(const io::json::Value & value) {
-    MingPatchNetworkConfig config;
+modules::MingPatchNetworkConfig parse_patch_network(const io::json::Value & value) {
+    modules::MingPatchNetworkConfig config;
     config.hidden_size = value.require("hidden_size").as_i64();
     config.heads = value.require("num_heads").as_i64();
     config.depth = value.require("depth").as_i64();

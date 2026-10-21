@@ -1,0 +1,20 @@
+[
+  {
+    "name": "warmup_zh",
+    "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+    "max_tokens": 256,
+    "seed": 42
+  },
+  {
+    "name": "nature_en",
+    "audio": "assets/resources/sample.wav",
+    "max_tokens": 256,
+    "seed": 42
+  },
+  {
+    "name": "nature_en_repeat",
+    "audio": "assets/resources/sample.wav",
+    "max_tokens": 256,
+    "seed": 42
+  }
+]

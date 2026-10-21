@@ -1,0 +1,39 @@
+{
+  "cases": [
+    {
+      "id": "audio_lifecycle",
+      "coverage": "Complete official music recording alternated with short speech in one session",
+      "family": "ming3_audio",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {
+          "id": "short_first",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "options": {"max_tokens": 256}
+        },
+        {
+          "id": "music_first",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/music.wav",
+          "options": {
+            "prompt": "Describe the vocals and instruments in this recording.",
+            "max_tokens": 512
+          }
+        },
+        {
+          "id": "short_after_music",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "options": {"max_tokens": 256}
+        },
+        {
+          "id": "music_repeat",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/music.wav",
+          "options": {
+            "prompt": "Describe the vocals and instruments in this recording.",
+            "max_tokens": 512
+          }
+        }
+      ]
+    }
+  ]
+}

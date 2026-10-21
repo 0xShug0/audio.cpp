@@ -573,6 +573,7 @@ add_library(engine_core OBJECT
     src/framework/modules/conv_modules.cpp
     src/framework/modules/zipformer_modules.cpp
     src/framework/modules/speech_encoders/whisper_embedding.cpp
+    src/framework/modules/speech_decoders/ming_flow_runtime.cpp
     src/framework/modules/speech_encoders/whisper_frontend.cpp
     src/framework/modules/speaker_encoders/campplus_encoder.cpp
     src/framework/modules/speech_encoders/s3_tokenizer.cpp
@@ -662,6 +663,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/oobleck_audio_vae_runtime.cpp
     src/framework/codecs/redae_codec_runtime.cpp
     src/framework/codecs/snac_decoder_runtime.cpp
+    src/framework/codecs/ming_audio_vae_runtime.cpp
     src/framework/codecs/s3gen_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
@@ -1566,11 +1568,24 @@ set_target_properties(utf8proc_vendor PROPERTIES EXCLUDE_FROM_ALL TRUE POSITION_
 target_include_directories(utf8proc_vendor PUBLIC external/utf8proc)
 target_compile_definitions(utf8proc_vendor PUBLIC UTF8PROC_STATIC)
 
+audiocpp_add_model(ming3_audio
+    SOURCES
+        src/models/ming3_audio/assets.cpp
+        src/models/ming3_audio/audio_encoder.cpp
+        src/models/ming3_audio/backbone.cpp
+        src/models/ming3_audio/frontend.cpp
+        src/models/ming3_audio/session.cpp
+        src/models/ming3_audio/talker.cpp
+        src/models/ming3_audio/talker_frontend.cpp
+    INCLUDES
+        engine/models/ming3_audio/session.h
+    LOADERS
+        engine::models::ming3_audio::make_ming3_audio_loader
+)
+
 audiocpp_add_model(ming3_tts
     SOURCES
         src/models/ming3_tts/assets.cpp
-        src/models/ming3_tts/audio_codec.cpp
-        src/models/ming3_tts/flow.cpp
         src/models/ming3_tts/generator.cpp
         src/models/ming3_tts/prompt.cpp
         src/models/ming3_tts/session.cpp
@@ -4145,6 +4160,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS)
+        if("ming3_audio" IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(ming3_audio_thinker_parity EXCLUDE_FROM_ALL tests/ming3_audio/thinker_parity.cpp)
+            target_link_libraries(ming3_audio_thinker_parity PRIVATE engine_runtime ggml)
+            add_executable(ming3_audio_talker_parity EXCLUDE_FROM_ALL tests/ming3_audio/talker_parity.cpp)
+            target_link_libraries(ming3_audio_talker_parity PRIVATE engine_runtime ggml)
+        endif()
         if("ming3_tts" IN_LIST AUDIOCPP_LINKED_MODELS)
             add_executable(ming3_tts_component_parity EXCLUDE_FROM_ALL tests/ming3_tts/component_parity.cpp)
             target_link_libraries(ming3_tts_component_parity PRIVATE engine_runtime ggml)

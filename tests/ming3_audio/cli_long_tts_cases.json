@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "id": "long_tts_lifecycle",
+      "family": "ming3_audio",
+      "task": "clon",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "warmup",
+          "text": "The sun warms the earth, and a soft breeze moves through the garden.",
+          "voice_ref": "reference/Ming-3.0-audio-tiny/voice_presets/voice_audio/US_James.wav",
+          "options": {"language": "en", "seed": 42, "reference_text": "And so everyone would be afraid of him and run away. But actually, he was the sweetest thing, he never attacked anyone."}
+        },
+        {
+          "id": "long",
+          "text": "At dawn, the research vessel left the harbor and followed the coast toward a small island. The team planned to measure the water temperature, photograph the nesting birds, and repair a weather station damaged by the winter storms. Before landing, they checked the tide chart and called the keeper over the radio. He told them that the northern path was clear, but the wooden steps near the old pier were slippery. They carried their equipment carefully, stopped to watch a seal swimming between the rocks, and reached the station just as the morning clouds began to lift. Inside the station, a broken window had left rainwater on the floor. The researchers moved the instruments to a dry table and opened their notebooks. One person checked the batteries while another inspected the antenna outside. They replaced a damaged cable, tightened the loose connections, and waited for the first weather report to appear on the screen. The temperature reading agreed with their portable thermometer, and a steady signal reached the vessel in the harbor. By afternoon, the work was finished. The team packed the old parts for recycling and swept the floor before closing the door. On the walk back, they stopped beside a sheltered pool where small fish moved between the stones. The keeper met them near the landing with hot tea and asked whether the station would survive another winter. They explained the repairs and showed him how to check the battery warning. Together, they agreed to return before the next storm season.",
+          "voice_ref": "reference/Ming-3.0-audio-tiny/voice_presets/voice_audio/US_James.wav",
+          "options": {"language": "en", "seed": 42, "reference_text": "And so everyone would be afraid of him and run away. But actually, he was the sweetest thing, he never attacked anyone."}
+        },
+        {
+          "id": "short",
+          "text": "Please leave the lamp beside the window.",
+          "voice_ref": "reference/Ming-3.0-audio-tiny/voice_presets/voice_audio/US_James.wav",
+          "options": {"language": "en", "seed": 42, "reference_text": "And so everyone would be afraid of him and run away. But actually, he was the sweetest thing, he never attacked anyone."}
+        },
+        {
+          "id": "long_repeat",
+          "text": "At dawn, the research vessel left the harbor and followed the coast toward a small island. The team planned to measure the water temperature, photograph the nesting birds, and repair a weather station damaged by the winter storms. Before landing, they checked the tide chart and called the keeper over the radio. He told them that the northern path was clear, but the wooden steps near the old pier were slippery. They carried their equipment carefully, stopped to watch a seal swimming between the rocks, and reached the station just as the morning clouds began to lift. Inside the station, a broken window had left rainwater on the floor. The researchers moved the instruments to a dry table and opened their notebooks. One person checked the batteries while another inspected the antenna outside. They replaced a damaged cable, tightened the loose connections, and waited for the first weather report to appear on the screen. The temperature reading agreed with their portable thermometer, and a steady signal reached the vessel in the harbor. By afternoon, the work was finished. The team packed the old parts for recycling and swept the floor before closing the door. On the walk back, they stopped beside a sheltered pool where small fish moved between the stones. The keeper met them near the landing with hot tea and asked whether the station would survive another winter. They explained the repairs and showed him how to check the battery warning. Together, they agreed to return before the next storm season.",
+          "voice_ref": "reference/Ming-3.0-audio-tiny/voice_presets/voice_audio/US_James.wav",
+          "options": {"language": "en", "seed": 42, "reference_text": "And so everyone would be afraid of him and run away. But actually, he was the sweetest thing, he never attacked anyone."}
+        }
+      ]
+    }
+  ]
+}
