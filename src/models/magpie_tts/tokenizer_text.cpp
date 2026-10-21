@@ -1046,8 +1046,9 @@ public:
     MagpieTokenizationResult tokenize(const std::string & text, const MagpieTTSGenerationOptions & options) const {
         const std::string language = MagpieTextTokenizer::normalize_language(options.language);
         // Each segment gets max_tokens (500 frames, 23 s). A 300-codepoint Chinese or Korean chunk needs about a minute
-        // of speech, so its end was cut; NeMo speaks long text of these languages one sentence at a time.
-        const int64_t chunk_size = options.text_chunk_size.value_or(language == "zh" || language == "ko" ? 60 : 300);
+        // of speech, so its end was cut. NeMo splits Chinese text into sentences from 100 characters on; a smaller budget
+        // would also cut short mixed-language text into fragments the model speaks poorly.
+        const int64_t chunk_size = options.text_chunk_size.value_or(language == "zh" || language == "ko" ? 100 : 300);
         std::mt19937_64 rng(options.seed);
         MagpieTokenizationResult out;
         out.language = language;
