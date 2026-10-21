@@ -1,0 +1,20 @@
+[
+  {
+    "name": "text_short",
+    "text": "What is the capital of France? Answer with the city name only.",
+    "max_tokens": 32,
+    "seed": 42
+  },
+  {
+    "name": "asr_short",
+    "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+    "max_tokens": 128,
+    "seed": 42
+  },
+  {
+    "name": "text_repeat",
+    "text": "What is the capital of France? Answer with the city name only.",
+    "max_tokens": 32,
+    "seed": 42
+  }
+]

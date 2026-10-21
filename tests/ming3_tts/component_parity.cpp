@@ -1,5 +1,5 @@
-#include "engine/models/ming3_tts/audio_codec.h"
-#include "engine/models/ming3_tts/flow.h"
+#include "engine/framework/codecs/ming_audio_vae_runtime.h"
+#include "engine/framework/modules/speech_decoders/ming_flow_runtime.h"
 #include "engine/models/ming3_tts/generator.h"
 #include "engine/models/ming3_tts/prompt.h"
 #include "engine/framework/audio/wav_writer.h"
@@ -424,7 +424,7 @@ int main(int argc, char ** argv) try {
         return 0;
     }
     if (flow_unit) {
-        engine::models::ming3_tts::MingFlowRuntime sampler(engine::assets::open_tensor_source(weights), model_config.flow, execution);
+        engine::modules::MingFlowRuntime sampler(engine::assets::open_tensor_source(weights), model_config.flow, execution);
         const auto start = std::chrono::steady_clock::now();
         if (fixture->has_tensor("flow.unit.velocity")) {
             const auto velocity = sampler.predict_velocity(fixture->require_f32("flow.0.noise"),
@@ -461,11 +461,11 @@ int main(int argc, char ** argv) try {
         engine::debug::trace_log_scalar("ming3_tts.flow.cosine", dot / std::sqrt(aa * bb));
         return dot / std::sqrt(aa * bb) > 0.99999 ? 0 : 1;
     }
-    std::unique_ptr<engine::models::ming3_tts::MingAudioDecoder> decoder;
-    if (!istft_only && !head_only) decoder = std::make_unique<engine::models::ming3_tts::MingAudioDecoder>(
+    std::unique_ptr<engine::modules::MingAudioDecoder> decoder;
+    if (!istft_only && !head_only) decoder = std::make_unique<engine::modules::MingAudioDecoder>(
         engine::assets::open_tensor_source(weights), model_config.codec, execution, attention);
-    std::unique_ptr<engine::models::ming3_tts::MingFlowRuntime> flow_runtime;
-    if (flow) flow_runtime = std::make_unique<engine::models::ming3_tts::MingFlowRuntime>(
+    std::unique_ptr<engine::modules::MingFlowRuntime> flow_runtime;
+    if (flow) flow_runtime = std::make_unique<engine::modules::MingFlowRuntime>(
         engine::assets::open_tensor_source(weights), model_config.flow, execution);
     std::unique_ptr<engine::models::ming3_tts::MingGenerator> generator;
     if (generate) generator = std::make_unique<engine::models::ming3_tts::MingGenerator>(
@@ -474,7 +474,7 @@ int main(int argc, char ** argv) try {
     auto latent = fixture->require_f32("decode.0.latent");
     std::vector<std::vector<float>> generated_latents;
     if (encode) {
-        engine::models::ming3_tts::MingAudioEncoder encoder(engine::assets::open_tensor_source(weights),
+        engine::modules::MingAudioEncoder encoder(engine::assets::open_tensor_source(weights),
             model_config.codec, execution, attention);
         latent = encoder.encode(fixture->require_f32("encoder.waveform"), fixture->require_f32("encoder.noise"));
         const auto expected = fixture->require_f32("encoder.latent");

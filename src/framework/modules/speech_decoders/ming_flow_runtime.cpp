@@ -1,4 +1,4 @@
-#include "engine/models/ming3_tts/flow.h"
+#include "engine/framework/modules/speech_decoders/ming_flow_runtime.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -17,7 +17,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace engine::models::ming3_tts {
+namespace engine::modules {
 namespace {
 
 class MingPatchNetwork {
@@ -122,7 +122,7 @@ private:
     struct Graph {
         Graph(core::ExecutionContext & execution, int64_t batch) : execution(execution), batch(batch) {}
         ~Graph() {
-            core::release_backend_graph_resources(execution.backend(), graph);
+            core::release_backend_graph_resources(execution.backend(), graph, true);
             plan.reset();
             if (allocator) ggml_gallocr_free(allocator);
             if (context) ggml_free(context);
@@ -260,9 +260,9 @@ private:
 
 struct MingFlowRuntime::Impl {
     Impl(const assets::TensorSource & source, const MingFlowConfig & config, core::ExecutionContext & execution)
-        : flow(source, config.network, "flowloss.cfm.model",
+        : flow(source, config.network, config.network_prefix,
               config.latent_dim, config.conditioning_dim, true, execution),
-          aggregator(source, config.aggregator, "linear_proj_audio",
+          aggregator(source, config.aggregator, config.aggregator_prefix,
               config.latent_dim, config.conditioning_dim, false, execution) {
         time = {0, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32};
         for (auto & t : time) t /= 32.0f;
@@ -329,4 +329,4 @@ std::vector<float> MingFlowRuntime::sample(const std::vector<float> & conditioni
     return y;
 }
 
-}  // namespace engine::models::ming3_tts
+}  // namespace engine::modules

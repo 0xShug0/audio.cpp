@@ -1,0 +1,16 @@
+[
+  {
+    "name": "english_ip",
+    "text": "The sun warms the earth, and a soft breeze moves through the garden.",
+    "voice_id": "US_James",
+    "language": "en",
+    "seed": 42
+  },
+  {
+    "name": "english_ip_repeat",
+    "text": "The sun warms the earth, and a soft breeze moves through the garden.",
+    "voice_id": "US_James",
+    "language": "en",
+    "seed": 42
+  }
+]

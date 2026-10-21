@@ -1,0 +1,112 @@
+{
+  "cases": [
+    {
+      "id": "official_asr",
+      "family": "ming3_audio",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {
+          "id": "ant_group",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "options": {
+            "prompt": "Please recognize the language of this speech and transcribe it, placing a `\\t` between the identified language and the transcribe.",
+            "max_tokens": 256
+          }
+        },
+        {
+          "id": "ant_group_repeat",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "options": {
+            "prompt": "Please recognize the language of this speech and transcribe it, placing a `\\t` between the identified language and the transcribe.",
+            "max_tokens": 256
+          }
+        },
+        {
+          "id": "tool_audio_transcription",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/tool_calling.wav",
+          "options": {"max_tokens": 256}
+        }
+      ]
+    },
+    {
+      "id": "official_spoken_qa",
+      "family": "ming3_audio",
+      "task": "s2s",
+      "outputs": ["text", "audio"],
+      "requests": [
+        {
+          "id": "ip_us_stella",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "options": {
+            "system_prompt": "You are a helpful assistant.\nListen to the user's audio and respond to their question or request.\nAnswer the question or carry out the requested task. For lists, provide several concrete examples; for why/how questions, explain the main reason or method. Follow the user's explicit instructions, including any requirements for format, wording, and length. Answer directly and keep your response concise but complete. Do not repeat or transcribe the request unless asked to do so. Before responding, silently check that your answer satisfies the requested constraints.",
+            "prompt": "",
+            "voice_id": "US_Stella",
+            "max_tokens": 256,
+            "seed": 42
+          }
+        },
+        {
+          "id": "reference_us_james",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "voice_ref": "reference/Ming-3.0-audio-tiny/voice_presets/voice_audio/US_James.wav",
+          "options": {
+            "system_prompt": "You are a helpful assistant.\nListen to the user's audio and respond to their question or request.\nAnswer the question or carry out the requested task. For lists, provide several concrete examples; for why/how questions, explain the main reason or method. Follow the user's explicit instructions, including any requirements for format, wording, and length. Answer directly and keep your response concise but complete. Do not repeat or transcribe the request unless asked to do so. Before responding, silently check that your answer satisfies the requested constraints.",
+            "prompt": "",
+            "reference_text": "And so everyone would be afraid of him and run away. But actually, he was the sweetest thing, he never attacked anyone.",
+            "max_tokens": 256,
+            "seed": 42
+          }
+        },
+        {
+          "id": "reference_lingkai",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "voice_ref": "reference/Ming-3.0-audio-tiny/voice_presets/voice_audio/灵楷.wav",
+          "options": {
+            "system_prompt": "You are a helpful assistant.\nListen to the user's audio and respond to their question or request.\nAnswer the question or carry out the requested task. For lists, provide several concrete examples; for why/how questions, explain the main reason or method. Follow the user's explicit instructions, including any requirements for format, wording, and length. Answer directly and keep your response concise but complete. Do not repeat or transcribe the request unless asked to do so. Before responding, silently check that your answer satisfies the requested constraints.",
+            "prompt": "",
+            "reference_text": "直到现在我才稍微走出了那些，别人眼神中的阴霾。",
+            "max_tokens": 256,
+            "seed": 42
+          }
+        }
+      ]
+    },
+    {
+      "id": "official_understanding",
+      "family": "ming3_audio",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {
+          "id": "music",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/music.wav",
+          "options": {
+            "system_prompt": "You are a helpful assistant.\nListen to the user's audio and respond to their question or request.\nAnswer the question or carry out the requested task. For lists, provide several concrete examples; for why/how questions, explain the main reason or method. Follow the user's explicit instructions, including any requirements for format, wording, and length. Answer directly and keep your response concise but complete. Do not repeat or transcribe the request unless asked to do so. Before responding, silently check that your answer satisfies the requested constraints.",
+            "prompt": "Please transcribe the lyrics of this song and carefully describe its vocals, arrangement, instrumentation, style, genre, and other relevant aspects.",
+            "max_tokens": 512
+          }
+        },
+        {
+          "id": "meeting",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/meeting.wav",
+          "options": {
+            "system_prompt": "You are a helpful assistant.\nListen to the user's audio and respond to their question or request.\nAnswer the question or carry out the requested task. For lists, provide several concrete examples; for why/how questions, explain the main reason or method. Follow the user's explicit instructions, including any requirements for format, wording, and length. Answer directly and keep your response concise but complete. Do not repeat or transcribe the request unless asked to do so. Before responding, silently check that your answer satisfies the requested constraints.",
+            "prompt": "Transcribe this meeting, identify the speakers when possible, and summarize decisions and action items.",
+            "max_tokens": 32768
+          }
+        },
+        {
+          "id": "meeting_thinking",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/meeting.wav",
+          "options": {
+            "system_prompt": "You are a helpful assistant.\nListen to the user's audio and respond to their question or request.\nAnswer the question or carry out the requested task. For lists, provide several concrete examples; for why/how questions, explain the main reason or method. Follow the user's explicit instructions, including any requirements for format, wording, and length. Answer directly and keep your response concise but complete. Do not repeat or transcribe the request unless asked to do so. Before responding, silently check that your answer satisfies the requested constraints.",
+            "prompt": "Analyze the meeting and summarize the key decisions and action items.",
+            "enable_thinking": true,
+            "max_tokens": 32768
+          }
+        }
+      ]
+    }
+  ]
+}

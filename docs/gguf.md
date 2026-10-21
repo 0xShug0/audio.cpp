@@ -114,6 +114,7 @@ Status labels:
 | `meanvc2` | Done | --- | --- | Pass | --- |
 | `mel_band_roformer` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `micro_wake_word` | Done | --- | Pass (F32) | --- | --- |
+| `ming3_audio` | Done | --- | Pass (BF16; CUDA ASR, TTS, clone, S2S; Vulkan ASR + TTS + clone; drift) | Pass (BF16) | Pass (expert-only; full CUDA audio understanding, resident + offload; drift) |
 | `ming3_tts` | Done | --- | Pass (BF16; TTS + clone, drift) | Pass (BF16; TTS + clone, drift) | Pass (TTS + clone) |
 | `miocodec` | Done | Pass | Pass | Pass (drift) | Pass (drift) |
 | `miotts` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
@@ -175,6 +176,7 @@ Additional lower-bit checks:
 |---|---|---|
 | `cohere_asr` | `q4_0` | Pass (drift) |
 | `meanvc2` | `q4_k` | Pass |
+| `ming3_audio` | `q4_k` | Pass (Q4_K experts, Q8_0 text head; CUDA resident + offload, long audio + chunked TTS; Vulkan ASR + TTS + clone) |
 | `moss_transcribe_diarize` | `q4_k` | No (long-audio segmentation/timestamp drift) |
 | `owsm` | `q4_k` | Pass (Small and Medium; transcript and timestamp drift) |
 | `personaplex` | `q4_k` | Pass |

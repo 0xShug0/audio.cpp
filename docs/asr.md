@@ -18,6 +18,7 @@ For Qwen3-ASR adapter loading and merged GGUF export, see the [LoRA guide](lora.
 | Hviske v6 | `hviske_asr_v6` | offline | [Hviske v6](models/hviske_asr_v6.md) |
 | Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
 | LFM2.5-Audio | `lfm2_audio` | offline | [LFM2.5-Audio](models/lfm2_audio.md) |
+| Ming 3.0 Audio Tiny | `ming3_audio` | offline | [Ming Audio](models/ming3_audio.md) |
 | Moonshine Streaming ASR | `moonshine_asr` | offline, streaming | [Moonshine Streaming ASR](models/moonshine_asr.md) |
 | MOSS-Transcribe-Diarize | `moss_transcribe_diarize` | offline, text-output streaming | [MOSS-Transcribe-Diarize](models/moss_transcribe_diarize.md) |
 | Nemotron ASR | `nemotron_asr` | offline, streaming | [Nemotron ASR](#nemotron-asr) |

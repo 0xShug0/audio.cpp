@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {
+      "id": "ming_audio_spoken_response",
+      "coverage": "Audio-to-Thinker-text-to-Talker speech route",
+      "family": "ming3_audio",
+      "model": "Ming-3.0-Audio-Tiny-GGUF/ming-3.0-audio-tiny-bf16.gguf",
+      "task": "s2s",
+      "outputs": ["text", "audio"],
+      "requests": [
+        {
+          "id": "translate_and_speak",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "seed": 42,
+          "options": {
+            "prompt": "Transcribe the speech in English. Return only the translated sentence.",
+            "language": "en",
+            "voice_id": "US_James"
+          }
+        }
+      ]
+    }
+  ]
+}

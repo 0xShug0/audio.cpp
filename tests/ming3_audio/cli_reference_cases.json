@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "id": "ming_audio_reference_sequence",
+      "coverage": "Reference reuse, changed voice, and long-short-long requests in one session",
+      "family": "ming3_audio",
+      "model": "Ming-3.0-Audio-Tiny-GGUF/ming-3.0-audio-tiny-bf16.gguf",
+      "task": "clon",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "warmup_a",
+          "text": "The sun warms the earth, and a soft breeze moves through the garden.",
+          "voice_ref": "resources/a.wav",
+          "seed": 42,
+          "options": {"language": "en"}
+        },
+        {
+          "id": "long_a",
+          "text": "At dawn, the research vessel left the harbor and followed the coast toward a small island. The team planned to measure the water temperature, photograph the nesting birds, and repair a weather station damaged by the winter storms. Before landing, they checked the tide chart and called the keeper over the radio. He told them that the northern path was clear, but the wooden steps near the old pier were slippery. They carried their equipment carefully, stopped to watch a seal swimming between the rocks, and reached the station just as the morning clouds began to lift.",
+          "voice_ref": "resources/a.wav",
+          "seed": 42,
+          "options": {"language": "en"}
+        },
+        {
+          "id": "short_b",
+          "text": "Please leave the lamp beside the window.",
+          "voice_ref": "resources/b.wav",
+          "seed": 42,
+          "options": {"language": "en"}
+        },
+        {
+          "id": "long_a_repeat",
+          "text": "At dawn, the research vessel left the harbor and followed the coast toward a small island. The team planned to measure the water temperature, photograph the nesting birds, and repair a weather station damaged by the winter storms. Before landing, they checked the tide chart and called the keeper over the radio. He told them that the northern path was clear, but the wooden steps near the old pier were slippery. They carried their equipment carefully, stopped to watch a seal swimming between the rocks, and reached the station just as the morning clouds began to lift.",
+          "voice_ref": "resources/a.wav",
+          "seed": 42,
+          "options": {"language": "en"}
+        },
+        {
+          "id": "short_b_repeat",
+          "text": "Please leave the lamp beside the window.",
+          "voice_ref": "resources/b.wav",
+          "seed": 42,
+          "options": {"language": "en"}
+        }
+      ]
+    }
+  ]
+}

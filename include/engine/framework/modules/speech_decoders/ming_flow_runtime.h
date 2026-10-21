@@ -2,12 +2,28 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/ming3_tts/assets.h"
 
 #include <memory>
+#include <string>
 #include <vector>
 
-namespace engine::models::ming3_tts {
+namespace engine::modules {
+
+struct MingPatchNetworkConfig {
+    int64_t hidden_size = 0;
+    int64_t heads = 0;
+    int64_t depth = 0;
+    int64_t intermediate_size = 0;
+};
+
+struct MingFlowConfig {
+    MingPatchNetworkConfig network;
+    MingPatchNetworkConfig aggregator;
+    int64_t latent_dim = 0;
+    int64_t conditioning_dim = 0;
+    std::string network_prefix = "flowloss.cfm.model";
+    std::string aggregator_prefix = "linear_proj_audio";
+};
 
 class MingFlowRuntime {
 public:
@@ -28,4 +44,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace engine::models::ming3_tts
+}  // namespace engine::modules
