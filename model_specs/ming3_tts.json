@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "family": "ming_tts",
+  "family": "ming3_tts",
   "display_name": "Ming 3.0 TTS 0.5B",
   "description": "Multilingual continuous-latent speech synthesis with a Qwen backbone, flow-matching acoustic head, CAMPPlus speaker conditioning and an audio VAE.",
   "category": "tts",
@@ -298,7 +298,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/models/ming_tts.md"
+      "docs/models/ming3_tts.md"
     ]
   },
   "sources": [

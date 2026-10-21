@@ -1,8 +1,8 @@
-#include "engine/models/ming_tts/session.h"
+#include "engine/models/ming3_tts/session.h"
 
-#include "engine/models/ming_tts/assets.h"
-#include "engine/models/ming_tts/audio_codec.h"
-#include "engine/models/ming_tts/generator.h"
+#include "engine/models/ming3_tts/assets.h"
+#include "engine/models/ming3_tts/audio_codec.h"
+#include "engine/models/ming3_tts/generator.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/reference_audio_frontend.h"
 #include "engine/framework/io/text.h"
@@ -18,7 +18,7 @@
 #include <chrono>
 #include <cmath>
 
-namespace engine::models::ming_tts {
+namespace engine::models::ming3_tts {
 namespace {
 
 struct MingReference {
@@ -37,13 +37,13 @@ public:
           generator_(assets_->model_weights, assets_->config, execution_context()),
           decoder_(assets_->model_weights, assets_->config.codec,
               execution_context()) {
-        runtime::validate_spec_backed_session_options(options, *contract_, "ming_tts", "Ming TTS");
+        runtime::validate_spec_backed_session_options(options, *contract_, "ming3_tts", "Ming TTS");
         sample_rate_ = assets_->config.codec.sample_rate;
         reference_cache_ = runtime::parse_bool_option(runtime::find_option(options.options,
-            {"ming_tts.reference_cache"}).value_or("true"), "ming_tts.reference_cache");
+            {"ming3_tts.reference_cache"}).value_or("true"), "ming3_tts.reference_cache");
     }
 
-    std::string family() const override { return "ming_tts"; }
+    std::string family() const override { return "ming3_tts"; }
     runtime::VoiceTaskKind task_kind() const override { return task_.task; }
     runtime::RunMode run_mode() const override { return task_.mode; }
     void prepare(const runtime::SessionPreparationRequest &) override { mark_prepared(); }
@@ -123,14 +123,14 @@ public:
         const auto chunks = raw_text || (design && !chunk_size) ? std::vector<std::string>{request.text_input->text}
             : text::split_text_chunks(request.text_input->text, chunk_size.value_or(300),
                 text::parse_text_chunk_mode_override(opts).value_or(text::TextChunkMode::TagAware));
-        debug::trace_log_scalar("ming_tts.text.chunk_count", chunks.size());
+        debug::trace_log_scalar("ming3_tts.text.chunk_count", chunks.size());
         const bool trim = runtime::parse_bool_option(runtime::find_option(opts, {"trim_silence"}).value_or("true"), "trim_silence");
         std::vector<float> waveform;
         const auto latent_dim = assets_->config.codec.encoder.latent_dim;
         std::vector<float> history;
         if (!reference_latents.empty()) history.assign(reference_latents.end() - latent_dim, reference_latents.end());
         for (const auto & chunk : chunks) {
-            debug::trace_log_scalar("ming_tts.text.chunk", io::json::stringify_string(chunk));
+            debug::trace_log_scalar("ming3_tts.text.chunk", io::json::stringify_string(chunk));
             const auto prompt = prompts_.build(chunk, prompt_options, speakers.size(), reference_text,
                 reference_latents.size() / latent_dim);
             const auto embeddings = generator_.prepare_inputs(prompt, speakers, reference_latents, zero_speaker);
@@ -160,7 +160,7 @@ public:
 
 private:
     MingReference prepare_reference(const runtime::AudioBuffer & audio, uint64_t seed, uint64_t & random_offset) {
-        const auto * cached = cache().find<MingReference>("ming_tts.reference");
+        const auto * cached = cache().find<MingReference>("ming3_tts.reference");
         if (reference_cache_ && cached && cached->audio.sample_rate == audio.sample_rate && cached->audio.channels == audio.channels &&
             cached->audio.samples == audio.samples) return *cached;
         if (!encoder_) encoder_ = std::make_unique<MingAudioEncoder>(assets_->model_weights,
@@ -185,13 +185,13 @@ private:
         const size_t alignment = codec.encoder.hop_size * codec.patch_size;
         if (waveform.size() % alignment) waveform.insert(waveform.begin(), alignment - waveform.size() % alignment, 0.0f);
         const auto policy = sampling::resolve_torch_cuda_sampling_policy(execution_context().backend_type(),
-            options().backend.device, "ming_tts", "Ming TTS");
+            options().backend.device, "ming3_tts", "Ming TTS");
         const auto count = encoder_->latent_frames(waveform.size()) * codec.encoder.latent_dim;
         const auto noise = sampling::generate_torch_cuda_tensor_iterator_randn(count, seed, random_offset,
             policy, sampling::TorchRandnPrecision::BFloat16);
         random_offset += sampling::torch_cuda_tensor_iterator_offset_blocks(count, policy);
         reference.latents = encoder_->encode(waveform, noise);
-        if (reference_cache_) cache().put("ming_tts.reference", reference);
+        if (reference_cache_) cache().put("ming3_tts.reference", reference);
         return reference;
     }
 
@@ -209,19 +209,22 @@ private:
 
 }  // namespace
 
-std::shared_ptr<runtime::IVoiceModelLoader> make_ming_tts_loader() {
+std::shared_ptr<runtime::IVoiceModelLoader> make_ming3_tts_loader() {
     runtime::SpecBackedVoiceModelConfig<MingAssets> config;
-    config.family = "ming_tts";
-    config.load_assets = load_ming_tts_assets;
+    config.family = "ming3_tts";
+    config.aliases = {"ming_tts"};
+    config.load_assets = load_ming3_tts_assets;
     config.create_session = [](const runtime::TaskSpec & task, const runtime::SessionOptions & options,
         std::shared_ptr<const MingAssets> assets, std::shared_ptr<const model_spec::ModelContract> contract) {
         if ((task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::VoiceCloning &&
              task.task != runtime::VoiceTaskKind::VoiceDesign) || task.mode != runtime::RunMode::Offline) {
             throw runtime::InvalidRequestError("Ming TTS supports offline tts, clon and voice_design");
         }
-        return std::make_unique<MingSession>(task, options, std::move(assets), std::move(contract));
+        const auto normalized = runtime::apply_option_v1_compatibility(options,
+            {{"ming_tts.reference_cache", "ming3_tts.reference_cache"}}, "Ming TTS");
+        return std::make_unique<MingSession>(task, normalized, std::move(assets), std::move(contract));
     };
     return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
-}  // namespace engine::models::ming_tts
+}  // namespace engine::models::ming3_tts

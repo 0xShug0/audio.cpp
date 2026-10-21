@@ -13,7 +13,7 @@ generation is currently exposed.
 ## Usage
 
 ```bash
-audiocpp_cli --family ming_tts --task tts --backend cuda \
+audiocpp_cli --family ming3_tts --task tts --backend cuda \
   --model /path/to/ming-3.0-tts-0.5b-bf16.gguf \
   --text "Good evening. The harbor is quiet tonight." \
   --request-option language=en --out speech.wav --log
@@ -27,7 +27,7 @@ in BF16 and the speaker encoder in F32.
 ### Voice Cloning
 
 ```bash
-audiocpp_cli --family ming_tts --task clon --backend cuda \
+audiocpp_cli --family ming3_tts --task clon --backend cuda \
   --model /path/to/ming-3.0-tts-0.5b-bf16.gguf \
   --voice-ref reference.wav \
   --request-option reference_text="Words spoken in the reference." \
@@ -43,7 +43,7 @@ RNG consumption.
 ### Voice Design
 
 ```bash
-audiocpp_cli --family ming_tts --task vdes --backend cuda \
+audiocpp_cli --family ming3_tts --task vdes --backend cuda \
   --model /path/to/ming-3.0-tts-0.5b-bf16.gguf \
   --text "Good evening. The harbor is quiet tonight." \
   --request-option language=en \
@@ -102,8 +102,11 @@ to reference audio.
 
 ## Session Options
 
-Use `--session-option ming_tts.name=value`, or the server model's
+Use `--session-option ming3_tts.name=value`, or the server model's
 `session_options` map with the same family-prefixed key.
+
+The legacy family hint `ming_tts` and session key `ming_tts.reference_cache`
+remain accepted aliases.
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -140,11 +143,11 @@ The Python converter requires NumPy, ONNX and Safetensors; inference does not
 require ONNX Runtime.
 
 ```bash
-python tools/models/convert_ming_tts_gguf.py \
+python tools/models/convert_ming3_tts_gguf.py \
   --source /path/to/Ming-3.0-tts-0.5B \
   --output /path/to/ming-3.0-tts-0.5b-bf16.gguf --type orig
 
-python tools/models/convert_ming_tts_gguf.py \
+python tools/models/convert_ming3_tts_gguf.py \
   --source /path/to/Ming-3.0-tts-0.5B \
   --output /path/to/ming-3.0-tts-0.5b-q8_0.gguf --type q8_0
 ```

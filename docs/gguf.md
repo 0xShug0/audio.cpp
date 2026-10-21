@@ -113,7 +113,7 @@ Status labels:
 | `meanvc2` | Done | --- | --- | Pass | --- |
 | `mel_band_roformer` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `micro_wake_word` | Done | --- | Pass (F32) | --- | --- |
-| `ming_tts` | Done | --- | Pass (BF16; TTS + clone, drift) | Pass (BF16; TTS + clone, drift) | Pass (TTS + clone) |
+| `ming3_tts` | Done | --- | Pass (BF16; TTS + clone, drift) | Pass (BF16; TTS + clone, drift) | Pass (TTS + clone) |
 | `miocodec` | Done | Pass | Pass | Pass (drift) | Pass (drift) |
 | `miotts` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `mms_forced_aligner` | Done | Pass | --- | Pass | Pass (bit-identical) |

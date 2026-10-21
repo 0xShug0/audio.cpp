@@ -3,7 +3,7 @@
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 
-namespace engine::models::ming_tts {
+namespace engine::models::ming3_tts {
 
 struct MingBackboneConfig {
     int64_t hidden_size = 0;
@@ -67,6 +67,6 @@ struct MingAssets {
     std::shared_ptr<const assets::TensorSource> speaker_weights;
 };
 
-std::shared_ptr<const MingAssets> load_ming_tts_assets(const std::filesystem::path & path);
+std::shared_ptr<const MingAssets> load_ming3_tts_assets(const std::filesystem::path & path);
 
-}  // namespace engine::models::ming_tts
+}  // namespace engine::models::ming3_tts

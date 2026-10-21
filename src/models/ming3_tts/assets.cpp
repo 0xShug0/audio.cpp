@@ -1,8 +1,8 @@
-#include "engine/models/ming_tts/assets.h"
+#include "engine/models/ming3_tts/assets.h"
 
 #include "engine/framework/model_spec/package.h"
 
-namespace engine::models::ming_tts {
+namespace engine::models::ming3_tts {
 namespace {
 
 MingBackboneConfig parse_backbone(const io::json::Value & value) {
@@ -54,13 +54,13 @@ MingConfig parse_ming_config(const io::json::Value & value) {
     return config;
 }
 
-std::shared_ptr<const MingAssets> load_ming_tts_assets(const std::filesystem::path & path) {
+std::shared_ptr<const MingAssets> load_ming3_tts_assets(const std::filesystem::path & path) {
     auto assets = std::make_shared<MingAssets>();
-    assets->resources = model_spec::load_resource_bundle_for_family(path, "ming_tts");
+    assets->resources = model_spec::load_resource_bundle_for_family(path, "ming3_tts");
     assets->config = parse_ming_config(assets->resources.parse_json("config"));
     assets->model_weights = assets->resources.open_tensor_source("weights");
     assets->speaker_weights = assets->resources.open_tensor_source("speaker");
     return assets;
 }
 
-}  // namespace engine::models::ming_tts
+}  // namespace engine::models::ming3_tts

@@ -3,7 +3,7 @@
     {
       "id": "ming_reference_lifecycle",
       "coverage": "Long-short-long reuse and changed reference in one session",
-      "family": "ming_tts",
+      "family": "ming3_tts",
       "model": "Ming-3.0-TTS-0.5B-GGUF/ming-3.0-tts-0.5b-bf16.gguf",
       "task": "clon",
       "outputs": ["audio"],

@@ -66,7 +66,7 @@ def main():
     source = args.source.resolve()
     weights = campplus_weights(source / "campplus.onnx")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    spec = Path(__file__).resolve().parents[2] / "model_specs/ming_tts.json"
+    spec = Path(__file__).resolve().parents[2] / "model_specs/ming3_tts.json"
     with tempfile.TemporaryDirectory(prefix=".ming-convert-", dir=args.output.parent) as temporary:
         root = Path(temporary)
         for name in ("config.json", "tokenizer.json", "tokenizer_config.json"):

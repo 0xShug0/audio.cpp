@@ -3,7 +3,7 @@
     {
       "id": "ming_controls",
       "coverage": "Structured attributes, multilingual, built-in voice, emotion, dialect and freeform conditioning",
-      "family": "ming_tts",
+      "family": "ming3_tts",
       "model": "Ming-3.0-TTS-0.5B-GGUF/ming-3.0-tts-0.5b-bf16.gguf",
       "task": "tts",
       "outputs": ["audio"],

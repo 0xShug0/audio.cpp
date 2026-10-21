@@ -3,7 +3,7 @@
     {
       "id": "ming_reference_sequence",
       "coverage": "Cold and warm reference reuse, changed voice, and longer input in one session",
-      "family": "ming_tts",
+      "family": "ming3_tts",
       "model": "Ming-3.0-TTS-0.5B-GGUF/ming-3.0-tts-0.5b-bf16.gguf",
       "task": "clon",
       "outputs": ["audio"],

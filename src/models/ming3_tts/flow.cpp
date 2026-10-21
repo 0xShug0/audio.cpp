@@ -1,4 +1,4 @@
-#include "engine/models/ming_tts/flow.h"
+#include "engine/models/ming3_tts/flow.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -17,7 +17,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace engine::models::ming_tts {
+namespace engine::models::ming3_tts {
 namespace {
 
 class MingPatchNetwork {
@@ -107,7 +107,7 @@ public:
             core::round_f32_to_bf16_in_place(embedding);
             core::write_tensor_f32(graph.time, embedding);
         }
-        if (core::compute_graph(execution_, graph.graph, graph.plan, "ming_tts.patch") != GGML_STATUS_SUCCESS) {
+        if (core::compute_graph(execution_, graph.graph, graph.plan, "ming3_tts.patch") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Ming patch graph execution failed");
         }
         return core::read_tensor_f32(graph.output.tensor);
@@ -141,7 +141,7 @@ private:
         const int64_t steps = conditioned_ ? 3 : 2;
         const int64_t dim = hidden_ / heads_;
         graph->context = ggml_init({4 * 1024 * 1024, nullptr, true});
-        core::ModuleBuildContext ctx{graph->context, "ming_tts.patch", execution_.backend_type()};
+        core::ModuleBuildContext ctx{graph->context, "ming3_tts.patch", execution_.backend_type()};
         graph->input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, 1, latent_dim_}));
         ggml_set_input(graph->input.tensor);
         auto x = modules::LinearModule({latent_dim_, hidden_, true}).build(ctx, graph->input, input_projection_);
@@ -241,7 +241,7 @@ private:
         core::prepare_host_graph_plan(execution_, graph->graph, graph->plan);
         const std::array<int32_t, 3> positions{0, 1, 2};
         ggml_backend_tensor_set(graph->positions.tensor, positions.data(), 0, steps * sizeof(int32_t));
-        debug::timing_log_context_reservation("ming_tts.patch", graph->context);
+        debug::timing_log_context_reservation("ming3_tts.patch", graph->context);
         return graph;
     }
 
@@ -277,7 +277,7 @@ struct MingFlowRuntime::Impl {
         core::round_f32_to_bf16_in_place(phase);
         for (size_t i = 0; i < time.size(); ++i) time[i] -= phase[i];
         core::round_f32_to_bf16_in_place(time);
-        debug::trace_log_f32("ming_tts.flow.timesteps", {11}, time);
+        debug::trace_log_f32("ming3_tts.flow.timesteps", {11}, time);
     }
     MingPatchNetwork flow, aggregator;
     std::vector<float> time;
@@ -329,4 +329,4 @@ std::vector<float> MingFlowRuntime::sample(const std::vector<float> & conditioni
     return y;
 }
 
-}  // namespace engine::models::ming_tts
+}  // namespace engine::models::ming3_tts

@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace engine::models::ming_tts {
+namespace engine::models::ming3_tts {
 
 struct MingPromptOptions {
     std::string template_name = "tts";
@@ -34,4 +34,4 @@ private:
     tokenizers::LlamaBpeTokenizer tokenizer_;
 };
 
-}  // namespace engine::models::ming_tts
+}  // namespace engine::models::ming3_tts

@@ -1,4 +1,4 @@
-#include "engine/models/ming_tts/prompt.h"
+#include "engine/models/ming3_tts/prompt.h"
 
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
@@ -10,7 +10,7 @@
 #include <set>
 #include <stdexcept>
 
-namespace engine::models::ming_tts {
+namespace engine::models::ming3_tts {
 
 MingPromptBuilder::MingPromptBuilder(tokenizers::LlamaBpeTokenizerSpec tokenizer)
     : tokenizer_(std::move(tokenizer)) {
@@ -41,7 +41,7 @@ MingPrompt MingPromptBuilder::build(const std::string & text, const MingPromptOp
     task = found->second;
     std::string language = io::trim_ascii_whitespace(options.language);
     if (task == "DIALECT" && !language.empty()) {
-        debug::log_message(debug::LogLevel::Warning, "ming_tts", "The dialect template ignores language");
+        debug::log_message(debug::LogLevel::Warning, "ming3_tts", "The dialect template ignores language");
         language.clear();
     }
     if (task == "MULTILINGUAL" && language.empty()) throw std::runtime_error("Ming multilingual requires language");
@@ -133,4 +133,4 @@ MingPrompt MingPromptBuilder::build(const std::string & text, const MingPromptOp
     return result;
 }
 
-}  // namespace engine::models::ming_tts
+}  // namespace engine::models::ming3_tts
