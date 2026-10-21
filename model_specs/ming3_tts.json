@@ -223,7 +223,7 @@
         "type": "int",
         "required": false,
         "min": 1,
-        "description": "Framework long-form chunk budget in Unicode codepoints; default 50 when hanzi, kana and Hangul outnumber other letters and digits, otherwise 300. Voice design and freeform remain unchunked unless explicitly set."
+        "description": "Framework long-form chunk budget in Unicode codepoints; default 50 when hanzi, kana and Hangul outnumber other letters and digits, otherwise 300 (120 for voice design and freeform, whose chunks after the first use the first generated chunk as their reference)."
       },
       {
         "name": "text_chunk_mode",
