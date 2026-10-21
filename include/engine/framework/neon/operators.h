@@ -94,11 +94,40 @@ public:
     LayerNorm(const std::vector<float> &weight, const std::vector<float> &bias, float epsilon);
 };
 
-enum class ActivationKind { SiLU, GELU, LeakyReLU, Sigmoid };
+enum class ActivationKind { SiLU, GELU, LeakyReLU, Sigmoid, Tanh };
 
 class Activation : public Operator {
 public:
     explicit Activation(ActivationKind kind, float negative_slope = 0.0F);
+};
+
+class Scale : public Operator {
+public:
+    explicit Scale(float scale);
+};
+
+// Add [channels, 1] or [channels, frames] to a channel-first sequence.
+class BroadcastAdd : public Operator {
+public:
+    BroadcastAdd();
+};
+
+class ReflectPad1d : public Operator {
+public:
+    ReflectPad1d(int left, int right);
+};
+
+// Inputs: [channels, frames] and [2*channels, 1] affine parameters.
+// output = normalize_time(input) * (1 + affine[:channels]) + affine[channels:].
+class AdaptiveInstanceNorm : public Operator {
+public:
+    explicit AdaptiveInstanceNorm(float epsilon);
+};
+
+// Channel-wise x + sin(alpha*x)^2 / alpha. Alpha must be nonzero.
+class Snake : public Operator {
+public:
+    explicit Snake(std::vector<float> alpha);
 };
 
 class ClampMin : public Operator {

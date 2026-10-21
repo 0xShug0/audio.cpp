@@ -3,6 +3,9 @@
 
 #include "engine/models/kokoro_tts/assets.h"
 #include "engine/models/kokoro_tts/rknn_generator.h"
+#ifdef ENGINE_HAVE_NEON
+#include "engine/models/kokoro_tts/neon_generator.h"
+#endif
 
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/core/backend.h"
@@ -11,7 +14,6 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
-#include "engine/framework/modules/optimizations/neon_conv1d.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
@@ -341,18 +343,9 @@ ggml_tensor * build_decoder_conv1d_bct(
     ggml_context * ctx,
     ggml_tensor * input,
     const ConvWeightsT & conv,
-    bool allow_cpu_fastpath,
-    modules::NeonConv1dGraph * neon = nullptr) {
+    bool allow_cpu_fastpath) {
     if (conv.groups != 1) {
         throw std::runtime_error("kokoro decoder conv1d requires groups == 1");
-    }
-    if (neon) {
-        core::ModuleBuildContext build{ctx};
-        return neon->build(build, core::wrap_tensor(input,
-            core::TensorShape::from_dims({input->ne[2], input->ne[1], input->ne[0]})),
-            make_conv1d_weights(build, conv), {conv.in_channels, conv.out_channels, conv.kernel,
-                static_cast<int>(conv.stride), static_cast<int>(conv.padding),
-                static_cast<int>(conv.dilation), conv.use_bias}).tensor;
     }
     if (allow_cpu_fastpath &&
         conv.kernel == 1 &&
@@ -930,25 +923,23 @@ ggml_tensor * build_generator_resblock(
     const core::TensorValue & style,
     bool allow_cpu_fastpath,
     std::vector<TimeMaskInputs> & time_masks,
-    bool use_time_masks,
-    modules::NeonConv1dGraph * neon = nullptr) {
+    bool use_time_masks) {
     ggml_tensor * current = x;
     for (size_t i = 0; i < block.convs1.size(); ++i) {
         ggml_tensor * xt = build_adaptive_instance_norm_bct_decoder(
             ctx, current, block.adain1[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
         xt = build_snake1d_bct_decoder(ctx, xt, block.alpha1[i], allow_cpu_fastpath);
-        xt = build_decoder_conv1d_bct(ctx, xt, block.convs1[i], allow_cpu_fastpath, neon);
+        xt = build_decoder_conv1d_bct(ctx, xt, block.convs1[i], allow_cpu_fastpath);
         xt = build_adaptive_instance_norm_bct_decoder(
             ctx, xt, block.adain2[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
         xt = build_snake1d_bct_decoder(ctx, xt, block.alpha2[i], allow_cpu_fastpath);
-        xt = build_decoder_conv1d_bct(ctx, xt, block.convs2[i], allow_cpu_fastpath, neon);
+        xt = build_decoder_conv1d_bct(ctx, xt, block.convs2[i], allow_cpu_fastpath);
         current = ggml_add(ctx, xt, current);
     }
     return current;
 }
 
 struct GeneratorGraphSession {
-    std::unique_ptr<modules::NeonConv1dGraph> neon;
     const KokoroWeights::GeneratorWeights * weights = nullptr;
     int64_t decoder_frame_capacity = 0;
     int64_t conditioning_frame_capacity = 0;
@@ -973,8 +964,7 @@ struct GeneratorGraphSession {
         int64_t conditioning_frame_capacity_in,
         int64_t style_dim_in,
         int n_threads_in,
-        bool use_device_backend_in,
-        bool neon_generator)
+        bool use_device_backend_in)
         : weights(&weights_in),
           decoder_frame_capacity(decoder_frame_capacity_in),
           conditioning_frame_capacity(conditioning_frame_capacity_in),
@@ -993,10 +983,6 @@ struct GeneratorGraphSession {
         }
 
         try {
-            if (neon_generator) {
-                if (use_device_backend) throw std::runtime_error("Kokoro NEON generator requires CPU");
-                neon = std::make_unique<modules::NeonConv1dGraph>(n_threads);
-            }
             const bool allow_cpu_fastpath = !use_device_backend;
 
             decoder_x_in = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, decoder_frame_capacity, 512, 1);
@@ -1013,7 +999,7 @@ struct GeneratorGraphSession {
             ggml_tensor * current = decoder_x_in;
             for (size_t i = 0; i < stages.size(); ++i) {
                 const GeneratorGraphStage & stage = stages[i];
-                ggml_tensor * source = build_decoder_conv1d_bct(ctx, conditioning_in, *stage.noise_conv, allow_cpu_fastpath, neon.get());
+                ggml_tensor * source = build_decoder_conv1d_bct(ctx, conditioning_in, *stage.noise_conv, allow_cpu_fastpath);
                 source = build_generator_resblock(
                     ctx,
                     source,
@@ -1021,7 +1007,7 @@ struct GeneratorGraphSession {
                     style,
                     allow_cpu_fastpath,
                     time_masks,
-                    false, neon.get());
+                    false);
 
                 ggml_tensor * x = ggml_leaky_relu(ctx, current, 0.1f, false);
                 x = use_device_backend
@@ -1041,14 +1027,14 @@ struct GeneratorGraphSession {
                         style,
                         allow_cpu_fastpath,
                         time_masks,
-                        false, neon.get());
+                        false);
                     stage_sum = stage_sum == nullptr ? block : ggml_add(ctx, stage_sum, block);
                 }
                 current = ggml_scale(ctx, stage_sum, 1.0f / 3.0f);
             }
 
             current = ggml_leaky_relu(ctx, current, 0.01f, false);
-            output = build_decoder_conv1d_bct(ctx, current, weights->conv_post, allow_cpu_fastpath, neon.get());
+            output = build_decoder_conv1d_bct(ctx, current, weights->conv_post, allow_cpu_fastpath);
             output = ggml_cont(ctx, output);
             set_graph_output(output);
 
@@ -1198,13 +1184,12 @@ public:
         int64_t style_dim,
         ggml_backend_t backend,
         int n_threads,
-        bool use_device_backend,
-        bool neon_generator)
+        bool use_device_backend)
         : generator_(&generator),
           style_dim_(style_dim),
           backend_(backend),
           n_threads_(std::max(1, n_threads)),
-          use_device_backend_(use_device_backend), neon_generator_(neon_generator) {
+          use_device_backend_(use_device_backend) {
         if (generator.noise_convs.size() != generator.ups.size() ||
             generator.noise_res.size() != generator.ups.size() ||
             generator.resblocks.size() != generator.ups.size() * 3) {
@@ -1246,7 +1231,7 @@ public:
             conditioning_frame_capacity_,
             style_dim_,
             n_threads_,
-            use_device_backend_, neon_generator_);
+            use_device_backend_);
     }
 
     std::vector<float> run(
@@ -1273,7 +1258,6 @@ private:
     int64_t conditioning_frame_capacity_ = 0;
     int n_threads_ = 1;
     bool use_device_backend_ = false;
-    bool neon_generator_ = false;
     std::vector<GeneratorGraphStage> stages_;
     std::unique_ptr<GeneratorGraphSession> session_;
 };
@@ -1289,6 +1273,9 @@ struct KokoroIstftNetDecoderRuntime::Impl {
     audio::STFTConfig inverse_stft_config;
     std::unique_ptr<ConditioningGraphRuntime> conditioning_graph;
     GeneratorGraphRuntime generator_graph;
+#ifdef ENGINE_HAVE_NEON
+    std::unique_ptr<KokoroNeonGenerator> neon_generator;
+#endif
     // Selected by `kokoro_tts.exec_plan.generator`: the generator stage runs on
     // the NPU, so the ggml generator graph is never prepared.
     std::unique_ptr<engine::models::kokoro_tts::KokoroTtsRknnGenerator> rknn_generator;
@@ -1307,7 +1294,7 @@ struct KokoroIstftNetDecoderRuntime::Impl {
         const std::string & rknn_generator_path = {},
         int64_t rknn_generator_overlap = 0,
         bool rknn_generator_gain_in = false,
-        bool neon_generator = false)
+        bool use_neon_generator = false)
         : weights(std::move(weights_in)),
           n_threads(std::max(1, n_threads_in)),
           use_device_backend(use_device_backend_in),
@@ -1321,8 +1308,16 @@ struct KokoroIstftNetDecoderRuntime::Impl {
               audio::STFTPadMode::Reflect,
               audio::STFTFamily::Kokoro,
           }),
-          generator_graph(weights->decoder.generator, weights->style_dim, backend, n_threads, use_device_backend, neon_generator),
+          generator_graph(weights->decoder.generator, weights->style_dim, backend, n_threads, use_device_backend),
           rknn_generator_gain(rknn_generator_gain_in) {
+        if (use_neon_generator) {
+#ifdef ENGINE_HAVE_NEON
+            if (use_device_backend) throw std::runtime_error("Kokoro NEON generator requires CPU");
+            neon_generator = std::make_unique<KokoroNeonGenerator>(weights->decoder.generator, int(weights->style_dim));
+#else
+            throw std::runtime_error("Kokoro NEON generator requires ENGINE_ENABLE_NEON=ON");
+#endif
+        }
         if (!rknn_generator_path.empty()) {
             const auto & gen = weights->decoder.generator;
             int64_t per_frame = gen.gen_istft_hop_size;
@@ -1348,6 +1343,9 @@ struct KokoroIstftNetDecoderRuntime::Impl {
             contract.conditioning_frames,
             n_threads,
             use_device_backend);
+#ifdef ENGINE_HAVE_NEON
+        if (neon_generator) return;
+#endif
         if (rknn_generator != nullptr && !rknn_generator_gain) {
             // The generator stage runs on the NPU; its ggml graph, arena and dequantized
             // weights are all dead weight. The gain knob is the exception: it renders a
@@ -1413,6 +1411,14 @@ std::vector<float> KokoroIstftNetDecoderRuntime::decode(
     int64_t generator_output_cols = 0;
     const int64_t bins = impl_->inverse_stft_config.n_fft / 2 + 1;
     generator_ms = measure_ms([&]() {
+#ifdef ENGINE_HAVE_NEON
+        if (impl_->neon_generator) {
+            generator_output = impl_->neon_generator->run(read_decoder_x(predictor), int(predictor.decoder_x_cols),
+                conditioning->features, int(conditioning->feature_cols), style_decoder, impl_->n_threads).values;
+            generator_output_cols = static_cast<int64_t>(generator_output.size()) / bins / 2;
+            return;
+        }
+#endif
         if (impl_->rknn_generator != nullptr) {
             const std::vector<float> decoder_x = read_decoder_x(predictor);
             // The conditioning is measured in spectrogram columns (60 per latent frame plus

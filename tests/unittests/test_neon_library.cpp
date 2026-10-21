@@ -492,51 +492,6 @@ void blocks_and_shared_weights() {
     engine::test::require(first.get() == second, "shared immutable operator with independent execution workspaces");
 }
 
-void replace_operator() {
-    const arm::Conv1d first({2, 3, 1}, values(6), values(3));
-    const arm::Conv1d second({2, 7, 3, 1, 1, 1, 1}, values(42), values(7));
-    arm::ExecutionPlan plan;
-    const auto input = plan.input();
-    const auto node = plan.add(first, {input});
-    plan.retain(node);
-    const arm::Activation activation(arm::ActivationKind::SiLU);
-    plan.set_output(plan.add(activation, {node}));
-    for (int threads : {1, 4, 1}) for (int frames : {3, 17, 3}) {
-        for (const auto * operation : {&first, &second, &first}) {
-            plan.replace(node, *operation);
-            bool invalidated = false;
-            try { (void)plan.view(node); }
-            catch (const std::invalid_argument &) { invalidated = true; }
-            engine::test::require(invalidated, "replacement invalidates retained results");
-            arm::ExecutionPlan reference;
-            const auto fresh_input = reference.input();
-            reference.set_output(reference.add(activation, {reference.add(*operation, {fresh_input})}));
-            auto data = values(2 * frames);
-            data[0] += threads * 0.01f;
-            const auto & expected = reference.run({arm::TensorView(data, {2, frames})}, threads);
-            const auto & actual = plan.run({arm::TensorView(data, {2, frames})}, threads);
-            engine::test::require(actual.shape == expected.shape && actual.values == expected.values,
-                                  "replacement matches a fresh graph, including downstream shapes");
-            engine::test::require(plan.view(node).shape.dimensions[1] == frames, "retained replacement result");
-        }
-    }
-    arm::ExecutionPlan other;
-    const auto foreign = other.add(first, {other.input()});
-    for (auto invalid : {input, foreign}) {
-        bool rejected = false;
-        try { plan.replace(invalid, first); }
-        catch (const std::invalid_argument &) { rejected = true; }
-        engine::test::require(rejected, "replacement rejects input nodes and foreign values");
-    }
-    plan.replace(node, arm::ScaleAdd({1}));
-    bool rejected = false;
-    try { (void)plan.run({arm::TensorView(values(6), {2, 3})}, 1); }
-    catch (const std::invalid_argument &) { rejected = true; }
-    engine::test::require(rejected, "replacement validates operator input arity");
-    plan.replace(node, first);
-    (void)plan.run({arm::TensorView(values(6), {2, 3})}, 1);
-}
-
 } // namespace
 
 int main() {
@@ -551,7 +506,6 @@ int main() {
         validation();
         output_layout_conversion();
         blocks_and_shared_weights();
-        replace_operator();
         std::cout << "NEON library contracts and scalar parity passed\n";
         return 0;
     } catch (const std::exception &error) {

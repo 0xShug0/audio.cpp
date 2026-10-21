@@ -252,16 +252,6 @@ ExecutionPlan::Value ExecutionPlan::add(const Operator &operation, std::initiali
     return {p.values.size() - 1, impl_.get()};
 }
 
-void ExecutionPlan::replace(Value value, const Operator &operation) {
-    if (value.owner_ != impl_.get() || value.index_ >= impl_->values.size() ||
-        !impl_->values[value.index_].kernel) {
-        throw std::invalid_argument("ARM replacement value must be an operator in this plan");
-    }
-    impl_->values[value.index_].kernel = operation.kernel_;
-    impl_->dirty = true;
-    impl_->completed = false;
-}
-
 void ExecutionPlan::set_output(Value value, Layout layout) {
     if (value.owner_ != impl_.get() || value.index_ >= impl_->values.size()) {
         throw std::invalid_argument("ARM plan output belongs to another plan");

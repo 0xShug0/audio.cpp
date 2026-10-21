@@ -5,7 +5,6 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "engine/framework/modules/optimizations/neon_conv1d.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
 
@@ -204,11 +203,6 @@ core::TensorValue crop_time_to(
     return SliceModule({2, 0, frames}).build(ctx, input);
 }
 
-core::TensorValue build_convolution(core::ModuleBuildContext & ctx, const core::TensorValue & input,
-    const Conv1dWeights & weights, const Conv1dConfig & config, NeonConv1dGraph * neon) {
-    return neon ? neon->build(ctx, input, weights, config) : Conv1dModule(config).build(ctx, input, weights);
-}
-
 core::TensorValue hifigan_resblock(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -217,8 +211,7 @@ core::TensorValue hifigan_resblock(
     int64_t kernel,
     const std::vector<int64_t> & dilations,
     HifiGanResBlockKind kind,
-    float slope,
-    NeonConv1dGraph * neon) {
+    float slope) {
     auto x = input;
     if (weights.convs1.size() != dilations.size() ||
         (kind == HifiGanResBlockKind::PairedConv && weights.convs2.size() != dilations.size())) {
@@ -226,24 +219,26 @@ core::TensorValue hifigan_resblock(
     }
     for (size_t layer = 0; layer < dilations.size(); ++layer) {
         auto xt = LeakyReluModule({slope}).build(ctx, x);
-        xt = build_convolution(ctx, xt, weights.convs1[layer], {
+        xt = Conv1dModule({
                 channels,
                 channels,
                 kernel,
                 1,
                 static_cast<int>((kernel * dilations[layer] - dilations[layer]) / 2),
                 static_cast<int>(dilations[layer]),
-                true}, neon);
+                true})
+                 .build(ctx, xt, weights.convs1[layer]);
         if (kind == HifiGanResBlockKind::PairedConv) {
             xt = LeakyReluModule({slope}).build(ctx, xt);
-            xt = build_convolution(ctx, xt, weights.convs2[layer], {
+            xt = Conv1dModule({
                     channels,
                     channels,
                     kernel,
                     1,
                     static_cast<int>((kernel - 1) / 2),
                     1,
-                    true}, neon);
+                    true})
+                     .build(ctx, xt, weights.convs2[layer]);
         }
         x = AddModule().build(ctx, xt, x);
     }
@@ -272,11 +267,10 @@ core::TensorValue hifigan_graph(
     const HifiGanVocoderWeights & weights,
     const core::TensorValue & mel,
     const core::TensorValue * source,
-    const core::TensorValue * conditioning,
-    NeonConv1dGraph * neon) {
+    const core::TensorValue * conditioning) {
     const auto & config = weights.config;
-    auto x = build_convolution(ctx, mel, weights.conv_pre,
-        {config.num_mels, config.upsample_initial_channel, 7, 1, 3, 1, true}, neon);
+    auto x = Conv1dModule({config.num_mels, config.upsample_initial_channel, 7, 1, 3, 1, true})
+                 .build(ctx, mel, weights.conv_pre);
     if (conditioning != nullptr) {
         if (!weights.cond.has_value()) {
             throw std::runtime_error("HiFi-GAN conditioning input provided without conditioning weights");
@@ -357,7 +351,7 @@ core::TensorValue hifigan_graph(
                 config.resblock_kernel_sizes[static_cast<size_t>(kernel_index)],
                 config.resblock_dilation_sizes[static_cast<size_t>(kernel_index)],
                 config.resblock_kind,
-                config.leaky_relu_slope, neon);
+                config.leaky_relu_slope);
             sum = kernel_index == 0 ? block : AddModule().build(ctx, sum, block);
         }
         x = core::wrap_tensor(
@@ -367,14 +361,15 @@ core::TensorValue hifigan_graph(
             GGML_TYPE_F32);
     }
     x = LeakyReluModule({config.post_leaky_relu_slope}).build(ctx, x);
-    x = build_convolution(ctx, x, weights.conv_post, {
+    x = Conv1dModule({
             config.upsample_initial_channel / (int64_t{1} << static_cast<int64_t>(config.upsample_rates.size())),
             config.output_channels,
             7,
             1,
             3,
             1,
-            config.conv_post_use_bias}, neon);
+            config.conv_post_use_bias})
+            .build(ctx, x, weights.conv_post);
     return TanhModule().build(ctx, x);
 }
 
@@ -571,7 +566,6 @@ private:
         }
         input_ctx_.reset();
         graph_ctx_.reset();
-        neon_.reset();
         mel_ = nullptr;
         source_ = nullptr;
         conditioning_ = nullptr;
@@ -644,13 +638,7 @@ private:
             mel_,
             core::TensorShape::from_dims({1, weights_.config.num_mels, frames}),
             GGML_TYPE_F32);
-        if (weights_.config.neon_convolutions) {
-            if (build.backend_type != core::BackendType::Cpu) {
-                throw std::runtime_error("HiFi-GAN NEON convolutions require a CPU backend");
-            }
-            neon_ = std::make_unique<NeonConv1dGraph>(weights_.execution_context->config().threads);
-        }
-        x = hifigan_graph(build, weights_, x, source_ptr, conditioning_ptr, neon_.get());
+        x = hifigan_graph(build, weights_, x, source_ptr, conditioning_ptr);
         output_ = core::ensure_backend_addressable_layout(build, x).tensor;
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(graph_ctx_.get(), 131072, false);
@@ -678,7 +666,6 @@ private:
     const HifiGanVocoderWeights & weights_;
     core::BackendConfig backend_;
     std::mutex mutex_;
-    std::unique_ptr<NeonConv1dGraph> neon_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
     ggml_backend_buffer_t input_buffer_ = nullptr;

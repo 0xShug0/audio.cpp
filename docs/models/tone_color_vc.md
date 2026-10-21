@@ -38,14 +38,15 @@ in F32. F32 remains the default; F16 is the smaller alternative.
 
 ## Session Options
 
-With `ENGINE_ENABLE_NEON=ON` on AArch64, select the CPU decoder's NEON
-convolutions with:
+With `ENGINE_ENABLE_NEON=ON` on AArch64, select the complete CPU NEON
+HiFi-GAN decoder with:
 
 ```bash
 --backend cpu --session-option 'tone_color_vc.exec_plan={"decoder":{"impl":"neon"}}'
 ```
 
-The default `{}` keeps GGML execution. Encoders and flow are unchanged. This
+The NEON decoder owns its execution plan, buffers, and worker team. The
+default `{}` keeps GGML execution. Encoders and flow are unchanged. This
 option also works with older embedded specs. There are no model-specific load
 options.
 
