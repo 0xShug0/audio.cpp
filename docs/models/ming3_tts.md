@@ -77,7 +77,7 @@ Use `--request-option name=value`, or the server request's `options` map.
 | `temperature` | `0` | Nonnegative flow sampling temperature; zero still uses seeded initial noise. |
 | `seed` | `1895` | Nonnegative reference-posterior and generation noise seed. |
 | `raw_text` | `false` | Bypass text chunking and synthesize one fragment. |
-| `text_chunk_size` | `300` | Framework text chunk budget in Unicode codepoints. Design/freeform remain unchunked unless explicitly set. |
+| `text_chunk_size` | `50` or `300` | Framework text chunk budget in Unicode codepoints: `50` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `300`. Design/freeform remain unchunked unless explicitly set. |
 | `text_chunk_mode` | `tag_aware` | `default`, `tag_aware`, `japanese`, or `endline`. |
 | `trim_silence` | `true` | Trim trailing low-energy 100-ms frames per fragment, retaining a 300-ms tail. |
 
@@ -113,8 +113,12 @@ There are no model-specific load options.
 
 ## Long Text
 
-Normal synthesis uses the framework text chunker with a 300-codepoint budget.
-This differs from the official Python semantic word/character chunker.
+Normal synthesis uses the framework text chunker with a 300-codepoint budget,
+or 50 codepoints when hanzi, kana and Hangul outnumber other letters and
+digits. The official Python chunker cuts fragments of 50 semantic units,
+counting a CJK character like a Latin word; a 300-codepoint CJK chunk does not
+leave its speech enough of the 512-position context, and its end would be
+dropped.
 Voice design and freeform remain unchunked unless `text_chunk_size` is
 explicitly supplied. `raw_text=true` bypasses chunking. The native frontend
 does not run the optional official FST text normalizer; spell out numbers

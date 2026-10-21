@@ -13,13 +13,45 @@
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/framework/text/chunking.h"
+#include "engine/framework/text/utf8.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <string_view>
 
 namespace engine::models::ming3_tts {
 namespace {
+
+// The official runtime cuts text into fragments of 50 semantic units, where a hanzi, kana or Hangul syllable counts like a
+// Latin word. A 300-codepoint chunk of such text holds several of those fragments, its prompt leaves too few of the 512
+// positions for its speech, and the end of the chunk is dropped without an error.
+int64_t default_text_chunk_size(std::string_view text) {
+    text::utf8_codepoint_count(text, "Ming TTS text");
+    size_t cjk = 0;
+    size_t other = 0;
+    for (size_t pos = 0; pos < text.size();) {
+        const auto ch = static_cast<unsigned char>(text[pos]);
+        if (ch < 0x80U) {
+            other += std::isalnum(ch) != 0;
+            ++pos;
+        } else if ((ch & 0xE0U) == 0xC0U) {
+            ++other;
+            pos += 2;
+        } else if ((ch & 0xF0U) == 0xE0U) {
+            const uint32_t cp = ((ch & 0x0FU) << 12) | ((static_cast<unsigned char>(text[pos + 1]) & 0x3FU) << 6) |
+                (static_cast<unsigned char>(text[pos + 2]) & 0x3FU);
+            cjk += (cp >= 0x3040U && cp <= 0x30FFU) || (cp >= 0x3400U && cp <= 0x4DBFU) ||
+                (cp >= 0x4E00U && cp <= 0x9FFFU) || (cp >= 0xAC00U && cp <= 0xD7A3U);
+            pos += 3;
+        } else {
+            pos += 4;
+        }
+    }
+    return cjk > other ? 50 : 300;
+}
 
 struct MingReference {
     runtime::AudioBuffer audio;
@@ -121,7 +153,7 @@ public:
         const bool design = prompt_options.template_name == "voice_design" || prompt_options.template_name == "style" ||
             prompt_options.template_name == "freeform";
         const auto chunks = raw_text || (design && !chunk_size) ? std::vector<std::string>{request.text_input->text}
-            : text::split_text_chunks(request.text_input->text, chunk_size.value_or(300),
+            : text::split_text_chunks(request.text_input->text, chunk_size.value_or(default_text_chunk_size(request.text_input->text)),
                 text::parse_text_chunk_mode_override(opts).value_or(text::TextChunkMode::TagAware));
         debug::trace_log_scalar("ming3_tts.text.chunk_count", chunks.size());
         const bool trim = runtime::parse_bool_option(runtime::find_option(opts, {"trim_silence"}).value_or("true"), "trim_silence");
