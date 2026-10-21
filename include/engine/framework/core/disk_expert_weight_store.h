@@ -27,7 +27,8 @@ public:
         double stage_ms = 0;
     };
 
-    explicit DiskExpertWeightStore(const std::filesystem::path & gguf_path, bool pin_experts = false);
+    explicit DiskExpertWeightStore(const std::filesystem::path & gguf_path, bool pin_experts = false,
+                                   size_t read_threads = 1);
     ~DiskExpertWeightStore();
     DiskExpertWeightStore(const DiskExpertWeightStore &) = delete;
     DiskExpertWeightStore & operator=(const DiskExpertWeightStore &) = delete;

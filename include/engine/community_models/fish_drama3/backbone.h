@@ -46,6 +46,7 @@ struct Drama3BackboneDecoderConfig {
     bool disk_experts = false;
     bool pin_experts = false;
     int64_t expert_cache_size = 32;
+    int64_t disk_expert_read_threads = 1;
     size_t prefill_cache_bytes = 256u * 1024u * 1024u;
     bool profile_prefill_cache = false;
 };
