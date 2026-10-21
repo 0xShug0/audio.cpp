@@ -212,6 +212,10 @@ void apply_top_k_to_scores(SamplerScratch & scratch, int64_t vocab_size, int64_t
                    scratch.scores[static_cast<size_t>(rhs)];
         });
     const float threshold = scratch.scores[static_cast<size_t>(*kth)];
+    // nth_element reorders the index vector. Candidate traversal order is
+    // observable by the fallback sampler, so restore token-index order
+    // before building the final candidate list.
+    std::sort(scratch.order.begin(), scratch.order.end());
     scratch.kept.reserve(kept_count);
     for (const int64_t index : scratch.order) {
         if (scratch.scores[static_cast<size_t>(index)] >= threshold) {
