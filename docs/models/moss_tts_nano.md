@@ -67,6 +67,15 @@ Voice clone:
 audiocpp_cli --task clon --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-100M --backend cuda --text "Hello from MOSS-TTS-Nano." --voice-ref /path/to/reference.wav --reference-text "Reference transcript when available." --out out.wav
 ```
 
+## Long Text
+
+Long text is split by the framework text chunker into 256-codepoint chunks, or
+50-codepoint chunks when hanzi, kana and Hangul outnumber other letters and
+digits. Upstream voice cloning packs sentences into chunks of 50-75 text
+tokens, and its tokenizer spends about one token per CJK character but about
+one per four Latin characters; a 256-codepoint CJK chunk would run into the
+300-frame `max_tokens` limit or stop early, dropping the rest of the chunk.
+
 ## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
@@ -79,7 +88,7 @@ audiocpp_cli --task clon --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-1
 | `--top-p` | float | `0.8` | Audio-token nucleus sampling limit. |
 | `--top-k` | integer | `25` | Audio-token top-k sampling limit. |
 | `--repetition-penalty` | float | `1.0` | Audio-token repetition penalty. |
-| `--text-chunk-size` | characters | `256` | Framework long-form text chunk size. |
+| `--text-chunk-size` | characters | `50` or `256` | Framework long-form text chunk size: `50` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `256`. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |
 
 ## Request Options (use with `--request-option`)
@@ -98,7 +107,7 @@ audiocpp_cli --task clon --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-1
 | `text_top_p` | float | `1` | Text-gate nucleus sampling limit. |
 | `text_top_k` | integer | `50` | Text-gate top-k sampling limit. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
-| `text_chunk_size` | integer | `256` | Framework long-form text chunk size. |
+| `text_chunk_size` | integer | `50` or `256` | Framework long-form text chunk size: `50` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `256`. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 
 ## Session Options (use with `--session-option`)

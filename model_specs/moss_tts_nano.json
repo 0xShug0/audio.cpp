@@ -130,9 +130,8 @@
       {
         "name": "text_chunk_size",
         "type": "int",
-        "description": "Framework long-form text chunk size.",
+        "description": "Framework long-form text chunk size; default 50 when hanzi, kana and Hangul outnumber other letters and digits, otherwise 256.",
         "required": false,
-        "default": 256,
         "min": 1
       },
       {
