@@ -8,6 +8,7 @@
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
+#include "engine/framework/modules/packed_linear_weights.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
@@ -86,11 +87,13 @@ linear_weights(engine::core::BackendWeightStore &store,
                                      out_features, in_features, use_bias);
 }
 
-VoxCPM2MiniCPMWeights load_minicpm_weights(
-    engine::core::BackendWeightStore &store,
-    const engine::assets::TensorSource &source, const std::string &prefix,
-    const VoxCPM2MiniCPMConfig &config,
-    engine::assets::TensorStorageType storage_type, bool load_token_embedding) {
+VoxCPM2MiniCPMWeights
+load_minicpm_weights(engine::core::BackendWeightStore &store,
+                     const engine::assets::TensorSource &source,
+                     const std::string &prefix,
+                     const VoxCPM2MiniCPMConfig &config,
+                     engine::assets::TensorStorageType storage_type,
+                     bool load_token_embedding, bool optimized) {
   const int64_t dim = head_dim(config);
   VoxCPM2MiniCPMWeights weights;
   weights.config = config;
@@ -116,27 +119,53 @@ VoxCPM2MiniCPMWeights load_minicpm_weights(
     VoxCPM2MiniCPMLayerWeights layer_weights;
     layer_weights.input_norm = weight_binding::norm_weight_from_source(
         store, source, layer_prefix + ".input_layernorm", config.hidden_size);
-    layer_weights.q_proj = linear_weights(
-        store, source, layer_prefix + ".self_attn.q_proj", storage_type,
-        config.num_attention_heads * dim, config.hidden_size, false);
-    layer_weights.k_proj = linear_weights(
-        store, source, layer_prefix + ".self_attn.k_proj", storage_type,
-        config.num_key_value_heads * dim, config.hidden_size, false);
-    layer_weights.v_proj = linear_weights(
-        store, source, layer_prefix + ".self_attn.v_proj", storage_type,
-        config.num_key_value_heads * dim, config.hidden_size, false);
+    if (optimized) {
+      layer_weights.qkv_proj =
+          engine::modules::PackedLinearWeightsBuilder(
+              {config.hidden_size,
+               {{layer_prefix + ".self_attn.q_proj.weight", std::nullopt,
+                 config.num_attention_heads * dim},
+                {layer_prefix + ".self_attn.k_proj.weight", std::nullopt,
+                 config.num_key_value_heads * dim},
+                {layer_prefix + ".self_attn.v_proj.weight", std::nullopt,
+                 config.num_key_value_heads * dim}},
+               false, true})
+              .build(store, source, storage_type);
+    } else {
+      layer_weights.q_proj = linear_weights(
+          store, source, layer_prefix + ".self_attn.q_proj", storage_type,
+          config.num_attention_heads * dim, config.hidden_size, false);
+      layer_weights.k_proj = linear_weights(
+          store, source, layer_prefix + ".self_attn.k_proj", storage_type,
+          config.num_key_value_heads * dim, config.hidden_size, false);
+      layer_weights.v_proj = linear_weights(
+          store, source, layer_prefix + ".self_attn.v_proj", storage_type,
+          config.num_key_value_heads * dim, config.hidden_size, false);
+    }
     layer_weights.o_proj = linear_weights(
         store, source, layer_prefix + ".self_attn.o_proj", storage_type,
         config.hidden_size, config.num_attention_heads * dim, false);
     layer_weights.post_norm = weight_binding::norm_weight_from_source(
         store, source, layer_prefix + ".post_attention_layernorm",
         config.hidden_size);
-    layer_weights.gate_proj = linear_weights(
-        store, source, layer_prefix + ".mlp.gate_proj", storage_type,
-        config.intermediate_size, config.hidden_size, false);
-    layer_weights.up_proj = linear_weights(
-        store, source, layer_prefix + ".mlp.up_proj", storage_type,
-        config.intermediate_size, config.hidden_size, false);
+    if (optimized) {
+      layer_weights.gate_up_proj =
+          engine::modules::PackedLinearWeightsBuilder(
+              {config.hidden_size,
+               {{layer_prefix + ".mlp.gate_proj.weight", std::nullopt,
+                 config.intermediate_size},
+                {layer_prefix + ".mlp.up_proj.weight", std::nullopt,
+                 config.intermediate_size}},
+               false, true})
+              .build(store, source, storage_type);
+    } else {
+      layer_weights.gate_proj = linear_weights(
+          store, source, layer_prefix + ".mlp.gate_proj", storage_type,
+          config.intermediate_size, config.hidden_size, false);
+      layer_weights.up_proj = linear_weights(
+          store, source, layer_prefix + ".mlp.up_proj", storage_type,
+          config.intermediate_size, config.hidden_size, false);
+    }
     layer_weights.down_proj = linear_weights(
         store, source, layer_prefix + ".mlp.down_proj", storage_type,
         config.hidden_size, config.intermediate_size, false);
@@ -178,18 +207,20 @@ std::shared_ptr<const VoxCPM2ModelWeights>
 load_model_weights(const VoxCPM2Assets &assets,
                    engine::core::ExecutionContext &execution_context,
                    size_t weight_context_bytes,
-                   engine::assets::TensorStorageType storage_type) {
+                   engine::assets::TensorStorageType storage_type,
+                   bool optimized) {
   auto weights = std::make_shared<VoxCPM2ModelWeights>();
   weights->store = std::make_shared<engine::core::BackendWeightStore>(
       execution_context.backend(), execution_context.backend_type(),
       "voxcpm2.model.weights", weight_context_bytes);
   auto &store = *weights->store;
   const auto &source = *assets.model_weights;
-  weights->base_lm = load_minicpm_weights(store, source, "base_lm",
-                                          assets.config.lm, storage_type, true);
+  weights->base_lm =
+      load_minicpm_weights(store, source, "base_lm", assets.config.lm,
+                           storage_type, true, optimized);
   weights->residual_lm = load_minicpm_weights(store, source, "residual_lm",
                                               residual_lm_config(assets.config),
-                                              storage_type, false);
+                                              storage_type, false, optimized);
 
   const auto encoder_config =
       local_transformer_config(assets.config.lm, assets.config.encoder);
@@ -201,7 +232,7 @@ load_model_weights(const VoxCPM2Assets &assets,
       assets.config.encoder.hidden_dim, assets.config.feat_dim, true);
   weights->feat_encoder.encoder =
       load_minicpm_weights(store, source, "feat_encoder.encoder",
-                           encoder_config, storage_type, false);
+                           encoder_config, storage_type, false, optimized);
 
   const auto dit_config =
       local_transformer_config(assets.config.lm, assets.config.dit);
@@ -230,7 +261,7 @@ load_model_weights(const VoxCPM2Assets &assets,
       true);
   weights->dit.decoder =
       load_minicpm_weights(store, source, "feat_decoder.estimator.decoder",
-                           dit_config, storage_type, false);
+                           dit_config, storage_type, false, optimized);
 
   weights->projections.fsq_in_proj =
       linear_weights(store, source, "fsq_layer.in_proj", storage_type,
@@ -262,20 +293,19 @@ load_model_weights(const VoxCPM2Assets &assets,
   return weights;
 }
 
-
-
 class VoxCPM2WeightsRuntime::Impl {
 public:
   Impl(std::shared_ptr<const VoxCPM2Assets> assets,
        engine::core::ExecutionContext &execution_context,
        size_t weight_context_bytes,
-       engine::assets::TensorStorageType weight_storage_type)
+       engine::assets::TensorStorageType weight_storage_type, bool optimized)
       : assets_(std::move(assets)), execution_context_(execution_context) {
     if (assets_ == nullptr) {
       throw std::runtime_error("VoxCPM2 weights runtime requires assets");
     }
-    weights_ = load_model_weights(*assets_, execution_context_,
-                                  weight_context_bytes, weight_storage_type);
+    weights_ =
+        load_model_weights(*assets_, execution_context_, weight_context_bytes,
+                           weight_storage_type, optimized);
   }
 
   const VoxCPM2Assets &assets() const noexcept { return *assets_; }
@@ -300,10 +330,10 @@ VoxCPM2WeightsRuntime::VoxCPM2WeightsRuntime(
     std::shared_ptr<const VoxCPM2Assets> assets,
     engine::core::ExecutionContext &execution_context,
     size_t weight_context_bytes,
-    engine::assets::TensorStorageType weight_storage_type)
+    engine::assets::TensorStorageType weight_storage_type, bool optimized)
     : impl_(std::make_unique<Impl>(std::move(assets), execution_context,
-                                   weight_context_bytes, weight_storage_type)) {
-}
+                                   weight_context_bytes, weight_storage_type,
+                                   optimized)) {}
 
 VoxCPM2WeightsRuntime::~VoxCPM2WeightsRuntime() = default;
 
@@ -482,18 +512,41 @@ minicpm_prefill_layer(engine::core::ModuleBuildContext &ctx,
   auto hidden = engine::modules::RMSNormModule(
                     {config.hidden_size, config.rms_norm_eps, true, false})
                     .build(ctx, input, layer.input_norm);
-  auto q = engine::modules::LinearModule(
-               binding::linear_config(config.hidden_size,
-                                      config.num_attention_heads * dim, false))
-               .build(ctx, hidden, layer.q_proj);
-  auto k = engine::modules::LinearModule(
-               binding::linear_config(config.hidden_size,
-                                      config.num_key_value_heads * dim, false))
-               .build(ctx, hidden, layer.k_proj);
-  auto v = engine::modules::LinearModule(
-               binding::linear_config(config.hidden_size,
-                                      config.num_key_value_heads * dim, false))
-               .build(ctx, hidden, layer.v_proj);
+  engine::core::TensorValue q, k, v;
+  if (layer.qkv_proj) {
+    auto packed = engine::modules::LinearModule(
+                      binding::linear_config(config.hidden_size,
+                                             (config.num_attention_heads +
+                                              2 * config.num_key_value_heads) *
+                                                 dim,
+                                             false))
+                      .build(ctx, hidden, *layer.qkv_proj);
+    const auto axis = static_cast<int>(hidden.shape.rank - 1);
+    q = engine::modules::SliceModule(
+            {axis, 0, config.num_attention_heads * dim})
+            .build(ctx, packed);
+    k = engine::modules::SliceModule({axis, config.num_attention_heads * dim,
+                                      config.num_key_value_heads * dim})
+            .build(ctx, packed);
+    v = engine::modules::SliceModule(
+            {axis,
+             (config.num_attention_heads + config.num_key_value_heads) * dim,
+             config.num_key_value_heads * dim})
+            .build(ctx, packed);
+  } else {
+    q = engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   config.num_attention_heads * dim, false))
+            .build(ctx, hidden, layer.q_proj);
+    k = engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   config.num_key_value_heads * dim, false))
+            .build(ctx, hidden, layer.k_proj);
+    v = engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   config.num_key_value_heads * dim, false))
+            .build(ctx, hidden, layer.v_proj);
+  }
   q = apply_minicpm_rope(ctx,
                          reshape_heads(ctx, q, config.num_attention_heads, dim),
                          positions, weights);
@@ -536,15 +589,31 @@ minicpm_prefill_layer(engine::core::ModuleBuildContext &ctx,
   hidden = engine::modules::RMSNormModule(
                {config.hidden_size, config.rms_norm_eps, true, false})
                .build(ctx, x, layer.post_norm);
-  auto gate = engine::modules::LinearModule(
-                  binding::linear_config(config.hidden_size,
-                                         config.intermediate_size, false))
-                  .build(ctx, hidden, layer.gate_proj);
-  gate = engine::modules::SiluModule{}.build(ctx, gate);
-  auto up = engine::modules::LinearModule(
-                binding::linear_config(config.hidden_size,
-                                       config.intermediate_size, false))
-                .build(ctx, hidden, layer.up_proj);
+  engine::core::TensorValue gate, up;
+  if (layer.gate_up_proj) {
+    auto packed =
+        engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   2 * config.intermediate_size, false))
+            .build(ctx, hidden, *layer.gate_up_proj);
+    const auto axis = static_cast<int>(hidden.shape.rank - 1);
+    gate = engine::modules::SliceModule({axis, 0, config.intermediate_size})
+               .build(ctx, packed);
+    up = engine::modules::SliceModule(
+             {axis, config.intermediate_size, config.intermediate_size})
+             .build(ctx, packed);
+    gate = engine::modules::SiluModule{}.build(ctx, gate);
+  } else {
+    gate = engine::modules::LinearModule(
+               binding::linear_config(config.hidden_size,
+                                      config.intermediate_size, false))
+               .build(ctx, hidden, layer.gate_proj);
+    gate = engine::modules::SiluModule{}.build(ctx, gate);
+    up = engine::modules::LinearModule(
+             binding::linear_config(config.hidden_size,
+                                    config.intermediate_size, false))
+             .build(ctx, hidden, layer.up_proj);
+  }
   auto gated = engine::modules::MulModule{}.build(ctx, gate, up);
   auto ff = engine::modules::LinearModule(
                 binding::linear_config(config.intermediate_size,
@@ -900,18 +969,41 @@ minicpm_layer_with_static_cache(engine::core::ModuleBuildContext &ctx,
   auto hidden = engine::modules::RMSNormModule(
                     {config.hidden_size, config.rms_norm_eps, true, false})
                     .build(ctx, input, layer.input_norm);
-  auto q = engine::modules::LinearModule(
-               binding::linear_config(config.hidden_size,
-                                      config.num_attention_heads * dim, false))
-               .build(ctx, hidden, layer.q_proj);
-  auto k = engine::modules::LinearModule(
-               binding::linear_config(config.hidden_size,
-                                      config.num_key_value_heads * dim, false))
-               .build(ctx, hidden, layer.k_proj);
-  auto v = engine::modules::LinearModule(
-               binding::linear_config(config.hidden_size,
-                                      config.num_key_value_heads * dim, false))
-               .build(ctx, hidden, layer.v_proj);
+  engine::core::TensorValue q, k, v;
+  if (layer.qkv_proj) {
+    auto packed = engine::modules::LinearModule(
+                      binding::linear_config(config.hidden_size,
+                                             (config.num_attention_heads +
+                                              2 * config.num_key_value_heads) *
+                                                 dim,
+                                             false))
+                      .build(ctx, hidden, *layer.qkv_proj);
+    const auto axis = static_cast<int>(hidden.shape.rank - 1);
+    q = engine::modules::SliceModule(
+            {axis, 0, config.num_attention_heads * dim})
+            .build(ctx, packed);
+    k = engine::modules::SliceModule({axis, config.num_attention_heads * dim,
+                                      config.num_key_value_heads * dim})
+            .build(ctx, packed);
+    v = engine::modules::SliceModule(
+            {axis,
+             (config.num_attention_heads + config.num_key_value_heads) * dim,
+             config.num_key_value_heads * dim})
+            .build(ctx, packed);
+  } else {
+    q = engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   config.num_attention_heads * dim, false))
+            .build(ctx, hidden, layer.q_proj);
+    k = engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   config.num_key_value_heads * dim, false))
+            .build(ctx, hidden, layer.k_proj);
+    v = engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   config.num_key_value_heads * dim, false))
+            .build(ctx, hidden, layer.v_proj);
+  }
   q = apply_minicpm_rope(ctx,
                          reshape_heads(ctx, q, config.num_attention_heads, dim),
                          positions, weights);
@@ -956,15 +1048,31 @@ minicpm_layer_with_static_cache(engine::core::ModuleBuildContext &ctx,
   hidden = engine::modules::RMSNormModule(
                {config.hidden_size, config.rms_norm_eps, true, false})
                .build(ctx, x, layer.post_norm);
-  auto gate = engine::modules::LinearModule(
-                  binding::linear_config(config.hidden_size,
-                                         config.intermediate_size, false))
-                  .build(ctx, hidden, layer.gate_proj);
-  gate = engine::modules::SiluModule{}.build(ctx, gate);
-  auto up = engine::modules::LinearModule(
-                binding::linear_config(config.hidden_size,
-                                       config.intermediate_size, false))
-                .build(ctx, hidden, layer.up_proj);
+  engine::core::TensorValue gate, up;
+  if (layer.gate_up_proj) {
+    auto packed =
+        engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   2 * config.intermediate_size, false))
+            .build(ctx, hidden, *layer.gate_up_proj);
+    const auto axis = static_cast<int>(hidden.shape.rank - 1);
+    gate = engine::modules::SliceModule({axis, 0, config.intermediate_size})
+               .build(ctx, packed);
+    up = engine::modules::SliceModule(
+             {axis, config.intermediate_size, config.intermediate_size})
+             .build(ctx, packed);
+    gate = engine::modules::SiluModule{}.build(ctx, gate);
+  } else {
+    gate = engine::modules::LinearModule(
+               binding::linear_config(config.hidden_size,
+                                      config.intermediate_size, false))
+               .build(ctx, hidden, layer.gate_proj);
+    gate = engine::modules::SiluModule{}.build(ctx, gate);
+    up = engine::modules::LinearModule(
+             binding::linear_config(config.hidden_size,
+                                    config.intermediate_size, false))
+             .build(ctx, hidden, layer.up_proj);
+  }
   auto gated = engine::modules::MulModule{}.build(ctx, gate, up);
   auto ff = engine::modules::LinearModule(
                 binding::linear_config(config.intermediate_size,

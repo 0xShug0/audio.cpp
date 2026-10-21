@@ -12,6 +12,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/runtime/streaming_audio.h"
 
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
@@ -599,6 +600,9 @@ public:
       throw std::runtime_error(
           "VoxCPM2 AudioVAE encoder sample capacity must be positive");
     }
+    if (config_.tile_frames < 0) {
+      throw std::runtime_error("VoxCPM2 AudioVAE tile frames must be non-negative");
+    }
   }
 
   ~Impl() {
@@ -617,7 +621,40 @@ public:
     if (static_cast<int64_t>(features.size()) != expected) {
       throw std::runtime_error("VoxCPM2 AudioVAE feature size mismatch");
     }
-    ensure_decoder_graph(latent_frames);
+    if (config_.tile_frames > 0 && latent_frames > config_.tile_frames) {
+      // Back-propagate the causal receptive field through the actual strides.
+      // Walking backward: residual convolutions, then inverse upsampling.
+      int64_t history = weights_.decoder_final_conv.kernel_size - 1;
+      for (auto it = weights_.decoder_blocks.rbegin();
+           it != weights_.decoder_blocks.rend(); ++it) {
+        history += (kResidualKernel - 1) * (1 + 3 + 9);
+        history = (history + it->upsample.kernel_size - 1 + it->stride - 1) /
+                  it->stride;
+      }
+      history += weights_.decoder_first_depthwise.kernel_size - 1;
+      runtime::StreamingAudioConfig tiling;
+      tiling.policy = runtime::StreamingAudioChunkPolicy::Fixed;
+      tiling.frames_per_chunk = static_cast<size_t>(config_.tile_frames);
+      tiling.frame_width = static_cast<size_t>(vae.latent_dim);
+      tiling.left_context_frames = static_cast<size_t>(history);
+      tiled_audio_.begin(tiling, [this, history](const auto &window) {
+        auto audio = decode_window(window.data, static_cast<int64_t>(window.frames()),
+                                   config_.tile_frames + history);
+        audio.samples.erase(audio.samples.begin(),
+                            audio.samples.begin() + window.left_frames * decoder_stride_);
+        return audio;
+      });
+      tiled_audio_.push(features);
+      return tiled_audio_.finish();
+    }
+    return decode_window(features.data(), latent_frames, latent_frames);
+  }
+
+private:
+  runtime::AudioBuffer decode_window(const float *features, int64_t latent_frames,
+                                    int64_t capacity) {
+    const auto &vae = assets_->config.audio_vae;
+    ensure_decoder_graph(capacity);
     std::vector<float> input(
         static_cast<size_t>(vae.latent_dim * decoder_latent_frame_capacity_),
         0.0F);
@@ -649,6 +686,7 @@ public:
     return audio;
   }
 
+public:
   VoxCPM2EncodedPrompt encode_prompt_audio(
       const std::optional<runtime::AudioBuffer> &prompt_audio,
       const std::string &prompt_text,
@@ -890,6 +928,9 @@ private:
       throw std::runtime_error("failed to allocate VoxCPM2 AudioVAE graph");
     }
     decoder_latent_frame_capacity_ = latent_frame_capacity;
+    debug::timing_log_scalar("voxcpm2.audiovae.decoder.workspace_mb",
+                            ggml_gallocr_get_buffer_size(gallocr_, 0) /
+                                (1024.0 * 1024.0));
   }
 
   void release_encoder_graph() {
@@ -970,6 +1011,7 @@ private:
   int64_t encoder_stride_ = 0;
   int64_t output_frames_ = 0;
   int64_t decoder_latent_frame_capacity_ = 0;
+  runtime::StreamingAudioController<float> tiled_audio_;
 };
 
 VoxCPM2AudioVAEDecoderRuntime::VoxCPM2AudioVAEDecoderRuntime(

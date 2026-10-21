@@ -27,6 +27,7 @@ struct VoxCPM2FeatureGeneratorConfig {
   bool mem_saver = true;
   engine::assets::TensorStorageType weight_storage_type =
       engine::assets::TensorStorageType::Native;
+  bool optimized = false;
 };
 
 class VoxCPM2FeatureGeneratorRuntime final {

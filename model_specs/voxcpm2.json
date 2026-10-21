@@ -182,6 +182,25 @@
     ],
     "session": [
       {
+        "name": "audiovae_tile_frames",
+        "type": "int",
+        "description": "Maximum new latent frames per causal AudioVAE tile; zero disables tiling.",
+        "required": false,
+        "default": 128,
+        "min": 0
+      },
+      {
+        "name": "perf_mode",
+        "type": "enum",
+        "description": "Opt-in packed attention and MLP projections. May change numerical results; off preserves standard execution.",
+        "required": false,
+        "values": [
+          "off",
+          "optimized"
+        ],
+        "default": "off"
+      },
+      {
         "name": "lora",
         "type": "path",
         "description": "Native LoRA directory or checkpoint file with adjacent lora_config.json; merged into generator weights at session creation.",
