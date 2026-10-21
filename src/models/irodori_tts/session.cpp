@@ -33,6 +33,12 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr const char *kFamily = "irodori_tts";
+// Each chunk is generated within max_duration_sec (30 s by default), about 160
+// Japanese characters at the model's pace. A chunk of max_text_len (256)
+// characters is squeezed into that and its second half is garbled, so chunk
+// about as finely as the upstream Irodori-TTS-Server, which splits at the first
+// punctuation after 80 characters.
+constexpr int64_t kDefaultTextChunkSize = 100;
 
 enum class IrodoriCodecBackend {
   Same,
@@ -672,7 +678,8 @@ IrodoriTTSSession::synthesize(const runtime::TaskRequest &request, bool streamin
   const auto wall_start = Clock::now();
   const int64_t text_chunk_size =
       engine::text::parse_text_chunk_size_override(normalized_request.options)
-          .value_or(assets_->config.max_text_len);
+          .value_or(std::min<int64_t>(kDefaultTextChunkSize,
+                                      assets_->config.max_text_len));
   const auto text_chunk_mode =
       engine::text::parse_text_chunk_mode_override(normalized_request.options)
           .value_or(engine::text::TextChunkMode::Endline);

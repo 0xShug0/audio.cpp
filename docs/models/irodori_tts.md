@@ -110,7 +110,7 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | `min_duration_sec` | seconds > 0 | `0.5` | Minimum generated duration; must not exceed `max_duration_sec`. |
 | `max_duration_sec` | seconds > 0 | `30` | Maximum generated duration; must be at least `min_duration_sec`. |
 | `text_chunk_mode` | `word_budget`, `tag_aware`, `japanese`, `endline` | `endline` | Text chunk policy; word_budget also accepts the legacy spelling default. |
-| `text_chunk_size` | integer | model text window | Maximum characters per outer chunk. |
+| `text_chunk_size` | integer | `100` | Maximum characters per outer chunk; the model text window if that is smaller. Each chunk is generated within `max_duration_sec`, so a much longer chunk is squeezed into it and garbled. |
 | `text_guidance_scale` | float | `3.0` | Text classifier-free guidance scale; default 3.0. Nonpositive values disable the corresponding CFG branch. |
 | `speaker_guidance_scale` | float | `5.0` | Speaker classifier-free guidance scale; default 5.0. Nonpositive values disable the corresponding CFG branch. |
 | `caption_guidance_scale` | float | `3.0` | Caption classifier-free guidance scale; default 3.0. Nonpositive values disable the corresponding CFG branch. |
