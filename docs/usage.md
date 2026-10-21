@@ -125,6 +125,7 @@ A request can also pass input artifacts in an `artifacts` array, in the shape th
 |---|---|
 | Speech, voice clone, long-form TTS | [tts.md](tts.md) |
 | Music and sound generation | [music_generation.md](music_generation.md) |
+| Video lip synchronization | [LatentSync](models/latentsync.md) |
 | OmniVoice TTS, voice cloning, voice design, and streaming | [models/omnivoice.md](models/omnivoice.md) |
 | ASR models | [asr.md](asr.md) |
 | Classification, wake word, VAD, and diarization | [speech_analysis.md](speech_analysis.md) |

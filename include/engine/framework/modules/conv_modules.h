@@ -73,6 +73,8 @@ struct Conv2dConfig {
     bool cuda_tile_f16_accum_output_lowering = false;
     bool cuda_cudnn = false;
     bool cuda_f16_output = false;
+    // Metal: FP32 per-tap GEMMs avoid materializing large im2col buffers.
+    bool metal_per_tap = false;
 };
 
 struct Conv2dWeights {
@@ -84,6 +86,7 @@ class Conv2dModule {
 public:
     explicit Conv2dModule(Conv2dConfig config);
     Conv2dModule(Conv2dConfig config, bool cuda_cudnn, bool cuda_f16_output = false);
+    Conv2dModule(Conv2dConfig config, bool cuda_cudnn, bool cuda_f16_output, bool metal_per_tap);
 
     const Conv2dConfig & config() const noexcept;
     const core::ModuleSchema & schema() const noexcept;

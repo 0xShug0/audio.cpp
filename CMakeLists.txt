@@ -1228,6 +1228,25 @@ audiocpp_add_model(minimax_h3
         engine::models::minimax_h3::make_minimax_h3_loader
 )
 
+audiocpp_add_model(latentsync
+    SOURCES
+        src/community_models/latentsync/whisper.cpp
+        src/community_models/latentsync/unet.cpp
+        src/community_models/latentsync/sd_vae.cpp
+        src/community_models/latentsync/face.cpp
+        src/community_models/latentsync/sampling.cpp
+        src/community_models/latentsync/pipeline.cpp
+        src/community_models/latentsync/video.cpp
+        src/community_models/latentsync/session.cpp
+    INCLUDES
+        engine/community_models/latentsync/session.h
+    LOADERS
+        engine::models::latentsync::make_latentsync_loader
+)
+if (GGML_CUDA_CUDNN_CONV2D)
+    target_compile_definitions(engine_model_latentsync PRIVATE GGML_CUDA_CUDNN_CONV2D=1)
+endif()
+
 audiocpp_add_model(liveavatar
     SOURCES
         src/community_models/liveavatar/assets.cpp
@@ -4147,6 +4166,20 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_link_libraries(plapre_codec_parity PRIVATE engine_runtime ggml)
         endif()
 
+        if (latentsync IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(latentsync_graph_ops_test tests/latentsync/graph_ops.cpp)
+            target_link_libraries(latentsync_graph_ops_test PRIVATE engine_runtime ggml)
+            add_test(NAME latentsync_graph_ops_cpu COMMAND latentsync_graph_ops_test cpu)
+            if (GGML_METAL)
+                add_test(NAME latentsync_graph_ops_metal COMMAND latentsync_graph_ops_test metal)
+            endif()
+            add_executable(latentsync_component_parity tests/latentsync/component_parity.cpp)
+            target_link_libraries(latentsync_component_parity PRIVATE engine_runtime ggml)
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(latentsync_graph_ops_test PRIVATE OpenMP::OpenMP_CXX)
+                target_link_libraries(latentsync_component_parity PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+        endif()
         if (sanotts IN_LIST AUDIOCPP_LINKED_MODELS AND inflect_v2 IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(espeak_frontend_probe tests/unittests/espeak_frontend_probe.cpp)
             if(AUDIOCPP_STATIC_ESPEAK)
