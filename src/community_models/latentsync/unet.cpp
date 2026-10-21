@@ -94,7 +94,11 @@ core::TensorValue LatentSyncUnetAttention::build_attention(core::ModuleBuildCont
             core::TensorShape::from_dims({x.shape.dims[0], x.shape.dims[1], heads_, dim}));
         return TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, value);
     };
-    const auto lowering = cuda_f16_ && ctx.backend_type == core::BackendType::Cuda && dim == 40
+    // Short temporal windows have thousands of independent spatial batches.
+    // Metal flash reserves multi-GiB scratch for them; explicit scores stay small.
+    const auto lowering = ctx.backend_type == core::BackendType::Metal && query.shape.dims[1] <= 24
+        ? ScaledDotProductAttentionLowering::Explicit
+        : cuda_f16_ && ctx.backend_type == core::BackendType::Cuda && dim == 40
         ? ScaledDotProductAttentionLowering::CudaFlashF16Head40
         : dim == 40 || dim == 80
             ? ScaledDotProductAttentionLowering::FlashPreserveViews
@@ -134,9 +138,9 @@ core::TensorValue LatentSyncUnetAttention::build_feed_forward(core::ModuleBuildC
     const int64_t channels = input.shape.dims[2], inner = channels * 4;
     const auto packed = LinearModule({channels, inner * 2, true,
         GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, input, geglu);
-    if (cuda_f16_) {
+    if (cuda_f16_ || ctx.backend_type == core::BackendType::Metal) {
         return LinearModule({inner, channels, true,
-            GGML_PREC_DEFAULT, false, false, true}).build(ctx, GegluModule().build(ctx, packed), output);
+            GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, GegluModule().build(ctx, packed), output);
     }
     const auto hidden = SliceModule({2, 0, inner}).build(ctx, packed);
     const auto gate = GeluModule({GeluApproximation::ExactErf}).build(ctx,
@@ -151,7 +155,7 @@ core::TensorValue LatentSyncUnetAttention::build_spatial(core::ModuleBuildContex
     using namespace modules;
     const int64_t batch = image.shape.dims[0], channels = image.shape.dims[1];
     const int64_t steps = image.shape.dims[2] * image.shape.dims[3];
-    auto x = GroupNormModule({channels, 32, 1e-6F, true, true, cuda_f16_}).build(ctx, image, weights.input_norm);
+    auto x = modules::GroupNormModule({channels, 32, 1e-6F, true, true, cuda_f16_, ctx.backend_type == core::BackendType::Metal}).build(ctx, image, weights.input_norm);
     x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({batch, channels, steps}));
     x = TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
     // A 1x1 convolution is a per-token linear projection. Stay in the transformer's
@@ -186,7 +190,7 @@ core::TensorValue LatentSyncUnetAttention::build_temporal(core::ModuleBuildConte
         throw std::runtime_error("Invalid LatentSync temporal attention frame count");
     }
     const int64_t batch = batch_frames / frames;
-    auto x = GroupNormModule({channels, 32, 1e-6F, true, true, cuda_f16_}).build(ctx, image, weights.input_norm);
+    auto x = modules::GroupNormModule({channels, 32, 1e-6F, true, true, cuda_f16_, ctx.backend_type == core::BackendType::Metal}).build(ctx, image, weights.input_norm);
     x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({batch_frames, channels, steps}));
     x = TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
     x = LinearModule({channels, channels, true, GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, x, weights.input);
@@ -322,7 +326,7 @@ core::TensorValue LatentSyncUnet::build_video_norm(core::ModuleBuildContext & ct
     // Unlike attention normalization, ResnetBlock3D normalizes over frames and spatial dimensions together.
     auto x = core::reshape_tensor(ctx, input, core::TensorShape::from_dims({batch, frames, channels, spatial}));
     x = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
-    x = GroupNormModule({channels, 32, 1e-5F, true, true, config_.cuda_f16_activations}).build(ctx, x, weights);
+    x = modules::GroupNormModule({channels, 32, 1e-5F, true, true, config_.cuda_f16_activations, ctx.backend_type == core::BackendType::Metal}).build(ctx, x, weights);
     x = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
     return core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, x), input.shape);
 }

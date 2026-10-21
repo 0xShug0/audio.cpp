@@ -642,6 +642,11 @@ Conv2dModule::Conv2dModule(Conv2dConfig config, bool cuda_cudnn, bool cuda_f16_o
     config_.cuda_f16_output = cuda_f16_output;
 }
 
+Conv2dModule::Conv2dModule(Conv2dConfig config, bool cuda_cudnn, bool cuda_f16_output,
+                         bool metal_per_tap) : Conv2dModule(config, cuda_cudnn, cuda_f16_output) {
+    config_.metal_per_tap = metal_per_tap;
+}
+
 const Conv2dConfig & Conv2dModule::config() const noexcept {
     return config_;
 }
@@ -683,6 +688,39 @@ core::TensorValue Conv2dModule::build(
             config_.padding_width,
             config_.dilation_width),
     });
+    const auto height = output_shape.dims[2];
+    const auto width = output_shape.dims[3];
+    if (config_.metal_per_tap && ctx.backend_type == core::BackendType::Metal &&
+        input.type == GGML_TYPE_F32 && weights.weight.type == GGML_TYPE_F32 &&
+        config_.in_channels >= 64 && config_.out_channels > 8 && width > 8 && !config_.cuda_cudnn) {
+        // Metal's FP32 accumulate kernel needs tap depth >= 64; small outputs favor im2col.
+        // Channel-fast tap views avoid materializing im2col. Each tap accumulates
+        // into the same FP32 output.
+        auto * x = core::ensure_backend_addressable_layout(ctx, input).tensor;
+        x = ggml_pad_ext(ctx.ggml, x, config_.padding_width, config_.padding_width, config_.padding_height, config_.padding_height, 0, 0, 0, 0);
+        x = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, x, 1, 2, 0, 3));
+        auto * w = weights.weight.tensor;
+        w = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, w, 1, 2, 0, 3));
+        ggml_tensor * result = nullptr;
+        for (int64_t ky = 0; ky < config_.kernel_height; ++ky) {
+            for (int64_t kx = 0; kx < config_.kernel_width; ++kx) {
+                auto * columns = ggml_view_4d(ctx.ggml, x, config_.in_channels, width, height, input.shape.dims[0],
+                    x->nb[1] * config_.stride_width, x->nb[2] * config_.stride_height, x->nb[3],
+                    ky * config_.dilation_height * x->nb[2] + kx * config_.dilation_width * x->nb[1]);
+                auto * kernel = ggml_view_2d(ctx.ggml, w, config_.in_channels, config_.out_channels, w->nb[3],
+                    ky * w->nb[2] + kx * w->nb[1]);
+                result = result ? ggml_mul_mat_acc(ctx.ggml, kernel, columns, result) : ggml_mul_mat(ctx.ggml, kernel, columns);
+            }
+        }
+        result = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, result, 2, 0, 1, 3));
+        if (config_.use_bias) {
+            if (!weights.bias) throw std::runtime_error("bias is required when Conv2dConfig.use_bias is true");
+            core::validate_shape(*weights.bias, core::TensorShape::from_dims({config_.out_channels}), "bias");
+            result = ggml_add(ctx.ggml, result,
+                ggml_reshape_4d(ctx.ggml, weights.bias->tensor, 1, 1, config_.out_channels, 1));
+        }
+        return core::wrap_tensor(result, output_shape);
+    }
     if (config_.cuda_cudnn) {
         const auto input_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, input);
         const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "Conv2dModule");
