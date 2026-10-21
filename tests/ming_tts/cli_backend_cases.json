@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "id": "ming_backend_outputs",
+      "coverage": "Normal synthesis and reference-conditioned synthesis",
+      "family": "ming_tts",
+      "model": "Ming-3.0-TTS-0.5B-GGUF/ming-3.0-tts-0.5b-bf16.gguf",
+      "task": "tts",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "plain",
+          "text": "The library opens at nine. Please return the book before Friday.",
+          "seed": 1895,
+          "options": {"language": "English"}
+        },
+        {
+          "id": "reference",
+          "text": "The library opens at nine. Please return the book before Friday.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1895,
+          "options": {"language": "English"}
+        }
+      ]
+    }
+  ]
+}

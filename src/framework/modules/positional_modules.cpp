@@ -72,6 +72,42 @@ core::TensorValue RoPEModule::build(
             core::TensorShape::from_dims({config_.dimensions / 2}),
             "RoPE frequency factors");
     }
+    if (config_.intermediate_round_type.has_value()) {
+        if (config_.mode != GGML_ROPE_TYPE_NEOX || config_.dimensions != input.tensor->ne[0]) {
+            throw std::runtime_error("Rounded RoPE requires full-dimension NEOX rotation");
+        }
+        const int64_t half = config_.dimensions / 2;
+        auto * basis = ggml_new_tensor_4d(ctx.ggml, GGML_TYPE_F32, half, 1, input.tensor->ne[2], 1);
+        auto * identity = ggml_concat(ctx.ggml, ggml_fill(ctx.ggml, basis, 1.0f),
+            ggml_fill(ctx.ggml, basis, 0.0f), 0);
+        auto * table = ggml_rope_ext(ctx.ggml, identity, positions.tensor,
+            frequency_factors ? frequency_factors->tensor : nullptr, config_.dimensions,
+            config_.mode, 0, config_.theta, config_.freq_scale, config_.ext_factor,
+            config_.attn_factor, config_.beta_fast, config_.beta_slow);
+        table = ggml_cast(ctx.ggml, ggml_cast(ctx.ggml, table, *config_.intermediate_round_type), GGML_TYPE_F32);
+        auto * cos = ggml_view_4d(ctx.ggml, table, half, 1, table->ne[2], 1,
+            table->nb[1], table->nb[2], table->nb[3], 0);
+        auto * sin = ggml_view_4d(ctx.ggml, table, half, 1, table->ne[2], 1,
+            table->nb[1], table->nb[2], table->nb[3], half * sizeof(float));
+        const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
+        auto * lower = ggml_view_4d(ctx.ggml, contiguous.tensor, half, input.tensor->ne[1],
+            input.tensor->ne[2], input.tensor->ne[3], contiguous.tensor->nb[1],
+            contiguous.tensor->nb[2], contiguous.tensor->nb[3], 0);
+        auto * upper = ggml_view_4d(ctx.ggml, contiguous.tensor, half, input.tensor->ne[1],
+            input.tensor->ne[2], input.tensor->ne[3], contiguous.tensor->nb[1],
+            contiguous.tensor->nb[2], contiguous.tensor->nb[3], half * sizeof(float));
+        auto * lower_cos = ggml_cast(ctx.ggml, ggml_cast(ctx.ggml,
+            ggml_mul(ctx.ggml, lower, cos), *config_.intermediate_round_type), GGML_TYPE_F32);
+        auto * upper_sin = ggml_cast(ctx.ggml, ggml_cast(ctx.ggml,
+            ggml_mul(ctx.ggml, upper, sin), *config_.intermediate_round_type), GGML_TYPE_F32);
+        auto * upper_cos = ggml_cast(ctx.ggml, ggml_cast(ctx.ggml,
+            ggml_mul(ctx.ggml, upper, cos), *config_.intermediate_round_type), GGML_TYPE_F32);
+        auto * lower_sin = ggml_cast(ctx.ggml, ggml_cast(ctx.ggml,
+            ggml_mul(ctx.ggml, lower, sin), *config_.intermediate_round_type), GGML_TYPE_F32);
+        return core::wrap_tensor(ggml_concat(ctx.ggml,
+            ggml_sub(ctx.ggml, lower_cos, upper_sin), ggml_add(ctx.ggml, upper_cos, lower_sin), 0),
+            input.shape, GGML_TYPE_F32);
+    }
     return core::wrap_tensor(
         ggml_rope_ext(
             ctx.ggml,

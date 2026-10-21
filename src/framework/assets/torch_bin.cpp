@@ -416,6 +416,9 @@ private:
     }
     std::vector<PickleValue> finish() {
         const PickleValue result = pop();
+        if (result.kind == PickleValue::Kind::Tensor) {
+            return {str_value("tensor"), result};
+        }
         if (result.kind != PickleValue::Kind::Dict) {
             throw std::runtime_error("torch .bin pickle did not produce a state dict");
         }

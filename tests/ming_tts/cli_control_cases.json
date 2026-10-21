@@ -1,0 +1,50 @@
+{
+  "cases": [
+    {
+      "id": "ming_controls",
+      "coverage": "Structured attributes, multilingual, built-in voice, emotion, dialect and freeform conditioning",
+      "family": "ming_tts",
+      "model": "Ming-3.0-TTS-0.5B-GGUF/ming-3.0-tts-0.5b-bf16.gguf",
+      "task": "tts",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "basic",
+          "text": "\u4eca\u5929\u7684\u5929\u6c14\u5f88\u597d\uff0c\u6211\u4eec\u4e00\u8d77\u53bb\u516c\u56ed\u6563\u6b65\u3002",
+          "seed": 1895,
+          "options": {"template_name": "basic", "language": "zh", "speed": "\u4e2d\u901f", "pitch": "\u4e2d", "volume": "\u4e2d", "raw_text": true}
+        },
+        {
+          "id": "multilingual",
+          "text": "Demain matin, nous prendrons le train pour visiter un petit village.",
+          "seed": 1895,
+          "options": {"template_name": "multilingual", "language": "fr", "raw_text": true}
+        },
+        {
+          "id": "ip",
+          "text": "The library opens at nine, and the morning train leaves at ten.",
+          "seed": 1895,
+          "options": {"template_name": "ip", "language": "en", "voice_id": "US_Emma", "raw_text": true}
+        },
+        {
+          "id": "emotion",
+          "text": "\u6211\u4eec\u7ec8\u4e8e\u5230\u8fbe\u4e86\u76ee\u7684\u5730\uff0c\u8fd9\u771f\u662f\u592a\u597d\u4e86\uff01",
+          "seed": 1895,
+          "options": {"template_name": "emotion", "language": "zh", "emotion": "\u9ad8\u5174", "raw_text": true}
+        },
+        {
+          "id": "dialect",
+          "text": "\u4eca\u5929\u5929\u6c14\u4e0d\u9519\uff0c\u6211\u4eec\u4e00\u8d77\u51fa\u53bb\u8d70\u8d70\u5427\u3002",
+          "seed": 1895,
+          "options": {"template_name": "dialect", "dialect": "chuanyu dialect", "raw_text": true}
+        },
+        {
+          "id": "freeform",
+          "text": "Please close the window before you leave the room.",
+          "seed": 1895,
+          "options": {"template_name": "freeform", "language": "en", "instruct": "A calm woman reads clearly at a natural pace.", "raw_text": true}
+        }
+      ]
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 #include "engine/framework/core/module.h"
 
 #include <cstdint>
+#include <optional>
 
 namespace engine::modules {
 
@@ -15,6 +16,7 @@ struct RoPEConfig {
     float attn_factor = 1.0f;
     float beta_fast = 0.0f;
     float beta_slow = 0.0f;
+    std::optional<ggml_type> intermediate_round_type = std::nullopt;
 };
 
 class RoPEModule {

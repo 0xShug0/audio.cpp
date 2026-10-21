@@ -235,9 +235,11 @@ void apply_batched_static_rope(
     const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
         ? &*weights.rope_frequency_factors
         : nullptr;
+    RoPEConfig rope{dim, config.rope_type, config.rope_theta};
+    rope.intermediate_round_type = config.activation_cast.rope_intermediate_type;
     if (positions.shape.rank == 1 && positions.shape.dims[0] == q.shape.dims[1]) {
-        q = RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, q, positions, rope_factors);
-        k = RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, k, positions, rope_factors);
+        q = RoPEModule(rope).build(ctx, q, positions, rope_factors);
+        k = RoPEModule(rope).build(ctx, k, positions, rope_factors);
         return;
     }
     if (q.shape.dims[1] != 1 || positions.shape.rank != 1 || positions.shape.dims[0] != q.shape.dims[0]) {
@@ -255,8 +257,8 @@ void apply_batched_static_rope(
             // Vulkan RoPE cannot address a position view at a non-aligned byte offset.
             pos_row = core::ensure_backend_addressable_layout(ctx, pos_row);
         }
-        q_rows.push_back(RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, q_row, pos_row, rope_factors));
-        k_rows.push_back(RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, k_row, pos_row, rope_factors));
+        q_rows.push_back(RoPEModule(rope).build(ctx, q_row, pos_row, rope_factors));
+        k_rows.push_back(RoPEModule(rope).build(ctx, k_row, pos_row, rope_factors));
     }
     q = concat_all(ctx, q_rows, 0);
     k = concat_all(ctx, k_rows, 0);
@@ -547,7 +549,8 @@ DecoderLayerOutputs DecoderLayerModule::build(
     const int64_t dim = require_head_dim(config_);
     const int64_t kv_repeats = config_.num_attention_heads / config_.num_key_value_heads;
 
-    auto x_norm = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false})
+    auto x_norm = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false, false, false,
+                                config_.activation_cast.norm_intermediate_type})
                       .build(ctx, input, weights.input_norm);
     if (config_.activation_cast.enabled && config_.activation_cast.after_input_norm) {
         x_norm = activation_cast(ctx, x_norm, config_.activation_cast);
@@ -562,8 +565,10 @@ DecoderLayerOutputs DecoderLayerModule::build(
     auto q = reshape_decoder_heads(ctx, qkv.q, config_.num_attention_heads, dim);
     auto k = reshape_decoder_heads(ctx, qkv.k, config_.num_key_value_heads, dim);
     if (config_.use_qk_norm) {
-        q = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-        k = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+        q = RMSNormModule({dim, config_.rms_norm_eps, true, false, false, false,
+                          config_.activation_cast.norm_intermediate_type}).build(ctx, q, weights.q_norm);
+        k = RMSNormModule({dim, config_.rms_norm_eps, true, false, false, false,
+                          config_.activation_cast.norm_intermediate_type}).build(ctx, k, weights.k_norm);
         if (config_.activation_cast.enabled && config_.activation_cast.after_qk_norm) {
             q = activation_cast(ctx, q, config_.activation_cast);
             k = activation_cast(ctx, k, config_.activation_cast);
@@ -575,8 +580,10 @@ DecoderLayerOutputs DecoderLayerModule::build(
         const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
             ? &*weights.rope_frequency_factors
             : nullptr;
-        q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
-        k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+        RoPEConfig rope{dim, config_.rope_type, config_.rope_theta};
+        rope.intermediate_round_type = config_.activation_cast.rope_intermediate_type;
+        q = RoPEModule(rope).build(ctx, q, positions, rope_factors);
+        k = RoPEModule(rope).build(ctx, k, positions, rope_factors);
         if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
             q = activation_cast(ctx, q, config_.activation_cast);
             k = activation_cast(ctx, k, config_.activation_cast);
@@ -695,7 +702,8 @@ DecoderLayerOutputs DecoderLayerModule::build(
         x = activation_cast(ctx, x, config_.activation_cast);
     }
 
-    auto ff_in = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false})
+    auto ff_in = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false, false, false,
+                               config_.activation_cast.norm_intermediate_type})
                      .build(ctx, x, weights.post_norm);
     if (config_.activation_cast.enabled && config_.activation_cast.after_ffn_norm) {
         ff_in = activation_cast(ctx, ff_in, config_.activation_cast);
@@ -755,7 +763,8 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
     const int64_t dim = require_head_dim(config_);
     const int64_t kv_repeats = config_.num_attention_heads / config_.num_key_value_heads;
 
-    auto x_norm = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false})
+    auto x_norm = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false, false, false,
+                                config_.activation_cast.norm_intermediate_type})
                       .build(ctx, input, weights.input_norm);
     if (config_.activation_cast.enabled && config_.activation_cast.after_input_norm) {
         x_norm = activation_cast(ctx, x_norm, config_.activation_cast);
@@ -770,8 +779,10 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
     auto q = reshape_decoder_heads(ctx, qkv.q, config_.num_attention_heads, dim);
     auto k = reshape_decoder_heads(ctx, qkv.k, config_.num_key_value_heads, dim);
     if (config_.use_qk_norm) {
-        q = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-        k = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+        q = RMSNormModule({dim, config_.rms_norm_eps, true, false, false, false,
+                          config_.activation_cast.norm_intermediate_type}).build(ctx, q, weights.q_norm);
+        k = RMSNormModule({dim, config_.rms_norm_eps, true, false, false, false,
+                          config_.activation_cast.norm_intermediate_type}).build(ctx, k, weights.k_norm);
         if (config_.activation_cast.enabled && config_.activation_cast.after_qk_norm) {
             q = activation_cast(ctx, q, config_.activation_cast);
             k = activation_cast(ctx, k, config_.activation_cast);
@@ -783,8 +794,10 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
         const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
             ? &*weights.rope_frequency_factors
             : nullptr;
-        q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
-        k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+        RoPEConfig rope{dim, config_.rope_type, config_.rope_theta};
+        rope.intermediate_round_type = config_.activation_cast.rope_intermediate_type;
+        q = RoPEModule(rope).build(ctx, q, positions, rope_factors);
+        k = RoPEModule(rope).build(ctx, k, positions, rope_factors);
         if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
             q = activation_cast(ctx, q, config_.activation_cast);
             k = activation_cast(ctx, k, config_.activation_cast);
@@ -900,7 +913,8 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
         x = activation_cast(ctx, x, config_.activation_cast);
     }
 
-    auto ff_in = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false})
+    auto ff_in = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false, false, false,
+                               config_.activation_cast.norm_intermediate_type})
                      .build(ctx, x, weights.post_norm);
     if (config_.activation_cast.enabled && config_.activation_cast.after_ffn_norm) {
         ff_in = activation_cast(ctx, ff_in, config_.activation_cast);
@@ -934,7 +948,8 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
     const int64_t dim = require_head_dim(config_);
     const int64_t kv_repeats = config_.num_attention_heads / config_.num_key_value_heads;
 
-    auto x_norm = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false})
+    auto x_norm = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false, false, false,
+                                config_.activation_cast.norm_intermediate_type})
                       .build(ctx, input, weights.input_norm);
     if (config_.activation_cast.enabled && config_.activation_cast.after_input_norm) {
         x_norm = activation_cast(ctx, x_norm, config_.activation_cast);
@@ -949,8 +964,10 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
     auto q = reshape_decoder_heads(ctx, qkv.q, config_.num_attention_heads, dim);
     auto k = reshape_decoder_heads(ctx, qkv.k, config_.num_key_value_heads, dim);
     if (config_.use_qk_norm) {
-        q = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-        k = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+        q = RMSNormModule({dim, config_.rms_norm_eps, true, false, false, false,
+                          config_.activation_cast.norm_intermediate_type}).build(ctx, q, weights.q_norm);
+        k = RMSNormModule({dim, config_.rms_norm_eps, true, false, false, false,
+                          config_.activation_cast.norm_intermediate_type}).build(ctx, k, weights.k_norm);
         if (config_.activation_cast.enabled && config_.activation_cast.after_qk_norm) {
             q = activation_cast(ctx, q, config_.activation_cast);
             k = activation_cast(ctx, k, config_.activation_cast);
@@ -1058,7 +1075,8 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
         x = activation_cast(ctx, x, config_.activation_cast);
     }
 
-    auto ff_in = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false})
+    auto ff_in = RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false, false, false,
+                               config_.activation_cast.norm_intermediate_type})
                      .build(ctx, x, weights.post_norm);
     if (config_.activation_cast.enabled && config_.activation_cast.after_ffn_norm) {
         ff_in = activation_cast(ctx, ff_in, config_.activation_cast);

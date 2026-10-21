@@ -30,6 +30,7 @@ For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
 | MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
 | Maya1 | `maya1` | `tts`, `vdes` | [Maya1](models/maya1.md) |
 | MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](models/minimax_h3.md) |
+| Ming 3.0 TTS 0.5B | `ming_tts` | `tts`, `clon`, `vdes` | [Ming TTS](models/ming_tts.md) |
 | MioTTS | `miotts` | `tts`, `clon` | [MioTTS](models/miotts.md) |
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
 | MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
