@@ -93,7 +93,7 @@ bool is_cjk_punctuation_delimiter(std::string_view token) noexcept {
 }
 
 bool is_tag_open(std::string_view token) {
-    return token == "[" || token == "<";
+    return token == "[" || token == "<" || token == "(";
 }
 
 // End of the closing quotes and brackets that belong to the sentence stop just
@@ -118,7 +118,8 @@ size_t sentence_closers_end(const std::vector<Utf8Span> & spans, size_t pos) {
 }
 
 bool is_tag_close(std::string_view token, std::string_view open) {
-    return (open == "[" && token == "]") || (open == "<" && token == ">");
+    return (open == "[" && token == "]") || (open == "<" && token == ">") ||
+           (open == "(" && token == ")");
 }
 
 std::vector<Utf8Span> split_utf8_spans(std::string_view text, std::string_view label) {
