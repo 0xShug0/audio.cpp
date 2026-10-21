@@ -373,7 +373,7 @@ Qwen3TTSSession::Qwen3TTSSession(
             throw std::runtime_error("unknown Qwen3 TTS session option: " + key);
         }
     }
-    const int64_t talker_kv_cache_alignment = runtime::parse_i64_option(options.options, {"qwen3_tts.talker_kv_cache_alignment"}).value_or(256);
+    const int64_t talker_kv_cache_alignment = runtime::parse_i64_option(options.options, {"qwen3_tts.talker_kv_cache_alignment"}).value_or(optimized ? 256 : 1);
     if (talker_kv_cache_alignment <= 0) throw std::runtime_error("qwen3_tts.talker_kv_cache_alignment must be positive");
     debug::trace_log_scalar("qwen3_tts.talker_kv_cache_alignment", talker_kv_cache_alignment);
     talker_weights_ = talker_.create_weights_runtime(
