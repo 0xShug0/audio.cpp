@@ -138,7 +138,7 @@ core::TensorValue LatentSyncUnetAttention::build_feed_forward(core::ModuleBuildC
     const int64_t channels = input.shape.dims[2], inner = channels * 4;
     const auto packed = LinearModule({channels, inner * 2, true,
         GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, input, geglu);
-    if (cuda_f16_ || ctx.backend_type == core::BackendType::Metal) {
+    if (cuda_f16_ || ctx.backend_type != core::BackendType::Cpu) {
         return LinearModule({inner, channels, true,
             GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, GegluModule().build(ctx, packed), output);
     }
