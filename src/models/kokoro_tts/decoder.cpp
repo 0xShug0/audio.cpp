@@ -3,6 +3,9 @@
 
 #include "engine/models/kokoro_tts/assets.h"
 #include "engine/models/kokoro_tts/rknn_generator.h"
+#ifdef ENGINE_HAVE_NEON
+#include "engine/models/kokoro_tts/neon_generator.h"
+#endif
 
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/core/backend.h"
@@ -1270,6 +1273,9 @@ struct KokoroIstftNetDecoderRuntime::Impl {
     audio::STFTConfig inverse_stft_config;
     std::unique_ptr<ConditioningGraphRuntime> conditioning_graph;
     GeneratorGraphRuntime generator_graph;
+#ifdef ENGINE_HAVE_NEON
+    std::unique_ptr<KokoroNeonGenerator> neon_generator;
+#endif
     // Selected by `kokoro_tts.exec_plan.generator`: the generator stage runs on
     // the NPU, so the ggml generator graph is never prepared.
     std::unique_ptr<engine::models::kokoro_tts::KokoroTtsRknnGenerator> rknn_generator;
@@ -1287,7 +1293,8 @@ struct KokoroIstftNetDecoderRuntime::Impl {
         KokoroIstftNetDecoderCapacityContract contract_in,
         const std::string & rknn_generator_path = {},
         int64_t rknn_generator_overlap = 0,
-        bool rknn_generator_gain_in = false)
+        bool rknn_generator_gain_in = false,
+        bool use_neon_generator = false)
         : weights(std::move(weights_in)),
           n_threads(std::max(1, n_threads_in)),
           use_device_backend(use_device_backend_in),
@@ -1303,6 +1310,14 @@ struct KokoroIstftNetDecoderRuntime::Impl {
           }),
           generator_graph(weights->decoder.generator, weights->style_dim, backend, n_threads, use_device_backend),
           rknn_generator_gain(rknn_generator_gain_in) {
+        if (use_neon_generator) {
+#ifdef ENGINE_HAVE_NEON
+            if (use_device_backend) throw std::runtime_error("Kokoro NEON generator requires CPU");
+            neon_generator = std::make_unique<KokoroNeonGenerator>(weights->decoder.generator, int(weights->style_dim));
+#else
+            throw std::runtime_error("Kokoro NEON generator requires ENGINE_ENABLE_NEON=ON");
+#endif
+        }
         if (!rknn_generator_path.empty()) {
             const auto & gen = weights->decoder.generator;
             int64_t per_frame = gen.gen_istft_hop_size;
@@ -1328,6 +1343,9 @@ struct KokoroIstftNetDecoderRuntime::Impl {
             contract.conditioning_frames,
             n_threads,
             use_device_backend);
+#ifdef ENGINE_HAVE_NEON
+        if (neon_generator) return;
+#endif
         if (rknn_generator != nullptr && !rknn_generator_gain) {
             // The generator stage runs on the NPU; its ggml graph, arena and dequantized
             // weights are all dead weight. The gain knob is the exception: it renders a
@@ -1349,7 +1367,8 @@ KokoroIstftNetDecoderRuntime::KokoroIstftNetDecoderRuntime(
     KokoroIstftNetDecoderCapacityContract contract,
     const std::string & rknn_generator_path,
     int64_t rknn_generator_overlap,
-    bool rknn_generator_gain)
+    bool rknn_generator_gain,
+    bool neon_generator)
     : impl_(std::make_unique<Impl>(
           std::move(weights),
           backend,
@@ -1359,7 +1378,7 @@ KokoroIstftNetDecoderRuntime::KokoroIstftNetDecoderRuntime(
           contract,
           rknn_generator_path,
           rknn_generator_overlap,
-          rknn_generator_gain)) {}
+          rknn_generator_gain, neon_generator)) {}
 
 KokoroIstftNetDecoderRuntime::~KokoroIstftNetDecoderRuntime() = default;
 
@@ -1392,6 +1411,14 @@ std::vector<float> KokoroIstftNetDecoderRuntime::decode(
     int64_t generator_output_cols = 0;
     const int64_t bins = impl_->inverse_stft_config.n_fft / 2 + 1;
     generator_ms = measure_ms([&]() {
+#ifdef ENGINE_HAVE_NEON
+        if (impl_->neon_generator) {
+            generator_output = impl_->neon_generator->run(read_decoder_x(predictor), int(predictor.decoder_x_cols),
+                conditioning->features, int(conditioning->feature_cols), style_decoder, impl_->n_threads).values;
+            generator_output_cols = static_cast<int64_t>(generator_output.size()) / bins / 2;
+            return;
+        }
+#endif
         if (impl_->rknn_generator != nullptr) {
             const std::vector<float> decoder_x = read_decoder_x(predictor);
             // The conditioning is measured in spectrogram columns (60 per latent frame plus

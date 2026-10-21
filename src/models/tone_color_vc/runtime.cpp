@@ -15,6 +15,9 @@
 #include "engine/framework/modules/vocoders/hifigan_vocoder.h"
 #include "engine/framework/runtime/graph_optimizer.h"
 #include "engine/framework/sampling/noise.h"
+#ifdef ENGINE_HAVE_NEON
+#include "engine/framework/neon/blocks.h"
+#endif
 
 #include <ggml-alloc.h>
 
@@ -267,10 +270,13 @@ struct ToneColorRuntime::State {
     core::ExecutionContext & execution;
     Weights weights;
     modules::HifiGanVocoderComponent decoder;
+#ifdef ENGINE_HAVE_NEON
+    std::unique_ptr<neon::ExecutionPlan> neon_decoder;
+#endif
     std::unique_ptr<Graph> source_graph, reference_graph, conversion_graph;
 
     State(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & ctx, core::BackendConfig backend,
-          const io::json::Value & model_config)
+          const io::json::Value & model_config, bool use_neon_decoder)
         : execution(ctx), weights(*source, ctx) {
         const auto & data = model_config.require("data");
         const auto & model = model_config.require("model");
@@ -305,14 +311,57 @@ struct ToneColorRuntime::State {
         config.tensor_prefix = "dec";
         config.global_conditioning.channels = 256;
         config.lower_padded_conv_transpose_as_crop = ctx.backend_type() == core::BackendType::Cpu;
-        decoder = modules::HifiGanVocoderComponent::load_from_tensor_source(source, backend, config);
+        auto loaded = modules::HifiGanVocoderComponent::load_from_tensor_source(source, backend, config);
+        if (!use_neon_decoder) {
+            decoder = std::move(loaded);
+            return;
+        }
+#ifdef ENGINE_HAVE_NEON
+        if (backend.type != core::BackendType::Cpu || !neon::available())
+            throw std::runtime_error("Tone Color VC NEON decoder requires an AArch64 NEON CPU");
+        // Reuse the framework's weight binding (including weight-norm resolution)
+        // only at initialization. The complete decoder then runs in the NEON plan.
+        const auto &w = *loaded.weights();
+        neon::HifiGanConfig c;
+        c.input_channels = int(config.num_mels);
+        c.initial_channels = int(config.upsample_initial_channel);
+        c.output_channels = int(config.output_channels);
+        c.conditioning_channels = int(config.global_conditioning.channels);
+        c.upsample_rates.assign(config.upsample_rates.begin(), config.upsample_rates.end());
+        c.upsample_kernels.assign(config.upsample_kernel_sizes.begin(), config.upsample_kernel_sizes.end());
+        c.residual_kernels.assign(config.resblock_kernel_sizes.begin(), config.resblock_kernel_sizes.end());
+        for (const auto &d : config.resblock_dilation_sizes) c.residual_dilations.emplace_back(d.begin(), d.end());
+        c.paired_convolutions = config.resblock_kind == modules::HifiGanResBlockKind::PairedConv;
+        c.negative_slope = config.leaky_relu_slope;
+        c.output_negative_slope = config.post_leaky_relu_slope;
+        auto copy = [](const auto &conv) -> neon::Conv1dWeights {
+            return {core::read_tensor_float(conv.weight.tensor),
+                conv.bias ? core::read_tensor_float(conv.bias->tensor) : std::vector<float>{}};
+        };
+        neon::HifiGanWeights bound;
+        bound.pre = copy(w.conv_pre);
+        bound.post = copy(w.conv_post);
+        bound.conditioning = copy(*w.cond);
+        for (const auto &up : w.ups) bound.upsample.push_back(copy(up));
+        for (const auto &block : w.resblocks) {
+            neon::HifiGanWeights::Residual r;
+            for (const auto &conv : block.convs1) r.first.push_back(copy(conv));
+            for (const auto &conv : block.convs2) r.second.push_back(copy(conv));
+            bound.residual.push_back(std::move(r));
+        }
+        neon_decoder = std::make_unique<neon::ExecutionPlan>();
+        auto latent = neon_decoder->input(), conditioning = neon_decoder->input();
+        neon_decoder->set_output(neon::build_hifigan(*neon_decoder, latent, conditioning, c, bound));
+#else
+        throw std::runtime_error("Tone Color VC NEON decoder requires ENGINE_ENABLE_NEON=ON");
+#endif
     }
 };
 
 ToneColorRuntime::ToneColorRuntime(std::shared_ptr<const assets::TensorSource> source,
                                  core::ExecutionContext & execution, core::BackendConfig backend,
-                                 const io::json::Value & config)
-    : state_(std::make_unique<State>(std::move(source), execution, backend, config)) {}
+                                 const io::json::Value & config, bool neon_decoder)
+    : state_(std::make_unique<State>(std::move(source), execution, backend, config, neon_decoder)) {}
 ToneColorRuntime::~ToneColorRuntime() = default;
 
 runtime::AudioBuffer ToneColorRuntime::convert(const runtime::AudioBuffer & source,
@@ -351,17 +400,26 @@ runtime::AudioBuffer ToneColorRuntime::convert(const runtime::AudioBuffer & sour
     debug::timing_log_scalar("tone_color_vc.flow_ms", debug::elapsed_ms(started));
     started = std::chrono::steady_clock::now();
     std::vector<float> zero(256, 0);
-    modules::HifiGanVocoderRequest request;
-    request.mel = &latent;
-    request.frames = source_frames;
-    request.conditioning = &zero;
-    request.conditioning_frames = 1;
-    auto decoded = s.decoder.synthesize(request);
+    std::vector<float> waveform;
+#ifdef ENGINE_HAVE_NEON
+    if (s.neon_decoder) {
+        waveform = s.neon_decoder->run({neon::TensorView(latent.data(), latent.size(), {192, int(source_frames)}),
+            neon::TensorView(zero.data(), zero.size(), {256, 1})}, s.execution.config().threads).values;
+    } else
+#endif
+    {
+        modules::HifiGanVocoderRequest request;
+        request.mel = &latent;
+        request.frames = source_frames;
+        request.conditioning = &zero;
+        request.conditioning_frames = 1;
+        waveform = s.decoder.synthesize(request).waveform;
+    }
     debug::timing_log_scalar("tone_color_vc.decoder_ms", debug::elapsed_ms(started));
     runtime::AudioBuffer output;
     output.sample_rate = kSampleRate;
     output.channels = 1;
-    output.samples = std::move(decoded.waveform);
+    output.samples = std::move(waveform);
     return output;
 }
 

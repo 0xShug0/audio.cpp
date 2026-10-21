@@ -485,6 +485,8 @@ if (ENGINE_ENABLE_NEON)
         src/framework/neon/execution.cpp
         src/framework/neon/worker_team.cpp
         src/framework/neon/blocks.cpp
+        src/framework/neon/hifigan.cpp
+        src/framework/neon/vocoder_operators.cpp
         src/framework/neon/kernels.cpp
     )
     target_include_directories(engine_neon PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -886,6 +888,9 @@ audiocpp_add_model(kokoro_tts
 )
 if(MSVC)
     target_compile_options(engine_model_kokoro_tts PRIVATE /utf-8)
+endif()
+if(ENGINE_ENABLE_NEON)
+    target_sources(engine_model_kokoro_tts PRIVATE src/models/kokoro_tts/neon_generator.cpp)
 endif()
 if(AUDIOCPP_STATIC_ESPEAK)
     target_compile_definitions(engine_model_kokoro_tts PRIVATE AUDIOCPP_STATIC_ESPEAK=1)
@@ -3452,6 +3457,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         endif()
     endif()
     if (ENGINE_ENABLE_NEON)
+        add_executable(neon_vocoder_test tests/unittests/test_neon_vocoder.cpp)
+        target_link_libraries(neon_vocoder_test PRIVATE engine_neon)
+        add_test(NAME neon_vocoder_test COMMAND neon_vocoder_test)
+        set_tests_properties(neon_vocoder_test PROPERTIES SKIP_RETURN_CODE 77)
         add_engine_unittest(neon_blocks_test tests/unittests/test_neon_blocks.cpp)
         target_include_directories(neon_blocks_test PRIVATE src/framework/neon)
         add_test(NAME neon_blocks_test COMMAND neon_blocks_test)

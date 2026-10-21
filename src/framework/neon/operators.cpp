@@ -356,7 +356,7 @@ class ActivationKernel final : public detail::Kernel {
 public:
     ActivationKernel(ActivationKind kind, float slope) : kind_(kind), slope_(slope) {
         if ((kind != ActivationKind::SiLU && kind != ActivationKind::GELU && kind != ActivationKind::LeakyReLU &&
-             kind != ActivationKind::Sigmoid) ||
+             kind != ActivationKind::Sigmoid && kind != ActivationKind::Tanh) ||
             !std::isfinite(slope)) {
             throw std::invalid_argument("ARM activation configuration invalid");
         }
@@ -385,6 +385,8 @@ public:
             detail::apply_silu(output, begin, end);
         } else if (kind_ == ActivationKind::Sigmoid) {
             for (int i = begin; i < end; ++i) output[i] = 1.0F / (1.0F + std::exp(-output[i]));
+        } else if (kind_ == ActivationKind::Tanh) {
+            for (int i = begin; i < end; ++i) output[i] = std::tanh(output[i]);
         } else {
             detail::apply_leaky_relu_clamp(output, begin, end, slope_, -std::numeric_limits<float>::infinity());
         }

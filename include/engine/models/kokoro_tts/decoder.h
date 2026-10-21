@@ -32,7 +32,8 @@ public:
         KokoroIstftNetDecoderCapacityContract contract,
         const std::string & rknn_generator_path = {},
         int64_t rknn_generator_overlap = 0,
-        bool rknn_generator_gain = false);
+        bool rknn_generator_gain = false,
+        bool neon_generator = false);
     ~KokoroIstftNetDecoderRuntime();
 
     KokoroIstftNetDecoderRuntime(const KokoroIstftNetDecoderRuntime &) = delete;

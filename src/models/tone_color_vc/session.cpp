@@ -16,12 +16,19 @@ struct Assets {
     assets::ResourceBundle resources;
 };
 
+bool use_neon_decoder(const runtime::SessionOptions & options) {
+    const auto plan = runtime::parse_exec_plan(options.options, "tone_color_vc.exec_plan",
+        {{"decoder", "ggml", {{"ggml", {options.backend.type}, {}, {}},
+                               {"neon", {core::BackendType::Cpu}, {}, {}}}}});
+    return plan.at("decoder").impl == "neon";
+}
+
 class Session final : public runtime::RuntimeSessionBase, public runtime::IOfflineVoiceTaskSession {
 public:
     Session(const runtime::SessionOptions & options, std::shared_ptr<const assets::TensorSource> source,
             std::shared_ptr<const model_spec::ModelContract> contract, const io::json::Value & config)
         : RuntimeSessionBase(options), contract_(std::move(contract)),
-          runtime_(std::move(source), execution_context(), options.backend, config) {}
+          runtime_(std::move(source), execution_context(), options.backend, config, use_neon_decoder(options)) {}
 
     std::string family() const override { return "tone_color_vc"; }
     runtime::VoiceTaskKind task_kind() const override { return runtime::VoiceTaskKind::VoiceConversion; }
@@ -70,7 +77,12 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_tone_color_vc_loader() {
                                std::shared_ptr<const model_spec::ModelContract> contract) {
         if (task.task != runtime::VoiceTaskKind::VoiceConversion || task.mode != runtime::RunMode::Offline)
             throw std::runtime_error("Tone Color VC supports offline voice conversion");
-        runtime::validate_spec_backed_session_options(options, *contract, "tone_color_vc", "Tone Color VC");
+        auto validation_options = options;
+        // Older embedded specs omit exec_plan; its parser validates the complete value.
+        if (!contract->session_option_keys.count("tone_color_vc.exec_plan")) {
+            validation_options.options.erase("tone_color_vc.exec_plan");
+        }
+        runtime::validate_spec_backed_session_options(validation_options, *contract, "tone_color_vc", "Tone Color VC");
         return std::make_unique<Session>(options, assets->resources.open_tensor_source("weights"), std::move(contract),
             assets->resources.parse_json("config"));
     };

@@ -170,7 +170,7 @@ package.
 | `kokoro_tts.predictor_duration_graph_arena_mb` | positive integer MiB | `384` | Duration predictor host graph-metadata arena. |
 | `kokoro_tts.predictor_text_graph_arena_mb` | positive integer MiB | `256` | Text predictor host graph-metadata arena. |
 | `kokoro_tts.predictor_tail_graph_arena_mb` | positive integer MiB | `640` | Tail predictor host graph-metadata arena. |
-| `kokoro_tts.exec_plan` | JSON object of component plans, encoded as a string | `{}` | Select RKNN with `{"generator":{"impl":"rknn","artifacts":{"main":"/models/generator.rknn"},"params":{"overlap":0,"gain":false}}}`; otherwise keep GGML. Requires `ENGINE_ENABLE_RKNN=ON`; see [component execution plans](../build/rockchip-npu.md#component-execution-plans). |
+| `kokoro_tts.exec_plan` | JSON object of component plans, encoded as a string | `{}` | Select the CPU NEON generator with `{"generator":{"impl":"neon"}}` (`ENGINE_ENABLE_NEON=ON`, AArch64 CPU session). The complete generator uses a NEON execution plan; harmonic conditioning and iSTFT are unchanged. Select RKNN with `{"generator":{"impl":"rknn","artifacts":{"main":"/models/generator.rknn"},"params":{"overlap":0,"gain":false}}}` (`ENGINE_ENABLE_RKNN=ON`); see [component execution plans](../build/rockchip-npu.md#component-execution-plans). Default retains GGML. |
 
 The RKNN generator accepts these fields inside the plan's `generator.params` object, not as
 separate session options. GGML accepts no parameters.
