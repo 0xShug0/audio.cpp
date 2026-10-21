@@ -65,7 +65,8 @@ public:
         MingPromptOptions prompt_options;
         prompt_options.template_name = runtime::find_option(opts, {"template_name"}).value_or(
             task_.task == runtime::VoiceTaskKind::VoiceDesign ? "voice_design" : "tts");
-        prompt_options.language = runtime::find_option(opts, {"language"}).value_or("");
+        // The language option, else the transcript's (the server's top-level "language", the CLI's --language).
+        prompt_options.language = runtime::find_option(opts, {"language"}).value_or(request.text_input->language);
         prompt_options.instruct = runtime::find_option(opts, {"instruct"}).value_or("");
         prompt_options.instruction_schema = runtime::find_option(opts, {"instruction_schema"}).value_or("");
         for (const auto * key : {"speed", "pitch", "volume", "emotion", "dialect"}) {

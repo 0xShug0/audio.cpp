@@ -58,7 +58,7 @@ Use `--request-option name=value`, or the server request's `options` map.
 | Option | Default | Description |
 | --- | --- | --- |
 | `template_name` | `tts`; `voice_design` on `vdes` | `tts`, `multilingual`, `basic`, `emotion`, `dialect`, `ip`, `voice_design`, or `freeform`. |
-| `language` | Unset | Target language name or code: `zh`, `en`, `ja`, `ko`, `de`, `fr`, `es`. Required for `multilingual`; ignored by `dialect`. |
+| `language` | The request's language | Target language name or code: `zh`, `en`, `ja`, `ko`, `de`, `fr`, `es`. Without the option, the server's top-level `language` field or the CLI's `--language` is used. Required for `multilingual`; ignored by `dialect`. |
 | `instruct` | Empty | Voice description for `voice_design`, required raw instruction for `freeform`, or optional raw instruction for `tts`. |
 | `instruction_schema` | `en` for `dialect`, otherwise `zh` | Language of the structured instruction field names, not the spoken language. Values: `en`, `zh`. |
 | `speed` | Unset | `basic` template: `慢速`, `中速`, `快速`. Categorical conditioning, not waveform resampling. |
