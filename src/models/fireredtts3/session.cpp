@@ -7,9 +7,13 @@
 #include "engine/framework/text/chunking.h"
 #include "engine/framework/text/chinese_normalization.h"
 #include "engine/framework/text/text_normalization.h"
+#include "engine/framework/text/utf8.h"
 #include "engine/models/fireredtts3/pipeline.h"
 
+#include <cctype>
+#include <cstdint>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace engine::models::fireredtts3 {
@@ -19,7 +23,40 @@ constexpr const char * kFamily = "fireredtts3";
 constexpr const char * kBaseName = "FireRedTTS3 Base";
 constexpr const char * kInstructName = "FireRedTTS3 Instruct";
 constexpr int64_t kDefaultTextChunkSize = 600;
+constexpr int64_t kDefaultCjkTextChunkSize = 80;
 constexpr size_t kDefaultReferenceCacheSlots = 4;
+
+// The official runtime splits Chinese into sentences of about 80 characters. A 600-codepoint chunk of hanzi, kana or
+// Hangul is far longer than what the model was trained on: it falls into babble or stops early, and its end is lost.
+// Edits rewrite a given recording, so their text stays whole as before.
+int64_t default_text_chunk_size(const runtime::TaskRequest & request) {
+    if (request.audio_input.has_value() || !request.text_input.has_value()) {
+        return kDefaultTextChunkSize;
+    }
+    const std::string_view text = request.text_input->text;
+    engine::text::utf8_codepoint_count(text, "FireRedTTS3 text");
+    size_t cjk = 0;
+    size_t other = 0;
+    for (size_t pos = 0; pos < text.size();) {
+        const auto ch = static_cast<unsigned char>(text[pos]);
+        if (ch < 0x80U) {
+            other += std::isalnum(ch) != 0;
+            ++pos;
+        } else if ((ch & 0xE0U) == 0xC0U) {
+            ++other;
+            pos += 2;
+        } else if ((ch & 0xF0U) == 0xE0U) {
+            const uint32_t cp = ((ch & 0x0FU) << 12) | ((static_cast<unsigned char>(text[pos + 1]) & 0x3FU) << 6) |
+                (static_cast<unsigned char>(text[pos + 2]) & 0x3FU);
+            cjk += (cp >= 0x3040U && cp <= 0x30FFU) || (cp >= 0x3400U && cp <= 0x4DBFU) ||
+                (cp >= 0x4E00U && cp <= 0x9FFFU) || (cp >= 0xAC00U && cp <= 0xD7A3U);
+            pos += 3;
+        } else {
+            pos += 4;
+        }
+    }
+    return cjk > other ? kDefaultCjkTextChunkSize : kDefaultTextChunkSize;
+}
 
 const char * variant_name(FireRedTTS3Variant variant) {
     return variant == FireRedTTS3Variant::Instruct ? kInstructName : kBaseName;
@@ -184,7 +221,7 @@ FireRedTTS3InstructRequest make_instruct_request(const runtime::TaskRequest & re
 
 std::vector<runtime::TaskRequest> split_request(const runtime::TaskRequest & request) {
     const int64_t text_chunk_size =
-        engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
+        engine::text::parse_text_chunk_size_override(request.options).value_or(default_text_chunk_size(request));
     if (text_chunk_size <= 0) {
         throw std::runtime_error("FireRedTTS3 text_chunk_size must be positive");
     }

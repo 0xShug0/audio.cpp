@@ -115,10 +115,9 @@
       {
         "name": "text_chunk_size",
         "type": "int",
-        "description": "Maximum Unicode codepoints per long-form text chunk; default 600.",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 80 when hanzi, kana and Hangul outnumber other letters and digits (except edits), otherwise 600.",
         "required": false,
-        "min": 1,
-        "default": 600
+        "min": 1
       },
       {
         "name": "text_chunk_mode",
