@@ -111,10 +111,10 @@ public:
         }
         std::vector<std::vector<float>> speakers;
         std::vector<float> reference_latents;
-        const auto reference_text = runtime::find_option(opts, {"reference_text"}).value_or("");
+        std::string reference_text = runtime::find_option(opts, {"reference_text"}).value_or("");
         const bool use_speaker = runtime::parse_bool_option(runtime::find_option(opts, {"use_speaker_embedding"})
             .value_or("true"), "use_speaker_embedding");
-        const bool zero_speaker = runtime::parse_bool_option(runtime::find_option(opts, {"zero_speaker_embedding"})
+        bool zero_speaker = runtime::parse_bool_option(runtime::find_option(opts, {"zero_speaker_embedding"})
             .value_or("false"), "zero_speaker_embedding");
         const auto embedding_file = runtime::find_option(opts, {"speaker_embedding_file"});
         const auto embedding_files = request.option_arrays.find("speaker_embedding_file");
@@ -153,8 +153,12 @@ public:
         const auto chunk_size = text::parse_text_chunk_size_override(opts);
         const bool design = prompt_options.template_name == "voice_design" || prompt_options.template_name == "style" ||
             prompt_options.template_name == "freeform";
-        const auto chunks = raw_text || (design && !chunk_size) ? std::vector<std::string>{request.text_input->text}
-            : text::split_text_chunks(request.text_input->text, chunk_size.value_or(default_text_chunk_size(request.text_input->text)),
+        // Later voice design and freeform chunks also carry the first chunk as their reference in the 512-position
+        // context, so their chunks stay near the official 24-unit fragments: about 120 codepoints of Latin text.
+        const int64_t default_chunk_size = design ? std::min<int64_t>(default_text_chunk_size(request.text_input->text), 120)
+            : default_text_chunk_size(request.text_input->text);
+        const auto chunks = raw_text ? std::vector<std::string>{request.text_input->text}
+            : text::split_text_chunks(request.text_input->text, chunk_size.value_or(default_chunk_size),
                 text::parse_text_chunk_mode_override(opts).value_or(text::TextChunkMode::TagAware));
         debug::trace_log_scalar("ming3_tts.text.chunk_count", chunks.size());
         const bool trim = runtime::parse_bool_option(runtime::find_option(opts, {"trim_silence"}).value_or("true"), "trim_silence");
@@ -169,20 +173,33 @@ public:
             const auto embeddings = generator_.prepare_inputs(prompt, speakers, reference_latents, zero_speaker);
             const auto latent = generator_.generate(embeddings, sampling, random_offset, history);
             auto audio = decoder_.decode(latent);
+            const size_t frame = static_cast<size_t>(sample_rate_ / 10);
+            const size_t frames = audio.size() / frame;
+            size_t last = frames;
+            while (last > 0) {
+                double score = 0;
+                for (size_t i = (last - 1) * frame; i < last * frame; ++i) score += std::abs(audio[i]);
+                if (score / frame > 1e-3) break;
+                --last;
+            }
             if (trim) {
-                const size_t frame = static_cast<size_t>(sample_rate_ / 10);
                 const size_t tail = static_cast<size_t>(sample_rate_ * 3 / 10);
-                const size_t frames = audio.size() / frame;
-                size_t last = frames;
-                while (last > 0) {
-                    double score = 0;
-                    for (size_t i = (last - 1) * frame; i < last * frame; ++i) score += std::abs(audio[i]);
-                    if (score / frame > 1e-3) break;
-                    --last;
-                }
                 audio.resize(std::min(frames ? frames * frame : audio.size(), last * frame + tail));
             }
             waveform.insert(waveform.end(), audio.begin(), audio.end());
+            // As in the official runtime, later chunks of a split voice design or freeform request take the first
+            // generated chunk as their reference, so the designed voice stays the same across chunks. The reference
+            // ends where its speech ends: its last latent seeds the decode history, and starting from the trailing
+            // silence made some chunks stop at once.
+            if (design && chunks.size() > 1 && &chunk == &chunks.front() && last > 0) {
+                const auto reference = encode_reference(runtime::AudioBuffer{sample_rate_, 1,
+                    std::vector<float>(audio.begin(), audio.begin() + last * frame)}, sampling.seed, random_offset);
+                speakers = {reference.speaker};
+                reference_latents = reference.latents;
+                reference_text = chunk;
+                zero_speaker = false;
+                history.assign(reference_latents.end() - latent_dim, reference_latents.end());
+            }
         }
         if (waveform.empty()) throw runtime::InvalidRequestError("Ming generated no audio; check the text and max_tokens");
         runtime::TaskResult result;
@@ -196,6 +213,12 @@ private:
         const auto * cached = cache().find<MingReference>("ming3_tts.reference");
         if (reference_cache_ && cached && cached->audio.sample_rate == audio.sample_rate && cached->audio.channels == audio.channels &&
             cached->audio.samples == audio.samples) return *cached;
+        auto reference = encode_reference(audio, seed, random_offset);
+        if (reference_cache_) cache().put("ming3_tts.reference", reference);
+        return reference;
+    }
+
+    MingReference encode_reference(const runtime::AudioBuffer & audio, uint64_t seed, uint64_t & random_offset) {
         if (!encoder_) encoder_ = std::make_unique<modules::MingAudioEncoder>(assets_->model_weights,
             assets_->config.codec, execution_context());
         if (!speaker_) {
@@ -224,7 +247,6 @@ private:
             policy, sampling::TorchRandnPrecision::BFloat16);
         random_offset += sampling::torch_cuda_tensor_iterator_offset_blocks(count, policy);
         reference.latents = encoder_->encode(waveform, noise);
-        if (reference_cache_) cache().put("ming3_tts.reference", reference);
         return reference;
     }
 
