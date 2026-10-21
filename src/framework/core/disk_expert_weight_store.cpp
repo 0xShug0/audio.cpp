@@ -12,6 +12,9 @@
 #include <fstream>
 #include <map>
 #include <stdexcept>
+#if defined(__linux__)
+#include <thread>
+#endif
 #include <unordered_set>
 #include <utility>
 
@@ -49,7 +52,8 @@ public:
         std::byte * data() { return buffer ? static_cast<std::byte *>(ggml_backend_buffer_get_base(buffer)) : bytes.data(); }
     };
 
-    Impl(const std::filesystem::path & path, bool pin) : file(path, std::ios::binary), pin_experts(pin) {
+    Impl(const std::filesystem::path & path, bool pin, size_t threads)
+        : file(path, std::ios::binary), pin_experts(pin), read_threads(std::max<size_t>(1, threads)) {
         if (!file) throw std::runtime_error("cannot open disk expert GGUF: " + path.string());
         ggml_context * tensors = nullptr;
         std::unique_ptr<gguf_context, HeaderDeleter> header(
@@ -131,11 +135,39 @@ public:
             const auto bytes = projection.expert_bytes;
             auto started = std::chrono::steady_clock::now();
             if (!pin_experts) {
-                for (size_t m = 0; m < misses.size(); ++m) {
-                    std::memcpy(staging + offset + m * bytes,
-                        mapped_file.data() + projection.offset + static_cast<size_t>(misses[m].id) * bytes, bytes);
-                    stats.bytes_read += bytes;
+#if defined(__linux__)
+                const auto worker_count = std::min(read_threads, misses.size());
+#else
+                const size_t worker_count = 1;
+#endif
+                auto copy_range = [&](size_t begin, size_t end) {
+                    for (size_t m = begin; m < end; ++m) {
+                        std::memcpy(staging + offset + m * bytes,
+                            mapped_file.data() + projection.offset + static_cast<size_t>(misses[m].id) * bytes, bytes);
+                    }
+                };
+                if (worker_count <= 1) {
+                    copy_range(0, misses.size());
+                } else {
+#if defined(__linux__)
+                    std::vector<std::thread> workers;
+                    workers.reserve(worker_count - 1);
+                    const auto chunk = (misses.size() + worker_count - 1) / worker_count;
+                    try {
+                        for (size_t worker = 1; worker < worker_count; ++worker) {
+                            const auto begin = worker * chunk;
+                            if (begin >= misses.size()) break;
+                            workers.emplace_back(copy_range, begin, std::min(misses.size(), begin + chunk));
+                        }
+                        copy_range(0, std::min(misses.size(), chunk));
+                    } catch (...) {
+                        for (auto & worker : workers) if (worker.joinable()) worker.join();
+                        throw;
+                    }
+                    for (auto & worker : workers) worker.join();
+#endif
                 }
+                stats.bytes_read += misses.size() * bytes;
             }
             stats.read_ms += debug::elapsed_ms(started);
             started = std::chrono::steady_clock::now();
@@ -166,6 +198,7 @@ public:
     std::ifstream file;
     io::BinaryBlob mapped_file;
     bool pin_experts;
+    size_t read_threads;
     std::map<std::string, Projection> projections;
     std::vector<std::unique_ptr<Group>> groups;
     std::map<std::string, size_t> routes;
@@ -174,8 +207,8 @@ public:
     Statistics stats;
 };
 
-DiskExpertWeightStore::DiskExpertWeightStore(const std::filesystem::path & path, bool pin_experts)
-    : impl_(std::make_unique<Impl>(path, pin_experts)) {}
+DiskExpertWeightStore::DiskExpertWeightStore(const std::filesystem::path & path, bool pin_experts, size_t read_threads)
+    : impl_(std::make_unique<Impl>(path, pin_experts, read_threads)) {}
 DiskExpertWeightStore::~DiskExpertWeightStore() {
     debug::timing_log_scalar("disk_experts.bytes_read", impl_->stats.bytes_read);
     debug::timing_log_scalar("disk_experts.expert_loads", impl_->stats.expert_loads);
