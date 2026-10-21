@@ -274,35 +274,73 @@ int main(int argc, char ** argv) {
         }
 
         if (audio.sample_rate == 16000 && audio.channels == 1) {
-            auto streaming_session = model->create_task_session(
-                {engine::runtime::VoiceTaskKind::Asr, engine::runtime::RunMode::Streaming},
-                session_options);
-            auto * streaming = dynamic_cast<engine::runtime::IStreamingVoiceTaskSession *>(streaming_session.get());
-            if (!streaming) {
-                std::cerr << "FAIL: session is not an IStreamingVoiceTaskSession\n";
+            const auto stream_buffer = [&](const engine::runtime::AudioBuffer & streamed_audio,
+                                            const engine::runtime::TaskResult & reference,
+                                            const std::string & label) {
+                auto streaming_session = model->create_task_session(
+                    {engine::runtime::VoiceTaskKind::Asr, engine::runtime::RunMode::Streaming},
+                    session_options);
+                auto * streaming = dynamic_cast<engine::runtime::IStreamingVoiceTaskSession *>(streaming_session.get());
+                if (!streaming) {
+                    std::cerr << "FAIL: session is not an IStreamingVoiceTaskSession\n";
+                    return false;
+                }
+                streaming->prepare(prep);
+                streaming->start_stream(engine::runtime::TaskRequest{});
+                constexpr size_t kStreamChunk = 512;
+                for (size_t offset = 0; offset < streamed_audio.samples.size(); offset += kStreamChunk) {
+                    const size_t end = std::min(streamed_audio.samples.size(), offset + kStreamChunk);
+                    engine::runtime::AudioChunk chunk;
+                    chunk.sample_rate = streamed_audio.sample_rate;
+                    chunk.channels = streamed_audio.channels;
+                    chunk.start_sample = static_cast<int64_t>(offset);
+                    chunk.samples.assign(
+                        streamed_audio.samples.begin() + static_cast<std::ptrdiff_t>(offset),
+                        streamed_audio.samples.begin() + static_cast<std::ptrdiff_t>(end));
+                    (void)streaming->process_audio_chunk(chunk);
+                }
+                const auto streamed = streaming->finish_stream();
+                const int64_t streamed_samples = static_cast<int64_t>(streamed_audio.samples.size());
+                if (!streamed.text_output.has_value() ||
+                    normalize_text(streamed.text_output->text) != normalize_text(reference.text_output->text)) {
+                    std::cerr << "FAIL[" << label << "]: streaming transcript mismatch\n";
+                    return false;
+                }
+                if (!check_words(label, streamed, streamed_samples)) {
+                    return false;
+                }
+                constexpr double kFrameSeconds = 0.08;
+                const auto & expected_last = reference.word_timestamps.back();
+                const auto & last = streamed.word_timestamps.back();
+                const auto last_delta = std::abs(
+                    seconds(last.span.start_sample, streamed_audio.sample_rate) -
+                    seconds(expected_last.span.start_sample, streamed_audio.sample_rate));
+                if (normalize_text(last.word) != normalize_text(expected_last.word) || last_delta > kFrameSeconds) {
+                    std::cerr << "FAIL[" << label << "]: streaming timestamps are not on the input clock\n"
+                              << "  offline " << expected_last.word << " at "
+                              << seconds(expected_last.span.start_sample, streamed_audio.sample_rate)
+                              << "s, streaming at "
+                              << seconds(last.span.start_sample, streamed_audio.sample_rate) << "s\n";
+                    return false;
+                }
+                return true;
+            };
+            if (!stream_buffer(audio, result, "streaming")) {
                 return kExitFail;
             }
-            streaming->prepare(prep);
-            streaming->start_stream(engine::runtime::TaskRequest{});
-            constexpr size_t kStreamChunk = 512;
-            for (size_t offset = 0; offset < audio.samples.size(); offset += kStreamChunk) {
-                const size_t end = std::min(audio.samples.size(), offset + kStreamChunk);
-                engine::runtime::AudioChunk chunk;
-                chunk.sample_rate = audio.sample_rate;
-                chunk.channels = audio.channels;
-                chunk.start_sample = static_cast<int64_t>(offset);
-                chunk.samples.assign(
-                    audio.samples.begin() + static_cast<std::ptrdiff_t>(offset),
-                    audio.samples.begin() + static_cast<std::ptrdiff_t>(end));
-                (void)streaming->process_audio_chunk(chunk);
-            }
-            const auto streamed = streaming->finish_stream();
-            if (!streamed.text_output.has_value() || normalize_text(streamed.text_output->text) != expected) {
-                std::cerr << "FAIL: streaming transcript mismatch\n";
-                return kExitFail;
-            }
-            if (!check_words("streaming", streamed, audio_samples)) {
-                return kExitFail;
+            for (const int sample_rate : {48000, 8000}) {
+                engine::runtime::AudioBuffer rated;
+                rated.sample_rate = sample_rate;
+                rated.channels = 1;
+                rated.samples = engine::audio::convert_interleaved_audio_to_mono_linear_resampled(
+                    audio.samples, audio.sample_rate, audio.channels, sample_rate);
+                engine::runtime::TaskRequest rated_request;
+                rated_request.audio_input = rated;
+                const auto rated_offline = offline_session->run(rated_request);
+                const std::string label = "streaming_" + std::to_string(sample_rate / 1000) + "khz";
+                if (!stream_buffer(rated, rated_offline, label)) {
+                    return kExitFail;
+                }
             }
         }
 

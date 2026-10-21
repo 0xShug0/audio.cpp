@@ -13,7 +13,9 @@ using engine::community_models::granite5asr::CtcPiece;
 using engine::community_models::granite5asr::DecodedCtcPiece;
 using engine::community_models::granite5asr::Granite5ASRConfig;
 using engine::community_models::granite5asr::ctc_greedy_pieces;
+using engine::community_models::granite5asr::language_code_from_token;
 using engine::community_models::granite5asr::samples_per_ctc_frame;
+using engine::community_models::granite5asr::scale_sample_to_rate;
 using engine::community_models::granite5asr::words_from_decoded_ctc_pieces;
 
 constexpr int32_t kBlank = 0;
@@ -180,6 +182,22 @@ void test_frames_convert_to_input_rate_samples() {
     engine::test::require_eq(clamped[0].span.end_sample, int64_t(28040), "8 kHz end clamps to the input buffer");
 }
 
+void test_streaming_samples_use_the_input_rate() {
+    engine::test::require_eq(scale_sample_to_rate(16000, 16000, 16000), int64_t(16000), "16 kHz stays on its own clock");
+    engine::test::require_eq(scale_sample_to_rate(16000, 16000, 48000), int64_t(48000), "one 16 kHz second is 48000 input samples");
+    engine::test::require_eq(scale_sample_to_rate(16000, 16000, 8000), int64_t(8000), "one 16 kHz second is 8000 input samples");
+    engine::test::require_eq(scale_sample_to_rate(0, 16000, 48000), int64_t(0), "the origin stays at 0");
+}
+
+void test_language_tokens_are_recognized() {
+    engine::test::require(language_code_from_token("<|en|>") == std::string("en"), "en tag");
+    engine::test::require(language_code_from_token("<|fr|>") == std::string("fr"), "fr tag");
+    engine::test::require(language_code_from_token("<|ja|>") == std::string("ja"), "ja tag");
+    engine::test::require(language_code_from_token("<|zh|>").empty(), "unsupported tags are not a language");
+    engine::test::require(language_code_from_token("hello").empty(), "ordinary text is not a language");
+    engine::test::require(language_code_from_token("<|timestamp|>").empty(), "the timestamp control is not a language");
+}
+
 void test_end_sample_clamps_and_keeps_one_sample() {
     const DecodedCtcPiece inside{"hi", 0, 10, 0.0, 1};
     const auto clamped = words_from_decoded_ctc_pieces({inside}, 1280, 0, 1000, kRate, kRate);
@@ -209,6 +227,8 @@ int main() {
         test_end_sample_clamps_and_keeps_one_sample();
         test_probability_above_one_clamps();
         test_end_sample_clamps_to_chunk_end();
+        test_streaming_samples_use_the_input_rate();
+        test_language_tokens_are_recognized();
         std::cout << "PASS: granite5asr CTC word timestamps\n";
         return 0;
     } catch (const std::exception & error) {

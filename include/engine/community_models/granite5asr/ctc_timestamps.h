@@ -98,6 +98,32 @@ inline int64_t samples_per_ctc_frame(const Granite5ASRConfig & config) {
 
 // The frontend resamples to the model rate, so frame indexes count model-rate
 // samples. Word spans are reported in samples of the input buffer.
+// Streaming audio is resampled to 16 kHz before the encoder. Word indexes from
+// that buffer are converted onto the sample rate of the audio that was streamed.
+inline int64_t scale_sample_to_rate(int64_t sample, int64_t from_rate, int64_t to_rate) {
+    if (sample <= 0 || from_rate <= 0 || to_rate <= 0 || from_rate == to_rate) {
+        return std::max<int64_t>(sample, 0);
+    }
+    return static_cast<int64_t>(std::llround(
+        static_cast<double>(sample) * static_cast<double>(to_rate) /
+        static_cast<double>(from_rate)));
+}
+
+// The multilingual checkpoint's tokenizer carries Parakeet language tags.
+// Only the languages the model was trained to transcribe count. The English-only
+// checkpoint has none of these tokens, so this returns empty for it.
+inline std::string language_code_from_token(const std::string & token) {
+    if (token.size() < 5 || token.front() != '<' || token.back() != '>') {
+        return {};
+    }
+    const std::string code = token.substr(2, token.size() - 4);
+    if (code == "en" || code == "fr" || code == "de" || code == "es" ||
+        code == "pt" || code == "it" || code == "ja") {
+        return code;
+    }
+    return {};
+}
+
 inline int64_t ctc_frame_to_input_sample(
     int64_t frame,
     int64_t samples_per_frame,
