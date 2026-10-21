@@ -140,7 +140,7 @@
       {
         "name": "exec_plan",
         "type": "string",
-        "description": "JSON object of component execution plans. Component: generator. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. GGML keeps the session backend. RKNN requires artifacts.main and ENGINE_ENABLE_RKNN; omit backend. RKNN params: overlap (nonnegative integer, default 0, smaller than the emitted window), gain (boolean, default false; keeps a GGML generator reference).",
+        "description": "JSON object of component execution plans. Component: generator. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn/neon. GGML keeps the session backend. NEON convolutions require a CPU session and ENGINE_ENABLE_NEON=ON on AArch64, without artifacts or params. RKNN requires artifacts.main and ENGINE_ENABLE_RKNN; omit backend. RKNN params: overlap (nonnegative integer, default 0, smaller than the emitted window), gain (boolean, default false; keeps a GGML generator reference).",
         "required": false,
         "default": "{}"
       }

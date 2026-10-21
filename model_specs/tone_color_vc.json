@@ -43,7 +43,15 @@
         "min": 0
       }
     ],
-    "session": [],
+    "session": [
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "required": false,
+        "default": "{}",
+        "description": "Component execution plan: decoder accepts default/ggml/neon. Default retains the session backend. NEON convolutions require a CPU session and ENGINE_ENABLE_NEON=ON on AArch64. No artifacts or params."
+      }
+    ],
     "load": []
   },
   "package_defaults": {

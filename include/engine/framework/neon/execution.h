@@ -26,6 +26,9 @@ public:
     ~ExecutionPlan();
     Value input();
     Value add(const Operator &operation, std::initializer_list<Value> inputs);
+    // Keep this node's inputs while replacing its prepared operator. Replans
+    // shapes on the next run and reuses existing buffers and workers.
+    void replace(Value value, const Operator &operation);
     void set_output(Value value, Layout layout = Layout::ChannelFirst);
     // Retained intermediate results remain read-only and valid until the next run.
     void retain(Value value);

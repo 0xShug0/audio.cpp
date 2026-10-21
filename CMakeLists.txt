@@ -585,6 +585,7 @@ add_library(engine_core OBJECT
     src/framework/modules/speech_encoders/wavlm_encoder.cpp
     src/framework/modules/speech_encoders/sanm.cpp
     src/framework/modules/optimizations/fast_conv_modules.cpp
+    src/framework/modules/optimizations/neon_conv1d.cpp
     src/framework/modules/optimizations/fast_projection_modules.cpp
     src/framework/modules/recurrent_modules.cpp
     src/framework/modules/streaming_conv_modules.cpp
@@ -2749,6 +2750,7 @@ add_library(engine_runtime STATIC
 )
 if (ENGINE_ENABLE_NEON)
     target_compile_definitions(engine_runtime PUBLIC ENGINE_HAVE_NEON=1)
+    target_compile_definitions(engine_core PRIVATE ENGINE_HAVE_NEON=1)
 endif()
 
 add_library(cjson_vendor STATIC
@@ -3452,6 +3454,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         endif()
     endif()
     if (ENGINE_ENABLE_NEON)
+        add_engine_unittest(neon_conv1d_graph_test tests/unittests/test_neon_conv1d_graph.cpp)
+        add_test(NAME neon_conv1d_graph_test COMMAND neon_conv1d_graph_test)
+        set_tests_properties(neon_conv1d_graph_test PROPERTIES SKIP_RETURN_CODE 77)
         add_engine_unittest(neon_blocks_test tests/unittests/test_neon_blocks.cpp)
         target_include_directories(neon_blocks_test PRIVATE src/framework/neon)
         add_test(NAME neon_blocks_test COMMAND neon_blocks_test)

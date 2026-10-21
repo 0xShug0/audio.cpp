@@ -77,8 +77,10 @@ KokoroTTSSession::KokoroTTSSession(
         "kokoro_tts.exec_plan",
         {{"generator", "ggml",
           {{"ggml", {options.backend.type}, {}, {}},
-           {"rknn", {}, {"main"}, {}, {"overlap", "gain"}}}}});
+           {"rknn", {}, {"main"}, {}, {"overlap", "gain"}},
+           {"neon", {core::BackendType::Cpu}, {}, {}}}}});
     const auto & generator_plan = exec_plan.at("generator");
+    neon_generator_ = generator_plan.impl == "neon";
     if (generator_plan.impl == "rknn") {
         rknn_generator_path_ = engine::rknn::resolve_engine_path(
             generator_plan.artifacts.at("main"), assets_->resources.model_directory());
@@ -288,7 +290,7 @@ void KokoroTTSSession::prepare_decoder_graph_capacity(int64_t capacity) {
                 decoder_contract,
                 rknn_generator_path_,
                 rknn_generator_overlap_,
-                rknn_generator_gain_);
+                rknn_generator_gain_, neon_generator_);
         });
     }
     prepared_decoder_capacity_ = capacity;

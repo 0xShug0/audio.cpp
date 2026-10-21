@@ -13,7 +13,7 @@ class ToneColorRuntime {
 public:
     ToneColorRuntime(std::shared_ptr<const assets::TensorSource> source,
                      core::ExecutionContext & execution, core::BackendConfig backend,
-                     const io::json::Value & config);
+                     const io::json::Value & config, bool neon_decoder = false);
     ~ToneColorRuntime();
     runtime::AudioBuffer convert(const runtime::AudioBuffer & source,
                                  const runtime::AudioBuffer & reference,

@@ -270,7 +270,7 @@ struct ToneColorRuntime::State {
     std::unique_ptr<Graph> source_graph, reference_graph, conversion_graph;
 
     State(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & ctx, core::BackendConfig backend,
-          const io::json::Value & model_config)
+          const io::json::Value & model_config, bool neon_decoder)
         : execution(ctx), weights(*source, ctx) {
         const auto & data = model_config.require("data");
         const auto & model = model_config.require("model");
@@ -305,14 +305,15 @@ struct ToneColorRuntime::State {
         config.tensor_prefix = "dec";
         config.global_conditioning.channels = 256;
         config.lower_padded_conv_transpose_as_crop = ctx.backend_type() == core::BackendType::Cpu;
+        config.neon_convolutions = neon_decoder;
         decoder = modules::HifiGanVocoderComponent::load_from_tensor_source(source, backend, config);
     }
 };
 
 ToneColorRuntime::ToneColorRuntime(std::shared_ptr<const assets::TensorSource> source,
                                  core::ExecutionContext & execution, core::BackendConfig backend,
-                                 const io::json::Value & config)
-    : state_(std::make_unique<State>(std::move(source), execution, backend, config)) {}
+                                 const io::json::Value & config, bool neon_decoder)
+    : state_(std::make_unique<State>(std::move(source), execution, backend, config, neon_decoder)) {}
 ToneColorRuntime::~ToneColorRuntime() = default;
 
 runtime::AudioBuffer ToneColorRuntime::convert(const runtime::AudioBuffer & source,

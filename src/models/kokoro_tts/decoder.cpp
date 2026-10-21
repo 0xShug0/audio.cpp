@@ -11,6 +11,7 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/optimizations/neon_conv1d.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
@@ -340,9 +341,18 @@ ggml_tensor * build_decoder_conv1d_bct(
     ggml_context * ctx,
     ggml_tensor * input,
     const ConvWeightsT & conv,
-    bool allow_cpu_fastpath) {
+    bool allow_cpu_fastpath,
+    modules::NeonConv1dGraph * neon = nullptr) {
     if (conv.groups != 1) {
         throw std::runtime_error("kokoro decoder conv1d requires groups == 1");
+    }
+    if (neon) {
+        core::ModuleBuildContext build{ctx};
+        return neon->build(build, core::wrap_tensor(input,
+            core::TensorShape::from_dims({input->ne[2], input->ne[1], input->ne[0]})),
+            make_conv1d_weights(build, conv), {conv.in_channels, conv.out_channels, conv.kernel,
+                static_cast<int>(conv.stride), static_cast<int>(conv.padding),
+                static_cast<int>(conv.dilation), conv.use_bias}).tensor;
     }
     if (allow_cpu_fastpath &&
         conv.kernel == 1 &&
@@ -920,23 +930,25 @@ ggml_tensor * build_generator_resblock(
     const core::TensorValue & style,
     bool allow_cpu_fastpath,
     std::vector<TimeMaskInputs> & time_masks,
-    bool use_time_masks) {
+    bool use_time_masks,
+    modules::NeonConv1dGraph * neon = nullptr) {
     ggml_tensor * current = x;
     for (size_t i = 0; i < block.convs1.size(); ++i) {
         ggml_tensor * xt = build_adaptive_instance_norm_bct_decoder(
             ctx, current, block.adain1[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
         xt = build_snake1d_bct_decoder(ctx, xt, block.alpha1[i], allow_cpu_fastpath);
-        xt = build_decoder_conv1d_bct(ctx, xt, block.convs1[i], allow_cpu_fastpath);
+        xt = build_decoder_conv1d_bct(ctx, xt, block.convs1[i], allow_cpu_fastpath, neon);
         xt = build_adaptive_instance_norm_bct_decoder(
             ctx, xt, block.adain2[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
         xt = build_snake1d_bct_decoder(ctx, xt, block.alpha2[i], allow_cpu_fastpath);
-        xt = build_decoder_conv1d_bct(ctx, xt, block.convs2[i], allow_cpu_fastpath);
+        xt = build_decoder_conv1d_bct(ctx, xt, block.convs2[i], allow_cpu_fastpath, neon);
         current = ggml_add(ctx, xt, current);
     }
     return current;
 }
 
 struct GeneratorGraphSession {
+    std::unique_ptr<modules::NeonConv1dGraph> neon;
     const KokoroWeights::GeneratorWeights * weights = nullptr;
     int64_t decoder_frame_capacity = 0;
     int64_t conditioning_frame_capacity = 0;
@@ -961,7 +973,8 @@ struct GeneratorGraphSession {
         int64_t conditioning_frame_capacity_in,
         int64_t style_dim_in,
         int n_threads_in,
-        bool use_device_backend_in)
+        bool use_device_backend_in,
+        bool neon_generator)
         : weights(&weights_in),
           decoder_frame_capacity(decoder_frame_capacity_in),
           conditioning_frame_capacity(conditioning_frame_capacity_in),
@@ -980,6 +993,10 @@ struct GeneratorGraphSession {
         }
 
         try {
+            if (neon_generator) {
+                if (use_device_backend) throw std::runtime_error("Kokoro NEON generator requires CPU");
+                neon = std::make_unique<modules::NeonConv1dGraph>(n_threads);
+            }
             const bool allow_cpu_fastpath = !use_device_backend;
 
             decoder_x_in = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, decoder_frame_capacity, 512, 1);
@@ -996,7 +1013,7 @@ struct GeneratorGraphSession {
             ggml_tensor * current = decoder_x_in;
             for (size_t i = 0; i < stages.size(); ++i) {
                 const GeneratorGraphStage & stage = stages[i];
-                ggml_tensor * source = build_decoder_conv1d_bct(ctx, conditioning_in, *stage.noise_conv, allow_cpu_fastpath);
+                ggml_tensor * source = build_decoder_conv1d_bct(ctx, conditioning_in, *stage.noise_conv, allow_cpu_fastpath, neon.get());
                 source = build_generator_resblock(
                     ctx,
                     source,
@@ -1004,7 +1021,7 @@ struct GeneratorGraphSession {
                     style,
                     allow_cpu_fastpath,
                     time_masks,
-                    false);
+                    false, neon.get());
 
                 ggml_tensor * x = ggml_leaky_relu(ctx, current, 0.1f, false);
                 x = use_device_backend
@@ -1024,14 +1041,14 @@ struct GeneratorGraphSession {
                         style,
                         allow_cpu_fastpath,
                         time_masks,
-                        false);
+                        false, neon.get());
                     stage_sum = stage_sum == nullptr ? block : ggml_add(ctx, stage_sum, block);
                 }
                 current = ggml_scale(ctx, stage_sum, 1.0f / 3.0f);
             }
 
             current = ggml_leaky_relu(ctx, current, 0.01f, false);
-            output = build_decoder_conv1d_bct(ctx, current, weights->conv_post, allow_cpu_fastpath);
+            output = build_decoder_conv1d_bct(ctx, current, weights->conv_post, allow_cpu_fastpath, neon.get());
             output = ggml_cont(ctx, output);
             set_graph_output(output);
 
@@ -1181,12 +1198,13 @@ public:
         int64_t style_dim,
         ggml_backend_t backend,
         int n_threads,
-        bool use_device_backend)
+        bool use_device_backend,
+        bool neon_generator)
         : generator_(&generator),
           style_dim_(style_dim),
           backend_(backend),
           n_threads_(std::max(1, n_threads)),
-          use_device_backend_(use_device_backend) {
+          use_device_backend_(use_device_backend), neon_generator_(neon_generator) {
         if (generator.noise_convs.size() != generator.ups.size() ||
             generator.noise_res.size() != generator.ups.size() ||
             generator.resblocks.size() != generator.ups.size() * 3) {
@@ -1228,7 +1246,7 @@ public:
             conditioning_frame_capacity_,
             style_dim_,
             n_threads_,
-            use_device_backend_);
+            use_device_backend_, neon_generator_);
     }
 
     std::vector<float> run(
@@ -1255,6 +1273,7 @@ private:
     int64_t conditioning_frame_capacity_ = 0;
     int n_threads_ = 1;
     bool use_device_backend_ = false;
+    bool neon_generator_ = false;
     std::vector<GeneratorGraphStage> stages_;
     std::unique_ptr<GeneratorGraphSession> session_;
 };
@@ -1287,7 +1306,8 @@ struct KokoroIstftNetDecoderRuntime::Impl {
         KokoroIstftNetDecoderCapacityContract contract_in,
         const std::string & rknn_generator_path = {},
         int64_t rknn_generator_overlap = 0,
-        bool rknn_generator_gain_in = false)
+        bool rknn_generator_gain_in = false,
+        bool neon_generator = false)
         : weights(std::move(weights_in)),
           n_threads(std::max(1, n_threads_in)),
           use_device_backend(use_device_backend_in),
@@ -1301,7 +1321,7 @@ struct KokoroIstftNetDecoderRuntime::Impl {
               audio::STFTPadMode::Reflect,
               audio::STFTFamily::Kokoro,
           }),
-          generator_graph(weights->decoder.generator, weights->style_dim, backend, n_threads, use_device_backend),
+          generator_graph(weights->decoder.generator, weights->style_dim, backend, n_threads, use_device_backend, neon_generator),
           rknn_generator_gain(rknn_generator_gain_in) {
         if (!rknn_generator_path.empty()) {
             const auto & gen = weights->decoder.generator;
@@ -1349,7 +1369,8 @@ KokoroIstftNetDecoderRuntime::KokoroIstftNetDecoderRuntime(
     KokoroIstftNetDecoderCapacityContract contract,
     const std::string & rknn_generator_path,
     int64_t rknn_generator_overlap,
-    bool rknn_generator_gain)
+    bool rknn_generator_gain,
+    bool neon_generator)
     : impl_(std::make_unique<Impl>(
           std::move(weights),
           backend,
@@ -1359,7 +1380,7 @@ KokoroIstftNetDecoderRuntime::KokoroIstftNetDecoderRuntime(
           contract,
           rknn_generator_path,
           rknn_generator_overlap,
-          rknn_generator_gain)) {}
+          rknn_generator_gain, neon_generator)) {}
 
 KokoroIstftNetDecoderRuntime::~KokoroIstftNetDecoderRuntime() = default;
 

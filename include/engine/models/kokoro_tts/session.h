@@ -90,6 +90,7 @@ private:
     // exec_plan.generator params: overlap-blend / per-window loudness correction.
     int64_t rknn_generator_overlap_ = 0;
     bool rknn_generator_gain_ = false;
+    bool neon_generator_ = false;
     int64_t fixed_token_capacity_ = 0;
     int64_t pre_tail_token_capacity_ = 0;
     uint64_t rng_seed_ = 0;
