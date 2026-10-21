@@ -439,17 +439,24 @@ public:
     LatentSyncUnetGraph(core::ExecutionContext & execution, const LatentSyncUnetConfig & config,
         const LatentSyncUnetWeights & weights, int64_t batch, int64_t frames,
         int64_t height, int64_t width, int64_t audio_tokens, bool cache,
-        ggml_gallocr_t allocator, bool replay = false) : backend_(execution.backend()), allocator_(allocator) {
+        LatentSyncUnetGraph * full = nullptr) : backend_(execution.backend()) {
+        const bool replay = full != nullptr;
         constexpr size_t nodes = 16384;
         context_.reset(ggml_init({nodes * ggml_tensor_overhead() + ggml_graph_overhead_custom(nodes, false), nullptr, true}));
         if (!context_) throw std::runtime_error("LatentSync U-Net graph context allocation failed");
         core::ModuleBuildContext ctx{context_.get(), "latentsync.unet", execution.backend_type()};
-        input_ = core::make_tensor(ctx, GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch * frames, config.input_channels, height, width}));
-        audio_ = core::make_tensor(ctx, GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch * frames, audio_tokens, config.audio_channels}));
-        timestep_ = core::make_tensor(ctx, GGML_TYPE_F32,
-            core::TensorShape::from_dims({batch, config.channels.front()}));
+        if (full) {
+            input_ = full->input_;
+            audio_ = full->audio_;
+            timestep_ = full->timestep_;
+        } else {
+            input_ = core::make_tensor(ctx, GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch * frames, config.input_channels, height, width}));
+            audio_ = core::make_tensor(ctx, GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch * frames, audio_tokens, config.audio_channels}));
+            timestep_ = core::make_tensor(ctx, GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch, config.channels.front()}));
+        }
         ggml_set_input(input_.tensor);
         ggml_set_input(audio_.tensor);
         ggml_set_input(timestep_.tensor);
@@ -470,14 +477,28 @@ public:
         ggml_set_output(output_.tensor);
         graph_ = ggml_new_graph_custom(context_.get(), nodes, false);
         ggml_build_forward_expand(graph_, output_.tensor);
-        if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_, graph_)) {
-            throw std::runtime_error("LatentSync U-Net graph allocation failed");
-        }
-        debug::timing_log_scalar("latentsync.unet.graph_buffer_mb",
-            ggml_gallocr_get_buffer_size(allocator_, 0) / 1048576.0);
     }
 
     ~LatentSyncUnetGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
+
+    void allocate(ggml_gallocr_t allocator, LatentSyncUnetGraph * replay) {
+        std::unique_ptr<ggml_context, decltype(&ggml_free)> plan_context{nullptr, ggml_free};
+        auto * plan = graph_;
+        if (replay) {
+            // Bind both cached graphs once; reallocating their shared arena invalidates tensor buffers.
+            const size_t nodes = ggml_graph_size(graph_) + ggml_graph_size(replay->graph_);
+            plan_context.reset(ggml_init({ggml_graph_overhead_custom(nodes, false), nullptr, true}));
+            if (!plan_context) throw std::runtime_error("LatentSync U-Net allocation plan context failed");
+            plan = ggml_new_graph_custom(plan_context.get(), nodes, false);
+            ggml_build_forward_expand(plan, output_.tensor);
+            ggml_build_forward_expand(plan, replay->output_.tensor);
+        }
+        if (!allocator || !ggml_gallocr_alloc_graph(allocator, plan)) {
+            throw std::runtime_error("LatentSync U-Net graph allocation failed");
+        }
+        debug::timing_log_scalar("latentsync.unet.graph_buffer_mb",
+            ggml_gallocr_get_buffer_size(allocator, 0) / 1048576.0);
+    }
 
     void copy_cache_to(LatentSyncUnetGraph & replay) const {
         ggml_backend_tensor_copy(cached_feature_.tensor, replay.cached_feature_.tensor);
@@ -493,9 +514,6 @@ public:
 
     std::vector<float> predict(const std::vector<float> & input, const std::vector<float> & audio,
         const std::vector<float> & timestep_features) {
-        if (!ggml_gallocr_alloc_graph(allocator_, graph_)) {
-            throw std::runtime_error("LatentSync U-Net graph allocation failed");
-        }
         core::write_tensor_f32(input_, input);
         core::write_tensor_f32(audio_, audio);
         core::write_tensor_f32(timestep_, timestep_features);
@@ -510,7 +528,6 @@ private:
     std::unique_ptr<ggml_context, decltype(&ggml_free)> context_{nullptr, ggml_free};
     std::unique_ptr<ggml_context, decltype(&ggml_free)> cache_context_{nullptr, ggml_free};
     std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> cache_buffer_{nullptr, ggml_backend_buffer_free};
-    ggml_gallocr_t allocator_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     core::TensorValue input_, audio_, timestep_, output_, cached_feature_;
 };
@@ -567,16 +584,15 @@ std::vector<float> LatentSyncUnetRuntime::predict(const std::vector<float> & inp
     const auto shape = std::make_tuple(batch, frames, height, width, audio_tokens);
     const bool cache = cache_step >= 0;
     if (!impl_->graph || impl_->shape != shape || cache != bool(impl_->replay_graph)) {
-        impl_->graph.reset();
         impl_->replay_graph.reset();
+        impl_->graph.reset();
         impl_->graph = std::make_unique<LatentSyncUnetGraph>(impl_->execution, impl_->config,
-            impl_->weights, batch, frames, height, width, audio_tokens, cache,
-            impl_->allocator.get());
+            impl_->weights, batch, frames, height, width, audio_tokens, cache);
         if (cache) {
             impl_->replay_graph = std::make_unique<LatentSyncUnetGraph>(impl_->execution, impl_->config,
-                impl_->weights, batch, frames, height, width, audio_tokens, true,
-                impl_->allocator.get(), true);
+                impl_->weights, batch, frames, height, width, audio_tokens, true, impl_->graph.get());
         }
+        impl_->graph->allocate(impl_->allocator.get(), impl_->replay_graph.get());
         impl_->shape = shape;
     }
     if (cache_step > 0 && impl_->config.sequential_cfg) {
