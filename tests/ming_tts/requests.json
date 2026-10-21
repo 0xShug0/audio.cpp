@@ -1,0 +1,46 @@
+[
+  {
+    "name": "warmup",
+    "task": "VOICE_DESIGN",
+    "text": "Good evening. The harbor is quiet tonight.",
+    "language_id": "English",
+    "controls": {"style": "A calm adult man with a clear, warm voice."},
+    "raw_text": true,
+    "seed": 1895
+  },
+  {
+    "name": "harbor",
+    "task": "VOICE_DESIGN",
+    "text": "The lighthouse stood beside the quiet harbor. Every evening, its keeper climbed the narrow stairs and lit the lamp to guide the fishing boats safely home.",
+    "language_id": "English",
+    "controls": {"style": "A calm adult man with a clear, warm voice."},
+    "raw_text": true,
+    "seed": 1895
+  },
+  {
+    "name": "harbor_repeat",
+    "task": "VOICE_DESIGN",
+    "text": "The lighthouse stood beside the quiet harbor. Every evening, its keeper climbed the narrow stairs and lit the lamp to guide the fishing boats safely home.",
+    "language_id": "English",
+    "controls": {"style": "A calm adult man with a clear, warm voice."},
+    "raw_text": true,
+    "seed": 1895
+  },
+  {
+    "name": "short",
+    "task": "VOICE_DESIGN",
+    "text": "Please leave the lamp beside the window.",
+    "language_id": "English",
+    "controls": {"style": "A calm adult man with a clear, warm voice."},
+    "raw_text": true,
+    "seed": 1895
+  },
+  {
+    "name": "long",
+    "task": "TTS",
+    "text": "At dawn, the research vessel left the harbor and followed the coast toward a small island. The team planned to measure the water temperature, photograph the nesting birds, and repair a weather station damaged by the winter storms. Before landing, they checked the tide chart and called the keeper over the radio. He told them that the northern path was clear, but the wooden steps near the old pier were slippery. They carried their equipment carefully, stopped to watch a seal swimming between the rocks, and reached the station just as the morning clouds began to lift.",
+    "language_id": "English",
+    "raw_text": false,
+    "seed": 1895
+  }
+]

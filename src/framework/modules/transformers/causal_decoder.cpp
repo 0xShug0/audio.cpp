@@ -103,7 +103,8 @@ DecoderHiddenOutputs DecoderHiddenModule::build(
 
     auto stack = DecoderStackModule(config_.stack)
                      .build(ctx, input, positions, weights.stack, prefix_state, attention_mask);
-    auto hidden_sequence = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false})
+    auto hidden_sequence = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false, false, false,
+                                         config_.stack.activation_cast.norm_intermediate_type})
                                .build(ctx, stack.output, weights.final_norm);
     auto hidden = select_hidden_steps(ctx, hidden_sequence, config_.hidden_mode);
     return {std::move(stack.output), hidden, std::move(stack.state)};
@@ -162,7 +163,8 @@ DecoderHiddenStaticCacheOutputs DecoderHiddenModule::build_static_cache_tail(
         x = out.output;
     }
 
-    auto hidden = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false})
+    auto hidden = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false, false, false,
+                                config_.stack.activation_cast.norm_intermediate_type})
                       .build(ctx, x, weights.final_norm);
     return {
         std::move(x),
@@ -230,7 +232,8 @@ DecoderHiddenBatchedStaticCacheOutputs DecoderHiddenModule::build_static_cache_t
         x = out.output;
     }
 
-    auto hidden = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false})
+    auto hidden = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false, false, false,
+                                config_.stack.activation_cast.norm_intermediate_type})
                       .build(ctx, x, weights.final_norm);
     return {
         std::move(x),

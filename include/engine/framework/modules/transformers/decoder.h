@@ -70,6 +70,9 @@ struct DecoderActivationCastPolicy {
     bool after_mlp_silu = false;
     bool after_mlp_mul = false;
     bool after_output = false;
+    // Qwen rounds normalized activations before applying the norm weight.
+    std::optional<ggml_type> norm_intermediate_type = std::nullopt;
+    std::optional<ggml_type> rope_intermediate_type = std::nullopt;
 };
 
 struct DecoderAttentionPolicy {

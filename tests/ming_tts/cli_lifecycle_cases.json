@@ -1,0 +1,70 @@
+{
+  "cases": [
+    {
+      "id": "ming_reference_lifecycle",
+      "coverage": "Long-short-long reuse and changed reference in one session",
+      "family": "ming_tts",
+      "model": "Ming-3.0-TTS-0.5B-GGUF/ming-3.0-tts-0.5b-bf16.gguf",
+      "task": "clon",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "warmup_a",
+          "text": "Please leave the lamp beside the window.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1895,
+          "options": {"language": "English"}
+        },
+        {
+          "id": "long_a",
+          "text": "The museum opened early on Saturday so that visitors could watch the restoration team at work. Behind a glass screen, two specialists carefully cleaned an old map of the coast. A guide explained how they used photographs and written records to identify the faded names of villages. Outside, children gathered around a model ship and asked how sailors found their way before satellite navigation. At noon, the team covered the map and invited everyone upstairs to see the finished exhibition.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1895,
+          "options": {"language": "English"}
+        },
+        {
+          "id": "long_repeat_a",
+          "text": "The museum opened early on Saturday so that visitors could watch the restoration team at work. Behind a glass screen, two specialists carefully cleaned an old map of the coast. A guide explained how they used photographs and written records to identify the faded names of villages. Outside, children gathered around a model ship and asked how sailors found their way before satellite navigation. At noon, the team covered the map and invited everyone upstairs to see the finished exhibition.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1895,
+          "options": {"language": "English"}
+        },
+        {
+          "id": "short_a",
+          "text": "The tickets are on the kitchen table.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1895,
+          "options": {"language": "English"}
+        },
+        {
+          "id": "long_after_short_a",
+          "text": "The museum opened early on Saturday so that visitors could watch the restoration team at work. Behind a glass screen, two specialists carefully cleaned an old map of the coast. A guide explained how they used photographs and written records to identify the faded names of villages. Outside, children gathered around a model ship and asked how sailors found their way before satellite navigation. At noon, the team covered the map and invited everyone upstairs to see the finished exhibition.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1895,
+          "options": {"language": "English"}
+        },
+        {
+          "id": "short_b",
+          "text": "Our train leaves tomorrow morning.",
+          "voice_ref": "resources/b.wav",
+          "seed": 1895,
+          "options": {"language": "English"}
+        },
+        {
+          "id": "long_reencoded_a",
+          "text": "The museum opened early on Saturday so that visitors could watch the restoration team at work. Behind a glass screen, two specialists carefully cleaned an old map of the coast. A guide explained how they used photographs and written records to identify the faded names of villages. Outside, children gathered around a model ship and asked how sailors found their way before satellite navigation. At noon, the team covered the map and invited everyone upstairs to see the finished exhibition.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1895,
+          "options": {"language": "English"}
+        },
+        {
+          "id": "long_rewarmed_a",
+          "text": "The museum opened early on Saturday so that visitors could watch the restoration team at work. Behind a glass screen, two specialists carefully cleaned an old map of the coast. A guide explained how they used photographs and written records to identify the faded names of villages. Outside, children gathered around a model ship and asked how sailors found their way before satellite navigation. At noon, the team covered the map and invited everyone upstairs to see the finished exhibition.",
+          "voice_ref": "resources/a.wav",
+          "seed": 1895,
+          "options": {"language": "English"}
+        }
+      ]
+    }
+  ]
+}

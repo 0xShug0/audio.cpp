@@ -1542,6 +1542,20 @@ set_target_properties(utf8proc_vendor PROPERTIES EXCLUDE_FROM_ALL TRUE POSITION_
 target_include_directories(utf8proc_vendor PUBLIC external/utf8proc)
 target_compile_definitions(utf8proc_vendor PUBLIC UTF8PROC_STATIC)
 
+audiocpp_add_model(ming_tts
+    SOURCES
+        src/models/ming_tts/assets.cpp
+        src/models/ming_tts/audio_codec.cpp
+        src/models/ming_tts/flow.cpp
+        src/models/ming_tts/generator.cpp
+        src/models/ming_tts/prompt.cpp
+        src/models/ming_tts/session.cpp
+    INCLUDES
+        engine/models/ming_tts/session.h
+    LOADERS
+        engine::models::ming_tts::make_ming_tts_loader
+)
+
 audiocpp_add_model(plapre
     SOURCES
         src/models/plapre/assets.cpp
@@ -4088,6 +4102,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS)
+        if("ming_tts" IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(ming_tts_component_parity EXCLUDE_FROM_ALL tests/ming_tts/component_parity.cpp)
+            target_link_libraries(ming_tts_component_parity PRIVATE engine_runtime ggml)
+        endif()
         if (ENGINE_ENABLE_RKNN)
             # The board-only half of the RKNN path: residency pricing, the driver's cached
             # self-report and a real context build. The repo ships no compiled engines, so the
