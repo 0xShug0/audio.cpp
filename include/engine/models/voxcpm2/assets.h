@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::models::voxcpm2 {
@@ -89,11 +90,14 @@ struct VoxCPM2Config {
 
 struct VoxCPM2Assets {
     assets::ResourceBundle resources;
+    std::string runtime_family = "voxcpm2";
     VoxCPM2Config config;
     std::shared_ptr<const assets::TensorSource> model_weights;
     std::shared_ptr<const assets::TensorSource> audiovae_weights;
 };
 
-std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(
+    const std::filesystem::path & model_path,
+    std::string_view spec_family = "voxcpm2");
 
 }  // namespace engine::models::voxcpm2

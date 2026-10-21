@@ -397,7 +397,7 @@ VoxCPM2SessionBase::VoxCPM2SessionBase(runtime::TaskSpec task,
 
 VoxCPM2SessionBase::~VoxCPM2SessionBase() = default;
 
-std::string VoxCPM2SessionBase::family_impl() const { return "voxcpm2"; }
+std::string VoxCPM2SessionBase::family_impl() const { return assets_->runtime_family; }
 
 runtime::VoiceTaskKind VoxCPM2SessionBase::task_kind_impl() const { return task_.task; }
 

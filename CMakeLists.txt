@@ -1472,10 +1472,13 @@ audiocpp_add_model(voxcpm2
         src/models/voxcpm2/minicpm.cpp
         src/models/voxcpm2/session.cpp
         src/models/voxcpm2/tokenizer_text.cpp
+        src/models/vocalrender/loader.cpp
     INCLUDES
         engine/models/voxcpm2/loader.h
+        engine/models/vocalrender/loader.h
     LOADERS
         engine::models::voxcpm2::make_voxcpm2_loader
+        engine::models::vocalrender::make_vocalrender_loader
 )
 
 audiocpp_add_model(voxcpm1

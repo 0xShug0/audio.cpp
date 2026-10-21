@@ -7,6 +7,8 @@
 
 #include <stdexcept>
 #include <string>
+#include <algorithm>
+#include <limits>
 
 namespace engine::models::voxcpm2 {
 namespace json = engine::io::json;
@@ -172,6 +174,35 @@ VoxCPM2Config parse_config(const assets::ResourceBundle & resources) {
     return config;
 }
 
+int64_t tokenizer_required_vocab_size(const assets::ResourceBundle & resources) {
+    int64_t required = 0;
+    auto include_id = [&required](int64_t id) {
+        if (id < 0 || id == std::numeric_limits<int64_t>::max()) {
+            throw std::runtime_error("VoxCPM2 tokenizer contains an invalid token id");
+        }
+        required = std::max(required, id + 1);
+    };
+    const auto tokenizer = resources.parse_json("tokenizer_json");
+    const auto & vocab = tokenizer.require("model").require("vocab").as_object();
+    for (const auto & [_, id_value] : vocab) {
+        include_id(id_value.as_i64());
+    }
+    if (const auto * added = tokenizer.find("added_tokens"); added != nullptr) {
+        for (const auto & token : added->as_array()) {
+            if (const auto * id = token.find("id"); id != nullptr) {
+                include_id(id->as_i64());
+            }
+        }
+    }
+    const auto tokenizer_config = resources.parse_json("tokenizer_config");
+    if (const auto * decoder = tokenizer_config.find("added_tokens_decoder"); decoder != nullptr) {
+        for (const auto & [id_text, _] : decoder->as_object()) {
+            include_id(std::stoll(id_text));
+        }
+    }
+    return required;
+}
+
 void validate_weight_anchors(const VoxCPM2Assets & assets) {
     const auto & config = assets.config;
     const auto & weights = *assets.model_weights;
@@ -207,14 +238,32 @@ void validate_weight_anchors(const VoxCPM2Assets & assets) {
 
 }
 
-std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(const std::filesystem::path & model_path) {
+std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(
+    const std::filesystem::path & model_path,
+    std::string_view spec_family) {
     auto out = std::make_shared<VoxCPM2Assets>();
     out->resources = engine::model_spec::load_resource_bundle(
         model_path,
-        engine::model_spec::default_spec_path("voxcpm2"));
+        engine::model_spec::default_spec_path(spec_family));
+    out->runtime_family = std::string(spec_family);
     out->config = parse_config(out->resources);
     out->model_weights = out->resources.open_tensor_source("weights");
     out->audiovae_weights = out->resources.open_tensor_source("audiovae_weights");
+    const auto embedding = out->model_weights->require_metadata("base_lm.embed_tokens.weight");
+    if (embedding.shape.size() != 2 || embedding.shape[1] != out->config.lm.hidden_size) {
+        throw std::runtime_error("VoxCPM2 embedding tensor shape does not match lm_config.hidden_size");
+    }
+    const auto required_vocab_size = tokenizer_required_vocab_size(out->resources);
+    if (required_vocab_size > embedding.shape[0]) {
+        throw std::runtime_error("VoxCPM2 tokenizer contains token id " +
+            std::to_string(required_vocab_size - 1) + " but embedding tensor has only " +
+            std::to_string(embedding.shape[0]) + " rows");
+    }
+    // VocalRender extends the VoxCPM2 text vocabulary in its checkpoint while
+    // retaining the base lm_config.vocab_size value. Derive the runtime width
+    // from the verified checkpoint tensor rather than silently dropping SVS
+    // tokens or indexing past the embedding table.
+    out->config.lm.vocab_size = embedding.shape[0];
     validate_weight_anchors(*out);
     return out;
 }

@@ -207,40 +207,85 @@ void load_tokenizer_json(const std::filesystem::path & path, VoxCPM2TextTokenize
     }
     const auto & vocab = model.require("vocab").as_object();
     for (const auto & [token, id_value] : vocab) {
-        const int32_t id = static_cast<int32_t>(id_value.as_i64());
+        const int64_t raw_id = id_value.as_i64();
+        if (raw_id < 0 || raw_id > std::numeric_limits<int32_t>::max()) {
+            throw std::runtime_error("VoxCPM2 tokenizer vocab id is out of range");
+        }
+        const int32_t id = static_cast<int32_t>(raw_id);
         impl.vocab.emplace(token, id);
         impl.id_to_token.emplace(id, token);
     }
     const auto & merges = model.require("merges").as_array();
     int32_t rank = 0;
     for (const auto & merge_value : merges) {
-        const std::string merge = merge_value.as_string();
-        const size_t split = merge.find(' ');
-        if (split == std::string::npos) {
-            throw std::runtime_error("invalid VoxCPM2 tokenizer merge: " + merge);
+        std::string left;
+        std::string right;
+        if (merge_value.is_string()) {
+            const std::string merge = merge_value.as_string();
+            const size_t split = merge.find(' ');
+            if (split == std::string::npos) {
+                throw std::runtime_error("invalid VoxCPM2 tokenizer merge: " + merge);
+            }
+            left = merge.substr(0, split);
+            right = merge.substr(split + 1);
+        } else if (merge_value.is_array() && merge_value.as_array().size() == 2 &&
+                   merge_value.as_array()[0].is_string() && merge_value.as_array()[1].is_string()) {
+            left = merge_value.as_array()[0].as_string();
+            right = merge_value.as_array()[1].as_string();
+        } else {
+            throw std::runtime_error("invalid VoxCPM2 tokenizer merge entry");
         }
-        impl.merge_ranks.emplace(pair_key(merge.substr(0, split), merge.substr(split + 1)), rank);
+        impl.merge_ranks.emplace(pair_key(left, right), rank);
         ++rank;
+    }
+
+    // Hugging Face tokenizers may persist added tokens only in tokenizer.json
+    // (VocalRender does this), without mirroring them into tokenizer_config's
+    // added_tokens_decoder. They still need atomic matching even when the
+    // tokenizer marks them as ordinary, non-special added tokens.
+    if (const auto * added = root.find("added_tokens"); added != nullptr) {
+        for (const auto & token_config : added->as_array()) {
+            const auto * content = token_config.find("content");
+            const auto * id_value = token_config.find("id");
+            if (content == nullptr || !content->is_string() ||
+                id_value == nullptr || !id_value->is_number()) {
+                continue;
+            }
+            const int64_t raw_id = id_value->as_i64();
+            if (raw_id < 0 || raw_id > std::numeric_limits<int32_t>::max()) {
+                throw std::runtime_error("VoxCPM2 tokenizer added-token id is out of range");
+            }
+            const auto id = static_cast<int32_t>(raw_id);
+            const auto token = content->as_string();
+            impl.vocab[token] = id;
+            impl.id_to_token[id] = token;
+            impl.special_tokens[token] = id;
+        }
     }
 }
 
 void load_special_tokens(const std::filesystem::path & path, VoxCPM2TextTokenizer::Impl & impl) {
     const auto root = engine::io::json::parse_file(path);
     const auto * added = root.find("added_tokens_decoder");
-    if (added == nullptr) {
-        throw std::runtime_error("VoxCPM2 tokenizer_config missing added_tokens_decoder");
-    }
-    for (const auto & [id_text, token_config] : added->as_object()) {
-        const auto * content = token_config.find("content");
-        if (content == nullptr || !content->is_string()) {
-            continue;
+    if (added != nullptr) {
+        for (const auto & [id_text, token_config] : added->as_object()) {
+            const auto * content = token_config.find("content");
+            if (content == nullptr || !content->is_string()) {
+                continue;
+            }
+            const int64_t raw_id = std::stoll(id_text);
+            if (raw_id < 0 || raw_id > std::numeric_limits<int32_t>::max()) {
+                throw std::runtime_error("VoxCPM2 tokenizer added-token id is out of range");
+            }
+            const int32_t id = static_cast<int32_t>(raw_id);
+            const std::string token = content->as_string();
+            impl.vocab[token] = id;
+            impl.id_to_token[id] = token;
+            impl.special_tokens[token] = id;
         }
-        const int32_t id = static_cast<int32_t>(std::stoll(id_text));
-        const std::string token = content->as_string();
-        impl.vocab[token] = id;
-        impl.id_to_token[id] = token;
-        impl.special_tokens[token] = id;
     }
+    // Newer tokenizer exports can omit this legacy map entirely. The audio
+    // and SVS added tokens have already been loaded from tokenizer.json.
     impl.audio_start_token_id = require_token_id(impl.vocab, "<|audio_start|>");
     impl.audio_end_token_id = require_token_id(impl.vocab, "<|audio_end|>");
     impl.reference_audio_start_token_id = require_token_id(impl.vocab, "<|audio_prompt_start|>");
@@ -288,13 +333,16 @@ VoxCPM2TextTokenizer::VoxCPM2TextTokenizer(std::shared_ptr<const VoxCPM2Assets> 
 std::vector<int32_t> VoxCPM2TextTokenizer::encode(const std::string & text) const {
     std::vector<int32_t> ids;
     for (size_t i = 0; i < text.size();) {
-        const auto special_it = std::find_if(
-            impl_->special_tokens.begin(),
-            impl_->special_tokens.end(),
-            [&](const auto & item) { return starts_with_at(text, i, item.first); });
-        if (special_it != impl_->special_tokens.end()) {
-            impl_->append_expanded_id(ids, special_it->second);
-            i += special_it->first.size();
+        const std::pair<const std::string, int32_t> * matched = nullptr;
+        for (const auto & item : impl_->special_tokens) {
+            if (starts_with_at(text, i, item.first) &&
+                (matched == nullptr || item.first.size() > matched->first.size())) {
+                matched = &item;
+            }
+        }
+        if (matched != nullptr) {
+            impl_->append_expanded_id(ids, matched->second);
+            i += matched->first.size();
             continue;
         }
 

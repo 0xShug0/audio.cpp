@@ -117,7 +117,10 @@ std::map<std::string, ZipEntry> read_zip_entries(const std::vector<uint8_t> & by
 
 // ---- Restricted pickle interpreter --------------------------------------------------
 
-enum class GlobalKind { None, OrderedDict, RebuildTensor, StorageF32, StorageF16, StorageBF16 };
+enum class GlobalKind {
+    None, OrderedDict, RebuildTensor, StorageF32, StorageF16, StorageBF16,
+    StorageI64, StorageI32, StorageI16, StorageI8, StorageU8, StorageBool
+};
 
 struct PickleValue {
     enum class Kind { None, Int, Bool, Str, Tuple, Global, Storage, Tensor, Dict } kind = Kind::None;
@@ -148,6 +151,12 @@ GlobalKind classify_global(const std::string & module, const std::string & name)
     if (module == "torch" && name == "BFloat16Storage") {
         return GlobalKind::StorageBF16;
     }
+    if (module == "torch" && name == "LongStorage") return GlobalKind::StorageI64;
+    if (module == "torch" && name == "IntStorage") return GlobalKind::StorageI32;
+    if (module == "torch" && name == "ShortStorage") return GlobalKind::StorageI16;
+    if (module == "torch" && name == "CharStorage") return GlobalKind::StorageI8;
+    if (module == "torch" && name == "ByteStorage") return GlobalKind::StorageU8;
+    if (module == "torch" && name == "BoolStorage") return GlobalKind::StorageBool;
     throw std::runtime_error("torch .bin pickle references an unsupported global: " + module + "." + name);
 }
 
@@ -436,7 +445,7 @@ private:
 // ---- Tensor source ------------------------------------------------------------------
 
 struct TensorRecord {
-    std::string dtype;  // "F32", "F16", or "BF16"
+    std::string dtype;
     std::vector<int64_t> shape;
     size_t byte_offset = 0;
     size_t byte_size = 0;
@@ -447,16 +456,22 @@ const char * storage_dtype_name(GlobalKind kind) {
         case GlobalKind::StorageF32: return "F32";
         case GlobalKind::StorageF16: return "F16";
         case GlobalKind::StorageBF16: return "BF16";
+        case GlobalKind::StorageI64: return "I64";
+        case GlobalKind::StorageI32: return "I32";
+        case GlobalKind::StorageI16: return "I16";
+        case GlobalKind::StorageI8: return "I8";
+        case GlobalKind::StorageU8: return "U8";
+        case GlobalKind::StorageBool: return "BOOL";
         default:
             throw std::runtime_error("torch .bin tensor has an unsupported storage dtype");
     }
 }
 
 size_t dtype_byte_size(const std::string & dtype) {
-    if (dtype == "F32") {
-        return 4;
-    }
-    return 2;  // F16 / BF16
+    if (dtype == "F32" || dtype == "I32") return 4;
+    if (dtype == "I64") return 8;
+    if (dtype == "I16" || dtype == "F16" || dtype == "BF16") return 2;
+    return 1;  // I8, U8, BOOL
 }
 
 std::vector<float> decode_f32(const std::string & dtype, const uint8_t * data, size_t elements) {
@@ -466,9 +481,29 @@ std::vector<float> decode_f32(const std::string & dtype, const uint8_t * data, s
     } else if (dtype == "F16") {
         ggml_fp16_to_fp32_row(
             reinterpret_cast<const ggml_fp16_t *>(data), values.data(), static_cast<int64_t>(elements));
-    } else {
+    } else if (dtype == "BF16") {
         ggml_bf16_to_fp32_row(
             reinterpret_cast<const ggml_bf16_t *>(data), values.data(), static_cast<int64_t>(elements));
+    } else if (dtype == "I64") {
+        for (size_t i = 0; i < elements; ++i) {
+            int64_t value = 0;
+            std::memcpy(&value, data + i * sizeof(value), sizeof(value));
+            values[i] = static_cast<float>(value);
+        }
+    } else if (dtype == "I32") {
+        for (size_t i = 0; i < elements; ++i) {
+            int32_t value = 0;
+            std::memcpy(&value, data + i * sizeof(value), sizeof(value));
+            values[i] = static_cast<float>(value);
+        }
+    } else {
+        for (size_t i = 0; i < elements; ++i) {
+            values[i] = dtype == "I16"
+                ? static_cast<float>(reinterpret_cast<const int16_t *>(data)[i])
+                : (dtype == "I8" ? static_cast<float>(reinterpret_cast<const int8_t *>(data)[i])
+                    : (dtype == "BOOL" ? static_cast<float>(data[i] != 0)
+                        : static_cast<float>(data[i])));
+        }
     }
     return values;
 }
@@ -517,10 +552,33 @@ public:
             throw std::runtime_error("torch .bin does not contain a data.pkl: " + path_.string());
         }
         PickleReader reader(bytes_.data() + pickle->offset, pickle->size);
-        const std::vector<PickleValue> entries_flat = reader.parse();
+        const std::vector<PickleValue> root_flat = reader.parse();
+        std::vector<PickleValue> entries_flat;
+        for (size_t i = 0; i + 1 < root_flat.size(); i += 2) {
+            const auto & key = root_flat[i];
+            const auto & value = root_flat[i + 1];
+            if (key.kind == PickleValue::Kind::Str && key.text == "state_dict") {
+                if (value.kind != PickleValue::Kind::Dict || value.items.size() % 2 != 0) {
+                    throw std::runtime_error("torch .bin state_dict wrapper is malformed");
+                }
+                entries_flat.insert(entries_flat.end(), value.items.begin(), value.items.end());
+            } else if (key.kind == PickleValue::Kind::Str &&
+                       (key.text == "metadata" || key.text == "_metadata")) {
+                continue;
+            } else {
+                entries_flat.push_back(key);
+                entries_flat.push_back(value);
+            }
+        }
         for (size_t i = 0; i + 1 < entries_flat.size(); i += 2) {
             const PickleValue & key = entries_flat[i];
             const PickleValue & value = entries_flat[i + 1];
+            if (key.kind == PickleValue::Kind::Str && value.kind != PickleValue::Kind::Tensor &&
+                (key.text == "metadata" || key.text == "_metadata")) {
+                // Some model exports attach checkpoint bookkeeping beside the
+                // tensor entries. It is not part of the parameter state dict.
+                continue;
+            }
             if (key.kind != PickleValue::Kind::Str || value.kind != PickleValue::Kind::Tensor) {
                 throw std::runtime_error("torch .bin state dict has a non-tensor entry: " + key.text);
             }

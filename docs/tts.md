@@ -114,6 +114,22 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 | `--max-tokens` | integer | `384` | Maximum generated T3 tokens per chunk. |
 | `--do-sample` | `true`, `false` | `true` | Enable stochastic T3 sampling. |
 
+## VocalRender (experimental)
+
+VocalRender-Pro is an offline, score-conditioned singing voice model. It reuses
+the VoxCPM2 runtime but is registered separately as `vocalrender`. The model
+expects Chinese lyric and score tokens (pitch, note values, and BPM) plus a
+2–8 second singing reference WAV. It generates a 48 kHz mono vocal track; it
+does not generate instrumental accompaniment. Only Chinese is advertised as a
+supported language.
+
+Install the experimental package with `python3
+tools/model_manager_v2.py install vocalrender_pro --models-root models`. Load
+it with `--family vocalrender --task tts --mode offline`. The standard text
+request field transports the score token sequence; an ordinary lyrics-only
+string is not a production score composer. Use a score exported in VocalRender's
+expected token format and provide the singing reference with `--voice-ref`.
+
 ### Request Options (use with `--request-option`)
 
 | Option | Values | Default | Meaning |

@@ -117,6 +117,7 @@ Model weights keep the license of their original release, which is separate from
 | **supertonic** | TTS | en, ko, ja, ar, bg, cs, da, de, el, es, et, fi, fr, hi, hr, hu, id, it, lt, lv, nl, pl, pt, ro, ru, sk, sl, sv, tr, uk, vi, na | Supertonic 3 | GGUF F32, Stream |
 | **vibevoice** | TTS, Dialogue | en, zh | VibeVoice-1.5B<br>VibeVoice-7B | GGUF 16/Q8, Stream |
 | **voxcpm2** | TTS, Clone, Design, Ctrl | ar, da, de, el, en, es, fi, fr, he, hi, id, it, ja, km, ko, lo, ms, my, nl, no, pl, pt, ru, sv, sw, th, tl, tr, vi, zh | VoxCPM2-2B, 48 kHz | GGUF 16/Q8, Stream |
+| **vocalrender** | Score-conditioned singing TTS | zh | VocalRender-Pro, 48 kHz mono | Experimental, safetensors |
 | **voxtral_tts** | TTS | en, fr, es, de, it, pt, nl, ar, hi | Voxtral-4B-TTS-2603, 20 embedded preset voices | GGUF BF16/Q8, Stream |
 
 ### Speech Recognition And Analysis
