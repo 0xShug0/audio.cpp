@@ -73,7 +73,7 @@ numeric speaker index. `--voice-id` takes precedence over
 | `--top-k` | integer > 0 | `80` | Audio-token top-k sampling limit. |
 | `--guidance-scale` | float >= 0 | `2.5` | Classifier-free guidance scale for decoder logits. |
 | `--max-tokens` | integer > 0 | `500` | Maximum decoder frames per text segment. |
-| `--text-chunk-size` | integer > 0 | `60` or `300` | Long-form text chunk budget: `60` for `zh` and `ko`, otherwise `300`. Each chunk is generated within `max_tokens`. |
+| `--text-chunk-size` | integer > 0 | `100` or `300` | Long-form text chunk budget: `100` for `zh` and `ko`, otherwise `300`. Each chunk is generated within `max_tokens`. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 | `--seed` | integer >= 0 | `0` | Audio-token sampling seed. |
 
@@ -87,7 +87,7 @@ numeric speaker index. `--voice-id` takes precedence over
 | `top_k` | integer > 0 | `80` | Audio-token top-k sampling limit. |
 | `guidance_scale` | float >= 0 | `2.5` | Classifier-free guidance scale for decoder logits. |
 | `max_tokens` | integer > 0 | `500` | Maximum decoder frames per text segment. |
-| `text_chunk_size` | integer > 0 | `60` or `300` | Long-form text chunk budget: `60` for `zh` and `ko`, otherwise `300`. Each chunk is generated within `max_tokens`. |
+| `text_chunk_size` | integer > 0 | `100` or `300` | Long-form text chunk budget: `100` for `zh` and `ko`, otherwise `300`. Each chunk is generated within `max_tokens`. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 | `seed` | integer >= 0 | `0` | Audio-token sampling seed. |
 
