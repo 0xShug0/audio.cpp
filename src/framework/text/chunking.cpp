@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <iterator>
 #include <optional>
 #include <stdexcept>
@@ -90,6 +91,16 @@ bool is_cjk_punctuation_delimiter(std::string_view token) noexcept {
     // text is unaffected.
     const auto leading = static_cast<unsigned char>(token.front());
     return leading >= 0x80 && (is_sentence_break(token) || is_clause_break(token));
+}
+
+bool is_cjk_letter(std::string_view token) noexcept {
+    if (token.size() != 3) {
+        return false;
+    }
+    const uint32_t cp = ((static_cast<unsigned char>(token[0]) & 0x0FU) << 12) |
+        ((static_cast<unsigned char>(token[1]) & 0x3FU) << 6) | (static_cast<unsigned char>(token[2]) & 0x3FU);
+    return (cp >= 0x3040U && cp <= 0x30FFU) || (cp >= 0x3400U && cp <= 0x4DBFU) ||
+        (cp >= 0x4E00U && cp <= 0x9FFFU) || (cp >= 0xAC00U && cp <= 0xD7A3U);
 }
 
 bool is_tag_open(std::string_view token) {
@@ -196,6 +207,35 @@ std::vector<WordRange> split_word_ranges(const std::vector<Utf8Span> & spans) {
         span_pos = word_end;
     }
     return words;
+}
+
+// A run of hanzi, kana or Hangul without punctuation has no word boundary, so it used to come back as one chunk over
+// the budget, which a model with a per-chunk length limit cuts short. Cut such runs into equal pieces that fit the
+// budget, as Japanese mode does; a Latin word longer than the budget still stays whole.
+std::vector<WordRange> fit_cjk_runs(
+    const std::vector<Utf8Span> & spans,
+    const std::vector<WordRange> & words,
+    int64_t codepoint_budget) {
+    const auto budget = static_cast<size_t>(codepoint_budget);
+    std::vector<WordRange> out;
+    out.reserve(words.size());
+    for (const auto & word : words) {
+        const size_t length = word.span_end - word.span_start;
+        if (length <= budget || std::none_of(spans.begin() + word.span_start, spans.begin() + word.span_end,
+                [](const Utf8Span & span) { return is_cjk_letter(span.text); })) {
+            out.push_back(word);
+            continue;
+        }
+        const size_t pieces = (length + budget - 1) / budget;
+        for (size_t i = 0; i < pieces; ++i) {
+            const size_t start = word.span_start + length * i / pieces;
+            const size_t end = word.span_start + length * (i + 1) / pieces;
+            const bool last = i + 1 == pieces;
+            out.push_back({start, end, spans[start].start, spans[end - 1].end,
+                last && word.sentence_break, last && word.clause_break});
+        }
+    }
+    return out;
 }
 
 std::vector<TextUnit> split_tag_aware_units(const std::vector<Utf8Span> & spans) {
@@ -386,7 +426,7 @@ std::vector<std::string> split_text_chunks_default(
         return {trimmed};
     }
 
-    const auto words = split_word_ranges(spans);
+    const auto words = fit_cjk_runs(spans, split_word_ranges(spans), codepoint_budget);
     if (words.empty()) {
         return {};
     }

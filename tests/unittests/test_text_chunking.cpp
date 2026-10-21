@@ -95,6 +95,22 @@ int main() {
         require(chunks[1] == "How are you today?", "second latin chunk verbatim");
     }
 
+    // A CJK run without punctuation has no word boundary. It is cut into equal
+    // pieces that fit the budget instead of coming back as one over-budget
+    // chunk; a Latin word longer than the budget still stays whole.
+    {
+        const std::string run = "一二三四五六七八九十一二三四五六七八九十一二三四五";
+        const auto chunks = engine::text::split_text_chunks(run, 10);
+        require(chunks.size() == 3, "unpunctuated CJK run splits into three pieces");
+        require(chunks[0] == "一二三四五六七八", "first piece");
+        require(chunks[1] == "九十一二三四五六", "second piece");
+        require(chunks[2] == "七八九十一二三四五", "third piece");
+        check_chunks(run, 10, 3, "unpunctuated CJK run");
+        const auto latin = engine::text::split_text_chunks("supercalifragilistic is long", 10);
+        require(latin.size() == 2 && latin[0] == "supercalifragilistic" && latin[1] == "is long",
+                "latin word over budget stays whole");
+    }
+
     // Tag-aware mode: a closing quote or bracket after a sentence stop belongs to
     // that sentence. Units used to end at the stop, so the closer opened the next
     // chunk (`."` split between `.` and `"`) and dialogue attribution shifted.
