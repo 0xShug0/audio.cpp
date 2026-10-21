@@ -74,6 +74,14 @@ private:
     AdaLNResidualMLPConfig config_;
 };
 
+// Normalization closing the timestep embedding MLP.
+enum class TimestepEmbeddingNorm {
+    // x * w / sqrt(var(x) + eps), centered with the unbiased (n - 1) variance.
+    VarianceRms,
+    // x * w / sqrt(mean(x^2) + eps), the plain uncentered RMS norm.
+    Rms,
+};
+
 struct ConditionedFlowMLPConfig {
     int64_t input_size = 0;
     int64_t hidden_size = 0;
@@ -82,6 +90,7 @@ struct ConditionedFlowMLPConfig {
     int64_t layers = 0;
     float eps = 1e-6f;
     bool use_bias = true;
+    TimestepEmbeddingNorm time_embedding_norm = TimestepEmbeddingNorm::VarianceRms;
 };
 
 struct TimestepEmbeddingWeights {
@@ -95,6 +104,7 @@ struct TimestepEmbeddingConfig {
     int64_t frequency_embedding_size = 0;
     int64_t hidden_size = 0;
     float rms_eps = 1e-5f;
+    TimestepEmbeddingNorm norm = TimestepEmbeddingNorm::VarianceRms;
 };
 
 class TimestepEmbeddingModule {
