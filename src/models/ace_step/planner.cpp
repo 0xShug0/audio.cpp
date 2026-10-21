@@ -383,7 +383,7 @@ modules::DecoderLayerOutputs planner_decoder_layer_batched(
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}));
     context = cast_planner_activation(ctx, context, activation_type);
 
-    auto attn_out = modules::LinearModule({config.hidden_size, config.hidden_size, false})
+    auto attn_out = modules::LinearModule({config.num_attention_heads * dim, config.hidden_size, false})
                         .build(ctx, context, {weights.self_attention.out_weight, std::nullopt});
     attn_out = cast_planner_activation(ctx, attn_out, activation_type);
     auto x = modules::AddModule{}.build(ctx, input, attn_out);
@@ -499,7 +499,7 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_static_cache_tail_batche
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}));
     context = cast_planner_activation(ctx, context, activation_type);
 
-    auto attn_out = modules::LinearModule({config.hidden_size, config.hidden_size, false})
+    auto attn_out = modules::LinearModule({config.num_attention_heads * dim, config.hidden_size, false})
                         .build(ctx, context, {weights.self_attention.out_weight, std::nullopt});
     attn_out = cast_planner_activation(ctx, attn_out, activation_type);
     auto x = modules::AddModule{}.build(ctx, input, attn_out);
@@ -579,7 +579,7 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_compact_cache_batched(
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}));
     context = cast_planner_activation(ctx, context, activation_type);
 
-    auto attn_out = modules::LinearModule({config.hidden_size, config.hidden_size, false})
+    auto attn_out = modules::LinearModule({config.num_attention_heads * dim, config.hidden_size, false})
                         .build(ctx, context, {weights.self_attention.out_weight, std::nullopt});
     attn_out = cast_planner_activation(ctx, attn_out, activation_type);
     auto x = modules::AddModule{}.build(ctx, input, attn_out);
