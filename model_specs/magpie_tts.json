@@ -94,10 +94,9 @@
       {
         "name": "text_chunk_size",
         "type": "int",
-        "description": "Maximum Unicode codepoints per long-form text chunk; default 300.",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 60 for zh and ko, otherwise 300.",
         "required": false,
-        "min": 1,
-        "default": 300
+        "min": 1
       },
       {
         "name": "text_chunk_mode",
