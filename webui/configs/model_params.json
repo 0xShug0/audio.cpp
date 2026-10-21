@@ -351,6 +351,11 @@
     {"name": "frames_after_eos", "type": "number", "label": "frames_after_eos（-1=自动）", "default": -1, "minimum": -1, "step": 1, "precision": 0}
   ],
 
+  "gradium_phonon": [
+    {"name": "frames_after_eos", "type": "number", "label": "frames_after_eos（-1=自动）", "label_en": "frames_after_eos (-1 = auto)", "default": -1, "minimum": -1, "step": 1, "precision": 0},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.3, "minimum": 0.05, "maximum": 1.0, "step": 0.05}
+  ],
+
   "neutts": [
     {"name": "voice_id", "type": "choice", "label": "voice_id（内置音色）", "label_en": "voice_id (built-in voice)", "default": "emily", "choices": ["dave", "emily", "greta", "jo", "juliette", "mateo", "paul", "sophie", "steven"]},
     {"name": "emotion", "type": "choice", "label": "emotion（情绪）", "label_en": "emotion", "default": "neutral", "choices": ["angry", "disgusted", "sad", "happy", "fearful", "neutral", "surprised"]}

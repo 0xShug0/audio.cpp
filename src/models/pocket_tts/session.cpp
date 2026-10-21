@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -75,6 +76,7 @@ FlowLMConfig make_flow_config(const PocketTTSAssets & manifest) {
         1.0e-5F,
         1.0e-6F,
         manifest.model_config.flow_depth,
+        manifest.model_config.time_embedding_plain_rms,
     };
 }
 
@@ -178,14 +180,15 @@ void apply_request_generation_options(
     generation_request.text_chunk_size = engine::text::parse_text_chunk_size_override(options);
 }
 
-GenerationRequest build_generation_request(const runtime::TaskRequest & request, float default_temperature) {
+GenerationRequest build_generation_request(const runtime::TaskRequest & request, const PocketTTSModelConfig & config) {
     if (!request.text_input.has_value()) {
         throw std::runtime_error("PocketTTS run requires text_input");
     }
     validate_supported_style(request.voice);
 
     GenerationRequest generation_request;
-    generation_request.temperature = default_temperature;
+    generation_request.temperature = config.default_temperature;
+    generation_request.eos_threshold = config.default_eos_threshold;
     generation_request.text = request.text_input->text;
     apply_voice_condition(request.voice, generation_request.voice);
     apply_request_generation_options(request.options, generation_request);
@@ -194,11 +197,12 @@ GenerationRequest build_generation_request(const runtime::TaskRequest & request,
 
 GenerationRequest build_preparation_generation_request(
     const runtime::SessionPreparationRequest & request,
-    float default_temperature) {
+    const PocketTTSModelConfig & config) {
     validate_supported_style(request.voice);
 
     GenerationRequest generation_request;
-    generation_request.temperature = default_temperature;
+    generation_request.temperature = config.default_temperature;
+    generation_request.eos_threshold = config.default_eos_threshold;
     if (request.text.has_value()) {
         generation_request.text = request.text->text;
     }
@@ -324,7 +328,7 @@ int estimate_default_frames_after_eos(const PocketTTSAssets & manifest, std::str
         ++words;
     }
     const int guess = words <= 4 ? 3 : 1;
-    return guess + 2;
+    return guess + manifest.model_config.frames_after_eos_offset;
 }
 
 VoiceConditioningPlan resolve_voice_conditioning_plan(
@@ -367,6 +371,13 @@ VoiceConditioningPlan resolve_voice_conditioning_plan(
         plan.source = VoiceSourceKind::NamedPreset;
         plan.preset_name = voice.preset_name;
         plan.asset_path = preset_embedding_path(model_dir, voice.preset_name);
+        // Gradium Phonon checkpoints ship their default voice beside the weights
+        std::error_code ec;
+        const auto checkpoint_default = model_dir / "default-voice.safetensors";
+        if (voice.preset_name == "default" && !std::filesystem::is_regular_file(plan.asset_path, ec)
+            && std::filesystem::is_regular_file(checkpoint_default, ec)) {
+            plan.asset_path = checkpoint_default;
+        }
         return plan;
     }
     throw std::runtime_error("PocketTTS voice config requires preset_name, embedding_path, clone_audio_path, or clone_audio");
@@ -756,7 +767,7 @@ std::vector<int64_t> PocketTTSSession::prepared_generation_capacities() const {
 }
 
 std::string PocketTTSSession::family() const {
-    return "pocket_tts";
+    return manifest_->family;
 }
 
 runtime::VoiceTaskKind PocketTTSSession::task_kind() const {
@@ -769,7 +780,10 @@ runtime::RunMode PocketTTSSession::run_mode() const {
 
 void PocketTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
     prepared_session_request_ =
-        build_preparation_generation_request(request, manifest_->model_config.default_temperature);
+        build_preparation_generation_request(request, manifest_->model_config);
+    if (!has_voice_selection(prepared_session_request_.voice) && manifest_->default_voice_path.has_value()) {
+        prepared_session_request_.voice.embedding_path = *manifest_->default_voice_path;
+    }
     if (!has_voice_selection(prepared_session_request_.voice)) {
         throw std::runtime_error(
             "PocketTTS session prepare() requires a session voice via --voice-id or --voice-ref");
@@ -908,7 +922,7 @@ GenerationRequest PocketTTSSession::effective_request_for_run(const runtime::Tas
     runtime::TaskRequest effective_request = request;
     effective_request.voice.reset();
     GenerationRequest generation_request =
-        build_generation_request(effective_request, manifest_->model_config.default_temperature);
+        build_generation_request(effective_request, manifest_->model_config);
     generation_request.max_steps = prepared_session_request_.max_steps;
     generation_request.max_tokens = prepared_session_request_.max_tokens;
     generation_request.temperature = prepared_session_request_.temperature;

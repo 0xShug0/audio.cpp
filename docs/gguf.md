@@ -94,6 +94,7 @@ Status labels:
 | `fun_asr_nano` | Done | Pass | --- | Pass | Pass |
 | `gigaam_asr` | Done | --- | Pass | Pass | --- |
 | `glm_tts` | Done | Pass (TTS + clone) | --- | --- | Pass (ASR match, drift) |
+| `gradium_phonon` | Done | Pass | Pass (BF16 source) | --- | Pass (drift) |
 | `heartmula` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `higgs_audio_stt` | Done | Pass | --- | Pass | Pass |
 | `higgs_audio_tts` | Done | Pass | --- | Pass | Pass |
@@ -194,6 +195,9 @@ Q8 packaging notes:
   tensors in Q8 in addition to the default converter selection. `conditioner.embed`,
   `cond_embed`, and Mimi conv tensors are not forced to Q8 because tested outputs
   drifted or the current conv path casts quantized conv weights back to F32.
+- `gradium_phonon` Q8 quantizes only the flow transformer linears. The flow net,
+  conditioner tables and input/EOS projections stay BF16 and Mimi stays F32; see the
+  [Gradium Phonon](models/gradium_phonon.md) conversion commands.
 - `dots_tts` Q8 keeps the vocoder in 16-bit storage and folds vocoder
   weight-norm conv tensors at conversion time. Use
   `--keep-type 'vocoder/*=f16' --fold-weight-norm 'vocoder/*'` for both SOAR

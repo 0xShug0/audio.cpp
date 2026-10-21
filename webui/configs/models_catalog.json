@@ -96,6 +96,7 @@
     { "id": "glm-tts",                "display_name": "GLM-TTS (tts 克隆, 社区)",                  "display_name_en": "GLM-TTS (tts + clone, community)", "family": "glm_tts", "path": "models/GLM-TTS", "task": "tts", "mode": "offline", "download_id": "glm_tts", "min_vram_gb": 8,
       "input_hint": "**GLM-TTS**（社区模型）：中英 TTS / voice clone；上传参考音色即克隆。",
       "input_hint_en": "**GLM-TTS** (community): Chinese/English TTS and voice clone. Upload a reference voice to clone." },
+    { "id": "gradium-phonon-31m-en",  "display_name": "Gradium Phonon 31m English (tts)",      "family": "gradium_phonon",       "path": "models/phonon-31m-en", "task": "tts", "mode": "offline", "download_id": "gradium_phonon_31m_en_q8_0", "min_vram_gb": 1 },
     { "id": "granite5asr",            "display_name": "Granite Speech 5.0 470M TurboCTC (asr)", "display_name_en": "Granite Speech 5.0 470M TurboCTC (asr)", "family": "granite5asr", "path": "models/Granite-Speech-5.0-470M-TurboCTC-GGUF/granite-speech-5.0-470m-turboctc-q8_0.gguf", "task": "asr", "mode": "offline", "download_id": "granite5asr_q8_0", "min_vram_gb": 4,
       "input_hint": "**Granite Speech 5.0 TurboCTC**：IBM 470M 英语 ASR；超快 Conformer CTC 转写；支持长音频自动分段与流式模式。",
       "input_hint_en": "**Granite Speech 5.0 TurboCTC**: IBM 470M English ASR with ultra-fast Conformer CTC architecture, supporting long-form audio segmentation and streaming mode." },

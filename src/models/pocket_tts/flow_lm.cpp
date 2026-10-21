@@ -266,7 +266,7 @@ public:
             core::TensorShape::from_dims({1, 1, 1, cache_steps_ + 1}));
         attention_mask_buffer_ = build_step_attention_mask(0, cache_steps_);
 
-        auto x = modules::LinearModule({config_.latent_size, config_.hidden_size, false}).build(
+        auto x = modules::LinearModule({config_.latent_size, config_.hidden_size, weights.input_linear.bias.has_value()}).build(
             ctx,
             latent_,
             weights.input_linear);
@@ -375,6 +375,8 @@ public:
             config_.flow_depth,
             config_.flow_eps,
             true,
+            config_.time_embedding_plain_rms ? modules::TimestepEmbeddingNorm::Rms
+                                             : modules::TimestepEmbeddingNorm::VarianceRms,
         }).build(ctx, condition_, start_time_, end_time_, noise_, weights.flow_net);
         auto next_latent = modules::ResidualAddModule().build(ctx, noise_, flow_);
         combined_ = modules::ConcatModule({1}).build(ctx, next_latent, eos);

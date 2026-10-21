@@ -1354,10 +1354,14 @@ audiocpp_add_model(pocket_tts
         src/models/pocket_tts/voice_conditioner.cpp
         src/models/pocket_tts/loader.cpp
         src/models/pocket_tts/session.cpp
+        src/models/pocket_tts/gradium_phonon.cpp
     INCLUDES
         engine/models/pocket_tts/loader.h
     LOADERS
         engine::models::pocket_tts::make_pocket_tts_loader
+        engine::models::pocket_tts::make_gradium_phonon_loader
+    ALIASES
+        gradium_phonon
 )
 
 audiocpp_add_model(miocodec

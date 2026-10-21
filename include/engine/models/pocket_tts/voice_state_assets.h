@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,7 +26,16 @@ struct VoiceStateAssets {
     std::vector<VoiceAttentionCache> transformer_layers;
 };
 
+// Voice latents the checkpoint projects itself: a `speaker_wavs` tensor [1, channels, frames],
+// returned frame-major.
+struct SpeakerLatents {
+    int64_t frames = 0;
+    int64_t channels = 0;
+    std::vector<float> values;
+};
+
 VoiceStateAssets load_voice_state_assets(const std::filesystem::path & source);
+std::optional<SpeakerLatents> load_speaker_latents(const std::filesystem::path & source);
 void save_voice_state_assets(
     const std::filesystem::path & destination,
     const runtime::TransformerKVState & state,

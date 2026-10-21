@@ -155,6 +155,32 @@ VoiceStateAssets load_voice_state_assets(const std::filesystem::path & source) {
     return state;
 }
 
+std::optional<SpeakerLatents> load_speaker_latents(const std::filesystem::path & source) {
+    const auto index = io::load_safetensors_index(source);
+    const auto found = index.tensors.find("speaker_wavs");
+    if (found == index.tensors.end()) {
+        return std::nullopt;
+    }
+    const auto & info = found->second;
+    const auto & shape = info.shape;
+    if (!(shape.size() == 3 && shape[0] == 1) && shape.size() != 2) {
+        throw std::runtime_error("speaker_wavs must have shape [1, channels, frames]: " + source.string());
+    }
+    const auto bytes = io::read_binary_blob(index.source_path);
+    const auto channel_major = read_voice_state_f32(index, bytes, info);
+    SpeakerLatents latents;
+    latents.channels = shape[shape.size() - 2];
+    latents.frames = shape[shape.size() - 1];
+    latents.values.resize(channel_major.size());
+    for (int64_t channel = 0; channel < latents.channels; ++channel) {
+        for (int64_t frame = 0; frame < latents.frames; ++frame) {
+            latents.values[static_cast<size_t>(frame * latents.channels + channel)] =
+                channel_major[static_cast<size_t>(channel * latents.frames + frame)];
+        }
+    }
+    return latents;
+}
+
 void save_voice_state_assets(
     const std::filesystem::path & destination,
     const runtime::TransformerKVState & state,
