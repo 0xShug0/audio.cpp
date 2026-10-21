@@ -5,6 +5,7 @@
 #include "engine/models/ming3_audio/frontend.h"
 #include "engine/models/ming3_audio/talker.h"
 #include "engine/models/ming3_audio/talker_frontend.h"
+#include "waveform.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/reference_audio_frontend.h"
 #include "engine/framework/debug/profiler.h"
@@ -218,17 +219,7 @@ private:
             const auto generated = talker_->generate(embeddings, generation, offset, history);
             auto decoded = decoder_->decode(generated);
             if (trim) {
-                const size_t frame = assets_->talker.codec.sample_rate / 10;
-                const size_t tail = assets_->talker.codec.sample_rate * 3 / 10;
-                const size_t frames = decoded.size() / frame;
-                size_t last = frames;
-                while (last > 0) {
-                    double energy = 0;
-                    for (size_t i = (last - 1) * frame; i < last * frame; ++i) energy += std::abs(decoded[i]);
-                    if (energy / frame > 1e-3) break;
-                    --last;
-                }
-                decoded.resize(std::min(frames ? frames * frame : decoded.size(), last * frame + tail));
+                detail::trim_trailing_silence(decoded, assets_->talker.codec.sample_rate);
             }
             waveform.insert(waveform.end(), decoded.begin(), decoded.end());
         }

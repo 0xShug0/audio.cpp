@@ -3840,6 +3840,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(text_chunking_test tests/unittests/test_text_chunking.cpp)
         add_test(NAME text_chunking_test COMMAND text_chunking_test)
+        if (ming3_audio IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(ming3_audio_waveform_trim_test
+                tests/unittests/test_ming3_audio_waveform_trim.cpp)
+            target_include_directories(ming3_audio_waveform_trim_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/models/ming3_audio)
+            target_link_libraries(ming3_audio_waveform_trim_test PRIVATE engine_runtime ggml)
+            add_test(NAME ming3_audio_waveform_trim_test COMMAND ming3_audio_waveform_trim_test)
+        endif()
 
         # Not a model test: it exercises the framework normalizer, but through the
         # supertonic tokenizer, so in a subset set it links a model symbol.
