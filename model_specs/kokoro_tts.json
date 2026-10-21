@@ -53,10 +53,9 @@
       {
         "name": "text_chunk_size",
         "type": "int",
-        "description": "Maximum codepoints per text chunk before synthesis. Default 240.",
+        "description": "Maximum codepoints per text chunk before synthesis. Default 100 for Chinese and Japanese voices, otherwise 240.",
         "required": false,
-        "min": 1,
-        "default": 240
+        "min": 1
       },
       {
         "name": "return_timestamps",

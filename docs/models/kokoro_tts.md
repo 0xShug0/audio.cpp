@@ -147,7 +147,7 @@ package.
 | `--voice-id` | voice ID or blend expression | `af_heart` | Built-in voice pack or normalized blend. |
 | `--seed` | integer | random | Decoder noise seed for the current request; omitted requests choose a fresh random seed. |
 | `--speaking-rate` | positive float | `1.0` | Speech speed multiplier. |
-| `--text-chunk-size` | integer chars | `240` | Long-form chunk size. |
+| `--text-chunk-size` | integer chars | `240`; `100` for Chinese and Japanese | Long-form chunk size. Chinese and Japanese chunks phonemize to more symbols per character and must stay under the 510-symbol input limit. |
 
 ## Request Options (use with `--request-option`)
 
@@ -159,7 +159,7 @@ package.
 | `language` | language code | voice prefix | Language selection precedence: voice-style language, transcript language (CLI --language), request-option language, then voice prefix. Must match the selected voice. |
 | `seed` | integer | random | Decoder noise seed for the current request; omitted requests choose a fresh random seed. |
 | `speed` | positive float | `1.0` | Speech speed multiplier; default 1.0. Must be finite and positive. |
-| `text_chunk_size` | integer chars | `240` | Long-form chunk size. |
+| `text_chunk_size` | integer chars | `240`; `100` for Chinese and Japanese | Long-form chunk size. |
 
 ## Session Options (use with `--session-option`)
 
