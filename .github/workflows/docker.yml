@@ -9,6 +9,11 @@
 #   full-cuda13-YYYYMMDD-HHHHHHH (pinned to date + short SHA, immutable)
 #   full-vulkan                  (latest, mutable)
 #   full-vulkan-YYYYMMDD-HHHHHHH (pinned to date + short SHA, immutable)
+#   full-rockchip-2.3.2                     (latest, mutable; the suffix is the
+#   full-rockchip-2.3.2-YYYYMMDD-HHHHHHH    pinned librknnrt version — engines
+#                                           are converted per SDK release, so
+#                                           the runtime version is part of the
+#                                           image's identity; arm64 only)
 
 name: Build and publish Docker images
 
@@ -175,6 +180,14 @@ jobs:
             arch: arm64
             runs_on: ubuntu-24.04-arm
             enabled: true
+          # ── Rockchip NPU (arm64 only: librknnrt is aarch64-only) ──
+          - tag: rockchip-2.3.2
+            dockerfile: .devops/rockchip.Dockerfile
+            platforms: linux/arm64
+            arch: arm64
+            runs_on: ubuntu-24.04-arm
+            rknn_sdk_tag: v2.3.2
+            enabled: true
     steps:
       - name: Skip when not enabled
         if: ${{ matrix.enabled != true }}
@@ -215,6 +228,7 @@ jobs:
             IMAGE_URL=${{ github.server_url }}/${{ github.repository }}
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
             ${{ matrix.cuda_version && format('CUDA_VERSION={0}', matrix.cuda_version) || '' }}
+            ${{ matrix.rknn_sdk_tag && format('RKNN_SDK_TAG={0}', matrix.rknn_sdk_tag) || '' }}
           cache-from: type=registry,ref=ghcr.io/${{ needs.metadata.outputs.image_repo }}:cache-${{ matrix.arch }}-${{ matrix.tag }}
           cache-to: type=registry,ref=ghcr.io/${{ needs.metadata.outputs.image_repo }}:cache-${{ matrix.arch }}-${{ matrix.tag }},mode=max
 
@@ -253,7 +267,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tag: [cpu, cuda12, cuda13, vulkan]
+        tag: [cpu, cuda12, cuda13, vulkan, rockchip-2.3.2]
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
