@@ -105,9 +105,6 @@ to reference audio.
 Use `--session-option ming3_tts.name=value`, or the server model's
 `session_options` map with the same family-prefixed key.
 
-The legacy family hint `ming_tts` and session key `ming_tts.reference_cache`
-remain accepted aliases.
-
 | Option | Default | Description |
 | --- | --- | --- |
 | `reference_cache` | `true` | Cache prepared conditioning for the most recently used reference waveform. |

@@ -212,7 +212,6 @@ private:
 std::shared_ptr<runtime::IVoiceModelLoader> make_ming3_tts_loader() {
     runtime::SpecBackedVoiceModelConfig<MingAssets> config;
     config.family = "ming3_tts";
-    config.aliases = {"ming_tts"};
     config.load_assets = load_ming3_tts_assets;
     config.create_session = [](const runtime::TaskSpec & task, const runtime::SessionOptions & options,
         std::shared_ptr<const MingAssets> assets, std::shared_ptr<const model_spec::ModelContract> contract) {
@@ -220,9 +219,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_ming3_tts_loader() {
              task.task != runtime::VoiceTaskKind::VoiceDesign) || task.mode != runtime::RunMode::Offline) {
             throw runtime::InvalidRequestError("Ming TTS supports offline tts, clon and voice_design");
         }
-        const auto normalized = runtime::apply_option_v1_compatibility(options,
-            {{"ming_tts.reference_cache", "ming3_tts.reference_cache"}}, "Ming TTS");
-        return std::make_unique<MingSession>(task, normalized, std::move(assets), std::move(contract));
+        return std::make_unique<MingSession>(task, options, std::move(assets), std::move(contract));
     };
     return runtime::make_spec_backed_voice_loader(std::move(config));
 }
