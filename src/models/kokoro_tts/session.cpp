@@ -34,6 +34,12 @@ constexpr int64_t kDefaultTextChunkSize = 240;
 constexpr const char * kFamily = "kokoro_tts";
 constexpr const char * kModelName = "Kokoro TTS";
 
+// Chinese and Japanese phonemize to several symbols per character, so a 240-character chunk exceeds the 510-symbol
+// input limit (Chinese does from about 150 characters) and the request fails. 100 characters leave room for denser text.
+int64_t default_text_chunk_size(const KokoroFrontendSessionState & state) {
+    return state.language_code == "z" || state.language_code == "j" ? 100 : kDefaultTextChunkSize;
+}
+
 }  // namespace
 
 KokoroTTSSession::KokoroTTSSession(
@@ -582,8 +588,8 @@ void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & reques
     int64_t request_size = 0;
     const auto & prepare_phonemes = require_phoneme_chunks(request.option_arrays);
     if (request.text.has_value()) {
-        const int64_t text_chunk_size =
-            engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
+        const int64_t text_chunk_size = engine::text::parse_text_chunk_size_override(request.options).value_or(
+            default_text_chunk_size(resolve_kokoro_frontend_session_state(request.text, voice, *assets_)));
         // The graph is sized for the LARGEST chunk either way. With supplied phonemes the
         // caller's own chunking decides that, so the text is not split -- splitting it would
         // size the graph against a boundary run() is never going to use.
@@ -643,8 +649,8 @@ runtime::TaskResult KokoroTTSSession::synthesize(const runtime::TaskRequest & re
     if (prepared_decoder_) prepared_decoder_->set_seed(rng_seed_);
     engine::debug::trace_log_scalar("kokoro.generation.seed", rng_seed_);
 
-    const int64_t text_chunk_size =
-        engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
+    const int64_t text_chunk_size = engine::text::parse_text_chunk_size_override(request.options).value_or(
+        default_text_chunk_size(resolve_kokoro_frontend_session_state(request.text_input, voice, *assets_)));
     // ⚠ WHEN PHONEMES ARE SUPPLIED THE CALLER OWNS THE CHUNKING. Chunking splits the TEXT, and
     // nothing here knows where the matching cut points in someone else's phoneme stream are --
     // only their G2P does. So the option is a LIST: one entry per chunk, rendered in order and
