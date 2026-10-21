@@ -3849,6 +3849,15 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             add_test(NAME ming3_audio_waveform_trim_test COMMAND ming3_audio_waveform_trim_test)
         endif()
 
+        if (moss IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(moss_tts_nano_text_chunking_test
+                tests/unittests/test_moss_tts_nano_text_chunking.cpp)
+            target_include_directories(moss_tts_nano_text_chunking_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/models/moss/moss_tts_nano)
+            target_link_libraries(moss_tts_nano_text_chunking_test PRIVATE engine_runtime ggml)
+            add_test(NAME moss_tts_nano_text_chunking_test COMMAND moss_tts_nano_text_chunking_test)
+        endif()
+
         # Not a model test: it exercises the framework normalizer, but through the
         # supertonic tokenizer, so in a subset set it links a model symbol.
         if (supertonic IN_LIST AUDIOCPP_LINKED_MODELS)

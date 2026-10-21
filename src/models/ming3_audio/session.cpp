@@ -44,8 +44,10 @@ public:
         if (task.mode != runtime::RunMode::Offline) throw std::runtime_error("Ming3 Audio supports offline sessions");
         thinker_options_.disk_experts = runtime::parse_bool_option(runtime::find_option(options.options,
             {"ming3_audio.disk_experts"}).value_or("false"), "ming3_audio.disk_experts");
+        // Metal stages experts through ordinary host memory; pinned host buffers are unavailable.
         thinker_options_.pin_experts = runtime::parse_bool_option(runtime::find_option(options.options,
-            {"ming3_audio.pin_experts"}).value_or("true"), "ming3_audio.pin_experts");
+            {"ming3_audio.pin_experts"}).value_or(execution_context().backend_type() == core::BackendType::Metal
+                ? "false" : "true"), "ming3_audio.pin_experts");
         thinker_options_.expert_cache_size = runtime::parse_positive_i64_option(options.options,
             {"ming3_audio.expert_cache_size"}, 8);
         if (task.task == runtime::VoiceTaskKind::Asr || task.task == runtime::VoiceTaskKind::SpeechToSpeech) {
@@ -193,7 +195,9 @@ private:
         generation.temperature = runtime::parse_finite_float_option(opts, {"temperature"}).value_or(0.0f);
         uint64_t offset = 0;
         const auto language = runtime::find_option(opts, {"language"}).value_or("");
-        const auto voice = runtime::find_option(opts, {"voice_id"}).value_or(u8"\u7075\u5c0f\u67d4");
+        const auto voice = runtime::find_option(opts, {"voice_id"}).value_or(
+            request.voice && request.voice->speaker
+                ? request.voice->speaker->cached_voice_id.value_or(u8"\u7075\u5c0f\u67d4") : u8"\u7075\u5c0f\u67d4");
         const auto transcript = runtime::find_option(opts, {"reference_text"}).value_or("");
         const PreparedReference * reference = nullptr;
         if (request.voice && request.voice->speaker && request.voice->speaker->audio) {

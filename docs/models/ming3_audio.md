@@ -91,6 +91,7 @@ for the most recent reference waveform. There are no model-specific load options
 host memory and stages selected experts into a bounded GPU cache. Inference
 still runs on the selected GPU. `ming3_audio.pin_experts=true` retains expert
 payloads in pinned RAM; set it to `false` for range reads from the GGUF instead.
+It defaults to `false` on Metal, which uses ordinary host staging.
 `ming3_audio.expert_cache_size` selects 8 to 128 slots per layer (default 8).
 Spoken-response sessions release Thinker workspaces before allocating the speech
 stage in this mode. The offloaded Thinker allocates its KV cache in growing
