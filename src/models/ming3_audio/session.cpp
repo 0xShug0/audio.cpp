@@ -50,6 +50,16 @@ public:
                 ? "false" : "true"), "ming3_audio.pin_experts");
         thinker_options_.expert_cache_size = runtime::parse_positive_i64_option(options.options,
             {"ming3_audio.expert_cache_size"}, 8);
+        constexpr int64_t default_disk_expert_read_threads =
+#if defined(__linux__)
+            4;
+#else
+            1;
+#endif
+        thinker_options_.disk_expert_read_threads = runtime::parse_positive_i64_option(options.options,
+            {"ming3_audio.disk_expert_read_threads"}, default_disk_expert_read_threads);
+        if (thinker_options_.disk_expert_read_threads > 64)
+            throw std::runtime_error("Ming3 Audio disk_expert_read_threads must be between 1 and 64");
         if (task.task == runtime::VoiceTaskKind::Asr || task.task == runtime::VoiceTaskKind::SpeechToSpeech) {
             frontend_ = std::make_unique<Frontend>(assets_);
             if (!thinker_options_.disk_experts) encoder_ = std::make_unique<AudioEncoder>(execution_context(), assets_->thinker_weights,

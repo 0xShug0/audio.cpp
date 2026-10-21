@@ -14,6 +14,7 @@ struct ThinkerOptions {
     bool disk_experts = false;
     bool pin_experts = true;
     int64_t expert_cache_size = 8;
+    int64_t disk_expert_read_threads = 1;
 };
 
 struct KdaWeights {

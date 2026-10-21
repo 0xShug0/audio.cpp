@@ -93,6 +93,10 @@ still runs on the selected GPU. `ming3_audio.pin_experts=true` retains expert
 payloads in pinned RAM; set it to `false` for range reads from the GGUF instead.
 It defaults to `false` on Metal, which uses ordinary host staging.
 `ming3_audio.expert_cache_size` selects 8 to 128 slots per layer (default 8).
+On Linux, unpinned range reads use four workers by default. Set
+`ming3_audio.disk_expert_read_threads` from 1 to 64 to tune the count; this
+option affects reads only when `disk_experts=true` and `pin_experts=false`.
+Other platforms keep the serial read default.
 Spoken-response sessions release Thinker workspaces before allocating the speech
 stage in this mode. The offloaded Thinker allocates its KV cache in growing
 buckets rather than reserving the entire `max_tokens` allowance upfront.

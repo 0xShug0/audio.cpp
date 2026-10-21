@@ -29,7 +29,8 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
         if (options.expert_cache_size < c.experts_per_token || options.expert_cache_size > c.experts) {
             throw std::runtime_error("Ming3 Audio expert_cache_size must cover top-k and not exceed the expert count");
         }
-        disk_store = std::make_unique<core::DiskExpertWeightStore>(source.source_path(), options.pin_experts);
+        disk_store = std::make_unique<core::DiskExpertWeightStore>(source.source_path(), options.pin_experts,
+            static_cast<size_t>(options.disk_expert_read_threads));
     }
     embedding = store.load_tensor(source, "model.word_embeddings.weight", native, {c.vocabulary_size, c.hidden_size});
     head = store.load_tensor(source, "lm_head.weight", native, {c.vocabulary_size, c.hidden_size});
