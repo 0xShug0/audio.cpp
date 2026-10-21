@@ -3,13 +3,13 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/models/ming_tts/assets.h"
-#include "engine/models/ming_tts/prompt.h"
+#include "engine/models/ming3_tts/assets.h"
+#include "engine/models/ming3_tts/prompt.h"
 
 #include <memory>
 #include <vector>
 
-namespace engine::models::ming_tts {
+namespace engine::models::ming3_tts {
 
 struct MingGenerationOptions {
     uint64_t seed = 1895;
@@ -37,4 +37,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace engine::models::ming_tts
+}  // namespace engine::models::ming3_tts

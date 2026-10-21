@@ -3,12 +3,12 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/attention_fallback.h"
-#include "engine/models/ming_tts/assets.h"
+#include "engine/models/ming3_tts/assets.h"
 
 #include <memory>
 #include <vector>
 
-namespace engine::models::ming_tts {
+namespace engine::models::ming3_tts {
 
 class MingAudioEncoder {
 public:
@@ -39,4 +39,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace engine::models::ming_tts
+}  // namespace engine::models::ming3_tts

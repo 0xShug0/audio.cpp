@@ -1,5 +1,5 @@
-#include "engine/models/ming_tts/generator.h"
-#include "engine/models/ming_tts/flow.h"
+#include "engine/models/ming3_tts/generator.h"
+#include "engine/models/ming3_tts/flow.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -16,18 +16,18 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace engine::models::ming_tts {
+namespace engine::models::ming3_tts {
 
 struct MingGenerator::Impl {
     Impl(std::shared_ptr<const assets::TensorSource> source, const MingConfig & config,
          core::ExecutionContext & execution, core::AttentionPreference attention)
-        : execution_(execution), store_(execution.backend(), execution.backend_type(), "ming_tts.ar.weights", 4 * 1024 * 1024),
+        : execution_(execution), store_(execution.backend(), execution.backend_type(), "ming3_tts.ar.weights", 4 * 1024 * 1024),
           flow_(source, config.flow, execution) {
         namespace binding = modules::binding;
         const auto & llm = config.backbone;
         latent_dim_ = config.codec.encoder.latent_dim;
         modules::CausalDecoderRuntimeConfig runtime;
-        runtime.trace_name = "ming_tts.ar";
+        runtime.trace_name = "ming3_tts.ar";
         runtime.prefill_graph_arena_bytes = 8 * 1024 * 1024;
         runtime.decode_graph_arena_bytes = 8 * 1024 * 1024;
         runtime.return_hidden = true;
@@ -142,7 +142,7 @@ struct MingGenerator::Impl {
         if (!prompt_graph_ || steps != prompt_steps_ || speakers.size() != prompt_speakers_) {
             release_prompt();
             prompt_context_ = ggml_init({2 * 1024 * 1024, nullptr, true});
-            core::ModuleBuildContext ctx{prompt_context_, "ming_tts.prompt", execution_.backend_type()};
+            core::ModuleBuildContext ctx{prompt_context_, "ming3_tts.prompt", execution_.backend_type()};
             prompt_ids_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
             ggml_set_input(prompt_ids_.tensor);
             auto embeddings = modules::EmbeddingModule({vocabulary_, hidden_}).build(ctx, prompt_ids_, embedding_);
@@ -169,7 +169,7 @@ struct MingGenerator::Impl {
         }
         ggml_backend_tensor_set(prompt_ids_.tensor, prompt.ids.data(), 0, prompt.ids.size() * sizeof(int32_t));
         if (!flat_speakers.empty()) core::write_tensor_f32(speaker_input_, flat_speakers);
-        if (core::compute_graph(execution_, prompt_graph_, prompt_plan_, "ming_tts.prompt") != GGML_STATUS_SUCCESS) {
+        if (core::compute_graph(execution_, prompt_graph_, prompt_plan_, "ming3_tts.prompt") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Ming prompt graph execution failed");
         }
         auto result = core::read_tensor_f32(prompt_output_.tensor);
@@ -205,7 +205,7 @@ struct MingGenerator::Impl {
         auto history = initial_history.empty() ? std::vector<float>(latent_dim_, 0.0f) : initial_history;
         if (history.size() != static_cast<size_t>(latent_dim_)) throw std::runtime_error("Ming history has the wrong latent dimension");
         const auto policy = sampling::resolve_torch_cuda_sampling_policy(execution_.backend_type(),
-            execution_.config().device, "ming_tts", "Ming TTS");
+            execution_.config().device, "ming3_tts", "Ming TTS");
         const auto prefill = decoder_->prefill_embeddings_into_decode_cache(embeddings, prompt_steps, 512);
         modules::CausalDecoderStepResult state{prefill.logits, prefill.hidden};
         std::vector<float> latents;
@@ -255,4 +255,4 @@ std::vector<float> MingGenerator::generate(const std::vector<float> & embeddings
     return impl_->generate(embeddings, options, random_offset, initial_history);
 }
 
-}  // namespace engine::models::ming_tts
+}  // namespace engine::models::ming3_tts

@@ -1,4 +1,4 @@
-#include "engine/models/ming_tts/audio_codec.h"
+#include "engine/models/ming3_tts/audio_codec.h"
 
 #include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -18,7 +18,7 @@
 #include <numeric>
 #include <stdexcept>
 
-namespace engine::models::ming_tts {
+namespace engine::models::ming3_tts {
 
 namespace {
 
@@ -115,7 +115,7 @@ struct MingAudioEncoder::Impl {
     Impl(std::shared_ptr<const assets::TensorSource> source, const MingAudioCodecConfig & config,
         core::ExecutionContext & execution, core::AttentionPreference attention)
         : execution_(execution), store_(execution.backend(), execution.backend_type(),
-              "ming_tts.vae.encoder.weights", 4 * 1024 * 1024) {
+              "ming3_tts.vae.encoder.weights", 4 * 1024 * 1024) {
         namespace binding = modules::binding;
         const auto & enc = config.encoder;
         const auto & backbone = enc.backbone;
@@ -167,7 +167,7 @@ struct MingAudioEncoder::Impl {
         const int64_t patches = (frames + patch_ - 1) / patch_;
         const int64_t aggregator_frames = patches * (patch_ + 1);
         context_ = ggml_init({8 * 1024 * 1024, nullptr, true});
-        core::ModuleBuildContext ctx{context_, "ming_tts.vae.encoder", execution_.backend_type()};
+        core::ModuleBuildContext ctx{context_, "ming3_tts.vae.encoder", execution_.backend_type()};
         input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames, input_dim_}));
         ggml_set_input(input_.tensor);
         const modules::Bf16RoundModule round;
@@ -230,7 +230,7 @@ struct MingAudioEncoder::Impl {
             std::copy_n(waveform.begin() + offset, count, framed.begin() + frame * input_dim_);
         }
         core::write_tensor_f32(input_, framed);
-        if (core::compute_graph(execution_, graph_, host_plan_, "ming_tts.vae.encoder") != GGML_STATUS_SUCCESS) {
+        if (core::compute_graph(execution_, graph_, host_plan_, "ming3_tts.vae.encoder") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Ming audio encoder graph execution failed");
         }
         const auto params = core::read_tensor_f32(output_.tensor);
@@ -272,7 +272,7 @@ struct MingAudioDecoder::Impl {
     Impl(std::shared_ptr<const assets::TensorSource> source,
          const MingAudioCodecConfig & config, core::ExecutionContext & execution, core::AttentionPreference attention)
         : execution_(execution), store_(execution.backend(), execution.backend_type(),
-              "ming_tts.vae.decoder.weights", 4 * 1024 * 1024) {
+              "ming3_tts.vae.decoder.weights", 4 * 1024 * 1024) {
         namespace binding = modules::binding;
         const auto & dec = config.decoder;
         const auto & backbone = dec.backbone;
@@ -309,7 +309,7 @@ struct MingAudioDecoder::Impl {
         release_graph();
         const int64_t frames = patches * patch_;
         context_ = ggml_init({8 * 1024 * 1024, nullptr, true});
-        core::ModuleBuildContext ctx{context_, "ming_tts.vae.decoder", execution_.backend_type()};
+        core::ModuleBuildContext ctx{context_, "ming3_tts.vae.decoder", execution_.backend_type()};
         input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, patches, latent_dim_}));
         ggml_set_input(input_.tensor);
         auto x = modules::LinearModule({latent_dim_, decoder_config_.stack.hidden_size, true})
@@ -352,7 +352,7 @@ struct MingAudioDecoder::Impl {
         }
         prepare(static_cast<int64_t>(latent.size() / latent_dim_));
         core::write_tensor_f32(input_, latent);
-        if (core::compute_graph(execution_, graph_, host_plan_, "ming_tts.vae.decoder") != GGML_STATUS_SUCCESS) {
+        if (core::compute_graph(execution_, graph_, host_plan_, "ming3_tts.vae.decoder") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Ming audio decoder graph execution failed");
         }
         const auto spectrum = core::read_tensor_f32(output_.tensor);
@@ -389,4 +389,4 @@ MingAudioDecoder::MingAudioDecoder(std::shared_ptr<const assets::TensorSource> s
 MingAudioDecoder::~MingAudioDecoder() = default;
 std::vector<float> MingAudioDecoder::decode(const std::vector<float> & latent) { return impl_->decode(latent); }
 
-}  // namespace engine::models::ming_tts
+}  // namespace engine::models::ming3_tts
