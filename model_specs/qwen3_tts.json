@@ -224,9 +224,9 @@
       {
         "name": "talker_kv_cache_alignment",
         "type": "int",
-        "description": "Round talker KV capacity to this many rows. Larger alignments can enable faster attention kernels but may use more memory and change numerical results; default 256.",
+        "description": "Round talker KV capacity to this many rows. Default 1 disables padding. Larger alignments can enable faster attention kernels but may use more memory and change numerical results.",
         "min": 1,
-        "default": 256,
+        "default": 1,
         "required": false
       },
       {

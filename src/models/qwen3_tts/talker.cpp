@@ -1008,7 +1008,7 @@ private:
     int threads_ = 1;
     size_t graph_arena_bytes_ = 0;
     Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
-    int64_t kv_cache_alignment_ = 256;
+    int64_t kv_cache_alignment_ = 1;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     engine::sampling::TorchCudaSamplingPolicy sampling_policy_;
