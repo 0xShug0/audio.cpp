@@ -4,6 +4,14 @@ LatentSync changes a face's lip motion in an existing video to match supplied
 speech. It uses a Whisper audio encoder, a temporal diffusion U-Net, an SD VAE,
 and SCRFD/106-point face alignment. The output retains the input video resolution.
 
+GGUF package: [audio-cpp/LatentSync-1.6-GGUF](https://huggingface.co/audio-cpp/LatentSync-1.6-GGUF).
+
+| Package | Precision |
+|---|---|
+| `latentsync-1.6-q8_0-f16.gguf` (default) | Q8 U-Net linear weights; remaining weights F16. |
+| `latentsync-1.6-f16.gguf` | F16. |
+| `latentsync-1.6-f32-f16.gguf` | Original mixed F32/F16. |
+
 Install FFmpeg and make sure `ffmpeg` is available on PATH. Native inference does
 not require Python or ONNX Runtime.
 
@@ -11,9 +19,9 @@ not require Python or ONNX Runtime.
 
 ```bash
 audiocpp_cli --task gen --family latentsync \
-  --model /path/to/latentsync-1.6-f32-f16.gguf --backend cuda \
+  --model /path/to/latentsync-1.6-q8_0-f16.gguf --backend cuda \
   --audio speech.wav \
-  --request-option reference_video_path=speaker.mp4 \
+  --request-option reference_video_file=speaker.mp4 \
   --out-dir outputs/latentsync --log
 ```
 
@@ -36,7 +44,7 @@ Use with **`--request-option name=value`**.
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `reference_video_path` | Required | Video containing the face to synchronize. |
+| `reference_video_file` | Required | Video containing the face to synchronize. |
 | `num_inference_steps` | `20` | DDIM denoising steps, from `1` to `999`. |
 | `cache_interval` | `1` | DeepCache refresh interval. `1` disables it; `3` matches upstream's DeepCache preset. Cached steps are faster but may change lip detail. |
 | `guidance_scale` | `1.5` | Audio guidance; values at or below `1` disable CFG. |
@@ -62,8 +70,9 @@ The same build enables `--session-option latentsync.unet_cudnn_f16=true` with
 FP16 U-Net weights. It also changes rounding; leave it off for exact output
 from the existing U-Net path.
 
-For faster CUDA inference, use `--session-option latentsync.weight_type=f16`
-and `--request-option cache_interval=3`. DeepCache refreshes the full denoiser
+For faster CUDA inference, use the default Q8/F16 package with native weight
+storage and `--request-option cache_interval=3`. The F16 package is also supported.
+DeepCache refreshes the full denoiser
 every third step and reuses a deep feature on intervening steps. Each new video
 chunk starts with a fresh feature. The cached path retains an additional shallow
 graph and feature buffer; it trades memory and some output detail for speed.

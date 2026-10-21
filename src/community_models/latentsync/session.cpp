@@ -66,8 +66,8 @@ public:
         const auto start = std::chrono::steady_clock::now();
         require_prepared("LatentSync run");
         runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "LatentSync");
-        const auto video_path = runtime::find_option(request.options, {"reference_video_path"});
-        if (!request.audio_input || !video_path || video_path->empty()) throw std::runtime_error("LatentSync requires audio and reference_video_path");
+        const auto video_path = runtime::find_option(request.options, {"reference_video_file"});
+        if (!request.audio_input || !video_path || video_path->empty()) throw std::runtime_error("LatentSync requires audio and reference_video_file");
         LatentSyncGenerationOptions options;
         options.steps = runtime::parse_positive_i64_option(request.options, {"num_inference_steps"}, 20);
         options.cache_interval = runtime::parse_positive_i64_option(request.options, {"cache_interval"}, 1);

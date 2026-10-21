@@ -23,7 +23,7 @@
   "options": {
     "request": [
       {
-        "name": "reference_video_path",
+        "name": "reference_video_file",
         "type": "path",
         "required": true,
         "description": "Reference video containing the face to synchronize. Requires FFmpeg on PATH."
@@ -128,14 +128,57 @@
     ],
     "load": []
   },
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/LatentSync-1.6-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "latentsync_1_6_q8_0_f16",
+      "display_name": "LatentSync 1.6 Q8/F16",
+      "format": "gguf",
+      "precision": "q8_0",
+      "default": true,
+      "target_directory": "LatentSync-1.6-GGUF",
+      "files": [
+        "latentsync-1.6-q8_0-f16.gguf"
+      ]
+    },
+    {
+      "id": "latentsync_1_6_f16",
+      "display_name": "LatentSync 1.6 F16",
+      "format": "gguf",
+      "precision": "f16",
+      "default": false,
+      "target_directory": "LatentSync-1.6-GGUF",
+      "files": [
+        "latentsync-1.6-f16.gguf"
+      ]
+    },
+    {
+      "id": "latentsync_1_6_f32_f16",
+      "display_name": "LatentSync 1.6 F32/F16",
+      "format": "gguf",
+      "precision": "orig",
+      "default": false,
+      "target_directory": "LatentSync-1.6-GGUF",
+      "files": [
+        "latentsync-1.6-f32-f16.gguf"
+      ]
+    }
+  ],
   "dependencies": [],
   "ui": {
+    "recommended_package": "latentsync_1_6_q8_0_f16",
     "tags": [
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/latentsync.md"
+      "docs/models/latentsync.md"
     ]
   },
   "sources": [
