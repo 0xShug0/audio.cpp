@@ -976,6 +976,8 @@ audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b
 
 VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
 
+[VocalRender-Pro](models/vocalrender.md) is a Mandarin score-conditioned singing fine-tune of VoxCPM2. It uses the `voxcpm2` family and has a separate installable GGUF package; see its guide for score tokens, reference-audio requirements, and a working CLI example.
+
 | Field | Value |
 |---|---|
 | Family | `voxcpm2` |

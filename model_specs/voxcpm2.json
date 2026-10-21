@@ -345,7 +345,8 @@
     ],
     "docs": [
       "docs/tts.md",
-      "docs/gguf.md"
+      "docs/gguf.md",
+      "docs/models/vocalrender.md"
     ]
   },
   "package_defaults": {
@@ -388,6 +389,17 @@
       "target_directory": "VoxCPM2-GGUF",
       "files": [
         "VoxCPM2-GGUF/voxcpm2-orig.gguf"
+      ],
+      "strip_prefix": "VoxCPM2-GGUF"
+    },
+    {
+      "id": "voxcpm2_vocalrender_pro",
+      "display_name": "VocalRender-Pro (VoxCPM2) Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "VoxCPM2-GGUF",
+      "files": [
+        "VoxCPM2-GGUF/finetune/vocalrender-pro-orig.gguf"
       ],
       "strip_prefix": "VoxCPM2-GGUF"
     },
