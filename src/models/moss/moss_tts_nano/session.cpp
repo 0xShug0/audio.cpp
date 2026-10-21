@@ -4,16 +4,14 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
-#include "engine/framework/text/utf8.h"
 #include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
+#include "text_chunking.h"
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -23,40 +21,6 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr int64_t kDefaultTextChunkSize = 256;
-constexpr int64_t kDefaultCjkTextChunkSize = 50;
-
-// Upstream voice cloning packs sentences into chunks of at most 50-75 text tokens. Its tokenizer spends 0.7-1.2 tokens on a
-// hanzi, kana or Hangul syllable but about 0.25 on a Latin character, so a 256-codepoint chunk of CJK text is several
-// upstream chunks: it runs into the 300-frame (24 s) limit or stops early, and the rest of the chunk is dropped without an
-// error.
-int64_t default_text_chunk_size(const runtime::TaskRequest & request) {
-    if (!request.text_input.has_value()) {
-        return kDefaultTextChunkSize;
-    }
-    const std::string_view text = request.text_input->text;
-    engine::text::utf8_codepoint_count(text, "MOSS-TTS-Nano text");
-    size_t cjk = 0;
-    size_t other = 0;
-    for (size_t pos = 0; pos < text.size();) {
-        const auto ch = static_cast<unsigned char>(text[pos]);
-        if (ch < 0x80U) {
-            other += std::isalnum(ch) != 0;
-            ++pos;
-        } else if ((ch & 0xE0U) == 0xC0U) {
-            ++other;
-            pos += 2;
-        } else if ((ch & 0xF0U) == 0xE0U) {
-            const uint32_t cp = ((ch & 0x0FU) << 12) | ((static_cast<unsigned char>(text[pos + 1]) & 0x3FU) << 6) |
-                (static_cast<unsigned char>(text[pos + 2]) & 0x3FU);
-            cjk += (cp >= 0x3040U && cp <= 0x30FFU) || (cp >= 0x3400U && cp <= 0x4DBFU) ||
-                (cp >= 0x4E00U && cp <= 0x9FFFU) || (cp >= 0xAC00U && cp <= 0xD7A3U);
-            pos += 3;
-        } else {
-            pos += 4;
-        }
-    }
-    return cjk > other ? kDefaultCjkTextChunkSize : kDefaultTextChunkSize;
-}
 
 constexpr size_t kDefaultGlobalPrefillGraphArenaBytes = 256ull * 1024ull * 1024ull;
 constexpr size_t kDefaultGlobalDecodeGraphArenaBytes = 128ull * 1024ull * 1024ull;
@@ -441,7 +405,8 @@ runtime::TaskResult MossTTSNanoSession::synthesize(const runtime::TaskRequest & 
     require_prepared("MOSS-TTS-Nano run()");
     const auto wall_start = Clock::now();
     const int64_t text_chunk_size =
-        engine::text::parse_text_chunk_size_override(request.options).value_or(default_text_chunk_size(request));
+        engine::text::parse_text_chunk_size_override(request.options).value_or(
+            request.text_input ? detail::default_text_chunk_size(request.text_input->text) : kDefaultTextChunkSize);
     const auto text_chunk_mode =
         engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
     const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
