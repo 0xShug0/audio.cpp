@@ -80,7 +80,7 @@ Use `--request-option name=value`, or the server request's `options` map.
 | `sigma` | `0.25` | Flow SDE noise scale. |
 | `temperature` | `0` | Flow sampling temperature; zero still uses seeded initial noise. |
 | `raw_text` | `false` | Synthesize one fragment without text chunking. |
-| `text_chunk_size` | `300` | Framework chunk budget in Unicode codepoints. |
+| `text_chunk_size` | `100` | Framework chunk budget in Unicode codepoints. |
 | `text_chunk_mode` | `tag_aware` | `default`, `tag_aware`, `japanese`, or `endline`. |
 | `trim_silence` | `true` | Trim trailing low-energy frames, retaining a short tail. |
 
@@ -104,6 +104,19 @@ word/character buffering and does not run the optional Python FST normalizer.
 Spell out numbers and abbreviations when pronunciation matters. Long text is
 synthesized as independent fragments. Reference conditioning is retained across
 fragments; generated conversation history is not.
+
+Long clones can omit words within a fragment. The default chunk budget is 100;
+any positive integer remains supported. For example,
+`--request-option text_chunk_size=300` selects the previous budget. On a
+1,518-character English clone with the same reference audio and transcript,
+reducing the budget from 300 to 100 lowered Whisper turbo WER from 4.35% to
+0.40% with seed 42 and from 3.95% to 0% with seed 43. Whisper medium independently
+confirmed the improvement. Smaller chunks reduce this risk but do not guarantee
+word-perfect output.
+Chunk boundaries and numerical execution can change generated lengths and the
+random stream consumed by later fragments; a fixed seed does not guarantee
+matching words across implementations. The tested BF16 and Q8_0 packages produce
+identical clone WAVs, so this omission is not caused by Thinker quantization.
 
 ## Conversion
 

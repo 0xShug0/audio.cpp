@@ -204,7 +204,7 @@ private:
         const bool raw = runtime::parse_bool_option(runtime::find_option(opts, {"raw_text"}).value_or("false"), "raw_text");
         const bool trim = runtime::parse_bool_option(runtime::find_option(opts, {"trim_silence"}).value_or("true"), "trim_silence");
         const auto chunks = raw ? std::vector<std::string>{text} : text::split_text_chunks(text,
-            text::parse_text_chunk_size_override(opts).value_or(300),
+            text::parse_text_chunk_size_override(opts).value_or(100),
             text::parse_text_chunk_mode_override(opts).value_or(text::TextChunkMode::TagAware));
         const auto latent_dim = assets_->talker.flow.latent_dim;
         const std::vector<float> speaker = reference ? reference->speaker : std::vector<float>{};

@@ -623,7 +623,7 @@
         "type": "int",
         "required": false,
         "min": 1,
-        "default": 300,
+        "default": 100,
         "description": "Talker text chunk budget in Unicode codepoints."
       },
       {
