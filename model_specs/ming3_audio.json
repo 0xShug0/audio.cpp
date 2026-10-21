@@ -653,7 +653,7 @@
         "type": "bool",
         "required": false,
         "default": true,
-        "description": "With disk_experts, retain expert payloads in pinned host RAM instead of reading them from the GGUF on each cache miss."
+        "description": "With disk_experts, retain expert payloads in pinned host RAM instead of reading them from the GGUF on each cache miss. Defaults to false on Metal, which uses ordinary host staging."
       },
       {
         "name": "expert_cache_size",
