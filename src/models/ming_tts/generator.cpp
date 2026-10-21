@@ -68,8 +68,9 @@ struct MingGenerator::Impl {
         runtime.decoder.static_cache_type = flash ? GGML_TYPE_F16 : GGML_TYPE_F32;
         runtime.decoder.logits_size = 2;
         runtime.decoder.use_lm_head_bias = true;
-        // Vulkan's matrix-vector kernels do not accept BF16 activations.
-        runtime.decoder.lm_head_input_type = execution.backend_type() == core::BackendType::Vulkan
+        // Vulkan and Metal use F16 weights without mixed F16/BF16 matrix-vector kernels.
+        runtime.decoder.lm_head_input_type = (execution.backend_type() == core::BackendType::Vulkan ||
+                                            execution.backend_type() == core::BackendType::Metal)
             ? GGML_TYPE_F32 : GGML_TYPE_BF16;
         const auto storage = assets::TensorStorageType::Native;
         modules::CausalDecoderRuntimeWeights weights;
