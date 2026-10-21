@@ -67,7 +67,7 @@
         "name": "language",
         "type": "string",
         "required": false,
-        "description": "Target language name or code. Required by multilingual; ignored by dialect."
+        "description": "Target language name or code; defaults to the request's language (the server's top-level language field, the CLI's --language). Required by multilingual; ignored by dialect."
       },
       {
         "name": "instruct",
