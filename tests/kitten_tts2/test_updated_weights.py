@@ -20,6 +20,21 @@ def dequantize(payload, bits):
 
 
 class PackingTests(unittest.TestCase):
+    def test_tq2_1_independent_groups(self):
+        values = torch.tensor([-1, 0, 1, 0] * 128).reshape(2, 256).to(torch.bfloat16)
+        values = values.reshape(-1, 128) * torch.tensor([0, 0.125, 0.5, 2**-24])[:, None]
+        values = values.reshape(2, 256)
+        payload = weights.exact_ternary_tq2_1(values)
+        blocks = np.frombuffer(payload, np.uint8).reshape(-1, 68)
+        scales = blocks[:, 64:].copy().view('<f2').astype(np.float32)
+        codes = blocks[:, :64].reshape(-1, 2, 32)
+        decoded = np.stack([(codes >> shift) & 3 for shift in (0, 2, 4, 6)], axis=2)
+        restored = (decoded.astype(np.float32).reshape(-1, 2, 128) - 1) * scales[..., None]
+        self.assertTrue(np.array_equal(restored.reshape(2, 256), values.float().numpy()))
+        values[0, 129] = 0.25
+        with self.assertRaises(ValueError): weights.exact_ternary_tq2_1(values)
+        with self.assertRaises(ValueError): weights.exact_ternary_tq2_1(torch.zeros(1, 128))
+
     def test_exact_blocks_include_zero_and_small_scales(self):
         values = torch.tensor([-1, 0, 1, 0] * 8).repeat(4, 1).to(torch.bfloat16)
         values *= torch.tensor([0, 0.123046875, 2**-22, 2**-24], dtype=torch.bfloat16)[:, None]

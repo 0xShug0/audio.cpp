@@ -2303,6 +2303,48 @@ void quantize_row_tq1_0_ref(const float * GGML_RESTRICT x, block_tq1_0 * GGML_RE
     }
 }
 
+void quantize_row_tq2_1_ref(const float * GGML_RESTRICT x, block_tq2_1 * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_K == 0);
+    for (int64_t i = 0; i < k/QK_K; ++i) {
+        for (int g = 0; g < 2; ++g) {
+            const float * v = x + i*QK_K + g*128;
+            float amax = 0.0f;
+            for (int j = 0; j < 128; ++j) {
+                amax = MAX(amax, fabsf(v[j]));
+            }
+            y[i].d[g] = GGML_FP32_TO_FP16(amax);
+            const float id = amax ? 1.0f/amax : 0.0f;
+            for (int m = 0; m < 32; ++m) {
+                uint8_t q = 0;
+                for (int l = 0; l < 4; ++l) {
+                    q |= (uint8_t) (lroundf(v[l*32 + m]*id) + 1) << (2*l);
+                }
+                y[i].qs[g*32 + m] = q;
+            }
+        }
+    }
+}
+
+void dequantize_row_tq2_1(const block_tq2_1 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_K == 0);
+    for (int64_t i = 0; i < k/QK_K; ++i) {
+        for (int g = 0; g < 2; ++g) {
+            const float d = GGML_FP16_TO_FP32(x[i].d[g]);
+            for (int l = 0; l < 4; ++l) {
+                for (int m = 0; m < 32; ++m) {
+                    *y++ = d * (((x[i].qs[g*32 + m] >> (2*l)) & 3) - 1);
+                }
+            }
+        }
+    }
+}
+
+size_t quantize_tq2_1(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrow, int64_t n_per_row, const float * quant_weights) {
+    GGML_UNUSED(quant_weights);
+    quantize_row_tq2_1_ref(src, dst, nrow*n_per_row);
+    return nrow * ggml_row_size(GGML_TYPE_TQ2_1, n_per_row);
+}
+
 void quantize_row_tq2_0_ref(const float * GGML_RESTRICT x, block_tq2_0 * GGML_RESTRICT y, int64_t k) {
     assert(k % QK_K == 0);
     const int64_t nb = k / QK_K;
@@ -5584,6 +5626,22 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
         case GGML_TYPE_TQ2_0:
             {
                 VALIDATE_ROW_DATA_D_F16_IMPL(block_tq2_0, data, nb);
+            } break;
+        case GGML_TYPE_TQ2_1:
+            {
+                const block_tq2_1 * q = (const block_tq2_1 *) data;
+                for (size_t i = 0; i < nb; ++i) {
+                    if (!validate_fp16(q[i].d[0], i) || !validate_fp16(q[i].d[1], i)) {
+                        return false;
+                    }
+                    for (size_t j = 0; j < sizeof(q[i].qs); ++j) {
+                        for (int shift = 0; shift < 8; shift += 2) {
+                            if (((q[i].qs[j] >> shift) & 3) == 3) {
+                                return false;
+                            }
+                        }
+                    }
+                }
             } break;
         case GGML_TYPE_IQ1_S:
             {

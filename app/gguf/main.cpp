@@ -575,7 +575,7 @@ void print_usage() {
     std::cout << "Usage: audiocpp_gguf --input [namespace=]<weights> [--input "
                  "namespace=<weights> ...] "
                  "--output <weights.gguf> --type "
-                 "<orig|f16|bf16|q8_0|q2_k|q3_k|q4_k|q5_k|q6_k> "
+                 "<orig|f16|bf16|q8_0|q2_k|q3_k|q4_k|q5_k|q6_k|tq2_1> "
                  "[--family <family>] [--model-spec <json-or-directory>] "
                  "[--root <model-dir>] [--sidecar <source>=<destination>] "
                  "[--bnb-nf4-type q8_0] [--exclude-prefix <logical-prefix>] "

@@ -99,8 +99,8 @@ def main() -> None:
     parser.add_argument("--converter", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--overwrite", action="store_true", help="Replace an existing output GGUF.")
-    parser.add_argument("--type", choices=("bf16", "q8_0", "q4_0"), default="q8_0",
-                        help="Export type (default q8_0): bf16 preserves full BF16; q8_0 unpacks the ternary checkpoint exactly; q4_0 packs the full BF16 body exactly with a Q8_0 embedding. All use the default decoder.")
+    parser.add_argument("--type", choices=("bf16", "q8_0", "q4_0", "tq2_1"), default="q8_0",
+                        help="Export type (default q8_0): bf16 preserves full BF16; q8_0 unpacks ternary weights exactly; q4_0 packs the body with a Q8 embedding by default; tq2_1 packs exact 128-group ternary weights for CPU with a BF16 embedding. All use the default decoder.")
     parser.add_argument("--s3gen", type=Path, help="Official s3gen_meanflow.safetensors (defaults to MODEL/native/).")
     parser.add_argument("--embedding-type", choices=("orig", "q8_0"),
                         help="Embedding/tied-head storage; defaults to q8_0 for Q4 exports, otherwise orig.")
@@ -147,7 +147,7 @@ def main() -> None:
         torch.set_num_threads(args.threads)
         required = set(json.loads((model / "voices/voices.json").read_text(encoding="utf-8")))
         sidecars["cpp/default/voices.json"] = prepare_voices(args, model, s3gen, root, required)
-        if args.type in ("q8_0", "q4_0"):
+        if args.type in ("q8_0", "q4_0", "tq2_1"):
             from kitten_tts2_weights import stage_language_model
             staged_lm = root / "language-model.gguf"
             stage_language_model(source, staged_lm, args.type)

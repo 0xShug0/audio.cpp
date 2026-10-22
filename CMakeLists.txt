@@ -3956,6 +3956,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(quantize_chunking_test tests/unittests/test_quantize_chunking.cpp)
         add_test(NAME quantize_chunking_test COMMAND quantize_chunking_test)
 
+        add_engine_unittest(tq2_1_test tests/unittests/test_tq2_1.cpp)
+        target_include_directories(tq2_1_test PRIVATE external/ggml/src)
+        add_test(NAME tq2_1_test COMMAND tq2_1_test)
+
         add_engine_unittest(moss_ttsd_speakers_test tests/unittests/test_moss_ttsd_speakers.cpp)
         target_link_libraries(moss_ttsd_speakers_test PRIVATE engine_model_moss_ttsd)
         add_test(NAME moss_ttsd_speakers_test COMMAND moss_ttsd_speakers_test)
