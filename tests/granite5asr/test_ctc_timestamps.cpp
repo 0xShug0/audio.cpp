@@ -86,6 +86,33 @@ void test_subword_gap_stays_inside_one_word() {
     engine::test::require_close(words[0].confidence, 0.5f, 1.0e-5f, "confidence ignores blank frames");
 }
 
+void test_punctuation_does_not_extend_the_word() {
+    const DecodedCtcPiece effort{"effort", 0, 2, 2.0 * std::log(0.9), 2};
+    const DecodedCtcPiece period{".", 2, 80, std::log(0.5), 78};
+    const DecodedCtcPiece toward{" toward", 80, 82, std::log(0.8), 2};
+    const auto words = words_from_decoded_ctc_pieces(
+        {effort, period, toward}, 1, 0, 1000, kRate, kRate);
+    engine::test::require_eq(words.size(), size_t(2), "punctuation stays on the previous word");
+    engine::test::require(words[0].word == "effort.", "the period is kept on the word");
+    engine::test::require_eq(words[0].span.start_sample, int64_t(0), "word still starts at the letters");
+    engine::test::require_eq(words[0].span.end_sample, int64_t(2), "the period's pause is not part of the word");
+    engine::test::require_close(words[0].confidence, 0.9f, 1.0e-5f, "punctuation frames are not scored");
+    engine::test::require(words[1].word == "toward", "the next word is unchanged");
+    engine::test::require_eq(words[1].span.start_sample, int64_t(80), "the next word keeps its own start");
+
+    const DecodedCtcPiece spaced_period{" .", 2, 80, 0.0, 1};
+    const auto spaced = words_from_decoded_ctc_pieces(
+        {effort, spaced_period}, 1, 0, 1000, kRate, kRate);
+    engine::test::require_eq(spaced.size(), size_t(1), "a spaced period is not its own word");
+    engine::test::require(spaced[0].word == "effort.", "a spaced period is written onto the word");
+    engine::test::require_eq(spaced[0].span.end_sample, int64_t(2), "a spaced period does not move the end");
+
+    const DecodedCtcPiece mark{"。", 2, 40, 0.0, 1};
+    const auto cjk = words_from_decoded_ctc_pieces({effort, mark}, 1, 0, 1000, kRate, kRate);
+    engine::test::require(cjk[0].word == "effort。", "ideographic punctuation is kept");
+    engine::test::require_eq(cjk[0].span.end_sample, int64_t(2), "ideographic punctuation does not move the end");
+}
+
 void test_leading_space_leaves_blanks_between_words() {
     std::vector<CtcArgmaxFrame> frames;
     frames.insert(frames.end(), 2, frame(7, 0.8f));
@@ -220,6 +247,7 @@ int main() {
         test_blank_gap_between_labels();
         test_repeated_label_is_one_piece();
         test_subword_gap_stays_inside_one_word();
+        test_punctuation_does_not_extend_the_word();
         test_leading_space_leaves_blanks_between_words();
         test_non_positive_probability_zeros_confidence();
         test_sample_stride_and_offset();

@@ -5,6 +5,7 @@
 #include "engine/framework/runtime/session.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -138,6 +139,57 @@ inline int64_t ctc_frame_to_input_sample(
         static_cast<double>(model_sample_rate)));
 }
 
+// A piece that is only punctuation is written onto the current word. Its frames
+// often run through the following pause, so they do not move the word's end or
+// enter its confidence.
+inline bool punctuation_only_piece(const std::string & text) {
+    bool saw_mark = false;
+    size_t index = 0;
+    while (index < text.size()) {
+        const auto lead = static_cast<unsigned char>(text[index]);
+        uint32_t code = 0;
+        size_t width = 1;
+        if (lead < 0x80) {
+            code = lead;
+        } else if ((lead & 0xE0) == 0xC0 && index + 1 < text.size()) {
+            code = (lead & 0x1F) << 6 | (static_cast<unsigned char>(text[index + 1]) & 0x3F);
+            width = 2;
+        } else if ((lead & 0xF0) == 0xE0 && index + 2 < text.size()) {
+            code = (lead & 0x0F) << 12 |
+                (static_cast<unsigned char>(text[index + 1]) & 0x3F) << 6 |
+                (static_cast<unsigned char>(text[index + 2]) & 0x3F);
+            width = 3;
+        } else if ((lead & 0xF8) == 0xF0 && index + 3 < text.size()) {
+            code = (lead & 0x07) << 18 |
+                (static_cast<unsigned char>(text[index + 1]) & 0x3F) << 12 |
+                (static_cast<unsigned char>(text[index + 2]) & 0x3F) << 6 |
+                (static_cast<unsigned char>(text[index + 3]) & 0x3F);
+            width = 4;
+        } else {
+            return false;
+        }
+        index += width;
+        if (code == ' ' || code == '\t') {
+            continue;
+        }
+        const bool ascii_word = code < 128 &&
+            (std::isalnum(static_cast<unsigned char>(code)) || code == '\'');
+        const bool letter =
+            (code >= 0x00C0 && code <= 0x024F) ||
+            (code >= 0x3040 && code <= 0x30FF) ||
+            (code >= 0x3400 && code <= 0x9FFF) ||
+            (code >= 0xAC00 && code <= 0xD7AF) ||
+            (code >= 0xFF10 && code <= 0xFF19) ||
+            (code >= 0xFF21 && code <= 0xFF3A) ||
+            (code >= 0xFF41 && code <= 0xFF5A);
+        if (ascii_word || letter) {
+            return false;
+        }
+        saw_mark = true;
+    }
+    return saw_mark;
+}
+
 inline std::vector<runtime::WordTimestamp> words_from_decoded_ctc_pieces(
     const std::vector<DecodedCtcPiece> & pieces,
     int64_t samples_per_frame,
@@ -198,6 +250,14 @@ inline std::vector<runtime::WordTimestamp> words_from_decoded_ctc_pieces(
             decoded.erase(0, i);
         }
         if (decoded.empty()) {
+            continue;
+        }
+        if (punctuation_only_piece(decoded)) {
+            if (current.open) {
+                current.text += decoded;
+            } else if (!words.empty()) {
+                words.back().word += decoded;
+            }
             continue;
         }
         const int64_t start = sample_offset + ctc_frame_to_input_sample(
