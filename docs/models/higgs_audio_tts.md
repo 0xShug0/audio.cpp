@@ -57,7 +57,7 @@ audiocpp_cli --task clon --family higgs_audio_tts --model models/Higgs-Audio-v3-
 | `temperature` | float | `0.8` | AR sampling temperature. Must be positive. |
 | `top_p` | float | `0.8` | AR nucleus sampling probability. Must be positive. |
 | `top_k` | integer | `30` | AR top-k sampling limit. |
-| `filter_nan_logits` | boolean | `false` | Filter NaN and infinity before stochastic top-k selection. All-invalid logits still fail. |
+| `filter_nan_logits` | boolean | `false` | Filter NaN and infinity during greedy and stochastic top-k selection. All-invalid logits still fail. |
 | `repetition_penalty` | float | `1.1` | Accepted for Python API compatibility; audio sampling does not consume this value. Compatibility-only, but must be finite and positive. |
 | `seed` | integer >= 0 | random | Torch sampling seed; omitted chooses a random seed. |
 | `reference_text` | text | empty string | Transcript accompanying reference audio. |
@@ -66,10 +66,10 @@ audiocpp_cli --task clon --family higgs_audio_tts --model models/Higgs-Audio-v3-
 | `stream_frames_per_event` | integer >= 1 | `32` | Streaming audio frame cap; each codec frame contains 40 ms of audio. |
 | `stream_chunk_policy` | `grow`, `fixed` | `grow` | Start with one frame and grow to the cap, or emit fixed-size chunks. Streaming only. |
 
-If mixed finite and non-finite logits disrupt stochastic top-k sampling, try
+If mixed finite and non-finite logits disrupt greedy or stochastic top-k sampling, try
 `--request-option filter_nan_logits=true`, or `"filter_nan_logits": true` in the
-server request's `options`. It does not repair invalid model output or change
-greedy sampling (`top_k=1`).
+server request's `options`. Greedy sampling (`top_k=1`) then selects the highest
+finite logit. It does not repair invalid model output; all-invalid logits still fail.
 
 For best-effort output when the model does not finish within the token budget, use
 `--request-option allow_incomplete_generation=true`. On the server, set

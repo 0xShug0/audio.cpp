@@ -76,7 +76,7 @@
       {
         "name": "filter_nan_logits",
         "type": "bool",
-        "description": "Filter NaN and infinity before stochastic top-k selection. All-invalid logits still fail.",
+        "description": "Filter NaN and infinity during greedy and stochastic top-k selection. All-invalid logits still fail.",
         "required": false,
         "default": false
       },
