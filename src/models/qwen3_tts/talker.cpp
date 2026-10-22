@@ -254,7 +254,7 @@ modules::CausalDecoderConfig make_qwen3_decoder_config(
     out.stack.runtime.static_cache.set_rows_mode = optimized_kv_cache_write
         ? modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized
         : modules::DecoderStaticCacheSetRowsMode::Exact;
-    out.stack.runtime.attention.allow_flash_attention = perf_mode == Qwen3TTSPerfMode::FlashAttention;
+    out.stack.runtime.attention.allow_flash_attention = perf_mode != Qwen3TTSPerfMode::Standard;
     if (perf_mode == Qwen3TTSPerfMode::FlashAttention) {
         out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
         out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;

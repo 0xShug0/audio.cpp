@@ -18,6 +18,7 @@ enum class Qwen3TTSVariant {
 enum class Qwen3TTSPerfMode {
     Standard,
     FlashAttention,
+    MixedAttention,
 };
 
 struct Qwen3TTSGenerationOptions {

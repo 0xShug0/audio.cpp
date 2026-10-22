@@ -224,10 +224,10 @@
       {
         "name": "attention",
         "type": "enum",
-        "description": "Attention preference for the talker, code predictor, and speech tokenizer; default auto. Explicit values override perf_mode.",
-        "values": ["auto", "eager", "flash"],
+        "description": "Attention preference; default mixed uses manual prefill and contiguous-K/V flash cached decoding in the talker and code predictor, with eager speech tokenization. auto uses the shared backend policy; eager disables flash; flash uses flash with K/V views. Explicit values override perf_mode.",
+        "values": ["mixed", "auto", "eager", "flash"],
         "required": false,
-        "default": "auto"
+        "default": "mixed"
       },
       {
         "name": "packed_projections",

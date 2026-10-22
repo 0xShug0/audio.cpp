@@ -170,7 +170,8 @@ bool stitch_decode_from_options(const runtime::SessionOptions & options) {
 }
 
 struct PerfSettings {
-    core::AttentionPreference attention = core::AttentionPreference::Auto;
+    // Unset selects manual prefill with contiguous-K/V flash cached decoding.
+    std::optional<core::AttentionPreference> attention = std::nullopt;
     bool packed_projections = false;
     bool optimized_kv_cache_write = false;
     ggml_type kv_cache_type = GGML_TYPE_F32;
@@ -203,7 +204,9 @@ PerfSettings perf_settings_from_options(const runtime::SessionOptions & options)
     }
     auto settings = preset->defaults;
     if (const auto value = runtime::find_option(options.options, {"qwen3_tts.attention"})) {
-        settings.attention = core::parse_attention_preference(*value, "qwen3_tts.attention");
+        settings.attention = *value == "mixed"
+            ? std::nullopt
+            : std::optional{core::parse_attention_preference(*value, "qwen3_tts.attention")};
     }
     if (const auto value = runtime::find_option(options.options, {"qwen3_tts.packed_projections"})) {
         settings.packed_projections = runtime::parse_bool_option(*value, "qwen3_tts.packed_projections");
@@ -353,10 +356,12 @@ Qwen3TTSSession::Qwen3TTSSession(
       voice_prompt_cache_(voice_prompt_cache_slots_from_options(options)) {
     const auto perf = perf_settings_from_options(options);
     conv_weight_storage_type_ = perf.conv_weight_type;
-    const bool flash_attention = core::resolve_flash_attention(
-        execution_context().backend(), assets_->config.talker.head_dim, perf.attention);
-    const auto attention_mode = flash_attention ? Qwen3TTSPerfMode::FlashAttention : Qwen3TTSPerfMode::Standard;
-    debug::trace_log_scalar("qwen3_tts.attention", std::string_view(flash_attention ? "flash" : "eager"));
+    const bool flash_attention = perf.attention && core::resolve_flash_attention(
+        execution_context().backend(), assets_->config.talker.head_dim, *perf.attention);
+    const auto attention_mode = !perf.attention ? Qwen3TTSPerfMode::MixedAttention
+        : flash_attention ? Qwen3TTSPerfMode::FlashAttention : Qwen3TTSPerfMode::Standard;
+    debug::trace_log_scalar("qwen3_tts.attention",
+        std::string_view(!perf.attention ? "mixed" : flash_attention ? "flash" : "eager"));
     talker_graph_arena_bytes_ = runtime::parse_size_mb_option(
         options.options, {"qwen3_tts.talker_graph_arena_mb"}, talker_graph_arena_bytes_);
     speech_encoder_graph_arena_bytes_ = runtime::parse_size_mb_option(
@@ -490,7 +495,8 @@ Qwen3TTSSession::Qwen3TTSSession(
             speech_encoder_graph_arena_bytes_,
             speech_encoder_weight_storage_type_,
             conv_weight_storage_type_,
-            core::resolve_flash_attention(voice_prompt_context_.backend(), 64, perf.attention)
+            core::resolve_flash_attention(voice_prompt_context_.backend(), 64,
+                perf.attention.value_or(core::AttentionPreference::Eager))
                 ? Qwen3TTSPerfMode::FlashAttention : Qwen3TTSPerfMode::Standard);
         speaker_encoder_ = std::make_unique<Qwen3TTSEcapaTdnnEncoderRuntime>(
             assets_,
