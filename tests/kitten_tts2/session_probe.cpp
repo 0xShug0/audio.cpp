@@ -24,11 +24,8 @@ int main(int argc, char ** argv) {
             if (body_type != assets::TensorStorageType::BF16 && body_type != assets::TensorStorageType::Q8_0 &&
                 body_type != assets::TensorStorageType::Q4_0)
                 throw std::runtime_error("incorrect packaged LM body precision");
-            const auto embedding_type = assets::tensor_storage_type_for_dtype(
-                source->require_metadata("language_model/model.embed_tokens.weight").dtype);
-            if (embedding_type != assets::TensorStorageType::BF16 &&
-                !(body_type == assets::TensorStorageType::Q4_0 && embedding_type == assets::TensorStorageType::Q8_0))
-                throw std::runtime_error("incorrect packaged embedding precision");
+            const auto embedding_type = body_type == assets::TensorStorageType::Q4_0
+                ? assets::TensorStorageType::Q8_0 : assets::TensorStorageType::BF16;
             const std::pair<const char *, assets::TensorStorageType> expected[] = {
                 {"language_model/model.embed_tokens.weight", embedding_type},
                 {"language_model/spk_proj.0.weight", assets::TensorStorageType::BF16},

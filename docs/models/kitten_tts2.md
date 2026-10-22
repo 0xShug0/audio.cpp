@@ -261,12 +261,12 @@ audiocpp_cli --task tts --family kitten_tts2 --model <model.gguf> \
 
 The same plan can be used with `--backend metal`: the rest of the model retains
 Metal execution, while the HiFT convolution stack runs on the NEON CPU library.
-Pitch prediction, excitation, STFT, and ISTFT retain the shared implementation.
+Pitch prediction uses the existing framework API. Kitten keeps excitation
+model-local and uses the existing STFT/ISTFT APIs for spectral processing.
 The NEON library has no GGML dependency. Sampling settings, token budgets,
 inference steps and language-model/flow execution remain unchanged.
 Executor selection and weight adaptation stay in Kitten. The NEON path receives
-plain mel/F0 arrays; source generation and reconstruction use backend-neutral
-audio helpers rather than a callback inside the GGML HiFT component.
+plain mel/F0 arrays. The GGML HiFT module is unchanged.
 
 ## Updated weight profiles
 

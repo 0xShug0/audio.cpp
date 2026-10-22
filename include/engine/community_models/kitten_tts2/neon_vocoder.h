@@ -1,6 +1,5 @@
 #pragma once
 
-#include "engine/framework/audio/harmonic_vocoder.h"
 #include "engine/framework/neon/execution.h"
 
 namespace engine::modules {
@@ -23,7 +22,11 @@ private:
     int64_t n_fft_ = 0;
     int64_t hop_ = 0;
     float audio_limit_ = 0.99F;
-    audio::HarmonicSourceConfig source_config_;
+    int64_t sample_rate_ = 0;
+    int64_t harmonics_ = 0;
+    float source_amplitude_ = 0.1F;
+    float source_noise_std_ = 0.003F;
+    float voiced_threshold_ = 10.0F;
     std::vector<float> source_weight_;
     float source_bias_ = 0.0F;
 };

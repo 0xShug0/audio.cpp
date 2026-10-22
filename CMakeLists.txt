@@ -637,7 +637,6 @@ add_library(engine_core OBJECT
     src/framework/audio/conversion.cpp
     src/framework/audio/utilities/deepfilternet2.cpp
     src/framework/audio/dsp.cpp
-    src/framework/audio/harmonic_vocoder.cpp
     src/framework/audio/nemo_mel_frontend.cpp
     src/framework/audio/mel_spectrogram_frontend.cpp
     src/framework/audio/reference_audio_frontend.cpp
@@ -3762,9 +3761,6 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
         add_test(NAME audio_dsp_test COMMAND audio_dsp_test)
-
-        add_engine_unittest(harmonic_vocoder_test tests/unittests/test_harmonic_vocoder.cpp)
-        add_test(NAME harmonic_vocoder_test COMMAND harmonic_vocoder_test)
 
         add_engine_unittest(mel_spectrogram_frontend_test
             tests/unittests/test_mel_spectrogram_frontend.cpp)

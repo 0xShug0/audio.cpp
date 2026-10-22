@@ -40,8 +40,6 @@ requests, threads, and weights. Leave all other execution-plan fields omitted.
 Compare `kitten_tts2.vocoder_ms`, total RTF, audio lengths and sample errors,
 then ASR the output. `neon_vocoder_test` independently checks the HiFT network,
 production upsample geometry, Snake epsilon, shape changes, and thread counts.
-`harmonic_vocoder_test` checks shared source generation, spectral packing and
-reconstruction with plain-array references.
 
 The session probe accepts `metal` as well as `cpu` and `cuda`. Use `-` to skip
 the optional upstream reference directory. Its final optional argument is the
@@ -55,8 +53,7 @@ build-kitten2/bin/kitten_tts2_session_probe <model.gguf> <output-directory> 8 na
 Run the same probe without the JSON argument as the default-path control. For
 Metal, pass `metal` with the same NEON vocoder plan.
 The probe checks invalid execution plans, seeded repeats, voice switching,
-long-form chunks, and unknown-voice rejection. Current Q4 packages with BF16
-embeddings and older hybrid Q4 packages with Q8 embeddings are both accepted.
+long-form chunks, and unknown-voice rejection.
 
 ### Updated BF16, Q8 and hybrid Q4
 

@@ -124,10 +124,12 @@ public:
     explicit AdaptiveInstanceNorm(float epsilon);
 };
 
-// Channel-wise x + sin(alpha*x)^2 / (alpha + epsilon); denominator must be nonzero.
+// Channel-wise x + sin(alpha*x)^2 / alpha. Alpha must be nonzero.
 class Snake : public Operator {
 public:
-    explicit Snake(std::vector<float> alpha, float epsilon = 0.0F);
+    explicit Snake(std::vector<float> alpha);
+    // Opt-in epsilon denominator for HiFT: alpha + epsilon must be nonzero.
+    Snake(std::vector<float> alpha, float epsilon);
 };
 
 class ClampMin : public Operator {
