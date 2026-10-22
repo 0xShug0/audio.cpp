@@ -139,9 +139,20 @@ public:
         if ((task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) ||
             task_.mode != runtime::RunMode::Offline)
             throw std::runtime_error("Kitten TTS 2 supports offline TTS and voice cloning sessions");
-        runtime::validate_spec_backed_session_options(options, *contract_, family_name, "Kitten TTS 2");
+        auto validation_options = options;
+        // Older embedded contracts omit exec_plan; its parser validates the complete value below.
+        if (!contract_->session_option_keys.count("kitten_tts2.exec_plan"))
+            validation_options.options.erase("kitten_tts2.exec_plan");
+        runtime::validate_spec_backed_session_options(validation_options, *contract_, family_name, "Kitten TTS 2");
+        const auto plan = runtime::parse_exec_plan(options.options, "kitten_tts2.exec_plan",
+            {{"vocoder", "ggml", {{"ggml", {execution_context().backend_type()}, {}, {}, {}},
+                {"neon", {core::BackendType::Cpu}, {}, {}, {}}}}});
+        const bool neon_vocoder = plan.at("vocoder").impl == "neon";
+#ifndef ENGINE_HAVE_NEON
+        if (neon_vocoder) throw std::runtime_error("Kitten NEON vocoder requires ENGINE_ENABLE_NEON=ON");
+#endif
         load_voices(assets_->resources.require_file("default_voices"));
-        waveform_ = std::make_unique<WaveformDecoder>(assets_->resources.open_tensor_source("s3gen"), execution_context());
+        waveform_ = std::make_unique<WaveformDecoder>(assets_->resources.open_tensor_source("s3gen"), execution_context(), neon_vocoder);
         const auto type = runtime::parse_tensor_storage_option(options.options, "kitten_tts2.weight_type",
             assets::TensorStorageType::Native,
             {assets::TensorStorageType::Native, assets::TensorStorageType::F32,

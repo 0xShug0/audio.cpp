@@ -2,23 +2,38 @@
 #include "engine/framework/codecs/s3gen_runtime.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/models/chatterbox/components.h"
+#ifdef ENGINE_HAVE_NEON
+#include "engine/community_models/kitten_tts2/neon_vocoder.h"
+#endif
 
 #include <cmath>
+#include <chrono>
 #include <stdexcept>
 
 namespace engine::community_models::kitten_tts2 {
 namespace s3 = engine::codecs::s3gen;
 struct WaveformDecoder::Impl {
     s3::S3GenRuntime runtime;
-    Impl(std::shared_ptr<const assets::TensorSource> source, const core::ExecutionContext & context)
+    std::unique_ptr<modules::HiftNeuralDecoder> neural_decoder;
+    Impl(std::shared_ptr<const assets::TensorSource> source, const core::ExecutionContext & context,
+        bool neon_vocoder)
         : runtime(std::move(source), context, [] {
               s3::S3GenConfig config;
               config.decoder.variant = s3::S3FlowVariant::MeanFlow;
               return config;
-          }(), {assets::TensorStorageType::F32, context.backend_type() == core::BackendType::Cpu}) {}
+          }(), {assets::TensorStorageType::F32, context.backend_type() == core::BackendType::Cpu}) {
+        if (neon_vocoder) {
+#ifdef ENGINE_HAVE_NEON
+            neural_decoder = std::make_unique<NeonVocoder>(*runtime.vocoder().weights());
+#else
+            throw std::runtime_error("Kitten NEON vocoder requires ENGINE_ENABLE_NEON=ON");
+#endif
+        }
+    }
 };
 WaveformDecoder::WaveformDecoder(std::shared_ptr<const assets::TensorSource> source,
-    const core::ExecutionContext & execution) : impl_(std::make_unique<Impl>(std::move(source), execution)) {}
+    const core::ExecutionContext & execution, bool neon_vocoder)
+    : impl_(std::make_unique<Impl>(std::move(source), execution, neon_vocoder)) {}
 WaveformDecoder::~WaveformDecoder() = default;
 
 std::vector<float> WaveformDecoder::decode(const std::vector<int32_t> & codes,
@@ -38,8 +53,18 @@ std::vector<float> WaveformDecoder::decode(const std::vector<int32_t> & codes,
     auto tokens = codes;
     tokens.insert(tokens.end(), 3, 4299); // Upstream S3 lookahead preserves the final syllable.
     s3::S3GenTimingBreakdown timing;
-    auto result = impl_->runtime.synthesize(
-        ref, tokens, tokens.size(), 2, 0.0f, false, {}, seed, seed, &timing);
+    s3::S3GenInferenceOutputs result;
+    if (impl_->neural_decoder) {
+        const auto mel = impl_->runtime.token_to_mel(ref, tokens, tokens.size(), 2, 0.0f, false, {}, seed, &timing);
+        // Preserve S3's shared flow/source RNG offset; only the neural vocoder changes.
+        const auto prior_noise = static_cast<uint64_t>(mel.channels * (ref.prompt_feat_frames + mel.frames));
+        const auto started = std::chrono::steady_clock::now();
+        result.waveform = impl_->runtime.vocoder().synthesize(mel.mel, mel.frames, *impl_->neural_decoder, seed, prior_noise).waveform;
+        timing.vocoder_ms = debug::elapsed_ms(started);
+    } else {
+        result = impl_->runtime.synthesize(
+            ref, tokens, tokens.size(), 2, 0.0f, false, {}, seed, seed, &timing);
+    }
     debug::timing_log_scalar("kitten_tts2.token2mel_encoder_ms", timing.token2mel_encoder_ms);
     debug::timing_log_scalar("kitten_tts2.token2mel_cfm_ms", timing.token2mel_cfm_ms);
     debug::timing_log_scalar("kitten_tts2.vocoder_ms", timing.vocoder_ms);

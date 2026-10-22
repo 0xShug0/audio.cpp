@@ -242,6 +242,29 @@ audiocpp_cli --family kitten_tts2 \
 If output is cut short by the automatic token budget, set a larger ceiling,
 for example `--request-option max_tokens=1000`.
 
+## Execution plans
+
+The default GGML path is unchanged. `kitten_tts2.exec_plan` is a session option;
+existing GGUFs also accept it without reconversion. Components and parameters
+omitted from the plan retain their defaults.
+
+### NEON vocoder
+
+Build with `-DENGINE_ENABLE_NEON=ON`, then select the HiFT neural decoder:
+
+```sh
+audiocpp_cli --task tts --family kitten_tts2 --model <model.gguf> \
+  --backend cpu --threads 8 --text "Hello from Kitten TTS 2." \
+  --session-option 'kitten_tts2.exec_plan={"vocoder":{"impl":"neon","backend":"cpu"}}' \
+  --out output.wav --metrics --log
+```
+
+The same plan can be used with `--backend metal`: the rest of the model retains
+Metal execution, while the HiFT convolution stack runs on the NEON CPU library.
+Pitch prediction, excitation, STFT, and ISTFT retain the shared implementation.
+The NEON library has no GGML dependency. Sampling settings, token budgets,
+inference steps and language-model/flow execution remain unchanged.
+
 ## Updated weight profiles
 
 Use the `kitten_tts2` model family and leave `kitten_tts2.weight_type` unset

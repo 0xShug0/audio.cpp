@@ -144,6 +144,15 @@ struct HiftVocoderOutput {
     int64_t sample_rate = 0;
 };
 
+// Neural mel/source-STFT -> log-magnitude/phase stage. Source generation and
+// waveform reconstruction stay shared across executors; tensors are channel-first.
+class HiftNeuralDecoder {
+public:
+    virtual ~HiftNeuralDecoder() = default;
+    virtual std::vector<float> run(const std::vector<float> & mel, int64_t frames,
+        const std::vector<float> & source_stft, int64_t stft_frames, int threads) = 0;
+};
+
 class HiftVocoderComponent {
 public:
     static HiftVocoderComponent load_from_safetensors(
@@ -172,6 +181,10 @@ public:
         int64_t frames,
         uint64_t seed = 1234,
         uint64_t prior_noise_values = 0,
+        const std::vector<float> * source_random_values = nullptr) const;
+    HiftVocoderOutput synthesize(
+        const std::vector<float> & mel, int64_t frames, HiftNeuralDecoder & decoder,
+        uint64_t seed = 1234, uint64_t prior_noise_values = 0,
         const std::vector<float> * source_random_values = nullptr) const;
     std::vector<float> predict_f0(const std::vector<float> & mel, int64_t frames) const;
     void release_runtime_cache() const;

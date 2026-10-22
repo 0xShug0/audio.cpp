@@ -1047,7 +1047,7 @@ public:
         int64_t frames,
         uint64_t seed,
         uint64_t prior_noise_values,
-        const std::vector<float> * source_random_values) {
+        const std::vector<float> * source_random_values, HiftNeuralDecoder * decoder = nullptr) {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto f0 = predict_f0_locked(mel, frames);
         const int64_t scale = upsample_scale(weights_->config);
@@ -1064,14 +1064,19 @@ public:
         std::vector<float> window;
         int64_t stft_frames = 0;
         const auto source_stft = source_stft_bct(*weights_, source, stft_frames, window);
-        if (backend_runner_ != nullptr && !backend_runner_->supports(*weights_, frames, stft_frames)) {
-            backend_runner_.reset();
-        }
-        if (backend_runner_ == nullptr) {
-            backend_runner_ = std::make_unique<BackendRunner>(*weights_, frames, stft_frames);
-        }
         HiftVocoderOutput out;
-        out.waveform = backend_runner_->run(mel, frames, source_stft, stft_frames, window);
+        if (decoder != nullptr) {
+            const auto post = decoder->run(mel, frames, source_stft, stft_frames, backend_.threads);
+            out.waveform = waveform_from_post(*weights_, post, stft_frames, window);
+        } else {
+            if (backend_runner_ != nullptr && !backend_runner_->supports(*weights_, frames, stft_frames)) {
+                backend_runner_.reset();
+            }
+            if (backend_runner_ == nullptr) {
+                backend_runner_ = std::make_unique<BackendRunner>(*weights_, frames, stft_frames);
+            }
+            out.waveform = backend_runner_->run(mel, frames, source_stft, stft_frames, window);
+        }
         out.batch = 1;
         out.samples = static_cast<int64_t>(out.waveform.size());
         out.sample_rate = weights_->config.sampling_rate;
@@ -1407,6 +1412,15 @@ HiftVocoderOutput HiftVocoderComponent::synthesize(
         throw std::runtime_error("HiFT component is not initialized");
     }
     return state_->runner->run(mel, frames, seed, prior_noise_values, source_random_values);
+}
+
+HiftVocoderOutput HiftVocoderComponent::synthesize(
+    const std::vector<float> & mel, int64_t frames, HiftNeuralDecoder & decoder,
+    uint64_t seed, uint64_t prior_noise_values, const std::vector<float> * source_random_values) const {
+    if (state_ == nullptr || state_->runner == nullptr) {
+        throw std::runtime_error("HiFT component is not initialized");
+    }
+    return state_->runner->run(mel, frames, seed, prior_noise_values, source_random_values, &decoder);
 }
 
 std::vector<float> HiftVocoderComponent::predict_f0(const std::vector<float> & mel, int64_t frames) const {

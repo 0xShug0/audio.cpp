@@ -11,7 +11,7 @@ namespace engine::community_models::kitten_tts2 {
 class WaveformDecoder {
 public:
     WaveformDecoder(std::shared_ptr<const assets::TensorSource> source,
-        const core::ExecutionContext & execution);
+        const core::ExecutionContext & execution, bool neon_vocoder = false);
     ~WaveformDecoder();
     std::vector<float> decode(const std::vector<int32_t> & codes,
         const std::vector<int64_t> & prompt_tokens, const std::vector<float> & prompt_mel,

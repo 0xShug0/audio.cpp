@@ -121,9 +121,12 @@ public:
 
 class SnakeKernel final : public detail::Kernel {
     std::vector<float> alpha_;
+    float epsilon_;
 public:
-    explicit SnakeKernel(std::vector<float> alpha) : alpha_(std::move(alpha)) {
-        for (float a : alpha_) if (!std::isfinite(a) || a == 0) throw std::invalid_argument("NEON Snake alpha invalid");
+    SnakeKernel(std::vector<float> alpha, float epsilon) : alpha_(std::move(alpha)), epsilon_(epsilon) {
+        if (!std::isfinite(epsilon) || epsilon < 0) throw std::invalid_argument("NEON Snake epsilon invalid");
+        for (float a : alpha_) if (!std::isfinite(a) || (a == 0 && epsilon == 0)) throw std::invalid_argument("NEON Snake alpha invalid");
+        for (float a : alpha_) if (a + epsilon == 0) throw std::invalid_argument("NEON Snake denominator invalid");
     }
     Shape output_shape(const std::vector<Shape> &inputs) const override {
         const auto &s = sequence(inputs);
@@ -135,10 +138,22 @@ public:
         detail::Workspace &, detail::WorkerContext &worker) const noexcept override {
         int begin, end;
         detail::split_range(s.dimensions[0], worker.index, worker.count, begin, end);
-        for (int c = begin; c < end; ++c) for (int t = 0; t < s.dimensions[1]; ++t) {
-            const int i = c * s.dimensions[1] + t;
-            const float x = inputs[0].data[i], a = alpha_[c], v = std::sin(a * x);
-            out[i] = x + (v * v) / a;
+        for (int c = begin; c < end; ++c) {
+            const float a = alpha_[c];
+            if (epsilon_ == 0.0F) {
+                for (int t = 0; t < s.dimensions[1]; ++t) {
+                    const int i = c * s.dimensions[1] + t;
+                    const float x = inputs[0].data[i], v = std::sin(a * x);
+                    out[i] = x + (v * v) / a;
+                }
+            } else {
+                const float inverse = 1.0F / (a + epsilon_);
+                for (int t = 0; t < s.dimensions[1]; ++t) {
+                    const int i = c * s.dimensions[1] + t;
+                    const float x = inputs[0].data[i], v = std::sin(a * x);
+                    out[i] = x + (v * v) * inverse;
+                }
+            }
         }
     }
 };
@@ -186,7 +201,8 @@ Scale::Scale(float scale) : Operator(std::make_shared<ScaleKernel>(scale)) {}
 BroadcastAdd::BroadcastAdd() : Operator(std::make_shared<BroadcastAddKernel>()) {}
 ReflectPad1d::ReflectPad1d(int left, int right) : Operator(std::make_shared<ReflectPadKernel>(left, right)) {}
 AdaptiveInstanceNorm::AdaptiveInstanceNorm(float epsilon) : Operator(std::make_shared<AdaInKernel>(epsilon)) {}
-Snake::Snake(std::vector<float> alpha) : Operator(std::make_shared<SnakeKernel>(std::move(alpha))) {}
+Snake::Snake(std::vector<float> alpha, float epsilon)
+    : Operator(std::make_shared<SnakeKernel>(std::move(alpha), epsilon)) {}
 
 ExecutionPlan::Value build_conv_transpose1d(ExecutionPlan &plan, ExecutionPlan::Value input,
     ConvTranspose1dConfig c, const std::vector<float> &weight, const std::vector<float> &bias) {

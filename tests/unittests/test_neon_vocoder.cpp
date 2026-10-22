@@ -74,6 +74,117 @@ void test_transpose() {
 
 void leaky(std::vector<float> &x, float slope) { for (float &v : x) if (v < 0) v *= slope; }
 
+void snake_reference(std::vector<float> &x, int channels, const std::vector<float> &alpha, float epsilon) {
+    const size_t frames = x.size() / channels;
+    for (int c = 0; c < channels; ++c) for (size_t t = 0; t < frames; ++t) {
+        auto &v = x[c * frames + t];
+        const float s = std::sin(alpha[c] * v);
+        v += (s * s) * (1.0F / (alpha[c] + epsilon));
+    }
+}
+
+std::vector<float> snake_residual_reference(std::vector<float> x, int channels, int width,
+    const std::vector<int> &dilations, float epsilon, const SnakeResidualWeights &w) {
+    for (size_t i = 0; i < dilations.size(); ++i) {
+        auto h = x;
+        snake_reference(h, channels, w.alpha_first[i], epsilon);
+        h = conv(h, channels, channels, width, dilations[i], w.first[i]);
+        snake_reference(h, channels, w.alpha_second[i], epsilon);
+        h = conv(h, channels, channels, width, 1, w.second[i]);
+        for (size_t n = 0; n < x.size(); ++n) x[n] += h[n];
+    }
+    return x;
+}
+
+void test_hift() {
+    HiftConfig c;
+    c.input_channels = 3; c.initial_channels = 16; c.source_channels = 4; c.output_channels = 6;
+    c.upsample_rates = {8, 5, 3}; c.upsample_kernels = {16, 11, 7};
+    c.residual_kernels = {3, 5}; c.residual_dilations = {{1, 3}, {1, 2}};
+    c.source_residual_kernels = {3, 5, 3}; c.source_residual_dilations = {{1, 2}, {1, 3}, {1, 2}};
+    c.snake_epsilon = 0.01F;
+    auto weight = [](int in, int out, int width) -> Conv1dWeights {
+        return {values(in * out * width, 0.02F), values(out)};
+    };
+    auto block = [&](int channels, int width, size_t layers) {
+        SnakeResidualWeights result;
+        for (size_t i = 0; i < layers; ++i) {
+            result.first.push_back(weight(channels, channels, width));
+            result.second.push_back(weight(channels, channels, width));
+            result.alpha_first.push_back(std::vector<float>(channels, 1.3F));
+            result.alpha_second.push_back(std::vector<float>(channels, 0.8F));
+        }
+        return result;
+    };
+    HiftWeights w;
+    w.pre = weight(3, 16, 7); w.post = weight(2, 6, 7);
+    for (int stage = 0; stage < 3; ++stage) {
+        const int in = 16 >> stage, out = in / 2, stride = stage == 0 ? 15 : stage == 1 ? 3 : 1;
+        w.upsample.push_back({values(in * out * c.upsample_kernels[stage], 0.02F), values(out)});
+        w.source_down.push_back(weight(4, out, stride == 1 ? 1 : 2 * stride));
+        w.source_residual.push_back(block(out, c.source_residual_kernels[stage], 2));
+        for (int k = 0; k < 2; ++k) w.residual.push_back(block(out, c.residual_kernels[k], 2));
+    }
+    ExecutionPlan plan;
+    auto mel = plan.input(), source = plan.input();
+    plan.set_output(build_hift(plan, mel, source, c, w));
+    for (int threads : {1, 4}) for (int frames : {1, 3, 17, 3}) {
+        auto input = values(3 * frames), stft = values(4 * (120 * frames + 1));
+        auto x = conv(input, 3, 16, 7, 1, w.pre);
+        for (int stage = 0; stage < 3; ++stage) {
+            const int in = 16 >> stage, out = in / 2, rate = c.upsample_rates[stage], width = c.upsample_kernels[stage];
+            leaky(x, c.negative_slope);
+            x = transpose(x, {in, out, width, rate, (width - rate) / 2}, w.upsample[stage]);
+            if (stage == 2) {
+                const size_t length = x.size() / out;
+                std::vector<float> padded(out * (length + 1));
+                for (int channel = 0; channel < out; ++channel) {
+                    padded[channel * (length + 1)] = x[channel * length + 1];
+                    std::copy_n(x.data() + channel * length, length, padded.data() + channel * (length + 1) + 1);
+                }
+                x = std::move(padded);
+            }
+            const int stride = stage == 0 ? 15 : stage == 1 ? 3 : 1;
+            const int kernel = stride == 1 ? 1 : stride * 2, padding = stride == 1 ? 0 : stride / 2;
+            const int length = (120 * frames + 1 + 2 * padding - kernel) / stride + 1;
+            std::vector<float> si(out * length);
+            for (int o = 0; o < out; ++o) for (int t = 0; t < length; ++t) {
+                double sum = w.source_down[stage].bias[o];
+                for (int ch = 0; ch < 4; ++ch) for (int k = 0; k < kernel; ++k) {
+                    const int pos = t * stride - padding + k;
+                    if (pos >= 0 && pos < 120 * frames + 1)
+                        sum += double(stft[ch * (120 * frames + 1) + pos]) * w.source_down[stage].weight[(o * 4 + ch) * kernel + k];
+                }
+                si[o * length + t] = float(sum);
+            }
+            si = snake_residual_reference(si, out, c.source_residual_kernels[stage],
+                c.source_residual_dilations[stage], c.snake_epsilon, w.source_residual[stage]);
+            if (si.size() != x.size()) throw std::runtime_error("HiFT reference source geometry mismatch");
+            for (size_t n = 0; n < x.size(); ++n) x[n] += si[n];
+            std::vector<float> sum(x.size());
+            for (int k = 0; k < 2; ++k) {
+                const auto h = snake_residual_reference(x, out, c.residual_kernels[k], c.residual_dilations[k],
+                    c.snake_epsilon, w.residual[stage * 2 + k]);
+                for (size_t n = 0; n < sum.size(); ++n) sum[n] += h[n];
+            }
+            for (float &v : sum) v *= 0.5F;
+            x = std::move(sum);
+        }
+        leaky(x, 0.01F);
+        x = conv(x, 2, 6, 7, 1, w.post);
+        close(plan.run({TensorView(input, {3, frames}), TensorView(stft, {4, 120 * frames + 1})}, threads).values, x);
+    }
+}
+
+void test_snake_epsilon() {
+    ExecutionPlan plan;
+    auto input = plan.input();
+    plan.set_output(plan.add(Snake({0.0F, 1.0F}, 0.5F), {input}));
+    auto x = values(14), expected = x;
+    snake_reference(expected, 2, {0.0F, 1.0F}, 0.5F);
+    for (int threads : {1, 4}) close(plan.run({TensorView(x, {2, 7})}, threads).values, expected);
+}
+
 void test_hifigan(bool paired, bool conditioned) {
     HifiGanConfig c;
     c.input_channels = 3; c.initial_channels = 8;
@@ -184,6 +295,8 @@ void test_validation() {
         throw std::runtime_error("invalid configuration accepted");
     };
     rejects([] { Snake({0.0F}); });
+    rejects([] { Snake({1.0F}, -1.0F); });
+    rejects([] { Snake({-0.5F}, 0.5F); });
     rejects([] { AdaptiveInstanceNorm(0.0F); });
     rejects([] { ReflectPad1d(-1, 0); });
     rejects([] {
@@ -211,9 +324,11 @@ int main() {
     try {
         test_transpose();
         test_style_ops();
+        test_hift();
+        test_snake_epsilon();
         test_validation();
         for (bool paired : {false, true}) for (bool conditioned : {false, true}) test_hifigan(paired, conditioned);
-        std::cout << "NEON vocoder operators and complete HiFi-GAN match independent references\n";
+        std::cout << "NEON vocoder operators, HiFi-GAN and HiFT match independent references\n";
         return 0;
     } catch (const std::exception &e) {
         std::cerr << e.what() << '\n';

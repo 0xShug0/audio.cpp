@@ -275,6 +275,13 @@
     "load": [],
     "session": [
       {
+        "name": "exec_plan",
+        "type": "string",
+        "required": false,
+        "default": "{}",
+        "description": "Component execution plan JSON. vocoder accepts impl=ggml (default) or neon with backend=cpu. NEON requires ENGINE_ENABLE_NEON=ON and an AArch64 NEON CPU, and replaces only the HiFT neural convolution stack."
+      },
+      {
         "name": "weight_type",
         "type": "enum",
         "values": [

@@ -486,6 +486,7 @@ if (ENGINE_ENABLE_NEON)
         src/framework/neon/worker_team.cpp
         src/framework/neon/blocks.cpp
         src/framework/neon/hifigan.cpp
+        src/framework/neon/hift.cpp
         src/framework/neon/vocoder_operators.cpp
         src/framework/neon/kernels.cpp
     )
@@ -1142,6 +1143,10 @@ audiocpp_add_model(kitten_tts2
     INCLUDES engine/community_models/kitten_tts2/session.h
     LOADERS engine::community_models::kitten_tts2::make_kitten_tts2_loader
     DEPENDS chatterbox)
+
+if (ENGINE_ENABLE_NEON)
+    target_sources(engine_model_kitten_tts2 PRIVATE src/community_models/kitten_tts2/neon_vocoder.cpp)
+endif()
 
 audiocpp_add_model(kitten_tts
     SOURCES
