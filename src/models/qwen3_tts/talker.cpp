@@ -7,6 +7,7 @@
 #include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/packed_linear_weights.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
@@ -33,7 +34,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -84,12 +84,14 @@ struct TalkerLayerWeights {
     core::TensorValue q_proj;
     core::TensorValue k_proj;
     core::TensorValue v_proj;
+    std::optional<modules::LinearWeights> qkv_proj;
     core::TensorValue o_proj;
     assets::TensorDataF32 q_norm;
     assets::TensorDataF32 k_norm;
     assets::TensorDataF32 post_norm;
     core::TensorValue gate_proj;
     core::TensorValue up_proj;
+    std::optional<modules::LinearWeights> gate_up_proj;
     core::TensorValue down_proj;
 };
 
@@ -224,14 +226,16 @@ core::TensorValue cache_view(
             cache.tensor->nb[3],
             static_cast<size_t>(start) * cache.tensor->nb[2]),
         core::TensorShape::from_dims({1, steps, heads, head_dim}),
-        GGML_TYPE_F32);
+        cache.type);
 }
 
 template <typename Config>
 modules::CausalDecoderConfig make_qwen3_decoder_config(
     const Config & config,
     int64_t logits_size,
-    Qwen3TTSPerfMode perf_mode) {
+    Qwen3TTSPerfMode perf_mode,
+    bool packed_projections = false,
+    bool optimized_kv_cache_write = false) {
     modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.num_attention_heads;
@@ -243,12 +247,21 @@ modules::CausalDecoderConfig make_qwen3_decoder_config(
     out.stack.rope_theta = config.rope_theta;
     out.stack.attention_precision = GGML_PREC_F32;
     out.stack.use_qk_norm = true;
+    out.stack.qkv_layout = packed_projections
+        ? modules::DecoderQKVLayout::PackedQKV
+        : modules::DecoderQKVLayout::Separate;
     out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = optimized_kv_cache_write
+        ? modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized
+        : modules::DecoderStaticCacheSetRowsMode::Exact;
+    out.stack.runtime.attention.allow_flash_attention = perf_mode == Qwen3TTSPerfMode::FlashAttention;
     if (perf_mode == Qwen3TTSPerfMode::FlashAttention) {
         out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
         out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
     }
-    out.stack.runtime.mlp.mode = modules::DecoderMLPMode::FusedSwiGLU;
+    out.stack.runtime.mlp.mode = packed_projections
+        ? modules::DecoderMLPMode::PackedGateUp
+        : modules::DecoderMLPMode::FusedSwiGLU;
     out.logits_size = logits_size;
     out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     return out;
@@ -259,15 +272,23 @@ modules::DecoderLayerWeights make_qwen3_decoder_layer_weights(
     const TalkerLayerWeights & weights) {
     modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_data(constants, weights.input_norm);
-    out.self_attention.q_weight = binding::tensor_data(constants, weights.q_proj);
-    out.self_attention.k_weight = binding::tensor_data(constants, weights.k_proj);
-    out.self_attention.v_weight = binding::tensor_data(constants, weights.v_proj);
+    if (weights.qkv_proj) {
+        out.self_attention.qkv_weight = weights.qkv_proj->weight;
+    } else {
+        out.self_attention.q_weight = binding::tensor_data(constants, weights.q_proj);
+        out.self_attention.k_weight = binding::tensor_data(constants, weights.k_proj);
+        out.self_attention.v_weight = binding::tensor_data(constants, weights.v_proj);
+    }
     out.self_attention.out_weight = binding::tensor_data(constants, weights.o_proj);
     out.q_norm = binding::norm_data(constants, weights.q_norm);
     out.k_norm = binding::norm_data(constants, weights.k_norm);
     out.post_norm = binding::norm_data(constants, weights.post_norm);
-    out.mlp.gate_proj = binding::linear_data(constants, weights.gate_proj);
-    out.mlp.up_proj = binding::linear_data(constants, weights.up_proj);
+    if (weights.gate_up_proj) {
+        out.mlp.gate_up_proj = weights.gate_up_proj;
+    } else {
+        out.mlp.gate_proj = binding::linear_data(constants, weights.gate_proj);
+        out.mlp.up_proj = binding::linear_data(constants, weights.up_proj);
+    }
     out.mlp.down_proj = binding::linear_data(constants, weights.down_proj);
     return out;
 }
@@ -727,7 +748,8 @@ Qwen3TalkerWeights load_talker_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
-    engine::assets::TensorStorageType weight_storage_type) {
+    engine::assets::TensorStorageType weight_storage_type,
+    bool packed_projections) {
     const auto & source = *assets.model_weights;
     const auto & config = assets.config.talker;
     Qwen3TalkerWeights weights;
@@ -777,21 +799,29 @@ Qwen3TalkerWeights load_talker_weights(
         const std::string prefix = "talker.model.layers." + std::to_string(layer);
         TalkerLayerWeights w;
         w.input_norm = source.require_f32_tensor(prefix + ".input_layernorm.weight", {config.hidden_size});
-        w.q_proj = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.q_proj.weight",
-            weight_storage_type,
-            {config.num_attention_heads * dim, config.hidden_size});
-        w.k_proj = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.k_proj.weight",
-            weight_storage_type,
-            {config.num_key_value_heads * dim, config.hidden_size});
-        w.v_proj = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.v_proj.weight",
-            weight_storage_type,
-            {config.num_key_value_heads * dim, config.hidden_size});
+        if (packed_projections) {
+            w.qkv_proj = modules::PackedLinearWeightsBuilder({config.hidden_size,
+                {{prefix + ".self_attn.q_proj.weight", std::nullopt, config.num_attention_heads * dim},
+                 {prefix + ".self_attn.k_proj.weight", std::nullopt, config.num_key_value_heads * dim},
+                 {prefix + ".self_attn.v_proj.weight", std::nullopt, config.num_key_value_heads * dim}}, false})
+                .build(*weights.store, source, weight_storage_type);
+        } else {
+            w.q_proj = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.q_proj.weight",
+                weight_storage_type,
+                {config.num_attention_heads * dim, config.hidden_size});
+            w.k_proj = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.k_proj.weight",
+                weight_storage_type,
+                {config.num_key_value_heads * dim, config.hidden_size});
+            w.v_proj = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.v_proj.weight",
+                weight_storage_type,
+                {config.num_key_value_heads * dim, config.hidden_size});
+        }
         w.o_proj = weights.store->load_tensor(
             source,
             prefix + ".self_attn.o_proj.weight",
@@ -800,16 +830,23 @@ Qwen3TalkerWeights load_talker_weights(
         w.q_norm = source.require_f32_tensor(prefix + ".self_attn.q_norm.weight", {dim});
         w.k_norm = source.require_f32_tensor(prefix + ".self_attn.k_norm.weight", {dim});
         w.post_norm = source.require_f32_tensor(prefix + ".post_attention_layernorm.weight", {config.hidden_size});
-        w.gate_proj = weights.store->load_tensor(
-            source,
-            prefix + ".mlp.gate_proj.weight",
-            weight_storage_type,
-            {config.intermediate_size, config.hidden_size});
-        w.up_proj = weights.store->load_tensor(
-            source,
-            prefix + ".mlp.up_proj.weight",
-            weight_storage_type,
-            {config.intermediate_size, config.hidden_size});
+        if (packed_projections) {
+            w.gate_up_proj = modules::PackedLinearWeightsBuilder({config.hidden_size,
+                {{prefix + ".mlp.gate_proj.weight", std::nullopt, config.intermediate_size},
+                 {prefix + ".mlp.up_proj.weight", std::nullopt, config.intermediate_size}}, false})
+                .build(*weights.store, source, weight_storage_type);
+        } else {
+            w.gate_proj = weights.store->load_tensor(
+                source,
+                prefix + ".mlp.gate_proj.weight",
+                weight_storage_type,
+                {config.intermediate_size, config.hidden_size});
+            w.up_proj = weights.store->load_tensor(
+                source,
+                prefix + ".mlp.up_proj.weight",
+                weight_storage_type,
+                {config.intermediate_size, config.hidden_size});
+        }
         w.down_proj = weights.store->load_tensor(
             source,
             prefix + ".mlp.down_proj.weight",
@@ -831,21 +868,29 @@ Qwen3TalkerWeights load_talker_weights(
         const std::string prefix = "talker.code_predictor.model.layers." + std::to_string(layer);
         TalkerLayerWeights w;
         w.input_norm = source.require_f32_tensor(prefix + ".input_layernorm.weight", {predictor_config.hidden_size});
-        w.q_proj = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.q_proj.weight",
-            weight_storage_type,
-            {predictor_config.num_attention_heads * predictor_dim, predictor_config.hidden_size});
-        w.k_proj = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.k_proj.weight",
-            weight_storage_type,
-            {predictor_config.num_key_value_heads * predictor_dim, predictor_config.hidden_size});
-        w.v_proj = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.v_proj.weight",
-            weight_storage_type,
-            {predictor_config.num_key_value_heads * predictor_dim, predictor_config.hidden_size});
+        if (packed_projections) {
+            w.qkv_proj = modules::PackedLinearWeightsBuilder({predictor_config.hidden_size,
+                {{prefix + ".self_attn.q_proj.weight", std::nullopt, predictor_config.num_attention_heads * predictor_dim},
+                 {prefix + ".self_attn.k_proj.weight", std::nullopt, predictor_config.num_key_value_heads * predictor_dim},
+                 {prefix + ".self_attn.v_proj.weight", std::nullopt, predictor_config.num_key_value_heads * predictor_dim}}, false})
+                .build(*weights.store, source, weight_storage_type);
+        } else {
+            w.q_proj = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.q_proj.weight",
+                weight_storage_type,
+                {predictor_config.num_attention_heads * predictor_dim, predictor_config.hidden_size});
+            w.k_proj = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.k_proj.weight",
+                weight_storage_type,
+                {predictor_config.num_key_value_heads * predictor_dim, predictor_config.hidden_size});
+            w.v_proj = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.v_proj.weight",
+                weight_storage_type,
+                {predictor_config.num_key_value_heads * predictor_dim, predictor_config.hidden_size});
+        }
         w.o_proj = weights.store->load_tensor(
             source,
             prefix + ".self_attn.o_proj.weight",
@@ -854,16 +899,23 @@ Qwen3TalkerWeights load_talker_weights(
         w.q_norm = source.require_f32_tensor(prefix + ".self_attn.q_norm.weight", {predictor_dim});
         w.k_norm = source.require_f32_tensor(prefix + ".self_attn.k_norm.weight", {predictor_dim});
         w.post_norm = source.require_f32_tensor(prefix + ".post_attention_layernorm.weight", {predictor_config.hidden_size});
-        w.gate_proj = weights.store->load_tensor(
-            source,
-            prefix + ".mlp.gate_proj.weight",
-            weight_storage_type,
-            {predictor_config.intermediate_size, predictor_config.hidden_size});
-        w.up_proj = weights.store->load_tensor(
-            source,
-            prefix + ".mlp.up_proj.weight",
-            weight_storage_type,
-            {predictor_config.intermediate_size, predictor_config.hidden_size});
+        if (packed_projections) {
+            w.gate_up_proj = modules::PackedLinearWeightsBuilder({predictor_config.hidden_size,
+                {{prefix + ".mlp.gate_proj.weight", std::nullopt, predictor_config.intermediate_size},
+                 {prefix + ".mlp.up_proj.weight", std::nullopt, predictor_config.intermediate_size}}, false})
+                .build(*weights.store, source, weight_storage_type);
+        } else {
+            w.gate_proj = weights.store->load_tensor(
+                source,
+                prefix + ".mlp.gate_proj.weight",
+                weight_storage_type,
+                {predictor_config.intermediate_size, predictor_config.hidden_size});
+            w.up_proj = weights.store->load_tensor(
+                source,
+                prefix + ".mlp.up_proj.weight",
+                weight_storage_type,
+                {predictor_config.intermediate_size, predictor_config.hidden_size});
+        }
         w.down_proj = weights.store->load_tensor(
             source,
             prefix + ".mlp.down_proj.weight",
@@ -914,17 +966,26 @@ public:
         size_t code_predictor_constant_context_bytes,
         engine::assets::TensorStorageType weight_storage_type,
         Qwen3TTSPerfMode perf_mode,
-        int64_t kv_cache_alignment)
+        int64_t kv_cache_alignment,
+        bool packed_projections,
+        ggml_type kv_cache_type,
+        bool optimized_kv_cache_write)
         : assets_(std::move(assets)),
           threads_(threads),
           graph_arena_bytes_(graph_arena_bytes),
           perf_mode_(perf_mode),
-          kv_cache_alignment_(kv_cache_alignment) {
+          packed_projections_(packed_projections),
+          kv_cache_alignment_(kv_cache_alignment),
+          kv_cache_type_(kv_cache_type),
+          optimized_kv_cache_write_(optimized_kv_cache_write) {
         if (assets_ == nullptr) {
             throw std::runtime_error("Qwen3 talker weights runtime requires assets");
         }
         if (kv_cache_alignment_ <= 0) {
             throw std::runtime_error("Qwen3 KV cache alignment must be positive");
+        }
+        if (kv_cache_type_ != GGML_TYPE_F32 && kv_cache_type_ != GGML_TYPE_F16) {
+            throw std::runtime_error("Qwen3 KV cache type must be f32 or f16");
         }
         if (threads_ <= 0) {
             throw std::runtime_error("Qwen3 talker weights runtime requires positive thread count");
@@ -940,7 +1001,7 @@ public:
             : engine::sampling::TorchCudaSamplingPolicy{};
         backend_ = core::init_backend({backend_type_, device, threads_});
         weights_ = std::make_shared<Qwen3TalkerWeights>(
-            load_talker_weights(*assets_, backend_, backend_type_, kTalkerWeightContextBytes, weight_storage_type));
+            load_talker_weights(*assets_, backend_, backend_type_, kTalkerWeightContextBytes, weight_storage_type, packed_projections_));
         talker_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
@@ -1002,13 +1063,28 @@ public:
         return kv_cache_alignment_;
     }
 
+    bool packed_projections() const noexcept {
+        return packed_projections_;
+    }
+
+    ggml_type kv_cache_type() const noexcept {
+        return kv_cache_type_;
+    }
+
+    bool optimized_kv_cache_write() const noexcept {
+        return optimized_kv_cache_write_;
+    }
+
 private:
     std::shared_ptr<const Qwen3TTSAssets> assets_;
     std::shared_ptr<const Qwen3TalkerWeights> weights_;
     int threads_ = 1;
     size_t graph_arena_bytes_ = 0;
     Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
+    bool packed_projections_ = false;
     int64_t kv_cache_alignment_ = 1;
+    ggml_type kv_cache_type_ = GGML_TYPE_F32;
+    bool optimized_kv_cache_write_ = false;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     engine::sampling::TorchCudaSamplingPolicy sampling_policy_;
@@ -1049,7 +1125,7 @@ public:
                 core::TensorShape::from_dims({1, 1, prompt_capacity_, prompt_capacity_}),
                 GGML_TYPE_F16);
         }
-        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode()))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode(), weights_->packed_projections()))
                                .build(
                                    ctx,
                                    x,
@@ -1061,8 +1137,10 @@ public:
             if (!layer.key.has_value() || !layer.value.has_value()) {
                 throw std::runtime_error("Qwen3 talker prefill decoder did not return K/V state");
             }
-            keys_.push_back(layer.key->tensor);
-            values_.push_back(layer.value->tensor);
+            keys_.push_back(weights_->kv_cache_type() == GGML_TYPE_F32 ? layer.key->tensor
+                : ggml_cast(ctx.ggml, layer.key->tensor, weights_->kv_cache_type()));
+            values_.push_back(weights_->kv_cache_type() == GGML_TYPE_F32 ? layer.value->tensor
+                : ggml_cast(ctx.ggml, layer.value->tensor, weights_->kv_cache_type()));
         }
         hidden_output_ = decoder_out.hidden.tensor;
         logits_output_ = decoder_out.logits.tensor;
@@ -1145,8 +1223,8 @@ public:
         const auto cache_shape = core::TensorShape::from_dims(
             {1, prompt_capacity_, config.num_key_value_heads, attention_head_dim(config)});
         for (size_t layer = 0; layer < keys_.size(); ++layer) {
-            out.keys.push_back(core::wrap_tensor(keys_[layer], cache_shape, GGML_TYPE_F32));
-            out.values.push_back(core::wrap_tensor(values_[layer], cache_shape, GGML_TYPE_F32));
+            out.keys.push_back(core::wrap_tensor(keys_[layer], cache_shape, weights_->kv_cache_type()));
+            out.values.push_back(core::wrap_tensor(values_[layer], cache_shape, weights_->kv_cache_type()));
         }
         return out;
     }
@@ -1195,8 +1273,9 @@ public:
         input_ = x.tensor;
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
         auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
-        cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
-        auto cache_slot_value = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
+        const auto index_type = weights_->optimized_kv_cache_write() ? GGML_TYPE_I64 : GGML_TYPE_I32;
+        cache_slot_ = ggml_new_tensor_1d(ctx_.get(), index_type, 1);
+        auto cache_slot_value = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({1}), index_type);
         attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, 1);
         auto attention_mask_value = core::wrap_tensor(
             attention_mask_,
@@ -1205,7 +1284,11 @@ public:
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         auto & constants = weights_->talker_constants();
         constants.begin_graph();
-        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode()))
+        auto decoder_config = make_qwen3_decoder_config(
+            config, config.vocab_size, weights_->perf_mode(), weights_->packed_projections(),
+            weights_->optimized_kv_cache_write());
+        decoder_config.static_cache_type = weights_->kv_cache_type();
+        auto decoder_out = modules::CausalDecoderModule(decoder_config)
                                .build_static_cache_tail(
                                    ctx,
                                    graph_,
@@ -1254,13 +1337,29 @@ public:
     }
 
     void import_prefill_state(const TalkerPrefillGraph::OutputWithCache & prefill,
-                             const runtime::TransformerKVState * migrated) {
-        if (migrated != nullptr) step_cache_.import_state(*migrated);
-        else step_cache_.import_prefix(prefill.keys, prefill.values, prefill.steps);
-    }
-
-    runtime::TransformerKVState export_state() const {
-        return step_cache_.export_state();
+                             TalkerCachedStepGraph * previous) {
+        if (previous == nullptr) {
+            step_cache_.import_prefix(prefill.keys, prefill.values, prefill.steps);
+            return;
+        }
+        const auto & config = weights_->assets().config.talker;
+        const auto steps = previous->step_cache_.valid_steps();
+        core::ModuleBuildContext ctx{previous->ctx_.get(), "qwen3_tts.talker.cache_migration"};
+        std::vector<core::TensorValue> keys;
+        std::vector<core::TensorValue> values;
+        for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
+            keys.push_back(runtime::view_transformer_kv_cache_steps(
+                ctx, previous->step_cache_.key_tensor(layer), 0, steps,
+                config.num_key_value_heads, attention_head_dim(config), "Qwen3 key migration", weights_->kv_cache_type()));
+            values.push_back(runtime::view_transformer_kv_cache_steps(
+                ctx, previous->step_cache_.value_tensor(layer), 0, steps,
+                config.num_key_value_heads, attention_head_dim(config), "Qwen3 value migration", weights_->kv_cache_type()));
+            if (ggml_backend_view_init(keys.back().tensor) != GGML_STATUS_SUCCESS ||
+                ggml_backend_view_init(values.back().tensor) != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("failed to bind Qwen3 KV migration views");
+            }
+        }
+        step_cache_.import_prefix(keys, values, steps);
     }
 
     Qwen3TalkerPrefillResult run_step(const std::vector<float> & embedding) {
@@ -1276,8 +1375,13 @@ public:
         ggml_backend_tensor_set(input_, embedding.data(), 0, embedding.size() * sizeof(float));
         const int32_t position = static_cast<int32_t>(step_cache_.current_end());
         ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
-        const int32_t cache_slot = static_cast<int32_t>(step_cache_.valid_steps());
-        ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(int32_t));
+        const int64_t cache_slot = step_cache_.valid_steps();
+        if (weights_->optimized_kv_cache_write()) {
+            ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(cache_slot));
+        } else {
+            const auto index = static_cast<int32_t>(cache_slot);
+            ggml_backend_tensor_set(cache_slot_, &index, 0, sizeof(index));
+        }
         last_timing_.input_upload_ms = engine::debug::elapsed_ms(timing_start, Clock::now());
         std::fill(attention_mask_buffer_.begin(), attention_mask_buffer_.end(), ggml_fp32_to_fp16(-INFINITY));
         for (int64_t i = 0; i < step_cache_.valid_steps(); ++i) {
@@ -1374,7 +1478,8 @@ void apply_main_talker_processors(
     const Qwen3TTSTalkerConfig & config,
     const std::vector<int32_t> & generated_first_codes,
     int64_t step,
-    float repetition_penalty) {
+    float repetition_penalty,
+    engine::sampling::HfSamplerScratch & scratch) {
     if (static_cast<int64_t>(logits.size()) != config.vocab_size) {
         throw std::runtime_error("Qwen3 talker logits size mismatch");
     }
@@ -1393,17 +1498,8 @@ void apply_main_talker_processors(
     if (repetition_penalty <= 0.0F) {
         throw std::runtime_error("Qwen3 talker repetition penalty must be positive");
     }
-    std::unordered_set<int32_t> seen_tokens;
-    for (const int32_t token : generated_first_codes) {
-        if (token < 0 || token >= config.vocab_size) {
-            continue;
-        }
-        if (!seen_tokens.insert(token).second) {
-            continue;
-        }
-        float & value = logits[static_cast<size_t>(token)];
-        value = value < 0.0F ? value * repetition_penalty : value / repetition_penalty;
-    }
+    engine::sampling::HfLogitsProcessor::apply_repetition_penalty(
+        logits, generated_first_codes, repetition_penalty, scratch);
 }
 
 std::vector<float> frame_embedding(
@@ -1453,11 +1549,11 @@ public:
         for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
             cache_keys_.push_back(core::make_tensor(
                 ctx,
-                GGML_TYPE_F32,
+                weights_->kv_cache_type(),
                 core::TensorShape::from_dims({1, cache_capacity, config.num_key_value_heads, head_dim})));
             cache_values_.push_back(core::make_tensor(
                 ctx,
-                GGML_TYPE_F32,
+                weights_->kv_cache_type(),
                 core::TensorShape::from_dims({1, cache_capacity, config.num_key_value_heads, head_dim})));
         }
         auto & constants = weights_->code_predictor_constants();
@@ -1485,7 +1581,12 @@ public:
             auto & step = step_graphs_[group];
             const int32_t position = static_cast<int32_t>(group + 2);
             ggml_backend_tensor_set(step.position, &position, 0, sizeof(position));
-            ggml_backend_tensor_set(step.cache_slot, &position, 0, sizeof(position));
+            if (weights_->optimized_kv_cache_write()) {
+                const int64_t cache_slot = position;
+                ggml_backend_tensor_set(step.cache_slot, &cache_slot, 0, sizeof(cache_slot));
+            } else {
+                ggml_backend_tensor_set(step.cache_slot, &position, 0, sizeof(position));
+            }
             std::fill(step_mask.begin(), step_mask.end(), ggml_fp32_to_fp16(-INFINITY));
             std::fill_n(step_mask.begin(), position + 1, ggml_fp32_to_fp16(0.0F));
             ggml_backend_tensor_set(step.attention_mask, step_mask.data(), 0,
@@ -1602,7 +1703,7 @@ private:
                 core::TensorShape::from_dims({1, 1, 2, 2}),
                 GGML_TYPE_F16);
         }
-        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode()))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode(), weights_->packed_projections()))
                                .build(
                                    ctx,
                                    x,
@@ -1642,8 +1743,9 @@ private:
         auto x = project_code_predictor_input(ctx, input, tensor_weights, root_config, constants);
         step.position = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
         auto position_value = core::wrap_tensor(step.position, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
-        step.cache_slot = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
-        auto cache_slot_value = core::wrap_tensor(step.cache_slot, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
+        const auto index_type = weights_->optimized_kv_cache_write() ? GGML_TYPE_I64 : GGML_TYPE_I32;
+        step.cache_slot = ggml_new_tensor_1d(ctx_.get(), index_type, 1);
+        auto cache_slot_value = core::wrap_tensor(step.cache_slot, core::TensorShape::from_dims({1}), index_type);
         step.attention_mask = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, code_groups_, 1, 1, 1);
         auto attention_mask_value = core::wrap_tensor(
             step.attention_mask,
@@ -1651,7 +1753,9 @@ private:
             GGML_TYPE_F16);
         step.graph = ggml_new_graph_custom(ctx_.get(), 32768, false);
         const auto & step_head = tensor_weights.code_predictor.lm_heads.at(static_cast<size_t>(group));
-        const auto decoder_config = make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode());
+        const auto decoder_config = make_qwen3_decoder_config(
+            config, config.vocab_size, weights_->perf_mode(), weights_->packed_projections(),
+            weights_->optimized_kv_cache_write());
         const modules::DecoderLayerModule layer_module(
             modules::decoder_layer_config_from_stack(decoder_config.stack));
         for (size_t layer_index = 0; layer_index < tensor_weights.code_predictor.layers.size(); ++layer_index) {
@@ -1783,12 +1887,12 @@ public:
         if (!cached_prompt_state_.has_value() ||
             !cached_prompt_prefill_.has_value() ||
             !talker_prefill_equal(*cached_prompt_prefill_, request)) {
-            if (on_frame && !text_projection_) {
+            if (!text_projection_) {
                 text_projection_ = std::make_unique<Qwen3TalkerTextProjectionGraph>(
                     weights_->backend(), weights_->threads(), weights_->weights(), weights_->assets().config.talker);
             }
             cached_prompt_state_ = build_prompt_state(
-                request, weights_->assets().config, weights_->weights(), on_frame ? text_projection_.get() : nullptr);
+                request, weights_->assets().config, weights_->weights(), text_projection_.get());
             cached_prompt_prefill_ = request;
             cached_prefill_output_.reset();
         }
@@ -1816,16 +1920,9 @@ public:
         double cached_step_build_ms = 0.0;
         double import_prefill_state_ms = 0.0;
         int64_t cached_step_capacity = 0;
-        runtime::TransformerKVState exported_cached_state;
-        const runtime::TransformerKVState * cached_state = nullptr;
         bool cached_graph_has_state = false;
         auto ensure_cached_step_capacity = [&](int64_t required_capacity) {
-            if (cached_step_graph_ != nullptr && cached_graph_has_state &&
-                !cached_step_graph_->can_run(*weights_, required_capacity)) {
-                exported_cached_state = cached_step_graph_->export_state();
-                cached_state = &exported_cached_state;
-                cached_graph_has_state = false;
-            }
+            std::unique_ptr<TalkerCachedStepGraph> previous;
             if (cached_step_graph_ == nullptr || !cached_step_graph_->can_run(*weights_, required_capacity)) {
                 const int64_t old_generated_capacity = cached_step_graph_ == nullptr
                     ? 0
@@ -1837,15 +1934,19 @@ public:
                         required_generated_capacity,
                         old_generated_capacity > 0 ? old_generated_capacity * 2 : kInitialGeneratedStepCacheFrames));
                 const auto build_start = Clock::now();
-                cached_step_graph_.reset();
+                previous = std::move(cached_step_graph_);
                 cached_step_graph_ = std::make_unique<TalkerCachedStepGraph>(
                     weights_,
                     prompt_steps + next_generated_capacity);
                 cached_step_build_ms += engine::debug::elapsed_ms(build_start, Clock::now());
+                const auto import_start = Clock::now();
+                cached_step_graph_->import_prefill_state(prefill_output, cached_graph_has_state ? previous.get() : nullptr);
+                import_prefill_state_ms += engine::debug::elapsed_ms(import_start, Clock::now());
+                cached_graph_has_state = true;
             }
             if (!cached_graph_has_state) {
                 const auto import_start = Clock::now();
-                cached_step_graph_->import_prefill_state(prefill_output, cached_state);
+                cached_step_graph_->import_prefill_state(prefill_output, nullptr);
                 import_prefill_state_ms += engine::debug::elapsed_ms(import_start, Clock::now());
                 cached_graph_has_state = true;
             }
@@ -1867,7 +1968,7 @@ public:
         for (int64_t step = 0; step < max_new_tokens; ++step) {
             auto logits = current.logits.values;
             const auto processor_start = Clock::now();
-            apply_main_talker_processors(logits, config, generated_first_codes, step, repetition_penalty);
+            apply_main_talker_processors(logits, config, generated_first_codes, step, repetition_penalty, sampling_scratch_);
             const int32_t first_code = options.do_sample
                 ? sample_index(
                     logits,
@@ -2031,7 +2132,10 @@ std::shared_ptr<const Qwen3TalkerWeightsRuntime> Qwen3Talker::create_weights_run
     size_t code_predictor_constant_context_bytes,
     engine::assets::TensorStorageType weight_storage_type,
     Qwen3TTSPerfMode perf_mode,
-    int64_t kv_cache_alignment) const {
+    int64_t kv_cache_alignment,
+    bool packed_projections,
+    ggml_type kv_cache_type,
+    bool optimized_kv_cache_write) const {
     return std::make_shared<Qwen3TalkerWeightsRuntime>(
         std::move(assets),
         backend_type,
@@ -2042,7 +2146,10 @@ std::shared_ptr<const Qwen3TalkerWeightsRuntime> Qwen3Talker::create_weights_run
         code_predictor_constant_context_bytes,
         weight_storage_type,
         perf_mode,
-        kv_cache_alignment);
+        kv_cache_alignment,
+        packed_projections,
+        kv_cache_type,
+        optimized_kv_cache_write);
 }
 
 std::shared_ptr<Qwen3TalkerStepRuntime> Qwen3Talker::create_step_runtime(

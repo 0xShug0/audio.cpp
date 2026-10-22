@@ -54,13 +54,9 @@ core::TensorValue FastKVSetRowsModule::build(
         throw std::runtime_error("FastKVSetRowsModule row_index must have shape {1} or {batch}");
     }
     const bool optimized = config_.mode == FastKVSetRowsMode::BackendViewOptimized;
-    if (((!optimized && cache.type != GGML_TYPE_F32) ||
-         (optimized && cache.type != GGML_TYPE_F32 && cache.type != GGML_TYPE_F16 && cache.type != GGML_TYPE_BF16)) ||
+    if ((cache.type != GGML_TYPE_F32 && cache.type != GGML_TYPE_F16 && cache.type != GGML_TYPE_BF16) ||
         row.type != GGML_TYPE_F32) {
-        throw std::runtime_error(
-            optimized
-                ? "FastKVSetRowsModule requires an f32/f16/bf16 cache and an f32 row tensor"
-                : "FastKVSetRowsModule requires f32 cache and row tensors");
+        throw std::runtime_error("FastKVSetRowsModule requires an f32/f16/bf16 cache and an f32 row tensor");
     }
     if (row_index.type != GGML_TYPE_I32 && row_index.type != GGML_TYPE_I64) {
         throw std::runtime_error("FastKVSetRowsModule requires i32 or i64 row_index tensor");
@@ -137,8 +133,7 @@ core::TensorValue FastKVSetRowsModule::build_block(
         throw std::runtime_error("FastKVSetRowsModule block requires one sequence, f32 rows and integer indices");
     }
     const bool optimized = config_.mode == FastKVSetRowsMode::BackendViewOptimized;
-    if ((!optimized && cache.type != GGML_TYPE_F32) ||
-        (optimized && cache.type != GGML_TYPE_F32 && cache.type != GGML_TYPE_F16 && cache.type != GGML_TYPE_BF16) ||
+    if ((cache.type != GGML_TYPE_F32 && cache.type != GGML_TYPE_F16 && cache.type != GGML_TYPE_BF16) ||
         !core::has_backend_addressable_layout(cache.tensor)) {
         throw std::runtime_error("FastKVSetRowsModule block cache type or layout is unsupported");
     }
