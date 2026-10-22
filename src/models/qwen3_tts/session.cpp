@@ -171,7 +171,7 @@ Qwen3TTSPerfMode perf_mode_from_options(const runtime::SessionOptions & options)
         if (*value == "off" || *value == "standard") {
             return Qwen3TTSPerfMode::Standard;
         }
-        if (*value == "flash_attention" || *value == "optimized") {
+        if (*value == "flash_attention" || *value == "perf_first") {
             return Qwen3TTSPerfMode::FlashAttention;
         }
         throw std::runtime_error("Invalid qwen3_tts.perf_mode: " + *value);
@@ -288,8 +288,8 @@ Qwen3TTSSession::Qwen3TTSSession(
       talker_(assets_->config.talker),
       voice_prompt_context_(voice_prompt_backend_config(options)),
       voice_prompt_cache_(voice_prompt_cache_slots_from_options(options)) {
-    const bool optimized = runtime::find_option(options.options, {"qwen3_tts.perf_mode"}).value_or("off") == "optimized";
-    if (optimized) {
+    const bool perf_first = runtime::find_option(options.options, {"qwen3_tts.perf_mode"}).value_or("off") == "perf_first";
+    if (perf_first) {
         conv_weight_storage_type_ = engine::assets::TensorStorageType::F16;
     }
     talker_graph_arena_bytes_ = runtime::parse_size_mb_option(
@@ -373,7 +373,7 @@ Qwen3TTSSession::Qwen3TTSSession(
             throw std::runtime_error("unknown Qwen3 TTS session option: " + key);
         }
     }
-    const int64_t talker_kv_cache_alignment = runtime::parse_i64_option(options.options, {"qwen3_tts.talker_kv_cache_alignment"}).value_or(optimized ? 256 : 1);
+    const int64_t talker_kv_cache_alignment = runtime::parse_i64_option(options.options, {"qwen3_tts.talker_kv_cache_alignment"}).value_or(perf_first ? 256 : 1);
     if (talker_kv_cache_alignment <= 0) throw std::runtime_error("qwen3_tts.talker_kv_cache_alignment must be positive");
     debug::trace_log_scalar("qwen3_tts.talker_kv_cache_alignment", talker_kv_cache_alignment);
     talker_weights_ = talker_.create_weights_runtime(
@@ -391,7 +391,7 @@ Qwen3TTSSession::Qwen3TTSSession(
         talker_weights_,
         assets_->config.talker.max_position_embeddings,
         assets_->config.max_new_tokens);
-    const auto stream_decoder = runtime::find_option(options.options, {"qwen3_tts.stream_decoder"}).value_or(optimized ? "stateful" : "windowed");
+    const auto stream_decoder = runtime::find_option(options.options, {"qwen3_tts.stream_decoder"}).value_or(perf_first ? "stateful" : "windowed");
     if (stream_decoder != "windowed" && stream_decoder != "stateful") {
         throw std::runtime_error("qwen3_tts.stream_decoder must be windowed or stateful");
     }

@@ -224,7 +224,7 @@
       {
         "name": "talker_kv_cache_alignment",
         "type": "int",
-        "description": "Round talker KV capacity to this many rows. Defaults to 1 (no padding), or 256 with perf_mode=optimized. Explicit values override the preset. Larger alignments may use more memory and change numerical results.",
+        "description": "Round talker KV capacity to this many rows. Defaults to 1 (no padding), or 256 with perf_mode=perf_first. Explicit values override the preset. Larger alignments may use more memory and change numerical results.",
         "min": 1,
         "default": 1,
         "required": false
@@ -240,8 +240,8 @@
       {
         "name": "perf_mode",
         "type": "enum",
-        "description": "Performance preset; default off. flash_attention enables flash attention; optimized also defaults convolution weights to f16, streaming decoding to stateful, and talker KV alignment to 256. Explicit session options override those defaults. May change audio and increase VRAM.",
-        "values": ["off", "flash_attention", "optimized"],
+        "description": "Performance preset; default off. flash_attention enables flash attention; perf_first also defaults convolution weights to f16, streaming decoding to stateful, and talker KV alignment to 256. Explicit session options override those defaults. May change audio and increase VRAM.",
+        "values": ["off", "flash_attention", "perf_first"],
         "required": false,
         "default": "off"
       },
