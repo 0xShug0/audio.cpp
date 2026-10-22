@@ -320,7 +320,7 @@
           "q4_0",
           "q4_k"
         ],
-        "description": "YuE2 VAE weight storage type. Omitted inherits weight_type.",
+        "description": "YuE2 VAE weight storage type. Explicit values override shared weight_type, then preset defaults (native, or f16 with cuda_perf).",
         "required": false
       },
       {
@@ -382,6 +382,43 @@
           "eager"
         ],
         "default": "auto"
+      },
+      {
+        "name": "perf_mode",
+        "type": "enum",
+        "description": "Performance preset; cuda_perf packs AR projections, aligns KV capacity to 256 tokens, retains stages, uses F16 VAE weights and caps VAE tiles at 512 frames. Explicit controls override the preset. May change audio and substantially increase peak VRAM.",
+        "values": [
+          "off",
+          "cuda_perf"
+        ],
+        "required": false,
+        "default": "off"
+      },
+      {
+        "name": "packed_projections",
+        "type": "bool",
+        "description": "Pack AR QKV and gate/up projections without changing weight dtype. Default false, true with cuda_perf. Explicit values override the preset.",
+        "required": false
+      },
+      {
+        "name": "kv_cache_alignment",
+        "type": "int",
+        "description": "AR KV capacity alignment in tokens. Default 1, or 256 with cuda_perf; may use more memory and change numerics. Explicit values override the preset.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release AR/NAR runtimes and VAE graphs after generation. Default true, false with cuda_perf. Disabling retains stages and can substantially increase peak VRAM.",
+        "required": false
+      },
+      {
+        "name": "vae_tile_frames",
+        "type": "int",
+        "description": "Latent core frames per VAE tile; defaults to model configuration, capped at 512 with cuda_perf. Explicit values override the cap. The halo is unchanged; different boundaries can change numerical results.",
+        "required": false,
+        "min": 1
       },
       {
         "name": "attention_tile_rows",

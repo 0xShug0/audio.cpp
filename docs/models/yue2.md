@@ -75,6 +75,44 @@ Select the F32 VAE:
 
 The component paths are relative to `--model`; absolute paths are rejected.
 
+## Performance Controls
+
+Defaults preserve the existing generation path. To enable the performance preset:
+
+```bash
+--session-option yue2.perf_mode=cuda_perf
+```
+
+| Session option | Default (`off`) | `cuda_perf` |
+|---|---|---|
+| `yue2.packed_projections` | `false` | `true` |
+| `yue2.kv_cache_alignment` | `1` | `256` |
+| `yue2.mem_saver` | `true` | `false` |
+| `yue2.vae_weight_type` | Shared `weight_type`, otherwise `native` | `f16` unless a weight type is explicit |
+| `yue2.vae_tile_frames` | Model configuration (normally `1024`) | Model configuration capped at `512` |
+| `yue2.attention` | `auto` | `auto` (unchanged) |
+
+Packing combines AR QKV and gate/up projections without changing their weight
+dtype. KV alignment pads AR cache capacity without changing the refill boundary.
+With `mem_saver=false`, AR/NAR runtimes and cached graphs remain session-owned
+between requests instead of being released after their stages. This can
+substantially increase peak VRAM. F16 VAE storage, packing, aligned attention
+and different VAE tile boundaries can change numerical results.
+
+Each control can be set independently of the preset. Explicit session options
+override preset values, including `false`, `1`, and `native`. For example, retain
+the other preset settings but release stages and keep the VAE's original dtype:
+
+```bash
+--session-option yue2.perf_mode=cuda_perf \
+--session-option yue2.mem_saver=true \
+--session-option yue2.vae_weight_type=native
+```
+
+`vae_tile_frames` is the latent core length; the model's halo is unchanged.
+`attention` controls NAR attention only; AR already uses flash attention.
+The `cuda_perf` preset is tuned for CUDA but is not backend-gated.
+
 ## AR and NAR LoRA
 
 Use `yue2.ar_lora` for score/semantic planning and `yue2.nar_lora` for acoustic
@@ -117,8 +155,8 @@ scale; other layouts apply their alpha/rank metadata when present. There is
 no per-token adapter computation. AR adapters leave NAR and VAE weights unchanged.
 Merged AR tensors are cached in CPU memory in their upload dtype for the session,
 so later requests skip merging. Only one dtype per adapted tensor is retained;
-unloading the session frees the cache. AR weights are still released from VRAM
-before VAE decoding.
+unloading the session frees the cache. By default (`mem_saver=true`), AR weights
+are still released from VRAM before VAE decoding.
 Use the BF16 main GGUF for the closest match to the original weights. Loading
 onto Q8/Q4 bases merges into dequantized weights and requantizes the result;
 it is not equivalent to merging into the original BF16 model first.
@@ -365,7 +403,7 @@ checkpoint does not override them.
 | `yue2.nar_lora_scale` | finite float | `1.0` | NAR delta scale; replacements stay at full strength. `0` disables the entire adapter. |
 | `yue2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Shared weight storage fallback for the main model and VAE. |
 | `yue2.model_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | see description | YuE2 MoT weight storage type. Omitted inherits weight_type. |
-| `yue2.vae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | see description | YuE2 VAE weight storage type. Omitted inherits weight_type. |
+| `yue2.vae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | see description | Explicit VAE type wins, then explicit shared `weight_type`, then preset default (`native`, or `f16` with `cuda_perf`). |
 | `yue2.model_weight_context_mb` | MiB integer >= 1 | `32` | Main model weight context size. |
 | `yue2.vae_weight_context_mb` | MiB integer >= 1 | `32` | VAE weight context size. |
 | `yue2.ar_prefill_graph_arena_mb` | MiB integer >= 1 | `32` | AR prefill graph arena size. |
@@ -374,6 +412,11 @@ checkpoint does not override them.
 | `yue2.vae_graph_arena_mb` | MiB integer >= 1 | `32` | VAE decode graph arena size. |
 | `yue2.attention` | `auto`, `flash`, `eager` | `auto` | NAR acoustic-flow attention kernel. `auto` uses flash, except on Volta/Turing CUDA GPUs (missing MMA kernels) and Intel Vulkan GPUs (eager measured 2.2x faster) where it uses eager; explicit `flash` / `eager` override the probe. The AR decode path always uses flash. |
 | `yue2.attention_tile_rows` | integer | `0` | Query rows per tile in eager NAR attention. Nonpositive values select automatic tiling to keep each tile's score matrix under 3 GiB. A song whose scores already fit runs as one tile. Positive values set the query-row budget per tile. Ignored by the flash kernel. |
+| `yue2.perf_mode` | `off`, `cuda_perf` | `off` | Performance preset; see Performance Controls. Explicit controls override preset values. |
+| `yue2.packed_projections` | boolean | `false`; `true` with `cuda_perf` | Pack AR QKV and gate/up projections without changing weight dtype. |
+| `yue2.kv_cache_alignment` | integer >= 1 | `1`; `256` with `cuda_perf` | Round AR KV capacity to this many tokens; may use more memory and change numerics. |
+| `yue2.mem_saver` | boolean | `true`; `false` with `cuda_perf` | Release AR/NAR runtimes and VAE graphs after generation. |
+| `yue2.vae_tile_frames` | integer >= 1 | Model configuration; capped at `512` with `cuda_perf` | VAE latent core frames per tile, with unchanged halo. Explicit values override the preset cap. |
 
 ## Parity Probes
 

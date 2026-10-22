@@ -130,7 +130,11 @@ public:
         size_t nar_graph_arena_bytes,
         size_t vae_graph_arena_bytes,
         core::AttentionPreference attention_preference,
-        int64_t nar_attention_tile_rows)
+        int64_t nar_attention_tile_rows,
+        bool mem_saver,
+        bool packed_projections,
+        int64_t kv_cache_alignment,
+        int64_t vae_tile_frames)
         : execution(&execution),
           assets(std::move(assets)),
           tokenizer(this->assets->tiktoken_path),
@@ -142,7 +146,11 @@ public:
           ar_decode_graph_arena_bytes(ar_decode_graph_arena_bytes),
           nar_graph_arena_bytes(nar_graph_arena_bytes),
           vae_graph_arena_bytes(vae_graph_arena_bytes),
-          nar_attention_tile_rows(nar_attention_tile_rows) {
+          nar_attention_tile_rows(nar_attention_tile_rows),
+          mem_saver(mem_saver),
+          packed_projections(packed_projections),
+          kv_cache_alignment(kv_cache_alignment),
+          vae_tile_frames(vae_tile_frames) {
         if (!this->assets) {
             throw std::runtime_error("Yue2 pipeline requires assets");
         }
@@ -200,7 +208,7 @@ public:
         out.truncated = static_cast<int64_t>(out.tokens.size()) >= request.generation.semantic.max_tokens;
         engine::debug::timing_log_scalar("yue2.semantic.tokens", out.tokens.size());
         engine::debug::timing_log_scalar("yue2.semantic.truncated", out.truncated);
-        ar->release_runtime_graphs();
+        if (mem_saver) ar->release_runtime_graphs();
         return out;
     }
 
@@ -233,7 +241,7 @@ public:
         if (frames <= 0 || static_cast<int64_t>(latents.size()) != frames * channels) {
             throw std::runtime_error("Yue2 VAE latent shape mismatch");
         }
-        const int64_t core_frames = assets->config.vae.decode_core_frames;
+        const int64_t core_frames = vae_tile_frames > 0 ? vae_tile_frames : assets->config.vae.decode_core_frames;
         const int64_t halo_frames = assets->config.vae.decode_halo_frames;
         const int64_t ratio = assets->config.vae.downsampling_ratio;
         if (core_frames <= 0 || halo_frames < 0 || ratio <= 0) {
@@ -338,7 +346,7 @@ public:
         Yue2RunResult out;
         if (request.stop_after == Yue2StopAfter::Abc) {
             generate_plan_abc(request, planned);
-            ar.reset();
+            if (mem_saver) ar.reset();
             attach_plan_abc(request, planned, out);
             return out;
         }
@@ -354,19 +362,21 @@ public:
             if (request.export_semantic && out.semantic_codes.empty()) {
                 throw std::runtime_error("Yue2 semantic generation produced no codec tokens");
             }
-            ar.reset();
+            if (mem_saver) ar.reset();
             return out;
         }
         const auto nar_start = Clock::now();
         auto latents = synthesize_latents(semantic, request.generation, request.nar_noise, request.seed);
         engine::debug::timing_log_scalar("yue2.nar_ms", engine::debug::elapsed_ms(nar_start, Clock::now()));
         const int64_t frames = static_cast<int64_t>(latents.size()) / assets->config.model.latent_dim;
-        ar.reset();
-        nar.reset();
+        if (mem_saver) {
+            ar.reset();
+            nar.reset();
+        }
         const auto vae_start = Clock::now();
         auto audio = decode_audio(latents, frames);
         engine::debug::timing_log_scalar("yue2.vae_decode_ms", engine::debug::elapsed_ms(vae_start, Clock::now()));
-        if (vae) {
+        if (mem_saver && vae) {
             vae->release_runtime_graphs();
         }
         out.audio = std::move(audio);
@@ -400,7 +410,7 @@ private:
         plan.prefix.push_back(kMusicStartToken);
         engine::debug::timing_log_scalar("yue2.semantic.abc_generated_tokens", plan.abc_ids.size());
         engine::debug::timing_log_scalar("yue2.semantic.abc_truncated", plan.truncated);
-        ar->release_runtime_graphs();
+        if (mem_saver) ar->release_runtime_graphs();
     }
 
     void attach_plan_abc(const Yue2Request & request, const Yue2Plan & plan, Yue2RunResult & out) {
@@ -424,7 +434,9 @@ private:
             model_weight_type,
             model_weight_context_bytes,
             ar_prefill_graph_arena_bytes,
-            ar_decode_graph_arena_bytes);
+            ar_decode_graph_arena_bytes,
+            packed_projections,
+            kv_cache_alignment);
         engine::debug::timing_log_scalar("yue2.ar.init_ms", engine::debug::elapsed_ms(start));
     }
 
@@ -481,6 +493,10 @@ private:
     size_t nar_graph_arena_bytes = 0;
     size_t vae_graph_arena_bytes = 0;
     int64_t nar_attention_tile_rows = 0;
+    bool mem_saver = true;
+    bool packed_projections = false;
+    int64_t kv_cache_alignment = 1;
+    int64_t vae_tile_frames = 0;
     std::unique_ptr<codecs::OobleckAudioVaeRuntime> vae;
     std::unique_ptr<Yue2ARRuntime> ar;
     std::unique_ptr<Yue2NARRuntime> nar;
@@ -498,7 +514,11 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
     size_t nar_graph_arena_bytes,
     size_t vae_graph_arena_bytes,
     core::AttentionPreference attention_preference,
-    int64_t nar_attention_tile_rows)
+    int64_t nar_attention_tile_rows,
+    bool mem_saver,
+    bool packed_projections,
+    int64_t kv_cache_alignment,
+    int64_t vae_tile_frames)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
@@ -511,7 +531,11 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
           nar_graph_arena_bytes,
           vae_graph_arena_bytes,
           attention_preference,
-          nar_attention_tile_rows)) {}
+          nar_attention_tile_rows,
+          mem_saver,
+          packed_projections,
+          kv_cache_alignment,
+          vae_tile_frames)) {}
 
 Yue2PipelineRuntime::~Yue2PipelineRuntime() = default;
 
