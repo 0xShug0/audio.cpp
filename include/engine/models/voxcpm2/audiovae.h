@@ -26,7 +26,7 @@ struct VoxCPM2AudioVAEDecoderConfig {
   int64_t encoder_sample_capacity = 240000;
   engine::assets::TensorStorageType weight_storage_type =
       engine::assets::TensorStorageType::Native;
-  int64_t tile_frames = 128;
+  int64_t tile_frames = 0;
 };
 
 class VoxCPM2AudioVAEDecoderRuntime final {

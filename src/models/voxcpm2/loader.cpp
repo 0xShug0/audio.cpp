@@ -60,7 +60,7 @@ runtime::ModelCliInterface cli(const VoxCPM2Assets &) {
       {"voxcpm2.prompt_cache_slots", "int", "Prompt and prompt-audio embedding cache slots; default 1.", false, "1", "0"},
       {"voxcpm2.mem_saver", "bool", "Use tighter graph workspaces and release request runtime graphs; default true.", false, "true"},
       {"voxcpm2.perf_mode", "enum", "off or optimized; optimized packs QKV and gate/up weights without changing their dtype. May change numerical results and generated audio.", false, "off"},
-      {"voxcpm2.audiovae_tile_frames", "int", "Maximum new latent frames per causal AudioVAE tile; zero disables tiling.", false, "128", "0"},
+      {"voxcpm2.audiovae_tile_frames", "int", "Opt-in causal AudioVAE tiling; zero preserves full decoding.", false, "0", "0"},
       {"voxcpm2.weight_context_mb", "int", "Context or graph arena size in MiB.", false, "3072", "1"},
       {"voxcpm2.text_embedding_graph_arena_mb", "int", "Text embedding host graph-metadata arena size in MiB, not device workspace.", false, "64", "1"},
       {"voxcpm2.lm_step_graph_arena_mb", "int", "LM step host graph-metadata arena size in MiB, not device workspace.", false, "1024", "1"},

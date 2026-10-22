@@ -184,9 +184,9 @@
       {
         "name": "audiovae_tile_frames",
         "type": "int",
-        "description": "Maximum new latent frames per causal AudioVAE tile; zero disables tiling.",
+        "description": "Opt-in causal AudioVAE tiling. Maximum new latent frames per tile; zero preserves full decoding.",
         "required": false,
-        "default": 128,
+        "default": 0,
         "min": 0
       },
       {
