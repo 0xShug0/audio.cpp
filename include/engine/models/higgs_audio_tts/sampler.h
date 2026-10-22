@@ -18,6 +18,7 @@ struct HiggsSamplingOptions {
     float temperature = 1.0F;
     std::optional<float> top_p;
     std::optional<int64_t> top_k;
+    bool filter_nan_logits = false;
     bool has_seed = false;
     uint64_t seed = 0;
     HiggsCudaSamplingPolicy cuda_policy;

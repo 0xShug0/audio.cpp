@@ -20,6 +20,7 @@ struct HiggsGenerationOptions {
     float temperature = 1.0F;
     std::optional<float> top_p;
     std::optional<int64_t> top_k;
+    bool filter_nan_logits = false;
     float repetition_penalty = 1.0F;
     std::optional<uint64_t> seed;
 };

@@ -74,6 +74,13 @@
         "min": 0
       },
       {
+        "name": "filter_nan_logits",
+        "type": "bool",
+        "description": "Filter NaN and infinity before stochastic top-k selection. All-invalid logits still fail.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "repetition_penalty",
         "type": "float",
         "description": "Accepted for Python API compatibility; audio sampling does not consume this value. Compatibility-only, but must be finite and positive.",

@@ -180,13 +180,29 @@ void apply_top_k_to_probs(SamplerScratch & scratch, int64_t vocab_size, int64_t 
     renormalize_probs(scratch);
 }
 
-void apply_top_k_to_scores(SamplerScratch & scratch, int64_t vocab_size, int64_t top_k) {
+void apply_top_k_to_scores(SamplerScratch & scratch, int64_t vocab_size, int64_t top_k, bool filter_nan_logits) {
     scratch.kept.clear();
     if (top_k <= 0 || top_k >= vocab_size) {
         return;
     }
-    scratch.order.resize(static_cast<size_t>(vocab_size));
-    std::iota(scratch.order.begin(), scratch.order.end(), 0);
+
+    if (filter_nan_logits) {
+        // Exclude non-finite scores so nth_element has a strict weak ordering.
+        scratch.order.clear();
+        scratch.order.reserve(static_cast<size_t>(vocab_size));
+        for (int64_t i = 0; i < vocab_size; ++i) {
+            if (std::isfinite(scratch.scores[static_cast<size_t>(i)])) {
+                scratch.order.push_back(i);
+            }
+        }
+        if (scratch.order.size() <= static_cast<size_t>(top_k)) {
+            scratch.kept = scratch.order;
+            return;
+        }
+    } else {
+        scratch.order.resize(static_cast<size_t>(vocab_size));
+        std::iota(scratch.order.begin(), scratch.order.end(), 0);
+    }
     auto kth = scratch.order.begin() + static_cast<std::ptrdiff_t>(top_k - 1);
     std::nth_element(
         scratch.order.begin(), kth, scratch.order.end(), [&](int64_t lhs, int64_t rhs) {
@@ -196,7 +212,8 @@ void apply_top_k_to_scores(SamplerScratch & scratch, int64_t vocab_size, int64_t
     const float threshold = scratch.scores[static_cast<size_t>(*kth)];
     scratch.kept.reserve(static_cast<size_t>(top_k));
     for (int64_t i = 0; i < vocab_size; ++i) {
-        if (scratch.scores[static_cast<size_t>(i)] >= threshold) {
+        if (scratch.scores[static_cast<size_t>(i)] >= threshold &&
+            (!filter_nan_logits || std::isfinite(scratch.scores[static_cast<size_t>(i)]))) {
             scratch.kept.push_back(i);
         }
     }
@@ -378,7 +395,7 @@ int32_t sample_codebook_row(const float * logits,
         }
         const int64_t top_k = std::min<int64_t>(*options.top_k, vocab_size);
         if (top_k > 0 && top_k < vocab_size) {
-            apply_top_k_to_scores(scratch, vocab_size, top_k);
+            apply_top_k_to_scores(scratch, vocab_size, top_k, options.filter_nan_logits);
             top_k_applied_to_scores = true;
         }
     }
