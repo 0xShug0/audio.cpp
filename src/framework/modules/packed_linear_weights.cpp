@@ -48,6 +48,23 @@ LinearWeights PackedLinearWeightsBuilder::build(
     std::vector<std::byte> packed_weight;
     std::vector<std::byte> packed_bias;
 
+    if (config_.defer_upload) {
+        std::vector<core::BackendWeightStore::TensorPart> weight_parts;
+        std::vector<core::BackendWeightStore::TensorPart> bias_parts;
+        for (const auto & item : config_.sources) {
+            weight_parts.push_back({item.weight, {item.out_features, in_features}});
+            if (config_.use_bias) {
+                bias_parts.push_back({*item.bias, {item.out_features}});
+            }
+        }
+        LinearWeights weights;
+        weights.weight = store.load_tensor(source, weight_parts, storage_type);
+        if (config_.use_bias) {
+            weights.bias = store.load_tensor(source, bias_parts, assets::TensorStorageType::F32);
+        }
+        return weights;
+    }
+
     for (const auto & item : config_.sources) {
         const auto tensor = source.require_tensor(
             item.weight,

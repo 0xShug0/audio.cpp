@@ -4,6 +4,8 @@
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/safetensors.h"
+#include "engine/framework/core/execution_context.h"
+#include "engine/framework/modules/packed_linear_weights.h"
 #include "gguf.h"
 #include "test_assert.h"
 
@@ -590,6 +592,60 @@ void test_weight_adapter_conversion() {
     std::filesystem::remove_all(root);
 }
 
+void test_deferred_packed_weights() {
+    using namespace engine;
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp_deferred_packed_test";
+    std::filesystem::create_directories(root);
+    const auto path = root / "weights.safetensors";
+    std::vector<float> a(64), b(32);
+    for (size_t i = 0; i < a.size(); ++i) a[i] = (static_cast<float>(i) - 21) / 32;
+    for (size_t i = 0; i < b.size(); ++i) b[i] = (static_cast<float>(i) + 3) / 64;
+    io::write_safetensors_file(path, {
+        {"a.weight", "F32", {2, 32}, bytes_for(a)},
+        {"b.weight", "F32", {1, 32}, bytes_for(b)},
+        {"a.bias", "F32", {2}, bytes_for(std::vector<float>{1, -2})},
+        {"b.bias", "F32", {1}, bytes_for(std::vector<float>{3})},
+    });
+    const auto source = assets::open_tensor_source(path);
+    core::BackendConfig backend;
+    backend.type = core::BackendType::Cpu;
+    core::ExecutionContext execution(backend);
+    for (const auto type : {assets::TensorStorageType::Native, assets::TensorStorageType::F32, assets::TensorStorageType::F16,
+                            assets::TensorStorageType::BF16, assets::TensorStorageType::Q8_0}) {
+        core::BackendWeightStore eager(execution.backend(), backend.type, "test.eager", 1024 * 1024);
+        core::BackendWeightStore deferred(execution.backend(), backend.type, "test.deferred", 1024 * 1024);
+        modules::PackedLinearWeightsConfig config{32,
+            {{"a.weight", "a.bias", 2}, {"b.weight", "b.bias", 1}}, true};
+        const auto expected = modules::PackedLinearWeightsBuilder(config).build(eager, *source, type);
+        config.defer_upload = true;
+        const auto actual = modules::PackedLinearWeightsBuilder(config).build(deferred, *source, type);
+        eager.upload();
+        deferred.upload();
+        for (const auto & pair : {std::make_pair(expected.weight.tensor, actual.weight.tensor),
+                                 std::make_pair(expected.bias->tensor, actual.bias->tensor)}) {
+            const size_t bytes = ggml_nbytes(pair.first);
+            test::require(bytes == ggml_nbytes(pair.second), "deferred packed tensor size");
+            std::vector<std::byte> lhs(bytes), rhs(bytes);
+            ggml_backend_tensor_get(pair.first, lhs.data(), 0, bytes);
+            ggml_backend_tensor_get(pair.second, rhs.data(), 0, bytes);
+            test::require(lhs == rhs, "deferred packed weights must preserve exact bytes");
+        }
+    }
+    for (const auto & parts : std::vector<std::vector<core::BackendWeightStore::TensorPart>>{
+             {}, {{"a.weight", {3, 32}}},
+             {{"a.weight", {2, 32}}, {"b.weight", {1, 64}}}}) {
+        core::BackendWeightStore invalid(execution.backend(), backend.type, "test.invalid", 1024 * 1024);
+        bool rejected = false;
+        try {
+            invalid.load_tensor(*source, parts, assets::TensorStorageType::F32);
+        } catch (const std::runtime_error &) {
+            rejected = true;
+        }
+        test::require(rejected, "invalid packed tensor sources must be rejected before upload");
+    }
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -605,6 +661,7 @@ int main() {
         test_package_spec_errors_name_selected_spec();
         test_malformed_embedded_sidecars_are_rejected_by_the_name_reader();
         test_weight_adapter_conversion();
+        test_deferred_packed_weights();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;
