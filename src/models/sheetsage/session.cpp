@@ -8,11 +8,15 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
+#include <gguf.h>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
+#include <unordered_map>
 #include <filesystem>
 #include <functional>
 #include <iterator>
@@ -152,8 +156,7 @@ std::shared_ptr<const model_spec::ModelContract> require_contract(
     return contract;
 }
 
-SheetSage2DecoderConfig parse_decoder_config(const assets::ResourceBundle & resources) {
-    const auto root = resources.parse_json("config");
+SheetSage2DecoderConfig parse_decoder_config(const io::json::Value & root) {
     SheetSage2DecoderConfig config;
     config.vocab_size = io::json::optional_i64(root, "vocab_size", config.vocab_size);
     config.hidden_size = io::json::optional_i64(root, "hidden_size", config.hidden_size);
@@ -185,6 +188,205 @@ SheetSage2DecoderConfig parse_decoder_config(const assets::ResourceBundle & reso
     }
     return config;
 }
+
+// yue2.cpp writes SheetSage2 as two GGUFs: the head, holding the LoRA factors of
+// the MERT attention projections, the layer mix, the encoder projection and the
+// decoder, with its config under sheetsage2.config_json; and MERT-v2 beside it,
+// named after the config's base model with the head file's quant suffix
+// (SheetSage2-Q8_0.gguf -> MERT-v2-FullSong-Q8_0.gguf).
+std::optional<std::string> yue2cpp_head_config(const std::filesystem::path & path) {
+    if (!std::filesystem::is_regular_file(path) || path.extension() != ".gguf") return std::nullopt;
+    gguf_init_params params{};
+    params.no_alloc = true;
+    params.ctx = nullptr;
+    gguf_context * gguf = gguf_init_from_file(path.string().c_str(), params);
+    if (gguf == nullptr) throw std::runtime_error("failed to read GGUF metadata: " + path.string());
+    std::optional<std::string> config;
+    const int64_t key = gguf_find_key(gguf, "sheetsage2.config_json");
+    if (key >= 0 && gguf_get_kv_type(gguf, key) == GGUF_TYPE_STRING) config = gguf_get_val_str(gguf, key);
+    gguf_free(gguf);
+    return config;
+}
+
+std::filesystem::path yue2cpp_mert_beside(const std::filesystem::path & head, const std::string & base_model) {
+    const std::string name = head.filename().string();
+    const size_t dash = name.find_last_of('-');
+    if (dash == std::string::npos) throw std::runtime_error("yue2.cpp SheetSage2 file name has no quant suffix: " + name);
+    return head.parent_path() / (base_model.substr(base_model.find_last_of('/') + 1) + name.substr(dash));
+}
+
+// Joins the head and MERT sources under the names of the merged package and
+// merges every adapter.<module>.lora_{A,B}.weight pair into <module>.weight
+// as W + scale * B @ A, the merge the published package was converted with.
+class LoraMergedMertSource final : public assets::TensorSource {
+public:
+    LoraMergedMertSource(
+        std::shared_ptr<const assets::TensorSource> head,
+        std::shared_ptr<const assets::TensorSource> mert,
+        float scale)
+        : head_(std::move(head)), mert_(std::move(mert)), scale_(scale) {
+        constexpr std::string_view kAdapter = "adapter.";
+        constexpr std::string_view kLoraA = ".lora_A.weight";
+        constexpr std::string_view kLoraB = ".lora_B.weight";
+        for (const auto & tensor : mert_->tensors()) routes_.emplace(tensor.name, mert_.get());
+        for (const auto & tensor : head_->tensors()) {
+            const std::string & name = tensor.name;
+            if (name.rfind(kAdapter, 0) == 0) {
+                if (name.size() > kLoraB.size() && name.compare(name.size() - kLoraB.size(), kLoraB.size(), kLoraB) == 0) {
+                    continue;
+                }
+                if (name.size() <= kAdapter.size() + kLoraA.size() ||
+                    name.compare(name.size() - kLoraA.size(), kLoraA.size(), kLoraA) != 0) {
+                    throw std::runtime_error("unsupported adapter tensor in yue2.cpp SheetSage2 GGUF: " + name);
+                }
+                const std::string module = name.substr(kAdapter.size(), name.size() - kAdapter.size() - kLoraA.size());
+                const std::string target = module + ".weight";
+                const std::string lora_b = std::string(kAdapter) + module + std::string(kLoraB);
+                if (!head_->has_tensor(lora_b)) throw std::runtime_error("LoRA factor without its pair: " + lora_b);
+                if (!mert_->has_tensor(target)) throw std::runtime_error("LoRA target missing from MERT: " + target);
+                merged_.emplace(target, LoraPair{name, lora_b});
+                continue;
+            }
+            if (!routes_.emplace(name, head_.get()).second) {
+                throw std::runtime_error("tensor present in both SheetSage2 and MERT GGUFs: " + name);
+            }
+        }
+    }
+
+    const std::filesystem::path & source_path() const noexcept override { return head_->source_path(); }
+    bool has_tensor(std::string_view name) const noexcept override {
+        return routes_.find(std::string(name)) != routes_.end();
+    }
+    assets::TensorMetadata require_metadata(std::string_view name) const override {
+        auto metadata = route(name)->require_metadata(name);
+        if (merged_.find(std::string(name)) != merged_.end()) metadata.dtype = "F32";
+        return metadata;
+    }
+    std::vector<assets::TensorMetadata> tensors() const override {
+        std::vector<assets::TensorMetadata> out;
+        out.reserve(routes_.size());
+        for (const auto & [name, _] : routes_) out.push_back(require_metadata(name));
+        std::sort(out.begin(), out.end(), [](const auto & lhs, const auto & rhs) { return lhs.name < rhs.name; });
+        return out;
+    }
+    void release_storage() const override {
+        head_->release_storage();
+        mert_->release_storage();
+    }
+    assets::RawTensorData require_tensor_data(std::string_view name) const override {
+        const auto merged = merged_.find(std::string(name));
+        if (merged == merged_.end()) return route(name)->require_tensor_data(name);
+        assets::RawTensorData data;
+        data.metadata = require_metadata(name);
+        const auto values = merge(merged->first, merged->second);
+        data.bytes.resize(values.size() * sizeof(float));
+        std::memcpy(data.bytes.data(), values.data(), data.bytes.size());
+        return data;
+    }
+    std::vector<float> require_f32(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const override {
+        const auto merged = merged_.find(std::string(name));
+        if (merged == merged_.end()) return route(name)->require_f32(name, stored_shape(name, expected_shape));
+        if (expected_shape && *expected_shape != require_metadata(name).shape) {
+            throw std::runtime_error("tensor shape mismatch: " + std::string(name));
+        }
+        return merge(merged->first, merged->second);
+    }
+    std::optional<std::vector<float>> optional_f32(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const override {
+        if (!has_tensor(name)) return std::nullopt;
+        return require_f32(name, expected_shape);
+    }
+    void set_backend_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        assets::TensorStorageType storage_type,
+        const std::vector<int64_t> & expected_shape) const override {
+        if (merged_.find(std::string(name)) != merged_.end()) {
+            assets::TensorSource::set_backend_tensor(tensor, name, storage_type, expected_shape);
+            return;
+        }
+        route(name)->set_backend_tensor(tensor, name, storage_type, *stored_shape(name, expected_shape));
+    }
+    void set_backend_f32_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        const std::vector<int64_t> & expected_shape) const override {
+        if (merged_.find(std::string(name)) != merged_.end()) {
+            assets::TensorSource::set_backend_f32_tensor(tensor, name, expected_shape);
+            return;
+        }
+        route(name)->set_backend_f32_tensor(tensor, name, *stored_shape(name, expected_shape));
+    }
+    int64_t require_i64_scalar(std::string_view name) const override {
+        return route(name)->require_i64_scalar(name);
+    }
+
+private:
+    struct LoraPair {
+        std::string a;
+        std::string b;
+    };
+
+    // yue2.cpp GGUFs carry no audiocpp.tensor_ranks, so the GGUF loader reports
+    // dimensions without their size-1 axes (a [1, 1, 512] GRN gamma reads as
+    // [512]). Size-1 axes do not change the data layout: an expected shape that
+    // differs only by them is answered with the stored shape.
+    std::optional<std::vector<int64_t>> stored_shape(
+        std::string_view name,
+        const std::optional<std::vector<int64_t>> & expected_shape) const {
+        if (!expected_shape) return expected_shape;
+        const auto stored = route(name)->require_metadata(name).shape;
+        const auto without_unit_axes = [](const std::vector<int64_t> & shape) {
+            std::vector<int64_t> out;
+            for (const int64_t dim : shape) {
+                if (dim != 1) out.push_back(dim);
+            }
+            return out;
+        };
+        if (without_unit_axes(stored) == without_unit_axes(*expected_shape)) return stored;
+        return expected_shape;
+    }
+
+    const assets::TensorSource * route(std::string_view name) const {
+        const auto it = routes_.find(std::string(name));
+        if (it == routes_.end()) throw std::runtime_error("missing tensor in yue2.cpp SheetSage2 GGUFs: " + std::string(name));
+        return it->second;
+    }
+
+    std::vector<float> merge(const std::string & target, const LoraPair & pair) const {
+        const auto w_meta = mert_->require_metadata(target);
+        const auto a_meta = head_->require_metadata(pair.a);
+        const auto b_meta = head_->require_metadata(pair.b);
+        if (w_meta.shape.size() != 2 || a_meta.shape.size() != 2 || b_meta.shape.size() != 2 ||
+            a_meta.shape[0] != b_meta.shape[1] || a_meta.shape[1] != w_meta.shape[1] || b_meta.shape[0] != w_meta.shape[0]) {
+            throw std::runtime_error("LoRA factor shapes do not fit their target: " + target);
+        }
+        const int64_t out_features = w_meta.shape[0];
+        const int64_t in_features = w_meta.shape[1];
+        const int64_t rank = a_meta.shape[0];
+        auto w = mert_->require_f32(target, w_meta.shape);
+        const auto a = head_->require_f32(pair.a, a_meta.shape);
+        const auto b = head_->require_f32(pair.b, b_meta.shape);
+        for (int64_t o = 0; o < out_features; ++o) {
+            float * row = w.data() + o * in_features;
+            for (int64_t k = 0; k < rank; ++k) {
+                const float coeff = scale_ * b[static_cast<size_t>(o * rank + k)];
+                const float * a_row = a.data() + k * in_features;
+                for (int64_t i = 0; i < in_features; ++i) row[i] += coeff * a_row[i];
+            }
+        }
+        return w;
+    }
+
+    std::shared_ptr<const assets::TensorSource> head_;
+    std::shared_ptr<const assets::TensorSource> mert_;
+    float scale_;
+    std::unordered_map<std::string, const assets::TensorSource *> routes_;
+    std::unordered_map<std::string, LoraPair> merged_;
+};
 
 SheetSage2DecoderRuntimeOptions decoder_options_from_session_options(const runtime::SessionOptions & options) {
     SheetSage2DecoderRuntimeOptions out;
@@ -884,9 +1086,25 @@ std::unique_ptr<runtime::IVoiceTaskSession> create_sheetsage2_session(
 
 std::shared_ptr<const SheetSage2Assets> load_sheetsage2_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<SheetSage2Assets>();
-    assets->resources = model_spec::load_resource_bundle_for_family(model_path, kFamily);
-    assets->config = parse_decoder_config(assets->resources);
-    assets->weights = assets->resources.open_tensor_source("weights");
+    if (const auto config_text = yue2cpp_head_config(model_path)) {
+        const auto root = io::json::parse(*config_text);
+        if (io::json::require_string(root, "weights_format") != "adapter") {
+            throw std::runtime_error("yue2.cpp SheetSage2 GGUF must carry LoRA adapter weights: " + model_path.string());
+        }
+        assets->config = parse_decoder_config(root);
+        const auto mert_path = yue2cpp_mert_beside(model_path, io::json::require_string(root, "base_model_name_or_path"));
+        if (!std::filesystem::is_regular_file(mert_path)) {
+            throw std::runtime_error("yue2.cpp SheetSage2 GGUF expects MERT beside it: " + mert_path.string());
+        }
+        const float lora_scale =
+            io::json::require_f32(root, "lora_alpha") / io::json::require_f32(root, "lora_rank");
+        assets->weights = std::make_shared<LoraMergedMertSource>(
+            assets::open_tensor_source(model_path), assets::open_tensor_source(mert_path), lora_scale);
+    } else {
+        assets->resources = model_spec::load_resource_bundle_for_family(model_path, kFamily);
+        assets->config = parse_decoder_config(assets->resources.parse_json("config"));
+        assets->weights = assets->resources.open_tensor_source("weights");
+    }
     assets::require_tensor_shape(*assets->weights, "token_embedding.weight", {assets->config.vocab_size, assets->config.hidden_size});
     assets::require_tensor_shape(
         *assets->weights,

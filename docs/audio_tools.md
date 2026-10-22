@@ -525,6 +525,14 @@ audiocpp_cli --task midi --family sheetsage2 \
 Use the original-precision package; Q8 is not supported. The resulting score can
 condition [YuE2](models/yue2.md) through `abc_file` with `cot=melody` or `cot=full`.
 
+The two-file layout written by [yue2.cpp](https://github.com/ServeurpersoCom/yue2.cpp)
+also loads: pass the SheetSage2 head GGUF as `--model`, with the MERT-v2 GGUF of
+the same precision beside it (`SheetSage2-F32.gguf` next to
+`MERT-v2-FullSong-F32.gguf`). The head carries the config and the LoRA factors of
+the MERT attention projections, and the loader merges them into MERT as
+`W + (lora_alpha / lora_rank) * B @ A` at load. With the F32 pair the score
+matches the merged package byte for byte.
+
 ### Encoder attention memory
 
 | Session option | Values | Default | Description |
