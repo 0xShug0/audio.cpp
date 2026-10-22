@@ -210,8 +210,9 @@ std::vector<WordRange> split_word_ranges(const std::vector<Utf8Span> & spans) {
 }
 
 // A run of hanzi, kana or Hangul without punctuation has no word boundary, so it used to come back as one chunk over
-// the budget, which a model with a per-chunk length limit cuts short. Cut such runs into equal pieces that fit the
-// budget, as Japanese mode does; a Latin word longer than the budget still stays whole.
+// the budget, which a model with a per-chunk length limit cuts short. Cut such words into about equal pieces, as
+// Japanese mode does, but only between two CJK letters, so tags, numbers and Latin text inside the word stay whole. A
+// word without such a boundary, like a long Latin word, stays whole.
 std::vector<WordRange> fit_cjk_runs(
     const std::vector<Utf8Span> & spans,
     const std::vector<WordRange> & words,
@@ -221,19 +222,36 @@ std::vector<WordRange> fit_cjk_runs(
     out.reserve(words.size());
     for (const auto & word : words) {
         const size_t length = word.span_end - word.span_start;
-        if (length <= budget || std::none_of(spans.begin() + word.span_start, spans.begin() + word.span_end,
-                [](const Utf8Span & span) { return is_cjk_letter(span.text); })) {
+        std::vector<size_t> cuts;
+        if (length > budget) {
+            for (size_t pos = word.span_start + 1; pos < word.span_end; ++pos) {
+                if (is_cjk_letter(spans[pos - 1].text) && is_cjk_letter(spans[pos].text)) {
+                    cuts.push_back(pos);
+                }
+            }
+        }
+        if (cuts.empty()) {
             out.push_back(word);
             continue;
         }
         const size_t pieces = (length + budget - 1) / budget;
-        for (size_t i = 0; i < pieces; ++i) {
-            const size_t start = word.span_start + length * i / pieces;
-            const size_t end = word.span_start + length * (i + 1) / pieces;
-            const bool last = i + 1 == pieces;
-            out.push_back({start, end, spans[start].start, spans[end - 1].end,
-                last && word.sentence_break, last && word.clause_break});
+        size_t start = word.span_start;
+        for (size_t i = 1; i < pieces; ++i) {
+            // The allowed cut nearest to the equal-piece position, after the previous cut.
+            const size_t ideal = word.span_start + length * i / pieces;
+            const auto next = std::lower_bound(cuts.begin(), cuts.end(), ideal);
+            size_t cut = next != cuts.end() && *next > start ? *next : 0;
+            if (next != cuts.begin() && *std::prev(next) > start && (cut == 0 || ideal - *std::prev(next) < cut - ideal)) {
+                cut = *std::prev(next);
+            }
+            if (cut == 0) {
+                continue;
+            }
+            out.push_back({start, cut, spans[start].start, spans[cut - 1].end, false, false});
+            start = cut;
         }
+        out.push_back({start, word.span_end, spans[start].start, spans[word.span_end - 1].end,
+            word.sentence_break, word.clause_break});
     }
     return out;
 }

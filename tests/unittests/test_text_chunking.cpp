@@ -109,6 +109,27 @@ int main() {
         const auto latin = engine::text::split_text_chunks("supercalifragilistic is long", 10);
         require(latin.size() == 2 && latin[0] == "supercalifragilistic" && latin[1] == "is long",
                 "latin word over budget stays whole");
+
+        // Cuts fall only between two CJK letters: a tag or a Latin word inside
+        // the run stays in one piece.
+        const std::string tag = "<|emotion:contemplation|>";
+        const std::string tagged = "一二三四五六七八九十" + tag + "一二三四五六七八九十";
+        const auto tag_chunks = engine::text::split_text_chunks(tagged, 12);
+        check_chunks(tagged, 12, 2, "CJK run with a tag");
+        size_t tag_count = 0;
+        for (const auto & c : tag_chunks) {
+            tag_count += c.find(tag) != std::string::npos;
+            require(c.find(tag) != std::string::npos || c.find('|') == std::string::npos, "tag is not cut");
+        }
+        require(tag_count == 1, "tag stays in exactly one chunk");
+        const std::string mixed = "一二三四五六七八九十GPT一二三四五六七八九十";
+        const auto mixed_chunks = engine::text::split_text_chunks(mixed, 8);
+        check_chunks(mixed, 8, 2, "CJK run with a Latin word");
+        size_t gpt = 0;
+        for (const auto & c : mixed_chunks) {
+            gpt += c.find("GPT") != std::string::npos;
+        }
+        require(gpt == 1, "Latin word inside a CJK run stays whole");
     }
 
     // Tag-aware mode: a closing quote or bracket after a sentence stop belongs to
