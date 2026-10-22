@@ -102,6 +102,8 @@ def main() -> None:
     parser.add_argument("--type", choices=("bf16", "q8_0", "q4_0"), default="q8_0",
                         help="Export type (default q8_0): bf16 preserves full BF16; q8_0 unpacks the ternary checkpoint exactly; q4_0 packs the full BF16 body exactly with a Q8_0 embedding. All use the default decoder.")
     parser.add_argument("--s3gen", type=Path, help="Official s3gen_meanflow.safetensors (defaults to MODEL/native/).")
+    parser.add_argument("--embedding-type", choices=("orig", "q8_0"),
+                        help="Embedding/tied-head storage; defaults to q8_0 for Q4 exports, otherwise orig.")
     parser.add_argument("--s3-license", type=Path, help="Chatterbox LICENSE (defaults to MODEL/native/LICENSE).")
     parser.add_argument("--voice-preparer", type=Path, help="Native voice preparer (defaults to the converter's sibling executable).")
     parser.add_argument("--voice-backend", choices=("cpu", "cuda"), default="cpu")
@@ -143,7 +145,7 @@ def main() -> None:
         root = Path(directory)
         import torch
         torch.set_num_threads(args.threads)
-        required = set(next(option["values"] for option in spec["options"]["request"] if option["name"] == "voice_id"))
+        required = set(json.loads((model / "voices/voices.json").read_text(encoding="utf-8")))
         sidecars["cpp/default/voices.json"] = prepare_voices(args, model, s3gen, root, required)
         if args.type in ("q8_0", "q4_0"):
             from kitten_tts2_weights import stage_language_model
@@ -172,7 +174,7 @@ def main() -> None:
                    "--input", f"s3gen={s3gen}", "--input", f"speaker={speaker}",
                    "--output", str(args.output.resolve()), "--type", "orig",
                    "--keep-type", "language_model/model.embed_tokens.weight=" +
-                       ("q8_0" if args.type == "q4_0" else "orig"),
+                       (args.embedding_type or ("q8_0" if args.type == "q4_0" else "orig")),
                    "--keep-type", "language_model/spk_proj.*=orig",
                    # These checkpoints are F32, with scalar I64 batch counters.
                    # Preserve both; forcing scalar counters to F32 is unsupported.
