@@ -62,18 +62,30 @@ uint32_t sglang_murmur_hash32(uint64_t seed, uint32_t position, uint32_t column)
     return fmix32(hash);
 }
 
-int32_t argmax_row(const float * logits, int64_t vocab_size) {
-    int32_t best = -1;
-    float best_value = -std::numeric_limits<float>::infinity();
-    for (int64_t i = 0; i < vocab_size; ++i) {
+int32_t argmax_row(const float * logits, int64_t vocab_size, bool filter_nan_logits) {
+    if (filter_nan_logits) {
+        int32_t best = -1;
+        float best_value = -std::numeric_limits<float>::infinity();
+        for (int64_t i = 0; i < vocab_size; ++i) {
+            const float value = logits[i];
+            if (std::isfinite(value) && value > best_value) {
+                best_value = value;
+                best = static_cast<int32_t>(i);
+            }
+        }
+        if (best < 0) {
+            throw std::runtime_error("Higgs TTS sampler kept no finite logits");
+        }
+        return best;
+    }
+    int32_t best = 0;
+    float best_value = logits[0];
+    for (int64_t i = 1; i < vocab_size; ++i) {
         const float value = logits[i];
-        if (std::isfinite(value) && (best < 0 || value > best_value)) {
+        if (value > best_value) {
             best_value = value;
             best = static_cast<int32_t>(i);
         }
-    }
-    if (best < 0) {
-        throw std::runtime_error("Higgs TTS sampler kept no finite logits");
     }
     return best;
 }
@@ -380,7 +392,7 @@ int32_t sample_codebook_row(const float * logits,
     }
     if (options.temperature <= kGreedyTemperatureThreshold ||
         (options.top_k.has_value() && *options.top_k == 1)) {
-        return argmax_row(logits, vocab_size);
+        return argmax_row(logits, vocab_size, options.filter_nan_logits);
     }
     if (!(options.temperature > 0.0F) || !std::isfinite(options.temperature)) {
         throw std::runtime_error("Higgs TTS sampler temperature must be finite and positive");
