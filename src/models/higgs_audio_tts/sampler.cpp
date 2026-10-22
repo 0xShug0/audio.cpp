@@ -195,33 +195,26 @@ void apply_top_k_to_scores(SamplerScratch & scratch, int64_t vocab_size, int64_t
                 scratch.order.push_back(i);
             }
         }
+        if (scratch.order.size() <= static_cast<size_t>(top_k)) {
+            scratch.kept = scratch.order;
+            return;
+        }
     } else {
         scratch.order.resize(static_cast<size_t>(vocab_size));
         std::iota(scratch.order.begin(), scratch.order.end(), 0);
     }
-    if (scratch.order.empty()) {
-        return;
-    }
-    const size_t kept_count = std::min(static_cast<size_t>(top_k), scratch.order.size());
-    if (kept_count == scratch.order.size()) {
-        scratch.kept = scratch.order;
-        return;
-    }
-
-    auto kth = scratch.order.begin() + static_cast<std::ptrdiff_t>(kept_count - 1);
+    auto kth = scratch.order.begin() + static_cast<std::ptrdiff_t>(top_k - 1);
     std::nth_element(
         scratch.order.begin(), kth, scratch.order.end(), [&](int64_t lhs, int64_t rhs) {
             return scratch.scores[static_cast<size_t>(lhs)] >
                    scratch.scores[static_cast<size_t>(rhs)];
         });
     const float threshold = scratch.scores[static_cast<size_t>(*kth)];
-    scratch.kept.reserve(kept_count);
-    for (int64_t index = 0; index < vocab_size; ++index) {
-        if (scratch.scores[static_cast<size_t>(index)] >= threshold &&
-            (!filter_nan_logits || std::isfinite(scratch.scores[static_cast<size_t>(index)]))) {
-            // Preserve the previous tie behavior: include every logit equal
-            // to the kth score, even if that means retaining more than k.
-            scratch.kept.push_back(index);
+    scratch.kept.reserve(static_cast<size_t>(top_k));
+    for (int64_t i = 0; i < vocab_size; ++i) {
+        if (scratch.scores[static_cast<size_t>(i)] >= threshold &&
+            (!filter_nan_logits || std::isfinite(scratch.scores[static_cast<size_t>(i)]))) {
+            scratch.kept.push_back(i);
         }
     }
 }
