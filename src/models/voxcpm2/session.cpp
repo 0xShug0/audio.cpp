@@ -338,10 +338,10 @@ VoxCPM2SessionBase::VoxCPM2SessionBase(runtime::TaskSpec task,
   const auto perf_mode =
       runtime::find_option(options.options, {"voxcpm2.perf_mode"})
           .value_or("off");
-  if (perf_mode != "off" && perf_mode != "optimized") {
-    throw std::runtime_error("voxcpm2.perf_mode must be off or optimized");
+  if (perf_mode != "off" && perf_mode != "cuda_perf") {
+    throw std::runtime_error("voxcpm2.perf_mode must be off or cuda_perf");
   }
-  generator_config_.optimized = perf_mode == "optimized";
+  generator_config_.optimized = perf_mode == "cuda_perf";
   debug::trace_log_scalar("voxcpm2.perf_mode", perf_mode);
   decoder_config_.weight_context_bytes = runtime::parse_size_mb_option(
       options.options, {"voxcpm2.audiovae_weight_context_mb"},

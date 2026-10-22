@@ -59,7 +59,7 @@ runtime::ModelCliInterface cli(const VoxCPM2Assets &) {
       {"voxcpm2.audiovae_weight_type", "native|f32|f16|bf16|q8_0", "AudioVAE weight storage; defaults independently to native, not the shared weight_type."},
       {"voxcpm2.prompt_cache_slots", "int", "Prompt and prompt-audio embedding cache slots; default 1.", false, "1", "0"},
       {"voxcpm2.mem_saver", "bool", "Use tighter graph workspaces and release request runtime graphs; default true.", false, "true"},
-      {"voxcpm2.perf_mode", "enum", "off or optimized; optimized packs QKV and gate/up weights without changing their dtype. May change numerical results and generated audio.", false, "off"},
+      {"voxcpm2.perf_mode", "enum", "off or cuda_perf; cuda_perf packs QKV and gate/up weights without changing their dtype. May change numerical results and generated audio.", false, "off"},
       {"voxcpm2.audiovae_tile_frames", "int", "Opt-in causal AudioVAE tiling; zero preserves full decoding.", false, "0", "0"},
       {"voxcpm2.weight_context_mb", "int", "Context or graph arena size in MiB.", false, "3072", "1"},
       {"voxcpm2.text_embedding_graph_arena_mb", "int", "Text embedding host graph-metadata arena size in MiB, not device workspace.", false, "64", "1"},

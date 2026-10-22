@@ -196,7 +196,7 @@
         "required": false,
         "values": [
           "off",
-          "optimized"
+          "cuda_perf"
         ],
         "default": "off"
       },
