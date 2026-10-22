@@ -32,6 +32,8 @@ struct VoxCPM2MiniCPMLayerWeights {
   engine::modules::LinearWeights gate_proj;
   engine::modules::LinearWeights up_proj;
   engine::modules::LinearWeights down_proj;
+  std::optional<engine::modules::LinearWeights> qkv_proj;
+  std::optional<engine::modules::LinearWeights> gate_up_proj;
 };
 
 struct VoxCPM2MiniCPMWeights {
@@ -112,7 +114,8 @@ public:
   VoxCPM2WeightsRuntime(std::shared_ptr<const VoxCPM2Assets> assets,
                         engine::core::ExecutionContext &execution_context,
                         size_t weight_context_bytes,
-                        engine::assets::TensorStorageType weight_storage_type);
+                        engine::assets::TensorStorageType weight_storage_type,
+                        bool optimized = false);
   ~VoxCPM2WeightsRuntime();
 
   const VoxCPM2Assets &assets() const noexcept;

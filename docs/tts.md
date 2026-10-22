@@ -1058,6 +1058,8 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `voxcpm2.audiovae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | AudioVAE weight storage; defaults independently to native, not the shared weight_type. |
 | `voxcpm2.prompt_cache_slots` | integer >= 0 | `1` | Cached encoded prompt slots; zero disables reuse. |
 | `voxcpm2.mem_saver` | bool | `true` | Release staged runtime graphs. |
+| `voxcpm2.audiovae_tile_frames` | integer >= 0 | `0` | Opt-in causal AudioVAE tiling; zero preserves full decoding. Set 128 to reduce decoder memory, at the cost of repeated context computation that can slow CPU decoding. |
+| `voxcpm2.perf_mode` | `off`, `optimized` | `off` | `optimized` packs QKV and gate/up projections using their existing weight dtype. May change numerical results and generated audio; `off` preserves standard execution. |
 | `voxcpm2.lora` | directory or checkpoint file | not set | Native LoRA weights with adjacent `lora_config.json`; merged at session creation without changing the AudioVAE. |
 | `voxcpm2.lora_scale` | finite float | `1` | Multiplier for the adapter's configured alpha/r scaling. |
 | `voxcpm2.weight_context_mb` | integer >= 1 | `3072` | Context or graph arena size in MiB. |

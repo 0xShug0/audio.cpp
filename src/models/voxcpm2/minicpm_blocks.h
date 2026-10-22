@@ -164,18 +164,41 @@ minicpm_layer(engine::core::ModuleBuildContext &ctx,
   auto hidden = engine::modules::RMSNormModule(
                     {config.hidden_size, config.rms_norm_eps, true, false})
                     .build(ctx, input, layer.input_norm);
-  auto q = engine::modules::LinearModule(
-               binding::linear_config(config.hidden_size,
-                                      config.num_attention_heads * dim, false))
-               .build(ctx, hidden, layer.q_proj);
-  auto k = engine::modules::LinearModule(
-               binding::linear_config(config.hidden_size,
-                                      config.num_key_value_heads * dim, false))
-               .build(ctx, hidden, layer.k_proj);
-  auto v = engine::modules::LinearModule(
-               binding::linear_config(config.hidden_size,
-                                      config.num_key_value_heads * dim, false))
-               .build(ctx, hidden, layer.v_proj);
+  engine::core::TensorValue q, k, v;
+  if (layer.qkv_proj) {
+    auto packed = engine::modules::LinearModule(
+                      binding::linear_config(config.hidden_size,
+                                             (config.num_attention_heads +
+                                              2 * config.num_key_value_heads) *
+                                                 dim,
+                                             false))
+                      .build(ctx, hidden, *layer.qkv_proj);
+    const auto axis = static_cast<int>(hidden.shape.rank - 1);
+    q = engine::modules::SliceModule(
+            {axis, 0, config.num_attention_heads * dim})
+            .build(ctx, packed);
+    k = engine::modules::SliceModule({axis, config.num_attention_heads * dim,
+                                      config.num_key_value_heads * dim})
+            .build(ctx, packed);
+    v = engine::modules::SliceModule(
+            {axis,
+             (config.num_attention_heads + config.num_key_value_heads) * dim,
+             config.num_key_value_heads * dim})
+            .build(ctx, packed);
+  } else {
+    q = engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   config.num_attention_heads * dim, false))
+            .build(ctx, hidden, layer.q_proj);
+    k = engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   config.num_key_value_heads * dim, false))
+            .build(ctx, hidden, layer.k_proj);
+    v = engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   config.num_key_value_heads * dim, false))
+            .build(ctx, hidden, layer.v_proj);
+  }
   q = apply_minicpm_rope(ctx,
                          reshape_heads(ctx, q, config.num_attention_heads, dim),
                          positions, weights);
@@ -219,15 +242,31 @@ minicpm_layer(engine::core::ModuleBuildContext &ctx,
   hidden = engine::modules::RMSNormModule(
                {config.hidden_size, config.rms_norm_eps, true, false})
                .build(ctx, x, layer.post_norm);
-  auto gate = engine::modules::LinearModule(
-                  binding::linear_config(config.hidden_size,
-                                         config.intermediate_size, false))
-                  .build(ctx, hidden, layer.gate_proj);
-  gate = engine::modules::SiluModule{}.build(ctx, gate);
-  auto up = engine::modules::LinearModule(
-                binding::linear_config(config.hidden_size,
-                                       config.intermediate_size, false))
-                .build(ctx, hidden, layer.up_proj);
+  engine::core::TensorValue gate, up;
+  if (layer.gate_up_proj) {
+    auto packed =
+        engine::modules::LinearModule(
+            binding::linear_config(config.hidden_size,
+                                   2 * config.intermediate_size, false))
+            .build(ctx, hidden, *layer.gate_up_proj);
+    const auto axis = static_cast<int>(hidden.shape.rank - 1);
+    gate = engine::modules::SliceModule({axis, 0, config.intermediate_size})
+               .build(ctx, packed);
+    up = engine::modules::SliceModule(
+             {axis, config.intermediate_size, config.intermediate_size})
+             .build(ctx, packed);
+    gate = engine::modules::SiluModule{}.build(ctx, gate);
+  } else {
+    gate = engine::modules::LinearModule(
+               binding::linear_config(config.hidden_size,
+                                      config.intermediate_size, false))
+               .build(ctx, hidden, layer.gate_proj);
+    gate = engine::modules::SiluModule{}.build(ctx, gate);
+    up = engine::modules::LinearModule(
+             binding::linear_config(config.hidden_size,
+                                    config.intermediate_size, false))
+             .build(ctx, hidden, layer.up_proj);
+  }
   auto gated = engine::modules::MulModule{}.build(ctx, gate, up);
   auto ff = engine::modules::LinearModule(
                 binding::linear_config(config.intermediate_size,
