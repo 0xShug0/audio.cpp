@@ -13,7 +13,9 @@ using engine::community_models::granite5asr::CtcPiece;
 using engine::community_models::granite5asr::DecodedCtcPiece;
 using engine::community_models::granite5asr::Granite5ASRConfig;
 using engine::community_models::granite5asr::ctc_greedy_pieces;
+using engine::community_models::granite5asr::language_code_from_token;
 using engine::community_models::granite5asr::samples_per_ctc_frame;
+using engine::community_models::granite5asr::scale_sample_to_rate;
 using engine::community_models::granite5asr::words_from_decoded_ctc_pieces;
 
 constexpr int32_t kBlank = 0;
@@ -82,6 +84,61 @@ void test_subword_gap_stays_inside_one_word() {
     engine::test::require_eq(words[0].span.start_sample, int64_t(0), "word starts at the first piece");
     engine::test::require_eq(words[0].span.end_sample, int64_t(43), "word ends at the last piece");
     engine::test::require_close(words[0].confidence, 0.5f, 1.0e-5f, "confidence ignores blank frames");
+}
+
+void test_punctuation_does_not_extend_the_word() {
+    const DecodedCtcPiece effort{"effort", 0, 2, 2.0 * std::log(0.9), 2};
+    const DecodedCtcPiece period{".", 2, 80, std::log(0.5), 78};
+    const DecodedCtcPiece toward{" toward", 80, 82, std::log(0.8), 2};
+    const auto words = words_from_decoded_ctc_pieces(
+        {effort, period, toward}, 1, 0, 1000, kRate, kRate);
+    engine::test::require_eq(words.size(), size_t(2), "punctuation stays on the previous word");
+    engine::test::require(words[0].word == "effort.", "the period is kept on the word");
+    engine::test::require_eq(words[0].span.start_sample, int64_t(0), "word still starts at the letters");
+    engine::test::require_eq(words[0].span.end_sample, int64_t(2), "the period's pause is not part of the word");
+    engine::test::require_close(words[0].confidence, 0.9f, 1.0e-5f, "punctuation frames are not scored");
+    engine::test::require(words[1].word == "toward", "the next word is unchanged");
+    engine::test::require_eq(words[1].span.start_sample, int64_t(80), "the next word keeps its own start");
+
+    const DecodedCtcPiece spaced_period{" .", 2, 80, 0.0, 1};
+    const auto spaced = words_from_decoded_ctc_pieces(
+        {effort, spaced_period}, 1, 0, 1000, kRate, kRate);
+    engine::test::require_eq(spaced.size(), size_t(1), "a spaced period is not its own word");
+    engine::test::require(spaced[0].word == "effort.", "a spaced period is written onto the word");
+    engine::test::require_eq(spaced[0].span.end_sample, int64_t(2), "a spaced period does not move the end");
+
+    const DecodedCtcPiece mark{"。", 2, 40, 0.0, 1};
+    const auto cjk = words_from_decoded_ctc_pieces({effort, mark}, 1, 0, 1000, kRate, kRate);
+    engine::test::require(cjk[0].word == "effort。", "ideographic punctuation is kept");
+    engine::test::require_eq(cjk[0].span.end_sample, int64_t(2), "ideographic punctuation does not move the end");
+}
+
+void test_leading_symbols_stay_on_the_following_word() {
+    const DecodedCtcPiece euro{"€", 0, 1, std::log(0.9), 1};
+    const DecodedCtcPiece fifty{"50", 1, 3, 2.0 * std::log(0.8), 2};
+    const auto amount = words_from_decoded_ctc_pieces(
+        {euro, fifty}, 1, 0, 1000, kRate, kRate);
+    engine::test::require_eq(amount.size(), size_t(1), "a leading euro stays with the number");
+    engine::test::require(amount[0].word == "€50", "€50 keeps the currency symbol");
+    engine::test::require_eq(amount[0].span.start_sample, int64_t(0), "the symbol starts the word");
+    engine::test::require_eq(amount[0].span.end_sample, int64_t(3), "the number ends the word");
+
+    const DecodedCtcPiece quote{"\"", 0, 1, std::log(0.9), 1};
+    const DecodedCtcPiece hello{"Hello", 1, 4, std::log(0.8), 3};
+    const auto quoted = words_from_decoded_ctc_pieces(
+        {quote, hello}, 1, 0, 1000, kRate, kRate);
+    engine::test::require_eq(quoted.size(), size_t(1), "a leading quote stays with the word");
+    engine::test::require(quoted[0].word == "\"Hello", "the opening quote is kept");
+
+    const DecodedCtcPiece said{"said", 0, 2, std::log(0.7), 2};
+    const DecodedCtcPiece spaced_euro{" €", 2, 3, std::log(0.9), 1};
+    const DecodedCtcPiece digits{"50", 3, 5, std::log(0.8), 2};
+    const auto after = words_from_decoded_ctc_pieces(
+        {said, spaced_euro, digits}, 1, 0, 1000, kRate, kRate);
+    engine::test::require_eq(after.size(), size_t(2), "a spaced currency symbol starts the next word");
+    engine::test::require(after[0].word == "said", "the previous word does not take the symbol");
+    engine::test::require(after[1].word == "€50", "the symbol prefixes the following word");
+    engine::test::require_eq(after[0].span.end_sample, int64_t(2), "the previous word keeps its own end");
 }
 
 void test_leading_space_leaves_blanks_between_words() {
@@ -180,6 +237,22 @@ void test_frames_convert_to_input_rate_samples() {
     engine::test::require_eq(clamped[0].span.end_sample, int64_t(28040), "8 kHz end clamps to the input buffer");
 }
 
+void test_streaming_samples_use_the_input_rate() {
+    engine::test::require_eq(scale_sample_to_rate(16000, 16000, 16000), int64_t(16000), "16 kHz stays on its own clock");
+    engine::test::require_eq(scale_sample_to_rate(16000, 16000, 48000), int64_t(48000), "one 16 kHz second is 48000 input samples");
+    engine::test::require_eq(scale_sample_to_rate(16000, 16000, 8000), int64_t(8000), "one 16 kHz second is 8000 input samples");
+    engine::test::require_eq(scale_sample_to_rate(0, 16000, 48000), int64_t(0), "the origin stays at 0");
+}
+
+void test_language_tokens_are_recognized() {
+    engine::test::require(language_code_from_token("<|en|>") == std::string("en"), "en tag");
+    engine::test::require(language_code_from_token("<|fr|>") == std::string("fr"), "fr tag");
+    engine::test::require(language_code_from_token("<|ja|>") == std::string("ja"), "ja tag");
+    engine::test::require(language_code_from_token("<|zh|>").empty(), "unsupported tags are not a language");
+    engine::test::require(language_code_from_token("hello").empty(), "ordinary text is not a language");
+    engine::test::require(language_code_from_token("<|timestamp|>").empty(), "the timestamp control is not a language");
+}
+
 void test_end_sample_clamps_and_keeps_one_sample() {
     const DecodedCtcPiece inside{"hi", 0, 10, 0.0, 1};
     const auto clamped = words_from_decoded_ctc_pieces({inside}, 1280, 0, 1000, kRate, kRate);
@@ -202,6 +275,8 @@ int main() {
         test_blank_gap_between_labels();
         test_repeated_label_is_one_piece();
         test_subword_gap_stays_inside_one_word();
+        test_punctuation_does_not_extend_the_word();
+        test_leading_symbols_stay_on_the_following_word();
         test_leading_space_leaves_blanks_between_words();
         test_non_positive_probability_zeros_confidence();
         test_sample_stride_and_offset();
@@ -209,6 +284,8 @@ int main() {
         test_end_sample_clamps_and_keeps_one_sample();
         test_probability_above_one_clamps();
         test_end_sample_clamps_to_chunk_end();
+        test_streaming_samples_use_the_input_rate();
+        test_language_tokens_are_recognized();
         std::cout << "PASS: granite5asr CTC word timestamps\n";
         return 0;
     } catch (const std::exception & error) {
