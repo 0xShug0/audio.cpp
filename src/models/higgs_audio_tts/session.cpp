@@ -125,6 +125,9 @@ HiggsGenerationOptions generation_options_from_request(
     if (const auto value = runtime::parse_int_option(request.options, {"top_k"})) {
         options.top_k = *value;
     }
+    if (const auto value = runtime::find_option(request.options, {"filter_nan_logits"})) {
+        options.filter_nan_logits = runtime::parse_bool_option(*value, "filter_nan_logits");
+    }
     if (const auto value = runtime::parse_finite_float_option(request.options, {"repetition_penalty"})) {
         options.repetition_penalty = *value;
     }

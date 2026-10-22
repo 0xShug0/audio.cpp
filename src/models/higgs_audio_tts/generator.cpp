@@ -432,6 +432,7 @@ HiggsGenerationResult HiggsGenerator::generate(
     sampling.temperature = request.options.temperature;
     sampling.top_p = request.options.top_p;
     sampling.top_k = request.options.top_k;
+    sampling.filter_nan_logits = request.options.filter_nan_logits;
     // Python accepts repetition_penalty on the public speech request, but the
     // Higgs audio-codebook sampler does not consume it.
     sampling.has_seed = request.options.seed.has_value();

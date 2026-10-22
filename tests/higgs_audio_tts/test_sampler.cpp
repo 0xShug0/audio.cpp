@@ -17,16 +17,17 @@ void test_top_k_ignores_non_finite_logits() {
     auto state = sampler.make_state();
     HiggsSamplingOptions options;
     options.temperature = 1.0F;
-    options.top_k = 3;
+    options.top_k = 2;
+    options.filter_nan_logits = true;
     options.has_seed = true;
-    options.seed = 123;
+    options.seed = 3;
 
     const float nan = std::numeric_limits<float>::quiet_NaN();
-    const std::vector<float> logits = {nan, 0.0F, 1.0F, 2.0F};
+    const std::vector<float> logits = {0.0F, 1.0F, 2.0F, nan};
     const auto & codes = sampler.step(logits.data(), logits.size(), state, options);
 
-    if (codes.size() != 1 || codes.front() < 1 || codes.front() > 3) {
-        throw std::runtime_error("Higgs top-k sampling selected a non-finite logit");
+    if (codes.size() != 1 || codes.front() < 1 || codes.front() > 2) {
+        throw std::runtime_error("Higgs top-k sampling selected outside the finite top two");
     }
 }
 
@@ -39,6 +40,7 @@ void test_top_k_reports_when_all_logits_are_non_finite() {
     HiggsSamplingOptions options;
     options.temperature = 1.0F;
     options.top_k = 2;
+    options.filter_nan_logits = true;
     options.has_seed = true;
     const float nan = std::numeric_limits<float>::quiet_NaN();
     const float inf = std::numeric_limits<float>::infinity();
