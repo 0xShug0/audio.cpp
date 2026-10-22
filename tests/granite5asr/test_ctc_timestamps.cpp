@@ -113,6 +113,34 @@ void test_punctuation_does_not_extend_the_word() {
     engine::test::require_eq(cjk[0].span.end_sample, int64_t(2), "ideographic punctuation does not move the end");
 }
 
+void test_leading_symbols_stay_on_the_following_word() {
+    const DecodedCtcPiece euro{"€", 0, 1, std::log(0.9), 1};
+    const DecodedCtcPiece fifty{"50", 1, 3, 2.0 * std::log(0.8), 2};
+    const auto amount = words_from_decoded_ctc_pieces(
+        {euro, fifty}, 1, 0, 1000, kRate, kRate);
+    engine::test::require_eq(amount.size(), size_t(1), "a leading euro stays with the number");
+    engine::test::require(amount[0].word == "€50", "€50 keeps the currency symbol");
+    engine::test::require_eq(amount[0].span.start_sample, int64_t(0), "the symbol starts the word");
+    engine::test::require_eq(amount[0].span.end_sample, int64_t(3), "the number ends the word");
+
+    const DecodedCtcPiece quote{"\"", 0, 1, std::log(0.9), 1};
+    const DecodedCtcPiece hello{"Hello", 1, 4, std::log(0.8), 3};
+    const auto quoted = words_from_decoded_ctc_pieces(
+        {quote, hello}, 1, 0, 1000, kRate, kRate);
+    engine::test::require_eq(quoted.size(), size_t(1), "a leading quote stays with the word");
+    engine::test::require(quoted[0].word == "\"Hello", "the opening quote is kept");
+
+    const DecodedCtcPiece said{"said", 0, 2, std::log(0.7), 2};
+    const DecodedCtcPiece spaced_euro{" €", 2, 3, std::log(0.9), 1};
+    const DecodedCtcPiece digits{"50", 3, 5, std::log(0.8), 2};
+    const auto after = words_from_decoded_ctc_pieces(
+        {said, spaced_euro, digits}, 1, 0, 1000, kRate, kRate);
+    engine::test::require_eq(after.size(), size_t(2), "a spaced currency symbol starts the next word");
+    engine::test::require(after[0].word == "said", "the previous word does not take the symbol");
+    engine::test::require(after[1].word == "€50", "the symbol prefixes the following word");
+    engine::test::require_eq(after[0].span.end_sample, int64_t(2), "the previous word keeps its own end");
+}
+
 void test_leading_space_leaves_blanks_between_words() {
     std::vector<CtcArgmaxFrame> frames;
     frames.insert(frames.end(), 2, frame(7, 0.8f));
@@ -248,6 +276,7 @@ int main() {
         test_repeated_label_is_one_piece();
         test_subword_gap_stays_inside_one_word();
         test_punctuation_does_not_extend_the_word();
+        test_leading_symbols_stay_on_the_following_word();
         test_leading_space_leaves_blanks_between_words();
         test_non_positive_probability_zeros_confidence();
         test_sample_stride_and_offset();

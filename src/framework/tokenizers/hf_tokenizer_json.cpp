@@ -94,24 +94,100 @@ int hex_nibble(char ch) {
     return -1;
 }
 
-// SentencePiece byte-fallback pieces are the six characters <0xHH>.
+bool is_utf8_continuation(unsigned char byte) {
+    return (byte & 0xC0) == 0x80;
+}
+
+// Matches the Hugging Face byte-fallback decoder: valid UTF-8 is kept, and each
+// incomplete or illegal sequence becomes U+FFFD.
+std::string utf8_lossy(const std::string & bytes) {
+    static constexpr char kReplacement[] = "\xEF\xBF\xBD";
+    std::string out;
+    out.reserve(bytes.size());
+    const auto * data = reinterpret_cast<const unsigned char *>(bytes.data());
+    const size_t size = bytes.size();
+    size_t index = 0;
+    while (index < size) {
+        const unsigned char lead = data[index];
+        if (lead < 0x80) {
+            out.push_back(static_cast<char>(lead));
+            ++index;
+            continue;
+        }
+        size_t width = 0;
+        if (lead >= 0xC2 && lead <= 0xDF) {
+            width = 2;
+        } else if (lead >= 0xE0 && lead <= 0xEF) {
+            width = 3;
+        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            width = 4;
+        }
+        if (width == 0) {
+            out.append(kReplacement);
+            ++index;
+            continue;
+        }
+        if (index + width > size) {
+            out.append(kReplacement);
+            break;
+        }
+        bool continuations = true;
+        for (size_t offset = 1; offset < width; ++offset) {
+            if (!is_utf8_continuation(data[index + offset])) {
+                continuations = false;
+                break;
+            }
+        }
+        const bool overlong_or_illegal =
+            (lead == 0xE0 && data[index + 1] < 0xA0) ||
+            (lead == 0xED && data[index + 1] >= 0xA0) ||
+            (lead == 0xF0 && data[index + 1] < 0x90) ||
+            (lead == 0xF4 && data[index + 1] > 0x8F);
+        if (!continuations) {
+            out.append(kReplacement);
+            ++index;
+            continue;
+        }
+        if (overlong_or_illegal) {
+            out.append(kReplacement);
+            index += width;
+            continue;
+        }
+        out.append(bytes, index, width);
+        index += width;
+    }
+    return out;
+}
+
+// SentencePiece byte-fallback pieces are the six characters <0xHH>. Consecutive
+// pieces are one UTF-8 sequence. A lone <0xC3> is an incomplete sequence.
 std::string decode_byte_fallback(const std::string & text) {
     std::string out;
     out.reserve(text.size());
+    std::string pending;
+    const auto flush_pending = [&]() {
+        if (pending.empty()) {
+            return;
+        }
+        out += utf8_lossy(pending);
+        pending.clear();
+    };
     for (size_t i = 0; i < text.size();) {
         if (i + 6 <= text.size() &&
             text[i] == '<' && text[i + 1] == '0' && text[i + 2] == 'x' && text[i + 5] == '>') {
             const int hi = hex_nibble(text[i + 3]);
             const int lo = hex_nibble(text[i + 4]);
             if (hi >= 0 && lo >= 0) {
-                out.push_back(static_cast<char>((hi << 4) | lo));
+                pending.push_back(static_cast<char>((hi << 4) | lo));
                 i += 6;
                 continue;
             }
         }
+        flush_pending();
         out.push_back(text[i]);
         ++i;
     }
+    flush_pending();
     return out;
 }
 

@@ -58,6 +58,25 @@ void test_sequence_metaspace_and_byte_fallback() {
             "byte fallback joins the current word, got: [" + tokenizer->decode_ids({1, 3}) + "]");
 }
 
+void test_incomplete_byte_fallback_is_the_replacement_character() {
+    const auto path = write_tokenizer(R"({
+        "model": {"vocab": {"<unk>": 0, "<0xC3>": 1, "<0xA9>": 2}},
+        "decoder": {
+            "type": "Sequence",
+            "decoders": [
+                {"type": "ByteFallback"},
+                {"type": "Fuse"}
+            ]
+        }
+    })");
+    const auto tokenizer = engine::tokenizers::load_huggingface_tokenizer_json(path);
+    std::filesystem::remove(path);
+    require(tokenizer->decode_ids({1}) == "\xEF\xBF\xBD",
+            "an incomplete byte sequence is the replacement character, got: [" + tokenizer->decode_ids({1}) + "]");
+    require(tokenizer->decode_ids({1, 2}) == "\xC3\xA9",
+            "a complete byte sequence stays the character, got: [" + tokenizer->decode_ids({1, 2}) + "]");
+}
+
 void test_byte_level_decoder_is_unchanged() {
     const auto path = write_tokenizer(
         "{\"model\":{\"vocab\":{\"<|blank|>\":0,\"\\u0120hello\":1,\"world\":2}},"
@@ -73,6 +92,7 @@ void test_byte_level_decoder_is_unchanged() {
 int main() {
     try {
         test_sequence_metaspace_and_byte_fallback();
+        test_incomplete_byte_fallback_is_the_replacement_character();
         test_byte_level_decoder_is_unchanged();
     } catch (const std::exception & error) {
         std::cerr << "hf tokenizer sequence decode test failed: " << error.what() << "\n";

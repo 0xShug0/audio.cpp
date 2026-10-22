@@ -139,11 +139,27 @@ inline int64_t ctc_frame_to_input_sample(
         static_cast<double>(model_sample_rate)));
 }
 
-// A piece that is only punctuation is written onto the current word. Its frames
-// often run through the following pause, so they do not move the word's end or
-// enter its confidence.
+// Currency marks and opening quotes belong to the word that follows. A period
+// or comma does not: its frames often run through the following pause.
+inline bool leading_symbol(uint32_t code) {
+    if (code == '"' || code == '$' || code == '(' || code == '[' || code == '{') {
+        return true;
+    }
+    if (code == 0x00A3 || code == 0x00A5 || code == 0x00AB || code == 0x00BB ||
+        code == 0x2039 || code == 0x203A) {
+        return true;
+    }
+    return (code >= 0x2018 && code <= 0x201F) ||
+        (code >= 0x20A0 && code <= 0x20CF) ||
+        (code >= 0x300C && code <= 0x300F);
+}
+
+// A piece that is only trailing punctuation is written onto the current word.
+// Its frames often run through the following pause, so they do not move the
+// word's end or enter its confidence. A leading symbol is ordinary word text.
 inline bool punctuation_only_piece(const std::string & text) {
     bool saw_mark = false;
+    bool saw_leading = false;
     size_t index = 0;
     while (index < text.size()) {
         const auto lead = static_cast<unsigned char>(text[index]);
@@ -185,9 +201,13 @@ inline bool punctuation_only_piece(const std::string & text) {
         if (ascii_word || letter) {
             return false;
         }
+        if (leading_symbol(code)) {
+            saw_leading = true;
+            continue;
+        }
         saw_mark = true;
     }
-    return saw_mark;
+    return saw_mark && !saw_leading;
 }
 
 inline std::vector<runtime::WordTimestamp> words_from_decoded_ctc_pieces(
