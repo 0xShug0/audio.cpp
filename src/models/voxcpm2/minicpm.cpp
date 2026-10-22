@@ -129,7 +129,7 @@ load_minicpm_weights(engine::core::BackendWeightStore &store,
                  config.num_key_value_heads * dim},
                 {layer_prefix + ".self_attn.v_proj.weight", std::nullopt,
                  config.num_key_value_heads * dim}},
-               false, true})
+               false})
               .build(store, source, storage_type);
     } else {
       layer_weights.q_proj = linear_weights(
@@ -156,7 +156,7 @@ load_minicpm_weights(engine::core::BackendWeightStore &store,
                  config.intermediate_size},
                 {layer_prefix + ".mlp.up_proj.weight", std::nullopt,
                  config.intermediate_size}},
-               false, true})
+               false})
               .build(store, source, storage_type);
     } else {
       layer_weights.gate_proj = linear_weights(

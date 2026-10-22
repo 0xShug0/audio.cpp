@@ -12,7 +12,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <stdexcept>
@@ -144,23 +143,6 @@ public:
         return value;
     }
 
-    // The initializer runs during upload(); captured sources must outlive that call.
-    TensorValue make_tensor_deferred(
-        const TensorShape & shape,
-        ggml_type type,
-        std::function<void(ggml_tensor *)> initialize) {
-        if (!initialize) {
-            throw std::runtime_error(name_ + " deferred tensor initializer is empty");
-        }
-        auto value = make_backend_tensor(shape, type);
-        PendingUpload upload;
-        upload.tensor = value.tensor;
-        upload.kind = PendingUploadKind::Initializer;
-        upload.initialize = std::move(initialize);
-        pending_.push_back(std::move(upload));
-        return value;
-    }
-
     TensorValue make_from_f32(
         const TensorShape & shape,
         assets::TensorStorageType storage_type,
@@ -207,8 +189,6 @@ public:
                     upload.expected_shape);
             } else if (upload.kind == PendingUploadKind::F32) {
                 upload.source->set_backend_f32_tensor(upload.tensor, upload.name, upload.expected_shape);
-            } else if (upload.kind == PendingUploadKind::Initializer) {
-                upload.initialize(upload.tensor);
             } else {
                 upload_bytes(upload.tensor, upload.bytes);
                 upload.bytes.clear();
@@ -237,7 +217,6 @@ private:
         Tensor,
         F32,
         Bytes,
-        Initializer,
     };
 
     struct PendingUpload {
@@ -248,7 +227,6 @@ private:
         std::vector<int64_t> expected_shape;
         PendingUploadKind kind = PendingUploadKind::Bytes;
         std::vector<std::byte> bytes;
-        std::function<void(ggml_tensor *)> initialize;
     };
 
     static TensorShape shape_from_dims(const std::vector<int64_t> & dims) {

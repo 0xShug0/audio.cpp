@@ -22,7 +22,6 @@ struct PackedLinearWeightsConfig {
     int64_t in_features = 0;
     std::vector<PackedLinearSource> sources;
     bool use_bias = false;
-    bool defer_upload = false;
 };
 
 class PackedLinearWeightsBuilder {
