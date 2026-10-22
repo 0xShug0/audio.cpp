@@ -14,17 +14,21 @@ namespace engine::community_models::kitten_tts2 {
 namespace s3 = engine::codecs::s3gen;
 struct WaveformDecoder::Impl {
     s3::S3GenRuntime runtime;
-    std::unique_ptr<modules::HiftNeuralDecoder> neural_decoder;
+#ifdef ENGINE_HAVE_NEON
+    std::unique_ptr<NeonVocoder> neon_vocoder;
+    int threads = 1;
+#endif
     Impl(std::shared_ptr<const assets::TensorSource> source, const core::ExecutionContext & context,
-        bool neon_vocoder)
+        bool use_neon)
         : runtime(std::move(source), context, [] {
               s3::S3GenConfig config;
               config.decoder.variant = s3::S3FlowVariant::MeanFlow;
               return config;
           }(), {assets::TensorStorageType::F32, context.backend_type() == core::BackendType::Cpu}) {
-        if (neon_vocoder) {
+        if (use_neon) {
 #ifdef ENGINE_HAVE_NEON
-            neural_decoder = std::make_unique<NeonVocoder>(*runtime.vocoder().weights());
+            threads = context.config().threads;
+            neon_vocoder = std::make_unique<NeonVocoder>(*runtime.vocoder().weights());
 #else
             throw std::runtime_error("Kitten NEON vocoder requires ENGINE_ENABLE_NEON=ON");
 #endif
@@ -54,14 +58,19 @@ std::vector<float> WaveformDecoder::decode(const std::vector<int32_t> & codes,
     tokens.insert(tokens.end(), 3, 4299); // Upstream S3 lookahead preserves the final syllable.
     s3::S3GenTimingBreakdown timing;
     s3::S3GenInferenceOutputs result;
-    if (impl_->neural_decoder) {
+#ifdef ENGINE_HAVE_NEON
+    if (impl_->neon_vocoder) {
         const auto mel = impl_->runtime.token_to_mel(ref, tokens, tokens.size(), 2, 0.0f, false, {}, seed, &timing);
         // Preserve S3's shared flow/source RNG offset; only the neural vocoder changes.
         const auto prior_noise = static_cast<uint64_t>(mel.channels * (ref.prompt_feat_frames + mel.frames));
         const auto started = std::chrono::steady_clock::now();
-        result.waveform = impl_->runtime.vocoder().synthesize(mel.mel, mel.frames, *impl_->neural_decoder, seed, prior_noise).waveform;
+        const auto f0 = impl_->runtime.vocoder().predict_f0(mel.mel, mel.frames);
+        result.waveform = impl_->neon_vocoder->synthesize(mel.mel, mel.frames, f0,
+            impl_->threads, seed, prior_noise);
         timing.vocoder_ms = debug::elapsed_ms(started);
-    } else {
+    } else
+#endif
+    {
         result = impl_->runtime.synthesize(
             ref, tokens, tokens.size(), 2, 0.0f, false, {}, seed, seed, &timing);
     }

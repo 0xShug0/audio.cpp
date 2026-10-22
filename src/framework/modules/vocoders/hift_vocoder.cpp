@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/harmonic_vocoder.h"
 #include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/sampling/torch_random.h"
@@ -538,76 +539,6 @@ int64_t upsample_scale(const HiftVocoderConfig & config) {
     return std::accumulate(config.upsample_rates.begin(), config.upsample_rates.end(), config.istft_hop, std::multiplies<int64_t>{});
 }
 
-std::vector<float> nearest_upsample_f0(const std::vector<float> & f0, int64_t frames, int64_t scale) {
-    if (static_cast<int64_t>(f0.size()) != frames) {
-        throw std::runtime_error("HiFT F0 shape mismatch");
-    }
-    std::vector<float> out(static_cast<size_t>(frames * scale), 0.0F);
-    for (int64_t t = 0; t < frames; ++t) {
-        std::fill(
-            out.begin() + static_cast<std::ptrdiff_t>(t * scale),
-            out.begin() + static_cast<std::ptrdiff_t>((t + 1) * scale),
-            f0[static_cast<size_t>(t)]);
-    }
-    return out;
-}
-
-std::vector<float> make_sine_source(
-    const HiftVocoderWeights & weights,
-    const std::vector<float> & f0_upsampled,
-    uint64_t seed,
-    uint64_t prior_noise_values,
-    const std::vector<float> * source_random_values) {
-    constexpr float kPi = 3.14159265358979323846F;
-    constexpr float kTwoPi = 2.0F * kPi;
-    const int64_t frames = static_cast<int64_t>(f0_upsampled.size());
-    const int64_t harmonics = weights.config.nb_harmonics + 1;
-    const size_t phase_count = static_cast<size_t>(harmonics);
-    const size_t gaussian_count = static_cast<size_t>(harmonics * frames);
-    if (source_random_values != nullptr &&
-        source_random_values->size() != phase_count + gaussian_count) {
-        throw std::runtime_error("HiFT source random value count mismatch");
-    }
-    std::vector<float> phase_uniform = source_random_values == nullptr
-        ? sampling::generate_torch_cuda_uniform(phase_count, seed, prior_noise_values)
-        : std::vector<float>(source_random_values->begin(), source_random_values->begin() + static_cast<std::ptrdiff_t>(phase_count));
-    std::vector<float> phase(static_cast<size_t>(harmonics), 0.0F);
-    for (int64_t h = 0; h < harmonics; ++h) {
-        phase[static_cast<size_t>(h)] = phase_uniform[static_cast<size_t>(h)] * kTwoPi - kPi;
-    }
-    phase[0] = 0.0F;
-    const uint64_t gaussian_offset = prior_noise_values + static_cast<uint64_t>(phase_uniform.size());
-    std::vector<float> gaussian = source_random_values == nullptr
-        ? sampling::generate_torch_cuda_randn(
-              gaussian_count,
-              seed,
-              sampling::TorchRandnPrecision::Float32,
-              gaussian_offset)
-        : std::vector<float>(source_random_values->begin() + static_cast<std::ptrdiff_t>(phase_count), source_random_values->end());
-
-    std::vector<float> source(static_cast<size_t>(frames), 0.0F);
-    std::vector<float> frac(static_cast<size_t>(harmonics), 0.0F);
-    for (int64_t t = 0; t < frames; ++t) {
-        const float base_f0 = f0_upsampled[static_cast<size_t>(t)];
-        const float uv = base_f0 > weights.config.nsf_voiced_threshold ? 1.0F : 0.0F;
-        float sum = weights.source_linear.bias[0];
-        for (int64_t h = 0; h < harmonics; ++h) {
-            frac[static_cast<size_t>(h)] +=
-                base_f0 * static_cast<float>(h + 1) / static_cast<float>(weights.config.sampling_rate);
-            frac[static_cast<size_t>(h)] -= std::floor(frac[static_cast<size_t>(h)]);
-            const float theta = kTwoPi * frac[static_cast<size_t>(h)];
-            float wave =
-                weights.config.nsf_alpha * std::sin(theta + phase[static_cast<size_t>(h)]);
-            const float noise_amp =
-                uv * weights.config.nsf_sigma + (1.0F - uv) * weights.config.nsf_alpha / 3.0F;
-            wave = wave * uv + noise_amp * gaussian[static_cast<size_t>(h * frames + t)];
-            sum += wave * weights.source_linear.weight[static_cast<size_t>(h)];
-        }
-        source[static_cast<size_t>(t)] = std::tanh(sum);
-    }
-    return source;
-}
-
 std::vector<float> make_causal_sinegen2_source(
     const HiftVocoderWeights & weights,
     const std::vector<float> & f0,
@@ -771,72 +702,6 @@ std::vector<float> make_sinegen2_source(
     return source;
 }
 
-std::vector<float> source_stft_bct(
-    const HiftVocoderWeights & weights,
-    const std::vector<float> & source,
-    int64_t & stft_frames,
-    std::vector<float> & window) {
-    const audio::STFTConfig window_config{
-        weights.config.istft_n_fft,
-        weights.config.istft_hop,
-        weights.config.istft_n_fft,
-        true,
-        audio::STFTPadMode::Reflect,
-        audio::STFTFamily::Kokoro,
-    };
-    window = audio::get_cached_stft_window(window_config);
-    const auto complex = audio::STFT().compute_complex(
-        source,
-        window,
-        1,
-        static_cast<int64_t>(source.size()),
-        {weights.config.istft_n_fft, weights.config.istft_hop, weights.config.istft_n_fft});
-    stft_frames = complex.shape[2];
-    std::vector<float> stft(static_cast<size_t>(kHiftStftChannels * stft_frames), 0.0F);
-    for (int64_t f = 0; f < kHiftStftBins; ++f) {
-        for (int64_t t = 0; t < stft_frames; ++t) {
-            const size_t complex_index = static_cast<size_t>((f * stft_frames + t) * 2);
-            stft[static_cast<size_t>(f * stft_frames + t)] = complex.values[complex_index];
-            stft[static_cast<size_t>((kHiftStftBins + f) * stft_frames + t)] = complex.values[complex_index + 1];
-        }
-    }
-    return stft;
-}
-
-std::vector<float> waveform_from_post(
-    const HiftVocoderWeights & weights,
-    const std::vector<float> & post,
-    int64_t frames,
-    const std::vector<float> & window) {
-    if (static_cast<int64_t>(post.size()) != kHiftStftChannels * frames) {
-        throw std::runtime_error("HiFT post shape mismatch");
-    }
-    std::vector<float> complex_spec(static_cast<size_t>(kHiftStftBins * frames * 2), 0.0F);
-    for (int64_t f = 0; f < kHiftStftBins; ++f) {
-        for (int64_t t = 0; t < frames; ++t) {
-            float magnitude = std::exp(post[static_cast<size_t>(f * frames + t)]);
-            magnitude = std::min(magnitude, 1.0e2F);
-            const float phase = std::sin(post[static_cast<size_t>((kHiftStftBins + f) * frames + t)]);
-            const size_t complex_index = static_cast<size_t>((f * frames + t) * 2);
-            complex_spec[complex_index] = magnitude * std::cos(phase);
-            complex_spec[complex_index + 1] = magnitude * std::sin(phase);
-        }
-    }
-    const int64_t samples = weights.config.istft_hop * (frames - 1);
-    auto wav = audio::ISTFT().compute(
-        complex_spec,
-        window,
-        1,
-        kHiftStftBins,
-        frames,
-        samples,
-        {weights.config.istft_n_fft, weights.config.istft_hop, weights.config.istft_n_fft});
-    for (float & sample : wav.values) {
-        sample = std::clamp(sample, -weights.config.audio_limit, weights.config.audio_limit);
-    }
-    return wav.values;
-}
-
 class F0Runner {
 public:
     F0Runner(const HiftVocoderWeights & weights, int64_t frames)
@@ -993,7 +858,8 @@ public:
             throw std::runtime_error("ggml_backend_graph_compute failed for HiFT backend");
         }
         const auto post = core::read_tensor_f32(post_);
-        if (!cuda_istft_) return waveform_from_post(*weights_, post, stft_frames, window);
+        if (!cuda_istft_) return audio::sine_phase_istft(post, stft_frames,
+            weights_->config.istft_n_fft, weights_->config.istft_hop, weights_->config.audio_limit, window);
         std::vector<float> spectrum(post.size());
         for (int64_t frame = 0; frame < stft_frames; ++frame) {
             for (int64_t frequency = 0; frequency < kHiftStftBins; ++frequency) {
@@ -1047,7 +913,7 @@ public:
         int64_t frames,
         uint64_t seed,
         uint64_t prior_noise_values,
-        const std::vector<float> * source_random_values, HiftNeuralDecoder * decoder = nullptr) {
+        const std::vector<float> * source_random_values) {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto f0 = predict_f0_locked(mel, frames);
         const int64_t scale = upsample_scale(weights_->config);
@@ -1058,25 +924,35 @@ public:
             source = make_sinegen2_source(*weights_, f0, frames, scale, seed, prior_noise_values,
                 source_random_values, random_policy_ ? &*random_policy_ : nullptr);
         } else {
-            const auto f0_upsampled = nearest_upsample_f0(f0, frames, scale);
-            source = make_sine_source(*weights_, f0_upsampled, seed, prior_noise_values, source_random_values);
+            const auto phase_count = static_cast<size_t>(weights_->config.nb_harmonics + 1);
+            const auto gaussian_count = phase_count * static_cast<size_t>(frames * scale);
+            if (source_random_values && source_random_values->size() != phase_count + gaussian_count)
+                throw std::runtime_error("HiFT source random value count mismatch");
+            const auto phase = source_random_values
+                ? std::vector<float>(source_random_values->begin(), source_random_values->begin() + phase_count)
+                : sampling::generate_torch_cuda_uniform(phase_count, seed, prior_noise_values);
+            const auto gaussian = source_random_values
+                ? std::vector<float>(source_random_values->begin() + phase_count, source_random_values->end())
+                : sampling::generate_torch_cuda_randn(gaussian_count, seed,
+                    sampling::TorchRandnPrecision::Float32, prior_noise_values + phase_count);
+            source = audio::generate_harmonic_source(f0, scale,
+                {weights_->config.sampling_rate, weights_->config.nb_harmonics + 1,
+                 weights_->config.nsf_alpha, weights_->config.nsf_sigma, weights_->config.nsf_voiced_threshold},
+                weights_->source_linear.weight, weights_->source_linear.bias[0],
+                phase, gaussian);
         }
         std::vector<float> window;
-        int64_t stft_frames = 0;
-        const auto source_stft = source_stft_bct(*weights_, source, stft_frames, window);
-        HiftVocoderOutput out;
-        if (decoder != nullptr) {
-            const auto post = decoder->run(mel, frames, source_stft, stft_frames, backend_.threads);
-            out.waveform = waveform_from_post(*weights_, post, stft_frames, window);
-        } else {
-            if (backend_runner_ != nullptr && !backend_runner_->supports(*weights_, frames, stft_frames)) {
-                backend_runner_.reset();
-            }
-            if (backend_runner_ == nullptr) {
-                backend_runner_ = std::make_unique<BackendRunner>(*weights_, frames, stft_frames);
-            }
-            out.waveform = backend_runner_->run(mel, frames, source_stft, stft_frames, window);
+        const auto source_stft = audio::stft_real_imag(source, weights_->config.istft_n_fft,
+            weights_->config.istft_hop, window);
+        const auto stft_frames = source_stft.shape[2];
+        if (backend_runner_ != nullptr && !backend_runner_->supports(*weights_, frames, stft_frames)) {
+            backend_runner_.reset();
         }
+        if (backend_runner_ == nullptr) {
+            backend_runner_ = std::make_unique<BackendRunner>(*weights_, frames, stft_frames);
+        }
+        HiftVocoderOutput out;
+        out.waveform = backend_runner_->run(mel, frames, source_stft.values, stft_frames, window);
         out.batch = 1;
         out.samples = static_cast<int64_t>(out.waveform.size());
         out.sample_rate = weights_->config.sampling_rate;
@@ -1412,15 +1288,6 @@ HiftVocoderOutput HiftVocoderComponent::synthesize(
         throw std::runtime_error("HiFT component is not initialized");
     }
     return state_->runner->run(mel, frames, seed, prior_noise_values, source_random_values);
-}
-
-HiftVocoderOutput HiftVocoderComponent::synthesize(
-    const std::vector<float> & mel, int64_t frames, HiftNeuralDecoder & decoder,
-    uint64_t seed, uint64_t prior_noise_values, const std::vector<float> * source_random_values) const {
-    if (state_ == nullptr || state_->runner == nullptr) {
-        throw std::runtime_error("HiFT component is not initialized");
-    }
-    return state_->runner->run(mel, frames, seed, prior_noise_values, source_random_values, &decoder);
 }
 
 std::vector<float> HiftVocoderComponent::predict_f0(const std::vector<float> & mel, int64_t frames) const {
