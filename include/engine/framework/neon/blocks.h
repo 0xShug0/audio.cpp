@@ -50,6 +50,32 @@ struct HifiGanWeights {
 ExecutionPlan::Value build_hifigan(ExecutionPlan &plan, ExecutionPlan::Value input,
     std::optional<ExecutionPlan::Value> conditioning, const HifiGanConfig &config, const HifiGanWeights &weights);
 
+struct HiftConfig {
+    int input_channels = 0, initial_channels = 0, source_channels = 0, output_channels = 0;
+    int pre_kernel = 7, post_kernel = 7;
+    std::vector<int> upsample_rates, upsample_kernels, residual_kernels, source_residual_kernels;
+    std::vector<std::vector<int>> residual_dilations, source_residual_dilations;
+    float negative_slope = 0.1F;
+    float snake_epsilon = 1.0e-9F;
+};
+
+struct SnakeResidualWeights {
+    std::vector<Conv1dWeights> first, second;
+    std::vector<std::vector<float>> alpha_first, alpha_second;
+};
+
+struct HiftWeights {
+    Conv1dWeights pre, post;
+    // Upsampling weights are [input_channels, output_channels, kernel].
+    std::vector<Conv1dWeights> upsample, source_down;
+    std::vector<SnakeResidualWeights> source_residual, residual;
+};
+
+// Noncausal HiFT neural decoder. Source STFT and the output log-magnitude/phase
+// are channel-first; excitation generation and ISTFT belong to the caller.
+ExecutionPlan::Value build_hift(ExecutionPlan &plan, ExecutionPlan::Value mel,
+    ExecutionPlan::Value source_stft, const HiftConfig &config, const HiftWeights &weights);
+
 struct ResidualConvWeights {
     std::vector<float> first_weight, first_bias, second_weight, second_bias, scale;
 };

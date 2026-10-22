@@ -12,7 +12,7 @@
 
 int main(int argc, char ** argv) {
     try {
-        if (argc < 3) throw std::runtime_error("usage: kitten_tts2_session_probe MODEL OUTPUT_DIR [THREADS] [WEIGHT_TYPE] [REFERENCE_MODEL_DIR] [cpu|cuda]");
+        if (argc < 3) throw std::runtime_error("usage: kitten_tts2_session_probe MODEL OUTPUT_DIR [THREADS] [WEIGHT_TYPE] [REFERENCE_MODEL_DIR|-] [cpu|cuda|metal] [EXEC_PLAN_JSON]");
         if (std::filesystem::path(argv[1]).extension() == ".gguf") {
             // Check stored precision, not just the runtime's upcast tensor types.
             // A misspelled namespace in converter overrides silently quantizes
@@ -48,11 +48,27 @@ int main(int argc, char ** argv) {
         if (argc > 6) {
             const std::string backend = argv[6];
             if (backend == "cuda") options.backend.type = engine::core::BackendType::Cuda;
-            else if (backend != "cpu") throw std::runtime_error("probe backend must be cpu or cuda");
+            else if (backend == "metal") options.backend.type = engine::core::BackendType::Metal;
+            else if (backend != "cpu") throw std::runtime_error("probe backend must be cpu, cuda or metal");
         }
         options.backend.threads = argc > 3 ? std::stoi(argv[3]) : 8;
         if (argc > 4 && std::string(argv[4]) != "default") options.options["kitten_tts2.weight_type"] = argv[4];
+        if (argc > 7) options.options["kitten_tts2.exec_plan"] = argv[7];
         const engine::runtime::TaskSpec task{engine::runtime::VoiceTaskKind::Tts, engine::runtime::RunMode::Offline};
+        for (const auto * plan : {
+            R"({"unknown":{"impl":"ggml"}})",
+            R"({"vocoder":{"impl":"unknown"}})",
+            R"({"vocoder":{"params":{"unknown":true}}})",
+            R"({"vocoder":{"impl":"neon","backend":"metal"}})",
+            R"({"vocoder":{"impl":"neon","params":{"threads":1}}})"}) {
+            auto invalid = options;
+            invalid.options["kitten_tts2.exec_plan"] = plan;
+            bool rejected = false;
+            try { model->create_task_session(task, invalid); }
+            catch (const std::runtime_error &) { rejected = true; }
+            if (!rejected) throw std::runtime_error("invalid Kitten execution plan was accepted");
+        }
+        std::cout << "PASS: execution-plan validation" << std::endl;
         auto base = model->create_task_session(task, options);
         auto * session = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(base.get());
         if (!session) throw std::runtime_error("expected offline session");
@@ -100,7 +116,7 @@ int main(int argc, char ** argv) {
         try { session->run(invalid); } catch (const std::runtime_error &) { rejected = true; }
         if (!rejected) throw std::runtime_error("unknown voice was not rejected");
         std::cout << "PASS: seeded repeat, voice switch, long-form chunks, and unknown-voice error" << std::endl;
-        if (argc > 5) {
+        if (argc > 5 && std::string(argv[5]) != "-") {
             const auto root = std::filesystem::path(argv[5]);
             const auto voices = engine::io::json::parse_file(root/"voices/voices.json");
             auto reference = [&](const char * name) {

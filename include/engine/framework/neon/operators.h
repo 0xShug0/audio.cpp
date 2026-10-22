@@ -128,6 +128,8 @@ public:
 class Snake : public Operator {
 public:
     explicit Snake(std::vector<float> alpha);
+    // Opt-in epsilon denominator for HiFT: alpha + epsilon must be nonzero.
+    Snake(std::vector<float> alpha, float epsilon);
 };
 
 class ClampMin : public Operator {
