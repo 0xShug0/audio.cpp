@@ -196,11 +196,15 @@ ParakeetTDTDecoderWeights load_decoder_weights(
     w.lstm_layers.reserve(static_cast<size_t>(config.decoder_layers));
     for (int64_t l = 0; l < config.decoder_layers; ++l) {
         const std::string p = "decoder.lstm";
+        const std::string bias_hh = p + ".bias_hh_l" + std::to_string(l);
+        // transcribe.cpp GGUFs store bias_ih + bias_hh as a single bias_ih.
         w.lstm_layers.push_back({
             store.load_tensor(source, p + ".weight_ih_l" + std::to_string(l), st, {4*H, H}),
             store.load_tensor(source, p + ".weight_hh_l" + std::to_string(l), st, {4*H, H}),
             store.load_f32_tensor(source, p + ".bias_ih_l" + std::to_string(l), {4*H}),
-            store.load_f32_tensor(source, p + ".bias_hh_l" + std::to_string(l), {4*H}),
+            source.has_tensor(bias_hh)
+                ? store.load_f32_tensor(source, bias_hh, {4*H})
+                : store.make_f32(engine::core::TensorShape::from_dims({4*H}), std::vector<float>(static_cast<size_t>(4*H), 0.0f)),
         });
     }
     w.decoder_projector = load_linear(store, source, "decoder.decoder_projector", st, H, H, true);

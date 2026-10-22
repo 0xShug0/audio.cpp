@@ -131,6 +131,24 @@ types stored in that file. The performance study below used the safetensors
 package plus session-time storage conversion; the GGUF checks validate
 standalone loading and output, not a separate GGUF-vs-safetensors speed claim.
 
+### transcribe.cpp GGUF files
+
+A Parakeet TDT GGUF written by
+[transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) also loads
+directly. Pass the file as `--model`. These files keep NeMo tensor names, the
+model config under `stt.parakeet.*` and `stt.frontend.*` keys, and the
+SentencePiece vocabulary under `tokenizer.ggml.*`. The loader maps the names
+onto the layout above, reads the config and vocabulary from the metadata, and
+needs no `config.json` or `tokenizer.json` next to the file. transcribe.cpp
+stores the two LSTM biases as one sum, so `bias_hh` is taken as zero.
+
+```bash
+audiocpp_cli --task asr --family parakeet_tdt \
+  --model parakeet-tdt-0.6b-v3-Q8_0.gguf \
+  --backend cuda --session-option parakeet_tdt.offline_mode=auto \
+  --audio speech.wav
+```
+
 ## Orukeet r3 checkpoint
 
 [Orukeet r3](https://huggingface.co/oruk/orukeet) (Oruk AI) is a fine-tune of
