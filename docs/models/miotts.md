@@ -37,7 +37,7 @@ audiocpp_cli --task tts --family miotts --model models/MioTTS-1.7B-GGUF/miotts-1
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--voice-ref` | WAV path | required | Reference speaker audio. |
-| `--text-chunk-size` | integer chars | `180` | Long-form chunk size. |
+| `--text-chunk-size` | integer chars | `120` or `180` | Long-form chunk size: `120` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `180`. Each chunk is generated within `max_tokens` (700 tokens, 28 s). |
 | `--max-tokens` | integer | `700` | Maximum generated LM tokens per chunk. |
 | `--temperature` | float | `0.8` | LM sampling temperature. |
 | `--top-k` | integer | `50` | LM top-k sampling limit. |
@@ -76,7 +76,7 @@ The legacy unprefixed session name `text_chunk_size` remains accepted for
 | `miotts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; defaults to native. |
 | `miotts.codec_model_path` | directory | not set | MioCodec model used for acoustic decoding. |
 | `miotts.best_of_n_asr_model_path` | directory | not set | Qwen3-ASR model used for best-of-N scoring. |
-| `miotts.text_chunk_size` | integer | `180` | Default framework text chunk size. |
+| `miotts.text_chunk_size` | integer | `120` or `180` | Default framework text chunk size: `120` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `180`. |
 | `miotts.best_of_n_enabled` | bool | `false` | Enable candidate generation and ASR ranking. |
 | `miotts.best_of_n_default` | integer | `1` | Default best-of-N candidate count. |
 | `miotts.best_of_n_max` | integer | `8` | Maximum best-of-N candidate count. |
