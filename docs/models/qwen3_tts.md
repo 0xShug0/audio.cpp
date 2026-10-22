@@ -152,10 +152,10 @@ These sampling controls are shared by the Qwen3 TTS Base, VoiceDesign, and Custo
 These options apply to Base, VoiceDesign, and CustomVoice sessions. Arena and
 constant-context sizes are in MiB.
 
-`perf_first` is a preset. Explicit session options override its settings:
+`cuda_perf` is a preset. Explicit session options override its settings:
 
 ```bash
---session-option qwen3_tts.perf_mode=perf_first \
+--session-option qwen3_tts.perf_mode=cuda_perf \
 --session-option qwen3_tts.attention=eager \
 --session-option qwen3_tts.packed_projections=false
 ```
@@ -167,20 +167,20 @@ In server configs, put the same keys and values in the model's `session_options`
 | `qwen3_tts.mem_saver` | bool | `false` | Release the talker cached-step graph after each request. Voice-prompt, prefill, code-predictor, and speech-decoder caches remain reusable. |
 | `qwen3_tts.lora` | adapter directory or checkpoint file | not set | Load a PEFT Talker/Subtalker adapter at session creation. Keep `adapter_config.json` beside its weights. A trained custom voice may also provide `speaker_embedding` and `tts_config.json` sidecars; select its name with `voice_id`. |
 | `qwen3_tts.lora_scale` | finite float | `1` | Strength multiplier applied after the adapter's alpha/r scaling. Speaker embedding replacements are not scaled. |
-| `qwen3_tts.perf_mode` | `off`, `flash_attention`, `perf_first` | `off` | Preset. `off` keeps normal defaults; `flash_attention` selects flash attention. `perf_first` also selects packing, optimized cache writes, F16 KV and convolution weights, stateful streaming decoding, and KV alignment 256. Explicit options override the preset. |
-| `qwen3_tts.attention` | `mixed`, `auto`, `eager`, `flash` | `mixed` | `mixed` uses manual prefill and contiguous-K/V flash cached decoding for the talker and code predictor, with eager speech tokenization. `auto` uses the shared backend policy; `eager` disables flash; `flash` uses flash with K/V views. Explicit values override the preset; `perf_first` selects `flash`. |
-| `qwen3_tts.packed_projections` | bool | `false`; `true` with `perf_first` | Pack QKV and gate/up projections in the talker and code predictor without changing weight dtype. |
-| `qwen3_tts.kv_cache_write` | `standard`, `optimized` | `standard`; `optimized` with `perf_first` | Optimized cache views and I64 indices allow backend fusion where supported; no CUDA-version requirement. |
-| `qwen3_tts.kv_cache_type` | `f32`, `f16` | `f32`; `f16` with `perf_first` | Talker and code-predictor KV storage. F16 reduces cache memory and may change numerical results. Explicit values override the preset. |
-| `qwen3_tts.talker_kv_cache_alignment` | int ≥ 1 | `1`; `256` with `perf_first` | Round talker KV capacity to this many rows. Alignment 1 disables padding. Explicit values override the preset. Larger alignments may use more memory and change numerical results. |
-| `qwen3_tts.stream_decoder` | `windowed`, `stateful` | `windowed`; `stateful` with `perf_first` | GGML streaming decoder. `stateful` carries convolution and attention history and caches graphs for exact chunk lengths. Uses more graph memory and can change audio. |
+| `qwen3_tts.perf_mode` | `off`, `flash_attention`, `cuda_perf` | `off` | Preset. `off` keeps normal defaults; `flash_attention` selects flash attention. `cuda_perf` also selects packing, optimized cache writes, F16 KV and convolution weights, stateful streaming decoding, and KV alignment 256. Explicit options override the preset. |
+| `qwen3_tts.attention` | `mixed`, `auto`, `eager`, `flash` | `mixed` | `mixed` uses manual prefill and contiguous-K/V flash cached decoding for the talker and code predictor, with eager speech tokenization. `auto` uses the shared backend policy; `eager` disables flash; `flash` uses flash with K/V views. Explicit values override the preset; `cuda_perf` selects `flash`. |
+| `qwen3_tts.packed_projections` | bool | `false`; `true` with `cuda_perf` | Pack QKV and gate/up projections in the talker and code predictor without changing weight dtype. |
+| `qwen3_tts.kv_cache_write` | `standard`, `optimized` | `standard`; `optimized` with `cuda_perf` | Optimized cache views and I64 indices allow backend fusion where supported; no CUDA-version requirement. |
+| `qwen3_tts.kv_cache_type` | `f32`, `f16` | `f32`; `f16` with `cuda_perf` | Talker and code-predictor KV storage. F16 reduces cache memory and may change numerical results. Explicit values override the preset. |
+| `qwen3_tts.talker_kv_cache_alignment` | int ≥ 1 | `1`; `256` with `cuda_perf` | Round talker KV capacity to this many rows. Alignment 1 disables padding. Explicit values override the preset. Larger alignments may use more memory and change numerical results. |
+| `qwen3_tts.stream_decoder` | `windowed`, `stateful` | `windowed`; `stateful` with `cuda_perf` | GGML streaming decoder. `stateful` carries convolution and attention history and caches graphs for exact chunk lengths. Uses more graph memory and can change audio. |
 | `qwen3_tts.stitch_decode` | bool | `false` | Voice the concatenated speech codes of all text chunks in one decoder pass instead of voicing each chunk separately. Per-chunk voicing voices the voice-clone reference once per chunk and zeroes the stateful vocoder cache at every chunk boundary (measured on RK3588, 300 characters, 22.5 s reference: 7 vocoder runs for 159.9 s against 1 run for 57.5 s); the stitched pass costs device memory proportional to the utterance, since one decode call builds a vocoder graph sized by its frame count. |
 | `qwen3_tts.voice_prompt_cache_slots` | nonnegative integer | `1` | Cached voice-clone prompts; `0` disables prompt caching. |
 | `qwen3_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Talker weight storage fallback. |
 | `qwen3_tts.talker_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit talker weight storage override. |
 | `qwen3_tts.speech_encoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Reference speech encoder matmul weight storage. |
 | `qwen3_tts.speech_decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Speech decoder matmul weight storage. |
-| `qwen3_tts.conv_weight_type` | `native`, `f32`, `f16` | `f32`; `f16` with `perf_first` | Speech tokenizer and speaker encoder convolution weight storage. |
+| `qwen3_tts.conv_weight_type` | `native`, `f32`, `f16` | `f32`; `f16` with `cuda_perf` | Speech tokenizer and speaker encoder convolution weight storage. |
 | `qwen3_tts.talker_graph_arena_mb` | positive integer | `32` | Talker graph arena. |
 | `qwen3_tts.speech_encoder_graph_arena_mb` | positive integer | `32` | Reference speech encoder graph arena. |
 | `qwen3_tts.speech_decoder_graph_arena_mb` | positive integer | `32` | Speech decoder graph arena. |

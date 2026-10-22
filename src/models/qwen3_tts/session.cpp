@@ -188,7 +188,7 @@ struct PerfPreset {
 constexpr std::array<PerfPreset, 3> kPerfPresets{{
     {"off", {}},
     {"flash_attention", {core::AttentionPreference::Flash}},
-    {"perf_first", {core::AttentionPreference::Flash, true, true, GGML_TYPE_F16, 256, true,
+    {"cuda_perf", {core::AttentionPreference::Flash, true, true, GGML_TYPE_F16, 256, true,
                     engine::assets::TensorStorageType::F16}},
 }};
 
