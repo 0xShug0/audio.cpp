@@ -788,13 +788,18 @@ public:
             const int64_t count = gguf_get_n_tensors(gguf);
             const int64_t ranks_key = gguf_find_key(gguf, "audiocpp.tensor_ranks");
             const int64_t shapes_key = gguf_find_key(gguf, "audiocpp.tensor_shapes");
-            const bool has_exact_shapes = ranks_key >= 0 && shapes_key >= 0;
-            if ((ranks_key >= 0) != (shapes_key >= 0) ||
-                (has_exact_shapes &&
+            // Format v1 files carry audiocpp.tensor_ranks without audiocpp.tensor_shapes: the
+            // dimensions are the GGUF ones, and the rank restores the trailing size-1 axes
+            // that ggml_n_dims() drops.
+            const bool has_exact_ranks = ranks_key >= 0;
+            const bool has_exact_shapes = has_exact_ranks && shapes_key >= 0;
+            if ((shapes_key >= 0 && !has_exact_ranks) ||
+                (has_exact_ranks &&
                  (gguf_get_kv_type(gguf, ranks_key) != GGUF_TYPE_ARRAY ||
                   gguf_get_arr_type(gguf, ranks_key) != GGUF_TYPE_INT32 ||
-                  gguf_get_arr_n(gguf, ranks_key) != static_cast<size_t>(count) ||
-                  gguf_get_kv_type(gguf, shapes_key) != GGUF_TYPE_ARRAY ||
+                  gguf_get_arr_n(gguf, ranks_key) != static_cast<size_t>(count))) ||
+                (has_exact_shapes &&
+                 (gguf_get_kv_type(gguf, shapes_key) != GGUF_TYPE_ARRAY ||
                   gguf_get_arr_type(gguf, shapes_key) != GGUF_TYPE_INT64))) {
                 throw std::runtime_error("GGUF audiocpp exact tensor shape metadata is invalid");
             }
@@ -828,6 +833,18 @@ public:
                         info.shape.clear();
                     }
                     shape_cursor += static_cast<size_t>(tensor_rank);
+                } else if (has_exact_ranks) {
+                    const auto * ranks = static_cast<const int32_t *>(gguf_get_arr_data(gguf, ranks_key));
+                    const int32_t tensor_rank = ranks[i];
+                    const bool scalar = tensor_rank == 0 && ggml_nelements(tensor) == 1;
+                    if ((!scalar && tensor_rank < ggml_n_dims(tensor)) || tensor_rank > GGML_MAX_DIMS) {
+                        throw std::runtime_error(
+                            "GGUF tensor rank does not match its dimensions: " + info.physical_name);
+                    }
+                    info.shape.reserve(static_cast<size_t>(tensor_rank));
+                    for (int dim = tensor_rank - 1; dim >= 0; --dim) {
+                        info.shape.push_back(tensor->ne[dim]);
+                    }
                 } else {
                     const int dimensions = ggml_n_dims(tensor);
                     info.shape.reserve(static_cast<size_t>(dimensions));
