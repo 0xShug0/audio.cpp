@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace engine::models::miocodec {
@@ -45,7 +46,7 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const MioTTSAssets> assets_;
-    int64_t text_chunk_size_ = 180;
+    std::optional<int64_t> text_chunk_size_;
     bool best_of_n_enabled_ = false;
     int best_of_n_default_ = 1;
     int best_of_n_max_ = 8;

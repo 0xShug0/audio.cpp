@@ -139,9 +139,8 @@
       {
         "name": "text_chunk_size",
         "type": "int",
-        "description": "Default framework text chunk size.",
-        "required": false,
-        "default": 180
+        "description": "Default framework text chunk size; 120 when hanzi, kana and Hangul outnumber other letters and digits, otherwise 180.",
+        "required": false
       },
       {
         "name": "best_of_n_enabled",

@@ -53,7 +53,7 @@ runtime::ModelCliInterface cli(const MioTTSAssets & assets) {
         {"miotts.best_of_n_language", "auto|en|ja", "Default language used when scoring best-of-N candidates.", false, "auto"},
         {"miotts.best_of_n_asr_model_path", "dir", "Qwen3-ASR model directory used by best-of-N scoring."},
         {"miotts.weight_type", "native|f32|f16|bf16|q8_0", "MioTTS language-model matmul weight storage type."},
-        {"miotts.text_chunk_size", "int", "Default framework text chunk size.", false, "180"},
+        {"miotts.text_chunk_size", "int", "Default framework text chunk size; 120 when hanzi, kana and Hangul outnumber other letters and digits, otherwise 180.", false, std::nullopt},
         {"miotts.prefill_graph_arena_mb", "int", "Context or graph arena size in MiB. Default: 1024.", false, "1024", "1"},
         {"miotts.decode_graph_arena_mb", "int", "Context or graph arena size in MiB. Default: 1024.", false, "1024", "1"},
         {"miotts.weight_context_mb", "int", "Context or graph arena size in MiB. Default: 512.", false, "512", "1"},
