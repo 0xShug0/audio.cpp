@@ -370,8 +370,8 @@ public:
         engine::debug::timing_log_scalar("yue2.nar_ms", engine::debug::elapsed_ms(nar_start, Clock::now()));
         const int64_t frames = static_cast<int64_t>(latents.size()) / assets->config.model.latent_dim;
         if (mem_saver) {
-            ar.reset();
             nar.reset();
+            ar.reset();
         }
         const auto vae_start = Clock::now();
         auto audio = decode_audio(latents, frames);
@@ -387,11 +387,11 @@ public:
         if (vae) {
             vae->release_runtime_graphs();
         }
-        if (ar) {
-            ar->release_runtime_graphs();
-        }
         if (nar) {
             nar->release_runtime_graphs();
+        }
+        if (ar) {
+            ar->release_runtime_graphs();
         }
     }
 

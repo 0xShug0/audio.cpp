@@ -132,6 +132,7 @@ public:
     int64_t decode_cache_steps() const noexcept;
     int64_t decode_current_end() const noexcept;
     int64_t decode_valid_steps() const noexcept;
+    void release_prefill_graph();
     void release_runtime_graphs();
 
 private:

@@ -497,6 +497,7 @@ CausalDecoderBatchedStaticCacheOutputs build_causal_decode_batched(
 }  // namespace
 
 class CausalDecoderRuntime::Impl {
+    friend class CausalDecoderRuntime;
 public:
     Impl(
         core::ExecutionContext & execution,
@@ -2140,6 +2141,10 @@ int64_t CausalDecoderRuntime::decode_valid_steps() const noexcept {
 
 void CausalDecoderRuntime::release_runtime_graphs() {
     impl_->release_runtime_graphs();
+}
+
+void CausalDecoderRuntime::release_prefill_graph() {
+    impl_->release_prefill_graph();
 }
 
 }  // namespace engine::modules
