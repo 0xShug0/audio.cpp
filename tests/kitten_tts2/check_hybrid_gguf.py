@@ -51,6 +51,12 @@ def tensor_index(path):
 def decode(payload, kind):
     if kind == 30:
         return (np.frombuffer(payload, '<u2').astype(np.uint32) << 16).view(np.float32)
+    if kind == 44:
+        blocks = np.frombuffer(payload, np.uint8).reshape(-1, 68)
+        scales = blocks[:, 64:].copy().view('<f2').astype(np.float32)
+        codes = blocks[:, :64].reshape(-1, 2, 32)
+        values = np.stack([(codes >> shift) & 3 for shift in (0, 2, 4, 6)], axis=2)
+        return ((values.astype(np.float32).reshape(-1, 2, 128) - 1) * scales[..., None]).ravel()
     blocks = np.frombuffer(payload, np.uint8).reshape(-1, 18 if kind == 2 else 34)
     scales = blocks[:, :2].copy().view('<f2').astype(np.float32)
     codes = (np.concatenate((blocks[:, 2:] & 15, blocks[:, 2:] >> 4), 1).astype(np.float32) - 8

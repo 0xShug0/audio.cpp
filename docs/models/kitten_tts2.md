@@ -303,6 +303,16 @@ For exact Q4 projections with the original BF16 embedding and tied output head,
 use `--type q4_0 --embedding-type orig`. This package loads directly with the
 default native weight type, without runtime Q4 conversion.
 
+For CPU-only ternary storage, `--type tq2_1` packs the 196 projections into
+2.125 bits per weight, preserving independent scales for each 128-weight group.
+The embedding/head stays BF16 and the codec stays F32. Load with native weight
+storage; no session option is needed. This opt-in format requires an audio.cpp
+binary with TQ2_1 support and is not a CUDA/Vulkan/Metal package. Existing package
+defaults are unchanged. The CPU kernel is adapted from
+[Kitten's C++ implementation](https://github.com/KittenML/kitten-tts-2-cpp).
+audio.cpp uses GGUF type ID 44: the other fork's ID 43 is already used by
+audio.cpp's I2_S format, so its ternary GGUFs are not interchangeable.
+
 ```sh
 python tools/community_models/prepare_kitten_tts2_gguf.py \
   --model /path/to/updated-kitten-tts-2 --converter build-kitten2/bin/audiocpp_gguf \

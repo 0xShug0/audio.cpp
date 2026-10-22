@@ -47,6 +47,7 @@ enum class TensorStorageType {
     IQ3_S,
     IQ4_NL,
     IQ4_XS,
+    TQ2_1,
 };
 
 struct TensorMetadata {

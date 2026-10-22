@@ -1367,6 +1367,50 @@ void ggml_vec_dot_tq1_0_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
 #endif
 }
 
+void ggml_vec_dot_tq2_1_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    assert(nrc == 1);
+    assert(n % QK_K == 0);
+#if defined(__AVX2__)
+    UNUSED(nrc); UNUSED(bs); UNUSED(bx); UNUSED(by);
+    const block_tq2_1 * GGML_RESTRICT x = vx;
+    const block_q8_K * GGML_RESTRICT y = vy;
+    const __m256i mask = _mm256_set1_epi8(3);
+    __m256 sum = _mm256_setzero_ps();
+    for (int i = 0; i < n/QK_K; ++i) {
+        for (int g = 0; g < 2; ++g) {
+            const __m256i packed = _mm256_loadu_si256((const __m256i *) (x[i].qs + g*32));
+            const __m256i q[4] = {
+                _mm256_and_si256(packed, mask),
+                _mm256_and_si256(_mm256_srli_epi16(packed, 2), mask),
+                _mm256_and_si256(_mm256_srli_epi16(packed, 4), mask),
+                _mm256_and_si256(_mm256_srli_epi16(packed, 6), mask),
+            };
+            __m256i dot = _mm256_setzero_si256();
+            for (int l = 0; l < 4; ++l) {
+                const __m256i a = _mm256_loadu_si256((const __m256i *) (y[i].qs + g*128 + l*32));
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+                dot = _mm256_dpbusd_epi32(dot, q[l], a);
+#elif defined(__AVXVNNI__)
+                dot = _mm256_dpbusd_avx_epi32(dot, q[l], a);
+#else
+                dot = _mm256_add_epi16(dot, _mm256_maddubs_epi16(q[l], a));
+#endif
+            }
+            const __m256i offset = _mm256_cvtepi16_epi32(_mm_loadu_si128((const __m128i *) (y[i].bsums + g*8)));
+#if !((defined(__AVX512VNNI__) && defined(__AVX512VL__)) || defined(__AVXVNNI__))
+            dot = _mm256_madd_epi16(dot, _mm256_set1_epi16(1));
+#endif
+            const __m256i sums = _mm256_sub_epi32(dot, offset);
+            const __m256 d = _mm256_set1_ps(y[i].d * GGML_CPU_FP16_TO_FP32(x[i].d[g]));
+            sum = _mm256_add_ps(sum, _mm256_mul_ps(_mm256_cvtepi32_ps(sums), d));
+        }
+    }
+    *s = hsum_float_8(sum);
+#else
+    ggml_vec_dot_tq2_1_q8_K_generic(n, s, bs, vx, bx, vy, by, nrc);
+#endif
+}
+
 void ggml_vec_dot_tq2_0_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
     assert(nrc == 1);
     UNUSED(nrc);

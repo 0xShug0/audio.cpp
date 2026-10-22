@@ -91,6 +91,7 @@ int main() {
             engine::assets::TensorStorageType::Q5_K,
             engine::assets::TensorStorageType::Q6_K,
             engine::assets::TensorStorageType::Q8_0,
+            engine::assets::TensorStorageType::TQ2_1,
             // Not offered by --type, but parse_tensor_storage_type accepts it and
             // --keep-type can ask for it, so it reaches the same split.
             engine::assets::TensorStorageType::NVFP4,
@@ -120,7 +121,7 @@ int main() {
             ++checked;
         }
 
-        engine::test::require(checked == 11, "expected every quantized storage type to be checked");
+        engine::test::require(checked == 12, "expected every quantized storage type to be checked");
         std::cout << "quantize_chunking_test passed (" << checked << " quantized storage types)\n";
         return 0;
     } catch (const std::exception & error) {
