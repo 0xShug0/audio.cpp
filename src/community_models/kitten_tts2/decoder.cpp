@@ -1,5 +1,6 @@
 #include "engine/community_models/kitten_tts2/decoder.h"
 #include "engine/framework/codecs/s3gen_runtime.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/models/chatterbox/components.h"
 
 #include <cmath>
@@ -14,7 +15,7 @@ struct WaveformDecoder::Impl {
               s3::S3GenConfig config;
               config.decoder.variant = s3::S3FlowVariant::MeanFlow;
               return config;
-          }(), {assets::TensorStorageType::F32}) {}
+          }(), {assets::TensorStorageType::F32, context.backend_type() == core::BackendType::Cpu}) {}
 };
 WaveformDecoder::WaveformDecoder(std::shared_ptr<const assets::TensorSource> source,
     const core::ExecutionContext & execution) : impl_(std::make_unique<Impl>(std::move(source), execution)) {}
@@ -36,8 +37,12 @@ std::vector<float> WaveformDecoder::decode(const std::vector<int32_t> & codes,
     ref.embedding_size = 192;
     auto tokens = codes;
     tokens.insert(tokens.end(), 3, 4299); // Upstream S3 lookahead preserves the final syllable.
+    s3::S3GenTimingBreakdown timing;
     auto result = impl_->runtime.synthesize(
-        ref, tokens, tokens.size(), 2, 0.0f, false, {}, seed, seed);
+        ref, tokens, tokens.size(), 2, 0.0f, false, {}, seed, seed, &timing);
+    debug::timing_log_scalar("kitten_tts2.token2mel_encoder_ms", timing.token2mel_encoder_ms);
+    debug::timing_log_scalar("kitten_tts2.token2mel_cfm_ms", timing.token2mel_cfm_ms);
+    debug::timing_log_scalar("kitten_tts2.vocoder_ms", timing.vocoder_ms);
     models::chatterbox::apply_s3_trim_fade(result.waveform, 24000);
     if (result.waveform.empty()) throw std::runtime_error("Kitten decoder returned empty audio");
     for (float value : result.waveform)

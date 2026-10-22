@@ -111,8 +111,8 @@ def stage_language_model(source: Path, output: Path, export_type: str):
                         body_count += 1
                         yield name, tuple(value.shape), 2, exact_ternary_blocks(value, 4)
                     else:
-                        # audiocpp_gguf applies its native Q8_0 quantizer to the
-                        # embedding only; other dense tensors retain BF16.
+                        # Preserve dense tensors here; the packaging step
+                        # selects the embedding storage independently.
                         yield name, tuple(value.shape), 30, value.view(torch.uint16).numpy().tobytes()
                 if body_count != 196:
                     raise ValueError(f'expected 196 Kitten body projections, got {body_count}')
