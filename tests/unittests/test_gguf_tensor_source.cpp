@@ -610,7 +610,7 @@ void test_deferred_packed_weights() {
     core::BackendConfig backend;
     backend.type = core::BackendType::Cpu;
     core::ExecutionContext execution(backend);
-    for (const auto type : {assets::TensorStorageType::F32, assets::TensorStorageType::F16,
+    for (const auto type : {assets::TensorStorageType::Native, assets::TensorStorageType::F32, assets::TensorStorageType::F16,
                             assets::TensorStorageType::BF16, assets::TensorStorageType::Q8_0}) {
         core::BackendWeightStore eager(execution.backend(), backend.type, "test.eager", 1024 * 1024);
         core::BackendWeightStore deferred(execution.backend(), backend.type, "test.deferred", 1024 * 1024);
@@ -630,6 +630,18 @@ void test_deferred_packed_weights() {
             ggml_backend_tensor_get(pair.second, rhs.data(), 0, bytes);
             test::require(lhs == rhs, "deferred packed weights must preserve exact bytes");
         }
+    }
+    for (const auto & parts : std::vector<std::vector<core::BackendWeightStore::TensorPart>>{
+             {}, {{"a.weight", {3, 32}}},
+             {{"a.weight", {2, 32}}, {"b.weight", {1, 64}}}}) {
+        core::BackendWeightStore invalid(execution.backend(), backend.type, "test.invalid", 1024 * 1024);
+        bool rejected = false;
+        try {
+            invalid.load_tensor(*source, parts, assets::TensorStorageType::F32);
+        } catch (const std::runtime_error &) {
+            rejected = true;
+        }
+        test::require(rejected, "invalid packed tensor sources must be rejected before upload");
     }
     std::filesystem::remove_all(root);
 }

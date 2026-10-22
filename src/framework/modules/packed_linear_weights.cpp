@@ -49,44 +49,18 @@ LinearWeights PackedLinearWeightsBuilder::build(
     std::vector<std::byte> packed_bias;
 
     if (config_.defer_upload) {
+        std::vector<core::BackendWeightStore::TensorPart> weight_parts;
+        std::vector<core::BackendWeightStore::TensorPart> bias_parts;
         for (const auto & item : config_.sources) {
-            const auto type = assets::ggml_type_for_tensor_storage(
-                assets::resolve_tensor_storage_type(source, item.weight, storage_type));
-            if (packed_type != GGML_TYPE_COUNT && packed_type != type) {
-                throw std::runtime_error("Packed linear sources resolved to different tensor types");
+            weight_parts.push_back({item.weight, {item.out_features, in_features}});
+            if (config_.use_bias) {
+                bias_parts.push_back({*item.bias, {item.out_features}});
             }
-            packed_type = type;
-            row_bytes(type, in_features, item.weight);
-            out_features += item.out_features;
         }
-        const auto config = config_;
-        auto initialize = [&source, storage_type, config](ggml_tensor *dst, bool bias) {
-            size_t offset = 0;
-            for (const auto & item : config.sources) {
-                const auto tensor = bias
-                    ? source.require_tensor(*item.bias, assets::TensorStorageType::F32, {item.out_features})
-                    : source.require_tensor(item.weight, storage_type, {item.out_features, config.in_features});
-                const size_t expected_bytes = bias
-                    ? static_cast<size_t>(item.out_features) * sizeof(float)
-                    : row_bytes(tensor.type, config.in_features, item.weight) * item.out_features;
-                if (tensor.type != dst->type || tensor.bytes.size() != expected_bytes) {
-                    throw std::runtime_error("Packed linear tensor type or byte size mismatch: " + item.weight);
-                }
-                ggml_backend_tensor_set(dst, tensor.bytes.data(), offset, tensor.bytes.size());
-                offset += tensor.bytes.size();
-            }
-            if (offset != ggml_nbytes(dst)) {
-                throw std::runtime_error("Packed linear upload did not cover destination tensor");
-            }
-        };
         LinearWeights weights;
-        weights.weight = store.make_tensor_deferred(
-            core::TensorShape::from_dims({out_features, in_features}), packed_type,
-            [initialize](ggml_tensor *dst) { initialize(dst, false); });
+        weights.weight = store.load_tensor(source, weight_parts, storage_type);
         if (config_.use_bias) {
-            weights.bias = store.make_tensor_deferred(
-                core::TensorShape::from_dims({out_features}), GGML_TYPE_F32,
-                [initialize](ggml_tensor *dst) { initialize(dst, true); });
+            weights.bias = store.load_tensor(source, bias_parts, assets::TensorStorageType::F32);
         }
         return weights;
     }

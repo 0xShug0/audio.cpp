@@ -9,10 +9,10 @@
 #include <ggml-backend.h>
 #include <ggml.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <stdexcept>
@@ -25,6 +25,11 @@ namespace engine::core {
 
 class BackendWeightStore {
 public:
+    struct TensorPart {
+        std::string name;
+        std::vector<int64_t> shape;
+    };
+
     BackendWeightStore(
         ggml_backend_t backend,
         BackendType backend_type,
@@ -144,20 +149,55 @@ public:
         return value;
     }
 
-    // The initializer runs during upload(); captured sources must outlive that call.
-    TensorValue make_tensor_deferred(
-        const TensorShape & shape,
-        ggml_type type,
-        std::function<void(ggml_tensor *)> initialize) {
-        if (!initialize) {
-            throw std::runtime_error(name_ + " deferred tensor initializer is empty");
+    // Concatenate along the leading source dimension; source must outlive upload().
+    TensorValue load_tensor(
+        const assets::TensorSource & source,
+        const std::vector<TensorPart> & parts,
+        assets::TensorStorageType storage_type) {
+        if (parts.empty()) {
+            throw std::runtime_error(name_ + " packed tensor requires at least one source");
         }
-        auto value = make_backend_tensor(shape, type);
-        PendingUpload upload;
-        upload.tensor = value.tensor;
-        upload.kind = PendingUploadKind::Initializer;
-        upload.initialize = std::move(initialize);
-        pending_.push_back(std::move(upload));
+        auto dims = parts.front().shape;
+        shape_from_dims(dims);
+        dims.front() = 0;
+        const auto resolved_type = assets::resolve_tensor_storage_type(source, parts.front().name, storage_type);
+        const auto type = assets::ggml_type_for_tensor_storage(resolved_type);
+        for (const auto & part : parts) {
+            if (part.shape.size() != dims.size() || part.shape.front() <= 0 ||
+                !std::equal(part.shape.begin() + 1, part.shape.end(), dims.begin() + 1)) {
+                throw std::runtime_error(name_ + " packed tensor source shapes are incompatible: " + part.name);
+            }
+            if (source.require_metadata(part.name).shape != part.shape) {
+                throw std::runtime_error(name_ + " packed tensor source shape mismatch: " + part.name);
+            }
+            if (assets::resolve_tensor_storage_type(source, part.name, storage_type) != resolved_type) {
+                throw std::runtime_error(name_ + " packed tensor sources resolved to different storage types");
+            }
+            if (part.shape.back() % ggml_blck_size(type) != 0) {
+                throw std::runtime_error(name_ + " packed tensor source is not block-aligned: " + part.name);
+            }
+            dims.front() += part.shape.front();
+        }
+        auto value = make_backend_tensor(shape_from_dims(dims), type);
+        size_t offset = 0;
+        for (const auto & part : parts) {
+            int64_t ne[4] = {1, 1, 1, 1};
+            for (size_t i = 0; i < part.shape.size(); ++i) {
+                ne[i] = part.shape[part.shape.size() - 1 - i];
+            }
+            const size_t nb1 = ggml_row_size(type, ne[0]);
+            auto * view = ggml_view_4d(ctx_.get(), value.tensor, ne[0], ne[1], ne[2], ne[3],
+                                      nb1, nb1 * ne[1], nb1 * ne[1] * ne[2], offset);
+            PendingUpload upload;
+            upload.tensor = view;
+            upload.source = &source;
+            upload.name = part.name;
+            upload.storage_type = resolved_type;
+            upload.expected_shape = part.shape;
+            upload.kind = PendingUploadKind::Tensor;
+            pending_.push_back(std::move(upload));
+            offset += ggml_nbytes(view);
+        }
         return value;
     }
 
@@ -207,8 +247,6 @@ public:
                     upload.expected_shape);
             } else if (upload.kind == PendingUploadKind::F32) {
                 upload.source->set_backend_f32_tensor(upload.tensor, upload.name, upload.expected_shape);
-            } else if (upload.kind == PendingUploadKind::Initializer) {
-                upload.initialize(upload.tensor);
             } else {
                 upload_bytes(upload.tensor, upload.bytes);
                 upload.bytes.clear();
@@ -237,7 +275,6 @@ private:
         Tensor,
         F32,
         Bytes,
-        Initializer,
     };
 
     struct PendingUpload {
@@ -248,7 +285,6 @@ private:
         std::vector<int64_t> expected_shape;
         PendingUploadKind kind = PendingUploadKind::Bytes;
         std::vector<std::byte> bytes;
-        std::function<void(ggml_tensor *)> initialize;
     };
 
     static TensorShape shape_from_dims(const std::vector<int64_t> & dims) {
