@@ -1,0 +1,172 @@
+name: HIP BLASLt PR 1060 concurrency
+
+on:
+  push:
+    branches: [test/devlab-dispatch]
+    paths:
+      - .github/workflows/hip-blaslt-pr1060.yml
+      - .github/tests/hipblaslt_real_probe.cpp
+      - .github/tests/extract_hipblaslt_probe.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: [self-hosted, linux, devlab-dispatch, strix-halo]
+    timeout-minutes: 30
+    env:
+      BASE_REF: c8365f391307a97bfe133e0872e632fe572ecace
+      HEAD_REF: f34ef9564df1167db91e9598290e45fc955e7873
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download test harness
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          mkdir -p results inputs
+          curl --fail --location --connect-timeout 20 --max-time 120 --retry 1 \
+            -o harness.tar.gz "https://codeload.github.com/$GITHUB_REPOSITORY/tar.gz/$GITHUB_SHA" \
+            2>&1 | tee results/harness-download.log
+          tar -xzf harness.tar.gz --strip-components=1
+      - name: Check runner and download pinned sources and tiny model
+        run: |
+          set -euo pipefail
+          exec > >(tee results/setup.log) 2>&1
+          uname -a
+          lscpu
+          ls -l /dev/kfd /dev/dri
+          rocm="${ROCM_PATH:-/opt/rocm}"
+          if [[ ! -x "$rocm/bin/hipcc" ]] && command -v hipconfig >/dev/null; then rocm="$(hipconfig --path)"; fi
+          "$rocm/bin/hipcc" --version
+          echo "ROCM_PATH=$rocm" >> "$GITHUB_ENV"
+          echo "$rocm/bin" >> "$GITHUB_PATH"
+          for variant in base head; do
+            repo=0xShug0/audio.cpp
+            ref="$BASE_REF"
+            if [[ "$variant" == head ]]; then repo=ZeroDot1/audio.cpp; ref="$HEAD_REF"; fi
+            mkdir -p "source-$variant"
+            curl --fail --location --connect-timeout 20 --max-time 120 --retry 1 \
+              -o "$variant.tar.gz" "https://codeload.github.com/$repo/tar.gz/$ref"
+            tar -xzf "$variant.tar.gz" --strip-components=1 -C "source-$variant"
+            printf '%s/%s\n' "$repo" "$ref" > "results/$variant-ref.txt"
+          done
+          curl --fail --location --connect-timeout 20 --max-time 180 --retry 2 \
+            -o inputs/moonshine-tiny-q8_0.gguf \
+            https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Moonshine-Streaming-GGUF/moonshine-streaming-tiny-q8_0.gguf
+          curl --fail --location --connect-timeout 20 --max-time 60 --retry 2 \
+            -o inputs/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
+          sha256sum inputs/* > results/input-sha256.txt
+      - name: Test real model and real library using production helper and cache
+        run: |
+          set -euo pipefail
+          ulimit -c 0
+          for variant in base head; do
+            source="source-$variant"
+            build="build-$variant"
+            python3 .github/tests/extract_hipblaslt_probe.py "$source" "results/$variant-generated"
+            SOURCE_DIR="$source" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path(os.environ['SOURCE_DIR']) / 'external/ggml/src/ggml-cuda/ggml-cuda.cu'
+          s = p.read_text()
+          start = s.index('static void ggml_hipblaslt_gemm(')
+          anchor = '    const hipblasOperation_t trans_a = HIPBLAS_OP_T;'
+          position = s.index(anchor, start)
+          names = 'm n k type_a type_b type_c lda ldb ldc stride_a stride_b stride_c batch_count'.split()
+          trace = '    fprintf(stderr, "[BLASLT_SHAPE] ' + ' '.join(['%lld'] * 13) + '\\n", ' + ', '.join('(long long)' + name for name in names) + ');\n'
+          s = s[:position] + trace + s[position:]
+          p.write_text(s)
+          PY
+            cmake -S "$source" -B "$build" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_C_COMPILER="$ROCM_PATH/llvm/bin/clang" \
+              -DCMAKE_CXX_COMPILER="$ROCM_PATH/llvm/bin/clang++" \
+              -DCMAKE_HIP_COMPILER="$ROCM_PATH/llvm/bin/clang++" \
+              -DCMAKE_PREFIX_PATH="$ROCM_PATH" -DGPU_TARGETS=gfx1151 \
+              -DENGINE_ENABLE_HIP=ON -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF \
+              -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF \
+              -DGGML_HIP_HIPBLASLT=ON -DENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=OFF \
+              -DGGML_HIP_NO_VMM=ON \
+              -DENGINE_BUILD_EXAMPLES=ON -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF \
+              -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=moonshine_asr \
+              2>&1 | tee "results/$variant-configure.log"
+            grep -q 'HIP: using hipBLASLt' "results/$variant-configure.log"
+            cmake --build "$build" --target audiocpp_cli -j 8 2>&1 | tee "results/$variant-build.log"
+            cp "$build/CMakeCache.txt" "results/$variant-CMakeCache.txt"
+            timeout 120 "$build/bin/audiocpp_cli" --task asr --family moonshine_asr \
+              --model inputs/moonshine-tiny-q8_0.gguf --backend hip --threads 4 \
+              --audio inputs/jfk.wav --text-out "results/$variant-transcript.txt" \
+              --log --metrics > "results/$variant-model.log" 2>&1
+            VARIANT="$variant" python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          variant = os.environ['VARIANT']
+          log = Path(f'results/{variant}-model.log').read_text()
+          shapes = re.findall(r'\[BLASLT_SHAPE\] ([0-9 -]+)', log)
+          assert shapes, 'Moonshine did not reach the affected hipBLASLt helper'
+          Path(f'results/{variant}-all-shapes.txt').write_text('\n'.join(dict.fromkeys(shapes)) + '\n')
+          # A/B uses the same first three supported single-batch production shapes.
+          if variant == 'base':
+              Path('results/stress-shapes.txt').write_text('\n'.join(dict.fromkeys(shapes)) + '\n')
+          print(f'{variant}: {len(shapes)} real-model calls to the affected helper')
+          PY
+            hipcc -O2 -std=c++17 -pthread -I "results/$variant-generated" \
+              .github/tests/hipblaslt_real_probe.cpp -L "$ROCM_PATH/lib" -lhipblaslt \
+              -Wl,-rpath,"$ROCM_PATH/lib" -o "results/$variant-probe" \
+              2>&1 | tee "results/$variant-probe-build.log"
+            for mode in private serialized shared; do
+              set +e
+              timeout 120 "results/$variant-probe" results/stress-shapes.txt "$mode" > "results/$variant-$mode.log" 2>&1
+              rc=$?
+              set -e
+              echo "$rc" > "results/$variant-$mode.exit"
+              cat "results/$variant-$mode.log"
+            done
+          done
+      - name: Classify evidence without conflating model and stress tests
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          root = Path('results')
+          reference = 'and so my fellow americans ask not what your country can do for you ask what you can do for your country'.split()
+          report, errors, outcomes = [], [], {}
+          for variant in ('base', 'head'):
+              text = (root / f'{variant}-transcript.txt').read_text()
+              actual = re.findall('[a-z]+', text.lower())
+              report.append(f'{variant}: normal Moonshine transcript={text.strip()!r}; exact normalized reference match={actual == reference}')
+              if actual != reference: errors.append(f'{variant}: normal ASR accuracy mismatch')
+              for mode in ('private', 'serialized', 'shared'):
+                  log = (root / f'{variant}-{mode}.log').read_text(errors='replace')
+                  rc = int((root / f'{variant}-{mode}.exit').read_text())
+                  rows = [(int(shape), int(failures), int(overlap)) for shape,_,failures,overlap in re.findall(r'RESULT shape=(\d+) mode=(\w+) failures=(\d+) overlapping_descriptor_calls=(\d+)', log)]
+                  outcomes[variant,mode] = rc
+                  report.append(f'{variant}/{mode}: exit={rc}')
+                  report.extend(f'  shape={shape} failures={failures} overlapping_descriptor_calls={overlap}' for shape,failures,overlap in rows)
+                  if variant == 'base' or mode != 'shared':
+                      if rc or not rows or any(f for _,f,_ in rows):
+                          errors.append(f'{variant}/{mode}: control failed; descriptor-sharing attribution is inconclusive')
+                  elif rc == 2:
+                      errors.append('head/shared: no supported shapes or probe setup failed')
+          reproduced = outcomes['head','shared'] != 0 and not errors
+          report.append(f'Conditional shared-descriptor numerical failure reproduced: {reproduced}')
+          report.append('The stress probe isolates descriptor reuse with private per-worker handles/workspaces/streams; it is not a supported concurrent full-backend inference test.')
+          if not reproduced: report.append('Do not claim a real GPU regression from the earlier mock/API-spy result alone.')
+          report.extend(errors)
+          result = '\n'.join(report) + '\n'
+          print(result)
+          (root / 'summary.txt').write_text(result)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out: out.write('```text\n' + result + '```\n')
+          if errors: raise SystemExit(1)
+          PY
+      - name: Upload complete evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hip-blaslt-pr1060-${{ github.run_attempt }}
+          path: results/
+          retention-days: 7
