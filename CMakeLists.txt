@@ -3640,6 +3640,16 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME granite5asr_ctc_timestamps_test COMMAND granite5asr_ctc_timestamps_test)
     endif()
 
+    if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_METAL)
+        add_executable(metal_im2col_test tests/unittests/test_metal_im2col.cpp)
+        target_link_libraries(metal_im2col_test PRIVATE ggml ggml-metal)
+        target_compile_definitions(metal_im2col_test PRIVATE
+            METAL_IM2COL_GOLDEN_PATH="${ENGINE_UNITTEST_ASSET_ROOT}/metal_im2col/original_metal_sha256.txt")
+        add_test(NAME metal_im2col_test COMMAND metal_im2col_test)
+        set_tests_properties(metal_im2col_test PROPERTIES
+            SKIP_RETURN_CODE 77 LABELS "extended;metal")
+    endif()
+
     if (ENGINE_BUILD_TESTS)
         # Runtime tests exercise the core HTTP handlers, not optional frontend
         # modules. Give their frontend.cpp an empty registry and exclude the
