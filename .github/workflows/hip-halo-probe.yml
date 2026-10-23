@@ -6,6 +6,9 @@ on:
     paths:
       - .github/workflows/hip-halo-probe.yml
       - external/ggml/src/ggml-hip/halo/sgemm.*
+      - external/ggml/src/ggml-hip/halo/mmvq.*
+      - .github/tests/extract_halo_mmvq_probe.py
+      - tests/unittests/test_hip_halo_mmvq.cu
       - tests/unittests/test_hip_halo_sgemm.cu
       - tests/unittests/assets/hip_halo/qwen3_sgemm_shapes.txt
   workflow_dispatch:
@@ -45,6 +48,16 @@ jobs:
           timeout 240 ./halo-sgemm-test 2>&1 | tee results/boundaries.log
           timeout 300 ./halo-sgemm-test tests/unittests/assets/hip_halo/qwen3_sgemm_shapes.txt \
             2>&1 | tee results/production.log
+      - name: Measure wave-per-row Q8 candidate against exact stock kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/tests/extract_halo_mmvq_probe.py
+          /opt/rocm/bin/hipcc --offload-arch=gfx1151 -O3 -std=c++17 -DGGML_USE_HIP \
+            -I. -Iexternal/ggml/include -Iexternal/ggml/src -Iexternal/ggml/src/ggml-cuda \
+            tests/unittests/test_hip_halo_mmvq.cu external/ggml/src/ggml-hip/halo/mmvq.cu \
+            -o halo-mmvq-test 2>&1 | tee results/mmvq-build.log
+          timeout 240 ./halo-mmvq-test 2>&1 | tee results/mmvq.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
