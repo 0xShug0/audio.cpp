@@ -11,6 +11,7 @@ on:
       - tests/unittests/test_hip_halo_mmvq.cu
       - tests/unittests/test_hip_halo_sgemm.cu
       - tests/unittests/assets/hip_halo/qwen3_sgemm_shapes.txt
+      - tests/unittests/assets/hip_halo/mmvq_candidates.cuh
   workflow_dispatch:
 
 permissions:
