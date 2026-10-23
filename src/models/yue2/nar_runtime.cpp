@@ -528,6 +528,8 @@ struct Yue2NARRuntime::Impl {
                 }
                 ar_keys.push_back(key);
                 ar_values.push_back(value);
+                ar_key_data.push_back(key.tensor->data);
+                ar_value_data.push_back(value.tensor->data);
             }
             auto nar_hidden = engine::modules::LinearModule({config.latent_dim, config.hidden_size, true})
                                   .build(build, state, owner.weights->vae2llm);
@@ -610,8 +612,20 @@ struct Yue2NARRuntime::Impl {
             }
         }
 
-        bool matches(int64_t f, int64_t ar) const noexcept {
-            return frames == f && ar_length == ar;
+        bool matches(int64_t f, const Yue2ARDevicePrefixState & ar) const noexcept {
+            if (frames != f || ar_length != ar.current_end ||
+                ar_keys.size() != ar.keys.size() || ar_values.size() != ar.values.size()) {
+                return false;
+            }
+            for (size_t layer = 0; layer < ar_keys.size(); ++layer) {
+                if (ar_keys[layer].tensor != ar.keys[layer].tensor ||
+                    ar_values[layer].tensor != ar.values[layer].tensor ||
+                    ar_key_data[layer] != ar.keys[layer].tensor->data ||
+                    ar_value_data[layer] != ar.values[layer].tensor->data) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         std::vector<float> run(
@@ -649,6 +663,8 @@ struct Yue2NARRuntime::Impl {
         core::TensorValue positions;
         std::vector<core::TensorValue> ar_keys;
         std::vector<core::TensorValue> ar_values;
+        std::vector<const void *> ar_key_data;
+        std::vector<const void *> ar_value_data;
         core::TensorValue output;
     };
 
@@ -662,7 +678,7 @@ struct Yue2NARRuntime::Impl {
         if (frames <= 0 || frames * config.latent_dim != static_cast<int64_t>(state.size())) {
             throw std::runtime_error("Yue2 NAR state shape mismatch");
         }
-        if (!graph.matches(frames, ar_state.current_end)) {
+        if (graph.frames != frames || graph.ar_length != ar_state.current_end) {
             throw std::runtime_error("Yue2 NAR graph shape changed during chunk solve");
         }
         std::vector<float> padded(static_cast<size_t>((frames + 2) * config.latent_dim), 0.0F);
@@ -679,7 +695,10 @@ struct Yue2NARRuntime::Impl {
         auto state = noise;
         const auto & config = assets->config.model;
         const int64_t frames = static_cast<int64_t>(state.size()) / config.latent_dim;
-        graph = std::make_unique<Graph>(*this, frames, ar_state);
+        if (!graph || !graph->matches(frames, ar_state)) {
+            graph.reset();
+            graph = std::make_unique<Graph>(*this, frames, ar_state);
+        }
         auto & chunk_graph = *graph;
         const float dt = 1.0F / static_cast<float>(ode_steps);
         for (int64_t step = 0; step < ode_steps; ++step) {

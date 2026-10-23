@@ -38,7 +38,11 @@ public:
         size_t nar_graph_arena_bytes,
         size_t vae_graph_arena_bytes,
         core::AttentionPreference attention_preference = core::AttentionPreference::Auto,
-        int64_t nar_attention_tile_rows = 0);
+        int64_t nar_attention_tile_rows = 0,
+        bool mem_saver = true,
+        bool packed_projections = false,
+        int64_t kv_cache_alignment = 1,
+        int64_t vae_tile_frames = 0);
     ~Yue2PipelineRuntime();
 
     Yue2Plan plan(const Yue2Request & request);

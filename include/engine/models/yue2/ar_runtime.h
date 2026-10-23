@@ -39,7 +39,9 @@ public:
         assets::TensorStorageType weight_type,
         size_t weight_context_bytes,
         size_t prefill_graph_arena_bytes,
-        size_t decode_graph_arena_bytes);
+        size_t decode_graph_arena_bytes,
+        bool packed_projections = false,
+        int64_t kv_cache_alignment = 1);
     ~Yue2ARRuntime();
 
     std::vector<int32_t> generate(

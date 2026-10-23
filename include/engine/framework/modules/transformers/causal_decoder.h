@@ -117,7 +117,9 @@ public:
         const DecoderHiddenWeights & weights,
         int64_t cache_steps,
         const core::TensorValue & attention_mask,
-        const core::TensorValue & cache_slot) const;
+        const core::TensorValue & cache_slot,
+        const runtime::TransformerBatchedKVCache * cache = nullptr,
+        runtime::TransformerKVCacheOptions cache_options = {}) const;
 
 private:
     DecoderHiddenConfig config_;
@@ -155,7 +157,9 @@ public:
         const CausalDecoderWeights & weights,
         int64_t cache_steps,
         const core::TensorValue & attention_mask,
-        const core::TensorValue & cache_slot) const;
+        const core::TensorValue & cache_slot,
+        const runtime::TransformerBatchedKVCache * cache = nullptr,
+        runtime::TransformerKVCacheOptions cache_options = {}) const;
 
 private:
     CausalDecoderConfig config_;

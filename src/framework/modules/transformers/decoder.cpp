@@ -997,6 +997,12 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
         attention_value_cache = activation_cast(ctx, attention_value_cache, config_.activation_cast);
     }
 
+    const int64_t attention_steps = attention_mask.shape.last_dim();
+    if (attention_steps < cache_key.shape.dims[1]) {
+        attention_key_cache = SliceModule({1, 0, attention_steps}).build(ctx, attention_key_cache);
+        attention_value_cache = SliceModule({1, 0, attention_steps}).build(ctx, attention_value_cache);
+    }
+
     auto q_heads = TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
     auto k_heads = TransposeModule({{0, 2, 1, 3}, attention_key_cache.shape.rank}).build(ctx, attention_key_cache);
