@@ -8,6 +8,7 @@
   export let packageSizeState: string;
   export let modelsFolderInput: string;
   export let modelsFolder: string;
+  export let modelsFolderHistory: string[] = [];
   export let defaultModelsFolder: string;
   export let applyingModelsFolder: boolean;
   export let modelsFolderIsDefault: boolean;
@@ -62,6 +63,15 @@
       <button disabled={applyingModelsFolder} on:click={() => openFolderBrowser()}>Browse</button>
       <button disabled={applyingModelsFolder || !modelsFolderInput.trim() || modelsFolderInput.trim() === modelsFolder} on:click={() => applyModelsFolder(false)}>Apply</button>
       <button disabled={applyingModelsFolder || modelsFolderIsDefault} on:click={() => applyModelsFolder(true)}>Use default</button></div>
+    <div class="folder-history">
+      <label for="models-folder-history">Recent folders</label>
+      <select id="models-folder-history" disabled={applyingModelsFolder || !modelsFolderHistory.length}
+        value={modelsFolderHistory.includes(modelsFolderInput) ? modelsFolderInput : ''}
+        on:change={(event) => modelsFolderInput = event.currentTarget.value}>
+        <option value="" disabled>Choose a recent folder</option>
+        {#each modelsFolderHistory as path}<option value={path}>{path}</option>{/each}
+      </select>
+    </div>
   </details>
   <div class="filters">
     <input type="search" aria-label="Search models" placeholder="Search models or families" bind:value={search} />
@@ -109,7 +119,10 @@
   .library-heading { padding: 20px 0; } .library-heading span, .result-count, .identity span, .package span, .package label, .state span { color: var(--muted); font-size: 13px; }
   .folder-settings { border-bottom: 1px solid var(--line); padding: 12px 0; }
   summary { cursor: pointer; font-size: 13px; } summary span { color: var(--muted); margin-left: 12px; overflow-wrap: anywhere; }
-  .folder-editor { display: flex; gap: 8px; padding: 12px 0; } .folder-editor input { flex: 1; min-width: 0; }
+  .folder-editor { display: flex; gap: 8px; padding: 12px 0; clear: both; } .folder-editor input { flex: 1; min-width: 0; }
+  .folder-history { display: grid; gap: 6px; padding-bottom: 12px; min-width: 0; }
+  .folder-history label { color: var(--muted); font-size: 13px; }
+  .folder-history select { width: 100%; min-width: 0; }
   .filters { display: grid; grid-template-columns: minmax(180px, 1fr) 220px 180px; gap: 12px; padding: 24px 0 12px; }
   input, select, button { font-size: 13px; min-height: 38px; border-radius: 6px; letter-spacing: 0; }
   .result-count { padding-bottom: 16px; } .family { margin: 0; }

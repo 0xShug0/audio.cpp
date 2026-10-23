@@ -1,4 +1,38 @@
 {
+  "ming3_tts": [
+    {"name":"template_name","type":"text","label":"Prompt template","placeholder":"Automatic"},
+    {"name":"voice_id","type":"text","label":"IP voice name","placeholder":"US_James (IP template only)"},
+    {"name":"temperature","type":"number","label":"Temperature","default":0,"minimum":0,"step":0.1},
+    {"name":"guidance_scale","type":"number","label":"Guidance scale","default":2,"step":0.1},
+    {"name":"sigma","type":"number","label":"SDE noise scale","default":0.25,"minimum":0,"step":0.05},
+    {"name":"trim_silence","type":"bool","label":"Trim trailing silence","default":true}
+  ],
+  "ming3_audio": [
+    {"name":"voice_id","type":"text","label":"Voice name","placeholder":"US_James"},
+    {"name":"prompt","type":"text","label":"Audio task prompt","placeholder":"Use task default"},
+    {"name":"system_prompt","type":"text","label":"System prompt"},
+    {"name":"enable_thinking","type":"bool","label":"Enable thinking","default":false},
+    {"name":"max_audio_tokens","type":"number","label":"Maximum acoustic patches per chunk","default":1000,"minimum":1,"step":1},
+    {"name":"temperature","type":"number","label":"Temperature","default":0,"minimum":0,"step":0.1},
+    {"name":"guidance_scale","type":"number","label":"Guidance scale","default":2,"step":0.1},
+    {"name":"disk_experts","scope":"session","session_option":"ming3_audio.disk_experts","type":"bool","label":"Offload expert weights","default":false},
+    {"name":"pin_experts","scope":"session","session_option":"ming3_audio.pin_experts","type":"bool","label":"Keep experts in pinned host RAM","default":false}
+  ],
+  "xtts_v2": [
+    {"name":"temperature","type":"slider","label":"Temperature","default":0.75,"minimum":0,"maximum":2,"step":0.05},
+    {"name":"top_k","type":"number","label":"Top-k","default":50,"minimum":0,"step":1},
+    {"name":"top_p","type":"slider","label":"Top-p","default":0.85,"minimum":0,"maximum":1,"step":0.01},
+    {"name":"repetition_penalty","type":"number","label":"Repetition penalty","default":10,"minimum":1,"step":0.5},
+    {"name":"max_mel_tokens","type":"number","label":"Maximum mel tokens","default":605,"minimum":1,"step":1}
+  ],
+  "latentsync": [
+    {"name":"num_inference_steps","type":"number","label":"Denoising steps","default":20,"minimum":1,"maximum":999,"step":1},
+    {"name":"cache_interval","type":"number","label":"DeepCache interval","default":1,"minimum":1,"step":1},
+    {"name":"guidance_scale","type":"number","label":"Guidance scale","default":1.5,"minimum":0,"step":0.1},
+    {"name":"frames_per_chunk","type":"number","label":"Frames per chunk","default":16,"minimum":1,"maximum":24,"step":1},
+    {"name":"fps","type":"number","label":"Frames per second","default":25,"minimum":1,"step":1},
+    {"name":"mem_saver","scope":"session","session_option":"latentsync.mem_saver","type":"bool","label":"Memory saver","default":false}
+  ],
   "ast_audioset": [
     {"name":"top_k","type":"number","label":"Top classes","default":10,"minimum":1,"maximum":527,"step":1}
   ],
