@@ -611,6 +611,11 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
     std::unique_lock<std::mutex> lock(ggml_cuda_lock);
     ggml_cuda_lock_cv.wait(lock, []{ return ggml_cuda_lock_counter.load(std::memory_order_relaxed) == 0; });
 
+#if defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
+    // Destroy cached descriptors before their associated hipBLASLt handles.
+    hipblaslt_clear_plan_cache();
+#endif // defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
+
     if (copy_event != nullptr) {
         CUDA_CHECK(cudaEventDestroy(copy_event));
     }
@@ -1673,49 +1678,55 @@ static void ggml_hipblaslt_gemm(
     hipblasLtHandle_t lt       = ctx.hipblaslt_handle();
     void *            workspace = ctx.hipblaslt_workspace(ctx.device);
 
-    hipblasLtMatmulDesc_t    matmul_desc;
-    hipblasLtMatrixLayout_t  layout_a, layout_b, layout_c;
-    hipblasLtMatmulPreference_t pref;
+    const ggml_backend_cuda_context::hipblaslt_algo_cache_key algo_key = {
+        m, n, k,
+        type_a, type_b, type_c,
+        lda, ldb, ldc,
+        stride_a, stride_b, stride_c,
+        batch_count,
+    };
 
-    HIPBLASLT_CHECK(hipblasLtMatmulDescCreate(&matmul_desc, HIPBLAS_COMPUTE_32F, HIP_R_32F));
-    HIPBLASLT_CHECK(hipblasLtMatmulDescSetAttribute(matmul_desc, HIPBLASLT_MATMUL_DESC_TRANSA, &trans_a, sizeof(trans_a)));
-    HIPBLASLT_CHECK(hipblasLtMatmulDescSetAttribute(matmul_desc, HIPBLASLT_MATMUL_DESC_TRANSB, &trans_b, sizeof(trans_b)));
+    auto plan = ctx.hipblaslt_cached_plan(algo_key);
+    if (plan == nullptr) {
+        auto candidate = std::make_shared<ggml_backend_cuda_context::hipblaslt_gemm_plan>();
+        HIPBLASLT_CHECK(hipblasLtMatmulDescCreate(&candidate->matmul_desc, HIPBLAS_COMPUTE_32F, HIP_R_32F));
+        HIPBLASLT_CHECK(hipblasLtMatmulDescSetAttribute(candidate->matmul_desc, HIPBLASLT_MATMUL_DESC_TRANSA, &trans_a, sizeof(trans_a)));
+        HIPBLASLT_CHECK(hipblasLtMatmulDescSetAttribute(candidate->matmul_desc, HIPBLASLT_MATMUL_DESC_TRANSB, &trans_b, sizeof(trans_b)));
 
-    // layout dims describe the stored (pre-op) matrix: A is stored [k, m], B is stored [k, n], C is [m, n]
-    HIPBLASLT_CHECK(hipblasLtMatrixLayoutCreate(&layout_a, ggml_hipblaslt_convert_type(type_a), k, m, lda));
-    HIPBLASLT_CHECK(hipblasLtMatrixLayoutCreate(&layout_b, ggml_hipblaslt_convert_type(type_b), k, n, ldb));
-    HIPBLASLT_CHECK(hipblasLtMatrixLayoutCreate(&layout_c, ggml_hipblaslt_convert_type(type_c), m, n, ldc));
+        // layout dims describe the stored (pre-op) matrix: A is stored [k, m], B is stored [k, n], C is [m, n]
+        HIPBLASLT_CHECK(hipblasLtMatrixLayoutCreate(&candidate->layout_a, ggml_hipblaslt_convert_type(type_a), k, m, lda));
+        HIPBLASLT_CHECK(hipblasLtMatrixLayoutCreate(&candidate->layout_b, ggml_hipblaslt_convert_type(type_b), k, n, ldb));
+        HIPBLASLT_CHECK(hipblasLtMatrixLayoutCreate(&candidate->layout_c, ggml_hipblaslt_convert_type(type_c), m, n, ldc));
 
-    if (batch_count > 1) {
-        int batch_count_i32 = (int) batch_count;
-        HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(layout_a, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT, &batch_count_i32, sizeof(batch_count_i32)));
-        HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(layout_a, HIPBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET, &stride_a, sizeof(stride_a)));
-        HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(layout_b, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT, &batch_count_i32, sizeof(batch_count_i32)));
-        HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(layout_b, HIPBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET, &stride_b, sizeof(stride_b)));
-        HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(layout_c, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT, &batch_count_i32, sizeof(batch_count_i32)));
-        HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(layout_c, HIPBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET, &stride_c, sizeof(stride_c)));
+        if (batch_count > 1) {
+            int batch_count_i32 = (int) batch_count;
+            HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(candidate->layout_a, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT, &batch_count_i32, sizeof(batch_count_i32)));
+            HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(candidate->layout_a, HIPBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET, &stride_a, sizeof(stride_a)));
+            HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(candidate->layout_b, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT, &batch_count_i32, sizeof(batch_count_i32)));
+            HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(candidate->layout_b, HIPBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET, &stride_b, sizeof(stride_b)));
+            HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(candidate->layout_c, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT, &batch_count_i32, sizeof(batch_count_i32)));
+            HIPBLASLT_CHECK(hipblasLtMatrixLayoutSetAttribute(candidate->layout_c, HIPBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET, &stride_c, sizeof(stride_c)));
+        }
+
+        hipblasLtMatmulPreference_t pref;
+        HIPBLASLT_CHECK(hipblasLtMatmulPreferenceCreate(&pref));
+        size_t max_workspace = HIPBLASLT_WORKSPACE_SIZE;
+        HIPBLASLT_CHECK(hipblasLtMatmulPreferenceSetAttribute(pref, HIPBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &max_workspace, sizeof(max_workspace)));
+
+        hipblasLtMatmulHeuristicResult_t heuristic;
+        int algo_count = 0;
+        HIPBLASLT_CHECK(hipblasLtMatmulAlgoGetHeuristic(lt, candidate->matmul_desc, candidate->layout_a, candidate->layout_b, candidate->layout_c, candidate->layout_c,
+                                                        pref, 1, &heuristic, &algo_count));
+        GGML_ASSERT(algo_count > 0);
+        candidate->algo = heuristic.algo;
+        HIPBLASLT_CHECK(hipblasLtMatmulPreferenceDestroy(pref));
+        plan = ctx.hipblaslt_cache_plan(algo_key, std::move(candidate));
     }
 
-    HIPBLASLT_CHECK(hipblasLtMatmulPreferenceCreate(&pref));
-    size_t max_workspace = HIPBLASLT_WORKSPACE_SIZE;
-    HIPBLASLT_CHECK(hipblasLtMatmulPreferenceSetAttribute(pref, HIPBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &max_workspace, sizeof(max_workspace)));
-
-    hipblasLtMatmulHeuristicResult_t heuristic;
-    int algo_count = 0;
-    HIPBLASLT_CHECK(hipblasLtMatmulAlgoGetHeuristic(lt, matmul_desc, layout_a, layout_b, layout_c, layout_c,
-                                                    pref, 1, &heuristic, &algo_count));
-    GGML_ASSERT(algo_count > 0);
-
-    HIPBLASLT_CHECK(hipblasLtMatmul(lt, matmul_desc,
-                                    &alpha, A, layout_a, B, layout_b,
-                                    &beta,  C, layout_c, C, layout_c,
-                                    &heuristic.algo, workspace, max_workspace, stream));
-
-    HIPBLASLT_CHECK(hipblasLtMatmulPreferenceDestroy(pref));
-    HIPBLASLT_CHECK(hipblasLtMatrixLayoutDestroy(layout_a));
-    HIPBLASLT_CHECK(hipblasLtMatrixLayoutDestroy(layout_b));
-    HIPBLASLT_CHECK(hipblasLtMatrixLayoutDestroy(layout_c));
-    HIPBLASLT_CHECK(hipblasLtMatmulDescDestroy(matmul_desc));
+    HIPBLASLT_CHECK(hipblasLtMatmul(lt, plan->matmul_desc,
+                                    &alpha, A, plan->layout_a, B, plan->layout_b,
+                                    &beta,  C, plan->layout_c, C, plan->layout_c,
+                                    &plan->algo, workspace, HIPBLASLT_WORKSPACE_SIZE, stream));
 }
 #endif // defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
 
