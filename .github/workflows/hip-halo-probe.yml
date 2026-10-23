@@ -1,0 +1,53 @@
+name: Halo isolated kernel iteration
+
+on:
+  push:
+    branches: [test/devlab-dispatch]
+    paths:
+      - .github/workflows/hip-halo-probe.yml
+      - external/ggml/src/ggml-hip/halo/sgemm.*
+      - tests/unittests/test_hip_halo_sgemm.cu
+      - tests/unittests/assets/hip_halo/qwen3_sgemm_shapes.txt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl --fail --location --max-time 120 --retry 2 -o source.tar.gz "https://codeload.github.com/$GITHUB_REPOSITORY/tar.gz/$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-source
+          path: source.tar.gz
+          retention-days: 1
+          compression-level: 0
+  probe:
+    needs: prepare
+    runs-on: [self-hosted, linux, devlab-dispatch, strix-halo]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: probe-source
+      - name: Compile and measure captured production shapes
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf source.tar.gz --strip-components=1
+          mkdir results
+          /opt/rocm/bin/hipcc --offload-arch=gfx1151 -O3 -std=c++17 \
+            -Iexternal/ggml/src/ggml-hip/halo \
+            tests/unittests/test_hip_halo_sgemm.cu external/ggml/src/ggml-hip/halo/sgemm.cu \
+            -lhipblaslt -o halo-sgemm-test 2>&1 | tee results/build.log
+          timeout 240 ./halo-sgemm-test 2>&1 | tee results/boundaries.log
+          timeout 300 ./halo-sgemm-test tests/unittests/assets/hip_halo/qwen3_sgemm_shapes.txt \
+            2>&1 | tee results/production.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: halo-isolated-kernels
+          path: results/
+          retention-days: 7
