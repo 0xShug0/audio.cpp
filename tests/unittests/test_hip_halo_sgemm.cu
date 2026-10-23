@@ -72,6 +72,11 @@ static void run(int m, int n, int k, int pad) {
 }
 
 int main(int argc, char **argv) {
+    int devices=0;
+    if (hipGetDeviceCount(&devices)!=hipSuccess || devices==0)return 77;
+    hipDeviceProp_t props;
+    CHECK(hipGetDeviceProperties(&props,0));
+    if (std::string(props.gcnArchName).find("gfx1151")!=0)return 77;
     if (argc == 2) {
         std::ifstream file(argv[1]);
         if (!file) return 1;

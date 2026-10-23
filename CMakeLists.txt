@@ -5150,6 +5150,19 @@ if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_HIP AND GGML_HIP_HALO AND NOT 
     target_include_directories(hip_halo_im2col_test PRIVATE external/ggml/include external/ggml/src/ggml-hip/halo)
     add_test(NAME hip_halo_im2col_test COMMAND hip_halo_im2col_test)
     set_tests_properties(hip_halo_im2col_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "extended;hip;halo")
+    find_package(hipblaslt REQUIRED)
+    set(HALO_SGEMM_TEST_SOURCES tests/unittests/test_hip_halo_sgemm.cu
+        external/ggml/src/ggml-hip/halo/sgemm.cu)
+    set_source_files_properties(${HALO_SGEMM_TEST_SOURCES} PROPERTIES LANGUAGE HIP)
+    add_executable(hip_halo_sgemm_test ${HALO_SGEMM_TEST_SOURCES})
+    set_target_properties(hip_halo_sgemm_test PROPERTIES HIP_STANDARD 17 HIP_STANDARD_REQUIRED ON)
+    target_include_directories(hip_halo_sgemm_test PRIVATE external/ggml/src/ggml-hip/halo)
+    target_link_libraries(hip_halo_sgemm_test PRIVATE roc::hipblaslt)
+    add_test(NAME hip_halo_sgemm_test COMMAND hip_halo_sgemm_test)
+    add_test(NAME hip_halo_sgemm_production_test COMMAND hip_halo_sgemm_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/assets/hip_halo/qwen3_sgemm_shapes.txt)
+    set_tests_properties(hip_halo_sgemm_test hip_halo_sgemm_production_test PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "extended;hip;halo")
 endif()
 
 if (ENGINE_BUILD_EXAMPLES)

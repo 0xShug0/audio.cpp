@@ -41,9 +41,6 @@ jobs:
             https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Moonshine-Streaming-GGUF/moonshine-streaming-tiny-q8_0.gguf
           curl --fail --location --connect-timeout 20 --max-time 60 --retry 2 \
             -o inputs/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
-          curl --fail --location --connect-timeout 20 --max-time 480 --retry 2 \
-            -o inputs/qwen3-customvoice-q8_0.gguf \
-            https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf
       - uses: actions/upload-artifact@v4
         with:
           name: halo-test-inputs
@@ -71,6 +68,12 @@ jobs:
           tar -xzf source.tar.gz --strip-components=1
           echo "$GITHUB_SHA" > results/source-ref.txt
           sha256sum inputs/* > results/input-sha256.txt
+          df -h . > results/disk-space.txt
+          curl --fail --location --connect-timeout 20 --max-time 300 --retry 2 \
+            -o inputs/qwen3-customvoice-q8_0.gguf \
+            'https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/6f45df32f8fb283e4cfce3d3e1cb7688986fcbe6/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf?download=true'
+          echo 'c8ac3f94b6e73f137c0e7ecc9270bc8faec7a476ff799b87e48844d1d0987ac3  inputs/qwen3-customvoice-q8_0.gguf' | sha256sum -c -
+          sha256sum inputs/qwen3-customvoice-q8_0.gguf >> results/input-sha256.txt
       - name: Prepare HIP runner and small models
         run: |
           set -euo pipefail
