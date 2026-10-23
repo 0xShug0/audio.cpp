@@ -37,7 +37,9 @@ for variant in variants:
             assert audio.getnframes() > 0, 'Empty audio'
         if name.endswith('warmup'): continue
         assert 'kokoro.decoder.generator_ms' in stages[name], 'Missing generator component timing'
-        rows.append({'request':name,'rtf':float(metrics[name]['rtf']),'stages':stages[name]})
+        rows.append({'request':name,
+                     'rtf':float(metrics[name]['wall_ms'])/float(metrics[name]['audio_duration_ms']),
+                     'reported_rtf':float(metrics[name]['rtf']),'stages':stages[name]})
     data[variant] = rows
 assert all(len(values)==1 for values in hashes.values()), 'Model WAV parity regression'
 reference = 'and so my fellow americans ask not what your country can do for you ask what you can do for your country'.split()

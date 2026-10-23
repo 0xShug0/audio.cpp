@@ -5131,6 +5131,7 @@ if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_CUDA)
 endif()
 
 if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_HIP AND GGML_HIP_HALO AND NOT WIN32)
+    enable_language(HIP)
     set(HALO_IM2COL_TEST_SOURCES tests/unittests/test_hip_halo_im2col.cu
         external/ggml/src/ggml-hip/halo/im2col.cu)
     set_source_files_properties(${HALO_IM2COL_TEST_SOURCES} PROPERTIES LANGUAGE HIP)

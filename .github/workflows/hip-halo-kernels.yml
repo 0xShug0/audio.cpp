@@ -7,6 +7,7 @@ on:
       - .github/workflows/hip-halo-kernels.yml
       - .github/tests/halo_requests.json
       - .github/tests/halo_results.py
+      - CMakeLists.txt
       - external/ggml/src/ggml-hip/halo/**
       - external/ggml/src/ggml-hip/CMakeLists.txt
       - external/ggml/src/ggml-cuda/im2col.cu
