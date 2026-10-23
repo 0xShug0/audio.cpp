@@ -15,6 +15,10 @@
 #include <unordered_set>
 #include <utility>
 
+#if defined(__APPLE__) && !defined(_OPENMP)
+#include <dispatch/dispatch.h>
+#endif
+
 namespace engine::core {
 
 class DiskExpertWeightStore::Impl {
@@ -53,7 +57,7 @@ public:
         : file(path, std::ios::binary), pin_experts(pin), read_threads(threads) {
         if (read_threads < 1 || read_threads > 64)
             throw std::invalid_argument("disk expert read_threads must be between 1 and 64");
-#if !defined(_OPENMP)
+#if !defined(_OPENMP) && !defined(__APPLE__)
         if (!pin_experts && read_threads > 1)
             throw std::runtime_error("parallel disk expert reads require ENGINE_ENABLE_OPENMP=ON");
 #endif
@@ -152,6 +156,24 @@ public:
                         std::memcpy(staging + offset + m * bytes,
                             mapped_file.data() + projection.offset + static_cast<size_t>(misses[m].id) * bytes, bytes);
                     }
+#elif defined(__APPLE__)
+                    // Apple release builds omit OpenMP; dispatch joins all reads before upload.
+                    const size_t workers = std::min(read_threads, misses.size());
+                    struct ReadBatch {
+                        std::byte * destination;
+                        const std::byte * source;
+                        const std::vector<Miss> & misses;
+                        size_t bytes, workers;
+                    } batch{staging + offset, mapped_file.data() + projection.offset, misses, bytes, workers};
+                    dispatch_apply_f(workers, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+                        &batch, [](void * context, size_t worker) {
+                            const auto & batch = *static_cast<ReadBatch *>(context);
+                            for (size_t m = worker; m < batch.misses.size(); m += batch.workers) {
+                                std::memcpy(batch.destination + m * batch.bytes,
+                                    batch.source + static_cast<size_t>(batch.misses[m].id) * batch.bytes,
+                                    batch.bytes);
+                            }
+                        });
 #endif
                 }
                 stats.bytes_read += misses.size() * bytes;

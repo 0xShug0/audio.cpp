@@ -37,6 +37,7 @@ int main(int argc, char ** argv) {
         config.threads = 4;
         if (argc > 1 && std::string(argv[1]) == "cuda") config.type = core::BackendType::Cuda;
         if (argc > 1 && std::string(argv[1]) == "vulkan") config.type = core::BackendType::Vulkan;
+        if (argc > 1 && std::string(argv[1]) == "metal") config.type = core::BackendType::Metal;
         core::ExecutionContext execution(config);
         std::unique_ptr<core::ExecutionContext> host;
         if (config.type != core::BackendType::Cpu) {
@@ -68,7 +69,7 @@ int main(int argc, char ** argv) {
         const std::vector<std::tuple<assets::TensorStorageType, bool, size_t>> modes{
             {assets::TensorStorageType::F32, false, 1}, {assets::TensorStorageType::Q4_K, false, 1},
             {assets::TensorStorageType::F32, true, 1}, {assets::TensorStorageType::Q4_K, true, 1},
-#if defined(_OPENMP)
+#if defined(_OPENMP) || defined(__APPLE__)
             {assets::TensorStorageType::F32, false, 4}, {assets::TensorStorageType::Q4_K, false, 4},
             {assets::TensorStorageType::F32, false, 64}, {assets::TensorStorageType::Q4_K, false, 64},
 #endif
@@ -79,7 +80,7 @@ int main(int argc, char ** argv) {
             assets::convert_tensor_sources_to_gguf({{input, ""}}, gguf, assets::TensorStorageType::F32,
                 true, false, {}, {}, std::nullopt, options);
             core::DiskExpertWeightStore disk(gguf, pin_experts, read_threads);
-#if !defined(_OPENMP)
+#if !defined(_OPENMP) && !defined(__APPLE__)
             bool parallel_rejected = false;
             try { core::DiskExpertWeightStore parallel(gguf, false, 4); }
             catch (const std::runtime_error & error) {
