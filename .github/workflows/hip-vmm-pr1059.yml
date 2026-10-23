@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   hip-vmm:
-    runs-on: [devlab-dispatch, Linux]
+    runs-on: [self-hosted, linux, devlab-dispatch, strix-halo]
     timeout-minutes: 45
     env:
       BASE_REF: c8365f391307a97bfe133e0872e632fe572ecace

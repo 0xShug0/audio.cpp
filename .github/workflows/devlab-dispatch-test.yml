@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - test/devlab-dispatch
+    paths:
+      - .github/workflows/devlab-dispatch-test.yml
   workflow_dispatch:
 
 permissions: {}
