@@ -14,7 +14,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_fish_drama3_loader() {
         // Their values are checked by the generator and backbone constructors.
         for (const auto * key : {"fish_drama3.disk_experts", "fish_drama3.expert_cache_size", "fish_drama3.disk_expert_read_threads", "fish_drama3.pin_experts",
                                  "fish_drama3.codec_encoder_f32_accumulation", "fish_drama3.codec_encoder_bf16_compute",
-                                 "fish_drama3.codec_encoder_chunk_samples"}) {
+                                 "fish_drama3.codec_encoder_chunk_samples", "fish_drama3.device_sampling"}) {
             if (!contract->session_option_keys.count(key)) validation_options.options.erase(key);
         }
         runtime::validate_spec_backed_session_options(validation_options, *contract, "fish_drama3", "Drama 3");

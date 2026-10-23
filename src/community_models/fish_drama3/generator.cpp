@@ -17,31 +17,49 @@
 namespace engine::models::fish_drama3 {
 namespace {
 
+struct SamplerScratch {
+    std::vector<int32_t> order;
+    std::vector<double> weights;
+    std::vector<double> probabilities;
+};
+
 int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
-               float top_p, std::mt19937 & random) {
+               float top_p, std::mt19937 & random, SamplerScratch & scratch) {
     if (logits.empty()) throw std::runtime_error("Drama 3 sampler has no logits");
     if (temperature == 0 || top_k == 1)
         return sampling::HfLogitsProcessor::argmax(logits.data(), logits.size(), "Drama 3");
-    std::vector<int32_t> order(logits.size());
+    auto & order = scratch.order;
+    order.resize(logits.size());
     std::iota(order.begin(), order.end(), 0);
     const auto count = std::min(logits.size(), static_cast<size_t>(top_k));
-    std::partial_sort(order.begin(), order.begin() + count, order.end(), [&](int32_t left, int32_t right) {
+    const auto compare = [&](int32_t left, int32_t right) {
         return logits[left] == logits[right] ? left < right : logits[left] > logits[right];
-    });
-    order.resize(count);
-    const double maximum = logits[order.front()] / temperature;
+    };
+    const double maximum = *std::max_element(logits.begin(), logits.end()) / temperature;
     double total = 0;
     // Top-p is defined against the full distribution, before top-k filtering.
-    for (const auto logit : logits) total += std::exp(logit / temperature - maximum);
-    std::vector<double> probabilities(order.size());
-    for (size_t rank = 0; rank < order.size(); ++rank) {
-        probabilities[rank] = std::exp(logits[order[rank]] / temperature - maximum);
+    auto & weights = scratch.weights;
+    weights.resize(logits.size());
+    for (size_t index = 0; index < logits.size(); ++index) {
+        weights[index] = std::exp(logits[index] / temperature - maximum);
+        total += weights[index];
     }
     if (!(total > 0) || !std::isfinite(total)) throw std::runtime_error("Drama 3 sampler encountered nonfinite logits");
+    size_t sorted = std::min(count, size_t{64});
+    for (;;) {
+        std::partial_sort(order.begin(), order.begin() + sorted, order.end(), compare);
+        double mass = 0;
+        for (size_t rank = 0; rank < sorted; ++rank) mass += weights[order[rank]] / total;
+        if (sorted == count || mass > top_p) break;
+        sorted = std::min(count, sorted * 2);
+    }
+    auto & probabilities = scratch.probabilities;
+    probabilities.assign(count, 0);
     double cumulative = 0;
-    for (size_t rank = 0; rank < order.size(); ++rank) {
-        cumulative += probabilities[rank] / total;
-        if (rank > 0 && (cumulative > top_p || rank >= static_cast<size_t>(top_k))) probabilities[rank] = 0;
+    for (size_t rank = 0; rank < sorted; ++rank) {
+        cumulative += weights[order[rank]] / total;
+        if (rank > 0 && cumulative > top_p) break;
+        probabilities[rank] = weights[order[rank]];
     }
     std::discrete_distribution<size_t> choice(probabilities.begin(), probabilities.end());
     return order[choice(random)];
@@ -61,6 +79,9 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     if (cache_steps_ > 262144) throw std::runtime_error("Drama 3 context_length exceeds the checkpoint's maximum position count");
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.profile_first_audio"})) {
         profile_first_audio_ = runtime::parse_bool_option(*value, "fish_drama3.profile_first_audio");
+    }
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.device_sampling"})) {
+        device_sampling_ = runtime::parse_bool_option(*value, "fish_drama3.device_sampling");
     }
     auto backbone_config = assets_->backbone;
     backbone_config.decode_cache_steps = cache_steps_;
@@ -223,6 +244,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     auto hidden = last_hidden(prefill.hidden, assets_->backbone.hidden_size);
     Drama3Frame current = prompt.back();
     std::mt19937 random(sampling.seed);
+    SamplerScratch sampler_scratch;
     std::deque<int32_t> recent;
     std::vector<Drama3Frame> output_frames;
     Drama3Generation result;
@@ -235,8 +257,8 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         // Both drama3 (lm_head_token_ids) and drama3-small (lm_head_rows) return
         // compact [EOS, semantic 0..N-1] logits from the backbone.
         auto candidates = std::move(logits);
-        const int32_t first = sample(candidates, sampling.temperature, sampling.top_k, sampling.top_p, random);
-        const int32_t second = sample(candidates, 1.0F, 30, 0.95F, random);
+        const int32_t first = sample(candidates, sampling.temperature, sampling.top_k, sampling.top_p, random, sampler_scratch);
+        const int32_t second = sample(candidates, 1.0F, 30, 0.95F, random, sampler_scratch);
         const int32_t first_token = first == 0 ? assets_->eos : assets_->tower.semantic_begin + first - 1;
         const bool repeats = first != 0 && std::find(recent.begin(), recent.end(), first_token) != recent.end();
         const int32_t selected = repeats ? second : first;
@@ -248,19 +270,28 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         next[1] = selected - 1;
         const auto tower_started = ProfileClock::now();
         const auto sampling_before_tower = component_ms[5];
-        const auto shared_input = tower_->shared_input({current});
-        auto tower_hidden = hidden;
         const int64_t position = decoder->valid_steps() - 1;
         const auto & config = assets_->tower;
-        for (int64_t layer = 0; layer < config.shared_layers + config.residual_layers; ++layer) {
-            const int64_t book = layer < config.shared_layers ? 0 : layer - config.shared_layers;
-            const auto tower_output = tower_->run_layer(layer, tower_hidden, {next[1 + book]}, {1.0F},
-                                                        layer == 0 ? shared_input : std::vector<float>{}, position);
-            tower_hidden = tower_output.hidden;
-            if (layer >= config.shared_layers) {
-                component_started = ProfileClock::now();
-                next[2 + book] = sample(tower_output.logits, sampling.temperature, sampling.top_k, sampling.top_p, random);
-                component_ms[5] += debug::elapsed_ms(component_started);
+        if (device_sampling_) {
+            std::array<float, 9> uniforms{};
+            if (sampling.temperature != 0 && sampling.top_k != 1) {
+                for (auto & uniform : uniforms) uniform = static_cast<float>(std::generate_canonical<double, 53>(random));
+            }
+            next = tower_->run_frame(hidden, current, selected - 1, position,
+                sampling.temperature, sampling.top_k, sampling.top_p, uniforms);
+        } else {
+            const auto shared_input = tower_->shared_input({current});
+            auto tower_hidden = hidden;
+            for (int64_t layer = 0; layer < config.shared_layers + config.residual_layers; ++layer) {
+                const int64_t book = layer < config.shared_layers ? 0 : layer - config.shared_layers;
+                const auto tower_output = tower_->run_layer(layer, tower_hidden, {next[1 + book]}, {1.0F},
+                                                            layer == 0 ? shared_input : std::vector<float>{}, position);
+                tower_hidden = tower_output.hidden;
+                if (layer >= config.shared_layers) {
+                    component_started = ProfileClock::now();
+                    next[2 + book] = sample(tower_output.logits, sampling.temperature, sampling.top_k, sampling.top_p, random, sampler_scratch);
+                    component_ms[5] += debug::elapsed_ms(component_started);
+                }
             }
         }
         component_ms[6] += debug::elapsed_ms(tower_started) - (component_ms[5] - sampling_before_tower);

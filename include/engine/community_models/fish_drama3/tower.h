@@ -57,6 +57,9 @@ public:
                               const std::vector<float> & semantic_mask,
                               const std::vector<float> & extra_input,
                               int64_t position, int64_t steps = 1);
+    Drama3Frame run_frame(const std::vector<float> & hidden, const Drama3Frame & current,
+                         int32_t semantic_code, int64_t position, float temperature,
+                         int top_k, float top_p, const std::array<float, 9> & uniforms);
     const Drama3TowerConfig & config() const noexcept;
 
 private:

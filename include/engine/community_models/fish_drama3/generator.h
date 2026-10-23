@@ -38,6 +38,7 @@ private:
     int64_t cache_steps_;
     bool profile_first_audio_ = false;
     bool disk_experts_ = false;
+    bool device_sampling_ = true;
     std::unique_ptr<Drama3BackboneDecoderRuntime> backbone_;
     std::unique_ptr<Drama3BackboneDecoderRuntime::DecodeSession> decoder_;
     std::vector<Drama3Frame> cached_prefix_;
