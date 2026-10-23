@@ -144,6 +144,13 @@
         "default": 256
       },
       {
+        "name": "device_sampling",
+        "type": "bool",
+        "description": "Enable tower decode and codebook sampling in one cached backend graph. Uses F32 probabilities; sampled outputs may differ from the host sampler.",
+        "required": false,
+        "default": true
+      },
+      {
         "name": "profile_first_audio",
         "type": "bool",
         "description": "Emit first-audio stage timings to stderr for performance diagnosis. Disabled by default.",

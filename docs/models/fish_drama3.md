@@ -125,6 +125,10 @@ CPU PyTorch dependencies managed by uv and does not load weights onto a GPU.
 
 ## Generate and stream
 
+Tower decode and codebook sampling use one cached backend graph by default.
+Set `--session-option fish_drama3.device_sampling=false` to use host sampling.
+Graph probability arithmetic is F32, so sampled outputs may differ from host sampling.
+
 ```powershell
 .\build\windows-cuda-release\bin\audiocpp_cli.exe `
   --task tts --family fish_drama3 --backend cuda --mode streaming `
