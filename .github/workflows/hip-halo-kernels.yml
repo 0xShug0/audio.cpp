@@ -204,10 +204,17 @@ jobs:
       - name: Build Vulkan reference on the same Halo
         run: |
           set -euo pipefail
-          sudo -n apt-get update -qq
-          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y libvulkan-dev glslc mesa-vulkan-drivers vulkan-tools
+          timeout 240 ./halo-sgemm-test results/qwen-off.log 2>&1 | tee results/sgemm-production.log
+          mkdir -p inputs/vulkan-debs inputs/vulkan-sdk
+          cd inputs/vulkan-debs
+          apt-get download libvulkan-dev glslc libshaderc1 vulkan-tools
+          for package in *.deb; do dpkg-deb -x "$package" ../vulkan-sdk; done
+          cd ../..
+          export PATH="$PWD/inputs/vulkan-sdk/usr/bin:$PATH"
+          export LD_LIBRARY_PATH="$PWD/inputs/vulkan-sdk/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
           vulkaninfo --summary > results/vulkan-device.log 2>&1
           cmake -S . -B build-vulkan -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PWD/inputs/vulkan-sdk/usr" \
             -DENGINE_ENABLE_HIP=OFF -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=ON \
             -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF -DENGINE_BUILD_EXAMPLES=ON \
             -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF -DAUDIOCPP_MODEL_SET=custom \

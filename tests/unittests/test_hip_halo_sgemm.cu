@@ -4,6 +4,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <set>
+#include <sstream>
+#include <tuple>
 #include <vector>
 
 #define CHECK(x) do { if ((x) != 0) { std::fprintf(stderr, "API failure %s:%d: %s\n", __FILE__, __LINE__, #x); std::exit(1); } } while (0)
@@ -67,7 +71,25 @@ static void run(int m, int n, int k, int pad) {
     CHECK(hipFree(work));CHECK(hipFree(da));CHECK(hipFree(db));CHECK(hipFree(dc));
 }
 
-int main() {
+int main(int argc, char **argv) {
+    if (argc == 2) {
+        std::ifstream file(argv[1]);
+        if (!file) return 1;
+        std::string line;
+        std::set<std::tuple<int,int,int>> shapes;
+        while (std::getline(file,line)) {
+            auto pos=line.find("[GEMM_SHAPE] ");
+            if(pos==std::string::npos)continue;
+            std::istringstream in(line.substr(pos+13));
+            int m,n,k,ta,tb,tc,lda,ldb,ldc,batches;
+            if (!(in>>m>>n>>k>>ta>>tb>>tc>>lda>>ldb>>ldc>>batches))return 1;
+            if (ta==0 && tb==0 && tc==0 && batches==1)shapes.emplace(m,n,k);
+        }
+        if(shapes.empty())return 1;
+        for(auto s:shapes)run(std::get<0>(s),std::get<1>(s),std::get<2>(s),0);
+        std::puts("PASS production SGEMM shapes");
+        return 0;
+    }
     for(int pad:{0,3})for(auto s:std::vector<std::vector<int>>{
         {1,1,1},{31,33,65},{64,64,64},{67,131,97},
         {512,128,1536},{256,1024,3584},{128,8192,1792},
