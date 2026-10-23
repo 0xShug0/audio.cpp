@@ -11,10 +11,11 @@ on:
       - external/ggml/src/ggml-hip/halo/**
       - external/ggml/src/ggml-hip/CMakeLists.txt
       - external/ggml/src/ggml-cuda/im2col.cu
+      - external/ggml/src/ggml-cuda/ggml-cuda.cu
       - external/ggml/CMakeLists.txt
       - tests/unittests/test_hip_halo_im2col.cu
       - tests/unittests/test_hip_halo_sgemm.cu
-      - tests/unittests/assets/hip_halo/**
+      - tests/unittests/assets/hip_halo/original_im2col.cuh
   workflow_dispatch:
 
 permissions:

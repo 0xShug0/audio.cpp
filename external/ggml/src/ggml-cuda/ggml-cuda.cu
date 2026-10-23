@@ -2,6 +2,10 @@
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
 
+#if defined(GGML_USE_HIP) && defined(GGML_HIP_HALO)
+#include "ggml-hip/halo/sgemm.cuh"
+#endif
+
 #include "ggml-cuda/allreduce.cuh"
 #include "ggml-cuda/common.cuh"
 #include "ggml-cuda/acc.cuh"
@@ -1663,6 +1667,22 @@ static void ggml_hipblaslt_gemm(
     const void * B, int type_b, int64_t ldb, int64_t stride_b,
     void *       C, int type_c, int64_t ldc, int64_t stride_c,
     int64_t batch_count) {
+
+#if defined(GGML_HIP_HALO)
+    // gfx1151's library FP32 convolution GEMMs underuse operand reuse. Keep
+    // small/batched GEMMs on the library; this tile retains FP32 arithmetic.
+    if (ggml_cuda_info().devices[ctx.device].cc == GGML_CUDA_CC_OFFSET_AMD + 0x1151 &&
+        ggml_hipblaslt_convert_type(type_a) == HIP_R_32F &&
+        ggml_hipblaslt_convert_type(type_b) == HIP_R_32F &&
+        ggml_hipblaslt_convert_type(type_c) == HIP_R_32F &&
+        batch_count == 1 && m >= 128 && n >= 96 && m * n >= 65536 && k >= 96 &&
+        n <= 65535 * 64 && lda >= k && ldb >= k && ldc >= m) {
+        ggml_hip_halo_sgemm(static_cast<const float *>(A), static_cast<const float *>(B),
+            static_cast<float *>(C), m, n, k, lda, ldb, ldc,
+            stride_a, stride_b, stride_c, batch_count, stream);
+        return;
+    }
+#endif
 
     const hipblasOperation_t trans_a = HIPBLAS_OP_T;
     const hipblasOperation_t trans_b = HIPBLAS_OP_N;
