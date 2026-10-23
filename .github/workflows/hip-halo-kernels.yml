@@ -20,23 +20,52 @@ permissions:
   contents: read
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Stage exact source and small model inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir inputs
+          curl --fail --location --connect-timeout 20 --max-time 120 --retry 1 \
+            -o source.tar.gz "https://codeload.github.com/$GITHUB_REPOSITORY/tar.gz/$GITHUB_SHA"
+          curl --fail --location --connect-timeout 20 --max-time 180 --retry 2 \
+            -o inputs/kokoro-q8_0.gguf \
+            https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf
+          curl --fail --location --connect-timeout 20 --max-time 180 --retry 2 \
+            -o inputs/moonshine-tiny-q8_0.gguf \
+            https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Moonshine-Streaming-GGUF/moonshine-streaming-tiny-q8_0.gguf
+          curl --fail --location --connect-timeout 20 --max-time 60 --retry 2 \
+            -o inputs/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-test-inputs
+          path: |
+            source.tar.gz
+            inputs/
+          compression-level: 0
+          retention-days: 1
   halo:
+    needs: prepare
     runs-on: [self-hosted, linux, devlab-dispatch, strix-halo]
     timeout-minutes: 40
     defaults:
       run:
         shell: bash
     steps:
-      - name: Fetch exact experimental source
+      - uses: actions/download-artifact@v4
+        with:
+          name: halo-test-inputs
+      - name: Extract exact experimental source
         timeout-minutes: 5
         run: |
           set -euo pipefail
           mkdir -p results inputs
-          curl --fail --location --connect-timeout 20 --max-time 120 --retry 1 \
-            -o source.tar.gz "https://codeload.github.com/$GITHUB_REPOSITORY/tar.gz/$GITHUB_SHA" \
-            2>&1 | tee results/source-download.log
           tar -xzf source.tar.gz --strip-components=1
           echo "$GITHUB_SHA" > results/source-ref.txt
+          sha256sum inputs/* > results/input-sha256.txt
       - name: Prepare HIP runner and small models
         run: |
           set -euo pipefail
@@ -53,15 +82,6 @@ jobs:
             sudo -n apt-get update -qq
             sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y espeak-ng libespeak-ng1
           fi
-          curl --fail --location --connect-timeout 20 --max-time 180 --retry 2 \
-            -o inputs/kokoro-q8_0.gguf \
-            https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf
-          curl --fail --location --connect-timeout 20 --max-time 180 --retry 2 \
-            -o inputs/moonshine-tiny-q8_0.gguf \
-            https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Moonshine-Streaming-GGUF/moonshine-streaming-tiny-q8_0.gguf
-          curl --fail --location --connect-timeout 20 --max-time 60 --retry 2 \
-            -o inputs/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
-          sha256sum inputs/* > results/input-sha256.txt
       - name: Add identical shape logging to CI builds only
         run: |
           python3 - <<'PY'
