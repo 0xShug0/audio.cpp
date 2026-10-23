@@ -200,7 +200,7 @@
       {
         "name": "disk_expert_read_threads",
         "type": "int",
-        "description": "Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 require an OpenMP build.",
+        "description": "Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 use OpenMP or Apple dispatch.",
         "required": false,
         "min": 1,
         "max": 64,

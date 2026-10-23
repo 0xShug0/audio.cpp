@@ -671,7 +671,7 @@
         "default": 1,
         "min": 1,
         "max": 64,
-        "description": "Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 require an OpenMP build."
+        "description": "Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 use OpenMP or Apple dispatch."
       },
       {
         "name": "reference_cache",
