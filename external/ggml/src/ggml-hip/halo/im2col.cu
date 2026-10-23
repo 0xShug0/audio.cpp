@@ -82,7 +82,7 @@ bool ggml_hip_halo_im2col_1d(
                 channel_stride, batch_stride, stride, padding, dilation, stream);
             break;
         case GGML_TYPE_BF16:
-            launch<__hip_bfloat16>(input, output, width, positions, kernel, columns, batches,
+            launch<hip_bfloat16>(input, output, width, positions, kernel, columns, batches,
                 channel_stride, batch_stride, stride, padding, dilation, stream);
             break;
         default:

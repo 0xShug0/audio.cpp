@@ -85,7 +85,7 @@ void run(const Shape & s, ggml_type type, hipStream_t stream) {
                 throw std::runtime_error("Halo rejected test case");
         } else if (type == GGML_TYPE_F32) original<float>(s,positions,cs,bs,input,a+128,stream);
         else if (type == GGML_TYPE_F16) original<__half>(s,positions,cs,bs,input,a+128,stream);
-        else original<__hip_bfloat16>(s,positions,cs,bs,input,a+128,stream);
+        else original<hip_bfloat16>(s,positions,cs,bs,input,a+128,stream);
         HIP_CHECK(hipGetLastError());
     };
     std::vector<unsigned char> actual(bytes+256), baseline(bytes+256);
