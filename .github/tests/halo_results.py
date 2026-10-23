@@ -62,7 +62,7 @@ for length in ('short','medium'):
     report.append(f'{length}: ' + json.dumps(by_mode))
 for mode in ('off','on'):
     totals = defaultdict(float)
-    for path in (root/f'profile-{mode}').glob('*kernel_trace.csv'):
+    for path in (root/f'profile-{mode}').rglob('*kernel_trace.csv'):
         with path.open() as handle:
             for row in csv.DictReader(handle):
                 if 'Kernel_Name' in row and 'Start_Timestamp' in row and 'End_Timestamp' in row:
