@@ -1,6 +1,6 @@
 # IBM Granite Speech 5.0 470M TurboCTC in audio.cpp
 
-IBM Granite Speech 5.0 TurboCTC is a compact 470-million-parameter English Automatic Speech Recognition (ASR) model delivering state-of-the-art transcription accuracy with ultra-low latency.
+IBM Granite Speech 5.0 TurboCTC is a compact 470-million-parameter Automatic Speech Recognition (ASR) model. The current checkpoint transcribes English, French, German, Spanish, Portuguese, Italian, and Japanese, and it writes punctuation and capitals itself. There is no language input: a request language is accepted and ignored. A result is labelled `en` unless the decoder emits a trained language token such as `<|fr|>`. An older English-only checkpoint still loads and is still labelled `en`.
 
 ## Architecture
 
@@ -46,9 +46,9 @@ It returns a final transcript rather than incremental text.
 
 Word timestamps are produced. `supports_timestamps` is true.
 
-The grid is 80 ms (1280 samples at the model's 16 kHz rate). Indexes are samples in the session buffer at that buffer's own sample rate, so input at 8 kHz or 48 kHz reports the same times in seconds as 16 kHz input.
+The grid is 80 ms (1280 samples at the model's 16 kHz rate). Indexes are samples of the audio that was submitted, at that audio's sample rate. Offline and streaming both use this clock, so input at 8 kHz or 48 kHz reports the same times in seconds as 16 kHz input. Streaming resamples internally to 16 kHz and converts the word indexes back.
 
-A token ends at the next different label, including blank. A word runs from its first subword piece through its last, so blanks between those pieces are inside the word. Blanks between words are in neither word.
+A token ends at the next different label, including blank. A word runs from its first subword piece through its last letter or digit, so blanks between those pieces are inside the word. A trailing punctuation piece is written onto that word and does not move its end or its confidence. A leading symbol, such as a currency mark or an opening quote, stays on the following word. Blanks between words are in neither word.
 
 `confidence` is the geometric mean of the greedy-class probability on the non-blank frames of that word.
 

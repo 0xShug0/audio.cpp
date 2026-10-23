@@ -84,9 +84,13 @@ public:
     runtime::TaskResult finalize() override;
 
 private:
+    void remap_stream_words(std::vector<runtime::WordTimestamp> & words) const;
+
     runtime::StreamEventCallback stream_event_sink_;
     runtime::AudioBuffer streaming_audio_;
     runtime::TaskRequest streaming_request_;
+    int32_t stream_input_rate_ = 0;
+    int64_t stream_input_samples_ = 0;
 };
 
 class Granite5ASRLoadedModel final : public runtime::ILoadedVoiceModel {

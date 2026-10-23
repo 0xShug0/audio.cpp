@@ -1206,7 +1206,7 @@ public:
       : assets_(require_assets(std::move(assets))),
         weights_(std::make_shared<VoxCPM2WeightsRuntime>(
             assets_, execution_context, config.weight_context_bytes,
-            config.weight_storage_type)),
+            config.weight_storage_type, config.optimized)),
         tokenizer_(assets_),
         text_embedding_(weights_, config.text_embedding_graph_context_bytes,
                         config.mem_saver),

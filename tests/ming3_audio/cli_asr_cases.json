@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "id": "ming_audio_asr_sequence",
+      "coverage": "Chinese warmup and repeated longer English audio in one session",
+      "family": "ming3_audio",
+      "model": "Ming-3.0-Audio-Tiny-GGUF/ming-3.0-audio-tiny-bf16.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {
+          "id": "warmup_zh",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "options": {"max_tokens": 256}
+        },
+        {
+          "id": "nature_en",
+          "audio": "assets/resources/sample.wav",
+          "options": {"max_tokens": 256}
+        },
+        {
+          "id": "nature_en_repeat",
+          "audio": "assets/resources/sample.wav",
+          "options": {"max_tokens": 256}
+        }
+      ]
+    }
+  ]
+}

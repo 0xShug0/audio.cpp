@@ -43,6 +43,7 @@ runtime::ModelCliInterface cli(const HiggsAssets &) {
         {"allow_incomplete_generation", "bool", "Return generated audio with a warning instead of failing when max_tokens is reached before EOC. Audio may be truncated or contain silence/noise.", false, "false"},
         {"temperature", "float", "AR sampling temperature. Must be positive. Default: 0.8.", false, "0.8"},
         {"top_k", "int", "AR top-k sampling limit. Default: 30.", false, "30", "0"},
+        {"filter_nan_logits", "bool", "Filter NaN and infinity during greedy and stochastic top-k selection. All-invalid logits still fail. Default: false.", false, "false"},
         {"top_p", "float", "AR nucleus sampling probability. Must be positive. Default: 0.8.", false, "0.8"},
         {"repetition_penalty", "float", "Accepted for Python API compatibility; audio sampling does not consume this value. Compatibility-only, but must be finite and positive. Default: 1.1.", false, "1.1"},
         {"seed", "n", "Torch RNG seed.", false, std::nullopt, "0"},

@@ -279,7 +279,7 @@ void test_suffix_causal_mask() {
     }
 }
 
-void test_f16_kv_set_rows() {
+void test_f16_kv_set_rows(engine::modules::FastKVSetRowsMode mode) {
     engine::core::BackendConfig backend_config{engine::core::BackendType::Cpu, 0, 4};
     ggml_backend_t backend = engine::core::init_backend(backend_config);
     if (backend == nullptr) {
@@ -306,10 +306,10 @@ void test_f16_kv_set_rows() {
             engine::core::TensorShape::from_dims({1, 1, 1, 2}));
         const auto row_index = engine::core::make_tensor(
             ctx,
-            GGML_TYPE_I64,
+            GGML_TYPE_I32,
             engine::core::TensorShape::from_dims({1}));
         const auto output = engine::modules::FastKVSetRowsModule({
-            engine::modules::FastKVSetRowsMode::BackendViewOptimized,
+            mode,
         }).build(ctx, cache, row, row_index);
 
         ggml_cgraph * graph = ggml_new_graph_custom(ggml, kGraphNodes, false);
@@ -321,7 +321,7 @@ void test_f16_kv_set_rows() {
 
         engine::core::write_tensor_f16(cache, std::vector<float>(6, 0.0F));
         engine::core::write_tensor_f32(row, {1.25F, -2.5F});
-        const int64_t index = 1;
+        const int32_t index = 1;
         ggml_backend_tensor_set(row_index.tensor, &index, 0, sizeof(index));
         if (ggml_backend_graph_compute(backend, graph) != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("f16 KV set-rows graph compute failed");
@@ -344,7 +344,7 @@ void test_f16_kv_set_rows() {
     }
 }
 
-void test_f16_kv_set_rows_batched() {
+void test_f16_kv_set_rows_batched(engine::modules::FastKVSetRowsMode mode) {
     engine::core::BackendConfig backend_config{engine::core::BackendType::Cpu, 0, 4};
     ggml_backend_t backend = engine::core::init_backend(backend_config);
     if (backend == nullptr) {
@@ -374,7 +374,7 @@ void test_f16_kv_set_rows_batched() {
             GGML_TYPE_I64,
             engine::core::TensorShape::from_dims({2}));
         const auto output = engine::modules::FastKVSetRowsModule({
-            engine::modules::FastKVSetRowsMode::BackendViewOptimized,
+            mode,
         }).build(ctx, cache, rows, row_indices);
 
         ggml_cgraph * graph = ggml_new_graph_custom(ggml, kGraphNodes, false);
@@ -663,8 +663,11 @@ int main(int argc, char ** argv) {
             }
         }
         test_suffix_causal_mask();
-        test_f16_kv_set_rows();
-        test_f16_kv_set_rows_batched();
+        for (const auto mode : {engine::modules::FastKVSetRowsMode::Exact,
+                                engine::modules::FastKVSetRowsMode::BackendViewOptimized}) {
+            test_f16_kv_set_rows(mode);
+            test_f16_kv_set_rows_batched(mode);
+        }
         test_fast_projection_accepts_cuda_or_hip_backends();
         test_higgs_decode_graph_exposes_cuda_fast_paths();
         std::cout << "decoder_packed_projection_test: ok\n";

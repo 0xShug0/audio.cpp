@@ -119,6 +119,7 @@ bool raw_dtype_matches_ggml_type(std::string_view dtype, ggml_type type) {
            (normalized == "q5_k" && type == GGML_TYPE_Q5_K) ||
            (normalized == "q6_k" && type == GGML_TYPE_Q6_K) ||
            (normalized == "q8_0" && type == GGML_TYPE_Q8_0) ||
+           (normalized == "tq2_1" && type == GGML_TYPE_TQ2_1) ||
            (normalized == "nvfp4" && type == GGML_TYPE_NVFP4) ||
            (normalized == "iq2_xxs" && type == GGML_TYPE_IQ2_XXS) ||
            (normalized == "iq2_xs" && type == GGML_TYPE_IQ2_XS) ||
@@ -144,6 +145,7 @@ ggml_type parse_ggml_type_for_tensor_dtype(std::string_view dtype) {
     if (normalized == "q5_0") return GGML_TYPE_Q5_0;
     if (normalized == "q5_1") return GGML_TYPE_Q5_1;
     if (normalized == "q8_0") return GGML_TYPE_Q8_0;
+    if (normalized == "tq2_1") return GGML_TYPE_TQ2_1;
     if (normalized == "q2_k") return GGML_TYPE_Q2_K;
     if (normalized == "q3_k") return GGML_TYPE_Q3_K;
     if (normalized == "q4_k") return GGML_TYPE_Q4_K;
@@ -1495,6 +1497,9 @@ TensorStorageType parse_tensor_storage_type(std::string_view value) {
     if (normalized == "q8_0") {
         return TensorStorageType::Q8_0;
     }
+    if (normalized == "tq2_1") {
+        return TensorStorageType::TQ2_1;
+    }
     if (normalized == "nvfp4") {
         return TensorStorageType::NVFP4;
     }
@@ -1554,6 +1559,8 @@ ggml_type ggml_type_for_tensor_storage(TensorStorageType storage_type) {
             return GGML_TYPE_Q6_K;
         case TensorStorageType::Q8_0:
             return GGML_TYPE_Q8_0;
+        case TensorStorageType::TQ2_1:
+            return GGML_TYPE_TQ2_1;
         case TensorStorageType::NVFP4:
             return GGML_TYPE_NVFP4;
         case TensorStorageType::IQ2_XXS:
@@ -1617,6 +1624,9 @@ TensorStorageType tensor_storage_type_for_dtype(std::string_view dtype) {
     }
     if (normalized == "q8_0") {
         return TensorStorageType::Q8_0;
+    }
+    if (normalized == "tq2_1") {
+        return TensorStorageType::TQ2_1;
     }
     if (normalized == "nvfp4") {
         return TensorStorageType::NVFP4;

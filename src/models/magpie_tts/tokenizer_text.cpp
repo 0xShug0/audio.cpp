@@ -1045,6 +1045,10 @@ public:
 
     MagpieTokenizationResult tokenize(const std::string & text, const MagpieTTSGenerationOptions & options) const {
         const std::string language = MagpieTextTokenizer::normalize_language(options.language);
+        // Each segment gets max_tokens (500 frames, 23 s). A 300-codepoint Chinese or Korean chunk needs about a minute
+        // of speech, so its end was cut. NeMo splits Chinese text into sentences from 100 characters on; a smaller budget
+        // would also cut short mixed-language text into fragments the model speaks poorly.
+        const int64_t chunk_size = options.text_chunk_size.value_or(language == "zh" || language == "ko" ? 100 : 300);
         std::mt19937_64 rng(options.seed);
         MagpieTokenizationResult out;
         out.language = language;
@@ -1053,7 +1057,7 @@ public:
             out.tokenizer_name = char_tokenizer->first;
             const auto tokens = exact_char_tokens(out.tokenizer_name);
             const int32_t pad_id = token_id_for_symbol(tokens, char_tokenizer->second, "<pad>");
-            for (const auto & unit : tokenizer_units(text, options.text_chunk_size, options.text_chunk_mode)) {
+            for (const auto & unit : tokenizer_units(text, chunk_size, options.text_chunk_mode)) {
                 MagpieTokenChunk chunk;
                 chunk.text = unit;
                 chunk.tokens = encode_char_tokens(unit, tokens, char_tokenizer->second);
@@ -1065,7 +1069,7 @@ public:
         } else if (language == "zh") {
             const MandarinTokenizer & tokenizer = mandarin_tokenizer();
             out.tokenizer_name = "mandarin_phoneme";
-            for (const auto & unit : tokenizer_units(text, options.text_chunk_size, options.text_chunk_mode)) {
+            for (const auto & unit : tokenizer_units(text, chunk_size, options.text_chunk_mode)) {
                 MagpieTokenChunk chunk;
                 chunk.text = unit;
                 chunk.tokens = tokenizer.encode(unit);
@@ -1076,7 +1080,7 @@ public:
             }
         } else if (const auto byt5_offset = byt5_aggregate_offset_for_language(language)) {
             out.tokenizer_name = byt5_tokenizer_name_for_language(language);
-            for (const auto & unit : tokenizer_units(text, options.text_chunk_size, options.text_chunk_mode)) {
+            for (const auto & unit : tokenizer_units(text, chunk_size, options.text_chunk_mode)) {
                 MagpieTokenChunk chunk;
                 chunk.text = unit;
                 chunk.tokens = encode_byt5_chars(unit, *byt5_offset);
@@ -1089,7 +1093,7 @@ public:
             const auto config = ipa_config_for_language(language);
             const IpaTokenizer & tokenizer = tokenizer_for_config(language, config);
             out.tokenizer_name = tokenizer.tokenizer_name();
-            for (const auto & unit : tokenizer_units(text, options.text_chunk_size, options.text_chunk_mode)) {
+            for (const auto & unit : tokenizer_units(text, chunk_size, options.text_chunk_mode)) {
                 MagpieTokenChunk chunk;
                 chunk.text = unit;
                 chunk.tokens = tokenizer.encode(unit, rng);

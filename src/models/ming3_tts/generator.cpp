@@ -1,5 +1,5 @@
 #include "engine/models/ming3_tts/generator.h"
-#include "engine/models/ming3_tts/flow.h"
+#include "engine/framework/modules/speech_decoders/ming_flow_runtime.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -230,7 +230,7 @@ struct MingGenerator::Impl {
 
     core::ExecutionContext & execution_;
     core::BackendWeightStore store_;
-    MingFlowRuntime flow_;
+    modules::MingFlowRuntime flow_;
     std::unique_ptr<modules::CausalDecoderRuntime> decoder_;
     int64_t hidden_ = 0, latent_dim_ = 0, vocabulary_ = 0, prompt_steps_ = 0;
     size_t prompt_speakers_ = 0;

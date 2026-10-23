@@ -310,7 +310,8 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
             throw std::runtime_error("Drama 3 disk experts require native GGUF weight types");
         if (c.expert_cache_size < c.experts_per_token || c.expert_cache_size > c.experts)
             throw std::runtime_error("Drama 3 expert_cache_size must cover top-k and not exceed the expert count");
-        weights->disk_store = std::make_unique<core::DiskExpertWeightStore>(source.source_path(), c.pin_experts);
+        weights->disk_store = std::make_unique<core::DiskExpertWeightStore>(source.source_path(), c.pin_experts,
+            static_cast<size_t>(c.disk_expert_read_threads));
     }
     weights->token_embedding = weights->store->load_tensor(
         source,

@@ -31,6 +31,30 @@ build-kitten2/bin/model_spec_system_test
 
 ## Validation assets
 
+### Execution plans
+
+For an isolated NEON A/B, build with `ENGINE_ENABLE_NEON=ON` and compare plans
+`{"vocoder":{"impl":"ggml"}}` and
+`{"vocoder":{"impl":"neon","backend":"cpu"}}` using the same executable,
+requests, threads, and weights. Leave all other execution-plan fields omitted.
+Compare `kitten_tts2.vocoder_ms`, total RTF, audio lengths and sample errors,
+then ASR the output. `neon_vocoder_test` independently checks the HiFT network,
+production upsample geometry, Snake epsilon, shape changes, and thread counts.
+
+The session probe accepts `metal` as well as `cpu` and `cuda`. Use `-` to skip
+the optional upstream reference directory. Its final optional argument is the
+`kitten_tts2.exec_plan` JSON. For example:
+
+```sh
+build-kitten2/bin/kitten_tts2_session_probe <model.gguf> <output-directory> 8 native - cpu \
+  '{"vocoder":{"impl":"neon","backend":"cpu"}}'
+```
+
+Run the same probe without the JSON argument as the default-path control. For
+Metal, pass `metal` with the same NEON vocoder plan.
+The probe checks invalid execution plans, seeded repeats, voice switching,
+long-form chunks, and unknown-voice rejection.
+
 ### Updated BF16, Q8 and hybrid Q4
 
 Build `kitten_tts2_session_probe` with `-DENGINE_BUILD_MODEL_TESTS=ON` in both

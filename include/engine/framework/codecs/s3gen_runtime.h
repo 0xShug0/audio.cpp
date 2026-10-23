@@ -120,6 +120,8 @@ struct S3GenWeightBinding {
 
 struct S3GenRuntimeOptions {
     assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
+    // Reuse the last exact-shape encoder graph set between synthesis calls.
+    bool retain_encoder_graphs = false;
 };
 
 class S3GenRuntime {

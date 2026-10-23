@@ -282,7 +282,7 @@ S3FlowCFMOutputs compute_s3_flow_cfm_meanflow(
 
 class S3GenSessionCache {
 public:
-    explicit S3GenSessionCache(engine::core::BackendConfig backend = {});
+    explicit S3GenSessionCache(engine::core::BackendConfig backend = {}, bool retain_encoder_graphs = false);
     ~S3GenSessionCache();
 
     S3GenSessionCache(const S3GenSessionCache &) = delete;
@@ -2682,10 +2682,10 @@ std::vector<float> make_gaussian_full_noise(int64_t channels, int64_t frames, ui
 }  // namespace
 
 struct S3GenSessionCache::State {
-    explicit State(engine::core::BackendConfig backend_value)
+    State(engine::core::BackendConfig backend_value, bool retain_graphs)
         : backend(std::move(backend_value)),
           token_capacity_controller(runtime::GraphCapacityMode::Grow),
-          flow_cache(backend) {}
+          flow_cache(backend), retain_encoder_graphs(retain_graphs) {}
 
     struct PreparedCapacity {
         int64_t token_capacity = 0;
@@ -2742,6 +2742,10 @@ struct S3GenSessionCache::State {
         const S3FlowEncoderWeights & weights,
         int64_t token_count,
         const engine::core::BackendConfig & backend_config) {
+        if (retain_encoder_graphs && prepared_capacity.token_capacity != token_count) {
+            // Do not pad shorter requests to a previous long request's capacity.
+            release_pre_cfm_graphs();
+        }
         auto adapter = make_token_capacity_adapter(weights, backend_config);
         token_capacity_controller.ensure_prepared(adapter, token_count);
         const int64_t selected_capacity = token_capacity_controller.select_capacity_for_run(adapter, token_count);
@@ -2765,10 +2769,11 @@ struct S3GenSessionCache::State {
     runtime::GraphCapacityController token_capacity_controller;
     S3FlowSessionCache flow_cache;
     PreparedCapacity prepared_capacity;
+    bool retain_encoder_graphs;
 };
 
-S3GenSessionCache::S3GenSessionCache(engine::core::BackendConfig backend)
-    : state_(std::make_unique<State>(backend)) {}
+S3GenSessionCache::S3GenSessionCache(engine::core::BackendConfig backend, bool retain_encoder_graphs)
+    : state_(std::make_unique<State>(backend, retain_encoder_graphs)) {}
 
 S3GenSessionCache::~S3GenSessionCache() = default;
 
@@ -2862,7 +2867,7 @@ S3Token2MelOutputs compute_s3_token2mel_inference(
             " speech_tokens=" +
             std::to_string(speech_token_count));
     }
-    cache.state_->release_pre_cfm_graphs();
+    if (!cache.state_->retain_encoder_graphs) cache.state_->release_pre_cfm_graphs();
     const auto cfm_started = std::chrono::steady_clock::now();
     // Meanflow-distilled decoders (Chatterbox Turbo) use a plain, non-CFG Euler solve driven by
     // two time inputs per step; see S3FlowDecoderWeights::meanflow and
@@ -2956,7 +2961,7 @@ struct S3GenRuntime::Impl {
     Impl(std::shared_ptr<const assets::TensorSource> source,
          const core::ExecutionContext & context, const S3GenConfig & config,
          const S3GenRuntimeOptions & options, const S3GenWeightBinding & binding)
-        : execution(context), cache(context.config()) {
+        : execution(context), cache(context.config(), options.retain_encoder_graphs) {
         if (config.encoder.heads <= 0 || config.encoder.hidden_size <= 0 ||
             config.encoder.hidden_size % config.encoder.heads != 0 ||
             config.encoder.hidden_size % 2 != 0 || config.encoder.upsample_factor <= 0 ||

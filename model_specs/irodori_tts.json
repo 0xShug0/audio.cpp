@@ -120,7 +120,7 @@
       {
         "name": "text_chunk_size",
         "type": "int",
-        "description": "Maximum characters per text chunk; default uses the model text-token window.",
+        "description": "Maximum characters per text chunk; default 100, or the model text-token window if smaller.",
         "required": false,
         "min": 1
       },

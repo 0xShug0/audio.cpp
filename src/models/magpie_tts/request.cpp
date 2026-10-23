@@ -68,8 +68,9 @@ MagpieTTSGenerationOptions generation_options(
     defaults.guidance_scale =
         runtime::parse_float_option(options, {"guidance_scale"}).value_or(defaults.guidance_scale);
     defaults.max_tokens = runtime::parse_i64_option(options, {"max_tokens"}).value_or(defaults.max_tokens);
-    defaults.text_chunk_size =
-        engine::text::parse_text_chunk_size_override(options).value_or(defaults.text_chunk_size);
+    if (const auto size = engine::text::parse_text_chunk_size_override(options)) {
+        defaults.text_chunk_size = *size;
+    }
     defaults.text_chunk_mode =
         engine::text::parse_text_chunk_mode_override(options).value_or(defaults.text_chunk_mode);
     defaults.seed = runtime::parse_u64_option(options, {"seed"}).value_or(defaults.seed);
@@ -82,7 +83,7 @@ MagpieTTSGenerationOptions generation_options(
     if (!(defaults.guidance_scale >= 0.0F) || !std::isfinite(defaults.guidance_scale)) {
         throw std::runtime_error("MagpieTTS guidance_scale must be finite and non-negative");
     }
-    if (defaults.max_tokens <= 0 || defaults.text_chunk_size <= 0) {
+    if (defaults.max_tokens <= 0 || (defaults.text_chunk_size && *defaults.text_chunk_size <= 0)) {
         throw std::runtime_error("MagpieTTS length options must be positive");
     }
     return defaults;

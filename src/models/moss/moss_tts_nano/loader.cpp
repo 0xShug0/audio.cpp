@@ -44,7 +44,7 @@ runtime::ModelCliInterface cli(const MossTTSNanoAssets &) {
         {"text_top_k", "int", "Text top-k sampling limit. Default: 50.", false, "50", "0"},
         {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode; default splitter.", false, "default"},
         {"active_codebooks", "int", "Active codebooks; defaults to the checkpoint n_vq. Must not exceed checkpoint n_vq; omitted uses n_vq.", false, std::nullopt, "1"},
-        {"text_chunk_size", "int", "Framework long-form text chunk size. Default: 256.", false, "256", "1"},
+        {"text_chunk_size", "int", "Framework long-form text chunk size. Default: 50 when hanzi, kana and Hangul outnumber other letters and digits, otherwise 256.", false, std::nullopt, "1"},
     };
     out.session_options = {
         {"moss_tts_nano.weight_type", "native|f32|f16|bf16|q8_0", "Global and local-frame weight storage type. With quantized weights on CUDA/HIP, incremental decoding may show hardware-dependent numerical drift (single-row decode and batched prefill use different quantized kernels); if output degrades, use an f16 GGUF or set this to f16.", false, "native"},

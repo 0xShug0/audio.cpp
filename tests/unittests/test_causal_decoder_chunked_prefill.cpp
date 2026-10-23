@@ -175,6 +175,7 @@ int main(int argc, char ** argv) {
             const auto expected = reference.prefill_embeddings(embeddings, steps);
             const auto actual = direct.prefill_embeddings_into_decode_cache(embeddings, steps, 64);
             close(actual.logits, expected.logits);
+            direct.release_prefill_graph();
             reference.start_decode_embeddings(expected.state, 64);
             for (int step = 0; step < 4; ++step) {
                 const auto next = pattern(64, .1f * (step + 1));

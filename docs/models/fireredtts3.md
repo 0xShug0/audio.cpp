@@ -94,7 +94,7 @@ audiocpp_cli \
 | `reference_text` | text | empty | Transcript for the prompt audio. |
 | `template_name` | `instruct_tts`, `voice_design`, `semantic_edit`, `acoustic_edit` | see description | Instruct template; defaults to acoustic_edit with input audio, otherwise instruct_tts. |
 | `instruct` | text | required for design/edit | Voice design or edit instruction. Legacy `instruction` remains accepted. |
-| `text_chunk_size` | integer > 0 | `600` | Long-form text chunk size. |
+| `text_chunk_size` | integer > 0 | `80` or `600` | Long-form text chunk size: `80` when hanzi, kana and Hangul outnumber other letters and digits, like the official runtime's Chinese sentence split; otherwise, and for semantic and acoustic edits, `600`. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
 | `num_inference_steps` | integer > 0 | `10` | FireRed DiT flow steps per latent patch. |
 | `guidance_scale` | float > 0 | see description | Positive guidance scale; defaults to 1.2 for voice-design/semantic-edit/acoustic-edit templates and 2 otherwise. |

@@ -461,7 +461,9 @@ CausalDecoderBatchedStaticCacheOutputs build_causal_decode_batched(
     const CausalDecoderRuntimeWeights & weights,
     int64_t cache_steps,
     const core::TensorValue & attention_mask,
-    const core::TensorValue & cache_slot) {
+    const core::TensorValue & cache_slot,
+    const runtime::TransformerBatchedKVCache * cache = nullptr,
+    runtime::TransformerKVCacheOptions cache_options = {}) {
     if (config.output_mode == CausalDecoderOutputMode::Logits) {
         auto causal_weights = causal_decoder_weights(weights);
         return CausalDecoderModule(config.decoder)
@@ -473,7 +475,9 @@ CausalDecoderBatchedStaticCacheOutputs build_causal_decode_batched(
                 causal_weights,
                 cache_steps,
                 attention_mask,
-                cache_slot);
+                cache_slot,
+                cache,
+                cache_options);
     }
 
     auto hidden_out = DecoderHiddenModule(hidden_config_from_runtime(config))
@@ -485,7 +489,9 @@ CausalDecoderBatchedStaticCacheOutputs build_causal_decode_batched(
                               hidden_weights_from_runtime(weights),
                               cache_steps,
                               attention_mask,
-                              cache_slot);
+                              cache_slot,
+                              cache,
+                              cache_options);
     return {
         std::move(hidden_out.sequence),
         hidden_out.hidden,
@@ -497,6 +503,7 @@ CausalDecoderBatchedStaticCacheOutputs build_causal_decode_batched(
 }  // namespace
 
 class CausalDecoderRuntime::Impl {
+    friend class CausalDecoderRuntime;
 public:
     Impl(
         core::ExecutionContext & execution,
@@ -516,6 +523,186 @@ public:
     ~Impl() {
         release_runtime_graphs();
     }
+
+    struct CacheLanePrefillGraph {
+        Impl & owner;
+        int64_t steps;
+        std::unique_ptr<ggml_context, GgmlContextDeleter> context;
+        std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator{nullptr, ggml_gallocr_free};
+        ggml_cgraph * graph = nullptr;
+        ggml_tensor * input = nullptr;
+        ggml_tensor * positions = nullptr;
+        ggml_tensor * mask = nullptr;
+        ggml_tensor * logits = nullptr;
+        ggml_tensor * hidden = nullptr;
+        ggml_tensor * readback_ids = nullptr;
+        std::vector<int32_t> position_values;
+        std::vector<ggml_fp16_t> mask_values;
+
+        CacheLanePrefillGraph(Impl & owner, int64_t batch, int64_t steps)
+            : owner(owner), steps(steps),
+              context(ggml_init({owner.config_.prefill_graph_arena_bytes, nullptr, true})) {
+            if (!context) throw std::runtime_error("failed to initialize cache-lane prefill context");
+            core::ModuleBuildContext ctx{context.get(), owner.config_.trace_name.c_str(), owner.backend_type_};
+            input = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, steps);
+            positions = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, steps);
+            mask = ggml_new_tensor_4d(ctx.ggml, GGML_TYPE_F16, steps, steps, 1, 1);
+            auto x = token_embedding_input(ctx, owner.weights_, owner.config_.decoder, input, steps);
+            auto out = build_causal_prefill(ctx, owner.config_, x,
+                core::wrap_tensor(positions, core::TensorShape::from_dims({steps}), GGML_TYPE_I32),
+                owner.weights_, core::wrap_tensor(mask, core::TensorShape::from_dims({1, 1, steps, steps}), GGML_TYPE_F16));
+            graph = ggml_new_graph_custom(ctx.ggml, 65536, false);
+            const auto & config = owner.config_.decoder.stack;
+            for (size_t layer = 0; layer < out.state.layers.size(); ++layer) {
+                const auto & state = out.state.layers[layer];
+                if (!state.key || !state.value) throw std::runtime_error("cache-lane prefill requires K/V outputs");
+                const auto & key_cache = owner.batched_decode_cache_.key_tensor(layer);
+                const auto & value_cache = owner.batched_decode_cache_.value_tensor(layer);
+                auto key = apply_readback_rounding(ctx, *state.key, owner.config_, owner.backend_type_);
+                auto value = apply_readback_rounding(ctx, *state.value, owner.config_, owner.backend_type_);
+                auto key_dest = runtime::view_transformer_kv_cache_steps(ctx, key_cache, 0, steps,
+                    config.num_key_value_heads, config.head_dim, "batched prefill key", key_cache.type, batch);
+                auto value_dest = runtime::view_transformer_kv_cache_steps(ctx, value_cache, 0, steps,
+                    config.num_key_value_heads, config.head_dim, "batched prefill value", value_cache.type, batch);
+                ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, key.tensor, key_dest.tensor));
+                ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, value.tensor, value_dest.tensor));
+            }
+            readback_ids = make_logits_readback_token_ids(ctx.ggml, owner.config_);
+            if (owner.config_.output_mode == CausalDecoderOutputMode::Logits) {
+                auto output = out.logits;
+                if (readback_ids) output = compact_logits_readback(ctx, owner.config_, output,
+                    wrap_logits_readback_token_ids(readback_ids, owner.config_));
+                logits = ggml_cpy(ctx.ggml, output.tensor, ggml_dup_tensor(ctx.ggml, output.tensor));
+                ggml_set_output(logits);
+                ggml_build_forward_expand(graph, logits);
+            }
+            if (owner.config_.return_hidden || owner.config_.output_mode == CausalDecoderOutputMode::Hidden) {
+                hidden = ggml_cpy(ctx.ggml, out.hidden.tensor, ggml_dup_tensor(ctx.ggml, out.hidden.tensor));
+                ggml_set_output(hidden);
+                ggml_build_forward_expand(graph, hidden);
+            }
+            allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(owner.backend_)));
+            if (!allocator || !ggml_gallocr_alloc_graph(allocator.get(), graph)) {
+                throw std::runtime_error("failed to allocate cache-lane prefill graph");
+            }
+            position_values = decoder_position_ids(steps);
+            mask_values = prefill_attention_mask_values(owner.config_, 1, steps);
+        }
+
+        ~CacheLanePrefillGraph() {
+            core::release_backend_graph_resources(owner.backend_, graph, owner.config_.evict_cuda_graph_cache_on_release);
+        }
+
+        CausalDecoderStepResult run(const std::vector<int32_t> & tokens) {
+            ggml_backend_tensor_set(input, tokens.data(), 0, tokens.size() * sizeof(int32_t));
+            ggml_backend_tensor_set(positions, position_values.data(), 0, position_values.size() * sizeof(int32_t));
+            ggml_backend_tensor_set(mask, mask_values.data(), 0, mask_values.size() * sizeof(ggml_fp16_t));
+            if (readback_ids) upload_logits_readback_token_ids(readback_ids, owner.config_);
+            core::set_backend_threads(owner.backend_, owner.threads_);
+            if (core::compute_backend_graph(owner.backend_, graph) != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("cache-lane prefill graph compute failed");
+            }
+            CausalDecoderStepResult result;
+            if (logits) result.logits = core::read_tensor_f32(logits);
+            if (hidden) {
+                result.hidden = core::read_tensor_f32(hidden);
+                round_readback(result.hidden, owner.config_);
+            }
+            return result;
+        }
+    };
+
+    std::vector<CausalDecoderStepResult> prefill_tokens_into_batched_decode_cache(
+        const std::vector<std::vector<int32_t>> & prefixes, int64_t required_cache_steps) {
+        if (prefixes.empty() || required_cache_steps <= 0) {
+            throw std::runtime_error("batched cache prefill requires prefixes and positive capacity");
+        }
+        std::vector<int64_t> lengths;
+        for (const auto & prefix : prefixes) {
+            if (prefix.empty() || static_cast<int64_t>(prefix.size()) > required_cache_steps) {
+                throw std::runtime_error("batched cache prefill prefix exceeds cache capacity or is empty");
+            }
+            lengths.push_back(static_cast<int64_t>(prefix.size()));
+        }
+        const auto init_start = Clock::now();
+        runtime::TransformerKVCacheOptions cache_options;
+        cache_options.lazy_import_scratch = true;
+        ensure_batched_decode_token_graph(required_cache_steps, static_cast<int64_t>(prefixes.size()), true, cache_options);
+        batched_decode_cache_.clear_on_backend();
+        cache_lane_prefills_.resize(prefixes.size());
+        debug::timing_log_scalar(config_.trace_name + ".batched_prefill.cache_init_ms", debug::elapsed_ms(init_start));
+        const auto compute_start = Clock::now();
+        std::vector<CausalDecoderStepResult> results;
+        for (size_t batch = 0; batch < prefixes.size(); ++batch) {
+            auto & prefill = cache_lane_prefills_[batch];
+            if (!prefill || prefill->steps != lengths[batch]) {
+                prefill.reset();
+                prefill = std::make_unique<CacheLanePrefillGraph>(*this, static_cast<int64_t>(batch), lengths[batch]);
+            }
+            results.push_back(prefill->run(prefixes[batch]));
+        }
+        batched_decode_cache_.advance_after_direct_append(lengths);
+        debug::timing_log_scalar(config_.trace_name + ".batched_prefill.compute_ms", debug::elapsed_ms(compute_start));
+        return results;
+    }
+
+    struct BatchedAttentionGraph {
+        Impl & owner;
+        std::unique_ptr<ggml_context, GgmlContextDeleter> context;
+        std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator{nullptr, ggml_gallocr_free};
+        ggml_cgraph * graph = nullptr;
+        ggml_tensor * logits = nullptr;
+        ggml_tensor * hidden = nullptr;
+
+        BatchedAttentionGraph(Impl & owner, int64_t steps)
+            : owner(owner), context(ggml_init({owner.config_.decode_graph_arena_bytes, nullptr, true})) {
+            if (!context) throw std::runtime_error("failed to initialize batched attention graph context");
+            core::ModuleBuildContext ctx{context.get(), owner.config_.trace_name.c_str(), owner.backend_type_};
+            const int64_t batch = owner.batched_decode_batch_size_;
+            auto x = owner.batched_decode_input_kind_ == InputKind::Token
+                ? token_embedding_input_batched(ctx, owner.weights_, owner.config_.decoder,
+                    owner.batched_decode_input_, batch, 1)
+                : core::wrap_tensor(owner.batched_decode_input_,
+                    core::TensorShape::from_dims({batch, 1, owner.config_.decoder.stack.hidden_size}), GGML_TYPE_F32);
+            const auto positions = core::wrap_tensor(owner.batched_decode_positions_,
+                core::TensorShape::from_dims({owner.batched_decode_variable_positions_ ? batch : 1}), GGML_TYPE_I32);
+            const auto slot = core::wrap_tensor(owner.batched_decode_cache_slot_,
+                core::TensorShape::from_dims({batch}), GGML_TYPE_I32);
+            auto * mask = owner.batched_decode_attention_mask_;
+            auto attention = core::wrap_tensor(ggml_view_4d(ctx.ggml, mask, steps, 1, 1, batch,
+                mask->nb[1], mask->nb[2], mask->nb[3], 0),
+                core::TensorShape::from_dims({batch, 1, 1, steps}), GGML_TYPE_F16);
+            attention = core::wrap_tensor(ggml_cont(ctx.ggml, attention.tensor), attention.shape, attention.type);
+            graph = ggml_new_graph_custom(ctx.ggml, 65536, false);
+            runtime::TransformerKVCacheOptions cache_options;
+            cache_options.lazy_import_scratch = true;
+            const auto out = build_causal_decode_batched(ctx, graph, owner.config_, x, positions, owner.weights_,
+                owner.batched_decode_cache_steps_, attention, slot, &owner.batched_decode_cache_, cache_options);
+            if (owner.config_.output_mode == CausalDecoderOutputMode::Logits) {
+                auto output = out.logits;
+                if (owner.batched_decode_logits_readback_token_ids_) {
+                    output = compact_logits_readback(ctx, owner.config_, output,
+                        wrap_logits_readback_token_ids(owner.batched_decode_logits_readback_token_ids_, owner.config_));
+                }
+                logits = ggml_cpy(ctx.ggml, output.tensor, ggml_dup_tensor(ctx.ggml, output.tensor));
+                ggml_set_output(logits);
+                ggml_build_forward_expand(graph, logits);
+            }
+            if (owner.config_.return_hidden || owner.config_.output_mode == CausalDecoderOutputMode::Hidden) {
+                hidden = ggml_cpy(ctx.ggml, out.hidden.tensor, ggml_dup_tensor(ctx.ggml, out.hidden.tensor));
+                ggml_set_output(hidden);
+                ggml_build_forward_expand(graph, hidden);
+            }
+            allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(owner.backend_)));
+            if (!allocator || !ggml_gallocr_alloc_graph(allocator.get(), graph)) {
+                throw std::runtime_error("failed to allocate batched attention graph");
+            }
+        }
+
+        ~BatchedAttentionGraph() {
+            core::release_backend_graph_resources(owner.backend_, graph, owner.config_.evict_cuda_graph_cache_on_release);
+        }
+    };
 
     CausalDecoderPrefillResult prefill_tokens(const std::vector<int32_t> & token_ids) {
         if (token_ids.empty()) {
@@ -1426,14 +1613,17 @@ private:
         debug::trace_log_scalar(config_.trace_name + ".decode.cache_steps", cache_steps);
     }
 
-    void ensure_batched_decode_token_graph(int64_t cache_steps, int64_t batch_size, bool variable_positions) {
+    void ensure_batched_decode_token_graph(
+        int64_t cache_steps, int64_t batch_size, bool variable_positions,
+        runtime::TransformerKVCacheOptions cache_options = {}) {
         if (batched_decode_graph_ != nullptr && batched_decode_input_kind_ == InputKind::Token &&
             batched_decode_cache_steps_ >= cache_steps && batched_decode_batch_size_ == batch_size &&
-            batched_decode_variable_positions_ == variable_positions) {
+            batched_decode_variable_positions_ == variable_positions &&
+            batched_decode_lazy_import_scratch_ == cache_options.lazy_import_scratch) {
             return;
         }
         release_batched_decode_graph();
-        build_batched_decode_graph(InputKind::Token, batch_size, cache_steps, variable_positions);
+        build_batched_decode_graph(InputKind::Token, batch_size, cache_steps, variable_positions, cache_options);
     }
 
     void ensure_batched_decode_embedding_graph(int64_t cache_steps, int64_t batch_size, bool variable_positions) {
@@ -1450,7 +1640,8 @@ private:
         InputKind input_kind,
         int64_t batch_size,
         int64_t cache_steps,
-        bool variable_positions) {
+        bool variable_positions,
+        runtime::TransformerKVCacheOptions cache_options = {}) {
         if (batch_size <= 0) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode requires positive batch size");
         }
@@ -1502,7 +1693,9 @@ private:
             weights_,
             cache_steps,
             attention,
-            slot);
+            slot,
+            nullptr,
+            cache_options);
         batched_decode_cache_ = std::move(decoder_out.cache);
         batched_decode_logits_readback_token_ids_ =
             make_logits_readback_token_ids(batched_decode_ctx_.get(), config_);
@@ -1549,6 +1742,7 @@ private:
         batched_decode_cache_steps_ = cache_steps;
         batched_decode_input_kind_ = input_kind;
         batched_decode_variable_positions_ = variable_positions;
+        batched_decode_lazy_import_scratch_ = cache_options.lazy_import_scratch;
         debug::timing_log_scalar(
             config_.trace_name + ".batched_decode.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
@@ -1731,24 +1925,41 @@ private:
             0,
             batched_decode_cache_slots_.size() * sizeof(int32_t));
         core::set_backend_threads(backend_, threads_);
-        const ggml_status status = core::compute_backend_graph(backend_, batched_decode_graph_);
+        auto * graph = batched_decode_graph_;
+        auto * logits = batched_decode_logits_;
+        auto * hidden = batched_decode_hidden_;
+        if (config_.batched_attention_alignment > 0) {
+            const int64_t alignment = config_.batched_attention_alignment;
+            const int64_t bucket = (batched_decode_cache_.valid_steps() + alignment) / alignment;
+            batched_attention_graphs_.resize(static_cast<size_t>((batched_decode_cache_steps_ + alignment - 1) / alignment + 1));
+            auto & active = batched_attention_graphs_[static_cast<size_t>(bucket)];
+            if (!active) {
+                const auto start = Clock::now();
+                active = std::make_unique<BatchedAttentionGraph>(*this, std::min(bucket * alignment, batched_decode_cache_steps_));
+                debug::timing_log_scalar(config_.trace_name + ".batched_attention.graph.build_ms", debug::elapsed_ms(start));
+            }
+            graph = active->graph;
+            logits = active->logits;
+            hidden = active->hidden;
+        }
+        const ggml_status status = core::compute_backend_graph(backend_, graph);
         ggml_backend_synchronize(backend_);
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode graph compute failed");
         }
         CausalDecoderStepResult out;
-        if (batched_decode_logits_ != nullptr) {
-            out.logits.resize(static_cast<size_t>(ggml_nelements(batched_decode_logits_)));
+        if (logits != nullptr) {
+            out.logits.resize(static_cast<size_t>(ggml_nelements(logits)));
             ggml_backend_tensor_get(
-                batched_decode_logits_,
+                logits,
                 out.logits.data(),
                 0,
                 out.logits.size() * sizeof(float));
         }
-        if (batched_decode_hidden_ != nullptr) {
-            out.hidden.resize(static_cast<size_t>(ggml_nelements(batched_decode_hidden_)));
+        if (hidden != nullptr) {
+            out.hidden.resize(static_cast<size_t>(ggml_nelements(hidden)));
             ggml_backend_tensor_get(
-                batched_decode_hidden_,
+                hidden,
                 out.hidden.data(),
                 0,
                 out.hidden.size() * sizeof(float));
@@ -1906,6 +2117,8 @@ private:
     }
 
     void release_batched_decode_graph() {
+        batched_attention_graphs_.clear();
+        cache_lane_prefills_.clear();
         if (batched_decode_graph_ != nullptr) {
             core::release_backend_graph_resources(
                 backend_, batched_decode_graph_, config_.evict_cuda_graph_cache_on_release);
@@ -1931,6 +2144,7 @@ private:
         batched_decode_cache_steps_ = 0;
         batched_decode_input_kind_ = InputKind::None;
         batched_decode_variable_positions_ = false;
+        batched_decode_lazy_import_scratch_ = false;
     }
 
     ggml_backend_t backend_ = nullptr;
@@ -2016,10 +2230,13 @@ private:
     std::vector<int32_t> batched_decode_cache_slots_;
     std::vector<int32_t> batched_decode_positions_values_;
     runtime::TransformerBatchedKVCache batched_decode_cache_;
+    std::vector<std::unique_ptr<CacheLanePrefillGraph>> cache_lane_prefills_;
+    std::vector<std::unique_ptr<BatchedAttentionGraph>> batched_attention_graphs_;
     int64_t batched_decode_batch_size_ = 0;
     int64_t batched_decode_cache_steps_ = 0;
     InputKind batched_decode_input_kind_ = InputKind::None;
     bool batched_decode_variable_positions_ = false;
+    bool batched_decode_lazy_import_scratch_ = false;
 };
 
 CausalDecoderRuntime::CausalDecoderRuntime(
@@ -2056,6 +2273,11 @@ CausalDecoderBatchedPrefillResult CausalDecoderRuntime::prefill_tokens_batched(
     int64_t batch_size,
     int64_t steps) {
     return impl_->prefill_tokens_batched(token_ids, batch_size, steps);
+}
+
+std::vector<CausalDecoderStepResult> CausalDecoderRuntime::prefill_tokens_into_batched_decode_cache(
+    const std::vector<std::vector<int32_t>> & prefixes, int64_t required_cache_steps) {
+    return impl_->prefill_tokens_into_batched_decode_cache(prefixes, required_cache_steps);
 }
 
 CausalDecoderBatchedPrefillResult CausalDecoderRuntime::prefill_embeddings_batched(
@@ -2140,6 +2362,10 @@ int64_t CausalDecoderRuntime::decode_valid_steps() const noexcept {
 
 void CausalDecoderRuntime::release_runtime_graphs() {
     impl_->release_runtime_graphs();
+}
+
+void CausalDecoderRuntime::release_prefill_graph() {
+    impl_->release_prefill_graph();
 }
 
 }  // namespace engine::modules

@@ -14,7 +14,8 @@ public:
         std::vector<std::string> id_to_token,
         std::string metaspace_replacement,
         bool trim_leading_space,
-        bool byte_level = false);
+        bool byte_level = false,
+        bool byte_fallback = false);
 
     const std::vector<std::string> & id_to_token() const noexcept;
     std::string decode_ids(const std::vector<int32_t> & ids) const;
@@ -25,6 +26,7 @@ private:
     std::string metaspace_replacement_;
     bool trim_leading_space_ = false;
     bool byte_level_ = false;
+    bool byte_fallback_ = false;
 };
 
 std::shared_ptr<HuggingFaceTokenizerJson> load_huggingface_tokenizer_json(

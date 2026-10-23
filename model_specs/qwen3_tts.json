@@ -222,9 +222,37 @@
         "default": false
       },
       {
+        "name": "attention",
+        "type": "enum",
+        "description": "Attention preference; default mixed uses manual prefill and contiguous-K/V flash cached decoding in the talker and code predictor, with eager speech tokenization. auto uses the shared backend policy; eager disables flash; flash uses flash with K/V views. Explicit values override perf_mode.",
+        "values": ["mixed", "auto", "eager", "flash"],
+        "required": false,
+        "default": "mixed"
+      },
+      {
+        "name": "packed_projections",
+        "type": "bool",
+        "description": "Pack QKV and gate/up projections in the talker and code predictor without changing weight dtype; default false, true with cuda_perf. Explicit values override the preset.",
+        "required": false
+      },
+      {
+        "name": "kv_cache_write",
+        "type": "enum",
+        "description": "Talker and code-predictor cache writes: standard by default, optimized with cuda_perf. Optimized uses backend-friendly views and I64 indices to allow fusion where supported. Explicit values override the preset.",
+        "values": ["standard", "optimized"],
+        "required": false
+      },
+      {
+        "name": "kv_cache_type",
+        "type": "enum",
+        "description": "Talker and code-predictor KV storage: f32 by default, f16 with cuda_perf. Explicit values override the preset. F16 reduces cache memory and may change numerical results.",
+        "values": ["f32", "f16"],
+        "required": false
+      },
+      {
         "name": "talker_kv_cache_alignment",
         "type": "int",
-        "description": "Round talker KV capacity to this many rows. Defaults to 1 (no padding), or 256 with perf_mode=optimized. Explicit values override the preset. Larger alignments may use more memory and change numerical results.",
+        "description": "Round talker KV capacity to this many rows. Defaults to 1 (no padding), or 256 with perf_mode=cuda_perf. Explicit values override the preset. Larger alignments may use more memory and change numerical results.",
         "min": 1,
         "default": 1,
         "required": false
@@ -240,8 +268,8 @@
       {
         "name": "perf_mode",
         "type": "enum",
-        "description": "Performance preset; default off. flash_attention enables flash attention; optimized also defaults convolution weights to f16, streaming decoding to stateful, and talker KV alignment to 256. Explicit session options override those defaults. May change audio and increase VRAM.",
-        "values": ["off", "flash_attention", "optimized"],
+        "description": "Performance preset; default off. flash_attention selects flash attention. cuda_perf also selects packed projections, optimized cache writes, f16 KV and convolution weights, stateful streaming decoding, and KV alignment 256. Explicit session options override the preset. May change audio and memory use.",
+        "values": ["off", "flash_attention", "cuda_perf"],
         "required": false,
         "default": "off"
       },

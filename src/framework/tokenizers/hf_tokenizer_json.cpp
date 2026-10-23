@@ -81,12 +81,123 @@ std::string decode_byte_level(const std::string & text) {
     return bytes;
 }
 
+int hex_nibble(char ch) {
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return ch - 'a' + 10;
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return ch - 'A' + 10;
+    }
+    return -1;
+}
+
+bool is_utf8_continuation(unsigned char byte) {
+    return (byte & 0xC0) == 0x80;
+}
+
+// Matches the Hugging Face byte-fallback decoder: valid UTF-8 is kept, and each
+// incomplete or illegal sequence becomes U+FFFD.
+std::string utf8_lossy(const std::string & bytes) {
+    static constexpr char kReplacement[] = "\xEF\xBF\xBD";
+    std::string out;
+    out.reserve(bytes.size());
+    const auto * data = reinterpret_cast<const unsigned char *>(bytes.data());
+    const size_t size = bytes.size();
+    size_t index = 0;
+    while (index < size) {
+        const unsigned char lead = data[index];
+        if (lead < 0x80) {
+            out.push_back(static_cast<char>(lead));
+            ++index;
+            continue;
+        }
+        size_t width = 0;
+        if (lead >= 0xC2 && lead <= 0xDF) {
+            width = 2;
+        } else if (lead >= 0xE0 && lead <= 0xEF) {
+            width = 3;
+        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            width = 4;
+        }
+        if (width == 0) {
+            out.append(kReplacement);
+            ++index;
+            continue;
+        }
+        if (index + width > size) {
+            out.append(kReplacement);
+            break;
+        }
+        bool continuations = true;
+        for (size_t offset = 1; offset < width; ++offset) {
+            if (!is_utf8_continuation(data[index + offset])) {
+                continuations = false;
+                break;
+            }
+        }
+        const bool overlong_or_illegal =
+            (lead == 0xE0 && data[index + 1] < 0xA0) ||
+            (lead == 0xED && data[index + 1] >= 0xA0) ||
+            (lead == 0xF0 && data[index + 1] < 0x90) ||
+            (lead == 0xF4 && data[index + 1] > 0x8F);
+        if (!continuations) {
+            out.append(kReplacement);
+            ++index;
+            continue;
+        }
+        if (overlong_or_illegal) {
+            out.append(kReplacement);
+            index += width;
+            continue;
+        }
+        out.append(bytes, index, width);
+        index += width;
+    }
+    return out;
+}
+
+// SentencePiece byte-fallback pieces are the six characters <0xHH>. Consecutive
+// pieces are one UTF-8 sequence. A lone <0xC3> is an incomplete sequence.
+std::string decode_byte_fallback(const std::string & text) {
+    std::string out;
+    out.reserve(text.size());
+    std::string pending;
+    const auto flush_pending = [&]() {
+        if (pending.empty()) {
+            return;
+        }
+        out += utf8_lossy(pending);
+        pending.clear();
+    };
+    for (size_t i = 0; i < text.size();) {
+        if (i + 6 <= text.size() &&
+            text[i] == '<' && text[i + 1] == '0' && text[i + 2] == 'x' && text[i + 5] == '>') {
+            const int hi = hex_nibble(text[i + 3]);
+            const int lo = hex_nibble(text[i + 4]);
+            if (hi >= 0 && lo >= 0) {
+                pending.push_back(static_cast<char>((hi << 4) | lo));
+                i += 6;
+                continue;
+            }
+        }
+        flush_pending();
+        out.push_back(text[i]);
+        ++i;
+    }
+    flush_pending();
+    return out;
+}
+
 std::string decode_with_optional_skip(
     const std::vector<std::string> & id_to_token,
     const std::vector<int32_t> & ids,
     const std::string & metaspace_replacement,
     bool trim_leading_space,
     bool byte_level,
+    bool byte_fallback,
     const int32_t * skip_token_id) {
     std::string text;
     for (const int32_t id : ids) {
@@ -103,6 +214,9 @@ std::string decode_with_optional_skip(
     }
     if (!metaspace_replacement.empty()) {
         text = replace_all(text, metaspace_replacement, " ");
+    }
+    if (byte_fallback) {
+        text = decode_byte_fallback(text);
     }
     if (trim_leading_space) {
         while (!text.empty() && text.front() == ' ') {
@@ -141,22 +255,26 @@ HuggingFaceTokenizerJson::HuggingFaceTokenizerJson(
     std::vector<std::string> id_to_token,
     std::string metaspace_replacement,
     bool trim_leading_space,
-    bool byte_level)
+    bool byte_level,
+    bool byte_fallback)
     : id_to_token_(std::move(id_to_token)),
       metaspace_replacement_(std::move(metaspace_replacement)),
       trim_leading_space_(trim_leading_space),
-      byte_level_(byte_level) {}
+      byte_level_(byte_level),
+      byte_fallback_(byte_fallback) {}
 
 const std::vector<std::string> & HuggingFaceTokenizerJson::id_to_token() const noexcept {
     return id_to_token_;
 }
 
 std::string HuggingFaceTokenizerJson::decode_ids(const std::vector<int32_t> & ids) const {
-    return decode_with_optional_skip(id_to_token_, ids, metaspace_replacement_, trim_leading_space_, byte_level_, nullptr);
+    return decode_with_optional_skip(
+        id_to_token_, ids, metaspace_replacement_, trim_leading_space_, byte_level_, byte_fallback_, nullptr);
 }
 
 std::string HuggingFaceTokenizerJson::decode_ids(const std::vector<int32_t> & ids, int32_t skip_token_id) const {
-    return decode_with_optional_skip(id_to_token_, ids, metaspace_replacement_, trim_leading_space_, byte_level_, &skip_token_id);
+    return decode_with_optional_skip(
+        id_to_token_, ids, metaspace_replacement_, trim_leading_space_, byte_level_, byte_fallback_, &skip_token_id);
 }
 
 std::shared_ptr<HuggingFaceTokenizerJson> load_huggingface_tokenizer_json(
@@ -194,23 +312,58 @@ std::shared_ptr<HuggingFaceTokenizerJson> load_huggingface_tokenizer_json(
         id_to_token[id] = token;
     }
 
-    std::string metaspace_replacement;
-    bool trim_leading_space = false;
-    if (const auto * decoder = root.find("decoder"); decoder != nullptr
-        && decoder->is_object()
-        && decoder->find("type") != nullptr
-        && decoder->require("type").as_string() == "Metaspace") {
-        metaspace_replacement = decoder->require("replacement").as_string();
-        trim_leading_space = true;
+    struct DecoderFlags {
+        std::string metaspace_replacement;
+        bool trim_leading_space = false;
+        bool byte_level = false;
+        bool byte_fallback = false;
+    };
+    DecoderFlags flags;
+    const auto read_decoder = [&](const auto & self, const engine::io::json::Value & decoder) -> void {
+        if (!decoder.is_object()) {
+            return;
+        }
+        const auto * type = decoder.find("type");
+        if (type == nullptr || !type->is_string()) {
+            return;
+        }
+        const std::string & kind = type->as_string();
+        if (kind == "ByteLevel") {
+            flags.byte_level = true;
+        } else if (kind == "Metaspace") {
+            flags.metaspace_replacement = decoder.require("replacement").as_string();
+            flags.trim_leading_space = true;
+        } else if (kind == "ByteFallback") {
+            flags.byte_fallback = true;
+        } else if (kind == "Replace") {
+            const auto * pattern = decoder.find("pattern");
+            const auto * content = decoder.find("content");
+            if (pattern != nullptr && pattern->is_object() && content != nullptr && content->is_string()) {
+                const auto * literal = pattern->find("String");
+                if (literal != nullptr && literal->is_string() &&
+                    literal->as_string() == "▁" && content->as_string() == " ") {
+                    flags.metaspace_replacement = "▁";
+                }
+            }
+        } else if (kind == "Sequence") {
+            if (const auto * children = decoder.find("decoders"); children != nullptr && children->is_array()) {
+                for (const auto & child : children->as_array()) {
+                    self(self, child);
+                }
+            }
+        }
+    };
+    if (const auto * decoder = root.find("decoder"); decoder != nullptr) {
+        read_decoder(read_decoder, *decoder);
     }
-
-    const bool byte_level = has_byte_level(root);
+    flags.byte_level = flags.byte_level || has_byte_level(root);
 
     return std::make_shared<HuggingFaceTokenizerJson>(
         std::move(id_to_token),
-        std::move(metaspace_replacement),
-        trim_leading_space,
-        byte_level);
+        std::move(flags.metaspace_replacement),
+        flags.trim_leading_space,
+        flags.byte_level,
+        flags.byte_fallback);
 }
 
 }  // namespace engine::tokenizers

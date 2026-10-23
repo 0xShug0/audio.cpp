@@ -1,4 +1,4 @@
-#include "engine/models/ming3_tts/audio_codec.h"
+#include "engine/framework/codecs/ming_audio_vae_runtime.h"
 
 #include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -18,7 +18,7 @@
 #include <numeric>
 #include <stdexcept>
 
-namespace engine::models::ming3_tts {
+namespace engine::modules {
 
 namespace {
 
@@ -124,22 +124,23 @@ struct MingAudioEncoder::Impl {
         latent_dim_ = enc.latent_dim;
         patch_ = config.patch_size;
         sliding_window_ = enc.sliding_window;
+        bf16_posterior_ = enc.bf16_posterior;
         if (input_dim_ <= 0 || hop_ <= 0 || patch_ <= 0 || latent_dim_ <= 0) {
             throw std::runtime_error("Ming audio encoder requires positive frame and patch dimensions");
         }
-        load_audio_backbone(store_, *source, backbone, "audio.encoder.encoder", execution, attention,
+        load_audio_backbone(store_, *source, backbone, config.encoder_prefix + ".encoder", execution, attention,
             true, encoder_config_, encoder_weights_);
         // The published VAE constructs its patch aggregator with four Qwen layers.
-        load_audio_backbone(store_, *source, backbone, "audio.encoder.aggregator", execution, attention,
+        load_audio_backbone(store_, *source, backbone, config.encoder_prefix + ".aggregator", execution, attention,
             true, aggregator_config_, aggregator_weights_, 4);
         hidden_ = encoder_config_.stack.hidden_size;
-        fc1_ = binding::linear_from_source(store_, *source, "audio.encoder.fc1",
+        fc1_ = binding::linear_from_source(store_, *source, config.encoder_prefix + ".fc1",
             assets::TensorStorageType::Native, hidden_, input_dim_, false);
-        fc2_ = binding::linear_from_source(store_, *source, "audio.encoder.fc2",
+        fc2_ = binding::linear_from_source(store_, *source, config.encoder_prefix + ".fc2",
             assets::TensorStorageType::Native, hidden_, hidden_, true);
-        fc3_ = binding::linear_from_source(store_, *source, "audio.encoder.fc3",
+        fc3_ = binding::linear_from_source(store_, *source, config.encoder_prefix + ".fc3",
             assets::TensorStorageType::Native, 2 * latent_dim_, hidden_, true);
-        const auto cls = source->require_f32("audio.encoder.cls_embed", {1, 1, hidden_});
+        const auto cls = source->require_f32(config.encoder_prefix + ".cls_embed", {1, 1, hidden_});
         cls_ = store_.make_f32(core::TensorShape::from_dims({1, 1, hidden_}), cls);
         store_.upload();
     }
@@ -152,7 +153,7 @@ struct MingAudioEncoder::Impl {
     }
 
     void release_graph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
+        core::release_backend_graph_resources(execution_.backend(), graph_, true);
         graph_ = nullptr;
         host_plan_.reset();
         if (allocator_) ggml_gallocr_free(allocator_);
@@ -241,17 +242,17 @@ struct MingAudioEncoder::Impl {
                 scale[t * latent_dim_ + d] = x > 20.0f ? x : std::log1p(std::exp(x));
             }
         }
-        core::round_f32_to_bf16_in_place(scale);
+        if (bf16_posterior_) core::round_f32_to_bf16_in_place(scale);
         for (auto & value : scale) value += 1e-4f;
-        core::round_f32_to_bf16_in_place(scale);
+        if (bf16_posterior_) core::round_f32_to_bf16_in_place(scale);
         for (int64_t t = 0; t < patches; ++t) {
             for (int64_t d = 0; d < latent_dim_; ++d) scale[t * latent_dim_ + d] *= noise[d * patches + t];
         }
-        core::round_f32_to_bf16_in_place(scale);
+        if (bf16_posterior_) core::round_f32_to_bf16_in_place(scale);
         for (int64_t t = 0; t < patches; ++t) {
             for (int64_t d = 0; d < latent_dim_; ++d) scale[t * latent_dim_ + d] += params[t * 2 * latent_dim_ + d];
         }
-        core::round_f32_to_bf16_in_place(scale);
+        if (bf16_posterior_) core::round_f32_to_bf16_in_place(scale);
         return scale;
     }
 
@@ -262,6 +263,7 @@ struct MingAudioEncoder::Impl {
     modules::LinearWeights fc1_, fc2_, fc3_;
     core::TensorValue cls_, input_, positions_, mask_, aggregator_positions_, aggregator_mask_, output_;
     int64_t hidden_ = 0, input_dim_ = 0, hop_ = 0, latent_dim_ = 0, patch_ = 0, sliding_window_ = 0, frames_ = 0;
+    bool bf16_posterior_ = true;
     ggml_context * context_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t allocator_ = nullptr;
@@ -280,22 +282,22 @@ struct MingAudioDecoder::Impl {
         hop_ = dec.output_dim;
         patch_ = config.patch_size;
         fft_size_ = hop_ * 4;
-        load_audio_backbone(store_, *source, backbone, "audio.decoder.decoder", execution, attention,
+        load_audio_backbone(store_, *source, backbone, config.decoder_prefix + ".decoder", execution, attention,
             false, decoder_config_, weights_);
         const auto & c = decoder_config_.stack;
         sliding_window_ = dec.sliding_window;
-        input_projection_ = binding::linear_from_source(store_, *source, "audio.decoder.fc1",
+        input_projection_ = binding::linear_from_source(store_, *source, config.decoder_prefix + ".fc1",
             assets::TensorStorageType::Native, c.hidden_size, latent_dim_, true);
-        output_projection_ = binding::linear_from_source(store_, *source, "audio.decoder.head.out",
+        output_projection_ = binding::linear_from_source(store_, *source, config.decoder_prefix + ".head.out",
             assets::TensorStorageType::Native, fft_size_ + 2, c.hidden_size, true);
-        window_ = source->require_f32("audio.decoder.head.istft.window", {fft_size_});
+        window_ = source->require_f32(config.decoder_prefix + ".head.istft.window", {fft_size_});
         store_.upload();
     }
 
     ~Impl() { release_graph(); }
 
     void release_graph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_);
+        core::release_backend_graph_resources(execution_.backend(), graph_, true);
         graph_ = nullptr;
         host_plan_.reset();
         if (allocator_) ggml_gallocr_free(allocator_);
@@ -314,8 +316,7 @@ struct MingAudioDecoder::Impl {
         ggml_set_input(input_.tensor);
         auto x = modules::LinearModule({latent_dim_, decoder_config_.stack.hidden_size, true})
             .build(ctx, input_, input_projection_);
-        x = core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_BF16), x.shape, GGML_TYPE_BF16);
-        x = core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F32), x.shape, GGML_TYPE_F32);
+        x = modules::Bf16RoundModule{}.build(ctx, x);
         x = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
         x = modules::Interpolate1dModule({frames, modules::Interpolate1dMode::Linear}).build(ctx, x);
         x = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
@@ -330,8 +331,7 @@ struct MingAudioDecoder::Impl {
         x = modules::LinearModule({decoder_config_.stack.hidden_size, fft_size_ + 2, false})
             .build(ctx, x, {output_projection_.weight, std::nullopt});
         x = modules::AddModule(false, true).build(ctx, modules::Bf16RoundModule{}.build(ctx, x), *output_projection_.bias);
-        x = core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_BF16), x.shape, GGML_TYPE_BF16);
-        output_ = core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F32), x.shape, GGML_TYPE_F32);
+        output_ = modules::Bf16RoundModule{}.build(ctx, x);
         ggml_set_output(output_.tensor);
         graph_ = ggml_new_graph_custom(context_, 32768, false);
         ggml_build_forward_expand(graph_, output_.tensor);
@@ -389,4 +389,4 @@ MingAudioDecoder::MingAudioDecoder(std::shared_ptr<const assets::TensorSource> s
 MingAudioDecoder::~MingAudioDecoder() = default;
 std::vector<float> MingAudioDecoder::decode(const std::vector<float> & latent) { return impl_->decode(latent); }
 
-}  // namespace engine::models::ming3_tts
+}  // namespace engine::modules

@@ -1,8 +1,8 @@
-"""Offline Kitten ternary checkpoint reader using standard GGML Q8_0/Q4_0 storage.
+"""Offline Kitten ternary checkpoint reader for GGML Q8_0/Q4_0/TQ2_1 storage.
 
 Packing follows KittenML/KittenTTS kittenml/kittentts2/ternary.py.
 Updated exports require NumPy, PyTorch and safetensors during conversion only.
-No custom GGML type IDs are written.
+TQ2_1 uses audio.cpp's type ID 44, not the Kitten llama.cpp fork's ID 43.
 """
 from __future__ import annotations
 
@@ -56,6 +56,22 @@ def exact_ternary_blocks(tensor, bits):
     return np.concatenate((scale.view(np.uint8).reshape(-1, 2), codes), axis=1).tobytes()
 
 
+def exact_ternary_tq2_1(tensor):
+    """Pack two independently scaled 128-weight groups into each 68-byte block."""
+    if tensor.ndim != 2 or tensor.shape[-1] % 256:
+        raise ValueError('TQ2_1 rows must be divisible by 256')
+    values = tensor.float().numpy().reshape(-1, 2, 128)
+    scales = np.max(np.abs(values), axis=2)
+    if not np.all(np.isfinite(values)) or np.any((values != 0) & (np.abs(values) != scales[..., None])):
+        raise ValueError('TQ2_1 requires ternary values within each 128-weight group')
+    stored_scales = scales.astype('<f2')
+    if not np.array_equal(stored_scales.astype(np.float32), scales):
+        raise ValueError('TQ2_1 scales are not exactly representable as FP16')
+    codes = (np.sign(values).astype(np.int8) + 1).astype(np.uint8).reshape(-1, 2, 4, 32)
+    packed = codes[:, :, 0] | (codes[:, :, 1] << 2) | (codes[:, :, 2] << 4) | (codes[:, :, 3] << 6)
+    return np.concatenate((packed.reshape(-1, 64), stored_scales.view(np.uint8).reshape(-1, 4)), axis=1).tobytes()
+
+
 def write_tensor_gguf(path, tensors):
     """Stream a temporary tensor-only GGUF; audiocpp_gguf packages the sidecars."""
     def string(text):
@@ -101,7 +117,7 @@ def stage_language_model(source: Path, output: Path, export_type: str):
                 for name, info in sorted(packed.items()):
                     value = unpack_ternary(handle.get_tensor(name + '::codes'), handle.get_tensor(name + '::scale'), info['shape'])
                     yield name, tuple(value.shape), 8, exact_ternary_blocks(value, 8)
-            elif export_type == 'q4_0':
+            elif export_type in ('q4_0', 'tq2_1'):
                 body_count = 0
                 for name in sorted(handle.keys()):
                     value = handle.get_tensor(name).contiguous()
@@ -109,15 +125,18 @@ def stage_language_model(source: Path, output: Path, export_type: str):
                         raise ValueError(f'expected BF16 source tensor: {name}')
                     if is_body_projection(name):
                         body_count += 1
-                        yield name, tuple(value.shape), 2, exact_ternary_blocks(value, 4)
+                        if export_type == 'tq2_1':
+                            yield name, tuple(value.shape), 44, exact_ternary_tq2_1(value)
+                        else:
+                            yield name, tuple(value.shape), 2, exact_ternary_blocks(value, 4)
                     else:
-                        # audiocpp_gguf applies its native Q8_0 quantizer to the
-                        # embedding only; other dense tensors retain BF16.
+                        # Preserve dense tensors here; the packaging step
+                        # selects the embedding storage independently.
                         yield name, tuple(value.shape), 30, value.view(torch.uint16).numpy().tobytes()
                 if body_count != 196:
                     raise ValueError(f'expected 196 Kitten body projections, got {body_count}')
             else:
-                raise ValueError('expected q8_0 or q4_0 export type')
+                raise ValueError('expected q8_0, q4_0 or tq2_1 export type')
     write_tensor_gguf(output, tensors())
 
 

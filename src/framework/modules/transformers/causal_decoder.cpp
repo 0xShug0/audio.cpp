@@ -186,7 +186,9 @@ DecoderHiddenBatchedStaticCacheOutputs DecoderHiddenModule::build_static_cache_t
     const DecoderHiddenWeights & weights,
     int64_t cache_steps,
     const core::TensorValue & attention_mask,
-    const core::TensorValue & cache_slot) const {
+    const core::TensorValue & cache_slot,
+    const runtime::TransformerBatchedKVCache * cache,
+    runtime::TransformerKVCacheOptions cache_options) const {
     if (graph == nullptr) {
         throw std::runtime_error("QwenDecoderHiddenModule batched static-cache build requires a graph");
     }
@@ -209,12 +211,13 @@ DecoderHiddenBatchedStaticCacheOutputs DecoderHiddenModule::build_static_cache_t
     auto x = input;
     const DecoderLayerModule layer_module(decoder_layer_config_from_stack(config_.stack));
     for (const auto & layer : weights.stack.layers) {
-        cache_keys.push_back(core::make_tensor(
+        const size_t index = cache_keys.size();
+        cache_keys.push_back(cache ? cache->key_tensor(index) : core::make_tensor(
             ctx,
             config_.static_cache_type,
             core::TensorShape::from_dims(
                 {batch_size, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
-        cache_values.push_back(core::make_tensor(
+        cache_values.push_back(cache ? cache->value_tensor(index) : core::make_tensor(
             ctx,
             config_.static_cache_type,
             core::TensorShape::from_dims(
@@ -235,6 +238,8 @@ DecoderHiddenBatchedStaticCacheOutputs DecoderHiddenModule::build_static_cache_t
     auto hidden = RMSNormModule({config_.stack.hidden_size, config_.stack.rms_norm_eps, true, false, false, false,
                                 config_.stack.activation_cast.norm_intermediate_type})
                       .build(ctx, x, weights.final_norm);
+    cache_options.allow_f16_storage = config_.static_cache_type == GGML_TYPE_F16;
+    cache_options.allow_bf16_storage = config_.static_cache_type == GGML_TYPE_BF16;
     return {
         std::move(x),
         hidden,
@@ -244,7 +249,7 @@ DecoderHiddenBatchedStaticCacheOutputs DecoderHiddenModule::build_static_cache_t
             row_elems,
             std::move(cache_keys),
             std::move(cache_values),
-            transformer_cache_options(config_.static_cache_type)),
+            cache_options),
     };
 }
 
@@ -354,7 +359,9 @@ CausalDecoderBatchedStaticCacheOutputs CausalDecoderModule::build_static_cache_t
     const CausalDecoderWeights & weights,
     int64_t cache_steps,
     const core::TensorValue & attention_mask,
-    const core::TensorValue & cache_slot) const {
+    const core::TensorValue & cache_slot,
+    const runtime::TransformerBatchedKVCache * cache,
+    runtime::TransformerKVCacheOptions cache_options) const {
     if (graph == nullptr) {
         throw std::runtime_error("QwenCausalDecoderModule batched static-cache build requires a graph");
     }
@@ -373,7 +380,9 @@ CausalDecoderBatchedStaticCacheOutputs CausalDecoderModule::build_static_cache_t
                               hidden_weights_from_causal(weights),
                               cache_steps,
                               attention_mask,
-                              cache_slot);
+                              cache_slot,
+                              cache,
+                              cache_options);
     auto logits_input = hidden_out.hidden;
     if (config_.lm_head_input_type.has_value() && logits_input.type != *config_.lm_head_input_type) {
         logits_input = core::wrap_tensor(

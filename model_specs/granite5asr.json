@@ -1,7 +1,7 @@
 {
   "family": "granite5asr",
   "display_name": "Granite Speech 5.0 470M TurboCTC",
-  "description": "IBM Granite Speech 5.0 TurboCTC 470M parameter compact and ultra-fast English ASR model using a Conformer CTC architecture with block self-attention and self-conditioning.",
+  "description": "IBM Granite Speech 5.0 TurboCTC 470M parameter Conformer CTC model. The current checkpoint transcribes English, French, German, Spanish, Portuguese, Italian, and Japanese with punctuation and capitalization. An older English-only checkpoint still loads.",
   "category": "asr",
   "status": "supported",
   "tasks": [
@@ -12,7 +12,13 @@
     "streaming"
   ],
   "languages": [
-    "en"
+    "en",
+    "fr",
+    "de",
+    "es",
+    "pt",
+    "it",
+    "ja"
   ],
   "capabilities": {
     "asr": [
@@ -26,7 +32,7 @@
       {
         "name": "language",
         "type": "string",
-        "description": "Compatibility metadata only; recognition output is always labelled en.",
+        "description": "Accepted and ignored. Granite has no language input. A result is labelled en unless decoding emits a trained language token such as <|fr|>.",
         "required": false,
         "default": "en"
       },
@@ -100,7 +106,7 @@
       "docs/asr.md",
       "docs/gguf.md"
     ],
-    "summary": "IBM Granite Speech 5.0 470M TurboCTC English transcription."
+    "summary": "IBM Granite Speech 5.0 470M TurboCTC multilingual transcription."
   },
   "package_defaults": {
     "download": {
@@ -137,7 +143,6 @@
       "target_directory": "granite5asr",
       "files": [
         "config.json",
-        "preprocessor_config.json",
         "tokenizer.json",
         "model.safetensors"
       ]

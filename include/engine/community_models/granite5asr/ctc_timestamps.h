@@ -5,6 +5,7 @@
 #include "engine/framework/runtime/session.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -98,6 +99,32 @@ inline int64_t samples_per_ctc_frame(const Granite5ASRConfig & config) {
 
 // The frontend resamples to the model rate, so frame indexes count model-rate
 // samples. Word spans are reported in samples of the input buffer.
+// Streaming audio is resampled to 16 kHz before the encoder. Word indexes from
+// that buffer are converted onto the sample rate of the audio that was streamed.
+inline int64_t scale_sample_to_rate(int64_t sample, int64_t from_rate, int64_t to_rate) {
+    if (sample <= 0 || from_rate <= 0 || to_rate <= 0 || from_rate == to_rate) {
+        return std::max<int64_t>(sample, 0);
+    }
+    return static_cast<int64_t>(std::llround(
+        static_cast<double>(sample) * static_cast<double>(to_rate) /
+        static_cast<double>(from_rate)));
+}
+
+// The multilingual checkpoint's tokenizer carries Parakeet language tags.
+// Only the languages the model was trained to transcribe count. The English-only
+// checkpoint has none of these tokens, so this returns empty for it.
+inline std::string language_code_from_token(const std::string & token) {
+    if (token.size() < 5 || token.front() != '<' || token.back() != '>') {
+        return {};
+    }
+    const std::string code = token.substr(2, token.size() - 4);
+    if (code == "en" || code == "fr" || code == "de" || code == "es" ||
+        code == "pt" || code == "it" || code == "ja") {
+        return code;
+    }
+    return {};
+}
+
 inline int64_t ctc_frame_to_input_sample(
     int64_t frame,
     int64_t samples_per_frame,
@@ -110,6 +137,77 @@ inline int64_t ctc_frame_to_input_sample(
     return static_cast<int64_t>(std::llround(
         static_cast<double>(model_sample) * static_cast<double>(input_sample_rate) /
         static_cast<double>(model_sample_rate)));
+}
+
+// Currency marks and opening quotes belong to the word that follows. A period
+// or comma does not: its frames often run through the following pause.
+inline bool leading_symbol(uint32_t code) {
+    if (code == '"' || code == '$' || code == '(' || code == '[' || code == '{') {
+        return true;
+    }
+    if (code == 0x00A3 || code == 0x00A5 || code == 0x00AB || code == 0x00BB ||
+        code == 0x2039 || code == 0x203A) {
+        return true;
+    }
+    return (code >= 0x2018 && code <= 0x201F) ||
+        (code >= 0x20A0 && code <= 0x20CF) ||
+        (code >= 0x300C && code <= 0x300F);
+}
+
+// A piece that is only trailing punctuation is written onto the current word.
+// Its frames often run through the following pause, so they do not move the
+// word's end or enter its confidence. A leading symbol is ordinary word text.
+inline bool punctuation_only_piece(const std::string & text) {
+    bool saw_mark = false;
+    bool saw_leading = false;
+    size_t index = 0;
+    while (index < text.size()) {
+        const auto lead = static_cast<unsigned char>(text[index]);
+        uint32_t code = 0;
+        size_t width = 1;
+        if (lead < 0x80) {
+            code = lead;
+        } else if ((lead & 0xE0) == 0xC0 && index + 1 < text.size()) {
+            code = (lead & 0x1F) << 6 | (static_cast<unsigned char>(text[index + 1]) & 0x3F);
+            width = 2;
+        } else if ((lead & 0xF0) == 0xE0 && index + 2 < text.size()) {
+            code = (lead & 0x0F) << 12 |
+                (static_cast<unsigned char>(text[index + 1]) & 0x3F) << 6 |
+                (static_cast<unsigned char>(text[index + 2]) & 0x3F);
+            width = 3;
+        } else if ((lead & 0xF8) == 0xF0 && index + 3 < text.size()) {
+            code = (lead & 0x07) << 18 |
+                (static_cast<unsigned char>(text[index + 1]) & 0x3F) << 12 |
+                (static_cast<unsigned char>(text[index + 2]) & 0x3F) << 6 |
+                (static_cast<unsigned char>(text[index + 3]) & 0x3F);
+            width = 4;
+        } else {
+            return false;
+        }
+        index += width;
+        if (code == ' ' || code == '\t') {
+            continue;
+        }
+        const bool ascii_word = code < 128 &&
+            (std::isalnum(static_cast<unsigned char>(code)) || code == '\'');
+        const bool letter =
+            (code >= 0x00C0 && code <= 0x024F) ||
+            (code >= 0x3040 && code <= 0x30FF) ||
+            (code >= 0x3400 && code <= 0x9FFF) ||
+            (code >= 0xAC00 && code <= 0xD7AF) ||
+            (code >= 0xFF10 && code <= 0xFF19) ||
+            (code >= 0xFF21 && code <= 0xFF3A) ||
+            (code >= 0xFF41 && code <= 0xFF5A);
+        if (ascii_word || letter) {
+            return false;
+        }
+        if (leading_symbol(code)) {
+            saw_leading = true;
+            continue;
+        }
+        saw_mark = true;
+    }
+    return saw_mark && !saw_leading;
 }
 
 inline std::vector<runtime::WordTimestamp> words_from_decoded_ctc_pieces(
@@ -172,6 +270,14 @@ inline std::vector<runtime::WordTimestamp> words_from_decoded_ctc_pieces(
             decoded.erase(0, i);
         }
         if (decoded.empty()) {
+            continue;
+        }
+        if (punctuation_only_piece(decoded)) {
+            if (current.open) {
+                current.text += decoded;
+            } else if (!words.empty()) {
+                words.back().word += decoded;
+            }
             continue;
         }
         const int64_t start = sample_offset + ctc_frame_to_input_sample(

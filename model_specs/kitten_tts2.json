@@ -13,7 +13,22 @@
     "offline"
   ],
   "languages": [
-    "en", "ar", "zh", "fr", "de", "hi", "it", "pt", "ru", "es"
+    "en",
+    "ar",
+    "zh",
+    "fr",
+    "de",
+    "hi",
+    "it",
+    "pt",
+    "ru",
+    "es",
+    "nl",
+    "id",
+    "ja",
+    "ko",
+    "pl",
+    "tr"
   ],
   "runtime": {
     "tags": [
@@ -75,12 +90,95 @@
           "Sable",
           "Victoria",
           "PreparedBruno",
-          "Arabic", "Chinese", "French", "German", "Hindi",
-          "Italian", "Portuguese", "Russian", "Spanish"
+          "Arabic",
+          "Chinese",
+          "French",
+          "German",
+          "Hindi",
+          "Italian",
+          "Portuguese",
+          "Russian",
+          "Spanish",
+          "AirportAnnouncer",
+          "ArabicChildSchool",
+          "ArabicFalconer",
+          "ArabicMother",
+          "ArabicNews",
+          "AudiobookNarratorFemale",
+          "BoredTeenager",
+          "CalmHostageNegotiator",
+          "ChineseKidSpringFestival",
+          "ChineseLivestreamSeller",
+          "ChineseNewsCctv",
+          "ChineseXianxiaMaster",
+          "DutchBaker",
+          "DutchGrandpaStory",
+          "DutchWeatherPresenter",
+          "FairytaleNarratorWhimsical",
+          "FrenchDocumentary",
+          "FrenchGrandmereRecette",
+          "FrenchTeacher",
+          "FrenchWaiter",
+          "GermanKidBirthday",
+          "GermanKneipe",
+          "GermanProfessor",
+          "GermanTrainAnnouncement",
+          "GrandmaBedtimeStory",
+          "GriefEulogy",
+          "HindiBollywoodDrama",
+          "HindiCollegeFriends",
+          "HindiDadiKahani",
+          "HindiYogaTeacher",
+          "IndonesianNewsAnchor",
+          "IndonesianTourGuide",
+          "ItalianChildSchool",
+          "ItalianFashionDesigner",
+          "ItalianFootballFan",
+          "ItalianGondolier",
+          "ItalianNonnaKitchen",
+          "ItalianOperaTenor",
+          "JapaneseAnimeHeroine",
+          "JapaneseGrandma",
+          "JapaneseSalarymanApology",
+          "JapaneseTrainConductor",
+          "KoreanGrandpaAdvice",
+          "KoreanKdramaConfession",
+          "KoreanNewsAnchor",
+          "LittleGirlExplaining",
+          "NervousFirstDate",
+          "NewsAnchorFemale",
+          "PilotCabinAnnouncement",
+          "PolishBabciaPierogi",
+          "PolishMountainGuide",
+          "PolishNewsAnchor",
+          "PolishPoetryStudent",
+          "PortugueseBeach",
+          "PortugueseBusiness",
+          "PortugueseFado",
+          "PortugueseGrandpaFarm",
+          "PortugueseKidFutebol",
+          "PortugueseNewsAnchor",
+          "RussianBabushka",
+          "RussianFairyTale",
+          "RussianHockeyCheer",
+          "RussianLiteratureTeacher",
+          "RussianSpaceControl",
+          "RussianTaxiDriver",
+          "SarcasticCoworker",
+          "SchoolboyPresentation",
+          "SpanishAbuela",
+          "SpanishBreakupSad",
+          "SpanishChildCuento",
+          "SpanishNews",
+          "SpanishTango",
+          "TurkishFisherman",
+          "TurkishGrandmaCooking",
+          "TurkishNewsAnchor",
+          "WeatherPresenterCheerful"
         ],
         "required": false,
         "default": "Bruno",
-        "description": "Prepared voice name; select a language-named preset for non-English speech. A supplied reference clip takes precedence."
+        "description": "Prepared voice name available in the loaded package. A supplied reference clip takes precedence."
       },
       {
         "name": "preset",
@@ -177,6 +275,13 @@
     "load": [],
     "session": [
       {
+        "name": "exec_plan",
+        "type": "string",
+        "required": false,
+        "default": "{}",
+        "description": "Component execution plan JSON. vocoder accepts impl=ggml (default) or neon with backend=cpu. NEON requires ENGINE_ENABLE_NEON=ON and an AArch64 NEON CPU, and replaces only the HiFT neural convolution stack."
+      },
+      {
         "name": "weight_type",
         "type": "enum",
         "values": [
@@ -204,7 +309,7 @@
   "packages": [
     {
       "id": "kitten_tts2_bf16",
-      "display_name": "Kitten TTS 2 BF16 GGUF",
+      "display_name": "Kitten TTS 2 BF16 GGUF (Previous Checkpoint)",
       "default": false,
       "format": "gguf",
       "precision": "bf16",
@@ -220,8 +325,8 @@
     },
     {
       "id": "kitten_tts2_q8_v2",
-      "display_name": "Kitten TTS 2 Q8 GGUF",
-      "default": true,
+      "display_name": "Kitten TTS 2 Q8 GGUF (Previous Checkpoint)",
+      "default": false,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "kitten-tts2-v2",
@@ -236,7 +341,7 @@
     },
     {
       "id": "kitten_tts2_q4",
-      "display_name": "Kitten TTS 2 Q4 GGUF (Experimental)",
+      "display_name": "Kitten TTS 2 Hybrid Q4 GGUF (Previous Checkpoint, Experimental)",
       "default": false,
       "format": "gguf",
       "precision": "q4_0",
@@ -249,11 +354,47 @@
         "speaker/LICENSE",
         "SHA256SUMS"
       ]
+    },
+    {
+      "id": "kitten_tts2_20261021_q8_0",
+      "display_name": "Kitten TTS 2 2026-10-21 Q8 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "KittenTTS2-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      },
+      "files": [
+        "KittenTTS2-GGUF/kitten-tts2-20261021-q8_0.gguf"
+      ],
+      "strip_prefix": "KittenTTS2-GGUF"
+    },
+    {
+      "id": "kitten_tts2_20261021_q4_0",
+      "display_name": "Kitten TTS 2 2026-10-21 Q4 GGUF (BF16 Embedding)",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "KittenTTS2-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      },
+      "files": [
+        "KittenTTS2-GGUF/kitten-tts2-20261021-q4_0.gguf"
+      ],
+      "strip_prefix": "KittenTTS2-GGUF"
     }
   ],
   "dependencies": [],
   "ui": {
-    "recommended_package": "kitten_tts2_q8_v2",
+    "recommended_package": "kitten_tts2_20261021_q8_0",
     "min_vram_gb": 7,
     "tags": [
       "TTS",
@@ -298,8 +439,15 @@
       "Martha",
       "Sable",
       "Victoria",
-      "Arabic", "Chinese", "French", "German", "Hindi",
-      "Italian", "Portuguese", "Russian", "Spanish"
+      "Arabic",
+      "Chinese",
+      "French",
+      "German",
+      "Hindi",
+      "Italian",
+      "Portuguese",
+      "Russian",
+      "Spanish"
     ],
     "default_voice": "Bruno",
     "docs": [

@@ -150,9 +150,11 @@ public:
         TransformerKVCacheOptions options);
 
     void import_state(const TransformerBatchedKVState & state);
+    void clear_on_backend();
     TransformerBatchedKVState export_state() const;
 
     void advance_after_direct_append(int64_t steps);
+    void advance_after_direct_append(const std::vector<int64_t> & steps_by_batch);
 
     int64_t batch_size() const noexcept;
     int64_t valid_steps() const noexcept;
@@ -160,6 +162,8 @@ public:
     int64_t cache_steps() const noexcept;
     const std::vector<int64_t> & valid_steps_by_batch() const noexcept;
     const std::vector<int64_t> & current_end_by_batch() const noexcept;
+    const core::TensorValue & key_tensor(size_t layer) const;
+    const core::TensorValue & value_tensor(size_t layer) const;
 
 private:
     struct LayerCache {
@@ -188,6 +192,7 @@ core::TensorValue view_transformer_kv_cache_steps(
     int64_t heads,
     int64_t head_dim,
     const char * label,
-    ggml_type view_type = GGML_TYPE_F32);
+    ggml_type view_type = GGML_TYPE_F32,
+    int64_t batch = 0);
 
 }  // namespace engine::runtime

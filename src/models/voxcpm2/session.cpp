@@ -255,12 +255,14 @@ void validate_session_options(
         key == "voxcpm2.audiovae_encoder_graph_context_mb" ||
         key == "voxcpm2.audiovae_encoder_graph_arena_mb" ||
         key == "voxcpm2.audiovae_latent_capacity" ||
+        key == "voxcpm2.audiovae_tile_frames" ||
         key == "voxcpm2.exec_plan" ||
         key == "voxcpm2.audiovae_encoder_sample_capacity" ||
         key == "voxcpm2.weight_type" ||
         key == "voxcpm2.audiovae_weight_type" ||
         key == "voxcpm2.prompt_cache_slots" ||
         key == "voxcpm2.mem_saver" ||
+        key == "voxcpm2.perf_mode" ||
         key == "voxcpm2.denoise" || key == "voxcpm2.load_denoiser") {
       continue;
     }
@@ -333,6 +335,14 @@ VoxCPM2SessionBase::VoxCPM2SessionBase(runtime::TaskSpec task,
       options.options, {"voxcpm2.dit_graph_arena_mb", "voxcpm2.dit_graph_context_mb"},
       generator_config_.dit_graph_context_bytes);
   generator_config_.prompt_cache_slots = encoded_prompt_cache_.capacity();
+  const auto perf_mode =
+      runtime::find_option(options.options, {"voxcpm2.perf_mode"})
+          .value_or("off");
+  if (perf_mode != "off" && perf_mode != "cuda_perf") {
+    throw std::runtime_error("voxcpm2.perf_mode must be off or cuda_perf");
+  }
+  generator_config_.optimized = perf_mode == "cuda_perf";
+  debug::trace_log_scalar("voxcpm2.perf_mode", perf_mode);
   decoder_config_.weight_context_bytes = runtime::parse_size_mb_option(
       options.options, {"voxcpm2.audiovae_weight_context_mb"},
       decoder_config_.weight_context_bytes);
@@ -345,6 +355,9 @@ VoxCPM2SessionBase::VoxCPM2SessionBase(runtime::TaskSpec task,
   decoder_config_.latent_frame_capacity = runtime::parse_positive_i64_option(
       options.options, {"voxcpm2.audiovae_latent_capacity"},
       decoder_config_.latent_frame_capacity);
+  decoder_config_.tile_frames = runtime::parse_i64_option(
+      options.options, {"voxcpm2.audiovae_tile_frames"})
+      .value_or(decoder_config_.tile_frames);
   decoder_config_.encoder_sample_capacity = runtime::parse_positive_i64_option(
       options.options, {"voxcpm2.audiovae_encoder_sample_capacity"},
       decoder_config_.encoder_sample_capacity);

@@ -62,7 +62,22 @@ uint32_t sglang_murmur_hash32(uint64_t seed, uint32_t position, uint32_t column)
     return fmix32(hash);
 }
 
-int32_t argmax_row(const float * logits, int64_t vocab_size) {
+int32_t argmax_row(const float * logits, int64_t vocab_size, bool filter_nan_logits) {
+    if (filter_nan_logits) {
+        int32_t best = -1;
+        float best_value = -std::numeric_limits<float>::infinity();
+        for (int64_t i = 0; i < vocab_size; ++i) {
+            const float value = logits[i];
+            if (std::isfinite(value) && value > best_value) {
+                best_value = value;
+                best = static_cast<int32_t>(i);
+            }
+        }
+        if (best < 0) {
+            throw std::runtime_error("Higgs TTS sampler kept no finite logits");
+        }
+        return best;
+    }
     int32_t best = 0;
     float best_value = logits[0];
     for (int64_t i = 1; i < vocab_size; ++i) {
@@ -180,13 +195,29 @@ void apply_top_k_to_probs(SamplerScratch & scratch, int64_t vocab_size, int64_t 
     renormalize_probs(scratch);
 }
 
-void apply_top_k_to_scores(SamplerScratch & scratch, int64_t vocab_size, int64_t top_k) {
+void apply_top_k_to_scores(SamplerScratch & scratch, int64_t vocab_size, int64_t top_k, bool filter_nan_logits) {
     scratch.kept.clear();
     if (top_k <= 0 || top_k >= vocab_size) {
         return;
     }
-    scratch.order.resize(static_cast<size_t>(vocab_size));
-    std::iota(scratch.order.begin(), scratch.order.end(), 0);
+
+    if (filter_nan_logits) {
+        // Exclude non-finite scores so nth_element has a strict weak ordering.
+        scratch.order.clear();
+        scratch.order.reserve(static_cast<size_t>(vocab_size));
+        for (int64_t i = 0; i < vocab_size; ++i) {
+            if (std::isfinite(scratch.scores[static_cast<size_t>(i)])) {
+                scratch.order.push_back(i);
+            }
+        }
+        if (scratch.order.size() <= static_cast<size_t>(top_k)) {
+            scratch.kept = scratch.order;
+            return;
+        }
+    } else {
+        scratch.order.resize(static_cast<size_t>(vocab_size));
+        std::iota(scratch.order.begin(), scratch.order.end(), 0);
+    }
     auto kth = scratch.order.begin() + static_cast<std::ptrdiff_t>(top_k - 1);
     std::nth_element(
         scratch.order.begin(), kth, scratch.order.end(), [&](int64_t lhs, int64_t rhs) {
@@ -196,7 +227,8 @@ void apply_top_k_to_scores(SamplerScratch & scratch, int64_t vocab_size, int64_t
     const float threshold = scratch.scores[static_cast<size_t>(*kth)];
     scratch.kept.reserve(static_cast<size_t>(top_k));
     for (int64_t i = 0; i < vocab_size; ++i) {
-        if (scratch.scores[static_cast<size_t>(i)] >= threshold) {
+        if (scratch.scores[static_cast<size_t>(i)] >= threshold &&
+            (!filter_nan_logits || std::isfinite(scratch.scores[static_cast<size_t>(i)]))) {
             scratch.kept.push_back(i);
         }
     }
@@ -360,7 +392,7 @@ int32_t sample_codebook_row(const float * logits,
     }
     if (options.temperature <= kGreedyTemperatureThreshold ||
         (options.top_k.has_value() && *options.top_k == 1)) {
-        return argmax_row(logits, vocab_size);
+        return argmax_row(logits, vocab_size, options.filter_nan_logits);
     }
     if (!(options.temperature > 0.0F) || !std::isfinite(options.temperature)) {
         throw std::runtime_error("Higgs TTS sampler temperature must be finite and positive");
@@ -378,7 +410,7 @@ int32_t sample_codebook_row(const float * logits,
         }
         const int64_t top_k = std::min<int64_t>(*options.top_k, vocab_size);
         if (top_k > 0 && top_k < vocab_size) {
-            apply_top_k_to_scores(scratch, vocab_size, top_k);
+            apply_top_k_to_scores(scratch, vocab_size, top_k, options.filter_nan_logits);
             top_k_applied_to_scores = true;
         }
     }

@@ -698,6 +698,7 @@ void OobleckAudioVaeRuntime::prepare_encode(int64_t frames) {
 void OobleckAudioVaeRuntime::prepare_decode(int64_t batch, int64_t latent_frames) {
     const auto & weights = impl_->require_weights();
     if (!impl_->decode_graph || !impl_->decode_graph->matches(batch, latent_frames)) {
+        impl_->decode_graph.reset();
         impl_->decode_graph = std::make_unique<Impl::DecodeGraph>(*impl_->execution, impl_->config, impl_->options, weights, batch, latent_frames);
     }
 }

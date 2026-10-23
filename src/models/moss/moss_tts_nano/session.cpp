@@ -5,13 +5,13 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
+#include "text_chunking.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -405,7 +405,8 @@ runtime::TaskResult MossTTSNanoSession::synthesize(const runtime::TaskRequest & 
     require_prepared("MOSS-TTS-Nano run()");
     const auto wall_start = Clock::now();
     const int64_t text_chunk_size =
-        engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
+        engine::text::parse_text_chunk_size_override(request.options).value_or(
+            request.text_input ? detail::default_text_chunk_size(request.text_input->text) : kDefaultTextChunkSize);
     const auto text_chunk_mode =
         engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
     const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);

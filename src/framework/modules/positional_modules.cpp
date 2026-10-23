@@ -2,6 +2,7 @@
 
 #include "engine/framework/modules/structural_modules.h"
 
+#include <array>
 #include <stdexcept>
 #include <string>
 
@@ -84,7 +85,9 @@ core::TensorValue RoPEModule::build(
             frequency_factors ? frequency_factors->tensor : nullptr, config_.dimensions,
             config_.mode, 0, config_.theta, config_.freq_scale, config_.ext_factor,
             config_.attn_factor, config_.beta_fast, config_.beta_slow);
-        table = ggml_cast(ctx.ggml, ggml_cast(ctx.ggml, table, *config_.intermediate_round_type), GGML_TYPE_F32);
+        table = *config_.intermediate_round_type == GGML_TYPE_BF16
+            ? ggml_round_bf16(ctx.ggml, table)
+            : ggml_cast(ctx.ggml, ggml_cast(ctx.ggml, table, *config_.intermediate_round_type), GGML_TYPE_F32);
         auto * cos = ggml_view_4d(ctx.ggml, table, half, 1, table->ne[2], 1,
             table->nb[1], table->nb[2], table->nb[3], 0);
         auto * sin = ggml_view_4d(ctx.ggml, table, half, 1, table->ne[2], 1,
@@ -96,16 +99,16 @@ core::TensorValue RoPEModule::build(
         auto * upper = ggml_view_4d(ctx.ggml, contiguous.tensor, half, input.tensor->ne[1],
             input.tensor->ne[2], input.tensor->ne[3], contiguous.tensor->nb[1],
             contiguous.tensor->nb[2], contiguous.tensor->nb[3], half * sizeof(float));
-        auto * lower_cos = ggml_cast(ctx.ggml, ggml_cast(ctx.ggml,
-            ggml_mul(ctx.ggml, lower, cos), *config_.intermediate_round_type), GGML_TYPE_F32);
-        auto * upper_sin = ggml_cast(ctx.ggml, ggml_cast(ctx.ggml,
-            ggml_mul(ctx.ggml, upper, sin), *config_.intermediate_round_type), GGML_TYPE_F32);
-        auto * upper_cos = ggml_cast(ctx.ggml, ggml_cast(ctx.ggml,
-            ggml_mul(ctx.ggml, upper, cos), *config_.intermediate_round_type), GGML_TYPE_F32);
-        auto * lower_sin = ggml_cast(ctx.ggml, ggml_cast(ctx.ggml,
-            ggml_mul(ctx.ggml, lower, sin), *config_.intermediate_round_type), GGML_TYPE_F32);
+        std::array<ggml_tensor *, 4> products{
+            ggml_mul(ctx.ggml, lower, cos), ggml_mul(ctx.ggml, upper, sin),
+            ggml_mul(ctx.ggml, upper, cos), ggml_mul(ctx.ggml, lower, sin)};
+        for (auto *& product : products) {
+            product = *config_.intermediate_round_type == GGML_TYPE_BF16
+                ? ggml_round_bf16(ctx.ggml, product)
+                : ggml_cast(ctx.ggml, ggml_cast(ctx.ggml, product, *config_.intermediate_round_type), GGML_TYPE_F32);
+        }
         return core::wrap_tensor(ggml_concat(ctx.ggml,
-            ggml_sub(ctx.ggml, lower_cos, upper_sin), ggml_add(ctx.ggml, upper_cos, lower_sin), 0),
+            ggml_sub(ctx.ggml, products[0], products[1]), ggml_add(ctx.ggml, products[2], products[3]), 0),
             input.shape, GGML_TYPE_F32);
     }
     return core::wrap_tensor(

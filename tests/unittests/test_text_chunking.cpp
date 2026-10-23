@@ -95,6 +95,43 @@ int main() {
         require(chunks[1] == "How are you today?", "second latin chunk verbatim");
     }
 
+    // A CJK run without punctuation has no word boundary. It is cut into equal
+    // pieces that fit the budget instead of coming back as one over-budget
+    // chunk; a Latin word longer than the budget still stays whole.
+    {
+        const std::string run = "一二三四五六七八九十一二三四五六七八九十一二三四五";
+        const auto chunks = engine::text::split_text_chunks(run, 10);
+        require(chunks.size() == 3, "unpunctuated CJK run splits into three pieces");
+        require(chunks[0] == "一二三四五六七八", "first piece");
+        require(chunks[1] == "九十一二三四五六", "second piece");
+        require(chunks[2] == "七八九十一二三四五", "third piece");
+        check_chunks(run, 10, 3, "unpunctuated CJK run");
+        const auto latin = engine::text::split_text_chunks("supercalifragilistic is long", 10);
+        require(latin.size() == 2 && latin[0] == "supercalifragilistic" && latin[1] == "is long",
+                "latin word over budget stays whole");
+
+        // Cuts fall only between two CJK letters: a tag or a Latin word inside
+        // the run stays in one piece.
+        const std::string tag = "<|emotion:contemplation|>";
+        const std::string tagged = "一二三四五六七八九十" + tag + "一二三四五六七八九十";
+        const auto tag_chunks = engine::text::split_text_chunks(tagged, 12);
+        check_chunks(tagged, 12, 2, "CJK run with a tag");
+        size_t tag_count = 0;
+        for (const auto & c : tag_chunks) {
+            tag_count += c.find(tag) != std::string::npos;
+            require(c.find(tag) != std::string::npos || c.find('|') == std::string::npos, "tag is not cut");
+        }
+        require(tag_count == 1, "tag stays in exactly one chunk");
+        const std::string mixed = "一二三四五六七八九十GPT一二三四五六七八九十";
+        const auto mixed_chunks = engine::text::split_text_chunks(mixed, 8);
+        check_chunks(mixed, 8, 2, "CJK run with a Latin word");
+        size_t gpt = 0;
+        for (const auto & c : mixed_chunks) {
+            gpt += c.find("GPT") != std::string::npos;
+        }
+        require(gpt == 1, "Latin word inside a CJK run stays whole");
+    }
+
     // Tag-aware mode: a closing quote or bracket after a sentence stop belongs to
     // that sentence. Units used to end at the stop, so the closer opened the next
     // chunk (`."` split between `.` and `"`) and dialogue attribution shifted.

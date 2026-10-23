@@ -1,0 +1,41 @@
+{
+  "cases": [
+    {
+      "id": "context_lifecycle",
+      "coverage": "Full official meeting grows the offloaded KV cache, followed by short audio and the same meeting",
+      "family": "ming3_audio",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {
+          "id": "warmup",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "options": {"max_tokens": 256}
+        },
+        {
+          "id": "meeting",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/meeting.wav",
+          "options": {
+            "system_prompt": "You are a helpful assistant.\nListen to the user's audio and respond to their question or request.\nAnswer the question or carry out the requested task. For lists, provide several concrete examples; for why/how questions, explain the main reason or method. Follow the user's explicit instructions, including any requirements for format, wording, and length. Answer directly and keep your response concise but complete. Do not repeat or transcribe the request unless asked to do so. Before responding, silently check that your answer satisfies the requested constraints.",
+            "prompt": "Transcribe this meeting, identify the speakers when possible, and summarize decisions and action items.",
+            "max_tokens": 32768
+          }
+        },
+        {
+          "id": "short_after_meeting",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "options": {"max_tokens": 256}
+        },
+        {
+          "id": "meeting_repeat",
+          "audio": "reference/Ming-3.0-audio-flash/examples/audio/meeting.wav",
+          "options": {
+            "system_prompt": "You are a helpful assistant.\nListen to the user's audio and respond to their question or request.\nAnswer the question or carry out the requested task. For lists, provide several concrete examples; for why/how questions, explain the main reason or method. Follow the user's explicit instructions, including any requirements for format, wording, and length. Answer directly and keep your response concise but complete. Do not repeat or transcribe the request unless asked to do so. Before responding, silently check that your answer satisfies the requested constraints.",
+            "prompt": "Transcribe this meeting, identify the speakers when possible, and summarize decisions and action items.",
+            "max_tokens": 32768
+          }
+        }
+      ]
+    }
+  ]
+}

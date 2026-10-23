@@ -777,6 +777,17 @@ core::TensorValue SnakeBeta1dModule::build(
         alpha = core::wrap_tensor(ggml_exp(ctx.ggml, alpha.tensor), alpha.shape, GGML_TYPE_F32);
         beta = core::wrap_tensor(ggml_exp(ctx.ggml, beta.tensor), beta.shape, GGML_TYPE_F32);
     }
+    if (ctx.backend_type == core::BackendType::Cuda && input_f32.tensor->ne[2] == 1 && input_f32.tensor->ne[3] == 1) {
+        auto * denom = ggml_scale_bias(ctx.ggml, beta.tensor, 1.0F, 1.0e-9F);
+        auto * inverse_beta = ggml_div(ctx.ggml, ggml_fill(ctx.ggml, denom, 1.0F), denom);
+        // Prepare both channel parameters before the consecutive CUDA-fusible activation chain.
+        auto * parameters = ggml_concat(ctx.ggml, alpha.tensor, inverse_beta, 1);
+        auto * channel_alpha = ggml_view_2d(ctx.ggml, parameters, 1, config_.hidden_size, parameters->nb[1], 0);
+        auto * ax = ggml_mul(ctx.ggml, input_f32.tensor, channel_alpha);
+        auto * squared = ggml_sqr(ctx.ggml, ggml_sin(ctx.ggml, ax));
+        auto * periodic = ggml_mul(ctx.ggml, squared, inverse_beta);
+        return core::wrap_tensor(ggml_add(ctx.ggml, input_f32.tensor, periodic), input_f32.shape, GGML_TYPE_F32);
+    }
     const auto ax = core::wrap_tensor(ggml_mul(ctx.ggml, input_f32.tensor, alpha.tensor), input_f32.shape, GGML_TYPE_F32);
     const auto s = core::wrap_tensor(ggml_sin(ctx.ggml, ax.tensor), input_f32.shape, GGML_TYPE_F32);
     const auto s2 = core::wrap_tensor(ggml_mul(ctx.ggml, s.tensor, s.tensor), input_f32.shape, GGML_TYPE_F32);

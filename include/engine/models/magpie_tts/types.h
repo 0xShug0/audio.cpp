@@ -3,6 +3,7 @@
 #include "engine/framework/text/chunking.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,7 +16,7 @@ struct MagpieTTSGenerationOptions {
     int32_t top_k = 80;
     float guidance_scale = 2.5F;
     int64_t max_tokens = 500;
-    int64_t text_chunk_size = 300;
+    std::optional<int64_t> text_chunk_size;
     engine::text::TextChunkMode text_chunk_mode = engine::text::TextChunkMode::Default;
     uint64_t seed = 0;
 };
