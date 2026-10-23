@@ -1,0 +1,23 @@
+name: DevLab Dispatch registration test
+
+on:
+  push:
+    branches:
+      - test/devlab-dispatch
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  runner-check:
+    runs-on: devlab-dispatch
+    timeout-minutes: 5
+    steps:
+      - name: Show runner host
+        shell: bash
+        run: |
+          set -eu
+          printf 'Runner: %s\nOS: %s\nArchitecture: %s\n' "$RUNNER_NAME" "$RUNNER_OS" "$RUNNER_ARCH"
+          uname -a
+          cat /etc/os-release
+          lscpu
