@@ -4823,6 +4823,53 @@ kernel void kernel_im2col(
 template [[host_name("kernel_im2col_f32")]] kernel im2col_t kernel_im2col<float>;
 template [[host_name("kernel_im2col_f16")]] kernel im2col_t kernel_im2col<half>;
 
+typedef void (im2col_1d_t)(
+        constant ggml_metal_kargs_im2col & args,
+        device const float * x,
+        device char * dst,
+        constant int32_t & OW,
+        uint3 tgpig [[threadgroup_position_in_grid]],
+        uint3 tpitg [[thread_position_in_threadgroup]],
+        uint3 ntg [[threads_per_threadgroup]]);
+
+template<typename T>
+kernel void kernel_im2col_1d(
+        constant ggml_metal_kargs_im2col & args,
+        device const float * x,
+        device char * dst,
+        constant int32_t & OW,
+        uint3 tgpig [[threadgroup_position_in_grid]],
+        uint3 tpitg [[thread_position_in_threadgroup]],
+        uint3 ntg [[threads_per_threadgroup]]) {
+    // Transpose time/patch tiles to coalesce both reads and writes; pad to avoid bank conflicts.
+    threadgroup T tile[32 * 33];
+    const int lane = tpitg.x % 32;
+    const int row = tpitg.x / 32;
+    const int frame = int(tgpig.x) * 32 + lane;
+    for (int column = row; column < 32; column += ntg.x / 32) {
+        const int position = int(tgpig.y) * 32 + column;
+        const int channel = position / args.KW;
+        const int tap = position % args.KW;
+        const int64_t source = int64_t(frame) * args.s0 + tap * args.d0 - args.p0;
+        tile[lane * 33 + column] = frame < OW && position < args.CHW && source >= 0 && source < args.IW
+            ? T(x[uint64_t(tgpig.z) * args.ofs0 + channel * args.ofs1 + source]) : T(0);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (int index = tpitg.x; index < 32 * 32; index += ntg.x) {
+        const int local_frame = index / 32;
+        const int column = index % 32;
+        const int frame_out = int(tgpig.x) * 32 + local_frame;
+        const int position = int(tgpig.y) * 32 + column;
+        if (frame_out < OW && position < args.CHW) {
+            const uint64_t destination = (uint64_t(tgpig.z) * OW + frame_out) * args.CHW + position;
+            ((device T *) dst)[destination] = tile[local_frame * 33 + column];
+        }
+    }
+}
+
+template [[host_name("kernel_im2col_1d_f32")]] kernel im2col_1d_t kernel_im2col_1d<float>;
+template [[host_name("kernel_im2col_1d_f16")]] kernel im2col_1d_t kernel_im2col_1d<half>;
+
 // TODO: obsolete -- remove
 //typedef void (im2col_ext_t)(
 //        constant ggml_metal_kargs_im2col & args,
