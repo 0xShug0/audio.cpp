@@ -47,6 +47,7 @@ struct FishDacCodecRuntimeOptions {
     assets::TensorStorageType matmul_weight_storage_type = assets::TensorStorageType::Native;
     assets::TensorStorageType conv_weight_storage_type = assets::TensorStorageType::Native;
     bool encoder_bf16_compute = false;
+    bool decoder_prepack_weights = false;
 };
 
 class FishDacCodecComponent {
@@ -89,7 +90,7 @@ public:
     FishDacCodes encode_codes(const runtime::AudioBuffer & audio);
     FishDacLatents encode_latents(const runtime::AudioBuffer & audio);
     runtime::AudioBuffer decode_codes(const FishDacCodes & codes);
-    // Decode one frame with persistent causal attention/convolution state.
+    // Decode consecutive frames with persistent causal attention/convolution state.
     runtime::AudioBuffer decode_stream(const FishDacCodes & codes);
     void reset_decode_stream();
     runtime::AudioBuffer decode_latents(const FishDacLatents & latents);

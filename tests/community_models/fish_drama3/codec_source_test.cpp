@@ -1,4 +1,5 @@
 #include "engine/community_models/fish_drama3/assets.h"
+#include "engine/community_models/fish_drama3/generator.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/audio/wav_writer.h"
 #include "engine/framework/core/execution_context.h"
@@ -19,6 +20,7 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 
 namespace {
 namespace assets = engine::assets;
@@ -46,6 +48,158 @@ struct FixtureDirectory {
 
 int main(int argc, char ** argv) {
     try {
+        if (argc == 7 && std::string(argv[1]) == "--stream-lifecycle" && std::string(argv[6]) == "--log") {
+            engine::debug::configure_logging({true, std::nullopt});
+            const auto started = std::chrono::steady_clock::now();
+            engine::runtime::SessionOptions options;
+            const std::string backend = argv[2];
+            if (backend == "cuda") options.backend.type = engine::core::BackendType::Cuda;
+            else if (backend == "vulkan") options.backend.type = engine::core::BackendType::Vulkan;
+            else throw std::runtime_error("stream-lifecycle expects cuda or vulkan");
+            options.backend.threads = 8;
+            options.options = {{"fish_drama3.cpu_expert_layers", "0"}, {"fish_drama3.context_length", "2048"},
+                {"fish_drama3.codec_batch_frames", "4"}, {"fish_drama3.codec_async_decode", "true"}};
+            engine::core::ExecutionContext execution(options.backend);
+            engine::models::fish_drama3::Drama3Generator generator(
+                engine::models::fish_drama3::load_drama3_assets(argv[3]), execution, options, true);
+            engine::models::fish_drama3::Drama3Take reference;
+            reference.text = "This little work was finished in the year eighteen o three, and intended for immediate publication.";
+            const auto wav = engine::audio::read_wav_f32(std::filesystem::path(argv[4]));
+            reference.codes = generator.encode_reference({wav.sample_rate, wav.channels, wav.samples});
+            engine::models::fish_drama3::Drama3Sampling sampling;
+            sampling.seed = 42;
+            sampling.max_frames = 1024;
+            const std::string text = "The morning train leaves in fifteen minutes.";
+            engine::runtime::AudioBuffer deltas;
+            const auto before = generator.generate(text, {reference}, {}, sampling, true,
+                [&](const auto & audio) { engine::runtime::append_audio_buffer(deltas, audio); });
+            if (before.reached_limit || before.audio.samples != deltas.samples)
+                throw std::runtime_error("stream lifecycle control was incomplete or lost deltas");
+            int emitted = 0;
+            bool rejected = false;
+            try {
+                (void)generator.generate(text, {reference}, {}, sampling, true, [&](const auto &) {
+                    if (++emitted == 1) std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                    if (emitted == 2) throw std::runtime_error("intentional codec sink failure");
+                });
+            } catch (const std::runtime_error & error) {
+                rejected = std::string(error.what()) == "intentional codec sink failure";
+                if (!rejected) throw;
+            }
+            if (!rejected) throw std::runtime_error("stream worker swallowed the sink failure");
+            const auto after = generator.generate(text, {reference}, {}, sampling, true);
+            if (after.reached_limit || before.codes.codes != after.codes.codes || before.audio.samples != after.audio.samples)
+                throw std::runtime_error("stream worker failure polluted the next request");
+            std::filesystem::create_directories(argv[5]);
+            engine::audio::WavWriteOptions write_options;
+            write_options.format = engine::audio::WavSampleFormat::Float32;
+            engine::audio::write_wav(std::filesystem::path(argv[5]) / "before.wav",
+                before.audio.sample_rate, before.audio.channels, before.audio.samples, write_options);
+            engine::audio::write_wav(std::filesystem::path(argv[5]) / "after.wav",
+                after.audio.sample_rate, after.audio.channels, after.audio.samples, write_options);
+            engine::debug::trace_log_scalar("fish_codec.stream.worker_recovery", "pass");
+            engine::debug::timing_log_scalar("session.wall_ms", std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count());
+            return 0;
+        }
+        if ((argc == 8 || (argc == 9 && (std::string(argv[8]) == "--prepack" || std::string(argv[8]) == "--f32"))) &&
+            std::string(argv[1]) == "--stream-decode" && std::string(argv[7]) == "--log") {
+            engine::debug::configure_logging({true, std::nullopt});
+            const auto started = std::chrono::steady_clock::now();
+            engine::core::BackendConfig backend;
+            const std::string backend_name = argv[3];
+            if (backend_name == "cpu") backend.type = engine::core::BackendType::Cpu;
+            else if (backend_name == "cuda") backend.type = engine::core::BackendType::Cuda;
+            else if (backend_name == "vulkan") backend.type = engine::core::BackendType::Vulkan;
+            else throw std::runtime_error("stream-decode backend must be cpu, cuda or vulkan");
+            backend.threads = 8;
+            engine::core::ExecutionContext execution(backend);
+            std::shared_ptr<const assets::TensorSource> source;
+            engine::codecs::FishDacCodecConfig config;
+            const std::string family = argv[2];
+            if (family == "fish_audio") {
+                const auto resources = engine::model_spec::load_resource_bundle(
+                    argv[4], engine::model_spec::default_spec_path(family));
+                source = resources.open_tensor_source("codec_weights");
+                config.total_codebooks = engine::io::json::require_i64(
+                    resources.parse_json("config").require("audio_decoder_config"), "num_codebooks");
+            } else if (family == "fish_drama3") {
+                const auto model = engine::models::fish_drama3::load_drama3_assets(argv[4]);
+                source = model->codec_weights;
+                config = model->codec;
+            } else throw std::runtime_error("unsupported codec family");
+            engine::codecs::FishDacCodecRuntimeOptions options;
+            options.graph_arena_bytes = 8 * 1024 * 1024;
+            options.weight_context_bytes = 16 * 1024 * 1024;
+            options.decoder_prepack_weights = argc == 9 && std::string(argv[8]) == "--prepack";
+            if (argc == 9 && std::string(argv[8]) == "--f32") {
+                options.matmul_weight_storage_type = assets::TensorStorageType::F32;
+                options.conv_weight_storage_type = assets::TensorStorageType::F32;
+            }
+            const auto component = engine::codecs::FishDacCodecComponent::load_from_tensor_source(
+                source, config, {}, execution.backend(), execution.backend_type(), options);
+            engine::codecs::FishDacCodecRuntime codec(component, backend, backend.threads, options.graph_arena_bytes);
+            const auto fixture = engine::io::json::parse_file(argv[5]);
+            const auto & books = fixture.require("vq_codes").as_array();
+            const auto frames = static_cast<int64_t>(books.front().as_array().size());
+            if (books.size() != static_cast<size_t>(config.total_codebooks) || frames <= 0)
+                throw std::runtime_error("stream-decode fixture has incompatible codebook dimensions");
+            std::filesystem::create_directories(argv[6]);
+            const std::vector<std::vector<int64_t>> plans{{1}, {4}, {16}, {1, 2, 4, 8, 16}, {7, 3, 16, 2}, {1}};
+            std::vector<float> reference;
+            for (size_t plan = 0; plan < plans.size(); ++plan) {
+                const auto decode_plan = [&] {
+                    codec.reset_decode_stream();
+                    engine::runtime::AudioBuffer audio;
+                    for (int64_t start = 0, step = 0; start < frames; ++step) {
+                        engine::codecs::FishDacCodes codes;
+                        codes.codebooks = config.total_codebooks;
+                        codes.frames = std::min(plans[plan][static_cast<size_t>(step) % plans[plan].size()], frames - start);
+                        for (const auto & book : books) {
+                            const auto & row = book.as_array();
+                            if (row.size() != static_cast<size_t>(frames)) throw std::runtime_error("ragged codec fixture");
+                            for (int64_t frame = 0; frame < codes.frames; ++frame) {
+                                codes.codes.push_back(static_cast<int32_t>(row[static_cast<size_t>(start + frame)].as_i64()));
+                            }
+                        }
+                        engine::runtime::append_audio_buffer(audio, codec.decode_stream(codes));
+                        start += codes.frames;
+                    }
+                    return audio;
+                };
+                (void)decode_plan();
+                const auto plan_started = std::chrono::steady_clock::now();
+                const auto audio = decode_plan();
+                engine::debug::timing_log_scalar("fish_codec.stream.plan_wall_ms",
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - plan_started).count());
+                engine::debug::timing_log_scalar("fish_codec.stream.plan_frames", frames);
+                if (audio.samples.size() != static_cast<size_t>(frames * config.frame_length))
+                    throw std::runtime_error("stream-decode lost or duplicated samples");
+                if (plan == 0) reference = audio.samples;
+                double dot = 0, left = 0, right = 0, error = 0;
+                for (size_t i = 0; i < reference.size(); ++i) {
+                    const double value = audio.samples[i], expected = reference[i];
+                    if (!std::isfinite(value)) throw std::runtime_error("nonfinite stream-decode output");
+                    dot += value * expected; left += expected * expected; right += value * value;
+                    error += (value - expected) * (value - expected);
+                }
+                const double cosine = dot / std::sqrt(left * right);
+                engine::debug::trace_log_scalar("fish_codec.stream.plan", std::to_string(plan));
+                engine::debug::timing_log_scalar("fish_codec.stream.cosine", cosine);
+                engine::debug::timing_log_scalar("fish_codec.stream.snr_db", error == 0 ? 999 : 10 * std::log10(left / error));
+                engine::audio::WavWriteOptions write_options;
+                write_options.format = engine::audio::WavSampleFormat::Float32;
+                engine::audio::write_wav(std::filesystem::path(argv[6]) / ("plan-" + std::to_string(plan) + ".wav"),
+                    audio.sample_rate, audio.channels, audio.samples, write_options);
+                // Batched backend GEMMs change reduction order; reset must remain exact.
+                const double minimum_cosine = backend.type == engine::core::BackendType::Cpu ? 0.99999 : 0.99998;
+                if (cosine < minimum_cosine || (plan == plans.size() - 1 && audio.samples != reference))
+                    throw std::runtime_error("stream-decode waveform parity or reset failed");
+            }
+            engine::debug::timing_log_scalar("session.wall_ms", std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count());
+            return 0;
+        }
         if (argc == 5 && std::string(argv[1]) == "--attention" && std::string(argv[4]) == "--log") {
             engine::debug::configure_logging({true, std::nullopt});
             const auto started = std::chrono::steady_clock::now();

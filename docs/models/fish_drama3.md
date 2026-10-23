@@ -129,6 +129,20 @@ Tower decode and codebook sampling use one cached backend graph by default.
 Set `--session-option fish_drama3.device_sampling=false` to use host sampling.
 Graph probability arithmetic is F32, so sampled outputs may differ from host sampling.
 
+Streaming defaults to a four-frame codec batch ceiling with AR/codec overlap.
+To use one-frame synchronous decoding:
+
+```text
+--session-option fish_drama3.codec_batch_frames=1
+--session-option fish_drama3.codec_async_decode=false
+```
+
+Batching starts with one frame, grows to the configured ceiling, and flushes the
+final partial batch. Larger batches retain more codec workspace and can introduce
+small waveform rounding differences without changing AR sampling. Overlap uses
+the dedicated codec backend and completes all audio before the request returns.
+Offline decoding is unchanged.
+
 ```powershell
 .\build\windows-cuda-release\bin\audiocpp_cli.exe `
   --task tts --family fish_drama3 --backend cuda --mode streaming `

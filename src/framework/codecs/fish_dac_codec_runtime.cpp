@@ -5,6 +5,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention_modules.h"
 #include "engine/framework/modules/attention/streaming_frame_attention_cache.h"
@@ -29,6 +30,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <list>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -98,11 +100,30 @@ struct CodecStreamingState {
                 ggml_backend_tensor_set(history.first, zeros.data(), 0, zeros.size() * sizeof(float));
             }
         }
-        const int32_t position = static_cast<int32_t>(frames);
-        ggml_backend_tensor_set(positions, &position, 0, sizeof(position));
-        std::vector<ggml_fp16_t> values(128, ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
-        std::fill(values.begin() + std::max<int64_t>(0, 127 - frames), values.end(), ggml_fp32_to_fp16(0.0F));
+        const int64_t count = ggml_nelements(positions);
+        std::vector<int32_t> positions_data(static_cast<size_t>(count));
+        std::iota(positions_data.begin(), positions_data.end(), static_cast<int32_t>(frames));
+        ggml_backend_tensor_set(positions, positions_data.data(), 0, positions_data.size() * sizeof(int32_t));
+        const int64_t keys = 127 + count;
+        std::vector<ggml_fp16_t> values(static_cast<size_t>(count * keys),
+            ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
+        for (int64_t row = 0; row < count; ++row) {
+            const auto start = values.begin() + row * keys;
+            std::fill(start + std::max<int64_t>(row, 127 - frames), start + 128 + row, ggml_fp32_to_fp16(0.0F));
+        }
         ggml_backend_tensor_set(mask, values.data(), 0, values.size() * sizeof(ggml_fp16_t));
+    }
+
+    void import_from(ggml_backend_t backend, const CodecStreamingState & source) {
+        if (histories.size() != source.histories.size()) {
+            throw std::runtime_error("Fish DAC streaming convolution state count mismatch");
+        }
+        attention.import_from(backend, source.attention);
+        for (size_t index = 0; index < histories.size(); ++index) {
+            ggml_backend_tensor_copy_async(backend, backend, source.histories[index].second, histories[index].first);
+        }
+        ggml_backend_synchronize(backend);
+        frames = source.frames;
     }
 
     void expand(ggml_cgraph * graph) {
@@ -117,7 +138,7 @@ struct CodecStreamingState {
             ggml_backend_tensor_copy_async(backend, backend, history.second, history.first);
         }
         ggml_backend_synchronize(backend);
-        ++frames;
+        frames += ggml_nelements(positions);
     }
 };
 
@@ -596,9 +617,9 @@ core::TensorValue build_window_transformer(
     bool bf16 = false) {
     auto x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input_bct);
     auto positions = stream == nullptr ? make_positions(ctx, constants, x.shape.dims[1])
-        : core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1}));
+        : core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({x.shape.dims[1]}));
     auto mask = stream == nullptr ? make_causal_mask(ctx, constants, x.shape.dims[1], window_size)
-        : core::make_tensor(ctx, GGML_TYPE_F16, core::TensorShape::from_dims({1, window_size}));
+        : core::make_tensor(ctx, GGML_TYPE_F16, core::TensorShape::from_dims({x.shape.dims[1], window_size - 1 + x.shape.dims[1]}));
     if (stream != nullptr) {
         stream->positions = positions.tensor;
         stream->mask = mask.tensor;
@@ -1112,8 +1133,12 @@ std::shared_ptr<FishCodecWeights> load_weights(
     size_t weight_context_bytes,
     assets::TensorStorageType matmul_storage_type,
     assets::TensorStorageType conv_storage_type,
-    bool encoder_bf16_compute) {
+    bool encoder_bf16_compute,
+    bool decoder_prepack_weights) {
     auto weights = std::make_shared<FishCodecWeights>();
+    const bool prepack = decoder_prepack_weights &&
+        (core::uses_ggml_cuda_or_hip_backend(backend_type) ||
+         backend_type == core::BackendType::Vulkan || backend_type == core::BackendType::Metal);
     weights->encoder_bf16_compute = encoder_bf16_compute && backend_type == core::BackendType::Cuda;
     weights->store = std::make_shared<core::BackendWeightStore>(backend, backend_type, "Fish DAC codec", weight_context_bytes);
     auto & store = *weights->store;
@@ -1200,7 +1225,7 @@ std::shared_ptr<FishCodecWeights> load_weights(
                 source,
                 prefix + ".0.conv.weight",
                 prefix + ".0.conv.bias",
-                conv_storage_type),
+                conv_storage_type, prepack),
             load_convnext(store, source, prefix + ".1", matmul_storage_type, kCodecDim),
         });
     }
@@ -1221,7 +1246,7 @@ std::shared_ptr<FishCodecWeights> load_weights(
             source,
             prefix + ".1.conv.weight",
             prefix + ".1.conv.bias",
-            conv_storage_type);
+            conv_storage_type, prepack);
         decoder_channels /= 2;
         block.residual1 = load_residual_unit(store, source, prefix + ".2", conv_storage_type, decoder_channels);
         block.residual3 = load_residual_unit(store, source, prefix + ".3", conv_storage_type, decoder_channels);
@@ -1256,7 +1281,7 @@ struct DecodeGraph {
           frame_capacity_(frames),
           constants_(backend_, threads_, "Fish DAC codec decode constants") {
         if (streaming) stream_ = std::make_unique<CodecStreamingState>();
-        ggml_init_params params{graph_arena_bytes, nullptr, true};
+        ggml_init_params params{streaming ? std::min(graph_arena_bytes, size_t{8 * 1024 * 1024}) : graph_arena_bytes, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize Fish DAC codec decode graph context");
@@ -1272,7 +1297,7 @@ struct DecodeGraph {
         auto waveform = build_decoder(ctx, latent, *weights_, stream_.get());
         output_ = waveform.tensor;
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), streaming ? 8192 : 1048576, false);
         ggml_build_forward_expand(graph_, output_);
         if (stream_) stream_->expand(graph_);
         constants_.finish_graph();
@@ -1280,6 +1305,11 @@ struct DecodeGraph {
         gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
         if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
             throw std::runtime_error("failed to allocate Fish DAC codec decode graph");
+        }
+        if (streaming) {
+            debug::timing_log_scalar("fish_codec.stream.graph_frames", frames);
+            debug::timing_log_scalar("fish_codec.stream.graph_buffer_mb",
+                static_cast<double>(ggml_gallocr_get_buffer_size(gallocr_.get(), 0)) / (1024 * 1024));
         }
     }
 
@@ -1291,15 +1321,13 @@ struct DecodeGraph {
         return frame_capacity_ >= frames && backend_ == backend && threads_ == std::max(1, threads);
     }
 
-    runtime::AudioBuffer run_stream(const FishDacCodes & codes) {
+    runtime::AudioBuffer run_stream(const FishDacCodes & codes, const DecodeGraph * previous) {
+        if (!previous) stream_->frames = 0;
+        else if (previous != this) stream_->import_from(backend_, *previous->stream_);
         stream_->prepare(backend_);
         auto audio = run(codes);
         stream_->commit(backend_);
         return audio;
-    }
-
-    void reset_stream() {
-        stream_->frames = 0;
     }
 
     runtime::AudioBuffer run(const FishDacCodes & codes) {
@@ -1918,19 +1946,29 @@ public:
     }
 
     runtime::AudioBuffer decode_stream(const FishDacCodes & codes) {
-        if (codes.frames != 1) {
-            throw std::runtime_error("Fish DAC streaming decode requires one codec frame");
+        if (codes.frames <= 0) {
+            throw std::runtime_error("Fish DAC streaming decode requires positive codec frames");
         }
-        if (!stream_decode_graph_) {
-            stream_decode_graph_ = std::make_unique<DecodeGraph>(
+        auto found = std::find_if(stream_decode_graphs_.begin(), stream_decode_graphs_.end(),
+            [&](const auto & entry) { return entry.first == codes.frames; });
+        if (found == stream_decode_graphs_.end()) {
+            auto graph = std::make_unique<DecodeGraph>(
                 component_->impl_->config, component_->impl_->weights,
-                execution_, graph_arena_bytes_, 1, true);
+                execution_, graph_arena_bytes_, codes.frames, true);
+            stream_decode_graphs_.emplace_front(codes.frames, std::move(graph));
+        } else {
+            stream_decode_graphs_.splice(stream_decode_graphs_.begin(), stream_decode_graphs_, found);
         }
-        return stream_decode_graph_->run_stream(codes);
+        auto * graph = stream_decode_graphs_.front().second.get();
+        auto audio = graph->run_stream(codes, stream_decode_last_);
+        stream_decode_last_ = graph;
+        // Growth shapes and one final partial batch stay cached between requests.
+        while (stream_decode_graphs_.size() > 6) stream_decode_graphs_.pop_back();
+        return audio;
     }
 
     void reset_decode_stream() {
-        if (stream_decode_graph_) stream_decode_graph_->reset_stream();
+        stream_decode_last_ = nullptr;
     }
 
     runtime::AudioBuffer decode_latents(const FishDacLatents & latents) {
@@ -1957,7 +1995,8 @@ public:
     void release_decode_graphs() {
         decode_graph_.reset();
         latent_decode_graph_.reset();
-        stream_decode_graph_.reset();
+        stream_decode_last_ = nullptr;
+        stream_decode_graphs_.clear();
     }
 
     void release_encode_graph() {
@@ -1972,7 +2011,8 @@ public:
         encode_tail_graph_.reset();
         decode_graph_.reset();
         latent_decode_graph_.reset();
-        stream_decode_graph_.reset();
+        stream_decode_last_ = nullptr;
+        stream_decode_graphs_.clear();
     }
 
 private:
@@ -1986,7 +2026,8 @@ private:
     std::unique_ptr<EncodeConvGraph> encode_conv_graph_;
     std::unique_ptr<EncodeTailGraph> encode_tail_graph_;
     std::unique_ptr<DecodeGraph> decode_graph_;
-    std::unique_ptr<DecodeGraph> stream_decode_graph_;
+    std::list<std::pair<int64_t, std::unique_ptr<DecodeGraph>>> stream_decode_graphs_;
+    DecodeGraph * stream_decode_last_ = nullptr;
     std::unique_ptr<LatentDecodeGraph> latent_decode_graph_;
 };
 
@@ -2012,7 +2053,8 @@ std::shared_ptr<const FishDacCodecComponent> FishDacCodecComponent::load_from_te
         options.weight_context_bytes,
         options.matmul_weight_storage_type,
         options.conv_weight_storage_type,
-        options.encoder_bf16_compute);
+        options.encoder_bf16_compute,
+        options.decoder_prepack_weights);
     return std::shared_ptr<const FishDacCodecComponent>(new FishDacCodecComponent(std::move(impl)));
 }
 

@@ -759,11 +759,29 @@ ConvTranspose1dWeights conv_transpose1d_from_named_source(
     const assets::TensorSource & source,
     const std::string & weight_name,
     const std::optional<std::string> & bias_name,
-    assets::TensorStorageType storage_type) {
+    assets::TensorStorageType storage_type,
+    bool prepack_col2im = false) {
     ConvTranspose1dWeights weights;
     weights.weight = tensor_from_named_source(store, source, weight_name, storage_type);
     if (bias_name.has_value()) {
         weights.bias = f32_tensor_from_named_source(store, source, *bias_name);
+    }
+    if (prepack_col2im) {
+        core::validate_rank_between(weights.weight, 3, 3, "conv_transpose1d weight");
+        const auto & shape = weights.weight.shape;
+        const int64_t inputs = shape.dims[0], outputs = shape.dims[1], kernel = shape.dims[2];
+        const auto values = assets::tensor_data_to_f32(weight_name,
+            source.require_tensor(weight_name, storage_type, {inputs, outputs, kernel}));
+        std::vector<float> matrix(values.size());
+        for (int64_t output = 0; output < outputs; ++output) {
+            for (int64_t tap = 0; tap < kernel; ++tap) {
+                for (int64_t input = 0; input < inputs; ++input) {
+                    matrix[static_cast<size_t>((output * kernel + tap) * inputs + input)] =
+                        values[static_cast<size_t>((input * outputs + output) * kernel + tap)];
+                }
+            }
+        }
+        weights.col2im_matrix = store.make_f32(core::TensorShape::from_dims({outputs * kernel, inputs}), std::move(matrix));
     }
     return weights;
 }

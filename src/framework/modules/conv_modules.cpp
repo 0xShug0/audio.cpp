@@ -331,6 +331,27 @@ core::TensorValue add_4d_channel_bias_if_needed(
     return core::wrap_tensor(ggml_add(ctx.ggml, output_contiguous.tensor, bias_expanded.tensor), output.shape, GGML_TYPE_F32);
 }
 
+ggml_tensor * conv_transpose1d_col2im_matrix(
+    core::ModuleBuildContext & ctx,
+    const ConvTranspose1dWeights & weights,
+    const ConvTranspose1dConfig & config) {
+    if (weights.col2im_matrix) {
+        core::validate_shape(*weights.col2im_matrix,
+            core::TensorShape::from_dims({config.kernel_size * config.out_channels, config.in_channels}), "col2im matrix");
+        if (weights.col2im_matrix->type != GGML_TYPE_F32) {
+            throw std::runtime_error("ConvTranspose1dModule col2im matrix must be F32");
+        }
+        return weights.col2im_matrix->tensor;
+    }
+    auto weight = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weights.weight);
+    if (weight.type != GGML_TYPE_F32) {
+        weight = core::wrap_tensor(ggml_cast(ctx.ggml, weight.tensor, GGML_TYPE_F32), weight.shape, GGML_TYPE_F32);
+    }
+    return ggml_reshape_2d(ctx.ggml,
+        ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weight.tensor, 1, 2, 0, 3)),
+        config.in_channels, config.kernel_size * config.out_channels);
+}
+
 core::TensorValue build_conv_transpose1d_cuda_col2im_path(
     core::ModuleBuildContext & ctx,
     const ConvTranspose1dConfig & config,
@@ -341,15 +362,7 @@ core::TensorValue build_conv_transpose1d_cuda_col2im_path(
         throw std::runtime_error("ConvTranspose1dModule CUDA col2im path was requested for an ineligible config");
     }
     const auto input_contiguous = core::ensure_backend_addressable_layout(ctx, input);
-    auto weight_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weights.weight);
-    if (weight_contiguous.type != GGML_TYPE_F32) {
-        weight_contiguous = core::wrap_tensor(ggml_cast(ctx.ggml, weight_contiguous.tensor, GGML_TYPE_F32), weight_contiguous.shape, GGML_TYPE_F32);
-    }
-    auto * weight_perm = ggml_reshape_2d(
-        ctx.ggml,
-        ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weight_contiguous.tensor, 1, 2, 0, 3)),
-        config.in_channels,
-        config.kernel_size * config.out_channels);
+    auto * weight_perm = conv_transpose1d_col2im_matrix(ctx, weights, config);
     ggml_tensor * bias_matrix = nullptr;
     if (config.use_bias) {
         if (!weights.bias.has_value()) {
@@ -471,18 +484,7 @@ ggml_tensor * conv_transpose1d_col2im_channel_fast(
         throw std::runtime_error(
             "conv_transpose1d_col2im_channel_fast requires contiguous F32 [in_channels, frames] input");
     }
-    auto weight_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weights.weight);
-    if (weight_contiguous.type != GGML_TYPE_F32) {
-        weight_contiguous = core::wrap_tensor(
-            ggml_cast(ctx.ggml, weight_contiguous.tensor, GGML_TYPE_F32),
-            weight_contiguous.shape,
-            GGML_TYPE_F32);
-    }
-    auto * weight_perm = ggml_reshape_2d(
-        ctx.ggml,
-        ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weight_contiguous.tensor, 1, 2, 0, 3)),
-        config.in_channels,
-        config.kernel_size * config.out_channels);
+    auto * weight_perm = conv_transpose1d_col2im_matrix(ctx, weights, config);
     auto * columns = ggml_mul_mat(ctx.ggml, weight_perm, input_cf);
     auto * output = ggml_col2im_1d(
         ctx.ggml,
