@@ -186,6 +186,37 @@ jobs:
               --request-option seed=1234 --out "results/qwen-$mode.wav" --log --metrics \
               > "results/qwen-$mode.log" 2>&1
           done
+      - name: Build Vulkan reference on the same Halo
+        run: |
+          set -euo pipefail
+          sudo -n apt-get update -qq
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y libvulkan-dev glslc mesa-vulkan-drivers vulkan-tools
+          vulkaninfo --summary > results/vulkan-device.log 2>&1
+          cmake -S . -B build-vulkan -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_ENABLE_HIP=OFF -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=ON \
+            -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF -DENGINE_BUILD_EXAMPLES=ON \
+            -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF -DAUDIOCPP_MODEL_SET=custom \
+            -DAUDIOCPP_MODELS=qwen3_tts \
+            2>&1 | tee results/vulkan-configure.log
+          cmake --build build-vulkan --target audiocpp_cli -j 8 2>&1 | tee results/vulkan-build.log
+      - name: Warmed Qwen3 TTS HIP and Vulkan reference
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          text = 'The morning sun fills the room with light. A small bird sings outside the window.'
+          rows = [dict(id=f'request_{i}', text=text, seed=1234, voice_id='ryan', language='English') for i in range(4)]
+          with open('inputs/qwen-requests.json', 'w') as f:
+              json.dump(rows, f)
+          PY
+          for mode in off on vulkan; do
+            backend=hip
+            if [[ "$mode" == vulkan ]]; then backend=vulkan; fi
+            timeout 900 "build-$mode/bin/audiocpp_cli" --task tts --family qwen3_tts \
+              --model inputs/qwen3-customvoice-q8_0.gguf --backend "$backend" --threads 4 \
+              --request-sequence inputs/qwen-requests.json --out-dir "results/qwen-warm-$mode" \
+              --log --metrics > "results/qwen-warm-$mode.log" 2>&1
+          done
       - name: Upload all evidence
         if: always()
         uses: actions/upload-artifact@v4
