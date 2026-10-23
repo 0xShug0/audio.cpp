@@ -523,6 +523,8 @@ struct Yue2ARRuntime::Impl {
             decode_graph_arena_bytes,
             kCodecSize + 1,
             packed_projections);
+        semantic_runtime_config.batched_attention_alignment = execution.backend_type() == core::BackendType::Cuda && decode_cache_alignment > 1
+            ? decode_cache_alignment : 0;
     }
 
     struct PrefixStateGraph {
@@ -819,22 +821,32 @@ struct Yue2ARRuntime::Impl {
         if (!forced.empty()) {
             engine::debug::timing_log_scalar("yue2.ar.cfg.forced_tokens", forced.size());
         }
-        const auto positive_prefill_start = Clock::now();
-        auto positive = positive_runtime->prefill_tokens(positive_tokens);
-        engine::debug::timing_log_scalar("yue2.ar.cfg.prefill_positive_ms", engine::debug::elapsed_ms(positive_prefill_start));
-        const auto negative_prefill_start = Clock::now();
-        auto negative = positive_runtime->prefill_tokens(negative_tokens);
-        engine::debug::timing_log_scalar("yue2.ar.cfg.prefill_negative_ms", engine::debug::elapsed_ms(negative_prefill_start));
-        const auto start_decode_start = Clock::now();
-        const int64_t cache_steps =
+        const auto prefill_start = Clock::now();
+        const int64_t required_cache_steps =
             std::max<int64_t>(
                 static_cast<int64_t>(positive_tokens.size()),
                 static_cast<int64_t>(negative_tokens.size())) +
             window.max_tokens - static_cast<int64_t>(forced.size());
-        positive_runtime->start_decode_tokens_batched(
-            make_cfg_batched_state(positive.state, negative.state),
-            cache_steps);
-        engine::debug::timing_log_scalar("yue2.ar.cfg.start_decode_ms", engine::debug::elapsed_ms(start_decode_start));
+        const int64_t cache_steps =
+            ((required_cache_steps + decode_cache_alignment - 1) / decode_cache_alignment) * decode_cache_alignment;
+        engine::debug::trace_log_scalar("yue2.ar.cfg.cache_steps", cache_steps);
+        engine::modules::CausalDecoderStepResult positive;
+        engine::modules::CausalDecoderStepResult negative;
+        if (execution.backend_type() == core::BackendType::Metal) {
+            // Preserve host BF16 readback rounding on Metal.
+            auto positive_prefill = positive_runtime->prefill_tokens(positive_tokens);
+            auto negative_prefill = positive_runtime->prefill_tokens(negative_tokens);
+            positive_runtime->start_decode_tokens_batched(
+                make_cfg_batched_state(positive_prefill.state, negative_prefill.state), cache_steps);
+            positive.logits = std::move(positive_prefill.logits);
+            negative.logits = std::move(negative_prefill.logits);
+        } else {
+            auto prefills = positive_runtime->prefill_tokens_into_batched_decode_cache(
+                {positive_tokens, negative_tokens}, cache_steps);
+            positive = std::move(prefills[0]);
+            negative = std::move(prefills[1]);
+        }
+        engine::debug::timing_log_scalar("yue2.ar.cfg.prefill_into_cache_ms", engine::debug::elapsed_ms(prefill_start));
         std::vector<int32_t> emitted;
         emitted.reserve(static_cast<size_t>(window.max_tokens));
         emitted.insert(emitted.end(), forced.begin(), forced.end());

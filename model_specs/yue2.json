@@ -320,7 +320,7 @@
           "q4_0",
           "q4_k"
         ],
-        "description": "YuE2 VAE weight storage type. Explicit values override shared weight_type, then preset defaults (native, or f16 with cuda_perf).",
+        "description": "YuE2 VAE weight storage type. Omitted inherits weight_type.",
         "required": false
       },
       {
@@ -386,7 +386,7 @@
       {
         "name": "perf_mode",
         "type": "enum",
-        "description": "Performance preset; cuda_perf packs AR projections, aligns KV capacity to 256 tokens, retains stages, uses F16 VAE weights and caps VAE tiles at 512 frames. Explicit controls override the preset. May change audio and substantially increase peak VRAM.",
+        "description": "Performance preset; cuda_perf packs AR projections, aligns KV capacity to 256 tokens, retains stages and caps VAE tiles at 512 frames. Explicit controls override the preset. May change audio and substantially increase peak VRAM.",
         "values": [
           "off",
           "cuda_perf"
@@ -403,7 +403,7 @@
       {
         "name": "kv_cache_alignment",
         "type": "int",
-        "description": "AR KV capacity alignment in tokens. Default 1, or 256 with cuda_perf; may use more memory and change numerics. Explicit values override the preset.",
+        "description": "AR KV capacity alignment in tokens; values above 1 also use cached CUDA CFG attention windows of this size. Default 1, or 256 with cuda_perf; may use more memory and change numerics. Explicit values override the preset.",
         "required": false,
         "min": 1
       },

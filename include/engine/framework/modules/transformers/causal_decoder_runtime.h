@@ -29,6 +29,8 @@ struct CausalDecoderRuntimeConfig {
     std::vector<int32_t> logits_readback_token_ids;
     int64_t sliding_window = 0;
     bool evict_cuda_graph_cache_on_release = false;
+    // Zero keeps full-capacity attention; positive values cache bounded decode graphs.
+    int64_t batched_attention_alignment = 0;
 };
 
 struct CausalDecoderRuntimeWeights {
@@ -106,6 +108,11 @@ public:
         const std::vector<float> & embeddings,
         int64_t batch_size,
         int64_t steps);
+
+    // Unequal-length prefixes write directly into their persistent cache lanes.
+    std::vector<CausalDecoderStepResult> prefill_tokens_into_batched_decode_cache(
+        const std::vector<std::vector<int32_t>> & prefixes,
+        int64_t required_cache_steps);
 
     void start_decode_tokens(const runtime::TransformerKVState & state, int64_t required_cache_steps);
     void start_decode_embeddings(const runtime::TransformerKVState & state, int64_t required_cache_steps);

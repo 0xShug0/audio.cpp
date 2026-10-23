@@ -53,7 +53,6 @@ struct PerfSettings {
     bool packed_projections = false;
     int64_t kv_cache_alignment = 1;
     bool mem_saver = true;
-    assets::TensorStorageType vae_weight_type = assets::TensorStorageType::Native;
     int64_t vae_tile_frames = 0;
 };
 
@@ -64,7 +63,7 @@ struct PerfPreset {
 
 constexpr std::array<PerfPreset, 2> kPerfPresets{{
     {"off", {}},
-    {"cuda_perf", {true, 256, false, assets::TensorStorageType::F16, 512}},
+    {"cuda_perf", {true, 256, false, 512}},
 }};
 
 PerfSettings perf_settings_from_options(const runtime::SessionOptions & options, int64_t model_vae_tile_frames) {
@@ -83,7 +82,6 @@ PerfSettings perf_settings_from_options(const runtime::SessionOptions & options,
     if (const auto value = runtime::find_option(options.options, {"yue2.mem_saver"})) {
         settings.mem_saver = runtime::parse_bool_option(*value, "yue2.mem_saver");
     }
-    settings.vae_weight_type = parse_weight_type(options, "yue2.vae_weight_type", settings.vae_weight_type);
     if (settings.vae_tile_frames > 0) {
         settings.vae_tile_frames = std::min(model_vae_tile_frames, settings.vae_tile_frames);
     }
@@ -262,7 +260,7 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"yue2.model_gguf", "string", "Yue2 main AR/NAR component GGUF file relative to the model root.", false, "yue2-3b-q8_0.gguf"},
         {"yue2.vae_gguf", "string", "Yue2 VAE component GGUF file relative to the model root.", false, "yue2-vae-f16.gguf"},
         {"yue2.model_weight_type", "native|f32|f16|bf16|q8_0|q4_0|q4_k", "YuE2 MoT weight storage type. Omitted inherits weight_type."},
-        {"yue2.vae_weight_type", "native|f32|f16|bf16|q8_0|q4_0|q4_k", "YuE2 VAE weight storage type. Explicit values override shared weight_type, then preset defaults (native, or f16 with cuda_perf)."},
+        {"yue2.vae_weight_type", "native|f32|f16|bf16|q8_0|q4_0|q4_k", "YuE2 VAE weight storage type. Omitted inherits weight_type."},
         {"yue2.model_weight_context_mb", "int", "Yue2 main model weight context size in MiB.", false, "32", "1"},
         {"yue2.vae_weight_context_mb", "int", "Yue2 VAE weight context size in MiB.", false, "32", "1"},
         {"yue2.ar_prefill_graph_arena_mb", "int", "AR prefill graph arena size in MiB.", false, "32", "1"},
@@ -271,9 +269,9 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"yue2.vae_graph_arena_mb", "int", "VAE decode graph arena size in MiB.", false, "32", "1"},
         {"yue2.attention", "auto|flash|eager", "NAR acoustic-flow attention lowering; auto uses flash except on CUDA sm70 (no kernel) and Intel Vulkan (eager measured faster).", false, "auto"},
         {"yue2.attention_tile_rows", "int", "Query rows per tile in eager NAR attention; nonpositive values choose automatic tiling to keep each score matrix under 3 GiB.", false, "0", std::nullopt},
-        {"yue2.perf_mode", "off|cuda_perf", "Performance preset; cuda_perf packs AR projections, aligns KV capacity to 256 tokens, retains stages, uses F16 VAE weights and caps VAE tiles at 512 frames. Explicit controls override the preset.", false, "off"},
+        {"yue2.perf_mode", "off|cuda_perf", "Performance preset; cuda_perf packs AR projections, aligns KV capacity to 256 tokens, retains stages and caps VAE tiles at 512 frames. Explicit controls override the preset.", false, "off"},
         {"yue2.packed_projections", "bool", "Pack AR QKV and gate/up projections without changing weight dtype. Default false, true with cuda_perf. Explicit values override the preset."},
-        {"yue2.kv_cache_alignment", "int", "AR KV capacity alignment in tokens. Default 1, or 256 with cuda_perf; may use more memory and change numerics. Explicit values override the preset.", false, std::nullopt, "1"},
+        {"yue2.kv_cache_alignment", "int", "AR KV capacity alignment in tokens; values above 1 also use cached CUDA CFG attention windows of this size. Default 1, or 256 with cuda_perf; may use more memory and change numerics. Explicit values override the preset.", false, std::nullopt, "1"},
         {"yue2.mem_saver", "bool", "Release AR/NAR runtimes and VAE graphs after generation. Default true, false with cuda_perf. Disabling retains stages and can substantially increase peak VRAM."},
         {"yue2.vae_tile_frames", "int", "Latent core frames per VAE tile; defaults to model configuration, capped at 512 with cuda_perf. Explicit values override the cap. The halo is unchanged.", false, std::nullopt, "1"},
         {"yue2.weight_type", "native|f32|f16|bf16|q8_0|q4_0|q4_k", "Shared weight storage type. Default: native.", false, "native"},
@@ -298,7 +296,7 @@ Yue2Session::Yue2Session(
         execution_context(),
         assets_,
         parse_weight_type(options, "yue2.model_weight_type", assets::TensorStorageType::Native),
-        perf.vae_weight_type,
+        parse_weight_type(options, "yue2.vae_weight_type", assets::TensorStorageType::Native),
         runtime::parse_size_mb_option(options.options, {"yue2.model_weight_context_mb"}, 32ull * 1024ull * 1024ull),
         runtime::parse_size_mb_option(options.options, {"yue2.vae_weight_context_mb"}, 32ull * 1024ull * 1024ull),
         runtime::parse_size_mb_option(options.options, {"yue2.ar_prefill_graph_arena_mb"}, 32ull * 1024ull * 1024ull),
