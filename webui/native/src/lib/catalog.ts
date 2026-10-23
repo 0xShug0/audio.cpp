@@ -40,6 +40,10 @@ const packages: PackageEntry[] = Object.values(specModules).flatMap((spec) =>
 
 const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.family, spec]));
 const exposeAllGgufPackageFamilies = new Set([
+  'ming3_tts',
+  'ming3_audio',
+  'latentsync',
+  'xtts_v2',
   'canary_asr',
   'cohere_asr',
   'moss_transcribe_diarize',
@@ -129,7 +133,7 @@ function relatedExposeAllGgufPackages(entry: CatalogEntry): PackageEntry[] {
   const family = packages.filter((candidate) =>
     candidate.family === entry.family && candidate.format === 'gguf');
   if (!family.length) return [];
-  if (entry.family === 'sanotts') return family;
+  if (entry.family === 'sanotts' || entry.family === 'xtts_v2') return family;
   if (!entry.download_id) return family;
   const exact = family.find((candidate) => candidate.id === entry.download_id);
   if (!exact) return relatedPackages(entry);

@@ -40,7 +40,7 @@
   import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
   import AceStepPanel from '$lib/models/ace_step/AceStepPanel.svelte';
   import type { PanelRunner } from '$lib/models/panel_runner';
-  import { prepareLiveAvatarOutput } from '$lib/models/liveavatar/video';
+  import { prepareRgb24Output } from '$lib/media/rgb24_video';
   import Arena from './Arena.svelte';
   import Configuration from './Configuration.svelte';
   import ModelLibrary from './ModelLibrary.svelte';
@@ -150,6 +150,7 @@
   let installJobs: Record<string, ModelInstallJob> = {};
   let modelsFolder = '';
   let modelsFolderInput = '';
+  let modelsFolderHistory: string[] = [];
   let defaultModelsFolder = '';
   let modelsFolderIsDefault = true;
   let applyingModelsFolder = false;
@@ -182,6 +183,7 @@
     demo_4_woman: 'demo_4_woman'
   };
   const exposeAllStudioPackageFamilies = new Set([
+    'ming3_tts', 'ming3_audio', 'latentsync', 'xtts_v2',
     'kugelaudio', 'crisperwhisper', 'index_echo', 'audio_flamingo', 'owsm', 'owsm_ctc', 'reuse', 'sidon', 'smart_turn',
     'maya1',
     'gigaam_asr',
@@ -528,7 +530,7 @@
     (selected?.family === 'lfm2_audio' && !selected?.builtin_voices?.length)
   ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi', 'turn', 'wake', 'cls'].includes(selected?.task) ||
-    isFireRedAudioEdit || selected?.family === 'liveavatar' ||
+    isFireRedAudioEdit || selected?.family === 'liveavatar' || selected?.family === 'latentsync' ||
     (selected?.family === 'auk' && selected?.task === 'gen');
   $: acceptsSource = needsSource || (selected?.task === 'gen' && !replacesGenericControls.genSource);
   $: acceptsVideo = selected?.request_options?.includes('video') === true;
@@ -844,6 +846,7 @@
 
 
   function supportsMaxTokens(entry: CatalogEntry) {
+    if (entry.family === 'ming3_audio' && ['tts', 'clon'].includes(entry.task)) return false;
     if (entry.request_options !== undefined) return entry.request_options.includes('max_tokens');
     return ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(entry.task);
   }
@@ -1042,6 +1045,9 @@
     defaultModelsFolder = root.default_models_root;
     modelsFolderIsDefault = root.is_default;
     modelPath = selectedModelPath(selected);
+    modelsFolderHistory = [root.models_root, ...modelsFolderHistory, root.default_models_root]
+      .filter((path, index, paths) => path && paths.indexOf(path) === index).slice(0, 10);
+    localStorage.setItem('audiocpp.ui.modelsFolderHistory', JSON.stringify(modelsFolderHistory));
   }
 
   function clearModelSelection() {
@@ -1165,6 +1171,8 @@
       ensureYue2DefaultLyrics();
     } else if (['liveavatar', 'moss_ttsd', 'sam_audio'].includes(selected?.family)) {
       text = selected.default_text || '';
+    } else if (selected?.family === 'ming3_audio' && selected.task === 's2s') {
+      text = '';
     } else if (!text.trim() && selected?.default_text) {
       text = selected.default_text;
     }
@@ -1916,6 +1924,7 @@
     if (outcome.audio) outputAudio = [{ id: 'reply', url: URL.createObjectURL(outcome.audio) }];
     outputText = outcome.text;
     outputJson = outcome.json;
+    outputArtifacts = outcome.artifacts || [];
     outputModelId = modelId;
     warningStatus = '';
     errorStatus = '';
@@ -2018,7 +2027,8 @@
           options.video = await uploadFile(videoFile, aborter?.signal);
         }
         const audio = acceptsSource ? await stagedPath(sourceFile) : undefined;
-      const voiceRef = needsVoice && !usesVibeVoiceSpeakerFiles ? await stagedPath(voiceFile) : undefined;
+      const voiceRef = needsVoice && !usesVibeVoiceSpeakerFiles && !(usesBuiltInVoiceSelector && quickStartVoice)
+        ? await stagedPath(voiceFile) : undefined;
 
       if (['tts', 'clon', 'vdes'].includes(selected.task)) {
         if (!text.trim()) throw new StatusWarning('Enter text to generate.');
@@ -2047,7 +2057,10 @@
           if (referenceText.trim() && supportsRequestOption(selected, 'reference_text')) {
             body.reference_text = referenceText;
           }
-          if (selected.task === 'vdes' && instructions.trim()) body.instructions = instructions;
+          if (selected.task === 'vdes' && instructions.trim()) {
+            if (selected.family === 'ming3_tts') body.instruct = instructions;
+            else body.instructions = instructions;
+          }
           submittedRequests.push({ endpoint: '/v1/audio/speech', body: JSON.parse(JSON.stringify(body)) });
           const result = await speech(body, aborter.signal);
           audioChunks.push(result.blob);
@@ -2070,6 +2083,7 @@
       } else if (selected.task === 'asr') {
         if (!audio) throw new StatusWarning('Choose an audio file.');
         if (selected.family in asrTokenDefaults) options.max_tokens = asrMaxTokens;
+        else if (selected.family === 'ming3_audio') options.max_tokens = maxTokens;
         const body = {
           model: selected.id,
           audio,
@@ -2133,7 +2147,7 @@
         if (Array.isArray(result.artifacts)) {
           if (selected.family === 'liveavatar') {
             status = 'Encoding LiveAvatar MP4 in browser…';
-            const prepared = await prepareLiveAvatarOutput(result, liveAvatarDrivingAudio);
+            const prepared = await prepareRgb24Output(result, liveAvatarDrivingAudio, 'LiveAvatar', 'liveavatar');
             nextArtifacts = prepared.artifacts;
             if (prepared.warning) log(prepared.warning);
           } else {
@@ -2474,6 +2488,15 @@
     const savedLanguage = localStorage.getItem('audiocpp.ui.language');
     uiLanguage = resolveUiLanguage(savedLanguage ? [savedLanguage] : navigator.languages);
     document.documentElement.lang = uiLanguage;
+    try {
+      const history = JSON.parse(localStorage.getItem('audiocpp.ui.modelsFolderHistory') || '[]');
+      if (!Array.isArray(history) || history.some((path) => typeof path !== 'string' || !path.trim())) {
+        throw new Error('Invalid models-folder history.');
+      }
+      modelsFolderHistory = [...new Set<string>(history)].slice(0, 10);
+    } catch (error) {
+      log(`Models folder history unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
     try {
       selectedPackageIds = JSON.parse(localStorage.getItem('audiocpp.ui.packageIds') || '{}');
     } catch {
@@ -3113,7 +3136,7 @@
     />
   {:else if tab === 'models'}
     <ModelLibrary groups={modelGroups} {packageSizes} {installJobs} {packageSizeState}
-      bind:modelsFolderInput {modelsFolder} {defaultModelsFolder} {applyingModelsFolder} {modelsFolderIsDefault}
+      bind:modelsFolderInput {modelsFolder} {modelsFolderHistory} {defaultModelsFolder} {applyingModelsFolder} {modelsFolderIsDefault}
       {openFolderBrowser} {applyModelsFolder} {installPackage} {removePackage} {stopPackageDownload}
       {cleanPartialDownload} {formatBytes} {installProgressLabel} {workflowForEntry}
       taskLabel={(entry) => localizedTaskLabel(entry.task, tr, entry)}
