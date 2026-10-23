@@ -665,6 +665,15 @@
         "description": "With disk_experts, number of GPU-resident expert slots per routed Thinker layer."
       },
       {
+        "name": "disk_expert_read_threads",
+        "type": "int",
+        "required": false,
+        "default": 1,
+        "min": 1,
+        "max": 64,
+        "description": "Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 require an OpenMP build."
+      },
+      {
         "name": "reference_cache",
         "type": "bool",
         "required": false,

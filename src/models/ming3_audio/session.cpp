@@ -40,7 +40,11 @@ public:
                      std::shared_ptr<const MingAudioAssets> assets,
                      std::shared_ptr<const model_spec::ModelContract> contract)
         : RuntimeSessionBase(options), task_(task), assets_(std::move(assets)), contract_(std::move(contract)) {
-        runtime::validate_spec_backed_session_options(options, *contract_, "ming3_audio", "Ming3 Audio");
+        auto validation_options = options;
+        // Published standalone contracts predate the reader-count control.
+        if (!contract_->session_option_keys.count("ming3_audio.disk_expert_read_threads"))
+            validation_options.options.erase("ming3_audio.disk_expert_read_threads");
+        runtime::validate_spec_backed_session_options(validation_options, *contract_, "ming3_audio", "Ming3 Audio");
         if (task.mode != runtime::RunMode::Offline) throw std::runtime_error("Ming3 Audio supports offline sessions");
         thinker_options_.disk_experts = runtime::parse_bool_option(runtime::find_option(options.options,
             {"ming3_audio.disk_experts"}).value_or("false"), "ming3_audio.disk_experts");
@@ -50,6 +54,10 @@ public:
                 ? "false" : "true"), "ming3_audio.pin_experts");
         thinker_options_.expert_cache_size = runtime::parse_positive_i64_option(options.options,
             {"ming3_audio.expert_cache_size"}, 8);
+        thinker_options_.disk_expert_read_threads = runtime::parse_positive_i64_option(options.options,
+            {"ming3_audio.disk_expert_read_threads"}, 1);
+        if (thinker_options_.disk_expert_read_threads > 64)
+            throw std::runtime_error("Ming3 Audio disk_expert_read_threads must be between 1 and 64");
         if (task.task == runtime::VoiceTaskKind::Asr || task.task == runtime::VoiceTaskKind::SpeechToSpeech) {
             frontend_ = std::make_unique<Frontend>(assets_);
             if (!thinker_options_.disk_experts) encoder_ = std::make_unique<AudioEncoder>(execution_context(), assets_->thinker_weights,

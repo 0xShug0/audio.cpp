@@ -49,7 +49,14 @@ public:
         std::byte * data() { return buffer ? static_cast<std::byte *>(ggml_backend_buffer_get_base(buffer)) : bytes.data(); }
     };
 
-    Impl(const std::filesystem::path & path, bool pin) : file(path, std::ios::binary), pin_experts(pin) {
+    Impl(const std::filesystem::path & path, bool pin, size_t threads)
+        : file(path, std::ios::binary), pin_experts(pin), read_threads(threads) {
+        if (read_threads < 1 || read_threads > 64)
+            throw std::invalid_argument("disk expert read_threads must be between 1 and 64");
+#if !defined(_OPENMP)
+        if (!pin_experts && read_threads > 1)
+            throw std::runtime_error("parallel disk expert reads require ENGINE_ENABLE_OPENMP=ON");
+#endif
         if (!file) throw std::runtime_error("cannot open disk expert GGUF: " + path.string());
         ggml_context * tensors = nullptr;
         std::unique_ptr<gguf_context, HeaderDeleter> header(
@@ -130,12 +137,24 @@ public:
             const auto & projection = group.projections[p];
             const auto bytes = projection.expert_bytes;
             auto started = std::chrono::steady_clock::now();
-            if (!pin_experts) {
-                for (size_t m = 0; m < misses.size(); ++m) {
-                    std::memcpy(staging + offset + m * bytes,
-                        mapped_file.data() + projection.offset + static_cast<size_t>(misses[m].id) * bytes, bytes);
-                    stats.bytes_read += bytes;
+            if (!pin_experts && !misses.empty()) {
+                if (read_threads == 1 || misses.size() == 1) {
+                    for (size_t m = 0; m < misses.size(); ++m) {
+                        std::memcpy(staging + offset + m * bytes,
+                            mapped_file.data() + projection.offset + static_cast<size_t>(misses[m].id) * bytes, bytes);
+                    }
+                } else {
+#if defined(_OPENMP)
+                    // Varying team sizes recreates OpenMP workers in the routing hot path.
+                    const int worker_count = static_cast<int>(std::min(read_threads, group.expert_ids.size()));
+                    #pragma omp parallel for num_threads(worker_count) schedule(static)
+                    for (int64_t m = 0; m < static_cast<int64_t>(misses.size()); ++m) {
+                        std::memcpy(staging + offset + m * bytes,
+                            mapped_file.data() + projection.offset + static_cast<size_t>(misses[m].id) * bytes, bytes);
+                    }
+#endif
                 }
+                stats.bytes_read += misses.size() * bytes;
             }
             stats.read_ms += debug::elapsed_ms(started);
             started = std::chrono::steady_clock::now();
@@ -166,6 +185,7 @@ public:
     std::ifstream file;
     io::BinaryBlob mapped_file;
     bool pin_experts;
+    size_t read_threads;
     std::map<std::string, Projection> projections;
     std::vector<std::unique_ptr<Group>> groups;
     std::map<std::string, size_t> routes;
@@ -174,8 +194,8 @@ public:
     Statistics stats;
 };
 
-DiskExpertWeightStore::DiskExpertWeightStore(const std::filesystem::path & path, bool pin_experts)
-    : impl_(std::make_unique<Impl>(path, pin_experts)) {}
+DiskExpertWeightStore::DiskExpertWeightStore(const std::filesystem::path & path, bool pin_experts, size_t read_threads)
+    : impl_(std::make_unique<Impl>(path, pin_experts, read_threads)) {}
 DiskExpertWeightStore::~DiskExpertWeightStore() {
     debug::timing_log_scalar("disk_experts.bytes_read", impl_->stats.bytes_read);
     debug::timing_log_scalar("disk_experts.expert_loads", impl_->stats.expert_loads);

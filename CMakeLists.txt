@@ -3917,6 +3917,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME snake_beta_test COMMAND snake_beta_test --log)
 
         add_engine_unittest(disk_expert_weight_store_test tests/unittests/test_disk_expert_weight_store.cpp)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(disk_expert_weight_store_test PRIVATE OpenMP::OpenMP_CXX)
+        endif()
         add_test(NAME disk_expert_weight_store_test COMMAND disk_expert_weight_store_test --log)
 
         add_engine_unittest(transpose_module_test tests/unittests/test_transpose_module.cpp)
