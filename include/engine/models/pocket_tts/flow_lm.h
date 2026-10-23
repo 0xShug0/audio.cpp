@@ -25,6 +25,7 @@ struct FlowLMConfig {
     float norm_eps = 1.0e-5F;
     float flow_eps = 1.0e-6F;
     int64_t flow_depth = 6;  // flow-net residual blocks, see PocketTTSModelConfig::flow_depth
+    bool time_embedding_plain_rms = false;
 };
 
 using FlowLMCacheState = runtime::KVLayerState;

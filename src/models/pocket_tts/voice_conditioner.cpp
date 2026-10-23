@@ -82,6 +82,34 @@ std::vector<float> prepare_conditioning_audio(
     return audio::zero_pad_samples_to_multiple(resampled, frame_size);
 }
 
+MimiPromptEmbedding project_speaker_latents(
+    const models::pocket_tts::PocketTTSAssets & manifest,
+    const SpeakerLatents & latents) {
+    if (!manifest.host_weights.speaker_proj.has_value()) {
+        throw std::runtime_error("This PocketTTS checkpoint cannot project speaker_wavs voice latents");
+    }
+    const auto & weight = *manifest.host_weights.speaker_proj;
+    const int64_t out_dim = manifest.model_config.flow_dim;
+    if (weight.shape.rank != 2 || weight.shape.dims[0] != out_dim || weight.shape.dims[1] != latents.channels) {
+        throw std::runtime_error("speaker_wavs channels do not match the checkpoint's speaker projection");
+    }
+    MimiPromptEmbedding embedding;
+    embedding.frames = latents.frames;
+    embedding.values.resize(static_cast<size_t>(latents.frames * out_dim));
+    for (int64_t frame = 0; frame < latents.frames; ++frame) {
+        const float * x = latents.values.data() + frame * latents.channels;
+        for (int64_t row = 0; row < out_dim; ++row) {
+            const float * w = weight.values.data() + row * latents.channels;
+            float sum = 0.0F;
+            for (int64_t col = 0; col < latents.channels; ++col) {
+                sum += w[col] * x[col];
+            }
+            embedding.values[static_cast<size_t>(frame * out_dim + row)] = sum;
+        }
+    }
+    return embedding;
+}
+
 }  // namespace
 
 VoiceConditioner::VoiceConditioner(FlowLMConfig flow_config) : flow_lm_(std::move(flow_config)) {}
@@ -99,6 +127,27 @@ VoiceConditioningResult VoiceConditioner::prepare(
     int64_t prompt_frames = 0;
     const double prepare_ms = engine::debug::measure_ms([&]() {
         if (plan.source != models::pocket_tts::VoiceSourceKind::CloneAudio) {
+            if (const auto latents = models::pocket_tts::load_speaker_latents(plan.asset_path)) {
+                auto prompt_embedding = append_bos_voice_embedding(
+                    manifest,
+                    weights.host,
+                    project_speaker_latents(manifest, *latents));
+                prompt_frames = prompt_embedding.frames;
+                result = VoiceConditioningResult{
+                    plan,
+                    flow_lm_.prompt_state(
+                        backend,
+                        threads,
+                        manifest,
+                        weights,
+                        prompt_embedding.values,
+                        prompt_embedding.frames,
+                        flow_lm_.make_empty_state(),
+                        flow_weights_view_context_bytes,
+                        flow_step_graph_context_bytes),
+                };
+                return;
+            }
             const auto voice_assets = models::pocket_tts::load_voice_assets_for_plan(plan, manifest);
             result = VoiceConditioningResult{
                 plan,
@@ -107,6 +156,9 @@ VoiceConditioningResult VoiceConditioner::prepare(
             return;
         }
 
+        if (!weights.has_mimi_encoder) {
+            throw std::runtime_error("This PocketTTS checkpoint has no Mimi encoder, so it cannot clone a voice from audio");
+        }
         const int sample_rate = manifest.model_config.sample_rate;
         const auto frame_rate = manifest.model_config.mimi_frame_rate;
         const int64_t frame_size = static_cast<int64_t>(std::llround(static_cast<double>(sample_rate) / frame_rate));

@@ -2955,6 +2955,37 @@
       ]
     },
     {
+      "id": "gradium_phonon_long_short_long",
+      "coverage": "Gradium Phonon text conditioner, speaker_wavs voice prompt, flow LM, Mimi decoder chunk/reuse path",
+      "family": "gradium_phonon",
+      "model": "models/phonon-31m-en",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "long",
+          "text": "The museum guide paused at the bronze clock so the children could hear its careful chime echo through the hall while visitors moved toward the river doors.",
+          "voice_id": "default",
+          "seed": 1234
+        },
+        {
+          "id": "short",
+          "text": "Rain taps softly on the glass roof.",
+          "voice_id": "default",
+          "seed": 1234
+        },
+        {
+          "id": "long_again",
+          "text": "Another longer request checks that Phonon keeps its session state stable after a shorter sentence and does not rebuild more than needed.",
+          "voice_id": "default",
+          "seed": 1234
+        }
+      ]
+    },
+    {
       "id": "moss_tts_nano_streaming",
       "coverage": "MOSS-TTS-Nano incremental code frames and cached causal codec decoding",
       "family": "moss_tts_nano",
