@@ -55,6 +55,40 @@ int main(int argc, char **) {
         }
         ggml_backend_buffer_free(buffer);ggml_free(ctx);++cases;
     }
+    // COL2IM_1D is provided by GPU backends; validate that composition there.
+    if(argc>1)for(int width:{7,31,65})for(int kernel:{3,7})for(int stride:{1,2,4}) {
+        constexpr int ic=3,oc=5,padding=0;
+        const int frames=(width-1)*stride+kernel-2*padding;
+        auto ctx=ggml_init({4*1024*1024,nullptr,true});
+        auto a=ggml_new_tensor_3d(ctx,GGML_TYPE_F32,kernel,oc,ic);
+        auto b=ggml_new_tensor_2d(ctx,GGML_TYPE_F32,width,ic);
+        auto old=ggml_conv_transpose_1d(ctx,a,b,stride,padding,1);
+        auto weights=ggml_reshape_2d(ctx,ggml_cont(ctx,ggml_permute(ctx,a,1,2,0,3)),ic,kernel*oc);
+        auto input=ggml_cont(ctx,ggml_transpose(ctx,b));
+        auto columns=ggml_mul_mat_tiled(ctx,weights,input);
+        auto tiled=ggml_col2im_1d(ctx,columns,stride,oc,padding);
+        auto graph=ggml_new_graph(ctx);
+        ggml_build_forward_expand(graph,old);ggml_build_forward_expand(graph,tiled);
+        auto buffer=ggml_backend_alloc_ctx_tensors(ctx,backend);
+        std::vector<float> av(kernel*oc*ic),bv(width*ic),x(frames*oc),y(x.size());
+        for(size_t i=0;i<av.size();++i)av[i]=std::sin(float(i)*0.37f)/7;
+        for(size_t i=0;i<bv.size();++i)bv[i]=std::cos(float(i)*0.23f);
+        ggml_backend_tensor_set(a,av.data(),0,av.size()*4);
+        ggml_backend_tensor_set(b,bv.data(),0,bv.size()*4);
+        if(ggml_backend_graph_compute(backend,graph)!=GGML_STATUS_SUCCESS)return 6;
+        ggml_backend_tensor_get(old,x.data(),0,x.size()*4);
+        ggml_backend_tensor_get(tiled,y.data(),0,y.size()*4);
+        for(int out=0;out<oc;++out)for(int t=0;t<frames;++t) {
+            double expected=0;
+            for(int ch=0;ch<ic;++ch)for(int source=0;source<width;++source) {
+                int tap=t+padding-source*stride;
+                if(tap>=0 && tap<kernel)expected+=double(bv[ch*width+source])*av[(ch*oc+out)*kernel+tap];
+            }
+            int index=out*frames+t;
+            if(!std::isfinite(y[index]) || std::abs(y[index]-expected)>1e-5 || std::abs(x[index]-expected)>1e-5)return 7;
+        }
+        ggml_backend_buffer_free(buffer);ggml_free(ctx);++cases;
+    }
     std::printf("PASS %d explicit tiled convolution graphs: scalar reference and untouched ordinary ops\n",cases);
     ggml_backend_free(backend);
 }

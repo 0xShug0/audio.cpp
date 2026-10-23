@@ -7,14 +7,20 @@ on:
       - .github/workflows/hip-halo-kernels.yml
       - .github/tests/halo_requests.json
       - .github/tests/halo_results.py
+      - .github/tests/halo_qwen_results.py
       - CMakeLists.txt
-      - external/ggml/src/ggml-hip/halo/**
       - external/ggml/src/ggml-hip/CMakeLists.txt
       - external/ggml/src/ggml-cuda/im2col.cu
       - external/ggml/src/ggml-cuda/ggml-cuda.cu
       - external/ggml/CMakeLists.txt
       - tests/unittests/test_hip_halo_im2col.cu
       - tests/unittests/test_hip_halo_sgemm.cu
+      - tests/unittests/test_tiled_conv_graph.cpp
+      - src/models/qwen3_tts/tokenizer_speech_decoder.cpp
+      - src/framework/modules/conv_modules.cpp
+      - include/engine/framework/modules/conv_modules.h
+      - external/ggml/include/ggml.h
+      - external/ggml/src/ggml.c
       - tests/unittests/assets/hip_halo/original_im2col.cuh
   workflow_dispatch:
 
@@ -199,7 +205,7 @@ jobs:
         run: |
           set -euo pipefail
           for mode in off on; do
-            timeout 600 "$ROCM_PATH/bin/rocprofv3" --kernel-trace --output-format csv \
+            timeout 600 "$ROCM_PATH/bin/rocprofv3" --kernel-trace --hip-trace --output-format csv \
               --output-directory "results/qwen-profile-$mode" -- \
               "build-$mode/bin/audiocpp_cli" --task tts --family qwen3_tts \
               --model inputs/qwen3-customvoice-q8_0.gguf --backend hip --threads 4 \
@@ -208,17 +214,40 @@ jobs:
               --request-option seed=1234 --out "results/qwen-$mode.wav" --log --metrics \
               > "results/qwen-$mode.log" 2>&1
           done
+      - name: Warmed Qwen3 TTS HIP A-B-B-A
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          cases = json.load(open('.github/tests/halo_requests.json'))
+          rows = []
+          for length in ('short','medium'):
+              text = next(c['text'] for c in cases if c['id']==f'{length}_1')
+              rows.extend(dict(id=f'{length}_{i}', text=text, seed=1234, voice_id='ryan', language='English') for i in ('warmup','1','2'))
+          with open('inputs/qwen-requests.json', 'w') as f:
+              json.dump(rows, f)
+          PY
+          for variant in off-a1 on-b1 on-b2 off-a2; do
+            mode="${variant%%-*}"
+            timeout 900 "build-$mode/bin/audiocpp_cli" --task tts --family qwen3_tts \
+              --model inputs/qwen3-customvoice-q8_0.gguf --backend hip --threads 4 \
+              --request-sequence inputs/qwen-requests.json --out-dir "results/qwen-warm-$variant" \
+              --log --metrics > "results/qwen-warm-$variant.log" 2>&1
+          done
       - name: Build Vulkan reference on the same Halo
         run: |
           set -euo pipefail
           timeout 240 ./halo-sgemm-test results/qwen-off.log 2>&1 | tee results/sgemm-production.log
           mkdir -p inputs/vulkan-debs inputs/vulkan-sdk
           cd inputs/vulkan-debs
-          apt-get download libvulkan-dev glslc libshaderc1 vulkan-tools
+          apt-get download libvulkan-dev glslc libshaderc1 vulkan-tools spirv-headers
           for package in *.deb; do dpkg-deb -x "$package" ../vulkan-sdk; done
           cd ../..
           export PATH="$PWD/inputs/vulkan-sdk/usr/bin:$PATH"
           export LD_LIBRARY_PATH="$PWD/inputs/vulkan-sdk/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+          printf '#include <spirv/unified1/spirv.hpp>\nint value = spv::OpCodeMask;\n' | \
+            c++ -x c++ -std=c++17 -Iinputs/vulkan-sdk/usr/include -E -H - \
+            > results/spirv-header-check.log 2>&1
           vulkaninfo --summary > results/vulkan-device.log 2>&1
           cmake -S . -B build-vulkan -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$PWD/inputs/vulkan-sdk/usr" \
@@ -229,31 +258,23 @@ jobs:
             -DAUDIOCPP_MODELS=qwen3_tts \
             2>&1 | tee results/vulkan-configure.log
           cmake --build build-vulkan --target audiocpp_cli -j 8 2>&1 | tee results/vulkan-build.log
-      - name: Warmed Qwen3 TTS HIP and Vulkan reference
+      - name: Warmed Qwen3 TTS Vulkan reference and output validation
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json
-          text = 'The morning sun fills the room with light. A small bird sings outside the window.'
-          rows = [dict(id=f'request_{i}', text=text, seed=1234, voice_id='ryan', language='English') for i in range(4)]
-          with open('inputs/qwen-requests.json', 'w') as f:
-              json.dump(rows, f)
-          PY
-          for mode in off on vulkan; do
-            backend=hip
-            if [[ "$mode" == vulkan ]]; then backend=vulkan; fi
-            timeout 900 "build-$mode/bin/audiocpp_cli" --task tts --family qwen3_tts \
-              --model inputs/qwen3-customvoice-q8_0.gguf --backend "$backend" --threads 4 \
-              --request-sequence inputs/qwen-requests.json --out-dir "results/qwen-warm-$mode" \
-              --log --metrics > "results/qwen-warm-$mode.log" 2>&1
+          for variant in vulkan-c1 vulkan-c2; do
+            timeout 900 build-vulkan/bin/audiocpp_cli --task tts --family qwen3_tts \
+              --model inputs/qwen3-customvoice-q8_0.gguf --backend vulkan --threads 4 \
+              --request-sequence inputs/qwen-requests.json --out-dir "results/qwen-warm-$variant" \
+              --log --metrics > "results/qwen-warm-$variant.log" 2>&1
           done
-          for mode in off on vulkan; do
+          for variant in off-a2 on-b2 vulkan-c2; do
             timeout 120 build-off/bin/audiocpp_cli --task asr --family moonshine_asr \
               --model inputs/moonshine-tiny-q8_0.gguf --backend hip --threads 4 \
-              --audio "results/qwen-warm-$mode/request_3.wav" \
-              --text-out "results/qwen-asr-$mode.txt" --log --metrics \
-              > "results/qwen-asr-$mode.log" 2>&1
+              --audio "results/qwen-warm-$variant/medium_2.wav" \
+              --text-out "results/qwen-asr-$variant.txt" --log --metrics \
+              > "results/qwen-asr-$variant.log" 2>&1
           done
+          python3 .github/tests/halo_qwen_results.py
       - name: Upload all evidence
         if: always()
         uses: actions/upload-artifact@v4

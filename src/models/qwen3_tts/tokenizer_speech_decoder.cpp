@@ -724,12 +724,17 @@ core::TensorValue causal_conv_transpose1d(
     const ConvTranspose1dWeights & weights,
     core::ConstantTensorCache & constants,
     DecoderStreamGraphState * stream = nullptr) {
+    bool tiled_f32 = false;
+#if defined(ENGINE_HAVE_HALO_KERNELS)
+    tiled_f32 = build_ctx.backend_type == core::BackendType::Hip;
+#endif
     const int64_t right_trim = weights.kernel - weights.stride;
     if (stream != nullptr) {
         if (right_trim < 0) throw std::runtime_error("Qwen3 stateful transposed convolution requires kernel >= stride");
         auto raw = modules::ConvTranspose1dModule({
             weights.in_channels, weights.out_channels, weights.kernel,
             static_cast<int>(weights.stride), 0, 1, false,
+            tiled_f32,
         }).build(build_ctx, input, binding::conv_transpose1d_data(constants, weights.weight));
         auto output = stream->transposed_convolution_output(
             build_ctx, &weights, raw, input.shape.dims[2] * weights.stride, right_trim);
@@ -749,6 +754,7 @@ core::TensorValue causal_conv_transpose1d(
         0,
         1,
         weights.use_bias,
+        tiled_f32,
     }).build(build_ctx, input, binding::conv_transpose1d_data(constants, weights.weight, weights.bias));
     if (right_trim <= 0) {
         return output_bct;

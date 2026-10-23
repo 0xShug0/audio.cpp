@@ -297,6 +297,8 @@ struct ConvTranspose1dConfig {
     int padding = 0;
     int dilation = 1;
     bool use_bias = true;
+    // Explicit FP32 tiled projection before col2im.
+    bool tiled_f32 = false;
 };
 
 struct ConvTranspose1dWeights {

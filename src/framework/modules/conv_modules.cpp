@@ -368,7 +368,9 @@ core::TensorValue build_conv_transpose1d_cuda_col2im_path(
             input_contiguous.tensor->nb[1],
             static_cast<size_t>(batch_index) * input_contiguous.tensor->nb[2]);
         auto * transposed_input = ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml, batch_input));
-        auto * columns = ggml_mul_mat(ctx.ggml, weight_perm, transposed_input);
+        auto * columns = config.tiled_f32
+            ? ggml_mul_mat_tiled(ctx.ggml, weight_perm, transposed_input)
+            : ggml_mul_mat(ctx.ggml, weight_perm, transposed_input);
         auto * batch_output = ggml_col2im_1d(
             ctx.ggml,
             columns,
@@ -483,7 +485,9 @@ ggml_tensor * conv_transpose1d_col2im_channel_fast(
         ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weight_contiguous.tensor, 1, 2, 0, 3)),
         config.in_channels,
         config.kernel_size * config.out_channels);
-    auto * columns = ggml_mul_mat(ctx.ggml, weight_perm, input_cf);
+    auto * columns = config.tiled_f32
+        ? ggml_mul_mat_tiled(ctx.ggml, weight_perm, input_cf)
+        : ggml_mul_mat(ctx.ggml, weight_perm, input_cf);
     auto * output = ggml_col2im_1d(
         ctx.ggml,
         columns,
