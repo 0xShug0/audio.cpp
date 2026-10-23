@@ -25,7 +25,7 @@
 #define HIPBLASLT_WORKSPACE_SIZE (size_t{32} * 1024 * 1024)
 #define GGML_ASSERT(x) do { if (!(x)) throw std::runtime_error(#x); } while (0)
 #define HIPBLASLT_CHECK(x) do { auto rc = (x); if (rc != HIPBLAS_STATUS_SUCCESS) throw std::runtime_error(#x " status=" + std::to_string(int(rc))); } while (0)
-#define HIP_CHECK(x) do { auto rc = (x); if (rc != hipSuccess) throw std::runtime_error(#x ": " + hipGetErrorString(rc)); } while (0)
+#define HIP_CHECK(x) do { auto rc = (x); if (rc != hipSuccess) throw std::runtime_error(std::string(#x ": ") + hipGetErrorString(rc)); } while (0)
 using cudaStream_t = hipStream_t;
 
 // Private handles, workspaces and streams isolate descriptor sharing from other

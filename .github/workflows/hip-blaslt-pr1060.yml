@@ -68,6 +68,10 @@ jobs:
             source="source-$variant"
             build="build-$variant"
             python3 .github/tests/extract_hipblaslt_probe.py "$source" "results/$variant-generated"
+            hipcc -O2 -std=c++17 -pthread -I "results/$variant-generated" \
+              .github/tests/hipblaslt_real_probe.cpp -L "$ROCM_PATH/lib" -lhipblaslt \
+              -Wl,-rpath,"$ROCM_PATH/lib" -o "results/$variant-probe" \
+              2>&1 | tee "results/$variant-probe-build.log"
             SOURCE_DIR="$source" python3 - <<'PY'
           import os
           from pathlib import Path
@@ -114,10 +118,6 @@ jobs:
               Path('results/stress-shapes.txt').write_text('\n'.join(dict.fromkeys(shapes)) + '\n')
           print(f'{variant}: {len(shapes)} real-model calls to the affected helper')
           PY
-            hipcc -O2 -std=c++17 -pthread -I "results/$variant-generated" \
-              .github/tests/hipblaslt_real_probe.cpp -L "$ROCM_PATH/lib" -lhipblaslt \
-              -Wl,-rpath,"$ROCM_PATH/lib" -o "results/$variant-probe" \
-              2>&1 | tee "results/$variant-probe-build.log"
             for mode in private serialized shared; do
               set +e
               timeout 120 "results/$variant-probe" results/stress-shapes.txt "$mode" > "results/$variant-$mode.log" 2>&1
