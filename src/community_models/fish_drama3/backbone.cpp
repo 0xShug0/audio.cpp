@@ -249,8 +249,11 @@ FullAttentionWeights load_full_attention(
         config.hidden_size,
         config.heads * config.head_dim,
         false);
-    out.q_norm = binding::norm_weight_from_source(store, source, prefix + ".q_norm", config.head_dim);
-    out.k_norm = binding::norm_weight_from_source(store, source, prefix + ".k_norm", config.head_dim);
+    for (const auto & entry : {std::make_pair(".q_norm", &out.q_norm), std::make_pair(".k_norm", &out.k_norm)}) {
+        auto scale = source.require_f32(prefix + entry.first + ".weight", {config.head_dim});
+        for (auto & value : scale) value += 1.0F;
+        entry.second->weight = store.make_f32(core::TensorShape::from_dims({config.head_dim}), std::move(scale));
+    }
     return out;
 }
 
@@ -323,8 +326,13 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
         const std::string prefix = root + ".layers." + std::to_string(layer);
         Drama3BackboneLayerWeights out;
         out.full_attention = c.full_attention_interval > 0 && ((layer + 1) % c.full_attention_interval) == 0;
-        out.input_norm = binding::norm_weight_from_source(*weights->store, source, prefix + ".input_layernorm", c.hidden_size);
-        out.post_norm = binding::norm_weight_from_source(*weights->store, source, prefix + ".post_attention_layernorm", c.hidden_size);
+        // Gemma scales are constant: fold the F32 offset once, not on every graph replay.
+        for (const auto & entry : {std::make_pair(".input_layernorm", &out.input_norm),
+                                  std::make_pair(".post_attention_layernorm", &out.post_norm)}) {
+            auto scale = source.require_f32(prefix + entry.first + ".weight", {c.hidden_size});
+            for (auto & value : scale) value += 1.0F;
+            entry.second->weight = weights->store->make_f32(core::TensorShape::from_dims({c.hidden_size}), std::move(scale));
+        }
         if (out.full_attention) {
             out.full = load_full_attention(*weights->store, source, prefix + ".self_attn", c, storage_type);
         } else {
@@ -354,7 +362,9 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
         }
         weights->layers.push_back(std::move(out));
     }
-    weights->final_norm = binding::norm_weight_from_source(*weights->store, source, root + ".norm", c.hidden_size);
+    auto final_scale = source.require_f32(root + ".norm.weight", {c.hidden_size});
+    for (auto & value : final_scale) value += 1.0F;
+    weights->final_norm.weight = weights->store->make_f32(core::TensorShape::from_dims({c.hidden_size}), std::move(final_scale));
     if (c.tie_word_embeddings) {
         weights->lm_head = {weights->token_embedding, std::nullopt};
     } else {
@@ -520,8 +530,8 @@ core::TensorValue full_attention(
     v = round_activation(ctx, v, config);
     k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
     v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+    q = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
+    k = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
     q = round_activation(ctx, q, config);
     k = round_activation(ctx, k, config);
     q = apply_partial_rope(ctx, q, positions, config);
@@ -577,8 +587,8 @@ core::TensorValue full_attention_prefill_cached(
     v = round_activation(ctx, v, config);
     k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
     v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+    q = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
+    k = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
     q = round_activation(ctx, q, config);
     k = round_activation(ctx, k, config);
     q = apply_partial_rope(ctx, q, positions, config);
@@ -639,8 +649,8 @@ core::TensorValue full_attention_cached(
     v = round_activation(ctx, v, config);
     k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
     v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+    q = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
+    k = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
     q = round_activation(ctx, q, config);
     k = round_activation(ctx, k, config);
     q = apply_partial_rope(ctx, q, positions, config);
@@ -984,7 +994,7 @@ private:
         state_inputs_.clear();
         for (const auto & layer : weights_->layers) {
             auto residual = x;
-            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+            auto h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
             h = round_activation(ctx, h, config_);
             if (layer.full_attention) {
                 h = full_attention(ctx, h, positions, attention_mask, *layer.full, config_);
@@ -1004,13 +1014,13 @@ private:
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
             residual = x;
-            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
+            h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
             h = mlp(ctx, h, layer, config_);
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
         }
-        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
+        x = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
         x = round_activation(ctx, x, config_);
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
@@ -1301,7 +1311,7 @@ public:
             const auto mask =
                 core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, steps, steps}), GGML_TYPE_F16);
             auto attention =
-                modules::GemmaRMSNormModule({h, config.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+                modules::RMSNormModule({h, config.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
             attention = round_activation(ctx, attention, config);
             if (layer.full_attention) {
                 attention = full_attention_prefill_cached(
@@ -1324,7 +1334,7 @@ public:
                 attention = std::move(out.output);
             }
             auto residual = round_activation(ctx, modules::AddModule{}.build(ctx, x, attention), config);
-            auto normalized = modules::GemmaRMSNormModule({h, config.rms_norm_eps, true, false})
+            auto normalized = modules::RMSNormModule({h, config.rms_norm_eps, true, false})
                                   .build(ctx, residual, layer.post_norm);
             normalized = round_activation(ctx, normalized, config);
             const auto moe = build_moe_inputs(ctx, normalized, layer, config);
@@ -1380,7 +1390,7 @@ public:
         add_graph(finish_);
         final_ = ggml_new_graph_custom(ctx.ggml, small_nodes, false);
         auto normalized =
-            modules::GemmaRMSNormModule({h, config.rms_norm_eps, true, false}).build(ctx, x, weights.final_norm);
+            modules::RMSNormModule({h, config.rms_norm_eps, true, false}).build(ctx, x, weights.final_norm);
         normalized = round_activation(ctx, normalized, config);
         ggml_build_forward_expand(final_, ggml_cpy(ctx.ggml, normalized.tensor, hidden_));
         add_graph(final_);
@@ -1531,6 +1541,8 @@ public:
             throw std::runtime_error("failed to initialize Drama 3 backbone cached decode graph context");
         }
         core::ModuleBuildContext ctx{ctx_.get(), "drama3_backbone.cached_decode", execution_.backend_type()};
+        // Preserve Vulkan fusion boundaries; eliding these views changes sampled output there.
+        ctx.elide_identity_reshapes = execution_.backend_type() == core::BackendType::Cuda;
         ggml_init_params persistent_params{4 * 1024 * 1024, nullptr, true};
         persistent_ctx_.reset(ggml_init(persistent_params));
         core::ModuleBuildContext persistent{persistent_ctx_.get(), "drama3_backbone.state", execution_.backend_type()};
@@ -1559,7 +1571,7 @@ public:
         const int64_t conv_dim = key_dim * 2 + value_dim;
         for (const auto & layer : weights_->layers) {
             auto residual = x;
-            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+            auto h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
             h = round_activation(ctx, h, config_);
             if (layer.full_attention) {
                 auto key_cache = core::make_tensor(
@@ -1592,13 +1604,13 @@ public:
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
             residual = x;
-            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
+            h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
             h = mlp(ctx, h, layer, config_);
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
         }
-        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
+        x = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
         x = round_activation(ctx, x, config_);
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
@@ -1771,7 +1783,7 @@ private:
         int64_t linear_index = 0;
         for (const auto & layer : weights_->layers) {
             auto residual = x;
-            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+            auto h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
             h = round_activation(ctx, h, config_);
             if (layer.full_attention) {
                 if (full_index >= full_count) {
@@ -1812,7 +1824,7 @@ private:
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
             residual = x;
-            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
+            h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
             h = mlp(ctx, h, layer, config_);
             x = modules::AddModule{}.build(ctx, residual, h);
@@ -1821,7 +1833,7 @@ private:
         if (full_index != full_count || linear_index != linear_count) {
             throw std::runtime_error("Drama 3 backbone prefill cache/state count mismatch");
         }
-        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
+        x = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
         x = round_activation(ctx, x, config_);
         prefill.output = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(prefill.output);

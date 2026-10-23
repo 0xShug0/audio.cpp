@@ -57,7 +57,7 @@ int main(int argc, char ** argv) {
             ggml_init({1024 * 1024, nullptr, false}));
         if (!context) throw std::runtime_error("test weight context allocation failed");
         auto * norm = ggml_new_tensor_1d(context.get(), GGML_TYPE_F32, 16);
-        std::fill_n(static_cast<float *>(norm->data), 16, 0.0F);
+        std::fill_n(static_cast<float *>(norm->data), 16, 1.0F);
         auto weights = std::make_shared<drama::Drama3BackboneWeights>();
         weights->final_norm.weight = engine::core::wrap_tensor(
             norm, engine::core::TensorShape::from_dims({16}), GGML_TYPE_F32);
@@ -139,11 +139,11 @@ int main(int argc, char ** argv) {
         };
         add(c.weight_prefix + ".embed_tokens.weight", {16, 256});
         add("lm_head.weight", {16, 256});
-        add(c.weight_prefix + ".norm.weight", {256}, 0);
+        add(c.weight_prefix + ".norm.weight", {256});
         for (int layer = 0; layer < 2; ++layer) {
             const auto p = c.weight_prefix + ".layers." + std::to_string(layer);
-            add(p + ".input_layernorm.weight", {256}, 0);
-            add(p + ".post_attention_layernorm.weight", {256}, 0);
+            add(p + ".input_layernorm.weight", {256});
+            add(p + ".post_attention_layernorm.weight", {256});
             if (layer == 0) {
                 const auto a = p + ".linear_attn";
                 add(a + ".in_proj_qkv.weight", {1024, 256});
@@ -161,8 +161,8 @@ int main(int argc, char ** argv) {
                 add(a + ".k_proj.weight", {128, 256});
                 add(a + ".v_proj.weight", {128, 256});
                 add(a + ".o_proj.weight", {256, 256});
-                add(a + ".q_norm.weight", {64}, 0);
-                add(a + ".k_norm.weight", {64}, 0);
+                add(a + ".q_norm.weight", {64});
+                add(a + ".k_norm.weight", {64});
             }
             for (const auto * projection : {"gate_proj", "up_proj", "down_proj"}) {
                 add(p + ".mlp.shared_expert." + projection + ".weight", {256, 256});
@@ -178,6 +178,28 @@ int main(int argc, char ** argv) {
             true, false, {}, {}, std::nullopt);
         auto source = engine::assets::open_tensor_source(gguf, "model_weights/");
         auto resident = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
+        std::vector<std::pair<std::string, engine::core::TensorValue>> gemma_scales{
+            {c.weight_prefix + ".norm.weight", *resident->final_norm.weight}};
+        for (size_t index = 0; index < resident->layers.size(); ++index) {
+            const auto & layer = resident->layers[index];
+            const auto prefix = c.weight_prefix + ".layers." + std::to_string(index);
+            gemma_scales.emplace_back(prefix + ".input_layernorm.weight", *layer.input_norm.weight);
+            gemma_scales.emplace_back(prefix + ".post_attention_layernorm.weight", *layer.post_norm.weight);
+            if (layer.full) {
+                gemma_scales.emplace_back(prefix + ".self_attn.q_norm.weight", *layer.full->q_norm.weight);
+                gemma_scales.emplace_back(prefix + ".self_attn.k_norm.weight", *layer.full->k_norm.weight);
+            } else {
+                const auto actual = engine::core::read_tensor_f32(layer.linear->norm.weight->tensor);
+                if (actual != source->require_f32(prefix + ".linear_attn.norm.weight", {128}))
+                    throw std::runtime_error("ordinary GDN normalization scale changed");
+            }
+        }
+        for (const auto & entry : gemma_scales) {
+            const auto actual = engine::core::read_tensor_f32(entry.second.tensor);
+            auto expected = source->require_f32(entry.first, {static_cast<int64_t>(actual.size())});
+            for (auto & value : expected) value += 1.0F;
+            if (actual != expected) throw std::runtime_error("Gemma normalization scale was not folded exactly once");
+        }
         {
             drama::LmHeadGraph full(prefill_execution, resident, c, 4 * 1024 * 1024);
             auto selected_config = c;

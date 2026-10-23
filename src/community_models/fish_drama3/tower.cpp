@@ -68,9 +68,7 @@ struct LayerGraph {
 ggml_tensor * gemma_norm(ggml_context * context, ggml_tensor * input,
                          ggml_tensor * weight, float epsilon) {
     input = ggml_cont(context, input);
-    if (weight->type != GGML_TYPE_F32) weight = ggml_cast(context, weight, GGML_TYPE_F32);
-    return ggml_mul(context, ggml_rms_norm(context, input, epsilon),
-                    ggml_scale_bias(context, weight, 1.0F, 1.0F));
+    return ggml_mul(context, ggml_rms_norm(context, input, epsilon), weight);
 }
 
 ggml_tensor * columns(ggml_context * context, ggml_tensor * input,
@@ -119,7 +117,12 @@ public:
                                                {10 * c.codebook_size, c.hidden_size});
         store_ = std::make_unique<core::BackendWeightStore>(execution.backend(), execution.backend_type(),
                                                           "drama3.tower", 4 * 1024 * 1024);
-        const auto load = [&](const std::string & name, std::initializer_list<int64_t> shape) {
+        const auto load = [&](const std::string & name, std::initializer_list<int64_t> shape, bool fold_gemma_scale = false) {
+            if (fold_gemma_scale) {
+                auto values = source->require_f32(name, shape);
+                for (auto & value : values) value += 1.0F;
+                return store_->make_f32(core::TensorShape::from_dims(shape), std::move(values)).tensor;
+            }
             return store_->load_tensor(*source, name, assets::TensorStorageType::Native, shape).tensor;
         };
         for (int64_t index = 0; index < c.shared_layers + c.residual_layers; ++index) {
@@ -130,18 +133,18 @@ public:
             LayerWeights w;
             w.embedding = load(prefix + (shared ? ".semantic_embedding.weight" : ".codebook_embedding.weight"),
                                {c.codebook_size, c.hidden_size});
-            w.enorm = load(prefix + ".enorm.weight", {c.hidden_size});
-            w.hnorm = load(prefix + ".hnorm.weight", {c.hidden_size});
+            w.enorm = load(prefix + ".enorm.weight", {c.hidden_size}, true);
+            w.hnorm = load(prefix + ".hnorm.weight", {c.hidden_size}, true);
             w.eh = load(prefix + ".eh_proj.weight", {c.hidden_size, 2 * c.hidden_size});
-            w.final_norm = load(prefix + ".final_layernorm.weight", {c.hidden_size});
+            w.final_norm = load(prefix + ".final_layernorm.weight", {c.hidden_size}, true);
             const std::string transformer = prefix + ".transformer_layer";
-            w.input_norm = load(transformer + ".attention_norm.weight", {c.hidden_size});
-            w.post_norm = load(transformer + ".ffn_norm.weight", {c.hidden_size});
+            w.input_norm = load(transformer + ".attention_norm.weight", {c.hidden_size}, true);
+            w.post_norm = load(transformer + ".ffn_norm.weight", {c.hidden_size}, true);
             const int64_t query_width = c.heads * c.head_dim;
             const int64_t kv_width = c.kv_heads * c.head_dim;
             w.qkv = load(transformer + ".attention.wqkv.weight", {2 * query_width + 2 * kv_width, c.hidden_size});
-            w.q_norm = load(transformer + ".attention.q_norm.weight", {c.head_dim});
-            w.k_norm = load(transformer + ".attention.k_norm.weight", {c.head_dim});
+            w.q_norm = load(transformer + ".attention.q_norm.weight", {c.head_dim}, true);
+            w.k_norm = load(transformer + ".attention.k_norm.weight", {c.head_dim}, true);
             w.output = load(transformer + ".attention.wo.weight", {c.hidden_size, query_width});
             w.gate = load(transformer + ".feed_forward.w1.weight", {c.intermediate_size, c.hidden_size});
             w.up = load(transformer + ".feed_forward.w3.weight", {c.intermediate_size, c.hidden_size});
