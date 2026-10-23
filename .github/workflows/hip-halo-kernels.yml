@@ -39,6 +39,9 @@ jobs:
             https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Moonshine-Streaming-GGUF/moonshine-streaming-tiny-q8_0.gguf
           curl --fail --location --connect-timeout 20 --max-time 60 --retry 2 \
             -o inputs/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
+          curl --fail --location --connect-timeout 20 --max-time 480 --retry 2 \
+            -o inputs/qwen3-customvoice-q8_0.gguf \
+            https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf
       - uses: actions/upload-artifact@v4
         with:
           name: halo-test-inputs
@@ -109,7 +112,7 @@ jobs:
               -DENGINE_ENABLE_HIP=ON -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF \
               -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF \
               -DENGINE_BUILD_EXAMPLES=ON -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF \
-              -DAUDIOCPP_MODEL_SET=custom '-DAUDIOCPP_MODELS=kokoro_tts;moonshine_asr' \
+              -DAUDIOCPP_MODEL_SET=custom '-DAUDIOCPP_MODELS=kokoro_tts;moonshine_asr;qwen3_tts' \
               -DGGML_HIP_HALO="$enabled" -DENGINE_BUILD_EXTENDED_TESTS="$enabled" \
               2>&1 | tee "results/$mode-configure.log"
             cmake --build "build-$mode" --target audiocpp_cli -j 8 2>&1 | tee "results/$mode-build.log"
@@ -170,6 +173,19 @@ jobs:
           done
       - name: Analyze timings and parity
         run: python3 .github/tests/halo_results.py
+      - name: Profile Qwen3 TTS production hot path
+        run: |
+          set -euo pipefail
+          for mode in off on; do
+            timeout 600 "$ROCM_PATH/bin/rocprofv3" --kernel-trace --output-format csv \
+              --output-directory "results/qwen-profile-$mode" -- \
+              "build-$mode/bin/audiocpp_cli" --task tts --family qwen3_tts \
+              --model inputs/qwen3-customvoice-q8_0.gguf --backend hip --threads 4 \
+              --voice-id ryan --language English \
+              --text 'The morning sun fills the room with light. A small bird sings outside the window.' \
+              --request-option seed=1234 --out "results/qwen-$mode.wav" --log --metrics \
+              > "results/qwen-$mode.log" 2>&1
+          done
       - name: Upload all evidence
         if: always()
         uses: actions/upload-artifact@v4
