@@ -135,6 +135,9 @@ jobs:
             cp "build-$mode/CMakeCache.txt" "results/$mode-CMakeCache.txt"
           done
           cmake --build build-on --target hip_halo_im2col_test -j 8 2>&1 | tee results/test-build.log
+          cmake --build build-on --target tiled_conv_graph_test -j 8 2>&1 | tee results/graph-test-build.log
+          build-on/bin/tiled_conv_graph_test 2>&1 | tee results/graph-cpu-test.log
+          build-on/bin/tiled_conv_graph_test hip 2>&1 | tee results/graph-hip-test.log
       - name: Warmed model A-B-B-A with logs
         run: |
           set -euo pipefail
@@ -216,6 +219,7 @@ jobs:
           vulkaninfo --summary > results/vulkan-device.log 2>&1
           cmake -S . -B build-vulkan -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$PWD/inputs/vulkan-sdk/usr" \
+            -DVulkan_LIBRARY=/lib/x86_64-linux-gnu/libvulkan.so.1 \
             -DENGINE_ENABLE_HIP=OFF -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=ON \
             -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF -DENGINE_BUILD_EXAMPLES=ON \
             -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF -DAUDIOCPP_MODEL_SET=custom \
@@ -239,6 +243,13 @@ jobs:
               --model inputs/qwen3-customvoice-q8_0.gguf --backend "$backend" --threads 4 \
               --request-sequence inputs/qwen-requests.json --out-dir "results/qwen-warm-$mode" \
               --log --metrics > "results/qwen-warm-$mode.log" 2>&1
+          done
+          for mode in off on vulkan; do
+            timeout 120 build-off/bin/audiocpp_cli --task asr --family moonshine_asr \
+              --model inputs/moonshine-tiny-q8_0.gguf --backend hip --threads 4 \
+              --audio "results/qwen-warm-$mode/request_3.wav" \
+              --text-out "results/qwen-asr-$mode.txt" --log --metrics \
+              > "results/qwen-asr-$mode.log" 2>&1
           done
       - name: Upload all evidence
         if: always()

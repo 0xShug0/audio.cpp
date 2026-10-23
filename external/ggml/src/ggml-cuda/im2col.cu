@@ -336,8 +336,8 @@ void ggml_cuda_op_im2col(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const int32_t lowering     = ggml_get_op_params_i32(dst, 7);
 
 #if defined(GGML_USE_HIP) && defined(GGML_HIP_HALO)
-    // Small patches underfill the Halo tile; keep the original launch there.
-    if (!is_2D && p1 == 0 && IC * KW >= 32 && src1->nb[0] == sizeof(float) &&
+    // Dedicated Halo lowering is selected explicitly by the graph builder.
+    if (dst->op == GGML_OP_IM2COL_TILED && !is_2D && p1 == 0 && src1->nb[0] == sizeof(float) &&
         ggml_cuda_info().devices[ctx.device].cc == GGML_CUDA_CC_OFFSET_AMD + 0x1151 &&
         ggml_hip_halo_im2col_1d(src1_d, dst->data, dst->type, IW, OW, KW, IC, N,
             IC_IH_IW, IH_IW, s0, p0, d0, stream)) {

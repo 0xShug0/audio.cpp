@@ -17,6 +17,8 @@ struct Conv1dConfig {
     bool use_bias = true;
     // Preserve BF16 convolution and bias rounding, with F32 graph outputs.
     bool bf16_compute = false;
+    // Explicit FP32 tiled graph; ordinary convolution remains the default.
+    bool tiled_f32 = false;
 };
 
 struct Conv1dWeights {

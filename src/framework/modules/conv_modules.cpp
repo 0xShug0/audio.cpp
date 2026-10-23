@@ -579,13 +579,14 @@ core::TensorValue Conv1dModule::build(
         return result;
     }
     const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "Conv1dModule");
+    const auto conv1d = config_.tiled_f32 ? ggml_conv_1d_tiled : ggml_conv_1d;
     core::TensorValue output;
-    if (is_conv1d_pertap_fast_path_eligible(ctx, config_, input) &&
+    if (!config_.tiled_f32 && is_conv1d_pertap_fast_path_eligible(ctx, config_, input) &&
         weight_contiguous.type == GGML_TYPE_F32) {
         output = build_conv1d_pertap_fast_path(ctx, config_, input_contiguous, weight_contiguous, output_shape);
     } else if (input.shape.dims[0] == 1) {
         output = core::wrap_tensor(
-            ggml_conv_1d(
+            conv1d(
                 ctx.ggml,
                 weight_contiguous.tensor,
                 input_contiguous.tensor,
@@ -603,7 +604,7 @@ core::TensorValue Conv1dModule::build(
                 config_.in_channels,
                 input.shape.dims[2]);
             auto batch_output = core::wrap_tensor(
-                ggml_conv_1d(
+                conv1d(
                     ctx.ggml,
                     weight_contiguous.tensor,
                     matrix_input.tensor,

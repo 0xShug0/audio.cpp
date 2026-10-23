@@ -634,7 +634,8 @@ core::TensorValue causal_conv1d(
     const core::TensorValue & input,
     const Conv1dWeights & weights,
     core::ConstantTensorCache & constants,
-    DecoderStreamGraphState * stream = nullptr) {
+    DecoderStreamGraphState * stream = nullptr,
+    bool tiled_f32 = false) {
     const int64_t kernel_extent = (weights.kernel - 1) * weights.dilation + 1;
     const int64_t left_pad = kernel_extent - weights.stride;
     const int64_t length = input.shape.dims[2];
@@ -711,6 +712,8 @@ core::TensorValue causal_conv1d(
             0,
             static_cast<int>(weights.dilation),
             weights.use_bias,
+            false,
+            tiled_f32,
         }).build(build_ctx, padded_value, binding::conv1d_data(constants, weights.weight, weights.bias));
     }
 }
@@ -1035,20 +1038,26 @@ core::TensorValue residual_unit(
     const ResidualUnitWeights & weights,
     core::ConstantTensorCache & constants,
     DecoderStreamGraphState * stream = nullptr) {
+    // The residual vocoder convolutions dominate FP32 GEMM time on Halo.
+    // Selection is model-local; framework and GGML interfaces stay generic.
+    bool tiled_f32 = false;
+#if defined(ENGINE_HAVE_HALO_KERNELS)
+    tiled_f32 = build_ctx.backend_type == core::BackendType::Hip;
+#endif
     auto hidden = snake_beta(
         build_ctx,
         input,
         constants,
         weights.act1_alpha,
         weights.act1_beta);
-    hidden = causal_conv1d(build_ctx, hidden, weights.conv1, constants, stream);
+    hidden = causal_conv1d(build_ctx, hidden, weights.conv1, constants, stream, tiled_f32);
     hidden = snake_beta(
         build_ctx,
         hidden,
         constants,
         weights.act2_alpha,
         weights.act2_beta);
-    hidden = causal_conv1d(build_ctx, hidden, weights.conv2, constants, stream);
+    hidden = causal_conv1d(build_ctx, hidden, weights.conv2, constants, stream, tiled_f32);
     return modules::AddModule{}.build(build_ctx, input, hidden);
 }
 

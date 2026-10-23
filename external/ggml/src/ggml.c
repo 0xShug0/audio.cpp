@@ -1147,9 +1147,11 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "MUL_MAT_ACC",
     "SNAKE_1D",
     "FLASH_ATTN_F16_HEAD40",
+    "IM2COL_TILED",
+    "MUL_MAT_TILED",
 };
 
-static_assert(GGML_OP_COUNT == 115, "GGML_OP_COUNT != 115");
+static_assert(GGML_OP_COUNT == 117, "GGML_OP_COUNT != 117");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1277,9 +1279,11 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "mul_mat_acc(a, b, acc)",
     "snake_1d(a, alpha)",
     "flash_attn_f16_head40(q, k, v)",
+    "im2col_tiled(x)",
+    "mul_mat_tiled(a, b)",
 };
 
-static_assert(GGML_OP_COUNT == 115, "GGML_OP_COUNT != 115");
+static_assert(GGML_OP_COUNT == 117, "GGML_OP_COUNT != 117");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -3544,6 +3548,15 @@ static struct ggml_tensor * ggml_mul_mat_impl(
     return result;
 }
 
+struct ggml_tensor * ggml_mul_mat_tiled(
+        struct ggml_context * ctx, struct ggml_tensor * a, struct ggml_tensor * b) {
+    GGML_ASSERT(a->type == GGML_TYPE_F32 && b->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_matrix(a) && ggml_is_matrix(b));
+    struct ggml_tensor * result = ggml_mul_mat_impl(ctx, a, b, GGML_TYPE_F32);
+    result->op = GGML_OP_MUL_MAT_TILED;
+    return result;
+}
+
 struct ggml_tensor * ggml_mul_mat_acc(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
@@ -4930,6 +4943,18 @@ struct ggml_tensor * ggml_conv_1d(
     result = ggml_reshape_3d(ctx, result, im2col->ne[1], a->ne[2], im2col->ne[2]); // [N, OC, OL]
 
     return result;
+}
+
+struct ggml_tensor * ggml_conv_1d_tiled(
+        struct ggml_context * ctx, struct ggml_tensor * a, struct ggml_tensor * b,
+        int s0, int p0, int d0) {
+    GGML_ASSERT(a->type == GGML_TYPE_F32 && b->type == GGML_TYPE_F32);
+    struct ggml_tensor * columns = ggml_im2col(ctx, a, b, s0, 0, p0, 0, d0, 0, false, GGML_TYPE_F32);
+    columns->op = GGML_OP_IM2COL_TILED;
+    struct ggml_tensor * result = ggml_mul_mat_tiled(ctx,
+        ggml_reshape_2d(ctx, columns, columns->ne[0], columns->ne[1] * columns->ne[2]),
+        ggml_reshape_2d(ctx, a, a->ne[0] * a->ne[1], a->ne[2]));
+    return ggml_reshape_3d(ctx, result, columns->ne[1], a->ne[2], columns->ne[2]);
 }
 
 struct ggml_tensor * ggml_conv_1d_fast_1d_im2col(

@@ -622,6 +622,9 @@ extern "C" {
         GGML_OP_SNAKE_1D,
         GGML_OP_FLASH_ATTN_F16_HEAD40,
 
+        GGML_OP_IM2COL_TILED,
+        GGML_OP_MUL_MAT_TILED,
+
         GGML_OP_COUNT,
     };
 
@@ -1573,6 +1576,13 @@ extern "C" {
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
 
+    // Explicit tiled FP32 matrix product, with the same layout as mul_mat.
+    // Backends may supply a dedicated implementation; CPU provides reference math.
+    GGML_API struct ggml_tensor * ggml_mul_mat_tiled(
+            struct ggml_context * ctx,
+            struct ggml_tensor * a,
+            struct ggml_tensor * b);
+
     // CUDA-only FP16 output variant. Both operands must be FP16.
     GGML_API struct ggml_tensor * ggml_mul_mat_f16(
             struct ggml_context * ctx,
@@ -2217,6 +2227,13 @@ extern "C" {
             int                   s0,  // stride
             int                   p0,  // padding
             int                   d0); // dilation
+
+    // Explicit FP32 tiled im2col and matrix product. Ordinary conv_1d is unchanged.
+    GGML_API struct ggml_tensor * ggml_conv_1d_tiled(
+            struct ggml_context * ctx,
+            struct ggml_tensor * a,
+            struct ggml_tensor * b,
+            int s0, int p0, int d0);
 
     // conv_1d with padding = half
     // alias for ggml_conv_1d(a, b, s, a->ne[0]/2, d)

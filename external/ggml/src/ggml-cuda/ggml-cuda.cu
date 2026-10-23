@@ -1668,22 +1668,6 @@ static void ggml_hipblaslt_gemm(
     void *       C, int type_c, int64_t ldc, int64_t stride_c,
     int64_t batch_count) {
 
-#if defined(GGML_HIP_HALO)
-    // gfx1151's library FP32 convolution GEMMs underuse operand reuse. Keep
-    // small/batched GEMMs on the library; this tile retains FP32 arithmetic.
-    if (ggml_cuda_info().devices[ctx.device].cc == GGML_CUDA_CC_OFFSET_AMD + 0x1151 &&
-        ggml_hipblaslt_convert_type(type_a) == HIP_R_32F &&
-        ggml_hipblaslt_convert_type(type_b) == HIP_R_32F &&
-        ggml_hipblaslt_convert_type(type_c) == HIP_R_32F &&
-        batch_count == 1 && m >= 128 && n >= 96 && m * n >= 65536 && k >= 96 &&
-        n <= 65535 * 64 && lda >= k && ldb >= k && ldc >= m) {
-        ggml_hip_halo_sgemm(static_cast<const float *>(A), static_cast<const float *>(B),
-            static_cast<float *>(C), m, n, k, lda, ldb, ldc,
-            stride_a, stride_b, stride_c, batch_count, stream);
-        return;
-    }
-#endif
-
     const hipblasOperation_t trans_a = HIPBLAS_OP_T;
     const hipblasOperation_t trans_b = HIPBLAS_OP_N;
 
@@ -3228,6 +3212,20 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_MUL_MAT_PACK4:
             ggml_cuda_mul_mat(ctx, dst->src[0], dst->src[1], dst);
             break;
+        case GGML_OP_MUL_MAT_TILED:
+#if defined(GGML_USE_HIP) && defined(GGML_HIP_HALO)
+            if (ggml_cuda_info().devices[ctx.device].cc == GGML_CUDA_CC_OFFSET_AMD + 0x1151) {
+                const auto * a = dst->src[0];
+                const auto * b = dst->src[1];
+                ggml_hip_halo_sgemm(static_cast<const float *>(a->data), static_cast<const float *>(b->data),
+                    static_cast<float *>(dst->data), a->ne[1], b->ne[1], a->ne[0],
+                    a->nb[1] / sizeof(float), b->nb[1] / sizeof(float), dst->nb[1] / sizeof(float),
+                    0, 0, 0, 1, ctx.stream());
+                break;
+            }
+#endif
+            ggml_cuda_mul_mat(ctx, dst->src[0], dst->src[1], dst);
+            break;
         case GGML_OP_MUL_MAT_ID:
             ggml_cuda_mul_mat_id(ctx, dst);
             break;
@@ -3284,6 +3282,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_IM2COL:
         case GGML_OP_IM2COL_FAST_1D:
+        case GGML_OP_IM2COL_TILED:
             ggml_cuda_op_im2col(ctx, dst);
             break;
         case GGML_OP_IM2COL_3D:
@@ -5991,6 +5990,12 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             return ggml_cuda_sage_attn2_supported(dev_ctx->device, op);
         case GGML_OP_SAGE_ATTN2_I8:
             return ggml_cuda_sage_attn2_i8_supported(dev_ctx->device, op);
+        case GGML_OP_MUL_MAT_TILED:
+            return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 &&
+                ggml_is_contiguous(op->src[0]) && ggml_is_contiguous(op->src[1]) &&
+                ggml_is_matrix(op->src[0]) && ggml_is_matrix(op->src[1]);
+        case GGML_OP_IM2COL_TILED:
+            return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32;
         case GGML_OP_CONVROT_LINEAR:
             return ggml_cuda_convrot_linear_supported(dev_ctx->device, op);
         case GGML_OP_CROSS_ENTROPY_LOSS:
