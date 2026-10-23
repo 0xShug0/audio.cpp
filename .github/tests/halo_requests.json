@@ -1,0 +1,10 @@
+[
+  {"id":"short_warmup","text":"The morning sun fills the room with light. A small bird sings outside the window.","seed":1234,"voice_id":"af_heart","language":"en-us"},
+  {"id":"short_1","text":"The morning sun fills the room with light. A small bird sings outside the window.","seed":1234,"voice_id":"af_heart","language":"en-us"},
+  {"id":"short_2","text":"The morning sun fills the room with light. A small bird sings outside the window.","seed":1234,"voice_id":"af_heart","language":"en-us"},
+  {"id":"short_3","text":"The morning sun fills the room with light. A small bird sings outside the window.","seed":1234,"voice_id":"af_heart","language":"en-us"},
+  {"id":"medium_warmup","text":"Before leaving the house, Sarah checked the weather and packed a blue umbrella. She walked to the station, bought a ticket, and waited beside the clock. When the train arrived, she found a quiet seat and called her brother to say she was on her way.","seed":1234,"voice_id":"af_heart","language":"en-us"},
+  {"id":"medium_1","text":"Before leaving the house, Sarah checked the weather and packed a blue umbrella. She walked to the station, bought a ticket, and waited beside the clock. When the train arrived, she found a quiet seat and called her brother to say she was on her way.","seed":1234,"voice_id":"af_heart","language":"en-us"},
+  {"id":"medium_2","text":"Before leaving the house, Sarah checked the weather and packed a blue umbrella. She walked to the station, bought a ticket, and waited beside the clock. When the train arrived, she found a quiet seat and called her brother to say she was on her way.","seed":1234,"voice_id":"af_heart","language":"en-us"},
+  {"id":"medium_3","text":"Before leaving the house, Sarah checked the weather and packed a blue umbrella. She walked to the station, bought a ticket, and waited beside the clock. When the train arrived, she found a quiet seat and called her brother to say she was on her way.","seed":1234,"voice_id":"af_heart","language":"en-us"}
+]

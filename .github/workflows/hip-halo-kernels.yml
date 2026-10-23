@@ -1,0 +1,158 @@
+name: Experimental Halo kernels A-B
+
+on:
+  push:
+    branches: [test/devlab-dispatch]
+    paths:
+      - .github/workflows/hip-halo-kernels.yml
+      - .github/tests/halo_requests.json
+      - .github/tests/halo_results.py
+      - external/ggml/src/ggml-hip/halo/**
+      - external/ggml/src/ggml-hip/CMakeLists.txt
+      - external/ggml/src/ggml-cuda/im2col.cu
+      - external/ggml/CMakeLists.txt
+      - tests/unittests/test_hip_halo_im2col.cu
+      - tests/unittests/assets/hip_halo/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  halo:
+    runs-on: [self-hosted, linux, devlab-dispatch, strix-halo]
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Fetch exact experimental source
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          mkdir -p results inputs
+          curl --fail --location --connect-timeout 20 --max-time 120 --retry 1 \
+            -o source.tar.gz "https://codeload.github.com/$GITHUB_REPOSITORY/tar.gz/$GITHUB_SHA" \
+            2>&1 | tee results/source-download.log
+          tar -xzf source.tar.gz --strip-components=1
+          echo "$GITHUB_SHA" > results/source-ref.txt
+      - name: Prepare HIP runner and small models
+        run: |
+          set -euo pipefail
+          exec > >(tee results/environment.log) 2>&1
+          uname -a
+          lscpu
+          rocm="${ROCM_PATH:-/opt/rocm}"
+          if [[ ! -x "$rocm/bin/hipcc" ]] && command -v hipconfig >/dev/null; then rocm="$(hipconfig --path)"; fi
+          "$rocm/bin/hipcc" --version
+          echo "ROCM_PATH=$rocm" >> "$GITHUB_ENV"
+          echo "$rocm/bin" >> "$GITHUB_PATH"
+          ldconfig -p > results/ldconfig.txt
+          if ! grep -q 'libespeak-ng.so' results/ldconfig.txt; then
+            sudo -n apt-get update -qq
+            sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y espeak-ng libespeak-ng1
+          fi
+          curl --fail --location --connect-timeout 20 --max-time 180 --retry 2 \
+            -o inputs/kokoro-q8_0.gguf \
+            https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf
+          curl --fail --location --connect-timeout 20 --max-time 180 --retry 2 \
+            -o inputs/moonshine-tiny-q8_0.gguf \
+            https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Moonshine-Streaming-GGUF/moonshine-streaming-tiny-q8_0.gguf
+          curl --fail --location --connect-timeout 20 --max-time 60 --retry 2 \
+            -o inputs/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
+          sha256sum inputs/* > results/input-sha256.txt
+      - name: Add identical shape logging to CI builds only
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('external/ggml/src/ggml-cuda/im2col.cu')
+          text = p.read_text()
+          anchor = '    const int32_t lowering     = ggml_get_op_params_i32(dst, 7);'
+          assert text.count(anchor) == 1
+          names = ['dst->type','IW','OW','KW','IC','N','IC_IH_IW','IH_IW','s0','p0','d0','is_2D']
+          trace = '\n    fprintf(stderr, "[IM2COL_SHAPE] ' + ' '.join(['%lld']*12) + '\\n", ' + ', '.join('(long long)'+name for name in names) + ');\n'
+          p.write_text(text.replace(anchor, anchor + trace))
+          PY
+      - name: Build off and on with identical settings
+        run: |
+          set -euo pipefail
+          for mode in off on; do
+            enabled=OFF
+            if [[ "$mode" == on ]]; then enabled=ON; fi
+            cmake -S . -B "build-$mode" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_C_COMPILER="$ROCM_PATH/llvm/bin/clang" \
+              -DCMAKE_CXX_COMPILER="$ROCM_PATH/llvm/bin/clang++" \
+              -DCMAKE_HIP_COMPILER="$ROCM_PATH/llvm/bin/clang++" \
+              -DCMAKE_PREFIX_PATH="$ROCM_PATH" -DGPU_TARGETS=gfx1151 \
+              -DENGINE_ENABLE_HIP=ON -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF \
+              -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF \
+              -DENGINE_BUILD_EXAMPLES=ON -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF \
+              -DAUDIOCPP_MODEL_SET=custom '-DAUDIOCPP_MODELS=kokoro_tts;moonshine_asr' \
+              -DGGML_HIP_HALO="$enabled" -DENGINE_BUILD_EXTENDED_TESTS="$enabled" \
+              2>&1 | tee "results/$mode-configure.log"
+            cmake --build "build-$mode" --target audiocpp_cli -j 8 2>&1 | tee "results/$mode-build.log"
+            cp "build-$mode/CMakeCache.txt" "results/$mode-CMakeCache.txt"
+          done
+          cmake --build build-on --target hip_halo_im2col_test -j 8 2>&1 | tee results/test-build.log
+      - name: Warmed model A-B-B-A with logs
+        run: |
+          set -euo pipefail
+          for variant in off-a1 on-b1 on-b2 off-a2; do
+            mode="${variant%%-*}"
+            timeout 240 "build-$mode/bin/audiocpp_cli" --task tts --family kokoro_tts \
+              --model inputs/kokoro-q8_0.gguf --backend hip --threads 4 \
+              --request-sequence .github/tests/halo_requests.json \
+              --out-dir "results/$variant" --log --metrics > "results/$variant.log" 2>&1
+            tail -n 20 "results/$variant.log"
+          done
+          for mode in off on; do
+            timeout 120 "build-$mode/bin/audiocpp_cli" --task asr --family moonshine_asr \
+              --model inputs/moonshine-tiny-q8_0.gguf --backend hip --threads 4 \
+              --audio inputs/jfk.wav --text-out "results/$mode-jfk.txt" \
+              --log --metrics > "results/$mode-jfk.log" 2>&1
+          done
+      - name: Correctness and GPU-event timings on captured production shapes
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          shapes = []
+          for name in ('off-a1','off-jfk'):
+              shapes.extend(re.findall(r'\[IM2COL_SHAPE\] ([0-9 -]+)', Path(f'results/{name}.log').read_text()))
+          assert shapes, 'No production IM2COL calls captured'
+          Path('results/production-shapes.txt').write_text('\n'.join(dict.fromkeys(shapes)) + '\n')
+          PY
+          timeout 600 build-on/bin/hip_halo_im2col_test results/production-shapes.txt \
+            2>&1 | tee results/kernel-test.log
+      - name: GPU kernel traces when profiler is available
+        run: |
+          set -euo pipefail
+          profiler="$ROCM_PATH/bin/rocprofv3"
+          if [[ ! -x "$profiler" ]]; then
+            echo 'rocprofv3 is unavailable; microbenchmarks still use HIP GPU events.' | tee results/profiler-status.txt
+            exit 0
+          fi
+          for mode in off on; do
+            set +e
+            timeout 120 "$profiler" --kernel-trace --output-format csv --output-directory "results/profile-$mode" -- \
+              "build-$mode/bin/audiocpp_cli" --task tts --family kokoro_tts \
+              --model inputs/kokoro-q8_0.gguf --backend hip --threads 4 \
+              --voice-id af_heart --language en-us \
+              --text 'Before leaving the house, Sarah checked the weather and packed a blue umbrella. She walked to the station, bought a ticket, and waited beside the clock.' \
+              --request-option seed=1234 --out "results/profile-$mode.wav" --log --metrics \
+              > "results/profile-$mode.log" 2>&1
+            rc=$?
+            set -e
+            echo "$rc" > "results/profile-$mode.exit"
+          done
+      - name: Analyze timings and parity
+        run: python3 .github/tests/halo_results.py
+      - name: Upload all evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hip-halo-kernels-${{ github.run_attempt }}
+          path: results/
+          retention-days: 7

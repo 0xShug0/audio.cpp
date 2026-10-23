@@ -5130,6 +5130,17 @@ if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_CUDA)
     set_tests_properties(cuda_conv_transpose_1d_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
+if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_HIP AND GGML_HIP_HALO AND NOT WIN32)
+    set(HALO_IM2COL_TEST_SOURCES tests/unittests/test_hip_halo_im2col.cu
+        external/ggml/src/ggml-hip/halo/im2col.cu)
+    set_source_files_properties(${HALO_IM2COL_TEST_SOURCES} PROPERTIES LANGUAGE HIP)
+    add_executable(hip_halo_im2col_test ${HALO_IM2COL_TEST_SOURCES})
+    set_target_properties(hip_halo_im2col_test PROPERTIES HIP_STANDARD 17 HIP_STANDARD_REQUIRED ON)
+    target_include_directories(hip_halo_im2col_test PRIVATE external/ggml/include external/ggml/src/ggml-hip/halo)
+    add_test(NAME hip_halo_im2col_test COMMAND hip_halo_im2col_test)
+    set_tests_properties(hip_halo_im2col_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "extended;hip;halo")
+endif()
+
 if (ENGINE_BUILD_EXAMPLES)
     add_executable(ggml_simple_inference
         examples/ggml_simple_inference.cpp

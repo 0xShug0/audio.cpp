@@ -1,5 +1,9 @@
 #include "im2col.cuh"
 
+#if defined(GGML_USE_HIP) && defined(GGML_HIP_HALO)
+#include "../ggml-hip/halo/im2col.cuh"
+#endif
+
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 static __global__ void im2col_f32_tiled_3x3(
         const float * x, float * dst, int64_t IW, int64_t IH, int64_t OW, int64_t OH,
@@ -330,6 +334,15 @@ void ggml_cuda_op_im2col(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const int64_t N        = src1->ne[is_2D ? 3 : 2];
     const int64_t IH_IW    = src1->nb[is_2D ? 3 : 2] / 4; // nb is byte offset, src is type float32
     const int32_t lowering     = ggml_get_op_params_i32(dst, 7);
+
+#if defined(GGML_USE_HIP) && defined(GGML_HIP_HALO)
+    if (!is_2D && p1 == 0 && src1->nb[0] == sizeof(float) &&
+        ggml_cuda_info().devices[ctx.device].cc == GGML_CUDA_CC_OFFSET_AMD + 0x1151 &&
+        ggml_hip_halo_im2col_1d(src1_d, dst->data, dst->type, IW, OW, KW, IC, N,
+            IC_IH_IW, IH_IW, s0, p0, d0, stream)) {
+        return;
+    }
+#endif
 
     if(dst->type == GGML_TYPE_F16) {
         im2col_cuda_f16(src1_d, (half *) dst_d, IW, IH, OW, OH, KW, KH, IC, N, IC_IH_IW, IH_IW, s0, s1, p0, p1, d0, d1, lowering, stream);

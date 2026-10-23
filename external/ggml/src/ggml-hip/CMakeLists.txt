@@ -95,6 +95,11 @@ else()
         ../ggml-cuda/template-instances/fattn-vec-instance-bf16-bf16.cu)
 endif()
 
+if (GGML_HIP_HALO)
+    list(APPEND GGML_SOURCES_ROCM ${CMAKE_CURRENT_SOURCE_DIR}/halo/im2col.cu)
+    list(APPEND GGML_HEADERS_ROCM ${CMAKE_CURRENT_SOURCE_DIR}/halo/im2col.cuh)
+endif()
+
 if (CXX_IS_HIPCC)
     set_source_files_properties(${GGML_SOURCES_ROCM} PROPERTIES LANGUAGE CXX)
 else()
@@ -105,6 +110,10 @@ ggml_add_backend_library(ggml-hip
                          ${GGML_HEADERS_ROCM}
                          ${GGML_SOURCES_ROCM}
                         )
+
+if (GGML_HIP_HALO)
+    target_compile_definitions(ggml-hip PRIVATE GGML_HIP_HALO)
+endif()
 
 # TODO: do not use CUDA definitions for HIP
 if (NOT GGML_BACKEND_DL)
