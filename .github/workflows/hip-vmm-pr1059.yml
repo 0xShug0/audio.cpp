@@ -22,9 +22,15 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      - name: Download workflow test source
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          curl --fail --location --connect-timeout 20 --max-time 120 --retry 1 \
+            -o harness.tar.gz "https://codeload.github.com/$GITHUB_REPOSITORY/tar.gz/$GITHUB_SHA" \
+            2>&1 | tee results/harness-download.log
+          tar -xzf harness.tar.gz --strip-components=1
       - name: Check HIP environment
         run: |
           set -euo pipefail
@@ -60,13 +66,21 @@ jobs:
       - name: Fetch pinned source and small model
         run: |
           set -euo pipefail
-          git clone --no-checkout https://github.com/0xShug0/audio.cpp.git source
-          git -C source fetch origin "$BASE_REF" refs/pull/1059/head
-          git -C source cat-file -e "$HEAD_REF^{commit}"
+          for variant in base head; do
+            repo=0xShug0/audio.cpp
+            ref="$BASE_REF"
+            if [[ "$variant" == head ]]; then repo=ZeroDot1/audio.cpp; ref="$HEAD_REF"; fi
+            mkdir -p "source-$variant"
+            curl --fail --location --connect-timeout 20 --max-time 120 --retry 1 \
+              -o "$variant.tar.gz" "https://codeload.github.com/$repo/tar.gz/$ref" \
+              2>&1 | tee "results/$variant-source-download.log"
+            tar -xzf "$variant.tar.gz" --strip-components=1 -C "source-$variant"
+            printf '%s/%s\n' "$repo" "$ref" > "results/$variant-ref.txt"
+          done
           mkdir -p inputs
-          curl --fail --location --retry 3 -o inputs/moonshine-tiny-q8_0.gguf \
+          curl --fail --location --connect-timeout 20 --max-time 180 --retry 2 -o inputs/moonshine-tiny-q8_0.gguf \
             https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Moonshine-Streaming-GGUF/moonshine-streaming-tiny-q8_0.gguf
-          curl --fail --location --retry 3 -o inputs/jfk.wav \
+          curl --fail --location --connect-timeout 20 --max-time 60 --retry 2 -o inputs/jfk.wav \
             https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
           sha256sum inputs/* | tee results/input-sha256.txt
           python3 - <<'PY'
@@ -84,21 +98,20 @@ jobs:
           arch=$(sed -n 's/.* arch=\([^: ]*\).*/\1/p' results/probe-head.log | head -1)
           test -n "$arch"
           for variant in base head; do
-            ref="$BASE_REF"
-            if [[ "$variant" == head ]]; then ref="$HEAD_REF"; fi
-            git -C source checkout --detach "$ref"
-            git -C source rev-parse HEAD | tee "results/$variant-ref.txt"
+            source="source-$variant"
+            build="build-$variant"
             # Identical logging on both versions; keep the pool/access math unchanged.
-            python3 - <<'PY'
+            SOURCE_DIR="$source" python3 - <<'PY'
+          import os
           from pathlib import Path
-          p = Path('source/external/ggml/src/ggml-cuda/ggml-cuda.cu')
+          p = Path(os.environ['SOURCE_DIR']) / 'external/ggml/src/ggml-cuda/ggml-cuda.cu'
           s = p.read_text()
           anchor = '            // set access\n'
           assert s.count(anchor) == 1
           s = s.replace(anchor, '            fprintf(stderr, "[VMM_GROW] previous=%zu reserve=%zu\\n", pool_size, reserve_size);\n' + anchor)
           p.write_text(s)
           PY
-            cmake -S source -B build -G Ninja \
+            cmake -S "$source" -B "$build" -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_C_COMPILER="$ROCM_PATH/llvm/bin/clang" \
               -DCMAKE_CXX_COMPILER="$ROCM_PATH/llvm/bin/clang++" \
@@ -109,11 +122,11 @@ jobs:
               -DENGINE_BUILD_EXAMPLES=ON -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF \
               -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=moonshine_asr \
               2>&1 | tee "results/$variant-configure.log"
-            cmake --build build --target audiocpp_cli -j 8 2>&1 | tee "results/$variant-build.log"
-            cp build/CMakeCache.txt "results/$variant-CMakeCache.txt"
+            cmake --build "$build" --target audiocpp_cli -j 8 2>&1 | tee "results/$variant-build.log"
+            cp "$build/CMakeCache.txt" "results/$variant-CMakeCache.txt"
             for clip in jfk jfk-twice; do
               set +e
-              timeout 180 build/bin/audiocpp_cli --task asr --family moonshine_asr \
+              timeout 180 "$build/bin/audiocpp_cli" --task asr --family moonshine_asr \
                 --model inputs/moonshine-tiny-q8_0.gguf --backend hip --threads 4 \
                 --audio "inputs/$clip.wav" --text-out "results/$variant-$clip.txt" \
                 --log --metrics > "results/$variant-$clip.log" 2>&1
@@ -122,7 +135,6 @@ jobs:
               echo "$rc" > "results/$variant-$clip.exit"
               tail -n 30 "results/$variant-$clip.log"
             done
-            git -C source restore external/ggml/src/ggml-cuda/ggml-cuda.cu
           done
       - name: Check coverage, reproduction and ASR accuracy
         run: |
