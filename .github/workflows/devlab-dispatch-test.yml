@@ -13,7 +13,8 @@ jobs:
     runs-on: devlab-dispatch
     timeout-minutes: 5
     steps:
-      - name: Show runner host
+      - name: Show Linux runner host
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -eu
@@ -21,3 +22,12 @@ jobs:
           uname -a
           cat /etc/os-release
           lscpu
+      - name: Show Windows runner host
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Output "Runner: $env:RUNNER_NAME"
+          Write-Output "OS: $env:RUNNER_OS"
+          Write-Output "Architecture: $env:RUNNER_ARCH"
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version
+          Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors
