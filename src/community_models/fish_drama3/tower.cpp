@@ -374,19 +374,20 @@ private:
             } else {
                 // Top-p uses the full distribution and excludes the crossing token,
                 // except that the highest-probability token is always retained.
+                // Sign/clamp keeps equality boundaries consistent across backends.
                 const auto n = config_.codebook_size;
                 auto * order = ggml_argsort(ctx, logits, GGML_SORT_ORDER_DESC);
                 auto * probs = ggml_soft_max(ctx, ggml_mul(ctx, logits, scalar(result->sampling, 0)));
                 probs = ggml_reshape_1d(ctx, ggml_get_rows(ctx, ggml_reshape_2d(ctx, probs, 1, n), order), n);
                 auto * ranks = ggml_arange(ctx, 0, static_cast<float>(n), 1);
-                auto * first = ggml_step(ctx, ggml_scale_bias(ctx, ranks, -1, 1));
-                auto * keep = ggml_step(ctx, ggml_add(ctx, ggml_scale(ctx, ggml_cumsum(ctx, probs), -1), scalar(result->sampling, 1)));
+                auto * first = ggml_clamp(ctx, ggml_scale_bias(ctx, ranks, -1, 1), 0, 1);
+                auto * keep = ggml_scale_bias(ctx, ggml_clamp(ctx, ggml_sgn(ctx, ggml_sub(ctx, ggml_cumsum(ctx, probs), scalar(result->sampling, 1))), 0, 1), -1, 1);
                 keep = ggml_clamp(ctx, ggml_add(ctx, keep, first), 0, 1);
-                keep = ggml_mul(ctx, keep, ggml_step(ctx, ggml_add(ctx, ggml_scale(ctx, ranks, -1), scalar(result->sampling, 2))));
+                keep = ggml_mul(ctx, keep, ggml_clamp(ctx, ggml_add(ctx, ggml_scale(ctx, ranks, -1), scalar(result->sampling, 2)), 0, 1));
                 auto * cdf = ggml_cumsum(ctx, ggml_mul(ctx, probs, keep));
                 auto * total = scalar(cdf, n - 1);
                 auto * threshold = ggml_mul(ctx, total, scalar(result->uniforms, layer - config_.shared_layers));
-                auto * rank = ggml_cast(ctx, ggml_sum(ctx, ggml_step(ctx, ggml_add(ctx, ggml_scale(ctx, cdf, -1), threshold))), GGML_TYPE_I32);
+                auto * rank = ggml_cast(ctx, ggml_sum(ctx, ggml_clamp(ctx, ggml_sgn(ctx, ggml_add(ctx, ggml_scale(ctx, cdf, -1), threshold)), 0, 1)), GGML_TYPE_I32);
                 code = ggml_cast(ctx, ggml_get_rows(ctx, ggml_reshape_2d(ctx, ggml_cast(ctx, order, GGML_TYPE_F32), 1, n), rank), GGML_TYPE_I32);
             }
             auto * value = ggml_cast(ctx, code, GGML_TYPE_F32);
