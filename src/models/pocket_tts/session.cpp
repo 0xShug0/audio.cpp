@@ -482,11 +482,13 @@ PocketTTSSession::PocketTTSSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
     std::shared_ptr<const PocketTTSAssets> manifest,
-    std::filesystem::path model_dir)
+    std::filesystem::path model_dir,
+    std::shared_ptr<const engine::model_spec::ModelContract> request_contract)
     : RuntimeSessionBase(options),
       task_(task),
       manifest_(std::move(manifest)),
       model_dir_(std::move(model_dir)),
+      request_contract_(std::move(request_contract)),
       graph_capacity_(resolve_graph_capacity_config()),
       weights_(load_pocket_tts_backend_weights(
           *manifest_,
@@ -778,7 +780,14 @@ runtime::RunMode PocketTTSSession::run_mode() const {
     return task_.mode;
 }
 
+void PocketTTSSession::validate_request_options(const std::unordered_map<std::string, std::string> & options) const {
+    if (request_contract_) {
+        runtime::validate_spec_backed_request_options(options, *request_contract_, manifest_->family);
+    }
+}
+
 void PocketTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
+    validate_request_options(request.options);
     prepared_session_request_ =
         build_preparation_generation_request(request, manifest_->model_config);
     if (!has_voice_selection(prepared_session_request_.voice) && manifest_->default_voice_path.has_value()) {
@@ -799,6 +808,7 @@ void PocketTTSSession::prepare(const runtime::SessionPreparationRequest & reques
 
 runtime::TaskResult PocketTTSSession::run(const runtime::TaskRequest & request) {
     require_prepared("PocketTTS run()");
+    validate_request_options(request.options);
     audio_decoder_.clear_runtime_cache();
     const GenerationRequest generation_request = effective_request_for_run(request);
     const GenerationResult generated = generate(generation_request);
@@ -823,6 +833,7 @@ void PocketTTSSession::start_stream(const runtime::TaskRequest & request) {
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("PocketTTS start_stream requires a streaming session");
     }
+    validate_request_options(request.options);
     reset();
     stream_request_ = effective_request_for_run(request);
     validate_generation_request(stream_request_);

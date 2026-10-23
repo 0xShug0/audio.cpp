@@ -88,7 +88,7 @@
         "required": false
       },
       {
-        "name": "voice_embedding_path",
+        "name": "voice_embedding_file",
         "type": "path",
         "description": "Voice file: a speaker_wavs latent file such as those of gradium/phonon-voices, or an exported voice state. Captured during session preparation.",
         "required": false
@@ -100,7 +100,7 @@
         "required": false
       },
       {
-        "name": "export_voice_state_path",
+        "name": "export_voice_state_file",
         "type": "path",
         "description": "Export the prepared voice state during session preparation.",
         "required": false

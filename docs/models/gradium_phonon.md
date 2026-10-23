@@ -38,7 +38,7 @@ checkpoint projects into its voice prompt. Every Phonon checkpoint reads the sam
 
 More voices are in [gradium/phonon-voices](https://huggingface.co/gradium/phonon-voices),
 listed with their names and languages in `voices.jsonl`. Pass one with
-`--request-option voice_embedding_path=/path/to/voice.safetensors`, or copy it into the
+`--request-option voice_embedding_file=/path/to/voice.safetensors`, or copy it into the
 model folder as `embeddings/<name>.safetensors`: `--voice-id <name>` and the server's
 `"voice": "<name>"` then select it, and `GET /v1/audio/voices` lists it.
 
@@ -52,7 +52,7 @@ byte tokens.
 
 ## Controls
 
-Request options (`--request-option name=value`):
+Request options (`--request-option name=value`). An option not listed here is an error:
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -63,8 +63,8 @@ Request options (`--request-option name=value`):
 | `max_frames` | `0` | Frame cap; zero estimates it from the text length. |
 | `text_chunk_tokens` | `50` | Tokens per text chunk. |
 | `text_chunk_size` | unset | Character chunk size instead of sentence/token budgeting. |
-| `voice_embedding_path` | unset | A voice file outside the model folder. |
-| `export_voice_state_path` | unset | Export the prepared voice state. |
+| `voice_embedding_file` | unset | A voice file outside the model folder. |
+| `export_voice_state_file` | unset | Export the prepared voice state. |
 
 Session options are those of PocketTTS under the `gradium_phonon.` prefix, for example
 `--session-option gradium_phonon.weight_type=f32`, minus the Mimi encoder ones.

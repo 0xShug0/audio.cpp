@@ -286,7 +286,8 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_gradium_phonon_loader() {
             task,
             as_pocket_tts_session_options(options, *contract),
             std::move(assets),
-            std::move(voice_root));
+            std::move(voice_root),
+            contract);
     };
     return runtime::make_spec_backed_voice_loader(std::move(config));
 }
