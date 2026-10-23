@@ -13,6 +13,7 @@ on:
       - external/ggml/src/ggml-cuda/im2col.cu
       - external/ggml/CMakeLists.txt
       - tests/unittests/test_hip_halo_im2col.cu
+      - tests/unittests/test_hip_halo_sgemm.cu
       - tests/unittests/assets/hip_halo/**
   workflow_dispatch:
 
@@ -96,7 +97,21 @@ jobs:
           names = ['dst->type','IW','OW','KW','IC','N','IC_IH_IW','IH_IW','s0','p0','d0','is_2D']
           trace = '\n    fprintf(stderr, "[IM2COL_SHAPE] ' + ' '.join(['%lld']*12) + '\\n", ' + ', '.join('(long long)'+name for name in names) + ');\n'
           p.write_text(text.replace(anchor, anchor + trace))
+          p = Path('external/ggml/src/ggml-cuda/ggml-cuda.cu')
+          text = p.read_text()
+          anchor = '    const hipblasOperation_t trans_a = HIPBLAS_OP_T;'
+          assert text.count(anchor) == 1
+          trace = '\n    fprintf(stderr, "[GEMM_SHAPE] %lld %lld %lld %d %d %d %lld %lld %lld %lld\\n", (long long)m, (long long)n, (long long)k, type_a, type_b, type_c, (long long)lda, (long long)ldb, (long long)ldc, (long long)batch_count);\n'
+          p.write_text(text.replace(anchor, trace + anchor))
           PY
+      - name: Validate isolated FP32 GEMM candidate before graph integration
+        run: |
+          set -euo pipefail
+          "$ROCM_PATH/bin/hipcc" --offload-arch=gfx1151 -O3 -std=c++17 \
+            -Iexternal/ggml/src/ggml-hip/halo \
+            tests/unittests/test_hip_halo_sgemm.cu external/ggml/src/ggml-hip/halo/sgemm.cu \
+            -lhipblaslt -o halo-sgemm-test 2>&1 | tee results/sgemm-build.log
+          timeout 180 ./halo-sgemm-test 2>&1 | tee results/sgemm-test.log
       - name: Build off and on with identical settings
         run: |
           set -euo pipefail
