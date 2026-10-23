@@ -41,15 +41,17 @@ static void run(int k,int m,bool gated,int pad=0) {
     ggml_cuda_mm_fusion_args_device f{};
     if(gated) { f.gate=dg;f.x_bias=db;f.gate_bias=dgb;f.glu_op=GGML_GLU_OP_SWIGLU; }
     const auto fd=init_fastdiv_values(1);
+    const int warps=original::calc_nwarps(GGML_TYPE_Q8_0,1,
+        original::get_device_table_id(GGML_CUDA_CC_OFFSET_AMD+0x1151));
     auto launch=[&](bool halo) {
         if(halo)ggml_hip_halo_mmvq_q8_0(dw,dy,dc+16,k,m,rs,f,nullptr);
-        else if(gated)original::mul_mat_vec_q<GGML_TYPE_Q8_0,1,true><<<dim3(m),dim3(32,4)>>>(
+        else if(gated)original::mul_mat_vec_q<GGML_TYPE_Q8_0,1,true><<<dim3(m),dim3(32,warps)>>>(
             dw,dy,nullptr,f,dc+16,k,make_uint3(0,0,0),rs,blocks,m,fd,rs*m,blocks,m,fd,rs*m,blocks,m,0);
-        else original::mul_mat_vec_q<GGML_TYPE_Q8_0,1,false><<<dim3(m),dim3(32,4)>>>(
+        else original::mul_mat_vec_q<GGML_TYPE_Q8_0,1,false><<<dim3(m),dim3(32,warps)>>>(
             dw,dy,nullptr,f,dc+16,k,make_uint3(0,0,0),rs,blocks,m,fd,rs*m,blocks,m,fd,rs*m,blocks,m,0);
     };
-    launch(false);CHECK(hipMemcpy(old.data(),dc,old.size()*4,hipMemcpyDeviceToHost));
-    launch(true);CHECK(hipMemcpy(out.data(),dc,out.size()*4,hipMemcpyDeviceToHost));
+    launch(false);CHECK(hipGetLastError());CHECK(hipMemcpy(old.data(),dc,old.size()*4,hipMemcpyDeviceToHost));
+    launch(true);CHECK(hipGetLastError());CHECK(hipMemcpy(out.data(),dc,out.size()*4,hipMemcpyDeviceToHost));
     for(int i=0;i<16;++i)if(out[i]!=-9876.5f || out[m+16+i]!=-9876.5f)std::exit(2);
     double max_error=0;
     for(int row=0;row<m;++row) {
@@ -78,6 +80,7 @@ static void run(int k,int m,bool gated,int pad=0) {
         for(int i=0;i<8;++i)launch(mode);
         CHECK(hipEventRecord(start));for(int i=0;i<64;++i)launch(mode);
         CHECK(hipEventRecord(end));CHECK(hipEventSynchronize(end));
+        CHECK(hipGetLastError());
         float ms;CHECK(hipEventElapsedTime(&ms,start,end));times[mode].push_back(ms/64);
     }
     for(auto &v:times)std::sort(v.begin(),v.end());
