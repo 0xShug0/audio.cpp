@@ -12,9 +12,6 @@
 #include <fstream>
 #include <map>
 #include <stdexcept>
-#if defined(__linux__)
-#include <thread>
-#endif
 #include <unordered_set>
 #include <utility>
 
@@ -53,7 +50,13 @@ public:
     };
 
     Impl(const std::filesystem::path & path, bool pin, size_t threads)
-        : file(path, std::ios::binary), pin_experts(pin), read_threads(std::max<size_t>(1, threads)) {
+        : file(path, std::ios::binary), pin_experts(pin), read_threads(threads) {
+        if (read_threads < 1 || read_threads > 64)
+            throw std::invalid_argument("disk expert read_threads must be between 1 and 64");
+#if !defined(_OPENMP)
+        if (!pin_experts && read_threads > 1)
+            throw std::runtime_error("parallel disk expert reads require ENGINE_ENABLE_OPENMP=ON");
+#endif
         if (!file) throw std::runtime_error("cannot open disk expert GGUF: " + path.string());
         ggml_context * tensors = nullptr;
         std::unique_ptr<gguf_context, HeaderDeleter> header(
@@ -134,37 +137,21 @@ public:
             const auto & projection = group.projections[p];
             const auto bytes = projection.expert_bytes;
             auto started = std::chrono::steady_clock::now();
-            if (!pin_experts) {
-#if defined(__linux__)
-                const auto worker_count = std::min(read_threads, misses.size());
-#else
-                const size_t worker_count = 1;
-#endif
-                auto copy_range = [&](size_t begin, size_t end) {
-                    for (size_t m = begin; m < end; ++m) {
+            if (!pin_experts && !misses.empty()) {
+                if (read_threads == 1 || misses.size() == 1) {
+                    for (size_t m = 0; m < misses.size(); ++m) {
                         std::memcpy(staging + offset + m * bytes,
                             mapped_file.data() + projection.offset + static_cast<size_t>(misses[m].id) * bytes, bytes);
                     }
-                };
-                if (worker_count <= 1) {
-                    copy_range(0, misses.size());
                 } else {
-#if defined(__linux__)
-                    std::vector<std::thread> workers;
-                    workers.reserve(worker_count - 1);
-                    const auto chunk = (misses.size() + worker_count - 1) / worker_count;
-                    try {
-                        for (size_t worker = 1; worker < worker_count; ++worker) {
-                            const auto begin = worker * chunk;
-                            if (begin >= misses.size()) break;
-                            workers.emplace_back(copy_range, begin, std::min(misses.size(), begin + chunk));
-                        }
-                        copy_range(0, std::min(misses.size(), chunk));
-                    } catch (...) {
-                        for (auto & worker : workers) if (worker.joinable()) worker.join();
-                        throw;
+#if defined(_OPENMP)
+                    // Varying team sizes recreates OpenMP workers in the routing hot path.
+                    const int worker_count = static_cast<int>(std::min(read_threads, group.expert_ids.size()));
+                    #pragma omp parallel for num_threads(worker_count) schedule(static)
+                    for (int64_t m = 0; m < static_cast<int64_t>(misses.size()); ++m) {
+                        std::memcpy(staging + offset + m * bytes,
+                            mapped_file.data() + projection.offset + static_cast<size_t>(misses[m].id) * bytes, bytes);
                     }
-                    for (auto & worker : workers) worker.join();
 #endif
                 }
                 stats.bytes_read += misses.size() * bytes;

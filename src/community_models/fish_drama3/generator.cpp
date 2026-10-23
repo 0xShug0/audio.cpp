@@ -73,14 +73,8 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
         throw std::runtime_error("fish_drama3.pin_experts requires fish_drama3.disk_experts=true");
     backbone_config.expert_cache_size = runtime::parse_positive_i64_option(
         options.options, {"fish_drama3.expert_cache_size"}, 32);
-    constexpr int64_t default_disk_expert_read_threads =
-#if defined(__linux__)
-        4;
-#else
-        1;
-#endif
     backbone_config.disk_expert_read_threads = runtime::parse_positive_i64_option(
-        options.options, {"fish_drama3.disk_expert_read_threads"}, default_disk_expert_read_threads);
+        options.options, {"fish_drama3.disk_expert_read_threads"}, 1);
     if (backbone_config.disk_expert_read_threads > 64)
         throw std::runtime_error("Drama 3 disk_expert_read_threads must be between 1 and 64");
     const auto backbone_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.backbone_prefill_cache_mb"}).value_or(256);

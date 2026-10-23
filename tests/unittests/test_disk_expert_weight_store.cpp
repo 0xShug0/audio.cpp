@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -58,15 +59,34 @@ int main(int argc, char ** argv) {
             entries.push_back({names[p], "F32", {12, 256, 256}, std::move(bytes)});
         }
         engine::io::write_safetensors_file(input, entries);
-        const std::vector<std::pair<assets::TensorStorageType, bool>> modes{
-            {assets::TensorStorageType::F32, false}, {assets::TensorStorageType::Q4_K, false},
-            {assets::TensorStorageType::F32, true}, {assets::TensorStorageType::Q4_K, true}};
-        for (const auto & [type, pin_experts] : modes) {
+        for (const size_t invalid_threads : {size_t{0}, size_t{65}}) {
+            bool rejected = false;
+            try { core::DiskExpertWeightStore invalid(gguf, false, invalid_threads); }
+            catch (const std::invalid_argument &) { rejected = true; }
+            if (!rejected) throw std::runtime_error("invalid expert reader count was not rejected");
+        }
+        const std::vector<std::tuple<assets::TensorStorageType, bool, size_t>> modes{
+            {assets::TensorStorageType::F32, false, 1}, {assets::TensorStorageType::Q4_K, false, 1},
+            {assets::TensorStorageType::F32, true, 1}, {assets::TensorStorageType::Q4_K, true, 1},
+#if defined(_OPENMP)
+            {assets::TensorStorageType::F32, false, 4}, {assets::TensorStorageType::Q4_K, false, 4},
+            {assets::TensorStorageType::F32, false, 64}, {assets::TensorStorageType::Q4_K, false, 64},
+#endif
+        };
+        for (const auto & [type, pin_experts, read_threads] : modes) {
             assets::GgufConversionOptions options;
             options.type_overrides.push_back({"model.layers.0.mlp.experts.*", type});
             assets::convert_tensor_sources_to_gguf({{input, ""}}, gguf, assets::TensorStorageType::F32,
                 true, false, {}, {}, std::nullopt, options);
-            core::DiskExpertWeightStore disk(gguf, pin_experts);
+            core::DiskExpertWeightStore disk(gguf, pin_experts, read_threads);
+#if !defined(_OPENMP)
+            bool parallel_rejected = false;
+            try { core::DiskExpertWeightStore parallel(gguf, false, 4); }
+            catch (const std::runtime_error & error) {
+                parallel_rejected = std::string(error.what()).find("ENGINE_ENABLE_OPENMP") != std::string::npos;
+            }
+            if (!parallel_rejected) throw std::runtime_error("parallel reads without OpenMP were not rejected");
+#endif
             if (pin_experts && !ggml_backend_dev_host_buffer_type(ggml_backend_get_device(execution.backend()))) {
                 bool rejected = false;
                 try { disk.add_group(names, execution.backend(), 4); }
@@ -143,7 +163,7 @@ int main(int argc, char ** argv) {
                     throw std::runtime_error("cache hit read expert payloads again");
                 if (after.buffer_bytes != cache_bytes) throw std::runtime_error("expert cache grew");
                 if (core::read_tensor_i32(ids) != route) throw std::runtime_error("routing changed original expert IDs");
-                std::cout << "pin_experts=" << pin_experts << " request=" << requests++ << " max_abs=" << maximum << " expert_loads=" << after.expert_loads
+                std::cout << "read_threads=" << read_threads << " pin_experts=" << pin_experts << " request=" << requests++ << " max_abs=" << maximum << " expert_loads=" << after.expert_loads
                           << " bytes_read=" << after.bytes_read << " cache_bytes=" << after.buffer_bytes << '\n';
             }
             const std::vector<int32_t> grouped_ids{7, 6, 7, 4};
@@ -164,7 +184,7 @@ int main(int argc, char ** argv) {
                 throw std::runtime_error("explicit expert staging did not reuse cached slots");
             const auto other_group = disk.add_group(names, execution.backend(), 4);
             for (const auto & route : std::vector<std::vector<int32_t>>{{7, 6, 7, 4}, {4, 6, 4, 7}, {7}, {7, 6, 7, 4}}) {
-                core::DiskExpertWeightStore cold(gguf, pin_experts);
+                core::DiskExpertWeightStore cold(gguf, pin_experts, read_threads);
                 const auto cold_group = cold.add_group(names, execution.backend(), 4);
                 const auto cold_slots = cold.stage(cold_group, route);
                 for (const auto cached_group : {group, other_group}) {

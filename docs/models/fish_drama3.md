@@ -186,12 +186,12 @@ GGUF file and read only selected experts into a bounded native-format cache.
 `cpu_expert_layers` setting still selects CPU execution for those layers, but
 their expert caches are bounded too. No GGUF conversion is required.
 
-On Linux, selected experts are copied from the memory-mapped GGUF into staging
-memory in parallel, using four read workers by default. Set
-`fish_drama3.disk_expert_read_threads` to a value from 1 to 64 to tune the number
-of workers (or set it to 1 to use the serial read path). Other platforms keep
-the serial default. This setting applies only to disk-backed expert reads;
-backend uploads and inference still follow the selected backend.
+`fish_drama3.disk_expert_read_threads` selects 1 to 64 host workers for copying
+selected experts from the memory-mapped GGUF into staging. The default is 1
+(serial); try 4 to enable parallel copies in an OpenMP build. This applies only
+with `disk_experts=true` and `pin_experts=false`. Backend uploads and inference
+are unchanged. The host reader is backend-independent; Metal performance has
+not been validated.
 
 This is a memory/speed trade-off, not a faster MoE kernel. With
 `cpu_expert_layers=0`, prompt prefill groups tokens by expert within each layer,
