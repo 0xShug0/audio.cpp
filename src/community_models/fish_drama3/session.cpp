@@ -84,7 +84,8 @@ Drama3Session::Drama3Session(runtime::TaskSpec task, const runtime::SessionOptio
     if (!assets_ || (task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::VoiceCloning)) {
         throw std::runtime_error("Fish Drama 3 supports TTS and voice cloning");
     }
-    generator_ = std::make_unique<Drama3Generator>(assets_, execution_context(), options);
+    generator_ = std::make_unique<Drama3Generator>(assets_, execution_context(), options,
+        task_.mode == runtime::RunMode::Streaming);
 }
 Drama3Session::~Drama3Session() = default;
 std::string Drama3Session::family() const { return "fish_drama3"; }

@@ -300,6 +300,7 @@ struct ConvTranspose1dConfig {
 struct ConvTranspose1dWeights {
     core::TensorValue weight;
     std::optional<core::TensorValue> bias;
+    std::optional<core::TensorValue> col2im_matrix = std::nullopt;
 };
 
 bool is_conv_transpose1d_col2im_fast_path_eligible(

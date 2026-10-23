@@ -8,11 +8,14 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <condition_variable>
 #include <deque>
 #include <iostream>
 #include <numeric>
+#include <mutex>
 #include <random>
 #include <stdexcept>
+#include <thread>
 
 namespace engine::models::fish_drama3 {
 namespace {
@@ -73,7 +76,7 @@ std::vector<float> last_hidden(const std::vector<float> & values, int64_t width)
 }  // namespace
 
 Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
-    core::ExecutionContext & execution, const runtime::SessionOptions & options)
+    core::ExecutionContext & execution, const runtime::SessionOptions & options, bool streaming)
     : assets_(std::move(assets)), tokenizer_(assets_->resources),
       cache_steps_(runtime::parse_positive_i64_option(options.options, {"fish_drama3.context_length"}, 2048)) {
     if (cache_steps_ > 262144) throw std::runtime_error("Drama 3 context_length exceeds the checkpoint's maximum position count");
@@ -82,6 +85,11 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     }
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.device_sampling"})) {
         device_sampling_ = runtime::parse_bool_option(*value, "fish_drama3.device_sampling");
+    }
+    codec_batch_frames_ = static_cast<size_t>(runtime::parse_positive_i64_option(
+        options.options, {"fish_drama3.codec_batch_frames"}, 4));
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_async_decode"})) {
+        codec_async_decode_ = runtime::parse_bool_option(*value, "fish_drama3.codec_async_decode");
     }
     auto backbone_config = assets_->backbone;
     backbone_config.decode_cache_steps = cache_steps_;
@@ -118,6 +126,7 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     codec_execution_ = std::make_unique<core::ExecutionContext>(codec_backend);
     codecs::FishDacCodecRuntimeOptions codec_options;
     codec_options.weight_context_bytes = 16 * 1024 * 1024;
+    codec_options.decoder_prepack_weights = streaming && codec_batch_frames_ > 1;
     codec_options.encoder_bf16_compute = true;
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_encoder_bf16_compute"})) {
         codec_options.encoder_bf16_compute = runtime::parse_bool_option(*value, "fish_drama3.codec_encoder_bf16_compute");
@@ -248,7 +257,81 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     std::deque<int32_t> recent;
     std::vector<Drama3Frame> output_frames;
     Drama3Generation result;
-    if (streaming) codec_->reset_decode_stream();
+    std::mutex codec_mutex;
+    std::condition_variable codec_ready;
+    std::deque<Drama3Frame> codec_queue;
+    bool codec_done = false;
+    bool codec_cancelled = false;
+    std::exception_ptr codec_error;
+    std::thread codec_worker;
+    if (streaming) {
+        runtime::StreamingAudioConfig config;
+        config.frames_per_chunk = codec_batch_frames_;
+        config.frame_width = 10;
+        streaming_audio_.begin(config, [&](const auto & window) {
+            codecs::FishDacCodes codes;
+            codes.codebooks = 10;
+            codes.frames = static_cast<int64_t>(window.new_frames);
+            codes.codes.resize(window.new_frames * 10);
+            for (size_t book = 0; book < 10; ++book) {
+                for (size_t frame = 0; frame < window.new_frames; ++frame) {
+                    codes.codes[book * window.new_frames + frame] = window.data[frame * 10 + book];
+                }
+            }
+            auto audio = codec_->decode_stream(codes);
+            if (window.first_frame == 0) {
+                mark_phase("codec_first_frame_ms");
+                if (profile_first_audio_) {
+                    std::cerr << "[drama3.first_audio] prompt_rows=" << prompt.size();
+                    for (const auto & phase : first_audio_phases) std::cerr << " " << phase.first << "=" << phase.second;
+                    std::cerr << " total_ms=" << std::chrono::duration<double, std::milli>(ProfileClock::now() - profile_start).count() << '\n';
+                }
+            }
+            return audio;
+        }, [&](const runtime::StreamEvent & event) {
+            if (on_audio && event.audio_output) on_audio(*event.audio_output);
+        }, {}, [&] { codec_->reset_decode_stream(); });
+    }
+    auto stop_codec = [&](bool cancel) {
+        if (!codec_worker.joinable()) return;
+        {
+            std::lock_guard<std::mutex> lock(codec_mutex);
+            codec_done = true;
+            codec_cancelled = cancel;
+            if (cancel) codec_queue.clear();
+        }
+        codec_ready.notify_all();
+        codec_worker.join();
+    };
+    struct CodecJoin {
+        decltype(stop_codec) & stop;
+        runtime::StreamingAudioController<int32_t> & stream;
+        ~CodecJoin() { stop(true); stream.reset(); }
+    } codec_join{stop_codec, streaming_audio_};
+    if (streaming && codec_async_decode_) {
+        codec_worker = std::thread([&] {
+            try {
+                for (;;) {
+                    Drama3Frame frame;
+                    {
+                        std::unique_lock<std::mutex> lock(codec_mutex);
+                        codec_ready.wait(lock, [&] { return codec_done || !codec_queue.empty(); });
+                        if (codec_queue.empty()) break;
+                        frame = codec_queue.front();
+                        codec_queue.pop_front();
+                    }
+                    codec_ready.notify_all();
+                    streaming_audio_.push({frame.begin() + 1, frame.end()});
+                }
+                if (!codec_cancelled) result.audio = streaming_audio_.finish();
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(codec_mutex);
+                codec_error = std::current_exception();
+                codec_queue.clear();
+                codec_ready.notify_all();
+            }
+        });
+    }
     for (int64_t step = 0; step < sampling.max_frames; ++step) {
         component_started = ProfileClock::now();
         auto logits = backbone_->lm_head(hidden);
@@ -300,20 +383,15 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         recent.push_back(next[0]);
         if (recent.size() > 16) recent.pop_front();
         if (streaming) {
-            component_started = ProfileClock::now();
-            codecs::FishDacCodes codes;
-            codes.codebooks = 10;
-            codes.frames = 1;
-            codes.codes.assign(next.begin() + 1, next.end());
-            auto chunk = codec_->decode_stream(codes);
-            if (step == 0) mark_phase("codec_first_frame_ms");
-            runtime::append_audio_buffer(result.audio, chunk);
-            if (on_audio) on_audio(chunk);
-            component_ms[8] += debug::elapsed_ms(component_started);
-            if (step == 0 && profile_first_audio_) {
-                std::cerr << "[drama3.first_audio] prompt_rows=" << prompt.size();
-                for (const auto & phase : first_audio_phases) std::cerr << " " << phase.first << "=" << phase.second;
-                std::cerr << " total_ms=" << std::chrono::duration<double, std::milli>(ProfileClock::now() - profile_start).count() << '\n';
+            if (codec_async_decode_) {
+                std::unique_lock<std::mutex> lock(codec_mutex);
+                codec_ready.wait(lock, [&] { return codec_error || codec_queue.size() < 2 * codec_batch_frames_; });
+                if (codec_error) std::rethrow_exception(codec_error);
+                codec_queue.push_back(next);
+                lock.unlock();
+                codec_ready.notify_one();
+            } else {
+                streaming_audio_.push({next.begin() + 1, next.end()});
             }
         }
         if (step + 1 == sampling.max_frames) { result.reached_limit = true; break; }
@@ -326,6 +404,12 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         hidden = decoder->run_embedding_step(embedding);
         if (disk_experts_) prefill.hidden.insert(prefill.hidden.end(), hidden.begin(), hidden.end());
         component_ms[7] += debug::elapsed_ms(component_started);
+    }
+    if (streaming) {
+        stop_codec(false);
+        if (codec_error) std::rethrow_exception(codec_error);
+        if (!codec_async_decode_) result.audio = streaming_audio_.finish();
+        component_ms[8] += streaming_audio_.decode_ms() + streaming_audio_.publish_ms();
     }
     if (output_frames.empty()) throw std::runtime_error("Drama 3 ended before producing an audio frame");
     if (disk_experts_) {
