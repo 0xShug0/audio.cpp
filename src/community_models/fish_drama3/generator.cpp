@@ -6,6 +6,7 @@
 #include "engine/framework/sampling/hf_sampler.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <chrono>
 #include <condition_variable>
@@ -15,10 +16,23 @@
 #include <mutex>
 #include <random>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 namespace engine::models::fish_drama3 {
 namespace {
+
+struct PerfPreset {
+    std::string_view name;
+    bool fused_moe;
+    ggml_type kv_cache_type;
+    int64_t kv_cache_alignment;
+};
+
+constexpr std::array<PerfPreset, 2> kPerfPresets{{
+    {"off", false, GGML_TYPE_F16, 1},
+    {"cuda_perf", true, GGML_TYPE_F16, 256},
+}};
 
 struct SamplerScratch {
     std::vector<int32_t> order;
@@ -93,6 +107,26 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     }
     auto backbone_config = assets_->backbone;
     backbone_config.decode_cache_steps = cache_steps_;
+    const auto perf_mode = runtime::find_option(options.options, {"fish_drama3.perf_mode"}).value_or("off");
+    const auto preset = std::find_if(kPerfPresets.begin(), kPerfPresets.end(),
+        [&](const auto & entry) { return entry.name == perf_mode; });
+    if (preset == kPerfPresets.end()) throw std::runtime_error("Invalid fish_drama3.perf_mode: " + perf_mode);
+    backbone_config.fused_moe = preset->fused_moe;
+    backbone_config.kv_cache_type = preset->kv_cache_type;
+    backbone_config.kv_cache_alignment = preset->kv_cache_alignment;
+    backbone_config.kv_cache_alignment = runtime::parse_positive_i64_option(
+        options.options, {"fish_drama3.kv_cache_alignment"}, backbone_config.kv_cache_alignment);
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.fused_moe"}))
+        backbone_config.fused_moe = runtime::parse_bool_option(*value, "fish_drama3.fused_moe");
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.kv_cache_type"})) {
+        if (*value == "f16") backbone_config.kv_cache_type = GGML_TYPE_F16;
+        else if (*value == "f32") backbone_config.kv_cache_type = GGML_TYPE_F32;
+        else throw std::runtime_error("fish_drama3.kv_cache_type requires f32 or f16");
+    }
+    debug::trace_log_scalar("fish_drama3.perf_mode", perf_mode);
+    debug::trace_log_scalar("fish_drama3.fused_moe", backbone_config.fused_moe);
+    debug::trace_log_scalar("fish_drama3.kv_cache_type", std::string_view(backbone_config.kv_cache_type == GGML_TYPE_F16 ? "f16" : "f32"));
+    debug::trace_log_scalar("fish_drama3.kv_cache_alignment", backbone_config.kv_cache_alignment);
     backbone_config.cpu_expert_layers = runtime::parse_i64_option(options.options, {"fish_drama3.cpu_expert_layers"}).value_or(4);
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.disk_experts"}))
         backbone_config.disk_experts = runtime::parse_bool_option(*value, "fish_drama3.disk_experts");
