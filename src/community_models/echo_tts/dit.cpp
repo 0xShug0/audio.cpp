@@ -462,8 +462,9 @@ private:
         std::vector<float> mask(
             static_cast<size_t>(static_cast<int64_t>(lanes) * sequence_length_ * keys), 0.0F);
         for (int lane = 0; lane < lanes; ++lane) {
-            const bool text_on = lane != 1;              // Joint: lane 0; Independent: lanes 0, 2
-            const bool speaker_on = lane != (lanes - 1); // Joint: lane 0; Independent: lanes 0, 1
+            // Note: logic needs to be correct for both lanes == 1 and lanes == 2/3
+            const bool text_on = lane != 1;
+            const bool speaker_on = lane == 0 || lane != (lanes - 1);
             for (int64_t q = 0; q < sequence_length_; ++q) {
                 float * row = mask.data() +
                               (static_cast<int64_t>(lane) * sequence_length_ + q) * keys;
