@@ -197,9 +197,20 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `ace_step.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared weight storage type. |
 | `ace_step.dit_weight_type` | same as above | inherits `ace_step.weight_type` | DiT override; `f16` is promoted to `bf16`. |
 | `ace_step.planner_weight_type` | same as above | inherits `ace_step.weight_type` | Planner LM override. |
+| `ace_step.planner_prefix_bucketing` | bool | `true` | Bucket planner CFG attention to the valid prefix. Set `false` for full-capacity attention; other optimizations remain enabled. |
 | `ace_step.text_encoder_weight_type` | same as above | inherits `ace_step.weight_type` | Text encoder override. |
 | `ace_step.vae_weight_type` | same as above | inherits `ace_step.weight_type` | VAE override. |
 | `ace_step.mem_saver` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+
+## Planner Performance
+
+Planner decoding reads K/V cache views directly. CFG decoding stores K/V in
+F16 and reuses cached graphs sized to the valid prefix, rounded up to 256
+steps. The complete history remains visible; this is not sliding-window
+attention. Model weights are not converted by these optimizations. Different
+cache precision or attention shapes can change sampled output at a fixed seed.
+Disable prefix bucketing with
+`--session-option ace_step.planner_prefix_bucketing=false`.
 
 ## Weight Adapters
 

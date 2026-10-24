@@ -66,6 +66,7 @@
       {"name": "weight_type", "type": "enum", "preset": "weight_type_full", "description": "Shared weight storage type.", "required": false, "default": "native"},
       {"name": "dit_weight_type", "type": "enum", "preset": "weight_type_full", "description": "DiT override of weight_type; f16 is promoted to bf16.", "required": false},
       {"name": "planner_weight_type", "type": "enum", "preset": "weight_type_full", "description": "Planner override of weight_type.", "required": false},
+      {"name": "planner_prefix_bucketing", "type": "bool", "description": "Bucket planner CFG attention to the valid prefix; false uses full cache capacity.", "required": false, "default": true},
       {"name": "text_encoder_weight_type", "type": "enum", "preset": "weight_type_full", "description": "Text encoder override of weight_type.", "required": false},
       {"name": "vae_weight_type", "type": "enum", "preset": "weight_type_full", "description": "VAE override of weight_type.", "required": false},
       {"name": "mem_saver", "type": "bool", "description": "Release staged graphs and caches between phases; later requests may rebuild them.", "required": false, "default": false}

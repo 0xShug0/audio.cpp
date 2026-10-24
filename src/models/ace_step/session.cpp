@@ -413,9 +413,14 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
 
 void AceStepSession::ensure_planner() {
     if (!planner_) {
+        AceStepQwen3PlannerRuntime::GenerationConfig generation{4096, 512, 4032};
+        generation.prefix_bucketing = runtime::parse_bool_option(
+            runtime::find_option(options().options, {"ace_step.planner_prefix_bucketing"}).value_or("true"),
+            "ace_step.planner_prefix_bucketing");
+        engine::debug::trace_log_scalar("ace_step.planner.prefix_bucketing", generation.prefix_bucketing);
         planner_ = std::make_unique<AceStepQwen3PlannerRuntime>(assets_, execution_context(), planner_weight_storage_type_,
                                                            256ull * 1024ull * 1024ull, 128ull * 1024ull * 1024ull,
-                                                           AceStepQwen3PlannerRuntime::GenerationConfig{4096, 512, 4032});
+                                                           generation);
     }
 }
 

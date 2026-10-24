@@ -90,6 +90,7 @@ runtime::ModelCliInterface cli(const AceStepAssets &) {
         {"ace_step.weight_type", "native|f32|f16|bf16|q8_0", "Shared ACE-Step weight storage type.", false, "native"},
         {"ace_step.dit_weight_type", "native|f32|f16|bf16|q8_0", "DiT override of ace_step.weight_type; f16 is promoted to bf16."},
         {"ace_step.planner_weight_type", "native|f32|f16|bf16|q8_0", "Planner override of ace_step.weight_type."},
+        {"ace_step.planner_prefix_bucketing", "true|false", "Bucket planner CFG attention to the valid prefix; false uses full cache capacity.", false, "true"},
         {"ace_step.text_encoder_weight_type", "native|f32|f16|bf16|q8_0", "Text encoder override of ace_step.weight_type."},
         {"ace_step.vae_weight_type", "native|f32|f16|bf16|q8_0", "VAE override of ace_step.weight_type."},
         {"ace_step.mem_saver", "true|false", "Release staged graphs and caches between phases; later requests may rebuild them. Default false; legacy mem_saver remains accepted.", false, "false"},

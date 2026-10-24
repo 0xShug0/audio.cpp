@@ -5,6 +5,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
@@ -184,41 +185,9 @@ core::TensorValue sdpa_from_planner_grouped_heads(
     const core::TensorValue & v_heads,
     int64_t dim,
     const core::TensorValue & attention_mask) {
-    if (q_heads.shape.rank != 4 || k_heads.shape.rank != 4 || v_heads.shape.rank != 4) {
-        throw std::runtime_error("ACE-Step planner SDPA expects rank-4 Q/K/V tensors");
-    }
-    if (q_heads.shape.dims[0] != k_heads.shape.dims[0] ||
-        q_heads.shape.dims[0] != v_heads.shape.dims[0] ||
-        q_heads.shape.dims[3] != k_heads.shape.dims[3] ||
-        q_heads.shape.dims[3] != v_heads.shape.dims[3]) {
-        throw std::runtime_error("ACE-Step planner SDPA Q/K/V tensor shapes are incompatible");
-    }
-    const int64_t query_heads = q_heads.shape.dims[1];
-    const int64_t key_value_heads = k_heads.shape.dims[1];
-    if (query_heads % key_value_heads != 0) {
-        throw std::runtime_error("ACE-Step planner SDPA requires attention heads divisible by KV heads");
-    }
-    const auto contiguous_k = core::ensure_backend_addressable_layout(ctx, k_heads);
-    const auto contiguous_v = core::ensure_backend_addressable_layout(ctx, v_heads);
-    if (!core::has_backend_addressable_layout(q_heads.tensor) ||
-        !core::has_backend_addressable_layout(contiguous_k.tensor) ||
-        !core::has_backend_addressable_layout(contiguous_v.tensor)) {
-        throw std::runtime_error("ACE-Step planner flash attention expects contiguous Q/K/V heads");
-    }
-    auto * flash = ggml_flash_attn_ext(
-        ctx.ggml,
-        q_heads.tensor,
-        contiguous_k.tensor,
-        contiguous_v.tensor,
-        attention_mask.tensor,
-        1.0F / std::sqrt(static_cast<float>(dim)),
-        0.0F,
-        0.0F);
-    ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
-    return core::wrap_tensor(
-        flash,
-        core::TensorShape::from_dims({q_heads.shape.dims[0], q_heads.shape.dims[2], q_heads.shape.dims[1], dim}),
-        GGML_TYPE_F32);
+    return modules::GroupedQueryAttentionModule({
+        dim, modules::GroupedQueryAttentionLowering::FlashGroupedViewKV, GGML_PREC_F32})
+        .build(ctx, q_heads, k_heads, v_heads, attention_mask);
 }
 
 core::TensorValue ensure_planner_contiguous(
@@ -489,8 +458,6 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_static_cache_tail_batche
     q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
     auto k_heads = modules::TransposeModule({head_axes, cache_key.shape.rank}).build(ctx, cache_key);
     auto v_heads = modules::TransposeModule({head_axes, cache_value.shape.rank}).build(ctx, cache_value);
-    k_heads = core::wrap_tensor(ggml_cont(ctx.ggml, k_heads.tensor), k_heads.shape, k_heads.type);
-    v_heads = core::wrap_tensor(ggml_cont(ctx.ggml, v_heads.tensor), v_heads.shape, v_heads.type);
     auto context = sdpa_from_planner_grouped_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(
@@ -567,10 +534,10 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_compact_cache_batched(
     std::array<int, core::kMaxTensorRank> head_axes = {0, 2, 1, 3};
     auto q_heads = modules::TransposeModule({head_axes, q.shape.rank}).build(ctx, q);
     q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
-    auto k_heads = modules::TransposeModule({head_axes, updated_cache_key.shape.rank}).build(ctx, updated_cache_key);
-    auto v_heads = modules::TransposeModule({head_axes, updated_cache_value.shape.rank}).build(ctx, updated_cache_value);
-    k_heads = core::wrap_tensor(ggml_cont(ctx.ggml, k_heads.tensor), k_heads.shape, k_heads.type);
-    v_heads = core::wrap_tensor(ggml_cont(ctx.ggml, v_heads.tensor), v_heads.shape, v_heads.type);
+    auto key_prefix = modules::SliceModule({1, 0, attention_mask.shape.dims[3]}).build(ctx, updated_cache_key);
+    auto value_prefix = modules::SliceModule({1, 0, attention_mask.shape.dims[3]}).build(ctx, updated_cache_value);
+    auto k_heads = modules::TransposeModule({head_axes, key_prefix.shape.rank}).build(ctx, key_prefix);
+    auto v_heads = modules::TransposeModule({head_axes, value_prefix.shape.rank}).build(ctx, value_prefix);
     auto context = sdpa_from_planner_grouped_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(
@@ -915,7 +882,26 @@ public:
         }
     }
 
-    int32_t sample(float temperature, std::mt19937 & rng) {
+    int32_t sample(float temperature, std::mt19937 & rng, int64_t top_k, float top_p) {
+        if (!(temperature > 0.0F)) {
+            int32_t best = -1;
+            float best_value = -std::numeric_limits<float>::infinity();
+            bool tied = false;
+            for (size_t i = 0; i < values_.size(); ++i) {
+                if (!std::isfinite(values_[i])) continue;
+                if (best < 0 || values_[i] > best_value) {
+                    best = candidate_token_ids_[i];
+                    best_value = values_[i];
+                    tied = false;
+                } else if (values_[i] == best_value) {
+                    tied = true;
+                }
+            }
+            // Both filters retain a unique maximum; ties retain their original filtering order.
+            if (best >= 0 && !tied) return best;
+        }
+        apply_top_k_filter(top_k);
+        apply_top_p_filter(top_p);
         if (!(temperature > 0.0F)) {
             int32_t best = -1;
             float best_value = -std::numeric_limits<float>::infinity();
@@ -2383,9 +2369,12 @@ public:
     Qwen3PlannerCfgDecodeGraph(
         std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime,
         int64_t cache_steps,
-        size_t graph_arena_bytes)
+        size_t graph_arena_bytes,
+        bool prefix_bucketing)
         : runtime_(std::move(runtime)),
           cache_steps_(cache_steps),
+          graph_arena_bytes_(graph_arena_bytes),
+          prefix_bucketing_(prefix_bucketing),
           activation_type_(planner_phase2_activation_type(runtime_->backend_type())) {
         if (cache_steps_ <= 0) {
             throw std::runtime_error("ACE-Step planner CFG decode requires positive cache length");
@@ -2401,76 +2390,33 @@ public:
 
         core::ModuleBuildContext ctx{ctx_.get(), "ace_step.planner.cfg_decode", runtime_->backend_type()};
         token_ids_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 2);
-        auto token_ids = core::wrap_tensor(token_ids_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
-        auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
-                     .build(ctx, token_ids, weights.token_embedding);
-        x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({2, 1, config.hidden_size}));
-        x = cast_planner_activation(ctx, x, activation_type_);
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 2);
-        auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
         cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 2);
-        auto cache_slot = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
         attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, 2);
-        auto attention_mask = core::wrap_tensor(
-            attention_mask_,
-            core::TensorShape::from_dims({2, 1, 1, cache_steps_}),
-            GGML_TYPE_F16);
 
-        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
-        for (const auto & layer : weights.layers.layers) {
+        for (size_t i = 0; i < weights.layers.layers.size(); ++i) {
             auto cache_key = core::make_tensor(
                 ctx,
-                GGML_TYPE_F32,
+                GGML_TYPE_F16,
                 core::TensorShape::from_dims({2, cache_steps_, config.num_key_value_heads, config.head_dim}));
             auto cache_value = core::make_tensor(
                 ctx,
-                GGML_TYPE_F32,
+                GGML_TYPE_F16,
                 core::TensorShape::from_dims({2, cache_steps_, config.num_key_value_heads, config.head_dim}));
             cache_keys_.push_back(cache_key);
             cache_values_.push_back(cache_value);
-            auto out = planner_decoder_layer_with_compact_cache_batched(
-                ctx,
-                x,
-                positions,
-                layer,
-                config,
-                cache_key,
-                cache_value,
-                cache_slot,
-                attention_mask,
-                activation_type_);
-            x = out.output;
         }
-
-        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
-                .build(ctx, x, {weights.norm, std::nullopt});
-        x = cast_planner_activation(ctx, x, activation_type_);
-        auto logits = modules::LinearModule({config.hidden_size, config.vocab_size, false})
-                          .build(ctx, x, {weights.lm_head, std::nullopt});
-        auto conditional_logits = ensure_planner_contiguous(
-            ctx,
-            modules::SliceModule({0, 0, 1}).build(ctx, logits));
-        auto unconditional_logits = ensure_planner_contiguous(
-            ctx,
-            modules::SliceModule({0, 1, 1}).build(ctx, logits));
-        logits_cond_ = conditional_logits.tensor;
-        logits_uncond_ = unconditional_logits.tensor;
-        ggml_set_output(logits_cond_);
-        ggml_set_output(logits_uncond_);
-        ggml_build_forward_expand(graph_, logits_cond_);
-        ggml_build_forward_expand(graph_, logits_uncond_);
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
         if (buffer_ == nullptr) {
-            throw std::runtime_error("failed to allocate ACE-Step planner CFG decode graph");
+            throw std::runtime_error("failed to allocate ACE-Step planner CFG decode state");
         }
-
         attention_mask_values_.assign(
             static_cast<size_t>(2 * cache_steps_),
             ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
     }
 
     ~Qwen3PlannerCfgDecodeGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        buckets_.clear();
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
@@ -2510,8 +2456,8 @@ public:
                 source.value.begin() + static_cast<std::ptrdiff_t>(branch_values),
                 source.value.end(),
                 cache_value_values.begin() + static_cast<std::ptrdiff_t>(uncond_offset));
-            core::write_tensor_f32(cache_keys_[layer], cache_key_values);
-            core::write_tensor_f32(cache_values_[layer], cache_value_values);
+            core::write_tensor_f16(cache_keys_[layer], cache_key_values);
+            core::write_tensor_f16(cache_values_[layer], cache_value_values);
         }
     }
 
@@ -2578,7 +2524,10 @@ public:
             attention_mask_values_.size() * sizeof(ggml_fp16_t));
 
         core::set_backend_threads(runtime_->backend(), runtime_->threads());
-        const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
+        const int64_t attention_steps = prefix_bucketing_
+            ? std::min(cache_steps_, ((current_end_ / 256) + 1) * 256) : cache_steps_;
+        auto & bucket = decode_bucket(attention_steps);
+        const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), bucket.graph);
         ggml_backend_synchronize(runtime_->backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ACE-Step planner CFG decode graph compute failed");
@@ -2591,12 +2540,12 @@ public:
         conditional_logits.resize(vocab_size);
         unconditional_logits.resize(vocab_size);
         ggml_backend_tensor_get(
-            logits_cond_,
+            bucket.conditional,
             conditional_logits.data(),
             0,
             conditional_logits.size() * sizeof(float));
         ggml_backend_tensor_get(
-            logits_uncond_,
+            bucket.unconditional,
             unconditional_logits.data(),
             0,
             unconditional_logits.size() * sizeof(float));
@@ -2634,8 +2583,67 @@ public:
     }
 
 private:
+    struct DecodeBucket {
+        std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
+        std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator{nullptr, ggml_gallocr_free};
+        ggml_backend_t backend = nullptr;
+        int64_t steps = 0;
+        ggml_cgraph * graph = nullptr;
+        ggml_tensor * conditional = nullptr;
+        ggml_tensor * unconditional = nullptr;
+        ~DecodeBucket() { core::release_backend_graph_resources(backend, graph); }
+    };
+
+    DecodeBucket & decode_bucket(int64_t steps) {
+        for (const auto & bucket : buckets_) {
+            if (bucket->steps == steps) return *bucket;
+        }
+        auto bucket = std::make_unique<DecodeBucket>();
+        bucket->backend = runtime_->backend();
+        bucket->steps = steps;
+        bucket->ctx.reset(ggml_init({graph_arena_bytes_, nullptr, true}));
+        if (!bucket->ctx) throw std::runtime_error("failed to initialize ACE-Step planner CFG bucket context");
+        core::ModuleBuildContext ctx{bucket->ctx.get(), "ace_step.planner.cfg_decode", runtime_->backend_type()};
+        const auto & config = runtime_->assets().config.planner;
+        const auto & weights = runtime_->weights();
+        auto token_ids = core::wrap_tensor(token_ids_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
+        auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
+                     .build(ctx, token_ids, weights.token_embedding);
+        x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({2, 1, config.hidden_size}));
+        x = cast_planner_activation(ctx, x, activation_type_);
+        auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
+        auto cache_slot = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
+        auto full_mask = core::wrap_tensor(attention_mask_, core::TensorShape::from_dims({2, 1, 1, cache_steps_}), GGML_TYPE_F16);
+        auto mask = ensure_planner_contiguous(ctx, modules::SliceModule({3, 0, steps}).build(ctx, full_mask));
+        for (size_t i = 0; i < weights.layers.layers.size(); ++i) {
+            x = planner_decoder_layer_with_compact_cache_batched(
+                ctx, x, positions, weights.layers.layers[i], config,
+                cache_keys_[i], cache_values_[i], cache_slot, mask, activation_type_).output;
+        }
+        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
+                .build(ctx, x, {weights.norm, std::nullopt});
+        x = cast_planner_activation(ctx, x, activation_type_);
+        auto logits = modules::LinearModule({config.hidden_size, config.vocab_size, false})
+                          .build(ctx, x, {weights.lm_head, std::nullopt});
+        bucket->conditional = ensure_planner_contiguous(ctx, modules::SliceModule({0, 0, 1}).build(ctx, logits)).tensor;
+        bucket->unconditional = ensure_planner_contiguous(ctx, modules::SliceModule({0, 1, 1}).build(ctx, logits)).tensor;
+        bucket->graph = ggml_new_graph_custom(bucket->ctx.get(), 65536, false);
+        ggml_set_output(bucket->conditional);
+        ggml_set_output(bucket->unconditional);
+        ggml_build_forward_expand(bucket->graph, bucket->conditional);
+        ggml_build_forward_expand(bucket->graph, bucket->unconditional);
+        bucket->allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
+        if (!bucket->allocator || !ggml_gallocr_alloc_graph(bucket->allocator.get(), bucket->graph)) {
+            throw std::runtime_error("failed to allocate ACE-Step planner CFG bucket scratch");
+        }
+        buckets_.push_back(std::move(bucket));
+        return *buckets_.back();
+    }
+
     std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime_;
     int64_t cache_steps_ = 0;
+    size_t graph_arena_bytes_ = 0;
+    bool prefix_bucketing_ = true;
     int64_t current_end_ = 0;
     int64_t valid_steps_ = 0;
     ggml_type activation_type_ = GGML_TYPE_F32;
@@ -2644,12 +2652,10 @@ private:
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * cache_slot_ = nullptr;
     ggml_tensor * attention_mask_ = nullptr;
-    ggml_tensor * logits_cond_ = nullptr;
-    ggml_tensor * logits_uncond_ = nullptr;
     std::vector<core::TensorValue> cache_keys_;
     std::vector<core::TensorValue> cache_values_;
+    std::vector<std::unique_ptr<DecodeBucket>> buckets_;
     std::vector<ggml_fp16_t> attention_mask_values_;
-    ggml_cgraph * graph_ = nullptr;
     ggml_backend_buffer_t buffer_ = nullptr;
 };
 
@@ -2947,7 +2953,8 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
             const auto cfg_prefill_run_start = Clock::now();
             CfgPrefillOutput cfg_prefill;
             if (use_metal_prompt_step_cfg_prefill) {
-                Qwen3PlannerCfgDecodeGraph prompt_graph(weights_runtime_, cfg_required_cache_steps, decode_graph_arena_bytes_);
+                Qwen3PlannerCfgDecodeGraph prompt_graph(
+                    weights_runtime_, cfg_required_cache_steps, decode_graph_arena_bytes_, generation_.prefix_bucketing);
                 cfg_prefill = run_cfg_decode_graph_prompt_prefill(
                     prompt_graph,
                     conditional_prompt.tokenized_prompt,
@@ -2970,7 +2977,8 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
                 cfg_decode_graph_ = std::make_unique<Qwen3PlannerCfgDecodeGraph>(
                     weights_runtime_,
                     cfg_required_cache_steps,
-                    decode_graph_arena_bytes_);
+                    decode_graph_arena_bytes_,
+                    generation_.prefix_bucketing);
             }
             cfg_decode_graph_->initialize(cfg_prefill);
             engine::debug::timing_log_scalar(
@@ -3004,9 +3012,9 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
             phase2_sampler.apply_repetition_penalty(
                 conditional_history,
                 request.generation.lm_repetition_penalty);
-            phase2_sampler.apply_top_k_filter(request.generation.lm_top_k);
-            phase2_sampler.apply_top_p_filter(request.generation.lm_top_p);
-            const int32_t token = phase2_sampler.sample(request.generation.lm_temperature, rng);
+            const int32_t token = phase2_sampler.sample(
+                request.generation.lm_temperature, rng,
+                request.generation.lm_top_k, request.generation.lm_top_p);
             generated.push_back(token);
             conditional_history.push_back(token);
             phase2_processor.update_state(token);

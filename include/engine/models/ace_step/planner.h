@@ -42,6 +42,7 @@ public:
         int64_t max_prompt_tokens = 4096;
         int64_t max_cot_tokens = 512;
         int64_t max_code_tokens = 4032;
+        bool prefix_bucketing = true;
     };
 
     AceStepQwen3PlannerRuntime(
