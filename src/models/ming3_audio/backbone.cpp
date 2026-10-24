@@ -5,9 +5,11 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/positional_modules.h"
+#include "engine/framework/modules/packed_linear_weights.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
+#include "engine/framework/runtime/kv_cache.h"
 
 #include <algorithm>
 #include <cmath>
@@ -62,17 +64,19 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
         } else {
             auto & a = w.kda;
             const int64_t width = c.heads * c.head_dim;
+            a.input_proj = modules::PackedLinearWeightsBuilder({c.hidden_size, {
+                {attn + ".q_proj.weight", std::nullopt, width},
+                {attn + ".k_proj.weight", std::nullopt, width},
+                {attn + ".v_proj.weight", std::nullopt, width},
+                {attn + ".f_proj.weight", std::nullopt, width},
+                {attn + ".g_proj.weight", std::nullopt, width},
+                {attn + ".b_proj.weight", std::nullopt, c.heads}}, false, true}).build(store, source, native);
             const std::array<std::string, 3> names = {"q", "k", "v"};
             for (size_t i = 0; i < names.size(); ++i) {
-                a.qkv[i] = binding::linear_from_source(store, source, attn + "." + names[i] + "_proj", native,
-                    width, c.hidden_size, false);
                 a.conv[i] = store.load_tensor_as_shape(source, attn + "." + names[i] + "_conv1d.weight",
                     assets::TensorStorageType::F32, {width, 1, c.conv_kernel_size},
                     core::TensorShape::from_dims({width, c.conv_kernel_size}));
             }
-            a.decay = binding::linear_from_source(store, source, attn + ".f_proj", native, width, c.hidden_size, false);
-            a.beta = binding::linear_from_source(store, source, attn + ".b_proj", native, c.heads, c.hidden_size, false);
-            a.gate = binding::linear_from_source(store, source, attn + ".g_proj", native, width, c.hidden_size, false);
             a.output = binding::linear_from_source(store, source, attn + ".o_proj", native, c.hidden_size, width, false);
             a.a_log = store.load_f32_tensor(source, attn + ".A_log", {c.heads});
             a.dt_bias = store.load_f32_tensor(source, attn + ".dt_bias", {width});
@@ -81,9 +85,10 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
         const bool routed = layer >= c.dense_layers;
         const auto dense = prefix + (routed ? ".mlp.shared_experts" : ".mlp");
         const auto middle = routed ? c.shared_intermediate_size : c.intermediate_size;
-        w.dense.gate_proj = binding::linear_from_source(store, source, dense + ".gate_proj", native, middle, c.hidden_size, false);
-        w.dense.up_proj = binding::linear_from_source(store, source, dense + ".up_proj", native, middle, c.hidden_size, false);
-        w.dense.down_proj = binding::linear_from_source(store, source, dense + ".down_proj", native, c.hidden_size, middle, false);
+        w.mlp_gate_up = modules::PackedLinearWeightsBuilder({c.hidden_size, {
+            {dense + ".gate_proj.weight", std::nullopt, middle},
+            {dense + ".up_proj.weight", std::nullopt, middle}}, false, true}).build(store, source, native);
+        w.mlp_down = binding::linear_from_source(store, source, dense + ".down_proj", native, c.hidden_size, middle, false);
         if (routed) {
             w.router = store.load_f32_tensor(source, prefix + ".mlp.gate.weight", {c.experts, c.hidden_size});
             auto bias = source.require_f32(prefix + ".mlp.gate.expert_bias", {c.experts});
@@ -123,13 +128,15 @@ KdaOutput build_kda(core::ModuleBuildContext & ctx, const core::TensorValue & in
     const int64_t steps = input.shape.dims[1];
     const int64_t width = c.heads * c.head_dim;
     KdaOutput result;
+    const auto projected = modules::LinearModule({c.hidden_size, 5 * width + c.heads, false})
+        .build(ctx, input, w.input_proj);
     std::array<ggml_tensor *, 3> qkv;
     for (size_t i = 0; i < qkv.size(); ++i) {
-        auto projected = modules::LinearModule({c.hidden_size, width, false}).build(ctx, input, w.qkv[i]);
-        projected = modules::Bf16RoundModule{}.build(ctx, projected);
-        projected = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, projected);
-        projected = core::ensure_backend_addressable_layout(ctx, projected);
-        const auto padded = modules::ConcatModule({2}).build(ctx, tails[i], projected);
+        auto part = modules::SliceModule({2, static_cast<int64_t>(i) * width, width}).build(ctx, projected);
+        part = modules::Bf16RoundModule{}.build(ctx, part);
+        part = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, part);
+        part = core::ensure_backend_addressable_layout(ctx, part);
+        const auto padded = modules::ConcatModule({2}).build(ctx, tails[i], part);
         auto * convolved = ggml_ssm_conv(ctx.ggml, padded.tensor, w.conv[i].tensor);
         auto conv = core::wrap_tensor(convolved, core::TensorShape::from_dims({1, steps, width}));
         conv = modules::SiluModule{}.build(ctx, conv);
@@ -142,14 +149,14 @@ KdaOutput build_kda(core::ModuleBuildContext & ctx, const core::TensorValue & in
     const float normalization_scale = 1.0f / std::sqrt(static_cast<float>(c.head_dim));
     auto * query = ggml_scale(ctx.ggml, ggml_rms_norm(ctx.ggml, qkv[0], 1e-6f / c.head_dim), normalization_scale);
     auto * key = ggml_scale(ctx.ggml, ggml_rms_norm(ctx.ggml, qkv[1], 1e-6f / c.head_dim), normalization_scale);
-    auto decay = modules::LinearModule({c.hidden_size, width, false}).build(ctx, input, w.decay);
-    decay = modules::Bf16RoundModule{}.build(ctx, decay);
+    const auto decay = modules::Bf16RoundModule{}.build(ctx,
+        modules::SliceModule({2, 3 * width, width}).build(ctx, projected));
     auto * g = ggml_add(ctx.ggml, decay.tensor, w.dt_bias.tensor);
     g = ggml_reshape_4d(ctx.ggml, g, c.head_dim, c.heads, steps, 1);
     auto * a = ggml_reshape_4d(ctx.ggml, ggml_exp(ctx.ggml, w.a_log.tensor), 1, c.heads, 1, 1);
     g = ggml_scale(ctx.ggml, ggml_sigmoid(ctx.ggml, ggml_mul(ctx.ggml, g, a)), c.kda_lower_bound);
-    auto beta = modules::LinearModule({c.hidden_size, c.heads, false}).build(ctx, input, w.beta);
-    beta = modules::Bf16RoundModule{}.build(ctx, beta);
+    const auto beta = modules::Bf16RoundModule{}.build(ctx,
+        modules::SliceModule({2, 5 * width, c.heads}).build(ctx, projected));
     auto * b = ggml_reshape_4d(ctx.ggml, ggml_sigmoid(ctx.ggml, beta.tensor), 1, c.heads, steps, 1);
     auto * delta = ggml_gated_delta_net(ctx.ggml, query, key, qkv[2], g, b, state.tensor);
     auto * output = ggml_view_2d(ctx.ggml, delta, width, steps, width * sizeof(float), 0);
@@ -157,8 +164,8 @@ KdaOutput build_kda(core::ModuleBuildContext & ctx, const core::TensorValue & in
         core::TensorShape::from_dims({steps * c.heads, c.head_dim}));
     hidden = modules::Bf16RoundModule{}.build(ctx, hidden);
     hidden = modules::RMSNormModule({c.head_dim, c.rms_norm_eps, true, false}).build(ctx, hidden, w.norm);
-    auto gate = modules::LinearModule({c.hidden_size, width, false}).build(ctx, input, w.gate);
-    gate = modules::Bf16RoundModule{}.build(ctx, gate);
+    const auto gate = modules::Bf16RoundModule{}.build(ctx,
+        modules::SliceModule({2, 4 * width, width}).build(ctx, projected));
     auto * gated = ggml_mul(ctx.ggml, hidden.tensor,
         ggml_reshape_2d(ctx.ggml, ggml_sigmoid(ctx.ggml, gate.tensor), c.head_dim, steps * c.heads));
     hidden = modules::Bf16RoundModule{}.build(ctx, core::wrap_tensor(gated, hidden.shape));
@@ -176,7 +183,7 @@ core::TensorValue build_mla(core::ModuleBuildContext & ctx, const core::TensorVa
                             const core::TensorValue & key_cache, const core::TensorValue & value_cache,
                             const MlaWeights & w, const ThinkerConfig & c) {
     const auto steps = input.shape.dims[1];
-    const auto capacity = key_cache.tensor->ne[1];
+    const auto capacity = attention_mask.shape.dims[3];
     const auto query_dim = c.qk_nope_dim + c.qk_rope_dim;
     modules::NormConfig query_norm{c.query_rank, c.rms_norm_eps, true, false};
     query_norm.normalized_round_type = GGML_TYPE_BF16;
@@ -217,10 +224,14 @@ core::TensorValue build_mla(core::ModuleBuildContext & ctx, const core::TensorVa
         ggml_reshape_2d(ctx.ggml, key.tensor, c.heads * query_dim, steps), positions.tensor);
     auto * values = ggml_set_rows(ctx.ggml, value_cache.tensor,
         ggml_reshape_2d(ctx.ggml, value.tensor, c.heads * c.value_dim, steps), positions.tensor);
+    if (capacity < key_cache.tensor->ne[1]) {
+        keys = ggml_view_2d(ctx.ggml, keys, keys->ne[0], capacity, keys->nb[1], 0);
+        values = ggml_view_2d(ctx.ggml, values, values->ne[0], capacity, values->nb[1], 0);
+    }
     auto cached_key = core::wrap_tensor(ggml_reshape_4d(ctx.ggml, keys, query_dim, c.heads, capacity, 1),
-        core::TensorShape::from_dims({1, capacity, c.heads, query_dim}));
+        core::TensorShape::from_dims({1, capacity, c.heads, query_dim}), key_cache.type);
     auto cached_value = core::wrap_tensor(ggml_reshape_4d(ctx.ggml, values, c.value_dim, c.heads, capacity, 1),
-        core::TensorShape::from_dims({1, capacity, c.heads, c.value_dim}));
+        core::TensorShape::from_dims({1, capacity, c.heads, c.value_dim}), value_cache.type);
     auto query_heads = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, query);
     auto key_heads = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, cached_key);
     auto value_heads = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, cached_value);
@@ -244,14 +255,15 @@ namespace {
 core::TensorValue build_shared_mlp(core::ModuleBuildContext & ctx, const core::TensorValue & input,
                                   const ThinkerLayerWeights & w, const ThinkerConfig & c, bool routed) {
     const int64_t middle = routed ? c.shared_intermediate_size : c.intermediate_size;
-    auto gate = modules::LinearModule({c.hidden_size, middle, false}).build(ctx, input, w.dense.gate_proj);
-    auto up = modules::LinearModule({c.hidden_size, middle, false}).build(ctx, input, w.dense.up_proj);
-    gate = modules::Bf16RoundModule{}.build(ctx, gate);
-    up = modules::Bf16RoundModule{}.build(ctx, up);
+    const auto projected = modules::LinearModule({c.hidden_size, 2 * middle, false}).build(ctx, input, w.mlp_gate_up);
+    auto gate = modules::Bf16RoundModule{}.build(ctx,
+        modules::SliceModule({2, 0, middle}).build(ctx, projected));
+    const auto up = modules::Bf16RoundModule{}.build(ctx,
+        modules::SliceModule({2, middle, middle}).build(ctx, projected));
     gate = modules::Bf16RoundModule{}.build(ctx, modules::SiluModule{}.build(ctx, gate));
     gate = modules::Bf16RoundModule{}.build(ctx, modules::MulModule{}.build(ctx, gate, up));
     return modules::Bf16RoundModule{}.build(ctx,
-        modules::LinearModule({middle, c.hidden_size, false}).build(ctx, gate, w.dense.down_proj));
+        modules::LinearModule({middle, c.hidden_size, false}).build(ctx, gate, w.mlp_down));
 }
 
 struct MoeRouting {
@@ -635,6 +647,7 @@ struct Thinker::Impl {
     }
 
     void reserve(int64_t requested, bool preserve = false) {
+        if (execution.backend_type() == core::BackendType::Cuda) requested = ((requested + 255) / 256) * 256;
         if (requested == capacity || (!options.disk_experts && requested < capacity)) return;
         const auto previous_steps = valid_steps;
         auto previous_context = std::move(state_context);
@@ -658,9 +671,9 @@ struct Thinker::Impl {
             const bool mla = (layer + 1) % c.attention_interval == 0 ||
                 layer >= c.layers / c.attention_interval * c.attention_interval;
             if (mla) {
-                state.key = core::make_tensor(ctx, GGML_TYPE_F32,
+                state.key = core::make_tensor(ctx, GGML_TYPE_F16,
                     core::TensorShape::from_dims({capacity, c.heads * (c.qk_nope_dim + c.qk_rope_dim)}));
-                state.value = core::make_tensor(ctx, GGML_TYPE_F32,
+                state.value = core::make_tensor(ctx, GGML_TYPE_F16,
                     core::TensorShape::from_dims({capacity, c.heads * c.value_dim}));
             } else {
                 for (auto & tail : state.tails) tail = core::make_tensor(ctx, GGML_TYPE_F32,
@@ -705,7 +718,7 @@ struct Thinker::Impl {
         offload_prefill.reset();
         offload_allocator.reset();
         prefill_graph.reset();
-        step_graph.reset();
+        step_graphs.clear();
         states.clear();
         if (state_buffer) ggml_backend_buffer_free(state_buffer);
         state_buffer = nullptr;
@@ -724,7 +737,7 @@ struct Thinker::Impl {
         valid_steps = 0;
     }
 
-    std::unique_ptr<Graph> build(int64_t steps, int64_t audio_steps) {
+    std::unique_ptr<Graph> build(int64_t steps, int64_t audio_steps, int64_t attention_steps) {
         const auto & c = config;
         auto result = std::make_unique<Graph>(execution.backend());
         constexpr size_t nodes = 32768;
@@ -737,7 +750,7 @@ struct Thinker::Impl {
         result->graph = ggml_new_graph_custom(ctx.ggml, nodes, false);
         result->ids = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
         result->positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
-        result->mask = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, capacity}));
+        result->mask = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, attention_steps}));
         ggml_set_input(result->ids.tensor);
         ggml_set_input(result->positions.tensor);
         ggml_set_input(result->mask.tensor);
@@ -852,16 +865,20 @@ struct Thinker::Impl {
             valid_steps += steps;
             return result;
         }
-        auto & cached = steps == 1 && indices.empty() ? step_graph : prefill_graph;
+        const bool decode = steps == 1 && indices.empty();
+        const auto attention_steps = decode && execution.backend_type() == core::BackendType::Cuda
+            ? std::min(capacity, runtime::bucketed_cache_steps(valid_steps + 1, capacity, 0, 256))
+            : capacity;
+        auto & cached = decode ? step_graphs[attention_steps] : prefill_graph;
         if (!cached || cached->steps != steps || cached->audio_steps != static_cast<int64_t>(indices.size())) {
             cached.reset();
-            cached = build(steps, indices.size());
+            cached = build(steps, indices.size(), attention_steps);
         }
         std::vector<int32_t> positions(steps);
-        std::vector<float> mask(steps * capacity, -std::numeric_limits<float>::infinity());
+        std::vector<float> mask(steps * attention_steps, -std::numeric_limits<float>::infinity());
         for (int64_t i = 0; i < steps; ++i) {
             positions[i] = static_cast<int32_t>(valid_steps + i);
-            std::fill_n(mask.begin() + i * capacity, valid_steps + i + 1, 0.0f);
+            std::fill_n(mask.begin() + i * attention_steps, valid_steps + i + 1, 0.0f);
         }
         core::write_tensor_i32(cached->ids, ids);
         core::write_tensor_i32(cached->positions, positions);
@@ -893,7 +910,7 @@ struct Thinker::Impl {
     std::vector<State> states;
     int64_t valid_steps = 0;
     std::unique_ptr<Graph> prefill_graph;
-    std::unique_ptr<Graph> step_graph;
+    std::map<int64_t, std::unique_ptr<Graph>> step_graphs;
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, decltype(&ggml_gallocr_free)>
         offload_allocator{nullptr, ggml_gallocr_free};
     std::unique_ptr<OffloadPrefill> offload_prefill, offload_tail;
