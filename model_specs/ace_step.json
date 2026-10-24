@@ -65,6 +65,7 @@
       {"name": "lora_scale", "type": "float", "description": "Adapter strength multiplied by its metadata scale; zero disables the adapter.", "required": false, "default": 1.0},
       {"name": "weight_type", "type": "enum", "preset": "weight_type_full", "description": "Shared weight storage type.", "required": false, "default": "native"},
       {"name": "dit_weight_type", "type": "enum", "preset": "weight_type_full", "description": "DiT override of weight_type; f16 is promoted to bf16.", "required": false},
+      {"name": "dit_attention", "type": "enum", "values": ["auto", "eager", "flash"], "description": "DiT attention; auto selects flash on supported GPUs and eager on CPU.", "required": false, "default": "auto"},
       {"name": "planner_weight_type", "type": "enum", "preset": "weight_type_full", "description": "Planner override of weight_type.", "required": false},
       {"name": "planner_prefix_bucketing", "type": "bool", "description": "Bucket planner CFG attention to the valid prefix; false uses full cache capacity.", "required": false, "default": true},
       {"name": "text_encoder_weight_type", "type": "enum", "preset": "weight_type_full", "description": "Text encoder override of weight_type.", "required": false},

@@ -436,7 +436,11 @@ void AceStepSession::ensure_pre_dit() {
 void AceStepSession::ensure_diffusion() {
     ensure_dit_weights_runtime();
     if (!diffusion_) {
-        diffusion_ = std::make_unique<AceStepDiffusionRuntime>(assets_, execution_context(), dit_weights_runtime_);
+        const auto attention = core::parse_attention_preference(
+            runtime::find_option(options().options, {"ace_step.dit_attention"}).value_or("auto"),
+            "ace_step.dit_attention");
+        diffusion_ = std::make_unique<AceStepDiffusionRuntime>(
+            assets_, execution_context(), dit_weights_runtime_, 256ull * 1024ull * 1024ull, attention);
     }
 }
 

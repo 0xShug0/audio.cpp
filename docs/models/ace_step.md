@@ -196,11 +196,23 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `ace_step.lora_scale` | finite float | `1.0` | Adapter strength multiplied by metadata scaling; zero disables it. |
 | `ace_step.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared weight storage type. |
 | `ace_step.dit_weight_type` | same as above | inherits `ace_step.weight_type` | DiT override; `f16` is promoted to `bf16`. |
+| `ace_step.dit_attention` | `auto`, `eager`, `flash` | `auto` | DiT attention implementation. Auto selects flash on supported GPUs and eager on CPU. |
 | `ace_step.planner_weight_type` | same as above | inherits `ace_step.weight_type` | Planner LM override. |
 | `ace_step.planner_prefix_bucketing` | bool | `true` | Bucket planner CFG attention to the valid prefix. Set `false` for full-capacity attention; other optimizations remain enabled. |
 | `ace_step.text_encoder_weight_type` | same as above | inherits `ace_step.weight_type` | Text encoder override. |
 | `ace_step.vae_weight_type` | same as above | inherits `ace_step.weight_type` | VAE override. |
 | `ace_step.mem_saver` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+
+## DiT Performance
+
+Static conditioning, attention masks and cross-attention K/V stay resident
+during a diffusion pass and refresh when conditioning changes. They are not
+rebuilt and uploaded at every solver step.
+
+`ace_step.dit_attention=auto` uses flash attention on supported GPUs and eager
+attention on CPU. Set it to `eager` to retain the previous attention lowering.
+Flash preserves the model's full/sliding masks and F32 accumulation, but can
+change floating-point results. This option does not convert model weights.
 
 ## Planner Performance
 

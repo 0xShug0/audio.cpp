@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/core/attention_fallback.h"
 #include "engine/models/ace_step/assets.h"
 #include "engine/models/ace_step/dit_weights_runtime.h"
 #include "engine/models/ace_step/types.h"
@@ -15,7 +16,8 @@ public:
         std::shared_ptr<const AceStepAssets> assets,
         core::ExecutionContext & execution,
         std::shared_ptr<const AceStepDitWeightsRuntime> dit_weights_runtime,
-        size_t graph_arena_bytes = 256ull * 1024ull * 1024ull);
+        size_t graph_arena_bytes = 256ull * 1024ull * 1024ull,
+        core::AttentionPreference attention = core::AttentionPreference::Auto);
     ~AceStepDiffusionRuntime();
 
     AceStepLatents generate_latents(
