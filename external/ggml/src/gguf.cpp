@@ -287,6 +287,13 @@ struct gguf_reader {
             }
         }
         dst.resize(n);
+        if constexpr (!std::is_same<T, bool>::value && !std::is_same<T, std::string>::value) {
+            // plain numeric arrays: one bulk read instead of one fread per element
+            const size_t nbytes = n * sizeof(T);
+            const size_t nread = fread(dst.data(), 1, nbytes, file);
+            nbytes_remain -= nread;
+            return nread == nbytes;
+        }
         for (size_t i = 0; i < dst.size(); ++i) {
             if constexpr (std::is_same<T, bool>::value) {
                 bool tmp;
