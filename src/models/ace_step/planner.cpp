@@ -2764,8 +2764,8 @@ public:
         out.valid_steps = valid_steps_;
         out.layers.resize(cache_keys_.size());
         for (size_t layer = 0; layer < cache_keys_.size(); ++layer) {
-            const auto key_values = core::read_tensor_f32(cache_keys_[layer].tensor);
-            const auto value_values = core::read_tensor_f32(cache_values_[layer].tensor);
+            const auto key_values = core::read_tensor_f16(cache_keys_[layer].tensor);
+            const auto value_values = core::read_tensor_f16(cache_values_[layer].tensor);
             auto & target = out.layers[layer];
             target.key.reserve(2 * branch_values);
             target.value.reserve(2 * branch_values);
@@ -3300,7 +3300,9 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
                     lm_cfg_scale,
                     step == 0 ? 0 : assets_->config.planner.eos_token_id);
             } else {
-                phase2_sampler.write_branch_logits(conditional_logits, step == 0 ? 0 : assets_->config.planner.eos_token_id);
+                const bool full_head = step == 0 && weights_runtime_->backend_type() != core::BackendType::Metal;
+                phase2_sampler.write_branch_logits(
+                    conditional_logits, full_head ? 0 : assets_->config.planner.eos_token_id);
             }
             phase2_sampler.apply_duration_constraint(
                 static_cast<int64_t>(generated.size()),
