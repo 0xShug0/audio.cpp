@@ -10,6 +10,8 @@
 #include "engine/models/ace_step/request_parser.h"
 #include "engine/models/ace_step/task_route.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <sstream>
 #include <stdexcept>
@@ -22,6 +24,34 @@ namespace engine::models::ace_step {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+struct PerfPreset {
+    std::string_view name;
+    AceStepVAEDecodeConfig vae_decode;
+};
+
+constexpr std::array<PerfPreset, 2> kPerfPresets{{
+    {"off", {}},
+    {"cuda_perf", {1024, 64}},
+}};
+
+AceStepVAEDecodeConfig vae_decode_config_from_options(const runtime::SessionOptions & options) {
+    const auto name = runtime::find_option(options.options, {"ace_step.perf_mode"}).value_or("off");
+    const auto preset = std::find_if(kPerfPresets.begin(), kPerfPresets.end(),
+        [&](const auto & entry) { return entry.name == name; });
+    if (preset == kPerfPresets.end()) {
+        throw std::runtime_error("Invalid ace_step.perf_mode: " + name);
+    }
+    auto config = preset->vae_decode;
+    if (const auto value = runtime::parse_i64_option(options.options, {"ace_step.vae_tile_frames"})) {
+        config.tile_frames = *value;
+    }
+    if (const auto value = runtime::parse_i64_option(options.options, {"ace_step.vae_tile_overlap_frames"})) {
+        config.tile_overlap_frames = *value;
+    }
+    engine::debug::trace_log_scalar("ace_step.perf_mode", name);
+    return config;
+}
 
 std::shared_ptr<const AceStepAssets> require_assets(std::shared_ptr<const AceStepAssets> assets) {
     if (assets == nullptr) {
@@ -216,7 +246,8 @@ AceStepSession::AceStepSession(runtime::TaskSpec task, runtime::SessionOptions o
           weight_type_from_options(RuntimeSessionBase::options(), "ace_step.text_encoder_weight_type")),
       dit_weight_storage_type_(dit_weight_type_from_options(RuntimeSessionBase::options())),
       vae_weight_storage_type_(weight_type_from_options(RuntimeSessionBase::options(), "ace_step.vae_weight_type")),
-      mem_saver_(mem_saver_from_options(RuntimeSessionBase::options())) {
+      mem_saver_(mem_saver_from_options(RuntimeSessionBase::options())),
+      vae_decode_config_(vae_decode_config_from_options(RuntimeSessionBase::options())) {
     if (task_.task != runtime::VoiceTaskKind::AudioGeneration) {
         throw std::runtime_error("ACE-Step supports only the gen task");
     }
@@ -454,7 +485,8 @@ void AceStepSession::ensure_dit_weights_runtime() {
 void AceStepSession::ensure_vae_decoder() {
     if (!vae_decoder_) {
         vae_decoder_ =
-            std::make_shared<AceStepVAEDecoderRuntime>(assets_, execution_context(), vae_weight_storage_type_);
+            std::make_shared<AceStepVAEDecoderRuntime>(assets_, execution_context(), vae_weight_storage_type_,
+                256ull * 1024ull * 1024ull, 64ull * 1024ull * 1024ull, vae_decode_config_);
     }
 }
 

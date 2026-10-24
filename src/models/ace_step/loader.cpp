@@ -94,6 +94,9 @@ runtime::ModelCliInterface cli(const AceStepAssets &) {
         {"ace_step.planner_prefix_bucketing", "true|false", "Bucket planner CFG attention to the valid prefix; false uses full cache capacity.", false, "true"},
         {"ace_step.text_encoder_weight_type", "native|f32|f16|bf16|q8_0", "Text encoder override of ace_step.weight_type."},
         {"ace_step.vae_weight_type", "native|f32|f16|bf16|q8_0", "VAE override of ace_step.weight_type."},
+        {"ace_step.perf_mode", "off|cuda_perf", "Performance preset; cuda_perf selects VAE tiles of 1024 latent frames with 64-frame overlap per side. Uses more VRAM without changing weight precision. Explicit tile options override the preset.", false, "off"},
+        {"ace_step.vae_tile_frames", "int", "VAE tile capacity in latent frames. Unset keeps backend defaults; 1024 with cuda_perf. Explicit values override the preset.", false, std::nullopt, "1"},
+        {"ace_step.vae_tile_overlap_frames", "int", "VAE overlap per side in latent frames; must be non-negative and less than half the tile capacity. Unset uses backend defaults; 64 with cuda_perf. Explicit values override the preset.", false, std::nullopt, "0"},
         {"ace_step.mem_saver", "true|false", "Release staged graphs and caches between phases; later requests may rebuild them. Default false; legacy mem_saver remains accepted.", false, "false"},
     };
     out.load_options = {

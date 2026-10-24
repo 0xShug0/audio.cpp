@@ -201,6 +201,9 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `ace_step.planner_prefix_bucketing` | bool | `true` | Bucket planner CFG attention to the valid prefix. Set `false` for full-capacity attention; other optimizations remain enabled. |
 | `ace_step.text_encoder_weight_type` | same as above | inherits `ace_step.weight_type` | Text encoder override. |
 | `ace_step.vae_weight_type` | same as above | inherits `ace_step.weight_type` | VAE override. |
+| `ace_step.perf_mode` | `off`, `cuda_perf` | `off` | `cuda_perf` selects VAE tiles of 1024 latent frames with 64-frame overlap per side. Explicit tile options override the preset. |
+| `ace_step.vae_tile_frames` | positive integer | backend policy | Maximum latent frames evaluated per VAE tile. `cuda_perf` sets 1024. |
+| `ace_step.vae_tile_overlap_frames` | non-negative integer | backend policy | Context per side, in latent frames; must be less than half the tile capacity. `cuda_perf` sets 64. |
 | `ace_step.mem_saver` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
 
 ## DiT Performance
@@ -223,6 +226,41 @@ attention. Model weights are not converted by these optimizations. Different
 cache precision or attention shapes can change sampled output at a fixed seed.
 Disable prefix bucketing with
 `--session-option ace_step.planner_prefix_bucketing=false`.
+
+## VAE Performance
+
+The Snake activation uses a broadcast graph that allows existing CUDA fusion,
+without changing weight precision. This fix is independent of `perf_mode`.
+
+With `perf_mode=off` and no tile overrides, tiling is unchanged: long GPU
+requests use 128-frame tiles with 32-frame overlap per side (stride 64),
+and long CPU requests use 256/64. Requests up to 512 latent frames on GPU
+or 256 on CPU retain the existing single-graph decode path.
+
+For larger tiles, add:
+
+```bash
+--session-option ace_step.perf_mode=cuda_perf
+```
+
+This selects 1024/64 and leaves weight precision, planner and attention
+settings unchanged. Larger tiles reduce redundant overlap computation but
+use more peak VRAM and can change floating-point results. The preset does
+not select a backend; use `--backend` separately.
+
+Explicit values override the preset, for example to retain the smaller tiles:
+
+```bash
+--session-option ace_step.perf_mode=cuda_perf \
+--session-option ace_step.vae_tile_frames=128 \
+--session-option ace_step.vae_tile_overlap_frames=32
+```
+
+An explicit tile capacity also applies to short requests. If only the tile
+capacity is set in `off` mode, overlap is derived from the existing 64-frame
+policy, reduced to fit the tile. Explicit overlap is never silently reduced:
+`2 * overlap < tile_frames` must hold. When reducing the preset's tile size,
+override its overlap too if necessary.
 
 ## Weight Adapters
 
