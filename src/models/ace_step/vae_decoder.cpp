@@ -201,11 +201,8 @@ core::TensorValue build_snake1d_exact_bct(
         ggml_sqr(ctx.ggml, ggml_sin(ctx.ggml, ggml_mul(ctx.ggml, input_f32.tensor, alpha.tensor))),
         input_f32.shape,
         GGML_TYPE_F32);
-    const auto beta_inv_broadcast = core::wrap_tensor(
-        ggml_repeat(ctx.ggml, beta_inv.tensor, input_f32.tensor),
-        input_f32.shape,
-        GGML_TYPE_F32);
-    auto frac = modules::MulModule{}.build(ctx, periodic, beta_inv_broadcast);
+    auto frac = core::wrap_tensor(
+        ggml_mul(ctx.ggml, periodic.tensor, beta_inv.tensor), input_f32.shape, GGML_TYPE_F32);
     return modules::AddModule{}.build(ctx, input_f32, frac);
 }
 
@@ -591,7 +588,8 @@ public:
         }
 
         bool can_run(int64_t latent_frames, bool use_col2im_conv_transpose) const noexcept {
-            return latent_frames_ >= latent_frames && use_col2im_conv_transpose_ == use_col2im_conv_transpose;
+            // A larger direct graph would execute its full capacity for every tile.
+            return latent_frames_ == latent_frames && use_col2im_conv_transpose_ == use_col2im_conv_transpose;
         }
 
         runtime::AudioBuffer decode(const AceStepLatents & latents) const {
@@ -733,20 +731,31 @@ public:
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType weight_storage_type)
+        assets::TensorStorageType weight_storage_type,
+        AceStepVAEDecodeConfig decode_config)
         : assets_(std::move(assets)),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
           graph_arena_bytes_(graph_arena_bytes),
-          weights_(std::make_shared<VAEDecoderWeights>(
-              load_vae_decoder_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type))) {
+          decode_config_(std::move(decode_config)) {
         if (assets_ == nullptr) {
             throw std::runtime_error("ACE-Step VAE runtime requires assets");
         }
         if (backend_ == nullptr) {
             throw std::runtime_error("ACE-Step VAE backend is not initialized");
         }
+        if (decode_config_.tile_frames.has_value() && *decode_config_.tile_frames <= 0) {
+            throw std::runtime_error("ace_step.vae_tile_frames must be positive");
+        }
+        const int64_t tile_frames = decode_config_.tile_frames.value_or(decode_tiled_chunk_frames(backend_type_));
+        if (decode_config_.tile_overlap_frames.has_value() &&
+            (*decode_config_.tile_overlap_frames < 0 || *decode_config_.tile_overlap_frames > (tile_frames - 1) / 2)) {
+            throw std::runtime_error(
+                "ace_step.vae_tile_overlap_frames must be non-negative and less than half ace_step.vae_tile_frames");
+        }
+        weights_ = std::make_shared<VAEDecoderWeights>(
+            load_vae_decoder_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type));
         assets_->vae_weights->release_storage();
     }
 
@@ -774,7 +783,10 @@ public:
         return overlap;
     }
 
-    static int64_t decode_chunk_frames(core::BackendType backend_type, int64_t latent_frames) noexcept {
+    int64_t decode_chunk_frames(core::BackendType backend_type, int64_t latent_frames) const noexcept {
+        if (decode_config_.tile_frames.has_value()) {
+            return *decode_config_.tile_frames;
+        }
         const int64_t direct_limit = decode_direct_frame_limit(backend_type);
         if (latent_frames <= direct_limit) {
             return direct_limit;
@@ -782,13 +794,16 @@ public:
         return decode_tiled_chunk_frames(backend_type);
     }
 
-    static int64_t decode_chunk_overlap_frames(core::BackendType backend_type, int64_t latent_frames) noexcept {
+    int64_t decode_chunk_overlap_frames(core::BackendType backend_type, int64_t latent_frames) const noexcept {
+        if (decode_config_.tile_overlap_frames.has_value()) {
+            return *decode_config_.tile_overlap_frames;
+        }
         const int64_t requested_overlap = requested_decode_overlap_frames();
         const int64_t chunk_frames = decode_chunk_frames(backend_type, latent_frames);
-        if (latent_frames <= decode_direct_frame_limit(backend_type)) {
+        if (!decode_config_.tile_frames.has_value() && latent_frames <= decode_direct_frame_limit(backend_type)) {
             return requested_overlap;
         }
-        return effective_decode_overlap(chunk_frames, requested_overlap);
+        return std::min(effective_decode_overlap(chunk_frames, requested_overlap), (chunk_frames - 1) / 2);
     }
 
     void ensure_decode_graph(int64_t latent_frames, bool use_col2im_conv_transpose) {
@@ -817,8 +832,9 @@ public:
         const int64_t kChunkOverlapFrames = decode_chunk_overlap_frames(backend_type_, latents.frames);
         const int64_t frame_factor = audio_frames_per_latent(config);
         const bool use_col2im_conv_transpose =
-            !core::uses_host_graph_plan(backend_type_) &&
-            latents.frames > decode_direct_frame_limit(backend_type_);
+            backend_type_ == core::BackendType::Cuda ||
+            (!core::uses_host_graph_plan(backend_type_) &&
+             latents.frames > decode_direct_frame_limit(backend_type_));
         engine::debug::trace_log_scalar("ace_step.vae.decode.chunk_frames", kChunkFrames);
         engine::debug::trace_log_scalar("ace_step.vae.decode.overlap_frames", kChunkOverlapFrames);
         engine::debug::trace_log_scalar("ace_step.vae.decode.col2im_conv_transpose",
@@ -891,6 +907,7 @@ public:
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
     size_t graph_arena_bytes_ = 0;
+    AceStepVAEDecodeConfig decode_config_;
     std::shared_ptr<const VAEDecoderWeights> weights_;
     std::unique_ptr<DecodeGraph> decode_graph_;
 };
@@ -900,13 +917,15 @@ AceStepVAEDecoderRuntime::AceStepVAEDecoderRuntime(
     core::ExecutionContext & execution,
     assets::TensorStorageType weight_storage_type,
     size_t graph_arena_bytes,
-    size_t weight_context_bytes)
+    size_t weight_context_bytes,
+    AceStepVAEDecodeConfig decode_config)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           graph_arena_bytes,
           weight_context_bytes,
-          weight_storage_type)) {}
+          weight_storage_type,
+          std::move(decode_config))) {}
 
 AceStepVAEDecoderRuntime::~AceStepVAEDecoderRuntime() = default;
 

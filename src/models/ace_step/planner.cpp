@@ -5,10 +5,12 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/packed_linear_weights.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -169,7 +171,15 @@ core::TensorValue reshape_planner_heads(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     int64_t heads,
-    int64_t dim) {
+    int64_t dim,
+    bool preserve_input_layout = false) {
+    if (preserve_input_layout) {
+        core::validate_last_dim(input, heads * dim, "planner projection");
+        return core::wrap_tensor(ggml_view_4d(ctx.ggml, input.tensor, dim, heads,
+            input.shape.dims[1], input.shape.dims[0], dim * input.tensor->nb[0],
+            input.tensor->nb[1], input.tensor->nb[2], 0),
+            core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}), input.type);
+    }
     const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
     return core::reshape_tensor(
         ctx,
@@ -184,41 +194,9 @@ core::TensorValue sdpa_from_planner_grouped_heads(
     const core::TensorValue & v_heads,
     int64_t dim,
     const core::TensorValue & attention_mask) {
-    if (q_heads.shape.rank != 4 || k_heads.shape.rank != 4 || v_heads.shape.rank != 4) {
-        throw std::runtime_error("ACE-Step planner SDPA expects rank-4 Q/K/V tensors");
-    }
-    if (q_heads.shape.dims[0] != k_heads.shape.dims[0] ||
-        q_heads.shape.dims[0] != v_heads.shape.dims[0] ||
-        q_heads.shape.dims[3] != k_heads.shape.dims[3] ||
-        q_heads.shape.dims[3] != v_heads.shape.dims[3]) {
-        throw std::runtime_error("ACE-Step planner SDPA Q/K/V tensor shapes are incompatible");
-    }
-    const int64_t query_heads = q_heads.shape.dims[1];
-    const int64_t key_value_heads = k_heads.shape.dims[1];
-    if (query_heads % key_value_heads != 0) {
-        throw std::runtime_error("ACE-Step planner SDPA requires attention heads divisible by KV heads");
-    }
-    const auto contiguous_k = core::ensure_backend_addressable_layout(ctx, k_heads);
-    const auto contiguous_v = core::ensure_backend_addressable_layout(ctx, v_heads);
-    if (!core::has_backend_addressable_layout(q_heads.tensor) ||
-        !core::has_backend_addressable_layout(contiguous_k.tensor) ||
-        !core::has_backend_addressable_layout(contiguous_v.tensor)) {
-        throw std::runtime_error("ACE-Step planner flash attention expects contiguous Q/K/V heads");
-    }
-    auto * flash = ggml_flash_attn_ext(
-        ctx.ggml,
-        q_heads.tensor,
-        contiguous_k.tensor,
-        contiguous_v.tensor,
-        attention_mask.tensor,
-        1.0F / std::sqrt(static_cast<float>(dim)),
-        0.0F,
-        0.0F);
-    ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
-    return core::wrap_tensor(
-        flash,
-        core::TensorShape::from_dims({q_heads.shape.dims[0], q_heads.shape.dims[2], q_heads.shape.dims[1], dim}),
-        GGML_TYPE_F32);
+    return modules::GroupedQueryAttentionModule({
+        dim, modules::GroupedQueryAttentionLowering::FlashGroupedViewKV, GGML_PREC_F32})
+        .build(ctx, q_heads, k_heads, v_heads, attention_mask);
 }
 
 core::TensorValue ensure_planner_contiguous(
@@ -288,6 +266,12 @@ core::TensorValue apply_planner_rope_batched(
         throw std::runtime_error("ACE-Step planner RoPE expects a rank-4 tensor");
     }
     const int64_t batch = input.shape.dims[0];
+    if (ctx.backend_type == core::BackendType::Cuda && input.shape.dims[1] == 1) {
+        auto tokens = core::reshape_tensor(ctx, ensure_planner_contiguous(ctx, input),
+            core::TensorShape::from_dims({1, batch, input.shape.dims[2], dim}));
+        tokens = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, rope_theta}).build(ctx, tokens, positions);
+        return core::reshape_tensor(ctx, tokens, input.shape);
+    }
     core::TensorValue output = {};
     for (int64_t batch_index = 0; batch_index < batch; ++batch_index) {
         auto one = modules::SliceModule({0, batch_index, 1}).build(ctx, input);
@@ -328,7 +312,7 @@ core::TensorValue planner_cache_view(
             cache.tensor->nb[3],
             byte_offset),
         core::TensorShape::from_dims({batch_count, step_count, heads, dim}),
-        GGML_TYPE_F32);
+        cache.type);
 }
 
 modules::DecoderLayerOutputs planner_decoder_layer_batched(
@@ -344,12 +328,23 @@ modules::DecoderLayerOutputs planner_decoder_layer_batched(
 
     auto x_norm = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, weights.input_norm.bias.has_value()})
                       .build(ctx, input, weights.input_norm);
-    auto q = modules::LinearModule({config.hidden_size, config.num_attention_heads * dim, false})
-                 .build(ctx, x_norm, {weights.self_attention.q_weight, std::nullopt});
-    auto k = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
-                 .build(ctx, x_norm, {weights.self_attention.k_weight, std::nullopt});
-    auto v = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
-                 .build(ctx, x_norm, {weights.self_attention.v_weight, std::nullopt});
+    core::TensorValue q, k, v;
+    if (weights.self_attention.qkv_weight.has_value()) {
+        const int64_t q_size = config.num_attention_heads * dim;
+        const int64_t kv_size = config.num_key_value_heads * dim;
+        auto qkv = modules::LinearModule({config.hidden_size, q_size + 2 * kv_size, false})
+                       .build(ctx, x_norm, {*weights.self_attention.qkv_weight, std::nullopt});
+        q = ensure_planner_contiguous(ctx, modules::SliceModule({2, 0, q_size}).build(ctx, qkv));
+        k = ensure_planner_contiguous(ctx, modules::SliceModule({2, q_size, kv_size}).build(ctx, qkv));
+        v = ensure_planner_contiguous(ctx, modules::SliceModule({2, q_size + kv_size, kv_size}).build(ctx, qkv));
+    } else {
+        q = modules::LinearModule({config.hidden_size, config.num_attention_heads * dim, false})
+                .build(ctx, x_norm, {weights.self_attention.q_weight, std::nullopt});
+        k = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
+                .build(ctx, x_norm, {weights.self_attention.k_weight, std::nullopt});
+        v = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
+                .build(ctx, x_norm, {weights.self_attention.v_weight, std::nullopt});
+    }
     q = cast_planner_activation(ctx, q, activation_type);
     k = cast_planner_activation(ctx, k, activation_type);
     v = cast_planner_activation(ctx, v, activation_type);
@@ -391,14 +386,22 @@ modules::DecoderLayerOutputs planner_decoder_layer_batched(
 
     auto ff_in = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, weights.post_norm.bias.has_value()})
                      .build(ctx, x, weights.post_norm);
-    auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
-                    .build(ctx, ff_in, {weights.mlp.gate_proj.weight, std::nullopt});
-    gate = modules::SiluModule{}.build(ctx, gate);
-    gate = cast_planner_activation(ctx, gate, activation_type);
-    auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
-                  .build(ctx, ff_in, {weights.mlp.up_proj.weight, std::nullopt});
-    up = cast_planner_activation(ctx, up, activation_type);
-    auto gated = modules::MulModule{}.build(ctx, gate, up);
+    core::TensorValue gated;
+    if (weights.mlp.gate_up_proj.has_value()) {
+        auto gate_up = modules::LinearModule({config.hidden_size, 2 * config.intermediate_size, false})
+                           .build(ctx, ff_in, *weights.mlp.gate_up_proj);
+        gated = core::wrap_tensor(ggml_swiglu(ctx.ggml, gate_up.tensor),
+            core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.intermediate_size}), gate_up.type);
+    } else {
+        auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
+                        .build(ctx, ff_in, {weights.mlp.gate_proj.weight, std::nullopt});
+        gate = modules::SiluModule{}.build(ctx, gate);
+        gate = cast_planner_activation(ctx, gate, activation_type);
+        auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
+                      .build(ctx, ff_in, {weights.mlp.up_proj.weight, std::nullopt});
+        up = cast_planner_activation(ctx, up, activation_type);
+        gated = modules::MulModule{}.build(ctx, gate, up);
+    }
     gated = cast_planner_activation(ctx, gated, activation_type);
     auto ff = modules::LinearModule({config.intermediate_size, config.hidden_size, false})
                   .build(ctx, gated, {weights.mlp.down_proj.weight, std::nullopt});
@@ -456,12 +459,23 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_static_cache_tail_batche
 
     auto x_norm = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, weights.input_norm.bias.has_value()})
                       .build(ctx, input, weights.input_norm);
-    auto q = modules::LinearModule({config.hidden_size, config.num_attention_heads * dim, false})
-                 .build(ctx, x_norm, {weights.self_attention.q_weight, std::nullopt});
-    auto k = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
-                 .build(ctx, x_norm, {weights.self_attention.k_weight, std::nullopt});
-    auto v = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
-                 .build(ctx, x_norm, {weights.self_attention.v_weight, std::nullopt});
+    core::TensorValue q, k, v;
+    if (weights.self_attention.qkv_weight.has_value()) {
+        const int64_t q_size = config.num_attention_heads * dim;
+        const int64_t kv_size = config.num_key_value_heads * dim;
+        auto qkv = modules::LinearModule({config.hidden_size, q_size + 2 * kv_size, false})
+                       .build(ctx, x_norm, {*weights.self_attention.qkv_weight, std::nullopt});
+        q = ensure_planner_contiguous(ctx, modules::SliceModule({2, 0, q_size}).build(ctx, qkv));
+        k = ensure_planner_contiguous(ctx, modules::SliceModule({2, q_size, kv_size}).build(ctx, qkv));
+        v = ensure_planner_contiguous(ctx, modules::SliceModule({2, q_size + kv_size, kv_size}).build(ctx, qkv));
+    } else {
+        q = modules::LinearModule({config.hidden_size, config.num_attention_heads * dim, false})
+                .build(ctx, x_norm, {weights.self_attention.q_weight, std::nullopt});
+        k = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
+                .build(ctx, x_norm, {weights.self_attention.k_weight, std::nullopt});
+        v = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
+                .build(ctx, x_norm, {weights.self_attention.v_weight, std::nullopt});
+    }
     q = cast_planner_activation(ctx, q, activation_type);
     k = cast_planner_activation(ctx, k, activation_type);
     v = cast_planner_activation(ctx, v, activation_type);
@@ -489,8 +503,6 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_static_cache_tail_batche
     q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
     auto k_heads = modules::TransposeModule({head_axes, cache_key.shape.rank}).build(ctx, cache_key);
     auto v_heads = modules::TransposeModule({head_axes, cache_value.shape.rank}).build(ctx, cache_value);
-    k_heads = core::wrap_tensor(ggml_cont(ctx.ggml, k_heads.tensor), k_heads.shape, k_heads.type);
-    v_heads = core::wrap_tensor(ggml_cont(ctx.ggml, v_heads.tensor), v_heads.shape, v_heads.type);
     auto context = sdpa_from_planner_grouped_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(
@@ -507,14 +519,22 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_static_cache_tail_batche
 
     auto ff_in = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, weights.post_norm.bias.has_value()})
                      .build(ctx, x, weights.post_norm);
-    auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
-                    .build(ctx, ff_in, {weights.mlp.gate_proj.weight, std::nullopt});
-    gate = modules::SiluModule{}.build(ctx, gate);
-    gate = cast_planner_activation(ctx, gate, activation_type);
-    auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
-                  .build(ctx, ff_in, {weights.mlp.up_proj.weight, std::nullopt});
-    up = cast_planner_activation(ctx, up, activation_type);
-    auto gated = modules::MulModule{}.build(ctx, gate, up);
+    core::TensorValue gated;
+    if (weights.mlp.gate_up_proj.has_value()) {
+        auto gate_up = modules::LinearModule({config.hidden_size, 2 * config.intermediate_size, false})
+                           .build(ctx, ff_in, *weights.mlp.gate_up_proj);
+        gated = core::wrap_tensor(ggml_swiglu(ctx.ggml, gate_up.tensor),
+            core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.intermediate_size}), gate_up.type);
+    } else {
+        auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
+                        .build(ctx, ff_in, {weights.mlp.gate_proj.weight, std::nullopt});
+        gate = modules::SiluModule{}.build(ctx, gate);
+        gate = cast_planner_activation(ctx, gate, activation_type);
+        auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
+                      .build(ctx, ff_in, {weights.mlp.up_proj.weight, std::nullopt});
+        up = cast_planner_activation(ctx, up, activation_type);
+        gated = modules::MulModule{}.build(ctx, gate, up);
+    }
     gated = cast_planner_activation(ctx, gated, activation_type);
     auto ff = modules::LinearModule({config.intermediate_size, config.hidden_size, false})
                   .build(ctx, gated, {weights.mlp.down_proj.weight, std::nullopt});
@@ -536,23 +556,39 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_compact_cache_batched(
     const core::TensorValue & attention_mask,
     ggml_type activation_type) {
     const int64_t dim = planner_attention_head_dim(config);
+    const bool projection_views = ctx.backend_type == core::BackendType::Cuda && weights.self_attention.qkv_weight.has_value();
 
     auto x_norm = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, weights.input_norm.bias.has_value()})
                       .build(ctx, input, weights.input_norm);
-    auto q = modules::LinearModule({config.hidden_size, config.num_attention_heads * dim, false})
-                 .build(ctx, x_norm, {weights.self_attention.q_weight, std::nullopt});
-    auto k = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
-                 .build(ctx, x_norm, {weights.self_attention.k_weight, std::nullopt});
-    auto v = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
-                 .build(ctx, x_norm, {weights.self_attention.v_weight, std::nullopt});
+    core::TensorValue q, k, v;
+    if (weights.self_attention.qkv_weight.has_value()) {
+        const int64_t q_size = config.num_attention_heads * dim;
+        const int64_t kv_size = config.num_key_value_heads * dim;
+        auto qkv = modules::LinearModule({config.hidden_size, q_size + 2 * kv_size, false})
+                       .build(ctx, x_norm, {*weights.self_attention.qkv_weight, std::nullopt});
+        q = modules::SliceModule({2, 0, q_size}).build(ctx, qkv);
+        k = modules::SliceModule({2, q_size, kv_size}).build(ctx, qkv);
+        if (!projection_views) {
+            q = ensure_planner_contiguous(ctx, q);
+            k = ensure_planner_contiguous(ctx, k);
+        }
+        v = ensure_planner_contiguous(ctx, modules::SliceModule({2, q_size + kv_size, kv_size}).build(ctx, qkv));
+    } else {
+        q = modules::LinearModule({config.hidden_size, config.num_attention_heads * dim, false})
+                .build(ctx, x_norm, {weights.self_attention.q_weight, std::nullopt});
+        k = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
+                .build(ctx, x_norm, {weights.self_attention.k_weight, std::nullopt});
+        v = modules::LinearModule({config.hidden_size, config.num_key_value_heads * dim, false})
+                .build(ctx, x_norm, {weights.self_attention.v_weight, std::nullopt});
+    }
     q = cast_planner_activation(ctx, q, activation_type);
     k = cast_planner_activation(ctx, k, activation_type);
     v = cast_planner_activation(ctx, v, activation_type);
 
-    q = modules::RMSNormModule({dim, config.rms_norm_eps, true, weights.q_norm.bias.has_value()})
-            .build(ctx, reshape_planner_heads(ctx, q, config.num_attention_heads, dim), weights.q_norm);
-    k = modules::RMSNormModule({dim, config.rms_norm_eps, true, weights.k_norm.bias.has_value()})
-            .build(ctx, reshape_planner_heads(ctx, k, config.num_key_value_heads, dim), weights.k_norm);
+    q = modules::RMSNormModule({dim, config.rms_norm_eps, true, weights.q_norm.bias.has_value(), projection_views})
+            .build(ctx, reshape_planner_heads(ctx, q, config.num_attention_heads, dim, projection_views), weights.q_norm);
+    k = modules::RMSNormModule({dim, config.rms_norm_eps, true, weights.k_norm.bias.has_value(), projection_views})
+            .build(ctx, reshape_planner_heads(ctx, k, config.num_key_value_heads, dim, projection_views), weights.k_norm);
     v = reshape_planner_heads(ctx, v, config.num_key_value_heads, dim);
     v = cast_planner_activation(ctx, v, activation_type);
 
@@ -566,11 +602,13 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_compact_cache_batched(
 
     std::array<int, core::kMaxTensorRank> head_axes = {0, 2, 1, 3};
     auto q_heads = modules::TransposeModule({head_axes, q.shape.rank}).build(ctx, q);
-    q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
-    auto k_heads = modules::TransposeModule({head_axes, updated_cache_key.shape.rank}).build(ctx, updated_cache_key);
-    auto v_heads = modules::TransposeModule({head_axes, updated_cache_value.shape.rank}).build(ctx, updated_cache_value);
-    k_heads = core::wrap_tensor(ggml_cont(ctx.ggml, k_heads.tensor), k_heads.shape, k_heads.type);
-    v_heads = core::wrap_tensor(ggml_cont(ctx.ggml, v_heads.tensor), v_heads.shape, v_heads.type);
+    q_heads = ctx.backend_type == core::BackendType::Cuda
+        ? ensure_planner_contiguous(ctx, q_heads)
+        : core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
+    auto key_prefix = modules::SliceModule({1, 0, attention_mask.shape.dims[3]}).build(ctx, updated_cache_key);
+    auto value_prefix = modules::SliceModule({1, 0, attention_mask.shape.dims[3]}).build(ctx, updated_cache_value);
+    auto k_heads = modules::TransposeModule({head_axes, key_prefix.shape.rank}).build(ctx, key_prefix);
+    auto v_heads = modules::TransposeModule({head_axes, value_prefix.shape.rank}).build(ctx, value_prefix);
     auto context = sdpa_from_planner_grouped_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(
@@ -587,14 +625,22 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_compact_cache_batched(
 
     auto ff_in = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, weights.post_norm.bias.has_value()})
                      .build(ctx, x, weights.post_norm);
-    auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
-                    .build(ctx, ff_in, {weights.mlp.gate_proj.weight, std::nullopt});
-    gate = modules::SiluModule{}.build(ctx, gate);
-    gate = cast_planner_activation(ctx, gate, activation_type);
-    auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
-                  .build(ctx, ff_in, {weights.mlp.up_proj.weight, std::nullopt});
-    up = cast_planner_activation(ctx, up, activation_type);
-    auto gated = modules::MulModule{}.build(ctx, gate, up);
+    core::TensorValue gated;
+    if (weights.mlp.gate_up_proj.has_value()) {
+        auto gate_up = modules::LinearModule({config.hidden_size, 2 * config.intermediate_size, false})
+                           .build(ctx, ff_in, *weights.mlp.gate_up_proj);
+        gated = core::wrap_tensor(ggml_swiglu(ctx.ggml, gate_up.tensor),
+            core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.intermediate_size}), gate_up.type);
+    } else {
+        auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
+                        .build(ctx, ff_in, {weights.mlp.gate_proj.weight, std::nullopt});
+        gate = modules::SiluModule{}.build(ctx, gate);
+        gate = cast_planner_activation(ctx, gate, activation_type);
+        auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false})
+                      .build(ctx, ff_in, {weights.mlp.up_proj.weight, std::nullopt});
+        up = cast_planner_activation(ctx, up, activation_type);
+        gated = modules::MulModule{}.build(ctx, gate, up);
+    }
     gated = cast_planner_activation(ctx, gated, activation_type);
     auto ff = modules::LinearModule({config.intermediate_size, config.hidden_size, false})
                   .build(ctx, gated, {weights.mlp.down_proj.weight, std::nullopt});
@@ -766,23 +812,24 @@ public:
         }
     }
 
-    void write_branch_logits(const std::vector<float> & logits) {
+    void write_branch_logits(const std::vector<float> & logits, int32_t logits_offset = 0) {
         top_p_active_indices_.clear();
         for (size_t i = 0; i < candidate_token_ids_.size(); ++i) {
-            values_[i] = logits[static_cast<size_t>(candidate_token_ids_[i])];
+            values_[i] = logits[static_cast<size_t>(candidate_token_ids_[i] - logits_offset)];
         }
     }
 
     void write_cfg_logits(
         const std::vector<float> & conditional,
         const std::vector<float> & unconditional,
-        float scale) {
+        float scale,
+        int32_t logits_offset = 0) {
         if (conditional.size() != unconditional.size()) {
             throw std::runtime_error("ACE-Step planner CFG logits size mismatch");
         }
         top_p_active_indices_.clear();
         for (size_t i = 0; i < candidate_token_ids_.size(); ++i) {
-            const size_t token = static_cast<size_t>(candidate_token_ids_[i]);
+            const size_t token = static_cast<size_t>(candidate_token_ids_[i] - logits_offset);
             const float cond = conditional[token];
             const float uncond = unconditional[token];
             const float value = uncond + scale * (cond - uncond);
@@ -915,7 +962,26 @@ public:
         }
     }
 
-    int32_t sample(float temperature, std::mt19937 & rng) {
+    int32_t sample(float temperature, std::mt19937 & rng, int64_t top_k, float top_p) {
+        if (!(temperature > 0.0F)) {
+            int32_t best = -1;
+            float best_value = -std::numeric_limits<float>::infinity();
+            bool tied = false;
+            for (size_t i = 0; i < values_.size(); ++i) {
+                if (!std::isfinite(values_[i])) continue;
+                if (best < 0 || values_[i] > best_value) {
+                    best = candidate_token_ids_[i];
+                    best_value = values_[i];
+                    tied = false;
+                } else if (values_[i] == best_value) {
+                    tied = true;
+                }
+            }
+            // Both filters retain a unique maximum; ties retain their original filtering order.
+            if (best >= 0 && !tied) return best;
+        }
+        apply_top_k_filter(top_k);
+        apply_top_p_filter(top_p);
         if (!(temperature > 0.0F)) {
             int32_t best = -1;
             float best_value = -std::numeric_limits<float>::infinity();
@@ -1176,8 +1242,14 @@ public:
         const Phase1ConstraintTables & tables)
         : tokenizer_(tokenizer),
           config_(config),
-          is_audio_code_token_(is_audio_code_token),
+          caption_forbidden_(is_audio_code_token),
           tables_(tables) {
+        for (const int32_t token : tables_.forbidden_tokens) {
+            caption_forbidden_.at(static_cast<size_t>(token)) = 1;
+        }
+        if (tables_.backtick_token.has_value()) {
+            caption_forbidden_.at(static_cast<size_t>(*tables_.backtick_token)) = 1;
+        }
         const int64_t request_duration = request.generation.duration_seconds > 0.0F
             ? static_cast<int64_t>(request.generation.duration_seconds)
             : 0;
@@ -1244,15 +1316,8 @@ public:
                     if (candidate < 0 || candidate >= static_cast<int32_t>(logits.size())) {
                         return false;
                     }
-                    if (std::find(tables_.forbidden_tokens.begin(), tables_.forbidden_tokens.end(), candidate) !=
-                        tables_.forbidden_tokens.end()) {
-                        return false;
-                    }
-                    if (tables_.backtick_token.has_value() && candidate == *tables_.backtick_token) {
-                        return false;
-                    }
-                    return candidate >= static_cast<int32_t>(is_audio_code_token_.size())
-                        || is_audio_code_token_[static_cast<size_t>(candidate)] == 0;
+                    return candidate >= static_cast<int32_t>(caption_forbidden_.size())
+                        || caption_forbidden_[static_cast<size_t>(candidate)] == 0;
                 });
             case Phase1State::Completed:
                 break;
@@ -1568,7 +1633,7 @@ private:
 
     const AceStepTextTokenizer & tokenizer_;
     const AceStepQwen3PlannerConfig & config_;
-    const std::vector<uint8_t> & is_audio_code_token_;
+    std::vector<uint8_t> caption_forbidden_;
     const Phase1ConstraintTables & tables_;
     std::vector<int32_t> duration_user_tokens_;
     size_t duration_user_position_ = 0;
@@ -1604,7 +1669,8 @@ Qwen3PlannerWeights load_planner_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
-    assets::TensorStorageType storage_type) {
+    assets::TensorStorageType storage_type,
+    bool fused_projections) {
     const auto & config = assets.config.planner;
     const auto & source = *assets.lm_weights;
     Qwen3PlannerWeights weights;
@@ -1630,42 +1696,57 @@ Qwen3PlannerWeights load_planner_weights(
             source, prefix + ".self_attn.k_norm.weight", {config.head_dim});
         w.post_norm.weight = weights.store->load_f32_tensor(
             source, prefix + ".post_attention_layernorm.weight", {config.hidden_size});
-        w.self_attention.q_weight = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.q_proj.weight",
-            storage_type,
-            {config.num_attention_heads * config.head_dim, config.hidden_size});
-        w.self_attention.k_weight = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.k_proj.weight",
-            storage_type,
-            {config.num_key_value_heads * config.head_dim, config.hidden_size});
-        w.self_attention.v_weight = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.v_proj.weight",
-            storage_type,
-            {config.num_key_value_heads * config.head_dim, config.hidden_size});
+        if (backend_type == core::BackendType::Cuda && fused_projections) {
+            w.self_attention.qkv_weight = modules::PackedLinearWeightsBuilder({config.hidden_size,
+                {{prefix + ".self_attn.q_proj.weight", std::nullopt, config.num_attention_heads * config.head_dim},
+                 {prefix + ".self_attn.k_proj.weight", std::nullopt, config.num_key_value_heads * config.head_dim},
+                 {prefix + ".self_attn.v_proj.weight", std::nullopt, config.num_key_value_heads * config.head_dim}}, false, true})
+                .build(*weights.store, source, storage_type).weight;
+        } else {
+            w.self_attention.q_weight = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.q_proj.weight",
+                storage_type,
+                {config.num_attention_heads * config.head_dim, config.hidden_size});
+            w.self_attention.k_weight = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.k_proj.weight",
+                storage_type,
+                {config.num_key_value_heads * config.head_dim, config.hidden_size});
+            w.self_attention.v_weight = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.v_proj.weight",
+                storage_type,
+                {config.num_key_value_heads * config.head_dim, config.hidden_size});
+        }
         w.self_attention.out_weight = weights.store->load_tensor(
             source,
             prefix + ".self_attn.o_proj.weight",
             storage_type,
             {config.hidden_size, config.num_attention_heads * config.head_dim});
-        w.mlp.gate_proj = {
-            weights.store->load_tensor(
-                source,
-                prefix + ".mlp.gate_proj.weight",
-                storage_type,
-                {config.intermediate_size, config.hidden_size}),
-            std::nullopt,
-        };
-        w.mlp.up_proj = {
-            weights.store->load_tensor(
-                source,
-                prefix + ".mlp.up_proj.weight",
-                storage_type,
-                {config.intermediate_size, config.hidden_size}),
-            std::nullopt,
-        };
+        if (backend_type == core::BackendType::Cuda && fused_projections) {
+            w.mlp.gate_up_proj = modules::PackedLinearWeightsBuilder({config.hidden_size,
+                {{prefix + ".mlp.gate_proj.weight", std::nullopt, config.intermediate_size},
+                 {prefix + ".mlp.up_proj.weight", std::nullopt, config.intermediate_size}}, false, true})
+                .build(*weights.store, source, storage_type);
+        } else {
+            w.mlp.gate_proj = {
+                weights.store->load_tensor(
+                    source,
+                    prefix + ".mlp.gate_proj.weight",
+                    storage_type,
+                    {config.intermediate_size, config.hidden_size}),
+                std::nullopt,
+            };
+            w.mlp.up_proj = {
+                weights.store->load_tensor(
+                    source,
+                    prefix + ".mlp.up_proj.weight",
+                    storage_type,
+                    {config.intermediate_size, config.hidden_size}),
+                std::nullopt,
+            };
+        }
         w.mlp.down_proj = {
             weights.store->load_tensor(
                 source,
@@ -1699,13 +1780,14 @@ public:
         std::shared_ptr<const AceStepAssets> assets,
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        bool fused_projections = false)
         : assets_(std::move(assets)),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
           weights_(std::make_shared<Qwen3PlannerWeights>(
-              load_planner_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type))) {
+              load_planner_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type, fused_projections))) {
         if (assets_ == nullptr) {
             throw std::runtime_error("ACE-Step planner weights runtime requires assets");
         }
@@ -1731,6 +1813,8 @@ private:
 struct PrefillOutput {
     std::vector<float> logits;
     runtime::TransformerKVState kv_state;
+    std::vector<core::TensorValue> device_keys;
+    std::vector<core::TensorValue> device_values;
 };
 
 struct CfgLayerState {
@@ -1744,6 +1828,8 @@ struct CfgPrefillOutput {
     int64_t current_end = 0;
     int64_t valid_steps = 0;
     std::vector<CfgLayerState> layers;
+    std::array<std::vector<core::TensorValue>, 2> device_keys;
+    std::array<std::vector<core::TensorValue>, 2> device_values;
 };
 
 class Qwen3PlannerPrefillGraph {
@@ -1751,9 +1837,11 @@ public:
     Qwen3PlannerPrefillGraph(
         std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime,
         int64_t prompt_steps,
-        size_t graph_arena_bytes)
+        size_t graph_arena_bytes,
+        ggml_type cache_type = GGML_TYPE_F32)
         : runtime_(std::move(runtime)),
-          prompt_steps_(prompt_steps) {
+          prompt_steps_(prompt_steps),
+          cache_type_(cache_type) {
         if (prompt_steps_ <= 0) {
             throw std::runtime_error("ACE-Step planner prefill requires positive prompt length");
         }
@@ -1794,8 +1882,8 @@ public:
                 query_mask,
                 GGML_TYPE_F32);
             x = out.output;
-            keys_.push_back(out.key.tensor);
-            values_.push_back(out.value.tensor);
+            keys_.push_back(cache_type_ == GGML_TYPE_F32 ? out.key.tensor : ggml_cast(ctx_.get(), out.key.tensor, cache_type_));
+            values_.push_back(cache_type_ == GGML_TYPE_F32 ? out.value.tensor : ggml_cast(ctx_.get(), out.value.tensor, cache_type_));
         }
         x = modules::SliceModule({1, prompt_steps_ - 1, 1}).build(ctx, x);
         x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
@@ -1872,6 +1960,14 @@ public:
         out.logits.resize(static_cast<size_t>(config.vocab_size));
         ggml_backend_tensor_get(logits_, out.logits.data(), 0, out.logits.size() * sizeof(float));
         out.kv_state.current_end = prompt_steps_;
+        if (runtime_->backend_type() == core::BackendType::Cuda) {
+            const auto shape = core::TensorShape::from_dims({1, prompt_steps_, config.num_key_value_heads, config.head_dim});
+            for (size_t layer = 0; layer < keys_.size(); ++layer) {
+                out.device_keys.push_back(core::wrap_tensor(keys_[layer], shape, cache_type_));
+                out.device_values.push_back(core::wrap_tensor(values_[layer], shape, cache_type_));
+            }
+            return out;
+        }
         out.kv_state.layers.resize(keys_.size());
         const size_t layer_values = static_cast<size_t>(prompt_steps_ * config.num_key_value_heads * config.head_dim);
         for (size_t layer = 0; layer < keys_.size(); ++layer) {
@@ -1888,6 +1984,7 @@ public:
 private:
     std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime_;
     int64_t prompt_steps_ = 0;
+    ggml_type cache_type_ = GGML_TYPE_F32;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_ids_ = nullptr;
     ggml_tensor * positions_ = nullptr;
@@ -1905,9 +2002,11 @@ public:
     Qwen3PlannerDecodeGraph(
         std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime,
         int64_t cache_steps,
-        size_t graph_arena_bytes)
+        size_t graph_arena_bytes,
+        int32_t head_offset = 0)
         : runtime_(std::move(runtime)),
-          cache_steps_(cache_steps) {
+          cache_steps_(cache_steps),
+          head_offset_(head_offset) {
         if (cache_steps_ <= 0) {
             throw std::runtime_error("ACE-Step planner decode requires positive cache length");
         }
@@ -1926,6 +2025,10 @@ public:
         x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({1, 1, config.hidden_size}));
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
+        if (runtime_->backend_type() == core::BackendType::Cuda) {
+            cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I64, 1);
+            ggml_set_input(cache_slot_);
+        }
         attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_ + 1, 1, 1, 1);
         auto attention_mask = core::wrap_tensor(
             attention_mask_,
@@ -1964,14 +2067,30 @@ public:
             config.num_key_value_heads * config.head_dim,
             std::move(cache_keys),
             std::move(cache_values));
-        build_transfer_views(config.num_key_value_heads * config.head_dim);
+        if (cache_slot_ == nullptr) build_transfer_views(config.num_key_value_heads * config.head_dim);
         x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
                 .build(ctx, x, {weights.norm, std::nullopt});
-        auto logits = modules::LinearModule({config.hidden_size, config.vocab_size, false})
-                          .build(ctx, x, {weights.lm_head, std::nullopt});
+        const auto head = modules::SliceModule({0, head_offset_, config.vocab_size - head_offset_})
+                              .build(ctx, weights.lm_head);
+        auto logits = modules::LinearModule({config.hidden_size, config.vocab_size - head_offset_, false})
+                          .build(ctx, x, {head, std::nullopt});
         logits_ = logits.tensor;
         ggml_set_output(logits_);
         ggml_build_forward_expand(graph_, logits_);
+        if (cache_slot_ != nullptr) {
+            auto slot = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({1}), GGML_TYPE_I64);
+            const auto shape = core::TensorShape::from_dims({1, 1, config.num_key_value_heads, config.head_dim});
+            for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
+                const auto key = core::reshape_tensor(ctx,
+                    core::wrap_tensor(key_sources_[layer], core::TensorShape::from_dims({config.num_key_value_heads * config.head_dim}), GGML_TYPE_F32), shape);
+                const auto value = core::reshape_tensor(ctx,
+                    core::wrap_tensor(value_sources_[layer], core::TensorShape::from_dims({config.num_key_value_heads * config.head_dim}), GGML_TYPE_F32), shape);
+                const auto updated_key = planner_set_compact_kv_row(ctx, step_cache_.key_tensor(layer), key, slot);
+                const auto updated_value = planner_set_compact_kv_row(ctx, step_cache_.value_tensor(layer), value, slot);
+                ggml_build_forward_expand(graph_, updated_key.tensor);
+                ggml_build_forward_expand(graph_, updated_value.tensor);
+            }
+        }
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate ACE-Step planner decode graph");
@@ -1988,12 +2107,20 @@ public:
         }
     }
 
-    bool can_run(const Qwen3PlannerWeightsRuntime & runtime, int64_t required_steps) const {
-        return runtime_.get() == &runtime && cache_steps_ >= required_steps;
+    bool can_run(const Qwen3PlannerWeightsRuntime & runtime, int64_t required_steps, int32_t head_offset = 0) const {
+        return runtime_.get() == &runtime && cache_steps_ >= required_steps && head_offset_ == head_offset;
     }
 
     void import_state(const runtime::TransformerKVState & state) {
         step_cache_.import_state(state);
+    }
+
+    void import_prefill(const PrefillOutput & prefill) {
+        if (!prefill.device_keys.empty()) {
+            step_cache_.import_prefix(prefill.device_keys, prefill.device_values, prefill.kv_state.current_end);
+        } else {
+            step_cache_.import_state(prefill.kv_state);
+        }
     }
 
     void reset_state() {
@@ -2016,6 +2143,10 @@ public:
         }
         ggml_backend_tensor_set(token_id_, &token, 0, sizeof(int32_t));
         const int32_t position = static_cast<int32_t>(step_cache_.current_end());
+        if (cache_slot_ != nullptr) {
+            const int64_t slot = step_cache_.valid_steps();
+            ggml_backend_tensor_set(cache_slot_, &slot, 0, sizeof(slot));
+        }
         if (visible_prefix != nullptr &&
             static_cast<int64_t>(visible_prefix->size()) != step_cache_.current_end()) {
             throw std::runtime_error("ACE-Step planner decode visible-prefix length mismatch");
@@ -2047,12 +2178,14 @@ public:
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ACE-Step planner decode graph compute failed");
         }
-        logits.resize(static_cast<size_t>(config.vocab_size));
+        logits.resize(static_cast<size_t>(config.vocab_size - head_offset_));
         ggml_backend_tensor_get(logits_, logits.data(), 0, logits.size() * sizeof(float));
         const size_t dst_slot = static_cast<size_t>(step_cache_.valid_steps());
-        for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
-            ggml_backend_tensor_copy(key_sources_[layer], key_destinations_[dst_slot][layer]);
-            ggml_backend_tensor_copy(value_sources_[layer], value_destinations_[dst_slot][layer]);
+        if (cache_slot_ == nullptr) {
+            for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
+                ggml_backend_tensor_copy(key_sources_[layer], key_destinations_[dst_slot][layer]);
+                ggml_backend_tensor_copy(value_sources_[layer], value_destinations_[dst_slot][layer]);
+            }
         }
         step_cache_.advance_after_direct_append(1);
     }
@@ -2084,8 +2217,10 @@ private:
 
     std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime_;
     int64_t cache_steps_ = 0;
+    int32_t head_offset_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_id_ = nullptr;
+    ggml_tensor * cache_slot_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * attention_mask_ = nullptr;
     ggml_tensor * logits_ = nullptr;
@@ -2108,7 +2243,7 @@ PrefillOutput run_decode_graph_prompt_prefill(Qwen3PlannerDecodeGraph & graph, c
             prompt.attention_mask.begin() + index);
         graph.run_step_into(prompt.input_ids[index], logits, &visible_prefix);
     }
-    return {std::move(logits), graph.export_state()};
+    return {std::move(logits), graph.export_state(), {}, {}};
 }
 
 CfgPrefillOutput pack_cfg_prefill_output(
@@ -2236,6 +2371,12 @@ public:
             auto value_uncond = ensure_planner_contiguous(
                 ctx,
                 modules::SliceModule({0, 1, 1}).build(ctx, value_tensor));
+            if (runtime_->backend_type() == core::BackendType::Cuda) {
+                key_cond = core::wrap_tensor(ggml_cast(ctx.ggml, key_cond.tensor, GGML_TYPE_F16), key_cond.shape, GGML_TYPE_F16);
+                key_uncond = core::wrap_tensor(ggml_cast(ctx.ggml, key_uncond.tensor, GGML_TYPE_F16), key_uncond.shape, GGML_TYPE_F16);
+                value_cond = core::wrap_tensor(ggml_cast(ctx.ggml, value_cond.tensor, GGML_TYPE_F16), value_cond.shape, GGML_TYPE_F16);
+                value_uncond = core::wrap_tensor(ggml_cast(ctx.ggml, value_uncond.tensor, GGML_TYPE_F16), value_uncond.shape, GGML_TYPE_F16);
+            }
             key_cond_outputs_.push_back(key_cond.tensor);
             key_uncond_outputs_.push_back(key_uncond.tensor);
             value_cond_outputs_.push_back(value_cond.tensor);
@@ -2335,6 +2476,16 @@ public:
             out.unconditional_logits.data(),
             0,
             out.unconditional_logits.size() * sizeof(float));
+        if (runtime_->backend_type() == core::BackendType::Cuda) {
+            const auto shape = core::TensorShape::from_dims({1, prompt_steps_, config.num_key_value_heads, config.head_dim});
+            for (size_t layer = 0; layer < key_cond_outputs_.size(); ++layer) {
+                out.device_keys[0].push_back(core::wrap_tensor(key_cond_outputs_[layer], shape, GGML_TYPE_F16));
+                out.device_keys[1].push_back(core::wrap_tensor(key_uncond_outputs_[layer], shape, GGML_TYPE_F16));
+                out.device_values[0].push_back(core::wrap_tensor(value_cond_outputs_[layer], shape, GGML_TYPE_F16));
+                out.device_values[1].push_back(core::wrap_tensor(value_uncond_outputs_[layer], shape, GGML_TYPE_F16));
+            }
+            return out;
+        }
         out.layers.resize(keys_.size());
         const size_t branch_values = static_cast<size_t>(prompt_steps_ * config.num_key_value_heads * config.head_dim);
         for (size_t layer = 0; layer < key_cond_outputs_.size(); ++layer) {
@@ -2383,9 +2534,16 @@ public:
     Qwen3PlannerCfgDecodeGraph(
         std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime,
         int64_t cache_steps,
-        size_t graph_arena_bytes)
+        size_t graph_arena_bytes,
+        bool prefix_bucketing,
+        int32_t head_offset = 0,
+        int64_t batch_size = 2)
         : runtime_(std::move(runtime)),
           cache_steps_(cache_steps),
+          graph_arena_bytes_(graph_arena_bytes),
+          prefix_bucketing_(prefix_bucketing),
+          head_offset_(head_offset),
+          batch_size_(batch_size),
           activation_type_(planner_phase2_activation_type(runtime_->backend_type())) {
         if (cache_steps_ <= 0) {
             throw std::runtime_error("ACE-Step planner CFG decode requires positive cache length");
@@ -2400,87 +2558,71 @@ public:
         const auto & weights = runtime_->weights();
 
         core::ModuleBuildContext ctx{ctx_.get(), "ace_step.planner.cfg_decode", runtime_->backend_type()};
-        token_ids_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 2);
-        auto token_ids = core::wrap_tensor(token_ids_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
-        auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
-                     .build(ctx, token_ids, weights.token_embedding);
-        x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({2, 1, config.hidden_size}));
-        x = cast_planner_activation(ctx, x, activation_type_);
-        positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 2);
-        auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
-        cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 2);
-        auto cache_slot = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
-        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, 2);
-        auto attention_mask = core::wrap_tensor(
-            attention_mask_,
-            core::TensorShape::from_dims({2, 1, 1, cache_steps_}),
-            GGML_TYPE_F16);
+        token_ids_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, batch_size_);
+        positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, batch_size_);
+        cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, batch_size_);
+        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, batch_size_);
 
-        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
-        for (const auto & layer : weights.layers.layers) {
+        for (size_t i = 0; i < weights.layers.layers.size(); ++i) {
             auto cache_key = core::make_tensor(
                 ctx,
-                GGML_TYPE_F32,
-                core::TensorShape::from_dims({2, cache_steps_, config.num_key_value_heads, config.head_dim}));
+                GGML_TYPE_F16,
+                core::TensorShape::from_dims({batch_size_, cache_steps_, config.num_key_value_heads, config.head_dim}));
             auto cache_value = core::make_tensor(
                 ctx,
-                GGML_TYPE_F32,
-                core::TensorShape::from_dims({2, cache_steps_, config.num_key_value_heads, config.head_dim}));
+                GGML_TYPE_F16,
+                core::TensorShape::from_dims({batch_size_, cache_steps_, config.num_key_value_heads, config.head_dim}));
             cache_keys_.push_back(cache_key);
             cache_values_.push_back(cache_value);
-            auto out = planner_decoder_layer_with_compact_cache_batched(
-                ctx,
-                x,
-                positions,
-                layer,
-                config,
-                cache_key,
-                cache_value,
-                cache_slot,
-                attention_mask,
-                activation_type_);
-            x = out.output;
         }
-
-        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
-                .build(ctx, x, {weights.norm, std::nullopt});
-        x = cast_planner_activation(ctx, x, activation_type_);
-        auto logits = modules::LinearModule({config.hidden_size, config.vocab_size, false})
-                          .build(ctx, x, {weights.lm_head, std::nullopt});
-        auto conditional_logits = ensure_planner_contiguous(
-            ctx,
-            modules::SliceModule({0, 0, 1}).build(ctx, logits));
-        auto unconditional_logits = ensure_planner_contiguous(
-            ctx,
-            modules::SliceModule({0, 1, 1}).build(ctx, logits));
-        logits_cond_ = conditional_logits.tensor;
-        logits_uncond_ = unconditional_logits.tensor;
-        ggml_set_output(logits_cond_);
-        ggml_set_output(logits_uncond_);
-        ggml_build_forward_expand(graph_, logits_cond_);
-        ggml_build_forward_expand(graph_, logits_uncond_);
+        runtime::TransformerKVCacheOptions cache_options;
+        cache_options.allow_f16_storage = true;
+        cache_options.lazy_import_scratch = true;
+        for (int64_t branch = 0; branch < batch_size_; ++branch) {
+            std::vector<core::TensorValue> keys;
+            std::vector<core::TensorValue> values;
+            for (size_t layer = 0; layer < cache_keys_.size(); ++layer) {
+                keys.push_back(planner_cache_view(ctx, cache_keys_[layer], branch, 1, 0, cache_steps_, config.num_key_value_heads, config.head_dim));
+                values.push_back(planner_cache_view(ctx, cache_values_[layer], branch, 1, 0, cache_steps_, config.num_key_value_heads, config.head_dim));
+            }
+            branch_caches_[branch] = runtime::TransformerKVCache(cache_steps_, config.num_key_value_heads * config.head_dim,
+                                                               std::move(keys), std::move(values), cache_options);
+        }
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
         if (buffer_ == nullptr) {
-            throw std::runtime_error("failed to allocate ACE-Step planner CFG decode graph");
+            throw std::runtime_error("failed to allocate ACE-Step planner CFG decode state");
         }
-
         attention_mask_values_.assign(
-            static_cast<size_t>(2 * cache_steps_),
+            static_cast<size_t>(batch_size_ * cache_steps_),
             ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
     }
 
     ~Qwen3PlannerCfgDecodeGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        buckets_.clear();
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
     }
 
-    bool can_run(const Qwen3PlannerWeightsRuntime & runtime, int64_t required_steps) const {
-        return runtime_.get() == &runtime && cache_steps_ >= required_steps;
+    bool can_run(const Qwen3PlannerWeightsRuntime & runtime, int64_t required_steps, int64_t batch_size = 2) const {
+        return runtime_.get() == &runtime && cache_steps_ >= required_steps && batch_size_ == batch_size;
     }
 
-    void initialize(const CfgPrefillOutput & prefill) {
+    void initialize(const CfgPrefillOutput & prefill, std::string_view timing_prefix = "ace_step.planner.code") {
+        const auto import_start = Clock::now();
+        unconditional_end_ = prefill.current_end;
+        unconditional_valid_steps_ = prefill.valid_steps;
+        if (!prefill.device_keys[0].empty()) {
+            for (int64_t branch = 0; branch < batch_size_; ++branch) {
+                const int64_t steps = prefill.device_keys[branch].front().shape.dims[1];
+                branch_caches_[branch].import_prefix(prefill.device_keys[branch], prefill.device_values[branch], steps);
+                if (branch == 1) unconditional_end_ = unconditional_valid_steps_ = steps;
+            }
+            current_end_ = prefill.current_end;
+            valid_steps_ = prefill.valid_steps;
+            engine::debug::timing_log_scalar(std::string(timing_prefix) + ".kv_import_ms", engine::debug::elapsed_ms(import_start, Clock::now()));
+            return;
+        }
         if (prefill.layers.size() != cache_keys_.size()) {
             throw std::runtime_error("ACE-Step planner CFG decode state layer count mismatch");
         }
@@ -2510,9 +2652,10 @@ public:
                 source.value.begin() + static_cast<std::ptrdiff_t>(branch_values),
                 source.value.end(),
                 cache_value_values.begin() + static_cast<std::ptrdiff_t>(uncond_offset));
-            core::write_tensor_f32(cache_keys_[layer], cache_key_values);
-            core::write_tensor_f32(cache_values_[layer], cache_value_values);
+            core::write_tensor_f16(cache_keys_[layer], cache_key_values);
+            core::write_tensor_f16(cache_values_[layer], cache_value_values);
         }
+        engine::debug::timing_log_scalar(std::string(timing_prefix) + ".kv_import_ms", engine::debug::elapsed_ms(import_start, Clock::now()));
     }
 
     void run_step_into(
@@ -2537,26 +2680,26 @@ public:
         const std::vector<int32_t> & unconditional_visible,
         std::vector<float> & conditional_logits,
         std::vector<float> & unconditional_logits) {
-        if (current_end_ >= cache_steps_) {
+        if (std::max(current_end_, unconditional_end_) >= cache_steps_) {
             throw std::runtime_error("ACE-Step planner CFG decode cache exhausted");
         }
         if (static_cast<int64_t>(conditional_visible.size()) != current_end_ ||
-            static_cast<int64_t>(unconditional_visible.size()) != current_end_) {
+            (batch_size_ == 2 && static_cast<int64_t>(unconditional_visible.size()) != unconditional_end_)) {
             throw std::runtime_error("ACE-Step planner CFG decode visible-prefix length mismatch");
         }
 
         const int32_t tokens[2] = {conditional_token, unconditional_token};
-        ggml_backend_tensor_set(token_ids_, tokens, 0, sizeof(tokens));
+        ggml_backend_tensor_set(token_ids_, tokens, 0, batch_size_ * sizeof(int32_t));
         int32_t positions[2] = {
             static_cast<int32_t>(current_end_),
-            static_cast<int32_t>(current_end_),
+            static_cast<int32_t>(unconditional_end_),
         };
-        ggml_backend_tensor_set(positions_, positions, 0, sizeof(positions));
+        ggml_backend_tensor_set(positions_, positions, 0, batch_size_ * sizeof(int32_t));
         const int32_t cache_slots[2] = {
             static_cast<int32_t>(current_end_),
-            static_cast<int32_t>(cache_steps_ + current_end_),
+            static_cast<int32_t>(cache_steps_ + unconditional_end_),
         };
-        ggml_backend_tensor_set(cache_slot_, cache_slots, 0, sizeof(cache_slots));
+        ggml_backend_tensor_set(cache_slot_, cache_slots, 0, batch_size_ * sizeof(int32_t));
 
         const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
         const auto visible = ggml_fp32_to_fp16(0.0F);
@@ -2565,12 +2708,14 @@ public:
             if (conditional_visible[static_cast<size_t>(i)] != 0) {
                 attention_mask_values_[static_cast<size_t>(i)] = visible;
             }
+        }
+        for (int64_t i = 0; batch_size_ == 2 && i < unconditional_valid_steps_; ++i) {
             if (unconditional_visible[static_cast<size_t>(i)] != 0) {
                 attention_mask_values_[static_cast<size_t>(cache_steps_ + i)] = visible;
             }
         }
         attention_mask_values_[static_cast<size_t>(current_end_)] = visible;
-        attention_mask_values_[static_cast<size_t>(cache_steps_ + current_end_)] = visible;
+        if (batch_size_ == 2) attention_mask_values_[static_cast<size_t>(cache_steps_ + unconditional_end_)] = visible;
         ggml_backend_tensor_set(
             attention_mask_,
             attention_mask_values_.data(),
@@ -2578,7 +2723,11 @@ public:
             attention_mask_values_.size() * sizeof(ggml_fp16_t));
 
         core::set_backend_threads(runtime_->backend(), runtime_->threads());
-        const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
+        const int64_t end = std::max(current_end_, unconditional_end_);
+        const int64_t attention_steps = prefix_bucketing_
+            ? std::min(cache_steps_, ((end / 256) + 1) * 256) : cache_steps_;
+        auto & bucket = decode_bucket(attention_steps);
+        const auto status = engine::core::compute_backend_graph(runtime_->backend(), bucket.graph);
         ggml_backend_synchronize(runtime_->backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ACE-Step planner CFG decode graph compute failed");
@@ -2586,20 +2735,24 @@ public:
 
         ++current_end_;
         ++valid_steps_;
+        ++unconditional_end_;
+        ++unconditional_valid_steps_;
 
-        const size_t vocab_size = static_cast<size_t>(runtime_->assets().config.planner.vocab_size);
-        conditional_logits.resize(vocab_size);
-        unconditional_logits.resize(vocab_size);
-        ggml_backend_tensor_get(
-            logits_cond_,
-            conditional_logits.data(),
-            0,
-            conditional_logits.size() * sizeof(float));
-        ggml_backend_tensor_get(
-            logits_uncond_,
-            unconditional_logits.data(),
-            0,
-            unconditional_logits.size() * sizeof(float));
+        const size_t vocab_size = static_cast<size_t>(runtime_->assets().config.planner.vocab_size - head_offset_);
+        if (runtime_->backend_type() == core::BackendType::Cuda) {
+            conditional_logits.resize(vocab_size);
+            unconditional_logits.resize(batch_size_ == 2 ? vocab_size : 0);
+            ggml_backend_tensor_get_async(runtime_->backend(), bucket.logits, conditional_logits.data(), 0, vocab_size * sizeof(float));
+            if (batch_size_ == 2) {
+                ggml_backend_tensor_get_async(runtime_->backend(), bucket.logits, unconditional_logits.data(), vocab_size * sizeof(float), vocab_size * sizeof(float));
+            }
+            ggml_backend_synchronize(runtime_->backend());
+        } else {
+            logits_values_.resize(batch_size_ * vocab_size);
+            ggml_backend_tensor_get(bucket.logits, logits_values_.data(), 0, logits_values_.size() * sizeof(float));
+            conditional_logits.assign(logits_values_.begin(), logits_values_.begin() + static_cast<std::ptrdiff_t>(vocab_size));
+            unconditional_logits.assign(logits_values_.begin() + static_cast<std::ptrdiff_t>(vocab_size), logits_values_.end());
+        }
     }
 
     CfgPrefillOutput export_prefill() const {
@@ -2611,8 +2764,8 @@ public:
         out.valid_steps = valid_steps_;
         out.layers.resize(cache_keys_.size());
         for (size_t layer = 0; layer < cache_keys_.size(); ++layer) {
-            const auto key_values = core::read_tensor_f32(cache_keys_[layer].tensor);
-            const auto value_values = core::read_tensor_f32(cache_values_[layer].tensor);
+            const auto key_values = core::read_tensor_f16(cache_keys_[layer].tensor);
+            const auto value_values = core::read_tensor_f16(cache_values_[layer].tensor);
             auto & target = out.layers[layer];
             target.key.reserve(2 * branch_values);
             target.value.reserve(2 * branch_values);
@@ -2634,22 +2787,86 @@ public:
     }
 
 private:
+    struct DecodeBucket {
+        std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
+        std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator{nullptr, ggml_gallocr_free};
+        ggml_backend_t backend = nullptr;
+        int64_t steps = 0;
+        ggml_cgraph * graph = nullptr;
+        ggml_tensor * logits = nullptr;
+        ~DecodeBucket() {
+            core::release_backend_graph_resources(backend, graph);
+        }
+    };
+
+    DecodeBucket & decode_bucket(int64_t steps) {
+        for (const auto & bucket : buckets_) {
+            if (bucket->steps == steps) return *bucket;
+        }
+        auto bucket = std::make_unique<DecodeBucket>();
+        bucket->backend = runtime_->backend();
+        bucket->steps = steps;
+        bucket->ctx.reset(ggml_init({graph_arena_bytes_, nullptr, true}));
+        if (!bucket->ctx) throw std::runtime_error("failed to initialize ACE-Step planner CFG bucket context");
+        core::ModuleBuildContext ctx{bucket->ctx.get(), "ace_step.planner.cfg_decode", runtime_->backend_type()};
+        ctx.elide_identity_reshapes = runtime_->backend_type() == core::BackendType::Cuda;
+        const auto & config = runtime_->assets().config.planner;
+        const auto & weights = runtime_->weights();
+        auto token_ids = core::wrap_tensor(token_ids_, core::TensorShape::from_dims({batch_size_}), GGML_TYPE_I32);
+        auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
+                     .build(ctx, token_ids, weights.token_embedding);
+        x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({batch_size_, 1, config.hidden_size}));
+        x = cast_planner_activation(ctx, x, activation_type_);
+        auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({batch_size_}), GGML_TYPE_I32);
+        auto cache_slot = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({batch_size_}), GGML_TYPE_I32);
+        auto full_mask = core::wrap_tensor(attention_mask_, core::TensorShape::from_dims({batch_size_, 1, 1, cache_steps_}), GGML_TYPE_F16);
+        auto mask = ensure_planner_contiguous(ctx, modules::SliceModule({3, 0, steps}).build(ctx, full_mask));
+        for (size_t i = 0; i < weights.layers.layers.size(); ++i) {
+            x = planner_decoder_layer_with_compact_cache_batched(
+                ctx, x, positions, weights.layers.layers[i], config,
+                cache_keys_[i], cache_values_[i], cache_slot, mask, activation_type_).output;
+        }
+        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
+                .build(ctx, x, {weights.norm, std::nullopt});
+        x = cast_planner_activation(ctx, x, activation_type_);
+        const auto head = modules::SliceModule({0, head_offset_, config.vocab_size - head_offset_})
+                              .build(ctx, weights.lm_head);
+        auto logits = modules::LinearModule({config.hidden_size, config.vocab_size - head_offset_, false})
+                          .build(ctx, x, {head, std::nullopt});
+        bucket->logits = logits.tensor;
+        bucket->graph = ggml_new_graph_custom(bucket->ctx.get(), 65536, false);
+        ggml_set_output(bucket->logits);
+        ggml_build_forward_expand(bucket->graph, bucket->logits);
+        bucket->allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
+        if (!bucket->allocator || !ggml_gallocr_alloc_graph(bucket->allocator.get(), bucket->graph)) {
+            throw std::runtime_error("failed to allocate ACE-Step planner CFG bucket scratch");
+        }
+        buckets_.push_back(std::move(bucket));
+        return *buckets_.back();
+    }
+
     std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime_;
     int64_t cache_steps_ = 0;
+    size_t graph_arena_bytes_ = 0;
+    bool prefix_bucketing_ = true;
+    int32_t head_offset_ = 0;
+    int64_t batch_size_ = 2;
     int64_t current_end_ = 0;
     int64_t valid_steps_ = 0;
+    int64_t unconditional_end_ = 0;
+    int64_t unconditional_valid_steps_ = 0;
     ggml_type activation_type_ = GGML_TYPE_F32;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_ids_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * cache_slot_ = nullptr;
     ggml_tensor * attention_mask_ = nullptr;
-    ggml_tensor * logits_cond_ = nullptr;
-    ggml_tensor * logits_uncond_ = nullptr;
     std::vector<core::TensorValue> cache_keys_;
     std::vector<core::TensorValue> cache_values_;
+    std::array<runtime::TransformerKVCache, 2> branch_caches_;
+    std::vector<std::unique_ptr<DecodeBucket>> buckets_;
     std::vector<ggml_fp16_t> attention_mask_values_;
-    ggml_cgraph * graph_ = nullptr;
+    std::vector<float> logits_values_;
     ggml_backend_buffer_t buffer_ = nullptr;
 };
 
@@ -2749,7 +2966,8 @@ AceStepQwen3PlannerRuntime::AceStepQwen3PlannerRuntime(
           assets_,
           execution,
           weight_context_bytes,
-          weight_storage_type)),
+          weight_storage_type,
+          generation.fused_projections)),
       decode_graph_arena_bytes_(decode_graph_arena_bytes),
       phase1_constraints_(build_phase1_constraint_tables(tokenizer_, assets_->config.planner)) {
     if (assets_ == nullptr) {
@@ -2800,10 +3018,14 @@ AceStepPlan AceStepQwen3PlannerRuntime::parse_output(const std::string & output_
 }
 
 void AceStepQwen3PlannerRuntime::release_graph_workspace() const {
-    cfg_decode_graph_.reset();
+    for (auto & graph : code_f16_decode_graphs_) graph.reset();
+    cot_decode_graph_.reset();
     cfg_prefill_graph_.reset();
     decode_graph_.reset();
     prefill_graph_.reset();
+    code_decode_graph_.reset();
+    for (auto & graph : code_prefill_graphs_) graph.reset();
+    unconditional_prefill_graph_.reset();
 }
 
 AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request, bool generate_audio_codes) const {
@@ -2814,7 +3036,11 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
     const auto prepare_prefill = [&](
         const AceStepPlannerPreparedInput & prepared,
         int64_t max_new_tokens,
-        std::string_view timing_prefix) {
+        std::string_view timing_prefix,
+        int32_t head_offset = 0,
+        bool code_phase = false,
+        bool cfg_prefill = false) {
+        auto & decode_graph = code_phase ? code_decode_graph_ : decode_graph_;
         const auto & config = assets_->config.planner;
         const auto & prompt_ids = prepared.tokenized_prompt.input_ids;
         const auto & attention_mask = prepared.tokenized_prompt.attention_mask;
@@ -2826,19 +3052,23 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
             : weights_runtime_;
         const auto graph_prepare_start = Clock::now();
         const int64_t required_cache_steps = static_cast<int64_t>(prompt_ids.size()) + max_new_tokens;
-        if (!decode_graph_ || !decode_graph_->can_run(*weights_runtime_, required_cache_steps)) {
-            decode_graph_ = std::make_unique<Qwen3PlannerDecodeGraph>(
+        const bool compact_code = weights_runtime_->backend_type() == core::BackendType::Cuda &&
+            (generation_.f16_decode || cfg_prefill);
+        // CFG switches can require different KV output types in the same session.
+        auto & prefill_graph = code_phase ? code_prefill_graphs_[compact_code ? 1 : 0] : prefill_graph_;
+        if (!compact_code && (!decode_graph || !decode_graph->can_run(*weights_runtime_, required_cache_steps, head_offset))) {
+            decode_graph = std::make_unique<Qwen3PlannerDecodeGraph>(
                 weights_runtime_,
                 required_cache_steps,
-                decode_graph_arena_bytes_);
+                decode_graph_arena_bytes_, head_offset);
         }
         const bool use_metal_prompt_step_prefill = prefill_runtime->backend_type() == core::BackendType::Metal;
         if (!use_metal_prompt_step_prefill &&
-            (!prefill_graph_ || !prefill_graph_->can_run(*prefill_runtime, static_cast<int64_t>(prompt_ids.size())))) {
-            prefill_graph_ = std::make_unique<Qwen3PlannerPrefillGraph>(
+            (!prefill_graph || !prefill_graph->can_run(*prefill_runtime, static_cast<int64_t>(prompt_ids.size())))) {
+            prefill_graph = std::make_unique<Qwen3PlannerPrefillGraph>(
                 prefill_runtime,
                 static_cast<int64_t>(prompt_ids.size()),
-                decode_graph_arena_bytes_);
+                decode_graph_arena_bytes_, compact_code ? GGML_TYPE_F16 : GGML_TYPE_F32);
         }
         engine::debug::timing_log_scalar(
             std::string(timing_prefix) + ".prefill.graph.prepare_ms",
@@ -2852,9 +3082,9 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
         const auto prefill_run_start = Clock::now();
         PrefillOutput out;
         if (use_metal_prompt_step_prefill) {
-            out = run_decode_graph_prompt_prefill(*decode_graph_, prepared.tokenized_prompt);
+            out = run_decode_graph_prompt_prefill(*decode_graph, prepared.tokenized_prompt);
         } else {
-            out = prefill_graph_->run(prompt_ids, attention_mask);
+            out = prefill_graph->run(prompt_ids, attention_mask);
         }
         engine::debug::timing_log_scalar(
             std::string(timing_prefix) + ".prefill_run_ms",
@@ -2868,7 +3098,24 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
         generated.reserve(static_cast<size_t>(generation_.max_cot_tokens));
         PrefillOutput prefill = prepare_prefill(prepared, generation_.max_cot_tokens, "ace_step.planner.cot");
         std::vector<float> logits = std::move(prefill.logits);
-        decode_graph_->import_state(prefill.kv_state);
+        const bool compact_decode = weights_runtime_->backend_type() == core::BackendType::Cuda && generation_.f16_decode;
+        std::vector<int32_t> visible = prepared.tokenized_prompt.attention_mask;
+        std::vector<float> unused_logits;
+        if (compact_decode) {
+            const int64_t required_steps = prefill.kv_state.current_end + generation_.max_cot_tokens;
+            if (!cot_decode_graph_ || !cot_decode_graph_->can_run(*weights_runtime_, required_steps, 1)) {
+                cot_decode_graph_ = std::make_unique<Qwen3PlannerCfgDecodeGraph>(
+                    weights_runtime_, required_steps, decode_graph_arena_bytes_, generation_.prefix_bucketing, 0, 1);
+            }
+            CfgPrefillOutput state;
+            state.current_end = prefill.kv_state.current_end;
+            state.valid_steps = state.current_end;
+            state.device_keys[0] = std::move(prefill.device_keys);
+            state.device_values[0] = std::move(prefill.device_values);
+            cot_decode_graph_->initialize(state, "ace_step.planner.cot");
+        } else {
+            decode_graph_->import_prefill(prefill);
+        }
         Phase1ConstrainedDecoder constrained_decoder(
             tokenizer_,
             assets_->config.planner,
@@ -2883,7 +3130,12 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
                 break;
             }
             const auto step_start = Clock::now();
-            decode_graph_->run_step_into(token, logits);
+            if (compact_decode) {
+                cot_decode_graph_->run_step_into(token, visible, {}, logits, unused_logits);
+                visible.push_back(1);
+            } else {
+                decode_graph_->run_step_into(token, logits);
+            }
             cot_decode_graph_step_ms += engine::debug::elapsed_ms(step_start, Clock::now());
         }
         engine::debug::timing_log_scalar("ace_step.planner.cot.decode.graph.step_ms", cot_decode_graph_step_ms);
@@ -2905,6 +3157,7 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
         std::mt19937 rng(request.generation.seed);
         const float lm_cfg_scale = request.generation.lm_cfg_scale;
         const bool use_cfg = lm_cfg_scale > 1.0F;
+        auto & code_f16_decode_graph = code_f16_decode_graphs_[use_cfg ? 1 : 0];
         std::vector<float> conditional_logits;
         std::vector<int32_t> conditional_visible;
         std::vector<int32_t> conditional_history;
@@ -2916,7 +3169,39 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
         Phase2CandidateSampler phase2_sampler(
             phase2_candidate_token_ids_,
             assets_->config.planner.eos_token_id);
-        if (use_cfg) {
+        if (use_cfg && weights_runtime_->backend_type() == core::BackendType::Cuda && generation_.independent_cfg_prefill) {
+            auto unconditional_prompt = prepare_phase2_unconditional_prompt(tokenizer_, request, generation_.max_prompt_tokens);
+            auto conditional_prefill = prepare_prefill(prepared, max_new_tokens, "ace_step.planner.code", assets_->config.planner.eos_token_id, true, true);
+            const auto & uncond = unconditional_prompt.tokenized_prompt;
+            const int64_t steps = static_cast<int64_t>(uncond.input_ids.size());
+            const auto prefill_start = Clock::now();
+            if (!unconditional_prefill_graph_ || !unconditional_prefill_graph_->can_run(*weights_runtime_, steps)) {
+                unconditional_prefill_graph_ = std::make_unique<Qwen3PlannerPrefillGraph>(weights_runtime_, steps, decode_graph_arena_bytes_, GGML_TYPE_F16);
+            }
+            auto unconditional_prefill = unconditional_prefill_graph_->run(uncond.input_ids, uncond.attention_mask);
+            engine::debug::timing_log_scalar("ace_step.planner.code.unconditional_prefill_ms", engine::debug::elapsed_ms(prefill_start, Clock::now()));
+            conditional_logits = std::move(conditional_prefill.logits);
+            unconditional_logits = std::move(unconditional_prefill.logits);
+            conditional_history = prepared.tokenized_prompt.input_ids;
+            conditional_visible = prepared.tokenized_prompt.attention_mask;
+            unconditional_visible = uncond.attention_mask;
+            const int64_t required_steps = std::max(conditional_prefill.kv_state.current_end, steps) + max_new_tokens;
+            if (required_steps > assets_->config.planner.max_position_embeddings) {
+                throw std::runtime_error("ACE-Step planner request exceeds max_position_embeddings");
+            }
+            if (!code_f16_decode_graph || !code_f16_decode_graph->can_run(*weights_runtime_, required_steps, 2)) {
+                code_f16_decode_graph = std::make_unique<Qwen3PlannerCfgDecodeGraph>(weights_runtime_, required_steps,
+                    decode_graph_arena_bytes_, generation_.prefix_bucketing, assets_->config.planner.eos_token_id, 2);
+            }
+            CfgPrefillOutput state;
+            state.current_end = conditional_prefill.kv_state.current_end;
+            state.valid_steps = state.current_end;
+            state.device_keys[0] = std::move(conditional_prefill.device_keys);
+            state.device_values[0] = std::move(conditional_prefill.device_values);
+            state.device_keys[1] = std::move(unconditional_prefill.device_keys);
+            state.device_values[1] = std::move(unconditional_prefill.device_values);
+            code_f16_decode_graph->initialize(state);
+        } else if (use_cfg) {
             auto unconditional_prompt =
                 prepare_phase2_unconditional_prompt(tokenizer_, request, generation_.max_prompt_tokens);
             auto aligned = left_pad_pair_to_shared_length(
@@ -2947,7 +3232,8 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
             const auto cfg_prefill_run_start = Clock::now();
             CfgPrefillOutput cfg_prefill;
             if (use_metal_prompt_step_cfg_prefill) {
-                Qwen3PlannerCfgDecodeGraph prompt_graph(weights_runtime_, cfg_required_cache_steps, decode_graph_arena_bytes_);
+                Qwen3PlannerCfgDecodeGraph prompt_graph(
+                    weights_runtime_, cfg_required_cache_steps, decode_graph_arena_bytes_, generation_.prefix_bucketing);
                 cfg_prefill = run_cfg_decode_graph_prompt_prefill(
                     prompt_graph,
                     conditional_prompt.tokenized_prompt,
@@ -2966,13 +3252,15 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
             conditional_visible = conditional_prompt.tokenized_prompt.attention_mask;
             unconditional_visible = unconditional_prompt.tokenized_prompt.attention_mask;
             const auto cfg_decode_prepare_start = Clock::now();
-            if (!cfg_decode_graph_ || !cfg_decode_graph_->can_run(*weights_runtime_, cfg_required_cache_steps)) {
-                cfg_decode_graph_ = std::make_unique<Qwen3PlannerCfgDecodeGraph>(
+            if (!code_f16_decode_graph || !code_f16_decode_graph->can_run(*weights_runtime_, cfg_required_cache_steps)) {
+                code_f16_decode_graph = std::make_unique<Qwen3PlannerCfgDecodeGraph>(
                     weights_runtime_,
                     cfg_required_cache_steps,
-                    decode_graph_arena_bytes_);
+                    decode_graph_arena_bytes_,
+                    generation_.prefix_bucketing,
+                    assets_->config.planner.eos_token_id);
             }
-            cfg_decode_graph_->initialize(cfg_prefill);
+            code_f16_decode_graph->initialize(cfg_prefill);
             engine::debug::timing_log_scalar(
                 "ace_step.planner.code.cfg_decode.graph.prepare_ms",
                 engine::debug::elapsed_ms(cfg_decode_prepare_start, Clock::now()));
@@ -2982,11 +3270,26 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
                 cfg_required_cache_steps);
         } else {
             PrefillOutput conditional_prefill =
-                prepare_prefill(prepared, max_new_tokens, "ace_step.planner.code");
+                prepare_prefill(prepared, max_new_tokens, "ace_step.planner.code", assets_->config.planner.eos_token_id, true);
             conditional_logits = std::move(conditional_prefill.logits);
             conditional_history = prepared.tokenized_prompt.input_ids;
             conditional_visible = prepared.tokenized_prompt.attention_mask;
-            decode_graph_->import_state(conditional_prefill.kv_state);
+            if (weights_runtime_->backend_type() == core::BackendType::Cuda && generation_.f16_decode) {
+                const int64_t required_steps = conditional_prefill.kv_state.current_end + max_new_tokens;
+                if (!code_f16_decode_graph || !code_f16_decode_graph->can_run(*weights_runtime_, required_steps, 1)) {
+                    code_f16_decode_graph = std::make_unique<Qwen3PlannerCfgDecodeGraph>(
+                        weights_runtime_, required_steps, decode_graph_arena_bytes_,
+                        generation_.prefix_bucketing, assets_->config.planner.eos_token_id, 1);
+                }
+                CfgPrefillOutput prefill;
+                prefill.current_end = conditional_prefill.kv_state.current_end;
+                prefill.valid_steps = prefill.current_end;
+                prefill.device_keys[0] = std::move(conditional_prefill.device_keys);
+                prefill.device_values[0] = std::move(conditional_prefill.device_values);
+                code_f16_decode_graph->initialize(prefill);
+            } else {
+                code_decode_graph_->import_prefill(conditional_prefill);
+            }
         }
         for (int64_t step = 0; step < max_new_tokens; ++step) {
             const auto sampling_start = Clock::now();
@@ -2994,9 +3297,12 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
                 phase2_sampler.write_cfg_logits(
                     conditional_logits,
                     unconditional_logits,
-                    lm_cfg_scale);
+                    lm_cfg_scale,
+                    step == 0 ? 0 : assets_->config.planner.eos_token_id);
             } else {
-                phase2_sampler.write_branch_logits(conditional_logits);
+                const bool full_head = step == 0 && weights_runtime_->backend_type() != core::BackendType::Metal;
+                phase2_sampler.write_branch_logits(
+                    conditional_logits, full_head ? 0 : assets_->config.planner.eos_token_id);
             }
             phase2_sampler.apply_duration_constraint(
                 static_cast<int64_t>(generated.size()),
@@ -3004,9 +3310,9 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
             phase2_sampler.apply_repetition_penalty(
                 conditional_history,
                 request.generation.lm_repetition_penalty);
-            phase2_sampler.apply_top_k_filter(request.generation.lm_top_k);
-            phase2_sampler.apply_top_p_filter(request.generation.lm_top_p);
-            const int32_t token = phase2_sampler.sample(request.generation.lm_temperature, rng);
+            const int32_t token = phase2_sampler.sample(
+                request.generation.lm_temperature, rng,
+                request.generation.lm_top_k, request.generation.lm_top_p);
             generated.push_back(token);
             conditional_history.push_back(token);
             phase2_processor.update_state(token);
@@ -3015,17 +3321,17 @@ AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request,
                 break;
             }
             const auto step_start = Clock::now();
-            if (use_cfg) {
-                cfg_decode_graph_->run_step_into(
+            if (use_cfg || (weights_runtime_->backend_type() == core::BackendType::Cuda && generation_.f16_decode)) {
+                code_f16_decode_graph->run_step_into(
                     token,
                     conditional_visible,
                     unconditional_visible,
                     conditional_logits,
                     unconditional_logits);
                 conditional_visible.push_back(1);
-                unconditional_visible.push_back(1);
+                if (use_cfg) unconditional_visible.push_back(1);
             } else {
-                decode_graph_->run_step_into(token, conditional_logits, &conditional_visible);
+                code_decode_graph_->run_step_into(token, conditional_logits, &conditional_visible);
                 conditional_visible.push_back(1);
             }
             code_decode_graph_step_ms += engine::debug::elapsed_ms(step_start, Clock::now());

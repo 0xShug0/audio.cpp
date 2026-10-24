@@ -4,6 +4,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
+#include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -26,6 +27,7 @@
 #include <optional>
 #include <random>
 #include <stdexcept>
+#include <string_view>
 #include <string>
 #include <utility>
 #include <vector>
@@ -99,13 +101,21 @@ core::TensorValue attention_from_heads(
     const core::TensorValue & v_heads,
     int64_t dim,
     const std::optional<core::TensorValue> & attention_mask,
-    core::BackendType backend_type) {
-    (void)backend_type;
+    bool flash_attention) {
+    auto mask = attention_mask;
+    if (flash_attention && mask.has_value() && mask->type != GGML_TYPE_F16) {
+        mask = core::wrap_tensor(ggml_cast(ctx.ggml, mask->tensor, GGML_TYPE_F16), mask->shape, GGML_TYPE_F16);
+    }
+    if (flash_attention) {
+        return modules::GroupedQueryAttentionModule({
+            dim, modules::GroupedQueryAttentionLowering::FlashGroupedViewKV, GGML_PREC_F32})
+            .build(ctx, q_heads, k_heads, v_heads, mask);
+    }
     return modules::ScaledDotProductAttentionModule({
         dim,
         modules::ScaledDotProductAttentionLowering::Explicit,
         GGML_PREC_F32,
-    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
+    }).build(ctx, q_heads, k_heads, v_heads, mask);
 }
 
 core::TensorValue build_attention(
@@ -115,7 +125,7 @@ core::TensorValue build_attention(
     const AceStepDiTAttentionWeights & weights,
     const AceStepDiffusionConfig & config,
     const std::optional<core::TensorValue> & attention_mask,
-    core::BackendType backend_type,
+    bool flash_attention,
     const std::optional<PrecomputedCrossAttentionKV> & cross_attention_kv = std::nullopt,
     const std::optional<core::TensorValue> & encoder_hidden_states = std::nullopt) {
     const int64_t dim = ace_step_diffusion_attention_head_dim(config, "ACE-Step diffusion");
@@ -149,17 +159,13 @@ core::TensorValue build_attention(
     auto q_heads = ensure_contiguous(
         ctx,
         modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q));
-    auto k_heads = repeat_kv_heads(
-        ctx,
-        modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k),
-        kv_repeats);
-    auto v_heads = repeat_kv_heads(
-        ctx,
-        modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v),
-        kv_repeats);
-    k_heads = ensure_contiguous(ctx, k_heads);
-    v_heads = ensure_contiguous(ctx, v_heads);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask, backend_type);
+    auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
+    auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
+    if (!flash_attention) {
+        k_heads = ensure_contiguous(ctx, repeat_kv_heads(ctx, k_heads, kv_repeats));
+        v_heads = ensure_contiguous(ctx, repeat_kv_heads(ctx, v_heads, kv_repeats));
+    }
+    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask, flash_attention);
     context = ensure_contiguous(ctx, context);
     // The attention width is heads x head_dim, which only equals hidden_size when
     // head_dim was derived from it. XL states head_dim outright (32 x 128 against
@@ -283,7 +289,7 @@ core::TensorValue dit_layer(
     const core::TensorValue & encoder_attention_mask,
     const AceStepDiTLayerWeights & weights,
     const AceStepDiffusionConfig & config,
-    core::BackendType backend_type,
+    bool flash_attention,
     const std::optional<PrecomputedCrossAttentionKV> & cross_attention_kv,
     const std::optional<core::TensorValue> & encoder_hidden_states = std::nullopt) {
     const int64_t hidden_size = config.hidden_size;
@@ -312,7 +318,7 @@ core::TensorValue dit_layer(
         weights.self_attn,
         config,
         self_attention_mask,
-        backend_type);
+        flash_attention);
     attn_out = modules::MulModule{}.build(ctx, attn_out, gate_msa);
     auto x = modules::AddModule{}.build(ctx, hidden_states, attn_out);
 
@@ -325,7 +331,7 @@ core::TensorValue dit_layer(
         weights.cross_attn,
         config,
         encoder_attention_mask,
-        backend_type,
+        flash_attention,
         cross_attention_kv,
         encoder_hidden_states);
     x = modules::AddModule{}.build(ctx, x, cross_out);
@@ -1081,7 +1087,8 @@ public:
             int64_t batch_size,
             int64_t original_frames_capacity,
             int64_t encoder_tokens_capacity,
-            size_t graph_arena_bytes)
+            size_t graph_arena_bytes,
+            bool flash_attention)
             : assets_(std::move(assets)),
               backend_(backend),
               backend_type_(backend_type),
@@ -1091,7 +1098,8 @@ public:
               original_frames_capacity_(original_frames_capacity),
               padded_frames_(round_up_frames(original_frames_capacity, assets_->config.diffusion.patch_size)),
               patch_frames_(padded_frames_ / assets_->config.diffusion.patch_size),
-              encoder_tokens_(encoder_tokens_capacity) {
+              encoder_tokens_(encoder_tokens_capacity),
+              flash_attention_(flash_attention) {
             if (batch_size_ <= 0) {
                 throw std::runtime_error("ACE-Step diffusion graph batch size is invalid");
             }
@@ -1190,13 +1198,6 @@ public:
             const std::vector<float> timestep_r_values(static_cast<size_t>(batch_size_), timestep_r);
             core::write_tensor_f32(timestep_value_, timestep_values);
             core::write_tensor_f32(timestep_r_value_, timestep_r_values);
-            ggml_backend_tensor_set(time_freqs_, time_freq_values_.data(), 0, time_freq_values_.size() * sizeof(float));
-            ggml_backend_tensor_set(time_freqs_r_, time_freq_values_.data(), 0, time_freq_values_.size() * sizeof(float));
-            ggml_backend_tensor_set(
-                positions_,
-                position_values_.data(),
-                0,
-                position_values_.size() * sizeof(int32_t));
             core::set_backend_threads(backend_, threads_);
             const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
             ggml_backend_synchronize(backend_);
@@ -1278,6 +1279,12 @@ public:
             ggml_set_input(positions_);
             ggml_set_input(sliding_attention_mask_value_.tensor);
             ggml_set_input(self_attention_padding_mask_value_.tensor);
+            // Keep constants out of scratch reuse across diffusion steps.
+            for (auto * tensor : {context_value_.tensor, encoder_attention_mask_value_.tensor,
+                                 sliding_attention_mask_value_.tensor, self_attention_padding_mask_value_.tensor,
+                                 time_freqs_, time_freqs_r_, positions_}) {
+                ggml_set_output(tensor);
+            }
 
             auto hidden = modules::ConcatModule({2}).build(ctx, context_value_, hidden_value_);
             hidden = modules::TransposeModule({{0, 2, 1}, hidden.shape.rank}).build(ctx, hidden);
@@ -1320,6 +1327,8 @@ public:
                 cross_value_value_inputs_.push_back(core::make_tensor(ctx, GGML_TYPE_F32, cross_cache_shape));
                 ggml_set_input(cross_key_value_inputs_.back().tensor);
                 ggml_set_input(cross_value_value_inputs_.back().tensor);
+                ggml_set_output(cross_key_value_inputs_.back().tensor);
+                ggml_set_output(cross_value_value_inputs_.back().tensor);
                 const std::optional<core::TensorValue> self_mask =
                     (config.layer_types[i] == "sliding_attention")
                     ? std::optional<core::TensorValue>(
@@ -1339,7 +1348,7 @@ public:
                     encoder_attention_mask_value_,
                     weights_->layers[i],
                     config,
-                    backend_type_,
+                    flash_attention_,
                     cross_attention_kv,
                     std::nullopt);
             }
@@ -1407,6 +1416,7 @@ public:
         int64_t padded_frames_ = 0;
         int64_t patch_frames_ = 0;
         int64_t encoder_tokens_ = 0;
+        bool flash_attention_ = false;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
         core::TensorValue hidden_value_;
         core::TensorValue context_value_;
@@ -1431,7 +1441,8 @@ public:
         std::shared_ptr<const AceStepAssets> assets,
         core::ExecutionContext & execution,
         std::shared_ptr<const AceStepDitWeightsRuntime> dit_weights_runtime,
-        size_t graph_arena_bytes)
+        size_t graph_arena_bytes,
+        core::AttentionPreference attention)
         : assets_(std::move(assets)),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
@@ -1444,6 +1455,10 @@ public:
         if (backend_ == nullptr) {
             throw std::runtime_error("ACE-Step diffusion backend is not initialized");
         }
+        flash_attention_ = (attention == core::AttentionPreference::Flash || backend_type_ != core::BackendType::Cpu) &&
+            core::resolve_flash_attention(backend_, ace_step_diffusion_attention_head_dim(assets_->config.diffusion,
+                "ACE-Step diffusion"), attention);
+        engine::debug::trace_log_scalar("ace_step.dit_attention", std::string_view(flash_attention_ ? "flash" : "eager"));
     }
 
     static CrossAttentionCacheGraph::Output combine_cross_attention_cache(
@@ -1507,7 +1522,8 @@ public:
                 diffusion_batch_size,
                 pre.context_latents.frames,
                 encoder_token_capacity,
-                graph_arena_bytes_);
+                graph_arena_bytes_,
+                flash_attention_);
         }
         engine::debug::timing_log_scalar(
             "ace_step.diffusion.graph.prepare_ms",
@@ -1667,11 +1683,6 @@ public:
         int64_t velocity_calls = 0;
         std::vector<float> apg_momentum;
         auto run_velocity = [&](float timestep, bool primary_eval) {
-            graph_->set_static_inputs(
-                pre.context_latents.frames,
-                *active_context_padded,
-                *active_cross_attention_cache,
-                *active_encoder_attention_mask_padded);
             const auto velocity_start = Clock::now();
             std::vector<float> cfg_hidden;
             const std::vector<float> * graph_hidden = &hidden;
@@ -1920,18 +1931,21 @@ public:
         std::shared_ptr<const AceStepDiffusionWeights> weights_;
         std::unique_ptr<CrossAttentionCacheGraph> cross_cache_graph_;
         std::unique_ptr<StepGraph> graph_;
+        bool flash_attention_ = false;
 };
 
 AceStepDiffusionRuntime::AceStepDiffusionRuntime(
     std::shared_ptr<const AceStepAssets> assets,
     core::ExecutionContext & execution,
     std::shared_ptr<const AceStepDitWeightsRuntime> dit_weights_runtime,
-    size_t graph_arena_bytes)
+    size_t graph_arena_bytes,
+    core::AttentionPreference attention)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           std::move(dit_weights_runtime),
-          graph_arena_bytes)) {}
+          graph_arena_bytes,
+          attention)) {}
 
 AceStepDiffusionRuntime::~AceStepDiffusionRuntime() = default;
 

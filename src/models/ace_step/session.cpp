@@ -10,6 +10,8 @@
 #include "engine/models/ace_step/request_parser.h"
 #include "engine/models/ace_step/task_route.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <sstream>
 #include <stdexcept>
@@ -22,6 +24,37 @@ namespace engine::models::ace_step {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+struct PerfPreset {
+    std::string_view name;
+    AceStepVAEDecodeConfig vae_decode;
+    bool planner_fused_projections;
+    bool planner_f16_decode;
+    bool planner_independent_cfg_prefill;
+};
+
+constexpr std::array<PerfPreset, 2> kPerfPresets{{
+    {"off", {}, false, false, false},
+    {"cuda_perf", {1024, 64}, true, true, true},
+}};
+
+AceStepVAEDecodeConfig vae_decode_config_from_options(const runtime::SessionOptions & options) {
+    const auto name = runtime::find_option(options.options, {"ace_step.perf_mode"}).value_or("off");
+    const auto preset = std::find_if(kPerfPresets.begin(), kPerfPresets.end(),
+        [&](const auto & entry) { return entry.name == name; });
+    if (preset == kPerfPresets.end()) {
+        throw std::runtime_error("Invalid ace_step.perf_mode: " + name);
+    }
+    auto config = preset->vae_decode;
+    if (const auto value = runtime::parse_i64_option(options.options, {"ace_step.vae_tile_frames"})) {
+        config.tile_frames = *value;
+    }
+    if (const auto value = runtime::parse_i64_option(options.options, {"ace_step.vae_tile_overlap_frames"})) {
+        config.tile_overlap_frames = *value;
+    }
+    engine::debug::trace_log_scalar("ace_step.perf_mode", name);
+    return config;
+}
 
 std::shared_ptr<const AceStepAssets> require_assets(std::shared_ptr<const AceStepAssets> assets) {
     if (assets == nullptr) {
@@ -216,7 +249,8 @@ AceStepSession::AceStepSession(runtime::TaskSpec task, runtime::SessionOptions o
           weight_type_from_options(RuntimeSessionBase::options(), "ace_step.text_encoder_weight_type")),
       dit_weight_storage_type_(dit_weight_type_from_options(RuntimeSessionBase::options())),
       vae_weight_storage_type_(weight_type_from_options(RuntimeSessionBase::options(), "ace_step.vae_weight_type")),
-      mem_saver_(mem_saver_from_options(RuntimeSessionBase::options())) {
+      mem_saver_(mem_saver_from_options(RuntimeSessionBase::options())),
+      vae_decode_config_(vae_decode_config_from_options(RuntimeSessionBase::options())) {
     if (task_.task != runtime::VoiceTaskKind::AudioGeneration) {
         throw std::runtime_error("ACE-Step supports only the gen task");
     }
@@ -273,7 +307,7 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
         engine::debug::timing_log_scalar("ace_step.session.planner_generate_ms",
                                          engine::debug::elapsed_ms(planner_start, Clock::now()));
         const auto planner_release_start = Clock::now();
-        planner_->release_graph_workspace();
+        if (mem_saver_) planner_->release_graph_workspace();
         if (execution_context().backend_type() == core::BackendType::Metal) {
             planner_.reset();
         }
@@ -316,7 +350,7 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
                                          engine::debug::elapsed_ms(planner_start, Clock::now()));
 
         const auto planner_release_start = Clock::now();
-        planner_->release_graph_workspace();
+        if (mem_saver_) planner_->release_graph_workspace();
         if (execution_context().backend_type() == core::BackendType::Metal) {
             planner_.reset();
         }
@@ -413,9 +447,32 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
 
 void AceStepSession::ensure_planner() {
     if (!planner_) {
+        const auto preset_name = runtime::find_option(options().options, {"ace_step.perf_mode"}).value_or("off");
+        const auto preset = std::find_if(kPerfPresets.begin(), kPerfPresets.end(),
+            [&](const auto & entry) { return entry.name == preset_name; });
+        if (preset == kPerfPresets.end()) {
+            throw std::runtime_error("Invalid ace_step.perf_mode: " + preset_name);
+        }
+        AceStepQwen3PlannerRuntime::GenerationConfig generation{4096, 512, 4032};
+        generation.prefix_bucketing = runtime::parse_bool_option(
+            runtime::find_option(options().options, {"ace_step.planner_prefix_bucketing"}).value_or("true"),
+            "ace_step.planner_prefix_bucketing");
+        engine::debug::trace_log_scalar("ace_step.planner.prefix_bucketing", generation.prefix_bucketing);
+        generation.fused_projections = runtime::parse_bool_option(
+            runtime::find_option(options().options, {"ace_step.planner_fused_projections"}).value_or(preset->planner_fused_projections ? "true" : "false"),
+            "ace_step.planner_fused_projections");
+        generation.f16_decode = runtime::parse_bool_option(
+            runtime::find_option(options().options, {"ace_step.planner_f16_decode"}).value_or(preset->planner_f16_decode ? "true" : "false"),
+            "ace_step.planner_f16_decode");
+        generation.independent_cfg_prefill = runtime::parse_bool_option(
+            runtime::find_option(options().options, {"ace_step.planner_independent_cfg_prefill"}).value_or(preset->planner_independent_cfg_prefill ? "true" : "false"),
+            "ace_step.planner_independent_cfg_prefill");
+        engine::debug::trace_log_scalar("ace_step.planner.fused_projections", generation.fused_projections);
+        engine::debug::trace_log_scalar("ace_step.planner.f16_decode", generation.f16_decode);
+        engine::debug::trace_log_scalar("ace_step.planner.independent_cfg_prefill", generation.independent_cfg_prefill);
         planner_ = std::make_unique<AceStepQwen3PlannerRuntime>(assets_, execution_context(), planner_weight_storage_type_,
                                                            256ull * 1024ull * 1024ull, 128ull * 1024ull * 1024ull,
-                                                           AceStepQwen3PlannerRuntime::GenerationConfig{4096, 512, 4032});
+                                                           generation);
     }
 }
 
@@ -431,7 +488,11 @@ void AceStepSession::ensure_pre_dit() {
 void AceStepSession::ensure_diffusion() {
     ensure_dit_weights_runtime();
     if (!diffusion_) {
-        diffusion_ = std::make_unique<AceStepDiffusionRuntime>(assets_, execution_context(), dit_weights_runtime_);
+        const auto attention = core::parse_attention_preference(
+            runtime::find_option(options().options, {"ace_step.dit_attention"}).value_or("auto"),
+            "ace_step.dit_attention");
+        diffusion_ = std::make_unique<AceStepDiffusionRuntime>(
+            assets_, execution_context(), dit_weights_runtime_, 256ull * 1024ull * 1024ull, attention);
     }
 }
 
@@ -445,7 +506,8 @@ void AceStepSession::ensure_dit_weights_runtime() {
 void AceStepSession::ensure_vae_decoder() {
     if (!vae_decoder_) {
         vae_decoder_ =
-            std::make_shared<AceStepVAEDecoderRuntime>(assets_, execution_context(), vae_weight_storage_type_);
+            std::make_shared<AceStepVAEDecoderRuntime>(assets_, execution_context(), vae_weight_storage_type_,
+                256ull * 1024ull * 1024ull, 64ull * 1024ull * 1024ull, vae_decode_config_);
     }
 }
 
