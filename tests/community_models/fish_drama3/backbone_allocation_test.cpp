@@ -112,10 +112,11 @@ int main(int argc, char ** argv) {
             ~FixtureDirectory() { std::error_code error; std::filesystem::remove_all(path, error); }
         } fixture;
         auto c = config;
+        c.kv_cache_type = GGML_TYPE_F32;
         c.vocab_size = 16;
         c.hidden_size = c.intermediate_size = 256;
         c.layers = 2;
-        c.experts = 12;
+        c.experts = 32;
         c.experts_per_token = 2;
         c.expert_cache_size = 4;
         c.heads = 4;
@@ -166,9 +167,9 @@ int main(int argc, char ** argv) {
             }
             for (const auto * projection : {"gate_proj", "up_proj", "down_proj"}) {
                 add(p + ".mlp.shared_expert." + projection + ".weight", {256, 256});
-                add(p + ".mlp.experts." + projection + ".weight", {12, 256, 256});
+                add(p + ".mlp.experts." + projection + ".weight", {c.experts, 256, 256});
             }
-            add(p + ".mlp.gate.weight", {12, 256});
+            add(p + ".mlp.gate.weight", {c.experts, 256});
             add(p + ".mlp.shared_expert_gate.weight", {1, 256});
         }
         const auto safe = fixture.path / "weights.safetensors";
@@ -215,6 +216,38 @@ int main(int argc, char ** argv) {
                     if (std::abs(actual[i] - expected.at(selected_config.lm_head_token_ids[i])) > 1e-5F)
                         throw std::runtime_error("selected LM head changed candidate logits");
                 selected.release_graph();
+            }
+        }
+        if (test_backend.type == engine::core::BackendType::Cuda) {
+            for (int variant = 0; variant < 4; ++variant) {
+                auto candidate_config = c;
+                candidate_config.kv_cache_type = variant == 0 || variant == 3 ? GGML_TYPE_F16 : GGML_TYPE_F32;
+                candidate_config.fused_moe = variant == 1 || variant == 3;
+                candidate_config.kv_cache_alignment = variant >= 2 ? 8 : 1;
+                drama::Drama3BackboneCachedDecodeGraph baseline(prefill_execution, resident, c, 32, 8 * 1024 * 1024);
+                drama::Drama3BackboneCachedDecodeGraph candidate(prefill_execution, resident, candidate_config, 32, 8 * 1024 * 1024);
+                float maximum = 0;
+                for (int steps : {7, 1, 7}) {
+                    std::vector<float> input(steps * 256);
+                    for (size_t i = 0; i < input.size(); ++i) input[i] = std::cos(float(i) * .091F);
+                    baseline.reset();
+                    candidate.reset();
+                    const auto expected = baseline.prefill_embeddings(input, steps).hidden;
+                    const auto actual = candidate.prefill_embeddings(input, steps).hidden;
+                    if (expected != actual) throw std::runtime_error("decode optimization changed prompt prefill");
+                    for (int step = 0; step < 8; ++step) {
+                        std::vector<float> next(256);
+                        for (size_t i = 0; i < next.size(); ++i) next[i] = std::sin(float(i + step * 256) * .037F);
+                        const auto reference = baseline.run_embedding_step(next);
+                        const auto output = candidate.run_embedding_step(next);
+                        for (size_t i = 0; i < output.size(); ++i) {
+                            if (!std::isfinite(output[i])) throw std::runtime_error("decode optimization produced nonfinite output");
+                            maximum = std::max(maximum, std::abs(reference[i] - output[i]));
+                        }
+                    }
+                }
+                std::cout << "decode_variant=" << variant << " max_abs=" << maximum << '\n';
+                if (maximum > 1e-4F) throw std::runtime_error("decode optimization changed fixed-input continuation");
             }
         }
         c.disk_experts = true;
