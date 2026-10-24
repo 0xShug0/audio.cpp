@@ -56,6 +56,8 @@ std::vector<ggml_backend_buffer_type_t> cpu_extra_buffer_types(ggml_backend_t ba
 bool buffer_type_supports_matmul_weight(
     ggml_backend_t backend, ggml_backend_buffer_type_t buffer_type, ggml_type type, int64_t ne0, int64_t ne1);
 BackendType backend_type(ggml_backend_t backend);
+// Whether `buffer` lives on a device owned by the HIP (ROCm) registry.
+bool is_hip_buffer(ggml_backend_buffer_t buffer);
 bool is_host_backend(ggml_backend_t backend);
 bool uses_host_graph_plan(BackendType type);
 bool uses_host_graph_plan(ggml_backend_t backend);
