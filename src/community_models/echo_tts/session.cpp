@@ -7,6 +7,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/audio/waveform_ops.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -119,6 +120,39 @@ int64_t quantize_window(int64_t frames, int64_t max_frames) {
     return std::min<int64_t>(frames, max_frames);
 }
 
+// For KV-cache allocation mostly, determine number of kv-lanes to allocate
+// (may belong in a different source file?)
+int cfg_mode_to_kv_lanes(EchoCfgMode cfg_mode) {
+    switch (cfg_mode) {
+        case EchoCfgMode::Joint:
+            return 2;
+        case EchoCfgMode::Independent:
+            return 3;
+        default:
+            throw std::runtime_error("Echo-TTS unrecognized CFG mode.");
+    }
+}
+
+std::string trim_ascii(std::string text) {
+  while (!text.empty() && (text.front() == ' ' || text.front() == '\n' ||
+                           text.front() == '\r' || text.front() == '\t')) {
+    text.erase(text.begin());
+  }
+  while (!text.empty() && (text.back() == ' ' || text.back() == '\n' ||
+                           text.back() == '\r' || text.back() == '\t')) {
+    text.pop_back();
+  }
+  return text;
+}
+
+std::string lower_ascii(std::string text) {
+  std::transform(text.begin(), text.end(), text.begin(),
+                 [](unsigned char ch) {
+                   return static_cast<char>(std::tolower(ch));
+                 });
+  return text;
+}
+
 // Predicts how many latents this chunk needs. Deliberately generous: a window
 // that is too short costs a full-length retry, while one that is slightly too
 // long only wastes the difference.
@@ -183,17 +217,36 @@ runtime::SessionOptions require_supported_session_options(
     runtime::SessionOptions options,
     const std::shared_ptr<const engine::model_spec::ModelContract> &contract) {
   // Older standalone GGUF packages embed a contract that predates the
-  // echo_tts.mem_saver option; keep them usable while still validating
+  // echo_tts.mem_saver + options; keep them usable while still validating
   // the value below.
   auto validation_options = options;
-  if (contract->session_option_keys.find("echo_tts.mem_saver") ==
-      contract->session_option_keys.end()) {
-    validation_options.options.erase("echo_tts.mem_saver");
+  for (auto key : {"echo_tts.mem_saver", "echo_tts.cfg_mode"}) {
+      if (contract->session_option_keys.find(key) ==
+          contract->session_option_keys.end()) {
+        validation_options.options.erase(key);
+      }
   }
   runtime::validate_spec_backed_session_options(
       validation_options, *contract, kFamily, "Echo-TTS");
   return options;
 }
+
+void require_supported_request_options(
+    const std::unordered_map<std::string, std::string> & options,
+    const engine::model_spec::ModelContract & contract) {
+    // Older standalone GGUF packages embed a contract that predates the
+    // 'guidance_interval' option; keep them usable while still validating
+    // the value below.
+    auto validation_options = options;
+    for (auto key : {"guidance_scale", "text_chunk_size"}) {
+        if (contract.request_option_keys.find(key) ==
+            contract.request_option_keys.end()) {
+          validation_options.erase(key);
+        }
+    }
+    runtime::validate_spec_backed_request_options(validation_options, contract, "Echo-TTS");
+}
+
 
 }  // namespace
 
@@ -213,6 +266,17 @@ EchoTtsSession::EchoTtsSession(
         RuntimeSessionBase::options().options, {"echo_tts.mem_saver"})) {
             mem_saver_ = runtime::parse_bool_option(*value, "echo_tts.mem_saver");
         }
+    if (const auto value = runtime::find_option(
+        RuntimeSessionBase::options().options, {"echo_tts.cfg_mode"})) {
+      const auto mode = lower_ascii(trim_ascii(*value));
+      if (mode == "independent") {
+          cfg_mode_ = EchoCfgMode::Independent;
+      } else if (mode == "joint") {
+          cfg_mode_ = EchoCfgMode::Joint;
+      } else {
+          throw std::runtime_error("echo_tts.cfg_mode must be 'independent' or 'joint'");
+      }
+    }
     const auto slots = runtime::parse_int_option(
         RuntimeSessionBase::options().options, {"echo_tts.reference_cache_slots"});
     if (slots.has_value()) {
@@ -244,16 +308,29 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
     EchoSamplerOptions sampler;
     sampler.num_steps =
         runtime::parse_int_option(options, {"num_inference_steps"}).value_or(sampler.num_steps);
-    sampler.cfg_scale_text = runtime::parse_float_option(options, {"text_guidance_scale"})
-                                 .value_or(sampler.cfg_scale_text);
-    sampler.cfg_scale_speaker = runtime::parse_float_option(options, {"speaker_guidance_scale"})
+    sampler.cfg_mode = cfg_mode_; // Session-only option (for now), copy from the session
+    if (cfg_mode_ == EchoCfgMode::Independent) {
+        sampler.cfg_scale_text = runtime::parse_float_option(options, {"text_guidance_scale"})
+                                    .value_or(sampler.cfg_scale_text);
+        sampler.cfg_scale_speaker = runtime::parse_float_option(options, {"speaker_guidance_scale"})
                                     .value_or(sampler.cfg_scale_speaker);
+        if (runtime::find_option(options, {"guidance_scale"})) {
+            throw runtime::InvalidRequestError("Echo-TTS guidance_scale is invalid for independent-CFG sampling");
+        }
+    } else { // EchoCfgMode::Joint
+        sampler.cfg_scale = runtime::parse_float_option(options, {"guidance_scale"})
+                                    .value_or(sampler.cfg_scale);
+        if (runtime::find_option(options, {"text_guidance_scale"}) ||
+            runtime::find_option(options, {"speaker_guidance_scale"})) {
+          throw runtime::InvalidRequestError("Echo-TTS text_guidance_scale and speaker_guidance_scale are invalid for joint-CFG sampling");
+        }
+    }
     if (const auto truncation = runtime::parse_float_option(options, {"truncation_factor"})) {
         sampler.truncation_factor = *truncation;
     }
     if (const auto kv_scale = runtime::parse_float_option(options, {"speaker_kv_scale"})) {
         if (*kv_scale == 0.0F) {
-            throw std::runtime_error("speaker_kv_scale must be nonzero");
+            throw runtime::InvalidRequestError("speaker_kv_scale must be nonzero");
         }
         // 1.0 is the documented "disabled" value, not a scale to apply.
         if (*kv_scale != 1.0F) {
@@ -270,7 +347,7 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
     sampler.sequence_length = assets_->config.max_sequence_length;
     if (const auto window_sec = runtime::parse_float_option(options, {"max_duration_sec"})) {
         if (!(*window_sec > 0.0F)) {
-            throw std::runtime_error("Echo-TTS max_duration_sec must be positive");
+            throw runtime::InvalidRequestError("Echo-TTS max_duration_sec must be positive");
         }
         // The window is quantised to whole latent frames. Round *down* so the
         // option keeps its name: the result is never longer than what was asked
@@ -286,12 +363,12 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
     }
     if (const auto interval = runtime::parse_int_option(options, {"guidance_interval"})) {
         if (*interval < 1) {
-            throw std::runtime_error("Echo-TTS guidance_interval must be at least 1");
+            throw runtime::InvalidRequestError("Echo-TTS guidance_interval must be at least 1");
         }
         sampler.cfg_interval = *interval;
     }
     if (sampler.num_steps <= 0) {
-        throw std::runtime_error("Echo-TTS num_inference_steps must be positive");
+        throw runtime::InvalidRequestError("Echo-TTS num_inference_steps must be positive");
     }
     return sampler;
 }
@@ -355,7 +432,7 @@ int64_t EchoTtsSession::resolve_reference_max_samples(
         return kDefaultReferenceMaxSamples;
     }
     if (!(*seconds > 0.0F)) {
-        throw std::runtime_error("Echo-TTS reference_duration_sec must be positive");
+        throw runtime::InvalidRequestError("Echo-TTS reference_duration_sec must be positive");
     }
     const auto requested = static_cast<int64_t>(
         static_cast<double>(*seconds) * static_cast<double>(kSampleRate));
@@ -484,7 +561,11 @@ runtime::AudioBuffer EchoTtsSession::synthesize_chunk(
     conditioning.speaker_mask.assign(static_cast<size_t>(speaker_frames_), 1.0F);
     conditioning.speaker_frames = speaker_frames_;
 
-    dit_->prepare_conditioning(conditioning);
+    // Note: with cfg_mode_ as a Session-option, it's safe to set the KV cache
+    // allocation based on the current cfg_mode_. If we ever allow cfg_mode_ as a
+    // request-option, this logic will need to be adjusted to the maximum needed
+    // by any allowed cfg mode.
+    dit_->prepare_conditioning(conditioning, cfg_mode_to_kv_lanes(cfg_mode_));
 
     // Adaptive window: OFF by default, enable with AUDIOCPP_ECHO_TTS_ADAPTIVE_WINDOW=1.
     //
@@ -582,15 +663,10 @@ runtime::AudioBuffer EchoTtsSession::synthesize_chunk(
 
 runtime::TaskResult EchoTtsSession::run(const runtime::TaskRequest & request) {
     require_prepared("Echo-TTS run");
-    auto validation_options = request.options;
-    // Older embedded specs omit this control; the chunk parser validates its value.
-    if (contract_->request_option_keys.find("text_chunk_size") == contract_->request_option_keys.end()) {
-        validation_options.erase("text_chunk_size");
-    }
-    runtime::validate_spec_backed_request_options(validation_options, *contract_, "Echo-TTS");
+    require_supported_request_options(request.options, *contract_);
 
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
-        throw std::runtime_error("Echo-TTS requires text input");
+        throw runtime::InvalidRequestError("Echo-TTS requires text input");
     }
     if (!request.voice.has_value() || !request.voice->speaker.has_value() ||
         !request.voice->speaker->audio.has_value()) {
