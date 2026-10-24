@@ -104,6 +104,12 @@ Growth preserves the existing KV and recurrent state without changing precision
 or reducing the token limit. Memory still grows with actual context length.
 The normal resident path remains the default.
 
+Thinker MLA attention uses F16 KV storage; KDA recurrent state and convolution
+tails remain F32. CUDA decode reuses session-owned attention graphs sized to
+the live prefix, retaining the full context. KDA input projections and shared
+MLP gate/up projections are packed at load without changing weight precision.
+These optimizations are enabled by default and do not change the Talker or VAE.
+
 The native frontend uses the framework text chunker rather than Python's
 word/character buffering and does not run the optional Python FST normalizer.
 Spell out numbers and abbreviations when pronunciation matters. Long text is

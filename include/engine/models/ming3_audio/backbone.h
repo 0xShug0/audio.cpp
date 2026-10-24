@@ -3,7 +3,7 @@
 #include "engine/models/ming3_audio/assets.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/disk_expert_weight_store.h"
-#include "engine/framework/modules/feed_forward_modules.h"
+#include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 
 #include <array>
@@ -18,11 +18,8 @@ struct ThinkerOptions {
 };
 
 struct KdaWeights {
-    std::array<modules::LinearWeights, 3> qkv;
+    modules::LinearWeights input_proj;
     std::array<core::TensorValue, 3> conv;
-    modules::LinearWeights decay;
-    modules::LinearWeights beta;
-    modules::LinearWeights gate;
     modules::LinearWeights output;
     core::TensorValue a_log;
     core::TensorValue dt_bias;
@@ -45,7 +42,8 @@ struct ThinkerLayerWeights {
     modules::NormWeights post_norm;
     KdaWeights kda;
     MlaWeights mla;
-    modules::GatedFeedForwardWeights dense;
+    modules::LinearWeights mlp_gate_up;
+    modules::LinearWeights mlp_down;
     core::TensorValue router;
     core::TensorValue router_bias;
     core::TensorValue expert_gate;
