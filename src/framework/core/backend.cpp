@@ -317,6 +317,15 @@ bool buffer_type_supports_matmul_weight(
     return supported;
 }
 
+bool is_hip_buffer(ggml_backend_buffer_t buffer) {
+    if (buffer == nullptr) return false;
+    ggml_backend_buffer_type_t buffer_type = ggml_backend_buffer_get_type(buffer);
+    ggml_backend_dev_t device = buffer_type != nullptr ? ggml_backend_buft_get_device(buffer_type) : nullptr;
+    if (device == nullptr) return false;
+    ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(device);
+    return reg != nullptr && reg_name_matches(BackendType::Hip, ggml_backend_reg_name(reg));
+}
+
 BackendType backend_type(ggml_backend_t backend) {
     if (is_host_backend(backend)) {
         return BackendType::Cpu;
