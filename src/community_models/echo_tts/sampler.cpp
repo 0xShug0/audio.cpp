@@ -30,7 +30,7 @@ bool cfg_active(float t, float cfg_min_t, float cfg_max_t) {
     return t >= cfg_min_t && t <= cfg_max_t;
 }
 
-std::vector<float> combine_cfg_lanes(
+std::vector<float> combine_cfg_lanes_independent(
     const std::vector<float> & lanes,
     int64_t lane_elements,
     float cfg_scale_text,
@@ -49,6 +49,26 @@ std::vector<float> combine_cfg_lanes(
         out[static_cast<size_t>(i)] =
             c + cfg_scale_text * (c - uncond_text[i]) +
             cfg_scale_speaker * (c - uncond_speaker[i]);
+    }
+    return out;
+}
+
+std::vector<float> combine_cfg_lanes_joint(
+    const std::vector<float> & lanes,
+    int64_t lane_elements,
+    float cfg_scale) {
+    if (lane_elements <= 0 ||
+        static_cast<int64_t>(lanes.size()) != lane_elements * 2) {
+        throw std::runtime_error("Echo-TTS Joint-CFG combine expects exactly 2 lanes");
+    }
+    const float * cond = lanes.data();
+    const float * uncond = lanes.data() + lane_elements;
+
+    std::vector<float> out(static_cast<size_t>(lane_elements));
+    for (int64_t i = 0; i < lane_elements; ++i) {
+        const float c = cond[i];
+        out[static_cast<size_t>(i)] =
+            c + cfg_scale * (c - uncond[i]);
     }
     return out;
 }
@@ -84,6 +104,7 @@ std::vector<float> run_euler_sampler(
     // is the whole additive term, w_text * (v_cond - v_text) + w_speaker *
     // (v_cond - v_speaker), held in absolute units rather than as a ratio so a
     // reused correction cannot amplify a small v_cond.
+    const int n_cfg_lanes = options.cfg_mode == EchoCfgMode::Joint ? 2 : 3;
     std::vector<float> cfg_delta;
     int steps_since_refresh = 0;
 
@@ -98,12 +119,17 @@ std::vector<float> run_euler_sampler(
             // applied before one has been measured.
             const bool refresh = cfg_delta.empty() || steps_since_refresh >= cfg_interval - 1;
             if (refresh) {
-                auto lanes = denoise(x_t, t, 3);
-                if (static_cast<int64_t>(lanes.size()) != elements * 3) {
+                auto lanes = denoise(x_t, t, n_cfg_lanes);
+                if (static_cast<int64_t>(lanes.size()) != elements * n_cfg_lanes) {
                     throw std::runtime_error("Echo-TTS denoiser returned mis-shaped CFG lanes");
                 }
-                v_pred = combine_cfg_lanes(
-                    lanes, elements, options.cfg_scale_text, options.cfg_scale_speaker);
+                if (n_cfg_lanes == 2) {
+                    v_pred = combine_cfg_lanes_joint(
+                        lanes, elements, options.cfg_scale);
+                } else {
+                    v_pred = combine_cfg_lanes_independent(
+                        lanes, elements, options.cfg_scale_text, options.cfg_scale_speaker);
+                }
                 if (cfg_interval > 1) {
                     cfg_delta.resize(static_cast<size_t>(elements));
                     for (int64_t i = 0; i < elements; ++i) {
