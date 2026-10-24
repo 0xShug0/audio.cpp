@@ -831,8 +831,9 @@ public:
         const int64_t kChunkOverlapFrames = decode_chunk_overlap_frames(backend_type_, latents.frames);
         const int64_t frame_factor = audio_frames_per_latent(config);
         const bool use_col2im_conv_transpose =
-            !core::uses_host_graph_plan(backend_type_) &&
-            latents.frames > decode_direct_frame_limit(backend_type_);
+            backend_type_ == core::BackendType::Cuda ||
+            (!core::uses_host_graph_plan(backend_type_) &&
+             latents.frames > decode_direct_frame_limit(backend_type_));
         engine::debug::trace_log_scalar("ace_step.vae.decode.chunk_frames", kChunkFrames);
         engine::debug::trace_log_scalar("ace_step.vae.decode.overlap_frames", kChunkOverlapFrames);
         engine::debug::trace_log_scalar("ace_step.vae.decode.col2im_conv_transpose",
