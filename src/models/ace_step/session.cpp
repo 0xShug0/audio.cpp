@@ -28,11 +28,14 @@ using Clock = std::chrono::steady_clock;
 struct PerfPreset {
     std::string_view name;
     AceStepVAEDecodeConfig vae_decode;
+    bool planner_fused_projections;
+    bool planner_f16_decode;
+    bool planner_independent_cfg_prefill;
 };
 
 constexpr std::array<PerfPreset, 2> kPerfPresets{{
-    {"off", {}},
-    {"cuda_perf", {1024, 64}},
+    {"off", {}, false, false, false},
+    {"cuda_perf", {1024, 64}, true, true, true},
 }};
 
 AceStepVAEDecodeConfig vae_decode_config_from_options(const runtime::SessionOptions & options) {
@@ -304,7 +307,7 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
         engine::debug::timing_log_scalar("ace_step.session.planner_generate_ms",
                                          engine::debug::elapsed_ms(planner_start, Clock::now()));
         const auto planner_release_start = Clock::now();
-        planner_->release_graph_workspace();
+        if (mem_saver_) planner_->release_graph_workspace();
         if (execution_context().backend_type() == core::BackendType::Metal) {
             planner_.reset();
         }
@@ -347,7 +350,7 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
                                          engine::debug::elapsed_ms(planner_start, Clock::now()));
 
         const auto planner_release_start = Clock::now();
-        planner_->release_graph_workspace();
+        if (mem_saver_) planner_->release_graph_workspace();
         if (execution_context().backend_type() == core::BackendType::Metal) {
             planner_.reset();
         }
@@ -444,11 +447,29 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
 
 void AceStepSession::ensure_planner() {
     if (!planner_) {
+        const auto preset_name = runtime::find_option(options().options, {"ace_step.perf_mode"}).value_or("off");
+        const auto preset = std::find_if(kPerfPresets.begin(), kPerfPresets.end(),
+            [&](const auto & entry) { return entry.name == preset_name; });
+        if (preset == kPerfPresets.end()) {
+            throw std::runtime_error("Invalid ace_step.perf_mode: " + preset_name);
+        }
         AceStepQwen3PlannerRuntime::GenerationConfig generation{4096, 512, 4032};
         generation.prefix_bucketing = runtime::parse_bool_option(
             runtime::find_option(options().options, {"ace_step.planner_prefix_bucketing"}).value_or("true"),
             "ace_step.planner_prefix_bucketing");
         engine::debug::trace_log_scalar("ace_step.planner.prefix_bucketing", generation.prefix_bucketing);
+        generation.fused_projections = runtime::parse_bool_option(
+            runtime::find_option(options().options, {"ace_step.planner_fused_projections"}).value_or(preset->planner_fused_projections ? "true" : "false"),
+            "ace_step.planner_fused_projections");
+        generation.f16_decode = runtime::parse_bool_option(
+            runtime::find_option(options().options, {"ace_step.planner_f16_decode"}).value_or(preset->planner_f16_decode ? "true" : "false"),
+            "ace_step.planner_f16_decode");
+        generation.independent_cfg_prefill = runtime::parse_bool_option(
+            runtime::find_option(options().options, {"ace_step.planner_independent_cfg_prefill"}).value_or(preset->planner_independent_cfg_prefill ? "true" : "false"),
+            "ace_step.planner_independent_cfg_prefill");
+        engine::debug::trace_log_scalar("ace_step.planner.fused_projections", generation.fused_projections);
+        engine::debug::trace_log_scalar("ace_step.planner.f16_decode", generation.f16_decode);
+        engine::debug::trace_log_scalar("ace_step.planner.independent_cfg_prefill", generation.independent_cfg_prefill);
         planner_ = std::make_unique<AceStepQwen3PlannerRuntime>(assets_, execution_context(), planner_weight_storage_type_,
                                                            256ull * 1024ull * 1024ull, 128ull * 1024ull * 1024ull,
                                                            generation);

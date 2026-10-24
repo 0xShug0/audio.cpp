@@ -588,7 +588,8 @@ public:
         }
 
         bool can_run(int64_t latent_frames, bool use_col2im_conv_transpose) const noexcept {
-            return latent_frames_ >= latent_frames && use_col2im_conv_transpose_ == use_col2im_conv_transpose;
+            // A larger direct graph would execute its full capacity for every tile.
+            return latent_frames_ == latent_frames && use_col2im_conv_transpose_ == use_col2im_conv_transpose;
         }
 
         runtime::AudioBuffer decode(const AceStepLatents & latents) const {

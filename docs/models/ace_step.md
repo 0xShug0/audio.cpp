@@ -199,9 +199,12 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `ace_step.dit_attention` | `auto`, `eager`, `flash` | `auto` | DiT attention implementation. Auto selects flash on supported GPUs and eager on CPU. |
 | `ace_step.planner_weight_type` | same as above | inherits `ace_step.weight_type` | Planner LM override. |
 | `ace_step.planner_prefix_bucketing` | bool | `true` | Bucket planner CFG attention to the valid prefix. Set `false` for full-capacity attention; other optimizations remain enabled. |
+| `ace_step.planner_fused_projections` | bool | `false`; `true` in `cuda_perf` | CUDA packed QKV and gate/up projections with fused SwiGLU. Can change generated codes. |
+| `ace_step.planner_f16_decode` | bool | `false`; `true` in `cuda_perf` | CUDA F16 KV and prefix-bucketed decoding for metadata and CFG-off codes. CFG-on code decoding already uses F16 KV. Can change generated codes. |
+| `ace_step.planner_independent_cfg_prefill` | bool | `false`; `true` in `cuda_perf` | Prefill CUDA CFG branches at their actual lengths instead of left-padding them to a shared length. Can change generated codes. |
 | `ace_step.text_encoder_weight_type` | same as above | inherits `ace_step.weight_type` | Text encoder override. |
 | `ace_step.vae_weight_type` | same as above | inherits `ace_step.weight_type` | VAE override. |
-| `ace_step.perf_mode` | `off`, `cuda_perf` | `off` | `cuda_perf` selects VAE tiles of 1024 latent frames with 64-frame overlap per side. Explicit tile options override the preset. |
+| `ace_step.perf_mode` | `off`, `cuda_perf` | `off` | `cuda_perf` enables the three CUDA planner options above and selects VAE tiles of 1024 latent frames with 64-frame overlap per side. Explicit options override the preset. |
 | `ace_step.vae_tile_frames` | positive integer | backend policy | Maximum latent frames evaluated per VAE tile. `cuda_perf` sets 1024. |
 | `ace_step.vae_tile_overlap_frames` | non-negative integer | backend policy | Context per side, in latent frames; must be less than half the tile capacity. `cuda_perf` sets 64. |
 | `ace_step.mem_saver` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
@@ -227,6 +230,22 @@ cache precision or attention shapes can change sampled output at a fixed seed.
 Disable prefix bucketing with
 `--session-option ace_step.planner_prefix_bucketing=false`.
 
+The default leaves projection packing, F16 metadata/CFG-off decoding and
+independent CFG prefill disabled. Enable them individually with the planner
+options above, or together with `ace_step.perf_mode=cuda_perf`. These change
+floating-point execution and can produce different generated codes and WAVs,
+even at the same seed. Explicit `false` values override the preset. The preset
+does not change planner weight precision; `ace_step.planner_weight_type`
+remains a separate explicit choice.
+
+Each planner control works independently; enabling one does not enable the
+others. Independent CFG prefill is ignored when planner CFG is off. Requests
+can switch CFG on/off within one session; their prefill precision and decode
+batch-size graphs are cached separately.
+
+Prefill/decode graphs are session-owned and reused when `mem_saver=false`.
+This avoids rebuilding them on later requests but retains their GPU memory.
+
 ## VAE Performance
 
 The Snake activation uses a broadcast graph that allows existing CUDA fusion,
@@ -243,8 +262,9 @@ For larger tiles, add:
 --session-option ace_step.perf_mode=cuda_perf
 ```
 
-This selects 1024/64 and leaves weight precision, planner and attention
-settings unchanged. Larger tiles reduce redundant overlap computation but
+This selects 1024/64 and enables the CUDA planner optimizations described
+above, without changing weight precision or DiT attention selection.
+Larger tiles reduce redundant overlap computation but
 use more peak VRAM and can change floating-point results. The preset does
 not select a backend; use `--backend` separately.
 
