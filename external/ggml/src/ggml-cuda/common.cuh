@@ -25,6 +25,10 @@
 #include <cassert>
 #include <cfloat>
 #include <cstdio>
+#include <deque>
+#include <functional>
+#include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -1486,8 +1490,89 @@ struct ggml_backend_cuda_context {
     }
 
 #if defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
+    using hipblaslt_algo_cache_key = std::array<int64_t, 13>;
+
+    // Descriptors remain immutable after construction and are reused by matching GEMMs.
+    struct hipblaslt_gemm_plan {
+        hipblasLtMatmulDesc_t matmul_desc = nullptr;
+        hipblasLtMatrixLayout_t layout_a = nullptr;
+        hipblasLtMatrixLayout_t layout_b = nullptr;
+        hipblasLtMatrixLayout_t layout_c = nullptr;
+        hipblasLtMatmulAlgo_t algo = {};
+
+        hipblaslt_gemm_plan() = default;
+        hipblaslt_gemm_plan(const hipblaslt_gemm_plan &) = delete;
+        hipblaslt_gemm_plan & operator=(const hipblaslt_gemm_plan &) = delete;
+
+        ~hipblaslt_gemm_plan() {
+            if (layout_c != nullptr) {
+                HIPBLASLT_CHECK(hipblasLtMatrixLayoutDestroy(layout_c));
+            }
+            if (layout_b != nullptr) {
+                HIPBLASLT_CHECK(hipblasLtMatrixLayoutDestroy(layout_b));
+            }
+            if (layout_a != nullptr) {
+                HIPBLASLT_CHECK(hipblasLtMatrixLayoutDestroy(layout_a));
+            }
+            if (matmul_desc != nullptr) {
+                HIPBLASLT_CHECK(hipblasLtMatmulDescDestroy(matmul_desc));
+            }
+        }
+    };
+
+    struct hipblaslt_algo_cache_key_hash {
+        size_t operator()(const hipblaslt_algo_cache_key & key) const {
+            size_t hash = 0;
+            for (const int64_t value : key) {
+                const size_t value_hash = std::hash<int64_t>{}(value);
+                hash ^= value_hash + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+            }
+            return hash;
+        }
+    };
+
+    static constexpr size_t HIPBLASLT_ALGO_CACHE_CAPACITY = 4096;
+    std::shared_mutex hipblaslt_algo_cache_mutex;
+    std::unordered_map<hipblaslt_algo_cache_key, std::shared_ptr<hipblaslt_gemm_plan>, hipblaslt_algo_cache_key_hash>
+        hipblaslt_algo_cache;
+    std::deque<hipblaslt_algo_cache_key> hipblaslt_algo_cache_order;
     hipblasLtHandle_t hipblaslt_handles[GGML_CUDA_MAX_DEVICES] = {nullptr};
     void * hipblaslt_workspaces[GGML_CUDA_MAX_DEVICES] = {nullptr};
+
+    std::shared_ptr<hipblaslt_gemm_plan> hipblaslt_cached_plan(const hipblaslt_algo_cache_key & key) {
+        std::shared_lock<std::shared_mutex> lock(hipblaslt_algo_cache_mutex);
+        const auto it = hipblaslt_algo_cache.find(key);
+        if (it == hipblaslt_algo_cache.end()) {
+            return nullptr;
+        }
+        return it->second;
+    }
+
+    std::shared_ptr<hipblaslt_gemm_plan> hipblaslt_cache_plan(
+        const hipblaslt_algo_cache_key & key,
+        std::shared_ptr<hipblaslt_gemm_plan> plan) {
+        std::unique_lock<std::shared_mutex> lock(hipblaslt_algo_cache_mutex);
+        const auto existing = hipblaslt_algo_cache.find(key);
+        if (existing != hipblaslt_algo_cache.end()) {
+            return existing->second;
+        }
+        if (hipblaslt_algo_cache.size() >= HIPBLASLT_ALGO_CACHE_CAPACITY) {
+            // Evict one FIFO entry instead of forcing every shape to miss again.
+            hipblaslt_algo_cache.erase(hipblaslt_algo_cache_order.front());
+            hipblaslt_algo_cache_order.pop_front();
+        }
+        if (hipblaslt_algo_cache.empty()) {
+            hipblaslt_algo_cache.reserve(HIPBLASLT_ALGO_CACHE_CAPACITY);
+        }
+        hipblaslt_algo_cache_order.push_back(key);
+        return hipblaslt_algo_cache.emplace(key, std::move(plan)).first->second;
+    }
+
+    void hipblaslt_clear_plan_cache() {
+        std::unique_lock<std::shared_mutex> lock(hipblaslt_algo_cache_mutex);
+        hipblaslt_algo_cache.clear();
+        hipblaslt_algo_cache_order.clear();
+    }
 
     hipblasLtHandle_t hipblaslt_handle(int device) {
         if (hipblaslt_handles[device] == nullptr) {
