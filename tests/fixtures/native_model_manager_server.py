@@ -126,6 +126,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.flush()
                     if len(payload) > 1024 * 1024:
                         time.sleep(0.003)
+                if len(payload) < 1024:
+                    time.sleep(0.03)
             except (BrokenPipeError, ConnectionResetError):
                 pass
         self.count_request()

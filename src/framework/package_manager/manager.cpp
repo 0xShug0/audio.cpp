@@ -13,6 +13,7 @@
 #include <fstream>
 #include <future>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -626,6 +627,20 @@ struct PackageManager::Impl {
     std::filesystem::path repository_root;
     std::filesystem::path models_root;
     std::vector<Package> packages;
+    std::mutex install_locks_mutex;
+    std::map<std::string, std::weak_ptr<std::mutex>> install_locks;
+
+    std::shared_ptr<std::mutex> install_lock_for(const Package & package) {
+        std::lock_guard<std::mutex> lock(install_locks_mutex);
+        const auto key = package.target_directory.generic_string();
+        auto & weak_lock = install_locks[key];
+        auto install_lock = weak_lock.lock();
+        if (!install_lock) {
+            install_lock = std::make_shared<std::mutex>();
+            weak_lock = install_lock;
+        }
+        return install_lock;
+    }
 
     const Package & require_package(const std::string & id) const {
         const auto found = std::find_if(packages.begin(), packages.end(), [&](const Package & item) {
@@ -673,6 +688,11 @@ std::string PackageManager::install(
     const std::shared_ptr<std::atomic_bool> & cancelled,
     const std::function<void(const PackageProgress &)> & progress) {
     const auto & package = impl_->require_package(package_id);
+    // Packages that share a target directory can also share sidecar files.
+    // Serialize their full install transactions so simultaneous library
+    // downloads cannot race while publishing those files.
+    const auto install_lock = impl_->install_lock_for(package);
+    std::lock_guard<std::mutex> target_lock(*install_lock);
     const auto final_root = impl_->models_root / package.target_directory;
     std::vector<std::pair<std::string, std::filesystem::path>> plan;
     for (const auto & remote : package.files) plan.emplace_back(remote, final_root / stripped_path(package, remote));

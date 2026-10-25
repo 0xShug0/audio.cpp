@@ -89,7 +89,12 @@ void test_native_package_lifecycle() {
         require(started.find("\"state\":\"queued\"") != std::string::npos ||
                 started.find("\"state\":\"running\"") != std::string::npos,
             "native install starts asynchronously");
+        const auto sibling_started = installer.start("demo_f16", "", "", "", "", false);
+        require(sibling_started.find("\"state\":\"queued\"") != std::string::npos ||
+                sibling_started.find("\"state\":\"running\"") != std::string::npos,
+            "a sibling package can be queued while the first package is installing");
         auto complete = wait_for(installer, "demo_q8", "complete");
+        (void) wait_for(installer, "demo_f16", "complete");
         require(complete.find("\"progress_percent\":100") != std::string::npos,
             "completed install reports 100 percent");
         require(std::filesystem::is_regular_file(root / "models" / "Demo" / "model-q8.gguf"),
@@ -99,8 +104,8 @@ void test_native_package_lifecycle() {
         require(std::filesystem::is_regular_file(root / "models" / "Demo" / ".audiocpp-package-demo_q8.json"),
             "native install writes a version manifest");
 
-        (void) installer.start("demo_f16", "", "", "", "", false);
-        (void) wait_for(installer, "demo_f16", "complete");
+        // Packages in the same model family share a target directory. The
+        // package manager serializes them so common sidecars are published once.
         require(std::filesystem::is_regular_file(root / "models" / "Demo" / "model-f16.gguf"),
             "sibling precision installs beside Q8");
         auto removed = installer.remove("demo_q8");
