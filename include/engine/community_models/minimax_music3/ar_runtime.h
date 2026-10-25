@@ -22,7 +22,8 @@ public:
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType storage_type,
-        bool evict_cuda_graph_cache_on_release = false);
+        bool evict_cuda_graph_cache_on_release = false,
+        MiniMaxMusic3PerfOptions perf = {});
     ~MiniMaxMusic3ArRuntime();
 
     std::vector<float> generate_frame_hiddens(

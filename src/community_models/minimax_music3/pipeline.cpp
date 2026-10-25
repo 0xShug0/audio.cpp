@@ -93,7 +93,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
         size_t weight_context_bytes,
         assets::TensorStorageType storage_type,
         bool memory_saver,
-        bool pipeline_overlap)
+        bool pipeline_overlap,
+        MiniMaxMusic3PerfOptions perf)
         : execution(input_execution),
           assets(std::move(input_assets)),
           graph_arena_bytes(graph_arena_bytes),
@@ -101,6 +102,7 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
           storage_type(storage_type),
           memory_saver(memory_saver),
           pipeline_overlap(pipeline_overlap),
+          perf(perf),
           sampling_policy(sampling::resolve_torch_cuda_sampling_policy(
               execution.backend_type(),
               execution.config().device,
@@ -640,7 +642,8 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
             graph_arena_bytes,
             weight_context_bytes,
             storage_type,
-            memory_saver);
+            memory_saver,
+            perf);
     }
 
     std::unique_ptr<MiniMaxMusic3ConditionEncoderRuntime> make_condition() {
@@ -680,6 +683,7 @@ struct MiniMaxMusic3PipelineRuntime::Impl {
     assets::TensorStorageType storage_type = assets::TensorStorageType::Native;
     bool memory_saver = true;
     bool pipeline_overlap = false;
+    MiniMaxMusic3PerfOptions perf;
     std::unique_ptr<core::ExecutionContext> overlap_execution;
     std::unique_ptr<MiniMaxMusic3ArRuntime> ar;
     std::unique_ptr<MiniMaxMusic3ConditionEncoderRuntime> condition;
@@ -695,7 +699,8 @@ MiniMaxMusic3PipelineRuntime::MiniMaxMusic3PipelineRuntime(
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type,
     bool memory_saver,
-    bool pipeline_overlap)
+    bool pipeline_overlap,
+    MiniMaxMusic3PerfOptions perf)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
@@ -703,7 +708,8 @@ MiniMaxMusic3PipelineRuntime::MiniMaxMusic3PipelineRuntime(
           weight_context_bytes,
           storage_type,
           memory_saver,
-          pipeline_overlap)) {}
+          pipeline_overlap,
+          perf)) {}
 
 MiniMaxMusic3PipelineRuntime::~MiniMaxMusic3PipelineRuntime() = default;
 

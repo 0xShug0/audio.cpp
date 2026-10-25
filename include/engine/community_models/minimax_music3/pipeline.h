@@ -31,7 +31,8 @@ public:
         size_t weight_context_bytes,
         assets::TensorStorageType storage_type,
         bool memory_saver,
-        bool pipeline_overlap = false);
+        bool pipeline_overlap = false,
+        MiniMaxMusic3PerfOptions perf = {});
     ~MiniMaxMusic3PipelineRuntime();
 
     runtime::AudioBuffer generate(const MiniMaxMusic3Request & request);
