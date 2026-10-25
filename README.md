@@ -102,7 +102,7 @@ Model weights keep the license of their original release, which is separate from
 | **index_tts2** | TTS, Clone, Ctrl | zh, en, ja, es, ar | IndexTTS-2<br>IndexTTS-2.5 | GGUF 16/Q8 |
 | **kokoro_tts** | TTS | en-us, en-gb, es, fr, hi, it, ja, pt-br, zh | Kokoro 82M, 54 preset voices | Safetensors, local GGUF BF16/Q8, Stream |
 | **kugelaudio** | TTS | European multilingual | KugelAudio-0-Open, four preset voices | GGUF BF16 / Q8_0 / Q4_K, Stream |
-| **irodori_tts** | TTS, Clone, Design, Ctrl | ja | Irodori-TTS-v4.1-Small<br>Irodori-TTS-v4.1-Anime<br>Irodori-TTS-500M-v3<br>Irodori-TTS-600M-v3-VoiceDesign | GGUF 16/Q8 |
+| **irodori_tts** | TTS, Clone, Design, Ctrl | ja | Irodori-TTS-v4.1-Small (RF and MF)<br>Irodori-TTS-v4.1-Anime<br>Irodori-TTS-500M-v3<br>Irodori-TTS-600M-v3-VoiceDesign | GGUF 16/Q8 |
 | **magpie_tts** | TTS | ar-AE, ar-MSA, ar-SA, de, en, es, fr, hi, it, ko, pt-BR, vi, zh | NVIDIA MagpieTTS Multilingual 357M (v2607) with baked speaker prompts and NanoCodec decode | GGUF original/Q8 |
 | **maya1** | TTS, Design, Ctrl | en | Maya1 expressive TTS with natural-language voice design, inline emotion tags, and SNAC decoding | GGUF original/Q8 |
 | **ming3_tts** | TTS, Clone, Design, Ctrl | zh, en, ja, ko, de, fr, es | Ming 3.0 TTS 0.5B | GGUF BF16/Q8 |

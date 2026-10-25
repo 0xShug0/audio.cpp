@@ -16,6 +16,12 @@ IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) 
     const auto root = resources.parse_json("model_config");
 
     IrodoriModelConfig config;
+    config.flow_parameterization = json::optional_string(
+        root, "flow_parameterization", config.flow_parameterization);
+    if (config.flow_parameterization != "rf_velocity" &&
+        config.flow_parameterization != "meanflow") {
+        throw std::runtime_error("Irodori-TTS flow_parameterization must be rf_velocity or meanflow");
+    }
     config.latent_dim = json::optional_i64(root, "latent_dim", config.latent_dim);
     config.latent_patch_size = json::optional_i64(root, "latent_patch_size", config.latent_patch_size);
     config.model_dim = json::optional_i64(root, "model_dim", config.model_dim);
@@ -171,6 +177,16 @@ IrodoriModelConfig parse_config(const assets::ResourceBundle & resources) {
 }
 
 void validate_model_weights(const IrodoriModelConfig & config, const assets::TensorSource & source) {
+    if (config.flow_parameterization == "meanflow") {
+        assets::require_tensor_shape(source, "delta_cond_module.0.weight",
+                                     {config.model_dim, config.timestep_embed_dim});
+        assets::require_tensor_shape(source, "delta_cond_module.2.weight",
+                                     {config.model_dim, config.model_dim});
+        assets::require_tensor_shape(source, "delta_cond_module.4.weight",
+                                     {3 * config.model_dim, config.model_dim});
+    } else if (source.has_tensor("delta_cond_module.0.weight")) {
+        throw std::runtime_error("Irodori-TTS interval weights require flow_parameterization=meanflow in model_config.json");
+    }
     if (config.use_pretrained_text_encoder()) {
         assets::require_tensor_shape(
             source,

@@ -133,8 +133,13 @@ std::unique_ptr<runtime::IVoiceTaskSession> create_irodori_tts_session(
 }
 
 IrodoriGenerationOptions
-generation_options_from_request(const runtime::TaskRequest &request) {
+generation_options_from_request(const runtime::TaskRequest &request,
+                                const IrodoriModelConfig &config) {
   IrodoriGenerationOptions options;
+  const bool meanflow = config.flow_parameterization == "meanflow";
+  if (meanflow) {
+    options.num_inference_steps = 4;
+  }
   if (const auto value = runtime::find_option(request.options, {"language"})) {
     if (*value != "ja") {
       throw std::runtime_error("Irodori-TTS language must be ja");
@@ -159,8 +164,10 @@ generation_options_from_request(const runtime::TaskRequest &request) {
     throw runtime::InvalidRequestError(error.what());
   }
   // Validate before expensive conditioning/codec work, including older GGUF contracts.
-  make_irodori_rf_schedule(options.num_inference_steps, options.t_schedule_mode,
-                           options.sway_coeff);
+  if (!meanflow) {
+    make_irodori_rf_schedule(options.num_inference_steps, options.t_schedule_mode,
+                             options.sway_coeff);
+  }
   if (const auto value = runtime::parse_float_option(request.options,
                                                      {"text_guidance_scale"})) {
     options.text_guidance_scale = *value;
@@ -864,24 +871,27 @@ IrodoriTTSSession::synthesize(const runtime::TaskRequest &request, bool streamin
                           engine::text::text_chunk_mode_name(text_chunk_mode));
   debug::trace_log_scalar("irodori_tts.text_chunk_count",
                           static_cast<int64_t>(chunk_requests.size()));
-  debug::trace_log_scalar("irodori_tts.sample_rf.context_graph_rebuilds",
+  const std::string sample_log = assets_->config.flow_parameterization == "meanflow"
+                                     ? "irodori_tts.sample_meanflow"
+                                     : "irodori_tts.sample_rf";
+  debug::trace_log_scalar(sample_log + ".context_graph_rebuilds",
                            rf_sampler_->context_graph_rebuilds() -
                                rf_context_graph_rebuilds_before);
-  debug::trace_log_scalar("irodori_tts.sample_rf.step_graph_rebuilds",
+  debug::trace_log_scalar(sample_log + ".step_graph_rebuilds",
                            rf_sampler_->step_graph_rebuilds() -
                                rf_step_graph_rebuilds_before);
   debug::timing_log_scalar("irodori_tts.prepare_reference_ms",
                            debug::elapsed_ms(reference_start, reference_end));
   debug::timing_log_scalar("irodori_tts.tokenize_ms", tokenize_ms);
   debug::timing_log_scalar("irodori_tts.condition_ms", condition_ms);
-  debug::timing_log_scalar("irodori_tts.sample_rf_ms", sample_rf_ms);
-  debug::timing_log_scalar("irodori_tts.sample_rf.context_cond_ms",
+  debug::timing_log_scalar(sample_log + "_ms", sample_rf_ms);
+  debug::timing_log_scalar(sample_log + ".context_cond_ms",
                            rf_context_cond_ms);
-  debug::timing_log_scalar("irodori_tts.sample_rf.context_cfg_ms",
+  debug::timing_log_scalar(sample_log + ".context_cfg_ms",
                            rf_context_cfg_ms);
-  debug::timing_log_scalar("irodori_tts.sample_rf.steps_cfg_ms",
+  debug::timing_log_scalar(sample_log + ".steps_cfg_ms",
                            rf_step_cfg_ms);
-  debug::timing_log_scalar("irodori_tts.sample_rf.steps_cond_ms",
+  debug::timing_log_scalar(sample_log + ".steps_cond_ms",
                            rf_step_cond_ms);
   debug::timing_log_scalar("irodori_tts.codec_decode_ms", decode_ms);
   debug::timing_log_scalar("session.wall_ms",
@@ -946,7 +956,7 @@ IrodoriTTSSession::make_request(const runtime::TaskRequest &request) const {
     }
     out.max_ref_sec = *value;
   }
-  out.generation = generation_options_from_request(request);
+  out.generation = generation_options_from_request(request, assets_->config);
   if (out.generation.duration_scale <= 0.0F) {
     throw std::runtime_error("Irodori-TTS duration_scale must be positive");
   }
@@ -957,11 +967,13 @@ IrodoriTTSSession::make_request(const runtime::TaskRequest &request) const {
   out.generation.guidance_mode =
       lower_ascii(trim_ascii(out.generation.guidance_mode));
   const std::string mode = out.generation.guidance_mode;
-  if (mode != "independent" && mode != "joint" && mode != "alternating") {
+  if (assets_->config.flow_parameterization != "meanflow" &&
+      mode != "independent" && mode != "joint" && mode != "alternating") {
     throw std::runtime_error(
         "Irodori-TTS guidance_mode must be independent, joint, or alternating");
   }
-  if (out.generation.guidance_min_t > out.generation.guidance_max_t) {
+  if (assets_->config.flow_parameterization != "meanflow" &&
+      out.generation.guidance_min_t > out.generation.guidance_max_t) {
     throw std::runtime_error(
         "Irodori-TTS guidance_min_t must be <= guidance_max_t");
   }

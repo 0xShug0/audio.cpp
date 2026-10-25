@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "irodori_tts",
   "display_name": "Irodori-TTS",
-  "description": "Japanese TTS model based on RF-DiT continuous audio latents, supporting zero-shot voice cloning, automatic duration prediction, multimodal voice design, and emoji-style control.",
+  "description": "Japanese TTS with RF and MeanFlow checkpoints, supporting zero-shot voice cloning, automatic duration prediction, multimodal voice design, and emoji-style control.",
   "category": "tts",
   "status": "supported",
   "tasks": [
@@ -85,10 +85,9 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "RF diffusion steps; default 40.",
+        "description": "Sampling steps; omitted uses 40 for RF checkpoints or 4 for MeanFlow checkpoints.",
         "required": false,
-        "min": 1,
-        "default": 40
+        "min": 1
       },
       {
         "name": "duration_sec",
@@ -429,6 +428,28 @@
         "Irodori-TTS-500M-v3-GGUF/irodori-tts-500m-v3-q8_0.gguf"
       ],
       "strip_prefix": "Irodori-TTS-500M-v3-GGUF"
+    },
+    {
+      "id": "irodori_tts_v4_1_small_mf_q8_0",
+      "display_name": "Irodori-TTS v4.1 Small MeanFlow Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Irodori-TTS-v4-Small-GGUF",
+      "files": [
+        "Irodori-TTS-v4-Small-GGUF/irodori-tts-v4.1-small-mf-q8_0.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-v4-Small-GGUF"
+    },
+    {
+      "id": "irodori_tts_v4_1_small_mf_f16",
+      "display_name": "Irodori-TTS v4.1 Small MeanFlow F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Irodori-TTS-v4-Small-GGUF",
+      "files": [
+        "Irodori-TTS-v4-Small-GGUF/irodori-tts-v4.1-small-mf-f16.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-v4-Small-GGUF"
     },
     {
       "id": "irodori_tts_500m_v3_f16",
