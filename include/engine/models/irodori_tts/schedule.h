@@ -2,10 +2,8 @@
 
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/sampling/flow_sampler_runtime.h"
+#include "engine/framework/sampling/sway_schedule.h"
 
-#include <algorithm>
-#include <cctype>
-#include <cmath>
 #include <string>
 #include <vector>
 
@@ -36,42 +34,7 @@ make_irodori_meanflow_schedule(int64_t steps) {
 inline std::vector<modules::FlowSamplerScheduleStep>
 make_irodori_rf_schedule(int64_t steps, std::string mode = "linear",
                          float sway_coeff = -1.0F) {
-  using runtime::InvalidRequestError;
-  if (steps <= 0) {
-    throw InvalidRequestError("Irodori-TTS RF schedule requires positive steps");
-  }
-  const auto first = mode.find_first_not_of(" \t\r\n");
-  mode = first == std::string::npos ? "" :
-      mode.substr(first, mode.find_last_not_of(" \t\r\n") - first + 1);
-  std::transform(mode.begin(), mode.end(), mode.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  if (mode != "linear" && mode != "sway") {
-    throw InvalidRequestError("Irodori-TTS t_schedule_mode must be linear or sway");
-  }
-  if (!std::isfinite(sway_coeff)) {
-    throw InvalidRequestError("Irodori-TTS sway_coeff must be finite");
-  }
-  auto time_at = [&](int64_t index) {
-    float u = static_cast<float>(index) / static_cast<float>(steps);
-    if (mode == "sway") {
-      u = std::clamp(u + sway_coeff * (std::cos(1.5707963267948966F * u) + u - 1.0F),
-                     0.0F, 1.0F);
-    }
-    return (1.0F - u) * 0.999F;
-  };
-  std::vector<modules::FlowSamplerScheduleStep> schedule;
-  schedule.reserve(static_cast<size_t>(steps));
-  float t = time_at(0);
-  for (int64_t step = 0; step < steps; ++step) {
-    const float next = time_at(step + 1);
-    if (!(t > next)) {
-      throw InvalidRequestError(
-          "Irodori-TTS t_schedule must be strictly decreasing; adjust num_inference_steps or sway_coeff");
-    }
-    schedule.push_back({step, t, next, 0.0F, 0.0F});
-    t = next;
-  }
-  return schedule;
+  return modules::make_rf_schedule(steps, "Irodori-TTS", mode, sway_coeff);
 }
 
 } // namespace engine::models::irodori_tts
