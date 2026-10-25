@@ -9,6 +9,7 @@ CUDA_MODE="auto"
 CUDA_ARCH=""
 VULKAN_MODE="off"
 HIP_MODE="off"
+HIP_VMM=""
 GPU_TARGETS=""
 USE_CCACHE="OFF"
 WITH_TESTS="OFF"
@@ -77,6 +78,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --gpu-targets)
             GPU_TARGETS="$2"
+            shift 2
+            ;;
+        --hip-vmm)
+            case "$2" in
+                on|off)
+                    HIP_VMM="$2"
+                    ;;
+                *)
+                    echo "--hip-vmm must be on or off" >&2
+                    exit 1
+                    ;;
+            esac
             shift 2
             ;;
         --cuda-arch)
@@ -292,6 +305,11 @@ case "$HIP_MODE" in
         ;;
 esac
 
+if [[ -n "$HIP_VMM" && "$ENGINE_ENABLE_HIP" != "ON" ]]; then
+    echo "--hip-vmm can only be used with the HIP backend" >&2
+    exit 1
+fi
+
 # HIP builds default to deployment builds so the produced binaries embed
 # package specs and run standalone outside the repo checkout. Other backends
 # keep the historical OFF default; --no-deployment-build opts out.
@@ -436,6 +454,14 @@ if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
         -UAMDGPU_TARGETS
         -DGPU_TARGETS="$GPU_TARGETS"
     )
+    if [[ -n "$HIP_VMM" ]]; then
+        if [[ "$HIP_VMM" == "on" ]]; then
+            CMAKE_ARGS+=(-DGGML_HIP_NO_VMM=OFF)
+        else
+            CMAKE_ARGS+=(-DGGML_HIP_NO_VMM=ON)
+        fi
+        echo "HIP virtual memory management: $HIP_VMM"
+    fi
 fi
 
 if [[ "$ENGINE_ENABLE_CUDA" == "ON" && -n "$CUDA_ARCH" ]]; then
