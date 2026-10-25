@@ -1230,6 +1230,10 @@ struct BreezeGeneratorRuntime::Impl {
                 weights->depth_heads);
         }
         engine::debug::trace_log_scalar("breeze_tts.fused_depth", fused_depth != nullptr);
+        // The batched CFG backbone is only validated on CUDA; other backends
+        // keep two single-lane runtimes.
+        backbone_cfg_batch = cuda;
+        engine::debug::trace_log_scalar("breeze_tts.backbone_cfg_batch", backbone_cfg_batch);
         speech_encoder = std::make_unique<BreezeSpeechEncoderRuntime>(
             this->assets,
             execution,
@@ -1253,6 +1257,119 @@ struct BreezeGeneratorRuntime::Impl {
         depth_logits_staging_.assign(static_cast<size_t>(config.vocab_size), 0.0F);
         depth_cond_hidden_now_.assign(static_cast<size_t>(config.depth_hidden_size), 0.0F);
         depth_uncond_hidden_now_.assign(static_cast<size_t>(config.depth_hidden_size), 0.0F);
+    }
+
+    // With CFG the conditional and unconditional backbone passes share weights and
+    // differ only in their prompt, so they run as one batch-2 decode: each prompt is
+    // prefilled into its own lane of the batched cache (lanes keep their own lengths
+    // and positions), and every step decodes both lanes with the same frame embedding.
+    // Without batching, `direct` prefills straight into the decode cache (streaming,
+    // or offline with direct_prefill); otherwise the KV state is exported and imported.
+    void prefill_backbone(
+        const std::vector<float> & cond_embeddings,
+        int64_t cond_steps,
+        const std::vector<float> & uncond_embeddings,
+        int64_t uncond_steps,
+        int64_t max_tokens,
+        bool use_cfg,
+        bool direct,
+        modules::CausalDecoderPrefillIntoDecodeResult & cond,
+        std::optional<modules::CausalDecoderPrefillIntoDecodeResult> & uncond,
+        double & cond_ms,
+        double & uncond_ms) {
+        const bool batched = use_cfg && backbone_cfg_batch;
+        if (batched != backbone_batched_active) {
+            // Drop the graphs of the other mode instead of keeping both resident.
+            backbone_cond->release_runtime_graphs();
+            backbone_uncond->release_runtime_graphs();
+            backbone_batched_active = batched;
+        }
+        if (batched) {
+            std::vector<modules::CausalDecoderStepResult> lanes;
+            cond_ms = engine::debug::measure_ms([&] {
+                lanes = backbone_cond->prefill_embeddings_into_batched_decode_cache(
+                    {cond_embeddings, uncond_embeddings}, std::max(cond_steps, uncond_steps) + max_tokens);
+            });
+            uncond_ms = 0.0;
+            cond.logits = std::move(lanes[0].logits);
+            cond.hidden = std::move(lanes[0].hidden);
+            uncond.emplace();
+            uncond->logits = std::move(lanes[1].logits);
+            uncond->hidden = std::move(lanes[1].hidden);
+            return;
+        }
+        if (!direct) {
+            modules::CausalDecoderPrefillResult cond_prefill;
+            cond_ms = engine::debug::measure_ms([&] {
+                cond_prefill = backbone_cond->prefill_embeddings(cond_embeddings, cond_steps);
+            });
+            std::optional<modules::CausalDecoderPrefillResult> uncond_prefill;
+            if (use_cfg) {
+                uncond_prefill.emplace();
+                uncond_ms = engine::debug::measure_ms([&] {
+                    *uncond_prefill = backbone_uncond->prefill_embeddings(uncond_embeddings, uncond_steps);
+                });
+            }
+            backbone_cond->start_decode_embeddings(cond_prefill.state, cond_steps + max_tokens);
+            if (use_cfg) {
+                backbone_uncond->start_decode_embeddings(uncond_prefill->state, uncond_steps + max_tokens);
+            }
+            cond.logits = std::move(cond_prefill.logits);
+            cond.hidden = std::move(cond_prefill.hidden);
+            if (use_cfg) {
+                uncond.emplace();
+                uncond->logits = std::move(uncond_prefill->logits);
+                uncond->hidden = std::move(uncond_prefill->hidden);
+            }
+            return;
+        }
+        cond_ms = engine::debug::measure_ms([&] {
+            cond = backbone_cond->prefill_embeddings_into_decode_cache(
+                cond_embeddings, cond_steps, cond_steps + max_tokens);
+        });
+        if (use_cfg) {
+            uncond.emplace();
+            uncond_ms = engine::debug::measure_ms([&] {
+                *uncond = backbone_uncond->prefill_embeddings_into_decode_cache(
+                    uncond_embeddings, uncond_steps, uncond_steps + max_tokens);
+            });
+        }
+    }
+
+    void decode_backbone(
+        const std::vector<float> & embedding,
+        bool use_cfg,
+        modules::CausalDecoderPrefillIntoDecodeResult & cond,
+        std::optional<modules::CausalDecoderPrefillIntoDecodeResult> & uncond,
+        double & cond_ms,
+        double & uncond_ms) {
+        modules::CausalDecoderStepResult step;
+        if (use_cfg && backbone_batched_active) {
+            backbone_pair_input_.assign(embedding.begin(), embedding.end());
+            backbone_pair_input_.insert(backbone_pair_input_.end(), embedding.begin(), embedding.end());
+            cond_ms += engine::debug::measure_ms([&] {
+                step = backbone_cond->decode_embeddings_batched(backbone_pair_input_, 2);
+            });
+            const auto logits_row = static_cast<std::ptrdiff_t>(step.logits.size() / 2);
+            const auto hidden_row = static_cast<std::ptrdiff_t>(step.hidden.size() / 2);
+            cond.logits.assign(step.logits.begin(), step.logits.begin() + logits_row);
+            uncond->logits.assign(step.logits.begin() + logits_row, step.logits.end());
+            cond.hidden.assign(step.hidden.begin(), step.hidden.begin() + hidden_row);
+            uncond->hidden.assign(step.hidden.begin() + hidden_row, step.hidden.end());
+            return;
+        }
+        cond_ms += engine::debug::measure_ms([&] {
+            step = backbone_cond->decode_embedding(embedding);
+        });
+        cond.logits = std::move(step.logits);
+        cond.hidden = std::move(step.hidden);
+        if (use_cfg) {
+            uncond_ms += engine::debug::measure_ms([&] {
+                step = backbone_uncond->decode_embedding(embedding);
+            });
+            uncond->logits = std::move(step.logits);
+            uncond->hidden = std::move(step.hidden);
+        }
     }
 
     std::vector<float> merge_prompt(const BreezePromptBranch & branch, const std::vector<int32_t> & reference_codes) {
@@ -1555,17 +1672,9 @@ struct BreezeGeneratorRuntime::Impl {
         state->first_options.repetition_penalty = kRepetitionPenalty;
         state->first_options.min_tokens_to_keep = 1;
         state->ar_total_ms += engine::debug::measure_ms([&] {
-            state->backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
-                state->cond = backbone_cond->prefill_embeddings_into_decode_cache(
-                    cond_embeddings, cond_steps, cond_steps + request.max_tokens);
-            });
-            if (use_cfg) {
-                state->uncond.emplace();
-                state->backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
-                    *state->uncond = backbone_uncond->prefill_embeddings_into_decode_cache(
-                        uncond_embeddings, uncond_steps, uncond_steps + request.max_tokens);
-                });
-            }
+            prefill_backbone(
+                cond_embeddings, cond_steps, uncond_embeddings, uncond_steps, request.max_tokens, use_cfg, true,
+                state->cond, state->uncond, state->backbone_cond_prefill_ms, state->backbone_uncond_prefill_ms);
         });
         stream_ = std::move(state);
     }
@@ -1582,19 +1691,8 @@ struct BreezeGeneratorRuntime::Impl {
             return 2;
         }
         if (!state.pending_embedding.empty()) {
-            modules::CausalDecoderStepResult step;
-            state.backbone_cond_decode_ms += engine::debug::measure_ms([&] {
-                step = backbone_cond->decode_embedding(state.pending_embedding);
-            });
-            state.cond.logits = std::move(step.logits);
-            state.cond.hidden = std::move(step.hidden);
-            if (state.use_cfg) {
-                state.backbone_uncond_decode_ms += engine::debug::measure_ms([&] {
-                    step = backbone_uncond->decode_embedding(state.pending_embedding);
-                });
-                state.uncond->logits = std::move(step.logits);
-                state.uncond->hidden = std::move(step.hidden);
-            }
+            decode_backbone(state.pending_embedding, state.use_cfg, state.cond, state.uncond,
+                            state.backbone_cond_decode_ms, state.backbone_uncond_decode_ms);
             state.pending_embedding.clear();
         }
         ++state.steps_taken;
@@ -1786,45 +1884,9 @@ struct BreezeGeneratorRuntime::Impl {
         const double ar_ms = engine::debug::measure_ms([&] {
             modules::CausalDecoderPrefillIntoDecodeResult cond;
             std::optional<modules::CausalDecoderPrefillIntoDecodeResult> uncond;
-            if (direct_prefill) {
-                // Prefill straight into the decode cache, as the streaming path does.
-                // Exporting the KV state to host floats and importing it back costs
-                // about half a second per request (zero-fill plus conversion of the whole cache).
-                backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
-                    cond = backbone_cond->prefill_embeddings_into_decode_cache(
-                        cond_embeddings, cond_steps, cond_steps + request.max_tokens);
-                });
-                if (use_cfg) {
-                    uncond.emplace();
-                    backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
-                        *uncond = backbone_uncond->prefill_embeddings_into_decode_cache(
-                            uncond_embeddings, uncond_steps, uncond_steps + request.max_tokens);
-                    });
-                }
-            } else {
-                modules::CausalDecoderPrefillResult cond_prefill;
-                backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
-                    cond_prefill = backbone_cond->prefill_embeddings(cond_embeddings, cond_steps);
-                });
-                std::optional<modules::CausalDecoderPrefillResult> uncond_prefill;
-                if (use_cfg) {
-                    uncond_prefill.emplace();
-                    backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
-                        *uncond_prefill = backbone_uncond->prefill_embeddings(uncond_embeddings, uncond_steps);
-                    });
-                }
-                backbone_cond->start_decode_embeddings(cond_prefill.state, cond_steps + request.max_tokens);
-                if (use_cfg) {
-                    backbone_uncond->start_decode_embeddings(uncond_prefill->state, uncond_steps + request.max_tokens);
-                }
-                cond.logits = std::move(cond_prefill.logits);
-                cond.hidden = std::move(cond_prefill.hidden);
-                if (use_cfg) {
-                    uncond.emplace();
-                    uncond->logits = std::move(uncond_prefill->logits);
-                    uncond->hidden = std::move(uncond_prefill->hidden);
-                }
-            }
+            prefill_backbone(
+                cond_embeddings, cond_steps, uncond_embeddings, uncond_steps, request.max_tokens, use_cfg,
+                direct_prefill, cond, uncond, backbone_cond_prefill_ms, backbone_uncond_prefill_ms);
 
             sampling::HfSamplerScratch scratch;
             scratch.reserve_vocab(static_cast<size_t>(config.lm_head_size));
@@ -1891,20 +1953,7 @@ struct BreezeGeneratorRuntime::Impl {
                     config.hidden_size,
                     config.vocab_size,
                     frame);
-                modules::CausalDecoderStepResult cond_step;
-                backbone_cond_decode_ms += engine::debug::measure_ms([&] {
-                    cond_step = backbone_cond->decode_embedding(embedded);
-                });
-                cond.logits = cond_step.logits;
-                cond.hidden = cond_step.hidden;
-                if (use_cfg) {
-                    modules::CausalDecoderStepResult uncond_step;
-                    backbone_uncond_decode_ms += engine::debug::measure_ms([&] {
-                        uncond_step = backbone_uncond->decode_embedding(embedded);
-                    });
-                    uncond->logits = uncond_step.logits;
-                    uncond->hidden = uncond_step.hidden;
-                }
+                decode_backbone(embedded, use_cfg, cond, uncond, backbone_cond_decode_ms, backbone_uncond_decode_ms);
             }
         });
         engine::debug::timing_log_scalar("breeze_tts.ar.total_ms", ar_ms);
@@ -1966,6 +2015,9 @@ struct BreezeGeneratorRuntime::Impl {
     std::vector<float> depth_logits_staging_;
     std::vector<float> depth_cond_hidden_now_;
     std::vector<float> depth_uncond_hidden_now_;
+    std::vector<float> backbone_pair_input_;
+    bool backbone_cfg_batch = false;
+    bool backbone_batched_active = false;
 };
 
 BreezeGeneratorRuntime::BreezeGeneratorRuntime(

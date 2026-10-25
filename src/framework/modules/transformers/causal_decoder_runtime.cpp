@@ -14,6 +14,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace engine::modules {
@@ -527,6 +528,7 @@ public:
     struct CacheLanePrefillGraph {
         Impl & owner;
         int64_t steps;
+        bool embedding_input;
         std::unique_ptr<ggml_context, GgmlContextDeleter> context;
         std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator{nullptr, ggml_gallocr_free};
         ggml_cgraph * graph = nullptr;
@@ -539,15 +541,22 @@ public:
         std::vector<int32_t> position_values;
         std::vector<ggml_fp16_t> mask_values;
 
-        CacheLanePrefillGraph(Impl & owner, int64_t batch, int64_t steps)
-            : owner(owner), steps(steps),
+        CacheLanePrefillGraph(Impl & owner, int64_t batch, int64_t steps, bool embedding_input = false)
+            : owner(owner), steps(steps), embedding_input(embedding_input),
               context(ggml_init({owner.config_.prefill_graph_arena_bytes, nullptr, true})) {
             if (!context) throw std::runtime_error("failed to initialize cache-lane prefill context");
             core::ModuleBuildContext ctx{context.get(), owner.config_.trace_name.c_str(), owner.backend_type_};
-            input = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, steps);
+            core::TensorValue x;
+            if (embedding_input) {
+                x = core::make_tensor(ctx, GGML_TYPE_F32,
+                    core::TensorShape::from_dims({1, steps, owner.config_.decoder.stack.hidden_size}));
+                input = x.tensor;
+            } else {
+                input = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, steps);
+                x = token_embedding_input(ctx, owner.weights_, owner.config_.decoder, input, steps);
+            }
             positions = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, steps);
             mask = ggml_new_tensor_4d(ctx.ggml, GGML_TYPE_F16, steps, steps, 1, 1);
-            auto x = token_embedding_input(ctx, owner.weights_, owner.config_.decoder, input, steps);
             auto out = build_causal_prefill(ctx, owner.config_, x,
                 core::wrap_tensor(positions, core::TensorShape::from_dims({steps}), GGML_TYPE_I32),
                 owner.weights_, core::wrap_tensor(mask, core::TensorShape::from_dims({1, 1, steps, steps}), GGML_TYPE_F16));
@@ -593,8 +602,10 @@ public:
             core::release_backend_graph_resources(owner.backend_, graph, owner.config_.evict_cuda_graph_cache_on_release);
         }
 
-        CausalDecoderStepResult run(const std::vector<int32_t> & tokens) {
-            ggml_backend_tensor_set(input, tokens.data(), 0, tokens.size() * sizeof(int32_t));
+        // Token ids (I32) or, for embedding_input, steps x hidden f32 embeddings.
+        template <typename T>
+        CausalDecoderStepResult run(const std::vector<T> & values) {
+            ggml_backend_tensor_set(input, values.data(), 0, values.size() * sizeof(T));
             ggml_backend_tensor_set(positions, position_values.data(), 0, position_values.size() * sizeof(int32_t));
             ggml_backend_tensor_set(mask, mask_values.data(), 0, mask_values.size() * sizeof(ggml_fp16_t));
             if (readback_ids) upload_logits_readback_token_ids(readback_ids, owner.config_);
@@ -614,20 +625,41 @@ public:
 
     std::vector<CausalDecoderStepResult> prefill_tokens_into_batched_decode_cache(
         const std::vector<std::vector<int32_t>> & prefixes, int64_t required_cache_steps) {
+        return prefill_lanes_into_batched_decode_cache(prefixes, 1, required_cache_steps);
+    }
+
+    std::vector<CausalDecoderStepResult> prefill_embeddings_into_batched_decode_cache(
+        const std::vector<std::vector<float>> & prefixes, int64_t required_cache_steps) {
+        return prefill_lanes_into_batched_decode_cache(prefixes, config_.decoder.stack.hidden_size, required_cache_steps);
+    }
+
+    // Prefills each batch lane separately, writing its K/V straight into that lane
+    // of the batched decode cache (lanes may have different lengths). T is int32_t
+    // for token ids (width 1) or float for embeddings (width = hidden size).
+    template <typename T>
+    std::vector<CausalDecoderStepResult> prefill_lanes_into_batched_decode_cache(
+        const std::vector<std::vector<T>> & prefixes, int64_t width, int64_t required_cache_steps) {
+        constexpr bool embedding_input = std::is_same_v<T, float>;
         if (prefixes.empty() || required_cache_steps <= 0) {
             throw std::runtime_error("batched cache prefill requires prefixes and positive capacity");
         }
         std::vector<int64_t> lengths;
         for (const auto & prefix : prefixes) {
-            if (prefix.empty() || static_cast<int64_t>(prefix.size()) > required_cache_steps) {
+            const int64_t steps = static_cast<int64_t>(prefix.size()) / width;
+            if (prefix.empty() || static_cast<int64_t>(prefix.size()) % width != 0 || steps > required_cache_steps) {
                 throw std::runtime_error("batched cache prefill prefix exceeds cache capacity or is empty");
             }
-            lengths.push_back(static_cast<int64_t>(prefix.size()));
+            lengths.push_back(steps);
         }
         const auto init_start = Clock::now();
         runtime::TransformerKVCacheOptions cache_options;
         cache_options.lazy_import_scratch = true;
-        ensure_batched_decode_token_graph(required_cache_steps, static_cast<int64_t>(prefixes.size()), true, cache_options);
+        const auto batch_size = static_cast<int64_t>(prefixes.size());
+        if constexpr (embedding_input) {
+            ensure_batched_decode_embedding_graph(required_cache_steps, batch_size, true, cache_options);
+        } else {
+            ensure_batched_decode_token_graph(required_cache_steps, batch_size, true, cache_options);
+        }
         batched_decode_cache_.clear_on_backend();
         cache_lane_prefills_.resize(prefixes.size());
         debug::timing_log_scalar(config_.trace_name + ".batched_prefill.cache_init_ms", debug::elapsed_ms(init_start));
@@ -635,9 +667,10 @@ public:
         std::vector<CausalDecoderStepResult> results;
         for (size_t batch = 0; batch < prefixes.size(); ++batch) {
             auto & prefill = cache_lane_prefills_[batch];
-            if (!prefill || prefill->steps != lengths[batch]) {
+            if (!prefill || prefill->steps != lengths[batch] || prefill->embedding_input != embedding_input) {
                 prefill.reset();
-                prefill = std::make_unique<CacheLanePrefillGraph>(*this, static_cast<int64_t>(batch), lengths[batch]);
+                prefill = std::make_unique<CacheLanePrefillGraph>(
+                    *this, static_cast<int64_t>(batch), lengths[batch], embedding_input);
             }
             results.push_back(prefill->run(prefixes[batch]));
         }
@@ -1626,14 +1659,17 @@ private:
         build_batched_decode_graph(InputKind::Token, batch_size, cache_steps, variable_positions, cache_options);
     }
 
-    void ensure_batched_decode_embedding_graph(int64_t cache_steps, int64_t batch_size, bool variable_positions) {
+    void ensure_batched_decode_embedding_graph(
+        int64_t cache_steps, int64_t batch_size, bool variable_positions,
+        runtime::TransformerKVCacheOptions cache_options = {}) {
         if (batched_decode_graph_ != nullptr && batched_decode_input_kind_ == InputKind::Embedding &&
             batched_decode_cache_steps_ >= cache_steps && batched_decode_batch_size_ == batch_size &&
-            batched_decode_variable_positions_ == variable_positions) {
+            batched_decode_variable_positions_ == variable_positions &&
+            batched_decode_lazy_import_scratch_ == cache_options.lazy_import_scratch) {
             return;
         }
         release_batched_decode_graph();
-        build_batched_decode_graph(InputKind::Embedding, batch_size, cache_steps, variable_positions);
+        build_batched_decode_graph(InputKind::Embedding, batch_size, cache_steps, variable_positions, cache_options);
     }
 
     void build_batched_decode_graph(
@@ -2278,6 +2314,11 @@ CausalDecoderBatchedPrefillResult CausalDecoderRuntime::prefill_tokens_batched(
 std::vector<CausalDecoderStepResult> CausalDecoderRuntime::prefill_tokens_into_batched_decode_cache(
     const std::vector<std::vector<int32_t>> & prefixes, int64_t required_cache_steps) {
     return impl_->prefill_tokens_into_batched_decode_cache(prefixes, required_cache_steps);
+}
+
+std::vector<CausalDecoderStepResult> CausalDecoderRuntime::prefill_embeddings_into_batched_decode_cache(
+    const std::vector<std::vector<float>> & prefixes, int64_t required_cache_steps) {
+    return impl_->prefill_embeddings_into_batched_decode_cache(prefixes, required_cache_steps);
 }
 
 CausalDecoderBatchedPrefillResult CausalDecoderRuntime::prefill_embeddings_batched(
