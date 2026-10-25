@@ -1,6 +1,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/assets/torch_bin.h"
+#include "engine/framework/core/backend.h"
 
 #include "engine/framework/io/binary.h"
 #include "engine/framework/io/filesystem.h"
@@ -275,7 +276,23 @@ void set_tensor_bytes(ggml_tensor * tensor, const void * data, size_t bytes, std
     if (bytes != ggml_nbytes(tensor)) {
         throw std::runtime_error("backend tensor byte size mismatch for " + std::string(name));
     }
-    ggml_backend_tensor_set(tensor, data, 0, bytes);
+    ggml_backend_buffer_t buffer = tensor->view_src != nullptr ? tensor->view_src->buffer : tensor->buffer;
+    if (buffer == nullptr || ggml_backend_buffer_is_host(buffer) || !core::is_hip_buffer(buffer)) {
+        ggml_backend_tensor_set(tensor, data, 0, bytes);
+        return;
+    }
+    // HIP device buffers are filled through a bounded host staging buffer instead of straight from
+    // the memory-mapped model file. On ROCm iGPUs without XNACK (Strix Halo, gfx1151) large direct
+    // copies leave the pageable source pages registered with the GPU, the file pages are never
+    // released, and the load crawls once they approach the memory limit.
+    constexpr size_t kUploadChunk = size_t{64} << 20;
+    std::vector<std::byte> staging(std::min(kUploadChunk, bytes));
+    const auto * source = static_cast<const std::byte *>(data);
+    for (size_t offset = 0; offset < bytes; offset += staging.size()) {
+        const size_t count = std::min(staging.size(), bytes - offset);
+        std::memcpy(staging.data(), source + offset, count);
+        ggml_backend_tensor_set(tensor, staging.data(), offset, count);
+    }
 }
 
 std::vector<float> decode_tensor_data_f32(std::string_view name, const TensorData & tensor) {
