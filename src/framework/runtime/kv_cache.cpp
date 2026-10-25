@@ -96,6 +96,9 @@ TransformerKVCache::TransformerKVCache(
     if (step_elems_ <= 0) {
         throw std::runtime_error("TransformerKVCache requires positive step_elems");
     }
+    if (options_.direct_import && options_.ring_mode) {
+        throw std::runtime_error("TransformerKVCache direct_import requires a non-ring cache");
+    }
     if (options_.ring_mode) {
         if (cache_steps_ <= 0) {
             throw std::runtime_error("TransformerKVCache ring_mode requires positive cache_steps");
@@ -108,12 +111,19 @@ TransformerKVCache::TransformerKVCache(
     if (keys.size() != values.size()) {
         throw std::runtime_error("TransformerKVCache key/value layer counts must match");
     }
-    const size_t cache_elems = options_.lazy_import_scratch
+    const size_t cache_elems = options_.lazy_import_scratch || options_.direct_import
         ? 0 : static_cast<size_t>(cache_steps_ * step_elems_);
     layers_.reserve(keys.size());
     for (size_t layer = 0; layer < keys.size(); ++layer) {
         validate_cache_tensor(keys[layer], options_);
         validate_cache_tensor(values[layer], options_);
+        if (options_.direct_import &&
+            (keys[layer].type != GGML_TYPE_F32 || values[layer].type != GGML_TYPE_F32 ||
+             !ggml_is_contiguous(keys[layer].tensor) || !ggml_is_contiguous(values[layer].tensor) ||
+             ggml_nelements(keys[layer].tensor) != cache_steps_ * step_elems_ ||
+             ggml_nelements(values[layer].tensor) != cache_steps_ * step_elems_)) {
+            throw std::runtime_error("TransformerKVCache direct_import requires dense F32 tensors matching cache capacity");
+        }
         layers_.push_back(LayerCache{
             std::move(keys[layer]),
             std::move(values[layer]),
@@ -158,6 +168,19 @@ void TransformerKVCache::import_state(const TransformerKVState & state) {
         }
         if (source.key.size() != keep_elems) {
             throw std::runtime_error("TransformerKVCache source tensors do not match valid_steps * step_elems");
+        }
+        if (options_.direct_import) {
+            const size_t prefix_bytes = keep_elems * sizeof(float);
+            const size_t tail_bytes = static_cast<size_t>(cache_steps_ * step_elems_) * sizeof(float) - prefix_bytes;
+            if (prefix_bytes > 0) {
+                ggml_backend_tensor_set(cache.key_tensor.tensor, source.key.data(), 0, prefix_bytes);
+                ggml_backend_tensor_set(cache.value_tensor.tensor, source.value.data(), 0, prefix_bytes);
+            }
+            if (tail_bytes > 0) {
+                ggml_backend_tensor_memset(cache.key_tensor.tensor, 0, prefix_bytes, tail_bytes);
+                ggml_backend_tensor_memset(cache.value_tensor.tensor, 0, prefix_bytes, tail_bytes);
+            }
+            continue;
         }
         if (cache_steps_ > 0) {
             const size_t cache_elems = static_cast<size_t>(cache_steps_ * step_elems_);
@@ -344,6 +367,9 @@ TransformerBatchedKVCache::TransformerBatchedKVCache(
       options_(options) {
     if (cache_steps_ <= 0 || batch_size_ <= 0 || row_elems_ <= 0) {
         throw std::runtime_error("TransformerBatchedKVCache requires positive cache_steps, batch_size, and row_elems");
+    }
+    if (options_.direct_import) {
+        throw std::runtime_error("TransformerBatchedKVCache does not support direct_import");
     }
     if (keys.size() != values.size()) {
         throw std::runtime_error("TransformerBatchedKVCache key/value layer counts must match");

@@ -61,6 +61,9 @@ struct TransformerKVCacheOptions {
     int64_t ring_pinned_steps = 0;
     // Device-only users can defer host staging allocation until import_state.
     bool lazy_import_scratch = false;
+    // Dense F32 imports upload the valid prefix and zero the backend tail
+    // without allocating cache-sized host staging buffers.
+    bool direct_import = false;
 };
 
 class TransformerKVCache {
