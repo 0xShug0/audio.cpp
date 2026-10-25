@@ -3,17 +3,17 @@
   import { catalog, modelCapabilities } from '$lib/catalog';
   import { browserDecodeToWav } from '$lib/audio';
   import type { SavedVoice } from '$lib/library';
-  import type { SavedModelPreset } from '$lib/presets/types';
+  import type { ModelSettings } from '$lib/model-settings/types';
   import type { VoiceAssignment, ReferenceVoice } from './project';
   import ModelChoice from './ModelChoice.svelte';
   export let label: string;
-  export let configuration: SavedModelPreset | null;
+  export let configuration: ModelSettings | null;
   export let assignment: VoiceAssignment | undefined;
   export let inheritedReference: ReferenceVoice | null = null;
   export let allowInherit = false;
   export let voices: SavedVoice[];
-  export let choices: SavedModelPreset[];
-  export let transcription: SavedModelPreset | null;
+  export let choices: ModelSettings[];
+  export let transcription: ModelSettings | null;
   export let disabled = false;
   export let onchange: (voice: VoiceAssignment | undefined) => void;
   export let onbusy: (busy: boolean) => void;
@@ -49,13 +49,13 @@
       {#if allowInherit}<option value="inherit">Use default · {inheritedReference?.name || configuration?.request.voice || 'model default'}</option>{/if}
       {#if reference}<option value="reference">Recording: {reference.name}</option>{/if}
       <option value="builtin:">Use model's default voice</option>
-      {#if configuration?.request.voice && !builtin.includes(configuration.request.voice)}<option value={`builtin:${configuration.request.voice}`}>{configuration.request.voice} · from preset</option>{/if}
+      {#if configuration?.request.voice && !builtin.includes(configuration.request.voice)}<option value={`builtin:${configuration.request.voice}`}>{configuration.request.voice} · saved setting</option>{/if}
       {#if builtin.length}<optgroup label="Built-in voices">{#each builtin as id}<option value={`builtin:${id}`}>{id.includes('_') ? id.slice(id.indexOf('_')+1).replace(/_/g,' ') : id} · {id}</option>{/each}</optgroup>{/if}
       {#if supportsReference && voices.length}<optgroup label="Recorded voices from Lib">{#each voices as voice}<option value={voice.id}>{voice.name}</option>{/each}</optgroup>{/if}
       {#if assignment?.kind==='builtin' && assignment.id && !builtin.includes(assignment.id) && configuration?.request.voice!==assignment.id}<option value={`builtin:${assignment.id}`}>{assignment.id} · saved in project</option>{/if}
     </select>
   </label>
-  {#if !configuration}<p>Choose a model or preset first.</p>{:else if !reference}<p>{assignment?.kind==='builtin' ? `Voice: ${assignment.id || 'model default'}` : `Current voice: ${configuration.request.voice || 'model default'}`}</p>{/if}
+  {#if !configuration}<p>Choose a speech model first.</p>{:else if !reference}<p>{assignment?.kind==='builtin' ? `Voice: ${assignment.id || 'model default'}` : `Current voice: ${configuration.request.voice || 'model default'}`}</p>{/if}
   {#if supportsReference}<label class="upload">Upload a different voice recording<input type="file" accept="audio/*" disabled={disabled} on:change={e=>upload(e.currentTarget.files?.[0])}/></label>{/if}
   {#if reference}
     {#if !supportsReference}<p role="alert">This model does not support recorded voices. Choose a cloning model or a built-in voice.</p>{/if}

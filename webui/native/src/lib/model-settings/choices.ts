@@ -1,14 +1,12 @@
 import { catalog, parameterCatalog } from '$lib/catalog';
 import { getModelsRoot, health, models, modelPackageSizes } from '$lib/api';
-import { listModelPresets } from '$lib/library';
 import type { CatalogEntry, InstallPackageChoice } from '$lib/types';
-import type { SavedModelPreset } from './types';
+import type { ModelSettings } from './types';
 
-// Model choices use the same execution contract as saved presets. Selecting one
-// copies its configuration into the project; it never links mutable form state.
-export async function loadModelChoices(): Promise<SavedModelPreset[]> {
-  const [presets, server, registered] = await Promise.all([listModelPresets(), health(), models()]);
-  const choices = [...presets];
+// Installed model choices become configuration snapshots owned by the app.
+export async function loadModelChoices(): Promise<ModelSettings[]> {
+  const [server, registered] = await Promise.all([health(), models()]);
+  const choices: ModelSettings[] = [];
   const configured = registered.filter(model => !server.ui_management || model.configured);
   for (const model of configured) {
     const entry = catalog.find(entry => entry.id === model.id) || catalog.find(entry => entry.family === model.family && entry.task === model.task);
@@ -33,7 +31,7 @@ export async function loadModelChoices(): Promise<SavedModelPreset[]> {
   return choices;
 }
 function modelChoice(entry: CatalogEntry, choice: InstallPackageChoice | undefined, path: string,
-  sessionOptions = { ...entry.session_options, ...choice?.session_options }): SavedModelPreset {
+  sessionOptions = { ...entry.session_options, ...choice?.session_options }): ModelSettings {
   const parameters = parameterCatalog[entry.id] || parameterCatalog[entry.family] || [];
   const options = Object.fromEntries(parameters.filter(p => p.scope !== 'session' && p.default !== undefined && p.default !== '' &&
     (entry.request_options === undefined || entry.request_options.includes(p.name))).map(p => [p.name, p.default]));

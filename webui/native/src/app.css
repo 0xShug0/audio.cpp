@@ -495,19 +495,3 @@ footer { display: flex; justify-content: space-between; max-width: 1600px; margi
   .long-text-row, .reference-input-grid { grid-template-columns: 1fr; }.long-text-row > .toggle { margin-top: 12px; }
   footer { display: block; } footer span { display: block; margin-top: 5px; }
 }
-
-.preset-save-dialog {
-  width: min(440px, calc(100vw - 32px));
-  padding: 24px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel);
-  color: var(--text);
-}
-.preset-save-dialog::backdrop { background: rgb(0 0 0 / 55%); }
-.preset-save-dialog h2 { margin: 0 0 10px; }
-.preset-save-model { color: var(--muted); margin-bottom: 24px; }
-.preset-save-dialog label { display: block; margin-bottom: 8px; }
-.preset-save-dialog input { width: 100%; }
-.preset-save-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
-.preset-save-actions button { display: inline-flex; align-items: center; gap: 8px; }

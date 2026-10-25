@@ -1,5 +1,5 @@
-import type { SavedModelPreset } from './presets/types';
-export type { ModelConfiguration, SavedModelPreset } from './presets/types';
+import type { ModelSettings } from './model-settings/types';
+export type { ModelConfiguration, ModelSettings } from './model-settings/types';
 
 export interface SavedVoice {
   id: string;
@@ -12,14 +12,14 @@ export interface SavedVoice {
 const voiceDatabaseName = 'audiocpp-native-studio';
 const appDatabaseName = 'audiocpp-native-apps';
 const voiceStoreName = 'voices';
-const presetStoreName = 'model-presets';
+const legacyPresetStoreName = 'model-presets';
 
 function openDatabase(storeName: string): Promise<IDBDatabase> {
   const isVoiceStore = storeName === voiceStoreName;
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(isVoiceStore ? voiceDatabaseName : appDatabaseName, 1);
     request.onupgradeneeded = () => {
-      for (const name of isVoiceStore ? [voiceStoreName] : [presetStoreName, 'app-projects']) {
+      for (const name of isVoiceStore ? [voiceStoreName] : [legacyPresetStoreName, 'app-projects']) {
         request.result.createObjectStore(name, { keyPath: 'id' });
       }
     };
@@ -59,17 +59,11 @@ export function deleteVoice(id: string): Promise<undefined> {
   return transaction<undefined>(voiceStoreName, 'readwrite', (store) => store.delete(id));
 }
 
-export async function listModelPresets(): Promise<SavedModelPreset[]> {
-  const presets = await transaction<SavedModelPreset[]>(presetStoreName, 'readonly', (store) => store.getAll());
-  return presets.sort((left, right) => right.createdAt - left.createdAt);
-}
-
-export function saveModelPreset(preset: SavedModelPreset): Promise<IDBValidKey> {
-  return transaction<IDBValidKey>(presetStoreName, 'readwrite', (store) => store.put(preset));
-}
-
-export function deleteModelPreset(id: string): Promise<undefined> {
-  return transaction<undefined>(presetStoreName, 'readwrite', (store) => store.delete(id));
+// Read-only compatibility for importing old speech settings into app-owned speakers.
+// The existing version 1 store stays in place; new model presets are never written.
+export async function readLegacySpeechSettings(): Promise<ModelSettings[]> {
+  const items = await transaction<ModelSettings[]>(legacyPresetStoreName, 'readonly', (store) => store.getAll());
+  return items.filter((item) => ['tts', 'clon', 'vdes'].includes(item.model.task));
 }
 
 // App data is opaque to the library. Each app owns its document schema.

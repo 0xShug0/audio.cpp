@@ -2,9 +2,7 @@
   import type { ComponentType, SvelteComponent } from 'svelte';
   import { apps } from '$lib/apps/registry';
   import type { AppDefinition, AppProps } from '$lib/apps/types';
-  export let initialPresetId = '';
   export let active = true;
-  export let openLibrary: () => void;
   let selected: AppDefinition | null = null;
   let component: ComponentType<SvelteComponent<AppProps>> | null = null;
   let instance: (SvelteComponent<AppProps> & { saveBeforeClose?: () => Promise<void> }) | null = null;
@@ -34,9 +32,9 @@
     </header>
     {#if loading}<p role="status">Opening app…</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
-    {#if component}<svelte:component this={component} bind:this={instance} {initialPresetId} {active} bind:busy {openLibrary}/>{/if}
+    {#if component}<svelte:component this={component} bind:this={instance} {active} bind:busy/>{/if}
   {:else}
-    <header class="app-heading"><div><p class="eyebrow">APPS</p><h1>Make something with your models</h1><p>Choose a workflow and use the model presets you saved in Lib.</p></div></header>
+    <header class="app-heading"><div><p class="eyebrow">APPS</p><h1>Make something with your models</h1><p>Choose a workflow. Create and reuse speaker presets inside Text to speech.</p></div></header>
     <aside class="early-release" aria-label="Early release">
       <strong>Early release</strong>
       <p>Apps are still being developed. Workflows and saved project formats may change. Export audio you want to keep.</p>

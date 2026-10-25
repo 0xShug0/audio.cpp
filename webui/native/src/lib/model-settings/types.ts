@@ -13,7 +13,7 @@ export interface ModelConfiguration {
   session_options: StringMap;
 }
 
-export interface SavedModelPreset {
+export interface ModelSettings {
   version: 1;
   id: string;
   name: string;

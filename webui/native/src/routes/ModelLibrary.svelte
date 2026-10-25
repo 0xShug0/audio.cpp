@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { CatalogEntry, InstallPackageChoice } from '$lib/types';
+  import { History, ChevronDown } from '@lucide/svelte';
   import type { ModelInstallJob, ModelPackageSize } from '$lib/api';
 
   export let groups: { family: string; label: string; entries: CatalogEntry[] }[];
@@ -59,18 +60,24 @@
     {#if activeDownloads.length}<span class="download-count">{activeDownloads.length} active downloads</span>{/if}
   </header>
   <details class="folder-settings"><summary>Models folder <span>{modelsFolder || defaultModelsFolder}</span></summary>
-    <div class="folder-editor"><input aria-label="Models folder" bind:value={modelsFolderInput} placeholder={defaultModelsFolder} />
+    <div class="folder-editor"><label class="folder-path">Folder path<input aria-label="Models folder path" bind:value={modelsFolderInput} placeholder={defaultModelsFolder} /></label>
       <button disabled={applyingModelsFolder} on:click={() => openFolderBrowser()}>Browse</button>
       <button disabled={applyingModelsFolder || !modelsFolderInput.trim() || modelsFolderInput.trim() === modelsFolder} on:click={() => applyModelsFolder(false)}>Apply</button>
       <button disabled={applyingModelsFolder || modelsFolderIsDefault} on:click={() => applyModelsFolder(true)}>Use default</button></div>
     <div class="folder-history">
-      <label for="models-folder-history">Recent folders</label>
-      <select id="models-folder-history" disabled={applyingModelsFolder || !modelsFolderHistory.length}
-        value={modelsFolderHistory.includes(modelsFolderInput) ? modelsFolderInput : ''}
-        on:change={(event) => modelsFolderInput = event.currentTarget.value}>
-        <option value="" disabled>Choose a recent folder</option>
-        {#each modelsFolderHistory as path}<option value={path}>{path}</option>{/each}
-      </select>
+      <div class="history-picker">
+        <History size={16} aria-hidden="true" />
+        <select aria-label="Recent folders" aria-describedby="folder-history-hint" disabled={applyingModelsFolder || !modelsFolderHistory.length}
+          value="" on:change={(event) => {
+            modelsFolderInput = event.currentTarget.value;
+            event.currentTarget.value = '';
+          }}>
+          <option value="" disabled>Recent folders</option>
+          {#each modelsFolderHistory as path}<option value={path}>{path}</option>{/each}
+        </select>
+        <ChevronDown size={14} aria-hidden="true" />
+      </div>
+      <p id="folder-history-hint">Choose a recent path, then Apply to switch folders.</p>
     </div>
   </details>
   <div class="filters">
@@ -119,10 +126,19 @@
   .library-heading { padding: 20px 0; } .library-heading span, .result-count, .identity span, .package span, .package label, .state span { color: var(--muted); font-size: 13px; }
   .folder-settings { border-bottom: 1px solid var(--line); padding: 12px 0; }
   summary { cursor: pointer; font-size: 13px; } summary span { color: var(--muted); margin-left: 12px; overflow-wrap: anywhere; }
-  .folder-editor { display: flex; gap: 8px; padding: 12px 0; clear: both; } .folder-editor input { flex: 1; min-width: 0; }
-  .folder-history { display: grid; gap: 6px; padding-bottom: 12px; min-width: 0; }
-  .folder-history label { color: var(--muted); font-size: 13px; }
-  .folder-history select { width: 100%; min-width: 0; }
+  .folder-editor { display: flex; align-items: flex-end; gap: 8px; padding: 16px 0; clear: both; }
+  .folder-path { display: grid; gap: 8px; flex: 1; min-width: 0; color: var(--muted); font-size: 12px; }
+  .folder-path input { width: 100%; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .folder-history { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 0 8px; border-top: 1px solid var(--line); min-width: 0; }
+  .history-picker { position: relative; width: 210px; max-width: 100%; flex-shrink: 0; color: var(--cyan); }
+  .history-picker :global(svg) { position: absolute; top: 50%; transform: translateY(-50%); pointer-events: none; }
+  .history-picker :global(svg:first-child) { left: 12px; }
+  .history-picker :global(svg:last-child) { right: 12px; }
+  .history-picker select { appearance: none; width: 100%; min-width: 0; padding: 8px 34px 8px 38px; color: var(--cyan); background: var(--active-bg); border-color: var(--active-border); font-weight: 600; cursor: pointer; }
+  .history-picker select:hover:not(:disabled) { border-color: var(--cyan); }
+  .history-picker select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+  .history-picker select:disabled { cursor: default; color: var(--muted); }
+  .folder-history p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
   .filters { display: grid; grid-template-columns: minmax(180px, 1fr) 220px 180px; gap: 12px; padding: 24px 0 12px; }
   input, select, button { font-size: 13px; min-height: 38px; border-radius: 6px; letter-spacing: 0; }
   .result-count { padding-bottom: 16px; } .family { margin: 0; }
@@ -136,5 +152,5 @@
   .downloads { padding: 12px; border: 1px solid var(--line); margin-bottom: 20px; } .download-row { display: flex; gap: 16px; align-items: center; padding-top: 10px; font-size: 13px; } .download-row span:first-child { flex: 1; }
   .empty { padding: 48px 0; display: grid; justify-items: center; gap: 16px; }
   @media (max-width: 1050px) { .model-row { grid-template-columns: minmax(140px, 1fr) minmax(150px, 1fr); } .actions { justify-self: end; } .filters { grid-template-columns: 1fr 1fr; } .filters input { grid-column: 1/-1; } }
-  @media (max-width: 600px) { .model-row { grid-template-columns: 1fr; gap: 12px; } .actions { justify-self: stretch; } .family > header, .library-heading { align-items: start; flex-direction: column; } .folder-editor { flex-wrap: wrap; } .folder-editor input { flex-basis: 100%; } .filters { grid-template-columns: minmax(0, 1fr); } .download-row { flex-wrap: wrap; } }
+  @media (max-width: 600px) { .model-row { grid-template-columns: 1fr; gap: 12px; } .actions { justify-self: stretch; } .family > header, .library-heading { align-items: start; flex-direction: column; } .folder-editor { flex-wrap: wrap; } .folder-editor .folder-path { flex-basis: 100%; } .filters { grid-template-columns: minmax(0, 1fr); } .download-row { flex-wrap: wrap; } }
 </style>

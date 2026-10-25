@@ -1,10 +1,8 @@
 import type { ComponentType, SvelteComponent } from 'svelte';
 
 export interface AppProps {
-  initialPresetId?: string;
   busy?: boolean;
   active?: boolean;
-  openLibrary: () => void;
 }
 
 export interface AppDefinition {

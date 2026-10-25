@@ -1,28 +1,28 @@
 import { health, models, loadModel, unloadModel, pathStatus, speech, transcription, runTask } from '$lib/api';
-import type { SavedModelPreset } from './types';
+import type { ModelSettings } from './types';
 
-export type PresetInputs = {
+export type ModelInputs = {
   text?: string;
   audio?: string;
   voice_ref?: string;
   reference_text?: string;
 };
-export type PresetResult =
+export type ModelResult =
   | { kind: 'audio'; blob: Blob }
   | { kind: 'json'; data: Record<string, unknown> };
 
 // One runtime per app operation. Preparation applies the saved configuration
 // once; all chunks in that operation reuse it. No Studio state or catalog lookup.
-export class PresetRuntime {
-  private readonly preset: SavedModelPreset;
+export class ModelRuntime {
+  private readonly configuration: ModelSettings;
   readonly resolvedSeed: number;
   private prepared = false;
 
-  constructor(preset: SavedModelPreset, private readonly signal: AbortSignal) {
-    if (preset.version !== 1) throw new Error('Unsupported model preset version.');
-    this.preset = structuredClone(preset);
-    const seed = preset.request.seed;
-    if (!Number.isInteger(seed) || seed < -1 || seed > 0xffffffff) throw new Error('Invalid preset seed.');
+  constructor(configuration: ModelSettings, private readonly signal: AbortSignal) {
+    if (configuration.version !== 1) throw new Error('Unsupported model configuration version.');
+    this.configuration = structuredClone(configuration);
+    const seed = configuration.request.seed;
+    if (!Number.isInteger(seed) || seed < -1 || seed > 0xffffffff) throw new Error('Seed must be -1 or an unsigned 32-bit integer.');
     this.resolvedSeed = seed === -1 ? crypto.getRandomValues(new Uint32Array(1))[0] : seed;
   }
 
@@ -32,21 +32,21 @@ export class PresetRuntime {
     const server = await health();
     const registered = await models();
     this.signal.throwIfAborted();
-    const saved = this.preset.model;
+    const saved = this.configuration.model;
     const resident = registered.find((model) => model.id === saved.id);
     if (!server.ui_management || resident?.configured) {
       if (!resident || resident.family !== saved.family || resident.task !== saved.task || resident.mode !== saved.mode) {
-        throw new Error('This preset does not match a model registered by this configured server.');
+        throw new Error('This model configuration does not match a model registered by this configured server.');
       }
       if (resident.path !== saved.path || Object.entries(saved.session_options)
         .some(([key, value]) => resident.session_options?.[key] !== value)) {
-        throw new Error('The preset differs from the server configuration. Update the server configuration before using it.');
+        throw new Error('The model configuration differs from the server configuration. Update the server configuration before using it.');
       }
       if (Object.keys(saved.load_options).length) {
         throw new Error('Saved load options cannot be applied to a server-configured model. Use a model managed by the UI.');
       }
     } else {
-      if (!(await pathStatus(saved.path)).exists) throw new Error('The preset model is not installed at its saved path. Install it in Models first.');
+      if (!(await pathStatus(saved.path)).exists) throw new Error('The model is not installed at its saved path. Install it in Models first.');
       this.signal.throwIfAborted();
       // Load options are not reported by /v1/models. Explicitly reload to apply
       // the complete saved configuration rather than assuming a resident match.
@@ -60,10 +60,10 @@ export class PresetRuntime {
     this.prepared = true;
   }
 
-  async run(inputs: PresetInputs, sequence = 0): Promise<PresetResult> {
+  async run(inputs: ModelInputs, sequence = 0): Promise<ModelResult> {
     await this.prepare();
     this.signal.throwIfAborted();
-    const { model, request } = this.preset;
+    const { model, request } = this.configuration;
     const { seed: _seed, ...settings } = request;
     const options = { ...request.options };
     if (['tts', 'clon', 'vdes'].includes(model.task)) {
