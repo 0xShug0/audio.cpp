@@ -34,10 +34,19 @@ For non-interactive use, set `AUDIOCPP_ARCH_MODE` to `auto`, `portable`, or
 `rdna4`. `AUDIOCPP_MODEL_SET=core` builds the smaller core model catalog;
 `AUDIOCPP_MODEL_SET=custom AUDIOCPP_MODELS=ace_step` selects a custom catalog.
 Build and install paths can be changed with `AUDIOCPP_BUILD_ROOT`,
-`AUDIOCPP_INSTALL_ROOT`, and `AUDIOCPP_BIN_ROOT`. The script leaves
-`GGML_HIP_NO_VMM` at ggml's default (`ON`). On the RX 9070 XT test system,
-forcing VMM (`GGML_HIP_NO_VMM=OFF`) caused an invalid HIP VMM allocation during
-ACE-Step graph execution.
+`AUDIOCPP_INSTALL_ROOT`, and `AUDIOCPP_BIN_ROOT`. HIP virtual memory management
+(VMM) defaults to `auto`: it is enabled for recognized discrete GPU targets
+(`gfx1100`–`gfx1102`, `gfx1200`, and `gfx1201`) and disabled for integrated,
+mixed, or unknown target sets. Override this with `AUDIOCPP_HIP_VMM=on` or
+`AUDIOCPP_HIP_VMM=off`. The build script also accepts `--hip-vmm on|off`.
+
+The auto mode reflects the HIP VMM access fix merged in `main` as commit
+`899d84ad` (PR #1059). On HIP, newly mapped pool ranges now receive access
+permissions across the full mapped contiguous prefix, fixing runtimes that
+rejected access updates limited to a newly mapped subrange. The fix was tested
+with VMM enabled and ACE-Step on an RX 9070 XT. Integrated GPUs remain
+conservative by default because VMM does not address their separate shared
+memory and graph-workspace constraints.
 
 The GGML library vendored at `external/ggml/` already contains a HIP backend that compiles CUDA kernels (`ggml-cuda/*.cu`) as HIP code via a vendor header mapping (`ggml-cuda/vendors/hip.h`). The changes in this PR expose that functionality through audio.cpp's build system, backend abstraction layer, and CLI.
 

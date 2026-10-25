@@ -12,6 +12,7 @@ INSTALL_ROOT="${AUDIOCPP_INSTALL_ROOT:-$HOME/.local/opt/audio.cpp}"
 BIN_ROOT="${AUDIOCPP_BIN_ROOT:-$HOME/.local/bin}"
 MODEL_SET="${AUDIOCPP_MODEL_SET:-full}"
 MODELS="${AUDIOCPP_MODELS:-}"
+HIP_VMM="${AUDIOCPP_HIP_VMM:-auto}"
 
 info() { printf '[audio.cpp] %s\n' "$*"; }
 fail() { printf '[audio.cpp] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -30,6 +31,9 @@ For non-interactive use, set AUDIOCPP_ARCH_MODE to auto, portable, or rdna4.
 Optional path overrides: AUDIOCPP_BUILD_ROOT, AUDIOCPP_INSTALL_ROOT,
 AUDIOCPP_BIN_ROOT, ROCM_PATH. Set AUDIOCPP_MODEL_SET=core or custom to build a
 smaller model catalog; AUDIOCPP_MODELS selects models for a custom build.
+HIP VMM defaults to auto: it is enabled for recognized discrete GPU targets
+and disabled for integrated or mixed target sets. Set AUDIOCPP_HIP_VMM=on or
+off to override this choice.
 EOF
 }
 
@@ -62,6 +66,28 @@ detect_gpu_target() {
 
     [[ -n "$target" ]] || fail "No AMD GPU target detected. Check ROCm with rocminfo or choose the portable/RDNA4 build."
     printf '%s\n' "$target"
+}
+
+select_hip_vmm_mode() {
+    local target
+    local -a target_list=()
+    case "$HIP_VMM" in
+        on|off)
+            printf '%s\n' "$HIP_VMM"
+            return
+            ;;
+        auto) ;;
+        *) fail "AUDIOCPP_HIP_VMM must be auto, on, or off." ;;
+    esac
+
+    IFS=';' read -r -a target_list <<< "$1"
+    for target in "${target_list[@]}"; do
+        case "$target" in
+            gfx1100|gfx1101|gfx1102|gfx1200|gfx1201) ;;
+            *) printf 'off\n'; return ;;
+        esac
+    done
+    printf 'on\n'
 }
 
 ensure_dependencies() {
@@ -125,10 +151,10 @@ EOF
 }
 
 install_build() {
-    local mode="$1" targets="$2" build_dir="$BUILD_ROOT/$mode"
+    local mode="$1" targets="$2" hip_vmm="$3" build_dir="$BUILD_ROOT/$mode"
     local install_dir="$INSTALL_ROOT/$mode" executable
 
-    info "Building HIP target(s): $targets"
+    info "Building HIP target(s): $targets (VMM: $hip_vmm)"
     if [[ -x "${ROCM_PATH}/bin/rocminfo" ]]; then
         export PATH="${ROCM_PATH}/bin:$PATH"
     fi
@@ -140,6 +166,7 @@ install_build() {
         --build-type Release
         --deployment-build
         --model-set "$MODEL_SET"
+        --hip-vmm "$hip_vmm"
     )
     if [[ "$MODEL_SET" == custom ]]; then
         [[ -n "$MODELS" ]] || fail "Set AUDIOCPP_MODELS when AUDIOCPP_MODEL_SET=custom."
@@ -169,7 +196,7 @@ main() {
     is_arch_linux || fail "This script supports Arch Linux and distributions declaring Arch in ID_LIKE."
     ensure_dependencies
 
-    local mode targets
+    local mode targets hip_vmm
     mode="$(select_mode)"
     case "$mode" in
         quit) return 0 ;;
@@ -186,7 +213,11 @@ main() {
         *) fail "AUDIOCPP_ARCH_MODE must be auto, portable, or rdna4." ;;
     esac
 
-    install_build "$mode" "$targets"
+    # HIP VMM access updates were fixed for growing pools in upstream commit
+    # 899d84ad. Auto-enable only when every target is a known discrete GPU.
+    hip_vmm="$(select_hip_vmm_mode "$targets")"
+
+    install_build "$mode" "$targets" "$hip_vmm"
     info "Build finished. Model files are installed separately; see docs/build/HIP.md."
 }
 
