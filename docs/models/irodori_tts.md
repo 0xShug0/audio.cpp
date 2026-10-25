@@ -11,7 +11,7 @@ The default downloadable package is the GGUF v4 Small Q8_0 checkpoint. v4 Small 
 | 500M v3 | `Irodori-TTS-500M-v3-GGUF` | `tts`, `clon` | Uses the shared llm-jp tokenizer layout in the original safetensors package. |
 | 600M v3 VoiceDesign | `Irodori-TTS-600M-v3-VoiceDesign-GGUF` | `tts`, `clon`, `vdes` | Adds instruction/caption conditioning for voice design. |
 | v4 Small | `Irodori-TTS-v4-Small-GGUF` | `tts`, `clon`, `vdes` | Bundles its v4 tokenizer and supports instruction/caption conditioning in the same checkpoint. |
-| v4.1 Small MeanFlow | `Irodori-TTS-v4.1-Small-MF-GGUF` | `tts`, `clon`, `vdes` | Distilled checkpoint; four sampling steps by default, with training-time CFG. |
+| v4.1 Small MeanFlow | `Irodori-TTS-v4-Small-GGUF` | `tts`, `clon`, `vdes` | Distilled checkpoint; four sampling steps by default, with training-time CFG. |
 
 v4 GGUF packages are published in both `q8_0` and `f16`. v3 GGUF packages are also available in `q8_0` and `f16`.
 
@@ -185,7 +185,7 @@ sampler and 40-step default. No sampler-selection option is needed.
 
 ```bash
 audiocpp_cli --task tts --family irodori_tts \
-  --model models/Irodori-TTS-v4.1-Small-MF-GGUF/irodori-tts-v4.1-small-mf-q8_0.gguf \
+  --model models/Irodori-TTS-v4-Small-GGUF/irodori-tts-v4.1-small-mf-q8_0.gguf \
   --backend cuda --text "こんにちは、私はAIです。これは音声合成のテストです。" \
   --request-option no_ref=true --out meanflow.wav
 ```
@@ -204,7 +204,7 @@ python tools/models/convert_irodori_gguf.py \
   --model models/Irodori-TTS-v4.1-Small-MF/model.safetensors \
   --codec models/Semantic-DACVAE-Japanese-32dim/weights.safetensors \
   --type q8_0 \
-  --output models/Irodori-TTS-v4.1-Small-MF-GGUF/irodori-tts-v4.1-small-mf-q8_0.gguf
+  --output models/Irodori-TTS-v4-Small-GGUF/irodori-tts-v4.1-small-mf-q8_0.gguf
 ```
 
 The converter preserves the checkpoint's configuration and interval-conditioning
