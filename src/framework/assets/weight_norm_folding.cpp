@@ -28,6 +28,19 @@ bool has_suffix(std::string_view value, std::string_view suffix) {
     return value.size() >= suffix.size() && value.substr(value.size() - suffix.size()) == suffix;
 }
 
+core::TensorShape shape_from_dims(const std::vector<int64_t> & dims) {
+    if (dims.empty() || dims.size() > core::kMaxTensorRank) {
+        throw std::runtime_error("tensor rank must be between 1 and 4");
+    }
+    switch (dims.size()) {
+        case 1: return core::TensorShape::from_dims({dims[0]});
+        case 2: return core::TensorShape::from_dims({dims[0], dims[1]});
+        case 3: return core::TensorShape::from_dims({dims[0], dims[1], dims[2]});
+        case 4: return core::TensorShape::from_dims({dims[0], dims[1], dims[2], dims[3]});
+        default: throw std::runtime_error("unsupported tensor rank");
+    }
+}
+
 std::vector<std::byte> f32_bytes(const std::vector<float> & values) {
     std::vector<std::byte> bytes(values.size() * sizeof(float));
     std::memcpy(bytes.data(), values.data(), bytes.size());
@@ -188,6 +201,31 @@ public:
             return std::nullopt;
         }
         return require_f32(name, expected_shape);
+    }
+
+    void set_backend_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        TensorStorageType storage_type,
+        const std::vector<int64_t> & expected_shape) const override {
+        const std::string key(name);
+        if (const auto folded = folded_.find(key); folded != folded_.end()) {
+            validate_expected_shape(name, folded->second.metadata.shape, expected_shape);
+            const auto shape = shape_from_dims(expected_shape);
+            const auto output_type = ggml_type_for_tensor_storage(
+                resolve_tensor_storage_type(*this, name, storage_type));
+            const auto values = fold_weight_norm(folded->second);
+            set_backend_tensor_from_f32_parallel(tensor, name, values, shape, output_type);
+            return;
+        }
+        source_->set_backend_tensor(tensor, require_name(name), storage_type, expected_shape);
+    }
+
+    void set_backend_f32_tensor(
+        ggml_tensor * tensor,
+        std::string_view name,
+        const std::vector<int64_t> & expected_shape) const override {
+        set_backend_tensor(tensor, name, TensorStorageType::F32, expected_shape);
     }
 
     int64_t require_i64_scalar(std::string_view name) const override {
