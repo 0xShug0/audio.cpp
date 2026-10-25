@@ -87,6 +87,7 @@ below `2^53` are accepted, but larger JSON numbers may lose precision before
 option parsing.
 
 If no request voice is provided and the configured model has `default_voice_preset`, the server injects that preset automatically. Request-level `voice`, `voice_ref`, and `reference_text` override the configured default.
+An empty string or `null` for `voice` is treated as omitted.
 
 A preset's configured `options` fill missing request keys. Explicit request options override preset options with the same key. Different aliases are not merged; supplying conflicting aliases may produce a model validation error.
 
