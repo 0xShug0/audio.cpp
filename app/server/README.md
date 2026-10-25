@@ -648,7 +648,8 @@ Server-side resolution of reference audio and voice names:
 4. Otherwise, `voice` is passed as the model-native cached voice ID.
 
 If neither `voice` nor `voice_ref` is supplied, the configured default preset
-applies. Prefer one selection method per request: combining `voice` and
+applies. An empty string or `null` for `voice` is treated as omitted.
+Prefer one selection method per request: combining `voice` and
 `voice_ref` can pass both a native ID and audio to the model, whose interpretation
 is model-specific. Top-level `reference_text` overrides the preset/library text.
 

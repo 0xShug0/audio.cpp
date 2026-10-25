@@ -98,8 +98,14 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
 
   bool voice_field_is_preset = false;
   const RuntimeVoicePreset *preset = nullptr;
-  if (const auto *value = body.find("voice")) {
-    const auto it = context.voice_presets.find(value->as_string());
+  const auto *voice_value = body.find("voice");
+  if (voice_value != nullptr &&
+      (voice_value->is_null() ||
+       (voice_value->is_string() && voice_value->as_string().empty()))) {
+    voice_value = nullptr;
+  }
+  if (voice_value != nullptr) {
+    const auto it = context.voice_presets.find(voice_value->as_string());
     if (it != context.voice_presets.end()) {
       voice_field_is_preset = true;
       preset = &it->second;
@@ -140,11 +146,10 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
   }
 
   const bool has_explicit_voice_ref = body.find("voice_ref") != nullptr;
-  if (const auto *value = body.find("voice");
-      value != nullptr && !voice_field_is_preset) {
+  if (voice_value != nullptr && !voice_field_is_preset) {
     bool voice_library_resolved = false;
     if (context.voice_dir.has_value() && !has_explicit_voice_ref) {
-      const std::string voice_name = value->as_string();
+      const std::string voice_name = voice_value->as_string();
       if (const auto wav =
               resolve_voice_library_wav(*context.voice_dir, voice_name)) {
         voice.speaker = engine::runtime::VoiceReference{};
@@ -164,7 +169,7 @@ build_speech_request(const Value &body, const SpeechRequestContext &context) {
       if (!voice.speaker.has_value()) {
         voice.speaker = engine::runtime::VoiceReference{};
       }
-      voice.speaker->cached_voice_id = value->as_string();
+      voice.speaker->cached_voice_id = voice_value->as_string();
       has_voice = true;
     }
   }

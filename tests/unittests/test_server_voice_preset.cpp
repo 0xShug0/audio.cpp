@@ -91,6 +91,31 @@ int main() {
                    request.voice->speaker->cached_voice_id == "alba",
                "a voice that is not a preset should stay a model-native voice id");
 
+        RuntimeVoicePreset clone;
+        clone.audio = engine::runtime::AudioBuffer{24000, 1, {0.25F, -0.25F}};
+        clone.reference_text = "reference transcript";
+        for (const std::string body : {R"({"input":"x"})",
+                                       R"({"input":"x","voice":""})",
+                                       R"({"input":"x","voice":null})"}) {
+            request = speech(presets, clone, no_defaults, body);
+            expect(request.voice.has_value() && request.voice->speaker.has_value() &&
+                       request.voice->speaker->audio.has_value(),
+                   "omitted, empty, or null voice should retain the default reference");
+            expect(request.voice->speaker->audio->samples == clone.audio->samples &&
+                       request.options.at("reference_text") == *clone.reference_text,
+                   "default reference audio or transcript changed");
+            request = speech(presets, no_default, no_defaults, body);
+            expect(!request.voice.has_value(), "empty or null voice should not create a voice");
+        }
+        request = speech(presets, clone, no_defaults, R"({"input":"x","voice":"alba"})");
+        expect(request.voice->speaker->cached_voice_id == "alba" &&
+                   !request.voice->speaker->audio.has_value(),
+               "nonempty voice must still override the default reference");
+        bool rejected = false;
+        try { (void)speech(presets, clone, no_defaults, R"({"input":"x","voice":123})"); }
+        catch (const std::runtime_error &) { rejected = true; }
+        expect(rejected, "non-string, non-null voice must still be rejected");
+
         // Instruction aliases follow request > preset > model precedence.
         for (const std::string key : {"instruct", "instruction"}) {
             const std::string alias = key == "instruct" ? "instruction" : "instruct";
