@@ -54,6 +54,8 @@ struct LayerGraph {
     ggml_tensor * attention_mask = nullptr;
     ggml_tensor * output = nullptr;
     ggml_tensor * logits = nullptr;
+    ggml_tensor * uniforms = nullptr;
+    ggml_tensor * sampling = nullptr;
     std::vector<ggml_tensor *> book_codes;
     ggml_backend_t backend = nullptr;
 
@@ -66,9 +68,7 @@ struct LayerGraph {
 ggml_tensor * gemma_norm(ggml_context * context, ggml_tensor * input,
                          ggml_tensor * weight, float epsilon) {
     input = ggml_cont(context, input);
-    if (weight->type != GGML_TYPE_F32) weight = ggml_cast(context, weight, GGML_TYPE_F32);
-    return ggml_mul(context, ggml_rms_norm(context, input, epsilon),
-                    ggml_scale_bias(context, weight, 1.0F, 1.0F));
+    return ggml_mul(context, ggml_rms_norm(context, input, epsilon), weight);
 }
 
 ggml_tensor * columns(ggml_context * context, ggml_tensor * input,
@@ -117,7 +117,12 @@ public:
                                                {10 * c.codebook_size, c.hidden_size});
         store_ = std::make_unique<core::BackendWeightStore>(execution.backend(), execution.backend_type(),
                                                           "drama3.tower", 4 * 1024 * 1024);
-        const auto load = [&](const std::string & name, std::initializer_list<int64_t> shape) {
+        const auto load = [&](const std::string & name, std::initializer_list<int64_t> shape, bool fold_gemma_scale = false) {
+            if (fold_gemma_scale) {
+                auto values = source->require_f32(name, shape);
+                for (auto & value : values) value += 1.0F;
+                return store_->make_f32(core::TensorShape::from_dims(shape), std::move(values)).tensor;
+            }
             return store_->load_tensor(*source, name, assets::TensorStorageType::Native, shape).tensor;
         };
         for (int64_t index = 0; index < c.shared_layers + c.residual_layers; ++index) {
@@ -128,18 +133,18 @@ public:
             LayerWeights w;
             w.embedding = load(prefix + (shared ? ".semantic_embedding.weight" : ".codebook_embedding.weight"),
                                {c.codebook_size, c.hidden_size});
-            w.enorm = load(prefix + ".enorm.weight", {c.hidden_size});
-            w.hnorm = load(prefix + ".hnorm.weight", {c.hidden_size});
+            w.enorm = load(prefix + ".enorm.weight", {c.hidden_size}, true);
+            w.hnorm = load(prefix + ".hnorm.weight", {c.hidden_size}, true);
             w.eh = load(prefix + ".eh_proj.weight", {c.hidden_size, 2 * c.hidden_size});
-            w.final_norm = load(prefix + ".final_layernorm.weight", {c.hidden_size});
+            w.final_norm = load(prefix + ".final_layernorm.weight", {c.hidden_size}, true);
             const std::string transformer = prefix + ".transformer_layer";
-            w.input_norm = load(transformer + ".attention_norm.weight", {c.hidden_size});
-            w.post_norm = load(transformer + ".ffn_norm.weight", {c.hidden_size});
+            w.input_norm = load(transformer + ".attention_norm.weight", {c.hidden_size}, true);
+            w.post_norm = load(transformer + ".ffn_norm.weight", {c.hidden_size}, true);
             const int64_t query_width = c.heads * c.head_dim;
             const int64_t kv_width = c.kv_heads * c.head_dim;
             w.qkv = load(transformer + ".attention.wqkv.weight", {2 * query_width + 2 * kv_width, c.hidden_size});
-            w.q_norm = load(transformer + ".attention.q_norm.weight", {c.head_dim});
-            w.k_norm = load(transformer + ".attention.k_norm.weight", {c.head_dim});
+            w.q_norm = load(transformer + ".attention.q_norm.weight", {c.head_dim}, true);
+            w.k_norm = load(transformer + ".attention.k_norm.weight", {c.head_dim}, true);
             w.output = load(transformer + ".attention.wo.weight", {c.hidden_size, query_width});
             w.gate = load(transformer + ".feed_forward.w1.weight", {c.intermediate_size, c.hidden_size});
             w.up = load(transformer + ".feed_forward.w3.weight", {c.intermediate_size, c.hidden_size});
@@ -164,6 +169,7 @@ public:
     }
 
     ~Impl() {
+        frame_graphs_ = {};
         prefill_graphs_.clear();
         graphs_.clear();
         if (cache_buffer_) ggml_backend_buffer_free(cache_buffer_);
@@ -294,9 +300,111 @@ public:
         return result;
     }
 
+    Drama3Frame run_frame(const std::vector<float> & hidden, const Drama3Frame & current,
+                         int32_t semantic_code, int64_t position, float temperature,
+                         int top_k, float top_p, const std::array<float, 9> & uniforms) {
+        if (hidden.size() != static_cast<size_t>(config_.hidden_size) || position < 0 || position >= capacity_ ||
+            semantic_code < 0 || semantic_code >= config_.codebook_size)
+            throw std::runtime_error("invalid Drama 3 tower frame input");
+        const bool greedy = temperature == 0 || top_k == 1;
+        auto & cached = frame_graphs_[greedy ? 0 : 1];
+        if (!cached) cached = build_frame_graph(greedy);
+        auto & graph = *cached;
+        const auto extra = shared_input({current});
+        const float mask = 1;
+        const auto pos = static_cast<int32_t>(position);
+        const std::array<float, 3> parameters{greedy ? 1.0F : 1.0F / temperature, top_p, static_cast<float>(top_k)};
+        std::vector<ggml_fp16_t> attention_mask(static_cast<size_t>(capacity_), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
+        std::fill_n(attention_mask.begin(), position + 1, ggml_fp32_to_fp16(0));
+        ggml_backend_tensor_set_async(execution_.backend(), graph.hidden, hidden.data(), 0, hidden.size() * sizeof(float));
+        ggml_backend_tensor_set_async(execution_.backend(), graph.codes, &semantic_code, 0, sizeof(semantic_code));
+        ggml_backend_tensor_set_async(execution_.backend(), graph.extra, extra.data(), 0, extra.size() * sizeof(float));
+        ggml_backend_tensor_set_async(execution_.backend(), graph.label_mask, &mask, 0, sizeof(mask));
+        ggml_backend_tensor_set_async(execution_.backend(), graph.positions, &pos, 0, sizeof(pos));
+        ggml_backend_tensor_set_async(execution_.backend(), graph.attention_mask, attention_mask.data(), 0, attention_mask.size() * sizeof(ggml_fp16_t));
+        if (!greedy) {
+            ggml_backend_tensor_set_async(execution_.backend(), graph.sampling, parameters.data(), 0, sizeof(parameters));
+            ggml_backend_tensor_set_async(execution_.backend(), graph.uniforms, uniforms.data(), 0, sizeof(uniforms));
+        }
+        if (core::compute_backend_graph(execution_.backend(), graph.graph, nullptr, "drama3.tower.frame") != GGML_STATUS_SUCCESS)
+            throw std::runtime_error("Drama 3 tower frame computation failed");
+        const auto codes = core::read_tensor_f32(graph.output);
+        Drama3Frame result{};
+        result[0] = config_.semantic_begin + semantic_code;
+        result[1] = semantic_code;
+        for (size_t book = 0; book < codes.size(); ++book) result[book + 2] = static_cast<int32_t>(codes[book]);
+        return result;
+    }
+
     Drama3TowerConfig config_;
 
 private:
+    std::unique_ptr<LayerGraph> build_frame_graph(bool greedy) {
+        auto result = std::make_unique<LayerGraph>();
+        result->backend = execution_.backend();
+        ggml_init_params params{8 * 1024 * 1024, nullptr, true};
+        result->context.reset(ggml_init(params));
+        auto * ctx = result->context.get();
+        result->graph = ggml_new_graph_custom(ctx, 8192, false);
+        const auto input = [&](ggml_type type, int64_t width) {
+            auto * value = ggml_new_tensor_1d(ctx, type, width);
+            ggml_set_input(value);
+            return value;
+        };
+        result->hidden = input(GGML_TYPE_F32, config_.hidden_size);
+        result->codes = input(GGML_TYPE_I32, 1);
+        result->extra = input(GGML_TYPE_F32, config_.hidden_size);
+        result->positions = input(GGML_TYPE_I32, 1);
+        result->label_mask = input(GGML_TYPE_F32, 1);
+        result->attention_mask = input(GGML_TYPE_F16, capacity_);
+        if (!greedy) {
+            result->uniforms = input(GGML_TYPE_F32, 9);
+            result->sampling = input(GGML_TYPE_F32, 3);
+        }
+        auto * hidden = result->hidden;
+        auto * code = result->codes;
+        ggml_tensor * output = nullptr;
+        const auto scalar = [&](ggml_tensor * tensor, int64_t index) {
+            return ggml_view_1d(ctx, tensor, 1, index * sizeof(float));
+        };
+        for (size_t layer = 0; layer < layers_.size(); ++layer) {
+            hidden = build_layer(ctx, layer, 1, hidden, code, result->label_mask,
+                layer == 0 ? result->extra : nullptr, result->positions, result->attention_mask);
+            if (!layers_[layer].head) continue;
+            auto * logits = ggml_mul_mat(ctx, layers_[layer].head, hidden);
+            if (greedy) {
+                code = ggml_argmax(ctx, logits);
+            } else {
+                // Top-p uses the full distribution and excludes the crossing token,
+                // except that the highest-probability token is always retained.
+                // Sign/clamp keeps equality boundaries consistent across backends.
+                const auto n = config_.codebook_size;
+                auto * order = ggml_argsort(ctx, logits, GGML_SORT_ORDER_DESC);
+                auto * probs = ggml_soft_max(ctx, ggml_mul(ctx, logits, scalar(result->sampling, 0)));
+                probs = ggml_reshape_1d(ctx, ggml_get_rows(ctx, ggml_reshape_2d(ctx, probs, 1, n), order), n);
+                auto * ranks = ggml_arange(ctx, 0, static_cast<float>(n), 1);
+                auto * first = ggml_clamp(ctx, ggml_scale_bias(ctx, ranks, -1, 1), 0, 1);
+                auto * keep = ggml_scale_bias(ctx, ggml_clamp(ctx, ggml_sgn(ctx, ggml_sub(ctx, ggml_cumsum(ctx, probs), scalar(result->sampling, 1))), 0, 1), -1, 1);
+                keep = ggml_clamp(ctx, ggml_add(ctx, keep, first), 0, 1);
+                keep = ggml_mul(ctx, keep, ggml_clamp(ctx, ggml_add(ctx, ggml_scale(ctx, ranks, -1), scalar(result->sampling, 2)), 0, 1));
+                auto * cdf = ggml_cumsum(ctx, ggml_mul(ctx, probs, keep));
+                auto * total = scalar(cdf, n - 1);
+                auto * threshold = ggml_mul(ctx, total, scalar(result->uniforms, layer - config_.shared_layers));
+                auto * rank = ggml_cast(ctx, ggml_sum(ctx, ggml_clamp(ctx, ggml_sgn(ctx, ggml_add(ctx, ggml_scale(ctx, cdf, -1), threshold)), 0, 1)), GGML_TYPE_I32);
+                code = ggml_cast(ctx, ggml_get_rows(ctx, ggml_reshape_2d(ctx, ggml_cast(ctx, order, GGML_TYPE_F32), 1, n), rank), GGML_TYPE_I32);
+            }
+            auto * value = ggml_cast(ctx, code, GGML_TYPE_F32);
+            output = output ? ggml_concat(ctx, output, value, 0) : value;
+        }
+        result->output = output;
+        ggml_set_output(output);
+        ggml_build_forward_expand(result->graph, output);
+        result->allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (!result->allocator || !ggml_gallocr_alloc_graph(result->allocator, result->graph))
+            throw std::runtime_error("failed to allocate Drama 3 tower frame graph");
+        return result;
+    }
+
     struct PrefillGraphs {
         int64_t steps;
         size_t bytes = 0;
@@ -463,6 +571,7 @@ private:
     std::unique_ptr<ggml_context, ContextDeleter> cache_context_;
     ggml_backend_buffer_t cache_buffer_ = nullptr;
     std::vector<std::unique_ptr<LayerGraph>> graphs_;
+    std::array<std::unique_ptr<LayerGraph>, 2> frame_graphs_;
     size_t prefill_cache_budget_;
     size_t prefill_cached_bytes_ = 0;
     std::list<PrefillGraphs> prefill_graphs_;
@@ -486,5 +595,11 @@ Drama3TowerOutput Drama3Tower::run_layer(int64_t layer, const std::vector<float>
     return impl_->run_layer(layer, hidden, codes, semantic_mask, extra_input, position, steps);
 }
 const Drama3TowerConfig & Drama3Tower::config() const noexcept { return impl_->config_; }
+
+Drama3Frame Drama3Tower::run_frame(const std::vector<float> & hidden, const Drama3Frame & current,
+                                  int32_t semantic_code, int64_t position, float temperature,
+                                  int top_k, float top_p, const std::array<float, 9> & uniforms) {
+    return impl_->run_frame(hidden, current, semantic_code, position, temperature, top_k, top_p, uniforms);
+}
 
 }  // namespace engine::models::fish_drama3

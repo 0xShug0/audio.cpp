@@ -89,9 +89,17 @@ runtime::ModelCliInterface cli(const AceStepAssets &) {
         {"ace_step.lora_scale", "float", "Adapter strength; multiplied by its alpha/r scale. Zero disables the adapter.", false, "1.0"},
         {"ace_step.weight_type", "native|f32|f16|bf16|q8_0", "Shared ACE-Step weight storage type.", false, "native"},
         {"ace_step.dit_weight_type", "native|f32|f16|bf16|q8_0", "DiT override of ace_step.weight_type; f16 is promoted to bf16."},
+        {"ace_step.dit_attention", "auto|eager|flash", "DiT attention; auto selects flash on supported GPUs and eager on CPU.", false, "auto"},
         {"ace_step.planner_weight_type", "native|f32|f16|bf16|q8_0", "Planner override of ace_step.weight_type."},
+        {"ace_step.planner_prefix_bucketing", "true|false", "Bucket planner CFG attention to the valid prefix; false uses full cache capacity.", false, "true"},
+        {"ace_step.planner_fused_projections", "true|false", "CUDA packed QKV and gate/up with fused SwiGLU; may change generated codes. Off unless enabled by cuda_perf; explicit values override the preset."},
+        {"ace_step.planner_f16_decode", "true|false", "CUDA F16 KV/bucketed metadata and CFG-off decode; CFG-on codes already use F16 KV. May change generated codes. Off unless enabled by cuda_perf; explicit values override the preset."},
+        {"ace_step.planner_independent_cfg_prefill", "true|false", "CUDA CFG prefill at actual branch lengths instead of shared left padding; may change generated codes. Off unless enabled by cuda_perf; explicit values override the preset."},
         {"ace_step.text_encoder_weight_type", "native|f32|f16|bf16|q8_0", "Text encoder override of ace_step.weight_type."},
         {"ace_step.vae_weight_type", "native|f32|f16|bf16|q8_0", "VAE override of ace_step.weight_type."},
+        {"ace_step.perf_mode", "off|cuda_perf", "Performance preset; cuda_perf enables CUDA planner fused projections, F16 decode and independent CFG prefill, and VAE tiles of 1024 frames with 64-frame overlap per side. Can change generated codes and VRAM; does not change weight precision. Explicit options override the preset.", false, "off"},
+        {"ace_step.vae_tile_frames", "int", "VAE tile capacity in latent frames. Unset keeps backend defaults; 1024 with cuda_perf. Explicit values override the preset.", false, std::nullopt, "1"},
+        {"ace_step.vae_tile_overlap_frames", "int", "VAE overlap per side in latent frames; must be non-negative and less than half the tile capacity. Unset uses backend defaults; 64 with cuda_perf. Explicit values override the preset.", false, std::nullopt, "0"},
         {"ace_step.mem_saver", "true|false", "Release staged graphs and caches between phases; later requests may rebuild them. Default false; legacy mem_saver remains accepted.", false, "false"},
     };
     out.load_options = {

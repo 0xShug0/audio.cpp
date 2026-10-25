@@ -9,7 +9,7 @@ import {
   canEncodeVideo
 } from 'mediabunny';
 
-interface LiveAvatarVideoMeta {
+export interface Rgb24VideoMeta {
   width?: string;
   height?: string;
   frames?: string;
@@ -17,28 +17,28 @@ interface LiveAvatarVideoMeta {
   format?: string;
 }
 
-export interface LiveAvatarOutputArtifact {
+export interface VideoOutputArtifact {
   id: string;
   url: string;
   extension: string;
   mime: string;
 }
 
-interface LiveAvatarTaskArtifact {
+interface VideoTaskArtifact {
   id?: unknown;
   payload?: unknown;
   meta?: Record<string, string>;
 }
 
-export interface LiveAvatarPreparedOutput {
-  artifacts: LiveAvatarOutputArtifact[];
+export interface PreparedVideoOutput {
+  artifacts: VideoOutputArtifact[];
   warning: string;
 }
 
-function positiveInteger(value: string | undefined, name: string): number {
+function positiveInteger(value: string | undefined, name: string, label: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`LiveAvatar video has invalid ${name} metadata`);
+    throw new Error(`${label} video has invalid ${name} metadata`);
   }
   return parsed;
 }
@@ -71,32 +71,35 @@ function trimAudio(audioContext: AudioContext, source: AudioBuffer, duration: nu
   return trimmed;
 }
 
-export async function encodeLiveAvatarMp4(
+export async function encodeRgb24Mp4(
   payload: string,
-  meta: LiveAvatarVideoMeta,
-  drivingAudio: File
+  meta: Rgb24VideoMeta,
+  drivingAudio: File,
+  label: string,
+  audioCodec: 'aac' | 'opus' = 'aac'
 ): Promise<{ blob: Blob; audioIncluded: boolean }> {
-  if (meta.format !== 'rgb24') throw new Error('LiveAvatar video artifact is not RGB24');
+  if (meta.format !== 'rgb24') throw new Error(`${label} video artifact is not RGB24`);
   if (typeof VideoEncoder === 'undefined') {
     throw new Error('This browser does not support H.264 encoding through WebCodecs');
   }
 
-  const width = positiveInteger(meta.width, 'width');
-  const height = positiveInteger(meta.height, 'height');
-  const frames = positiveInteger(meta.frames, 'frame count');
-  const fps = positiveInteger(meta.fps, 'frame rate');
+  const width = positiveInteger(meta.width, 'width', label);
+  const height = positiveInteger(meta.height, 'height', label);
+  const frames = positiveInteger(meta.frames, 'frame count', label);
+  const fps = Number(meta.fps);
+  if (!Number.isFinite(fps) || fps <= 0) throw new Error(`${label} video has invalid frame rate metadata`);
   const bytesPerFrame = width * height * 3;
   const base64CharsPerFrame = bytesPerFrame / 3 * 4;
   const expectedPayloadLength = Math.ceil(bytesPerFrame * frames / 3) * 4;
   if (payload.length !== expectedPayloadLength) {
-    throw new Error('LiveAvatar RGB24 payload size does not match its video metadata');
+    throw new Error(`${label} RGB24 payload size does not match its video metadata`);
   }
 
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext('2d', { alpha: false });
-  if (!context) throw new Error('Unable to create the LiveAvatar video canvas');
+  if (!context) throw new Error(`Unable to create the ${label} video canvas`);
 
   const audioContext = new AudioContext();
   try {
@@ -105,14 +108,14 @@ export async function encodeLiveAvatarMp4(
     const videoQuality = new Quality('high');
     const audioQuality = new Quality('high');
     if (!await canEncodeVideo('avc', { width, height, quality: videoQuality })) {
-      throw new Error('This browser cannot encode H.264 video for LiveAvatar MP4 output');
+      throw new Error(`This browser cannot encode H.264 video for ${label} MP4 output`);
     }
     const audioConfig = {
       numberOfChannels: audio.numberOfChannels,
       sampleRate: audio.sampleRate,
       quality: audioQuality
     };
-    const audioIncluded = typeof AudioEncoder !== 'undefined' && await canEncodeAudio('aac', audioConfig);
+    const audioIncluded = typeof AudioEncoder !== 'undefined' && await canEncodeAudio(audioCodec, audioConfig);
     const target = new BufferTarget();
     const output = new Output({
       format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
@@ -140,7 +143,7 @@ export async function encodeLiveAvatarMp4(
       }
     });
     const audioSource = audioIncluded
-      ? new AudioBufferSource({ codec: 'aac', quality: audioQuality })
+      ? new AudioBufferSource({ codec: audioCodec, quality: audioQuality })
       : null;
     output.addVideoTrack(videoSource);
     if (audioSource) output.addAudioTrack(audioSource);
@@ -152,14 +155,14 @@ export async function encodeLiveAvatarMp4(
       const rgb = decodeBase64Frame(payload, frame * base64CharsPerFrame, base64CharsPerFrame);
       if (rgb.length !== bytesPerFrame) {
         await output.cancel();
-        throw new Error(`LiveAvatar RGB24 frame ${frame} has an invalid size`);
+        throw new Error(`${label} RGB24 frame ${frame} has an invalid size`);
       }
       context.putImageData(new ImageData(rgb24ToRgba(rgb), width, height), 0, 0);
       await videoSource.add(frame * frameDuration, frameDuration);
     }
 
     await output.finalize();
-    if (!target.buffer) throw new Error('LiveAvatar MP4 encoder returned no output');
+    if (!target.buffer) throw new Error(`${label} MP4 encoder returned no output`);
     return {
       blob: new Blob([target.buffer], { type: 'video/mp4' }),
       audioIncluded
@@ -169,47 +172,52 @@ export async function encodeLiveAvatarMp4(
   }
 }
 
-export async function prepareLiveAvatarOutput(
+export async function prepareRgb24Output(
   result: Record<string, unknown>,
-  drivingAudio: File | null
-): Promise<LiveAvatarPreparedOutput> {
-  const artifacts: LiveAvatarOutputArtifact[] = [{
-    id: 'liveavatar_result',
+  drivingAudio: File | null,
+  label: string,
+  idPrefix: string,
+  audioCodec: 'aac' | 'opus' = 'aac'
+): Promise<PreparedVideoOutput> {
+  const artifacts: VideoOutputArtifact[] = [{
+    id: `${idPrefix}_result`,
     extension: 'json',
     mime: 'application/json',
     url: URL.createObjectURL(new Blob([JSON.stringify(result)], { type: 'application/json' }))
   }];
   const videoArtifact = Array.isArray(result.artifacts)
-    ? (result.artifacts as LiveAvatarTaskArtifact[]).find((entry) =>
+    ? (result.artifacts as VideoTaskArtifact[]).find((entry) =>
         typeof entry?.payload === 'string' && entry.meta?.format === 'rgb24')
     : undefined;
   if (!videoArtifact || typeof videoArtifact.payload !== 'string') {
-    return { artifacts, warning: 'LiveAvatar returned no RGB24 video artifact.' };
+    return { artifacts, warning: `${label} returned no RGB24 video artifact.` };
   }
   if (!drivingAudio) {
-    return { artifacts, warning: 'LiveAvatar MP4 encoding requires the driving audio.' };
+    return { artifacts, warning: `${label} MP4 encoding requires the driving audio.` };
   }
 
   try {
-    const video = await encodeLiveAvatarMp4(
+    const video = await encodeRgb24Mp4(
       videoArtifact.payload,
       videoArtifact.meta || {},
-      drivingAudio
+      drivingAudio,
+      label,
+      audioCodec
     );
     artifacts.push({
-      id: 'liveavatar_video',
+      id: `${idPrefix}_video`,
       extension: 'mp4',
       mime: 'video/mp4',
       url: URL.createObjectURL(video.blob)
     });
     return {
       artifacts,
-      warning: video.audioIncluded ? '' : 'Browser AAC encoding is unavailable; the MP4 has no audio track.'
+      warning: video.audioIncluded ? '' : `Browser ${audioCodec.toUpperCase()} encoding is unavailable; the MP4 has no audio track.`
     };
   } catch (error) {
     return {
       artifacts,
-      warning: `LiveAvatar MP4 encoding failed: ${error instanceof Error ? error.message : String(error)}`
+      warning: `${label} MP4 encoding failed: ${error instanceof Error ? error.message : String(error)}`
     };
   }
 }

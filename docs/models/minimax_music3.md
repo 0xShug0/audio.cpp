@@ -113,8 +113,25 @@ Common session options:
 | `minimax_music3.graph_arena_mb` | `32` | Host graph-metadata arena size in MiB, not device workspace; legacy `minimax_music3.graph_context_mb` remains accepted. |
 | `minimax_music3.weight_context_mb` | `32` | Weight context size in MiB. |
 | `minimax_music3.mem_saver` | `true` | Load large generation stages only while needed to reduce peak VRAM. |
+| `minimax_music3.perf_mode` | `off` | `cuda_perf` selects 256-row attention-prefix buckets. Explicit controls override the preset. |
+| `minimax_music3.kv_cache_alignment` | `1`; `256` with `cuda_perf` | Attention-prefix bucket size. `1` keeps full-capacity attention. |
 
 ## Performance options
+
+Attention buckets retain all valid history, but numerical differences can change
+sampled songs. The preset does not change weight precision, flow steps,
+`mem_saver`, pipeline overlap, CFG reuse or chunk hops.
+
+```bash
+--session-option minimax_music3.perf_mode=cuda_perf
+```
+
+The loader always prepares only the 16,384 semantic-token head rows plus EOS,
+preserving the selected weight dtype. Already-compact GGUFs are unchanged;
+no checkpoint conversion is required.
+
+Explicit `minimax_music3.kv_cache_alignment=1` restores normal attention even
+when the preset is selected.
 
 Everything below is opt-in; the defaults reproduce the reference trajectory
 exactly. The two cheapest wins that need no extra GGUFs are

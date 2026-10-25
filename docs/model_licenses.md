@@ -57,6 +57,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `fun_asr_nano` | [FunAudioLLM/Fun-ASR-Nano-2512](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-2512) | Apache-2.0 | Yes | | 2026-09-21 |
 | `gigaam_asr` | [ai-sage/GigaAM-v3](https://huggingface.co/ai-sage/GigaAM-v3), [ai-sage/GigaAM-Multilingual](https://huggingface.co/ai-sage/GigaAM-Multilingual) | MIT | Yes | | 2026-09-25 |
 | `glm_tts` | [zai-org/GLM-TTS](https://huggingface.co/zai-org/GLM-TTS) | MIT | Yes | | 2026-09-21 |
+| `gradium_phonon` | [gradium/phonon-31m-en](https://huggingface.co/gradium/phonon-31m-en)<br>[gradium/phonon-31m-en-audiocpp](https://huggingface.co/gradium/phonon-31m-en-audiocpp) | Apache-2.0 | Yes | Both packages come from Gradium's repositories: the Q8_0 GGUF and the published safetensors checkpoint, each with its default voice. The 40m checkpoints ([gradium/phonon-40m-en](https://huggingface.co/gradium/phonon-40m-en) and other languages) are CC-BY-NC-4.0 and gated, and are not packaged. | 2026-10-21 |
 | `granite5asr` | [ibm-granite/granite-speech-5.0-470m-turboctc](https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc) | Apache-2.0 | Yes | | 2026-09-21 |
 | `heartmula` | [HeartMuLa/HeartMuLa-oss-3B](https://huggingface.co/HeartMuLa/HeartMuLa-oss-3B)<br>[HeartMuLa/HeartCodec-oss-20260123](https://huggingface.co/HeartMuLa/HeartCodec-oss-20260123) | Apache-2.0 | Yes | | 2026-09-21 |
 | `higgs_audio_stt` | [bosonai/higgs-audio-v3-stt](https://huggingface.co/bosonai/higgs-audio-v3-stt) | Apache-2.0 | Yes | | 2026-09-21 |

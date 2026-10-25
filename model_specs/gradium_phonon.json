@@ -1,0 +1,340 @@
+{
+  "schema_version": 1,
+  "family": "gradium_phonon",
+  "display_name": "Gradium Phonon",
+  "description": "Gradium's Phonon text-to-speech: a small flow-matching language model with a Mimi decoder, a descendant of Kyutai's pocket-tts, for real-time local synthesis on CPU and GPU with prepared voices.",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "built_in_voices",
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "frames_after_eos",
+        "type": "int",
+        "description": "Frames kept after EOS, counting the EOS frame; -1 keeps 4 for texts of up to four words and 2 otherwise, as the reference does.",
+        "required": false,
+        "min": -1,
+        "default": -1
+      },
+      {
+        "name": "max_frames",
+        "type": "int",
+        "description": "Maximum generated audio frames; zero estimates the cap from text length. Captured during session preparation.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "text_chunk_tokens",
+        "type": "int",
+        "description": "Tokenizer tokens per text chunk; must be positive, default 50. Set during preparation and overridable per request.",
+        "required": false,
+        "min": 1,
+        "default": 50
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Positive flow noise temperature. Captured during session preparation.",
+        "required": false,
+        "default": 0.3
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Noise seed; omitted chooses a random seed. Captured during session preparation.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295
+      },
+      {
+        "name": "noise_clamp",
+        "type": "float",
+        "description": "Noise clamp; a negative value disables clamping. Captured during session preparation.",
+        "required": false,
+        "default": -1
+      },
+      {
+        "name": "eos_threshold",
+        "type": "float",
+        "description": "EOS detection threshold on the EOS logit. Captured during session preparation.",
+        "required": false,
+        "default": 4
+      },
+      {
+        "name": "noise_file",
+        "type": "path",
+        "description": "Precomputed noise schedule, raw float32 [frames, 32], used as given. Captured during session preparation.",
+        "required": false
+      },
+      {
+        "name": "voice_embedding_file",
+        "type": "path",
+        "description": "Voice file: a speaker_wavs latent file such as those of gradium/phonon-voices, or an exported voice state. Captured during session preparation.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Optional per-request character chunk size; otherwise use sentence/token budgeting.",
+        "required": false
+      },
+      {
+        "name": "export_voice_state_file",
+        "type": "path",
+        "description": "Export the prepared voice state during session preparation.",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "voice_state_cache_slots",
+        "type": "int",
+        "description": "Cached prepared voice states; zero disables reuse.",
+        "required": false,
+        "min": 0,
+        "default": 4
+      },
+      {
+        "name": "offline_graph_capacity_mode",
+        "type": "enum",
+        "description": "Offline graph capacity policy; CPU/Metal default tiered, other backends double.",
+        "required": false,
+        "values": [
+          "fixed",
+          "double",
+          "tiered",
+          "grow"
+        ]
+      },
+      {
+        "name": "prompt_graph_capacity",
+        "type": "int",
+        "description": "Optional reserved prompt capacity.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "generation_graph_capacity",
+        "type": "int",
+        "description": "Optional reserved generation capacity.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared matmul weight storage; component matmul settings inherit it. Convolution storage remains independently native unless overridden.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "matmul_weight_type",
+        "type": "enum",
+        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage.",
+        "required": false,
+        "preset": "weight_type_conv",
+        "default": "native"
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "flow_weight_context_mb",
+        "type": "int",
+        "description": "Flow weight context in MiB; inherits gradium_phonon.weight_context_mb when omitted.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "mimi_decoder_weight_context_mb",
+        "type": "int",
+        "description": "Mimi decoder weight context in MiB; inherits gradium_phonon.weight_context_mb when omitted.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "flow_weights_view_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "flow_step_graph_arena_mb",
+        "type": "int",
+        "description": "Flow-step host graph-metadata arena size in MiB, not device workspace.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "mimi_conv_graph_arena_mb",
+        "type": "int",
+        "description": "Mimi convolution host graph-metadata arena size in MiB, not device workspace.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "mimi_transformer_graph_arena_mb",
+        "type": "int",
+        "description": "Mimi transformer host graph-metadata arena size in MiB, not device workspace.",
+        "required": false,
+        "min": 1,
+        "default": 96
+      },
+      {
+        "name": "mimi_tail_graph_arena_mb",
+        "type": "int",
+        "description": "Mimi tail host graph-metadata arena size in MiB, not device workspace.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "mimi_full_chunk_frames",
+        "type": "int",
+        "description": "Full-sequence decoder chunk frames.",
+        "required": false,
+        "min": 1,
+        "default": 90
+      },
+      {
+        "name": "mimi_stage2_chunk_frames",
+        "type": "int",
+        "description": "Second-stage decoder chunk frames.",
+        "required": false,
+        "min": 1,
+        "default": 900
+      },
+      {
+        "name": "use_full_mimi",
+        "type": "bool",
+        "description": "Use full-sequence Mimi decoding.",
+        "required": false,
+        "default": true
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "gradium/phonon-31m-en-audiocpp",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "gradium_phonon_31m_en_q8_0",
+      "display_name": "Phonon 31m English Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "phonon-31m-en",
+      "files": [
+        "phonon-31m-en-q8_0.gguf",
+        "default-voice.safetensors"
+      ]
+    },
+    {
+      "id": "gradium_phonon_31m_en_safetensors",
+      "display_name": "Phonon 31m English Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "phonon-31m-en-safetensors",
+      "files": [
+        "config.json",
+        "tokenizer.model",
+        "model.safetensors",
+        "default-voice.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "gradium/phonon-31m-en",
+        "revision": "52433c46975bfa13144c56204c9f4ee1c5b148aa",
+        "gated": false
+      }
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "gradium_phonon_31m_en_q8_0",
+    "default_voice": "default",
+    "builtin_voices": [
+      "default"
+    ],
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/gradium_phonon.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer": "model:tokenizer.model"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer": "model:tokenizer.model"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

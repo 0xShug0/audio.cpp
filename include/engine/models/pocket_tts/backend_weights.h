@@ -79,6 +79,7 @@ struct PocketTTSBackendMimiDecoderWeights {
 
 struct PocketTTSBackendWeights {
     core::BackendType backend_type = core::BackendType::Cpu;
+    bool has_mimi_encoder = true;
     std::shared_ptr<core::BackendWeightStore> flow_store;
     std::shared_ptr<core::BackendWeightStore> mimi_encoder_store;
     std::shared_ptr<core::BackendWeightStore> mimi_decoder_store;

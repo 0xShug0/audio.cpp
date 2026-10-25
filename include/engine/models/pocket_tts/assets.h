@@ -39,6 +39,11 @@ struct PocketTTSModelConfig {
     bool remove_semicolons = false;
     bool insert_bos_before_voice = false;
     std::optional<int> model_recommended_frames_after_eos = std::nullopt;
+    // Added to the word-count guess (3 or 1) for the default frames_after_eos, which counts
+    // the EOS frame itself.
+    int frames_after_eos_offset = 2;
+    float default_eos_threshold = -4.0F;
+    bool time_embedding_plain_rms = false;
 };
 
 struct PocketTTSHostWeights {
@@ -47,6 +52,11 @@ struct PocketTTSHostWeights {
     std::optional<assets::TensorDataF32> bos_before_voice;
     std::vector<float> emb_mean;
     std::vector<float> emb_std;
+    // Constant added to input_linear on every generated frame, for checkpoints whose summed
+    // conditioners are folded at load time.
+    std::optional<std::vector<float>> input_linear_bias;
+    // Projects `speaker_wavs` voice latents [frames, channels] to flow_dim on the host.
+    std::optional<assets::TensorDataF32> speaker_proj;
 };
 
 struct PocketTTSAssets {
@@ -57,10 +67,15 @@ struct PocketTTSAssets {
     PocketTTSModelConfig model_config;
     std::vector<tokenizers::SentencePiecePiece> tokenizer_pieces;
     std::string language;
+    std::string family = "pocket_tts";
+    // Voice used when a request selects none.
+    std::optional<std::filesystem::path> default_voice_path;
 };
 
 std::shared_ptr<const PocketTTSAssets> load_pocket_tts_assets(
     const std::filesystem::path & model_path,
     std::string language);
+
+std::shared_ptr<const PocketTTSAssets> load_gradium_phonon_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::pocket_tts

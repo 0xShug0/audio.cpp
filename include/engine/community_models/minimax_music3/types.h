@@ -8,6 +8,10 @@
 
 namespace engine::models::minimax_music3 {
 
+struct MiniMaxMusic3PerfOptions {
+    int64_t kv_cache_alignment = 1;
+};
+
 struct MiniMaxMusic3QwenConfig {
     int64_t vocab_size = 200000;
     int64_t hidden_size = 4096;

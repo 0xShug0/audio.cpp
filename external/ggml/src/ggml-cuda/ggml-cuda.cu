@@ -554,7 +554,14 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
             access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
             access.location.id = device;
             access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-            CU_CHECK(cuMemSetAccess((CUdeviceptr)((char *)(pool_addr) + pool_size), reserve_size, &access, 1));
+#if defined(GGML_USE_HIP)
+            // Some HIP runtimes reject access changes applied to a newly mapped
+            // subrange inside a larger reservation. Reapply access to the fully
+            // mapped, contiguous prefix; the unmapped tail is excluded.
+            CU_CHECK(cuMemSetAccess(pool_addr, pool_size + reserve_size, &access, 1));
+#else
+            CU_CHECK(cuMemSetAccess(start_ptr, reserve_size, &access, 1));
+#endif
 
             // add to the pool
             pool_size += reserve_size;

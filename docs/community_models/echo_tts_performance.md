@@ -118,6 +118,45 @@ Verified against a mock denoiser at 0.011% max deviation for interval 2 and
 0.020% for interval 3 -- but that mock had deliberately smooth uncond offsets,
 so treat those as a lower bound, not a measurement on real audio.
 
+### 5. `echo_tts.mem_saver` (opt-in, default false)
+Mem-saver frees VRAM by free-ing the audio encoder allocations after reference
+speaker encoding. For cached reference speakers, this has no performance hit,
+for an uncached reference speaker this has a small performance hit. Peak VRAM
+often occurs during speaker encoding, but depends on the length of prompts you
+send (long prompts make the audio decode buffers larger than the encode buffers).
+Actual savings will depend on model quantization and backend architecture. For
+Q8_0 model weights, the following were measured on a GTX 1080 Ti and a RTX 4070:
+- GTX 1080 Ti (false/true): 8122 MB / 7416 MB (8.7% savings)
+- RTX 4070  (false/true): 6084 MB / 5356 MB (12.0% savings)
+
+### 6. `echo_tts.cfg_mode` (opt-in, default independent)
+Echo-TTS allows two classifier free guidance modes: the reference Independent
+mode with a guidance scale for the reference speaker and a guidance scale for the
+text, and a Joint mode with a single combined guidance scale. Joint-CFG allows
+for a slightly smaller VRAM allocation, and fewer forwards passes. While actual
+results will depend on the backend architecture, the following numbers are
+provided as examples measured on a GTX 1080 Ti and an RTX 4080:
+- GTX 1080 Ti (independent/joint): 16.9s / 11.9s (0.7x, or ~30% faster)
+- RTX 4070 (independent/joint): 3.5s / 2.7s (0.77x, or ~23% faster)
+
+The setting also has an effect on audio quality. Measured by @5uck1ess on an RTX
+5090, 4 English prompts x 3 seeds run through Whisper-v3 WER and WavLM SIM:
+
+| Mode & Scale | WER | UTMOS | SIM |
+|---|---|---|---|
+| independent, 3.0/8.0 | 0.069 | 4.20 | 0.831 |
+| joint, 4.0 | 0.081 | 4.32 | 0.804 |
+| joint, 6.0 | 0.060 | 4.31 | 0.821 |
+| joint, 8.0 | 0.076 | 4.29 | 0.829 |
+| joint, 10.0 | 0.069 | 4.26 | 0.830 |
+
+Joint-CFG at scale 8.0 is at parity, below ~6.0 scale similarity drops. By ear:
+near parity, independent is slightly better on a few, clone is almost identical.
+@lojack5 also notes: Joint-CFG the most noticable (by ear) difference is at the
+first ~0.2 seconds of the generated audio, where the speaker doesn't as closely
+match the reference as Independent-CFG does. After the beginning of the
+generation, the speaker quickly matches the reference audio.
+
 ---
 
 ## Suggested config

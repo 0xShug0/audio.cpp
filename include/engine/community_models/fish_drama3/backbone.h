@@ -41,6 +41,9 @@ struct Drama3BackboneDecoderConfig {
     // `experts` in every layer; otherwise one entry per layer, each <= `experts`.
     std::vector<int64_t> experts_per_layer;
     bool round_bf16_activations = false;
+    bool fused_moe = false;
+    ggml_type kv_cache_type = GGML_TYPE_F16;
+    int64_t kv_cache_alignment = 1;
     int64_t decode_cache_steps = 2048;
     int64_t cpu_expert_layers = 0;
     bool disk_experts = false;

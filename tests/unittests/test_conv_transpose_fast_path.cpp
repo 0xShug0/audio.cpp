@@ -1,4 +1,5 @@
 #include "engine/framework/core/backend.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
@@ -257,7 +258,8 @@ engine::core::TensorValue build_conv_transpose1d_col2im_test_path(
 
 RunResult run_conv_transpose_case(
     const ConvTransposeCase & test_case,
-    engine::core::BackendType backend_type) {
+    engine::core::BackendType backend_type,
+    bool prepack = false) {
     BackendModuleRunner runner(
         backend_type == engine::core::BackendType::Cuda ? "conv_transpose_fast_path_test.cuda" : "conv_transpose_fast_path_test.reference",
         backend_type);
@@ -275,12 +277,29 @@ RunResult run_conv_transpose_case(
         bias = runner.make_f32(bias_shape);
     }
 
+    const auto values = make_patterned_f32(static_cast<size_t>(weight_shape.num_elements()), 0.47f, 0.017f);
+    std::optional<engine::core::TensorValue> matrix;
+    std::vector<float> packed;
+    if (prepack) {
+        matrix = runner.make_f32(engine::core::TensorShape::from_dims(
+            {test_case.out_channels * test_case.kernel_size, test_case.in_channels}));
+        packed.resize(values.size());
+        for (int64_t output = 0; output < test_case.out_channels; ++output) {
+            for (int64_t tap = 0; tap < test_case.kernel_size; ++tap) {
+                for (int64_t input = 0; input < test_case.in_channels; ++input) {
+                    packed[static_cast<size_t>((output * test_case.kernel_size + tap) * test_case.in_channels + input)] =
+                        values[static_cast<size_t>((input * test_case.out_channels + output) * test_case.kernel_size + tap)];
+                }
+            }
+        }
+    }
     const auto output = engine::modules::ConvTranspose1dModule(make_config(test_case))
-        .build(runner.ctx, input, engine::modules::ConvTranspose1dWeights{weight, bias});
+        .build(runner.ctx, input, engine::modules::ConvTranspose1dWeights{weight, bias, matrix});
 
     runner.allocate_tensors();
     write_tensor_f32(input, make_patterned_f32(static_cast<size_t>(input_shape.num_elements()), 0.19f, 0.031f), "input");
-    write_tensor_f32(weight, make_patterned_f32(static_cast<size_t>(weight_shape.num_elements()), 0.47f, 0.017f), "weight");
+    write_tensor_f32(weight, values, "weight");
+    if (matrix) write_tensor_f32(*matrix, packed, "col2im matrix");
     if (bias) {
         write_tensor_f32(*bias, make_patterned_f32(static_cast<size_t>(bias_shape.num_elements()), 0.83f, 0.011f), "bias");
     }
@@ -425,6 +444,8 @@ void require_close(const RunResult & slow, const RunResult & fast, const ConvTra
 void run_case(const ConvTransposeCase & test_case, engine::core::BackendType backend_type) {
     const RunResult reference = run_conv_transpose_case(test_case, engine::core::BackendType::Cpu);
     const RunResult fast = run_conv_transpose_case(test_case, backend_type);
+    const RunResult prepacked = run_conv_transpose_case(test_case, backend_type, true);
+    if (fast.values != prepacked.values) throw std::runtime_error("cached col2im matrix changed output");
     require_close(reference, fast, test_case);
     std::cout << "[PASS] " << test_case.name << " output " << reference.shape.to_string() << '\n';
 }
@@ -473,8 +494,10 @@ void run_ab_case(const ConvTransposeCase & test_case, engine::core::BackendType 
 
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
     try {
+        const auto started = std::chrono::steady_clock::now();
+        if (argc == 2 && std::string(argv[1]) == "--log") engine::debug::configure_logging({true, std::nullopt});
         const ConvTransposeCase qwen3_case{"qwen3_decoder_mid_block_biased", 1, 256, 128, 96, 10, 5, true};
         const ConvTransposeCase batched_case{"batched_decoder_block_no_bias", 2, 192, 192, 48, 2, 2, false};
         require_cuda_or_hip_backend_classification();
@@ -495,11 +518,15 @@ int main() {
         std::cout << "[SKIP] CPU backend does not implement ggml_col2im_1d for conv transpose A/B test\n";
 
         if (backend_is_available(engine::core::BackendType::Vulkan)) {
+            run_case(qwen3_case, engine::core::BackendType::Vulkan);
+            run_case(batched_case, engine::core::BackendType::Vulkan);
             run_ab_case(qwen3_case, engine::core::BackendType::Vulkan);
             run_ab_case(batched_case, engine::core::BackendType::Vulkan);
         } else {
             std::cout << "[SKIP] Vulkan backend is not available for conv transpose A/B test\n";
         }
+        engine::debug::timing_log_scalar("session.wall_ms", std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count());
     } catch (const std::exception & ex) {
         std::cerr << "[FAIL] " << ex.what() << '\n';
         return 1;

@@ -6,42 +6,77 @@
 #include "engine/framework/sampling/hf_sampler.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <chrono>
+#include <condition_variable>
 #include <deque>
 #include <iostream>
 #include <numeric>
+#include <mutex>
 #include <random>
 #include <stdexcept>
+#include <string_view>
+#include <thread>
 
 namespace engine::models::fish_drama3 {
 namespace {
 
+struct PerfPreset {
+    std::string_view name;
+    bool fused_moe;
+    ggml_type kv_cache_type;
+    int64_t kv_cache_alignment;
+};
+
+constexpr std::array<PerfPreset, 2> kPerfPresets{{
+    {"off", false, GGML_TYPE_F16, 1},
+    {"cuda_perf", true, GGML_TYPE_F16, 256},
+}};
+
+struct SamplerScratch {
+    std::vector<int32_t> order;
+    std::vector<double> weights;
+    std::vector<double> probabilities;
+};
+
 int32_t sample(const std::vector<float> & logits, float temperature, int top_k,
-               float top_p, std::mt19937 & random) {
+               float top_p, std::mt19937 & random, SamplerScratch & scratch) {
     if (logits.empty()) throw std::runtime_error("Drama 3 sampler has no logits");
     if (temperature == 0 || top_k == 1)
         return sampling::HfLogitsProcessor::argmax(logits.data(), logits.size(), "Drama 3");
-    std::vector<int32_t> order(logits.size());
+    auto & order = scratch.order;
+    order.resize(logits.size());
     std::iota(order.begin(), order.end(), 0);
     const auto count = std::min(logits.size(), static_cast<size_t>(top_k));
-    std::partial_sort(order.begin(), order.begin() + count, order.end(), [&](int32_t left, int32_t right) {
+    const auto compare = [&](int32_t left, int32_t right) {
         return logits[left] == logits[right] ? left < right : logits[left] > logits[right];
-    });
-    order.resize(count);
-    const double maximum = logits[order.front()] / temperature;
+    };
+    const double maximum = *std::max_element(logits.begin(), logits.end()) / temperature;
     double total = 0;
     // Top-p is defined against the full distribution, before top-k filtering.
-    for (const auto logit : logits) total += std::exp(logit / temperature - maximum);
-    std::vector<double> probabilities(order.size());
-    for (size_t rank = 0; rank < order.size(); ++rank) {
-        probabilities[rank] = std::exp(logits[order[rank]] / temperature - maximum);
+    auto & weights = scratch.weights;
+    weights.resize(logits.size());
+    for (size_t index = 0; index < logits.size(); ++index) {
+        weights[index] = std::exp(logits[index] / temperature - maximum);
+        total += weights[index];
     }
     if (!(total > 0) || !std::isfinite(total)) throw std::runtime_error("Drama 3 sampler encountered nonfinite logits");
+    size_t sorted = std::min(count, size_t{64});
+    for (;;) {
+        std::partial_sort(order.begin(), order.begin() + sorted, order.end(), compare);
+        double mass = 0;
+        for (size_t rank = 0; rank < sorted; ++rank) mass += weights[order[rank]] / total;
+        if (sorted == count || mass > top_p) break;
+        sorted = std::min(count, sorted * 2);
+    }
+    auto & probabilities = scratch.probabilities;
+    probabilities.assign(count, 0);
     double cumulative = 0;
-    for (size_t rank = 0; rank < order.size(); ++rank) {
-        cumulative += probabilities[rank] / total;
-        if (rank > 0 && (cumulative > top_p || rank >= static_cast<size_t>(top_k))) probabilities[rank] = 0;
+    for (size_t rank = 0; rank < sorted; ++rank) {
+        cumulative += weights[order[rank]] / total;
+        if (rank > 0 && cumulative > top_p) break;
+        probabilities[rank] = weights[order[rank]];
     }
     std::discrete_distribution<size_t> choice(probabilities.begin(), probabilities.end());
     return order[choice(random)];
@@ -55,15 +90,43 @@ std::vector<float> last_hidden(const std::vector<float> & values, int64_t width)
 }  // namespace
 
 Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
-    core::ExecutionContext & execution, const runtime::SessionOptions & options)
+    core::ExecutionContext & execution, const runtime::SessionOptions & options, bool streaming)
     : assets_(std::move(assets)), tokenizer_(assets_->resources),
       cache_steps_(runtime::parse_positive_i64_option(options.options, {"fish_drama3.context_length"}, 2048)) {
     if (cache_steps_ > 262144) throw std::runtime_error("Drama 3 context_length exceeds the checkpoint's maximum position count");
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.profile_first_audio"})) {
         profile_first_audio_ = runtime::parse_bool_option(*value, "fish_drama3.profile_first_audio");
     }
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.device_sampling"})) {
+        device_sampling_ = runtime::parse_bool_option(*value, "fish_drama3.device_sampling");
+    }
+    codec_batch_frames_ = static_cast<size_t>(runtime::parse_positive_i64_option(
+        options.options, {"fish_drama3.codec_batch_frames"}, 4));
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_async_decode"})) {
+        codec_async_decode_ = runtime::parse_bool_option(*value, "fish_drama3.codec_async_decode");
+    }
     auto backbone_config = assets_->backbone;
     backbone_config.decode_cache_steps = cache_steps_;
+    const auto perf_mode = runtime::find_option(options.options, {"fish_drama3.perf_mode"}).value_or("off");
+    const auto preset = std::find_if(kPerfPresets.begin(), kPerfPresets.end(),
+        [&](const auto & entry) { return entry.name == perf_mode; });
+    if (preset == kPerfPresets.end()) throw std::runtime_error("Invalid fish_drama3.perf_mode: " + perf_mode);
+    backbone_config.fused_moe = preset->fused_moe;
+    backbone_config.kv_cache_type = preset->kv_cache_type;
+    backbone_config.kv_cache_alignment = preset->kv_cache_alignment;
+    backbone_config.kv_cache_alignment = runtime::parse_positive_i64_option(
+        options.options, {"fish_drama3.kv_cache_alignment"}, backbone_config.kv_cache_alignment);
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.fused_moe"}))
+        backbone_config.fused_moe = runtime::parse_bool_option(*value, "fish_drama3.fused_moe");
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.kv_cache_type"})) {
+        if (*value == "f16") backbone_config.kv_cache_type = GGML_TYPE_F16;
+        else if (*value == "f32") backbone_config.kv_cache_type = GGML_TYPE_F32;
+        else throw std::runtime_error("fish_drama3.kv_cache_type requires f32 or f16");
+    }
+    debug::trace_log_scalar("fish_drama3.perf_mode", perf_mode);
+    debug::trace_log_scalar("fish_drama3.fused_moe", backbone_config.fused_moe);
+    debug::trace_log_scalar("fish_drama3.kv_cache_type", std::string_view(backbone_config.kv_cache_type == GGML_TYPE_F16 ? "f16" : "f32"));
+    debug::trace_log_scalar("fish_drama3.kv_cache_alignment", backbone_config.kv_cache_alignment);
     backbone_config.cpu_expert_layers = runtime::parse_i64_option(options.options, {"fish_drama3.cpu_expert_layers"}).value_or(4);
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.disk_experts"}))
         backbone_config.disk_experts = runtime::parse_bool_option(*value, "fish_drama3.disk_experts");
@@ -97,6 +160,7 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     codec_execution_ = std::make_unique<core::ExecutionContext>(codec_backend);
     codecs::FishDacCodecRuntimeOptions codec_options;
     codec_options.weight_context_bytes = 16 * 1024 * 1024;
+    codec_options.decoder_prepack_weights = streaming && codec_batch_frames_ > 1;
     codec_options.encoder_bf16_compute = true;
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_encoder_bf16_compute"})) {
         codec_options.encoder_bf16_compute = runtime::parse_bool_option(*value, "fish_drama3.codec_encoder_bf16_compute");
@@ -223,10 +287,85 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     auto hidden = last_hidden(prefill.hidden, assets_->backbone.hidden_size);
     Drama3Frame current = prompt.back();
     std::mt19937 random(sampling.seed);
+    SamplerScratch sampler_scratch;
     std::deque<int32_t> recent;
     std::vector<Drama3Frame> output_frames;
     Drama3Generation result;
-    if (streaming) codec_->reset_decode_stream();
+    std::mutex codec_mutex;
+    std::condition_variable codec_ready;
+    std::deque<Drama3Frame> codec_queue;
+    bool codec_done = false;
+    bool codec_cancelled = false;
+    std::exception_ptr codec_error;
+    std::thread codec_worker;
+    if (streaming) {
+        runtime::StreamingAudioConfig config;
+        config.frames_per_chunk = codec_batch_frames_;
+        config.frame_width = 10;
+        streaming_audio_.begin(config, [&](const auto & window) {
+            codecs::FishDacCodes codes;
+            codes.codebooks = 10;
+            codes.frames = static_cast<int64_t>(window.new_frames);
+            codes.codes.resize(window.new_frames * 10);
+            for (size_t book = 0; book < 10; ++book) {
+                for (size_t frame = 0; frame < window.new_frames; ++frame) {
+                    codes.codes[book * window.new_frames + frame] = window.data[frame * 10 + book];
+                }
+            }
+            auto audio = codec_->decode_stream(codes);
+            if (window.first_frame == 0) {
+                mark_phase("codec_first_frame_ms");
+                if (profile_first_audio_) {
+                    std::cerr << "[drama3.first_audio] prompt_rows=" << prompt.size();
+                    for (const auto & phase : first_audio_phases) std::cerr << " " << phase.first << "=" << phase.second;
+                    std::cerr << " total_ms=" << std::chrono::duration<double, std::milli>(ProfileClock::now() - profile_start).count() << '\n';
+                }
+            }
+            return audio;
+        }, [&](const runtime::StreamEvent & event) {
+            if (on_audio && event.audio_output) on_audio(*event.audio_output);
+        }, {}, [&] { codec_->reset_decode_stream(); });
+    }
+    auto stop_codec = [&](bool cancel) {
+        if (!codec_worker.joinable()) return;
+        {
+            std::lock_guard<std::mutex> lock(codec_mutex);
+            codec_done = true;
+            codec_cancelled = cancel;
+            if (cancel) codec_queue.clear();
+        }
+        codec_ready.notify_all();
+        codec_worker.join();
+    };
+    struct CodecJoin {
+        decltype(stop_codec) & stop;
+        runtime::StreamingAudioController<int32_t> & stream;
+        ~CodecJoin() { stop(true); stream.reset(); }
+    } codec_join{stop_codec, streaming_audio_};
+    if (streaming && codec_async_decode_) {
+        codec_worker = std::thread([&] {
+            try {
+                for (;;) {
+                    Drama3Frame frame;
+                    {
+                        std::unique_lock<std::mutex> lock(codec_mutex);
+                        codec_ready.wait(lock, [&] { return codec_done || !codec_queue.empty(); });
+                        if (codec_queue.empty()) break;
+                        frame = codec_queue.front();
+                        codec_queue.pop_front();
+                    }
+                    codec_ready.notify_all();
+                    streaming_audio_.push({frame.begin() + 1, frame.end()});
+                }
+                if (!codec_cancelled) result.audio = streaming_audio_.finish();
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(codec_mutex);
+                codec_error = std::current_exception();
+                codec_queue.clear();
+                codec_ready.notify_all();
+            }
+        });
+    }
     for (int64_t step = 0; step < sampling.max_frames; ++step) {
         component_started = ProfileClock::now();
         auto logits = backbone_->lm_head(hidden);
@@ -235,8 +374,8 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         // Both drama3 (lm_head_token_ids) and drama3-small (lm_head_rows) return
         // compact [EOS, semantic 0..N-1] logits from the backbone.
         auto candidates = std::move(logits);
-        const int32_t first = sample(candidates, sampling.temperature, sampling.top_k, sampling.top_p, random);
-        const int32_t second = sample(candidates, 1.0F, 30, 0.95F, random);
+        const int32_t first = sample(candidates, sampling.temperature, sampling.top_k, sampling.top_p, random, sampler_scratch);
+        const int32_t second = sample(candidates, 1.0F, 30, 0.95F, random, sampler_scratch);
         const int32_t first_token = first == 0 ? assets_->eos : assets_->tower.semantic_begin + first - 1;
         const bool repeats = first != 0 && std::find(recent.begin(), recent.end(), first_token) != recent.end();
         const int32_t selected = repeats ? second : first;
@@ -248,19 +387,28 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         next[1] = selected - 1;
         const auto tower_started = ProfileClock::now();
         const auto sampling_before_tower = component_ms[5];
-        const auto shared_input = tower_->shared_input({current});
-        auto tower_hidden = hidden;
         const int64_t position = decoder->valid_steps() - 1;
         const auto & config = assets_->tower;
-        for (int64_t layer = 0; layer < config.shared_layers + config.residual_layers; ++layer) {
-            const int64_t book = layer < config.shared_layers ? 0 : layer - config.shared_layers;
-            const auto tower_output = tower_->run_layer(layer, tower_hidden, {next[1 + book]}, {1.0F},
-                                                        layer == 0 ? shared_input : std::vector<float>{}, position);
-            tower_hidden = tower_output.hidden;
-            if (layer >= config.shared_layers) {
-                component_started = ProfileClock::now();
-                next[2 + book] = sample(tower_output.logits, sampling.temperature, sampling.top_k, sampling.top_p, random);
-                component_ms[5] += debug::elapsed_ms(component_started);
+        if (device_sampling_) {
+            std::array<float, 9> uniforms{};
+            if (sampling.temperature != 0 && sampling.top_k != 1) {
+                for (auto & uniform : uniforms) uniform = static_cast<float>(std::generate_canonical<double, 53>(random));
+            }
+            next = tower_->run_frame(hidden, current, selected - 1, position,
+                sampling.temperature, sampling.top_k, sampling.top_p, uniforms);
+        } else {
+            const auto shared_input = tower_->shared_input({current});
+            auto tower_hidden = hidden;
+            for (int64_t layer = 0; layer < config.shared_layers + config.residual_layers; ++layer) {
+                const int64_t book = layer < config.shared_layers ? 0 : layer - config.shared_layers;
+                const auto tower_output = tower_->run_layer(layer, tower_hidden, {next[1 + book]}, {1.0F},
+                                                            layer == 0 ? shared_input : std::vector<float>{}, position);
+                tower_hidden = tower_output.hidden;
+                if (layer >= config.shared_layers) {
+                    component_started = ProfileClock::now();
+                    next[2 + book] = sample(tower_output.logits, sampling.temperature, sampling.top_k, sampling.top_p, random, sampler_scratch);
+                    component_ms[5] += debug::elapsed_ms(component_started);
+                }
             }
         }
         component_ms[6] += debug::elapsed_ms(tower_started) - (component_ms[5] - sampling_before_tower);
@@ -269,20 +417,15 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         recent.push_back(next[0]);
         if (recent.size() > 16) recent.pop_front();
         if (streaming) {
-            component_started = ProfileClock::now();
-            codecs::FishDacCodes codes;
-            codes.codebooks = 10;
-            codes.frames = 1;
-            codes.codes.assign(next.begin() + 1, next.end());
-            auto chunk = codec_->decode_stream(codes);
-            if (step == 0) mark_phase("codec_first_frame_ms");
-            runtime::append_audio_buffer(result.audio, chunk);
-            if (on_audio) on_audio(chunk);
-            component_ms[8] += debug::elapsed_ms(component_started);
-            if (step == 0 && profile_first_audio_) {
-                std::cerr << "[drama3.first_audio] prompt_rows=" << prompt.size();
-                for (const auto & phase : first_audio_phases) std::cerr << " " << phase.first << "=" << phase.second;
-                std::cerr << " total_ms=" << std::chrono::duration<double, std::milli>(ProfileClock::now() - profile_start).count() << '\n';
+            if (codec_async_decode_) {
+                std::unique_lock<std::mutex> lock(codec_mutex);
+                codec_ready.wait(lock, [&] { return codec_error || codec_queue.size() < 2 * codec_batch_frames_; });
+                if (codec_error) std::rethrow_exception(codec_error);
+                codec_queue.push_back(next);
+                lock.unlock();
+                codec_ready.notify_one();
+            } else {
+                streaming_audio_.push({next.begin() + 1, next.end()});
             }
         }
         if (step + 1 == sampling.max_frames) { result.reached_limit = true; break; }
@@ -295,6 +438,12 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         hidden = decoder->run_embedding_step(embedding);
         if (disk_experts_) prefill.hidden.insert(prefill.hidden.end(), hidden.begin(), hidden.end());
         component_ms[7] += debug::elapsed_ms(component_started);
+    }
+    if (streaming) {
+        stop_codec(false);
+        if (codec_error) std::rethrow_exception(codec_error);
+        if (!codec_async_decode_) result.audio = streaming_audio_.finish();
+        component_ms[8] += streaming_audio_.decode_ms() + streaming_audio_.publish_ms();
     }
     if (output_frames.empty()) throw std::runtime_error("Drama 3 ended before producing an audio frame");
     if (disk_experts_) {

@@ -94,8 +94,8 @@ payloads in pinned RAM; set it to `false` for range reads from the GGUF instead.
 It defaults to `false` on Metal, which uses ordinary host staging.
 `ming3_audio.expert_cache_size` selects 8 to 128 slots per layer (default 8).
 `ming3_audio.disk_expert_read_threads` selects 1 to 64 host workers for copying
-selected GGUF experts into staging. The default is 1 (serial); try 4 in an
-OpenMP build. This applies only with `disk_experts=true` and `pin_experts=false`.
+selected GGUF experts into staging. The default is 1 (serial); try 4 using
+OpenMP or Apple dispatch. This applies only with `disk_experts=true` and `pin_experts=false`.
 The host reader is backend-independent; Metal performance has not been validated.
 Spoken-response sessions release Thinker workspaces before allocating the speech
 stage in this mode. The offloaded Thinker allocates its KV cache in growing
@@ -103,6 +103,12 @@ buckets rather than reserving the entire `max_tokens` allowance upfront.
 Growth preserves the existing KV and recurrent state without changing precision
 or reducing the token limit. Memory still grows with actual context length.
 The normal resident path remains the default.
+
+Thinker MLA attention uses F16 KV storage; KDA recurrent state and convolution
+tails remain F32. CUDA decode reuses session-owned attention graphs sized to
+the live prefix, retaining the full context. KDA input projections and shared
+MLP gate/up projections are packed at load without changing weight precision.
+These optimizations are enabled by default and do not change the Talker or VAE.
 
 The native frontend uses the framework text chunker rather than Python's
 word/character buffering and does not run the optional Python FST normalizer.

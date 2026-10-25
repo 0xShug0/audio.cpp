@@ -260,6 +260,10 @@ core::TensorValue TimestepEmbeddingModule::build(
     if (!weights.rms_weight.has_value()) {
         throw std::runtime_error("TimestepEmbeddingWeights.rms_weight is required");
     }
+    if (config_.norm == TimestepEmbeddingNorm::Rms) {
+        return RMSNormModule({config_.hidden_size, config_.rms_eps, true, false})
+            .build(ctx, hidden, {*weights.rms_weight, std::nullopt});
+    }
     return variance_rms_norm(ctx, hidden, *weights.rms_weight, config_.rms_eps);
 }
 
@@ -383,8 +387,9 @@ core::TensorValue TimedConditionedFlowMLPModule::build(
 
     auto x = LinearModule({config_.input_size, config_.hidden_size, config_.use_bias}).build(ctx, input, weights.input_projection);
     auto c = LinearModule({config_.condition_size, config_.hidden_size, config_.use_bias}).build(ctx, condition, weights.condition_projection);
-    auto t0 = TimestepEmbeddingModule({256, config_.hidden_size, 1.0e-5F}).build(ctx, start_time, weights.start_time_embedding);
-    auto t1 = TimestepEmbeddingModule({256, config_.hidden_size, 1.0e-5F}).build(ctx, end_time, weights.end_time_embedding);
+    const TimestepEmbeddingConfig time_config{256, config_.hidden_size, 1.0e-5F, config_.time_embedding_norm};
+    auto t0 = TimestepEmbeddingModule(time_config).build(ctx, start_time, weights.start_time_embedding);
+    auto t1 = TimestepEmbeddingModule(time_config).build(ctx, end_time, weights.end_time_embedding);
     auto y = add_tensors(ctx, c, scale_tensor(ctx, add_tensors(ctx, t0, t1), 0.5F));
 
     for (const auto & layer_weights : weights.residual_layers) {

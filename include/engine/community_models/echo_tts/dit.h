@@ -47,7 +47,7 @@ public:
 
     // Runs the text and speaker encoders and populates the cached key/value
     // projections. Must be called before sample().
-    void prepare_conditioning(const EchoConditioning & conditioning);
+    void prepare_conditioning(const EchoConditioning & conditioning, int max_kv_lanes);
 
     // Runs the dual-CFG Euler sampler and returns the final latent, shaped
     // (sequence_length, latent_size) row-major.

@@ -304,7 +304,8 @@ struct MiniMaxMusic3ArRuntime::Impl {
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType storage_type,
-        bool input_evict_cuda_graph_cache_on_release)
+        bool input_evict_cuda_graph_cache_on_release,
+        MiniMaxMusic3PerfOptions perf)
         : assets(std::move(input_assets)),
           execution(input_execution),
           evict_cuda_graph_cache_on_release(input_evict_cuda_graph_cache_on_release),
@@ -334,6 +335,7 @@ struct MiniMaxMusic3ArRuntime::Impl {
             graph_arena_bytes,
             graph_arena_bytes);
         qwen_config.evict_cuda_graph_cache_on_release = evict_cuda_graph_cache_on_release;
+        qwen_config.batched_attention_alignment = perf.kv_cache_alignment > 1 ? perf.kv_cache_alignment : 0;
         qwen_config.return_hidden = true;
         if (global_weights.lm_head_layout == MiniMaxMusic3LmHeadLayout::FullVocab) {
             qwen_config.logits_readback_token_ids = semantic_logits_readback_token_ids(MiniMaxMusic3Prompt{});
@@ -795,14 +797,16 @@ MiniMaxMusic3ArRuntime::MiniMaxMusic3ArRuntime(
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type,
-    bool evict_cuda_graph_cache_on_release)
+    bool evict_cuda_graph_cache_on_release,
+    MiniMaxMusic3PerfOptions perf)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           graph_arena_bytes,
           weight_context_bytes,
           storage_type,
-          evict_cuda_graph_cache_on_release)) {}
+          evict_cuda_graph_cache_on_release,
+          perf)) {}
 
 MiniMaxMusic3ArRuntime::~MiniMaxMusic3ArRuntime() = default;
 

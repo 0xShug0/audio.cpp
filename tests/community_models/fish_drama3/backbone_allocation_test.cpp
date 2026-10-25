@@ -57,7 +57,7 @@ int main(int argc, char ** argv) {
             ggml_init({1024 * 1024, nullptr, false}));
         if (!context) throw std::runtime_error("test weight context allocation failed");
         auto * norm = ggml_new_tensor_1d(context.get(), GGML_TYPE_F32, 16);
-        std::fill_n(static_cast<float *>(norm->data), 16, 0.0F);
+        std::fill_n(static_cast<float *>(norm->data), 16, 1.0F);
         auto weights = std::make_shared<drama::Drama3BackboneWeights>();
         weights->final_norm.weight = engine::core::wrap_tensor(
             norm, engine::core::TensorShape::from_dims({16}), GGML_TYPE_F32);
@@ -112,10 +112,11 @@ int main(int argc, char ** argv) {
             ~FixtureDirectory() { std::error_code error; std::filesystem::remove_all(path, error); }
         } fixture;
         auto c = config;
+        c.kv_cache_type = GGML_TYPE_F32;
         c.vocab_size = 16;
         c.hidden_size = c.intermediate_size = 256;
         c.layers = 2;
-        c.experts = 12;
+        c.experts = 32;
         c.experts_per_token = 2;
         c.expert_cache_size = 4;
         c.heads = 4;
@@ -139,11 +140,11 @@ int main(int argc, char ** argv) {
         };
         add(c.weight_prefix + ".embed_tokens.weight", {16, 256});
         add("lm_head.weight", {16, 256});
-        add(c.weight_prefix + ".norm.weight", {256}, 0);
+        add(c.weight_prefix + ".norm.weight", {256});
         for (int layer = 0; layer < 2; ++layer) {
             const auto p = c.weight_prefix + ".layers." + std::to_string(layer);
-            add(p + ".input_layernorm.weight", {256}, 0);
-            add(p + ".post_attention_layernorm.weight", {256}, 0);
+            add(p + ".input_layernorm.weight", {256});
+            add(p + ".post_attention_layernorm.weight", {256});
             if (layer == 0) {
                 const auto a = p + ".linear_attn";
                 add(a + ".in_proj_qkv.weight", {1024, 256});
@@ -161,14 +162,14 @@ int main(int argc, char ** argv) {
                 add(a + ".k_proj.weight", {128, 256});
                 add(a + ".v_proj.weight", {128, 256});
                 add(a + ".o_proj.weight", {256, 256});
-                add(a + ".q_norm.weight", {64}, 0);
-                add(a + ".k_norm.weight", {64}, 0);
+                add(a + ".q_norm.weight", {64});
+                add(a + ".k_norm.weight", {64});
             }
             for (const auto * projection : {"gate_proj", "up_proj", "down_proj"}) {
                 add(p + ".mlp.shared_expert." + projection + ".weight", {256, 256});
-                add(p + ".mlp.experts." + projection + ".weight", {12, 256, 256});
+                add(p + ".mlp.experts." + projection + ".weight", {c.experts, 256, 256});
             }
-            add(p + ".mlp.gate.weight", {12, 256});
+            add(p + ".mlp.gate.weight", {c.experts, 256});
             add(p + ".mlp.shared_expert_gate.weight", {1, 256});
         }
         const auto safe = fixture.path / "weights.safetensors";
@@ -178,6 +179,28 @@ int main(int argc, char ** argv) {
             true, false, {}, {}, std::nullopt);
         auto source = engine::assets::open_tensor_source(gguf, "model_weights/");
         auto resident = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
+        std::vector<std::pair<std::string, engine::core::TensorValue>> gemma_scales{
+            {c.weight_prefix + ".norm.weight", *resident->final_norm.weight}};
+        for (size_t index = 0; index < resident->layers.size(); ++index) {
+            const auto & layer = resident->layers[index];
+            const auto prefix = c.weight_prefix + ".layers." + std::to_string(index);
+            gemma_scales.emplace_back(prefix + ".input_layernorm.weight", *layer.input_norm.weight);
+            gemma_scales.emplace_back(prefix + ".post_attention_layernorm.weight", *layer.post_norm.weight);
+            if (layer.full) {
+                gemma_scales.emplace_back(prefix + ".self_attn.q_norm.weight", *layer.full->q_norm.weight);
+                gemma_scales.emplace_back(prefix + ".self_attn.k_norm.weight", *layer.full->k_norm.weight);
+            } else {
+                const auto actual = engine::core::read_tensor_f32(layer.linear->norm.weight->tensor);
+                if (actual != source->require_f32(prefix + ".linear_attn.norm.weight", {128}))
+                    throw std::runtime_error("ordinary GDN normalization scale changed");
+            }
+        }
+        for (const auto & entry : gemma_scales) {
+            const auto actual = engine::core::read_tensor_f32(entry.second.tensor);
+            auto expected = source->require_f32(entry.first, {static_cast<int64_t>(actual.size())});
+            for (auto & value : expected) value += 1.0F;
+            if (actual != expected) throw std::runtime_error("Gemma normalization scale was not folded exactly once");
+        }
         {
             drama::LmHeadGraph full(prefill_execution, resident, c, 4 * 1024 * 1024);
             auto selected_config = c;
@@ -193,6 +216,38 @@ int main(int argc, char ** argv) {
                     if (std::abs(actual[i] - expected.at(selected_config.lm_head_token_ids[i])) > 1e-5F)
                         throw std::runtime_error("selected LM head changed candidate logits");
                 selected.release_graph();
+            }
+        }
+        if (test_backend.type == engine::core::BackendType::Cuda) {
+            for (int variant = 0; variant < 4; ++variant) {
+                auto candidate_config = c;
+                candidate_config.kv_cache_type = variant == 0 || variant == 3 ? GGML_TYPE_F16 : GGML_TYPE_F32;
+                candidate_config.fused_moe = variant == 1 || variant == 3;
+                candidate_config.kv_cache_alignment = variant >= 2 ? 8 : 1;
+                drama::Drama3BackboneCachedDecodeGraph baseline(prefill_execution, resident, c, 32, 8 * 1024 * 1024);
+                drama::Drama3BackboneCachedDecodeGraph candidate(prefill_execution, resident, candidate_config, 32, 8 * 1024 * 1024);
+                float maximum = 0;
+                for (int steps : {7, 1, 7}) {
+                    std::vector<float> input(steps * 256);
+                    for (size_t i = 0; i < input.size(); ++i) input[i] = std::cos(float(i) * .091F);
+                    baseline.reset();
+                    candidate.reset();
+                    const auto expected = baseline.prefill_embeddings(input, steps).hidden;
+                    const auto actual = candidate.prefill_embeddings(input, steps).hidden;
+                    if (expected != actual) throw std::runtime_error("decode optimization changed prompt prefill");
+                    for (int step = 0; step < 8; ++step) {
+                        std::vector<float> next(256);
+                        for (size_t i = 0; i < next.size(); ++i) next[i] = std::sin(float(i + step * 256) * .037F);
+                        const auto reference = baseline.run_embedding_step(next);
+                        const auto output = candidate.run_embedding_step(next);
+                        for (size_t i = 0; i < output.size(); ++i) {
+                            if (!std::isfinite(output[i])) throw std::runtime_error("decode optimization produced nonfinite output");
+                            maximum = std::max(maximum, std::abs(reference[i] - output[i]));
+                        }
+                    }
+                }
+                std::cout << "decode_variant=" << variant << " max_abs=" << maximum << '\n';
+                if (maximum > 1e-4F) throw std::runtime_error("decode optimization changed fixed-input continuation");
             }
         }
         c.disk_experts = true;

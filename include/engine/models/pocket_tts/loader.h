@@ -28,5 +28,6 @@ private:
 
 std::unique_ptr<PocketTTSLoadedModel> load_pocket_tts_model(const runtime::ModelLoadRequest & request);
 std::shared_ptr<runtime::IVoiceModelLoader> make_pocket_tts_loader();
+std::shared_ptr<runtime::IVoiceModelLoader> make_gradium_phonon_loader();
 
 }  // namespace engine::models::pocket_tts

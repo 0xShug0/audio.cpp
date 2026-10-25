@@ -125,12 +125,20 @@ PocketTTSBackendFlowWeights load_backend_flow_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const PocketTTSModelConfig & config,
+    const PocketTTSHostWeights & host,
+    bool has_mimi_encoder,
     assets::TensorStorageType storage_type) {
     PocketTTSBackendFlowWeights weights;
     weights.input_linear = modules::LinearWeights{
         binding::tensor_from_named_source(store, source, "flow_lm.input_linear.weight", storage_type),
         std::nullopt,
     };
+    if (host.input_linear_bias.has_value()) {
+        if (static_cast<int64_t>(host.input_linear_bias->size()) != config.flow_dim) {
+            throw std::runtime_error("PocketTTS input_linear bias must have flow_dim values");
+        }
+        weights.input_linear.bias = store.make_f32(core::TensorShape::from_dims({config.flow_dim}), *host.input_linear_bias);
+    }
     weights.transformer_layers.reserve(static_cast<size_t>(config.flow_layers));
     for (int64_t layer = 0; layer < config.flow_layers; ++layer) {
         const std::string prefix = "flow_lm.transformer.layers." + std::to_string(layer) + ".";
@@ -139,8 +147,10 @@ PocketTTSBackendFlowWeights load_backend_flow_weights(
     weights.flow_net = load_backend_flow_net_weights(store, source, config.flow_depth, storage_type);
     weights.out_norm = binding::norm_from_named_source(store, source, "flow_lm.out_norm.weight", "flow_lm.out_norm.bias");
     weights.out_eos = binding::linear_from_named_source(store, source, "flow_lm.out_eos.weight", "flow_lm.out_eos.bias", storage_type);
-    weights.speaker_proj_weight =
-        binding::tensor_from_named_source(store, source, "flow_lm.speaker_proj_weight", storage_type);
+    if (has_mimi_encoder) {
+        weights.speaker_proj_weight =
+            binding::tensor_from_named_source(store, source, "flow_lm.speaker_proj_weight", storage_type);
+    }
     return weights;
 }
 
@@ -249,23 +259,31 @@ std::shared_ptr<const PocketTTSBackendWeights> load_pocket_tts_backend_weights(
         backend_type,
         "PocketTTS.flow_lm.weights",
         flow_context_bytes);
-    weights->flow =
-        load_backend_flow_weights(*weights->flow_store, *manifest.model_weights, manifest.model_config, matmul_storage_type);
+    weights->has_mimi_encoder = manifest.model_weights->has_tensor("mimi.encoder.model.0.conv.weight");
+    weights->flow = load_backend_flow_weights(
+        *weights->flow_store,
+        *manifest.model_weights,
+        manifest.model_config,
+        manifest.host_weights,
+        weights->has_mimi_encoder,
+        matmul_storage_type);
     weights->flow_store->upload();
 
-    weights->mimi_encoder_store = std::make_shared<core::BackendWeightStore>(
-        backend,
-        backend_type,
-        "PocketTTS.mimi_encoder.weights",
-        mimi_encoder_context_bytes);
-    weights->mimi_encoder =
-        load_backend_mimi_encoder_weights(
-            *weights->mimi_encoder_store,
-            *manifest.model_weights,
-            manifest.model_config,
-            matmul_storage_type,
-            conv_storage_type);
-    weights->mimi_encoder_store->upload();
+    if (weights->has_mimi_encoder) {
+        weights->mimi_encoder_store = std::make_shared<core::BackendWeightStore>(
+            backend,
+            backend_type,
+            "PocketTTS.mimi_encoder.weights",
+            mimi_encoder_context_bytes);
+        weights->mimi_encoder =
+            load_backend_mimi_encoder_weights(
+                *weights->mimi_encoder_store,
+                *manifest.model_weights,
+                manifest.model_config,
+                matmul_storage_type,
+                conv_storage_type);
+        weights->mimi_encoder_store->upload();
+    }
 
     weights->mimi_decoder_store = std::make_shared<core::BackendWeightStore>(
         backend,

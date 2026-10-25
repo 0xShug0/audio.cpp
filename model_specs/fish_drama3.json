@@ -126,6 +126,43 @@
     ],
     "session": [
       {
+        "name": "perf_mode",
+        "type": "enum",
+        "description": "AR decode preset. cuda_perf enables fused MoE and 256-row attention buckets. F16 KV storage, device sampling, codec batching/overlap and prefill-cache defaults remain unchanged in both modes. Explicit session options override the preset.",
+        "required": false,
+        "values": [
+          "off",
+          "cuda_perf"
+        ],
+        "default": "off"
+      },
+      {
+        "name": "fused_moe",
+        "type": "bool",
+        "description": "Fuse cached backbone MoE routing and SwiGLU activations. Fused arithmetic may change sampled output; prompt prefill is unchanged.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "kv_cache_alignment",
+        "type": "int",
+        "description": "Cached decode attention prefix bucket size. Values above 1 retain all history while skipping unused KV capacity; execution shapes may change numerical results.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "kv_cache_type",
+        "type": "enum",
+        "description": "Storage precision for full-attention backbone KV caches.",
+        "required": false,
+        "values": [
+          "f32",
+          "f16"
+        ],
+        "default": "f16"
+      },
+      {
         "name": "backbone_prefill_cache_mb",
         "type": "int",
         "description": "Bounded cache of backbone prefill graphs, in MiB. Reuses exact shapes and their CUDA captures. One active graph is retained even if larger than this budget. Zero retains only the active graph.",
@@ -142,6 +179,28 @@
         "min": 0,
         "max": 4096,
         "default": 256
+      },
+      {
+        "name": "codec_batch_frames",
+        "type": "int",
+        "description": "Streaming codec batch ceiling. Starts at one frame and grows to this size; partial final batches are flushed. Offline decoding is unchanged.",
+        "required": false,
+        "min": 1,
+        "default": 4
+      },
+      {
+        "name": "codec_async_decode",
+        "type": "bool",
+        "description": "Overlap streaming codec decoding with AR generation on the dedicated codec backend. Uses a bounded queue and waits for all audio before completing the request.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "device_sampling",
+        "type": "bool",
+        "description": "Enable tower decode and codebook sampling in one cached backend graph. Uses F32 probabilities; sampled outputs may differ from the host sampler.",
+        "required": false,
+        "default": true
       },
       {
         "name": "profile_first_audio",
@@ -193,7 +252,7 @@
       {
         "name": "disk_expert_read_threads",
         "type": "int",
-        "description": "Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 require an OpenMP build.",
+        "description": "Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 use OpenMP or Apple dispatch.",
         "required": false,
         "min": 1,
         "max": 64,

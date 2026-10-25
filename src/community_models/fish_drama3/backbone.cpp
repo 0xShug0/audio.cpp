@@ -249,8 +249,11 @@ FullAttentionWeights load_full_attention(
         config.hidden_size,
         config.heads * config.head_dim,
         false);
-    out.q_norm = binding::norm_weight_from_source(store, source, prefix + ".q_norm", config.head_dim);
-    out.k_norm = binding::norm_weight_from_source(store, source, prefix + ".k_norm", config.head_dim);
+    for (const auto & entry : {std::make_pair(".q_norm", &out.q_norm), std::make_pair(".k_norm", &out.k_norm)}) {
+        auto scale = source.require_f32(prefix + entry.first + ".weight", {config.head_dim});
+        for (auto & value : scale) value += 1.0F;
+        entry.second->weight = store.make_f32(core::TensorShape::from_dims({config.head_dim}), std::move(scale));
+    }
     return out;
 }
 
@@ -323,8 +326,13 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
         const std::string prefix = root + ".layers." + std::to_string(layer);
         Drama3BackboneLayerWeights out;
         out.full_attention = c.full_attention_interval > 0 && ((layer + 1) % c.full_attention_interval) == 0;
-        out.input_norm = binding::norm_weight_from_source(*weights->store, source, prefix + ".input_layernorm", c.hidden_size);
-        out.post_norm = binding::norm_weight_from_source(*weights->store, source, prefix + ".post_attention_layernorm", c.hidden_size);
+        // Gemma scales are constant: fold the F32 offset once, not on every graph replay.
+        for (const auto & entry : {std::make_pair(".input_layernorm", &out.input_norm),
+                                  std::make_pair(".post_attention_layernorm", &out.post_norm)}) {
+            auto scale = source.require_f32(prefix + entry.first + ".weight", {c.hidden_size});
+            for (auto & value : scale) value += 1.0F;
+            entry.second->weight = weights->store->make_f32(core::TensorShape::from_dims({c.hidden_size}), std::move(scale));
+        }
         if (out.full_attention) {
             out.full = load_full_attention(*weights->store, source, prefix + ".self_attn", c, storage_type);
         } else {
@@ -354,7 +362,9 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
         }
         weights->layers.push_back(std::move(out));
     }
-    weights->final_norm = binding::norm_weight_from_source(*weights->store, source, root + ".norm", c.hidden_size);
+    auto final_scale = source.require_f32(root + ".norm.weight", {c.hidden_size});
+    for (auto & value : final_scale) value += 1.0F;
+    weights->final_norm.weight = weights->store->make_f32(core::TensorShape::from_dims({c.hidden_size}), std::move(final_scale));
     if (c.tie_word_embeddings) {
         weights->lm_head = {weights->token_embedding, std::nullopt};
     } else {
@@ -429,14 +439,20 @@ Drama3MoeInputs build_moe_inputs(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & x,
     const Drama3BackboneLayerWeights & weights,
-    const Drama3BackboneDecoderConfig & config) {
+    const Drama3BackboneDecoderConfig & config,
+    bool fused = false) {
     auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false}).build(ctx, x, weights.mlp_gate);
-    gate = round_activation(ctx, gate, config);
-    gate = modules::SiluModule{}.build(ctx, gate);
     gate = round_activation(ctx, gate, config);
     auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false}).build(ctx, x, weights.mlp_up);
     up = round_activation(ctx, up, config);
-    auto gated = modules::MulModule{}.build(ctx, gate, up);
+    core::TensorValue gated;
+    if (fused) {
+        gated = core::wrap_tensor(ggml_swiglu_split(ctx.ggml, gate.tensor, up.tensor), gate.shape, gate.type);
+    } else {
+        gate = modules::SiluModule{}.build(ctx, gate);
+        gate = round_activation(ctx, gate, config);
+        gated = modules::MulModule{}.build(ctx, gate, up);
+    }
     gated = round_activation(ctx, gated, config);
     auto shared = round_activation(ctx,
         modules::LinearModule({config.intermediate_size, config.hidden_size, false}).build(ctx, gated, weights.mlp_down), config);
@@ -460,8 +476,10 @@ core::TensorValue mlp(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & x,
     const Drama3BackboneLayerWeights & weights,
-    const Drama3BackboneDecoderConfig & config) {
-    const auto inputs = build_moe_inputs(ctx, x, weights, config);
+    const Drama3BackboneDecoderConfig & config,
+    ggml_cgraph * routing_graph = nullptr) {
+    const auto inputs = build_moe_inputs(ctx, x, weights, config, routing_graph != nullptr);
+    if (routing_graph && !weights.disk_store) ggml_build_forward_expand(routing_graph, inputs.scales);
     const int64_t steps = ggml_nelements(x.tensor) / config.hidden_size;
     auto * hidden = ggml_reshape_2d(ctx.ggml, x.tensor, config.hidden_size, steps);
     auto * expert_ids = inputs.ids;
@@ -469,7 +487,8 @@ core::TensorValue mlp(
     auto * expanded_hidden = ggml_reshape_3d(ctx.ggml, hidden, config.hidden_size, 1, steps);
     auto * expert_gate = ggml_mul_mat_id(ctx.ggml, weights.expert_gate.tensor, expanded_hidden, expert_ids);
     auto * expert_up = ggml_mul_mat_id(ctx.ggml, weights.expert_up.tensor, expanded_hidden, expert_ids);
-    auto * expert_activated = ggml_mul(ctx.ggml, ggml_silu(ctx.ggml, expert_gate), expert_up);
+    auto * expert_activated = routing_graph ? ggml_swiglu_split(ctx.ggml, expert_gate, expert_up)
+                                          : ggml_mul(ctx.ggml, ggml_silu(ctx.ggml, expert_gate), expert_up);
     auto * expert_output = ggml_mul_mat_id(ctx.ggml, weights.expert_down.tensor, expert_activated, expert_ids);
     auto * routing_scale = ggml_reshape_3d(ctx.ggml, inputs.scales, 1, config.experts_per_token, steps);
     expert_output = ggml_mul(ctx.ggml, expert_output, routing_scale);
@@ -520,8 +539,8 @@ core::TensorValue full_attention(
     v = round_activation(ctx, v, config);
     k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
     v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+    q = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
+    k = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
     q = round_activation(ctx, q, config);
     k = round_activation(ctx, k, config);
     q = apply_partial_rope(ctx, q, positions, config);
@@ -577,8 +596,8 @@ core::TensorValue full_attention_prefill_cached(
     v = round_activation(ctx, v, config);
     k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
     v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+    q = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
+    k = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
     q = round_activation(ctx, q, config);
     k = round_activation(ctx, k, config);
     q = apply_partial_rope(ctx, q, positions, config);
@@ -639,8 +658,8 @@ core::TensorValue full_attention_cached(
     v = round_activation(ctx, v, config);
     k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
     v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+    q = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
+    k = modules::RMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
     q = round_activation(ctx, q, config);
     k = round_activation(ctx, k, config);
     q = apply_partial_rope(ctx, q, positions, config);
@@ -653,6 +672,12 @@ core::TensorValue full_attention_cached(
     const modules::FastKVSetRowsModule set_rows({modules::FastKVSetRowsMode::BackendViewOptimized});
     auto attention_key_cache = set_rows.build(ctx, cache_key, k, cache_slot);
     auto attention_value_cache = set_rows.build(ctx, cache_value, v, cache_slot);
+
+    const int64_t attention_steps = attention_mask.shape.dims[3];
+    if (attention_steps < cache_key.shape.dims[1]) {
+        attention_key_cache = modules::SliceModule({1, 0, attention_steps}).build(ctx, attention_key_cache);
+        attention_value_cache = modules::SliceModule({1, 0, attention_steps}).build(ctx, attention_value_cache);
+    }
 
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
@@ -984,7 +1009,7 @@ private:
         state_inputs_.clear();
         for (const auto & layer : weights_->layers) {
             auto residual = x;
-            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+            auto h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
             h = round_activation(ctx, h, config_);
             if (layer.full_attention) {
                 h = full_attention(ctx, h, positions, attention_mask, *layer.full, config_);
@@ -1004,13 +1029,13 @@ private:
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
             residual = x;
-            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
+            h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
             h = mlp(ctx, h, layer, config_);
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
         }
-        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
+        x = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
         x = round_activation(ctx, x, config_);
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
@@ -1301,16 +1326,16 @@ public:
             const auto mask =
                 core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, steps, steps}), GGML_TYPE_F16);
             auto attention =
-                modules::GemmaRMSNormModule({h, config.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+                modules::RMSNormModule({h, config.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
             attention = round_activation(ctx, attention, config);
             if (layer.full_attention) {
                 attention = full_attention_prefill_cached(
                     ctx, graph, attention, positions, mask,
                     core::wrap_tensor(keys.at(full), core::TensorShape::from_dims(
-                                                         {1, keys.at(full)->ne[2], config.kv_heads, config.head_dim})),
+                                                         {1, keys.at(full)->ne[2], config.kv_heads, config.head_dim}), config.kv_cache_type),
                     core::wrap_tensor(
                         values.at(full),
-                        core::TensorShape::from_dims({1, values.at(full)->ne[2], config.kv_heads, config.head_dim})),
+                        core::TensorShape::from_dims({1, values.at(full)->ne[2], config.kv_heads, config.head_dim}), config.kv_cache_type),
                     *layer.full, config);
             } else {
                 auto out = linear_attention_prefill(
@@ -1324,7 +1349,7 @@ public:
                 attention = std::move(out.output);
             }
             auto residual = round_activation(ctx, modules::AddModule{}.build(ctx, x, attention), config);
-            auto normalized = modules::GemmaRMSNormModule({h, config.rms_norm_eps, true, false})
+            auto normalized = modules::RMSNormModule({h, config.rms_norm_eps, true, false})
                                   .build(ctx, residual, layer.post_norm);
             normalized = round_activation(ctx, normalized, config);
             const auto moe = build_moe_inputs(ctx, normalized, layer, config);
@@ -1380,7 +1405,7 @@ public:
         add_graph(finish_);
         final_ = ggml_new_graph_custom(ctx.ggml, small_nodes, false);
         auto normalized =
-            modules::GemmaRMSNormModule({h, config.rms_norm_eps, true, false}).build(ctx, x, weights.final_norm);
+            modules::RMSNormModule({h, config.rms_norm_eps, true, false}).build(ctx, x, weights.final_norm);
         normalized = round_activation(ctx, normalized, config);
         ggml_build_forward_expand(final_, ggml_cpy(ctx.ggml, normalized.tensor, hidden_));
         add_graph(final_);
@@ -1521,7 +1546,10 @@ public:
         : execution_(execution),
           weights_(std::move(weights)),
           config_(config),
-          cache_steps_(cache_steps) {
+          cache_steps_(cache_steps),
+          graph_arena_bytes_(graph_arena_bytes) {
+        if (config_.fused_moe && config_.round_bf16_activations)
+            throw std::runtime_error("Drama3 fused decode requires F32 backbone activations");
         if (cache_steps_ <= 0) {
             throw std::runtime_error("Drama 3 backbone cached decode requires positive cache length");
         }
@@ -1531,6 +1559,8 @@ public:
             throw std::runtime_error("failed to initialize Drama 3 backbone cached decode graph context");
         }
         core::ModuleBuildContext ctx{ctx_.get(), "drama3_backbone.cached_decode", execution_.backend_type()};
+        // Preserve Vulkan fusion boundaries; eliding these views changes sampled output there.
+        ctx.elide_identity_reshapes = execution_.backend_type() == core::BackendType::Cuda;
         ggml_init_params persistent_params{4 * 1024 * 1024, nullptr, true};
         persistent_ctx_.reset(ggml_init(persistent_params));
         core::ModuleBuildContext persistent{persistent_ctx_.get(), "drama3_backbone.state", execution_.backend_type()};
@@ -1543,12 +1573,6 @@ public:
         attention_mask_ = core::make_tensor(persistent, GGML_TYPE_F16, core::TensorShape::from_dims({1, 1, 1, cache_steps_})).tensor;
         ggml_set_input(attention_mask_);
 
-        auto x = core::wrap_tensor(input_, core::TensorShape::from_dims({1, 1, config_.hidden_size}), GGML_TYPE_F32);
-        auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
-        auto cache_slot = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
-        auto attention_mask = core::wrap_tensor(attention_mask_, core::TensorShape::from_dims({1, 1, 1, cache_steps_}), GGML_TYPE_F16);
-
-        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         const int64_t state_values = config_.linear_value_head_dim * config_.linear_value_head_dim * config_.linear_num_value_heads;
         // Every prompt starts with the same read-only GDN state. Sharing it
         // across layers and shapes avoids retaining a zero tensor per layer.
@@ -1558,21 +1582,17 @@ public:
         const int64_t value_dim = config_.linear_value_head_dim * config_.linear_num_value_heads;
         const int64_t conv_dim = key_dim * 2 + value_dim;
         for (const auto & layer : weights_->layers) {
-            auto residual = x;
-            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
-            h = round_activation(ctx, h, config_);
             if (layer.full_attention) {
                 auto key_cache = core::make_tensor(
                     persistent,
-                    GGML_TYPE_F32,
+                    config_.kv_cache_type,
                     core::TensorShape::from_dims({1, cache_steps_, config_.kv_heads, config_.head_dim}));
                 auto value_cache = core::make_tensor(
                     persistent,
-                    GGML_TYPE_F32,
+                    config_.kv_cache_type,
                     core::TensorShape::from_dims({1, cache_steps_, config_.kv_heads, config_.head_dim}));
                 full_key_caches_.push_back(key_cache.tensor);
                 full_value_caches_.push_back(value_cache.tensor);
-                h = full_attention_cached(ctx, h, positions, cache_slot, attention_mask, key_cache, value_cache, *layer.full, config_);
             } else {
                 auto conv_tail = core::make_tensor(
                     persistent,
@@ -1584,36 +1604,71 @@ public:
                     core::TensorShape::from_dims({1, 1, state_values}));
                 linear_conv_tails_.push_back(conv_tail.tensor);
                 linear_recurrent_states_.push_back(recurrent_state.tensor);
-                auto out = linear_attention_cached(ctx, h, conv_tail, recurrent_state, *layer.linear, config_);
-                ggml_build_forward_expand(graph_, ggml_cpy(ctx.ggml, out.next_conv_tail.tensor, conv_tail.tensor));
-                ggml_build_forward_expand(graph_, ggml_cpy(ctx.ggml, out.next_recurrent_state.tensor, recurrent_state.tensor));
-                h = std::move(out.output);
             }
-            x = modules::AddModule{}.build(ctx, residual, h);
-            x = round_activation(ctx, x, config_);
-            residual = x;
-            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
-            h = round_activation(ctx, h, config_);
-            h = mlp(ctx, h, layer, config_);
-            x = modules::AddModule{}.build(ctx, residual, h);
-            x = round_activation(ctx, x, config_);
         }
-        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
-        x = round_activation(ctx, x, config_);
-        output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
-        ggml_set_output(output_);
-        ggml_build_forward_expand(graph_, output_);
         buffer_.reset(ggml_backend_alloc_ctx_tensors(persistent_ctx_.get(), execution_.backend()));
-        if (buffer_ == nullptr || !decode_allocator_.allocate(graph_, execution_.backend(),
-                weights_->cpu_execution ? weights_->cpu_execution->backend() : nullptr, weights_->disk_store.get())) {
-            throw std::runtime_error("failed to allocate Drama 3 backbone cached decode graph");
+        if (buffer_ == nullptr) throw std::runtime_error("failed to allocate Drama 3 backbone cached decode graph");
+        if (config_.kv_cache_alignment == 1) {
+            build_decode(ctx, cache_steps_, graph_, output_);
+            if (!decode_allocator_.allocate(graph_, execution_.backend(),
+                    weights_->cpu_execution ? weights_->cpu_execution->backend() : nullptr, weights_->disk_store.get()))
+                throw std::runtime_error("failed to allocate Drama 3 backbone cached decode graph");
         }
         attention_mask_values_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
         reset();
     }
 
+    void build_decode(core::ModuleBuildContext & ctx, int64_t steps, ggml_cgraph *& graph, ggml_tensor *& output) {
+        auto x = core::wrap_tensor(input_, core::TensorShape::from_dims({1, 1, config_.hidden_size}), GGML_TYPE_F32);
+        auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
+        auto cache_slot = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
+        auto * mask = attention_mask_;
+        if (steps < cache_steps_) mask = ggml_view_1d(ctx.ggml, mask, steps, 0);
+        auto attention_mask = core::wrap_tensor(mask, core::TensorShape::from_dims({1, 1, 1, steps}), GGML_TYPE_F16);
+        graph = ggml_new_graph_custom(ctx.ggml, 65536, false);
+        size_t full_index = 0;
+        size_t linear_index = 0;
+        for (const auto & layer : weights_->layers) {
+            auto residual = x;
+            auto h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+            h = round_activation(ctx, h, config_);
+            if (layer.full_attention) {
+                auto key_cache = core::wrap_tensor(full_key_caches_[full_index],
+                    core::TensorShape::from_dims({1, cache_steps_, config_.kv_heads, config_.head_dim}), config_.kv_cache_type);
+                auto value_cache = core::wrap_tensor(full_value_caches_[full_index++], key_cache.shape, config_.kv_cache_type);
+                h = full_attention_cached(ctx, h, positions, cache_slot, attention_mask, key_cache, value_cache, *layer.full, config_);
+            } else {
+                const int64_t conv_dim = config_.linear_key_head_dim * config_.linear_num_key_heads * 2
+                    + config_.linear_value_head_dim * config_.linear_num_value_heads;
+                const int64_t state_values = config_.linear_value_head_dim * config_.linear_value_head_dim * config_.linear_num_value_heads;
+                auto conv_tail = core::wrap_tensor(linear_conv_tails_[linear_index],
+                    core::TensorShape::from_dims({1, conv_dim, config_.linear_conv_kernel_dim - 1}), GGML_TYPE_F32);
+                auto recurrent_state = core::wrap_tensor(linear_recurrent_states_[linear_index++],
+                    core::TensorShape::from_dims({1, 1, state_values}), GGML_TYPE_F32);
+                auto out = linear_attention_cached(ctx, h, conv_tail, recurrent_state, *layer.linear, config_);
+                ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, out.next_conv_tail.tensor, conv_tail.tensor));
+                ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, out.next_recurrent_state.tensor, recurrent_state.tensor));
+                h = std::move(out.output);
+            }
+            x = modules::AddModule{}.build(ctx, residual, h);
+            x = round_activation(ctx, x, config_);
+            residual = x;
+            h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
+            h = round_activation(ctx, h, config_);
+            h = mlp(ctx, h, layer, config_, config_.fused_moe ? graph : nullptr);
+            x = modules::AddModule{}.build(ctx, residual, h);
+            x = round_activation(ctx, x, config_);
+        }
+        x = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
+        x = round_activation(ctx, x, config_);
+        output = core::ensure_backend_addressable_layout(ctx, x).tensor;
+        ggml_set_output(output);
+        ggml_build_forward_expand(graph, output);
+    }
+
     ~Drama3BackboneCachedDecodeGraph() {
         release_prefill_graphs();
+        decode_buckets_.clear();
         core::release_backend_graph_resources(execution_.backend(), graph_, true);
         decode_allocator_.reset();
     }
@@ -1704,16 +1759,51 @@ public:
             cache_steps_,
             valid_steps_,
             valid_steps_);
-        if (decode_allocator_.compute(execution_.backend(), graph_, "drama3_backbone.cached_decode") != GGML_STATUS_SUCCESS) {
+        auto * active_graph = graph_;
+        auto * active_output = output_;
+        auto * allocator = &decode_allocator_;
+        if (config_.kv_cache_alignment > 1) {
+            const int64_t alignment = config_.kv_cache_alignment;
+            const int64_t steps = std::min(cache_steps_, ((valid_steps_ / alignment) + 1) * alignment);
+            auto found = std::find_if(decode_buckets_.begin(), decode_buckets_.end(),
+                [steps](const auto & bucket) { return bucket->steps == steps; });
+            if (found == decode_buckets_.end()) {
+                auto bucket = std::make_unique<DecodeBucket>();
+                bucket->backend = execution_.backend();
+                bucket->steps = steps;
+                bucket->memory.ctx.reset(ggml_init({graph_arena_bytes_, nullptr, true}));
+                if (!bucket->memory.ctx) throw std::runtime_error("failed to initialize Drama 3 attention bucket");
+                core::ModuleBuildContext ctx{bucket->memory.ctx.get(), "drama3_backbone.cached_decode", execution_.backend_type()};
+                ctx.elide_identity_reshapes = execution_.backend_type() == core::BackendType::Cuda;
+                build_decode(ctx, steps, bucket->memory.graph, bucket->output);
+                if (!bucket->memory.hybrid.allocate(bucket->memory.graph, execution_.backend(),
+                        weights_->cpu_execution ? weights_->cpu_execution->backend() : nullptr, weights_->disk_store.get()))
+                    throw std::runtime_error("failed to allocate Drama 3 attention bucket");
+                decode_buckets_.push_back(std::move(bucket));
+                found = std::prev(decode_buckets_.end());
+            }
+            active_graph = (*found)->memory.graph;
+            active_output = (*found)->output;
+            allocator = &(*found)->memory.hybrid;
+        }
+        if (allocator->compute(execution_.backend(), active_graph, "drama3_backbone.cached_decode") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Drama 3 backbone cached decode graph compute failed");
         }
         std::vector<float> hidden(static_cast<size_t>(config_.hidden_size));
-        ggml_backend_tensor_get(output_, hidden.data(), 0, hidden.size() * sizeof(float));
+        ggml_backend_tensor_get(active_output, hidden.data(), 0, hidden.size() * sizeof(float));
         ++valid_steps_;
         return hidden;
     }
 
 private:
+    struct DecodeBucket {
+        GraphMemory memory;
+        ggml_backend_t backend = nullptr;
+        int64_t steps = 0;
+        ggml_tensor * output = nullptr;
+        ~DecodeBucket() { memory.reset(backend); }
+    };
+
     struct PrefillGraph {
         GraphMemory memory;
         ggml_backend_t backend = nullptr;
@@ -1771,7 +1861,7 @@ private:
         int64_t linear_index = 0;
         for (const auto & layer : weights_->layers) {
             auto residual = x;
-            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+            auto h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
             h = round_activation(ctx, h, config_);
             if (layer.full_attention) {
                 if (full_index >= full_count) {
@@ -1786,11 +1876,11 @@ private:
                     core::wrap_tensor(
                         full_key_caches_[static_cast<size_t>(full_index)],
                         core::TensorShape::from_dims({1, cache_steps_, config_.kv_heads, config_.head_dim}),
-                        GGML_TYPE_F32),
+                        config_.kv_cache_type),
                     core::wrap_tensor(
                         full_value_caches_[static_cast<size_t>(full_index)],
                         core::TensorShape::from_dims({1, cache_steps_, config_.kv_heads, config_.head_dim}),
-                        GGML_TYPE_F32),
+                        config_.kv_cache_type),
                     *layer.full,
                     config_);
                 ++full_index;
@@ -1812,7 +1902,7 @@ private:
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
             residual = x;
-            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
+            h = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
             h = mlp(ctx, h, layer, config_);
             x = modules::AddModule{}.build(ctx, residual, h);
@@ -1821,7 +1911,7 @@ private:
         if (full_index != full_count || linear_index != linear_count) {
             throw std::runtime_error("Drama 3 backbone prefill cache/state count mismatch");
         }
-        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
+        x = modules::RMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
         x = round_activation(ctx, x, config_);
         prefill.output = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(prefill.output);
@@ -1859,6 +1949,7 @@ private:
     Drama3BackboneDecoderConfig config_;
     int64_t cache_steps_ = 0;
     int64_t valid_steps_ = 0;
+    size_t graph_arena_bytes_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> persistent_ctx_;
     // Also owns the buffer when construction fails. Destroy the allocator first,
@@ -1866,6 +1957,7 @@ private:
     std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, decltype(&ggml_backend_buffer_free)>
         buffer_{nullptr, ggml_backend_buffer_free};
     HybridGraphAllocator decode_allocator_;
+    std::vector<std::unique_ptr<DecodeBucket>> decode_buckets_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * cache_slot_ = nullptr;

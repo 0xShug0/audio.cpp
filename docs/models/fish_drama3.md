@@ -125,6 +125,48 @@ CPU PyTorch dependencies managed by uv and does not load weights onto a GPU.
 
 ## Generate and stream
 
+Tower decode and codebook sampling use one cached backend graph by default.
+Set `--session-option fish_drama3.device_sampling=false` to use host sampling.
+Graph probability arithmetic is F32, so sampled outputs may differ from host sampling.
+
+`fish_drama3.perf_mode` defaults to `off`. The opt-in `cuda_perf` preset sets
+the following defaults; explicit session options override the preset:
+
+| Session option | `off` | `cuda_perf` | Effect |
+|---|---|---|---|
+| `fish_drama3.fused_moe` | `false` | `true` | Cached-decode routing and SwiGLU fusion. |
+| `fish_drama3.kv_cache_type` | `f16` | `f16` | KV storage precision, not weight precision. Set `f32` to use F32 KV storage. |
+| `fish_drama3.kv_cache_alignment` | `1` | `256` | Cached attention-prefix buckets; all history retained. |
+| `fish_drama3.device_sampling` | `true` | `true` | Cached tower decode and device sampling; existing default retained. |
+| `fish_drama3.codec_batch_frames` | `4` | `4` | Streaming codec batch ceiling; existing default retained. |
+| `fish_drama3.codec_async_decode` | `true` | `true` | Streaming AR/codec overlap; existing default retained. |
+| `fish_drama3.backbone_prefill_cache_mb` | `256` | `256` | Backbone prefill graph-cache budget in MiB; existing default retained. |
+| `fish_drama3.tower_prefill_cache_mb` | `256` | `256` | Tower prefill graph-cache budget in MiB; existing default retained. |
+
+`off` disables only the new preset optimizations, not the existing performance
+defaults listed above. `cuda_perf` leaves those existing controls unchanged.
+
+Fused arithmetic and attention shapes can change sampled audio. To enable the
+combined CUDA path, add:
+
+```text
+--session-option fish_drama3.perf_mode=cuda_perf
+```
+
+Streaming defaults to a four-frame codec batch ceiling with AR/codec overlap.
+To use one-frame synchronous decoding:
+
+```text
+--session-option fish_drama3.codec_batch_frames=1
+--session-option fish_drama3.codec_async_decode=false
+```
+
+Batching starts with one frame, grows to the configured ceiling, and flushes the
+final partial batch. Larger batches retain more codec workspace and can introduce
+small waveform rounding differences without changing AR sampling. Overlap uses
+the dedicated codec backend and completes all audio before the request returns.
+Offline decoding is unchanged.
+
 ```powershell
 .\build\windows-cuda-release\bin\audiocpp_cli.exe `
   --task tts --family fish_drama3 --backend cuda --mode streaming `
@@ -188,10 +230,10 @@ their expert caches are bounded too. No GGUF conversion is required.
 
 `fish_drama3.disk_expert_read_threads` selects 1 to 64 host workers for copying
 selected experts from the memory-mapped GGUF into staging. The default is 1
-(serial); try 4 to enable parallel copies in an OpenMP build. This applies only
+(serial); try 4 to enable parallel copies using OpenMP or Apple dispatch. This applies only
 with `disk_experts=true` and `pin_experts=false`. Backend uploads and inference
-are unchanged. The host reader is backend-independent; Metal performance has
-not been validated.
+are unchanged. The host reader is backend-independent; Apple builds do not
+require OpenMP for parallel reads.
 
 This is a memory/speed trade-off, not a faster MoE kernel. With
 `cpu_expert_layers=0`, prompt prefill groups tokens by expert within each layer,

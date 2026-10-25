@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/community_models/fish_drama3/prompt.h"
+#include "engine/framework/runtime/streaming_audio.h"
 
 #include <functional>
 #include <optional>
@@ -24,7 +25,7 @@ struct Drama3Generation {
 class Drama3Generator {
 public:
     Drama3Generator(std::shared_ptr<const Drama3Assets> assets, core::ExecutionContext & execution,
-                    const runtime::SessionOptions & options);
+                    const runtime::SessionOptions & options, bool streaming);
     ~Drama3Generator();
     codecs::FishDacCodes encode_reference(const runtime::AudioBuffer & audio);
     void warm_streaming_codec(const codecs::FishDacCodes & reference);
@@ -38,6 +39,10 @@ private:
     int64_t cache_steps_;
     bool profile_first_audio_ = false;
     bool disk_experts_ = false;
+    bool device_sampling_ = true;
+    size_t codec_batch_frames_ = 4;
+    bool codec_async_decode_ = true;
+    runtime::StreamingAudioController<int32_t> streaming_audio_;
     std::unique_ptr<Drama3BackboneDecoderRuntime> backbone_;
     std::unique_ptr<Drama3BackboneDecoderRuntime::DecodeSession> decoder_;
     std::vector<Drama3Frame> cached_prefix_;
