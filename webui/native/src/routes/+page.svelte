@@ -1,7 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { onDestroy, onMount } from 'svelte';
-  import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Mic, Play, SlidersHorizontal, Square, Trash2, User, Users, Video } from '@lucide/svelte';
+  import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Mic, Play, SlidersHorizontal, Square, Trash2, User, Users, Video, Save } from '@lucide/svelte';
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
     base64AudioUrl,
@@ -43,9 +43,10 @@
   import type { PanelRunner } from '$lib/models/panel_runner';
   import { prepareRgb24Output } from '$lib/media/rgb24_video';
   import Arena from './Arena.svelte';
+  import Apps from './Apps.svelte';
   import Configuration from './Configuration.svelte';
   import ModelLibrary from './ModelLibrary.svelte';
-  import VoiceLibrary from './VoiceLibrary.svelte';
+  import Library from './Library.svelte';
   import { loadUiConfiguration, uiConfiguration, uiConfigurationError } from '$lib/configuration';
   import type {
     AudioOutput,
@@ -56,13 +57,23 @@
     ServerHealth
   } from '$lib/types';
   import {
-    listVoices,
+    listVoices, saveModelPreset,
+    type ModelConfiguration, type SavedModelPreset,
     type SavedVoice
-  } from '$lib/voices';
+  } from '$lib/library';
   import '../app.css';
 
-  let tab: 'studio' | 'arena' | 'models' | 'logs' | 'configuration' | 'voices' = 'studio';
-  let voiceLibrary: VoiceLibrary | null = null;
+  let tab: 'studio' | 'arena' | 'models' | 'logs' | 'configuration' | 'library' | 'apps' = 'studio';
+  let library: Library | null = null;
+  let appsPage: Apps | null = null;
+  let appsOpened = false;
+  $: if (tab === 'apps') appsOpened = true;
+  let appPresetId = '';
+  let librarySection: 'voices' | 'presets' = 'voices';
+  let presetDialog: HTMLDialogElement | null = null;
+  let presetName = '';
+  let presetError = '';
+  let savingPreset = false;
   let arenaComponent: { runArena: () => Promise<void> } | null = null;
   let selectedId = catalog[0]?.id || '';
   let selected: CatalogEntry = catalog[0];
@@ -943,7 +954,8 @@
   }
 
   function openModelsPage() {
-    if (tab === 'voices' && !voiceLibrary?.canClose()) return;
+    if (tab === 'library' && !library?.canClose()) return;
+    if (tab === 'apps' && !appsPage?.canClose()) return;
     if (!server?.ui_management) {
       tab = 'studio';
       status = 'Model management is disabled for this configured server.';
@@ -1031,7 +1043,8 @@
   }
 
   async function openStudioPage() {
-    if (tab === 'voices' && !voiceLibrary?.canClose()) return;
+    if (tab === 'library' && !library?.canClose()) return;
+    if (tab === 'apps' && !appsPage?.canClose()) return;
     tab = 'studio';
     await refreshVoices();
     await refresh();
@@ -1573,34 +1586,106 @@
     }
   }
 
-  async function restoreSettingsJson(json: string) {
-    const settings = JSON.parse(json);
-    if (settings.schema_version !== 1 || typeof settings.model?.id !== 'string' ||
-        !Array.isArray(settings.requests) || !settings.requests.length ||
-        !settings.requests.every((request: { body?: unknown }) =>
-          request && request.body && typeof request.body === 'object' && !Array.isArray(request.body))) {
-      throw new Error('Choose an audio.cpp settings JSON exported with Save settings JSON.');
+  function openPresetDialog() {
+    if (!selectedId || running || loadingModel || restoringHistory || modelPanelUploading || rewritingCaption) return;
+    presetName = `${selected.display_name} · ${localizedTaskLabel(selected.task)}`;
+    presetError = '';
+    presetDialog?.showModal();
+  }
+
+  async function saveCurrentPreset() {
+    if (savingPreset || !selectedId) return;
+    if (!presetName.trim()) { presetError = 'Give this preset a name.'; return; }
+    savingPreset = true;
+    presetError = '';
+    try {
+      if (seed !== -1 && (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)) {
+        throw new Error('Seed must be -1 or an unsigned 32-bit integer.');
+      }
+      const options = requestOptions();
+      if (selected.task === 'asr' && selected.family in asrTokenDefaults) options.max_tokens = asrMaxTokens;
+      if (selected.family === 'voxcpm2') options.text_chunk_size = Math.max(40, chunkBudget);
+      if (selected.task === 'gen' && usesDurationSecOption) options.duration_sec = duration;
+      await saveModelPreset({
+        version: 1, id: crypto.randomUUID(), name: presetName.trim(), createdAt: Date.now(),
+        model: {
+          id: selected.id, display_name: selected.display_name, family: selected.family,
+          task: selected.task, mode: selected.mode || 'offline', path: modelPath,
+          package_id: selectedPackageChoice(selected)?.id,
+          load_options: { ...(selected.load_options || {}), ...importedLoadOptions },
+          session_options: mergedSessionOptions(selected)
+        },
+        request: {
+          seed, options,
+          language: ['moss_ttsd', 'moss_voicegen'].includes(selected.family) ? mossLanguage : language,
+          ...(selected.task === 'vdes' && instructions.trim() ? { instructions } : {}),
+          ...(selected.task === 'gen' && !usesDurationSecOption ? { duration_seconds: duration } : {}),
+          ...(supportsMaxTokens(selected) && !['kugelaudio', 'voxtral_tts'].includes(selected.family)
+            ? { max_tokens: maxTokens } : {}),
+          ...((quickStartVoice || selected.default_voice) ? {
+            voice: demoVoiceSources[quickStartVoice] || quickStartVoice || selected.default_voice
+          } : {})
+        },
+        chunking: { enabled: longText && ['tts', 'clon'].includes(selected.task) && selected.family !== 'moss_ttsd',
+          characters: chunkBudget }
+      });
+      presetDialog?.close();
+      librarySection = 'presets';
+      status = `Saved preset "${presetName.trim()}". Find it in Lib → Model presets.`;
+      errorStatus = '';
+      warningStatus = '';
+      log(status);
+    } catch (error) {
+      presetError = error instanceof Error ? error.message : String(error);
+    } finally { savingPreset = false; }
+  }
+
+  async function applyModelPreset(preset: SavedModelPreset) {
+    if (running || loadingModel || restoringHistory) throw new Error('Wait for the current operation to finish.');
+    restoringHistory = true;
+    const inputText = text;
+    const inputLyrics = lyrics;
+    try {
+      await restoreModelConfiguration(preset.model, undefined, preset.request.options);
+      seed = preset.request.seed;
+      language = preset.request.language || '';
+      mossLanguage = preset.request.language || 'English';
+      instructions = preset.request.instructions || '';
+      if (preset.request.duration_seconds !== undefined) duration = preset.request.duration_seconds;
+      else if (typeof preset.request.options.duration_sec === 'number') duration = preset.request.options.duration_sec;
+      if (preset.request.max_tokens !== undefined) maxTokens = preset.request.max_tokens;
+      if (typeof preset.request.options.max_tokens === 'number') asrMaxTokens = preset.request.options.max_tokens;
+      longText = preset.chunking.enabled;
+      chunkBudget = preset.chunking.characters;
+      quickStartVoice = preset.request.voice || '';
+      advancedJson = JSON.stringify(Object.fromEntries(Object.entries(preset.request.options)
+        .filter(([name]) => !paramSpecs.some((spec) => spec.name === name))), null, 2);
+      text = inputText;
+      lyrics = inputLyrics;
+      status = `Applied preset "${preset.name}".`;
+      if (settingsReloadRequired) status += ' The model must reload before the next request.';
+      errorStatus = '';
+      warningStatus = settingsReloadRequired ? status : '';
+      log(status);
+      tab = 'studio';
+    } finally { restoringHistory = false; }
+  }
+
+  async function restoreModelConfiguration(model: ModelConfiguration,
+    values?: Record<string, unknown>, fallbackOptions: Record<string, unknown> = {}) {
+    const entry = activeCatalog.find((candidate) => candidate.id === model.id);
+    if (!entry || entry.family !== model.family || entry.task !== model.task) {
+      throw new Error(`The saved model is not available in this UI: ${model.id}`);
     }
-    const entry = activeCatalog.find((candidate) => candidate.id === settings.model.id);
-    if (!entry || entry.family !== settings.model.family || entry.task !== settings.model.task) {
-      throw new Error(`The exported model is not available in this UI: ${settings.model.id}`);
-    }
-    if (!entrySelectable(entry)) throw new Error(`Install ${entry.display_name} before importing its settings.`);
-    const choice = settings.model.package_id
-      ? entry.install_packages?.find((candidate) => candidate.id === settings.model.package_id)
+    if (!entrySelectable(entry)) throw new Error(`Install ${entry.display_name} before applying its settings.`);
+    const choice = model.package_id
+      ? entry.install_packages?.find((candidate) => candidate.id === model.package_id)
       : undefined;
-    if (settings.model.package_id && !choice) {
-      throw new Error(`The exported package is not available: ${settings.model.package_id}`);
+    if (model.package_id && !choice) {
+      throw new Error(`The saved package is not available: ${model.package_id}`);
     }
     if (choice && !packageIsAvailable(entry, choice, loadedModels, packageSizes)) {
-      throw new Error(`Install ${choice.label} before importing its settings.`);
-    }
-    const body = settings.requests[0].body;
-    const request = body.request || body;
-    const ui = settings.ui;
-    const importedSeed = settings.resolved_seed;
-    if (!Number.isInteger(importedSeed) || importedSeed < 0 || importedSeed > 0xffffffff) {
-      throw new Error('The settings JSON has an invalid resolved seed.');
+      throw new Error(`Install ${choice.label} before applying its settings.`);
     }
     const previousLoadOptions = { ...(entry.load_options || {}),
       ...(entry.id === selectedId ? importedLoadOptions : {}) };
@@ -1609,11 +1694,11 @@
       selectedPackageIds = { ...selectedPackageIds, [entry.id]: choice.id };
       localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
     }
-    modelPath = choice ? selectedModelPath(entry) : settings.model.path;
-    importedSessionOptions = { ...(settings.model.session_options || {}) };
-    importedLoadOptions = { ...(settings.model.load_options || {}) };
-    advancedValues = { ...advancedValues, ...(ui?.advanced_values || Object.fromEntries(
-      Object.entries(request.options || {}).filter(([name]) => paramSpecs.some((spec) => spec.name === name)))) };
+    modelPath = choice ? selectedModelPath(entry) : model.path;
+    importedSessionOptions = { ...(model.session_options || {}) };
+    importedLoadOptions = { ...(model.load_options || {}) };
+    advancedValues = { ...advancedValues, ...(values || Object.fromEntries(
+      Object.entries(fallbackOptions).filter(([name]) => paramSpecs.some((spec) => spec.name === name)))) };
     for (const spec of paramSpecs.filter((spec) => spec.scope === 'session')) {
       const value = importedSessionOptions[spec.session_option || spec.name];
       if (value === undefined) continue;
@@ -1626,6 +1711,31 @@
       advancedValues[spec.name] = spec.type === 'bool' ? value === 'true'
         : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
     }
+    const resident = loadedModels.find((model) => model.id === entry.id && model.loaded);
+    settingsReloadRequired = Boolean(resident && (
+      !catalogPathMatches(modelPath, resident.path) ||
+      Object.entries(mergedSessionOptions(entry)).some(([key, value]) => resident.session_options?.[key] !== value) ||
+      JSON.stringify(previousLoadOptions) !== JSON.stringify(importedLoadOptions)));
+    await inspectPath();
+    return entry;
+  }
+
+  async function restoreSettingsJson(json: string) {
+    const settings = JSON.parse(json);
+    if (settings.schema_version !== 1 || typeof settings.model?.id !== 'string' ||
+        !Array.isArray(settings.requests) || !settings.requests.length ||
+        !settings.requests.every((request: { body?: unknown }) =>
+          request && request.body && typeof request.body === 'object' && !Array.isArray(request.body))) {
+      throw new Error('Choose an audio.cpp settings JSON exported with Save settings JSON.');
+    }
+    const body = settings.requests[0].body;
+    const request = body.request || body;
+    const ui = settings.ui;
+    const importedSeed = settings.resolved_seed;
+    if (!Number.isInteger(importedSeed) || importedSeed < 0 || importedSeed > 0xffffffff) {
+      throw new Error('The settings JSON has an invalid resolved seed.');
+    }
+    const entry = await restoreModelConfiguration(settings.model, ui?.advanced_values, request.options);
     text = ui?.text ?? (settings.requests[0].endpoint === '/v1/audio/speech'
       ? settings.requests.map((item: { body: { input: string } }) => item.body.input).join('\n\n')
       : request.text || '');
@@ -1655,12 +1765,6 @@
     if (videoInput) videoInput.value = '';
     if (referenceTextInput) referenceTextInput.value = '';
     for (const input of vibeVoiceSpeakerInputs) if (input) input.value = '';
-    const resident = loadedModels.find((model) => model.id === entry.id && model.loaded);
-    settingsReloadRequired = Boolean(resident && (
-      !catalogPathMatches(modelPath, resident.path) ||
-      Object.entries(mergedSessionOptions(entry)).some(([key, value]) => resident.session_options?.[key] !== value) ||
-      JSON.stringify(previousLoadOptions) !== JSON.stringify(importedLoadOptions)));
-    await inspectPath();
     const files = Object.values(settings.input_files || {}).flat().filter((name) => typeof name === 'string' && name);
     status = `Imported settings for ${entry.display_name}.`;
     if (files.length) status += ` Reselect the referenced files: ${files.join(', ')}.`;
@@ -2242,7 +2346,8 @@
   }
 
   function handleShortcut(event: KeyboardEvent) {
-    if (tab === 'voices') return;
+    if (presetDialog?.open) return;
+    if (tab === 'library' || tab === 'apps') return;
     if (event.key === 'Escape' && folderBrowserOpen) {
       folderBrowserOpen = false;
       return;
@@ -2256,7 +2361,8 @@
 
   function openPage(next: typeof tab) {
     if (next === tab) return;
-    if (tab === 'voices' && !voiceLibrary?.canClose()) return;
+    if (tab === 'library' && !library?.canClose()) return;
+    if (tab === 'apps' && !appsPage?.canClose()) return;
     tab = next;
   }
 
@@ -2587,9 +2693,11 @@
   </div>
   <nav aria-label={tr('nav.primary')}>
     <button class:active={tab === 'studio'} on:click={openStudioPage}>{tr('nav.studio')}</button>
+    <button class:active={tab === 'apps'} disabled={running || loadingModel || restoringHistory || Boolean(recorder) || liveRecording}
+      on:click={() => openPage('apps')}>{tr('nav.apps')}</button>
     <button class:active={tab === 'arena'} on:click={() => openPage('arena')}>{tr('nav.arena')}</button>
-    <button class:active={tab === 'voices'} disabled={running || restoringHistory || Boolean(recorder) || liveRecording}
-      on:click={() => openPage('voices')}>Voices</button>
+    <button class:active={tab === 'library'} disabled={running || restoringHistory || Boolean(recorder) || liveRecording}
+      on:click={() => openPage('library')}>{tr('nav.library')}</button>
     {#if server?.ui_management !== false}
       <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
     {/if}
@@ -2621,6 +2729,7 @@
 </header>
 
 <main>
+  {#if appsOpened}<div hidden={tab !== 'apps'}><Apps bind:this={appsPage} active={tab === 'apps'} initialPresetId={appPresetId} openLibrary={() => { librarySection = 'presets'; openPage('library'); }}/></div>{/if}
   {#if tab === 'studio'}
     <nav class="workflow-tabs" aria-label={tr('nav.workflows')}>
       {#each workflowTabs as workflow}
@@ -2719,6 +2828,8 @@
           <div><span>{tr('request.label')}</span><h2>{tr('request.title')}</h2></div>
           <div class="studio-request-actions">
             <span class="task-chip">{selected?.task}</span>
+            <button type="button" disabled={running || loadingModel || restoringHistory || modelPanelUploading || rewritingCaption}
+              on:click={openPresetDialog}><Save size={14}/>Save preset</button>
             {#if !replacesGenericControls.settingsImport}
               <button type="button" class="settings-import" disabled={running || loadingModel || restoringHistory}
                 on:click={() => settingsInput?.click()}><FolderOpen size={14} />{tr('settings.load')}</button>
@@ -3168,19 +3279,22 @@
         tab = 'studio';
       }}
     />
-  {:else if tab === 'voices'}
-    <VoiceLibrary bind:this={voiceLibrary} onchange={async () => {
-      await refreshVoices();
-      if (savedVoiceId && !savedVoices.some(voice => voice.id === savedVoiceId)) savedVoiceId = '';
-    }} ontext={async (voice) => {
-      await refreshVoices();
-      chooseWorkflow('tts');
-      chooseSavedVoice(voice.id);
-      tab = 'studio';
-    }}/>
+  {:else if tab === 'library'}
+    <Library bind:this={library} bind:section={librarySection}
+      taskLabel={(task) => localizedTaskLabel(task)} onpreset={applyModelPreset}
+      onapps={(preset) => { appPresetId = preset.id; tab = 'apps'; }}
+      onvoicechange={async () => {
+        await refreshVoices();
+        if (savedVoiceId && !savedVoices.some(voice => voice.id === savedVoiceId)) savedVoiceId = '';
+      }} onvoice={async (voice) => {
+        await refreshVoices();
+        chooseWorkflow('tts');
+        chooseSavedVoice(voice.id);
+        tab = 'studio';
+      }}/>
   {:else if tab === 'configuration'}
     <Configuration {tr} />
-  {:else}
+  {:else if tab !== 'apps'}
     <section class="page-head"><p class="eyebrow">{tr('runtime.eyebrow')}</p><h1>{tr('runtime.title')}</h1><p>{tr('runtime.subtitle')}</p></section>
     <section class="panel log-panel">
       <div class="runtime-cards">
@@ -3194,6 +3308,21 @@
     </section>
   {/if}
 </main>
+
+<dialog class="preset-save-dialog" bind:this={presetDialog} aria-labelledby="preset-save-title"
+  on:cancel={(event) => { if (savingPreset) event.preventDefault(); }}>
+  <form on:submit|preventDefault={saveCurrentPreset}>
+    <h2 id="preset-save-title">Save model preset</h2>
+    <p class="preset-save-model">{selected?.display_name} · {localizedTaskLabel(selected?.task)}</p>
+    <label for="preset-save-name">Preset name</label>
+    <input id="preset-save-name" bind:value={presetName} disabled={savingPreset} required />
+    {#if presetError}<p class="error-text" role="alert">{presetError}</p>{/if}
+    <div class="preset-save-actions">
+      <button type="button" disabled={savingPreset} on:click={() => presetDialog?.close()}>Cancel</button>
+      <button type="submit" class="primary" disabled={savingPreset}><Save size={16}/>{savingPreset ? 'Saving…' : 'Save preset'}</button>
+    </div>
+  </form>
+</dialog>
 
 {#if folderBrowserOpen}
   <div class="folder-browser-backdrop">

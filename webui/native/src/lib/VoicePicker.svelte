@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Translator } from '$lib/i18n';
-  import type { SavedVoice } from '$lib/voices';
+  import type { SavedVoice } from '$lib/library';
 
   export let id: string;
   export let value = '';

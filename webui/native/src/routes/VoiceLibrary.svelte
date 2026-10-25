@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Users, Upload, Search, Save, Trash2, Download, FileText, Mic } from '@lucide/svelte';
-  import { listVoices, saveVoice, deleteVoice, type SavedVoice } from '$lib/voices';
+  import { listVoices, saveVoice, deleteVoice, type SavedVoice } from '$lib/library';
   import { browserDecodeToWav } from '$lib/audio';
   import MediaPreview from '$lib/MediaPreview.svelte';
 

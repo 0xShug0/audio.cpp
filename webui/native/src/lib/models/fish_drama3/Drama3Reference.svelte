@@ -1,7 +1,7 @@
 <script lang="ts">
   import { FileAudio, X } from '@lucide/svelte';
   import MediaPreview from '$lib/MediaPreview.svelte';
-  import type { SavedVoice } from '$lib/voices';
+  import type { SavedVoice } from '$lib/library';
 
   export let id: string;
   export let file: File | null = null;
