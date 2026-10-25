@@ -125,8 +125,9 @@ CPU PyTorch dependencies managed by uv and does not load weights onto a GPU.
 
 ## Generate and stream
 
-Tower decode and codebook sampling use one cached backend graph by default.
-Set `--session-option fish_drama3.device_sampling=false` to use host sampling.
+Host sampling is used by default. Set
+`--session-option fish_drama3.device_sampling=true` to enable tower decode and
+codebook sampling in one cached backend graph, or select the `cuda_perf` preset.
 Graph probability arithmetic is F32, so sampled outputs may differ from host sampling.
 
 `fish_drama3.perf_mode` defaults to `off`. The opt-in `cuda_perf` preset sets
@@ -137,14 +138,14 @@ the following defaults; explicit session options override the preset:
 | `fish_drama3.fused_moe` | `false` | `true` | Cached-decode routing and SwiGLU fusion. |
 | `fish_drama3.kv_cache_type` | `f16` | `f16` | KV storage precision, not weight precision. Set `f32` to use F32 KV storage. |
 | `fish_drama3.kv_cache_alignment` | `1` | `256` | Cached attention-prefix buckets; all history retained. |
-| `fish_drama3.device_sampling` | `true` | `true` | Cached tower decode and device sampling; existing default retained. |
+| `fish_drama3.device_sampling` | `false` | `true` | Cached tower decode and device sampling. |
 | `fish_drama3.codec_batch_frames` | `4` | `4` | Streaming codec batch ceiling; existing default retained. |
 | `fish_drama3.codec_async_decode` | `true` | `true` | Streaming AR/codec overlap; existing default retained. |
 | `fish_drama3.backbone_prefill_cache_mb` | `256` | `256` | Backbone prefill graph-cache budget in MiB; existing default retained. |
 | `fish_drama3.tower_prefill_cache_mb` | `256` | `256` | Tower prefill graph-cache budget in MiB; existing default retained. |
 
-`off` disables only the new preset optimizations, not the existing performance
-defaults listed above. `cuda_perf` leaves those existing controls unchanged.
+`off` retains the defaults listed above. Explicit session options override either
+preset, including `fish_drama3.device_sampling=false` with `cuda_perf`.
 
 Fused arithmetic and attention shapes can change sampled audio. To enable the
 combined CUDA path, add:

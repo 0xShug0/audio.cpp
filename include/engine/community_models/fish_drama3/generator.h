@@ -39,7 +39,7 @@ private:
     int64_t cache_steps_;
     bool profile_first_audio_ = false;
     bool disk_experts_ = false;
-    bool device_sampling_ = true;
+    bool device_sampling_ = false;
     size_t codec_batch_frames_ = 4;
     bool codec_async_decode_ = true;
     runtime::StreamingAudioController<int32_t> streaming_audio_;
