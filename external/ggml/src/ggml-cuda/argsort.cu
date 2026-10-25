@@ -1,5 +1,9 @@
 #include "argsort.cuh"
 
+#ifdef GGML_USE_HIP
+#    include <hipcub/hipcub.hpp>
+#endif
+
 #ifdef GGML_CUDA_USE_CUB
 #    include <cub/cub.cuh>
 #    if (CCCL_MAJOR_VERSION >= 3 && CCCL_MINOR_VERSION >= 1)
@@ -26,6 +30,37 @@ static __global__ void init_offsets(int * offsets, const int ncols, const int nr
     }
 }
 #endif  // STRIDED_ITERATOR_AVAILABLE
+
+#ifdef GGML_USE_HIP
+static void argsort_f32_i32_hip_radix(ggml_cuda_pool & pool, const float * x, int * dst,
+                                     int ncols, int nrows, ggml_sort_order order, cudaStream_t stream) {
+    ggml_cuda_pool_alloc<int> indices(pool, size_t(ncols) * nrows);
+    ggml_cuda_pool_alloc<float> keys(pool, size_t(ncols) * nrows);
+    ggml_cuda_pool_alloc<int> offsets(pool, nrows + 1);
+    constexpr int block_size = 256;
+    init_indices<<<dim3((ncols + block_size - 1) / block_size, nrows), block_size, 0, stream>>>(
+        indices.get(), ncols, nrows);
+    init_offsets<<<(nrows + 1 + block_size - 1) / block_size, block_size, 0, stream>>>(
+        offsets.get(), ncols, nrows);
+
+    // Separate key input/output preserves the logits and avoids overlapping radix-sort buffers.
+    size_t storage_bytes = 0;
+    auto sort = [&](void * storage) {
+        if (order == GGML_SORT_ORDER_ASC) {
+            return hipcub::DeviceSegmentedRadixSort::SortPairs(
+                storage, storage_bytes, x, keys.get(), indices.get(), dst, ncols * nrows, nrows,
+                offsets.get(), offsets.get() + 1, 0, sizeof(float) * 8, stream);
+        }
+        return hipcub::DeviceSegmentedRadixSort::SortPairsDescending(
+            storage, storage_bytes, x, keys.get(), indices.get(), dst, ncols * nrows, nrows,
+            offsets.get(), offsets.get() + 1, 0, sizeof(float) * 8, stream);
+    };
+    GGML_ASSERT(order == GGML_SORT_ORDER_ASC || order == GGML_SORT_ORDER_DESC);
+    CUDA_CHECK(sort(nullptr));
+    ggml_cuda_pool_alloc<uint8_t> storage(pool, storage_bytes);
+    CUDA_CHECK(sort(storage.get()));
+}
+#endif
 
 #ifdef GGML_CUDA_USE_CUB
 void argsort_f32_i32_cuda_cub(ggml_cuda_pool & pool,
@@ -249,7 +284,13 @@ void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 
     enum ggml_sort_order order = (enum ggml_sort_order) dst->op_params[0];
 
-#ifdef GGML_CUDA_USE_CUB
+#if defined(GGML_USE_HIP)
+    if (ncols > 1024) {
+        argsort_f32_i32_hip_radix(ctx.pool(), src0_d, (int *) dst_d, ncols, nrows, order, stream);
+    } else {
+        argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
+    }
+#elif defined(GGML_CUDA_USE_CUB)
     const int    ncols_pad      = next_power_of_2(ncols);
     const size_t shared_mem     = ncols_pad * sizeof(int);
     const size_t max_shared_mem = ggml_cuda_info().devices[ggml_cuda_get_device()].smpb;
