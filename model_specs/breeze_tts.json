@@ -219,7 +219,7 @@
       {
         "name": "fused_depth",
         "type": "bool",
-        "description": "Decode each frame's depth codebooks in one CUDA graph with device-side CFG mixing and sampling. Device sampling uses a different random stream, so sampled output differs from the per-codebook path. CUDA only.",
+        "description": "Decode each frame's depth codebooks in one CUDA graph with device-side CFG mixing and sampling. Device sampling uses the per-codebook path's torch random draws, so output normally matches it token for token. CUDA only.",
         "required": false,
         "default": false
       },
