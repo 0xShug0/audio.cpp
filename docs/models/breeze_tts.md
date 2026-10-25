@@ -105,6 +105,7 @@ audiocpp_cli \
 | `breeze_tts.direct_prefill` | `true`, `false` | `false` | Offline prefill writes straight into the decode cache. |
 | `breeze_tts.skip_cache_round` | `true`, `false` | `false` | Skips the identity bf16 re-rounding of the F16 KV cache. |
 | `breeze_tts.round_bf16_fusion` | `true`, `false` | `false` | On CUDA, fold the bf16 activation rounding into the RMS-norm, add and SwiGLU kernels that produce it. Output is bit-identical; it only saves kernel launches. Other models are unaffected. |
+| `breeze_tts.cfg_batch` | `true`, `false` | `false` | Decode both CFG backbone branches as one batch-2 step on CUDA. |
 
 For long-form generation without reference audio, the first text chunk's generated
 audio codes and text serve as a fixed voice reference for subsequent chunks. This
@@ -159,6 +160,7 @@ controls apply to CUDA only and are ignored on other backends.
 | `breeze_tts.fused_depth` | `false` | `true` | Decodes the 15 residual codebooks of a frame in one CUDA graph. CFG mixing, temperature, top-k/top-p and sampling run on the device, and only the sampled tokens return to the host. |
 | `breeze_tts.direct_prefill` | `false` | `true` | Offline generation prefills the backbone straight into the decode cache, as streaming does, instead of exporting the KV state to host floats and importing it back. |
 | `breeze_tts.skip_cache_round` | `false` | `true` | With the bf16 reference path, an F16 KV cache and flash attention, skips re-rounding the whole cache to bf16 after each update. The K/V rows are already bf16-rounded when written, so the pass is an identity. |
+| `breeze_tts.cfg_batch` | `false` | `true` | With `guidance_scale` other than 1, decodes the conditional and unconditional backbone branches as one batch-2 step, so the backbone weights are read once per frame. |
 
 The fused depth graph uses the per-codebook path's torch random draws, so for
 the same seed it normally reproduces `off` token for token. Its temperature
@@ -166,7 +168,8 @@ scaling and f32 ranking round differently, which can change a sample only when
 two candidates are tied to within float precision. It replaces the
 per-codebook depth runtimes rather than adding to them, so peak VRAM stays
 close to `off`. `direct_prefill` and `skip_cache_round` do the same computation without
-the extra work and do not change output.
+the extra work and do not change output. `cfg_batch` changes matmul accumulation order,
+so CFG output is not bit-identical to the two-runtime path.
 
 ```text
 --session-option breeze_tts.perf_mode=cuda_perf

@@ -1204,8 +1204,9 @@ struct BreezeGeneratorRuntime::Impl {
         weights = load_weights(*this->assets, execution, weight_context_bytes, storage_type, backbone_runtime_config);
         backbone_cond = std::make_unique<modules::CausalDecoderRuntime>(execution, backbone_runtime_config, weights->backbone);
         backbone_uncond = std::make_unique<modules::CausalDecoderRuntime>(execution, backbone_runtime_config, weights->backbone);
-        // The fused depth path is opt-in and only validated on CUDA; other backends
-        // keep the per-codebook depth path.
+        // The performance paths are opt-in and only validated on CUDA; other
+        // backends keep the per-codebook depth path and two single-lane backbone
+        // runtimes.
         const bool cuda = execution.backend_type() == core::BackendType::Cuda;
         direct_prefill = cuda && perf.direct_prefill;
         engine::debug::trace_log_scalar("breeze_tts.direct_prefill", direct_prefill);
@@ -1230,9 +1231,7 @@ struct BreezeGeneratorRuntime::Impl {
                 weights->depth_heads);
         }
         engine::debug::trace_log_scalar("breeze_tts.fused_depth", fused_depth != nullptr);
-        // The batched CFG backbone is only validated on CUDA; other backends
-        // keep two single-lane runtimes.
-        backbone_cfg_batch = cuda;
+        backbone_cfg_batch = cuda && perf.cfg_batch;
         engine::debug::trace_log_scalar("breeze_tts.backbone_cfg_batch", backbone_cfg_batch);
         speech_encoder = std::make_unique<BreezeSpeechEncoderRuntime>(
             this->assets,
