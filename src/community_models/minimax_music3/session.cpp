@@ -177,8 +177,8 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
         {"minimax_music3.weight_context_mb", "int", "Weight context size in MiB.", false, "32", "1"},
         {"minimax_music3.mem_saver", "bool", "Load large generation stages only while they are needed to reduce peak VRAM.", false, "true"},
         {"minimax_music3.pipeline_overlap", "bool", "Overlap AR decoding with per-chunk condition/flow/vocoder work on a second backend stream. Requires mem_saver=false; combining with mem_saver=true is an error. Long requests and nondefault chunk hops use the sequential pipeline.", false, "false"},
-        {"minimax_music3.perf_mode", "off|cuda_perf", "Performance preset; cuda_perf selects CUDA attention-prefix buckets of 256 rows. Explicit controls override the preset.", false, "off"},
-        {"minimax_music3.kv_cache_alignment", "int", "CUDA attention-prefix bucket size; 1 preserves full-capacity attention. All valid history is retained. Graph shapes may change sampled output. Explicit values override the preset.", false, std::nullopt, "1"},
+        {"minimax_music3.perf_mode", "off|cuda_perf", "Performance preset; cuda_perf selects attention-prefix buckets of 256 rows. Explicit controls override the preset.", false, "off"},
+        {"minimax_music3.kv_cache_alignment", "int", "Attention-prefix bucket size; 1 preserves full-capacity attention. All valid history is retained. Graph shapes may change sampled output. Explicit values override the preset.", false, std::nullopt, "1"},
     };
     return out;
 }

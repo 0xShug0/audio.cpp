@@ -185,14 +185,14 @@
         "name": "perf_mode",
         "type": "enum",
         "values": ["off", "cuda_perf"],
-        "description": "Performance preset. cuda_perf selects CUDA attention-prefix buckets of 256 rows. Explicit controls override preset values.",
+        "description": "Performance preset. cuda_perf selects attention-prefix buckets of 256 rows. Explicit controls override preset values.",
         "required": false,
         "default": "off"
       },
       {
         "name": "kv_cache_alignment",
         "type": "int",
-        "description": "CUDA attention-prefix bucket size. 1 preserves full-capacity attention; cuda_perf selects 256. Retains all valid history, but graph shapes may change sampled output. Explicit values override the preset.",
+        "description": "Attention-prefix bucket size. 1 preserves full-capacity attention; cuda_perf selects 256. Retains all valid history, but graph shapes may change sampled output. Explicit values override the preset.",
         "required": false,
         "min": 1
       },
