@@ -4,6 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/hf_sampler.h"
@@ -97,6 +98,31 @@ modules::DecoderActivationCastPolicy breeze_bf16_activation_policy(core::Backend
     return policy;
 }
 
+// K/V rows are rounded to bf16 (after RoPE / the QKV projection) before they are
+// written, and an f16 cache stores every bf16-rounded value exactly, so rounding the
+// whole cache again after each update is an identity. CUDA flash attention also
+// converts that f32 copy straight back to f16 and runs the same f16 kernel, so
+// skipping the pass is bit-identical there while saving two full-cache passes per
+// layer and step. Other backends and the eager attention path keep the reference
+// rounding because their attention kernels differ between f32 and f16 inputs.
+void skip_redundant_cache_round(
+    modules::DecoderStackConfig & stack,
+    ggml_type static_cache_type,
+    core::BackendType backend_type,
+    bool allow_flash_attention) {
+    auto & cast = stack.activation_cast;
+    // The last op on K before the cache write must be followed by a rounding point.
+    const bool key_rounded = stack.position_encoding == modules::DecoderPositionEncoding::Rotary
+        ? cast.after_rope
+        : (stack.use_qk_norm ? cast.after_qk_norm : cast.after_qkv_projection);
+    const bool rows_prerounded =
+        cast.enabled && cast.type == GGML_TYPE_BF16 && cast.after_qkv_projection && key_rounded;
+    if (rows_prerounded && backend_type == core::BackendType::Cuda && allow_flash_attention &&
+        static_cache_type == GGML_TYPE_F16) {
+        cast.after_static_cache_update = false;
+    }
+}
+
 modules::CausalDecoderRuntimeConfig backbone_config(
     const BreezeTTSConfig & config,
     core::BackendType backend_type,
@@ -143,6 +169,8 @@ modules::CausalDecoderRuntimeConfig backbone_config(
                 ? GGML_TYPE_BF16 : GGML_TYPE_F16;
         if (bf16_reference) {
             out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
+            skip_redundant_cache_round(
+                out.decoder.stack, out.decoder.static_cache_type, backend_type, allow_flash_attention);
         }
     }
     out.decoder.logits_size = config.lm_head_size;
@@ -200,6 +228,8 @@ modules::CausalDecoderRuntimeConfig depth_config(
                 ? GGML_TYPE_BF16 : GGML_TYPE_F16;
         if (bf16_reference) {
             out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
+            skip_redundant_cache_round(
+                out.decoder.stack, out.decoder.static_cache_type, backend_type, allow_flash_attention);
         }
     }
     out.decoder.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
@@ -754,6 +784,332 @@ private:
     mutable std::vector<float> head_paired_staging_;
 };
 
+// Runs the whole depth loop of one frame (15 codebooks) as a single
+// fixed-shape graph. The K/V of earlier codebooks are carried inside the graph,
+// and CFG, top-k/top-p and Gumbel-max sampling stay on the device. The
+// per-step graph sequence used to need 45+ host round trips per frame and its
+// changing cache offsets kept the CUDA backend from reusing a captured graph;
+// this graph has stable shapes and buffers, so it replays one CUDA graph per
+// frame. Per frame it uploads the backbone hidden state(s), the first token and
+// the sampling noise, and downloads 15 tokens.
+class BreezeFusedDepthRuntime {
+public:
+    BreezeFusedDepthRuntime(
+        ggml_backend_t backend,
+        core::BackendType backend_type,
+        int threads,
+        const BreezeTTSConfig & config,
+        const modules::CausalDecoderRuntimeConfig & depth_runtime_config,
+        const BreezeWeights & weights)
+        : backend_(backend),
+          backend_type_(backend_type),
+          threads_(std::max(1, threads)),
+          config_(config),
+          projector_(weights.depth_projector),
+          heads_(weights.depth_heads),
+          store_(backend, backend_type, "breeze_tts.fused_depth.weights", 1024ull * 1024ull) {
+        if (config_.num_codebooks <= 1 || config_.vocab_size < kCodecCodebookSize) {
+            throw std::runtime_error("BreezeTTS fused depth shape is invalid");
+        }
+        hidden_config_.stack = depth_runtime_config.decoder.stack;
+        hidden_config_.hidden_mode = depth_runtime_config.decoder.logits_mode;
+        hidden_config_.static_cache_type = depth_runtime_config.decoder.static_cache_type;
+        hidden_weights_.stack = weights.depth.stack;
+        hidden_weights_.final_norm = weights.depth.final_norm;
+        // The CPU path embeds from the f32 table; keep the same values on the
+        // device (quantized tables like Q4_K have no CUDA get_rows kernel).
+        table_ = store_.make_f32(
+            core::TensorShape::from_dims({config_.num_codebooks * config_.vocab_size, config_.hidden_size}),
+            weights.audio_embedding);
+        store_.upload();
+    }
+
+    ~BreezeFusedDepthRuntime() {
+        release();
+    }
+
+    static int64_t candidates_for(int64_t top_k) {
+        return top_k <= 0 || top_k > kCodecCodebookSize ? kCodecCodebookSize : top_k;
+    }
+
+    std::vector<int32_t> run(
+        const float * cond_hidden,
+        const float * uncond_hidden,
+        int32_t first_token,
+        const BreezeGenerationRequest & request,
+        bool paired,
+        std::mt19937 & rng) {
+        const Key key{
+            paired ? 2 : 1,
+            paired ? request.guidance_scale : 1.0F,
+            request.depth_temperature,
+            candidates_for(request.top_k),
+            request.top_p};
+        if (graph_ == nullptr || !(key == key_)) {
+            build(key);
+        }
+        const size_t hidden_bytes = static_cast<size_t>(config_.hidden_size) * sizeof(float);
+        ggml_backend_tensor_set(hidden_in_, cond_hidden, 0, hidden_bytes);
+        if (paired) {
+            ggml_backend_tensor_set(hidden_in_, uncond_hidden, hidden_bytes, hidden_bytes);
+        }
+        ggml_backend_tensor_set(first_token_in_, &first_token, 0, sizeof(int32_t));
+        // Gumbel-max: argmax(logits / T + G) samples softmax(logits / T).
+        for (float & value : noise_staging_) {
+            const double uniform = (static_cast<double>(rng()) + 0.5) / 4294967296.0;
+            value = static_cast<float>(-std::log(-std::log(uniform)));
+        }
+        ggml_backend_tensor_set(noise_in_, noise_staging_.data(), 0, noise_staging_.size() * sizeof(float));
+        core::set_backend_threads(backend_, threads_);
+        if (core::compute_backend_graph(backend_, graph_, nullptr, "breeze_tts.fused_depth") != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("BreezeTTS fused depth graph compute failed");
+        }
+        ggml_backend_synchronize(backend_);
+        std::vector<int32_t> frame;
+        frame.reserve(static_cast<size_t>(config_.num_codebooks));
+        frame.push_back(first_token);
+        for (auto * token : tokens_out_) {
+            int32_t value = 0;
+            ggml_backend_tensor_get(token, &value, 0, sizeof(int32_t));
+            if (value < 0 || value >= kCodecCodebookSize) {
+                throw std::runtime_error(
+                    "BreezeTTS fused depth sampled an invalid token " + std::to_string(value) + " at codebook " +
+                    std::to_string(frame.size()));
+            }
+            frame.push_back(value);
+        }
+        return frame;
+    }
+
+private:
+    struct Key {
+        int64_t batch = 0;
+        float guidance = 1.0F;
+        float temperature = 1.0F;
+        int64_t candidates = 0;
+        float top_p = 1.0F;
+
+        bool operator==(const Key & other) const {
+            return batch == other.batch && guidance == other.guidance && temperature == other.temperature &&
+                   candidates == other.candidates && top_p == other.top_p;
+        }
+    };
+
+    void release() {
+        if (graph_ != nullptr) {
+            core::release_backend_graph_resources(backend_, graph_);
+            graph_ = nullptr;
+        }
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+        }
+        graph_ctx_.reset();
+        if (inputs_buffer_ != nullptr) {
+            ggml_backend_buffer_free(inputs_buffer_);
+            inputs_buffer_ = nullptr;
+        }
+        inputs_ctx_.reset();
+        masks_in_.clear();
+        open_masks_in_.clear();
+        tokens_out_.clear();
+    }
+
+    void build(const Key & key) {
+        release();
+        const int64_t batch = key.batch;
+        const int64_t hidden = config_.hidden_size;
+        const int64_t depth_hidden = config_.depth_hidden_size;
+        const int64_t vocab = config_.vocab_size;
+        const int64_t candidates = key.candidates;
+        const int64_t steps = config_.num_codebooks - 1;
+
+        // Graph inputs live in their own buffer so the graph allocator never
+        // reuses them; positions and masks are uploaded once per build.
+        inputs_ctx_.reset(ggml_init({ggml_tensor_overhead() * static_cast<size_t>(2 * steps + 8), nullptr, true}));
+        if (inputs_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize BreezeTTS fused depth input context");
+        }
+        hidden_in_ = ggml_new_tensor_2d(inputs_ctx_.get(), GGML_TYPE_F32, hidden, batch);
+        first_token_in_ = ggml_new_tensor_1d(inputs_ctx_.get(), GGML_TYPE_I32, 1);
+        noise_in_ = ggml_new_tensor_2d(inputs_ctx_.get(), GGML_TYPE_F32, candidates, steps);
+        positions_in_ = ggml_new_tensor_1d(inputs_ctx_.get(), GGML_TYPE_I32, steps + 1);
+        for (int64_t length = 2; length <= steps + 1; ++length) {
+            masks_in_.push_back(ggml_new_tensor_4d(inputs_ctx_.get(), GGML_TYPE_F16, length, length, 1, batch));
+        }
+        for (int64_t length = 2; length <= steps + 1; ++length) {
+            open_masks_in_.push_back(ggml_new_tensor_4d(inputs_ctx_.get(), GGML_TYPE_F16, length, 1, 1, batch));
+        }
+        for (ggml_tensor * tensor = ggml_get_first_tensor(inputs_ctx_.get()); tensor != nullptr;
+             tensor = ggml_get_next_tensor(inputs_ctx_.get(), tensor)) {
+            ggml_set_input(tensor);
+        }
+        inputs_buffer_ = ggml_backend_alloc_ctx_tensors(inputs_ctx_.get(), backend_);
+        if (inputs_buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate BreezeTTS fused depth inputs");
+        }
+        std::vector<int32_t> positions(static_cast<size_t>(steps + 1));
+        for (int64_t i = 0; i <= steps; ++i) {
+            positions[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+        }
+        ggml_backend_tensor_set(positions_in_, positions.data(), 0, positions.size() * sizeof(int32_t));
+        for (int64_t length = 2; length <= steps + 1; ++length) {
+            const auto mask = modules::causal_prefill_mask_values(batch, length);
+            ggml_backend_tensor_set(masks_in_[static_cast<size_t>(length - 2)], mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
+            // A single new query sees the whole prefix: an all-zero mask.
+            const std::vector<ggml_fp16_t> open(static_cast<size_t>(batch * length), ggml_fp32_to_fp16(0.0F));
+            ggml_backend_tensor_set(open_masks_in_[static_cast<size_t>(length - 2)], open.data(), 0, open.size() * sizeof(ggml_fp16_t));
+        }
+        noise_staging_.assign(static_cast<size_t>(candidates * steps), 0.0F);
+
+        graph_ctx_.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
+        if (graph_ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize BreezeTTS fused depth graph context");
+        }
+        ggml_context * g = graph_ctx_.get();
+        core::ModuleBuildContext ctx{g, "breeze_tts.fused_depth", backend_type_};
+
+        const auto project = [&](ggml_tensor * rows, int64_t count) {
+            auto input = core::wrap_tensor(rows, core::TensorShape::from_dims({count, hidden}));
+            return modules::LinearModule({hidden, depth_hidden, false}).build(ctx, input, projector_).tensor;
+        };
+        ggml_tensor * prefix = ggml_reshape_3d(g, project(hidden_in_, batch), depth_hidden, 1, batch);
+        const size_t table_row = table_.tensor->nb[1];
+        const auto embed = [&](int64_t codebook, ggml_tensor * token) {
+            auto * table = ggml_view_2d(
+                g, table_.tensor, hidden, vocab, table_row, static_cast<size_t>(codebook * vocab) * table_row);
+            auto * projected = ggml_reshape_3d(g, project(ggml_get_rows(g, table, token), 1), depth_hidden, 1, 1);
+            return batch == 1 ? projected : ggml_repeat(g, projected, prefix);
+        };
+
+        ggml_tensor * sequence = ggml_concat(g, prefix, embed(0, first_token_in_), 1);
+        const size_t head_row = heads_.tensor->nb[1];
+        const size_t head_stride = heads_.tensor->nb[2];
+        // With the in-graph KV state each step after the first feeds a single
+        // new token, keeping every projection a narrow mat-vec instead of
+        // re-running the whole prefix.
+        std::optional<modules::DecoderStackState> state;
+        for (int64_t codebook = 1; codebook <= steps; ++codebook) {
+            const int64_t length = codebook + 1;
+            const bool cached = codebook > 1;
+            const int64_t step_tokens = cached ? 1 : length;
+            std::optional<core::TensorValue> mask = core::wrap_tensor(
+                open_masks_in_[static_cast<size_t>(codebook - 1)],
+                core::TensorShape::from_dims({batch, 1, 1, length}),
+                GGML_TYPE_F16);
+            if (!cached) {
+                mask = core::wrap_tensor(
+                    masks_in_[static_cast<size_t>(codebook - 1)],
+                    core::TensorShape::from_dims({batch, 1, length, length}),
+                    GGML_TYPE_F16);
+            }
+            auto out = modules::DecoderHiddenModule(hidden_config_).build(
+                ctx,
+                core::wrap_tensor(sequence, core::TensorShape::from_dims({batch, step_tokens, depth_hidden})),
+                core::wrap_tensor(
+                    ggml_view_1d(
+                        g, positions_in_, step_tokens, cached ? static_cast<size_t>(codebook) * sizeof(int32_t) : 0),
+                    core::TensorShape::from_dims({step_tokens}),
+                    GGML_TYPE_I32),
+                hidden_weights_,
+                cached ? state : std::nullopt,
+                mask);
+            if (!cached) {
+                state = out.state;
+            } else {
+                for (size_t layer = 0; layer < state->layers.size(); ++layer) {
+                    auto & full = state->layers[layer];
+                    const auto & added = out.state.layers[layer];
+                    full.key = modules::ConcatModule({1}).build(ctx, *full.key, *added.key);
+                    full.value = modules::ConcatModule({1}).build(ctx, *full.value, *added.value);
+                }
+            }
+            auto * last = ggml_reshape_2d(g, ggml_cont(g, out.hidden.tensor), depth_hidden, batch);
+            auto head = core::wrap_tensor(
+                ggml_view_2d(g, heads_.tensor, depth_hidden, vocab, head_row, static_cast<size_t>(codebook - 1) * head_stride),
+                core::TensorShape::from_dims({vocab, depth_hidden}),
+                heads_.type);
+            auto * logits = modules::LinearModule({depth_hidden, vocab, false})
+                                .build(ctx,
+                                       core::wrap_tensor(last, core::TensorShape::from_dims({batch, depth_hidden})),
+                                       modules::LinearWeights{head, std::nullopt})
+                                .tensor;
+            // Reserved ids >= codebook size are suppressed by only looking at
+            // the first kCodecCodebookSize logits.
+            ggml_tensor * scores = ggml_view_1d(g, logits, kCodecCodebookSize, 0);
+            if (batch == 2 && key.guidance != 1.0F) {
+                auto * uncond = ggml_view_1d(g, logits, kCodecCodebookSize, logits->nb[1]);
+                scores = ggml_add(g, uncond, ggml_scale(g, ggml_sub(g, scores, uncond), key.guidance));
+            }
+            scores = ggml_scale(g, scores, 1.0F / key.temperature);
+            auto * order = ggml_cont(g, ggml_argsort_top_k(g, scores, candidates));
+            auto * values = ggml_reshape_1d(
+                g, ggml_get_rows(g, ggml_reshape_2d(g, scores, 1, kCodecCodebookSize), order), candidates);
+            if (key.top_p < 1.0F) {
+                // Keep a candidate while the mass strictly before it (sorted
+                // descending) is below top_p, matching HF TopPLogitsWarper.
+                auto * probs = ggml_soft_max(g, values);
+                auto * before = ggml_sub(g, ggml_cumsum(g, probs), probs);
+                auto * keep = ggml_step(g, ggml_scale_bias(g, before, -1.0F, key.top_p));
+                values = ggml_add(g, values, ggml_scale_bias(g, keep, 1.0e30F, -1.0e30F));
+            }
+            auto * noise = ggml_view_1d(g, noise_in_, candidates, static_cast<size_t>(codebook - 1) * noise_in_->nb[1]);
+            auto * choice = ggml_argmax(g, ggml_add(g, values, noise));
+            // Keep the get_rows result itself (not a reshape view) as the output
+            // so its storage is protected from allocator reuse.
+            auto * token = ggml_get_rows(g, ggml_reshape_2d(g, order, 1, candidates), choice);
+            ggml_set_output(token);
+            tokens_out_.push_back(token);
+            if (codebook < steps) {
+                sequence = embed(codebook, token);
+            }
+        }
+
+        graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
+        for (auto * token : tokens_out_) {
+            ggml_build_forward_expand(graph_, token);
+        }
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            throw std::runtime_error("failed to allocate BreezeTTS fused depth graph");
+        }
+        key_ = key;
+        engine::debug::trace_log_scalar("breeze_tts.fused_depth.graph_nodes", static_cast<int64_t>(ggml_graph_n_nodes(graph_)));
+    }
+
+    static constexpr size_t kGraphArenaBytes = 128ull * 1024ull * 1024ull;
+    static constexpr size_t kGraphNodes = 65536;
+
+    ggml_backend_t backend_ = nullptr;
+    core::BackendType backend_type_;
+    int threads_ = 1;
+    BreezeTTSConfig config_;
+    modules::DecoderHiddenConfig hidden_config_;
+    modules::DecoderHiddenWeights hidden_weights_;
+    modules::LinearWeights projector_;
+    core::TensorValue heads_;
+    core::BackendWeightStore store_;
+    core::TensorValue table_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> inputs_ctx_;
+    ggml_backend_buffer_t inputs_buffer_ = nullptr;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx_;
+    ggml_gallocr_t gallocr_ = nullptr;
+    ggml_cgraph * graph_ = nullptr;
+    ggml_tensor * hidden_in_ = nullptr;
+    ggml_tensor * first_token_in_ = nullptr;
+    ggml_tensor * noise_in_ = nullptr;
+    ggml_tensor * positions_in_ = nullptr;
+    std::vector<ggml_tensor *> masks_in_;
+    std::vector<ggml_tensor *> open_masks_in_;
+    std::vector<ggml_tensor *> tokens_out_;
+    std::vector<float> noise_staging_;
+    Key key_;
+};
+
+bool fused_depth_enabled(core::BackendType backend_type) {
+    return backend_type == core::BackendType::Cuda;
+}
+
 }  // namespace
 
 struct BreezeGeneratorRuntime::Impl {
@@ -803,6 +1159,18 @@ struct BreezeGeneratorRuntime::Impl {
             config,
             weights->depth_projector,
             weights->depth_heads);
+        if (fused_depth_enabled(execution.backend_type())) {
+            fused_depth = std::make_unique<BreezeFusedDepthRuntime>(
+                execution.backend(),
+                execution.backend_type(),
+                execution.config().threads,
+                config,
+                depth_runtime_config,
+                *weights);
+        }
+        engine::debug::trace_log_scalar("breeze_tts.fused_depth", fused_depth != nullptr);
+        // Only validated on CUDA; other backends keep releasing them after each request.
+        keep_decode_graphs = execution.backend_type() == core::BackendType::Cuda;
         speech_encoder = std::make_unique<BreezeSpeechEncoderRuntime>(
             this->assets,
             execution,
@@ -902,6 +1270,20 @@ struct BreezeGeneratorRuntime::Impl {
         uint64_t & offset_blocks,
         bool paired_depth = true) {
         const auto & config = assets->config;
+        if (fused_depth != nullptr) {
+            auto frame = fused_depth->run(
+                cond_hidden.data(), uncond_hidden.data(), first_token, request, paired_depth, fallback_rng);
+            // Keep the semantic sampler's torch RNG stream where the per-step
+            // depth sampler would have left it.
+            for (int64_t codebook = 1; codebook < config.num_codebooks; ++codebook) {
+                ++call_index;
+                if (sampling_policy.cuda_fast_path) {
+                    offset_blocks += sampling::torch_cuda_tensor_iterator_offset_blocks(
+                        static_cast<uint64_t>(config.vocab_size), sampling_policy);
+                }
+            }
+            return frame;
+        }
         std::vector<int32_t> frame;
         frame.reserve(static_cast<size_t>(config.num_codebooks));
         frame.push_back(first_token);
@@ -1336,20 +1718,21 @@ struct BreezeGeneratorRuntime::Impl {
         double backbone_cond_prefill_ms = 0.0;
         double backbone_uncond_prefill_ms = 0.0;
         const double ar_ms = engine::debug::measure_ms([&] {
-            modules::CausalDecoderPrefillResult cond;
+            // Prefill straight into the decode cache, as the streaming path does.
+            // Exporting the KV state to host floats and importing it back costs
+            // about half a second per request (zero-fill plus conversion of the whole cache).
+            modules::CausalDecoderPrefillIntoDecodeResult cond;
             backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
-                cond = backbone_cond->prefill_embeddings(cond_embeddings, cond_steps);
+                cond = backbone_cond->prefill_embeddings_into_decode_cache(
+                    cond_embeddings, cond_steps, cond_steps + request.max_tokens);
             });
-            std::optional<modules::CausalDecoderPrefillResult> uncond;
+            std::optional<modules::CausalDecoderPrefillIntoDecodeResult> uncond;
             if (use_cfg) {
                 uncond.emplace();
                 backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
-                    *uncond = backbone_uncond->prefill_embeddings(uncond_embeddings, uncond_steps);
+                    *uncond = backbone_uncond->prefill_embeddings_into_decode_cache(
+                        uncond_embeddings, uncond_steps, uncond_steps + request.max_tokens);
                 });
-            }
-            backbone_cond->start_decode_embeddings(cond.state, cond_steps + request.max_tokens);
-            if (use_cfg) {
-                backbone_uncond->start_decode_embeddings(uncond->state, uncond_steps + request.max_tokens);
             }
 
             sampling::HfSamplerScratch scratch;
@@ -1439,11 +1822,15 @@ struct BreezeGeneratorRuntime::Impl {
         engine::debug::timing_log_scalar("breeze_tts.ar.backbone_uncond_prefill_ms", backbone_uncond_prefill_ms);
         engine::debug::timing_log_scalar("breeze_tts.ar.backbone_cond_decode_ms", backbone_cond_decode_ms);
         engine::debug::timing_log_scalar("breeze_tts.ar.backbone_uncond_decode_ms", backbone_uncond_decode_ms);
-        backbone_cond->release_runtime_graphs();
-        if (use_cfg) {
-            backbone_uncond->release_runtime_graphs();
+        // On CUDA the backbone and depth graphs stay resident for the next request,
+        // which reuses them whenever its cache capacity fits.
+        if (!keep_decode_graphs) {
+            backbone_cond->release_runtime_graphs();
+            if (use_cfg) {
+                backbone_uncond->release_runtime_graphs();
+            }
+            depth_pair->release_runtime_graphs();
         }
-        depth_pair->release_runtime_graphs();
         if (codes.empty()) {
             throw std::runtime_error("BreezeTTS generated no audio codes");
         }
@@ -1477,6 +1864,7 @@ struct BreezeGeneratorRuntime::Impl {
     std::unique_ptr<modules::CausalDecoderRuntime> backbone_uncond;
     std::unique_ptr<modules::CausalDecoderRuntime> depth_pair;
     std::unique_ptr<BreezeDepthProjectionRuntime> depth_projection;
+    std::unique_ptr<BreezeFusedDepthRuntime> fused_depth;
     std::unique_ptr<BreezeSpeechEncoderRuntime> speech_encoder;
     std::unique_ptr<BreezeSpeechDecoderRuntime> speech_decoder;
     runtime::StreamingAudioController<int32_t> stream_audio_;
@@ -1488,6 +1876,7 @@ struct BreezeGeneratorRuntime::Impl {
     std::vector<float> depth_logits_staging_;
     std::vector<float> depth_cond_hidden_now_;
     std::vector<float> depth_uncond_hidden_now_;
+    bool keep_decode_graphs = false;
 };
 
 BreezeGeneratorRuntime::BreezeGeneratorRuntime(
