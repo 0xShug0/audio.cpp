@@ -2,6 +2,7 @@
 
 #include "engine/framework/modules/weight_binding.h"
 
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -198,14 +199,33 @@ MiniMaxMusic3Qwen3GlobalLMWeights load_minimax_music3_global_lm_weights(
         out.qwen.stack.layers.push_back(load_qwen_layer(*out.store, source, config, storage_type, layer));
     }
     out.qwen.final_norm = binding::norm_weight_from_source(*out.store, source, "model.norm", config.hidden_size);
-    out.qwen.lm_head = binding::linear_from_source(
-        *out.store,
-        source,
-        "lm_head",
-        storage_type,
-        lm_head_rows,
-        config.hidden_size,
-        false);
+    if (out.lm_head_layout == MiniMaxMusic3LmHeadLayout::FullVocab) {
+        const MiniMaxMusic3Prompt prompt;
+        if (config.vocab_size < prompt.audio_code_offset + prompt.semantic_vocab_size ||
+            config.vocab_size <= prompt.audio_end_token_id) {
+            throw std::runtime_error("MiniMax Music 3 LM head does not cover its semantic/EOS token range");
+        }
+        const auto head = source.require_tensor("lm_head.weight", storage_type, {config.vocab_size, config.hidden_size});
+        const size_t row_bytes = ggml_row_size(head.type, config.hidden_size);
+        std::vector<std::byte> compact(static_cast<size_t>(prompt.semantic_vocab_size + 1) * row_bytes);
+        std::memcpy(compact.data(), head.bytes.data() + static_cast<size_t>(prompt.audio_code_offset) * row_bytes,
+                    static_cast<size_t>(prompt.semantic_vocab_size) * row_bytes);
+        std::memcpy(compact.data() + static_cast<size_t>(prompt.semantic_vocab_size) * row_bytes,
+                    head.bytes.data() + static_cast<size_t>(prompt.audio_end_token_id) * row_bytes, row_bytes);
+        out.qwen.lm_head = {out.store->make_tensor(
+            core::TensorShape::from_dims({prompt.semantic_vocab_size + 1, config.hidden_size}),
+            head.type, compact.data(), compact.size()), std::nullopt};
+        out.lm_head_layout = MiniMaxMusic3LmHeadLayout::SemanticCompactV1;
+    } else {
+        out.qwen.lm_head = binding::linear_from_source(
+            *out.store,
+            source,
+            "lm_head",
+            storage_type,
+            lm_head_rows,
+            config.hidden_size,
+            false);
+    }
     out.store->upload();
     assets.language_model_weights->release_storage();
     return out;
