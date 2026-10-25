@@ -1,0 +1,18 @@
+[package]
+name = "earshot_reference"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Upstream reference for tests/earshot_vad/check_parity.py; not part of the CMake build.
+# The network and weights match the 1.2.2 crate; `segments()` is only on main so far.
+[dependencies]
+earshot = { git = "https://github.com/pykeio/earshot", rev = "ffd32d426f556c55a8c84490c12745743ee4bd79" }
+hound = "3.5"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[workspace]

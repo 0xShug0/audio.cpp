@@ -809,6 +809,23 @@ audiocpp_add_model(pulsevad
         engine::models::pulsevad::make_pulsevad_loader
 )
 
+# Earshot VAD: plain C++ port with bundled weights (assets/framework/models/earshot_vad).
+audiocpp_add_model(earshot_vad
+    SOURCES
+        src/community_models/earshot_vad/runtime.cpp
+        src/community_models/earshot_vad/session.cpp
+    INCLUDES
+        engine/community_models/earshot_vad/session.h
+    LOADERS
+        engine::community_models::earshot_vad::make_earshot_vad_loader
+    ALIASES
+        earshot
+)
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # Keep multiply-add rounding identical to the Rust reference.
+    set_source_files_properties(src/community_models/earshot_vad/runtime.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+
 audiocpp_add_model(smart_turn
     SOURCES
         src/models/smart_turn/runtime.cpp
@@ -3263,6 +3280,11 @@ if (ENGINE_ENABLE_OPENMP)
 endif()
 
 if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
+    if (earshot_vad IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(earshot_vad_probe tests/earshot_vad/probe.cpp)
+        target_link_libraries(earshot_vad_probe PRIVATE engine_runtime ggml)
+    endif()
+
     if (firered_vad IN_LIST AUDIOCPP_LINKED_MODELS)
         add_executable(firered_vad_probe tests/firered_vad/probe.cpp)
         target_link_libraries(firered_vad_probe PRIVATE engine_runtime ggml)
@@ -3848,6 +3870,19 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
         add_test(NAME audio_chunking_test COMMAND audio_chunking_test)
+
+        if (earshot_vad IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(earshot_vad_test tests/unittests/test_earshot_vad.cpp)
+            target_compile_definitions(earshot_vad_test PRIVATE
+                ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+                ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+            )
+            add_test(NAME earshot_vad_test COMMAND earshot_vad_test)
+            # Same checks with the SSE2 minGRU kernel instead of AVX2.
+            add_test(NAME earshot_vad_baseline_test COMMAND earshot_vad_test)
+            set_tests_properties(earshot_vad_baseline_test PROPERTIES ENVIRONMENT "AUDIOCPP_EARSHOT_BASELINE=1")
+        endif()
+
         add_engine_unittest(partial_text_test tests/unittests/test_partial_text.cpp)
         add_test(NAME partial_text_test COMMAND partial_text_test)
         add_engine_unittest(streaming_audio_test tests/unittests/test_streaming_audio.cpp)

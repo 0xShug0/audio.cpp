@@ -28,6 +28,7 @@ SPECS_DIR = REPO_ROOT / "model_specs"
 _LOADER_CALL_RE = re.compile(r"\bmake_([a-z0-9_]+)_loader(?:\s*\(\s*\))?")
 
 BUNDLED_LOADERS_WITHOUT_SPEC = {
+    "earshot_vad",
     "marblenet_vad",
     "silero_vad",
 }

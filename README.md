@@ -141,6 +141,7 @@ Model weights keep the license of their original release, which is separate from
 | **micro_wake_word** | Wake | model dependent | microWakeWord MixedNet TFLite models converted to GGUF | GGUF F32, Stream |
 | **ming3_audio** | ASR, Understanding, TTS, Clone, S2S | zh, en | Ming 3.0 Audio Tiny | GGUF BF16/Q8_0/Q4_K |
 | **open_wake_word** | Wake | en | OpenWakeWord Alexa | GGUF F32, Stream |
+| **earshot_vad** | VAD | lang agnostic | Earshot VAD (native C++ port) | Bundled, Stream |
 | **firered_vad** | VAD | lang agnostic | FireRed VAD / Stream-VAD | GGUF F32/F16/Q8, Stream |
 | **pulsevad** | VAD | lang agnostic | PulseVAD 2.1K Student / 81K Teacher | GGUF F32 |
 | **moonshine_asr** | ASR | en | Moonshine Streaming Tiny/Small/Medium | GGUF Q8, Stream |
