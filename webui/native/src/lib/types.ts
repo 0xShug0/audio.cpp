@@ -39,6 +39,7 @@ export interface CatalogEntry {
 
 export interface ParamSpec {
   name: string;
+  group?: 'lora';
   type: 'slider' | 'number' | 'bool' | 'text' | 'choice';
   scope?: 'request' | 'session';
   session_option?: string;

@@ -2,6 +2,7 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { jsonRequest, loadModel, models, runTask, unloadModel, uploadFile } from '$lib/api';
   import MediaPreview from '$lib/MediaPreview.svelte';
+  import LoraGroup from '$lib/LoraGroup.svelte';
   import type { Translator } from '$lib/i18n';
   import type { CatalogEntry, LoadedModel, ParamSpec, ServerHealth } from '$lib/types';
 
@@ -304,8 +305,10 @@
     {/each}
   </div>
 
+  {#if specByName('ar_lora') || specByName('nar_lora')}
+  <LoraGroup selected={Number(Boolean(advancedValues.ar_lora)) + Number(Boolean(advancedValues.nar_lora))}>
   {#if specByName('ar_lora')}
-    <div class="yue2-grid">
+    <div class="lora-fields">
       <div class="yue2-field">
         <label for="param-ar_lora">AR LoRA adapter</label>
         <input id="param-ar_lora" type="text" placeholder="Server path (.safetensors)"
@@ -339,7 +342,7 @@
   {/if}
 
   {#if specByName('nar_lora')}
-    <div class="yue2-grid">
+    <div class="lora-fields">
       <div class="yue2-field">
         <label for="param-nar_lora">NAR LoRA adapter</label>
         <input id="param-nar_lora" type="text" placeholder="Server path (.safetensors)"
@@ -368,9 +371,12 @@
               setNamedParameter('nar_lora_scale', event.currentTarget.valueAsNumber);
             }
           }} />
-        <small>Scales the LoRA deltas only; any full vae2llm/llm2vae projection replacement in the adapter stays at full strength.</small>
       </div>
     </div>
+    <small>Scales the LoRA deltas only; any full vae2llm/llm2vae projection replacement in the adapter stays at full strength.</small>
+  {/if}
+
+  </LoraGroup>
   {/if}
 
   <div class="yue2-grid yue2-grid-core">

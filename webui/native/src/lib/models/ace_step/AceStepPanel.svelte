@@ -2,6 +2,7 @@
   import { runTask } from '$lib/api';
   import type { Translator } from '$lib/i18n';
   import type { ParamSpec } from '$lib/types';
+  import LoraGroup from '$lib/LoraGroup.svelte';
 
   export let modelId: string;
   export let text = '';
@@ -23,6 +24,7 @@
   export let requestOptions: () => Record<string, unknown>;
   export let resolveRequestSeed: (value: number) => number;
   export let setParameterValue: (spec: ParamSpec, value: unknown) => void;
+  export let onBrowseAdapter: (spec: ParamSpec) => void;
   export let log: (message: string) => void;
   export let tr: Translator;
 
@@ -101,15 +103,18 @@
 </div>
 
 {#if loraSpec && scaleSpec}
-  <details>
-    <summary>LoRA <span>{advancedValues.lora ? 'Selected' : 'None'}</span></summary>
+  <LoraGroup selected={advancedValues.lora ? 1 : 0}>
     <div class="lora-fields">
       <div>
         <label for="ace-lora">Adapter path <span>{tr('request.optional')}</span></label>
-        <input id="ace-lora" type="text" disabled={busy || rewritingCaption || !adapterEditable}
-          title={adapterEditable ? '' : 'Set adapter session options in the server configuration.'}
-          value={String(advancedValues.lora ?? '')} placeholder="Server adapter file or PEFT directory"
-          on:input={(event) => setParameterValue(loraSpec, event.currentTarget.value.trim())} />
+        <div class="lora-path">
+          <input id="ace-lora" type="text" disabled={busy || rewritingCaption || !adapterEditable}
+            title={adapterEditable ? '' : 'Set adapter session options in the server configuration.'}
+            value={String(advancedValues.lora ?? '')} placeholder="Server adapter file or PEFT directory"
+            on:input={(event) => setParameterValue(loraSpec, event.currentTarget.value.trim())} />
+          <button type="button" disabled={busy || rewritingCaption || !adapterEditable}
+            on:click={() => onBrowseAdapter(loraSpec)}>Browse folder</button>
+        </div>
       </div>
       <div>
         <label for="ace-lora-scale">LoRA strength</label>
@@ -119,13 +124,8 @@
             if (Number.isFinite(event.currentTarget.valueAsNumber)) setParameterValue(scaleSpec, event.currentTarget.valueAsNumber);
           }} />
       </div>
-      <button type="button" disabled={busy || rewritingCaption || !adapterEditable || !advancedValues.lora}
-        on:click={() => setParameterValue(loraSpec, '')}>Clear adapter</button>
     </div>
-  </details>
+    <button type="button" disabled={busy || rewritingCaption || !adapterEditable || !advancedValues.lora}
+      on:click={() => setParameterValue(loraSpec, '')}>Clear adapter</button>
+  </LoraGroup>
 {/if}
-
-<style>
-  .lora-fields { display: grid; gap: 12px; padding: 12px; }
-  .lora-fields button { justify-self: start; }
-</style>

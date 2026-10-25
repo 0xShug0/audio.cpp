@@ -19,6 +19,7 @@ interface PackageSpec {
   packages?: Array<Omit<PackageEntry, 'family'>>;
   options?: {
     request?: Array<{ name: string; required?: boolean }>;
+    session?: Array<{ name: string; description?: string; default?: unknown; min?: number; max?: number }>;
   };
   ui?: {
     builtin_voices?: string[];
@@ -406,6 +407,20 @@ export const parameterCatalog = Object.fromEntries(
       }))
     ])
 ) as Record<string, ParamSpec[]>;
+
+for (const [family, spec] of specsByFamily) {
+  const adapter = spec.options?.session?.find((option) => option.name === 'lora');
+  const strength = spec.options?.session?.find((option) => option.name === 'lora_scale');
+  const controls = parameterCatalog[family] || [];
+  if (!adapter || !strength || controls.some((control) => control.session_option === `${family}.lora`)) continue;
+  parameterCatalog[family] = [...controls,
+    { name: 'lora', group: 'lora', scope: 'session', session_option: `${family}.lora`,
+      type: 'text', label: 'Adapter path', default: '', info: adapter.description },
+    { name: 'lora_scale', group: 'lora', scope: 'session', session_option: `${family}.lora_scale`,
+      type: 'number', label: 'Strength', default: strength.default ?? '',
+      minimum: strength.min, maximum: strength.max, step: 0.1, info: strength.description }
+  ];
+}
 
 export const taskLabels: Record<string, string> = {
   tts: 'Text to speech',
