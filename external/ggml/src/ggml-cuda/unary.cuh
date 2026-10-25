@@ -98,6 +98,13 @@ void ggml_cuda_op_unary_mul(ggml_backend_cuda_context & ctx, ggml_tensor * unary
 
 void ggml_cuda_op_relu_sqr(ggml_backend_cuda_context & ctx, ggml_tensor * relu_node, ggml_tensor * sqr_node);
 
+// ADD -> ROUND_BF16 on same-shape contiguous f32 operands.
+void ggml_cuda_op_add_round_bf16(ggml_backend_cuda_context & ctx, ggml_tensor * add_node, ggml_tensor * round_node);
+
+// ROUND_BF16(gate) -> SILU -> ROUND_BF16, ROUND_BF16(up), MUL -> ROUND_BF16; gate/up may be strided views.
+void ggml_cuda_op_swiglu_round_bf16(ggml_backend_cuda_context & ctx, const ggml_tensor * gate, const ggml_tensor * up,
+                                    ggml_tensor * dst);
+
 __device__ __forceinline__ float ggml_cuda_op_silu_single(float x) {
     return x / (1.0f + expf(-x));
 }

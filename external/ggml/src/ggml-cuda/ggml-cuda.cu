@@ -4245,6 +4245,69 @@ static bool ggml_cuda_safe_bias_fusion(const ggml_cgraph * graph, int i) {
 }
 #endif
 
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+// bf16-reference graphs (see ggml_round_bf16) insert a ROUND_BF16 after most
+// activations, which breaks the usual fusion patterns. These helpers match the
+// rounding that directly follows a fusable op so it can run in that op's kernel.
+static bool ggml_cuda_is_round_bf16_of(const ggml_cgraph * cgraph, int idx, const ggml_tensor * src) {
+    if (idx >= cgraph->n_nodes) {
+        return false;
+    }
+    const ggml_tensor * node = cgraph->nodes[idx];
+    return node->op == GGML_OP_UNARY && ggml_get_unary_op(node) == GGML_UNARY_OP_ROUND_BF16 &&
+           (node->flags & GGML_TENSOR_FLAG_COMPUTE) && node->src[0] == src &&
+           node->type == GGML_TYPE_F32 && ggml_is_contiguous(node);
+}
+
+// Intermediate that is consumed only inside the fused chain and is not a requested output.
+static bool ggml_cuda_is_elidable(const ggml_cgraph * cgraph, int idx) {
+    return (cgraph->nodes[idx]->flags & GGML_TENSOR_FLAG_COMPUTE) && ggml_node_has_n_uses(cgraph, idx, 1);
+}
+
+static bool ggml_cuda_ranges_overlap(const ggml_tensor * a, const ggml_tensor * b) {
+    const uintptr_t a0 = reinterpret_cast<uintptr_t>(a->data);
+    const uintptr_t b0 = reinterpret_cast<uintptr_t>(b->data);
+    return a0 < b0 + ggml_nbytes(b) && b0 < a0 + ggml_nbytes(a);
+}
+
+// ROUND(gate) -> SILU -> ROUND, [VIEW up], ROUND(up) -> MUL -> ROUND starting at node i.
+static bool ggml_cuda_can_fuse_swiglu_round_bf16(const ggml_cgraph * cgraph, int i) {
+    if (i + 6 >= cgraph->n_nodes) {
+        return false;
+    }
+    const ggml_tensor * round_gate = cgraph->nodes[i];
+    const ggml_tensor * silu       = cgraph->nodes[i + 1];
+    const ggml_tensor * round_silu = cgraph->nodes[i + 2];
+    const ggml_tensor * up_view    = cgraph->nodes[i + 3];
+    const ggml_tensor * round_up   = cgraph->nodes[i + 4];
+    const ggml_tensor * mul        = cgraph->nodes[i + 5];
+    if (round_gate->op != GGML_OP_UNARY || ggml_get_unary_op(round_gate) != GGML_UNARY_OP_ROUND_BF16 ||
+        silu->op != GGML_OP_UNARY || ggml_get_unary_op(silu) != GGML_UNARY_OP_SILU || silu->src[0] != round_gate ||
+        !ggml_cuda_is_round_bf16_of(cgraph, i + 2, silu) || up_view->op != GGML_OP_VIEW ||
+        !ggml_cuda_is_round_bf16_of(cgraph, i + 4, up_view) || mul->op != GGML_OP_MUL ||
+        !((mul->src[0] == round_silu && mul->src[1] == round_up) ||
+          (mul->src[0] == round_up && mul->src[1] == round_silu)) ||
+        !ggml_cuda_is_round_bf16_of(cgraph, i + 6, mul)) {
+        return false;
+    }
+    for (int idx : { i, i + 1, i + 2, i + 4, i + 5 }) {
+        if (!ggml_cuda_is_elidable(cgraph, idx)) {
+            return false;
+        }
+    }
+    const ggml_tensor * gate = round_gate->src[0];
+    const ggml_tensor * up   = up_view;
+    const ggml_tensor * dst  = cgraph->nodes[i + 6];
+    if (gate->type != GGML_TYPE_F32 || up->type != GGML_TYPE_F32 || silu->type != GGML_TYPE_F32 ||
+        mul->type != GGML_TYPE_F32 || gate->nb[0] != sizeof(float) || up->nb[0] != sizeof(float) ||
+        !ggml_are_same_shape(gate, up) || !ggml_are_same_shape(gate, dst) || !ggml_are_same_shape(mul, dst)) {
+        return false;
+    }
+    // The fused kernel reads gate/up while writing dst; they must not alias.
+    return !ggml_cuda_ranges_overlap(dst, gate) && !ggml_cuda_ranges_overlap(dst, up);
+}
+#endif
+
 // try and fuse nodes and return the number of nodes to skip
 static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, int i) {
 
@@ -4290,6 +4353,36 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
             ggml_cuda_op_bias_residual(*cuda_ctx, node, activation->src[0], activation);
             return 2;
         }
+    }
+
+    // bf16-reference rounding folded into the producing kernel.
+    if (node->op == GGML_OP_RMS_NORM && ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL }, {}) &&
+        ggml_cuda_is_elidable(cgraph, i + 1) && ggml_cuda_is_round_bf16_of(cgraph, i + 2, cgraph->nodes[i + 1])) {
+        const int outputs[] = { i + 2 };
+        if (ggml_cuda_check_fusion_memory_ranges(cgraph, i, 3, outputs, 1)) {
+            ggml_cuda_op_rms_norm_fused(*cuda_ctx, node, cgraph->nodes[i + 1], cgraph->nodes[i + 2]);
+            return 2;
+        }
+    }
+    if (node->op == GGML_OP_ADD && ggml_cuda_is_elidable(cgraph, i) && ggml_cuda_is_round_bf16_of(cgraph, i + 1, node) &&
+        node->type == GGML_TYPE_F32 && node->src[0]->type == GGML_TYPE_F32 && node->src[1]->type == GGML_TYPE_F32 &&
+        ggml_is_contiguous(node->src[0]) && ggml_is_contiguous(node->src[1]) &&
+        ggml_are_same_shape(node->src[0], node) && ggml_are_same_shape(node->src[1], node)) {
+        // Element-wise: an exact in-place alias of an operand is safe, a shifted overlap is not.
+        const ggml_tensor * dst = cgraph->nodes[i + 1];
+        bool safe = true;
+        for (const ggml_tensor * src : { node->src[0], node->src[1] }) {
+            safe = safe && (!ggml_cuda_ranges_overlap(dst, src) || dst->data == src->data);
+        }
+        if (safe) {
+            ggml_cuda_op_add_round_bf16(*cuda_ctx, node, cgraph->nodes[i + 1]);
+            return 1;
+        }
+    }
+    if (node->op == GGML_OP_UNARY && ggml_get_unary_op(node) == GGML_UNARY_OP_ROUND_BF16 &&
+        ggml_cuda_can_fuse_swiglu_round_bf16(cgraph, i)) {
+        ggml_cuda_op_swiglu_round_bf16(*cuda_ctx, node->src[0], cgraph->nodes[i + 3], cgraph->nodes[i + 6]);
+        return 6;
     }
 
 #endif
