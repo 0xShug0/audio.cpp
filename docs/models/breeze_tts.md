@@ -100,6 +100,9 @@ audiocpp_cli \
 | `breeze_tts.attention` | `auto`, `flash`, `eager` | `auto` | Attention kernel. `auto` uses flash except on Volta/Turing GPUs (e.g. V100), where it falls back to eager to avoid missing MMA kernels. |
 | `breeze_tts.bf16_activations` | `auto`, `on`, `off` | `auto` | Reference bf16 activation rounding (and, on Metal, the bf16 KV cache). `auto` is on for CUDA/HIP/Vulkan and off on Metal; see [Metal and the reference bf16 path](#metal-and-the-reference-bf16-path). |
 | `weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Weight storage type; quantized types convert at load time from the BF16 package. |
+| `breeze_tts.perf_mode` | `off`, `cuda_perf` | `off` | CUDA decode preset; see [CUDA performance preset](#cuda-performance-preset). |
+| `breeze_tts.fused_depth` | `true`, `false` | `false` | One CUDA graph per frame for the depth codebooks, with device sampling. |
+| `breeze_tts.keep_decode_graphs` | `true`, `false` | `false` | Keep decode graphs resident between requests on CUDA. |
 
 For long-form generation without reference audio, the first text chunk's generated
 audio codes and text serve as a fixed voice reference for subsequent chunks. This
@@ -142,6 +145,25 @@ and HIP alike: `q8_0` cut the fixed 100-token regression case from RTF ~1.5 to
 voice-design regression cases. Counter to intuition, fp32 is the one
 configuration known to be *worse* for this model (mispronunciations and
 runaway repetition), because the model is trained and tuned in bf16.
+
+## CUDA performance preset
+
+`breeze_tts.perf_mode` defaults to `off`. The opt-in `cuda_perf` preset sets
+the following defaults; explicit session options override the preset. Both
+controls apply to CUDA only and are ignored on other backends.
+
+| Session option | `off` | `cuda_perf` | Effect |
+|---|---|---|---|
+| `breeze_tts.fused_depth` | `false` | `true` | Decodes the 15 residual codebooks of a frame in one CUDA graph. CFG mixing, temperature, top-k/top-p and sampling run on the device, and only the sampled tokens return to the host. |
+| `breeze_tts.keep_decode_graphs` | `false` | `true` | Keeps the backbone and depth decode graphs resident between requests and reuses them when the cache capacity fits. |
+
+The fused depth graph samples from the same distribution as the per-codebook
+path but uses its own random stream, so sampled audio differs from `off` for
+the same seed. `keep_decode_graphs` does not change output.
+
+```text
+--session-option breeze_tts.perf_mode=cuda_perf
+```
 
 ## Metal and the reference bf16 path
 

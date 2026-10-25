@@ -207,6 +207,28 @@
         "required": false,
         "values": ["auto", "on", "off"],
         "default": "auto"
+      },
+      {
+        "name": "perf_mode",
+        "type": "enum",
+        "description": "CUDA AR decode preset. cuda_perf enables the fused depth graph and keeps decode graphs resident between requests; off keeps both disabled. Other backends ignore both. Explicit session options override the preset.",
+        "required": false,
+        "values": ["off", "cuda_perf"],
+        "default": "off"
+      },
+      {
+        "name": "fused_depth",
+        "type": "bool",
+        "description": "Decode each frame's depth codebooks in one CUDA graph with device-side CFG mixing and sampling. Device sampling uses a different random stream, so sampled output differs from the per-codebook path. CUDA only.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "keep_decode_graphs",
+        "type": "bool",
+        "description": "Keep the backbone and depth decode graphs resident between requests instead of releasing them after each one; output is unchanged. CUDA only.",
+        "required": false,
+        "default": false
       }
     ],
     "load": []

@@ -41,6 +41,15 @@ enum class Bf16ActivationMode {
     Off,
 };
 
+// Opt-in CUDA performance paths; breeze_tts.perf_mode=cuda_perf enables both.
+// Other backends ignore them.
+struct BreezePerfOptions {
+    // Decode each frame's depth codebooks in one graph with device sampling.
+    bool fused_depth = false;
+    // Keep the backbone and depth decode graphs resident between requests.
+    bool keep_decode_graphs = false;
+};
+
 class BreezeGeneratorRuntime {
 public:
     BreezeGeneratorRuntime(
@@ -50,7 +59,8 @@ public:
         size_t weight_context_bytes,
         engine::assets::TensorStorageType storage_type,
         engine::core::AttentionPreference attention_preference = engine::core::AttentionPreference::Auto,
-        Bf16ActivationMode bf16_activations = Bf16ActivationMode::Auto);
+        Bf16ActivationMode bf16_activations = Bf16ActivationMode::Auto,
+        BreezePerfOptions perf = {});
     ~BreezeGeneratorRuntime();
 
     engine::runtime::AudioBuffer generate(

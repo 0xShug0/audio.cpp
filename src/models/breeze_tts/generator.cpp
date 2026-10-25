@@ -443,6 +443,9 @@ struct BreezeWeights {
     modules::CausalDecoderRuntimeWeights backbone;
     modules::CausalDecoderRuntimeWeights depth;
     std::vector<float> audio_embedding;
+    // backbone.token_embedding holds exactly the audio_embedding values (stored
+    // unconverted as f32/f16/bf16), so device code can embed from it directly.
+    bool token_embedding_exact = false;
     modules::LinearWeights depth_projector;
     core::TensorValue depth_heads;
 };
@@ -512,6 +515,12 @@ std::shared_ptr<const BreezeWeights> load_weights(
     out->depth.final_norm = binding::norm_weight_from_source(*out->store, source, "depth_decoder.model.norm", config.depth_hidden_size);
 
     out->audio_embedding = source.require_f32("depth_decoder.model.embed_tokens.weight", {config.num_codebooks * config.vocab_size, config.hidden_size});
+    {
+        const ggml_type type = out->backbone.token_embedding.type;
+        const bool float_type = type == GGML_TYPE_F32 || type == GGML_TYPE_F16 || type == GGML_TYPE_BF16;
+        out->token_embedding_exact = float_type &&
+            assets::ggml_type_for_tensor_dtype(source.require_metadata("depth_decoder.model.embed_tokens.weight").dtype) == type;
+    }
     out->depth_projector = {
         out->store->load_f32_tensor(
             source,
@@ -814,14 +823,25 @@ public:
         hidden_config_.stack = depth_runtime_config.decoder.stack;
         hidden_config_.hidden_mode = depth_runtime_config.decoder.logits_mode;
         hidden_config_.static_cache_type = depth_runtime_config.decoder.static_cache_type;
+        // Codebooks after the first attend over the K/V carried in the graph; use
+        // the same flash attention as the per-codebook path's cached decode.
+        if (hidden_config_.stack.runtime.attention.prefill_mode == modules::DecoderAttentionMode::FlashGroupedViewKV) {
+            hidden_config_.stack.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::FlashWithPrefix;
+        }
         hidden_weights_.stack = weights.depth.stack;
         hidden_weights_.final_norm = weights.depth.final_norm;
-        // The CPU path embeds from the f32 table; keep the same values on the
-        // device (quantized tables like Q4_K have no CUDA get_rows kernel).
-        table_ = store_.make_f32(
-            core::TensorShape::from_dims({config_.num_codebooks * config_.vocab_size, config_.hidden_size}),
-            weights.audio_embedding);
-        store_.upload();
+        // The CPU path embeds from the f32 table. Reuse the device copy when it
+        // holds the same values; otherwise upload the f32 table (quantized tables
+        // like Q4_K have no CUDA get_rows kernel).
+        if (weights.token_embedding_exact) {
+            table_ = weights.backbone.token_embedding;
+        } else {
+            table_ = store_.make_f32(
+                core::TensorShape::from_dims({config_.num_codebooks * config_.vocab_size, config_.hidden_size}),
+                weights.audio_embedding);
+            store_.upload();
+        }
+        engine::debug::trace_log_scalar("breeze_tts.fused_depth.shared_embedding", weights.token_embedding_exact);
     }
 
     ~BreezeFusedDepthRuntime() {
@@ -1106,10 +1126,6 @@ private:
     Key key_;
 };
 
-bool fused_depth_enabled(core::BackendType backend_type) {
-    return backend_type == core::BackendType::Cuda;
-}
-
 }  // namespace
 
 struct BreezeGeneratorRuntime::Impl {
@@ -1120,7 +1136,8 @@ struct BreezeGeneratorRuntime::Impl {
         size_t weight_context_bytes,
         assets::TensorStorageType storage_type,
         core::AttentionPreference attention_preference = core::AttentionPreference::Auto,
-        Bf16ActivationMode bf16_activations = Bf16ActivationMode::Auto)
+        Bf16ActivationMode bf16_activations = Bf16ActivationMode::Auto,
+        BreezePerfOptions perf = {})
         : assets(std::move(assets)),
           execution(execution),
           tokenizer(this->assets),
@@ -1159,7 +1176,11 @@ struct BreezeGeneratorRuntime::Impl {
             config,
             weights->depth_projector,
             weights->depth_heads);
-        if (fused_depth_enabled(execution.backend_type())) {
+        // Both performance paths are opt-in and only validated on CUDA; other
+        // backends keep the per-codebook depth path and release the decode graphs
+        // after each request.
+        const bool cuda = execution.backend_type() == core::BackendType::Cuda;
+        if (cuda && perf.fused_depth) {
             fused_depth = std::make_unique<BreezeFusedDepthRuntime>(
                 execution.backend(),
                 execution.backend_type(),
@@ -1169,8 +1190,8 @@ struct BreezeGeneratorRuntime::Impl {
                 *weights);
         }
         engine::debug::trace_log_scalar("breeze_tts.fused_depth", fused_depth != nullptr);
-        // Only validated on CUDA; other backends keep releasing them after each request.
-        keep_decode_graphs = execution.backend_type() == core::BackendType::Cuda;
+        keep_decode_graphs = cuda && perf.keep_decode_graphs;
+        engine::debug::trace_log_scalar("breeze_tts.keep_decode_graphs", keep_decode_graphs);
         speech_encoder = std::make_unique<BreezeSpeechEncoderRuntime>(
             this->assets,
             execution,
@@ -1886,7 +1907,8 @@ BreezeGeneratorRuntime::BreezeGeneratorRuntime(
     size_t weight_context_bytes,
     engine::assets::TensorStorageType storage_type,
     engine::core::AttentionPreference attention_preference,
-    Bf16ActivationMode bf16_activations)
+    Bf16ActivationMode bf16_activations,
+    BreezePerfOptions perf)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
@@ -1894,7 +1916,8 @@ BreezeGeneratorRuntime::BreezeGeneratorRuntime(
           weight_context_bytes,
           storage_type,
           attention_preference,
-          bf16_activations)) {}
+          bf16_activations,
+          perf)) {}
 
 BreezeGeneratorRuntime::~BreezeGeneratorRuntime() = default;
 
