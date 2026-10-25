@@ -44,6 +44,17 @@ Use `--session-option` on the CLI, or the same keys in a server model's
 they do not add inference graph operations or modify the base files.
 Pre-v1 GGUF packages still require a current external or compiled model spec.
 
+In Studio, the **LoRA adapter** group provides a server-side adapter path and
+strength for Qwen3-TTS/ASR, VoxCPM1/2, Fish Audio, CosyVoice3, F5-TTS, OuteTTS,
+and VibeVoice. **Browse folder** selects an adapter directory on the server;
+individual checkpoint paths can also be entered. Keep required configuration
+and sidecar files beside the adapter.
+Changing or clearing an adapter reloads the model before the next generation;
+clearing it restores the base model. A blank strength uses the model's adapter
+default. Models configured by the server show these settings read-only; edit
+their `session_options` in the server config. ACE-Step and YuE2 use the same
+group style; YuE2 retains separate AR/NAR adapters and upload controls.
+
 ```bash
 audiocpp_cli --family qwen3_asr --task asr --model base.gguf \
   --backend cuda --audio speech.wav \

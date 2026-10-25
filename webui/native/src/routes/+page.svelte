@@ -34,6 +34,7 @@
   import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
   import MediaPreview from '$lib/MediaPreview.svelte';
+  import LoraControls from '$lib/LoraControls.svelte';
   import VoicePicker from '$lib/VoicePicker.svelte';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
@@ -158,6 +159,7 @@
   let folderBrowserLoading = false;
   let folderBrowserError = '';
   let folderBrowser: DirectoryBrowserResponse | null = null;
+  let folderBrowserTarget: ParamSpec | null = null;
   let installPoll: number | null = null;
   let selectedPackageIds: Record<string, string> = {};
   let packageSizes: Record<string, ModelPackageSize> = {};
@@ -302,11 +304,12 @@
 
   function setParameterValue(spec: ParamSpec, value: unknown) {
     advancedValues = { ...advancedValues, [spec.name]: value };
-    if (selected?.family === 'ace_step' && spec.name === 'lora' && value === '') {
+    if ((selected?.family === 'ace_step' || spec.group === 'lora') && spec.name === 'lora' && value === '') {
       importedSessionOptions = { ...importedSessionOptions };
-      delete importedSessionOptions['ace_step.lora'];
+      delete importedSessionOptions[spec.session_option || `${selected.family}.lora`];
+      if (spec.group === 'lora') delete importedSessionOptions[`${selected.family}.lora_scale`];
     }
-    if (['auk', 'yue2', 'liveavatar', 'fish_drama3', 'ace_step'].includes(selected?.family || '') && spec.scope === 'session') {
+    if ((spec.group === 'lora' || ['auk', 'yue2', 'liveavatar', 'fish_drama3', 'ace_step'].includes(selected?.family || '')) && spec.scope === 'session') {
       isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
         modelMatchesSelectedPackage(model, selected));
     }
@@ -512,8 +515,9 @@
     modelMatchesSelectedPackage(model, selected));
   $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family, selected?.task);
   $: modelStudioPanel = modelStudioPanelConfig?.component;
-  $: genericParamSpecs = selected?.family === 'ace_step'
-    ? paramSpecs.filter((spec) => !['lora', 'lora_scale'].includes(spec.name)) : paramSpecs;
+  $: loraParamSpecs = paramSpecs.filter((spec) => spec.group === 'lora');
+  $: genericParamSpecs = paramSpecs.filter((spec) => spec.group !== 'lora' &&
+    !(selected?.family === 'ace_step' && ['lora', 'lora_scale'].includes(spec.name)));
   $: replacesGenericControls = (modelStudioPanelConfig?.replacesGenericControls || noGenericControlReplacements) as GenericControlReplacements;
   $: usesYue2Request = modelStudioPanelConfig?.requestMode === 'yue2';
   $: usesPanelRequest = modelStudioPanelConfig?.requestMode === 'panel';
@@ -1110,7 +1114,8 @@
     }
   }
 
-  async function openFolderBrowser(path = '') {
+  async function openFolderBrowser(path = '', target: ParamSpec | null = null) {
+    folderBrowserTarget = target;
     folderBrowserOpen = true;
     folderBrowserLoading = true;
     folderBrowserError = '';
@@ -1125,7 +1130,8 @@
 
   function selectBrowsedFolder() {
     if (!folderBrowser) return;
-    modelsFolderInput = folderBrowser.current;
+    if (folderBrowserTarget) setParameterValue(folderBrowserTarget, folderBrowser.current);
+    else modelsFolderInput = folderBrowser.current;
     folderBrowserOpen = false;
   }
 
@@ -1139,6 +1145,11 @@
       !(['vibevoice', 'moss_ttsd'].includes(selected?.family) && spec.name === 'voice_samples') &&
       !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
+    const sessionOptions = loadedModels.find((model) => model.id === selectedId)?.session_options || {};
+    for (const spec of paramSpecs.filter((spec) => spec.group === 'lora')) {
+      const value = sessionOptions[spec.session_option || spec.name];
+      if (value !== undefined) advancedValues[spec.name] = value;
+    }
     if (selected?.family === 'ace_step' && isConfiguredEntry(selected)) {
       const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
       advancedValues = { ...advancedValues,
@@ -1437,6 +1448,7 @@
   function sessionParameterOptions() {
     const options = Object.fromEntries(paramSpecs
       .filter((spec) => spec.scope === 'session')
+      .filter((spec) => spec.group !== 'lora' || String(advancedValues.lora ?? '').trim().length > 0)
       .map((spec) => [spec.session_option || spec.name, String(advancedValues[spec.name] ?? spec.default ?? '')])
       .filter(([, value]) => value.length > 0));
     if (selected?.family === 'auk') {
@@ -2514,6 +2526,7 @@
     if (selectedId) workflowSelections = { ...workflowSelections, [activeWorkflow]: selectedId };
     resetParams();
     await refresh();
+    if (paramSpecs.some((spec) => spec.group === 'lora')) resetParams();
     if (server?.ui_management) {
       try {
         let root = await getModelsRoot();
@@ -2741,6 +2754,7 @@
           <AceStepPanel modelId={selected.id} bind:text bind:lyrics bind:language bind:duration
             {seed} busy={running || loadingModel} bind:rewritingCaption bind:advancedValues
             adapterEditable={server?.ui_management === true && !isConfiguredEntry(selected)}
+            onBrowseAdapter={(spec) => openFolderBrowser(modelsFolder, spec)}
             {paramSpecs} bind:outputText bind:outputJson bind:status bind:warningStatus bind:errorStatus
             {ensureLoaded} {requestOptions} {resolveRequestSeed} {setParameterValue} {log} {tr} />
         {:else if modelStudioPanel}
@@ -2985,6 +2999,13 @@
           </div>
         {/if}
 
+        {#if loraParamSpecs.length}
+          <LoraControls specs={loraParamSpecs} values={advancedValues}
+            editable={server?.ui_management === true && !isConfiguredEntry(selected)}
+            busy={running || loadingModel} onChange={setParameterValue}
+            onBrowse={(spec) => openFolderBrowser(modelsFolder, spec)} />
+        {/if}
+
         {#if genericParamSpecs.length && !replacesGenericControls.params}
           <details class="studio-options">
             <summary><SlidersHorizontal size={16} />{tr('options.modelParameters')} <span>{genericParamSpecs.length}</span></summary>
@@ -3178,22 +3199,22 @@
   <div class="folder-browser-backdrop">
     <div class="panel folder-browser-dialog" role="dialog" aria-modal="true" aria-labelledby="folder-browser-title">
       <header>
-        <div><span>{tr('folder.eyebrow')}</span><h2 id="folder-browser-title">{tr('folder.title')}</h2></div>
+        <div><span>{tr('folder.eyebrow')}</span><h2 id="folder-browser-title">{folderBrowserTarget ? 'Select LoRA adapter directory' : tr('folder.title')}</h2></div>
         <button aria-label={tr('folder.closeLabel')} title={tr('common.close')} on:click={() => folderBrowserOpen = false}>{tr('common.close')}</button>
       </header>
       <div class="folder-browser-location">{folderBrowser?.current || tr('folder.loading')}</div>
       {#if folderBrowser?.roots.length}
         <div class="folder-browser-roots">
           {#each folderBrowser.roots as root}
-            <button on:click={() => openFolderBrowser(root)}>{root}</button>
+            <button on:click={() => openFolderBrowser(root, folderBrowserTarget)}>{root}</button>
           {/each}
         </div>
       {/if}
       <div class="folder-browser-toolbar">
         <button disabled={!folderBrowser?.parent || folderBrowserLoading}
-          on:click={() => openFolderBrowser(folderBrowser?.parent || '')}>{tr('folder.up')}</button>
+          on:click={() => openFolderBrowser(folderBrowser?.parent || '', folderBrowserTarget)}>{tr('folder.up')}</button>
         <button disabled={folderBrowserLoading}
-          on:click={() => openFolderBrowser(folderBrowser?.current || '')}>{tr('common.refresh')}</button>
+          on:click={() => openFolderBrowser(folderBrowser?.current || '', folderBrowserTarget)}>{tr('common.refresh')}</button>
       </div>
       {#if folderBrowserError}
         <div class="folder-browser-error">{folderBrowserError}</div>
@@ -3202,7 +3223,7 @@
       {:else if folderBrowser?.directories.length}
         <div class="folder-browser-list">
           {#each folderBrowser.directories as directory}
-            <button title={directory.path} on:click={() => openFolderBrowser(directory.path)}>
+            <button title={directory.path} on:click={() => openFolderBrowser(directory.path, folderBrowserTarget)}>
               <span class="folder-icon">&gt;</span><span>{directory.name}</span>
             </button>
           {/each}
@@ -3213,7 +3234,7 @@
       <footer>
         <button on:click={() => folderBrowserOpen = false}>{tr('common.cancel')}</button>
         <button class="primary" disabled={!folderBrowser || folderBrowserLoading}
-          on:click={selectBrowsedFolder}>{tr('folder.select')}</button>
+          on:click={selectBrowsedFolder}>{folderBrowserTarget ? 'Use adapter folder' : tr('folder.select')}</button>
       </footer>
     </div>
   </div>
