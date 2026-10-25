@@ -53,6 +53,14 @@ ModelRegistry make_registry_from_config(
 ModelRegistry make_default_registry(const std::optional<std::filesystem::path> & config_path = std::nullopt);
 
 /**
+ * Load a VAD model of any family built into this binary, for internal use such as ASR
+ * VAD chunking. Only loaders that advertise offline VAD are considered; for a weight
+ * file, the loader that uses exactly that file wins over a package in the same folder.
+ * A path no VAD loader claims is loaded as Silero VAD, as before this helper existed.
+ */
+std::unique_ptr<ILoadedVoiceModel> load_vad_model(const ModelLoadRequest & request);
+
+/**
  * Close the load-progress bracket opened by ModelRegistry::load: emit
  * ``runtime.load.phase loaded`` and the final upload_progress curve point.
  * Hosts call this once the task session is built — that is when the weight

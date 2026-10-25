@@ -11,7 +11,7 @@
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
-#include "engine/models/silero_vad/session.h"
+#include "engine/framework/runtime/registry.h"
 
 #include <algorithm>
 #include <chrono>
@@ -180,7 +180,7 @@ public:
         inspection.cli.session_options = {
             {"granite5asr.weight_type", "native|f32|f16|bf16|q8_0", "Shared model weight storage type. Default: native.", false, "native"},
             {"granite5asr.encoder_graph_arena_mb", "int", "Encoder graph arena size in MB. Positive MiB allocation; invalid/nonpositive values resolve to 1024 MiB. Default: 1024.", false, "1024", "1"},
-            {"granite5asr.vad_model_path", "string", "Path to a Silero VAD model file, not a directory; VAD runs only when this path is a regular file."},
+            {"granite5asr.vad_model_path", "string", "Path to a VAD weight file of any built-in VAD family (e.g. silero_vad_16k.safetensors), not a directory; VAD runs only when this path is a regular file."},
         };
         inspection.model_root = resources.model_root();
         inspection.metadata.family = family();
@@ -255,7 +255,7 @@ runtime::IOfflineVoiceTaskSession & Granite5ASRSessionBase::vad_session() {
     if (vad_session_ == nullptr) {
         runtime::ModelLoadRequest load_request;
         load_request.model_path = vad_model_path_;
-        vad_model_ = engine::models::silero_vad::load_silero_vad_model(load_request);
+        vad_model_ = runtime::load_vad_model(load_request);
         auto session = vad_model_->create_task_session(
             runtime::TaskSpec{runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},
             runtime::SessionOptions{options().backend, {}});

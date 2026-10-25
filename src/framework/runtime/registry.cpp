@@ -1,5 +1,6 @@
 #include "engine/framework/runtime/registry.h"
 
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/audio/utilities/utility_api.h"
@@ -281,12 +282,20 @@ ModelRegistry make_registry_from_config(
     return registry;
 }
 
-ModelRegistry make_default_registry(const std::optional<std::filesystem::path> & config_path) {
-    const std::vector<std::shared_ptr<IVoiceModelLoader>> available_loaders = {
+namespace {
+
+std::vector<std::shared_ptr<IVoiceModelLoader>> default_loaders() {
+    return {
         engine::models::silero_vad::make_silero_vad_loader(),
         engine::models::marblenet_vad::make_marblenet_vad_loader(),
 #include "model_registry_loaders.inc"
     };
+}
+
+}  // namespace
+
+ModelRegistry make_default_registry(const std::optional<std::filesystem::path> & config_path) {
+    const std::vector<std::shared_ptr<IVoiceModelLoader>> available_loaders = default_loaders();
     if (!config_path.has_value()) {
         ModelRegistry registry;
         for (const auto & loader : available_loaders) {
@@ -299,6 +308,126 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
     }
     const auto config = load_registry_config(*config_path);
     return make_registry_from_config(config, available_loaders);
+}
+
+namespace {
+
+bool has_offline_vad(const CapabilitySet & capabilities) {
+    return std::any_of(
+        capabilities.supported_tasks.begin(), capabilities.supported_tasks.end(), [](const TaskCapability & task) {
+            return task.task == VoiceTaskKind::Vad &&
+                   std::find(task.modes.begin(), task.modes.end(), RunMode::Offline) != task.modes.end();
+        });
+}
+
+bool same_file(const std::filesystem::path & a, const std::filesystem::path & b) {
+    std::error_code ec_a;
+    std::error_code ec_b;
+    const auto ca = std::filesystem::weakly_canonical(a, ec_a);
+    const auto cb = std::filesystem::weakly_canonical(b, ec_b);
+    return !ec_a && !ec_b && ca == cb;
+}
+
+// True when the loader would read exactly this weight file, not just a package in its folder.
+bool claims_exact_file(const IVoiceModelLoader & loader, const ModelLoadRequest & request) {
+    try {
+        if (!loader.can_load(request)) {
+            return false;
+        }
+        const auto inspection = loader.inspect(request);
+        return std::any_of(
+            inspection.discovered_weights.begin(), inspection.discovered_weights.end(),
+            [&](const NamedAsset & asset) { return same_file(asset.path, request.model_path); });
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+}  // namespace
+
+std::unique_ptr<ILoadedVoiceModel> load_vad_model(const ModelLoadRequest & request) {
+    // Internal load for a host session (e.g. ASR chunking): call the loader directly so the
+    // host's load trace and progress bracket are left alone. Only VAD loaders are considered,
+    // so a wrong path never loads a large non-VAD model first.
+    const auto loaders = default_loaders();
+    std::vector<const IVoiceModelLoader *> vad_loaders;
+    const IVoiceModelLoader * silero = nullptr;
+    std::string built;
+    for (const auto & loader : loaders) {
+        bool vad = false;
+        try {
+            vad = has_offline_vad(loader->advertised_capabilities());
+        } catch (const std::exception &) {
+        }
+        if (!vad) {
+            continue;
+        }
+        vad_loaders.push_back(loader.get());
+        built += (built.empty() ? "" : ", ") + loader->family();
+        if (loader->family() == "silero_vad") {
+            silero = loader.get();
+        }
+    }
+
+    const IVoiceModelLoader * selected = nullptr;
+    if (request.family_hint.has_value()) {
+        for (const auto * loader : vad_loaders) {
+            const auto aliases = loader->family_aliases();
+            if (loader->family() == *request.family_hint ||
+                std::find(aliases.begin(), aliases.end(), *request.family_hint) != aliases.end()) {
+                selected = loader;
+                break;
+            }
+        }
+        if (selected == nullptr) {
+            throw std::runtime_error(
+                "VAD family '" + *request.family_hint + "' is not built into this binary (built VAD families: " +
+                built + ")");
+        }
+        return selected->load(request);
+    }
+
+    const bool is_file = engine::io::is_existing_file(request.model_path);
+    if (is_file) {
+        // A weight file: prefer the loader that uses exactly this file. Package loaders resolve a
+        // file to its folder, so a different package next to the file must not claim it.
+        for (const auto * loader : vad_loaders) {
+            if (claims_exact_file(*loader, request)) {
+                return loader->load(request);
+            }
+        }
+    } else {
+        for (const auto * loader : vad_loaders) {
+            if (loader->can_load(request)) {
+                return loader->load(request);
+            }
+        }
+    }
+
+    // Unclaimed path: load it as Silero, as the Silero-only loader did before (e.g. Silero
+    // weights under another file name). Then try any folder-level VAD package for a file.
+    std::string silero_error = "silero_vad is not built into this binary";
+    if (silero != nullptr) {
+        try {
+            // Silero loads its tensors lazily, so confirm a file really holds Silero weights.
+            if (is_file && !engine::assets::open_tensor_source(request.model_path)->has_tensor("stft_conv.weight")) {
+                throw std::runtime_error("the file has no Silero VAD tensors");
+            }
+            return silero->load(request);
+        } catch (const std::exception & error) {
+            silero_error = error.what();
+        }
+    }
+    if (is_file) {
+        for (const auto * loader : vad_loaders) {
+            if (loader != silero && loader->can_load(request)) {
+                return loader->load(request);
+            }
+        }
+    }
+    throw std::runtime_error(
+        "no VAD model built into this binary can load " + request.model_path.string() +
+        " (built VAD families: " + built + "; loading it as Silero VAD failed: " + silero_error + ")");
 }
 
 }  // namespace engine::runtime

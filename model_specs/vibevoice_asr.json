@@ -166,7 +166,7 @@
       {
         "name": "vad_model_path",
         "type": "path",
-        "description": "Silero VAD model used with audio_chunk_mode=vad.",
+        "description": "VAD model (any built-in VAD family; default Silero VAD) used with audio_chunk_mode=vad.",
         "required": false,
         "default": "assets/framework/models/silero_vad"
       }

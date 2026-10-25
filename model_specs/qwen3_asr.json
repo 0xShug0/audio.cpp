@@ -131,7 +131,7 @@
       {
         "name": "vad_model_path",
         "type": "path",
-        "description": "Optional Silero VAD model path for VAD chunking; default assets/framework/models/silero_vad.",
+        "description": "Optional VAD model path for VAD chunking (any built-in VAD family); default assets/framework/models/silero_vad.",
         "required": false,
         "default": "assets/framework/models/silero_vad"
       },

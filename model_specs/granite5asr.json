@@ -78,7 +78,7 @@
       {
         "name": "vad_model_path",
         "type": "string",
-        "description": "Path to a Silero VAD model file, not a directory; VAD runs only when this path is a regular file.",
+        "description": "Path to a VAD weight file of any built-in VAD family (e.g. silero_vad_16k.safetensors), not a directory; VAD runs only when this path is a regular file.",
         "required": false
       }
     ],
