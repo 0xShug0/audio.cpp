@@ -12,6 +12,7 @@
 namespace engine::models::irodori_tts {
 
 struct IrodoriModelConfig {
+    std::string flow_parameterization = "rf_velocity";
     int64_t latent_dim = 32;
     int64_t latent_patch_size = 1;
     int64_t model_dim = 1280;
