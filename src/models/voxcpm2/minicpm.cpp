@@ -1264,9 +1264,11 @@ private:
           ctx, x, position, cache_slot, attention_mask, cache_keys.back(),
           cache_values.back(), layer, lm_weights);
     }
+    engine::runtime::TransformerKVCacheOptions cache_options;
+    cache_options.direct_import = true;
     step_cache_ = engine::runtime::TransformerKVCache(
         cache_steps_, config.num_key_value_heads * dim, std::move(cache_keys),
-        std::move(cache_values));
+        std::move(cache_values), cache_options);
     x = engine::modules::RMSNormModule(
             {config.hidden_size, config.rms_norm_eps, true, false})
             .build(ctx, x, lm_weights.norm);

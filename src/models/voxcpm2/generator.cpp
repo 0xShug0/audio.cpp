@@ -1538,9 +1538,6 @@ private:
     if (base_lm_ == nullptr || base_lm_->cache_steps() != cache_steps) {
       replace_step_runtimes(cache_steps, false);
     }
-    base_lm_->reset();
-    residual_lm_->reset();
-
     std::vector<float> zero_hidden(static_cast<size_t>(hidden_size), 0.0F);
     std::vector<float> zero_patch(static_cast<size_t>(patch_elems), 0.0F);
     VoxCPM2PromptPrefillInput prefill_input;
@@ -1579,6 +1576,7 @@ private:
       prefill_input.audio_mask.push_back(row.audio_mask ? 1.0F : 0.0F);
     }
     const auto prefill_output = prefill_.run(prefill_input);
+    // Imports replace the prefix and zero the unused tail, so no reset is needed.
     base_lm_->import_state(prefill_output.base_state);
     residual_lm_->import_state(prefill_output.residual_state);
     std::vector<float> lm_hidden = prefill_output.lm_hidden;
