@@ -128,7 +128,7 @@
       {
         "name": "perf_mode",
         "type": "enum",
-        "description": "AR decode preset. cuda_perf enables fused MoE and 256-row attention buckets. F16 KV storage, device sampling, codec batching/overlap and prefill-cache defaults remain unchanged in both modes. Explicit session options override the preset.",
+        "description": "AR decode preset. cuda_perf enables fused MoE, 256-row attention buckets and device sampling. F16 KV storage, codec batching/overlap and prefill-cache defaults remain unchanged in both modes. Explicit session options override the preset.",
         "required": false,
         "values": [
           "off",
@@ -198,9 +198,9 @@
       {
         "name": "device_sampling",
         "type": "bool",
-        "description": "Enable tower decode and codebook sampling in one cached backend graph. Uses F32 probabilities; sampled outputs may differ from the host sampler.",
+        "description": "Enable tower decode and codebook sampling in one cached backend graph. Disabled by default; enabled by cuda_perf unless explicitly overridden. Uses F32 probabilities; sampled outputs may differ from the host sampler.",
         "required": false,
-        "default": true
+        "default": false
       },
       {
         "name": "profile_first_audio",

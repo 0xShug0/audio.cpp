@@ -27,11 +27,12 @@ struct PerfPreset {
     bool fused_moe;
     ggml_type kv_cache_type;
     int64_t kv_cache_alignment;
+    bool device_sampling;
 };
 
 constexpr std::array<PerfPreset, 2> kPerfPresets{{
-    {"off", false, GGML_TYPE_F16, 1},
-    {"cuda_perf", true, GGML_TYPE_F16, 256},
+    {"off", false, GGML_TYPE_F16, 1, false},
+    {"cuda_perf", true, GGML_TYPE_F16, 256, true},
 }};
 
 struct SamplerScratch {
@@ -97,9 +98,6 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.profile_first_audio"})) {
         profile_first_audio_ = runtime::parse_bool_option(*value, "fish_drama3.profile_first_audio");
     }
-    if (const auto value = runtime::find_option(options.options, {"fish_drama3.device_sampling"})) {
-        device_sampling_ = runtime::parse_bool_option(*value, "fish_drama3.device_sampling");
-    }
     codec_batch_frames_ = static_cast<size_t>(runtime::parse_positive_i64_option(
         options.options, {"fish_drama3.codec_batch_frames"}, 4));
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_async_decode"})) {
@@ -111,6 +109,10 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     const auto preset = std::find_if(kPerfPresets.begin(), kPerfPresets.end(),
         [&](const auto & entry) { return entry.name == perf_mode; });
     if (preset == kPerfPresets.end()) throw std::runtime_error("Invalid fish_drama3.perf_mode: " + perf_mode);
+    device_sampling_ = preset->device_sampling;
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.device_sampling"})) {
+        device_sampling_ = runtime::parse_bool_option(*value, "fish_drama3.device_sampling");
+    }
     backbone_config.fused_moe = preset->fused_moe;
     backbone_config.kv_cache_type = preset->kv_cache_type;
     backbone_config.kv_cache_alignment = preset->kv_cache_alignment;
@@ -124,6 +126,7 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
         else throw std::runtime_error("fish_drama3.kv_cache_type requires f32 or f16");
     }
     debug::trace_log_scalar("fish_drama3.perf_mode", perf_mode);
+    debug::trace_log_scalar("fish_drama3.device_sampling", device_sampling_);
     debug::trace_log_scalar("fish_drama3.fused_moe", backbone_config.fused_moe);
     debug::trace_log_scalar("fish_drama3.kv_cache_type", std::string_view(backbone_config.kv_cache_type == GGML_TYPE_F16 ? "f16" : "f32"));
     debug::trace_log_scalar("fish_drama3.kv_cache_alignment", backbone_config.kv_cache_alignment);
