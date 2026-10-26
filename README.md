@@ -19,26 +19,27 @@ Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio 
   </a>
 </p>
 
+> [!TIP]
+>
+> **v0.9.3 highlights:** **LoRA support across 11 models**, with adapter loading, strength controls, Studio integration, and a shared tool for merging adapters into GGUF packages. See the [LoRA guide](docs/lora.md) for supported models and formats.
+>
+> **Performance optimizations and performance modes:** Faster execution across speech and music models, with `perf_mode` presets to select model-specific optimizations. Tested CUDA presets reduce RTF by **27% for Qwen3-TTS streaming, 25–26% for BreezeTTS2, 16% for VoxCPM2, 15–47% for YuE2, 59–62% for ACE-Step, and 33% for MiniMax Music3** versus the paths before these optimizations. Some models also benefit from further reductions in peak VRAM usage.
+>
+> Many performance optimizations are disabled by default for broader compatibility. Not happy with performance? Enable the `cuda_perf` preset or create your own preset for your hardware!
+>
+> **New TTS app in the WebUI:** Turn scripts into narration in a dedicated workspace. Import text, split it into passages, and assign each passage a reusable speaker with its own model, voice, and generation settings. Generate or refine passages individually, compare takes, edit waveforms and pauses, then combine, enhance, and export your finished audio. Projects and speaker presets are saved for reuse.
+>
+> **AMD support and HIP test releases:** Thanks to AMD for providing audio.cpp with access to AMD DevLab! We now offer **HIP release builds for testing** on AMD GPUs.
+
 > [!IMPORTANT]
 >
-> **v0.9.2 highlights:** New and improved streaming for Qwen3 TTS, BreezeTTS2, Higgs Audio, VibeVoice, and Fish Audio. **Expect roughly 85-90% lower BreezeTTS2 time to first audio.** This release also improves BreezeTTS2 longform voice consistency and adds a shared Voice Library with refreshed Studio, Arena, and model-download pages. Selected models also gain ARM CPU optimizations for devices such as Raspberry Pi and Rockchip NPU acceleration.
+> - **130+ audio model families and 200+ variants, running locally.** TTS, ASR, music generation, voice conversion, separation, and more through a shared CLI and server API.
 >
-> <img src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20logo%20only.png" alt="Unsloth logo" width="48" align="absmiddle"> **Unsloth integration:** audio.cpp now powers speech, music, and speech-to-text in [Unsloth Studio](https://github.com/unslothai/unsloth#audiocpp-audio-engine)!
+> - **Built-in WebUI:** Generate and clone voices in Studio, compare models side by side in Arena, manage models and voice/speaker libraries, and create narration with passage editing, multiple speakers, and audio assembly in the TTS app.
 >
-> **110+ audio model families and 190+ variants, running locally.** Explore TTS, ASR, music generation, voice conversion, separation, and more through a shared CLI, server API, and WebUI. Built with contributions from the community.
+> - **Performance:** Selected CUDA TTS paths run **1.8–8× faster than Python**; tested Q8 packages offer up to **1.53× speedup and 37% lower peak VRAM** versus 16-bit weights ([report](docs/reports/gguf_q8_performance.md)). VibeVoice 1.5B reaches **5.15× real time**, and Supertonic 3 generates **10 hours of audio in 3 minutes** on RTX 5090 ([demo](https://www.reddit.com/r/LocalLLaMA/comments/1uwpvt9/audiocpp_10_hours_of_audio_generated_in_3_minutes/)). Nemotron 3.5 ASR matches WER at roughly **¼ the wall time** in the [TranscrIA benchmark](https://github.com/Martossien/transcria/blob/main/docs/STT_BENCHMARK_REAL_MEETINGS.md).
 >
-> **Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
->
-> **Performance:** Selected CUDA TTS paths run **1.8-8x faster than Python**, while tested Q8 GGUF packages deliver up to **1.53x speedup and 37% lower peak VRAM versus 16-bit weights**; see the [GGUF guide](docs/gguf.md) and [Q8 performance report](docs/reports/gguf_q8_performance.md).
->
-> **Production deployment example:** Try Fun-ASR-Nano and SenseVoice with audio.cpp on the [FunASR platform](https://www.funasr.com/en/deploy/audio-cpp.html)!
->
-> **VibeVoice 1.5B:** generates a **93.9-minute podcast in 18.2 minutes** with **10 diffusion steps** and without quantization, running about **5.15x faster than real time**.
->
-> **Supertonic 3:** generates about **10 hours of audio in 3 minutes** on RTX5090. Up to 200x+ real-time on CUDA, 6x+ real-time on CPU, and 47 ms TTFT in CUDA streaming mode.
-> [Demo: 10 hours of audio generated in 3 minutes](https://www.reddit.com/r/LocalLLaMA/comments/1uwpvt9/audiocpp_10_hours_of_audio_generated_in_3_minutes/).
->
-> **Real-world ASR win:** In [TranscrIA benchmark](https://github.com/Martossien/transcria/blob/main/docs/STT_BENCHMARK_REAL_MEETINGS.md) on messy French meeting audio, audio.cpp’s Nemotron 3.5 ASR matched the same WER as other implementations while using about **1/4 of the wall time**. 
+> - **Integrations and deployment:** audio.cpp powers speech, music, and speech-to-text in [Unsloth Studio](https://github.com/unslothai/unsloth#audiocpp-audio-engine). Deploy Fun-ASR-Nano and SenseVoice through the [FunASR platform](https://www.funasr.com/en/deploy/audio-cpp.html)!
 
 It is built for real end-to-end execution rather than one-off model demos: the same runtime powers TTS, voice cloning, voice conversion, ASR, diarization, VAD, source separation, alignment, codec-style models, and higher-level workflows through a common framework surface.
 
@@ -62,6 +63,10 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
+> **Release v0.9.3:** New models include **Fish Audio Drama3 and Drama3-small, Ming 3.0 TTS, Ming 3.0 Audio Tiny, Coqui XTTS v2, Plapre 3, Gradium Phonon, and Earshot VAD**, plus experimental **LatentSync 1.6** lip synchronization. Existing families gain Irodori-TTS MeanFlow and multilingual Granite TurboCTC support.
+>
+> New features include **LoRA support across 11 models**, Studio adapter controls and GGUF merging, a **TTS workspace with reusable speakers**, Ming3-TTS streaming, Kokoro voice blending, and built-in recipes for voice cloning and cross-language dubbing. Performance optimizations and `perf_mode` presets improve speech and music generation, with further memory reductions for selected models. Hardware support expands with HIP test releases, more ARM NEON acceleration, and additional Rockchip NPU paths and Docker images. Thanks to everyone contributing code, testing, feedback, and hardware access!
+>
 > **Release v0.9.2:** New models include Voxtral TTS, TF-GridNet, MossFormer2, Hviske v6, FireRed VAD, AST, CED, and wake-word detection models. This release expands TTS streaming, adds multi-turn LFM2.5-Audio conversations, and improves model performance and compatibility. The WebUI gains a shared Voice Library and layout improvements. Downloadable C API libraries, Windows Vulkan portable builds, and packaged server configuration examples make integration easier. Thanks to everyone contributing code, testing, and feedback!
 >
 > **2026-09-30 - Release v0.9.0:** **100+ audio models**, an enhancement and denoising WebUI tab, speaker-tagged ASR, and performance and memory improvements. Explore the [Architecture Atlas](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas). Thanks to our community!
