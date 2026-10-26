@@ -819,6 +819,7 @@ public:
         : backend_(backend),
           backend_type_(backend_type),
           threads_(std::max(1, threads)),
+          graph_arena_bytes_(depth_runtime_config.decode_graph_arena_bytes),
           config_(config),
           projector_(weights.depth_projector),
           heads_(weights.depth_heads),
@@ -1012,7 +1013,7 @@ private:
         }
         noise_staging_.assign(static_cast<size_t>(kCodecCodebookSize * steps), 0.0F);
 
-        graph_ctx_.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
+        graph_ctx_.reset(ggml_init({graph_arena_bytes_, nullptr, true}));
         if (graph_ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize BreezeTTS fused depth graph context");
         }
@@ -1131,12 +1132,12 @@ private:
         engine::debug::trace_log_scalar("breeze_tts.fused_depth.graph_nodes", static_cast<int64_t>(ggml_graph_n_nodes(graph_)));
     }
 
-    static constexpr size_t kGraphArenaBytes = 128ull * 1024ull * 1024ull;
     static constexpr size_t kGraphNodes = 65536;
 
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_;
     int threads_ = 1;
+    size_t graph_arena_bytes_;
     BreezeTTSConfig config_;
     modules::DecoderHiddenConfig hidden_config_;
     modules::DecoderHiddenWeights hidden_weights_;
