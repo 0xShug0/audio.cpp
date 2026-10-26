@@ -94,6 +94,7 @@ Use `--request-option name=value`, or the server request's `options` map.
 | `voice_id` | Unset | `ip` template: `US_Emma`, `US_James`, `UK_George`, `UK_Charlotte`. |
 | `reference_text` | Empty | Transcript accompanying `voice_ref`, enabling its acoustic prefix. |
 | `speaker_embedding_file` | Unset | Precomputed CAMPPlus embedding file or list; see below. |
+| `export_speaker_embedding_file` | Unset | Export the reference speaker embedding as F32 Safetensors. |
 | `use_speaker_embedding` | `true` | Enable reference-speaker embedding conditioning. |
 | `zero_speaker_embedding` | `false` | Use a zero projected speaker row, overriding file and reference conditioning. |
 | `max_tokens` | `1000` | Maximum generated acoustic patches per text chunk, also bounded by the 512-position context. |
@@ -126,6 +127,22 @@ process. Files supersede reference audio and its transcript;
 `zero_speaker_embedding=true` supersedes both. With files provided,
 `use_speaker_embedding=false` disables their conditioning without falling back
 to reference audio.
+
+Export a reference embedding while generating audio:
+
+```bash
+audiocpp_cli --family ming3_tts --task clon --backend cuda \
+  --model /path/to/ming-3.0-tts-0.5b-q8_0.gguf \
+  --voice-ref reference.wav --text "Good morning." \
+  --request-option export_speaker_embedding_file=speaker.safetensors \
+  --out clone.wav --log
+```
+
+Reuse it with `--request-option speaker_embedding_file=speaker.safetensors`.
+Export requires reference audio and enabled speaker conditioning, without a
+speaker-embedding input file or zero embedding. It saves only the speaker
+embedding, not the acoustic prompt or transcript; loading it is equivalent to
+reference-only cloning without `reference_text`.
 
 ## Session Options
 

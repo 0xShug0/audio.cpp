@@ -6,6 +6,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/reference_audio_frontend.h"
 #include "engine/framework/io/text.h"
+#include "engine/framework/io/safetensors.h"
 #include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
@@ -22,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <string_view>
 
 namespace engine::models::ming3_tts {
@@ -132,6 +134,13 @@ private:
             .value_or("false"), "zero_speaker_embedding");
         const auto embedding_file = runtime::find_option(opts, {"speaker_embedding_file"});
         const auto embedding_files = request.option_arrays.find("speaker_embedding_file");
+        const auto export_embedding_file = runtime::find_option(opts, {"export_speaker_embedding_file"});
+        if (export_embedding_file && (export_embedding_file->empty() || !use_speaker || zero_speaker ||
+            embedding_file || embedding_files != request.option_arrays.end() ||
+            !request.voice || !request.voice->speaker || !request.voice->speaker->audio)) {
+            throw runtime::InvalidRequestError("Ming export_speaker_embedding_file requires a nonempty output path, "
+                "voice_ref audio and enabled reference-speaker conditioning without speaker_embedding_file");
+        }
         if (zero_speaker) {
             speakers.emplace_back(192, 0.0f);
         } else if (embedding_file || embedding_files != request.option_arrays.end()) {
@@ -159,6 +168,15 @@ private:
         } else if (request.voice && request.voice->speaker && request.voice->speaker->audio) {
             const auto reference = prepare_reference(*request.voice->speaker->audio, sampling.seed, random_offset);
             if (use_speaker) speakers.push_back(reference.speaker);
+            if (export_embedding_file) {
+                io::SafeTensorWriteEntry entry;
+                entry.name = "speaker_embedding";
+                entry.dtype = "F32";
+                entry.shape = {192};
+                entry.data.resize(reference.speaker.size() * sizeof(float));
+                std::memcpy(entry.data.data(), reference.speaker.data(), entry.data.size());
+                io::write_safetensors_file(*export_embedding_file, {entry});
+            }
             if (!reference_text.empty()) reference_latents = reference.latents;
         } else if (!reference_text.empty()) {
             throw runtime::InvalidRequestError("Ming reference_text requires voice_ref audio");

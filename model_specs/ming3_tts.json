@@ -160,6 +160,12 @@
         "description": "CAMPPlus embedding file or list, with shape [192] or [1, 192]. Supersedes voice_ref audio; zero_speaker_embedding takes precedence."
       },
       {
+        "name": "export_speaker_embedding_file",
+        "type": "path",
+        "required": false,
+        "description": "Export the enabled voice_ref CAMPPlus speaker embedding as F32 Safetensors. Requires voice_ref, use_speaker_embedding=true, zero_speaker_embedding=false and no speaker_embedding_file. Does not export acoustic latents or the reference transcript."
+      },
+      {
         "name": "use_speaker_embedding",
         "type": "bool",
         "required": false,
