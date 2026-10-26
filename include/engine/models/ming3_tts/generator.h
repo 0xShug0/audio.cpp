@@ -7,6 +7,7 @@
 #include "engine/models/ming3_tts/prompt.h"
 
 #include <memory>
+#include <functional>
 #include <vector>
 
 namespace engine::models::ming3_tts {
@@ -30,7 +31,8 @@ public:
         bool zero_speaker = false);
 
     std::vector<float> generate(const std::vector<float> & embeddings, const MingGenerationOptions & options,
-        uint64_t & random_offset, const std::vector<float> & initial_history = {});
+        uint64_t & random_offset, const std::vector<float> & initial_history = {},
+        const std::function<void(const std::vector<float> &)> & on_patch = {});
 
 private:
     struct Impl;

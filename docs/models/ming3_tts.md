@@ -7,8 +7,8 @@ Korean, German, French and Spanish, with voice cloning and voice design.
 GGUF packages: [audio-cpp/Ming-3.0-TTS-0.5B-GGUF](https://huggingface.co/audio-cpp/Ming-3.0-TTS-0.5B-GGUF).
 
 Upstream: [inclusionAI/Ming-3.0-tts](https://github.com/inclusionAI/Ming-3.0-tts).
-Output is mono 44.1 kHz. Inference supports CUDA, Vulkan and CPU; only offline
-generation is currently exposed.
+Output is mono 44.1 kHz. Inference supports CUDA, Vulkan and CPU, with offline
+and streaming TTS, voice cloning, and voice design.
 
 ## Usage
 
@@ -23,6 +23,31 @@ The GGUF includes the backbone, flow head, audio VAE, CAMPPlus speaker encoder,
 configuration and tokenizer. No separate codec or Python runtime is needed.
 BF16 preserves the original checkpoint dtypes. Q8 retains the small stop head
 in BF16 and the speaker encoder in F32.
+
+### Streaming
+
+Add `--mode streaming` to a generation command:
+
+```bash
+audiocpp_cli --family ming3_tts --task tts --mode streaming --backend cuda \
+  --model /path/to/ming-3.0-tts-0.5b-q8_0.gguf \
+  --text "Good evening. The harbor is quiet tonight." \
+  --request-option language=en --out speech.wav --log
+```
+
+Streaming decodes latent patches while the acoustic generator is running.
+The VAE retains enough left context for its causal attention and one patch of
+lookahead for interpolation and waveform reconstruction. The default schedule
+grows from one patch to four patches per decode. Set
+`--request-option stream_chunk_policy=fixed` for fixed-size groups or
+`--request-option stream_frames_per_event=8` to change the maximum group size.
+The codec retains at most six streaming graph capacities, sharing one set of weights.
+Trailing-silence trimming buffers uncommitted audio; emitted audio is never retracted.
+The streaming window can produce numerical differences from full offline decoding.
+
+For HTTP streaming, configure the model with `"mode": "streaming"` and use
+`POST /v1/audio/speech` with `"response_format": "pcm"` and
+`"stream_format": "sse"`; the same voice and generation options apply.
 
 ### Voice Cloning
 
@@ -80,6 +105,8 @@ Use `--request-option name=value`, or the server request's `options` map.
 | `text_chunk_size` | `50`, `120` or `300` | Framework text chunk budget in Unicode codepoints: `50` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `300`, or `120` for voice design and freeform. Their later chunks use the first generated chunk as their reference. |
 | `text_chunk_mode` | `tag_aware` | `default`, `tag_aware`, `japanese`, or `endline`. |
 | `trim_silence` | `true` | Trim trailing low-energy 100-ms frames per fragment, retaining a 300-ms tail. |
+| `stream_frames_per_event` | `4` | Maximum latent patches per streaming decode, from 1 to 64. |
+| `stream_chunk_policy` | `grow` | `grow` starts at one patch and doubles to the maximum; `fixed` uses the maximum throughout. |
 
 Structured templates accept only their matching controls: `basic` uses
 `speed`/`pitch`/`volume`, `emotion` uses `emotion`, `dialect` uses `dialect`,

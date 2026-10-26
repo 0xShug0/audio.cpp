@@ -11,6 +11,8 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/spec_backed_model.h"
+#include "engine/framework/runtime/streaming_audio.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/framework/text/utf8.h"
@@ -59,7 +61,8 @@ struct MingReference {
     std::vector<float> speaker;
 };
 
-class MingSession final : public runtime::RuntimeSessionBase, public runtime::IOfflineVoiceTaskSession {
+class MingSession final : public runtime::RuntimeSessionBase, public runtime::IOfflineVoiceTaskSession,
+    public runtime::StreamingTtsSessionBase {
 public:
     MingSession(runtime::TaskSpec task, const runtime::SessionOptions & options,
         std::shared_ptr<const MingAssets> assets, std::shared_ptr<const model_spec::ModelContract> contract)
@@ -81,6 +84,17 @@ public:
     void prepare(const runtime::SessionPreparationRequest &) override { mark_prepared(); }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
+        return synthesize(request, false);
+    }
+
+private:
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override {
+        return synthesize(request, true);
+    }
+
+    void reset_stream_state() override { streaming_audio_.reset(); }
+
+    runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming) {
         require_prepared("Ming TTS run");
         runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "Ming TTS");
         if (!request.text_input || request.text_input->text.empty()) throw runtime::InvalidRequestError("Ming TTS requires text input");
@@ -164,6 +178,23 @@ public:
         const bool trim = runtime::parse_bool_option(runtime::find_option(opts, {"trim_silence"}).value_or("true"), "trim_silence");
         std::vector<float> waveform;
         const auto latent_dim = assets_->config.codec.encoder.latent_dim;
+        runtime::StreamingAudioConfig stream_config;
+        const auto & codec = assets_->config.codec;
+        if (streaming) {
+            stream_config.frames_per_chunk = static_cast<size_t>(runtime::parse_positive_i64_option(
+                opts, {"stream_frames_per_event"}, 4));
+            stream_config.policy = runtime::parse_streaming_audio_chunk_policy(
+                runtime::find_option(opts, {"stream_chunk_policy"}).value_or("grow"));
+            stream_config.frame_width = static_cast<size_t>(latent_dim);
+            // Include every decoder layer's causal window, interpolation and ISTFT overlap.
+            stream_config.left_context_frames = codec.decoder.sliding_window > 0
+                ? (codec.decoder.backbone.layers * (codec.decoder.sliding_window - 1) + 4 + codec.patch_size - 1)
+                    / codec.patch_size + 1
+                : 512;
+            stream_config.right_context_frames = 1;
+            debug::trace_log_scalar("ming3_tts.streaming.frames_per_event", stream_config.frames_per_chunk);
+            debug::trace_log_scalar("ming3_tts.streaming.context_frames", stream_config.left_context_frames);
+        }
         std::vector<float> history;
         if (!reference_latents.empty()) history.assign(reference_latents.end() - latent_dim, reference_latents.end());
         for (const auto & chunk : chunks) {
@@ -171,8 +202,44 @@ public:
             const auto prompt = prompts_.build(chunk, prompt_options, speakers.size(), reference_text,
                 reference_latents.size() / latent_dim);
             const auto embeddings = generator_.prepare_inputs(prompt, speakers, reference_latents, zero_speaker);
-            const auto latent = generator_.generate(embeddings, sampling, random_offset, history);
-            auto audio = decoder_.decode(latent);
+            std::vector<float> emitted_audio;
+            size_t checked_frames = 0;
+            size_t last_speech_frame = 0;
+            size_t published_samples = 0;
+            const size_t trim_frame = static_cast<size_t>(sample_rate_ / 10);
+            if (streaming) {
+                streaming_audio_.begin(stream_config, [&](const auto & window) {
+                    return decoder_.decode_streaming_window(window, stream_config);
+                }, [&](const runtime::StreamEvent & event) {
+                    const auto & samples = event.audio_output->samples;
+                    emitted_audio.insert(emitted_audio.end(), samples.begin(), samples.end());
+                    while (checked_frames < emitted_audio.size() / trim_frame) {
+                        double score = 0;
+                        for (size_t i = checked_frames * trim_frame; i < (checked_frames + 1) * trim_frame; ++i) {
+                            score += std::abs(emitted_audio[i]);
+                        }
+                        if (score / trim_frame > 1e-3) last_speech_frame = checked_frames + 1;
+                        ++checked_frames;
+                    }
+                    const size_t ready = trim
+                        ? std::min(checked_frames * trim_frame, last_speech_frame * trim_frame + static_cast<size_t>(sample_rate_ * 3 / 10))
+                        : emitted_audio.size();
+                    if (ready > published_samples) {
+                        if (stream_event_sink()) {
+                            runtime::StreamEvent output;
+                            output.audio_output = runtime::AudioBuffer{sample_rate_, 1,
+                                std::vector<float>(emitted_audio.begin() + published_samples, emitted_audio.begin() + ready)};
+                            stream_event_sink()(output);
+                        }
+                        published_samples = ready;
+                    }
+                });
+            }
+            const auto latent = generator_.generate(embeddings, sampling, random_offset, history,
+                streaming ? std::function<void(const std::vector<float> &)>([&](const auto & patch) {
+                    streaming_audio_.push(patch);
+                }) : std::function<void(const std::vector<float> &)>{});
+            auto audio = streaming ? streaming_audio_.finish().samples : decoder_.decode(latent);
             const size_t frame = static_cast<size_t>(sample_rate_ / 10);
             const size_t frames = audio.size() / frame;
             size_t last = frames;
@@ -185,6 +252,12 @@ public:
             if (trim) {
                 const size_t tail = static_cast<size_t>(sample_rate_ * 3 / 10);
                 audio.resize(std::min(frames ? frames * frame : audio.size(), last * frame + tail));
+            }
+            if (streaming && published_samples < audio.size() && stream_event_sink()) {
+                runtime::StreamEvent output;
+                output.audio_output = runtime::AudioBuffer{sample_rate_, 1,
+                    std::vector<float>(audio.begin() + published_samples, audio.end())};
+                stream_event_sink()(output);
             }
             waveform.insert(waveform.end(), audio.begin(), audio.end());
             // As in the official runtime, later chunks of a split voice design or freeform request take the first
@@ -208,7 +281,6 @@ public:
         return result;
     }
 
-private:
     MingReference prepare_reference(const runtime::AudioBuffer & audio, uint64_t seed, uint64_t & random_offset) {
         const auto * cached = cache().find<MingReference>("ming3_tts.reference");
         if (reference_cache_ && cached && cached->audio.sample_rate == audio.sample_rate && cached->audio.channels == audio.channels &&
@@ -256,6 +328,7 @@ private:
     MingPromptBuilder prompts_;
     MingGenerator generator_;
     modules::MingAudioDecoder decoder_;
+    runtime::StreamingAudioController<float> streaming_audio_;
     std::unique_ptr<modules::MingAudioEncoder> encoder_;
     std::unique_ptr<modules::CampplusEncoderComponent> speaker_;
     int sample_rate_ = 0;
@@ -271,8 +344,9 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_ming3_tts_loader() {
     config.create_session = [](const runtime::TaskSpec & task, const runtime::SessionOptions & options,
         std::shared_ptr<const MingAssets> assets, std::shared_ptr<const model_spec::ModelContract> contract) {
         if ((task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::VoiceCloning &&
-             task.task != runtime::VoiceTaskKind::VoiceDesign) || task.mode != runtime::RunMode::Offline) {
-            throw runtime::InvalidRequestError("Ming TTS supports offline tts, clon and voice_design");
+             task.task != runtime::VoiceTaskKind::VoiceDesign) ||
+            (task.mode != runtime::RunMode::Offline && task.mode != runtime::RunMode::Streaming)) {
+            throw runtime::InvalidRequestError("Ming TTS supports offline and streaming tts, clon and voice_design");
         }
         return std::make_unique<MingSession>(task, options, std::move(assets), std::move(contract));
     };

@@ -195,7 +195,8 @@ struct MingGenerator::Impl {
     }
 
     std::vector<float> generate(const std::vector<float> & embeddings, const MingGenerationOptions & options,
-        uint64_t & offset, const std::vector<float> & initial_history) {
+        uint64_t & offset, const std::vector<float> & initial_history,
+        const std::function<void(const std::vector<float> &)> & on_patch) {
         if (embeddings.empty() || embeddings.size() % hidden_ != 0 || options.max_tokens <= 0) {
             throw std::runtime_error("Ming generation requires complete prompt embeddings and positive max_tokens");
         }
@@ -218,6 +219,7 @@ struct MingGenerator::Impl {
             offset += sampling::torch_cuda_tensor_iterator_offset_blocks(10 * latent_dim_, policy);
             auto patch = flow_.sample(state.hidden, history, noise, sde_noise, options.cfg, options.sigma, options.temperature);
             latents.insert(latents.end(), patch.begin(), patch.end());
+            if (on_patch) on_patch(patch);
             core::round_f32_to_bf16_in_place(state.logits);
             std::vector<float> stop_probability{1.0f / (1.0f + std::exp(state.logits.at(0) - state.logits.at(1)))};
             core::round_f32_to_bf16_in_place(stop_probability);
@@ -251,8 +253,9 @@ std::vector<float> MingGenerator::prepare_inputs(const MingPrompt & prompt,
     return impl_->prepare_inputs(prompt, speakers, prompt_latents, zero_speaker);
 }
 std::vector<float> MingGenerator::generate(const std::vector<float> & embeddings, const MingGenerationOptions & options,
-    uint64_t & random_offset, const std::vector<float> & initial_history) {
-    return impl_->generate(embeddings, options, random_offset, initial_history);
+    uint64_t & random_offset, const std::vector<float> & initial_history,
+    const std::function<void(const std::vector<float> &)> & on_patch) {
+    return impl_->generate(embeddings, options, random_offset, initial_history, on_patch);
 }
 
 }  // namespace engine::models::ming3_tts

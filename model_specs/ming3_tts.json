@@ -11,7 +11,8 @@
     "design"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "zh",
@@ -244,6 +245,26 @@
         "required": false,
         "default": true,
         "description": "Trim trailing low-energy 100-ms frames per fragment, retaining a 300-ms tail."
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Maximum latent patches per streaming audio decode.",
+        "required": false,
+        "default": 4,
+        "min": 1,
+        "max": 64
+      },
+      {
+        "name": "stream_chunk_policy",
+        "type": "enum",
+        "description": "Streaming audio chunk schedule.",
+        "required": false,
+        "default": "grow",
+        "values": [
+          "fixed",
+          "grow"
+        ]
       }
     ],
     "session": [

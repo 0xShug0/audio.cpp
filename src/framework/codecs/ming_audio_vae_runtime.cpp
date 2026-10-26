@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <list>
 #include <numeric>
 #include <stdexcept>
 
@@ -271,6 +272,23 @@ struct MingAudioEncoder::Impl {
 };
 
 struct MingAudioDecoder::Impl {
+    struct Graph {
+        explicit Graph(core::ExecutionContext & execution) : execution_(execution) {}
+        ~Graph() {
+            core::release_backend_graph_resources(execution_.backend(), graph_, true);
+            host_plan_.reset();
+            if (allocator_) ggml_gallocr_free(allocator_);
+            if (context_) ggml_free(context_);
+        }
+        core::ExecutionContext & execution_;
+        int64_t patches_ = 0;
+        ggml_context * context_ = nullptr;
+        ggml_cgraph * graph_ = nullptr;
+        ggml_gallocr_t allocator_ = nullptr;
+        core::HostGraphPlan host_plan_;
+        core::TensorValue input_, positions_, mask_, output_;
+    };
+
     Impl(std::shared_ptr<const assets::TensorSource> source,
          const MingAudioCodecConfig & config, core::ExecutionContext & execution, core::AttentionPreference attention)
         : execution_(execution), store_(execution.backend(), execution.backend_type(),
@@ -281,6 +299,7 @@ struct MingAudioDecoder::Impl {
         latent_dim_ = dec.latent_dim;
         hop_ = dec.output_dim;
         patch_ = config.patch_size;
+        sample_rate_ = config.sample_rate;
         fft_size_ = hop_ * 4;
         load_audio_backbone(store_, *source, backbone, config.decoder_prefix + ".decoder", execution, attention,
             false, decoder_config_, weights_);
@@ -294,69 +313,108 @@ struct MingAudioDecoder::Impl {
         store_.upload();
     }
 
-    ~Impl() { release_graph(); }
-
-    void release_graph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_, true);
-        graph_ = nullptr;
-        host_plan_.reset();
-        if (allocator_) ggml_gallocr_free(allocator_);
-        allocator_ = nullptr;
-        if (context_) ggml_free(context_);
-        context_ = nullptr;
-    }
-
-    void prepare(int64_t patches) {
-        if (graph_ && patches_ == patches) return;
-        release_graph();
+    Graph & prepare(int64_t patches, bool streaming) {
+        if (streaming) {
+            const auto found = std::find_if(stream_graphs_.begin(), stream_graphs_.end(),
+                [patches](const auto & entry) { return entry->patches_ == patches; });
+            if (found != stream_graphs_.end()) {
+                stream_graphs_.splice(stream_graphs_.begin(), stream_graphs_, found);
+                return *stream_graphs_.front();
+            }
+            if (stream_graphs_.size() == 6) stream_graphs_.pop_back();
+        } else {
+            if (offline_graph_ && offline_graph_->patches_ == patches) return *offline_graph_;
+            offline_graph_.reset();
+        }
+        auto graph = std::make_unique<Graph>(execution_);
+        auto & g = *graph;
         const int64_t frames = patches * patch_;
-        context_ = ggml_init({8 * 1024 * 1024, nullptr, true});
-        core::ModuleBuildContext ctx{context_, "ming3_tts.vae.decoder", execution_.backend_type()};
-        input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, patches, latent_dim_}));
-        ggml_set_input(input_.tensor);
+        g.context_ = ggml_init({8 * 1024 * 1024, nullptr, true});
+        core::ModuleBuildContext ctx{g.context_, "ming3_tts.vae.decoder", execution_.backend_type()};
+        g.input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, patches, latent_dim_}));
+        ggml_set_input(g.input_.tensor);
         auto x = modules::LinearModule({latent_dim_, decoder_config_.stack.hidden_size, true})
-            .build(ctx, input_, input_projection_);
+            .build(ctx, g.input_, input_projection_);
         x = modules::Bf16RoundModule{}.build(ctx, x);
         x = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
         x = modules::Interpolate1dModule({frames, modules::Interpolate1dMode::Linear}).build(ctx, x);
         x = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
         x = core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, x.type);
-        positions_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({frames}));
-        mask_ = core::make_tensor(ctx, GGML_TYPE_F16, core::TensorShape::from_dims({1, 1, frames, frames}));
-        ggml_set_input(positions_.tensor);
-        ggml_set_input(mask_.tensor);
-        ggml_set_output(positions_.tensor);
-        ggml_set_output(mask_.tensor);
-        x = modules::DecoderHiddenModule(decoder_config_).build(ctx, x, positions_, weights_, std::nullopt, mask_).hidden;
+        g.positions_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({frames}));
+        g.mask_ = core::make_tensor(ctx, GGML_TYPE_F16, core::TensorShape::from_dims({1, 1, frames, frames}));
+        ggml_set_input(g.positions_.tensor);
+        ggml_set_input(g.mask_.tensor);
+        ggml_set_output(g.positions_.tensor);
+        ggml_set_output(g.mask_.tensor);
+        x = modules::DecoderHiddenModule(decoder_config_).build(ctx, x, g.positions_, weights_, std::nullopt, g.mask_).hidden;
         x = modules::LinearModule({decoder_config_.stack.hidden_size, fft_size_ + 2, false})
             .build(ctx, x, {output_projection_.weight, std::nullopt});
         x = modules::AddModule(false, true).build(ctx, modules::Bf16RoundModule{}.build(ctx, x), *output_projection_.bias);
-        output_ = modules::Bf16RoundModule{}.build(ctx, x);
-        ggml_set_output(output_.tensor);
-        graph_ = ggml_new_graph_custom(context_, 32768, false);
-        ggml_build_forward_expand(graph_, output_.tensor);
-        allocator_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
-        if (!ggml_gallocr_reserve(allocator_, graph_) || !ggml_gallocr_alloc_graph(allocator_, graph_)) {
+        g.output_ = modules::Bf16RoundModule{}.build(ctx, x);
+        ggml_set_output(g.output_.tensor);
+        g.graph_ = ggml_new_graph_custom(g.context_, 32768, false);
+        ggml_build_forward_expand(g.graph_, g.output_.tensor);
+        g.allocator_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
+        if (!ggml_gallocr_reserve(g.allocator_, g.graph_) || !ggml_gallocr_alloc_graph(g.allocator_, g.graph_)) {
             throw std::runtime_error("Ming audio decoder graph allocation failed");
         }
-        core::prepare_host_graph_plan(execution_, graph_, host_plan_);
-        write_audio_mask(positions_, mask_, frames, sliding_window_);
-        istft_ = std::make_unique<audio::HostLogMagnitudePhaseISTFT>(audio::HostLogMagnitudePhaseISTFTConfig{
-            frames, fft_size_, hop_, fft_size_ + 2, static_cast<size_t>(execution_.config().threads)});
-        patches_ = patches;
+        core::prepare_host_graph_plan(execution_, g.graph_, g.host_plan_);
+        write_audio_mask(g.positions_, g.mask_, frames, sliding_window_);
+        g.patches_ = patches;
+        if (streaming) stream_graphs_.push_front(std::move(graph));
+        else offline_graph_ = std::move(graph);
+        return g;
     }
 
-    std::vector<float> decode(const std::vector<float> & latent) {
+    std::vector<float> decode(const std::vector<float> & latent, int64_t max_window_patches = 0) {
         if (latent.empty() || latent.size() % latent_dim_ != 0) {
             throw std::runtime_error("Ming audio decoder requires complete latent frames");
         }
-        prepare(static_cast<int64_t>(latent.size() / latent_dim_));
-        core::write_tensor_f32(input_, latent);
-        if (core::compute_graph(execution_, graph_, host_plan_, "ming3_tts.vae.decoder") != GGML_STATUS_SUCCESS) {
+        const int64_t patches = static_cast<int64_t>(latent.size() / latent_dim_);
+        int64_t capacity = patches;
+        if (max_window_patches != 0) {
+            if (max_window_patches < patches) {
+                throw std::runtime_error("Ming audio decoder window exceeds the configured streaming window");
+            }
+            capacity = 1;
+            while (capacity < patches) capacity *= 2;
+            capacity = std::min(capacity, max_window_patches);
+        }
+        auto & g = prepare(capacity, max_window_patches != 0);
+        if (g.patches_ == patches) {
+            core::write_tensor_f32(g.input_, latent);
+        } else {
+            auto padded = latent;
+            padded.resize(g.patches_ * latent_dim_);
+            for (int64_t i = patches; i < g.patches_; ++i) {
+                std::copy_n(latent.end() - latent_dim_, latent_dim_, padded.begin() + i * latent_dim_);
+            }
+            core::write_tensor_f32(g.input_, padded);
+        }
+        if (core::compute_graph(execution_, g.graph_, g.host_plan_, "ming3_tts.vae.decoder") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Ming audio decoder graph execution failed");
         }
-        const auto spectrum = core::read_tensor_f32(output_.tensor);
+        auto spectrum = core::read_tensor_f32(g.output_.tensor);
+        const int64_t frames = patches * patch_;
+        spectrum.resize(frames * (fft_size_ + 2));
+        if (!istft_ || istft_frames_ != frames) {
+            istft_ = std::make_unique<audio::HostLogMagnitudePhaseISTFT>(audio::HostLogMagnitudePhaseISTFTConfig{
+                frames, fft_size_, hop_, fft_size_ + 2, static_cast<size_t>(execution_.config().threads)});
+            istft_frames_ = frames;
+        }
         return istft_->compute(spectrum, window_).audio;
+    }
+
+    runtime::AudioBuffer decode_streaming_window(const runtime::StreamingAudioWindow<float> & window,
+        const runtime::StreamingAudioConfig & config) {
+        if (window.frame_width != static_cast<size_t>(latent_dim_) || window.new_frames == 0) {
+            throw std::runtime_error("Ming audio decoder received an invalid streaming latent window");
+        }
+        auto audio = decode(std::vector<float>(window.data, window.data + window.frames() * window.frame_width),
+            config.left_context_frames + config.frames_per_chunk + config.right_context_frames);
+        const size_t begin = window.left_frames * patch_ * hop_;
+        const size_t end = begin + window.new_frames * patch_ * hop_;
+        return runtime::AudioBuffer{sample_rate_, 1, std::vector<float>(audio.begin() + begin, audio.begin() + end)};
     }
 
     core::ExecutionContext & execution_;
@@ -366,12 +424,10 @@ struct MingAudioDecoder::Impl {
     modules::LinearWeights input_projection_, output_projection_;
     std::unique_ptr<audio::HostLogMagnitudePhaseISTFT> istft_;
     std::vector<float> window_;
-    int64_t latent_dim_ = 0, hop_ = 0, fft_size_ = 0, patch_ = 0, sliding_window_ = 0, patches_ = 0;
-    ggml_context * context_ = nullptr;
-    ggml_cgraph * graph_ = nullptr;
-    ggml_gallocr_t allocator_ = nullptr;
-    core::HostGraphPlan host_plan_;
-    core::TensorValue input_, positions_, mask_, output_;
+    int64_t latent_dim_ = 0, hop_ = 0, fft_size_ = 0, patch_ = 0, sliding_window_ = 0, istft_frames_ = 0;
+    int sample_rate_ = 0;
+    std::unique_ptr<Graph> offline_graph_;
+    std::list<std::unique_ptr<Graph>> stream_graphs_;
 };
 
 MingAudioEncoder::MingAudioEncoder(std::shared_ptr<const assets::TensorSource> source,
@@ -388,5 +444,9 @@ MingAudioDecoder::MingAudioDecoder(std::shared_ptr<const assets::TensorSource> s
     : impl_(std::make_unique<Impl>(std::move(source), config, execution, attention)) {}
 MingAudioDecoder::~MingAudioDecoder() = default;
 std::vector<float> MingAudioDecoder::decode(const std::vector<float> & latent) { return impl_->decode(latent); }
+runtime::AudioBuffer MingAudioDecoder::decode_streaming_window(const runtime::StreamingAudioWindow<float> & window,
+    const runtime::StreamingAudioConfig & config) {
+    return impl_->decode_streaming_window(window, config);
+}
 
 }  // namespace engine::modules
