@@ -207,6 +207,35 @@
         "required": false,
         "values": ["auto", "on", "off"],
         "default": "auto"
+      },
+      {
+        "name": "perf_mode",
+        "type": "enum",
+        "description": "CUDA AR decode preset. cuda_perf enables fused_depth, direct_prefill and skip_cache_round; off keeps them disabled. Other backends ignore it. Explicit session options override the preset.",
+        "required": false,
+        "values": ["off", "cuda_perf"],
+        "default": "off"
+      },
+      {
+        "name": "fused_depth",
+        "type": "bool",
+        "description": "Decode each frame's depth codebooks in one CUDA graph with device-side CFG mixing and sampling. Device sampling uses the per-codebook path's torch random draws, so output normally matches it token for token. CUDA only.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "direct_prefill",
+        "type": "bool",
+        "description": "Offline generation prefills the backbone straight into the decode cache, as streaming does, instead of exporting the KV state to the host and importing it back. Same computation. CUDA only.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "skip_cache_round",
+        "type": "bool",
+        "description": "Skip re-rounding the F16 KV cache to bf16 after each update, which is an identity because the K/V rows are already bf16-rounded. Applies only with the bf16 reference path and flash attention. CUDA only.",
+        "required": false,
+        "default": false
       }
     ],
     "load": []

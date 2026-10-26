@@ -100,6 +100,10 @@ audiocpp_cli \
 | `breeze_tts.attention` | `auto`, `flash`, `eager` | `auto` | Attention kernel. `auto` uses flash except on Volta/Turing GPUs (e.g. V100), where it falls back to eager to avoid missing MMA kernels. |
 | `breeze_tts.bf16_activations` | `auto`, `on`, `off` | `auto` | Reference bf16 activation rounding (and, on Metal, the bf16 KV cache). `auto` is on for CUDA/HIP/Vulkan and off on Metal; see [Metal and the reference bf16 path](#metal-and-the-reference-bf16-path). |
 | `weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Weight storage type; quantized types convert at load time from the BF16 package. |
+| `breeze_tts.perf_mode` | `off`, `cuda_perf` | `off` | CUDA decode preset; see [CUDA performance preset](#cuda-performance-preset). |
+| `breeze_tts.fused_depth` | `true`, `false` | `false` | One CUDA graph per frame for the depth codebooks, with device sampling. |
+| `breeze_tts.direct_prefill` | `true`, `false` | `false` | Offline prefill writes straight into the decode cache. |
+| `breeze_tts.skip_cache_round` | `true`, `false` | `false` | Skips the identity bf16 re-rounding of the F16 KV cache. |
 
 For long-form generation without reference audio, the first text chunk's generated
 audio codes and text serve as a fixed voice reference for subsequent chunks. This
@@ -142,6 +146,30 @@ and HIP alike: `q8_0` cut the fixed 100-token regression case from RTF ~1.5 to
 voice-design regression cases. Counter to intuition, fp32 is the one
 configuration known to be *worse* for this model (mispronunciations and
 runaway repetition), because the model is trained and tuned in bf16.
+
+## CUDA performance preset
+
+`breeze_tts.perf_mode` defaults to `off`. The opt-in `cuda_perf` preset sets
+the following defaults; explicit session options override the preset. These
+controls apply to CUDA only and are ignored on other backends.
+
+| Session option | `off` | `cuda_perf` | Effect |
+|---|---|---|---|
+| `breeze_tts.fused_depth` | `false` | `true` | Decodes the 15 residual codebooks of a frame in one CUDA graph. CFG mixing, temperature, top-k/top-p and sampling run on the device, and only the sampled tokens return to the host. |
+| `breeze_tts.direct_prefill` | `false` | `true` | Offline generation prefills the backbone straight into the decode cache, as streaming does, instead of exporting the KV state to host floats and importing it back. |
+| `breeze_tts.skip_cache_round` | `false` | `true` | With the bf16 reference path, an F16 KV cache and flash attention, skips re-rounding the whole cache to bf16 after each update. The K/V rows are already bf16-rounded when written, so the pass is an identity. |
+
+The fused depth graph uses the per-codebook path's torch random draws, so for
+the same seed it normally reproduces `off` token for token. Its temperature
+scaling and f32 ranking round differently, which can change a sample only when
+two candidates are tied to within float precision. It replaces the
+per-codebook depth runtimes rather than adding to them, so peak VRAM stays
+close to `off`. `direct_prefill` and `skip_cache_round` do the same computation without
+the extra work and do not change output.
+
+```text
+--session-option breeze_tts.perf_mode=cuda_perf
+```
 
 ## Metal and the reference bf16 path
 

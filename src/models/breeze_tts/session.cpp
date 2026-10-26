@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -75,6 +76,39 @@ Bf16ActivationMode bf16_activation_mode_from_options(const runtime::SessionOptio
     throw std::runtime_error("BreezeTTS bf16_activations must be auto, on or off (got '" + *value + "')");
 }
 
+struct PerfPreset {
+    std::string_view name;
+    BreezePerfOptions options;
+};
+
+constexpr PerfPreset kPerfPresets[] = {
+    {"off", {false, false, false}},
+    {"cuda_perf", {true, true, true}},
+};
+
+// perf_mode picks the defaults; explicit options override the preset.
+BreezePerfOptions perf_options_from_options(const runtime::SessionOptions & options) {
+    const auto perf_mode = runtime::find_option(options.options, {"breeze_tts.perf_mode"}).value_or("off");
+    const auto * preset = std::find_if(std::begin(kPerfPresets), std::end(kPerfPresets),
+        [&](const PerfPreset & entry) { return entry.name == perf_mode; });
+    if (preset == std::end(kPerfPresets)) {
+        throw std::runtime_error("BreezeTTS perf_mode must be off or cuda_perf (got '" + perf_mode + "')");
+    }
+    auto perf = preset->options;
+    const std::pair<const char *, bool BreezePerfOptions::*> flags[] = {
+        {"breeze_tts.fused_depth", &BreezePerfOptions::fused_depth},
+        {"breeze_tts.direct_prefill", &BreezePerfOptions::direct_prefill},
+        {"breeze_tts.skip_cache_round", &BreezePerfOptions::skip_cache_round},
+    };
+    for (const auto & [key, member] : flags) {
+        if (const auto value = runtime::find_option(options.options, {key})) {
+            perf.*member = runtime::parse_bool_option(*value, key);
+        }
+    }
+    engine::debug::trace_log_scalar("breeze_tts.perf_mode", std::string_view(preset->name));
+    return perf;
+}
+
 void trace_attention_preference(core::AttentionPreference preference) {
     const char * name = "auto";
     if (preference == core::AttentionPreference::Flash) {
@@ -92,8 +126,10 @@ void validate_session_options(
     // Older standalone GGUF packages embed a v1 contract that predates this
     // backend-compatibility option; keep them usable while still validating
     // the option value in attention_preference_from_options().
-    // bf16_activations is handled the same way.
-    for (const char * key : {"breeze_tts.attention", "bf16_activations", "breeze_tts.bf16_activations"}) {
+    // bf16_activations and the perf_mode controls are handled the same way.
+    for (const char * key : {"breeze_tts.attention", "bf16_activations", "breeze_tts.bf16_activations",
+                             "breeze_tts.perf_mode", "breeze_tts.fused_depth",
+                             "breeze_tts.direct_prefill", "breeze_tts.skip_cache_round"}) {
         if (contract.session_option_keys.find(key) == contract.session_option_keys.end()) {
             validation_options.options.erase(key);
         }
@@ -198,6 +234,7 @@ BreezeTTSSession::BreezeTTSSession(
     const auto attention_preference = attention_preference_from_options(options);
     trace_attention_preference(attention_preference);
     const auto bf16_activations = bf16_activation_mode_from_options(options);
+    const auto perf = perf_options_from_options(options);
     generator_ = std::make_unique<BreezeGeneratorRuntime>(
         assets_,
         execution_context(),
@@ -205,7 +242,8 @@ BreezeTTSSession::BreezeTTSSession(
         weight_context_bytes,
         storage_type,
         attention_preference,
-        bf16_activations);
+        bf16_activations,
+        perf);
 }
 
 BreezeTTSSession::~BreezeTTSSession() = default;
