@@ -176,6 +176,7 @@ enum class EchoScheduleMode {
 // Request-level sampler configuration, parsed from spec options.
 struct EchoSamplerOptions {
     int num_steps = 40;
+    const int num_steps_sway = 12;
     EchoScheduleMode t_schedule_mode = EchoScheduleMode::Linear;
     float sway_coeff = -1.0F;
     EchoCfgMode cfg_mode = EchoCfgMode::Independent;

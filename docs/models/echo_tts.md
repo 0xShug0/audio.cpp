@@ -221,9 +221,13 @@ buffers. These are regenerated at runtime rather than shipped in the GGUF.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `text_guidance_scale` | float | 3.0 | Classifier-free guidance scale on the text condition. Advertised range is recommended, not enforced by the parser. |
-| `speaker_guidance_scale` | float | 8.0 | Classifier-free guidance scale on the speaker condition. Advertised range is recommended, not enforced by the parser. |
-| `num_inference_steps` | int | 40 | Euler sampler steps. |
+| `text_guidance_scale` | float | 3.0 | Classifier-free guidance scale on the text condition (Independent-CFG mode). Advertised range is recommended, not enforced by the parser. |
+| `speaker_guidance_scale` | float | 8.0 | Classifier-free guidance scale on the speaker condition (Independent CFG mode). Advertised range is recommended, not enforced by the parser. |
+| `guidance_scale` | float | 8.0 | Classifier-free guidance scale on the text+speaker condition (Joint-CFG mode). Advertised range is recommended, not enforced by the parser. |
+| `cfg_mode` | float | independent | What type of classifier-free guidance to use. `independent` is the default and upstream implementation, using two guidance scales (one for text, one for the speaker). `joint` uses a single guidance scale on both the text and the speaker. |
+| `num_inference_steps` | int | 40/12 | Euler sampler steps. 40 got linear time schedule, 12 for sway. |
+| `t_schedule_mode` | string | linear | `linear` time scheduling is the default upstream; `sway` scheduling modifies the grid to place more timesteps where the noise is higher. Sway time schedules can reduce the number of steps needed to produce similar quality. |
+| `sway_coeff` | float | -1.0 | Sway coefficient for producing timesteps. Values must be finite and produce decreasing timesteps (validated at request) |
 | `truncation_factor` | float | 0.8 | Initial-noise truncation factor. Advertised range is recommended, not enforced by the parser. |
 | `speaker_kv_scale` | float | 1.0 | Force-speaker KV scaling. 1.0 disables; 1.5 is the upstream default when enabled. Advertised range is recommended, not parser-enforced; zero is invalid for reciprocal scaling. |
 | `seed` | int | 0 | RNG seed for the initial latent. Negative signed-integer values are treated as zero. |

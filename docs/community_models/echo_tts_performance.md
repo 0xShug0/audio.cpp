@@ -157,6 +157,79 @@ first ~0.2 seconds of the generated audio, where the speaker doesn't as closely
 match the reference as Independent-CFG does. After the beginning of the
 generation, the speaker quickly matches the reference audio.
 
+### 7 `t_schedule_mode` (opt-in, default linear)
+Like Irodori-TTS, Echo-TTS has two Euler solver timestep schedules available.
+Upstream only implements the linear timeschedule, so here Echo-TTS utilizes the
+Sway timestep schedule from Irodori-TTS, which changes the the timestep grid
+supplied to the ODE solver. Only active when `t_schedule_mode=sway`, and utilizes
+`sway_coeff` to change the grid (default -1.0). Negative coefficients place
+denser timesteps towards the beginning of the time schedule, closer to the
+initial noise. Zero gives an equivalent to `t_schedule_mode=linear`. Coefficients
+must be finite and produce strictly decreasing timesteps; invalid combinations
+are rejected. When `t_schedule_mode=sway` is selected, the default for
+`num_inference_steps` is changed to 12.
+
+Sway scheduling can give similar quality at fewer inference steps than linear
+scheduling. By-ear, a listener (@lojack5) was unable to distinguise between
+linear 40-step and sway 12-step generations in a blind A/B/X test, both for
+Joint-CFG and Independent-CFG; sway 11-step was distinguisable in 20% of the
+tests.
+
+Audio analysis backs this up: a reference audio generated using linear 40-step
+time schedule was compared against a sweep of sway schedules (6-40), using the same
+sampling parameters (seed, prompt, etc) and only changing the timestep schedule
+(8-16 shown). "speaker cosine" is the cosine similarity after embedding with
+speechbrain/spkrec-ecapa-voxceleb; "voiced disagreement" is a pitch and prosody
+comparison.
+
+| Sway steps | DTW logmel distance | Pooled logmel cosine | logmag mae | spectral convergence | speaker cosine | voiced disagreement |
+|---|---|---|---|---|---|---|
+| 8 | 0.003887 | 0.9949 | 1.1011 | 0.5997 | 0.9278 | 0.08445 |
+| 9 | 0.001769 | 0.9978 | 0.8824 | 0.5998 | 0.9574 | 0.07693 |
+| 10 | 0.002054 | 0.9998 | 0.4943 | 0.3411 | 0.9639 | 0.06218 |
+| 11 | 0.003888 | 0.9990 | 0.6357 | 0.4087 | 0.9668 | 0.06218 |
+| 12 | 0.001769 | 0.9998 | 0.4745 | 0.3150 | 0.9641 | 0.06741 |
+| 13 | 0.001430 | 0.9999 | 0.4286 | 0.2482 | 0.9675 | 0.06093 |
+| 14 | 0.001631 | 0.9998 | 0.4503 | 0.2594 | 0.9685 | 0.06729 |
+| 15 | 0.001312 | 0.9999 | 0.4144 | 0.2281 | 0.9730 | 0.07787 |
+| 16 | 0.001429 | 0.9999 | 0.4201 | 0.2481 | 0.9675 | 0.06449 |
+
+Note: Sway timestep schedule does not purport to produce identical audio. It can
+produce similar quality and cloning similarity at fewer inference steps.
+
+At 12-step sway versus 40-step linear, the following speedups were observed:
+
+| GPU | CFG Mode | timestep schedule | Audio Duration | Request Time | RTF | Speedup |
+|---|---|---|---|---|---|---|
+| GTX 1080 Ti | independent | linear-40 | 2.46s | 16.68s | x6.78 | - |
+| GTX 1080 Ti | independent | sway-12 | 2.46s | 6.04s | x2.45 | x2.29 |
+| GTX 1080 Ti | independent | linear-40 | 9.20s | 17.80s | x1.94 | - |
+| GTX 1080 Ti | independent | sway-12 | 9.57s | 6.58s | x0.69 | x2.76 |
+| GTX 1080 Ti | independent | linear-40 | 26.38s | 36.95s | x1.40 | - |
+| GTX 1080 Ti | independent | sway-12 | 26.38s | 14.28s | x0.54 | x2.70 |
+| GTX 1080 Ti | joint | linear-40 | 3.07s | 11.50s | x3.75 | - |
+| GTX 1080 Ti | joint | sway-12 | 3.02s | 2.26s | x1.41 | x2.70 |
+| GTX 1080 Ti | joint | linear-40 | 9.85s | 13.51s | x1.37 | - |
+| GTX 1080 Ti | joint | sway-12 | 9.75s | 4.95s | x0.51 | x2.71 |
+| GTX 1080 Ti | joint | linear-40 | 27.49s | 28.67s | x1.04 | - |
+| GTX 1080 Ti | joint | sway-12 | 27.49s | 11.08s | x0.40 | x2.59 |
+| RTX 4070 | independent | linear-40 | 2.46s | 3.91s | x1.59 | - |
+| RTX 4070 | independent | sway-12 | 2.55s | 1.52s | x0.59 | x2.57 |
+| RTX 4070 | independent | linear-40 | 9.20s | 4.34s | x0.47 | - |
+| RTX 4070 | independent | sway-12 | 9.20s | 1.66s | x0.18 | x2.61 |
+| RTX 4070 | independent | linear-40 | 26.38s | 8.91s | x0.33 | - |
+| RTX 4070 | independent | sway-12 | 26.61s | 3.90s | x0.15 | x2.29 |
+| RTX 4070 | joint | linear-40 | 2.83s | 2.92s | x1.03 | - |
+| RTX 4070 | joint | sway-12 | 2.79s | 1.07s | x0.38 | x2.74 |
+| RTX 4070 | joint | linear-40 | 9.85s | 3.18s | x0.32 | - |
+| RTX 4070 | joint | sway-12 | 9.75s | 1.28s | x0.13 | x2.47 |
+| RTX 4070 | joint | linear-40 | 27.49s | 6.80s | x0.25 | - |
+| RTX 4070 | joint | sway-12 | 27.59s | 2.98s | x0.11 | x2.28 |
+
+Mesured with identical sampling parameters except where noted, and "warm" server: model weights loaded, reference speaker cached, GPUs up to temperature. Three prompt lengths, two GPUs, and both CFG modes tested. Again, Sway
+scheduling does not purport to produce identical audio, merely similar quality at lower step counts. Using the
+recommended step counts gives a ~2.3-2.7 times speedup.
+
 ---
 
 ## Suggested config

@@ -80,7 +80,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Euler sampler steps.",
+        "description": "Euler sampler steps. Default 40 for linear timestep schedule, 12 for sway.",
         "required": false,
         "min": 1,
         "default": 40

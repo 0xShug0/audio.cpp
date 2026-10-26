@@ -306,8 +306,6 @@ runtime::RunMode EchoTtsSession::run_mode() const { return task_.mode; }
 EchoSamplerOptions EchoTtsSession::parse_sampler_options(
     const std::unordered_map<std::string, std::string> & options) const {
     EchoSamplerOptions sampler;
-    sampler.num_steps =
-        runtime::parse_int_option(options, {"num_inference_steps"}).value_or(sampler.num_steps);
     sampler.cfg_mode = cfg_mode_; // Session-only option (for now), copy from the session
     if (const auto t_schedule_mode_raw = runtime::find_option(options, {"t_schedule_mode"})) {
         const auto t_schedule_mode = lower_ascii(trim_ascii(*t_schedule_mode_raw));
@@ -319,6 +317,9 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
             throw runtime::InvalidRequestError("Echo-TTS t_schedule_mode must be one of 'linear' or 'sway'.");
         }
     }
+    sampler.num_steps =
+        runtime::parse_int_option(options, {"num_inference_steps"}).value_or(
+            sampler.t_schedule_mode == EchoScheduleMode::Linear ? sampler.num_steps : sampler.num_steps_sway);
     if (sampler.t_schedule_mode == EchoScheduleMode::Sway) {
         sampler.sway_coeff = runtime::parse_float_option(options, {"sway_coeff"})
             .value_or(sampler.sway_coeff);
