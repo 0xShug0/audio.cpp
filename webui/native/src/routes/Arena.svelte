@@ -358,6 +358,13 @@
     arenaItems = [];
   }
 
+  function chooseArenaMode(mode: ArenaMode) {
+    if (running || mode === arenaMode) return;
+    resetArena();
+    arenaMode = mode;
+    status = '';
+  }
+
   function addArenaItem() {
     if (!arenaEntry) return;
     const choice = arenaPackageChoices.find((candidate) => candidate.id === arenaPackageId);
@@ -636,9 +643,9 @@
     <p>{arenaSubtitle}</p>
   </div>
   <div class="arena-mode-switch">
-    <button class:active={arenaMode === 'tts'} on:click={() => arenaMode = 'tts'}>{tr('arena.mode.tts')}</button>
-    <button class:active={arenaMode === 'vc'} on:click={() => arenaMode = 'vc'}>{tr('arena.mode.vc')}</button>
-    <button class:active={arenaMode === 'asr'} on:click={() => arenaMode = 'asr'}>{tr('arena.mode.asr')}</button>
+    <button class:active={arenaMode === 'tts'} disabled={running} on:click={() => chooseArenaMode('tts')}>{tr('arena.mode.tts')}</button>
+    <button class:active={arenaMode === 'vc'} disabled={running} on:click={() => chooseArenaMode('vc')}>{tr('arena.mode.vc')}</button>
+    <button class:active={arenaMode === 'asr'} disabled={running} on:click={() => chooseArenaMode('asr')}>{tr('arena.mode.asr')}</button>
   </div>
 </section>
 
