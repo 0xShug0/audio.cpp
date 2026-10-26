@@ -112,21 +112,22 @@ void test_upstream_parity() {
         const auto audio = load_wav(wav);
         require(static_cast<int64_t>(audio.size()) == file.find("num_samples")->as_i64(), wav + ": sample count");
         const auto & expected = file.find("scores")->as_array();
-        for (const int threads : {1, 4}) {
-            const auto scores = ev::score_earshot_frames(w, audio.data(), static_cast<int64_t>(audio.size()), threads);
-            require(scores.size() == expected.size(), wav + ": frame count");
-            double max_diff = 0.0;
-            for (size_t i = 0; i < scores.size(); ++i) {
-                max_diff = std::max(max_diff, std::abs(static_cast<double>(scores[i]) - expected[i].as_number()));
-            }
-            require(max_diff <= 2e-3, wav + ": max score diff " + std::to_string(max_diff));
-        }
-
         const auto scores = ev::score_earshot_frames(w, audio.data(), static_cast<int64_t>(audio.size()), 1);
+        require(scores.size() == expected.size(), wav + ": frame count");
+        double max_diff = 0.0;
+        for (size_t i = 0; i < scores.size(); ++i) {
+            max_diff = std::max(max_diff, std::abs(static_cast<double>(scores[i]) - expected[i].as_number()));
+        }
+        // FFT order, logf and mel sum order differ from upstream; observed max ~1e-4.
+        require(max_diff <= 5e-4, wav + ": max score diff " + std::to_string(max_diff));
+
+        // Threads and the frame-by-frame detector run the same kernels: identical bits.
+        const auto threaded = ev::score_earshot_frames(w, audio.data(), static_cast<int64_t>(audio.size()), 4);
+        require(threaded == scores, wav + ": threaded scoring differs from one thread");
         ev::EarshotDetector detector(w);
         for (size_t f = 0; f < scores.size(); ++f) {
             const float s = detector.predict(audio.data() + static_cast<int64_t>(f) * ev::kFrameSize);
-            require(std::abs(s - scores[f]) <= 1e-6f, wav + ": detector differs from batched scoring");
+            require(s == scores[f], wav + ": detector differs from batched scoring");
         }
 
         ev::EarshotSegmenterConfig upstream;
@@ -292,6 +293,7 @@ void test_vad_chunk_planner() {
 }  // namespace
 
 int main() {
+    std::cout << "earshot_vad kernels: " << ev::earshot_kernel_name() << "\n";
     const std::vector<std::pair<const char *, void (*)()>> tests = {
         {"upstream_parity", test_upstream_parity},
         {"trailing_segment_kept", test_trailing_segment_kept},

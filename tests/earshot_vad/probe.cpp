@@ -95,8 +95,8 @@ int main(int argc, char ** argv) {
                         static_cast<long long>(segments[i].start_frame * ev::kFrameSize),
                         static_cast<long long>(segments[i].end_frame * ev::kFrameSize));
         }
-        std::printf("],\"max_stream_diff\":%.9e,\"offline_ms\":%.6f,\"streaming_ms\":%.6f}\n",
-                    max_stream_diff, offline_ms, streaming_ms);
+        std::printf("],\"max_stream_diff\":%.9e,\"offline_ms\":%.6f,\"streaming_ms\":%.6f,\"kernel\":\"%s\"}\n",
+                    max_stream_diff, offline_ms, streaming_ms, ev::earshot_kernel_name());
     } catch (const std::exception & error) {
         std::cerr << "earshot_vad_probe: " << error.what() << "\n";
         return 1;

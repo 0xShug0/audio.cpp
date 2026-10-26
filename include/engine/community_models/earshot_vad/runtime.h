@@ -33,17 +33,25 @@ struct EarshotWeights {
     std::array<float, 16> layer2_bias{};
     std::array<float, 48> layer3_kernel{};
     std::array<float, 256> layer3_weight{};
-    // [in, out] copies of layer{2,3}_weight so the pointwise loops vectorize over outputs.
+    // Channel-innermost copies so the conv kernels vectorize over the 16 channels:
+    // layer{2,3}_kernel_t is [tap, channel], layer{2,3}_weight_t is [in, out].
+    std::array<float, 48> layer2_kernel_t{};
+    std::array<float, 48> layer3_kernel_t{};
     std::array<float, 256> layer2_weight_t{};
     std::array<float, 256> layer3_weight_t{};
     std::vector<int16_t> rnn1_weight;    // [128, 80], Q9
     std::vector<int16_t> rnn2_weight;    // [128, 64], Q9
+    // The same weights as [in / 2, 128, 2]: input pairs outermost, for the VNNI kernels.
+    std::vector<int16_t> rnn1_pairs;
+    std::vector<int16_t> rnn2_pairs;
     std::array<int16_t, 128> output_weight{};  // Q9
     std::array<float, kWindowSize> hann_window{};
     std::array<int32_t, kMels> mel_start{};
     std::array<int32_t, kMels> mel_length{};
-    std::array<int32_t, kMels> mel_offset{};
-    std::vector<float> mel_coeffs;
+    std::array<int32_t, kMels> mel_offset{};  // into mel_coeffs
+    std::array<int32_t, kMels> mel_groups{};  // mel_length rounded up to groups of eight
+    std::vector<float> mel_coeffs;             // per band, zero-padded to mel_groups * 8
+    int32_t mel_bins = 0;  // one past the last power bin any mel band reads
 };
 
 struct EarshotAssetPaths {
@@ -99,6 +107,9 @@ std::vector<float> score_earshot_frames(
     const float * samples,
     int64_t sample_count,
     int threads);
+
+/** Kernel set picked for this CPU: "baseline", "avx2" or "avx512". */
+const char * earshot_kernel_name();
 
 struct EarshotFrameSegment {
     int64_t start_frame = 0;

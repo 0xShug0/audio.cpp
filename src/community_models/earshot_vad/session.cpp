@@ -164,13 +164,23 @@ public:
         received_ += static_cast<int64_t>(chunk.samples.size());
 
         runtime::StreamEvent event;
-        for (const float sample : chunk.samples) {
-            pending_.push_back(sample);
-            if (static_cast<int64_t>(pending_.size()) == kFrameSize) {
-                push_frame(event);
+        const float * data = chunk.samples.data();
+        const size_t size = chunk.samples.size();
+        const size_t frame = static_cast<size_t>(kFrameSize);
+        size_t used = 0;
+        if (!pending_.empty()) {
+            // Complete the partial frame left by the previous chunk.
+            used = std::min(size, frame - pending_.size());
+            pending_.insert(pending_.end(), data, data + used);
+            if (pending_.size() == frame) {
+                push_frame(event, pending_.data());
                 pending_.clear();
             }
         }
+        for (; used + frame <= size; used += frame) {
+            push_frame(event, data + used);
+        }
+        pending_.insert(pending_.end(), data + used, data + size);
         debug::timing_log_scalar("earshot_vad.streaming.chunk_ms", debug::elapsed_ms(started));
         return event;
     }
@@ -207,8 +217,8 @@ private:
         received_ = 0;
     }
 
-    void push_frame(runtime::StreamEvent & event) {
-        const float score = detector_.predict(pending_.data());
+    void push_frame(runtime::StreamEvent & event, const float * samples) {
+        const float score = detector_.predict(samples);
         const auto update = segmenter_.push(score);
         if (update.started_frame) {
             event.voice_activity.push_back({
