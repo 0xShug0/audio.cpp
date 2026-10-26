@@ -1,6 +1,7 @@
 // runtime::load_vad_model: the loader ASR VAD chunking uses for <family>.vad_model_path.
 
 #include "engine/framework/runtime/registry.h"
+#include "gguf.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -8,6 +9,7 @@
 #include <optional>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -121,6 +123,33 @@ void test_rejections() {
     require(bad_hint.find("not built into this binary") != std::string::npos, "unknown hint error: " + bad_hint);
 }
 
+void test_standalone_embedded_vad() {
+    if (!rt::make_default_registry().supports_family("pulsevad")) {
+        std::cout << "[SKIP] standalone_embedded_vad: pulsevad is not built\n";
+        return;
+    }
+    TempDir dir("audiocpp_vad_loader_standalone");
+    std::ifstream spec(repo_path("model_specs/pulsevad.json"));
+    require(spec.good(), "open PulseVAD spec fixture");
+    const std::string json((std::istreambuf_iterator<char>(spec)), std::istreambuf_iterator<char>());
+    const auto path = dir.path / "vad.gguf";
+    auto * gguf = gguf_init_empty();
+    gguf_set_val_u32(gguf, "audiocpp.model_spec.version", 1);
+    gguf_set_val_str(gguf, "audiocpp.model_spec.family", "pulsevad");
+    gguf_set_val_str(gguf, "audiocpp.model_spec.json", json.c_str());
+    const bool written = gguf_write_to_file(gguf, path.string().c_str(), true);
+    gguf_free(gguf);
+    require(written, "write embedded VAD spec fixture");
+
+    const auto previous = fs::current_path();
+    fs::current_path(dir.path);
+    const auto error = error_of([&] {
+        require(family_of(path) == "pulsevad", "standalone embedded VAD family");
+    });
+    fs::current_path(previous);
+    require(error.empty(), "standalone embedded VAD: " + error);
+}
+
 }  // namespace
 
 int main() {
@@ -129,6 +158,7 @@ int main() {
         {"renamed_silero_file", test_renamed_silero_file},
         {"sibling_package_does_not_claim_file", test_sibling_package_does_not_claim_file},
         {"rejections", test_rejections},
+        {"standalone_embedded_vad", test_standalone_embedded_vad},
     };
     int failures = 0;
     for (const auto & [name, test] : tests) {

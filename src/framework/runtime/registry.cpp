@@ -1,6 +1,5 @@
 #include "engine/framework/runtime/registry.h"
 
-#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/audio/utilities/utility_api.h"
@@ -346,6 +345,7 @@ bool claims_exact_file(const IVoiceModelLoader & loader, const ModelLoadRequest 
 }  // namespace
 
 std::unique_ptr<ILoadedVoiceModel> load_vad_model(const ModelLoadRequest & request) {
+    engine::model_spec::ScopedSpecOverride spec_override(request.model_spec_override, request.model_path);
     // Internal load for a host session (e.g. ASR chunking): call the loader directly so the
     // host's load trace and progress bracket are left alone. Only VAD loaders are considered,
     // so a wrong path never loads a large non-VAD model first.
@@ -409,10 +409,6 @@ std::unique_ptr<ILoadedVoiceModel> load_vad_model(const ModelLoadRequest & reque
     std::string silero_error = "silero_vad is not built into this binary";
     if (silero != nullptr) {
         try {
-            // Silero loads its tensors lazily, so confirm a file really holds Silero weights.
-            if (is_file && !engine::assets::open_tensor_source(request.model_path)->has_tensor("stft_conv.weight")) {
-                throw std::runtime_error("the file has no Silero VAD tensors");
-            }
             return silero->load(request);
         } catch (const std::exception & error) {
             silero_error = error.what();
