@@ -113,6 +113,11 @@ public:
     std::vector<CausalDecoderStepResult> prefill_tokens_into_batched_decode_cache(
         const std::vector<std::vector<int32_t>> & prefixes,
         int64_t required_cache_steps);
+    // Same for embedding inputs: each prefix holds steps x hidden_size floats. Follow
+    // with decode_embeddings_batched().
+    std::vector<CausalDecoderStepResult> prefill_embeddings_into_batched_decode_cache(
+        const std::vector<std::vector<float>> & prefixes,
+        int64_t required_cache_steps);
 
     void start_decode_tokens(const runtime::TransformerKVState & state, int64_t required_cache_steps);
     void start_decode_embeddings(const runtime::TransformerKVState & state, int64_t required_cache_steps);

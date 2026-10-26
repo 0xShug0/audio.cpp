@@ -211,7 +211,7 @@
       {
         "name": "perf_mode",
         "type": "enum",
-        "description": "CUDA AR decode preset. cuda_perf enables fused_depth, direct_prefill and skip_cache_round; off keeps them disabled. Other backends ignore it. Explicit session options override the preset.",
+        "description": "CUDA AR decode preset. cuda_perf enables fused_depth, direct_prefill, skip_cache_round and cfg_batch; off keeps them disabled. Other backends ignore it. Explicit session options override the preset.",
         "required": false,
         "values": ["off", "cuda_perf"],
         "default": "off"
@@ -241,6 +241,13 @@
         "name": "round_bf16_fusion",
         "type": "bool",
         "description": "Fold the bf16 activation rounding into the CUDA RMS-norm, add and SwiGLU kernels that produce it. Bit-identical to the unfused graph, with fewer kernel launches. CUDA only.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "cfg_batch",
+        "type": "bool",
+        "description": "With guidance_scale != 1, decode the conditional and unconditional backbone branches as one batch-2 step. Batching changes matmul accumulation order, so output differs from the two-runtime path. CUDA only.",
         "required": false,
         "default": false
       }

@@ -237,7 +237,68 @@ int main(int argc, char ** argv) {
         close(saver.prefill_embeddings_into_cache(regrown, 40, 128, 8, 20).logits, regrown_reference.logits);
         saver.release_runtime_graphs();
         if (saver.decode_current_end() != 0) { throw std::runtime_error("reset failed"); }
-        std::cout << "PASS chunk boundaries, repeated prefill, kept prefix, decode, reset, capacity, reference parity\n";
+        // Unequal-length embedding prompts prefilled into separate lanes of the
+        // batched cache and then decoded together match two single-lane runtimes
+        // (the CFG pattern: both lanes receive the same embedding every step).
+        engine::modules::CausalDecoderRuntime lanes(execution, config, weights);
+        engine::modules::CausalDecoderRuntime lane_a(execution, config, weights);
+        engine::modules::CausalDecoderRuntime lane_b(execution, config, weights);
+        for (const auto & [steps_a, steps_b] : std::array<std::array<int, 2>, 4>{{{11, 5}, {3, 17}, {9, 9}, {11, 5}}}) {
+            const auto prompt_a = pattern(steps_a * 64, .3f);
+            const auto prompt_b = pattern(steps_b * 64, -.25f);
+            const auto prefilled = lanes.prefill_embeddings_into_batched_decode_cache({prompt_a, prompt_b}, 32);
+            close(prefilled[0].logits, lane_a.prefill_embeddings_into_decode_cache(prompt_a, steps_a, 32).logits);
+            close(prefilled[1].logits, lane_b.prefill_embeddings_into_decode_cache(prompt_b, steps_b, 32).logits);
+            for (int step = 0; step < 4; ++step) {
+                const auto next = pattern(64, .1f * (step + 1));
+                auto paired = next;
+                paired.insert(paired.end(), next.begin(), next.end());
+                const auto batched = lanes.decode_embeddings_batched(paired, 2);
+                const auto row = static_cast<std::ptrdiff_t>(batched.logits.size() / 2);
+                close({batched.logits.begin(), batched.logits.begin() + row}, lane_a.decode_embedding(next).logits);
+                close({batched.logits.begin() + row, batched.logits.end()}, lane_b.decode_embedding(next).logits);
+            }
+        }
+        // Token prompts take the same lane path (Yue2 uses it for CFG). Running them on
+        // the same runtime after the embedding lanes, and switching back afterwards,
+        // also covers changing the input kind between requests.
+        engine::modules::CausalDecoderRuntime token_a(execution, config, weights);
+        engine::modules::CausalDecoderRuntime token_b(execution, config, weights);
+        const auto token_prompt = [](int count, int offset) {
+            std::vector<int32_t> ids(static_cast<size_t>(count));
+            for (int i = 0; i < count; ++i) { ids[static_cast<size_t>(i)] = (i * 7 + offset) % 97; }
+            return ids;
+        };
+        for (const auto & [steps_a, steps_b] : std::array<std::array<int, 2>, 3>{{{7, 13}, {6, 6}, {7, 13}}}) {
+            const auto prompt_a = token_prompt(steps_a, 3);
+            const auto prompt_b = token_prompt(steps_b, 11);
+            const auto prefilled = lanes.prefill_tokens_into_batched_decode_cache({prompt_a, prompt_b}, 32);
+            close(prefilled[0].logits, token_a.prefill_tokens_into_decode_cache(prompt_a, 32).logits);
+            close(prefilled[1].logits, token_b.prefill_tokens_into_decode_cache(prompt_b, 32).logits);
+            for (int step = 0; step < 4; ++step) {
+                const int32_t next = (step * 13 + 5) % 97;
+                const auto batched = lanes.decode_tokens_batched({next, next});
+                const auto row = static_cast<std::ptrdiff_t>(batched.logits.size() / 2);
+                close({batched.logits.begin(), batched.logits.begin() + row}, token_a.decode_token(next).logits);
+                close({batched.logits.begin() + row, batched.logits.end()}, token_b.decode_token(next).logits);
+            }
+        }
+        {
+            const auto prompt_a = pattern(5 * 64, .2f);
+            const auto prompt_b = pattern(9 * 64, -.35f);
+            const auto prefilled = lanes.prefill_embeddings_into_batched_decode_cache({prompt_a, prompt_b}, 32);
+            close(prefilled[0].logits, lane_a.prefill_embeddings_into_decode_cache(prompt_a, 5, 32).logits);
+            close(prefilled[1].logits, lane_b.prefill_embeddings_into_decode_cache(prompt_b, 9, 32).logits);
+            const auto next = pattern(64, .45f);
+            auto paired = next;
+            paired.insert(paired.end(), next.begin(), next.end());
+            const auto batched = lanes.decode_embeddings_batched(paired, 2);
+            const auto row = static_cast<std::ptrdiff_t>(batched.logits.size() / 2);
+            close({batched.logits.begin(), batched.logits.begin() + row}, lane_a.decode_embedding(next).logits);
+            close({batched.logits.begin() + row, batched.logits.end()}, lane_b.decode_embedding(next).logits);
+        }
+        std::cout << "PASS chunk boundaries, repeated prefill, kept prefix, decode, reset, capacity, reference parity, "
+                     "batched embedding and token lanes\n";
         engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         return 0;
     } catch (const std::exception & error) {
