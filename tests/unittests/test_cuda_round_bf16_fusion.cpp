@@ -108,6 +108,15 @@ int main() {
     if (!reg || ggml_backend_reg_dev_count(reg) == 0) return 77;
     auto backend = ggml_backend_dev_init(ggml_backend_reg_dev_get(reg, 0), nullptr);
     if (!backend) return 1;
+    // The fusion is opt-in per backend instance.
+    auto set_fusion = reinterpret_cast<void (*)(ggml_backend_t, bool)>(
+        ggml_backend_reg_get_proc_address(reg, "ggml_backend_cuda_set_round_bf16_fusion"));
+    if (!set_fusion) {
+        std::cerr << "CUDA backend does not export ggml_backend_cuda_set_round_bf16_fusion\n";
+        ggml_backend_free(backend);
+        return 1;
+    }
+    set_fusion(backend, true);
     const char * names[] = {"rms_norm*w", "add", "swiglu"};
     try {
         for (Pattern pattern : {Pattern::RmsNormMul, Pattern::Add, Pattern::SwiGlu}) {

@@ -1,6 +1,7 @@
 #include "engine/models/breeze_tts/session.h"
 
 #include "engine/framework/core/attention_fallback.h"
+#include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -126,10 +127,11 @@ void validate_session_options(
     // Older standalone GGUF packages embed a v1 contract that predates this
     // backend-compatibility option; keep them usable while still validating
     // the option value in attention_preference_from_options().
-    // bf16_activations and the perf_mode controls are handled the same way.
+    // bf16_activations and the performance controls are handled the same way.
     for (const char * key : {"breeze_tts.attention", "bf16_activations", "breeze_tts.bf16_activations",
                              "breeze_tts.perf_mode", "breeze_tts.fused_depth",
-                             "breeze_tts.direct_prefill", "breeze_tts.skip_cache_round"}) {
+                             "breeze_tts.direct_prefill", "breeze_tts.skip_cache_round",
+                             "breeze_tts.round_bf16_fusion"}) {
         if (contract.session_option_keys.find(key) == contract.session_option_keys.end()) {
             validation_options.options.erase(key);
         }
@@ -164,6 +166,15 @@ std::size_t reference_cache_slots_from_options(const runtime::SessionOptions & o
         throw std::runtime_error("breeze_tts.reference_cache_slots is too large");
     }
     return static_cast<std::size_t>(slots);
+}
+
+// Opt-in CUDA fusion of the bf16-reference rounding into its producing
+// kernels; bit-identical to the unfused graph, ignored on other backends.
+bool round_bf16_fusion_from_options(const runtime::SessionOptions & options) {
+    const auto it = options.options.find("breeze_tts.round_bf16_fusion");
+    const bool enabled = it != options.options.end() && runtime::parse_bool_option(it->second, it->first);
+    engine::debug::trace_log_scalar("breeze_tts.round_bf16_fusion", enabled);
+    return enabled;
 }
 
 uint64_t fnv1a_mix(uint64_t hash, const void * data, size_t size) {
@@ -235,6 +246,7 @@ BreezeTTSSession::BreezeTTSSession(
     trace_attention_preference(attention_preference);
     const auto bf16_activations = bf16_activation_mode_from_options(options);
     const auto perf = perf_options_from_options(options);
+    core::set_backend_round_bf16_fusion(execution_context().backend(), round_bf16_fusion_from_options(options));
     generator_ = std::make_unique<BreezeGeneratorRuntime>(
         assets_,
         execution_context(),

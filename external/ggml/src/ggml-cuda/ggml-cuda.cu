@@ -4355,8 +4355,9 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
         }
     }
 
-    // bf16-reference rounding folded into the producing kernel.
-    if (node->op == GGML_OP_RMS_NORM && ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL }, {}) &&
+    // bf16-reference rounding folded into the producing kernel; opt-in per backend
+    // through ggml_backend_cuda_set_round_bf16_fusion().
+    if (cuda_ctx->round_bf16_fusion && node->op == GGML_OP_RMS_NORM && ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL }, {}) &&
         ggml_cuda_is_elidable(cgraph, i + 1) && ggml_cuda_is_round_bf16_of(cgraph, i + 2, cgraph->nodes[i + 1])) {
         const int outputs[] = { i + 2 };
         if (ggml_cuda_check_fusion_memory_ranges(cgraph, i, 3, outputs, 1)) {
@@ -4364,7 +4365,8 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
             return 2;
         }
     }
-    if (node->op == GGML_OP_ADD && ggml_cuda_is_elidable(cgraph, i) && ggml_cuda_is_round_bf16_of(cgraph, i + 1, node) &&
+    if (cuda_ctx->round_bf16_fusion && node->op == GGML_OP_ADD && ggml_cuda_is_elidable(cgraph, i) &&
+        ggml_cuda_is_round_bf16_of(cgraph, i + 1, node) &&
         node->type == GGML_TYPE_F32 && node->src[0]->type == GGML_TYPE_F32 && node->src[1]->type == GGML_TYPE_F32 &&
         ggml_is_contiguous(node->src[0]) && ggml_is_contiguous(node->src[1]) &&
         ggml_are_same_shape(node->src[0], node) && ggml_are_same_shape(node->src[1], node)) {
@@ -4379,8 +4381,8 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
             return 1;
         }
     }
-    if (node->op == GGML_OP_UNARY && ggml_get_unary_op(node) == GGML_UNARY_OP_ROUND_BF16 &&
-        ggml_cuda_can_fuse_swiglu_round_bf16(cgraph, i)) {
+    if (cuda_ctx->round_bf16_fusion && node->op == GGML_OP_UNARY &&
+        ggml_get_unary_op(node) == GGML_UNARY_OP_ROUND_BF16 && ggml_cuda_can_fuse_swiglu_round_bf16(cgraph, i)) {
         ggml_cuda_op_swiglu_round_bf16(*cuda_ctx, node->src[0], cgraph->nodes[i + 3], cgraph->nodes[i + 6]);
         return 6;
     }
@@ -5427,6 +5429,14 @@ void ggml_backend_cuda_set_stream_priority(ggml_backend_t backend, int priority)
     ctx->stream_priority = priority;
 }
 
+void ggml_backend_cuda_set_round_bf16_fusion(ggml_backend_t backend, bool enabled) {
+    if (backend == nullptr || !ggml_backend_is_cuda(backend)) {
+        return;
+    }
+    ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
+    ctx->round_bf16_fusion = enabled;
+}
+
 void ggml_backend_cuda_clear_graph(ggml_backend_t backend, const ggml_cgraph * graph) {
 #ifdef USE_CUDA_GRAPH
     if (!ggml_backend_is_cuda(backend) || graph == nullptr || graph->n_nodes <= 0) {
@@ -6284,6 +6294,9 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     }
     if (strcmp(name, "ggml_backend_cuda_set_stream_priority") == 0) {
         return (void *)ggml_backend_cuda_set_stream_priority;
+    }
+    if (strcmp(name, "ggml_backend_cuda_set_round_bf16_fusion") == 0) {
+        return (void *)ggml_backend_cuda_set_round_bf16_fusion;
     }
     if (strcmp(name, "ggml_backend_cuda_get_stream") == 0) {
         return (void *)ggml_backend_cuda_get_stream;

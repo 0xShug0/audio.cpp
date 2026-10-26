@@ -28,6 +28,10 @@ GGML_BACKEND_API void ggml_backend_cuda_trim_pools(ggml_backend_t backend);
 // created streams (lower = higher priority, 0 = default). Scoped to the
 // instance; already-created streams keep their priority.
 GGML_BACKEND_API void ggml_backend_cuda_set_stream_priority(ggml_backend_t backend, int priority);
+// Opts this backend instance into folding the bf16-reference rounding
+// (ggml_round_bf16) that directly follows RMS_NORM*MUL, ADD or SwiGLU into the
+// producing kernel. Off by default; results are bit-identical either way.
+GGML_BACKEND_API void ggml_backend_cuda_set_round_bf16_fusion(ggml_backend_t backend, bool enabled);
 // Returns the backend's current compute CUDA stream (cudaStream_t) so host
 // code can enqueue its own kernels/copies ordered with graph computes.
 GGML_BACKEND_API void * ggml_backend_cuda_get_stream(ggml_backend_t backend);

@@ -104,6 +104,7 @@ audiocpp_cli \
 | `breeze_tts.fused_depth` | `true`, `false` | `false` | One CUDA graph per frame for the depth codebooks, with device sampling. |
 | `breeze_tts.direct_prefill` | `true`, `false` | `false` | Offline prefill writes straight into the decode cache. |
 | `breeze_tts.skip_cache_round` | `true`, `false` | `false` | Skips the identity bf16 re-rounding of the F16 KV cache. |
+| `breeze_tts.round_bf16_fusion` | `true`, `false` | `false` | On CUDA, fold the bf16 activation rounding into the RMS-norm, add and SwiGLU kernels that produce it. Output is bit-identical; it only saves kernel launches. Other models are unaffected. |
 
 For long-form generation without reference audio, the first text chunk's generated
 audio codes and text serve as a fixed voice reference for subsequent chunks. This

@@ -1453,6 +1453,11 @@ struct ggml_backend_cuda_context {
     // instance, unlike a process-wide environment variable.
     int stream_priority = 0;
 
+    // Fold a ROUND_BF16 that directly follows RMS_NORM*MUL, ADD or SwiGLU into
+    // the producing kernel. Off by default; set through
+    // ggml_backend_cuda_set_round_bf16_fusion(), scoped to this backend instance.
+    bool round_bf16_fusion = false;
+
     ~ggml_backend_cuda_context();
 
     cudaStream_t stream(int device, int stream) {
