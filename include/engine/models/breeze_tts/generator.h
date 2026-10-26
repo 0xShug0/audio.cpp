@@ -41,8 +41,7 @@ enum class Bf16ActivationMode {
     Off,
 };
 
-// CUDA performance defaults; cuda_perf additionally enables batched CFG.
-// Other backends ignore them.
+// CUDA/Vulkan/Metal performance defaults; cuda_perf additionally enables CUDA batched CFG.
 struct BreezePerfOptions {
     // Decode each frame's depth codebooks in one graph with device sampling.
     bool fused_depth = true;
