@@ -1,0 +1,82 @@
+name: HIP test release binaries
+
+on:
+  workflow_call:
+    inputs:
+      source_repository:
+        type: string
+        required: true
+      source_sha:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    # DevLab availability and HIP build failures must not fail the release.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ fromJSON(matrix.os == 'windows-2022' && '["self-hosted", "windows", "devlab-dispatch", "strix-halo"]' || '["self-hosted", "linux", "devlab-dispatch", "strix-halo"]') }}
+    timeout-minutes: 90
+    env:
+      ROCM_VERSION: '10.0.0'
+      SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      GPU_TARGETS: release
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.source_repository }}
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install ninja patchelf
+          tools="$RUNNER_TEMP/hip-release-tools"
+          mkdir -p "$tools"
+          curl -fL --retry 3 --max-time 120 -o "$tools/ccache.tar.xz" https://github.com/ccache/ccache/releases/download/v4.13.6/ccache-4.13.6-linux-x86_64-musl-static.tar.xz
+          tar -xJf "$tools/ccache.tar.xz" -C "$tools" --strip-components=1 ccache-4.13.6-linux-x86_64-musl-static/ccache
+          echo "$tools" >> "$GITHUB_PATH"
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: ggml-org/ccache-action@v1.2.24
+        with:
+          key: hip-release-${{ runner.os }}-rocm10
+          max-size: 2G
+          install: ${{ runner.os == 'Linux' && 'no' || 'binary' }}
+      - name: Build and package deployment binaries
+        run: python scripts/ci/build_hip_release.py --source source --output dist
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hip-build-logs-${{ runner.os }}
+          path: dist/logs/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hip-release-${{ runner.os }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
