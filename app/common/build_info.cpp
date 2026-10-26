@@ -36,6 +36,18 @@ std::string compiler_name() {
 
 }  // namespace
 
+const char * build_version() {
+    return AUDIOCPP_VERSION_STRING;
+}
+
+const char * build_git_sha() {
+    return AUDIOCPP_GIT_SHA_STRING;
+}
+
+const char * build_git_date() {
+    return AUDIOCPP_GIT_DATE_STRING;
+}
+
 void print_build_info(std::ostream & out) {
     out << "audio.cpp " << AUDIOCPP_VERSION_STRING << "\n"
         << "git: " << AUDIOCPP_GIT_SHA_STRING << " " << AUDIOCPP_GIT_DATE_STRING << "\n"
