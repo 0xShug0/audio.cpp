@@ -238,7 +238,7 @@ void require_supported_request_options(
     // 'guidance_interval' option; keep them usable while still validating
     // the value below.
     auto validation_options = options;
-    for (auto key : {"guidance_scale", "text_chunk_size"}) {
+    for (auto key : {"guidance_scale", "text_chunk_size", "sway_coeff", "t_schedule_mode"}) {
         if (contract.request_option_keys.find(key) ==
             contract.request_option_keys.end()) {
           validation_options.erase(key);
@@ -309,6 +309,20 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
     sampler.num_steps =
         runtime::parse_int_option(options, {"num_inference_steps"}).value_or(sampler.num_steps);
     sampler.cfg_mode = cfg_mode_; // Session-only option (for now), copy from the session
+    if (const auto t_schedule_mode_raw = runtime::find_option(options, {"t_schedule_mode"})) {
+        const auto t_schedule_mode = lower_ascii(trim_ascii(*t_schedule_mode_raw));
+        if (t_schedule_mode == "linear") {
+            sampler.t_schedule_mode = EchoScheduleMode::Linear;
+        } else if (t_schedule_mode == "sway") {
+            sampler.t_schedule_mode = EchoScheduleMode::Sway;
+        } else {
+            throw runtime::InvalidRequestError("Echo-TTS t_schedule_mode must be one of 'linear' or 'sway'.");
+        }
+    }
+    if (sampler.t_schedule_mode == EchoScheduleMode::Sway) {
+        sampler.sway_coeff = runtime::parse_float_option(options, {"sway_coeff"})
+            .value_or(sampler.sway_coeff);
+    }
     if (cfg_mode_ == EchoCfgMode::Independent) {
         sampler.cfg_scale_text = runtime::parse_float_option(options, {"text_guidance_scale"})
                                     .value_or(sampler.cfg_scale_text);
