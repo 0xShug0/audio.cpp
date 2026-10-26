@@ -41,13 +41,11 @@ enum class Bf16ActivationMode {
     Off,
 };
 
-// Opt-in CUDA performance paths; breeze_tts.perf_mode=cuda_perf enables both.
+// Opt-in CUDA performance paths; breeze_tts.perf_mode=cuda_perf enables them.
 // Other backends ignore them.
 struct BreezePerfOptions {
     // Decode each frame's depth codebooks in one graph with device sampling.
     bool fused_depth = false;
-    // Keep the backbone and depth decode graphs resident between requests.
-    bool keep_decode_graphs = false;
 };
 
 class BreezeGeneratorRuntime {

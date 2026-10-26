@@ -102,7 +102,6 @@ audiocpp_cli \
 | `weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Weight storage type; quantized types convert at load time from the BF16 package. |
 | `breeze_tts.perf_mode` | `off`, `cuda_perf` | `off` | CUDA decode preset; see [CUDA performance preset](#cuda-performance-preset). |
 | `breeze_tts.fused_depth` | `true`, `false` | `false` | One CUDA graph per frame for the depth codebooks, with device sampling. |
-| `breeze_tts.keep_decode_graphs` | `true`, `false` | `false` | Keep decode graphs resident between requests on CUDA. |
 
 For long-form generation without reference audio, the first text chunk's generated
 audio codes and text serve as a fixed voice reference for subsequent chunks. This
@@ -149,19 +148,19 @@ runaway repetition), because the model is trained and tuned in bf16.
 ## CUDA performance preset
 
 `breeze_tts.perf_mode` defaults to `off`. The opt-in `cuda_perf` preset sets
-the following defaults; explicit session options override the preset. Both
+the following defaults; explicit session options override the preset. These
 controls apply to CUDA only and are ignored on other backends.
 
 | Session option | `off` | `cuda_perf` | Effect |
 |---|---|---|---|
 | `breeze_tts.fused_depth` | `false` | `true` | Decodes the 15 residual codebooks of a frame in one CUDA graph. CFG mixing, temperature, top-k/top-p and sampling run on the device, and only the sampled tokens return to the host. |
-| `breeze_tts.keep_decode_graphs` | `false` | `true` | Keeps the backbone and depth decode graphs resident between requests and reuses them when the cache capacity fits. |
 
 The fused depth graph uses the per-codebook path's torch random draws, so for
 the same seed it normally reproduces `off` token for token. Its temperature
 scaling and f32 ranking round differently, which can change a sample only when
-two candidates are tied to within float precision. `keep_decode_graphs` does
-not change output.
+two candidates are tied to within float precision. It replaces the
+per-codebook depth runtimes rather than adding to them, so peak VRAM stays
+close to `off`.
 
 ```text
 --session-option breeze_tts.perf_mode=cuda_perf

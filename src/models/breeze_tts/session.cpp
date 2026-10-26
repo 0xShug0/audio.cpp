@@ -82,12 +82,11 @@ struct PerfPreset {
 };
 
 constexpr PerfPreset kPerfPresets[] = {
-    {"off", {false, false}},
-    {"cuda_perf", {true, true}},
+    {"off", {false}},
+    {"cuda_perf", {true}},
 };
 
-// perf_mode picks the defaults; explicit fused_depth / keep_decode_graphs
-// override the preset.
+// perf_mode picks the defaults; an explicit fused_depth overrides the preset.
 BreezePerfOptions perf_options_from_options(const runtime::SessionOptions & options) {
     const auto perf_mode = runtime::find_option(options.options, {"breeze_tts.perf_mode"}).value_or("off");
     const auto * preset = std::find_if(std::begin(kPerfPresets), std::end(kPerfPresets),
@@ -98,9 +97,6 @@ BreezePerfOptions perf_options_from_options(const runtime::SessionOptions & opti
     auto perf = preset->options;
     if (const auto value = runtime::find_option(options.options, {"breeze_tts.fused_depth"})) {
         perf.fused_depth = runtime::parse_bool_option(*value, "breeze_tts.fused_depth");
-    }
-    if (const auto value = runtime::find_option(options.options, {"breeze_tts.keep_decode_graphs"})) {
-        perf.keep_decode_graphs = runtime::parse_bool_option(*value, "breeze_tts.keep_decode_graphs");
     }
     engine::debug::trace_log_scalar("breeze_tts.perf_mode", std::string_view(preset->name));
     return perf;
@@ -125,7 +121,7 @@ void validate_session_options(
     // the option value in attention_preference_from_options().
     // bf16_activations and the perf_mode controls are handled the same way.
     for (const char * key : {"breeze_tts.attention", "bf16_activations", "breeze_tts.bf16_activations",
-                             "breeze_tts.perf_mode", "breeze_tts.fused_depth", "breeze_tts.keep_decode_graphs"}) {
+                             "breeze_tts.perf_mode", "breeze_tts.fused_depth"}) {
         if (contract.session_option_keys.find(key) == contract.session_option_keys.end()) {
             validation_options.options.erase(key);
         }

@@ -1195,9 +1195,8 @@ struct BreezeGeneratorRuntime::Impl {
         weights = load_weights(*this->assets, execution, weight_context_bytes, storage_type, backbone_runtime_config);
         backbone_cond = std::make_unique<modules::CausalDecoderRuntime>(execution, backbone_runtime_config, weights->backbone);
         backbone_uncond = std::make_unique<modules::CausalDecoderRuntime>(execution, backbone_runtime_config, weights->backbone);
-        // Both performance paths are opt-in and only validated on CUDA; other
-        // backends keep the per-codebook depth path and release the decode graphs
-        // after each request.
+        // The fused depth path is opt-in and only validated on CUDA; other backends
+        // keep the per-codebook depth path.
         const bool cuda = execution.backend_type() == core::BackendType::Cuda;
         if (cuda && perf.fused_depth) {
             fused_depth = std::make_unique<BreezeFusedDepthRuntime>(
@@ -1220,8 +1219,6 @@ struct BreezeGeneratorRuntime::Impl {
                 weights->depth_heads);
         }
         engine::debug::trace_log_scalar("breeze_tts.fused_depth", fused_depth != nullptr);
-        keep_decode_graphs = cuda && perf.keep_decode_graphs;
-        engine::debug::trace_log_scalar("breeze_tts.keep_decode_graphs", keep_decode_graphs);
         speech_encoder = std::make_unique<BreezeSpeechEncoderRuntime>(
             this->assets,
             execution,
@@ -1880,16 +1877,12 @@ struct BreezeGeneratorRuntime::Impl {
         engine::debug::timing_log_scalar("breeze_tts.ar.backbone_uncond_prefill_ms", backbone_uncond_prefill_ms);
         engine::debug::timing_log_scalar("breeze_tts.ar.backbone_cond_decode_ms", backbone_cond_decode_ms);
         engine::debug::timing_log_scalar("breeze_tts.ar.backbone_uncond_decode_ms", backbone_uncond_decode_ms);
-        // On CUDA the backbone and depth graphs stay resident for the next request,
-        // which reuses them whenever its cache capacity fits.
-        if (!keep_decode_graphs) {
-            backbone_cond->release_runtime_graphs();
-            if (use_cfg) {
-                backbone_uncond->release_runtime_graphs();
-            }
-            if (depth_pair != nullptr) {
-                depth_pair->release_runtime_graphs();
-            }
+        backbone_cond->release_runtime_graphs();
+        if (use_cfg) {
+            backbone_uncond->release_runtime_graphs();
+        }
+        if (depth_pair != nullptr) {
+            depth_pair->release_runtime_graphs();
         }
         if (codes.empty()) {
             throw std::runtime_error("BreezeTTS generated no audio codes");
@@ -1936,7 +1929,6 @@ struct BreezeGeneratorRuntime::Impl {
     std::vector<float> depth_logits_staging_;
     std::vector<float> depth_cond_hidden_now_;
     std::vector<float> depth_uncond_hidden_now_;
-    bool keep_decode_graphs = false;
 };
 
 BreezeGeneratorRuntime::BreezeGeneratorRuntime(
