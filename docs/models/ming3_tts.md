@@ -102,7 +102,7 @@ Use `--request-option name=value`, or the server request's `options` map.
 | `temperature` | `0` | Nonnegative flow sampling temperature; zero still uses seeded initial noise. |
 | `seed` | `1895` | Nonnegative reference-posterior and generation noise seed. |
 | `raw_text` | `false` | Bypass text chunking and synthesize one fragment. |
-| `text_chunk_size` | `50`, `120` or `300` | Framework text chunk budget in Unicode codepoints: `50` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `300`, or `120` for voice design and freeform. Their later chunks use the first generated chunk as their reference. |
+| `text_chunk_size` | `50`, `120` or `300` | Framework text chunk budget in Unicode codepoints: `50` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `300`; multi-chunk generation without speaker conditioning uses at most `120` by default and anchors later chunks to the first generated voice. |
 | `text_chunk_mode` | `tag_aware` | `default`, `tag_aware`, `japanese`, or `endline`. |
 | `trim_silence` | `true` | Trim trailing low-energy 100-ms frames per fragment, retaining a 300-ms tail. |
 | `stream_frames_per_event` | `4` | Maximum latent patches per streaming decode, from 1 to 64. |
@@ -140,20 +140,26 @@ There are no model-specific load options.
 
 ## Long Text
 
-Normal synthesis uses the framework text chunker with a 300-codepoint budget,
+Reference-conditioned synthesis uses the framework text chunker with a 300-codepoint budget,
 or 50 codepoints when hanzi, kana and Hangul outnumber other letters and
 digits. The official Python chunker cuts fragments of 50 semantic units,
 counting a CJK character like a Latin word; a 300-codepoint CJK chunk does not
 leave its speech enough of the 512-position context, and its end would be
 dropped.
-Voice design and freeform text is chunked too. As in the official runtime,
-every chunk after the first takes the first generated chunk as its reference
-(speaker embedding, acoustic prompt and transcript), so the designed voice
+Multi-chunk generation without speaker conditioning anchors later chunks to the
+first generated voice, regardless of the prompt template. Every chunk after the first
+takes the first generated chunk as its reference
+(speaker embedding, acoustic prompt and transcript), so the voice
 stays the same across chunks. The reference shares the 512-position context,
 so these chunks default to at most 120 codepoints, close to the official
-24-unit fragments. `raw_text=true` bypasses chunking. The native frontend
+24-unit fragments. Inputs that fit in one original chunk keep their existing
+chunk size. Explicit `text_chunk_size` overrides are preserved. `raw_text=true` bypasses chunking. The native frontend
 does not run the optional official FST text normalizer; spell out numbers
 and abbreviations when pronunciation matters.
+
+Explicit reference audio, speaker-embedding files, built-in voices, and disabled
+or zero speaker embeddings retain their existing TTS behavior. Automatic TTS
+anchoring applies in both offline and streaming modes.
 
 Generation has a 512-position context shared between the prompt and emitted
 acoustic patches. Reduce `text_chunk_size` or reference duration if the

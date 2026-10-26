@@ -165,15 +165,17 @@ private:
         }
         const bool raw_text = runtime::parse_bool_option(runtime::find_option(opts, {"raw_text"}).value_or("false"), "raw_text");
         const auto chunk_size = text::parse_text_chunk_size_override(opts);
-        const bool design = prompt_options.template_name == "voice_design" || prompt_options.template_name == "style" ||
-            prompt_options.template_name == "freeform";
-        // Later voice design and freeform chunks also carry the first chunk as their reference in the 512-position
-        // context, so their chunks stay near the official 24-unit fragments: about 120 codepoints of Latin text.
-        const int64_t default_chunk_size = design ? std::min<int64_t>(default_text_chunk_size(request.text_input->text), 120)
-            : default_text_chunk_size(request.text_input->text);
-        const auto chunks = raw_text ? std::vector<std::string>{request.text_input->text}
-            : text::split_text_chunks(request.text_input->text, chunk_size.value_or(default_chunk_size),
-                text::parse_text_chunk_mode_override(opts).value_or(text::TextChunkMode::TagAware));
+        const auto chunk_mode = text::parse_text_chunk_mode_override(opts).value_or(text::TextChunkMode::TagAware);
+        const int64_t default_chunk_size = default_text_chunk_size(request.text_input->text);
+        auto chunks = raw_text ? std::vector<std::string>{request.text_input->text}
+            : text::split_text_chunks(request.text_input->text, chunk_size.value_or(default_chunk_size), chunk_mode);
+        const bool has_speaker_conditioning = !speakers.empty() || !reference_latents.empty() ||
+            prompt_options.controls.count("ip") != 0;
+        const bool anchor_voice = chunks.size() > 1 && use_speaker && !zero_speaker && !has_speaker_conditioning;
+        // Anchored chunks share the 512-position context with the first chunk's reference.
+        if (anchor_voice && !chunk_size && default_chunk_size > 120) {
+            chunks = text::split_text_chunks(request.text_input->text, 120, chunk_mode);
+        }
         debug::trace_log_scalar("ming3_tts.text.chunk_count", chunks.size());
         const bool trim = runtime::parse_bool_option(runtime::find_option(opts, {"trim_silence"}).value_or("true"), "trim_silence");
         std::vector<float> waveform;
@@ -260,11 +262,8 @@ private:
                 stream_event_sink()(output);
             }
             waveform.insert(waveform.end(), audio.begin(), audio.end());
-            // As in the official runtime, later chunks of a split voice design or freeform request take the first
-            // generated chunk as their reference, so the designed voice stays the same across chunks. The reference
-            // ends where its speech ends: its last latent seeds the decode history, and starting from the trailing
-            // silence made some chunks stop at once.
-            if (design && chunks.size() > 1 && &chunk == &chunks.front() && last > 0) {
+            // Anchor later chunks to the first voice, excluding its trailing silence.
+            if (anchor_voice && &chunk == &chunks.front() && last > 0) {
                 const auto reference = encode_reference(runtime::AudioBuffer{sample_rate_, 1,
                     std::vector<float>(audio.begin(), audio.begin() + last * frame)}, sampling.seed, random_offset);
                 speakers = {reference.speaker};
