@@ -25,7 +25,7 @@
 #define EARSHOT_SSE2 1
 #if defined(__x86_64__) || defined(_M_X64)
 #include <immintrin.h>
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 #include <intrin.h>
 #endif
 #define EARSHOT_AVX2_DISPATCH 1
@@ -473,7 +473,7 @@ EARSHOT_TARGET_AVX2 void matvec_i16_avx2(
 }
 
 bool cpu_has_avx2() {
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
     int info[4];
     __cpuid(info, 0);
     if (info[0] < 7) {
