@@ -24,6 +24,14 @@ refer to entries in your server config, with the task/mode required by the route
 
 Returns server readiness and the number of configured models.
 
+```json
+{"status":"ok","backend":"cpu","models":1,"ui":true,"ui_management":false,"version":"dev","git":"1bbd8517","git_date":"2026-10-25"}
+```
+
+`version`, `git`, and `git_date` are the build values `audiocpp_server --version`
+prints: the `AUDIOCPP_VERSION` CMake value (`dev` by default), the short commit,
+and the commit date.
+
 ## `GET /v1/models`
 
 Returns OpenAI-style model entries for the configured audio.cpp model ids.

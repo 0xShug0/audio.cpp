@@ -686,7 +686,7 @@ supports every task, mode, or optional output.
 
 | Need | Endpoint | Input / response |
 |---|---|---|
-| Check readiness / configured IDs | <a id="get-health"></a>[`GET /health`](api.md#get-health), <a id="get-v1models"></a>[`GET /v1/models`](api.md#get-v1models) | JSON metadata; a registered model may still be unloaded. |
+| Check readiness / configured IDs | <a id="get-health"></a>[`GET /health`](api.md#get-health), <a id="get-v1models"></a>[`GET /v1/models`](api.md#get-v1models) | JSON metadata, including the build version and git commit; a registered model may still be unloaded. |
 | Generate speech | <a id="post-v1audiospeech"></a>[`POST /v1/audio/speech`](api.md#post-v1audiospeech) | JSON text and voice controls; WAV by default, or streaming audio/SSE when supported. |
 | Transcribe a recording | <a id="post-v1audiotranscriptions"></a>[`POST /v1/audio/transcriptions`](api.md#post-v1audiotranscriptions) | Server-local WAV path or file upload; text/timing, optionally transcript SSE. |
 | Get timestamps or speaker labels | <a id="post-v1audiotranscriptionsdetails"></a>[`POST /v1/audio/transcriptions/details`](api.md#post-v1audiotranscriptionsdetails) | Same inputs; includes detail arrays the model actually produces. |
