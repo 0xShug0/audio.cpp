@@ -1204,7 +1204,7 @@ struct BreezeGeneratorRuntime::Impl {
         weights = load_weights(*this->assets, execution, weight_context_bytes, storage_type, backbone_runtime_config);
         backbone_cond = std::make_unique<modules::CausalDecoderRuntime>(execution, backbone_runtime_config, weights->backbone);
         backbone_uncond = std::make_unique<modules::CausalDecoderRuntime>(execution, backbone_runtime_config, weights->backbone);
-        // The performance paths are opt-in and only validated on CUDA; other
+        // These performance paths apply only on CUDA; other
         // backends keep the per-codebook depth path and two single-lane backbone
         // runtimes.
         const bool cuda = execution.backend_type() == core::BackendType::Cuda;

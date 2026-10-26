@@ -41,15 +41,15 @@ enum class Bf16ActivationMode {
     Off,
 };
 
-// Opt-in CUDA performance paths; breeze_tts.perf_mode=cuda_perf enables them.
+// CUDA performance defaults; cuda_perf additionally enables batched CFG.
 // Other backends ignore them.
 struct BreezePerfOptions {
     // Decode each frame's depth codebooks in one graph with device sampling.
-    bool fused_depth = false;
+    bool fused_depth = true;
     // Offline prefill writes the backbone KV straight into the decode cache.
-    bool direct_prefill = false;
+    bool direct_prefill = true;
     // Skip re-rounding the F16 KV cache to bf16 after each update (an identity).
-    bool skip_cache_round = false;
+    bool skip_cache_round = true;
     // With CFG, decode both backbone branches as one batch-2 step.
     bool batched_cfg = false;
 };

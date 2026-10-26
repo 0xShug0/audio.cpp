@@ -83,7 +83,7 @@ struct PerfPreset {
 };
 
 constexpr PerfPreset kPerfPresets[] = {
-    {"off", {false, false, false, false}},
+    {"off", {true, true, true, false}},
     {"cuda_perf", {true, true, true, true}},
 };
 
