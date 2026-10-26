@@ -14,6 +14,7 @@ FILES = {
     "/org/repo/resolve/main/Demo/model-f16.gguf": b"f16-model-payload",
     "/org/repo/resolve/main/Demo/shared.json": b'{"shared":true}\n',
     "/org/repo/resolve/main/Slow/model.gguf": b"s" * (16 * 1024 * 1024),
+    "/org/repo/resolve/main/Slow/sibling.gguf": b"t" * (16 * 1024 * 1024),
 }
 
 # ModelScope-style repo: default branch is master, and the file-list API is

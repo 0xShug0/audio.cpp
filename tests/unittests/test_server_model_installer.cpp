@@ -64,15 +64,17 @@ void test_native_package_lifecycle() {
             {"id":"demo_f16","display_name":"Demo F16","format":"gguf","precision":"f16",
              "target_directory":"Demo","files":["Demo/model-f16.gguf","Demo/shared.json"],"strip_prefix":"Demo"},
             {"id":"demo_slow","display_name":"Demo Slow","format":"gguf","precision":"q8_0",
-             "target_directory":"Slow","files":["Slow/model.gguf"],"strip_prefix":"Slow"}
+             "target_directory":"Slow","files":["Slow/model.gguf"],"strip_prefix":"Slow"},
+            {"id":"demo_slow_sibling","display_name":"Demo Slow sibling","format":"gguf","precision":"f16",
+             "target_directory":"Slow","files":["Slow/sibling.gguf"],"strip_prefix":"Slow"}
           ],"sources":[]
         })JSON");
         set_base_url("http://127.0.0.1:18991");
         auto fixture = std::async(std::launch::async, [] {
 #ifdef _WIN32
-            return std::system("python \"" AUDIOCPP_NATIVE_MANAGER_FIXTURE "\" --requests 14");
+            return std::system("python \"" AUDIOCPP_NATIVE_MANAGER_FIXTURE "\" --requests 16");
 #else
-            return std::system("python3 \"" AUDIOCPP_NATIVE_MANAGER_FIXTURE "\" --requests 14");
+            return std::system("python3 \"" AUDIOCPP_NATIVE_MANAGER_FIXTURE "\" --requests 16");
 #endif
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -124,6 +126,23 @@ void test_native_package_lifecycle() {
         (void) wait_for(installer, "demo_slow", "cancelled");
         require(!std::filesystem::exists(root / "models" / "Slow" / "model.gguf"),
             "cancelled package is never published to its final path");
+
+        // A sibling queued behind an active install must be cancellable while
+        // it waits for the shared target-directory lock.
+        (void) installer.start("demo_slow", "", "", "", "", false);
+        (void) wait_for(installer, "demo_slow", "running");
+        (void) installer.start("demo_slow_sibling", "", "", "", "", false);
+        (void) wait_for(installer, "demo_slow_sibling", "queued");
+        const auto sibling_stopping = installer.stop("demo_slow_sibling");
+        require(sibling_stopping.find("\"state\":\"cancelling\"") != std::string::npos,
+            "queued sibling accepts cancellation while another package is active");
+        (void) wait_for(installer, "demo_slow_sibling", "cancelled");
+        require(installer.status("demo_slow").find("\"state\":\"running\"") != std::string::npos,
+            "cancelling a queued sibling does not stop the active package");
+        (void) installer.stop("demo_slow");
+        (void) wait_for(installer, "demo_slow", "cancelled");
+        require(!std::filesystem::exists(root / "models" / "Slow" / "sibling.gguf"),
+            "cancelled queued sibling is never published");
 
         const auto partial = root / "models" / ".Demo.abandoned";
         write(partial / "model.tmp", "partial");
