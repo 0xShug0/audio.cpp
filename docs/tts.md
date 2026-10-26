@@ -1049,10 +1049,18 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `stream_chunk_policy` | `grow`, `fixed` | `grow` | Streaming only. Grow emits one patch first, then doubles toward `stream_frames_per_event`; fixed waits for the configured patch count. |
 | `stream_frames_per_event` | integer >= 1 | `4` | Maximum generated latent patches per streaming audio event. Set to `1` for the original one-patch cadence. Ignored offline. |
 | `prompt_text` | text | not set | Transcript for continuation prompt audio, distinct from the base voice reference. |
-| `ultimate_clone` | bool | `false` | Use the voice reference itself as the continuation prompt, with `reference_text` as its transcript (upstream's ultimate clone). Without it, a `reference_text` sent with a voice reference has no prompt audio to describe and is unused. |
+| `ultimate_clone` | bool | `false` | Use the voice reference itself as the continuation prompt, with `reference_text` or `prompt_text` as its transcript. Requires both reference audio and its transcript; cannot be combined with explicit prompt audio. Omitted/false preserves existing prompt selection. |
 | `chunk_strategy` | `continuation`, `stateless` | `continuation` | Long-form continuation or independent generation per chunk. Offline only. |
 | `text_chunk_size` | integer | `2048` | Framework long-form text chunk size. Offline only. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode. Offline only. |
+
+For ultimate cloning, add `--request-option ultimate_clone=true` to a voice-clone
+request with `--voice-ref` and `--reference-text`. This uses continuation
+conditioning rather than reference-only cloning, in both offline and streaming
+modes. Existing explicit prompt audio with `prompt_text` remains supported when
+`ultimate_clone` is omitted or false. Encoded prompts use the existing in-memory
+cache; increase `voxcpm2.prompt_cache_slots` to retain multiple reference/prompt
+combinations in a session.
 
 ### Session Options (use with `--session-option`)
 
@@ -1077,7 +1085,6 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `voxcpm2.audiovae_encoder_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_encoder_graph_context_mb` accepted with the same family prefix. |
 | `voxcpm2.audiovae_latent_capacity` | integer >= 1 | not set | Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count. |
 | `voxcpm2.exec_plan` | JSON string | `{}` | Component `audiovae`: `impl` is `default`/`ggml`; `backend`, if supplied, must match the session; no artifacts. `params.threads` is a nonnegative int. Positive values require a CPU session and create a dedicated AudioVAE backend, enabling streaming decode overlap; also controls offline decoding and prompt encoding threads. Omitted/0 shares the session backend. |
-| `voxcpm2.prompt_cache_dir` | path | not set | Keep encoded prompts on disk across restarts, one file per input set, named by a hash of the clip(s), transcript and AudioVAE storage type. A changed input is a miss, an unreadable file is encoded again. |
 | `voxcpm2.audiovae_encoder_sample_capacity` | integer >= 1 | `240000` | Reserved encoder sample capacity. |
 
 For a CPU session with a four-thread AudioVAE worker, add:
