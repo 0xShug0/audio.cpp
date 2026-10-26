@@ -167,9 +167,17 @@ enum class EchoCfgMode {
     Joint,          // Single CFG (speaker+text) method
 };
 
+// Euler sampline time schedule to use
+enum class EchoScheduleMode {
+    Linear,         // Default, evenly spaced timesteps
+    Sway,           // Irodori-TTS style, more timesteps at the beginning
+};
+
 // Request-level sampler configuration, parsed from spec options.
 struct EchoSamplerOptions {
     int num_steps = 40;
+    EchoScheduleMode t_schedule_mode = EchoScheduleMode::Linear;
+    float sway_coeff = -1.0F;
     EchoCfgMode cfg_mode = EchoCfgMode::Independent;
     float cfg_scale_text = 3.0F;        // Independent-CFG only
     float cfg_scale_speaker = 8.0F;     // Independent-CFG only

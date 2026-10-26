@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config.h"
+#include "engine/framework/sampling/flow_sampler_runtime.h"
 #include "engine/community_models/echo_tts/config.h"
 
 #include <cstdint>
@@ -20,7 +22,8 @@ using EchoDenoiseFn = std::function<std::vector<float>(
 //     linspace(1, 0, num_steps + 1) * 0.999
 // The 0.999 scale exists so that temporal rescaling can be applied on the first
 // step; it is not a rounding artifact and changes the trajectory if dropped.
-std::vector<float> euler_timestep_schedule(int num_steps);
+std::vector<engine::modules::FlowSamplerScheduleStep>
+euler_timestep_schedule(EchoSamplerOptions options);
 
 // True when classifier-free guidance is active at timestep t. Mirrors the
 // upstream inclusive comparison on both ends.

@@ -1,3 +1,4 @@
+#include "engine/framework/sampling/sway_schedule.h"
 #include "engine/community_models/echo_tts/sampler.h"
 
 #include <algorithm>
@@ -12,18 +13,13 @@ constexpr float kInitScale = 0.999F;
 
 }  // namespace
 
-std::vector<float> euler_timestep_schedule(int num_steps) {
-    if (num_steps <= 0) {
-        throw std::runtime_error("Echo-TTS sampler requires at least one step");
-    }
-    std::vector<float> schedule(static_cast<size_t>(num_steps) + 1);
-    for (int i = 0; i <= num_steps; ++i) {
-        // torch.linspace(1, 0, n + 1) puts exact endpoints at both ends.
-        const float ramp =
-            1.0F - static_cast<float>(i) / static_cast<float>(num_steps);
-        schedule[static_cast<size_t>(i)] = ramp * kInitScale;
-    }
-    return schedule;
+std::vector<engine::modules::FlowSamplerScheduleStep> euler_timestep_schedule(EchoSamplerOptions options) {
+    return engine::modules::make_rf_schedule(
+        options.num_steps,
+        "Echo-TTS",
+        options.t_schedule_mode == EchoScheduleMode::Linear ? "linear" : "sway",
+        options.sway_coeff,
+        kInitScale);
 }
 
 bool cfg_active(float t, float cfg_min_t, float cfg_max_t) {
@@ -96,7 +92,7 @@ std::vector<float> run_euler_sampler(
         }
     }
 
-    const auto schedule = euler_timestep_schedule(options.num_steps);
+    const auto schedule = euler_timestep_schedule(options);
     bool kv_scaled = options.speaker_kv_scale.has_value();
 
     const int cfg_interval = std::max(1, options.cfg_interval);
@@ -109,8 +105,9 @@ std::vector<float> run_euler_sampler(
     int steps_since_refresh = 0;
 
     for (int step = 0; step < options.num_steps; ++step) {
-        const float t = schedule[static_cast<size_t>(step)];
-        const float t_next = schedule[static_cast<size_t>(step) + 1];
+        const auto schedule_step = schedule[static_cast<size_t>(step)];
+        const float t = schedule_step.t;
+        const float t_next = schedule_step.t_next;
         const bool use_cfg = cfg_active(t, options.cfg_min_t, options.cfg_max_t);
 
         std::vector<float> v_pred;
