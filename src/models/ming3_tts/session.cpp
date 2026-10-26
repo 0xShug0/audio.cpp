@@ -191,7 +191,7 @@ private:
             prompt_options.controls.count("ip") != 0;
         const bool anchor_voice = chunks.size() > 1 && use_speaker && !zero_speaker && !has_speaker_conditioning;
         // Anchored chunks share the 512-position context with the first chunk's reference.
-        if (anchor_voice && !chunk_size && default_chunk_size > 120) {
+        if (anchor_voice && chunk_size.value_or(default_chunk_size) > 120) {
             chunks = text::split_text_chunks(request.text_input->text, 120, chunk_mode);
         }
         debug::trace_log_scalar("ming3_tts.text.chunk_count", chunks.size());

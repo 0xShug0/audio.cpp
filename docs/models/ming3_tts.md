@@ -103,7 +103,7 @@ Use `--request-option name=value`, or the server request's `options` map.
 | `temperature` | `0` | Nonnegative flow sampling temperature; zero still uses seeded initial noise. |
 | `seed` | `1895` | Nonnegative reference-posterior and generation noise seed. |
 | `raw_text` | `false` | Bypass text chunking and synthesize one fragment. |
-| `text_chunk_size` | `50`, `120` or `300` | Framework text chunk budget in Unicode codepoints: `50` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `300`; multi-chunk generation without speaker conditioning uses at most `120` by default and anchors later chunks to the first generated voice. |
+| `text_chunk_size` | `50`, `120` or `300` | Framework text chunk budget in Unicode codepoints: `50` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `300`; multi-chunk generation without speaker conditioning uses at most `120`, including explicit overrides, and anchors later chunks to the first generated voice. |
 | `text_chunk_mode` | `tag_aware` | `default`, `tag_aware`, `japanese`, or `endline`. |
 | `trim_silence` | `true` | Trim trailing low-energy 100-ms frames per fragment, retaining a 300-ms tail. |
 | `stream_frames_per_event` | `4` | Maximum latent patches per streaming decode, from 1 to 64. |
@@ -168,9 +168,10 @@ first generated voice, regardless of the prompt template. Every chunk after the 
 takes the first generated chunk as its reference
 (speaker embedding, acoustic prompt and transcript), so the voice
 stays the same across chunks. The reference shares the 512-position context,
-so these chunks default to at most 120 codepoints, close to the official
-24-unit fragments. Inputs that fit in one original chunk keep their existing
-chunk size. Explicit `text_chunk_size` overrides are preserved. `raw_text=true` bypasses chunking. The native frontend
+so automatically anchored chunks are capped at 120 codepoints, including when
+`text_chunk_size` requests a larger budget. Smaller overrides remain honored.
+This is close to the official 24-unit fragments. Inputs that fit in one original
+chunk keep their existing chunk size. `raw_text=true` bypasses chunking. The native frontend
 does not run the optional official FST text normalizer; spell out numbers
 and abbreviations when pronunciation matters.
 

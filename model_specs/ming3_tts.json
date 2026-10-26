@@ -230,7 +230,7 @@
         "type": "int",
         "required": false,
         "min": 1,
-        "description": "Framework long-form chunk budget in Unicode codepoints; default 50 when hanzi, kana and Hangul outnumber other letters and digits, otherwise 300; multi-chunk generation without speaker conditioning defaults to at most 120 and anchors later chunks to the first generated voice. Single-chunk inputs and explicit overrides retain their chunk size."
+        "description": "Framework long-form chunk budget in Unicode codepoints; default 50 when hanzi, kana and Hangul outnumber other letters and digits, otherwise 300; multi-chunk generation without speaker conditioning is capped at 120, including explicit overrides, and anchors later chunks to the first generated voice. Smaller overrides, single-chunk inputs and explicitly conditioned voices retain their chunk size."
       },
       {
         "name": "text_chunk_mode",
