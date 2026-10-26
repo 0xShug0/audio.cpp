@@ -236,6 +236,13 @@
         "description": "Skip re-rounding the F16 KV cache to bf16 after each update, which is an identity because the K/V rows are already bf16-rounded. Applies only with the bf16 reference path and flash attention. CUDA only.",
         "required": false,
         "default": false
+      },
+      {
+        "name": "round_bf16_fusion",
+        "type": "bool",
+        "description": "Fold the bf16 activation rounding into the CUDA RMS-norm, add and SwiGLU kernels that produce it. Bit-identical to the unfused graph, with fewer kernel launches. CUDA only.",
+        "required": false,
+        "default": false
       }
     ],
     "load": []
