@@ -6,11 +6,32 @@ native audio.cpp with GGML; Python is used to prepare the checkpoint.
 
 Built with Fish Audio.
 
-The implementation includes the 40-layer hybrid attention/MoE backbone,
+The base model includes the 40-layer hybrid attention/MoE backbone,
 256 experts with eight selected per token, four shared enrichment layers,
 nine residual codebook layers with persistent timeline caches, and the Fish DAC
 encoder/decoder. It supports offline and streaming TTS, voice references,
 speaker and event tags in text, long-form chunking, and continuation/edit history.
+
+## Variants
+
+Both variants use `--family fish_drama3` and the same CLI and server routes.
+The loader reads layer-specific expert counts and the output-head layout from
+the checkpoint, so Drama3-small does not need a separate family.
+
+| Variant | GGUF packages | Source |
+|---|---|---|
+| Drama3 base | Q2_K, Q3_K, and Q4_K expert packages | [Jmica/Drama-3-GGUF](https://huggingface.co/Jmica/Drama-3-GGUF) |
+| Drama3-small | `fish_drama3_small_iq3_xxs`: `Drama3-small-GGUF/drama3-small-IQ3_XXS.gguf` | [pentacoxian-dev/drama3-small-GGUF](https://huggingface.co/pentacoxian-dev/drama3-small-GGUF) |
+
+Install the small variant with:
+
+```bash
+python tools/model_manager_v2.py install fish_drama3_small_iq3_xxs --models-root models
+```
+
+Use `--model models/Drama3-small-GGUF/drama3-small-IQ3_XXS.gguf` with the
+generation examples below. Base-model weight sizes and memory measurements
+in this guide do not describe the small checkpoint.
 
 ## Windows build
 
@@ -51,7 +72,7 @@ uv run --no-project --python 3.12 --with huggingface_hub hf download `
   --local-dir models\Drama-3-GGUF
 ```
 
-The model manager also lists all four packages:
+The model manager lists the base and small packages:
 
 ```powershell
 uv run --no-project --python 3.12 tools\model_manager_v2.py list | Select-String 'fish_drama3'

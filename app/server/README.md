@@ -41,40 +41,39 @@ Open `http://127.0.0.1:8080`, install a model package from the model library,
 then select it in the matching studio tab. Replace `cuda` with a backend your
 binary and selected model support, such as `cpu`, `vulkan`, or `metal`.
 
-After trying a model in Studio, choose **Save preset** to save the selected
-model, package, and current configuration. **Lib → Model presets** shows the
-saved task and model; choose **Use in Apps** or **Use in Studio**. Presets and
-saved voices are stored in this browser, not in the server config. Prompt text
-and uploaded files are not part of a model preset.
+Use **Lib → Speakers → New speaker preset** to save a model, voice, and
+generation settings together, then select that speaker in **Apps → Text to
+speech**. **Lib → Voices** manages reference recordings and their transcripts.
+These libraries are stored in this browser, not in the server config. Existing
+projects keep their own speaker settings when a library preset is edited or deleted.
 
 The **Apps** tab, after Studio, is an early release. Workflows and saved project
 formats may change; export audio you want to keep. It contains a project-based
 **Text to speech** app:
 
 - Import TXT/Markdown and preview text splitting before applying it.
-- Navigate the manuscript with search, chunk-number jumps, first/last and
-  previous/next controls. One selected chunk is edited at a time; the browser
-  remembers the last selected chunk for each project.
-- Choose a speech model or preset per project, with optional per-chunk overrides.
-- Edit each chosen take directly in Voices & audio: zoom/pan its waveform,
+- In **Speakers**, create or reuse named speakers and assign them to passages.
+  Set a project default or apply a speaker to all passages. Search and filter
+  passages; the browser remembers the last selected passage for each project.
+- Edit each chosen take with **Edit audio**: zoom/pan its waveform,
   place a playhead, insert silence, drag-select and delete existing gaps or
   audio ranges, remove inserted regions, and undo/redo.
   Edits stay with that take and persist with the project; original recordings
   are retained. Boundary previews and exports use the edited audio.
 - Generate chunks individually or in a batch, compare takes, and choose the audio
-  to keep. Optional reference transcription has a separate ASR model/preset.
-- Inspect the selected join with actual waveforms and boundary playback. Click
-  the waveform end to add a configurable pause increment, remove silence, or
-  reset to the global gap. Custom gaps are saved with the project.
-- Assemble selected takes with pauses, then apply optional model enhancement and
-  gain or peak normalization. Export WAV PCM16 or WebM Opus.
+  to keep. Optional reference transcription uses a separately selected ASR model.
+- In **Arrange**, inspect joins with actual waveforms and boundary playback.
+  Adjust pauses with + / − or enter an exact duration; choose **Use default**
+  to reset a join. Custom pauses are saved with the project.
+- Combine the selected takes, then use **Export** for optional model enhancement,
+  gain or peak normalization, and WAV PCM16 or WebM Opus download.
 
 Projects, references and generated takes persist in this browser. Regeneration
 preserves chosen takes; splitting/merging archives the original chunks. Changing
 text/settings marks affected audio out of date instead of silently reusing it.
 
 An app applies the saved load/session options when UI management owns the model.
-For a server-configured model, its configuration must already match the preset;
+For a server-configured model, its configuration must already match the saved settings;
 apps do not rewrite the server config. App modules are maintained independently;
 see the [app contribution guide](../../webui/native/src/lib/apps/README.md).
 

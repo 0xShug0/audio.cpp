@@ -12,6 +12,7 @@
 | LFM2.5-Audio | `lfm2_audio` | `s2s` spoken chat (also `asr`, `tts`) | [LFM2.5-Audio](models/lfm2_audio.md) |
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
+| Ming 3.0 Audio Tiny | `ming3_audio` | `s2s` spoken responses (also `asr`, `tts`, `clon`) | [Ming Audio](models/ming3_audio.md#spoken-response) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
 | MossFormer2 | `mossformer2` | `sep` | [MossFormer2](models/mossformer2.md) |
 | MuScriptor | `muscriptor` | audio to MIDI/events | [MuScriptor](#muscriptor) |
