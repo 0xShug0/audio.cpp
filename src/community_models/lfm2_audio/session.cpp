@@ -9,7 +9,7 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
-#include "engine/models/silero_vad/session.h"
+#include "engine/framework/runtime/registry.h"
 
 #include <algorithm>
 #include <chrono>
@@ -448,7 +448,7 @@ runtime::IOfflineVoiceTaskSession & Lfm2AudioSession::vad_session() {
     if (vad_session_ == nullptr) {
         runtime::ModelLoadRequest load_request;
         load_request.model_path = vad_model_path_;
-        vad_model_ = engine::models::silero_vad::load_silero_vad_model(load_request);
+        vad_model_ = runtime::load_vad_model(load_request);
         auto session = vad_model_->create_task_session(
             {runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},
             runtime::SessionOptions{RuntimeSessionBase::options().backend, {}});

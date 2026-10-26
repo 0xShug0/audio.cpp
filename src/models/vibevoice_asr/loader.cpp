@@ -68,7 +68,7 @@ runtime::ModelCliInterface cli(const VibeVoiceASRAssets & assets) {
     };
     if (assets.family != "vibevoice_asr_streaming") {
         out.session_options.push_back(
-            {"vibevoice_asr.vad_model_path", "path", "Silero VAD model path used by audio_chunk_mode=vad.", false, "assets/framework/models/silero_vad"});
+            {"vibevoice_asr.vad_model_path", "path", "VAD model path used by audio_chunk_mode=vad (any built-in VAD family; default Silero VAD).", false, "assets/framework/models/silero_vad"});
     }
     return out;
 }

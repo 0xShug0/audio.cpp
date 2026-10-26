@@ -107,7 +107,7 @@
       {
         "name": "vad_model_path",
         "type": "string",
-        "description": "Path to the Silero VAD model directory used by automatic audio chunking.",
+        "description": "Path to the VAD model (any built-in VAD family; default Silero VAD) used by automatic audio chunking.",
         "required": false,
         "default": "assets/framework/models/silero_vad"
       }

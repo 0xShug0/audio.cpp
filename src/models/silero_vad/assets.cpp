@@ -1,6 +1,7 @@
 #include "engine/models/silero_vad/assets.h"
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/filesystem.h"
 
 #include <mutex>
@@ -20,6 +21,9 @@ SileroWeights load_silero_weights(const std::filesystem::path & checkpoint_path)
     resources.add_file("weights", checkpoint_path);
     SileroWeights weights;
     weights.source = resources.open_tensor_source("weights");
+    if (!weights.source->has_tensor("stft_conv.weight")) {
+        throw std::runtime_error("the file has no Silero VAD tensors: " + checkpoint_path.string());
+    }
     return weights;
 }
 

@@ -43,7 +43,7 @@ runtime::ModelCliInterface cli() {
         {"qwen3_asr.lora", "path", "PEFT LoRA adapter directory or checkpoint file; merged into matching encoder/decoder weights at session creation.", false},
         {"qwen3_asr.lora_scale", "float", "Multiplier for the adapter's alpha/r scaling; default 1.", false, "1"},
         {"qwen3_asr.forced_aligner_path", "path", "Optional Qwen3 ForcedAligner model path required for return_timestamps.", false},
-        {"qwen3_asr.vad_model_path", "path", "Optional Silero VAD model path for VAD chunking; default assets/framework/models/silero_vad.", false, "assets/framework/models/silero_vad"},
+        {"qwen3_asr.vad_model_path", "path", "Optional VAD model path for VAD chunking (any built-in VAD family); default assets/framework/models/silero_vad.", false, "assets/framework/models/silero_vad"},
         {"qwen3_asr.weight_type", "native|f32|f16|bf16|q8_0", "Shared text decoder weight storage fallback; default native.", false, "native"},
         {"qwen3_asr.audio_encoder_weight_type", "native|f32|f16", "Audio encoder weight storage type; default native.", false, "native"},
         {"qwen3_asr.text_decoder_weight_type", "native|f32|f16|bf16|q8_0", "Text decoder matmul weight storage type; defaults to weight_type when set, otherwise native.", false},

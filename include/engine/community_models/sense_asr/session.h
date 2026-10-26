@@ -20,10 +20,6 @@ namespace engine::runtime {
 class ILoadedVoiceModel;
 }
 
-namespace engine::models::silero_vad {
-class SileroVADLoadedModel;
-}
-
 namespace engine::community_models::sense_asr {
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_sense_asr_loader();
