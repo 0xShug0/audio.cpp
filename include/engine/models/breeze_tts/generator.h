@@ -51,7 +51,7 @@ struct BreezePerfOptions {
     // Skip re-rounding the F16 KV cache to bf16 after each update (an identity).
     bool skip_cache_round = false;
     // With CFG, decode both backbone branches as one batch-2 step.
-    bool cfg_batch = false;
+    bool batched_cfg = false;
 };
 
 class BreezeGeneratorRuntime {

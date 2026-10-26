@@ -829,7 +829,7 @@ LiveAvatarGenerateShared prepare_liveavatar_generate_shared(
         throw std::runtime_error("LiveAvatar target_cache_blocks must be non-negative");
     }
     if (!request.blockwise_generation && request.denoiser_layerwise && (!request.fused_cfg || request.guidance_scale <= 1.0F)) {
-        throw std::runtime_error("LiveAvatar denoiser_layerwise requires fused_cfg=true and guidance_scale > 1");
+        throw std::runtime_error("LiveAvatar denoiser_layerwise requires batched_cfg=true and guidance_scale > 1");
     }
     if (request.blockwise_generation && request.guidance_scale != 0.0F) {
         throw std::runtime_error("LiveAvatar blockwise mode requires guidance_scale=0");
@@ -839,7 +839,7 @@ LiveAvatarGenerateShared prepare_liveavatar_generate_shared(
     engine::debug::trace_log_scalar("liveavatar.input.audio_channels", request.audio.channels);
     engine::debug::trace_log_scalar("liveavatar.input.audio_samples", static_cast<int64_t>(request.audio.samples.size()));
     engine::debug::trace_log_scalar("liveavatar.input.seed", request.seed);
-    engine::debug::trace_log_scalar("liveavatar.input.fused_cfg", request.fused_cfg);
+    engine::debug::trace_log_scalar("liveavatar.input.batched_cfg", request.fused_cfg);
     engine::debug::trace_log_scalar("liveavatar.input.sage_attention", request.sage_attention);
     engine::debug::trace_log_scalar("liveavatar.input.memory_saver", request.memory_saver);
     engine::debug::trace_log_scalar("liveavatar.input.denoiser_layerwise", request.denoiser_layerwise);

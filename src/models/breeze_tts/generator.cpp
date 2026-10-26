@@ -1231,8 +1231,8 @@ struct BreezeGeneratorRuntime::Impl {
                 weights->depth_heads);
         }
         engine::debug::trace_log_scalar("breeze_tts.fused_depth", fused_depth != nullptr);
-        backbone_cfg_batch = cuda && perf.cfg_batch;
-        engine::debug::trace_log_scalar("breeze_tts.backbone_cfg_batch", backbone_cfg_batch);
+        backbone_batched_cfg = cuda && perf.batched_cfg;
+        engine::debug::trace_log_scalar("breeze_tts.backbone_batched_cfg", backbone_batched_cfg);
         speech_encoder = std::make_unique<BreezeSpeechEncoderRuntime>(
             this->assets,
             execution,
@@ -1276,7 +1276,7 @@ struct BreezeGeneratorRuntime::Impl {
         std::optional<modules::CausalDecoderPrefillIntoDecodeResult> & uncond,
         double & cond_ms,
         double & uncond_ms) {
-        const bool batched = use_cfg && backbone_cfg_batch;
+        const bool batched = use_cfg && backbone_batched_cfg;
         if (batched != backbone_batched_active) {
             // Drop the graphs of the other mode instead of keeping both resident.
             backbone_cond->release_runtime_graphs();
@@ -2015,7 +2015,7 @@ struct BreezeGeneratorRuntime::Impl {
     std::vector<float> depth_cond_hidden_now_;
     std::vector<float> depth_uncond_hidden_now_;
     std::vector<float> backbone_pair_input_;
-    bool backbone_cfg_batch = false;
+    bool backbone_batched_cfg = false;
     bool backbone_batched_active = false;
 };
 

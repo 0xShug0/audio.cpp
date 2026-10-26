@@ -82,9 +82,10 @@ Request options (use with `--request-option`):
 | `num_inference_steps` | `4` | UniPC steps offline, Euler steps in blockwise mode; the LiveAvatar adapter is designed for four steps. |
 | `shift` | `3` | Flow scheduler shift; must be > 0. |
 | `guidance_scale` | `0` | LiveAvatar blockwise generation requires zero guidance. |
+| `batched_cfg` | `true` | Run CFG branches in one denoiser graph. Legacy `fused_cfg` and `liveavatar.fused_cfg` remain accepted; the new name takes precedence. |
 | `seed` | `420` | Generation seed. |
 | `mem_saver` | `true` | Reuse immutable condition data and temporary denoiser graph storage between blocks. Legacy `memory_saver` and `liveavatar.memory_saver` remain accepted. |
-| `denoiser_layerwise` | `false` | Required by denoiser weight streaming. Offline generation requires `fused_cfg=true` and `guidance_scale > 1`. |
+| `denoiser_layerwise` | `false` | Required by denoiser weight streaming. Offline generation requires `batched_cfg=true` and `guidance_scale > 1`. |
 | `denoiser_layerwise_batch` | `16` | Number of denoiser layers staged and evaluated together. |
 | `target_cache_blocks` | `0` | Target KV cache window; `1` keeps one block. |
 | `vae_encoder_chunk_size` | `16` | VAE encoder chunk size. |

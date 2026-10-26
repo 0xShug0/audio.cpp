@@ -100,7 +100,7 @@ BreezePerfOptions perf_options_from_options(const runtime::SessionOptions & opti
         {"breeze_tts.fused_depth", &BreezePerfOptions::fused_depth},
         {"breeze_tts.direct_prefill", &BreezePerfOptions::direct_prefill},
         {"breeze_tts.skip_cache_round", &BreezePerfOptions::skip_cache_round},
-        {"breeze_tts.cfg_batch", &BreezePerfOptions::cfg_batch},
+        {"breeze_tts.batched_cfg", &BreezePerfOptions::batched_cfg},
     };
     for (const auto & [key, member] : flags) {
         if (const auto value = runtime::find_option(options.options, {key})) {
@@ -132,7 +132,7 @@ void validate_session_options(
     for (const char * key : {"breeze_tts.attention", "bf16_activations", "breeze_tts.bf16_activations",
                              "breeze_tts.perf_mode", "breeze_tts.fused_depth",
                              "breeze_tts.direct_prefill", "breeze_tts.skip_cache_round",
-                             "breeze_tts.round_bf16_fusion", "breeze_tts.cfg_batch"}) {
+                             "breeze_tts.round_bf16_fusion", "breeze_tts.batched_cfg"}) {
         if (contract.session_option_keys.find(key) == contract.session_option_keys.end()) {
             validation_options.options.erase(key);
         }

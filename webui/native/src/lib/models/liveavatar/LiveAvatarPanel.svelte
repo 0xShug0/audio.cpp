@@ -21,7 +21,7 @@
     'num_inference_steps', 'guidance_scale', 'shift', 'negative_prompt'
   ];
   const memoryNames = [
-    'sage_attention', 'memory_saver', 'fused_cfg', 'denoiser_layerwise',
+    'sage_attention', 'memory_saver', 'batched_cfg', 'fused_cfg', 'denoiser_layerwise',
     'denoiser_layerwise_batch', 'target_cache_blocks', 'vae_cache_f16',
     'vae_encoder_chunk_size', 'vae_decoder_tile_size', 'denoiser_weight_streaming'
   ];
