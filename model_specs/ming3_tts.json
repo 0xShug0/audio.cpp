@@ -11,7 +11,8 @@
     "design"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "zh",
@@ -159,6 +160,12 @@
         "description": "CAMPPlus embedding file or list, with shape [192] or [1, 192]. Supersedes voice_ref audio; zero_speaker_embedding takes precedence."
       },
       {
+        "name": "export_speaker_embedding_file",
+        "type": "path",
+        "required": false,
+        "description": "Export the enabled voice_ref CAMPPlus speaker embedding as F32 Safetensors. Requires voice_ref, use_speaker_embedding=true, zero_speaker_embedding=false and no speaker_embedding_file. Does not export acoustic latents or the reference transcript."
+      },
+      {
         "name": "use_speaker_embedding",
         "type": "bool",
         "required": false,
@@ -223,7 +230,7 @@
         "type": "int",
         "required": false,
         "min": 1,
-        "description": "Framework long-form chunk budget in Unicode codepoints; default 50 when hanzi, kana and Hangul outnumber other letters and digits, otherwise 300 (120 for voice design and freeform, whose chunks after the first use the first generated chunk as their reference)."
+        "description": "Framework long-form chunk budget in Unicode codepoints; default 50 when hanzi, kana and Hangul outnumber other letters and digits, otherwise 300; multi-chunk generation without speaker conditioning is capped at 120, including explicit overrides, and anchors later chunks to the first generated voice. Smaller overrides, single-chunk inputs and explicitly conditioned voices retain their chunk size."
       },
       {
         "name": "text_chunk_mode",
@@ -244,6 +251,26 @@
         "required": false,
         "default": true,
         "description": "Trim trailing low-energy 100-ms frames per fragment, retaining a 300-ms tail."
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Maximum latent patches per streaming audio decode.",
+        "required": false,
+        "default": 4,
+        "min": 1,
+        "max": 64
+      },
+      {
+        "name": "stream_chunk_policy",
+        "type": "enum",
+        "description": "Streaming audio chunk schedule.",
+        "required": false,
+        "default": "grow",
+        "values": [
+          "fixed",
+          "grow"
+        ]
       }
     ],
     "session": [

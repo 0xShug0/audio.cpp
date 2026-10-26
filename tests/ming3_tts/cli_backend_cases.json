@@ -22,6 +22,27 @@
           "options": {"language": "English"}
         }
       ]
+    },
+    {
+      "id": "ming_stream_plain",
+      "coverage": "Streaming TTS with the default chunk schedule",
+      "family": "ming3_tts",
+      "model": "Ming-3.0-TTS-0.5B-GGUF/ming-3.0-tts-0.5b-q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "plain",
+          "text": "The library opens at nine. Please return the book before Friday.",
+          "seed": 1895,
+          "options": {
+            "language": "English"
+          }
+        }
+      ]
     }
   ]
 }

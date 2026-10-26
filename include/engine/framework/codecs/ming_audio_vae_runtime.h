@@ -3,6 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/attention_fallback.h"
+#include "engine/framework/runtime/streaming_audio.h"
 
 #include <memory>
 #include <string>
@@ -68,6 +69,8 @@ public:
     ~MingAudioDecoder();
 
     std::vector<float> decode(const std::vector<float> & latent);
+    runtime::AudioBuffer decode_streaming_window(const runtime::StreamingAudioWindow<float> & window,
+        const runtime::StreamingAudioConfig & config);
 
 private:
     struct Impl;

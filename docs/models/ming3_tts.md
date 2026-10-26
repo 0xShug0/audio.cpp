@@ -7,8 +7,8 @@ Korean, German, French and Spanish, with voice cloning and voice design.
 GGUF packages: [audio-cpp/Ming-3.0-TTS-0.5B-GGUF](https://huggingface.co/audio-cpp/Ming-3.0-TTS-0.5B-GGUF).
 
 Upstream: [inclusionAI/Ming-3.0-tts](https://github.com/inclusionAI/Ming-3.0-tts).
-Output is mono 44.1 kHz. Inference supports CUDA, Vulkan and CPU; only offline
-generation is currently exposed.
+Output is mono 44.1 kHz. Inference supports CUDA, Vulkan and CPU, with offline
+and streaming TTS, voice cloning, and voice design.
 
 ## Usage
 
@@ -23,6 +23,31 @@ The GGUF includes the backbone, flow head, audio VAE, CAMPPlus speaker encoder,
 configuration and tokenizer. No separate codec or Python runtime is needed.
 BF16 preserves the original checkpoint dtypes. Q8 retains the small stop head
 in BF16 and the speaker encoder in F32.
+
+### Streaming
+
+Add `--mode streaming` to a generation command:
+
+```bash
+audiocpp_cli --family ming3_tts --task tts --mode streaming --backend cuda \
+  --model /path/to/ming-3.0-tts-0.5b-q8_0.gguf \
+  --text "Good evening. The harbor is quiet tonight." \
+  --request-option language=en --out speech.wav --log
+```
+
+Streaming decodes latent patches while the acoustic generator is running.
+The VAE retains enough left context for its causal attention and one patch of
+lookahead for interpolation and waveform reconstruction. The default schedule
+grows from one patch to four patches per decode. Set
+`--request-option stream_chunk_policy=fixed` for fixed-size groups or
+`--request-option stream_frames_per_event=8` to change the maximum group size.
+The codec retains at most six streaming graph capacities, sharing one set of weights.
+Trailing-silence trimming buffers uncommitted audio; emitted audio is never retracted.
+The streaming window can produce numerical differences from full offline decoding.
+
+For HTTP streaming, configure the model with `"mode": "streaming"` and use
+`POST /v1/audio/speech` with `"response_format": "pcm"` and
+`"stream_format": "sse"`; the same voice and generation options apply.
 
 ### Voice Cloning
 
@@ -69,6 +94,7 @@ Use `--request-option name=value`, or the server request's `options` map.
 | `voice_id` | Unset | `ip` template: `US_Emma`, `US_James`, `UK_George`, `UK_Charlotte`. |
 | `reference_text` | Empty | Transcript accompanying `voice_ref`, enabling its acoustic prefix. |
 | `speaker_embedding_file` | Unset | Precomputed CAMPPlus embedding file or list; see below. |
+| `export_speaker_embedding_file` | Unset | Export the reference speaker embedding as F32 Safetensors. |
 | `use_speaker_embedding` | `true` | Enable reference-speaker embedding conditioning. |
 | `zero_speaker_embedding` | `false` | Use a zero projected speaker row, overriding file and reference conditioning. |
 | `max_tokens` | `1000` | Maximum generated acoustic patches per text chunk, also bounded by the 512-position context. |
@@ -77,9 +103,11 @@ Use `--request-option name=value`, or the server request's `options` map.
 | `temperature` | `0` | Nonnegative flow sampling temperature; zero still uses seeded initial noise. |
 | `seed` | `1895` | Nonnegative reference-posterior and generation noise seed. |
 | `raw_text` | `false` | Bypass text chunking and synthesize one fragment. |
-| `text_chunk_size` | `50`, `120` or `300` | Framework text chunk budget in Unicode codepoints: `50` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `300`, or `120` for voice design and freeform. Their later chunks use the first generated chunk as their reference. |
+| `text_chunk_size` | `50`, `120` or `300` | Framework text chunk budget in Unicode codepoints: `50` when hanzi, kana and Hangul outnumber other letters and digits, otherwise `300`; multi-chunk generation without speaker conditioning uses at most `120`, including explicit overrides, and anchors later chunks to the first generated voice. |
 | `text_chunk_mode` | `tag_aware` | `default`, `tag_aware`, `japanese`, or `endline`. |
 | `trim_silence` | `true` | Trim trailing low-energy 100-ms frames per fragment, retaining a 300-ms tail. |
+| `stream_frames_per_event` | `4` | Maximum latent patches per streaming decode, from 1 to 64. |
+| `stream_chunk_policy` | `grow` | `grow` starts at one patch and doubles to the maximum; `fixed` uses the maximum throughout. |
 
 Structured templates accept only their matching controls: `basic` uses
 `speed`/`pitch`/`volume`, `emotion` uses `emotion`, `dialect` uses `dialect`,
@@ -100,6 +128,22 @@ process. Files supersede reference audio and its transcript;
 `use_speaker_embedding=false` disables their conditioning without falling back
 to reference audio.
 
+Export a reference embedding while generating audio:
+
+```bash
+audiocpp_cli --family ming3_tts --task clon --backend cuda \
+  --model /path/to/ming-3.0-tts-0.5b-q8_0.gguf \
+  --voice-ref reference.wav --text "Good morning." \
+  --request-option export_speaker_embedding_file=speaker.safetensors \
+  --out clone.wav --log
+```
+
+Reuse it with `--request-option speaker_embedding_file=speaker.safetensors`.
+Export requires reference audio and enabled speaker conditioning, without a
+speaker-embedding input file or zero embedding. It saves only the speaker
+embedding, not the acoustic prompt or transcript; loading it is equivalent to
+reference-only cloning without `reference_text`.
+
 ## Session Options
 
 Use `--session-option ming3_tts.name=value`, or the server model's
@@ -113,20 +157,27 @@ There are no model-specific load options.
 
 ## Long Text
 
-Normal synthesis uses the framework text chunker with a 300-codepoint budget,
+Reference-conditioned synthesis uses the framework text chunker with a 300-codepoint budget,
 or 50 codepoints when hanzi, kana and Hangul outnumber other letters and
 digits. The official Python chunker cuts fragments of 50 semantic units,
 counting a CJK character like a Latin word; a 300-codepoint CJK chunk does not
 leave its speech enough of the 512-position context, and its end would be
 dropped.
-Voice design and freeform text is chunked too. As in the official runtime,
-every chunk after the first takes the first generated chunk as its reference
-(speaker embedding, acoustic prompt and transcript), so the designed voice
+Multi-chunk generation without speaker conditioning anchors later chunks to the
+first generated voice, regardless of the prompt template. Every chunk after the first
+takes the first generated chunk as its reference
+(speaker embedding, acoustic prompt and transcript), so the voice
 stays the same across chunks. The reference shares the 512-position context,
-so these chunks default to at most 120 codepoints, close to the official
-24-unit fragments. `raw_text=true` bypasses chunking. The native frontend
+so automatically anchored chunks are capped at 120 codepoints, including when
+`text_chunk_size` requests a larger budget. Smaller overrides remain honored.
+This is close to the official 24-unit fragments. Inputs that fit in one original
+chunk keep their existing chunk size. `raw_text=true` bypasses chunking. The native frontend
 does not run the optional official FST text normalizer; spell out numbers
 and abbreviations when pronunciation matters.
+
+Explicit reference audio, speaker-embedding files, built-in voices, and disabled
+or zero speaker embeddings retain their existing TTS behavior. Automatic TTS
+anchoring applies in both offline and streaming modes.
 
 Generation has a 512-position context shared between the prompt and emitted
 acoustic patches. Reduce `text_chunk_size` or reference duration if the

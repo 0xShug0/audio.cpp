@@ -97,7 +97,7 @@ Model weights keep the license of their original release, which is separate from
 | **irodori_tts** | TTS, Clone, Design, Ctrl | ja | Irodori-TTS-v4.1-Small (RF and MF)<br>Irodori-TTS-v4.1-Anime<br>Irodori-TTS-500M-v3<br>Irodori-TTS-600M-v3-VoiceDesign | GGUF 16/Q8 |
 | **magpie_tts** | TTS | ar-AE, ar-MSA, ar-SA, de, en, es, fr, hi, it, ko, pt-BR, vi, zh | NVIDIA MagpieTTS Multilingual 357M (v2607) with baked speaker prompts and NanoCodec decode | GGUF original/Q8 |
 | **maya1** | TTS, Design, Ctrl | en | Maya1 expressive TTS with natural-language voice design, inline emotion tags, and SNAC decoding | GGUF original/Q8 |
-| **ming3_tts** | TTS, Clone, Design, Ctrl | zh, en, ja, ko, de, fr, es | Ming 3.0 TTS 0.5B | GGUF BF16/Q8 |
+| **ming3_tts** | TTS, Clone, Design, Ctrl | zh, en, ja, ko, de, fr, es | Ming 3.0 TTS 0.5B | GGUF BF16/Q8, Stream |
 | **miotts** | TTS, Clone | en, ja | MioTTS-1.7B | GGUF 16/Q8 |
 | **moss_tts_local** | TTS, Clone, Ctrl | auto, optional language hint | MOSS-TTS-Local-Transformer-v1.5 | GGUF 16/Q8 |
 | **moss_tts_nano** | TTS, Clone | auto | MOSS-TTS-Nano-100M | GGUF 16/Q8, Stream |
