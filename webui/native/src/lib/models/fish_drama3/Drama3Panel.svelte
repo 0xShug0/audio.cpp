@@ -4,7 +4,7 @@
   import { browserDecodeToWav } from '$lib/audio';
   import { speech, uploadWav } from '$lib/api';
   import type { PanelRunContext, PanelRunOutcome, RegisterPanelRunner } from '$lib/models/panel_runner';
-  import type { SavedVoice } from '$lib/voices';
+  import type { SavedVoice } from '$lib/library';
   import Drama3Reference from './Drama3Reference.svelte';
 
   export let busy = false;

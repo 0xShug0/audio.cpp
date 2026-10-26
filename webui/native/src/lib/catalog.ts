@@ -16,6 +16,7 @@ interface PackageEntry {
 
 interface PackageSpec {
   family: string;
+  capabilities?: Record<string, string[]>;
   packages?: Array<Omit<PackageEntry, 'family'>>;
   options?: {
     request?: Array<{ name: string; required?: boolean }>;
@@ -40,6 +41,8 @@ const packages: PackageEntry[] = Object.values(specModules).flatMap((spec) =>
 );
 
 const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.family, spec]));
+export const modelCapabilities = Object.fromEntries(Object.values(specModules).map(spec =>
+  [spec.family, [...new Set(Object.values(spec.capabilities || {}).flat())]])) as Record<string, string[]>;
 const exposeAllGgufPackageFamilies = new Set([
   'ming3_tts',
   'ming3_audio',

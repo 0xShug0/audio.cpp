@@ -43,9 +43,10 @@
   import type { PanelRunner } from '$lib/models/panel_runner';
   import { prepareRgb24Output } from '$lib/media/rgb24_video';
   import Arena from './Arena.svelte';
+  import Apps from './Apps.svelte';
   import Configuration from './Configuration.svelte';
   import ModelLibrary from './ModelLibrary.svelte';
-  import VoiceLibrary from './VoiceLibrary.svelte';
+  import Library from './Library.svelte';
   import { loadUiConfiguration, uiConfiguration, uiConfigurationError } from '$lib/configuration';
   import type {
     AudioOutput,
@@ -57,12 +58,16 @@
   } from '$lib/types';
   import {
     listVoices,
+    type ModelConfiguration,
     type SavedVoice
-  } from '$lib/voices';
+  } from '$lib/library';
   import '../app.css';
 
-  let tab: 'studio' | 'arena' | 'models' | 'logs' | 'configuration' | 'voices' = 'studio';
-  let voiceLibrary: VoiceLibrary | null = null;
+  let tab: 'studio' | 'arena' | 'models' | 'logs' | 'configuration' | 'library' | 'apps' = 'studio';
+  let library: Library | null = null;
+  let appsPage: Apps | null = null;
+  let appsOpened = false;
+  $: if (tab === 'apps') appsOpened = true;
   let arenaComponent: { runArena: () => Promise<void> } | null = null;
   let selectedId = catalog[0]?.id || '';
   let selected: CatalogEntry = catalog[0];
@@ -943,7 +948,8 @@
   }
 
   function openModelsPage() {
-    if (tab === 'voices' && !voiceLibrary?.canClose()) return;
+    if (tab === 'library' && !library?.canClose()) return;
+    if (tab === 'apps' && !appsPage?.canClose()) return;
     if (!server?.ui_management) {
       tab = 'studio';
       status = 'Model management is disabled for this configured server.';
@@ -1031,7 +1037,8 @@
   }
 
   async function openStudioPage() {
-    if (tab === 'voices' && !voiceLibrary?.canClose()) return;
+    if (tab === 'library' && !library?.canClose()) return;
+    if (tab === 'apps' && !appsPage?.canClose()) return;
     tab = 'studio';
     await refreshVoices();
     await refresh();
@@ -1573,34 +1580,21 @@
     }
   }
 
-  async function restoreSettingsJson(json: string) {
-    const settings = JSON.parse(json);
-    if (settings.schema_version !== 1 || typeof settings.model?.id !== 'string' ||
-        !Array.isArray(settings.requests) || !settings.requests.length ||
-        !settings.requests.every((request: { body?: unknown }) =>
-          request && request.body && typeof request.body === 'object' && !Array.isArray(request.body))) {
-      throw new Error('Choose an audio.cpp settings JSON exported with Save settings JSON.');
+  async function restoreModelConfiguration(model: ModelConfiguration,
+    values?: Record<string, unknown>, fallbackOptions: Record<string, unknown> = {}) {
+    const entry = activeCatalog.find((candidate) => candidate.id === model.id);
+    if (!entry || entry.family !== model.family || entry.task !== model.task) {
+      throw new Error(`The saved model is not available in this UI: ${model.id}`);
     }
-    const entry = activeCatalog.find((candidate) => candidate.id === settings.model.id);
-    if (!entry || entry.family !== settings.model.family || entry.task !== settings.model.task) {
-      throw new Error(`The exported model is not available in this UI: ${settings.model.id}`);
-    }
-    if (!entrySelectable(entry)) throw new Error(`Install ${entry.display_name} before importing its settings.`);
-    const choice = settings.model.package_id
-      ? entry.install_packages?.find((candidate) => candidate.id === settings.model.package_id)
+    if (!entrySelectable(entry)) throw new Error(`Install ${entry.display_name} before applying its settings.`);
+    const choice = model.package_id
+      ? entry.install_packages?.find((candidate) => candidate.id === model.package_id)
       : undefined;
-    if (settings.model.package_id && !choice) {
-      throw new Error(`The exported package is not available: ${settings.model.package_id}`);
+    if (model.package_id && !choice) {
+      throw new Error(`The saved package is not available: ${model.package_id}`);
     }
     if (choice && !packageIsAvailable(entry, choice, loadedModels, packageSizes)) {
-      throw new Error(`Install ${choice.label} before importing its settings.`);
-    }
-    const body = settings.requests[0].body;
-    const request = body.request || body;
-    const ui = settings.ui;
-    const importedSeed = settings.resolved_seed;
-    if (!Number.isInteger(importedSeed) || importedSeed < 0 || importedSeed > 0xffffffff) {
-      throw new Error('The settings JSON has an invalid resolved seed.');
+      throw new Error(`Install ${choice.label} before applying its settings.`);
     }
     const previousLoadOptions = { ...(entry.load_options || {}),
       ...(entry.id === selectedId ? importedLoadOptions : {}) };
@@ -1609,11 +1603,11 @@
       selectedPackageIds = { ...selectedPackageIds, [entry.id]: choice.id };
       localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
     }
-    modelPath = choice ? selectedModelPath(entry) : settings.model.path;
-    importedSessionOptions = { ...(settings.model.session_options || {}) };
-    importedLoadOptions = { ...(settings.model.load_options || {}) };
-    advancedValues = { ...advancedValues, ...(ui?.advanced_values || Object.fromEntries(
-      Object.entries(request.options || {}).filter(([name]) => paramSpecs.some((spec) => spec.name === name)))) };
+    modelPath = choice ? selectedModelPath(entry) : model.path;
+    importedSessionOptions = { ...(model.session_options || {}) };
+    importedLoadOptions = { ...(model.load_options || {}) };
+    advancedValues = { ...advancedValues, ...(values || Object.fromEntries(
+      Object.entries(fallbackOptions).filter(([name]) => paramSpecs.some((spec) => spec.name === name)))) };
     for (const spec of paramSpecs.filter((spec) => spec.scope === 'session')) {
       const value = importedSessionOptions[spec.session_option || spec.name];
       if (value === undefined) continue;
@@ -1626,6 +1620,31 @@
       advancedValues[spec.name] = spec.type === 'bool' ? value === 'true'
         : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
     }
+    const resident = loadedModels.find((model) => model.id === entry.id && model.loaded);
+    settingsReloadRequired = Boolean(resident && (
+      !catalogPathMatches(modelPath, resident.path) ||
+      Object.entries(mergedSessionOptions(entry)).some(([key, value]) => resident.session_options?.[key] !== value) ||
+      JSON.stringify(previousLoadOptions) !== JSON.stringify(importedLoadOptions)));
+    await inspectPath();
+    return entry;
+  }
+
+  async function restoreSettingsJson(json: string) {
+    const settings = JSON.parse(json);
+    if (settings.schema_version !== 1 || typeof settings.model?.id !== 'string' ||
+        !Array.isArray(settings.requests) || !settings.requests.length ||
+        !settings.requests.every((request: { body?: unknown }) =>
+          request && request.body && typeof request.body === 'object' && !Array.isArray(request.body))) {
+      throw new Error('Choose an audio.cpp settings JSON exported with Save settings JSON.');
+    }
+    const body = settings.requests[0].body;
+    const request = body.request || body;
+    const ui = settings.ui;
+    const importedSeed = settings.resolved_seed;
+    if (!Number.isInteger(importedSeed) || importedSeed < 0 || importedSeed > 0xffffffff) {
+      throw new Error('The settings JSON has an invalid resolved seed.');
+    }
+    const entry = await restoreModelConfiguration(settings.model, ui?.advanced_values, request.options);
     text = ui?.text ?? (settings.requests[0].endpoint === '/v1/audio/speech'
       ? settings.requests.map((item: { body: { input: string } }) => item.body.input).join('\n\n')
       : request.text || '');
@@ -1655,12 +1674,6 @@
     if (videoInput) videoInput.value = '';
     if (referenceTextInput) referenceTextInput.value = '';
     for (const input of vibeVoiceSpeakerInputs) if (input) input.value = '';
-    const resident = loadedModels.find((model) => model.id === entry.id && model.loaded);
-    settingsReloadRequired = Boolean(resident && (
-      !catalogPathMatches(modelPath, resident.path) ||
-      Object.entries(mergedSessionOptions(entry)).some(([key, value]) => resident.session_options?.[key] !== value) ||
-      JSON.stringify(previousLoadOptions) !== JSON.stringify(importedLoadOptions)));
-    await inspectPath();
     const files = Object.values(settings.input_files || {}).flat().filter((name) => typeof name === 'string' && name);
     status = `Imported settings for ${entry.display_name}.`;
     if (files.length) status += ` Reselect the referenced files: ${files.join(', ')}.`;
@@ -2242,7 +2255,7 @@
   }
 
   function handleShortcut(event: KeyboardEvent) {
-    if (tab === 'voices') return;
+    if (tab === 'library' || tab === 'apps') return;
     if (event.key === 'Escape' && folderBrowserOpen) {
       folderBrowserOpen = false;
       return;
@@ -2256,7 +2269,8 @@
 
   function openPage(next: typeof tab) {
     if (next === tab) return;
-    if (tab === 'voices' && !voiceLibrary?.canClose()) return;
+    if (tab === 'library' && !library?.canClose()) return;
+    if (tab === 'apps' && !appsPage?.canClose()) return;
     tab = next;
   }
 
@@ -2587,9 +2601,11 @@
   </div>
   <nav aria-label={tr('nav.primary')}>
     <button class:active={tab === 'studio'} on:click={openStudioPage}>{tr('nav.studio')}</button>
+    <button class:active={tab === 'apps'} disabled={running || loadingModel || restoringHistory || Boolean(recorder) || liveRecording}
+      on:click={() => openPage('apps')}>{tr('nav.apps')}</button>
     <button class:active={tab === 'arena'} on:click={() => openPage('arena')}>{tr('nav.arena')}</button>
-    <button class:active={tab === 'voices'} disabled={running || restoringHistory || Boolean(recorder) || liveRecording}
-      on:click={() => openPage('voices')}>Voices</button>
+    <button class:active={tab === 'library'} disabled={running || restoringHistory || Boolean(recorder) || liveRecording}
+      on:click={() => openPage('library')}>{tr('nav.library')}</button>
     {#if server?.ui_management !== false}
       <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
     {/if}
@@ -2621,6 +2637,7 @@
 </header>
 
 <main>
+  {#if appsOpened}<div hidden={tab !== 'apps'}><Apps bind:this={appsPage} active={tab === 'apps'}/></div>{/if}
   {#if tab === 'studio'}
     <nav class="workflow-tabs" aria-label={tr('nav.workflows')}>
       {#each workflowTabs as workflow}
@@ -3168,19 +3185,20 @@
         tab = 'studio';
       }}
     />
-  {:else if tab === 'voices'}
-    <VoiceLibrary bind:this={voiceLibrary} onchange={async () => {
-      await refreshVoices();
-      if (savedVoiceId && !savedVoices.some(voice => voice.id === savedVoiceId)) savedVoiceId = '';
-    }} ontext={async (voice) => {
-      await refreshVoices();
-      chooseWorkflow('tts');
-      chooseSavedVoice(voice.id);
-      tab = 'studio';
-    }}/>
+  {:else if tab === 'library'}
+    <Library bind:this={library}
+      onchange={async () => {
+        await refreshVoices();
+        if (savedVoiceId && !savedVoices.some(voice => voice.id === savedVoiceId)) savedVoiceId = '';
+      }} ontext={async (voice) => {
+        await refreshVoices();
+        chooseWorkflow('tts');
+        chooseSavedVoice(voice.id);
+        tab = 'studio';
+      }}/>
   {:else if tab === 'configuration'}
     <Configuration {tr} />
-  {:else}
+  {:else if tab !== 'apps'}
     <section class="page-head"><p class="eyebrow">{tr('runtime.eyebrow')}</p><h1>{tr('runtime.title')}</h1><p>{tr('runtime.subtitle')}</p></section>
     <section class="panel log-panel">
       <div class="runtime-cards">

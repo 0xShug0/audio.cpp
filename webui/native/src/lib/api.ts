@@ -39,15 +39,15 @@ export async function models(): Promise<LoadedModel[]> {
   return response.data;
 }
 
-export async function loadModel(body: Record<string, unknown>): Promise<void> {
-  await jsonRequest('/v1/models/load', { method: 'POST', body: JSON.stringify(body) });
+export async function loadModel(body: Record<string, unknown>, signal?: AbortSignal): Promise<void> {
+  await jsonRequest('/v1/models/load', { method: 'POST', body: JSON.stringify(body) }, signal);
 }
 
-export async function unloadModel(id: string): Promise<void> {
+export async function unloadModel(id: string, signal?: AbortSignal): Promise<void> {
   await jsonRequest('/v1/models/unload', {
     method: 'POST',
     body: JSON.stringify({ id })
-  });
+  }, signal);
 }
 
 // Frees the models' memory and keeps them registered as configured; the next

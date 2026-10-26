@@ -16,7 +16,7 @@
   import type { Translator } from '$lib/i18n';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import VoicePicker from '$lib/VoicePicker.svelte';
-  import type { SavedVoice } from '$lib/voices';
+  import type { SavedVoice } from '$lib/library';
   import type { CatalogEntry, InstallPackageChoice, LoadedModel, ServerHealth } from '$lib/types';
 
   export let activeCatalog: CatalogEntry[] = [];

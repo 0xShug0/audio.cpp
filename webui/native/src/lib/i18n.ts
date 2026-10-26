@@ -14,8 +14,10 @@ export type UiLanguage = {
 
 const english: Record<string, string> = {
   'app.nativeStudio': 'Native Studio',
+  'nav.apps': 'Apps',
   'nav.studio': 'Studio',
   'nav.arena': 'Arena',
+  'nav.library': 'Lib',
   'nav.models': 'Models',
   'nav.runtime': 'Runtime',
   'nav.configuration': 'Configuration',
