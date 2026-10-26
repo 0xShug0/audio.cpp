@@ -6,6 +6,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <random>
@@ -118,7 +122,7 @@ void test_upstream_parity() {
         for (size_t i = 0; i < scores.size(); ++i) {
             max_diff = std::max(max_diff, std::abs(static_cast<double>(scores[i]) - expected[i].as_number()));
         }
-        // FFT order, logf and mel sum order differ from upstream; observed max ~1e-4.
+        // FFT order, ln/exp and mel sum order differ from upstream; observed max ~2e-5.
         require(max_diff <= 5e-4, wav + ": max score diff " + std::to_string(max_diff));
 
         // Threads and the frame-by-frame detector run the same kernels: identical bits.
@@ -267,6 +271,54 @@ void test_options() {
             "defaults must match upstream SegmenterOptions");
 }
 
+void test_long_input_blocks() {
+    // Offline scoring runs in 4096-frame blocks. Two full blocks plus a short
+    // tail (scored without threads) must match the frame-by-frame detector,
+    // which has no blocks, for every thread count.
+    const auto speech = load_wav("tests/parakeet_tdt/assets/2086-149220-0033.wav");
+    const int64_t frames = 2 * 4096 + 100;
+    std::vector<float> audio(static_cast<size_t>(frames * ev::kFrameSize) + 77);
+    std::mt19937 rng(3);
+    std::normal_distribution<float> noise(0.0f, 0.003f);
+    for (size_t i = 0; i < audio.size(); ++i) {
+        audio[i] = speech[i % speech.size()] + noise(rng);
+    }
+    const auto w = weights();
+    ev::EarshotDetector detector(w);
+    std::vector<float> expected(static_cast<size_t>(frames));
+    for (int64_t f = 0; f < frames; ++f) {
+        expected[static_cast<size_t>(f)] = detector.predict(audio.data() + f * ev::kFrameSize);
+    }
+    for (const int threads : {1, 3, 4, 8}) {
+        const auto scores = ev::score_earshot_frames(w, audio.data(), static_cast<int64_t>(audio.size()), threads);
+        require(scores == expected, "long input differs from the detector, threads " + std::to_string(threads));
+    }
+}
+
+void test_kernel_identity() {
+    // Every kernel set, compiler and platform must give these exact bits. The
+    // ctest variants run this with the kernel set capped to baseline and avx2.
+    const std::string name = ev::earshot_kernel_name();
+    require(name == "baseline" || name == "avx2" || name == "avx512", "unknown kernel set " + name);
+    if (const char * cap = std::getenv("AUDIOCPP_EARSHOT_ISA"); cap != nullptr && std::string(cap) == "baseline") {
+        require(name == "baseline", "AUDIOCPP_EARSHOT_ISA=baseline picked " + name);
+    }
+    const auto audio = load_wav("assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav");
+    const auto scores = ev::score_earshot_frames(weights(), audio.data(), static_cast<int64_t>(audio.size()), 4);
+    uint64_t hash = 1469598103934665603ull;  // FNV-1a over the score bits
+    for (const float score : scores) {
+        uint32_t bits;
+        std::memcpy(&bits, &score, sizeof(bits));
+        for (int b = 0; b < 4; ++b) {
+            hash = (hash ^ ((bits >> (8 * b)) & 0xff)) * 1099511628211ull;
+        }
+    }
+    char hex[17];
+    std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(hash));
+    require(scores.size() == 889 && std::string(hex) == "9f3e04a6ceab8012",
+            name + " scores hash " + hex + " over " + std::to_string(scores.size()) + " frames");
+}
+
 void test_loader_detection() {
     const auto registry = rt::make_default_registry();
     rt::ModelLoadRequest silero;
@@ -301,6 +353,8 @@ int main() {
         {"silence_and_noise", test_silence_and_noise},
         {"stereo_resampled_input", test_stereo_resampled_input},
         {"options", test_options},
+        {"long_input_blocks", test_long_input_blocks},
+        {"kernel_identity", test_kernel_identity},
         {"loader_detection", test_loader_detection},
         {"vad_chunk_planner", test_vad_chunk_planner},
     };

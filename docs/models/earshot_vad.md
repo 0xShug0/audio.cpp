@@ -110,6 +110,8 @@ python tests/earshot_vad/check_parity.py \
 `earshot_vad_test` (ctest) checks the committed upstream golden scores. It also
 checks:
 - the frame-by-frame detector and 4-thread scoring equal 1-thread scoring bit for bit;
+- inputs longer than one 4096-frame block, scored with 1, 3, 4 and 8 threads, equal the detector bit for bit;
+- the scores of one clip hash to the same committed value on every kernel set and platform;
 - streaming equals offline for any chunk size;
 - silence and noise produce no segments;
 - 48 kHz stereo input maps back to input samples;
@@ -117,8 +119,8 @@ checks:
 - the options, loader detection, and VAD chunk planning through the registry.
 
 `earshot_vad_baseline_test` and `earshot_vad_avx2_test` repeat it with the kernel
-set capped by `AUDIOCPP_EARSHOT_ISA=baseline` or `avx2` (`avx512` is the default
-cap; `AUDIOCPP_EARSHOT_BASELINE=1` still means baseline).
+set capped by `AUDIOCPP_EARSHOT_ISA=baseline` or `avx2` (any other value means
+no cap; `AUDIOCPP_EARSHOT_BASELINE=1` still means baseline).
 
 ### Speed
 

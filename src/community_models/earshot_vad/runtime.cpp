@@ -21,8 +21,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <stdexcept>
 #include <string_view>
 
@@ -285,8 +287,12 @@ void gemm_baseline(const int16_t * x, int64_t frames, int64_t in_dim, const int1
     }
 }
 
-void scan_baseline(const int32_t * acc, int64_t frames, int first, int last, int16_t * state, int16_t * out,
+void scan_baseline(const int32_t * acc, int64_t frames, int first, int last, int16_t * shared_state, int16_t * out,
                    int64_t group_stride) {
+    // Scan parts on other threads update neighbouring groups of the shared
+    // state, so work on a local copy and write it back once.
+    int16_t state[kHidden];
+    std::memcpy(state + 8 * first, shared_state + 8 * first, 8 * (last - first) * sizeof(int16_t));
     for (int64_t f = 0; f < frames; ++f) {
         const int32_t * a = acc + f * 2 * kHidden;
         for (int64_t i = 8 * first; i < 8 * last; ++i) {
@@ -303,6 +309,7 @@ void scan_baseline(const int32_t * acc, int64_t frames, int first, int last, int
             }
         }
     }
+    std::memcpy(shared_state + 8 * first, state + 8 * first, 8 * (last - first) * sizeof(int16_t));
 }
 
 // Cephes expf (relative error below 2e-7) from plain float operations, so the
@@ -893,23 +900,28 @@ CpuFeatures detect_cpu() {
 }
 #endif  // EARSHOT_X86_DISPATCH
 
-// The widest supported kernel set. AUDIOCPP_EARSHOT_ISA=baseline|avx2|avx512 caps
-// it (tests use this); AUDIOCPP_EARSHOT_BASELINE=1 is the same as baseline.
+// The widest supported kernel set. AUDIOCPP_EARSHOT_ISA=baseline|avx2 caps it
+// (tests use this; case-insensitive, any other value means no cap);
+// AUDIOCPP_EARSHOT_BASELINE=1 is the same as baseline.
 const Kernels & kernels() {
     static const Kernels * selected = [] {
 #if defined(EARSHOT_X86_DISPATCH)
         const CpuFeatures cpu = detect_cpu();
-        std::string_view cap = "avx512";
+        int cap = 2;  // 0 baseline, 1 avx2, 2 avx512
         if (const char * value = std::getenv("AUDIOCPP_EARSHOT_ISA")) {
-            cap = value;
+            std::string name(value);
+            for (char & c : name) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            cap = name == "baseline" ? 0 : name == "avx2" ? 1 : 2;
         }
         if (std::getenv("AUDIOCPP_EARSHOT_BASELINE") != nullptr) {
-            cap = "baseline";
+            cap = 0;
         }
-        if (cpu.avx512 && cap == "avx512") {
+        if (cpu.avx512 && cap >= 2) {
             return &kAvx512Kernels;
         }
-        if (cpu.avx2 && (cap == "avx512" || cap == "avx2")) {
+        if (cpu.avx2 && cap >= 1) {
             return &kAvx2Kernels;
         }
 #endif
