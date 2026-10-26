@@ -98,17 +98,12 @@ modules::DecoderActivationCastPolicy breeze_bf16_activation_policy(core::Backend
     return policy;
 }
 
-// K/V rows are rounded to bf16 (after RoPE / the QKV projection) before they are
-// written, and an f16 cache stores every bf16-rounded value exactly, so rounding the
-// whole cache again after each update is an identity. CUDA flash attention also
-// converts that f32 copy straight back to f16 and runs the same f16 kernel, so
-// skipping the pass is bit-identical there while saving two full-cache passes per
-// layer and step. Other backends and the eager attention path keep the reference
-// rounding because their attention kernels differ between f32 and f16 inputs.
+// Skip the whole-cache rounding pass only when rows are already bf16-rounded
+// and the f16 cache preserves them. Attention may use different kernels for the
+// resulting cache path on different backends.
 void skip_redundant_cache_round(
     modules::DecoderStackConfig & stack,
     ggml_type static_cache_type,
-    core::BackendType backend_type,
     bool allow_flash_attention) {
     auto & cast = stack.activation_cast;
     // The last op on K before the cache write must be followed by a rounding point.
@@ -117,7 +112,7 @@ void skip_redundant_cache_round(
         : (stack.use_qk_norm ? cast.after_qk_norm : cast.after_qkv_projection);
     const bool rows_prerounded =
         cast.enabled && cast.type == GGML_TYPE_BF16 && cast.after_qkv_projection && key_rounded;
-    if (rows_prerounded && backend_type == core::BackendType::Cuda && allow_flash_attention &&
+    if (rows_prerounded && allow_flash_attention &&
         static_cache_type == GGML_TYPE_F16) {
         cast.after_static_cache_update = false;
     }
@@ -172,7 +167,7 @@ modules::CausalDecoderRuntimeConfig backbone_config(
             out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
             if (skip_cache_round) {
                 skip_redundant_cache_round(
-                    out.decoder.stack, out.decoder.static_cache_type, backend_type, allow_flash_attention);
+                    out.decoder.stack, out.decoder.static_cache_type, allow_flash_attention);
             }
         }
     }
@@ -234,7 +229,7 @@ modules::CausalDecoderRuntimeConfig depth_config(
             out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
             if (skip_cache_round) {
                 skip_redundant_cache_round(
-                    out.decoder.stack, out.decoder.static_cache_type, backend_type, allow_flash_attention);
+                    out.decoder.stack, out.decoder.static_cache_type, allow_flash_attention);
             }
         }
     }
@@ -1054,14 +1049,17 @@ private:
                     core::TensorShape::from_dims({batch, 1, length, length}),
                     GGML_TYPE_F16);
             }
+            auto positions = core::wrap_tensor(
+                ggml_view_1d(g, positions_in_, step_tokens, cached ? static_cast<size_t>(codebook) * sizeof(int32_t) : 0),
+                core::TensorShape::from_dims({step_tokens}), GGML_TYPE_I32);
+            if (backend_type_ == core::BackendType::Vulkan) {
+                // Vulkan RoPE requires base-aligned position buffers.
+                positions = core::ensure_backend_addressable_layout(ctx, positions);
+            }
             auto out = modules::DecoderHiddenModule(hidden_config_).build(
                 ctx,
                 core::wrap_tensor(sequence, core::TensorShape::from_dims({batch, step_tokens, depth_hidden})),
-                core::wrap_tensor(
-                    ggml_view_1d(
-                        g, positions_in_, step_tokens, cached ? static_cast<size_t>(codebook) * sizeof(int32_t) : 0),
-                    core::TensorShape::from_dims({step_tokens}),
-                    GGML_TYPE_I32),
+                positions,
                 hidden_weights_,
                 cached ? state : std::nullopt,
                 mask);
@@ -1195,22 +1193,21 @@ struct BreezeGeneratorRuntime::Impl {
         engine::debug::trace_log_scalar("breeze_tts.attention.allow_depth_flash", allow_depth_flash);
         const bool bf16_reference = bf16_reference_enabled(bf16_activations, execution.backend_type());
         engine::debug::trace_log_scalar("breeze_tts.bf16_activations", bf16_reference);
+        const bool cuda = execution.backend_type() == core::BackendType::Cuda;
+        const bool perf_backend = cuda || execution.backend_type() == core::BackendType::Vulkan ||
+            execution.backend_type() == core::BackendType::Metal;
         backbone_runtime_config = backbone_config(
             config, execution.backend_type(), graph_arena_bytes, allow_backbone_flash, bf16_reference,
-            perf.skip_cache_round);
+            perf_backend && perf.skip_cache_round);
         depth_runtime_config = depth_config(
             config, execution.backend_type(), graph_arena_bytes, allow_depth_flash, bf16_reference,
-            perf.skip_cache_round);
+            perf_backend && perf.skip_cache_round);
         weights = load_weights(*this->assets, execution, weight_context_bytes, storage_type, backbone_runtime_config);
         backbone_cond = std::make_unique<modules::CausalDecoderRuntime>(execution, backbone_runtime_config, weights->backbone);
         backbone_uncond = std::make_unique<modules::CausalDecoderRuntime>(execution, backbone_runtime_config, weights->backbone);
-        // These performance paths apply only on CUDA; other
-        // backends keep the per-codebook depth path and two single-lane backbone
-        // runtimes.
-        const bool cuda = execution.backend_type() == core::BackendType::Cuda;
-        direct_prefill = cuda && perf.direct_prefill;
+        direct_prefill = perf_backend && perf.direct_prefill;
         engine::debug::trace_log_scalar("breeze_tts.direct_prefill", direct_prefill);
-        if (cuda && perf.fused_depth) {
+        if (perf_backend && perf.fused_depth) {
             fused_depth = std::make_unique<BreezeFusedDepthRuntime>(
                 execution.backend(),
                 execution.backend_type(),
