@@ -128,7 +128,8 @@ modules::CausalDecoderRuntimeConfig backbone_config(
     core::BackendType backend_type,
     size_t graph_arena_bytes,
     bool allow_flash_attention = true,
-    bool bf16_reference = true) {
+    bool bf16_reference = true,
+    bool skip_cache_round = false) {
     modules::CausalDecoderRuntimeConfig out;
     out.trace_name = "breeze_tts.backbone";
     out.prefill_graph_arena_bytes = graph_arena_bytes;
@@ -169,8 +170,10 @@ modules::CausalDecoderRuntimeConfig backbone_config(
                 ? GGML_TYPE_BF16 : GGML_TYPE_F16;
         if (bf16_reference) {
             out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
-            skip_redundant_cache_round(
-                out.decoder.stack, out.decoder.static_cache_type, backend_type, allow_flash_attention);
+            if (skip_cache_round) {
+                skip_redundant_cache_round(
+                    out.decoder.stack, out.decoder.static_cache_type, backend_type, allow_flash_attention);
+            }
         }
     }
     out.decoder.logits_size = config.lm_head_size;
@@ -190,7 +193,8 @@ modules::CausalDecoderRuntimeConfig depth_config(
     core::BackendType backend_type,
     size_t graph_arena_bytes,
     bool allow_flash_attention = true,
-    bool bf16_reference = true) {
+    bool bf16_reference = true,
+    bool skip_cache_round = false) {
     modules::CausalDecoderRuntimeConfig out;
     out.trace_name = "breeze_tts.depth_decoder";
     out.prefill_graph_arena_bytes = graph_arena_bytes;
@@ -228,8 +232,10 @@ modules::CausalDecoderRuntimeConfig depth_config(
                 ? GGML_TYPE_BF16 : GGML_TYPE_F16;
         if (bf16_reference) {
             out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
-            skip_redundant_cache_round(
-                out.decoder.stack, out.decoder.static_cache_type, backend_type, allow_flash_attention);
+            if (skip_cache_round) {
+                skip_redundant_cache_round(
+                    out.decoder.stack, out.decoder.static_cache_type, backend_type, allow_flash_attention);
+            }
         }
     }
     out.decoder.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
@@ -1189,15 +1195,19 @@ struct BreezeGeneratorRuntime::Impl {
         const bool bf16_reference = bf16_reference_enabled(bf16_activations, execution.backend_type());
         engine::debug::trace_log_scalar("breeze_tts.bf16_activations", bf16_reference);
         backbone_runtime_config = backbone_config(
-            config, execution.backend_type(), graph_arena_bytes, allow_backbone_flash, bf16_reference);
+            config, execution.backend_type(), graph_arena_bytes, allow_backbone_flash, bf16_reference,
+            perf.skip_cache_round);
         depth_runtime_config = depth_config(
-            config, execution.backend_type(), graph_arena_bytes, allow_depth_flash, bf16_reference);
+            config, execution.backend_type(), graph_arena_bytes, allow_depth_flash, bf16_reference,
+            perf.skip_cache_round);
         weights = load_weights(*this->assets, execution, weight_context_bytes, storage_type, backbone_runtime_config);
         backbone_cond = std::make_unique<modules::CausalDecoderRuntime>(execution, backbone_runtime_config, weights->backbone);
         backbone_uncond = std::make_unique<modules::CausalDecoderRuntime>(execution, backbone_runtime_config, weights->backbone);
         // The fused depth path is opt-in and only validated on CUDA; other backends
         // keep the per-codebook depth path.
         const bool cuda = execution.backend_type() == core::BackendType::Cuda;
+        direct_prefill = cuda && perf.direct_prefill;
+        engine::debug::trace_log_scalar("breeze_tts.direct_prefill", direct_prefill);
         if (cuda && perf.fused_depth) {
             fused_depth = std::make_unique<BreezeFusedDepthRuntime>(
                 execution.backend(),
@@ -1773,21 +1783,46 @@ struct BreezeGeneratorRuntime::Impl {
         double backbone_cond_prefill_ms = 0.0;
         double backbone_uncond_prefill_ms = 0.0;
         const double ar_ms = engine::debug::measure_ms([&] {
-            // Prefill straight into the decode cache, as the streaming path does.
-            // Exporting the KV state to host floats and importing it back costs
-            // about half a second per request (zero-fill plus conversion of the whole cache).
             modules::CausalDecoderPrefillIntoDecodeResult cond;
-            backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
-                cond = backbone_cond->prefill_embeddings_into_decode_cache(
-                    cond_embeddings, cond_steps, cond_steps + request.max_tokens);
-            });
             std::optional<modules::CausalDecoderPrefillIntoDecodeResult> uncond;
-            if (use_cfg) {
-                uncond.emplace();
-                backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
-                    *uncond = backbone_uncond->prefill_embeddings_into_decode_cache(
-                        uncond_embeddings, uncond_steps, uncond_steps + request.max_tokens);
+            if (direct_prefill) {
+                // Prefill straight into the decode cache, as the streaming path does.
+                // Exporting the KV state to host floats and importing it back costs
+                // about half a second per request (zero-fill plus conversion of the whole cache).
+                backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
+                    cond = backbone_cond->prefill_embeddings_into_decode_cache(
+                        cond_embeddings, cond_steps, cond_steps + request.max_tokens);
                 });
+                if (use_cfg) {
+                    uncond.emplace();
+                    backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
+                        *uncond = backbone_uncond->prefill_embeddings_into_decode_cache(
+                            uncond_embeddings, uncond_steps, uncond_steps + request.max_tokens);
+                    });
+                }
+            } else {
+                modules::CausalDecoderPrefillResult cond_prefill;
+                backbone_cond_prefill_ms = engine::debug::measure_ms([&] {
+                    cond_prefill = backbone_cond->prefill_embeddings(cond_embeddings, cond_steps);
+                });
+                std::optional<modules::CausalDecoderPrefillResult> uncond_prefill;
+                if (use_cfg) {
+                    uncond_prefill.emplace();
+                    backbone_uncond_prefill_ms = engine::debug::measure_ms([&] {
+                        *uncond_prefill = backbone_uncond->prefill_embeddings(uncond_embeddings, uncond_steps);
+                    });
+                }
+                backbone_cond->start_decode_embeddings(cond_prefill.state, cond_steps + request.max_tokens);
+                if (use_cfg) {
+                    backbone_uncond->start_decode_embeddings(uncond_prefill->state, uncond_steps + request.max_tokens);
+                }
+                cond.logits = std::move(cond_prefill.logits);
+                cond.hidden = std::move(cond_prefill.hidden);
+                if (use_cfg) {
+                    uncond.emplace();
+                    uncond->logits = std::move(uncond_prefill->logits);
+                    uncond->hidden = std::move(uncond_prefill->hidden);
+                }
             }
 
             sampling::HfSamplerScratch scratch;
@@ -1918,6 +1953,7 @@ struct BreezeGeneratorRuntime::Impl {
     std::unique_ptr<modules::CausalDecoderRuntime> depth_pair;
     std::unique_ptr<BreezeDepthProjectionRuntime> depth_projection;
     std::unique_ptr<BreezeFusedDepthRuntime> fused_depth;
+    bool direct_prefill = false;
     std::unique_ptr<BreezeSpeechEncoderRuntime> speech_encoder;
     std::unique_ptr<BreezeSpeechDecoderRuntime> speech_decoder;
     runtime::StreamingAudioController<int32_t> stream_audio_;

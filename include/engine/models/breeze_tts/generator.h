@@ -46,6 +46,10 @@ enum class Bf16ActivationMode {
 struct BreezePerfOptions {
     // Decode each frame's depth codebooks in one graph with device sampling.
     bool fused_depth = false;
+    // Offline prefill writes the backbone KV straight into the decode cache.
+    bool direct_prefill = false;
+    // Skip re-rounding the F16 KV cache to bf16 after each update (an identity).
+    bool skip_cache_round = false;
 };
 
 class BreezeGeneratorRuntime {
