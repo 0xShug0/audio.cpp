@@ -1,4 +1,5 @@
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/registry.h"
 #include "engine/framework/runtime/task_vocabulary.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/model_spec/package.h"
@@ -1673,6 +1674,30 @@ void test_shipped_model_specs_declare_known_tasks() {
     engine::test::require(checked > 0, "should have checked at least one shipped spec");
 }
 
+// Loaders that identify a model by its config (lfm3_audio) are tried first; a CED directory, whose
+// layout (config.json, preprocessor_config.json, model.safetensors) is the generic one, stays ced.
+void test_ced_auto_detection() {
+    const auto registry = engine::runtime::make_default_registry();
+    if (!registry.supports_family("ced")) {
+        return;
+    }
+    const auto root = make_temp_root();
+    write_text(root, "config.json",
+        R"({"embed_dim": 4, "num_heads": 1, "depth": 1, "mlp_ratio": 4, "patch_size": 2, "patch_stride": 2,
+            "target_length": 4, "pad_last": true, "pooling": "mean", "qkv_bias": true,
+            "id2label": {"0": "Speech"}, "outputdim": 1})");
+    write_text(root, "preprocessor_config.json",
+        R"({"feature_size": 4, "n_fft": 8, "hop_size": 4, "win_size": 8, "sampling_rate": 16000,
+            "center": true, "f_min": 0})");
+    write_text(root, "model.safetensors", "");
+    engine::runtime::ModelLoadRequest request;
+    request.model_path = root;
+    request.model_spec_override = std::filesystem::path(AUDIOCPP_SOURCE_DIR) / "model_specs";
+    engine::test::require_eq(registry.inspect(request).metadata.family, std::string("ced"),
+                             "a CED directory should auto-detect as ced");
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -1696,6 +1721,7 @@ int main() {
         test_task_vocabulary_is_consistent();
         test_vad_timestamp_capability();
         test_shipped_model_specs_declare_known_tasks();
+        test_ced_auto_detection();
     } catch (const std::exception & error) {
         std::cerr << "model_spec_system_test failed: " << error.what() << "\n";
         return 1;

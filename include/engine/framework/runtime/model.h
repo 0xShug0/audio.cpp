@@ -145,6 +145,11 @@ public:
     /** Alternate family names accepted for family hints (e.g. "habibi" for "f5_tts"). */
     virtual std::vector<std::string> family_aliases() const { return {}; }
     virtual bool can_load(const ModelLoadRequest & request) const = 0;
+    /**
+     * True when the loader recognizes the model by its config, not just its file layout. Without a
+     * family hint the registry tries these loaders first, so a generic layout cannot take the model.
+     */
+    virtual bool identifies(const ModelLoadRequest &) const { return false; }
     virtual ModelInspection inspect(const ModelLoadRequest & request) const = 0;
     virtual std::unique_ptr<ILoadedVoiceModel> load(const ModelLoadRequest & request) const = 0;
 

@@ -229,6 +229,13 @@ void ModelRegistry::validate_request(const ModelLoadRequest & request) const {
 }
 
 const IVoiceModelLoader * ModelRegistry::find_loader(const ModelLoadRequest & request) const {
+    if (!request.family_hint.has_value()) {
+        for (const auto & loader : loaders_) {
+            if (loader->identifies(request)) {
+                return loader.get();
+            }
+        }
+    }
     for (const auto & loader : loaders_) {
         if (request.family_hint.has_value()) {
             if (loader->family() == *request.family_hint) {

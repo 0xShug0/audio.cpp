@@ -2701,6 +2701,32 @@ audiocpp_add_model(lfm2_audio
         engine::community_models::lfm2_audio::make_lfm2_audio_loader
 )
 
+audiocpp_add_model(lfm3_audio
+    SOURCES
+        src/community_models/lfm3_audio/assets.cpp
+        src/community_models/lfm3_audio/published_gguf.cpp
+        src/community_models/lfm3_audio/weights.cpp
+        src/community_models/lfm3_audio/tokenizer.cpp
+        src/community_models/lfm3_audio/prompt.cpp
+        src/community_models/lfm3_audio/chat.cpp
+        src/community_models/lfm3_audio/features.cpp
+        src/community_models/lfm3_audio/blocks.cpp
+        src/community_models/lfm3_audio/encoder.cpp
+        src/community_models/lfm3_audio/backbone.cpp
+        src/community_models/lfm3_audio/depth.cpp
+        src/community_models/lfm3_audio/sampling.cpp
+        src/community_models/lfm3_audio/codec.cpp
+        src/community_models/lfm3_audio/generator.cpp
+        src/community_models/lfm3_audio/debug.cpp
+        src/community_models/lfm3_audio/session.cpp
+    INCLUDES
+        engine/community_models/lfm3_audio/session.h
+    LOADERS
+        engine::community_models::lfm3_audio::make_lfm3_audio_loader
+    DEPENDS
+        lfm2_audio
+)
+
 audiocpp_add_model(xtts_v2
     SOURCES
         src/community_models/xtts_v2/assets.cpp
@@ -3846,6 +3872,29 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             endif()
         endif()
 
+        if(lfm3_audio IN_LIST AUDIOCPP_LINKED_MODELS)
+            foreach(lfm3_audio_test IN ITEMS
+                lfm3_audio_assets_test
+                lfm3_audio_tokenizer_test
+                lfm3_audio_prompt_test
+                lfm3_audio_chat_test
+                lfm3_audio_features_test
+                lfm3_audio_blocks_test
+                lfm3_audio_encoder_test
+                lfm3_audio_backbone_test
+                lfm3_audio_depth_test
+                lfm3_audio_sampling_test
+                lfm3_audio_codec_test
+                lfm3_audio_generator_test
+                lfm3_audio_session_test)
+                add_engine_unittest(${lfm3_audio_test} tests/community_models/lfm3_audio/${lfm3_audio_test}.cpp)
+                target_include_directories(${lfm3_audio_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+                target_compile_definitions(${lfm3_audio_test} PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+                add_test(NAME ${lfm3_audio_test} COMMAND ${lfm3_audio_test})
+                set_tests_properties(${lfm3_audio_test} PROPERTIES SKIP_RETURN_CODE 77)
+            endforeach()
+        endif()
+
         add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
         add_test(NAME midi_file_test COMMAND midi_file_test)
 
@@ -4461,6 +4510,33 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 SKIP_RETURN_CODE 125
                 TIMEOUT 900
             )
+        endif()
+
+        if (lfm3_audio IN_LIST AUDIOCPP_LINKED_MODELS)
+            foreach(lfm3_audio_model_test IN ITEMS
+                test_lfm3_audio_parity
+                test_lfm3_audio_asr
+                test_lfm3_audio_tts
+                test_lfm3_audio_s2s)
+                add_executable(${lfm3_audio_model_test} tests/lfm3_audio/${lfm3_audio_model_test}.cpp)
+                target_compile_definitions(${lfm3_audio_model_test} PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+                target_link_libraries(${lfm3_audio_model_test} PRIVATE engine_runtime ggml)
+                if (ENGINE_ENABLE_OPENMP)
+                    target_link_libraries(${lfm3_audio_model_test} PRIVATE OpenMP::OpenMP_CXX)
+                endif()
+                # The 418 s prefill check is slow on CPU F32; ctest skips it to stay within TIMEOUT,
+                # and the manual or matrix runs cover it.
+                set(lfm3_audio_model_test_args)
+                if (lfm3_audio_model_test MATCHES "_parity$")
+                    set(lfm3_audio_model_test_args --skip-long)
+                endif()
+                add_test(NAME ${lfm3_audio_model_test} COMMAND ${lfm3_audio_model_test} ${lfm3_audio_model_test_args})
+                # Needs models/LFM3-Audio-2B (and its fixtures); exits 125 (skip) without them.
+                set_tests_properties(${lfm3_audio_model_test} PROPERTIES
+                    SKIP_RETURN_CODE 125
+                    TIMEOUT 900
+                )
+            endforeach()
         endif()
 
         if (sopro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
