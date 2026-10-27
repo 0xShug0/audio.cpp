@@ -4,6 +4,7 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
+#include "engine/framework/text/utf8.h"
 
 #include <chrono>
 #include <cmath>
@@ -421,7 +422,7 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
         } else {
             const double avg_tokens_per_char =
                 static_cast<double>(prompt.target_audio_tokens) /
-                static_cast<double>(std::max<size_t>(1, prompt.text.size()));
+                static_cast<double>(std::max<size_t>(1, engine::text::utf8_codepoint_count(prompt.text, "OmniVoice text")));
             text_chunk_size = std::max<int64_t>(
                 1,
                 static_cast<int64_t>(omni_request.generation.audio_chunk_duration_seconds *
@@ -747,7 +748,7 @@ std::vector<std::string> OmniVoiceSession::plan_text_chunks(
     } else {
         const double avg_tokens_per_char =
             static_cast<double>(prompt.target_audio_tokens) /
-            static_cast<double>(std::max<size_t>(1, prompt.text.size()));
+            static_cast<double>(std::max<size_t>(1, engine::text::utf8_codepoint_count(prompt.text, "OmniVoice text")));
         text_chunk_size = std::max<int64_t>(
             1,
             static_cast<int64_t>(request.generation.audio_chunk_duration_seconds *
