@@ -6,8 +6,10 @@ streaming voice activity detector by pyke.io (MIT OR Apache-2.0). It scores
 depthwise-separable convolutions and two int16 minGRU layers.
 
 The weights ship in the repository, so there is nothing to download. The port is
-plain C++ and does not use a ggml graph or a GPU. It runs on the CPU with SSE2,
-AVX2 or NEON, whatever backend the session asks for.
+plain C++ and does not use a ggml graph or a GPU. It runs on the CPU whatever
+backend the session asks for, with the widest kernel set the CPU supports:
+AVX-512 (F, BW and VNNI), AVX2, or the SSE2 / NEON baseline. Every kernel set,
+compiler, thread count and the streaming path give the same scores, bit for bit.
 
 ## Quick Start
 
@@ -32,7 +34,7 @@ audiocpp_cli --task vad --mode streaming --model assets/framework/models/earshot
 | Modes | `offline`, `streaming` |
 | Input | Offline: any sample rate and channel count, converted to 16 kHz mono and mapped back to input samples. Streaming: 16 kHz mono, any chunk size. |
 | Output | Speech segments (`--segments-out`), with the mean frame score as `confidence` |
-| Threads | `--threads` parallelises the offline front end and convolutions; the recurrent layers run in order |
+| Threads | `--threads` parallelises the offline front end, convolutions and the minGRU matrix products; only the elementwise recurrence runs in order |
 | Build | Part of the default `full` model set; with `AUDIOCPP_MODEL_SET=custom`, add `earshot_vad` to `AUDIOCPP_MODELS` |
 
 On the server, configure a `"task": "vad"` model entry and call `POST /v1/tasks/run`. The response lists `segments`.
@@ -56,6 +58,21 @@ defaults reproduce upstream `SegmenterOptions::default()`.
 
 Other Silero option names, such as `max_speech_duration_s`, are accepted and ignored.
 
+### Kernel set
+
+The detector has CPU kernels for SSE2 or NEON (`baseline`), AVX2 and
+AVX-512 (F, BW and VNNI). Each session picks one through
+`earshot_vad.exec_plan`; the default, `auto`, uses the widest one the build
+and CPU support. All kernel sets give the same scores, bit for bit.
+
+```bash
+--session-option 'earshot_vad.exec_plan={"detector":{"impl":"native","backend":"cpu","params":{"isa":"avx2"}}}'
+```
+
+`isa` takes `auto`, `baseline`, `avx2` or `avx512`. Asking for a kernel set the
+build or CPU cannot run is an error. With `--log` or `--log-file`, each run
+writes a timing line `earshot_vad.kernel <name>` naming the kernel set it used.
+
 ## VAD chunking for ASR
 
 `gigaam_asr` loads its chunking VAD through the model registry, so it can use
@@ -70,9 +87,12 @@ for now.
 
 ## Differences from upstream
 
-Per-frame scores match the Rust crate to within 1e-4. The FFT is a different
-implementation, so the last float bits differ. Segments match upstream
-`segments()` except for two deliberate fixes:
+Per-frame scores match the Rust crate to within 1e-4. The last float bits differ
+because the FFT is a different implementation, `ln` and `exp` are Cephes
+polynomials (relative error below 2e-7) instead of the C library's, and the mel
+sums use eight interleaved partial sums. Those choices are what make the scores
+identical on every platform. The integer minGRU layers are exact. Segments match
+upstream `segments()` except for two deliberate fixes:
 
 - **Trailing speech is kept.** Upstream drops a segment that is still open when the
   audio ends. That would lose the last words of an ASR input, so audio.cpp closes
@@ -104,41 +124,56 @@ python tests/earshot_vad/check_parity.py \
 
 `earshot_vad_test` (ctest) checks the committed upstream golden scores. It also
 checks:
+- the frame-by-frame detector and 4-thread scoring equal 1-thread scoring bit for bit;
+- inputs longer than one 4096-frame block, scored with 1, 3, 4 and 8 threads, equal the detector bit for bit, on every kernel set the CPU supports;
+- every supported kernel set reproduces the golden scores, and the scores of one clip hash to the same committed value on every kernel set and platform;
+- `earshot_vad.exec_plan` parsing, errors for unsupported kernel sets, and that offline and streaming sessions run the kernel set they asked for;
 - streaming equals offline for any chunk size;
 - silence and noise produce no segments;
 - 48 kHz stereo input maps back to input samples;
 - every streamed segment is announced by a SpeechStart event;
 - the options, loader detection, and VAD chunk planning through the registry.
 
-`earshot_vad_baseline_test` repeats it with the SSE2 kernel forced
-(`AUDIOCPP_EARSHOT_BASELINE=1`).
+`earshot_vad_probe --isa auto|baseline|avx2|avx512` benchmarks one kernel set.
 
 ### Speed
 
 The table shows wall time to score 10 minutes of 16 kHz audio (37,583 frames)
-with `earshot_vad_probe --bench 5`. It was measured on Windows 11 with MSVC 19.44
-on a 32-thread x86-64 CPU with AVX2.
+with `earshot_vad_probe --bench`, best of five runs, on a Ryzen 9 9950X3D. The
+upstream Rust crate takes 147 ms for the same file on Windows and 133 ms on
+Linux (frame loop, one thread; 127 ms with `-C target-cpu=native`).
 
-| Path | Threads | ms | x real time |
-|---|---:|---:|---:|
-| Upstream Rust crate, frame loop | 1 | 147 | 4,100 |
-| audio.cpp offline | 1 | 111 | 5,400 |
-| audio.cpp offline | 8 | 32 | 18,800 |
-| audio.cpp streaming (frame by frame) | 1 | 119 | 5,000 |
+| Build | Kernels | Offline, 1 thread | Offline, 8 threads | Streaming |
+|---|---|---:|---:|---:|
+| Windows 11, MSVC 19.44 | AVX-512 | 25 ms | 5 ms | 29 ms |
+| Windows 11, MSVC 19.44 | AVX2 | 38 ms | 6 ms | 39 ms |
+| Ubuntu 24.04 (WSL), gcc 13 | AVX-512 | 20 ms | 3.1 ms | 25 ms |
+| Ubuntu 24.04 (WSL), gcc 13 | AVX2 | 28 ms | 4.5 ms | 31 ms |
+| Ubuntu 24.04 (WSL), clang 18 | AVX-512 | 17 ms | 2.6 ms | 25 ms |
 
 The second table covers the 30 clips of the TEN VAD test set, repeated to 43.7 min.
-It was run on Google Colab with a 12-vCPU Xeon @ 2.20 GHz, gcc 13 and a Release
-build. Each figure is `session.wall_ms` from `audiocpp_cli --task vad`.
+It was run on Google Colab with a 12-vCPU Xeon @ 2.20 GHz (AVX-512 with VNNI),
+gcc 13 and a Release build. Each figure is `session.wall_ms` from
+`audiocpp_cli --task vad`, best of three.
 
 | Model | Threads | ms | x real time |
 |---|---:|---:|---:|
-| `earshot_vad` | 1 | 1,201 | 2,185 |
-| `earshot_vad` | 4 | 484 | 5,421 |
-| Upstream Rust crate, frame loop | 1 | 2,311 | 1,135 |
-| `marblenet_vad` | 4 | 4,586 | 572 |
-| `pulsevad` | 4 | 5,327 | 492 |
-| `firered_vad` | 4 | 6,694 | 392 |
-| `silero_vad` | 4 | 19,526 | 134 |
+| `earshot_vad` | 1 | 345 | 7,603 |
+| `earshot_vad` | 4 | 99 | 26,557 |
+| Upstream Rust crate, frame loop | 1 | 2,200 | 1,192 |
+| `marblenet_vad` | 4 | 4,518 | 581 |
+| `pulsevad` | 4 | 5,405 | 485 |
+| `firered_vad` | 4 | 6,862 | 382 |
+| `silero_vad` | 4 | 19,942 | 132 |
+
+On the same machine, `earshot_vad_probe --bench` gives these times for the
+Earshot model alone on that 43.7 min file:
+
+| Kernels | Offline, 1 thread | Offline, 4 threads | Offline, 12 threads | Streaming |
+|---|---:|---:|---:|---:|
+| AVX-512 | 351 ms | 97 ms | 60 ms | 443 ms |
+| AVX2 | 486 ms | 134 ms | 82 ms | 511 ms |
+| Baseline (SSE2) | 892 ms | 335 ms | 298 ms | 980 ms |
 
 ### Accuracy
 

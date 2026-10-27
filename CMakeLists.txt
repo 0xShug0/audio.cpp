@@ -3885,9 +3885,6 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
             )
             add_test(NAME earshot_vad_test COMMAND earshot_vad_test)
-            # Same checks with the SSE2 minGRU kernel instead of AVX2.
-            add_test(NAME earshot_vad_baseline_test COMMAND earshot_vad_test)
-            set_tests_properties(earshot_vad_baseline_test PROPERTIES ENVIRONMENT "AUDIOCPP_EARSHOT_BASELINE=1")
         endif()
 
         add_engine_unittest(partial_text_test tests/unittests/test_partial_text.cpp)

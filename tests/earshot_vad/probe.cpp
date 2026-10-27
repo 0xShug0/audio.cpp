@@ -1,6 +1,6 @@
 // Dump Earshot VAD per-frame scores and segments as JSON for parity checks.
 //
-// Usage: earshot_vad_probe <model dir|file> <wav> [--threads N] [--bench N] [--upstream-segments]
+// Usage: earshot_vad_probe <model dir|file> <wav> [--threads N] [--bench N] [--isa auto|baseline|avx2|avx512] [--upstream-segments]
 //                          [--log-file path]
 //
 // The wav is converted to 16 kHz mono. `--upstream-segments` disables
@@ -23,18 +23,21 @@ namespace ev = engine::community_models::earshot_vad;
 
 int main(int argc, char ** argv) {
     if (argc < 3) {
-        std::cerr << "usage: earshot_vad_probe <model> <wav> [--threads N] [--bench N] [--upstream-segments]\n";
+        std::cerr << "usage: earshot_vad_probe <model> <wav> [--threads N] [--bench N] [--isa auto|baseline|avx2|avx512] [--upstream-segments]\n";
         return 2;
     }
     int threads = 1;
     int bench = 0;
     bool upstream_segments = false;
+    std::string isa_name = "auto";
     for (int i = 3; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--threads" && i + 1 < argc) {
             threads = std::atoi(argv[++i]);
         } else if (arg == "--bench" && i + 1 < argc) {
             bench = std::atoi(argv[++i]);
+        } else if (arg == "--isa" && i + 1 < argc) {
+            isa_name = argv[++i];
         } else if (arg == "--log-file" && i + 1 < argc) {
             engine::debug::configure_logging({true, std::string(argv[++i])});
         } else if (arg == "--upstream-segments") {
@@ -48,11 +51,13 @@ int main(int argc, char ** argv) {
         const auto weights = ev::load_earshot_weights_cached(ev::resolve_earshot_assets(argv[1]).checkpoint_path);
         const auto audio = engine::audio::read_wav_f32_as_mono_linear_resampled(argv[2], ev::kSampleRate);
         const auto n = static_cast<int64_t>(audio.size());
+        const auto isa = ev::earshot_isa_from_options(
+            {{"earshot_vad.exec_plan", "{\"detector\":{\"params\":{\"isa\":\"" + isa_name + "\"}}}"}});
 
-        const auto scores = ev::score_earshot_frames(weights, audio.data(), n, threads);
+        const auto scores = ev::score_earshot_frames(weights, audio.data(), n, threads, isa);
 
         // Streaming path, frame by frame, must reproduce the batched scores.
-        ev::EarshotDetector detector(weights);
+        ev::EarshotDetector detector(weights, isa);
         double max_stream_diff = 0.0;
         for (size_t f = 0; f < scores.size(); ++f) {
             const float s = detector.predict(audio.data() + static_cast<int64_t>(f) * ev::kFrameSize);
@@ -68,7 +73,7 @@ int main(int argc, char ** argv) {
         if (bench > 0) {
             auto start = std::chrono::steady_clock::now();
             for (int r = 0; r < bench; ++r) {
-                const auto again = ev::score_earshot_frames(weights, audio.data(), n, threads);
+                const auto again = ev::score_earshot_frames(weights, audio.data(), n, threads, isa);
                 if (again.size() != scores.size()) return 3;
             }
             offline_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / bench;
@@ -95,8 +100,8 @@ int main(int argc, char ** argv) {
                         static_cast<long long>(segments[i].start_frame * ev::kFrameSize),
                         static_cast<long long>(segments[i].end_frame * ev::kFrameSize));
         }
-        std::printf("],\"max_stream_diff\":%.9e,\"offline_ms\":%.6f,\"streaming_ms\":%.6f}\n",
-                    max_stream_diff, offline_ms, streaming_ms);
+        std::printf("],\"max_stream_diff\":%.9e,\"offline_ms\":%.6f,\"streaming_ms\":%.6f,\"kernel\":\"%s\"}\n",
+                    max_stream_diff, offline_ms, streaming_ms, ev::earshot_kernel_name(isa));
     } catch (const std::exception & error) {
         std::cerr << "earshot_vad_probe: " << error.what() << "\n";
         return 1;
