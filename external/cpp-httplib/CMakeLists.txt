@@ -37,11 +37,15 @@ if (NOT AUDIOCPP_USE_SYSTEM_OPENSSL)
     set(FIPS OFF CACHE BOOL "Disable BoringSSL FIPS build" FORCE)
 
     include(FetchContent)
-    FetchContent_Declare(audiocpp_boringssl
+    set(AUDIOCPP_BORINGSSL_FETCH_ARGS
         URL "${AUDIOCPP_BORINGSSL_URL}"
         URL_HASH "SHA256=${AUDIOCPP_BORINGSSL_SHA256}"
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
+    # CMake < 3.24 does not know this option and folds it into URL_HASH.
+    if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24")
+        list(APPEND AUDIOCPP_BORINGSSL_FETCH_ARGS DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    endif()
+    FetchContent_Declare(audiocpp_boringssl ${AUDIOCPP_BORINGSSL_FETCH_ARGS})
 
     set(AUDIOCPP_SAVED_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
     set(AUDIOCPP_SAVED_BUILD_TESTING ${BUILD_TESTING})
