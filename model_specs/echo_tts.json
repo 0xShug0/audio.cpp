@@ -60,9 +60,27 @@
         "default": 8
       },
       {
+        "name": "t_schedule_mode",
+        "type": "enum",
+        "description": "RF Euler timestep schedule: linear or sway; default linear.",
+        "values": [
+          "linear",
+          "sway"
+        ],
+        "required": false,
+        "default": "linear"
+      },
+      {
+        "name": "sway_coeff",
+        "type": "float",
+        "description": "Sway Sampling coefficient; must be finite and produce strictly decreasing timesteps. Default -1.0.",
+        "required": false,
+        "default": -1.0
+      },
+      {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Euler sampler steps.",
+        "description": "Euler sampler steps. Default 40 for linear timestep schedule, 12 for sway.",
         "required": false,
         "min": 1,
         "default": 40
