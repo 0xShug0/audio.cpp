@@ -87,7 +87,7 @@ std::filesystem::path executable_directory(const char * argv0) {
 void print_help() {
     std::cout
         << "audiocpp_server [--config <server.json>] [--ui] [--host <ip>] [--port <port>] [--backend <backend>]\n"
-        << "                [--device <id>] [--list-devices] [--threads <n>] [--busy-timeout-ms <ms>]\n"
+        << "                [--device <id>] [--list-devices [--json]] [--threads <n>] [--busy-timeout-ms <ms>]\n"
         << "                [--max-loaded-models <n>] [--idle-unload-ms <ms>] [--min-free-memory-mb <mb>]\n"
         << "                [--model-spec-override <json-or-directory|embedded>] [--voice-dir <directory>]\n"
         << "                [--frontend-listener <name>] [--frontend-option key=value]\n"
@@ -102,7 +102,8 @@ void print_help() {
         << "  --host <ip>                      server bind address; default 127.0.0.1\n"
         << "  --port <port>                    server listening port; default 8080\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal  default cuda (rocm is an alias for hip)\n"
-        << "  --list-devices                   list available backend devices and exit\n"
+        << "  --list-devices                   list available backend devices and exit; add --json\n"
+        << "                                   for PCI ids and free/total memory as JSON\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
         << "                                   busy this long; default 300000, 0 disables\n"
         << "  --max-loaded-models <n>          keep at most n models resident in memory, unloading\n"
@@ -167,7 +168,11 @@ void print_help() {
 int main(int argc, char ** argv) {
     try {
         if (has_arg(argc, argv, "--list-devices")) {
-            engine::core::print_backend_devices(std::cout);
+            if (has_arg(argc, argv, "--json")) {
+                engine::core::print_backend_devices_json(std::cout);
+            } else {
+                engine::core::print_backend_devices(std::cout);
+            }
             return 0;
         }
         if (has_arg(argc, argv, "--version")) {

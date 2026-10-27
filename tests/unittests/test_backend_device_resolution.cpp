@@ -1,11 +1,14 @@
 #include "engine/framework/core/backend.h"
+#include "engine/framework/io/json.h"
 
 #include "test_assert.h"
 
+#include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -195,6 +198,169 @@ void test_unregistered_backends_are_rejected() {
     }
 }
 
+// Parsers depend on the text form of --list-devices, so pin it byte for byte against ggml.
+void test_text_listing_format_is_stable() {
+    ensure_backends_loaded();
+
+    std::string expected;
+    size_t count = 0;
+    for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
+        ggml_backend_reg_t reg = ggml_backend_reg_get(i);
+        for (size_t j = 0; reg != nullptr && j < ggml_backend_reg_dev_count(reg); ++j) {
+            ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, j);
+            const char * description = ggml_backend_dev_description(dev);
+            const std::string name = description != nullptr && description[0] != '\0' ? description : ggml_backend_dev_name(dev);
+            const char * types[] = {"CPU", "GPU", "IGPU", "ACCEL", "META"};
+            expected += std::string(ggml_backend_reg_name(reg)) + ":" + std::to_string(j) +
+                (name.empty() ? "" : " \"" + name + "\"") + " [" + types[ggml_backend_dev_type(dev)] + "]\n";
+            ++count;
+        }
+    }
+    expected = "available_devices=" + std::to_string(count) + "\n" + expected +
+        "select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n";
+
+    std::ostringstream text;
+    engine::core::print_backend_devices(text);
+    require_eq(text.str(), expected, "--list-devices text output");
+}
+
+std::optional<BackendType> backend_type_for_option(const std::string & option) {
+    for (const BackendType type : {BackendType::Cpu, BackendType::Cuda, BackendType::Hip, BackendType::Vulkan, BackendType::Metal}) {
+        if (option == backend_label(type)) {
+            return type;
+        }
+    }
+    return std::nullopt;
+}
+
+// The --backend value for a ggml registry name, spelled out independently of backend.cpp.
+std::string expected_backend_option(const std::string & registry) {
+    if (registry == "CPU") {
+        return "cpu";
+    }
+    if (registry == "CUDA" || registry == "MUSA") {
+        return "cuda";
+    }
+    if (registry == "ROCm") {
+        return "hip";
+    }
+    if (registry == "Vulkan") {
+        return "vulkan";
+    }
+    if (registry == "MTL") {
+        return "metal";
+    }
+    return {};
+}
+
+// --list-devices --json lists the text listing's devices in the same order, and each
+// "backend"/"index" pair, fed to init_backend as --backend/--device are, opens that device.
+void test_json_listing_matches_selection() {
+    namespace json = engine::io::json;
+    std::ostringstream text;
+    engine::core::print_backend_devices_json(text);
+    const json::Value root = json::parse(text.str());
+    require_eq(root.require("schema_version").as_i64(), int64_t{1}, "schema_version");
+
+    const auto listed = engine::core::list_backend_devices();
+    const auto & devices = root.require("devices").as_array();
+    require_eq(devices.size(), listed.size(), "JSON and text list the same number of devices");
+    for (size_t i = 0; i < devices.size(); ++i) {
+        const json::Value & device = devices[i];
+        const std::string label = listed[i].backend + ":" + std::to_string(listed[i].index);
+        require_eq(device.require("registry").as_string(), listed[i].backend, label + " registry");
+        require_eq(device.require("index").as_i64(), int64_t{listed[i].index}, label + " index");
+
+        ggml_backend_reg_t reg = ggml_backend_reg_by_name(listed[i].backend.c_str());
+        require(reg != nullptr, label + " registry not found");
+        ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, static_cast<size_t>(listed[i].index));
+        require_eq(device.require("name").as_string(), std::string(ggml_backend_dev_name(dev)), label + " name");
+
+        ggml_backend_dev_props props{};
+        ggml_backend_dev_get_props(dev, &props);
+        const json::Value & pci_bus_id = device.require("pci_bus_id");
+        if (props.device_id == nullptr || props.device_id[0] == '\0') {
+            require(pci_bus_id.is_null(), label + " pci_bus_id must be null when ggml has none");
+        } else {
+            require_eq(pci_bus_id.as_string(), std::string(props.device_id), label + " pci_bus_id");
+        }
+
+        const json::Value & memory = device.require("memory");
+        if (!memory.is_null()) {
+            size_t free_bytes = 0;
+            size_t total_bytes = 0;
+            ggml_backend_dev_memory(dev, &free_bytes, &total_bytes);
+            require_eq(memory.require("total_bytes").as_i64(), static_cast<int64_t>(total_bytes), label + " total_bytes");
+            const int64_t free = memory.require("free_bytes").as_i64();
+            require(free >= 0 && free <= static_cast<int64_t>(total_bytes), label + " free_bytes out of range");
+        }
+
+        // Every registry --backend can select must name its option; the rest (BLAS, RPC) must be null.
+        const std::string expected_backend = expected_backend_option(listed[i].backend);
+        const json::Value & backend = device.require("backend");
+        if (expected_backend.empty()) {
+            require(backend.is_null(), label + " backend must be null for a registry --backend cannot select");
+            continue;
+        }
+        require(!backend.is_null(), label + " backend must not be null");
+        require_eq(backend.as_string(), expected_backend, label + " backend");
+        if (listed[i].backend == "CPU") {
+            require(!memory.is_null(), label + " memory must not be null for the CPU");
+        }
+        const auto type = backend_type_for_option(backend.as_string());
+        require(type.has_value(), label + " unknown backend " + backend.as_string());
+        BackendConfig config;
+        config.type = *type;
+        config.device = listed[i].index;
+        BackendHandle handle(engine::core::init_backend(config));
+        require(
+            ggml_backend_get_device(handle.handle) == dev,
+            label + " --backend " + backend.as_string() + " --device " + std::to_string(config.device) +
+                " opened a different device");
+    }
+}
+
+// Byte counts must print as exact integers, and unknown values as null.
+void test_json_writer_exact_integers_and_nulls() {
+    namespace json = engine::io::json;
+    engine::core::BackendDeviceInfo gpu;
+    gpu.backend = "CUDA";
+    gpu.index = 1;
+    gpu.type = "GPU";
+    gpu.backend_option = "cuda";
+    gpu.device_name = "CUDA1";
+    gpu.description = "Card \"A\" \\ B";
+    gpu.pci_bus_id = "0000:01:00.0";
+    gpu.memory.available = true;
+    gpu.memory.free_bytes = 9007199254740993;  // 2^53 + 1: not representable as a double
+    gpu.memory.total_bytes = 9223372036854775807;
+    gpu.caps.async = true;
+
+    engine::core::BackendDeviceInfo blas;
+    blas.backend = "BLAS";
+    blas.type = "ACCEL";
+    blas.device_name = "BLAS";
+
+    std::ostringstream text;
+    engine::core::print_backend_devices_json(text, {gpu, blas});
+    const std::string out = text.str();
+    require(
+        out.find("\"memory\":{\"free_bytes\":9007199254740993,\"total_bytes\":9223372036854775807}") != std::string::npos,
+        "byte counts must be exact integers, got: " + out);
+
+    const json::Value root = json::parse(out);
+    const auto & devices = root.require("devices").as_array();
+    require_eq(devices.size(), size_t{2}, "device count");
+    require_eq(devices[0].require("backend").as_string(), std::string("cuda"), "backend");
+    require_eq(devices[0].require("description").as_string(), gpu.description, "escaped description");
+    require_eq(devices[0].require("type").as_string(), std::string("gpu"), "type");
+    require(devices[0].require("caps").require("async").as_bool(), "caps.async");
+    require(!devices[0].require("caps").require("events").as_bool(), "caps.events");
+    for (const char * key : {"backend", "description", "pci_bus_id", "memory"}) {
+        require(devices[1].require(key).is_null(), std::string("unknown ") + key + " must be null");
+    }
+}
+
 void test_host_and_best_backends_still_resolve() {
     BackendConfig cpu;
     cpu.type = BackendType::Cpu;
@@ -222,6 +388,9 @@ int main() {
         test_every_enumerated_device_resolves();
         test_unregistered_backends_are_rejected();
         test_host_and_best_backends_still_resolve();
+        test_text_listing_format_is_stable();
+        test_json_listing_matches_selection();
+        test_json_writer_exact_integers_and_nulls();
     } catch (const std::exception & error) {
         std::cerr << "backend_device_resolution_test failed: " << error.what() << '\n';
         return 1;

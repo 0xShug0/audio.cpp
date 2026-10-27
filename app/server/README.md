@@ -284,7 +284,8 @@ individual model entries:
 ```
 
 The indices use audio.cpp's backend device order; run the server with
-`--list-devices` to inspect it. Each model remains wholly on one device: this
+`--list-devices` to inspect it, or `--list-devices --json` for PCI ids and
+free/total memory in [JSON](../../docs/usage.md#listing-devices). Each model remains wholly on one device: this
 setting assigns models independently and does not split one model across GPUs.
 `GET /v1/models` reports the effective `device` for every entry. Dynamic loads
 may also send `device`; when a registered model is reloaded and the field is
