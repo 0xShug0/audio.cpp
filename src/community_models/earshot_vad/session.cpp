@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace engine::community_models::earshot_vad {
@@ -59,8 +60,9 @@ public:
           threads_(std::max(1, options.backend.threads)),
           default_config_(earshot_config_from_options(options.options)),
           stream_config_(default_config_),
+          isa_(earshot_isa_from_options(options.options)),
           weights_(std::move(weights)),
-          detector_(weights_),
+          detector_(weights_, isa_),
           segmenter_(default_config_) {
         if (task_.task != runtime::VoiceTaskKind::Vad) {
             throw std::runtime_error("Earshot VAD only supports VoiceTaskKind::Vad");
@@ -104,7 +106,7 @@ public:
         const int64_t input_frames = static_cast<int64_t>(audio.samples.size()) / audio.channels;
         const int64_t length = static_cast<int64_t>(mono->size());
 
-        const auto scores = score_earshot_frames(weights_, mono->data(), length, threads_);
+        const auto scores = score_earshot_frames(weights_, mono->data(), length, threads_, isa_);
         debug::timing_log_scalar("earshot_vad.offline.score_ms", debug::elapsed_ms(started));
         const auto segments = segment_earshot_scores(scores, config);
 
@@ -136,6 +138,7 @@ public:
         require_prepared("start_stream()");
         stream_config_ = earshot_config_from_options(request.options, &default_config_);
         reset_stream();
+        debug::timing_log_scalar("earshot_vad.kernel", std::string_view(detector_.kernel_name()));
     }
 
     void reset() override {
@@ -247,6 +250,7 @@ private:
     int threads_ = 1;
     EarshotSegmenterConfig default_config_;
     EarshotSegmenterConfig stream_config_;
+    EarshotIsa isa_;  // resolved per session from earshot_vad.exec_plan
     std::shared_ptr<const EarshotWeights> weights_;
     EarshotDetector detector_;
     EarshotSegmenter segmenter_;

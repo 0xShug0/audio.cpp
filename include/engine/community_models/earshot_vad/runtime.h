@@ -79,10 +79,32 @@ EarshotSegmenterConfig earshot_config_from_options(
     const std::unordered_map<std::string, std::string> & options,
     const EarshotSegmenterConfig * fallback = nullptr);
 
+/** Kernel set for the detector. Auto picks the widest one this build and CPU support. */
+enum class EarshotIsa { Auto, Baseline, Avx2, Avx512 };
+
+/**
+ * Resolve Auto to the widest supported kernel set. An explicit set this build
+ * or CPU cannot run throws.
+ */
+EarshotIsa resolve_earshot_isa(EarshotIsa requested);
+
+/** "auto", "baseline", "avx2" or "avx512". */
+const char * earshot_isa_name(EarshotIsa isa);
+
+/** Name of the kernel table that runs for `isa`: "baseline", "avx2" or "avx512". */
+const char * earshot_kernel_name(EarshotIsa isa);
+
+/**
+ * Parse earshot_vad.exec_plan, e.g.
+ * {"detector": {"impl": "native", "backend": "cpu", "params": {"isa": "avx2"}}},
+ * and return the resolved kernel set.
+ */
+EarshotIsa earshot_isa_from_options(const std::unordered_map<std::string, std::string> & options);
+
 /** Streaming per-frame detector; mirrors upstream earshot::Detector. */
 class EarshotDetector {
 public:
-    explicit EarshotDetector(std::shared_ptr<const EarshotWeights> weights);
+    explicit EarshotDetector(std::shared_ptr<const EarshotWeights> weights, EarshotIsa isa = EarshotIsa::Auto);
     ~EarshotDetector();
     EarshotDetector(EarshotDetector &&) noexcept;
     EarshotDetector & operator=(EarshotDetector &&) noexcept;
@@ -90,10 +112,13 @@ public:
     void reset();
     /** Score one frame of kFrameSize samples in [-1, 1]. */
     float predict(const float * frame);
+    /** Name of the kernel table this detector runs. */
+    const char * kernel_name() const;
 
 private:
     struct State;
     std::shared_ptr<const EarshotWeights> weights_;
+    EarshotIsa isa_;
     std::unique_ptr<State> state_;
 };
 
@@ -106,10 +131,8 @@ std::vector<float> score_earshot_frames(
     const std::shared_ptr<const EarshotWeights> & weights,
     const float * samples,
     int64_t sample_count,
-    int threads);
-
-/** Kernel set picked for this CPU: "baseline", "avx2" or "avx512". */
-const char * earshot_kernel_name();
+    int threads,
+    EarshotIsa isa = EarshotIsa::Auto);
 
 struct EarshotFrameSegment {
     int64_t start_frame = 0;

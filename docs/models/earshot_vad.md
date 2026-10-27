@@ -58,6 +58,21 @@ defaults reproduce upstream `SegmenterOptions::default()`.
 
 Other Silero option names, such as `max_speech_duration_s`, are accepted and ignored.
 
+### Kernel set
+
+The detector has CPU kernels for SSE2 or NEON (`baseline`), AVX2 and
+AVX-512 (F, BW and VNNI). Each session picks one through
+`earshot_vad.exec_plan`; the default, `auto`, uses the widest one the build
+and CPU support. All kernel sets give the same scores, bit for bit.
+
+```bash
+--session-option 'earshot_vad.exec_plan={"detector":{"impl":"native","backend":"cpu","params":{"isa":"avx2"}}}'
+```
+
+`isa` takes `auto`, `baseline`, `avx2` or `avx512`. Asking for a kernel set the
+build or CPU cannot run is an error. With `--log-file`, each run logs the kernel
+set it used as `earshot_vad.kernel <name>`.
+
 ## VAD chunking for ASR
 
 `gigaam_asr` loads its chunking VAD through the model registry, so it can use
@@ -110,17 +125,16 @@ python tests/earshot_vad/check_parity.py \
 `earshot_vad_test` (ctest) checks the committed upstream golden scores. It also
 checks:
 - the frame-by-frame detector and 4-thread scoring equal 1-thread scoring bit for bit;
-- inputs longer than one 4096-frame block, scored with 1, 3, 4 and 8 threads, equal the detector bit for bit;
-- the scores of one clip hash to the same committed value on every kernel set and platform;
+- inputs longer than one 4096-frame block, scored with 1, 3, 4 and 8 threads, equal the detector bit for bit, on every kernel set the CPU supports;
+- every supported kernel set reproduces the golden scores, and the scores of one clip hash to the same committed value on every kernel set and platform;
+- `earshot_vad.exec_plan` parsing, errors for unsupported kernel sets, and that offline and streaming sessions run the kernel set they asked for;
 - streaming equals offline for any chunk size;
 - silence and noise produce no segments;
 - 48 kHz stereo input maps back to input samples;
 - every streamed segment is announced by a SpeechStart event;
 - the options, loader detection, and VAD chunk planning through the registry.
 
-`earshot_vad_baseline_test` and `earshot_vad_avx2_test` repeat it with the kernel
-set capped by `AUDIOCPP_EARSHOT_ISA=baseline` or `avx2` (any other value means
-no cap; `AUDIOCPP_EARSHOT_BASELINE=1` still means baseline).
+`earshot_vad_probe --isa auto|baseline|avx2|avx512` benchmarks one kernel set.
 
 ### Speed
 

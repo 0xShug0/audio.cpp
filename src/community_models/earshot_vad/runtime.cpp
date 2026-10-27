@@ -21,7 +21,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
-#include <cctype>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -898,36 +897,28 @@ CpuFeatures detect_cpu() {
 #endif
     return cpu;
 }
+
+// CPU support is fixed for the process; which set a session uses is not.
+const CpuFeatures & cpu_features() {
+    static const CpuFeatures cpu = detect_cpu();
+    return cpu;
+}
 #endif  // EARSHOT_X86_DISPATCH
 
-// The widest supported kernel set. AUDIOCPP_EARSHOT_ISA=baseline|avx2 caps it
-// (tests use this; case-insensitive, any other value means no cap);
-// AUDIOCPP_EARSHOT_BASELINE=1 is the same as baseline.
-const Kernels & kernels() {
-    static const Kernels * selected = [] {
+// Takes a resolved set; resolve_earshot_isa() has checked CPU support.
+const Kernels & kernels_for(EarshotIsa isa) {
+    switch (isa) {
 #if defined(EARSHOT_X86_DISPATCH)
-        const CpuFeatures cpu = detect_cpu();
-        int cap = 2;  // 0 baseline, 1 avx2, 2 avx512
-        if (const char * value = std::getenv("AUDIOCPP_EARSHOT_ISA")) {
-            std::string name(value);
-            for (char & c : name) {
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            }
-            cap = name == "baseline" ? 0 : name == "avx2" ? 1 : 2;
-        }
-        if (std::getenv("AUDIOCPP_EARSHOT_BASELINE") != nullptr) {
-            cap = 0;
-        }
-        if (cpu.avx512 && cap >= 2) {
-            return &kAvx512Kernels;
-        }
-        if (cpu.avx2 && cap >= 1) {
-            return &kAvx2Kernels;
-        }
+    case EarshotIsa::Avx512:
+        return kAvx512Kernels;
+    case EarshotIsa::Avx2:
+        return kAvx2Kernels;
 #endif
-        return &kBaselineKernels;
-    }();
-    return *selected;
+    case EarshotIsa::Baseline:
+        return kBaselineKernels;
+    default:
+        throw std::logic_error("Earshot VAD kernel set not resolved");
+    }
 }
 
 }  // namespace
@@ -1020,6 +1011,69 @@ EarshotSegmenterConfig earshot_config_from_options(
     return config;
 }
 
+// ---------------------------------------------------------------- kernel set
+
+EarshotIsa resolve_earshot_isa(EarshotIsa requested) {
+    bool avx2 = false;
+    bool avx512 = false;
+#if defined(EARSHOT_X86_DISPATCH)
+    avx2 = cpu_features().avx2;
+    avx512 = cpu_features().avx512;
+#endif
+    switch (requested) {
+    case EarshotIsa::Auto:
+        return avx512 ? EarshotIsa::Avx512 : avx2 ? EarshotIsa::Avx2 : EarshotIsa::Baseline;
+    case EarshotIsa::Baseline:
+        return requested;
+    case EarshotIsa::Avx2:
+    case EarshotIsa::Avx512:
+        if (requested == EarshotIsa::Avx2 ? avx2 : avx512) {
+            return requested;
+        }
+        throw std::runtime_error(std::string("Earshot VAD: isa '") + earshot_isa_name(requested) +
+                                 "' is not supported by this build or CPU");
+    }
+    throw std::runtime_error("Earshot VAD: unknown isa");
+}
+
+const char * earshot_isa_name(EarshotIsa isa) {
+    switch (isa) {
+    case EarshotIsa::Auto:
+        return "auto";
+    case EarshotIsa::Baseline:
+        return "baseline";
+    case EarshotIsa::Avx2:
+        return "avx2";
+    case EarshotIsa::Avx512:
+        return "avx512";
+    }
+    return "unknown";
+}
+
+const char * earshot_kernel_name(EarshotIsa isa) {
+    return kernels_for(resolve_earshot_isa(isa)).name;
+}
+
+EarshotIsa earshot_isa_from_options(const std::unordered_map<std::string, std::string> & options) {
+    const auto plan = runtime::parse_exec_plan(options, "earshot_vad.exec_plan",
+                                               {{"detector", "native", {{"native", {core::BackendType::Cpu}, {}, {}, {"isa"}}}}});
+    const auto & params = plan.at("detector").params;
+    const auto isa = params.find("isa");
+    if (isa == params.end()) {
+        return resolve_earshot_isa(EarshotIsa::Auto);
+    }
+    constexpr const char * kIsaError = "earshot_vad.exec_plan.detector.params.isa must be auto, baseline, avx2 or avx512";
+    if (!isa->second.is_string()) {
+        throw std::runtime_error(kIsaError);
+    }
+    for (const auto requested : {EarshotIsa::Auto, EarshotIsa::Baseline, EarshotIsa::Avx2, EarshotIsa::Avx512}) {
+        if (isa->second.as_string() == earshot_isa_name(requested)) {
+            return resolve_earshot_isa(requested);
+        }
+    }
+    throw std::runtime_error(kIsaError);
+}
+
 // ---------------------------------------------------------------- detector
 
 struct EarshotDetector::State {
@@ -1031,8 +1085,9 @@ struct EarshotDetector::State {
     std::array<float, kWindowSize> windowed{};
 };
 
-EarshotDetector::EarshotDetector(std::shared_ptr<const EarshotWeights> weights)
+EarshotDetector::EarshotDetector(std::shared_ptr<const EarshotWeights> weights, EarshotIsa isa)
     : weights_(std::move(weights)),
+      isa_(resolve_earshot_isa(isa)),
       state_(std::make_unique<State>()) {
     if (!weights_) {
         throw std::runtime_error("Earshot VAD detector requires weights");
@@ -1043,13 +1098,17 @@ EarshotDetector::~EarshotDetector() = default;
 EarshotDetector::EarshotDetector(EarshotDetector &&) noexcept = default;
 EarshotDetector & EarshotDetector::operator=(EarshotDetector &&) noexcept = default;
 
+const char * EarshotDetector::kernel_name() const {
+    return kernels_for(isa_).name;
+}
+
 void EarshotDetector::reset() {
     *state_ = State{};
 }
 
 float EarshotDetector::predict(const float * frame) {
     const auto & w = *weights_;
-    const Kernels & k = kernels();
+    const Kernels & k = kernels_for(isa_);
     auto & s = *state_;
     std::memmove(s.history.data(), s.history.data() + kFrameSize, (kWindowSize + 1 - kFrameSize) * sizeof(float));
     std::memcpy(s.history.data() + (kWindowSize + 1 - kFrameSize), frame, kFrameSize * sizeof(float));
@@ -1068,20 +1127,18 @@ float EarshotDetector::predict(const float * frame) {
     return output_score(w, h1, h2);
 }
 
-const char * earshot_kernel_name() {
-    return kernels().name;
-}
-
 std::vector<float> score_earshot_frames(
     const std::shared_ptr<const EarshotWeights> & weights,
     const float * samples,
     int64_t sample_count,
-    int threads) {
+    int threads,
+    EarshotIsa isa) {
     if (!weights) {
         throw std::runtime_error("Earshot VAD scoring requires weights");
     }
     const auto & w = *weights;
-    const Kernels & k = kernels();
+    const Kernels & k = kernels_for(resolve_earshot_isa(isa));
+    debug::timing_log_scalar("earshot_vad.kernel", std::string_view(k.name));
     const int64_t frame_count = sample_count / kFrameSize;
     std::vector<float> scores(static_cast<size_t>(frame_count), 0.0f);
     if (frame_count == 0) {

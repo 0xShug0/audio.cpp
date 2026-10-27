@@ -1,5 +1,6 @@
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/conversion.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/registry.h"
 #include "engine/community_models/earshot_vad/runtime.h"
@@ -8,9 +9,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <random>
 #include <stdexcept>
@@ -46,6 +47,17 @@ void require(bool condition, const std::string & message) {
 
 std::shared_ptr<const ev::EarshotWeights> weights() {
     return ev::load_earshot_weights_cached(ev::resolve_earshot_assets(model_dir()).checkpoint_path);
+}
+
+std::vector<ev::EarshotIsa> supported_isas() {
+    std::vector<ev::EarshotIsa> out;
+    for (const auto isa : {ev::EarshotIsa::Baseline, ev::EarshotIsa::Avx2, ev::EarshotIsa::Avx512}) {
+        try {
+            out.push_back(ev::resolve_earshot_isa(isa));
+        } catch (const std::runtime_error &) {
+        }
+    }
+    return out;
 }
 
 std::vector<float> load_wav(const std::string & relative) {
@@ -132,6 +144,10 @@ void test_upstream_parity() {
         for (size_t f = 0; f < scores.size(); ++f) {
             const float s = detector.predict(audio.data() + static_cast<int64_t>(f) * ev::kFrameSize);
             require(s == scores[f], wav + ": detector differs from batched scoring");
+        }
+        for (const auto isa : supported_isas()) {
+            const auto other = ev::score_earshot_frames(w, audio.data(), static_cast<int64_t>(audio.size()), 1, isa);
+            require(other == scores, wav + ": " + ev::earshot_kernel_name(isa) + " scores differ");
         }
 
         ev::EarshotSegmenterConfig upstream;
@@ -284,39 +300,145 @@ void test_long_input_blocks() {
         audio[i] = speech[i % speech.size()] + noise(rng);
     }
     const auto w = weights();
-    ev::EarshotDetector detector(w);
-    std::vector<float> expected(static_cast<size_t>(frames));
-    for (int64_t f = 0; f < frames; ++f) {
-        expected[static_cast<size_t>(f)] = detector.predict(audio.data() + f * ev::kFrameSize);
-    }
-    for (const int threads : {1, 3, 4, 8}) {
-        const auto scores = ev::score_earshot_frames(w, audio.data(), static_cast<int64_t>(audio.size()), threads);
-        require(scores == expected, "long input differs from the detector, threads " + std::to_string(threads));
+    for (const auto isa : supported_isas()) {
+        const std::string name = ev::earshot_kernel_name(isa);
+        ev::EarshotDetector detector(w, isa);
+        std::vector<float> expected(static_cast<size_t>(frames));
+        for (int64_t f = 0; f < frames; ++f) {
+            expected[static_cast<size_t>(f)] = detector.predict(audio.data() + f * ev::kFrameSize);
+        }
+        for (const int threads : {1, 3, 4, 8}) {
+            const auto scores =
+                ev::score_earshot_frames(w, audio.data(), static_cast<int64_t>(audio.size()), threads, isa);
+            require(scores == expected,
+                    name + ": long input differs from the detector, threads " + std::to_string(threads));
+        }
     }
 }
 
 void test_kernel_identity() {
-    // Every kernel set, compiler and platform must give these exact bits. The
-    // ctest variants run this with the kernel set capped to baseline and avx2.
-    const std::string name = ev::earshot_kernel_name();
-    require(name == "baseline" || name == "avx2" || name == "avx512", "unknown kernel set " + name);
-    if (const char * cap = std::getenv("AUDIOCPP_EARSHOT_ISA"); cap != nullptr && std::string(cap) == "baseline") {
-        require(name == "baseline", "AUDIOCPP_EARSHOT_ISA=baseline picked " + name);
-    }
+    // Every kernel set, compiler and platform must give these exact bits.
     const auto audio = load_wav("assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav");
-    const auto scores = ev::score_earshot_frames(weights(), audio.data(), static_cast<int64_t>(audio.size()), 4);
-    uint64_t hash = 1469598103934665603ull;  // FNV-1a over the score bits
-    for (const float score : scores) {
-        uint32_t bits;
-        std::memcpy(&bits, &score, sizeof(bits));
-        for (int b = 0; b < 4; ++b) {
-            hash = (hash ^ ((bits >> (8 * b)) & 0xff)) * 1099511628211ull;
+    const auto w = weights();
+    for (const auto isa : supported_isas()) {
+        // Scores are identical by design, so check the table name to see which kernels ran.
+        const std::string name = ev::earshot_isa_name(isa);
+        require(ev::earshot_kernel_name(isa) == name, name + " runs the " + ev::earshot_kernel_name(isa) + " kernels");
+        const auto scores = ev::score_earshot_frames(w, audio.data(), static_cast<int64_t>(audio.size()), 4, isa);
+        uint64_t hash = 1469598103934665603ull;  // FNV-1a over the score bits
+        for (const float score : scores) {
+            uint32_t bits;
+            std::memcpy(&bits, &score, sizeof(bits));
+            for (int b = 0; b < 4; ++b) {
+                hash = (hash ^ ((bits >> (8 * b)) & 0xff)) * 1099511628211ull;
+            }
+        }
+        char hex[17];
+        std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(hash));
+        require(scores.size() == 889 && std::string(hex) == "9f3e04a6ceab8012",
+                name + " scores hash " + hex + " over " + std::to_string(scores.size()) + " frames");
+        ev::EarshotDetector detector(w, isa);
+        require(detector.kernel_name() == name, name + " detector runs " + detector.kernel_name());
+        for (size_t f = 0; f < scores.size(); ++f) {
+            require(detector.predict(audio.data() + static_cast<int64_t>(f) * ev::kFrameSize) == scores[f],
+                    name + ": detector differs from batched scoring");
         }
     }
-    char hex[17];
-    std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(hash));
-    require(scores.size() == 889 && std::string(hex) == "9f3e04a6ceab8012",
-            name + " scores hash " + hex + " over " + std::to_string(scores.size()) + " frames");
+}
+
+void test_exec_plan_isa() {
+    const auto plan = [](const std::string & json) {
+        return ev::earshot_isa_from_options({{"earshot_vad.exec_plan", json}});
+    };
+    const auto throws = [&](const std::string & json) {
+        try {
+            (void)plan(json);
+        } catch (const std::runtime_error &) {
+            return true;
+        }
+        return false;
+    };
+    const auto best = ev::resolve_earshot_isa(ev::EarshotIsa::Auto);
+    require(best != ev::EarshotIsa::Auto, "auto must resolve to a kernel set");
+    require(ev::earshot_isa_from_options({}) == best, "default isa must be auto");
+    require(plan(R"({"detector":{"impl":"native","backend":"cpu","params":{"isa":"auto"}}})") == best, "isa auto");
+    require(plan(R"({"detector":{"params":{"isa":"baseline"}}})") == ev::EarshotIsa::Baseline, "isa baseline");
+    for (const auto isa : {ev::EarshotIsa::Avx2, ev::EarshotIsa::Avx512}) {
+        const std::string json = std::string(R"({"detector":{"params":{"isa":")") + ev::earshot_isa_name(isa) + "\"}}}";
+        const auto supported = supported_isas();
+        if (std::find(supported.begin(), supported.end(), isa) != supported.end()) {
+            require(plan(json) == isa, std::string("isa ") + ev::earshot_isa_name(isa));
+        } else {
+            require(throws(json), std::string("unsupported isa accepted: ") + ev::earshot_isa_name(isa));
+        }
+    }
+    require(throws(R"({"detector":{"params":{"isa":"sse4"}}})"), "unknown isa accepted");
+    require(throws(R"({"detector":{"params":{"isa":2}}})"), "non-string isa accepted");
+    require(throws(R"({"detector":{"params":{"threads":2}}})"), "unknown param accepted");
+    require(throws(R"({"detector":{"impl":"neon"}})"), "unknown impl accepted");
+    require(throws(R"({"detector":{"backend":"cuda"}})"), "non-cpu backend accepted");
+    require(throws(R"({"vocoder":{}})"), "unknown component accepted");
+
+    // Each session runs the kernel set it asked for. Scores are the same for every
+    // set, so check the kernel name the session logs ("earshot_vad.kernel <name>").
+    const auto model = rt::make_default_registry().load(model_dir());
+    const auto log_path = std::filesystem::temp_directory_path() / "earshot_vad_test_kernel.log";
+    const auto speech = load_wav("tests/parakeet_tdt/assets/2086-149220-0033.wav");
+    std::vector<rt::SpeechSegment> reference;
+    for (const auto isa : supported_isas()) {
+        const std::string name = ev::earshot_isa_name(isa);
+        rt::SessionOptions options;
+        options.options["earshot_vad.exec_plan"] = "{\"detector\":{\"params\":{\"isa\":\"" + name + "\"}}}";
+        std::filesystem::remove(log_path);
+        engine::debug::configure_logging({true, log_path.string()});
+        auto offline = model->create_task_session({rt::VoiceTaskKind::Vad, rt::RunMode::Offline}, options);
+        offline->prepare({});
+        rt::TaskRequest request;
+        request.audio_input = rt::AudioBuffer{ev::kSampleRate, 1, speech};
+        const auto segments = dynamic_cast<rt::IOfflineVoiceTaskSession &>(*offline).run(request).speech_segments;
+        auto streaming = model->create_task_session({rt::VoiceTaskKind::Vad, rt::RunMode::Streaming}, options);
+        streaming->prepare({});
+        dynamic_cast<rt::IStreamingVoiceTaskSession &>(*streaming).start_stream({});
+        engine::debug::reset_logging();
+        std::vector<std::string> logged;
+        std::ifstream log(log_path);
+        for (std::string line; std::getline(log, line);) {
+            const auto at = line.find("earshot_vad.kernel ");
+            if (at != std::string::npos) {
+                std::string value = line.substr(at + 19);
+                while (!value.empty() && (value.back() == '\r' || value.back() == ' ')) {
+                    value.pop_back();
+                }
+                logged.push_back(value);
+            }
+        }
+        log.close();
+        std::filesystem::remove(log_path);
+        // One line from offline scoring, one from start_stream.
+        require(logged.size() == 2 && logged[0] == name && logged[1] == name,
+                name + " session did not run the " + name + " kernels");
+        require(!segments.empty(), name + " session found no speech");
+        if (reference.empty()) {
+            reference = segments;
+            continue;
+        }
+        require(segments.size() == reference.size(), name + " session segment count differs");
+        for (size_t i = 0; i < segments.size(); ++i) {
+            require(segments[i].span.start_sample == reference[i].span.start_sample &&
+                        segments[i].span.end_sample == reference[i].span.end_sample &&
+                        segments[i].confidence == reference[i].confidence,
+                    name + " session segments differ");
+        }
+    }
+    rt::SessionOptions bad;
+    bad.options["earshot_vad.exec_plan"] = R"({"detector":{"params":{"isa":"sse4"}}})";
+    bool threw = false;
+    try {
+        (void)model->create_task_session({rt::VoiceTaskKind::Vad, rt::RunMode::Offline}, bad);
+    } catch (const std::runtime_error &) {
+        threw = true;
+    }
+    require(threw, "session accepted an invalid isa");
 }
 
 void test_loader_detection() {
@@ -345,7 +467,8 @@ void test_vad_chunk_planner() {
 }  // namespace
 
 int main() {
-    std::cout << "earshot_vad kernels: " << ev::earshot_kernel_name() << "\n";
+    std::cout << "earshot_vad kernels (auto): " << ev::earshot_isa_name(ev::resolve_earshot_isa(ev::EarshotIsa::Auto))
+              << "\n";
     const std::vector<std::pair<const char *, void (*)()>> tests = {
         {"upstream_parity", test_upstream_parity},
         {"trailing_segment_kept", test_trailing_segment_kept},
@@ -355,6 +478,7 @@ int main() {
         {"options", test_options},
         {"long_input_blocks", test_long_input_blocks},
         {"kernel_identity", test_kernel_identity},
+        {"exec_plan_isa", test_exec_plan_isa},
         {"loader_detection", test_loader_detection},
         {"vad_chunk_planner", test_vad_chunk_planner},
     };
