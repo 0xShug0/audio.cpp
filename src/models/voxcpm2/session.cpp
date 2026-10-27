@@ -457,8 +457,9 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
     reference_audio = *request.voice->speaker->audio;
   }
   const VoxCPM2EncodedPrompt *prompt =
-      encoded_prompt_for_request(request.audio_input, prompt_text,
-                                 reference_audio);
+      encoded_prompt_for_request(
+          prompt_audio_for_request(request, reference_audio, prompt_text),
+          prompt_text, reference_audio);
 
   runtime::TaskResult result;
   double generator_ms = 0.0;
@@ -552,8 +553,9 @@ VoxCPM2SessionBase::run_streaming_request(
     reference_audio = *request.voice->speaker->audio;
   }
   const VoxCPM2EncodedPrompt *prompt =
-      encoded_prompt_for_request(request.audio_input, prompt_text,
-                                 reference_audio);
+      encoded_prompt_for_request(
+          prompt_audio_for_request(request, reference_audio, prompt_text),
+          prompt_text, reference_audio);
 
   runtime::TaskResult result;
   runtime::StreamingAudioConfig stream_config;
@@ -741,6 +743,29 @@ void VoxCPM2SessionBase::release_request_runtime_memory() {
   }
   generator_->release_runtime_memory();
   decoder_->release_runtime_memory();
+}
+
+const std::optional<runtime::AudioBuffer> &
+VoxCPM2SessionBase::prompt_audio_for_request(
+    const runtime::TaskRequest &request,
+    const std::optional<runtime::AudioBuffer> &reference_audio,
+    const std::string &prompt_text) const {
+  const auto ultimate = runtime::find_option(
+      request.options, {"voxcpm2.ultimate_clone", "ultimate_clone"});
+  if (!ultimate.has_value() ||
+      !runtime::parse_bool_option(*ultimate, "ultimate_clone")) {
+    return request.audio_input;
+  }
+  if (request.audio_input.has_value()) {
+    throw runtime::InvalidRequestError(
+        "VoxCPM2 ultimate_clone cannot be combined with explicit prompt audio");
+  }
+  if (!reference_audio.has_value() || prompt_text.empty()) {
+    throw runtime::InvalidRequestError(
+        "VoxCPM2 ultimate_clone requires a voice reference and its transcript "
+        "(reference_text or prompt_text)");
+  }
+  return reference_audio;
 }
 
 const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(

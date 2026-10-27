@@ -50,6 +50,11 @@ protected:
       const std::optional<runtime::AudioBuffer> &prompt_audio,
       const std::string &prompt_text,
       const std::optional<runtime::AudioBuffer> &reference_audio);
+  /** request.audio_input, or with `ultimate_clone` the voice reference itself (with its transcript as prompt_text). */
+  const std::optional<runtime::AudioBuffer> &prompt_audio_for_request(
+      const runtime::TaskRequest &request,
+      const std::optional<runtime::AudioBuffer> &reference_audio,
+      const std::string &prompt_text) const;
 
   runtime::TaskResult run_offline_request(const runtime::TaskRequest &request);
   runtime::TaskResult run_streaming_request(
