@@ -7,12 +7,14 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <condition_variable>
 #include <cctype>
 #include <ctime>
 #include <cstdlib>
 #include <fstream>
 #include <future>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -626,6 +628,25 @@ struct PackageManager::Impl {
     std::filesystem::path repository_root;
     std::filesystem::path models_root;
     std::vector<Package> packages;
+    std::mutex install_locks_mutex;
+    struct InstallLock {
+        std::mutex mutex;
+        std::condition_variable available;
+        bool held = false;
+    };
+    std::map<std::string, std::weak_ptr<InstallLock>> install_locks;
+
+    std::shared_ptr<InstallLock> install_lock_for(const Package & package) {
+        std::lock_guard<std::mutex> lock(install_locks_mutex);
+        const auto key = package.target_directory.generic_string();
+        auto & weak_lock = install_locks[key];
+        auto install_lock = weak_lock.lock();
+        if (!install_lock) {
+            install_lock = std::make_shared<InstallLock>();
+            weak_lock = install_lock;
+        }
+        return install_lock;
+    }
 
     const Package & require_package(const std::string & id) const {
         const auto found = std::find_if(packages.begin(), packages.end(), [&](const Package & item) {
@@ -673,6 +694,26 @@ std::string PackageManager::install(
     const std::shared_ptr<std::atomic_bool> & cancelled,
     const std::function<void(const PackageProgress &)> & progress) {
     const auto & package = impl_->require_package(package_id);
+    // Packages that share a target directory can also share sidecar files.
+    // Serialize their full install transactions so simultaneous library
+    // downloads cannot race while publishing those files.
+    const auto install_lock = impl_->install_lock_for(package);
+    {
+        std::unique_lock<std::mutex> lock(install_lock->mutex);
+        while (install_lock->held) {
+            if (cancelled && cancelled->load()) throw Cancelled();
+            install_lock->available.wait_for(lock, std::chrono::milliseconds(50));
+        }
+        if (cancelled && cancelled->load()) throw Cancelled();
+        install_lock->held = true;
+    }
+    const auto release_install_lock = std::shared_ptr<void>(nullptr, [install_lock](void *) {
+        {
+            std::lock_guard<std::mutex> lock(install_lock->mutex);
+            install_lock->held = false;
+        }
+        install_lock->available.notify_one();
+    });
     const auto final_root = impl_->models_root / package.target_directory;
     std::vector<std::pair<std::string, std::filesystem::path>> plan;
     for (const auto & remote : package.files) plan.emplace_back(remote, final_root / stripped_path(package, remote));
