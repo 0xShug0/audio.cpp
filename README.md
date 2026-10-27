@@ -736,6 +736,7 @@ Useful CLI features:
 - `--help` with `--model <path>` and `--family <family>` shows model-owned request, session, and load options
 - `--inspect` prints discovered configs, weights, and capabilities
 - `--list-loaders` prints registered model families (`--json` for the machine-readable contract)
+- `--list-devices` prints backend devices and the `--backend`/`--device` values that select them (`--json` adds [PCI ids and free/total memory](docs/usage.md#listing-devices))
 - `python tools/model_manager_v2.py list --json` prints installable packages from `model_specs/*.json`
 - `--batch-text-file <txt>` runs one offline request per non-empty line
 - `--batch-text-dir <dir>` runs one offline request per `.txt`, `.md`, or `.json` file, normalizing each file as one paragraph

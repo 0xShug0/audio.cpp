@@ -18,7 +18,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Inference backend. |
 | `--mode` | `offline`, `streaming` | `offline` | Run mode. Most models are offline. |
 | `--device` | integer | `0` | Backend device index. |
-| `--list-devices` | flag | off | List available backend devices and exit; combine with `--backend`/`--device` to select one. |
+| `--list-devices` | flag | off | List available backend devices and exit; combine with `--backend`/`--device` to select one. Add `--json` for [machine-readable output](#listing-devices) with PCI ids and memory. |
 | `--threads` | integer | `4` | Backend/OpenMP worker threads. |
 | `--log` | flag | off | Print progress and timing logs to stdout. |
 | `--log-file` | path | not set | Stream progress and timing logs to a file. |
@@ -118,6 +118,90 @@ The JSON may be either an array or an object with a `requests` array. Each item 
 For each request id, `--metrics` prints `metrics[<id>].wall_ms`, `audio_duration_ms`, `rtf`, `x_realtime`, `sample_rate`, and `channels`.
 
 A request can also pass input artifacts in an `artifacts` array, in the shape the server's [`/v1/tasks/run`](../app/server/README.md#post-v1tasksrun) takes: `id`, `kind`, `payload` (Base64) or `path` (a file holding the bytes, relative to the JSON file), and optional `meta`. Workflow requests take the same field, with paths relative to the workflow file.
+
+## Listing Devices
+
+`--list-devices` prints every backend device with the `--backend`/`--device` pair that selects it. Add `--json` to print one JSON document on stdout instead, with PCI ids and memory. `audiocpp_server --list-devices --json` prints the same document. ggml and driver start-up messages go to stderr. Builds from before `--json` was added ignore it and print the text listing, so a caller can check that stdout starts with `{`.
+
+```bash
+audiocpp_cli --list-devices --json | python3 -m json.tool
+```
+
+Abridged output from a CUDA and Vulkan build; the real document is one line:
+
+```json
+{
+  "schema_version": 1,
+  "devices": [
+    {
+      "backend": "cuda",
+      "registry": "CUDA",
+      "index": 0,
+      "name": "CUDA0",
+      "description": "NVIDIA GeForce RTX 5090",
+      "type": "gpu",
+      "pci_bus_id": "0000:01:00.0",
+      "memory": {
+        "free_bytes": 29778771968,
+        "total_bytes": 33743044608
+      },
+      "caps": {
+        "async": true,
+        "host_buffer": true,
+        "buffer_from_host_ptr": false,
+        "events": true
+      }
+    },
+    {
+      "backend": "cpu",
+      "registry": "CPU",
+      "index": 0,
+      "name": "CPU",
+      "description": "AMD Ryzen 9 9950X3D 16-Core Processor",
+      "type": "cpu",
+      "pci_bus_id": null,
+      "memory": {
+        "free_bytes": 17498980352,
+        "total_bytes": 32635379712
+      },
+      "caps": {
+        "async": false,
+        "host_buffer": false,
+        "buffer_from_host_ptr": true,
+        "events": false
+      }
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | `1`. Later versions may add fields; a change that breaks readers bumps it. |
+| `backend` | The `--backend` value that selects the device: `cpu`, `cuda`, `hip`, `vulkan` or `metal`. `null` when no `--backend` value selects it, as for BLAS. |
+| `registry` | ggml registry name, the prefix in the text listing: `CUDA` (`MUSA` on MUSA builds), `ROCm`, `Vulkan`, `MTL`, `BLAS` or `CPU`. |
+| `index` | The `--device` value, and the server's `device`. It counts within the registry, after `CUDA_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` or `GGML_VK_VISIBLE_DEVICES` filtering. `--backend cpu` ignores `--device`. |
+| `name` | ggml device name, such as `CUDA0` or `Vulkan1`. |
+| `description` | Device name from the driver, such as `NVIDIA GeForce RTX 5090`. |
+| `type` | `cpu`, `gpu`, `igpu`, `accel` or `meta`. |
+| `pci_bus_id` | Lower-case `domain:bus:device.function`, such as `0000:01:00.0`. `nvidia-smi` prints the same id with an 8-digit domain (`00000000:01:00.0`). A GPU that both CUDA and Vulkan list has the same id in both. `null` for Metal, CPU and BLAS, and on Vulkan drivers without `VK_EXT_pci_bus_info`. |
+| `memory` | `free_bytes` and `total_bytes` as exact integers. `null` when the device reports no total, as BLAS does, or a free figure above its total. |
+| `caps` | ggml device capabilities: `async`, `host_buffer`, `buffer_from_host_ptr` and `events`. |
+
+A value the backend does not report is `null`. ggml itself falls back to an estimate in two places, both in the table below: for the CPU, where the listing reports the host's available memory instead, and for Vulkan without `VK_EXT_memory_budget`, where free equals total.
+
+`free_bytes` is a snapshot taken while the listing runs. Except on Metal, it covers the whole device, including memory other processes hold. Backends measure it differently:
+
+| Backend | `total_bytes` | `free_bytes` |
+|---|---|---|
+| CUDA, HIP | `cudaMemGetInfo` / `hipMemGetInfo`, which leaves out memory the driver reserves: on NVIDIA, `nvidia-smi`'s `memory.total` minus `memory.reserved` | Free memory from the same call. The listing reads it after creating its own context on the device, so the figure already excludes one context. On Linux, integrated GPUs, and every device while `GGML_CUDA_ENABLE_UNIFIED_MEMORY` is set (to any value, `0` included), report `MemAvailable` from `/proc/meminfo` instead, against the device's own total. |
+| Vulkan | Device-local heaps (on NVIDIA, `nvidia-smi`'s `memory.total`); every heap on an integrated GPU | Heap budget minus heap usage, from `VK_EXT_memory_budget`. Without that extension, ggml reports the heap size, so free equals total whatever is in use. |
+| Metal | `recommendedMaxWorkingSetSize` | That minus `currentAllocatedSize`, which counts only this process's allocations. |
+| CPU | Physical RAM | Memory the host can still allocate: `MemAvailable` on Linux, available physical memory on Windows, and free + inactive + purgeable pages on macOS. The server's `--min-free-memory-mb` guard checks the same figure. |
+
+`--json` reads each CUDA or HIP device's PCI id and memory through ggml's device properties, which query memory and so create the device's primary context; the plain listing creates none. On an RTX 5090 with CUDA 13.4, the context held 498 MiB of VRAM until the command exited and added about 0.1 s. On Vulkan, `--json` added no measurable time or VRAM.
+
+If a CUDA or HIP device cannot give the process a context, for example a GPU in exclusive-process mode that another process holds, or one too full for a new context, ggml stops the process: `--json` exits with a non-zero status, prints nothing on stdout and reports the CUDA error on stderr. The plain `--list-devices` still works in that state.
 
 ## Model Docs
 
