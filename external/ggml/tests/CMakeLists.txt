@@ -169,6 +169,16 @@ add_test(NAME ${TEST_TARGET} COMMAND $<TARGET_FILE:${TEST_TARGET}>)
 set_property(TEST ${TEST_TARGET} PROPERTY ENVIRONMENT "LLVM_PROFILE_FILE=${TEST_TARGET}.profraw")
 
 
+if (GGML_CUDA AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT GGML_BACKEND_DL)
+    find_package(CUDAToolkit REQUIRED)
+    add_executable(test-cuda-softmax test-cuda-softmax.cpp)
+    target_link_libraries(test-cuda-softmax PRIVATE ggml ggml-cuda CUDA::cudart ${CMAKE_DL_LIBS})
+    set_target_properties(test-cuda-softmax PROPERTIES ENABLE_EXPORTS ON)
+    add_test(NAME test-cuda-softmax COMMAND test-cuda-softmax)
+    add_test(NAME test-cuda-softmax-rejected-opt-in COMMAND test-cuda-softmax --reject-opt-in)
+    set_tests_properties(test-cuda-softmax test-cuda-softmax-rejected-opt-in PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 if (NOT GGML_BACKEND_DL)
     #
     # test-opt

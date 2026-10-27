@@ -10,6 +10,7 @@
 #endif // GGML_USE_HIP
 
 #include <cstdint>
+#include <mutex>
 #include <utility>
 
 template <typename T>
@@ -276,33 +277,55 @@ static __global__ void soft_max_back_f32(
 }
 
 template<int... Ns, typename T>
-static void launch_soft_max_kernels(const float * x, const T * mask, const float * sinks, float * dst,
+static bool launch_soft_max_kernels(const float * x, const T * mask, const float * sinks, float * dst,
                              const soft_max_params & p, cudaStream_t stream, dim3 block_dims, dim3 block_nums, size_t nbytes_shared)
 {
-    const int id       = ggml_cuda_get_device();
-    const size_t smpbo = ggml_cuda_info().devices[id].smpbo;
-
     auto launch_kernel = [=](auto I) -> bool {
         constexpr int ncols = decltype(I)::value;
         constexpr int block = (ncols > 1024 ? 1024 : ncols);
 
-        if (p.ncols == ncols) {
-            CUDA_SET_SHARED_MEMORY_LIMIT((soft_max_f32<true, ncols, block, T>), smpbo);
-            soft_max_f32<true, ncols, block><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, mask, sinks, dst, p);
-            return true;
+        if (ncols != 0 && p.ncols != ncols) {
+            return false;
         }
-        return false;
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+        const int id = ggml_cuda_get_device();
+        const auto & device = ggml_cuda_info().devices[id];
+        // Portable launches need no opt-in; a rejected larger limit can use the low-shared-memory kernel.
+        if (nbytes_shared > device.smpb) {
+            static std::once_flag configured[GGML_CUDA_MAX_DEVICES];
+            static bool raised[GGML_CUDA_MAX_DEVICES] = {};
+            std::call_once(configured[id], [&] {
+                const cudaError_t status = cudaFuncSetAttribute((soft_max_f32<true, ncols, block, T>),
+                    cudaFuncAttributeMaxDynamicSharedMemorySize, device.smpbo);
+                if (status == cudaErrorInvalidValue) {
+                    const cudaError_t pending = cudaGetLastError();
+                    if (pending != cudaSuccess && pending != cudaErrorInvalidValue) {
+                        CUDA_CHECK(pending);
+                    }
+                    return;
+                }
+                CUDA_CHECK(status);
+                raised[id] = true;
+            });
+            if (!raised[id]) {
+                return false;
+            }
+        }
+#endif
+
+        soft_max_f32<true, ncols, block><<<block_nums, block_dims, nbytes_shared, stream>>>
+            (x, mask, sinks, dst, p);
+        return true;
     };
 
     // unary fold over launch_kernel
     if ((launch_kernel(std::integral_constant<int, Ns>{}) || ...)) {
-        return;
+        return true;
     }
 
-    //default case
-    CUDA_SET_SHARED_MEMORY_LIMIT((soft_max_f32<true, 0, 0, T>), smpbo);
-    soft_max_f32<true, 0, 0><<<block_nums, block_dims, nbytes_shared, stream>>>(x, mask, sinks, dst, p);
+    // default case
+    return launch_kernel(std::integral_constant<int, 0>{});
 }
 
 __launch_bounds__(8*WARP_SIZE, 1) static __global__ void soft_max_f32_parallelize_cols(const float * __restrict__ x,
@@ -346,8 +369,9 @@ static void soft_max_f32_cuda(const float *                                x,
     const size_t smpbo = ggml_cuda_info().devices[id].smpbo;
 
 
-    if (nbytes_shared <= smpbo) {
-        launch_soft_max_kernels<32, 64, 128, 256, 512, 1024, 2048, 4096>(x, mask, sinks, dst, params, stream, block_dims, block_nums, nbytes_shared);
+    if (nbytes_shared <= smpbo &&
+        launch_soft_max_kernels<32, 64, 128, 256, 512, 1024, 2048, 4096>(x, mask, sinks, dst, params, stream, block_dims, block_nums, nbytes_shared)) {
+        return;
     } else {
         // Parallelize across SMs for top-p/dist-sampling
         // The heuristic for parallelizing rows across SMs vs parallelizing single row & looping over all rows was done on the basis of a B6000 GPU and
