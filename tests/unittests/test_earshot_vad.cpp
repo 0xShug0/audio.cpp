@@ -6,6 +6,7 @@
 #include "engine/community_models/earshot_vad/runtime.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -16,6 +17,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #ifndef ENGINE_REPO_ROOT
@@ -382,7 +384,19 @@ void test_exec_plan_isa() {
     // Each session runs the kernel set it asked for. Scores are the same for every
     // set, so check the kernel name the session logs ("earshot_vad.kernel <name>").
     const auto model = rt::make_default_registry().load(model_dir());
-    const auto log_path = std::filesystem::temp_directory_path() / "earshot_vad_test_kernel.log";
+    // A per-process file name, so concurrent test runs don't share the log.
+    const auto log_path = std::filesystem::temp_directory_path() /
+                          ("earshot_vad_test_kernel_" + std::to_string(std::random_device{}()) + "_" +
+                           std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    // Turn logging off and remove the file even when a check throws.
+    struct LogGuard {
+        std::filesystem::path path;
+        ~LogGuard() {
+            engine::debug::reset_logging();
+            std::error_code ignored;
+            std::filesystem::remove(path, ignored);
+        }
+    } guard{log_path};
     const auto speech = load_wav("tests/parakeet_tdt/assets/2086-149220-0033.wav");
     std::vector<rt::SpeechSegment> reference;
     for (const auto isa : supported_isas()) {

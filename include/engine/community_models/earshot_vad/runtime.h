@@ -91,7 +91,10 @@ EarshotIsa resolve_earshot_isa(EarshotIsa requested);
 /** "auto", "baseline", "avx2" or "avx512". */
 const char * earshot_isa_name(EarshotIsa isa);
 
-/** Name of the kernel table that runs for `isa`: "baseline", "avx2" or "avx512". */
+/**
+ * Name of the kernel table that runs for `isa`: "baseline", "avx2" or "avx512".
+ * Throws like resolve_earshot_isa() for a set this build or CPU cannot run.
+ */
 const char * earshot_kernel_name(EarshotIsa isa);
 
 /**

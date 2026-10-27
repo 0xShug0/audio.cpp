@@ -70,8 +70,8 @@ and CPU support. All kernel sets give the same scores, bit for bit.
 ```
 
 `isa` takes `auto`, `baseline`, `avx2` or `avx512`. Asking for a kernel set the
-build or CPU cannot run is an error. With `--log-file`, each run logs the kernel
-set it used as `earshot_vad.kernel <name>`.
+build or CPU cannot run is an error. With `--log` or `--log-file`, each run
+writes a timing line `earshot_vad.kernel <name>` naming the kernel set it used.
 
 ## VAD chunking for ASR
 
