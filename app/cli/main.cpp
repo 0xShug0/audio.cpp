@@ -14,6 +14,7 @@
 
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/conversion.h"
+#include "engine/framework/audio/resampling.h"
 #include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
@@ -72,6 +73,8 @@ void print_task_list_help() {
         << "    --log-file <path>  Stream framework progress and timing logs to a file\n"
         << "    --load-progress 0|1  with --log/--log-file, emit model-load progress keys\n"
         << "                (runtime.load.phase, <store>.weights.upload_progress); default 0\n"
+        << "    --resample-kernel-cache-mb <mb>  Resampling kernel cache in MiB, default 32; 0 disables it\n"
+        << "                (a kernel larger than this is rebuilt on every call)\n"
         << "    --metrics  Print compact wall time, audio duration, and RTF summary after offline generation\n"
         << "    --load-option key=value\n"
         << "    --session-option key=value\n"
@@ -667,6 +670,10 @@ int audiocpp_cli_main(int argc, char ** argv) {
                 throw std::runtime_error("--load-progress expects 0 or 1");
             }
             engine::core::set_load_progress_enabled(*load_progress == "1");
+        }
+        if (const auto cache_mb = find_arg(argc, argv, "--resample-kernel-cache-mb")) {
+            const int mb = parse_non_negative_int(*cache_mb, "--resample-kernel-cache-mb");
+            engine::audio::set_resample_kernel_cache_budget_bytes(static_cast<size_t>(mb) * 1024ull * 1024ull);
         }
         const bool metrics_requested = has_arg(argc, argv, "--metrics");
         if (has_arg(argc, argv, "--version")) {

@@ -71,4 +71,17 @@ std::vector<float> resample_mono_torchaudio_sinc_hann(
     int target_sample_rate_hz,
     const TorchaudioSincHannResampleOptions & options = {});
 
+// Bounds the memory resample_mono_torchaudio_sinc_hann keeps in cached kernels; 0 disables the cache.
+// A kernel larger than the budget is not cached, so it is rebuilt on every call.
+void set_resample_kernel_cache_budget_bytes(size_t bytes);
+
+struct ResampleKernelCacheStats {
+    size_t entries = 0;
+    size_t bytes = 0;
+    uint64_t hits = 0;
+    uint64_t misses = 0;
+};
+
+ResampleKernelCacheStats resample_kernel_cache_stats();
+
 }  // namespace engine::audio
