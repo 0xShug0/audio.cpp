@@ -1276,6 +1276,7 @@
     chunkBudget = defaultChunkBudget(next.family);
     localStorage.setItem('audiocpp.ui.model', id);
     resetParams();
+    status = tr('status.ready');
     inspectPath();
     refreshConfiguredVoices();
   }
@@ -2059,7 +2060,9 @@
         if (!text.trim()) throw new StatusWarning('Enter text to generate.');
         const effectiveChunkBudget = Math.max(40, chunkBudget);
         if (selected.family === 'voxcpm2') options.text_chunk_size = effectiveChunkBudget;
-        const chunks = longText && selected.task !== 'vdes' && selected.family !== 'moss_ttsd'
+        // Ming anchors subsequent chunks to the first voice inside one request.
+        if (selected.family === 'ming3_tts' && longText) options.text_chunk_size = effectiveChunkBudget;
+        const chunks = longText && selected.task !== 'vdes' && !['moss_ttsd', 'ming3_tts'].includes(selected.family)
           ? splitTtsChunks(text, effectiveChunkBudget)
           : [text];
         const audioChunks: Blob[] = [];
