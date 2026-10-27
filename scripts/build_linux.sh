@@ -22,7 +22,8 @@ AUDIOCPP_USE_SYSTEM_OPENSSL="OFF"
 AUDIOCPP_BORINGSSL_ARCHIVE=""
 AUDIOCPP_MODEL_SET="full"
 AUDIOCPP_MODELS=""
-NATIVE_CPU="ON"
+NATIVE_CPU="${AUDIOCPP_NATIVE_CPU:-ON}"
+NATIVE_CPU_CLI_SET="OFF"
 LLAMAFILE="ON"
 TARGETS=()
 JOBS=""
@@ -154,9 +155,11 @@ while [[ $# -gt 0 ]]; do
             case "$2" in
                 ON|on|On|1|true|TRUE|yes|YES)
                     NATIVE_CPU="ON"
+                    NATIVE_CPU_CLI_SET="ON"
                     ;;
                 OFF|off|Off|0|false|FALSE|no|NO)
                     NATIVE_CPU="OFF"
+                    NATIVE_CPU_CLI_SET="ON"
                     ;;
                 *)
                     echo "--native-cpu must be ON or OFF" >&2
@@ -194,6 +197,17 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$NATIVE_CPU_CLI_SET" == "OFF" ]]; then
+    case "$NATIVE_CPU" in
+        ON|on|On|1|true|TRUE|yes|YES) NATIVE_CPU="ON" ;;
+        OFF|off|Off|0|false|FALSE|no|NO) NATIVE_CPU="OFF" ;;
+        *)
+            echo "AUDIOCPP_NATIVE_CPU must be ON or OFF" >&2
+            exit 1
+            ;;
+    esac
+fi
 
 if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" != "ON" ]]; then
     if [[ "$AUDIOCPP_USE_SYSTEM_OPENSSL" == "ON" ]]; then

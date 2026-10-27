@@ -19,7 +19,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--mode` | `offline`, `streaming` | `offline` | Run mode. Most models are offline. |
 | `--device` | integer | `0` | Backend device index. |
 | `--list-devices` | flag | off | List available backend devices and exit; combine with `--backend`/`--device` to select one. |
-| `--threads` | integer | `4` | Backend/OpenMP worker threads. |
+| `--threads` | integer | detected host physical cores | Backend/OpenMP worker threads. Linux respects the process CPU affinity and physical-core topology where sysfs exposes it; other platforms use `std::thread::hardware_concurrency()`. |
 | `--log` | flag | off | Print progress and timing logs to stdout. |
 | `--log-file` | path | not set | Stream progress and timing logs to a file. |
 | `--metrics` | flag | off | Print compact offline wall time, audio duration, RTF, realtime speed, sample rate, and channel metrics. |

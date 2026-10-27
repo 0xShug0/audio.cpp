@@ -63,7 +63,7 @@ void print_task_list_help() {
         << "    --mode offline|streaming  default offline\n"
         << "    --device <n>\n"
         << "    --list-devices  List available backend devices and exit\n"
-        << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
+        << "    --threads <n>  Backend and OpenMP worker threads, default detected physical CPU cores\n"
         << "    --registry-config <path>\n"
         << "    --model-spec-override <json-or-directory|embedded>  Select a spec file/directory or the GGUF's embedded spec\n"
         << "    --config <id>\n"
@@ -781,7 +781,8 @@ int audiocpp_cli_main(int argc, char ** argv) {
         const auto batch_merge_audio = find_arg(argc, argv, "--batch-merge-audio").value_or("none");
         const auto batch_audio_role = find_arg(argc, argv, "--batch-audio-role").value_or("audio");
         if (pipeline_arg.has_value()) {
-            const int threads = parse_int_arg(argc, argv, "--threads", 4);
+            const int threads = parse_int_arg(
+                argc, argv, "--threads", engine::core::default_host_thread_count());
             if (threads <= 0) {
                 throw std::runtime_error("--threads must be positive");
             }
@@ -808,7 +809,8 @@ int audiocpp_cli_main(int argc, char ** argv) {
             return 0;
         }
         if (recipe_arg.has_value()) {
-            const int threads = parse_int_arg(argc, argv, "--threads", 4);
+            const int threads = parse_int_arg(
+                argc, argv, "--threads", engine::core::default_host_thread_count());
             if (threads <= 0) {
                 throw std::runtime_error("--threads must be positive");
             }
@@ -914,7 +916,8 @@ int audiocpp_cli_main(int argc, char ** argv) {
         engine::runtime::SessionOptions session_options;
         session_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
         session_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
-        const int threads = parse_int_arg(argc, argv, "--threads", 4);
+        const int threads = parse_int_arg(
+            argc, argv, "--threads", engine::core::default_host_thread_count());
         if (threads <= 0) {
             throw std::runtime_error("--threads must be positive");
         }

@@ -47,6 +47,12 @@ constexpr int64_t kF32ConvertChunkElements = 1ll << 16;
 // elements, which puts a chunk in the same size range as the conversions above.
 constexpr int64_t kQuantizeChunkElements = 1ll << 20;
 
+// Reused for synchronous HIP transfers to keep pageable mapped-file pages out
+// of the HIP driver's long-lived registration path without allocating a large
+// staging vector for every tensor.
+constexpr size_t kHipUploadChunkBytes = size_t{32} << 20;
+thread_local std::vector<std::byte> hip_upload_staging;
+
 bool tensor_type_override_matches(std::string_view name, std::string_view pattern) {
     if (pattern.empty()) {
         return false;
@@ -285,13 +291,15 @@ void set_tensor_bytes(ggml_tensor * tensor, const void * data, size_t bytes, std
     // the memory-mapped model file. On ROCm iGPUs without XNACK (Strix Halo, gfx1151) large direct
     // copies leave the pageable source pages registered with the GPU, the file pages are never
     // released, and the load crawls once they approach the memory limit.
-    constexpr size_t kUploadChunk = size_t{64} << 20;
-    std::vector<std::byte> staging(std::min(kUploadChunk, bytes));
+    const size_t staging_bytes = std::min(kHipUploadChunkBytes, bytes);
+    if (hip_upload_staging.size() < staging_bytes) {
+        hip_upload_staging.resize(staging_bytes);
+    }
     const auto * source = static_cast<const std::byte *>(data);
-    for (size_t offset = 0; offset < bytes; offset += staging.size()) {
-        const size_t count = std::min(staging.size(), bytes - offset);
-        std::memcpy(staging.data(), source + offset, count);
-        ggml_backend_tensor_set(tensor, staging.data(), offset, count);
+    for (size_t offset = 0; offset < bytes; offset += staging_bytes) {
+        const size_t count = std::min(staging_bytes, bytes - offset);
+        std::memcpy(hip_upload_staging.data(), source + offset, count);
+        ggml_backend_tensor_set(tensor, hip_upload_staging.data(), offset, count);
     }
 }
 
@@ -380,6 +388,10 @@ void set_backend_tensor_from_f32(
 }
 
 }  // namespace
+
+void detail::release_upload_staging_buffer() noexcept {
+    std::vector<std::byte>().swap(hip_upload_staging);
+}
 
 void set_backend_tensor_from_f32_parallel(
     ggml_tensor * tensor,

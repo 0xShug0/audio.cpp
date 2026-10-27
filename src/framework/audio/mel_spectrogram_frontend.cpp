@@ -1,6 +1,7 @@
 #include "engine/framework/audio/mel_spectrogram_frontend.h"
 
 #include "engine/framework/audio/conversion.h"
+#include "engine/framework/audio/detail/thread_count.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/audio/waveform_ops.h"
 
@@ -24,14 +25,18 @@ void project_mel_filterbank(
     int64_t freq_bins,
     int64_t stft_frames,
     int64_t frames,
+    size_t threads,
     MelSpectrogramFeatures & out) {
     using Accumulator = std::conditional_t<
         Projection == MelFilterbankProjection::DenseLongDouble,
         long double,
         std::conditional_t<Projection == MelFilterbankProjection::DenseF64, double, float>>;
     const int64_t projection_work_items = channels * config.n_mels * frames;
+    const size_t thread_count = detail::resolve_thread_count(threads);
 #ifdef _OPENMP
-#pragma omp parallel for collapse(3) if(projection_work_items >= 4096)
+    const int openmp_threads = detail::recommended_openmp_thread_count(
+        thread_count, static_cast<size_t>(projection_work_items));
+#pragma omp parallel for collapse(3) schedule(static) num_threads(openmp_threads) if(projection_work_items >= 4096)
 #endif
     for (int64_t channel = 0; channel < channels; ++channel) {
         for (int64_t mel = 0; mel < config.n_mels; ++mel) {
@@ -181,6 +186,7 @@ MelSpectrogramFeatures MelSpectrogramFrontend::extract_planar(
     if (channels <= 0 || planar.empty() || planar.size() % static_cast<size_t>(channels) != 0) {
         throw std::runtime_error("MelSpectrogramFrontend invalid planar waveform");
     }
+    const size_t thread_count = detail::resolve_thread_count(threads);
     const int64_t input_samples = static_cast<int64_t>(planar.size()) / channels;
     const int64_t samples = std::max(input_samples, config_.minimum_samples);
     const int64_t pad = config_.waveform_padding != MelWaveformPadding::None
@@ -207,7 +213,7 @@ MelSpectrogramFeatures MelSpectrogramFrontend::extract_planar(
         config_.stft_center, config_.stft_pad_mode, window_family};
     const auto & window = get_cached_stft_window(stft_config);
     auto magnitude = STFT().compute_magnitude(
-        padded, window, channels, padded_samples, stft_config, threads);
+        padded, window, channels, padded_samples, stft_config, thread_count);
     if (magnitude.shape.size() != 3 || magnitude.shape[0] != channels ||
         magnitude.shape[1] != config_.n_fft / 2 + 1 || magnitude.shape[2] <= 0) {
         throw std::runtime_error("MelSpectrogramFrontend STFT shape mismatch");
@@ -231,7 +237,9 @@ MelSpectrogramFeatures MelSpectrogramFrontend::extract_planar(
     if (config_.magnitude_epsilon > 0.0f ||
         config_.spectrum_mode == MelSpectrumMode::PowerBeforeProjection) {
 #ifdef _OPENMP
-#pragma omp parallel for if(magnitude.values.size() >= 4096)
+    const int openmp_threads = detail::recommended_openmp_thread_count(
+        thread_count, magnitude.values.size());
+#pragma omp parallel for schedule(static) num_threads(openmp_threads) if(magnitude.values.size() >= 4096)
 #endif
         for (int64_t index = 0;
              index < static_cast<int64_t>(magnitude.values.size()); ++index) {
@@ -251,11 +259,11 @@ MelSpectrogramFeatures MelSpectrogramFrontend::extract_planar(
         if (config_.spectrum_mode == MelSpectrumMode::PowerDuringProjection) {
             project_mel_filterbank<projection, true>(
                 config_, magnitude, filterbank_, sparse_filterbank_,
-                channels, freq_bins, stft_frames, frames, out);
+                channels, freq_bins, stft_frames, frames, thread_count, out);
         } else {
             project_mel_filterbank<projection, false>(
                 config_, magnitude, filterbank_, sparse_filterbank_,
-                channels, freq_bins, stft_frames, frames, out);
+                channels, freq_bins, stft_frames, frames, thread_count, out);
         }
     };
     switch (config_.filterbank_projection) {

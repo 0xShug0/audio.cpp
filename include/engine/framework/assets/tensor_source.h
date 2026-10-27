@@ -16,6 +16,10 @@
 
 namespace engine::assets {
 
+namespace detail {
+void release_upload_staging_buffer() noexcept;
+}
+
 // Existing loaders remain unsynchronized. Model adapters explicitly opt in before
 // sharing a source across sessions; the policy is fixed at source construction.
 struct TensorSourceOptions {

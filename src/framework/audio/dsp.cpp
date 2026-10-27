@@ -1,4 +1,5 @@
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/detail/thread_count.h"
 #include "engine/framework/audio/fft.h"
 #include "engine/framework/debug/trace.h"
 
@@ -377,7 +378,12 @@ AudioTensor STFT::compute_magnitude(
     AudioTensor result;
     result.shape = {complex_result.shape[0], complex_result.shape[1], complex_result.shape[2]};
     result.values.resize(static_cast<size_t>(checked_product({result.shape[0], result.shape[1], result.shape[2]})));
-    for (size_t i = 0, out = 0; i < complex_result.values.size(); i += 2, ++out) {
+#ifdef _OPENMP
+    const int openmp_threads = detail::recommended_openmp_thread_count(threads, result.values.size());
+#pragma omp parallel for num_threads(openmp_threads) if(result.values.size() >= 4096)
+#endif
+    for (size_t out = 0; out < result.values.size(); ++out) {
+        const size_t i = 2 * out;
         const float re = complex_result.values[i];
         const float im = complex_result.values[i + 1];
         result.values[out] = std::sqrt(re * re + im * im);
@@ -396,15 +402,20 @@ AudioTensor STFT::compute_complex(
         static_cast<int64_t>(window.size()) != config.win_length) {
         throw std::runtime_error("STFT input size mismatch");
     }
+    const size_t thread_count = detail::resolve_thread_count(threads);
 
     const int64_t pad = config.center ? config.n_fft / 2 : 0;
     const int64_t frames = 1 + (samples + 2 * pad - config.n_fft) / config.hop_length;
     const int64_t freq_bins = (config.n_fft / 2) + 1;
     const int64_t window_offset = (config.n_fft - config.win_length) / 2;
+#ifdef _OPENMP
+    const int frame_threads = detail::recommended_openmp_thread_count(
+        thread_count, static_cast<size_t>(batch * frames));
+#endif
 
     std::vector<float> framed(static_cast<size_t>(checked_product({batch, frames, config.n_fft})), 0.0f);
 #ifdef _OPENMP
-    #pragma omp parallel for collapse(2) if(batch * frames >= 8)
+    #pragma omp parallel for collapse(2) schedule(static) num_threads(frame_threads) if(batch * frames >= 8)
 #endif
     for (int64_t b = 0; b < batch; ++b) {
         for (int64_t frame_index = 0; frame_index < frames; ++frame_index) {
@@ -451,13 +462,15 @@ AudioTensor STFT::compute_complex(
         framed.data(),
         spectrum.data(),
         1.0f,
-        threads);
+        thread_count);
 
     AudioTensor result;
     result.shape = {batch, freq_bins, frames, 2};
     result.values.assign(static_cast<size_t>(checked_product({batch, freq_bins, frames, 2})), 0.0f);
 #ifdef _OPENMP
-    #pragma omp parallel for collapse(3) if(batch * freq_bins * frames >= 4096)
+    const int output_threads = detail::recommended_openmp_thread_count(
+        thread_count, static_cast<size_t>(batch * freq_bins * frames));
+    #pragma omp parallel for collapse(3) schedule(static) num_threads(output_threads) if(batch * freq_bins * frames >= 4096)
 #endif
     for (int64_t b = 0; b < batch; ++b) {
         for (int64_t f = 0; f < freq_bins; ++f) {

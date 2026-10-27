@@ -1,8 +1,10 @@
 #include "engine/framework/audio/mel_spectrogram_frontend.h"
+#include "engine/framework/audio/wav_reader.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -174,7 +176,8 @@ void require_bitwise_equal(const MelSpectrogramFeatures &actual,
   }
 }
 
-void test_optimized_projection_matches_legacy_loop() {
+void test_optimized_projection_matches_legacy_loop(
+    const std::vector<float> & waveform, int64_t channels) {
   MelSpectrogramFrontendConfig base;
   base.sample_rate = 16000;
   base.n_fft = 64;
@@ -187,8 +190,6 @@ void test_optimized_projection_matches_legacy_loop() {
   base.waveform_padding = engine::audio::MelWaveformPadding::None;
   base.frame_multiple = 4;
   base.frame_pad_value = 17.0f;
-  const auto waveform = make_planar_waveform(2, 2053);
-
   std::vector<MelSpectrogramFrontendConfig> cases;
   cases.push_back(base);
 
@@ -232,19 +233,33 @@ void test_optimized_projection_matches_legacy_loop() {
   cases.push_back(config);
 
   for (size_t index = 0; index < cases.size(); ++index) {
-    const auto expected = legacy_projection(waveform, 2, cases[index]);
-    const auto actual = engine::audio::MelSpectrogramFrontend(cases[index])
-                            .extract_planar(waveform, 2, 1);
-    require_bitwise_equal(actual, expected,
-                          "mel projection case " + std::to_string(index));
+    const auto expected = legacy_projection(waveform, channels, cases[index]);
+    const auto frontend = engine::audio::MelSpectrogramFrontend(cases[index]);
+    for (const size_t threads : {size_t{1}, size_t{2}, size_t{4}}) {
+      const auto actual = frontend.extract_planar(waveform, channels, threads);
+      require_bitwise_equal(
+          actual, expected,
+          "mel projection case " + std::to_string(index) + " threads " +
+              std::to_string(threads));
+    }
   }
 }
 
 } // namespace
 
-int main() {
+int main(int argc, char ** argv) {
   try {
-    test_optimized_projection_matches_legacy_loop();
+    test_optimized_projection_matches_legacy_loop(make_planar_waveform(2, 2053), 2);
+    if (argc == 2) {
+      const auto wav = engine::audio::read_wav_f32(std::filesystem::path(argv[1]));
+      if (wav.sample_rate != 24000 || wav.channels != 1 ||
+          wav.samples.size() != 60u * 24000u) {
+        throw std::runtime_error("60-second frontend fixture shape mismatch");
+      }
+      test_optimized_projection_matches_legacy_loop(wav.samples, wav.channels);
+    } else if (argc != 1) {
+      throw std::runtime_error("usage: mel_spectrogram_frontend_test [60-second.wav]");
+    }
     std::cout << "mel spectrogram frontend tests passed\n";
     return 0;
   } catch (const std::exception &error) {

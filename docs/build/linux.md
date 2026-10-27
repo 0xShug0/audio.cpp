@@ -12,7 +12,7 @@ This document covers direct CMake builds on Linux. For the quick script-based pa
   is the host GCC the chosen toolkit accepts, not the CUDA version: e.g. CUDA 12.9
   supports up to GCC 14
 
-Native ggml CPU optimization is enabled by default for local performance. If your compiler or assembler rejects a generated CPU instruction such as `vpdpbusd`, reconfigure with `-DENGINE_ENABLE_NATIVE_CPU=OFF` to build portable CPU kernels.
+Native ggml CPU optimization is enabled by default for local performance. The Linux build script also enables it by default; set `AUDIOCPP_NATIVE_CPU=OFF` or pass `--native-cpu OFF` to build portable CPU kernels. The command-line option takes precedence over the environment variable. If your compiler or assembler rejects a generated CPU instruction such as `vpdpbusd`, disable the option.
 
 If you use an environment manager or custom toolchain, activate it before running the commands below.
 

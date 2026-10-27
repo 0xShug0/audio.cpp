@@ -17,6 +17,13 @@ versioned launchers under `~/.local/bin` and executables under
 bash scripts/install_arch_amd.sh
 ```
 
+The Arch installer explicitly enables ggml's native CPU kernels by default,
+targeting the instruction set supported by the build machine's compiler. This
+setting applies to CPU kernels and is independent of the selected HIP GPU
+targets. Set `AUDIOCPP_NATIVE_CPU=OFF` when the installed binaries must run on
+older or different CPU architectures; the installer forwards this choice to
+`scripts/build_linux.sh`.
+
 The menu offers three choices:
 
 1. **Detected GPU** — use the AMD target(s) reported by `amdgpu-arch`, falling

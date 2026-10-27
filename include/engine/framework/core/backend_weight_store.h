@@ -10,6 +10,7 @@
 #include <ggml.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -218,6 +219,12 @@ public:
         if (buffer_ != nullptr) {
             throw std::runtime_error(name_ + " weights were already uploaded");
         }
+        struct StagingCleanup {
+            ~StagingCleanup() {
+                assets::detail::release_upload_staging_buffer();
+            }
+        } staging_cleanup;
+        const auto buffer_alloc_start = std::chrono::steady_clock::now();
         buffer_ = buffer_type_ != nullptr
             ? ggml_backend_alloc_ctx_tensors_from_buft(ctx_.get(), buffer_type_)
             : ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
@@ -225,6 +232,10 @@ public:
             throw std::runtime_error("failed to allocate " + name_ + " backend weight buffer");
         }
         ggml_backend_buffer_set_usage(buffer_, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+        engine::debug::timing_log_scalar(
+            name_ + ".allocate_ms",
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - buffer_alloc_start).count());
         // The header context is host RAM by construction; the buffer is where
         // the weights actually landed (device, or a host fallback), by name.
         debug::timing_log_context_reservation(name_, ctx_.get());
@@ -238,6 +249,7 @@ public:
         }
         engine::core::register_weight_bytes(pending_bytes);
         engine::core::emit_weight_upload_progress(name_);
+        const auto upload_start = std::chrono::steady_clock::now();
         for (auto & upload : pending_) {
             if (upload.kind == PendingUploadKind::Tensor) {
                 upload.source->set_backend_tensor(
@@ -260,6 +272,10 @@ public:
         }
         pending_.clear();
         pending_.shrink_to_fit();
+        engine::debug::timing_log_scalar(
+            name_ + ".upload_ms",
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - upload_start).count());
     }
 
 private:

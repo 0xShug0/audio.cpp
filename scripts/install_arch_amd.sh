@@ -13,6 +13,7 @@ BIN_ROOT="${AUDIOCPP_BIN_ROOT:-$HOME/.local/bin}"
 MODEL_SET="${AUDIOCPP_MODEL_SET:-full}"
 MODELS="${AUDIOCPP_MODELS:-}"
 HIP_VMM="${AUDIOCPP_HIP_VMM:-auto}"
+NATIVE_CPU="${AUDIOCPP_NATIVE_CPU:-ON}"
 
 info() { printf '[audio.cpp] %s\n' "$*"; }
 fail() { printf '[audio.cpp] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -33,7 +34,9 @@ AUDIOCPP_BIN_ROOT, ROCM_PATH. Set AUDIOCPP_MODEL_SET=core or custom to build a
 smaller model catalog; AUDIOCPP_MODELS selects models for a custom build.
 HIP VMM defaults to auto: it is enabled for recognized discrete GPU targets
 and disabled for integrated or mixed target sets. Set AUDIOCPP_HIP_VMM=on or
-off to override this choice.
+off to override this choice. Native ggml CPU kernels default to the build
+machine's supported instruction set; set AUDIOCPP_NATIVE_CPU=OFF for portable
+CPU kernels.
 EOF
 }
 
@@ -154,7 +157,7 @@ install_build() {
     local mode="$1" targets="$2" hip_vmm="$3" build_dir="$BUILD_ROOT/$mode"
     local install_dir="$INSTALL_ROOT/$mode" executable
 
-    info "Building HIP target(s): $targets (VMM: $hip_vmm)"
+    info "Building HIP target(s): $targets (VMM: $hip_vmm, native CPU kernels: $NATIVE_CPU)"
     if [[ -x "${ROCM_PATH}/bin/rocminfo" ]]; then
         export PATH="${ROCM_PATH}/bin:$PATH"
     fi
@@ -167,6 +170,7 @@ install_build() {
         --deployment-build
         --model-set "$MODEL_SET"
         --hip-vmm "$hip_vmm"
+        --native-cpu "$NATIVE_CPU"
     )
     if [[ "$MODEL_SET" == custom ]]; then
         [[ -n "$MODELS" ]] || fail "Set AUDIOCPP_MODELS when AUDIOCPP_MODEL_SET=custom."
@@ -194,6 +198,11 @@ main() {
     esac
 
     is_arch_linux || fail "This script supports Arch Linux and distributions declaring Arch in ID_LIKE."
+    case "$NATIVE_CPU" in
+        ON|on|On|1|true|TRUE|yes|YES) NATIVE_CPU="ON" ;;
+        OFF|off|Off|0|false|FALSE|no|NO) NATIVE_CPU="OFF" ;;
+        *) fail "AUDIOCPP_NATIVE_CPU must be ON or OFF." ;;
+    esac
     ensure_dependencies
 
     local mode targets hip_vmm

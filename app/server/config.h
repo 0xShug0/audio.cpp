@@ -81,7 +81,7 @@ struct ServerConfig {
     bool ui_management = false;
     engine::core::BackendType backend = engine::core::BackendType::Cuda;
     int device = 0;
-    int threads = 1;
+    int threads = engine::core::default_host_thread_count();
     bool lazy_load = false;
     bool log_request_body = false;
     uint64_t max_request_body_bytes = kDefaultMaxRequestBodyBytes;

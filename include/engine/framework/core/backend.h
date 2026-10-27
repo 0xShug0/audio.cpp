@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/module.h"
+#include "engine/framework/core/default_thread_count.h"
 
 #include "ggml.h"
 #include "ggml-backend.h"
@@ -18,7 +19,7 @@ class ExecutionContext;
 struct BackendConfig {
     BackendType type = BackendType::Cpu;
     int device = 0;
-    int threads = 1;
+    int threads = default_host_thread_count();
 };
 
 struct BackendDeviceInfo {
