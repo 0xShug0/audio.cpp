@@ -3,6 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/runtime/errors.h"
 
 #include <algorithm>
 #include <chrono>
@@ -16,70 +17,68 @@ namespace engine::runtime {
 
 namespace {
 
-int parse_int_value(const std::string & value, std::string_view key) {
+// Option values are caller input: a bad one is a client error naming the option, not std::sto*'s bare "stoll".
+template <typename Parse>
+auto parse_number(const std::string & value, std::string_view key, std::string_view kind, Parse parse) {
     size_t parsed = 0;
-    const long long out = std::stoll(value, &parsed);
-    if (parsed != value.size()) {
-        throw std::runtime_error(std::string(key) + " must be an integer");
+    try {
+        const auto out = parse(value, &parsed);
+        if (parsed == value.size()) {
+            return out;
+        }
+    } catch (const std::invalid_argument &) {
+    } catch (const std::out_of_range &) {
+        throw InvalidRequestError(std::string(key) + " is out of range");
     }
+    throw InvalidRequestError(std::string(key) + " must be " + std::string(kind));
+}
+
+int parse_int_value(const std::string & value, std::string_view key) {
+    const long long out =
+        parse_number(value, key, "an integer", [](const std::string & v, size_t * at) { return std::stoll(v, at); });
     if (out < std::numeric_limits<int>::min() || out > std::numeric_limits<int>::max()) {
-        throw std::runtime_error(std::string(key) + " is outside int range");
+        throw InvalidRequestError(std::string(key) + " is outside int range");
     }
     return static_cast<int>(out);
 }
 
 float parse_float_value(const std::string & value, std::string_view key) {
-    size_t parsed = 0;
-    const float out = std::stof(value, &parsed);
-    if (parsed != value.size()) {
-        throw std::runtime_error(std::string(key) + " must be a float");
-    }
-    return out;
+    return parse_number(value, key, "a float", [](const std::string & v, size_t * at) { return std::stof(v, at); });
 }
 
 uint32_t parse_u32_value(const std::string & value, std::string_view key) {
-    if (!value.empty() && value.front() == '-') {
-        throw std::runtime_error(std::string(key) + " must be an unsigned integer");
+    // std::stoul and std::stoull accept a sign after leading spaces and wrap " -1" to their maximum.
+    if (value.find('-') != std::string::npos) {
+        throw InvalidRequestError(std::string(key) + " must be an unsigned integer");
     }
-    size_t parsed = 0;
-    const unsigned long out = std::stoul(value, &parsed);
-    if (parsed != value.size()) {
-        throw std::runtime_error(std::string(key) + " must be an unsigned integer");
-    }
+    const unsigned long out = parse_number(
+        value, key, "an unsigned integer", [](const std::string & v, size_t * at) { return std::stoul(v, at); });
     if (out > std::numeric_limits<uint32_t>::max()) {
-        throw std::runtime_error(std::string(key) + " is outside uint32 range");
+        throw InvalidRequestError(std::string(key) + " is outside uint32 range");
     }
     return static_cast<uint32_t>(out);
 }
 
 uint64_t parse_u64_value(const std::string & value, std::string_view key) {
-    if (!value.empty() && value.front() == '-') {
-        throw std::runtime_error(std::string(key) + " must be an unsigned integer");
+    if (value.find('-') != std::string::npos) {
+        throw InvalidRequestError(std::string(key) + " must be an unsigned integer");
     }
-    size_t parsed = 0;
-    const unsigned long long out = std::stoull(value, &parsed);
-    if (parsed != value.size()) {
-        throw std::runtime_error(std::string(key) + " must be an unsigned integer");
-    }
+    const unsigned long long out = parse_number(
+        value, key, "an unsigned integer", [](const std::string & v, size_t * at) { return std::stoull(v, at); });
     if (out > std::numeric_limits<uint64_t>::max()) {
-        throw std::runtime_error(std::string(key) + " is outside uint64 range");
+        throw InvalidRequestError(std::string(key) + " is outside uint64 range");
     }
     return static_cast<uint64_t>(out);
 }
 
 int64_t parse_i64_value(const std::string & value, std::string_view key) {
-    size_t parsed = 0;
-    const int64_t out = std::stoll(value, &parsed);
-    if (parsed != value.size()) {
-        throw std::runtime_error(std::string(key) + " must be an integer");
-    }
-    return out;
+    return parse_number(value, key, "an integer", [](const std::string & v, size_t * at) { return std::stoll(v, at); });
 }
 
 size_t checked_mib_to_bytes(int64_t mb, std::string_view key) {
     constexpr int64_t kMiB = 1024 * 1024;
     if (mb > static_cast<int64_t>(std::numeric_limits<size_t>::max() / kMiB)) {
-        throw std::runtime_error(std::string(key) + " is too large");
+        throw InvalidRequestError(std::string(key) + " is too large");
     }
     return static_cast<size_t>(mb) * static_cast<size_t>(kMiB);
 }
@@ -316,7 +315,7 @@ bool parse_bool_option(const std::string & value, std::string_view key) {
     if (value == "false" || value == "0" || value == "no" || value == "off") {
         return false;
     }
-    throw std::runtime_error(std::string(key) + " must be true/false, yes/no, on/off, or 1/0");
+    throw InvalidRequestError(std::string(key) + " must be true/false, yes/no, on/off, or 1/0");
 }
 
 std::optional<int> parse_int_option(
@@ -343,7 +342,7 @@ std::optional<float> parse_finite_float_option(
     if (const auto match = find_option_match(options, keys)) {
         const float value = parse_float_value(match->value, match->key);
         if (!std::isfinite(value)) {
-            throw std::runtime_error(match->key + " must be a finite float");
+            throw InvalidRequestError(match->key + " must be a finite float");
         }
         return value;
     }
@@ -356,10 +355,10 @@ std::optional<float> parse_positive_finite_float_option(
     if (const auto match = find_option_match(options, keys)) {
         const float value = parse_float_value(match->value, match->key);
         if (!std::isfinite(value)) {
-            throw std::runtime_error(match->key + " must be a finite float");
+            throw InvalidRequestError(match->key + " must be a finite float");
         }
         if (value <= 0.0F) {
-            throw std::runtime_error(match->key + " must be positive");
+            throw InvalidRequestError(match->key + " must be positive");
         }
         return value;
     }
@@ -400,7 +399,7 @@ int64_t parse_positive_i64_option(
     if (const auto match = find_option_match(options, keys)) {
         const int64_t value = parse_i64_value(match->value, match->key);
         if (value <= 0) {
-            throw std::runtime_error(match->key + " must be positive");
+            throw InvalidRequestError(match->key + " must be positive");
         }
         return value;
     }
@@ -414,7 +413,7 @@ size_t parse_size_mb_option(
     if (const auto match = find_option_match(options, keys)) {
         const int64_t mb = parse_i64_value(match->value, match->key);
         if (mb <= 0) {
-            throw std::runtime_error(match->key + " must be positive");
+            throw InvalidRequestError(match->key + " must be positive");
         }
         return checked_mib_to_bytes(mb, match->key);
     }

@@ -39,7 +39,7 @@ uint64_t parse_seed(const std::string & value) {
 void require_seed_rejected(const std::string & value) {
     try {
         (void) parse_seed(value);
-    } catch (const std::runtime_error &) {
+    } catch (const engine::runtime::InvalidRequestError &) {
         return;
     }
     throw std::runtime_error("unsafe seed option was parsed unexpectedly: " + value);
@@ -75,6 +75,13 @@ void test_unsafe_integer_numbers_are_not_silently_rounded() {
         rounded.find('e') != std::string::npos || rounded.find('E') != std::string::npos,
         "2^53+1 does not become a rounded decimal option");
     require_seed_rejected(rounded);
+}
+
+void test_malformed_seeds_are_invalid_requests() {
+    // A JSON null option reaches the parser as "null".
+    for (const char * value : {"null", " -1", "18446744073709551616"}) {
+        require_seed_rejected(value);
+    }
 }
 
 void test_audio_only_language_is_request_option() {
@@ -471,6 +478,7 @@ int main() {
     test_large_safe_integer_numbers_stay_decimal();
     test_float_numbers_keep_json_formatting();
     test_unsafe_integer_numbers_are_not_silently_rounded();
+    test_malformed_seeds_are_invalid_requests();
     test_audio_only_language_is_request_option();
     test_audio_chunk_shortcut_uses_canonical_name();
     test_normalized_request_option_aliases();

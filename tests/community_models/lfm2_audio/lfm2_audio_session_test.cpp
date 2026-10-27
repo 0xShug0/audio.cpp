@@ -200,11 +200,7 @@ void test_request_options(const Package & package) {
     rejects({{"language", "ja"}}, "transcribes en");
     rejects({{"max_tokens", "0"}}, "max_tokens");
     rejects({{"max_tokens", "5x"}}, "max_tokens");
-
-    // The framework's integer parser reports "stoll: no conversion" here,
-    // without the option name, so only the rejection is checked.
-    lfm2_audio_test::require_throws([&] { (void)session->run(request(tone(1.0), {{"max_tokens", "many"}})); },
-        "request option max_tokens=many");
+    rejects({{"max_tokens", "many"}}, "max_tokens");
 
     rejects({{"audio_chunk_mode", "sometimes"}}, "audio_chunk_mode");
     rejects({{"audio_chunk_seconds", "0"}}, "audio_chunk_duration_sec");
