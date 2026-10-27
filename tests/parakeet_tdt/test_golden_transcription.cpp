@@ -27,8 +27,10 @@
 // isn't present (e.g. a fresh checkout without models downloaded), this test
 // SKIPs rather than failing, via SKIP_RETURN_CODE configured in CMakeLists.txt.
 
+#include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/core/backend.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/registry.h"
@@ -69,6 +71,7 @@ std::string arg_value(int argc, char ** argv, const std::string & name, const st
 }  // namespace
 
 int main(int argc, char ** argv) {
+    engine::debug::configure_logging({argc > 1 && std::string(argv[1]) == "--log", std::nullopt});
     const std::filesystem::path model_path = arg_value(
         argc, argv, "--model", repo_path("models/parakeet-tdt-0.6b-v3").string());
     const std::filesystem::path audio_path = arg_value(
@@ -195,9 +198,56 @@ int main(int argc, char ** argv) {
             return kExitFail;
         }
 
+        for (const int sample_rate : {16000, 48000}) {
+            const auto mono = engine::audio::resample_mono_linear(
+                wav.samples, wav.sample_rate, sample_rate);
+            auto stereo_request = request;
+            stereo_request.audio_input = engine::runtime::AudioBuffer{
+                sample_rate,
+                2,
+                engine::audio::duplicate_mono_to_interleaved_channels(mono, 2),
+            };
+            long_form->prepare(engine::runtime::build_preparation_request(stereo_request));
+            const auto stereo_result = long_form->run(stereo_request);
+            if (!stereo_result.text_output.has_value() ||
+                stereo_result.text_output->text != long_form_text ||
+                stereo_result.word_timestamps.size() != long_form_result.word_timestamps.size()) {
+                throw std::runtime_error("resampled stereo long-form transcription mismatch");
+            }
+            for (size_t i = 0; i < stereo_result.word_timestamps.size(); ++i) {
+                const auto & expected = long_form_result.word_timestamps[i];
+                const auto & actual = stereo_result.word_timestamps[i];
+                if (actual.word != expected.word ||
+                    actual.span.start_sample != expected.span.start_sample ||
+                    actual.span.end_sample != expected.span.end_sample) {
+                    throw std::runtime_error("resampled stereo long-form timestamp mismatch");
+                }
+            }
+        }
+
+        long_form_base.reset();
+        session_options.options["parakeet_tdt.offline_mode"] = "full_context";
+        auto fixed_base = model->create_task_session(task, session_options);
+        auto * fixed = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(fixed_base.get());
+        if (fixed == nullptr) {
+            throw std::runtime_error("Parakeet TDT did not produce a fixed-window session");
+        }
+        request.audio_input = engine::runtime::AudioBuffer{
+            48000,
+            2,
+            engine::audio::duplicate_mono_to_interleaved_channels(
+                engine::audio::resample_mono_linear(wav.samples, wav.sample_rate, 48000), 2),
+        };
+        request.options["audio_chunk_mode"] = "fixed";
+        fixed->prepare(engine::runtime::build_preparation_request(request));
+        const auto fixed_result = fixed->run(request);
+        if (!fixed_result.text_output.has_value() || fixed_result.text_output->text != kExpectedText) {
+            throw std::runtime_error("stereo fixed-window transcription mismatch in full-context mode");
+        }
+
         std::printf(
             "PASS: full-context and long-form transcription plus word timestamps "
-            "match expected reference output\n");
+            "match expected reference output; stereo input and fixed windows also pass\n");
         return kExitPass;
     } catch (const std::exception & e) {
         std::fprintf(stderr, "FAIL: exception: %s\n", e.what());
