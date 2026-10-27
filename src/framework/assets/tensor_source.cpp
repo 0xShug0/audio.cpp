@@ -42,6 +42,7 @@ constexpr std::pair<std::string_view, TensorContainer> kTensorContainers[] = {
 
 constexpr int64_t kParallelF32ConvertElements = 1ll << 20;
 constexpr int64_t kF32ConvertChunkElements = 1ll << 16;
+constexpr int64_t kF32DecodeChunkElements = 1ll << 16;
 // Quantization chunks are whole ROWS, so this is a budget rounded down to a row
 // count rather than an exact split. A row of a large tensor is a few thousand
 // elements, which puts a chunk in the same size range as the conversions above.
@@ -286,7 +287,10 @@ void set_tensor_bytes(ggml_tensor * tensor, const void * data, size_t bytes, std
     // copies leave the pageable source pages registered with the GPU, the file pages are never
     // released, and the load crawls once they approach the memory limit.
     constexpr size_t kUploadChunk = size_t{64} << 20;
-    std::vector<std::byte> staging(std::min(kUploadChunk, bytes));
+    thread_local std::vector<std::byte> staging;
+    const size_t staging_bytes = std::min(kUploadChunk, bytes);
+    if (staging.capacity() < staging_bytes) staging.reserve(staging_bytes);
+    staging.resize(staging_bytes);
     const auto * source = static_cast<const std::byte *>(data);
     for (size_t offset = 0; offset < bytes; offset += staging.size()) {
         const size_t count = std::min(staging.size(), bytes - offset);
@@ -309,10 +313,17 @@ std::vector<float> decode_tensor_data_f32(std::string_view name, const TensorDat
             throw std::runtime_error("invalid F16 tensor byte size: " + std::string(name));
         }
         std::vector<float> values(static_cast<size_t>(tensor.shape.num_elements()));
-        ggml_fp16_to_fp32_row(
-            reinterpret_cast<const ggml_fp16_t *>(tensor.bytes.data()),
-            values.data(),
-            tensor.shape.num_elements());
+        const auto * source = reinterpret_cast<const ggml_fp16_t *>(tensor.bytes.data());
+        const int64_t count = tensor.shape.num_elements();
+        const int64_t chunks = (count + kF32DecodeChunkElements - 1) / kF32DecodeChunkElements;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(count >= kParallelF32ConvertElements)
+#endif
+        for (int64_t chunk = 0; chunk < chunks; ++chunk) {
+            const int64_t offset = chunk * kF32DecodeChunkElements;
+            const int64_t length = std::min(kF32DecodeChunkElements, count - offset);
+            ggml_fp16_to_fp32_row(source + offset, values.data() + offset, length);
+        }
         return values;
     }
     if (tensor.type == GGML_TYPE_BF16) {
@@ -320,10 +331,17 @@ std::vector<float> decode_tensor_data_f32(std::string_view name, const TensorDat
             throw std::runtime_error("invalid BF16 tensor byte size: " + std::string(name));
         }
         std::vector<float> values(static_cast<size_t>(tensor.shape.num_elements()));
-        ggml_bf16_to_fp32_row(
-            reinterpret_cast<const ggml_bf16_t *>(tensor.bytes.data()),
-            values.data(),
-            tensor.shape.num_elements());
+        const auto * source = reinterpret_cast<const ggml_bf16_t *>(tensor.bytes.data());
+        const int64_t count = tensor.shape.num_elements();
+        const int64_t chunks = (count + kF32DecodeChunkElements - 1) / kF32DecodeChunkElements;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(count >= kParallelF32ConvertElements)
+#endif
+        for (int64_t chunk = 0; chunk < chunks; ++chunk) {
+            const int64_t offset = chunk * kF32DecodeChunkElements;
+            const int64_t length = std::min(kF32DecodeChunkElements, count - offset);
+            ggml_bf16_to_fp32_row(source + offset, values.data() + offset, length);
+        }
         return values;
     }
     const ggml_type_traits * traits = ggml_get_type_traits(tensor.type);
@@ -341,6 +359,9 @@ std::vector<float> decode_tensor_data_f32(std::string_view name, const TensorDat
     }
     std::vector<float> values(static_cast<size_t>(rows * cols));
     const std::byte * src = tensor.bytes.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(tensor.shape.num_elements() >= kParallelF32ConvertElements)
+#endif
     for (int64_t row = 0; row < rows; ++row) {
         traits->to_float(
             src + static_cast<std::ptrdiff_t>(row * static_cast<int64_t>(row_bytes)),
@@ -934,6 +955,29 @@ public:
         bytes_.discard_range(data_begin_ + info.data_offset, byte_size);
     }
 
+    void set_backend_tensor_async(
+        ggml_tensor * tensor,
+        std::string_view name,
+        TensorStorageType storage_type,
+        const std::vector<int64_t> & expected_shape,
+        const BackendUploadFn & upload) const override {
+        const auto & info = require_info(name);
+        validate_expected_shape(name, info.shape, expected_shape);
+        const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
+        if (info.type != type) {
+            set_backend_tensor(tensor, name, storage_type, expected_shape);
+            return;
+        }
+        const auto shape = shape_from_dims(expected_shape);
+        auto lock = lock_storage();
+        const auto [data, byte_size] = require_data_range(info);
+        validate_raw_tensor_byte_size(name, shape, type, byte_size);
+        // The callback copies the mapped bytes into bounded staging buffers
+        // before returning, so mapped pages can still be discarded immediately.
+        upload(tensor, data, 0, byte_size);
+        bytes_.discard_range(data_begin_ + info.data_offset, byte_size);
+    }
+
     void set_backend_f32_tensor(
         ggml_tensor * tensor,
         std::string_view name,
@@ -1417,6 +1461,15 @@ void TensorSource::set_backend_tensor(
             throw std::runtime_error("tensor rank must be between 1 and 4");
     }
     set_tensor_bytes(tensor, data.bytes.data(), data.bytes.size(), name);
+}
+
+void TensorSource::set_backend_tensor_async(
+    ggml_tensor * tensor,
+    std::string_view name,
+    TensorStorageType storage_type,
+    const std::vector<int64_t> & expected_shape,
+    const BackendUploadFn &) const {
+    set_backend_tensor(tensor, name, storage_type, expected_shape);
 }
 
 void TensorSource::set_backend_f32_tensor(

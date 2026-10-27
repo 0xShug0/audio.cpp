@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -74,6 +75,8 @@ struct RawTensorData {
 
 class TensorSource {
 public:
+    using BackendUploadFn = std::function<void(ggml_tensor *, const void *, size_t, size_t)>;
+
     virtual ~TensorSource() = default;
 
     [[nodiscard]] virtual const std::filesystem::path & source_path() const noexcept = 0;
@@ -120,6 +123,14 @@ public:
         std::string_view name,
         TensorStorageType storage_type,
         const std::vector<int64_t> & expected_shape) const;
+    // Sources with stable raw storage may enqueue a copy instead of synchronizing
+    // each tensor. The default preserves the existing synchronous behavior.
+    virtual void set_backend_tensor_async(
+        ggml_tensor * tensor,
+        std::string_view name,
+        TensorStorageType storage_type,
+        const std::vector<int64_t> & expected_shape,
+        const BackendUploadFn & upload) const;
     virtual void set_backend_f32_tensor(
         ggml_tensor * tensor,
         std::string_view name,

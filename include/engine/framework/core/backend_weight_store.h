@@ -10,9 +10,11 @@
 #include <ggml.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <chrono>
 #include <initializer_list>
 #include <memory>
 #include <stdexcept>
@@ -238,19 +240,34 @@ public:
         }
         engine::core::register_weight_bytes(pending_bytes);
         engine::core::emit_weight_upload_progress(name_);
+        AsyncUploadQueue async_upload(backend_, backend_type_);
+        const auto upload_start = std::chrono::steady_clock::now();
         for (auto & upload : pending_) {
             if (upload.kind == PendingUploadKind::Tensor) {
-                upload.source->set_backend_tensor(
-                    upload.tensor,
-                    upload.name,
-                    upload.storage_type,
-                    upload.expected_shape);
+                if (async_upload.enabled()) {
+                    upload.source->set_backend_tensor_async(
+                        upload.tensor,
+                        upload.name,
+                        upload.storage_type,
+                        upload.expected_shape,
+                        [&async_upload](ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+                            async_upload.enqueue(tensor, data, offset, size);
+                        });
+                } else {
+                    upload.source->set_backend_tensor(
+                        upload.tensor,
+                        upload.name,
+                        upload.storage_type,
+                        upload.expected_shape);
+                }
             } else if (upload.kind == PendingUploadKind::F32) {
                 upload.source->set_backend_f32_tensor(upload.tensor, upload.name, upload.expected_shape);
             } else {
-                upload_bytes(upload.tensor, upload.bytes);
-                upload.bytes.clear();
-                upload.bytes.shrink_to_fit();
+                if (async_upload.enabled()) {
+                    async_upload.enqueue(upload.tensor, upload.bytes.data(), 0, upload.bytes.size());
+                } else {
+                    upload_bytes(upload.tensor, upload.bytes);
+                }
             }
             // Per-tensor progress report (llama.cpp pace): the tensor reads and
             // backend copies below are the long pole of a model load, so each
@@ -258,11 +275,147 @@ public:
             engine::core::add_uploaded_weight_bytes(ggml_nbytes(upload.tensor));
             engine::core::emit_weight_upload_progress(name_);
         }
+        async_upload.finish();
+        debug::timing_log_scalar(
+            name_ + ".weights.upload_ms",
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - upload_start).count());
+        for (auto & upload : pending_) {
+            if (upload.kind == PendingUploadKind::Bytes) {
+                upload.bytes.clear();
+                upload.bytes.shrink_to_fit();
+            }
+        }
         pending_.clear();
         pending_.shrink_to_fit();
     }
 
 private:
+    class AsyncUploadQueue {
+    public:
+        AsyncUploadQueue(ggml_backend_t backend, BackendType backend_type) : backend_(backend) {
+            if (backend_ == nullptr || (backend_type != BackendType::Cuda && backend_type != BackendType::Hip)) {
+                return;
+            }
+            auto * device = ggml_backend_get_device(backend_);
+            if (device == nullptr) {
+                return;
+            }
+            ggml_backend_dev_props props{};
+            ggml_backend_dev_get_props(device, &props);
+            device_buft_ = ggml_backend_dev_buffer_type(device);
+            auto * host_buft = ggml_backend_dev_host_buffer_type(device);
+            if (!props.caps.async || !props.caps.host_buffer || host_buft == nullptr || device_buft_ == nullptr) {
+                return;
+            }
+            host_buft_ = host_buft;
+            supported_ = true;
+        }
+
+        AsyncUploadQueue(const AsyncUploadQueue &) = delete;
+        AsyncUploadQueue & operator=(const AsyncUploadQueue &) = delete;
+
+        ~AsyncUploadQueue() {
+            finish();
+            release_slots();
+        }
+
+        bool enabled() const noexcept { return supported_; }
+
+        void enqueue(ggml_tensor * tensor, const void * data, size_t tensor_offset, size_t size) {
+            if (tensor == nullptr || data == nullptr || tensor_offset > ggml_nbytes(tensor) ||
+                size > ggml_nbytes(tensor) - tensor_offset) {
+                throw std::runtime_error("invalid queued tensor upload in " + name_for_error_);
+            }
+            ggml_backend_buffer_t tensor_buffer = tensor->view_src != nullptr ? tensor->view_src->buffer : tensor->buffer;
+            if (!supported_ || tensor_buffer == nullptr || ggml_backend_buffer_is_host(tensor_buffer) ||
+                ggml_backend_buffer_get_type(tensor_buffer) != device_buft_) {
+                ggml_backend_tensor_set(tensor, data, tensor_offset, size);
+                return;
+            }
+            if (!prepare_slots()) {
+                supported_ = false;
+                ggml_backend_tensor_set(tensor, data, tensor_offset, size);
+                return;
+            }
+            const auto * source = static_cast<const std::byte *>(data);
+            size_t copied = 0;
+            while (copied < size) {
+                const size_t slot_index = next_slot_++ % slots_.size();
+                if (slots_[slot_index].pending) {
+                    synchronize_pending();
+                }
+                const size_t count = std::min(kChunkBytes, size - copied);
+                std::memcpy(slots_[slot_index].data, source + copied, count);
+                ggml_backend_tensor_set_async(backend_, tensor, slots_[slot_index].data, tensor_offset + copied, count);
+                slots_[slot_index].pending = true;
+                copied += count;
+            }
+        }
+
+        void finish() noexcept {
+            if (has_pending()) {
+                ggml_backend_synchronize(backend_);
+                for (auto & slot : slots_) slot.pending = false;
+            }
+        }
+
+    private:
+        struct Slot {
+            ggml_backend_buffer_t buffer = nullptr;
+            std::byte * data = nullptr;
+            bool pending = false;
+        };
+
+        static constexpr size_t kChunkBytes = size_t{64} << 20;
+
+        bool prepare_slots() {
+            if (prepared_) return true;
+            for (auto & slot : slots_) {
+                slot.buffer = ggml_backend_buft_alloc_buffer(host_buft_, kChunkBytes);
+                if (slot.buffer == nullptr) {
+                    release_slots();
+                    return false;
+                }
+                slot.data = static_cast<std::byte *>(ggml_backend_buffer_get_base(slot.buffer));
+                if (slot.data == nullptr) {
+                    release_slots();
+                    return false;
+                }
+            }
+            prepared_ = true;
+            return true;
+        }
+
+        bool has_pending() const noexcept {
+            for (const auto & slot : slots_) if (slot.pending) return true;
+            return false;
+        }
+
+        void synchronize_pending() noexcept {
+            ggml_backend_synchronize(backend_);
+            for (auto & slot : slots_) slot.pending = false;
+        }
+
+        void release_slots() noexcept {
+            for (auto & slot : slots_) {
+                if (slot.buffer != nullptr) ggml_backend_buffer_free(slot.buffer);
+                slot.buffer = nullptr;
+                slot.data = nullptr;
+                slot.pending = false;
+            }
+            prepared_ = false;
+        }
+
+        ggml_backend_t backend_ = nullptr;
+        ggml_backend_buffer_type_t device_buft_ = nullptr;
+        ggml_backend_buffer_type_t host_buft_ = nullptr;
+        std::array<Slot, 2> slots_{};
+        size_t next_slot_ = 0;
+        bool supported_ = false;
+        bool prepared_ = false;
+        const std::string name_for_error_ = "BackendWeightStore";
+    };
+
     struct GgmlContextDeleter {
         void operator()(ggml_context * ctx) const noexcept {
             if (ctx != nullptr) {
