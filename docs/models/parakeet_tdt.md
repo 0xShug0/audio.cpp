@@ -236,13 +236,20 @@ flushes a short tail; `reset()` retains the loaded weights and reusable graphs.
 ## Long-form audio
 
 Offline mode remains full-context by default. Set
-`parakeet_tdt.offline_mode=long_form` to process arbitrarily long mono 16 kHz
-audio with the same bounded overlapping-window scheduler, or use `auto` to
+`parakeet_tdt.offline_mode=long_form` to process long audio with the same
+bounded overlapping-window scheduler, or use `auto` to
 switch after `parakeet_tdt.audio_chunk_threshold_sec` (30 seconds by
 default). Long-form mode preserves global timestamps and predictor state while
 decoding every center region exactly once. Because each region sees bounded
 rather than utterance-wide context, its transcript can differ from the default
 full-context result.
+
+Offline long-form input is downmixed and resampled to mono 16 kHz before
+windowing, using the same preprocessing as full-context mode. Streaming still
+requires mono 16 kHz input. Request `audio_chunk_mode=fixed` selects this
+bounded-window scheduler even when `offline_mode=full_context`. Set the session
+option `parakeet_tdt.audio_chunk_duration_sec` for its center-window duration;
+the request option `audio_chunk_duration_sec` only controls VAD chunk duration.
 
 Set `--request-option audio_chunk_mode=vad` to use Silero VAD-planned speech
 spans instead of fixed windows. VAD mode uses
