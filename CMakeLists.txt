@@ -930,6 +930,8 @@ audiocpp_add_model(omnivoice
         engine/models/omnivoice/loader.h
     LOADERS
         engine::models::omnivoice::make_omnivoice_loader
+    OBJECT_LIBRARIES
+        utf8proc_vendor
 )
 
 audiocpp_add_model(reuse
