@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/models/audio_flamingo/audio_encoder.h"
@@ -24,9 +25,23 @@ public:
         std::shared_ptr<const AudioFlamingoAssets> assets, std::shared_ptr<const model_spec::ModelContract> contract)
         : RuntimeSessionBase(options), task_(task), assets_(std::move(assets)), contract_(std::move(contract)),
           tokenizer_(assets_), frontend_(assets_) {
+        if (!contract_->session_option_keys.count("audio_flamingo.lora") ||
+            !contract_->session_option_keys.count("audio_flamingo.lora_scale") ||
+            !contract_->request_option_keys.count("template_name")) {
+            auto extended = std::make_shared<model_spec::ModelContract>(*contract_);
+            extended->session_option_keys.insert("audio_flamingo.lora");
+            extended->session_option_keys.insert("audio_flamingo.lora_scale");
+            extended->request_option_keys.insert("template_name");
+            contract_ = std::move(extended);
+        }
         runtime::validate_spec_backed_session_options(options, *contract_, kFamily, "Audio Flamingo");
         if (task.task != runtime::VoiceTaskKind::Asr || task.mode != runtime::RunMode::Offline) {
             throw std::runtime_error("Audio Flamingo supports offline audio understanding through the ASR task");
+        }
+        if (const auto path = runtime::find_option(options.options, {"audio_flamingo.lora"}); path && !path->empty()) {
+            const float strength = runtime::parse_finite_float_option(
+                options.options, {"audio_flamingo.lora_scale"}).value_or(1.0F);
+            assets_ = load_audio_flamingo_adapter(assets_, std::filesystem::u8path(*path), strength);
         }
         const auto storage = assets::parse_tensor_storage_type(
             runtime::find_option(options.options, {"audio_flamingo.weight_type"}).value_or("native"));
@@ -61,18 +76,35 @@ public:
         if (const auto sample = runtime::find_option(request.options, {"do_sample"})) {
             generation.do_sample = runtime::parse_bool_option(*sample, "do_sample");
         }
-        const auto instruction = runtime::find_option(request.options, {"instruct"}).value_or(
+        auto instruction = runtime::find_option(request.options, {"instruct"}).value_or(
             request.text_input && !request.text_input->text.empty() ? request.text_input->text : "Transcribe the input speech.");
+        const auto template_name = runtime::find_option(request.options, {"template_name"}).value_or("default");
+        if (template_name != "default" && template_name != "temporal_grounding") {
+            throw runtime::InvalidRequestError("Audio Flamingo template_name must be default or temporal_grounding");
+        }
+        const bool temporal_grounding = template_name == "temporal_grounding";
+        if (temporal_grounding) {
+            if (assets_->config.variant != AudioFlamingoVariant::V3) {
+                throw runtime::InvalidRequestError("SpotSound temporal grounding requires the Audio Flamingo 3 base model");
+            }
+            instruction = "This is a sequence of audio stream. Your task is to identify the temporal window "
+                "(start and end timestamps) when the given query appears. The query is: " + instruction + " Answer: ";
+        }
         const auto started = std::chrono::steady_clock::now();
         auto stage = started;
         const auto features = frontend_.extract(*request.audio_input);
         debug::timing_log_scalar("audio_flamingo.frontend_ms", debug::elapsed_ms(stage));
-        const auto prompt = tokenizer_.build_prompt(instruction, features);
+        const auto prompt = tokenizer_.build_prompt(instruction, features, temporal_grounding);
         stage = std::chrono::steady_clock::now();
         const auto encoded = encoder_->encode(features);
         debug::timing_log_scalar("audio_flamingo.encoder_ms", debug::elapsed_ms(stage));
         stage = std::chrono::steady_clock::now();
-        const auto projected = projector_->project(encoded, features, prompt);
+        auto projected = projector_->project(encoded, features, prompt);
+        if (temporal_grounding) {
+            // Match SpotSound's scatter: retain only complete seconds of audio features.
+            projected.tokens = static_cast<int64_t>(prompt.audio_token_positions.size());
+            projected.values.resize(static_cast<size_t>(projected.tokens * projected.hidden_size));
+        }
         debug::timing_log_scalar("audio_flamingo.projector_ms", debug::elapsed_ms(stage));
         stage = std::chrono::steady_clock::now();
         const auto generated = decoder_->generate(prompt, projected, generation);

@@ -28,7 +28,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `ast_audioset` | [MIT/ast-finetuned-audioset-10-10-0.4593](https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593) | BSD-3-Clause | Yes | | 2026-09-26 |
 | `audio8_asr` | [Edge0/Audio8-ASR-0.1B](https://huggingface.co/Edge0/Audio8-ASR-0.1B) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `audio8_tts` | [Edge0/Audio8-TTS-Preview-0.6b](https://huggingface.co/Edge0/Audio8-TTS-Preview-0.6b) | Apache-2.0 | Yes | | 2026-09-21 |
-| `audio_flamingo` | [nvidia/audio-flamingo-3-hf](https://huggingface.co/nvidia/audio-flamingo-3-hf), [nvidia/audio-flamingo-next-hf](https://huggingface.co/nvidia/audio-flamingo-next-hf) | NVIDIA OneWay Noncommercial | No | Upstream model-card licenses and terms apply. | 2026-10-02 |
+| `audio_flamingo` | [nvidia/audio-flamingo-3-hf](https://huggingface.co/nvidia/audio-flamingo-3-hf), [nvidia/audio-flamingo-next-hf](https://huggingface.co/nvidia/audio-flamingo-next-hf), [nvidia/music-flamingo-2601-hf](https://huggingface.co/nvidia/music-flamingo-2601-hf) | NVIDIA OneWay Noncommercial | No | Upstream model-card licenses and terms apply. SpotSound adapter is MIT; base-model terms still apply. | 2026-10-26 |
 | `audiosr` | [haoheliu/audiosr_basic](https://huggingface.co/haoheliu/audiosr_basic) | Apache-2.0 | Yes | | 2026-09-21 |
 | `auk` | [tencent/AuK](https://huggingface.co/tencent/AuK)<br>[tencent/AuK-Flash](https://huggingface.co/tencent/AuK-Flash) | MIT | Yes | | 2026-09-21 |
 | `breeze_tts` | [BreezeBlue/Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) | [BreezeBlue Research and Non-Commercial License](https://huggingface.co/BreezeBlue/Breeze-TTS-2/blob/main/LICENSE) | No | | 2026-09-21 |

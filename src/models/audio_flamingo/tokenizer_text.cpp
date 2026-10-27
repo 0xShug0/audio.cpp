@@ -1,6 +1,7 @@
 #include "engine/models/audio_flamingo/tokenizer_text.h"
 
 #include "engine/framework/tokenizers/llama_bpe.h"
+#include "engine/framework/runtime/errors.h"
 
 #include <algorithm>
 #include <numeric>
@@ -20,6 +21,14 @@ struct AudioFlamingoTextTokenizer::Impl {
             throw std::runtime_error("Audio Flamingo tokenizer audio token does not match the model config");
         }
         audio_id = *token;
+        const auto chat_template = assets->resources.read_text("chat_template");
+        const std::string system_start = "<|im_start|>system\n";
+        const auto start = chat_template.find(system_start);
+        const auto end = chat_template.find("<|im_end|>", start);
+        if (start == std::string::npos || end == std::string::npos) {
+            throw std::runtime_error("Audio Flamingo chat template requires a static system message");
+        }
+        system_prompt = chat_template.substr(start + system_start.size(), end - start - system_start.size());
         if (assets->config.variant == AudioFlamingoVariant::Next) {
             const auto bos = tokenizer.find_token_id("<|sound_bos|>");
             const auto eos = tokenizer.find_token_id("<|sound_eos|>");
@@ -33,6 +42,7 @@ struct AudioFlamingoTextTokenizer::Impl {
     std::shared_ptr<const AudioFlamingoAssets> assets;
     tokenizers::LlamaBpeTokenizer tokenizer;
     int32_t audio_id = 0;
+    std::string system_prompt;
 };
 
 AudioFlamingoTextTokenizer::AudioFlamingoTextTokenizer(std::shared_ptr<const AudioFlamingoAssets> assets)
@@ -42,7 +52,7 @@ std::string AudioFlamingoTextTokenizer::decode(const std::vector<int32_t> & toke
     return impl_->tokenizer.decode(token_ids, skip_special_tokens);
 }
 
-AudioFlamingoPrompt AudioFlamingoTextTokenizer::build_prompt(const std::string & prompt, const AudioFlamingoAudioFeatures & features) const {
+AudioFlamingoPrompt AudioFlamingoTextTokenizer::build_prompt(const std::string & prompt, const AudioFlamingoAudioFeatures & features, bool temporal_grounding) const {
     if (features.post_lengths.empty()) {
         throw std::runtime_error("Audio Flamingo prompt requires audio post lengths");
     }
@@ -53,21 +63,23 @@ AudioFlamingoPrompt AudioFlamingoTextTokenizer::build_prompt(const std::string &
     }
     expanded.reserve(prompt.size() + 512 + static_cast<size_t>(audio_token_count) * 7);
     expanded += "<|im_start|>system\n";
-    if (impl_->assets->config.variant == AudioFlamingoVariant::Next) {
-        expanded += "You are Audio Flamingo-Next, a multimodal assistant for language and audio. ";
-        expanded += "On each turn you receive an optional audio clip which may contain speech, music, or ambient sounds and optional text, ";
-        expanded += "you will receive at least one or both; use your world knowledge and reasoning to help the user with any task. ";
-        expanded += "Interpret the entirety of the content of any input audio\xE2\x80\x94regardless of whether the user calls it audio, speech, music, or sound.";
-    } else {
-        expanded += "You are a helpful assistant.";
-    }
+    expanded += impl_->system_prompt;
     expanded += "<|im_end|>\n";
     expanded += "<|im_start|>user\n";
     if (impl_->assets->config.variant == AudioFlamingoVariant::Next) {
         expanded += "<|sound_bos|>";
     }
-    for (int64_t i = 0; i < audio_token_count; ++i) {
-        expanded += "<sound>";
+    if (temporal_grounding) {
+        const int64_t seconds = audio_token_count / 25;
+        if (seconds == 0) {
+            throw runtime::InvalidRequestError("SpotSound requires at least one second of audio");
+        }
+        for (int64_t second = 0; second < seconds; ++second) {
+            expanded += "timestamp: " + std::to_string(second) + " seconds; feature: ";
+            for (int64_t i = 0; i < 25; ++i) expanded += "<sound>";
+        }
+    } else {
+        for (int64_t i = 0; i < audio_token_count; ++i) expanded += "<sound>";
     }
     if (impl_->assets->config.variant == AudioFlamingoVariant::Next) {
         expanded += "<|sound_eos|>";
@@ -82,7 +94,7 @@ AudioFlamingoPrompt AudioFlamingoTextTokenizer::build_prompt(const std::string &
             out.audio_token_positions.push_back(static_cast<int32_t>(i));
         }
     }
-    if (out.audio_token_positions.size() != static_cast<size_t>(audio_token_count)) {
+    if (out.audio_token_positions.size() != static_cast<size_t>(temporal_grounding ? audio_token_count / 25 * 25 : audio_token_count)) {
         throw std::runtime_error("Audio Flamingo prompt audio token count does not match feature count");
     }
     return out;

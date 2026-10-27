@@ -16,7 +16,7 @@ public:
     explicit AudioFlamingoTextTokenizer(std::shared_ptr<const AudioFlamingoAssets> assets);
 
     std::string decode(const std::vector<int32_t> & token_ids, bool skip_special_tokens = true) const;
-    AudioFlamingoPrompt build_prompt(const std::string & prompt, const AudioFlamingoAudioFeatures & features) const;
+    AudioFlamingoPrompt build_prompt(const std::string & prompt, const AudioFlamingoAudioFeatures & features, bool temporal_grounding = false) const;
 
 private:
     std::shared_ptr<const Impl> impl_;
