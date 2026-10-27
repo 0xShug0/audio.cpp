@@ -4,7 +4,7 @@ For Qwen3-ASR adapter loading and merged GGUF export, see the [LoRA guide](lora.
 
 | Model | Family | Mode(s) | Quick Start |
 |---|---|---|---|
-| Audio Flamingo 3 / Next | `audio_flamingo` | offline | [Audio Flamingo](models/audio_flamingo.md) |
+| Audio Flamingo 3 / Next / Music Flamingo / SpotSound | `audio_flamingo` | offline | [Audio Flamingo](models/audio_flamingo.md) |
 | Canary 180M Flash | `canary_asr` | offline | [Canary 180M Flash](models/canary_asr.md) |
 | Citrinet ASR | `citrinet_asr` | offline | [Citrinet ASR](#citrinet-asr) |
 | Cohere Transcribe | `cohere_asr` | offline | [Cohere Transcribe](models/cohere_asr.md) |

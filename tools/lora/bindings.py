@@ -16,7 +16,7 @@ from checkpoint import EXTENSIONS
 
 FAMILIES = (
     "qwen3_tts", "qwen3_asr", "voxcpm2", "voxcpm1", "fish_audio",
-    "cosyvoice3", "f5_tts", "outetts", "yue2", "ace_step", "vibevoice",
+    "cosyvoice3", "f5_tts", "outetts", "yue2", "ace_step", "vibevoice", "audio_flamingo",
 )
 
 MERGE_MODES = {"yue2": "rounded_bf16_delta", "vibevoice": "rankwise_f32"}
@@ -24,7 +24,7 @@ MERGE_MODES = {"yue2": "rounded_bf16_delta", "vibevoice": "rankwise_f32"}
 COMPONENTS = {
     "qwen3_tts": "model_weights", "voxcpm2": "weights",
     "fish_audio": "model_weights", "cosyvoice3": "llm",
-    "f5_tts": "transformer", "outetts": "model_weights",
+    "f5_tts": "transformer", "outetts": "model_weights", "audio_flamingo": "weights",
 }
 
 

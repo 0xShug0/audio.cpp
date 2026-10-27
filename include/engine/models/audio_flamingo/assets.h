@@ -78,5 +78,8 @@ struct AudioFlamingoAssets {
 };
 
 std::shared_ptr<const AudioFlamingoAssets> load_audio_flamingo_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const AudioFlamingoAssets> load_audio_flamingo_adapter(
+    std::shared_ptr<const AudioFlamingoAssets> assets,
+    const std::filesystem::path & path, float strength);
 
 }  // namespace engine::models::audio_flamingo

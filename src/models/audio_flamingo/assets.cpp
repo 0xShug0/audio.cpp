@@ -1,6 +1,7 @@
 #include "engine/models/audio_flamingo/assets.h"
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/package.h"
@@ -118,6 +119,25 @@ std::shared_ptr<const AudioFlamingoAssets> load_audio_flamingo_assets(const std:
     assets.model_weights = resources.open_tensor_source("weights");
     assets.resources = std::move(resources);
     return std::make_shared<AudioFlamingoAssets>(std::move(assets));
+}
+
+std::shared_ptr<const AudioFlamingoAssets> load_audio_flamingo_adapter(
+    std::shared_ptr<const AudioFlamingoAssets> assets,
+    const std::filesystem::path & path, float strength) {
+    engine::assets::WeightAdapterReadOptions options;
+    options.require_scaling_metadata = true;
+    options.strength = strength;
+    auto adapter = engine::assets::read_weight_adapter(path, options);
+    engine::assets::WeightAdapterBindings bindings;
+    for (const auto & tensor : assets->model_weights->tensors()) {
+        bindings.add(tensor.name, tensor.name);
+    }
+    auto plan = engine::assets::bind_weight_adapter(
+        *assets->model_weights, std::move(adapter), bindings, engine::assets::WeightMergeMode::DeltaF32);
+    auto adapted = std::make_shared<AudioFlamingoAssets>(*assets);
+    adapted->model_weights = engine::assets::make_weight_adapter_source(
+        assets->model_weights, std::move(plan), "audio_flamingo.lora");
+    return adapted;
 }
 
 }  // namespace engine::models::audio_flamingo

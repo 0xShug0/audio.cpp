@@ -8,6 +8,7 @@ automatically compatible.
 
 | Model | Family | Session options | Adapter format and target |
 |---|---|---|---|
+| Audio Flamingo | `audio_flamingo` | `audio_flamingo.lora`, `audio_flamingo.lora_scale` | Matching PEFT encoder/projector/decoder adapters. SpotSound uses the Audio Flamingo 3 base with `template_name=temporal_grounding`; see the [model guide](models/audio_flamingo.md#spotsound-temporal-grounding). |
 | Qwen3-TTS | `qwen3_tts` | `qwen3_tts.lora`, `qwen3_tts.lora_scale` | PEFT Talker/Subtalker adapters. Custom-voice packages can also include `speaker_embedding.safetensors` and `tts_config.json`. |
 | Qwen3-ASR | `qwen3_asr` | `qwen3_asr.lora`, `qwen3_asr.lora_scale` | PEFT encoder/decoder adapters; both original and Transformers weight layouts are supported. |
 | VoxCPM2 | `voxcpm2` | `voxcpm2.lora`, `voxcpm2.lora_scale` | Native `lora_weights.safetensors` with adjacent `lora_config.json`; generator only, not AudioVAE. |

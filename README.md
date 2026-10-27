@@ -123,7 +123,7 @@ Model weights keep the license of their original release, which is separate from
 |---|---|---|---|---|
 | **ast_audioset** | Classify | language agnostic | MIT AST AudioSet, 527 classes | GGUF F32 |
 | **ced** | Classify | language agnostic | CED Tiny<br>CED Mini<br>CED Small<br>CED Base<br>527 AudioSet classes | GGUF F32 |
-| **audio_flamingo** | ASR, Audio understanding | en | Audio Flamingo 3<br>Audio Flamingo Next | GGUF BF16 |
+| **audio_flamingo** | ASR, Audio understanding | en | Audio Flamingo 3<br>Audio Flamingo Next<br>Music Flamingo 2601<br>SpotSound (LoRA temporal grounding) | GGUF BF16/Q8/Q4, LoRA |
 | **canary_asr** | ASR, Translate | en, de, es, fr | Canary 180M Flash | GGUF F32/Q8 |
 | **citrinet_asr** | ASR | en | Citrinet-256 | GGUF Q8 |
 | **cohere_asr** | ASR | en, fr, de, es, it, pt, nl, pl, el, ar, ja, zh, vi, ko | Cohere Transcribe 03-2026 | GGUF BF16/Q8/Q4_0 |
