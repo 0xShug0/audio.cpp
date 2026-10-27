@@ -1,7 +1,13 @@
 #include "engine/models/omnivoice/tokenizer_text.h"
 
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
 
+#include <utf8proc.h>
+
+#include <cstdlib>
+#include <limits>
+#include <memory>
 #include <regex>
 #include <stdexcept>
 #include <utility>
@@ -37,7 +43,23 @@ OmniVoiceTextTokenizer::OmniVoiceTextTokenizer(std::shared_ptr<const OmniVoiceAs
 }
 
 std::vector<int32_t> OmniVoiceTextTokenizer::encode(const std::string & text) const {
-    return impl_->tokenizer->encode(text);
+    if (text.empty()) return impl_->tokenizer->encode(text);
+    if (text.size() > static_cast<size_t>(std::numeric_limits<utf8proc_ssize_t>::max())) {
+        throw runtime::InvalidRequestError("OmniVoice text is too large to normalize");
+    }
+    // tokenizer.json declares an NFC normalizer; apply it like Hugging Face tokenizers does.
+    utf8proc_uint8_t * output = nullptr;
+    const auto size = utf8proc_map(
+        reinterpret_cast<const utf8proc_uint8_t *>(text.data()),
+        static_cast<utf8proc_ssize_t>(text.size()), &output,
+        static_cast<utf8proc_option_t>(UTF8PROC_STABLE | UTF8PROC_COMPOSE));
+    const std::unique_ptr<utf8proc_uint8_t, decltype(&std::free)> normalized(output, &std::free);
+    if (size < 0) {
+        throw runtime::InvalidRequestError(
+            "OmniVoice text normalization: " + std::string(utf8proc_errmsg(size)));
+    }
+    return impl_->tokenizer->encode(
+        std::string(reinterpret_cast<const char *>(normalized.get()), static_cast<size_t>(size)));
 }
 
 std::vector<int32_t> OmniVoiceTextTokenizer::encode_with_nonverbal_tags(const std::string & text) const {
