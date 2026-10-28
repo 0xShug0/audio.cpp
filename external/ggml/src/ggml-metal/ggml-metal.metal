@@ -10499,7 +10499,7 @@ kernel void kernel_mul_mm(
         ushort sgitg[[simdgroup_index_in_threadgroup]]) {
 
     threadgroup S0 * sa = (threadgroup S0 *)(shmem);
-    threadgroup S1 * sb = (threadgroup S1 *)(shmem + 4096);
+    threadgroup S1 * sb = (threadgroup S1 *)(shmem + 2048 * sizeof(S0));
 
     constexpr int NR0 = 64;
     constexpr int NR1 = 32;
@@ -11358,6 +11358,8 @@ template [[host_name("kernel_set_rows_iq4_nl_i32")]] kernel set_rows_q32_t kerne
 typedef decltype(kernel_mul_mm<half, half4x4, simdgroup_half8x8, half, half2x4, simdgroup_half8x8, float4x4, 1, dequantize_f32, float, float4x4, float, float2x4>) mul_mm_t;
 
 template [[host_name("kernel_mul_mm_f32_f32")]]     kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   float4x4,      1,     dequantize_f32,     float,  float4x4,  float, float2x4>;
+// Explicit full-F32 operands: the default F32-buffer kernel stages operands as half.
+template [[host_name("kernel_mul_mm_f32_f32_full")]] kernel mul_mm_t kernel_mul_mm<float, float4x4, simdgroup_float8x8, float, float2x4, simdgroup_float8x8, float4x4, 1, dequantize_f32, float, float4x4, float, float2x4>;
 
 typedef decltype(kernel_mul_mm_acc<half, half4x4, simdgroup_half8x8, half, half2x4, simdgroup_half8x8, float4x4, 1, dequantize_f32, float, float4x4, float, float2x4>) mul_mm_acc_t;
 

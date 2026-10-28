@@ -1,0 +1,8 @@
+[
+  {"id": "warmup", "text": "disco funk", "duration_sec": 2, "seed": 0},
+  {"id": "funk", "text": "disco funk", "duration_sec": 8, "seed": 0},
+  {"id": "funk_repeat", "text": "disco funk", "duration_sec": 8, "seed": 0},
+  {"id": "acoustic", "text": "A gentle acoustic guitar with warm piano", "duration_sec": 3, "seed": 0},
+  {"id": "electronic", "text": "Driving electronic drums and deep bass", "duration_sec": 12, "seed": 0},
+  {"id": "funk_after_long", "text": "disco funk", "duration_sec": 8, "seed": 0}
+]

@@ -669,6 +669,7 @@ add_library(engine_core OBJECT
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
     src/framework/conditioners/musicgen_style_conditioner_runtime.cpp
+    src/framework/conditioners/musiccoca_runtime.cpp
     src/framework/conditioners/open_clip_conditioner_runtime.cpp
     src/framework/conditioners/synchformer_conditioner_runtime.cpp
     src/models/controlfoley/flow_denoiser.cpp
@@ -2490,6 +2491,18 @@ audiocpp_add_model(mira_tts
 )
 
 
+audiocpp_add_model(magenta_realtime_2
+    SOURCES
+        src/models/magenta_realtime_2/assets.cpp
+        src/models/magenta_realtime_2/depthformer.cpp
+        src/models/magenta_realtime_2/session.cpp
+        src/models/magenta_realtime_2/spectrostream.cpp
+    INCLUDES
+        engine/models/magenta_realtime_2/session.h
+    LOADERS
+        engine::models::magenta_realtime_2::make_magenta_realtime_2_loader
+)
+
 audiocpp_add_model(midashenglm_gen
     SOURCES
         src/models/midashenglm_gen/assets.cpp
@@ -3452,6 +3465,17 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
 
+    if (magenta_realtime_2 IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(magenta_musiccoca_parity tests/magenta_realtime_2/musiccoca_parity.cpp)
+        target_link_libraries(magenta_musiccoca_parity PRIVATE engine_runtime ggml)
+        add_executable(magenta_codec_parity tests/magenta_realtime_2/codec_parity.cpp)
+        target_link_libraries(magenta_codec_parity PRIVATE engine_runtime ggml)
+        add_executable(magenta_validation tests/magenta_realtime_2/validation.cpp)
+        target_link_libraries(magenta_validation PRIVATE engine_runtime ggml)
+        add_executable(magenta_greedy_parity tests/magenta_realtime_2/greedy_parity.cpp)
+        target_link_libraries(magenta_greedy_parity PRIVATE engine_runtime ggml)
+    endif()
+
     if (whistle_asr IN_LIST AUDIOCPP_LINKED_MODELS)
         add_executable(whistle_frontend_test
             tests/whistle_asr/test_frontend.cpp
@@ -3673,6 +3697,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_METAL)
+        add_executable(metal_f32_matmul_test tests/unittests/test_metal_f32_matmul.cpp)
+        target_link_libraries(metal_f32_matmul_test PRIVATE ggml ggml-metal)
+        add_test(NAME metal_f32_matmul_test COMMAND metal_f32_matmul_test)
+        set_tests_properties(metal_f32_matmul_test PROPERTIES
+            SKIP_RETURN_CODE 77 LABELS "extended;metal")
+
         add_executable(metal_im2col_test tests/unittests/test_metal_im2col.cpp)
         target_link_libraries(metal_im2col_test PRIVATE ggml ggml-metal)
         target_compile_definitions(metal_im2col_test PRIVATE
