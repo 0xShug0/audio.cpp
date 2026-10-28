@@ -867,6 +867,23 @@ std::string PackageManager::remove(const std::string & package_id) {
     return "Removed " + package.id + " -> " + root.string();
 }
 
+std::optional<PackageInfo> PackageManager::package_info(const std::string & package_id) const {
+    const auto found = std::find_if(impl_->packages.begin(), impl_->packages.end(), [&](const Package & package) {
+        return package.id == package_id;
+    });
+    if (found == impl_->packages.end()) return std::nullopt;
+    PackageInfo info;
+    info.family = found->family;
+    info.package.root = (impl_->models_root / found->target_directory).lexically_normal();
+    info.package.format = found->format;
+    info.package.files.reserve(found->files.size());
+    for (const auto & remote : found->files) {
+        info.package.files.push_back(stripped_path(*found, remote).lexically_normal());
+    }
+    info.installed = package_installed(*found, impl_->models_root);
+    return info;
+}
+
 std::string PackageManager::inventory(bool query_remote, const std::string & package_id) const {
     std::vector<const Package *> selected;
     selected.reserve(impl_->packages.size());
@@ -890,6 +907,17 @@ std::string PackageManager::inventory(bool query_remote, const std::string & pac
             json::Value::Object row;
             row["id"] = string_value(package.id);
             row["installed"] = bool_value(installed);
+            json::Value::Array files;
+            files.reserve(package.files.size());
+            for (const auto & remote : package.files) {
+                files.push_back(string_value(stripped_path(package, remote).lexically_normal().generic_string()));
+            }
+            json::Value::Object metadata;
+            metadata["family"] = string_value(package.family);
+            metadata["root"] = string_value((impl_->models_root / package.target_directory).lexically_normal().generic_string());
+            metadata["files"] = json::Value::make_array(std::move(files));
+            metadata["format"] = string_value(package.format);
+            row["package"] = json::Value::make_object(std::move(metadata));
             row["state"] = string_value(query_remote ? "ok" : "pending");
             row["message"] = string_value("");
             row["size_bytes"] = json::Value::make_null();

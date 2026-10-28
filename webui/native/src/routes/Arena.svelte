@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Play, Plus, Square, Trash2, User } from '@lucide/svelte';
   import { browserDecodeToWav } from '$lib/audio';
+  import { requirePackageLoadTarget } from '$lib/catalog';
   import {
     availableVoices,
     base64AudioUrl,
@@ -425,6 +426,8 @@
       }
       return;
     }
+    choice = choice || entry.install_packages?.[0];
+    const target = choice ? requirePackageLoadTarget(choice) : undefined;
     if (choice && !packageIsAvailable(entry, choice)) {
       throw new StatusWarning(tr('arena.error.notDownloaded', { package: choice.label }));
     }
@@ -443,10 +446,10 @@
     await loadModel({
       id: entry.id,
       path,
-      family: entry.family,
+      family: target?.family ?? entry.family,
       task: entry.task,
       mode: entry.mode || 'offline',
-      load_options: entry.load_options || {},
+      load_options: { ...choice?.load_options, ...entry.load_options },
       session_options: mergedSessionOptionsForChoice(entry, choice)
     });
     await refresh();

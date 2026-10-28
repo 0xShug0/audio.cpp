@@ -5,8 +5,26 @@
 
 #include <unordered_map>
 #include <stdexcept>
+#include <algorithm>
+#include <cctype>
 
 namespace engine::runtime {
+
+PackageLoadTarget IVoiceModelLoader::resolve_package_load(const assets::ModelPackage & package) const {
+    PackageLoadTarget target{family(), package.root, {}, {}};
+    if (package.format == "gguf") {
+        for (const auto & file : package.files) {
+            auto extension = file.extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (extension == ".gguf") {
+                target.model_path /= file;
+                break;
+            }
+        }
+    }
+    return target;
+}
 
 namespace {
 

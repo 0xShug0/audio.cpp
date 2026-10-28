@@ -345,6 +345,24 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_auk_loader() {
     class Loader final : public runtime::IVoiceModelLoader {
     public:
         std::string family() const override { return "auk"; }
+        runtime::PackageLoadTarget resolve_package_load(const assets::ModelPackage & package) const override {
+            runtime::PackageLoadTarget out{"auk", package.root, {}, {}};
+            if (package.format == "gguf") {
+                for (const auto & file : package.files) {
+                    if (file.extension() != ".gguf") continue;
+                    const auto name = file.filename().string();
+                    if (name.rfind("auk-base-", 0) == 0 || name.rfind("auk-flash-", 0) == 0) {
+                        out.session_options.emplace("auk.model_gguf", file.generic_string());
+                        out.session_options.emplace("auk.variant", name.rfind("auk-flash-", 0) == 0 ? "flash" : "base");
+                    } else if (name.rfind("qwen2.5-omni-3b-", 0) == 0) {
+                        out.session_options.emplace("auk.qwen_gguf", file.generic_string());
+                    } else if (name.rfind("auk-vae-", 0) == 0) {
+                        out.session_options.emplace("auk.vae_gguf", file.generic_string());
+                    }
+                }
+            }
+            return out;
+        }
         bool can_load(const runtime::ModelLoadRequest & request) const override {
             if (request.family_hint && *request.family_hint != "auk") return false;
             try {

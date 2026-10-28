@@ -1,6 +1,7 @@
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/task_vocabulary.h"
 #include "engine/framework/runtime/spec_backed_model.h"
+#include "engine/framework/runtime/registry.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/model_spec/schema.h"
 #include "engine/framework/io/json.h"
@@ -12,6 +13,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -1673,6 +1675,93 @@ void test_shipped_model_specs_declare_known_tasks() {
     engine::test::require(checked > 0, "should have checked at least one shipped spec");
 }
 
+void test_package_load_resolvers() {
+    const auto registry = engine::runtime::make_default_registry();
+    // No directory or weights are created: resolution must use only the declared files.
+    const std::filesystem::path root = "uninstalled-package-root";
+    struct PackageCase {
+        const char * family;
+        std::vector<std::filesystem::path> files;
+        std::unordered_map<std::string, std::string> session_options;
+        std::unordered_map<std::string, std::string> load_options = {};
+        const char * entry = nullptr;
+    };
+    // Filenames are the installed-relative entries in the shipped package specs.
+    const std::vector<PackageCase> cases{
+        {"minimax_h3", {"configuration.json", "text_encoder_q4_k.gguf", "dit_int8.gguf", "video_vae.gguf"},
+            {}, {}, "dit_int8.gguf"},
+        {"minimax_h3", {"text_encoder_q4_k.gguf", "dit.gguf", "audio_vae_folded_f16.gguf"},
+            {}, {}, "dit.gguf"},
+        {"lfm2_audio", {"LFM2.5-Audio-1.5B-Q8_0.gguf", "mmproj-LFM2.5-Audio-1.5B-Q8_0.gguf",
+                       "vocoder-LFM2.5-Audio-1.5B-Q8_0.gguf", "tokenizer-LFM2.5-Audio-1.5B-Q8_0.gguf"},
+            {{"lfm2_audio.model_gguf", "LFM2.5-Audio-1.5B-Q8_0.gguf"},
+             {"lfm2_audio.mmproj_gguf", "mmproj-LFM2.5-Audio-1.5B-Q8_0.gguf"},
+             {"lfm2_audio.vocoder_gguf", "vocoder-LFM2.5-Audio-1.5B-Q8_0.gguf"},
+             {"lfm2_audio.detokenizer_gguf", "tokenizer-LFM2.5-Audio-1.5B-Q8_0.gguf"}}},
+        {"lfm2_audio", {"tokenizer-LFM2.5-Audio-1.5B-JP-F32.gguf", "vocoder-LFM2.5-Audio-1.5B-JP-F32.gguf",
+                       "mmproj-LFM2.5-Audio-1.5B-JP-F32.gguf", "LFM2.5-Audio-1.5B-JP-F32.gguf"},
+            {{"lfm2_audio.model_gguf", "LFM2.5-Audio-1.5B-JP-F32.gguf"},
+             {"lfm2_audio.mmproj_gguf", "mmproj-LFM2.5-Audio-1.5B-JP-F32.gguf"},
+             {"lfm2_audio.vocoder_gguf", "vocoder-LFM2.5-Audio-1.5B-JP-F32.gguf"},
+             {"lfm2_audio.detokenizer_gguf", "tokenizer-LFM2.5-Audio-1.5B-JP-F32.gguf"}}},
+        {"liveavatar", {"Wan2.2-S2V-Support-Q4_K_S-F16.gguf", "Wan2.2-S2V-VAE-F16.gguf",
+                       "Wan2.2-S2V-14B-NVFP4-LORA.gguf"}, {},
+            {{"liveavatar.support_gguf", "Wan2.2-S2V-Support-Q4_K_S-F16.gguf"},
+             {"liveavatar.vae_gguf", "Wan2.2-S2V-VAE-F16.gguf"},
+             {"liveavatar.denoiser_gguf", "Wan2.2-S2V-14B-NVFP4-LORA.gguf"}}},
+        {"yue2", {"sidecars/yue2-model-config.json", "yue2-3b-bf16.gguf"},
+            {{"yue2.model_gguf", "yue2-3b-bf16.gguf"}}},
+        {"yue2", {"sidecars/yue2-vae-config.json", "yue2-vae-f32.gguf"},
+            {{"yue2.vae_gguf", "yue2-vae-f32.gguf"}}},
+        {"auk", {"config/auk-base.yaml", "auk-base-q8_0.gguf"},
+            {{"auk.model_gguf", "auk-base-q8_0.gguf"}, {"auk.variant", "base"}}},
+        {"auk", {"config/auk-flash.yaml", "auk-flash-f16.gguf"},
+            {{"auk.model_gguf", "auk-flash-f16.gguf"}, {"auk.variant", "flash"}}},
+        {"auk", {"tokenizer/tokenizer.json", "qwen2.5-omni-3b-q8_0.gguf"},
+            {{"auk.qwen_gguf", "qwen2.5-omni-3b-q8_0.gguf"}}},
+        {"auk", {"auk-vae-f32.gguf"}, {{"auk.vae_gguf", "auk-vae-f32.gguf"}}},
+        {"minimax_music3", {"config.json", "language_model_q4_0.gguf", "rvq_depth_decoder_q8_0.gguf",
+                           "condition_encoder.gguf", "transformer_q4_0.gguf", "vocoder.gguf"},
+            {{"minimax_music3.language_model_gguf", "language_model_q4_0.gguf"},
+             {"minimax_music3.rvq_depth_decoder_gguf", "rvq_depth_decoder_q8_0.gguf"},
+             {"minimax_music3.flow_transformer_gguf", "transformer_q4_0.gguf"}}},
+        {"minimax_music3", {"language_model_q8_0.gguf", "rvq_depth_decoder_q8_0.gguf", "transformer_q8_0.gguf"},
+            {{"minimax_music3.language_model_gguf", "language_model_q8_0.gguf"},
+             {"minimax_music3.rvq_depth_decoder_gguf", "rvq_depth_decoder_q8_0.gguf"},
+             {"minimax_music3.flow_transformer_gguf", "transformer_q8_0.gguf"}}},
+        {"minimax_music3", {"language_model_bf16.gguf", "rvq_depth_decoder_bf16.gguf", "transformer_bf16.gguf"},
+            {{"minimax_music3.language_model_gguf", "language_model_bf16.gguf"},
+             {"minimax_music3.rvq_depth_decoder_gguf", "rvq_depth_decoder_bf16.gguf"},
+             {"minimax_music3.flow_transformer_gguf", "transformer_bf16.gguf"}}},
+    };
+    for (const auto & test : cases) {
+        if (!registry.supports_family(test.family)) continue;
+        const auto target = registry.resolve_package_load(test.family, {root, test.files, "gguf"});
+        const std::string label = std::string(test.family) + ": " + test.files.back().generic_string();
+        engine::test::require_eq(target.family, std::string(test.family), label + " family");
+        engine::test::require_eq(target.model_path, test.entry ? root / test.entry : root, label + " model path");
+        engine::test::require(target.session_options == test.session_options, label + " exact session options");
+        engine::test::require(target.load_options == test.load_options, label + " exact load options");
+    }
+
+    // Silero uses the base resolver; no VAD model is loaded.
+    const engine::assets::ModelPackage generic{root, {"config.json", "weights/z-first.GGUF", "weights/a-second.gguf"}, "gguf"};
+    const auto target = registry.resolve_package_load("silero_vad", generic);
+    engine::test::require_eq(target.family, std::string("silero_vad"), "generic package family");
+    engine::test::require_eq(target.model_path, root / "weights/z-first.GGUF", "generic first declared GGUF");
+    engine::test::require(target.load_options.empty() && target.session_options.empty(), "generic package adds no component defaults");
+
+    bool rejected = false;
+    try {
+        (void)registry.resolve_package_load("package_resolver_unknown_family", generic);
+    } catch (const std::runtime_error & error) {
+        rejected = true;
+        engine::test::require(std::string(error.what()).find("package_resolver_unknown_family") != std::string::npos,
+                              "unknown package family error names the family");
+    }
+    engine::test::require(rejected, "unknown package family must not fall through to an automatic loader");
+}
+
 }  // namespace
 
 int main() {
@@ -1696,6 +1785,7 @@ int main() {
         test_task_vocabulary_is_consistent();
         test_vad_timestamp_capability();
         test_shipped_model_specs_declare_known_tasks();
+        test_package_load_resolvers();
     } catch (const std::exception & error) {
         std::cerr << "model_spec_system_test failed: " << error.what() << "\n";
         return 1;
