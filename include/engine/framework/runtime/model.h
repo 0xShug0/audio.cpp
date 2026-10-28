@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/assets/model_package.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -74,6 +75,13 @@ struct ModelLoadRequest {
     std::optional<std::string> config_id = std::nullopt;
     std::optional<std::string> weight_id = std::nullopt;
     std::unordered_map<std::string, std::string> options;
+};
+
+struct PackageLoadTarget {
+    std::string family;
+    std::filesystem::path model_path;
+    std::unordered_map<std::string, std::string> load_options;
+    std::unordered_map<std::string, std::string> session_options;
 };
 
 std::vector<NamedAsset> discover_named_assets(
@@ -169,6 +177,10 @@ public:
         (void)session_options;
         return {};
     }
+
+    // Translate selected package files into existing loading inputs. No weights
+    // are loaded here; path-based loading does not call this method.
+    virtual PackageLoadTarget resolve_package_load(const assets::ModelPackage & package) const;
 };
 
 }  // namespace engine::runtime

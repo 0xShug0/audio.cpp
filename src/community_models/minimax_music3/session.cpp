@@ -381,6 +381,24 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_minimax_music3_loader() {
             return kFamily;
         }
 
+        runtime::PackageLoadTarget resolve_package_load(const assets::ModelPackage & package) const override {
+            runtime::PackageLoadTarget out{kFamily, package.root, {}, {}};
+            if (package.format == "gguf") {
+                for (const auto & file : package.files) {
+                    if (file.extension() != ".gguf") continue;
+                    const auto name = file.filename().string();
+                    if (name.rfind("language_model_", 0) == 0) {
+                        out.session_options.emplace("minimax_music3.language_model_gguf", file.generic_string());
+                    } else if (name.rfind("rvq_depth_decoder_", 0) == 0) {
+                        out.session_options.emplace("minimax_music3.rvq_depth_decoder_gguf", file.generic_string());
+                    } else if (name.rfind("transformer_", 0) == 0) {
+                        out.session_options.emplace("minimax_music3.flow_transformer_gguf", file.generic_string());
+                    }
+                }
+            }
+            return out;
+        }
+
         bool can_load(const runtime::ModelLoadRequest & request) const override {
             if (request.family_hint.has_value() && *request.family_hint != kFamily) {
                 return false;

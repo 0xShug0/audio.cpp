@@ -1,5 +1,5 @@
-import { catalog, parameterCatalog } from '$lib/catalog';
-import { getModelsRoot, health, models, modelPackageSizes } from '$lib/api';
+import { catalog, parameterCatalog, requirePackageLoadTarget, withPackageLoadTarget } from '$lib/catalog';
+import { health, models, modelPackageSizes } from '$lib/api';
 import type { CatalogEntry, InstallPackageChoice } from '$lib/types';
 import type { ModelSettings } from './types';
 
@@ -14,13 +14,13 @@ export async function loadModelChoices(): Promise<ModelSettings[]> {
       undefined, model.path, model.session_options || {}));
   }
   if (server.ui_management) {
-    const [root, inventory] = await Promise.all([getModelsRoot(), modelPackageSizes()]);
+    const inventory = await modelPackageSizes();
+    const rows = new Map(inventory.data.map(row => [row.id, row]));
     for (const entry of catalog.filter(e => !configured.some(model => model.id === e.id))) {
-      const installed = (entry.install_packages || []).filter(p => inventory.data.some(item => item.id === p.id && item.installed));
+      const installed = (entry.install_packages || []).map(p => withPackageLoadTarget(p, rows.get(p.id)))
+        .filter(p => rows.get(p.id)?.installed && p.load_target);
       for (const choice of installed) {
-        const path = choice.path.startsWith('models/')
-          ? `${root.models_root.replace(/[\\/]+$/, '')}/${choice.path.slice(7)}` : choice.path;
-        choices.push(modelChoice(entry, choice, path));
+        choices.push(modelChoice(entry, choice, requirePackageLoadTarget(choice).model_path));
       }
       if (!installed.length) {
         const resident = registered.find(m => m.id === entry.id && m.loaded);
@@ -37,8 +37,9 @@ function modelChoice(entry: CatalogEntry, choice: InstallPackageChoice | undefin
     (entry.request_options === undefined || entry.request_options.includes(p.name))).map(p => [p.name, p.default]));
   return { version: 1, id: `model:${entry.id}:${choice?.id || 'configured'}`,
     name: `${entry.display_name}${choice ? ` · ${choice.label}` : ''}`, createdAt: 0,
-    model: { id: entry.id, display_name: entry.display_name, family: entry.family, task: entry.task,
-      mode: entry.mode, path, package_id: choice?.id, load_options: { ...entry.load_options }, session_options: sessionOptions },
+    model: { id: entry.id, display_name: entry.display_name, family: choice?.load_target?.family ?? entry.family, task: entry.task,
+      mode: entry.mode, path, package_id: choice?.id,
+      load_options: { ...choice?.load_options, ...entry.load_options }, session_options: sessionOptions },
     request: { seed: -1, ...(entry.default_voice ? { voice: entry.default_voice } : {}), options: { ...entry.default_options, ...options } },
     chunking: { enabled: true, characters: 400 } };
 }

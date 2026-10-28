@@ -1,6 +1,23 @@
 import rawCatalog from '../../../configs/models_catalog.json';
 import rawParams from '../../../configs/model_params.json';
 import type { CatalogEntry, InstallPackageChoice, ParamSpec } from './types';
+import type { ModelPackageSize } from './api';
+
+// Static paths are display/install placeholders. Managed loads use the server's
+// model-local resolution, including both option scopes.
+export function withPackageLoadTarget(choice: InstallPackageChoice, row?: ModelPackageSize): InstallPackageChoice {
+  const target = row?.load_target ?? undefined;
+  return { ...choice, path: target?.model_path ?? choice.path,
+    load_target: target, load_target_error: row?.load_target_error ?? undefined,
+    load_options: target?.load_options, session_options: target?.session_options };
+}
+
+export function requirePackageLoadTarget(choice: InstallPackageChoice) {
+  if (!choice.load_target) {
+    throw new Error(choice.load_target_error || `Package load target is not ready: ${choice.label}`);
+  }
+  return choice.load_target;
+}
 
 interface PackageEntry {
   family: string;
@@ -218,16 +235,8 @@ function packageLabel(entry: PackageEntry): string {
 }
 
 function packageModelPath(entry: PackageEntry): string {
-  let modelFile: string | undefined;
-  if (entry.format === 'gguf' && entry.family === 'minimax_h3') {
-    const entryName = entry.id.includes('int8_dit') ? 'dit_int8.gguf' : 'dit.gguf';
-    modelFile = entry.files?.find((file) => file.toLowerCase().endsWith(`/${entryName}`));
-  } else if (entry.format === 'gguf' &&
-      ['auk', 'lfm2_audio', 'liveavatar', 'minimax_music3', 'yue2'].includes(entry.family)) {
-    return `models/${entry.target_directory}`;
-  } else if (entry.format === 'gguf') {
-    modelFile = entry.files?.find((file) => file.toLowerCase().endsWith('.gguf'));
-  }
+  const modelFile = entry.format === 'gguf'
+    ? entry.files?.find((file) => file.toLowerCase().endsWith('.gguf')) : undefined;
   if (!modelFile) {
     return `models/${entry.target_directory}`;
   }
@@ -235,39 +244,6 @@ function packageModelPath(entry: PackageEntry): string {
   const prefix = (entry.strip_prefix || '').replace(/\\/g, '/').replace(/\/$/, '');
   if (prefix && relative.startsWith(`${prefix}/`)) relative = relative.slice(prefix.length + 1);
   return `models/${entry.target_directory}/${relative}`.replace(/\/+/g, '/');
-}
-
-function packageSessionOptions(entry: PackageEntry): Record<string, string> | undefined {
-  if (entry.family === 'lfm2_audio') {
-    // Every quantization installs into the same directory as Liquid's GGUF
-    // repo, so name this package's backbone; the loader pairs its mmproj.
-    const backbone = entry.files?.find((file) => !file.startsWith('mmproj-'));
-    return backbone ? { 'lfm2_audio.model_gguf': backbone } : undefined;
-  }
-  if (entry.family === 'minimax_music3') {
-    if (entry.id === 'minimax_music3_q8_0') {
-      return {
-        'minimax_music3.language_model_gguf': 'language_model_q8_0.gguf',
-        'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
-        'minimax_music3.flow_transformer_gguf': 'transformer_q8_0.gguf'
-      };
-    }
-    if (entry.id === 'minimax_music3_bf16') {
-      return {
-        'minimax_music3.language_model_gguf': 'language_model_bf16.gguf',
-        'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_bf16.gguf',
-        'minimax_music3.flow_transformer_gguf': 'transformer_bf16.gguf'
-      };
-    }
-    if (entry.id === 'minimax_music3_q4_0') {
-      return {
-        'minimax_music3.language_model_gguf': 'language_model_q4_0.gguf',
-        'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
-        'minimax_music3.flow_transformer_gguf': 'transformer_q4_0.gguf'
-      };
-    }
-  }
-  return undefined;
 }
 
 function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
@@ -302,8 +278,7 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
         label: packageLabel(candidate),
         path: packageModelPath(candidate),
         format: candidate.format,
-        precision: candidate.precision,
-        session_options: packageSessionOptions(candidate)
+        precision: candidate.precision
       }));
   }
   if (entry.family === 'yue2') {
@@ -324,8 +299,7 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
         label: packageLabel(candidate),
         path: packageModelPath(candidate),
         format: candidate.format,
-        precision: candidate.precision,
-        session_options: packageSessionOptions(candidate)
+        precision: candidate.precision
       }));
   }
   const related = exposesAllGguf ? relatedExposeAllGgufPackages(entry) : relatedPackages(entry);
@@ -341,8 +315,7 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
         label: packageLabel(candidate),
         path: packageModelPath(candidate),
         format: candidate.format,
-        precision: candidate.precision,
-        session_options: packageSessionOptions(candidate)
+        precision: candidate.precision
       }));
   }
   const q8 = preferredPackage(related.filter((candidate) =>
@@ -364,8 +337,7 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
       label: packageLabel(candidate),
       path: packageModelPath(candidate),
       format: candidate.format,
-      precision: candidate.precision,
-      session_options: packageSessionOptions(candidate)
+      precision: candidate.precision
     }));
 }
 

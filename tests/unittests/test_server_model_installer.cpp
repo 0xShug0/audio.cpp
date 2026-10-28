@@ -1,5 +1,6 @@
 #include "model_installer.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/package_manager/manager.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -10,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <future>
+#include <vector>
 
 namespace {
 
@@ -48,6 +50,74 @@ std::string wait_for(minitts::server::ModelInstaller & installer, const std::str
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     throw std::runtime_error("timed out waiting for " + id + " to become " + state);
+}
+
+void test_native_package_info() {
+    namespace json = engine::io::json;
+    const auto root = make_root();
+    try {
+        write(root / "model_specs" / "demo.json", R"({"family":"demo",
+          "package_defaults":{"download":{"kind":"huggingface_snapshot","repo":"org/repo"}},
+          "packages":[
+            {"id":"components","display_name":"Components","format":"gguf","precision":"f32",
+             "target_directory":"Nested/Components","strip_prefix":"Remote/",
+             "files":["Remote/config.json","Remote/subdir/z.gguf","Remote/a.gguf"]},
+            {"id":"directory","display_name":"Directory","format":"directory","precision":"f32",
+             "target_directory":"Directory","strip_prefix":".","files":["./config.json"]},
+            {"id":"empty","display_name":"Empty","format":"gguf","precision":"f32",
+             "target_directory":"Empty","files":[]}
+          ]})");
+        engine::package_manager::PackageManager manager(root, root / "models");
+        require(!manager.package_info("missing").has_value(), "unknown packages return no package info");
+        const auto info = manager.package_info("components");
+        require(info.has_value() && info->family == "demo" && !info->installed &&
+            info->package.root == root / "models" / "Nested" / "Components" &&
+            info->package.format == "gguf", "package info exposes raw identity, root, format, and local presence");
+        const std::vector<std::filesystem::path> expected = {"config.json", "subdir/z.gguf", "a.gguf"};
+        require(info->package.files == expected,
+            "package info strips the prefix, preserves file order and subdirectories, and retains every component");
+        require(!std::filesystem::exists(info->package.root), "package lookup does not install or create a package");
+        const auto directory = manager.package_info("directory");
+        require(directory.has_value() && directory->package.format == "directory" &&
+            directory->package.files == std::vector<std::filesystem::path>{"config.json"},
+            "non-GGUF packages use the same generic metadata and dot-prefix semantics");
+        require(!manager.package_info("empty")->installed && manager.package_info("empty")->package.files.empty(),
+            "packages without files retain the installer's not-installed state");
+
+        const auto check_inventory = [&](bool installed) {
+            const auto response = json::parse(manager.inventory(false, "components"));
+            const auto & row = response.as_array().at(0);
+            const auto & metadata = row.require("package");
+            require(row.require("installed").as_bool() == installed &&
+                manager.package_info("components")->installed == installed,
+                "lookup and local inventory agree on complete package presence");
+            require(metadata.require("family").as_string() == info->family &&
+                metadata.require("root").as_string() == info->package.root.generic_string() &&
+                metadata.require("format").as_string() == info->package.format,
+                "inventory exposes the same raw package identity, root, and format");
+            const auto & files = metadata.require("files").as_array();
+            require(files.size() == expected.size(), "inventory retains all package files");
+            for (size_t i = 0; i < expected.size(); ++i) {
+                require(files[i].as_string() == expected[i].generic_string(),
+                    "inventory paths are installed-relative and retain source order");
+            }
+            require(metadata.as_object().size() == 4 && row.find("load_target") == nullptr &&
+                row.find("load_options") == nullptr && row.find("session_options") == nullptr,
+                "native inventory contains raw package data without loading policy or options");
+        };
+        check_inventory(false);
+        write(info->package.root / expected[0], "{}");
+        check_inventory(false);
+        write(info->package.root / expected[1], "payload");
+        write(info->package.root / expected[2], "payload");
+        check_inventory(true);
+        std::filesystem::remove(info->package.root / expected[0]);
+        check_inventory(false);
+    } catch (...) {
+        std::filesystem::remove_all(root);
+        throw;
+    }
+    std::filesystem::remove_all(root);
 }
 
 void test_native_package_lifecycle() {
@@ -224,6 +294,7 @@ void test_large_inventory() {
 
 int main() {
     try {
+        test_native_package_info();
         test_native_package_lifecycle();
         test_large_inventory();
     }

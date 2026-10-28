@@ -1,4 +1,4 @@
-import type { LoadedModel, ServerHealth } from './types';
+import type { LoadedModel, PackageLoadTarget, ServerHealth } from './types';
 
 function apiUrl(path: string): string {
   return new URL(path.replace(/^\//, ''), document.baseURI).toString();
@@ -113,6 +113,8 @@ export async function modelInstallJobs(): Promise<ModelInstallJob[]> {
 
 export interface ModelPackageSize {
   id: string;
+  load_target?: PackageLoadTarget | null;
+  load_target_error?: string | null;
   size_bytes: number | null;
   state: 'pending' | 'ok' | 'gated' | 'unknown' | 'error';
   message: string;

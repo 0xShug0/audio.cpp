@@ -228,6 +228,18 @@ void ModelRegistry::validate_request(const ModelLoadRequest & request) const {
     }
 }
 
+PackageLoadTarget ModelRegistry::resolve_package_load(
+    const std::string & family, const assets::ModelPackage & package) const {
+    ModelLoadRequest request;
+    request.model_path = package.root;
+    request.family_hint = family;
+    const auto * loader = find_loader(request);
+    if (!loader) {
+        throw std::runtime_error("unsupported model family hint: " + family);
+    }
+    return loader->resolve_package_load(package);
+}
+
 const IVoiceModelLoader * ModelRegistry::find_loader(const ModelLoadRequest & request) const {
     for (const auto & loader : loaders_) {
         if (request.family_hint.has_value()) {
