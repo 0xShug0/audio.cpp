@@ -71,6 +71,24 @@ export const modelStudioPanels = {
       advancedJson: false
     }
   },
+  lfm3_audio: {
+    component: Lfm2AudioPanel,
+    // Only speech-to-speech, as for lfm2_audio. Its S2S takes no language
+    // but auto, so the language field is hidden.
+    tasks: ['s2s'],
+    requestMode: 'panel',
+    blocksRunWhileUploading: false,
+    replacesGenericControls: {
+      packageButtons: false,
+      text: false,
+      genSource: false,
+      language: true,
+      seed: false,
+      duration: false,
+      params: false,
+      advancedJson: false
+    }
+  },
   liveavatar: {
     component: LiveAvatarPanel,
     requestMode: 'default',

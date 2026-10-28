@@ -61,9 +61,15 @@
     if (signal.aborted) throw new DOMException('The turn was stopped.', 'AbortError');
   }
 
-  function isReplyArtifact(entry: unknown): entry is ReplyArtifact {
+  // The panel serves lfm2_audio and lfm3_audio, whose artifacts are named
+  // after the family.
+  function familyOf(id: string) {
+    return catalogEntries.find((entry) => entry.id === id)?.family ?? 'lfm2_audio';
+  }
+
+  function isReplyArtifact(family: string, entry: unknown): entry is ReplyArtifact {
     const candidate = entry as Partial<ReplyArtifact> | null;
-    return typeof candidate === 'object' && candidate !== null && candidate.id === 'lfm2_audio.reply' &&
+    return typeof candidate === 'object' && candidate !== null && candidate.id === `${family}.reply` &&
       typeof candidate.kind === 'string' && typeof candidate.payload === 'string';
   }
 
@@ -78,10 +84,13 @@
   function requestBody(context: PanelRunContext, options: Record<string, unknown>, path: string, history: Turn[]) {
     const request: Record<string, unknown> = { audio: path, seed: context.seed, options };
     if (context.maxTokens !== undefined) request.max_tokens = context.maxTokens;
-    if (context.language) request.language = context.language;
+    const family = familyOf(context.modelId);
+    // LFM3-Audio S2S takes no language but auto; the field may hold one
+    // left by another entry.
+    if (context.language && family !== 'lfm3_audio') request.language = context.language;
     if (history.length) {
       request.artifacts = history.flatMap((turn) => [
-        { id: 'lfm2_audio.question', kind: 'custom', path: turn.questionPath },
+        { id: `${family}.question`, kind: 'custom', path: turn.questionPath },
         turn.reply
       ]);
     }
@@ -96,7 +105,9 @@
       audio = new Blob([base64Bytes(result.audio)], { type: 'audio/wav' });
       changes.replyUrl = URL.createObjectURL(audio);
     }
-    const artifact = (Array.isArray(result.artifacts) ? result.artifacts : []).find(isReplyArtifact);
+    const family = familyOf(entryId);
+    const artifact = (Array.isArray(result.artifacts) ? result.artifacts : [])
+      .find((entry): entry is ReplyArtifact => isReplyArtifact(family, entry));
     if (artifact) {
       changes.reply = { id: artifact.id, kind: artifact.kind, payload: artifact.payload };
       if (artifact.meta) changes.reply.meta = artifact.meta;
@@ -105,7 +116,9 @@
     } else {
       changes.message = 'The server returned no reply artifact, so this turn does not go with the next question.';
     }
-    if (completeTurn(entryId, turn, changes)) log(`New LFM2.5-Audio conversation with ${displayName(entryId)}.`);
+    if (completeTurn(entryId, turn, changes)) {
+      log(`New ${family === 'lfm3_audio' ? 'LFM3-Audio' : 'LFM2.5-Audio'} conversation with ${displayName(entryId)}.`);
+    }
     return audio;
   }
 
@@ -302,7 +315,7 @@
     <small class="note">These turns are with {displayName(conversationModelId)}. Run starts a new conversation with {displayName(modelId)}.</small>
   {/if}
   {#if familySpecs}
-    <small class="note">This entry's id is not the catalog's (lfm2-audio-s2s or lfm2-audio-jp-s2s), so Model parameters shows the family's ASR settings; turns leave them out and use Max tokens.</small>
+    <small class="note">This entry's id is not the catalog's S2S id, so Model parameters shows the family's ASR settings; turns leave them out and use Max tokens.</small>
   {/if}
 
   {#if turns.length}

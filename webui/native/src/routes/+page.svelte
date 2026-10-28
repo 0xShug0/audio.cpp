@@ -383,6 +383,7 @@
     pulsevad: 'PulseVAD',
     nemotron_3_diar: 'Nemotron 3 Diarization',
     lfm2_audio: 'LFM2.5-Audio',
+    lfm3_audio: 'LFM3-Audio',
     personaplex: 'PersonaPlex'
   };
 
@@ -574,10 +575,10 @@
   // has no voice_dir of its own.
   $: quickStartVoicesAreDemos = usesBuiltInVoiceSelector ||
     quickStartVoices.every((voice) => voice in demoVoiceSources);
-  // LFM2.5-Audio S2S text would replace the chat system prompt the checkpoints
-  // were trained with, so it gets no text box, and text kept from another
-  // model is not sent.
-  $: usesFixedChatPrompt = selected?.family === 'lfm2_audio' && selected?.task === 's2s';
+  // LFM2.5-Audio and LFM3-Audio S2S text would replace the chat system prompt
+  // the checkpoints were trained with, so it gets no text box, and text kept
+  // from another model is not sent.
+  $: usesFixedChatPrompt = ['lfm2_audio', 'lfm3_audio'].includes(selected?.family) && selected?.task === 's2s';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
     !['apollo', 'universr', 'builtin_audio_utils', 'reuse', 'sidon'].includes(selected?.family) &&
     !usesFixedChatPrompt && !replacesGenericControls.text;
@@ -3057,8 +3058,8 @@
                       min={spec.minimum} max={spec.maximum} step={spec.step}
                       value={String(advancedValues[spec.name] ?? '')}
                       placeholder={localizedParameterText(spec, 'placeholder', tr)}
-                      on:input={(event) => setParameterValue(spec,
-                        spec.type === 'number' ? event.currentTarget.valueAsNumber : event.currentTarget.value)} />
+                      on:input={(event) => setParameterValue(spec, spec.type !== 'number' ? event.currentTarget.value
+                        : event.currentTarget.value === '' ? '' : event.currentTarget.valueAsNumber)} />
                   {/if}
                   {#if localizedParameterText(spec, 'info', tr)}<small>{localizedParameterText(spec, 'info', tr)}</small>{/if}
                 </div>

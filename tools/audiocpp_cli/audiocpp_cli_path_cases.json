@@ -3466,6 +3466,66 @@
       ]
     },
     {
+      "id": "lfm3_audio_q8_offline",
+      "coverage": "LFM3-Audio Q8_0 published GGUF: whole-input, VAD and fixed chunking, and spoken-question chat",
+      "family": "lfm3_audio",
+      "model": "models/LFM3-Audio-2B-GGUF/LFM3-Audio-2B-Q8_0.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "librispeech_whole",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
+          "language": "en"
+        },
+        {
+          "id": "librispeech_vad",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_other_7902-96591-0000.wav",
+          "options": {
+            "audio_chunk_mode": "vad"
+          }
+        },
+        {
+          "id": "librispeech_fixed_2s",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav",
+          "language": "en",
+          "options": {
+            "audio_chunk_mode": "fixed",
+            "audio_chunk_duration_sec": 2
+          }
+        },
+        {
+          "id": "spoken_chat",
+          "audio": "assets/resources/c.wav",
+          "options": {
+            "chat": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "lfm3_audio_q8_s2s",
+      "coverage": "LFM3-Audio Q8_0 spoken chat: a spoken turn in, a reply of interleaved text and 24 kHz speech out",
+      "family": "lfm3_audio",
+      "model": "models/LFM3-Audio-2B-GGUF/LFM3-Audio-2B-Q8_0.gguf",
+      "task": "s2s",
+      "mode": "offline",
+      "outputs": [
+        "audio",
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "greeting",
+          "audio": "assets/resources/c.wav",
+          "seed": 1234
+        }
+      ]
+    },
+    {
       "id": "fun_asr_nano_offline",
       "coverage": "Fun-ASR-Nano Q8 GGUF offline English ASR warm-session path",
       "family": "fun_asr_nano",

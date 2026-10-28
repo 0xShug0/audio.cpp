@@ -1,0 +1,374 @@
+{
+  "schema_version": 1,
+  "family": "lfm3_audio",
+  "display_name": "LFM3-Audio",
+  "description": "Liquid AI's LFM3-Audio-2B, from the llama.cpp-format GGUFs Liquid publishes or the upstream safetensors directory. ASR: a log-mel LFM2 encoder feeds an LFM3 hybrid conv/attention backbone. TTS: the backbone drives a bidirectional MaskGIT depth decoder (12 codebooks, 12.5 Hz) and the LiquidCodec decoder and ISTFT give 24 kHz audio. S2S: a spoken question in, interleaved text and audio out, with client-held multi-turn history.",
+  "category": "asr",
+  "status": "experimental",
+  "tasks": [
+    "asr",
+    "tts",
+    "s2s"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en",
+    "ar",
+    "da",
+    "de",
+    "el",
+    "es",
+    "fi",
+    "fr",
+    "he",
+    "it",
+    "ja",
+    "ko",
+    "nl",
+    "pl",
+    "pt",
+    "sv",
+    "tr",
+    "zh"
+  ],
+  "capabilities": {
+    "asr": [
+      "vad_chunking"
+    ],
+    "tts": [
+      "built_in_voices",
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "ASR: ISO code of the spoken language (prompt 'Perform ASR in <English name>.'); auto lets the model infer it ('Perform ASR.'). TTS: picks the default voice of that language when no voice is given.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "min": 1,
+        "description": "ASR: text tokens per audio chunk (max(512, 8 per second of audio); chat 512, or 2048 with enable_thinking). TTS: audio frames (80 ms) per text chunk (512). S2S: text tokens and frames of the reply together (1024).",
+        "required": false
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "description": "ASR chunking, as lfm2_audio.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "min": 1,
+        "description": "ASR: longest chunk in seconds; auto keeps input up to this long whole and splits longer input at VAD pauses.",
+        "required": false,
+        "default": 300
+      },
+      {
+        "name": "max_audio_tail_frames",
+        "type": "int",
+        "min": 0,
+        "description": "S2S: most audio frames after the reply text ends before the turn is closed with an end-of-audio frame; 0 disables the cap.",
+        "required": false,
+        "default": 375
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "min": 0,
+        "description": "TTS and S2S: audio code temperature; 0 picks the most likely code. The default is the checkpoint's generation_config.json audio_temperature.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "min": 0,
+        "description": "TTS and S2S: sample audio codes from the k most likely; 0 keeps all. The default is the checkpoint's audio_top_k.",
+        "required": false,
+        "default": 128
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "min": 0.01,
+        "description": "TTS and S2S: audio repetition penalty over the last 4096 frames (the checkpoint's audio_repetition_window) of each codebook; must be positive, 1 disables it. The default is the checkpoint's audio_repetition_penalty.",
+        "required": false,
+        "default": 1.1
+      },
+      {
+        "name": "text_temperature",
+        "type": "float",
+        "min": 0,
+        "description": "ASR and S2S: text token temperature; 0 is greedy.",
+        "required": false,
+        "default": 0
+      },
+      {
+        "name": "text_top_k",
+        "type": "int",
+        "min": 0,
+        "description": "ASR and S2S: sample text tokens from the k most likely; 0 keeps all.",
+        "required": false,
+        "default": 0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed (random when absent); TTS text chunk i uses seed + i.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "description": "TTS long-form text chunking (values as text::parse_text_chunk_mode_override accepts).",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "min": 1,
+        "description": "TTS: target characters per text chunk.",
+        "required": false,
+        "default": 200
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "min": 1,
+        "description": "TTS and S2S streaming: audio frames per event.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "return_codes",
+        "type": "bool",
+        "description": "S2S: return the lfm3_audio.reply artifact a client sends back with the next turn.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "chat",
+        "type": "bool",
+        "description": "ASR task: answer the spoken input as a text chat reply instead of transcribing it.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "enable_thinking",
+        "type": "bool",
+        "description": "ASR chat: let the model think first; only the text after </think> is returned.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "values": [
+          "native",
+          "f16",
+          "f32"
+        ],
+        "description": "Weight storage at load. native keeps the file's types (BF16 falls back to F16 where the backend lacks BF16). f32 also uses F32 KV caches and explicit attention, for parity checks.",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "cpu_repack",
+        "type": "bool",
+        "description": "CPU: repack matmul weights for ggml's extra buffer kernels.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "vad_model_path",
+        "type": "string",
+        "description": "VAD model (any built-in VAD family; default Silero VAD) used by ASR audio_chunk_mode auto/vad.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
+      },
+      {
+        "name": "max_pass_duration_sec",
+        "type": "float",
+        "min": 1,
+        "description": "Most audio, in seconds, the encoder takes in one pass (an ASR chunk or the S2S question); longer audio is rejected before it is encoded.",
+        "required": false,
+        "default": 300
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream",
+      "cpu",
+      "metal",
+      "cuda"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "LiquidAI/LFM3-Audio-2B-GGUF",
+      "revision": "fcfae9027c00a6f3f872c48a841cfeb77e2b5a1c",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "lfm3_audio_2b_q8_0",
+      "display_name": "LFM3-Audio-2B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "LFM3-Audio-2B-GGUF",
+      "files": [
+        "LFM3-Audio-2B-Q8_0.gguf",
+        "mmproj-LFM3-Audio-2B-Q8_0.gguf"
+      ]
+    },
+    {
+      "id": "lfm3_audio_2b_f16",
+      "display_name": "LFM3-Audio-2B F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "LFM3-Audio-2B-GGUF",
+      "files": [
+        "LFM3-Audio-2B-F16.gguf",
+        "mmproj-LFM3-Audio-2B-F16.gguf"
+      ]
+    },
+    {
+      "id": "lfm3_audio_2b_bf16",
+      "display_name": "LFM3-Audio-2B BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "LFM3-Audio-2B-GGUF",
+      "files": [
+        "LFM3-Audio-2B-BF16.gguf",
+        "mmproj-LFM3-Audio-2B-BF16.gguf"
+      ]
+    },
+    {
+      "id": "lfm3_audio_2b_q4_k_m",
+      "display_name": "LFM3-Audio-2B Q4_K_M GGUF (Q8_0 mmproj)",
+      "format": "gguf",
+      "precision": "q4_k_m",
+      "target_directory": "LFM3-Audio-2B-GGUF",
+      "files": [
+        "LFM3-Audio-2B-Q4_K_M.gguf",
+        "mmproj-LFM3-Audio-2B-Q8_0.gguf"
+      ]
+    },
+    {
+      "id": "lfm3_audio_2b_q4_0",
+      "display_name": "LFM3-Audio-2B Q4_0 GGUF (Q8_0 mmproj)",
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "LFM3-Audio-2B-GGUF",
+      "files": [
+        "LFM3-Audio-2B-Q4_0.gguf",
+        "mmproj-LFM3-Audio-2B-Q8_0.gguf"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "ASR",
+      "TTS",
+      "GGUF",
+      "Stream"
+    ],
+    "recommended_package": "lfm3_audio_2b_q8_0",
+    "docs": [
+      "docs/models/lfm3_audio.md"
+    ],
+    "summary": "LFM3-Audio transcription, multilingual speech and spoken chat from Liquid's published GGUFs.",
+    "builtin_voices": [
+      "arabic_female",
+      "arabic_male",
+      "danish_female",
+      "danish_male",
+      "german_female",
+      "german_male",
+      "greek_female",
+      "greek_male",
+      "british_english_female",
+      "british_english_male",
+      "american_english_female",
+      "american_english_male",
+      "finnish_female",
+      "finnish_male",
+      "french_female",
+      "french_male",
+      "hebrew_female",
+      "hebrew_male",
+      "italian_female",
+      "italian_male",
+      "japanese_female",
+      "japanese_male",
+      "korean_female",
+      "korean_male",
+      "dutch_female",
+      "dutch_male",
+      "polish_female",
+      "polish_male",
+      "portuguese_female",
+      "portuguese_male",
+      "spanish_female",
+      "spanish_male",
+      "swedish_female",
+      "swedish_male",
+      "turkish_female",
+      "turkish_male",
+      "chinese_female",
+      "chinese_male"
+    ],
+    "default_voice": "american_english_female"
+  },
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "codec_config": "model:audio_tokenizer/config.json"
+      },
+      "tensors": {
+        "model": "model:model.safetensors",
+        "codec": "model:audio_tokenizer/model.safetensors"
+      }
+    }
+  ]
+}

@@ -80,6 +80,8 @@ struct BpeVocabulary {
     std::vector<int32_t> special_tokens_sorted;
     std::optional<int32_t> configured_pad_token_id;
     PreTokenizerType pre_type = PreTokenizerType::Gpt2;
+    // HF tokenizer.json model.ignore_merges: a pre-token that is a whole vocab entry is that token, merges or not.
+    bool ignore_merges = false;
 
     int32_t text_to_token(const std::string & text) const;
     int find_bpe_rank(const std::string & left, const std::string & right) const;
