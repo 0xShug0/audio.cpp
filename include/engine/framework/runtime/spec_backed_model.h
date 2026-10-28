@@ -36,8 +36,6 @@ struct SpecBackedVoiceModelConfig {
     std::function<ModelResourcePlan(
         const std::filesystem::path &,
         const std::unordered_map<std::string, std::string> &)> model_resources;
-    // Optional config check; a loader with one identifies its models (IVoiceModelLoader::identifies).
-    std::function<bool(const engine::assets::ResourceBundle &)> accepts;
 };
 
 inline std::shared_ptr<const engine::model_spec::ModelContract> require_model_contract(std::string family) {
@@ -211,15 +209,11 @@ public:
             return false;
         }
         try {
-            const auto resources = engine::model_spec::load_resource_bundle_for_family(request.model_path, config_.family);
-            return !config_.accepts || config_.accepts(resources);
+            (void) engine::model_spec::load_resource_bundle_for_family(request.model_path, config_.family);
+            return true;
         } catch (const std::exception &) {
             return false;
         }
-    }
-
-    bool identifies(const ModelLoadRequest & request) const override {
-        return config_.accepts && can_load(request);
     }
 
     ModelInspection inspect(const ModelLoadRequest & request) const override {
