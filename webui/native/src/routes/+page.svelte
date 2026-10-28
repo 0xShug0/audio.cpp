@@ -3244,7 +3244,6 @@
       {entrySelectable}
       {studioPackageSlots}
       {packageIsAvailable}
-      {packageSessionOptionsMatch}
       {supportsMaxTokens}
       {supportsRequestOption}
       {requiresRequestOption}
