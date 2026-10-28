@@ -66,12 +66,12 @@
           vulkan = base.override { vulkanSupport = true; };
           python-scripts = pythonScripts.${system};
           default =
-            if pkgs.${system}.stdenv.isDarwin then
+            if pkgs.${system}.stdenv.hostPlatform.isDarwin then
               self.packages.${system}.metal
             else
               self.packages.${system}.cpu;
         }
-        // nixpkgs.lib.optionalAttrs pkgs.${system}.stdenv.isLinux {
+        // nixpkgs.lib.optionalAttrs pkgs.${system}.stdenv.hostPlatform.isLinux {
           cuda = baseCuda.override { cudaSupport = true; };
           rocm = base.override { rocmSupport = true; };
           rocm-gfx1151 = base.override {
@@ -80,7 +80,7 @@
             strixHaloOptimizations = true;
           };
         }
-        // nixpkgs.lib.optionalAttrs pkgs.${system}.stdenv.isDarwin {
+        // nixpkgs.lib.optionalAttrs pkgs.${system}.stdenv.hostPlatform.isDarwin {
           metal = base.override { metalSupport = true; };
         }
       );
@@ -92,7 +92,7 @@
             inputsFrom = [ self.packages.${system}.default ];
           };
         }
-        // nixpkgs.lib.optionalAttrs pkgs.${system}.stdenv.isLinux {
+        // nixpkgs.lib.optionalAttrs pkgs.${system}.stdenv.hostPlatform.isLinux {
           cuda = pkgsCuda.${system}.mkShell {
             inputsFrom = [ self.packages.${system}.cuda ];
           };
