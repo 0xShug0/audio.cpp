@@ -18,6 +18,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/registry.h"
 #include "engine/framework/runtime/session.h"
@@ -106,6 +107,10 @@ audiocpp_status guard(Fn && fn, audiocpp_status runtime_status = AUDIOCPP_ERR_RU
         g_last_error = e.what();
         return AUDIOCPP_ERR_OUT_OF_MEMORY;
     } catch (const std::invalid_argument & e) {
+        g_last_error = e.what();
+        return AUDIOCPP_ERR_INVALID_ARGUMENT;
+    } catch (const rt::InvalidRequestError & e) {
+        /* Caller input such as a malformed option value: not a load or runtime failure. */
         g_last_error = e.what();
         return AUDIOCPP_ERR_INVALID_ARGUMENT;
     } catch (const std::exception & e) {
