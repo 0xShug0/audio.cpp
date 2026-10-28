@@ -404,10 +404,11 @@ int main() {
         Fixture f{write_session_package(), nullptr};
         runtime::ModelLoadRequest load;
         load.model_path = f.package.root;
+        load.family_hint = "lfm3_audio";
         const auto loader = lfm3::make_lfm3_audio_loader();
         require(loader->can_load(load), "the loader claims the package");
         require_eq(runtime::make_default_registry().inspect(load).metadata.family, std::string("lfm3_audio"),
-                   "the package auto-detects as lfm3_audio");
+                   "the explicit family selects lfm3_audio");
         f.model = loader->load(load);
         test_asr(f);
         test_thinking_ends_inside();

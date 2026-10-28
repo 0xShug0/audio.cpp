@@ -118,10 +118,9 @@ audiocpp_cli --task s2s --family lfm3_audio \
 ```
 
 From the upstream directory, pass it as `--model models/LFM3-Audio-2B`.
-`--family` is optional: Liquid's GGUFs are recognized by their metadata
-(`general.architecture` `lfm3` and an `lfm3a` mmproj beside it), and the
-safetensors directory by `model_type` in its `config.json`. A server config
-entry still needs `"family": "lfm3_audio"`.
+Pass `--family lfm3_audio` to select this loader explicitly; automatic detection
+follows registry order and the safetensors layout is shared with other models.
+A server config entry needs `"family": "lfm3_audio"`.
 
 ### ASR
 

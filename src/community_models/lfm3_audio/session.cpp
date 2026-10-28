@@ -1206,11 +1206,17 @@ public:
             return false;
         }
 
-        return is_lfm3_audio_published_gguf(request.model_path) || spec_backed_->can_load(request);
-    }
-
-    bool identifies(const runtime::ModelLoadRequest & request) const override {
-        return is_lfm3_audio_published_gguf(request.model_path) || spec_backed_->identifies(request);
+        if (is_lfm3_audio_published_gguf(request.model_path)) {
+            return true;
+        }
+        try {
+            const auto resources = model_spec::load_resource_bundle_for_family(request.model_path, kFamily);
+            const auto config_json = resources.parse_json("config");
+            const auto * model_type = config_json.find("model_type");
+            return model_type != nullptr && model_type->is_string() && model_type->as_string() == kFamily;
+        } catch (const std::exception &) {
+            return false;
+        }
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
@@ -1244,19 +1250,11 @@ private:
 
 }  // namespace
 
-// The config.json model_type check keeps the spec-backed loader off other families' models, and puts it ahead of
-// the families whose generic config.json + model.safetensors layout the upstream directory matches.
 std::shared_ptr<runtime::IVoiceModelLoader> make_lfm3_audio_loader() {
     runtime::SpecBackedVoiceModelConfig<Lfm3AudioAssets> config;
     config.family = kFamily;
     config.load_assets = load_lfm3_audio_assets;
     config.create_session = create_lfm3_audio_session;
-    config.accepts = [](const assets::ResourceBundle & resources) {
-        // parse_json returns by value: keep it alive while model_type points into it.
-        const auto config_json = resources.parse_json("config");
-        const auto * model_type = config_json.find("model_type");
-        return model_type != nullptr && model_type->is_string() && model_type->as_string() == kFamily;
-    };
     return std::make_shared<Loader>(runtime::make_spec_backed_voice_loader(std::move(config)));
 }
 
