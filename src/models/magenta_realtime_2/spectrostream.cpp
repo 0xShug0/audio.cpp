@@ -104,6 +104,9 @@ public:
             ggml_mul_mat_set_prec(node, GGML_PREC_F32);
             if (execution.backend_type() == core::BackendType::Vulkan)
                 ggml_mul_mat_set_lowering(node, GGML_MUL_MAT_LOWERING_VULKAN_F32_INPUTS);
+            // Metal's default matmul narrows operands to half; codec activations can overflow it.
+            if (execution.backend_type() == core::BackendType::Metal)
+                ggml_mul_mat_set_lowering(node, GGML_MUL_MAT_LOWERING_METAL_F32_INPUTS);
         }
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_context_.get(), execution.backend());
         if (!input_buffer_) throw std::runtime_error("Cannot allocate SpectroStream persistent inputs");
