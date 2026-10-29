@@ -1333,6 +1333,22 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_lfm2_audio_loader() {
     public:
         std::string family() const override { return kFamily; }
 
+        runtime::PackageLoadTarget resolve_package_load(const assets::ModelPackage & package) const override {
+            runtime::PackageLoadTarget out{kFamily, package.root, {}, {}};
+            if (package.format == "gguf") {
+                for (const auto & file : package.files) {
+                    if (file.extension() != ".gguf") continue;
+                    const auto name = file.filename().string();
+                    const char * option = "lfm2_audio.model_gguf";
+                    if (name.rfind("mmproj-", 0) == 0) option = "lfm2_audio.mmproj_gguf";
+                    else if (name.rfind("vocoder-", 0) == 0) option = "lfm2_audio.vocoder_gguf";
+                    else if (name.rfind("tokenizer-", 0) == 0) option = "lfm2_audio.detokenizer_gguf";
+                    out.session_options.emplace(option, file.generic_string());
+                }
+            }
+            return out;
+        }
+
         bool can_load(const runtime::ModelLoadRequest & request) const override {
             if (request.family_hint && *request.family_hint != kFamily) {
                 return false;

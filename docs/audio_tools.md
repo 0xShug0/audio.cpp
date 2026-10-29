@@ -10,6 +10,7 @@
 | GTCRN | `gtcrn`, `gtcrn_dns3`, `gtcrn_vctk`, `gtcrn_streaming` | framework denoise utility API | [GTCRN](#gtcrn) |
 | HTDemucs | `htdemucs` | `sep` | [HTDemucs](#htdemucs) |
 | LFM2.5-Audio | `lfm2_audio` | `s2s` spoken chat (also `asr`, `tts`) | [LFM2.5-Audio](models/lfm2_audio.md) |
+| LFM3-Audio | `lfm3_audio` | `s2s` spoken chat (also `asr`, `tts`) | [LFM3-Audio](models/lfm3_audio.md) |
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
 | Ming 3.0 Audio Tiny | `ming3_audio` | `s2s` spoken responses (also `asr`, `tts`, `clon`) | [Ming Audio](models/ming3_audio.md#spoken-response) |

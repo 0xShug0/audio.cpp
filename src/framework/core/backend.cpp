@@ -1,7 +1,11 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/core/host_memory.h"
+#include "engine/framework/io/json.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -30,14 +34,15 @@ namespace {
 // backend's own build flags, which are not visible from this translation unit.
 struct BackendRegNames {
     BackendType  type;
+    const char * option;    // the --backend value
     const char * names[3];  // unused entries are nullptr
 };
 
 constexpr BackendRegNames k_backend_reg_names[] = {
-    {BackendType::Cuda,   {"CUDA", "MUSA", nullptr}},
-    {BackendType::Hip,    {"ROCm", nullptr, nullptr}},
-    {BackendType::Vulkan, {"Vulkan", nullptr, nullptr}},
-    {BackendType::Metal,  {"MTL", nullptr, nullptr}},
+    {BackendType::Cuda,   "cuda",   {"CUDA", "MUSA", nullptr}},
+    {BackendType::Hip,    "hip",    {"ROCm", nullptr, nullptr}},
+    {BackendType::Vulkan, "vulkan", {"Vulkan", nullptr, nullptr}},
+    {BackendType::Metal,  "metal",  {"MTL", nullptr, nullptr}},
 };
 
 bool reg_name_matches(BackendType type, const char * reg_name) {
@@ -56,6 +61,23 @@ bool reg_name_matches(BackendType type, const char * reg_name) {
         return false;
     }
     return false;
+}
+
+// The --backend value that selects this registry's devices, or "" when none does (BLAS,
+// RPC). --backend cpu takes ggml's CPU device, which the "CPU" registry owns.
+std::string backend_option_for_reg(const char * reg_name) {
+    if (reg_name == nullptr) {
+        return {};
+    }
+    if (std::strcmp(reg_name, "CPU") == 0) {
+        return "cpu";
+    }
+    for (const BackendRegNames & entry : k_backend_reg_names) {
+        if (reg_name_matches(entry.type, reg_name)) {
+            return entry.option;
+        }
+    }
+    return {};
 }
 
 bool backend_handle_matches(ggml_backend_t backend, BackendType type) {
@@ -119,6 +141,45 @@ const char * backend_dev_type_label(enum ggml_backend_dev_type type) {
     return "UNKNOWN";
 }
 
+// Not available when the device reports no total (BLAS reports 0/0) or a free figure above it.
+BackendMemorySnapshot memory_snapshot(size_t free_bytes, size_t total_bytes) {
+    BackendMemorySnapshot snapshot;
+    if (total_bytes > 0 && free_bytes <= total_bytes) {
+        snapshot.available = true;
+        snapshot.total_bytes = static_cast<int64_t>(total_bytes);
+        snapshot.free_bytes = static_cast<int64_t>(free_bytes);
+        snapshot.used_bytes = static_cast<int64_t>(total_bytes - free_bytes);
+    }
+    return snapshot;
+}
+
+// What ggml_backend_dev_memory reports for one device.
+BackendMemorySnapshot query_device_memory(ggml_backend_dev_t device) {
+    if (device == nullptr) {
+        return {};
+    }
+    size_t free_bytes = 0;
+    size_t total_bytes = 0;
+    ggml_backend_dev_memory(device, &free_bytes, &total_bytes);
+    return memory_snapshot(free_bytes, total_bytes);
+}
+
+// ggml aborts the process when a CUDA or HIP device cannot give it a context (CUDA_CHECK
+// in get_memory). Its default abort handler forks gdb, whose backtrace goes to stdout;
+// print only the message, on stderr, so stdout never holds anything but the document.
+void print_abort_message_to_stderr(const char * message) {
+    std::fprintf(stderr, "%s\n", message);
+    std::fflush(stderr);
+}
+
+struct AbortCallbackScope {
+    ggml_abort_callback_t previous;
+    explicit AbortCallbackScope(ggml_abort_callback_t callback) : previous(ggml_set_abort_callback(callback)) {}
+    ~AbortCallbackScope() { ggml_set_abort_callback(previous); }
+    AbortCallbackScope(const AbortCallbackScope &) = delete;
+    AbortCallbackScope & operator=(const AbortCallbackScope &) = delete;
+};
+
 std::string describe_available_devices() {
     std::string description;
     for (const auto & device : list_backend_devices()) {
@@ -177,7 +238,7 @@ bool backend_graph_validation_enabled() {
 
 }  // namespace
 
-std::vector<BackendDeviceInfo> list_backend_devices() {
+std::vector<BackendDeviceInfo> list_backend_devices(bool query_properties) {
     ensure_backends_loaded();
     std::vector<BackendDeviceInfo> devices;
     for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
@@ -205,6 +266,31 @@ std::vector<BackendDeviceInfo> list_backend_devices() {
                 info.name = dev_name;
             }
             info.type = backend_dev_type_label(ggml_backend_dev_type(dev));
+            info.backend_option = backend_option_for_reg(reg_name);
+            info.device_name = dev_name != nullptr ? dev_name : "";
+            info.description = dev_description != nullptr ? dev_description : "";
+            if (query_properties) {
+                ggml_backend_dev_props props{};
+                ggml_backend_dev_get_props(dev, &props);
+                if (props.device_id != nullptr && props.device_id[0] != '\0') {
+                    info.pci_bus_id = props.device_id;
+                }
+                info.caps = props.caps;
+                // get_props already read the memory; reading it again would repeat the driver call.
+                info.memory = memory_snapshot(props.memory_free, props.memory_total);
+                // Outside Windows, ggml's CPU device reports all of RAM as free. Report what the
+                // host can still allocate instead (on Windows that is the figure ggml already
+                // reports), which the server's memory guard also checks.
+                if (info.memory.available && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+                    const auto available = static_cast<int64_t>(available_host_memory_bytes());
+                    if (available > 0 && available <= info.memory.total_bytes) {
+                        info.memory.free_bytes = available;
+                        info.memory.used_bytes = info.memory.total_bytes - available;
+                    } else {
+                        info.memory = BackendMemorySnapshot{};
+                    }
+                }
+            }
             devices.push_back(std::move(info));
         }
     }
@@ -222,6 +308,53 @@ void print_backend_devices(std::ostream & out) {
         out << " [" << device.type << "]\n";
     }
     out << "select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n";
+}
+
+void print_backend_devices_json(std::ostream & out) {
+    std::vector<BackendDeviceInfo> devices;
+    {
+        const AbortCallbackScope abort_to_stderr(print_abort_message_to_stderr);
+        devices = list_backend_devices(true);
+    }
+    print_backend_devices_json(out, devices);
+}
+
+// Written by hand, not through json::Value, so the keys keep this order and byte counts
+// stay exact integers (json::Value holds numbers as double). Unknown values are null.
+void print_backend_devices_json(std::ostream & out, const std::vector<BackendDeviceInfo> & devices) {
+    const auto string_or_null = [](const std::string & value) {
+        return value.empty() ? std::string("null") : engine::io::json::stringify_string(value);
+    };
+    const auto boolean = [](bool value) { return value ? "true" : "false"; };
+    std::string text = "{\"schema_version\":1,\"devices\":[";
+    for (size_t i = 0; i < devices.size(); ++i) {
+        const BackendDeviceInfo & device = devices[i];
+        std::string type = device.type == "UNKNOWN" ? "" : device.type;
+        for (char & c : type) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        text += i == 0 ? "{" : ",{";
+        text += "\"backend\":" + string_or_null(device.backend_option);
+        text += ",\"registry\":" + string_or_null(device.backend);
+        text += ",\"index\":" + std::to_string(device.index);
+        text += ",\"name\":" + string_or_null(device.device_name);
+        text += ",\"description\":" + string_or_null(device.description);
+        text += ",\"type\":" + string_or_null(type);
+        text += ",\"pci_bus_id\":" + string_or_null(device.pci_bus_id.value_or(""));
+        text += ",\"memory\":";
+        if (device.memory.available) {
+            text += "{\"free_bytes\":" + std::to_string(device.memory.free_bytes) +
+                ",\"total_bytes\":" + std::to_string(device.memory.total_bytes) + "}";
+        } else {
+            text += "null";
+        }
+        text += ",\"caps\":{\"async\":" + std::string(boolean(device.caps.async)) +
+            ",\"host_buffer\":" + boolean(device.caps.host_buffer) +
+            ",\"buffer_from_host_ptr\":" + boolean(device.caps.buffer_from_host_ptr) +
+            ",\"events\":" + boolean(device.caps.events) + "}}";
+    }
+    text += "]}\n";
+    out << text;
 }
 
 ggml_backend_t init_backend(const BackendConfig & config) {
@@ -520,24 +653,11 @@ void validate_backend_graph_with_cpu_extra_buffers(ggml_backend_t backend, ggml_
 }
 
 BackendMemorySnapshot query_backend_memory(ggml_backend_t backend, int device_hint) {
-    BackendMemorySnapshot snapshot;
-    if (backend == nullptr) {
-        return snapshot;
-    }
-    ggml_backend_dev_t device = ggml_backend_get_device(backend);
-    if (device != nullptr) {
-        size_t free_bytes = 0;
-        size_t total_bytes = 0;
-        ggml_backend_dev_memory(device, &free_bytes, &total_bytes);
-        if (total_bytes > 0 && free_bytes <= total_bytes) {
-            snapshot.available = true;
-            snapshot.total_bytes = static_cast<int64_t>(total_bytes);
-            snapshot.free_bytes = static_cast<int64_t>(free_bytes);
-            snapshot.used_bytes = static_cast<int64_t>(total_bytes - free_bytes);
-        }
-    }
     (void)device_hint;
-    return snapshot;
+    if (backend == nullptr) {
+        return BackendMemorySnapshot{};
+    }
+    return query_device_memory(ggml_backend_get_device(backend));
 }
 
 BackendMemorySnapshot query_backend_memory(const BackendConfig & config) {
@@ -550,19 +670,7 @@ BackendMemorySnapshot query_backend_memory(const BackendConfig & config) {
         default:
             break;
     }
-    ggml_backend_dev_t device = find_device_by_backend_type(config.type, config.device);
-    if (device != nullptr) {
-        size_t free_bytes = 0;
-        size_t total_bytes = 0;
-        ggml_backend_dev_memory(device, &free_bytes, &total_bytes);
-        if (total_bytes > 0 && free_bytes <= total_bytes) {
-            snapshot.available = true;
-            snapshot.total_bytes = static_cast<int64_t>(total_bytes);
-            snapshot.free_bytes = static_cast<int64_t>(free_bytes);
-            snapshot.used_bytes = static_cast<int64_t>(total_bytes - free_bytes);
-        }
-    }
-    return snapshot;
+    return query_device_memory(find_device_by_backend_type(config.type, config.device));
 }
 
 ggml_backend_graph_plan_t create_backend_graph_plan_if_host(ggml_backend_t backend, ggml_cgraph * graph) {

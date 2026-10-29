@@ -31,7 +31,7 @@
     type ModelPackageSize,
     type DirectoryBrowserResponse
   } from '$lib/api';
-  import { catalog, parameterCatalog, taskLabels } from '$lib/catalog';
+  import { catalog, parameterCatalog, requirePackageLoadTarget, taskLabels, withPackageLoadTarget } from '$lib/catalog';
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import LoraControls from '$lib/LoraControls.svelte';
@@ -53,6 +53,7 @@
     CatalogEntry,
     InstallPackageChoice,
     LoadedModel,
+    PackageLoadTarget,
     ParamSpec,
     ServerHealth
   } from '$lib/types';
@@ -72,6 +73,7 @@
   let selectedId = catalog[0]?.id || '';
   let selected: CatalogEntry = catalog[0];
   let modelPath = selected?.path || '';
+  let directModelPath = false;
   let loadedModels: LoadedModel[] = [];
   let server: ServerHealth | null = null;
   let installed: boolean | null = null;
@@ -136,6 +138,7 @@
   let settingsInput: HTMLInputElement | null = null;
   let importedSessionOptions: Record<string, string> = {};
   let importedLoadOptions: Record<string, string> = {};
+  let editedPackageOptions = new Set<string>();
   let settingsReloadRequired = false;
   let logs: string[] = [];
   let aborter: AbortController | null = null;
@@ -309,6 +312,11 @@
 
   function setParameterValue(spec: ParamSpec, value: unknown) {
     advancedValues = { ...advancedValues, [spec.name]: value };
+    const key = spec.session_option || spec.name;
+    if (!directModelPath && spec.scope === 'session' && selected?.install_packages?.some((choice) =>
+      packageSizes[choice.id]?.load_target?.session_options[key] !== undefined)) {
+      editedPackageOptions = new Set([...editedPackageOptions, key]);
+    }
     if ((selected?.family === 'ace_step' || spec.group === 'lora') && spec.name === 'lora' && value === '') {
       importedSessionOptions = { ...importedSessionOptions };
       delete importedSessionOptions[spec.session_option || `${selected.family}.lora`];
@@ -383,6 +391,7 @@
     pulsevad: 'PulseVAD',
     nemotron_3_diar: 'Nemotron 3 Diarization',
     lfm2_audio: 'LFM2.5-Audio',
+    lfm3_audio: 'LFM3-Audio',
     personaplex: 'PersonaPlex'
   };
 
@@ -509,9 +518,14 @@
 
   $: activeCatalog = server && !server.ui_management
     ? configuredCatalogEntries()
-    : [...catalog, ...configuredCatalogEntries(true)];
+    : [...catalog.map(entry => ({ ...entry,
+        install_packages: entry.install_packages?.map(choice => withPackageLoadTarget(choice, packageSizes[choice.id]))
+      })), ...configuredCatalogEntries(true)];
   $: modelGroups = groupCatalog(activeCatalog);
   $: selected = activeCatalog.find((entry) => entry.id === selectedId) || activeCatalog[0] || catalog[0];
+  $: selectedLoadChoice = selected?.install_packages?.find(choice => choice.id === selectedPackageIds[selected.id]) ||
+    selected?.install_packages?.[0];
+  $: packageLoadReady = directModelPath || isConfiguredEntry(selected) || !selectedLoadChoice || Boolean(selectedLoadChoice.load_target);
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
   $: workflowModels = activeCatalog
     .filter((entry) => workflowForEntry(entry) === activeWorkflow)
@@ -574,10 +588,10 @@
   // has no voice_dir of its own.
   $: quickStartVoicesAreDemos = usesBuiltInVoiceSelector ||
     quickStartVoices.every((voice) => voice in demoVoiceSources);
-  // LFM2.5-Audio S2S text would replace the chat system prompt the checkpoints
-  // were trained with, so it gets no text box, and text kept from another
-  // model is not sent.
-  $: usesFixedChatPrompt = selected?.family === 'lfm2_audio' && selected?.task === 's2s';
+  // LFM2.5-Audio and LFM3-Audio S2S text would replace the chat system prompt
+  // the checkpoints were trained with, so it gets no text box, and text kept
+  // from another model is not sent.
+  $: usesFixedChatPrompt = ['lfm2_audio', 'lfm3_audio'].includes(selected?.family) && selected?.task === 's2s';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
     !['apollo', 'universr', 'builtin_audio_utils', 'reuse', 'sidon'].includes(selected?.family) &&
     !usesFixedChatPrompt && !replacesGenericControls.text;
@@ -618,7 +632,8 @@
 
   function selectedPackageChoice(entry: CatalogEntry) {
     const choices = entry.install_packages || [];
-    return choices.find((choice) => choice.id === selectedPackageIds[entry.id]) || choices[0];
+    const choice = choices.find((choice) => choice.id === selectedPackageIds[entry.id]) || choices[0];
+    return choice ? withPackageLoadTarget(choice, packageSizes[choice.id]) : undefined;
   }
 
   function packageIsSelected(entry: CatalogEntry, choice: InstallPackageChoice) {
@@ -638,20 +653,30 @@
     return catalogPathMatches(choice.path, path);
   }
 
-  function mergedSessionOptions(entry: CatalogEntry) {
-    const packageChoice = selectedPackageChoice(entry);
-    const sessionParams = entry.id === selectedId ? sessionParameterOptions() : {};
+  async function packageTargetFor(entry: CatalogEntry): Promise<PackageLoadTarget | undefined> {
+    if (isConfiguredEntry(entry) || (entry.id === selectedId && directModelPath) || !entry.install_packages?.length) return undefined;
+    const choice = selectedPackageChoice(entry)!;
+    if (!choice.load_target && !choice.load_target_error) await refreshPackageSizes();
+    return requirePackageLoadTarget(selectedPackageChoice(entry)!);
+  }
+
+  function mergedLoadOptions(entry: CatalogEntry) {
+    return { ...(entry.id === selectedId && directModelPath ? {} : selectedPackageChoice(entry)?.load_options), ...entry.load_options,
+      ...(entry.id === selectedId ? importedLoadOptions : {}) };
+  }
+
+  function mergedSessionOptions(entry: CatalogEntry, packageChoice = selectedPackageChoice(entry)) {
+    if (entry.id === selectedId && directModelPath) packageChoice = undefined;
+    const sessionParams = entry.id === selectedId ? sessionParameterOptions(packageChoice?.session_options) : {};
     return { ...(entry.session_options || {}), ...(packageChoice?.session_options || {}),
       ...(entry.id === selectedId ? importedSessionOptions : {}), ...sessionParams };
   }
 
   function packageSessionOptionsMatch(entry: CatalogEntry, choice: InstallPackageChoice, model: LoadedModel) {
-    const expected = mergedSessionOptions(entry);
-    if (entry.family === 'lfm2_audio') {
-      expected['lfm2_audio.model_gguf'] = choice.session_options?.['lfm2_audio.model_gguf'];
-    }
-    const keys = Array.from(new Set((entry.install_packages || [])
-      .flatMap((candidate) => Object.keys(candidate.session_options || {}))));
+    choice = withPackageLoadTarget(choice, packageSizes[choice.id]);
+    const expected = mergedSessionOptions(entry, choice);
+    const keys = Array.from(new Set((entry.id === selectedId && directModelPath ? [] : entry.install_packages || [])
+      .flatMap((candidate) => Object.keys(packageSizes[candidate.id]?.load_target?.session_options || {}))));
     if (entry.id === selectedId) {
       for (const spec of paramSpecs.filter((candidate) => candidate.scope === 'session')) {
         keys.push(spec.session_option || spec.name);
@@ -663,6 +688,8 @@
   }
 
   function modelMatchesPackage(entry: CatalogEntry, model: LoadedModel, choice: InstallPackageChoice) {
+    if (entry.id === selectedId && directModelPath) return false;
+    choice = withPackageLoadTarget(choice, packageSizes[choice.id]);
     return packagePathMatches(choice, model.path) && packageSessionOptionsMatch(entry, choice, model);
   }
 
@@ -689,7 +716,8 @@
     models = loadedModels,
     sizes = packageSizes
   ) {
-    return packageIsResident(entry, choice, models) || sizes[choice.id]?.installed === true;
+    return packageIsResident(entry, choice, models) ||
+      (sizes[choice.id]?.installed === true && Boolean(sizes[choice.id]?.load_target));
   }
 
   function studioPackageSlots(entry: CatalogEntry) {
@@ -931,6 +959,10 @@
       if (response.data.length) {
         packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
         if (response.state === 'complete') reconcileSelectedPackageChoices(packageSizes);
+        if (selectedId && !directModelPath && !isConfiguredEntry(selected) && selected.install_packages?.length) {
+          modelPath = selectedModelPath(selected);
+          syncPackageSessionControls();
+        }
       }
       const inventoryPending = response.state === 'idle' || response.state === 'running' || response.data.length === 0;
       if (inventoryPending && packageSizePoll === null) {
@@ -965,7 +997,11 @@
   function rememberPackageChoice(entry: CatalogEntry, choice: InstallPackageChoice) {
     selectedPackageIds = { ...selectedPackageIds, [entry.id]: choice.id };
     localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
-    if (entry.id === selectedId) modelPath = resolveCatalogPath(choice.path);
+    if (entry.id === selectedId) {
+      directModelPath = false;
+      modelPath = selectedModelPath(entry);
+      syncPackageSessionControls();
+    }
   }
 
   function reconcileSelectedPackageChoices(sizes = packageSizes) {
@@ -995,7 +1031,10 @@
     if (!changed) return false;
     selectedPackageIds = nextIds;
     localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
-    if (selectedId) modelPath = selectedModelPath(selected);
+    if (selectedId && !directModelPath) {
+      modelPath = selectedModelPath(selected);
+      syncPackageSessionControls();
+    }
     return true;
   }
 
@@ -1006,8 +1045,9 @@
     for (const entry of catalog) {
       const resident = residentModel(entry, models);
       if (!resident) continue;
-      const choice = (entry.install_packages || []).find((candidate) =>
-        modelMatchesPackage(entry, resident, candidate));
+      const current = selectedPackageChoice(entry);
+      const choice = current && modelMatchesPackage(entry, resident, current) ? current
+        : (entry.install_packages || []).find((candidate) => modelMatchesPackage(entry, resident, candidate));
       if (choice && nextIds[entry.id] !== choice.id) {
         nextIds[entry.id] = choice.id;
         changed = true;
@@ -1017,7 +1057,10 @@
     if (!changed) return false;
     selectedPackageIds = nextIds;
     localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
-    if (selectedId) modelPath = selectedModelPath(selected);
+    if (selectedId && !directModelPath) {
+      modelPath = selectedModelPath(selected);
+      syncPackageSessionControls();
+    }
     return true;
   }
 
@@ -1055,7 +1098,7 @@
     modelsFolderInput = root.models_root;
     defaultModelsFolder = root.default_models_root;
     modelsFolderIsDefault = root.is_default;
-    modelPath = selectedModelPath(selected);
+    if (!directModelPath) modelPath = selectedModelPath(selected);
     modelsFolderHistory = [root.models_root, ...modelsFolderHistory, root.default_models_root]
       .filter((path, index, paths) => path && paths.indexOf(path) === index).slice(0, 10);
     localStorage.setItem('audiocpp.ui.modelsFolderHistory', JSON.stringify(modelsFolderHistory));
@@ -1142,9 +1185,25 @@
     folderBrowserOpen = false;
   }
 
+  function syncPackageSessionControls() {
+    if (directModelPath) return;
+    const options = selectedPackageChoice(selected)?.session_options || {};
+    if (!Object.keys(options).length) return;
+    const next = { ...advancedValues };
+    for (const spec of paramSpecs.filter(spec => spec.scope === 'session')) {
+      const key = spec.session_option || spec.name;
+      if (options[key] === undefined || editedPackageOptions.has(key)) continue;
+      const value = importedSessionOptions[key] ?? options[key];
+      next[spec.name] = spec.type === 'bool' ? value === 'true'
+        : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
+    }
+    advancedValues = next;
+  }
+
   function resetParams() {
     importedSessionOptions = {};
     importedLoadOptions = {};
+    editedPackageOptions = new Set();
     settingsReloadRequired = false;
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
     const hidesDurationSec = selected?.family === 'controlfoley' || selected?.family === 'midashenglm_gen';
@@ -1152,6 +1211,7 @@
       !(['vibevoice', 'moss_ttsd'].includes(selected?.family) && spec.name === 'voice_samples') &&
       !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
+    syncPackageSessionControls();
     const sessionOptions = loadedModels.find((model) => model.id === selectedId)?.session_options || {};
     for (const spec of paramSpecs.filter((spec) => spec.group === 'lora')) {
       const value = sessionOptions[spec.session_option || spec.name];
@@ -1268,6 +1328,7 @@
     if (!next || !entrySelectable(next)) return;
     selectedId = id;
     selected = next;
+    directModelPath = false;
     quickStartVoice = '';
     configuredVoices = [];
     activeWorkflow = workflowForEntry(next);
@@ -1326,6 +1387,8 @@
     status = `Loading ${selected.display_name}…`;
     log(status);
     try {
+      const target = await packageTargetFor(selected);
+      if (target) modelPath = target.model_path;
       const replaced = loadedModels.filter((model) => model.loaded &&
         (model.id !== selected.id || !catalogPathMatches(modelPath, model.path) ||
           !modelMatchesSelectedPackage(model, selected)));
@@ -1337,10 +1400,10 @@
       await loadModel({
         id: selected.id,
         path: modelPath,
-        family: selected.family,
+        family: target?.family ?? selected.family,
         task: selected.task,
         mode: modeOverride || selected.mode || 'offline',
-        load_options: { ...(selected.load_options || {}), ...importedLoadOptions },
+        load_options: mergedLoadOptions(selected),
         session_options: mergedSessionOptions(selected)
       });
       await refresh();
@@ -1453,14 +1516,19 @@
     return { ...defaults, ...requestValues, ...raw };
   }
 
-  function sessionParameterOptions() {
+  function sessionParameterOptions(packageOptions: Record<string, string> = {}) {
     const options = Object.fromEntries(paramSpecs
       .filter((spec) => spec.scope === 'session')
       .filter((spec) => spec.group !== 'lora' || String(advancedValues.lora ?? '').trim().length > 0)
-      .map((spec) => [spec.session_option || spec.name, String(advancedValues[spec.name] ?? spec.default ?? '')])
+      .map((spec) => {
+        const key = spec.session_option || spec.name;
+        const value = packageOptions[key] !== undefined && !editedPackageOptions.has(key)
+          ? importedSessionOptions[key] ?? packageOptions[key] : advancedValues[spec.name];
+        return [key, String(value ?? spec.default ?? '')];
+      })
       .filter(([, value]) => value.length > 0));
     if (selected?.family === 'auk') {
-      const generator = String(advancedValues.model_gguf || 'auk-base-f32.gguf');
+      const generator = options['auk.model_gguf'] || 'auk-base-f32.gguf';
       options['auk.variant'] = generator.startsWith('auk-flash-') ? 'flash' : 'base';
     }
     return options;
@@ -1597,14 +1665,14 @@
     if (choice && !packageIsAvailable(entry, choice, loadedModels, packageSizes)) {
       throw new Error(`Install ${choice.label} before applying its settings.`);
     }
-    const previousLoadOptions = { ...(entry.load_options || {}),
-      ...(entry.id === selectedId ? importedLoadOptions : {}) };
+    const previousLoadOptions = mergedLoadOptions(entry);
     chooseModel(entry.id);
     if (choice) {
       selectedPackageIds = { ...selectedPackageIds, [entry.id]: choice.id };
       localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
     }
     modelPath = choice ? selectedModelPath(entry) : model.path;
+    directModelPath = !choice;
     importedSessionOptions = { ...(model.session_options || {}) };
     importedLoadOptions = { ...(model.load_options || {}) };
     advancedValues = { ...advancedValues, ...(values || Object.fromEntries(
@@ -1621,6 +1689,7 @@
       advancedValues[spec.name] = spec.type === 'bool' ? value === 'true'
         : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
     }
+    syncPackageSessionControls();
     const resident = loadedModels.find((model) => model.id === entry.id && model.loaded);
     settingsReloadRequired = Boolean(resident && (
       !catalogPathMatches(modelPath, resident.path) ||
@@ -2026,8 +2095,8 @@
           task: selected.task,
           mode: resident?.mode || selected.mode || 'offline',
           path: resident?.path || modelPath,
-          package_id: selectedPackageChoice(selected)?.id,
-          load_options: { ...(selected.load_options || {}), ...importedLoadOptions },
+          package_id: directModelPath ? undefined : selectedPackageChoice(selected)?.id,
+          load_options: mergedLoadOptions(selected),
           session_options: resident?.session_options || mergedSessionOptions(selected)
         },
         ui: {
@@ -2477,7 +2546,10 @@
         else delete nextIds[entry.id];
         selectedPackageIds = nextIds;
         localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
-        if (entry.id === selectedId) modelPath = resolveCatalogPath(replacement?.path || entry.path);
+        if (entry.id === selectedId && !directModelPath) {
+          modelPath = selectedModelPath(entry);
+          syncPackageSessionControls();
+        }
       }
       // Keep Studio synchronized even when its saved preference was stale or the
       // removed package shared a directory with another precision.
@@ -2707,8 +2779,8 @@
               <button class:resident class:selected-package={Boolean(choice && available &&
                   packageIsSelected(selected, choice))}
                 disabled={loadingModel || !available}
-                title={tr(resident ? 'studio.unloadPackage' : available ? 'studio.loadPackage' :
-                  'studio.packageNotDownloaded', { package: choice?.label || slot.label })}
+                title={choice?.load_target_error || (!resident && !choice?.load_target ? 'Package load target is not ready' : tr(resident ? 'studio.unloadPackage' : available ? 'studio.loadPackage' :
+                  'studio.packageNotDownloaded', { package: choice?.label || slot.label }))}
                 on:click={() => choice && toggleStudioPackage(choice)}>
                 {choice?.label || slot.label}
               </button>
@@ -2717,9 +2789,11 @@
         {:else}
           <button class="single-model-toggle" class:resident={isLoaded}
             disabled={!selectedId || loadingModel || modelPanelUploading || installed === false ||
+              (!isLoaded && !packageLoadReady) ||
               (isConfiguredEntry(selected) && !isLoaded)}
-            title={isConfiguredEntry(selected) && !isLoaded ? tr('studio.serverConfigured') :
-              isLoaded ? tr('studio.unload') : tr('studio.load')}
+            title={selectedLoadChoice?.load_target_error || (!packageLoadReady ? 'Package load target is not ready' :
+              isConfiguredEntry(selected) && !isLoaded ? tr('studio.serverConfigured') :
+              isLoaded ? tr('studio.unload') : tr('studio.load'))}
             on:click={toggleSingleModel}>
             {isConfiguredEntry(selected) ? (loadingModel ? tr('studio.working') : isLoaded ? tr('studio.bundledLoaded') : tr('studio.configured')) :
               loadingModel ? tr('studio.working') : isLoaded ? tr(selected.family === 'builtin_audio_utils' ? 'studio.unload' : 'studio.bundledLoaded') : tr('studio.load')}
@@ -2784,7 +2858,7 @@
               bind:lyrics
               bind:seed
               bind:loraUploading
-              busy={running || loadingModel}
+              busy={running || loadingModel || !packageLoadReady}
               {paramSpecs}
               {advancedValues}
               catalogEntries={activeCatalog}
@@ -2794,6 +2868,8 @@
               setPanelRunner={registerPanelRunner}
               modelPathFor={selectedModelPath}
               sessionOptionsFor={mergedSessionOptions}
+              loadOptionsFor={mergedLoadOptions}
+              loadTargetFor={packageTargetFor}
               refreshModels={selected.family === 'yue2' && isConfiguredEntry(selected)
                 ? async () => { loadedModels = await models(); }
                 : refresh}
@@ -3057,8 +3133,8 @@
                       min={spec.minimum} max={spec.maximum} step={spec.step}
                       value={String(advancedValues[spec.name] ?? '')}
                       placeholder={localizedParameterText(spec, 'placeholder', tr)}
-                      on:input={(event) => setParameterValue(spec,
-                        spec.type === 'number' ? event.currentTarget.valueAsNumber : event.currentTarget.value)} />
+                      on:input={(event) => setParameterValue(spec, spec.type !== 'number' ? event.currentTarget.value
+                        : event.currentTarget.value === '' ? '' : event.currentTarget.valueAsNumber)} />
                   {/if}
                   {#if localizedParameterText(spec, 'info', tr)}<small>{localizedParameterText(spec, 'info', tr)}</small>{/if}
                 </div>
@@ -3075,7 +3151,8 @@
         {/if}
 
         <div class="runbar">
-          <button class="run" disabled={!selectedId || running || rewritingCaption || restoringHistory || modelPanelUploading || (!isLoaded && installed === false)} on:click={run}
+          <button class="run" disabled={!selectedId || running || rewritingCaption || restoringHistory || modelPanelUploading ||
+            (!isLoaded && (installed === false || !packageLoadReady))} on:click={run}
             title={!selectedId ? tr('run.chooseModel') : !isLoaded && installed === false ? tr('run.installModel') : ''}>
             <Play size={15} /><span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>
@@ -3167,7 +3244,6 @@
       {entrySelectable}
       {studioPackageSlots}
       {packageIsAvailable}
-      {packageSessionOptionsMatch}
       {supportsMaxTokens}
       {supportsRequestOption}
       {requiresRequestOption}

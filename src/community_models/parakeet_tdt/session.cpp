@@ -2,6 +2,7 @@
 #include "engine/community_models/parakeet_tdt/phonon_streaming.h"
 
 #include "engine/framework/audio/chunking.h"
+#include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -504,7 +505,15 @@ runtime::TaskResult ParakeetTDTOfflineSession::run(const runtime::TaskRequest & 
          (offline_mode_ == "long_form" ||
           (offline_mode_ == "auto" && target_samples > auto_full_context_max_samples_)));
     if (use_long_form) {
-        auto result = run_long_form(*normalized_request.audio_input, decode_options);
+        auto & audio = *normalized_request.audio_input;
+        const int sample_rate = assets_->config.frontend.sample_rate;
+        if (audio.sample_rate != sample_rate || audio.channels != 1) {
+            audio.samples = engine::audio::convert_interleaved_audio_to_mono_linear_resampled(
+                audio.samples, audio.sample_rate, audio.channels, sample_rate);
+            audio.sample_rate = sample_rate;
+            audio.channels = 1;
+        }
+        auto result = run_long_form(audio, decode_options);
         debug::timing_log_scalar(
             "session.wall_ms",
             engine::debug::elapsed_ms(wall_start, Clock::now()));

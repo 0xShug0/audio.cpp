@@ -3344,16 +3344,24 @@ struct test_rms_norm : public test_case {
     const float eps;
     const bool inplace; // whether to do the operation inplace
 
+    const bool multiply;
+
+    std::string op_desc(ggml_tensor * t) override {
+        return multiply ? "RMS_NORM_MUL" : test_case::op_desc(t);
+    }
+
+    bool run_whole_graph() override { return multiply; }
+
     std::string vars() override {
-        return VARS_TO_STR5(type, ne, v, eps, inplace);
+        return VARS_TO_STR6(type, ne, v, eps, inplace, multiply);
     }
 
     test_rms_norm(ggml_type type = GGML_TYPE_F32,
             std::array<int64_t, 4> ne = {64, 5, 4, 3},
             bool v = false,
             float eps = 1e-6f,
-            bool inplace = false)
-        : type(type), ne(ne), v(v), eps(eps), inplace(inplace) {}
+            bool inplace = false, bool multiply = false)
+        : type(type), ne(ne), v(v), eps(eps), inplace(inplace), multiply(multiply) {}
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
         ggml_tensor * a = ggml_new_tensor(ctx, type, 4, ne.data());
@@ -3370,6 +3378,10 @@ struct test_rms_norm : public test_case {
             out = ggml_rms_norm_inplace(ctx, a, eps);
         } else {
             out = ggml_rms_norm(ctx, a, eps);
+        }
+        if (multiply) {
+            ggml_tensor * weight = ggml_new_tensor_1d(ctx, type, a->ne[0]);
+            out = ggml_mul(ctx, out, weight);
         }
         ggml_set_name(out, "out");
 
@@ -8160,6 +8172,21 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
             test_cases.emplace_back(new test_l2_norm(GGML_TYPE_F32, { n, 5, 4, 3 }, eps, true));
         }
     }
+
+    // Vulkan's minimum X workgroup limit is 65535: cover both sides and multiple row strides.
+    for (int64_t rows : {64800, 65535, 65536, 67200, 142800}) {
+        for (bool multiply : {false, true}) {
+            test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {32, rows, 1, 1}, false, 1e-6f, false, multiply));
+        }
+    }
+    for (bool multiply : {false, true}) {
+        test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {33, 65536, 2, 2}, false, 1e-6f, false, multiply));
+        test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {64, 131072, 2, 2}, true, 1e-6f, false, multiply));
+        test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {32, 65536, 1, 1}, false, 1e-6f, true, multiply));
+    }
+
+    test_cases.emplace_back(new test_rms_norm_mul_add(GGML_TYPE_F32, {33, 65536, 2, 2}, 1e-6f, false));
+    test_cases.emplace_back(new test_rms_norm_mul_add(GGML_TYPE_F32, {16, 21846, 1, 1}, 1e-6f, true));
 
     // in-place tests
     test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {64, 5, 4, 3}, false, 1e-6f, true));

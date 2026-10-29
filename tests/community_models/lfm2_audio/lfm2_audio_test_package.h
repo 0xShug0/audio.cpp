@@ -72,9 +72,14 @@ public:
     void set(const char * key, const std::string & value) { gguf_set_val_str(ctx_.get(), key, value.c_str()); }
     void set_u32(const char * key, uint32_t value) { gguf_set_val_u32(ctx_.get(), key, value); }
     void set_f32(const char * key, float value) { gguf_set_val_f32(ctx_.get(), key, value); }
+    void set_bool(const char * key, bool value) { gguf_set_val_bool(ctx_.get(), key, value); }
 
     void set_i32_array(const char * key, const std::vector<int32_t> & values) {
         gguf_set_arr_data(ctx_.get(), key, GGUF_TYPE_INT32, values.data(), values.size());
+    }
+
+    void set_bool_array(const char * key, const std::vector<int8_t> & values) {
+        gguf_set_arr_data(ctx_.get(), key, GGUF_TYPE_BOOL, values.data(), values.size());
     }
 
     void set_str_array(const char * key, const std::vector<std::string> & values) {

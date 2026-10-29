@@ -78,7 +78,7 @@
       {
         "name": "audio_chunk_mode",
         "type": "enum",
-        "description": "Offline audio chunking mode. vad uses the configured VAD model (Silero by default) to skip silence; auto keeps Parakeet's existing offline_mode behavior.",
+        "description": "Offline audio chunking mode. fixed selects overlapping long-form windows regardless of offline_mode; vad uses the configured VAD model (Silero by default) to skip silence; auto follows offline_mode. Offline input is downmixed and resampled as needed.",
         "values": [
           "auto",
           "fixed",

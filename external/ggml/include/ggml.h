@@ -458,6 +458,7 @@ extern "C" {
         GGML_MUL_MAT_LOWERING_CUDA_NVFP4_F16_ACTIVATION  = 2,
         GGML_MUL_MAT_LOWERING_CUDA_TILE_F16_ACCUM_OUTPUT = 3,
         GGML_MUL_MAT_LOWERING_VULKAN_F32_INPUTS           = 4,
+        GGML_MUL_MAT_LOWERING_METAL_F32_INPUTS            = 5,
     };
 
     // model file types

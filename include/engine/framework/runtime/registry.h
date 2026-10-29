@@ -28,6 +28,8 @@ public:
     ModelInspection inspect(const std::filesystem::path & model_path) const;
     std::unique_ptr<ILoadedVoiceModel> load(const ModelLoadRequest & request) const;
     std::unique_ptr<ILoadedVoiceModel> load(const std::filesystem::path & model_path) const;
+    PackageLoadTarget resolve_package_load(
+        const std::string & family, const assets::ModelPackage & package) const;
 
     /**
      * What the named family's session options ask for beyond weight files, from the loader that

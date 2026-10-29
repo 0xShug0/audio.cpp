@@ -4,7 +4,7 @@
   import MediaPreview from '$lib/MediaPreview.svelte';
   import LoraGroup from '$lib/LoraGroup.svelte';
   import type { Translator } from '$lib/i18n';
-  import type { CatalogEntry, LoadedModel, ParamSpec, ServerHealth } from '$lib/types';
+  import type { CatalogEntry, LoadedModel, PackageLoadTarget, ParamSpec, ServerHealth } from '$lib/types';
 
   export let lyrics = '';
   export let seed = 1234;
@@ -16,6 +16,8 @@
   export let loadedModels: LoadedModel[] = [];
   export let server: ServerHealth | null = null;
   export let modelPathFor: (entry: CatalogEntry) => string = (entry) => entry.path;
+  export let loadTargetFor: (entry: CatalogEntry) => Promise<PackageLoadTarget | undefined>;
+  export let loadOptionsFor: (entry: CatalogEntry) => Record<string, string> = entry => entry.load_options || {};
   export let sessionOptionsFor: (entry: CatalogEntry) => Record<string, string> = (entry) => entry.session_options || {};
   export let refreshModels: () => Promise<void> = async () => {};
   export let log: (message: string) => void = () => {};
@@ -153,13 +155,14 @@
       }
       return;
     }
+    const target = await loadTargetFor(entry);
     await loadModel({
       id: entry.id,
-      path: modelPathFor(entry),
-      family: entry.family,
+      path: target?.model_path ?? modelPathFor(entry),
+      family: target?.family ?? entry.family,
       task: entry.task,
       mode: entry.mode || 'offline',
-      load_options: entry.load_options || {},
+      load_options: loadOptionsFor(entry),
       session_options: sessionOptionsFor(entry)
     });
   }

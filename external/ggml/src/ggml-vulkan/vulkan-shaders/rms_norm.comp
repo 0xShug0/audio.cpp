@@ -40,10 +40,18 @@ shared FLOAT_TYPE sumsh[BLOCK_SIZE];
 
 void rms_norm(uint num_iters) {
     const uint ncols     = p.ne00;
+#if RMS_NORM_ROW_STRIDE
+    const uint nrows     = p.ne01;
+#else
     const uint nrows     = gl_NumWorkGroups.x;
+#endif
     const uint nchannels = gl_NumWorkGroups.y;
 
+#if RMS_NORM_ROW_STRIDE
+    for (uint row = gl_WorkGroupID.x; row < nrows; row += gl_NumWorkGroups.x) {
+#else
     const uint row       = gl_WorkGroupID.x;
+#endif
     const uint channel   = gl_WorkGroupID.y;
     const uint samp      = gl_WorkGroupID.z;
     const uint tid       = gl_LocalInvocationID.x;
@@ -118,6 +126,11 @@ void rms_norm(uint num_iters) {
         } else if (rp.rope_mode == GGML_ROPE_TYPE_NORMAL) {
             rope_norm(t, row, channel, samp, rp);
         }
+    }
+#endif
+#if RMS_NORM_ROW_STRIDE
+    // Finish reading shared reduction storage before the next row overwrites it.
+    barrier();
     }
 #endif
 }

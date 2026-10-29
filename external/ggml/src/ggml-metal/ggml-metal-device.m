@@ -1257,8 +1257,13 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         case GGML_OP_GATED_DELTA_NET:
             return has_simdgroup_reduction && op->src[2]->ne[0] % 32 == 0;
         case GGML_OP_SOLVE_TRI:
-        case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
+            return has_simdgroup_reduction && op->src[0]->type != GGML_TYPE_NVFP4;
+        case GGML_OP_MUL_MAT:
+            if (ggml_get_op_params_i32(op, 1) == GGML_MUL_MAT_LOWERING_METAL_F32_INPUTS) {
+                return has_simdgroup_reduction && op->src[0]->type == GGML_TYPE_F32 &&
+                       op->src[1]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32;
+            }
             return has_simdgroup_reduction && op->src[0]->type != GGML_TYPE_NVFP4;
         case GGML_OP_SNAKE_1D:
             // fused snake activation: elementwise F32, nothing exotic required

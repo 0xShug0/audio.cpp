@@ -62,7 +62,7 @@ void print_task_list_help() {
         << "    --backend cpu|cuda|hip|rocm|vulkan|metal|best  (rocm is an alias for hip)\n"
         << "    --mode offline|streaming  default offline\n"
         << "    --device <n>\n"
-        << "    --list-devices  List available backend devices and exit\n"
+        << "    --list-devices  List available backend devices and exit; --json adds PCI ids and memory\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
         << "    --registry-config <path>\n"
         << "    --model-spec-override <json-or-directory|embedded>  Select a spec file/directory or the GGUF's embedded spec\n"
@@ -703,7 +703,11 @@ int audiocpp_cli_main(int argc, char ** argv) {
             return 0;
         }
         if (has_arg(argc, argv, "--list-devices")) {
-            engine::core::print_backend_devices(std::cout);
+            if (json_output) {
+                engine::core::print_backend_devices_json(std::cout);
+            } else {
+                engine::core::print_backend_devices(std::cout);
+            }
             return 0;
         }
         if (has_arg(argc, argv, "--list-loaders")) {

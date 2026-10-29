@@ -786,6 +786,8 @@ struct vk_device_struct {
     vk_pipeline pipeline_group_norm_f32;
     vk_pipeline pipeline_rms_norm_f32;
     vk_pipeline pipeline_rms_norm_mul_f32;
+    vk_pipeline pipeline_rms_norm_rows_f32;
+    vk_pipeline pipeline_rms_norm_mul_rows_f32;
     vk_pipeline pipeline_rms_norm_partials_f32;
     vk_pipeline pipeline_rms_norm_mul_partials_f32;
     vk_pipeline pipeline_rms_norm_mul_rope_f32_f32;
@@ -4596,6 +4598,8 @@ static void ggml_vk_load_shaders(vk_device& device) {
 
     ggml_vk_create_pipeline(device, device->pipeline_rms_norm_f32, "rms_norm_f32", rms_norm_f32_len, rms_norm_f32_data, "main", 4, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {0, 0}, 1, true);
     ggml_vk_create_pipeline(device, device->pipeline_rms_norm_mul_f32, "rms_norm_mul_f32", rms_norm_f32_len, rms_norm_f32_data, "main", 4, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {0, 1}, 1, true);
+    ggml_vk_create_pipeline(device, device->pipeline_rms_norm_rows_f32, "rms_norm_rows_f32", rms_norm_rows_f32_len, rms_norm_rows_f32_data, "main", 4, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {0, 0}, 1, true);
+    ggml_vk_create_pipeline(device, device->pipeline_rms_norm_mul_rows_f32, "rms_norm_mul_rows_f32", rms_norm_rows_f32_len, rms_norm_rows_f32_data, "main", 4, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {0, 1}, 1, true);
     ggml_vk_create_pipeline(device, device->pipeline_rms_norm_partials_f32, "rms_norm_partials_f32", rms_norm_partials_f32_len, rms_norm_partials_f32_data, "main", 4, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {0, 0}, 1, true);
     ggml_vk_create_pipeline(device, device->pipeline_rms_norm_mul_partials_f32, "rms_norm_mul_partials_f32", rms_norm_partials_f32_len, rms_norm_partials_f32_data, "main", 4, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {0, 1}, 1, true);
 
@@ -9762,6 +9766,8 @@ static vk_pipeline ggml_vk_op_get_pipeline(ggml_backend_vk_context * ctx, const 
         if (src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
             if (ctx->do_add_rms_partials) {
                 return ctx->num_additional_fused_ops > 0 ? ctx->device->pipeline_rms_norm_mul_partials_f32 : ctx->device->pipeline_rms_norm_partials_f32;
+            } else if (src0->ne[1] > ctx->device->properties.limits.maxComputeWorkGroupCount[0]) {
+                return ctx->num_additional_fused_ops > 0 ? ctx->device->pipeline_rms_norm_mul_rows_f32 : ctx->device->pipeline_rms_norm_rows_f32;
             } else {
                 return ctx->num_additional_fused_ops > 0 ? ctx->device->pipeline_rms_norm_mul_f32 : ctx->device->pipeline_rms_norm_f32;
             }
@@ -10349,7 +10355,7 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
             // Run one element per thread, 128 threads per workgroup
             elements = { (uint32_t)CEIL_DIV(ne00, 128), 1, 1 };
         } else {
-            elements = { (uint32_t)ne01, (uint32_t)ne02, (uint32_t)ne03 };
+            elements = { std::min((uint32_t)ne01, ctx->device->properties.limits.maxComputeWorkGroupCount[0]), (uint32_t)ne02, (uint32_t)ne03 };
         }
         break;
 

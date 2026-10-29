@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Play, Plus, Square, Trash2, User } from '@lucide/svelte';
   import { browserDecodeToWav } from '$lib/audio';
+  import { requirePackageLoadTarget } from '$lib/catalog';
   import {
     availableVoices,
     base64AudioUrl,
@@ -29,8 +30,6 @@
   export let studioPackageSlots: (entry: CatalogEntry) =>
     Array<{ key: string; label: string; choice?: InstallPackageChoice }> = () => [];
   export let packageIsAvailable: (entry: CatalogEntry, choice: InstallPackageChoice) => boolean = () => false;
-  export let packageSessionOptionsMatch:
-    (entry: CatalogEntry, choice: InstallPackageChoice, model: LoadedModel) => boolean = () => true;
   export let supportsMaxTokens: (entry: CatalogEntry) => boolean = () => false;
   export let supportsRequestOption: (entry: CatalogEntry, option: string) => boolean = () => false;
   export let requiresRequestOption: (entry: CatalogEntry, option: string) => boolean = () => false;
@@ -425,13 +424,17 @@
       }
       return;
     }
+    choice = choice || entry.install_packages?.[0];
+    const target = choice ? requirePackageLoadTarget(choice) : undefined;
     if (choice && !packageIsAvailable(entry, choice)) {
       throw new StatusWarning(tr('arena.error.notDownloaded', { package: choice.label }));
     }
     const path = modelPathForChoice(entry, choice);
+    // Arena matches its own request, independently of Studio overrides.
+    const sessionOptions = mergedSessionOptionsForChoice(entry, choice);
     const resident = loadedModels.find((model) => model.id === entry.id && model.loaded &&
       loadedPathMatches(path, model.path) &&
-      (!choice || packageSessionOptionsMatch(entry, choice, model)));
+      Object.entries(sessionOptions).every(([key, value]) => model.session_options?.[key] === value));
     if (resident) return;
 
     const replaced = loadedModels.filter((model) => model.loaded &&
@@ -443,16 +446,16 @@
     await loadModel({
       id: entry.id,
       path,
-      family: entry.family,
+      family: target?.family ?? entry.family,
       task: entry.task,
       mode: entry.mode || 'offline',
-      load_options: entry.load_options || {},
-      session_options: mergedSessionOptionsForChoice(entry, choice)
+      load_options: { ...choice?.load_options, ...entry.load_options },
+      session_options: sessionOptions
     });
     await refresh();
     if (!loadedModels.some((model) => model.id === entry.id && model.loaded &&
       loadedPathMatches(path, model.path) &&
-      (!choice || packageSessionOptionsMatch(entry, choice, model)))) {
+      Object.entries(sessionOptions).every(([key, value]) => model.session_options?.[key] === value))) {
       throw new Error(tr('arena.error.loadFailed'));
     }
   }

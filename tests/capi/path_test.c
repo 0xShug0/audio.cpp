@@ -310,6 +310,28 @@ int main(int argc, char ** argv) {
               == AUDIOCPP_ERR_OUT_OF_RANGE, "out-of-range option was not rejected");
     }
 
+    /* A malformed option value is the caller's error, not a runtime failure. */
+    {
+        audiocpp_backend_config backend;
+        audiocpp_options * bad = audiocpp_options_create();
+        audiocpp_session * rejected = NULL;
+        audiocpp_status status;
+        backend.backend = backend_name;
+        backend.device = 0;
+        backend.threads = 2;
+        CHECK(bad != NULL, "audiocpp_options_create returned NULL");
+        CHECK_OK(audiocpp_options_set(bad, "threshold", "not-a-number"));
+        status = audiocpp_session_create(model, "vad", "offline", &backend, bad, &rejected);
+        CHECK(status == AUDIOCPP_ERR_INVALID_ARGUMENT,
+              "malformed option gave %s (%s), expected invalid argument",
+              audiocpp_status_string(status), audiocpp_last_error());
+        CHECK(strstr(audiocpp_last_error(), "threshold") != NULL,
+              "error does not name the option: %s", audiocpp_last_error());
+        CHECK(rejected == NULL, "failed session create still wrote an out handle");
+        audiocpp_session_free(rejected);
+        audiocpp_options_free(bad);
+    }
+
     {
         audiocpp_backend_config backend;
         backend.backend = backend_name;

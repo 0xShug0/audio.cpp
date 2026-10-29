@@ -343,6 +343,24 @@ std::shared_ptr<engine::runtime::IVoiceModelLoader> make_liveavatar_loader() {
             return kFamily;
         }
 
+        engine::runtime::PackageLoadTarget resolve_package_load(const assets::ModelPackage & package) const override {
+            engine::runtime::PackageLoadTarget out{kFamily, package.root, {}, {}};
+            if (package.format == "gguf") {
+                for (const auto & file : package.files) {
+                    if (file.extension() != ".gguf") continue;
+                    const auto name = file.filename().string();
+                    if (name.rfind("Wan2.2-S2V-Support-", 0) == 0) {
+                        out.load_options.emplace("liveavatar.support_gguf", file.generic_string());
+                    } else if (name.rfind("Wan2.2-S2V-VAE-", 0) == 0) {
+                        out.load_options.emplace("liveavatar.vae_gguf", file.generic_string());
+                    } else if (name.rfind("Wan2.2-S2V-14B-", 0) == 0) {
+                        out.load_options.emplace("liveavatar.denoiser_gguf", file.generic_string());
+                    }
+                }
+            }
+            return out;
+        }
+
         engine::runtime::CapabilitySet advertised_capabilities() const override {
             return make_capabilities();
         }

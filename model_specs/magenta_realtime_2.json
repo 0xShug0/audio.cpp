@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "family": "magenta_realtime_2",
+  "display_name": "Magenta RealTime 2",
+  "description": "Frame-autoregressive stereo music generation with text, audio style, and MIDI conditioning.",
+  "category": "audio_generation",
+  "status": "experimental",
+  "tasks": [
+    "music"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "music": [
+      "instrumental",
+      "style_control"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Requested music duration in seconds.",
+        "min": 0.04,
+        "default": 10,
+        "required": false
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Sampling temperature; zero selects greedy decoding.",
+        "min": 0,
+        "default": 1.3,
+        "required": false
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Sampling candidate limit; zero keeps all 1024 valid codes.",
+        "min": 0,
+        "max": 1024,
+        "default": 40,
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed.",
+        "min": 0,
+        "max": 4294967295,
+        "default": 0,
+        "required": false
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "MusicCoCa style guidance, discretized to the model's trained conditioning tokens.",
+        "min": -1,
+        "max": 7,
+        "default": 3,
+        "required": false
+      },
+      {
+        "name": "note_guidance_scale",
+        "type": "float",
+        "description": "MIDI note guidance.",
+        "min": -1,
+        "max": 7,
+        "default": 1,
+        "required": false
+      },
+      {
+        "name": "drum_guidance_scale",
+        "type": "float",
+        "description": "Drum guidance.",
+        "min": -1,
+        "max": 7,
+        "default": 1,
+        "required": false
+      },
+      {
+        "name": "use_mapper",
+        "type": "bool",
+        "description": "Map text style embeddings into the audio embedding space.",
+        "default": true,
+        "required": false
+      },
+      {
+        "name": "pianoroll_file",
+        "type": "string",
+        "description": "Optional JSON array of 128 MIDI pitch states per frame at 25 Hz: -1 masked, 0 off, 1 sustain, 2 onset, 3 model chooses.",
+        "required": false
+      },
+      {
+        "name": "drums",
+        "type": "int",
+        "description": "Drum conditioning: -1 leaves drums unspecified, 0 requests no drums, 1 requests drums.",
+        "required": false,
+        "min": -1,
+        "max": 1,
+        "default": -1
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "description": "Transformer weight storage type.",
+        "default": "native",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/Magenta-RealTime-2-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "magenta_realtime_2_small_f16",
+      "display_name": "Magenta RealTime 2 Small F16",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Magenta-RealTime-2-GGUF",
+      "files": [
+        "magenta-rt2-small-f16.gguf"
+      ],
+      "default": true
+    },
+    {
+      "id": "magenta_realtime_2_small_q8_0",
+      "display_name": "Magenta RealTime 2 Small Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Magenta-RealTime-2-GGUF",
+      "files": [
+        "magenta-rt2-small-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "magenta_realtime_2_base_f16",
+      "display_name": "Magenta RealTime 2 Base F16",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Magenta-RealTime-2-GGUF",
+      "files": [
+        "magenta-rt2-base-f16.gguf"
+      ]
+    },
+    {
+      "id": "magenta_realtime_2_base_q8_0",
+      "display_name": "Magenta RealTime 2 Base Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Magenta-RealTime-2-GGUF",
+      "files": [
+        "magenta-rt2-base-q8_0.gguf"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "magenta_realtime_2_small_f16",
+    "tags": [
+      "Music",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/magenta_realtime_2.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "musiccoca_config": "model:musiccoca.json",
+        "musiccoca_tokenizer": "model:spm.model"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "generator"
+        },
+        "musiccoca": {
+          "source": "weights:",
+          "prefix": "musiccoca"
+        }
+      }
+    }
+  ]
+}

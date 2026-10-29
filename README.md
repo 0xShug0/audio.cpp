@@ -188,6 +188,7 @@ Model weights keep the license of their original release, which is separate from
 |---|---|---|---|---|
 | **ace_step** | Music, Edit | 50+ langs | ACE-Step 1.5 Turbo<br>ACE-Step 1.5 Base<br>ACE-Step 1.5 XL Turbo<br>ACE-Step 1.5 XL SFT | GGUF 16, LoRA |
 | **heartmula** | Music | zh, en, ja, ko, es | HeartMuLa-oss-3B with HeartCodec-oss | GGUF 16/Q8 |
+| **magenta_realtime_2** | Music | music | Magenta RealTime 2 Small (230M)<br>Magenta RealTime 2 Base (2.4B) | GGUF F16/Q8_0, Stream |
 | **midashenglm_gen** | Music, SFX | auto | MiDashengLM-Gen structured-prompt generation for speech, music, sound effects, and ambience | GGUF F32/Q8 |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | MiniMax-H3 Q4_K with optional INT8 ConvRot DiT | GGUF Q4/INT8 |
 | **minimax_music3** | Music | auto | MiniMax Music 3 text-to-music generation with lyrics conditioning | GGUF Q4/Q8 |
@@ -220,6 +221,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Safetensors, GGUF Q8 | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](docs/models/kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |
 | **latentsync** | Video lip sync | lang agnostic | GGUF F32/F16/Q8, experimental | [@0xShug0](https://github.com/0xShug0) | [LatentSync 1.6](docs/models/latentsync.md) audio-conditioned lip synchronization with optional DeepCache and reduced-memory execution modes |
 | **lfm2_audio** | ASR, TTS, S2S | en, ja | GGUF F32/16/Q8/Q4, Stream | [@ykhrustalev](https://github.com/ykhrustalev) / Liquid AI | [LFM2.5-Audio](docs/models/lfm2_audio.md) English and Japanese transcription, speech and spoken chat from Liquid AI's published GGUFs: LFM2 hybrid short-conv/attention backbone with a FastConformer encoder for audio input, and a depthformer and LFM2 detokenizer for 24 kHz speech in four built-in English voices; spoken questions get replies of interleaved text and speech; offline or streamed frame by frame |
+| **lfm3_audio** | ASR, TTS, S2S | en, ar, da, de, el, es, fi, fr, he, it, ja, ko, nl, pl, pt, sv, tr, zh | GGUF BF16/16/Q8/Q4, Safetensors, Stream, experimental | Community | [LFM3-Audio](docs/models/lfm3_audio.md) transcription, spoken-question chat (with optional thinking), speech in 38 built-in voices across 19 languages and spoken chat from Liquid AI's published LFM3-Audio-2B GGUFs: LFM2 encoder for audio input, LFM3 hybrid short-conv/attention backbone, a bidirectional MaskGIT depth decoder (12 codebooks, 12.5 Hz) and the LiquidCodec decoder for 24 kHz speech; spoken questions get replies of interleaved text and speech, with client-held multi-turn history; TTS and S2S offline or streamed frame by frame |
 | **liveavatar** | Audio-to-video | auto | GGUF NVFP4 | [@0xShug0](https://github.com/0xShug0) | [LiveAvatar](docs/models/liveavatar.md) audio-to-video avatar generation with Wan2.2 S2V and an optional low-VRAM denoiser path |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | GGUF Q4/INT8 | [@0xShug0](https://github.com/0xShug0) | [MiniMax-H3](docs/models/minimax_h3.md) text-to-audio/video generation with Q4_K and optional INT8 ConvRot DiT |
 | **minimax_music3** | Music | auto | GGUF Q4/Q8 | [@0xShug0](https://github.com/0xShug0), [@JoeMattie](https://github.com/JoeMattie) | [MiniMax Music 3](docs/models/minimax_music3.md) text-to-music generation with lyrics conditioning |
@@ -736,6 +738,7 @@ Useful CLI features:
 - `--help` with `--model <path>` and `--family <family>` shows model-owned request, session, and load options
 - `--inspect` prints discovered configs, weights, and capabilities
 - `--list-loaders` prints registered model families (`--json` for the machine-readable contract)
+- `--list-devices` prints backend devices and the `--backend`/`--device` values that select them (`--json` adds [PCI ids and free/total memory](docs/usage.md#listing-devices))
 - `python tools/model_manager_v2.py list --json` prints installable packages from `model_specs/*.json`
 - `--batch-text-file <txt>` runs one offline request per non-empty line
 - `--batch-text-dir <dir>` runs one offline request per `.txt`, `.md`, or `.json` file, normalizing each file as one paragraph

@@ -4,6 +4,7 @@
 #include "ui_assets.h"
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 #include "model_installer.h"
+#include "engine/framework/runtime/registry.h"
 #endif
 
 #include "engine/framework/io/json.h"
@@ -239,7 +240,41 @@ HttpResponse ui_model_install_status_response(
 }
 
 HttpResponse ui_model_package_sizes_response(ModelInstaller &installer) {
-    return json_response(installer.package_sizes());
+    namespace json = engine::io::json;
+    auto inventory = json::parse(installer.package_sizes()).as_object();
+    const auto registry = engine::runtime::make_default_registry();
+    auto rows = inventory.at("data").as_array();
+    for (auto & value : rows) {
+        auto row = value.as_object();
+        const auto & metadata = row.at("package");
+        engine::assets::ModelPackage package;
+        package.root = json::require_string(metadata, "root");
+        package.format = json::require_string(metadata, "format");
+        for (const auto & file : metadata.require("files").as_array()) {
+            package.files.emplace_back(file.as_string());
+        }
+        try {
+            const auto target = registry.resolve_package_load(json::require_string(metadata, "family"), package);
+            json::Value::Object load_options, session_options;
+            for (const auto & option : target.load_options) {
+                load_options[option.first] = json::Value::make_string(option.second);
+            }
+            for (const auto & option : target.session_options) {
+                session_options[option.first] = json::Value::make_string(option.second);
+            }
+            json::Value::Object resolved;
+            resolved["family"] = json::Value::make_string(target.family);
+            resolved["model_path"] = json::Value::make_string(target.model_path.generic_string());
+            resolved["load_options"] = json::Value::make_object(std::move(load_options));
+            resolved["session_options"] = json::Value::make_object(std::move(session_options));
+            row["load_target"] = json::Value::make_object(std::move(resolved));
+        } catch (const std::exception & error) {
+            row["load_target_error"] = json::Value::make_string(error.what());
+        }
+        value = json::Value::make_object(std::move(row));
+    }
+    inventory["data"] = json::Value::make_array(std::move(rows));
+    return json_response(json::stringify(json::Value::make_object(std::move(inventory))));
 }
 
 HttpResponse ui_models_root_response(
