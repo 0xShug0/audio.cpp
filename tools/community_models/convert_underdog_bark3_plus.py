@@ -47,6 +47,7 @@ class BarkPackedProfile:
     variant: str
     display_name: str
     docs: str
+    bf16_f32_prefixes: tuple[str, ...] = ()
 
 
 PLUS_PROFILE = BarkPackedProfile(SOURCE_REPO, SOURCE_REVISION, SOURCE_SHA256,
@@ -231,6 +232,9 @@ def pack(staging, tool, output, storage, overwrite=False, profile=PLUS_PROFILE):
         preserved, _ = lossless_f16_tensors(staging)
     elif storage in ("q8_0", "mixed-q8"):
         preserved, half = mixed_q8_tensors(staging)
+    elif storage == "bf16" and profile.bf16_f32_prefixes:
+        preserved = [row["name"] for row in json.loads((staging / "tensor_manifest.json").read_text(encoding="utf-8"))
+                     if row["name"].startswith(profile.bf16_f32_prefixes)]
     provenance.update(storage=storage, exact_staged_values=storage in ("f32", "mixed-f16"),
                       preserved_f32_tensors=preserved, preserved_f16_tensors=half)
     with tempfile.TemporaryDirectory(prefix="bark-packed-pack-", dir=staging.parent) as temporary:

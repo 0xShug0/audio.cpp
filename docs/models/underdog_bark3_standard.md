@@ -48,7 +48,12 @@ Mixed-F16 preserves all staged F32 values, retaining non-representable scale
 products, normalization and compensated projections in F32. Q8 uses the
 protected mixed policy: eligible attention matrices use Q8_0, feed-forward and
 pointwise matrices keep exact F16, and non-representable products retain F32.
-Q8/BF16 add rounding and must be assessed separately from the source checkpoint.
+The standard BF16 profile retains the predictor, encoder-to-joint projection
+and output head in F32 to protect capitalization/duration decisions; Plus's
+existing BF16 policy is unchanged. Q8/BF16 still add rounding and must be
+assessed separately from the source checkpoint.
+Keep `matmul_weight_type`/`conv_weight_type` at `native` to retain this storage
+policy; explicit weight-type overrides can round protected tensors again.
 
 ## Run
 
@@ -63,6 +68,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions/details \
 ```
 
 Edit the example paths; use `--backend cpu` or `vulkan` for other devices.
+Select the intended GPU with `--device` if multiple Vulkan devices are present.
 Select the embedded spec explicitly, since the family catalog otherwise
 describes stock multilingual Parakeet. The ordinary legacy server is used.
 Full context is the default. Prefix correction, opt-in offline Silero VAD,
@@ -74,6 +80,8 @@ frame limit. Buffered windows/VAD can change recognition relative to full-contex
 decoding. Streaming is buffered, not native cache-aware. VAD is offline-only;
 timestamps use the native TDT emission policy rather than forced alignment.
 Metal/HIP and corpus-level WER are unvalidated.
+The original model emits `Yeah.` on the one-second silence test; unfiltered
+native inference preserves this behavior. Opt-in VAD can skip non-speech spans.
 
 ## Reference validation
 

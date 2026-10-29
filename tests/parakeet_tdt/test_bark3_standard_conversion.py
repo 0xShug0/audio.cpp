@@ -23,6 +23,8 @@ class BarkStandardConversionTest(unittest.TestCase):
         self.assertEqual(spec["ui"]["docs"], ["docs/models/underdog_bark3_standard.md"])
         self.assertEqual(packed.package_spec(REPO), original)
         self.assertEqual(packed.VARIANT, "underdog_bark3_plus")
+        self.assertEqual(packed.PLUS_PROFILE.bf16_f32_prefixes, ())
+        self.assertTrue(standard.STANDARD_PROFILE.bf16_f32_prefixes)
         with self.assertRaises(FrozenInstanceError):
             standard.STANDARD_PROFILE.variant = "underdog_bark3_plus"
 
