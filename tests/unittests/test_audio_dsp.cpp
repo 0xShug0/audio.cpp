@@ -1,5 +1,6 @@
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/audio/probability_segmenter.h"
+#include "engine/framework/audio/resampling.h"
 
 #include <algorithm>
 #include <chrono>
@@ -11,6 +12,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -316,6 +318,93 @@ void test_hann_window_modes_and_cache() {
     }
 }
 
+void test_resample_kernel_cache_eviction() {
+    using engine::audio::resample_kernel_cache_stats;
+    using engine::audio::set_resample_kernel_cache_budget_bytes;
+    std::vector<float> input(2000);
+    for (size_t i = 0; i < input.size(); ++i) {
+        input[i] = std::sin(0.05f * static_cast<float>(i));
+    }
+    const auto options = engine::audio::torchaudio_sinc_hann_float32_options();
+    const auto resample = [&](int source_rate, int target_rate) {
+        return engine::audio::resample_mono_torchaudio_sinc_hann(input, source_rate, target_rate, options);
+    };
+    // 16 KiB holds a few of these 24 kernels (93 KiB in all), so the sweep evicts.
+    constexpr size_t kBudget = 16 * 1024;
+    std::vector<int> rates;
+    for (int rate = 17000; rate <= 40000; rate += 1000) {
+        rates.push_back(rate);
+    }
+    set_resample_kernel_cache_budget_bytes(kBudget);
+    std::vector<std::vector<float>> expected;
+    for (const int rate : rates) {
+        expected.push_back(resample(rate, 16000));
+        require(resample_kernel_cache_stats().bytes <= kBudget, "resample kernel cache exceeded its budget");
+    }
+    require(resample_kernel_cache_stats().entries < rates.size(), "resample kernel sweep did not evict");
+    for (size_t i = 0; i < rates.size(); ++i) {
+        require_close(resample(rates[i], 16000), expected[i], 0.0f, 0.0, "resample_after_eviction");
+    }
+
+    // Pairs that reduce to 3:1 build kernels of equal size under distinct keys.
+    set_resample_kernel_cache_budget_bytes(0);
+    set_resample_kernel_cache_budget_bytes(kBudget);
+    resample(24000, 8000);
+    const size_t kernel_bytes = resample_kernel_cache_stats().bytes;
+    set_resample_kernel_cache_budget_bytes(3 * kernel_bytes);
+    resample(48000, 16000);
+    resample(96000, 32000);
+    resample(24000, 8000);
+    resample(12000, 4000);
+    auto stats = resample_kernel_cache_stats();
+    require(stats.entries == 3, "resample kernel cache did not hold three equal kernels");
+    resample(24000, 8000);
+    require(resample_kernel_cache_stats().hits == stats.hits + 1, "recently used resample kernel was evicted");
+    resample(48000, 16000);
+    require(resample_kernel_cache_stats().misses == stats.misses + 1, "least recently used resample kernel was kept");
+
+    set_resample_kernel_cache_budget_bytes(kernel_bytes);
+    stats = resample_kernel_cache_stats();
+    require(stats.entries == 1 && stats.bytes == kernel_bytes, "shrinking the budget did not evict at once");
+    resample(48000, 16000);
+    require(resample_kernel_cache_stats().hits == stats.hits + 1, "shrinking evicted the most recently used kernel");
+
+    set_resample_kernel_cache_budget_bytes(0);
+    for (size_t i = 0; i < rates.size(); ++i) {
+        require_close(resample(rates[i], 16000), expected[i], 0.0f, 0.0, "resample_uncached");
+    }
+    stats = resample_kernel_cache_stats();
+    require(stats.entries == 0 && stats.bytes == 0, "budget 0 cached a resample kernel");
+
+    // Concurrent misses evict entries other threads may still be using.
+    set_resample_kernel_cache_budget_bytes(kBudget);
+    std::vector<std::string> errors(4);
+    std::vector<std::thread> threads;
+    for (size_t t = 0; t < errors.size(); ++t) {
+        threads.emplace_back([&, t] {
+            try {
+                for (int pass = 0; pass < 3; ++pass) {
+                    for (size_t i = t; i < rates.size(); i += 2) {
+                        require_close(resample(rates[i], 16000), expected[i], 0.0f, 0.0,
+                                      "resample_concurrent_eviction");
+                    }
+                }
+            } catch (const std::exception & ex) {
+                errors[t] = ex.what();
+            }
+        });
+    }
+    for (auto & thread : threads) {
+        thread.join();
+    }
+    for (const auto & error : errors) {
+        require(error.empty(), error);
+    }
+    require(resample_kernel_cache_stats().bytes <= kBudget, "concurrent resampling exceeded the kernel budget");
+    // The library default, for any later test.
+    set_resample_kernel_cache_budget_bytes(32 * 1024 * 1024);
+}
+
 void test_istft_matches_reference_across_configs_and_variants() {
     const std::vector<engine::audio::STFTConfig> configs{
         engine::audio::STFTConfig{
@@ -419,6 +508,7 @@ int main() {
         test_probability_segments();
         test_log_mel_matches_reference_pipeline();
         test_hann_window_modes_and_cache();
+        test_resample_kernel_cache_eviction();
         test_stft_istft_round_trip_matches_waveform();
         test_istft_matches_reference_across_configs_and_variants();
         std::cout << "audio_dsp_test: ok\n";

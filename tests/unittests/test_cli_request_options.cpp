@@ -472,6 +472,23 @@ void test_component_exec_plans() {
     }
 }
 
+void test_non_negative_int_flag_values() {
+    using minitts::cli::parse_non_negative_int;
+    const std::string flag = "--resample-kernel-cache-mb";
+    engine::test::require_eq(parse_non_negative_int("0", flag), 0, "0 parses");
+    engine::test::require_eq(parse_non_negative_int("32", flag), 32, "32 parses");
+    engine::test::require_eq(parse_non_negative_int("2147483647", flag), 2147483647, "INT_MAX parses");
+    for (const std::string value : {"-1", "abc", "32abc", "1.5", "", " 8", "+5", "2147483648"}) {
+        bool rejected = false;
+        try {
+            (void) parse_non_negative_int(value, flag);
+        } catch (const std::runtime_error & error) {
+            rejected = std::string(error.what()) == flag + " expects a non-negative integer, got: " + value;
+        }
+        engine::test::require(rejected, flag + " rejects '" + value + "' and names the flag");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -485,6 +502,7 @@ int main() {
     test_out_format_selects_wav_sample_format();
     test_request_json_artifacts();
     test_component_exec_plans();
+    test_non_negative_int_flag_values();
     std::cout << "cli_request_options_test passed\n";
     return 0;
 }
