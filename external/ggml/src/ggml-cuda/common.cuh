@@ -1378,10 +1378,17 @@ struct ggml_cuda_stream_context {
     }
 };
 
+#ifdef GGML_USE_HIP
+struct ggml_hip_impl;
+#endif
+
 struct ggml_backend_cuda_context {
     int device;
     std::string name;
     cudaEvent_t copy_event = nullptr;
+#ifdef GGML_USE_HIP
+    const ggml_hip_impl * impl = nullptr;
+#endif
 
     cudaStream_t streams[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { { nullptr } };
     cublasHandle_t cublas_handles[GGML_CUDA_MAX_DEVICES] = {nullptr};
