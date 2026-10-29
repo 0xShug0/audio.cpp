@@ -212,7 +212,7 @@ RTX 3090, so there is real work to amortise.
 | Fish S1-DAC | 391 M weights | Reference encoding and waveform decoding |
 
 Sampling is 40 Euler steps with **two independent CFG scales** — text (default 3.0) and speaker
-(default 8.0) — gated to `t ∈ [0.5, 1.0]`.
+(default 8.0) — gated to `t ∈ [0.5, 1.0]` (this is the default - matching upstream - sampling behavior). There is also optional **single CFG scaling**  (`echo_tts.cfg_mode=joint`) with combined text and speaker guidance scale (default 8.0), as well as optional `t_schedule_mode=sway` timestep scheduling, with default 12 Euler steps.
 
 Note the Fish checkpoint stores an additional 303.6 M elements of `freqs_cis` and `causal_mask`
 buffers. These are regenerated at runtime rather than shipped in the GGUF.
@@ -224,8 +224,8 @@ buffers. These are regenerated at runtime rather than shipped in the GGUF.
 | `text_guidance_scale` | float | 3.0 | Classifier-free guidance scale on the text condition (Independent-CFG mode). Advertised range is recommended, not enforced by the parser. |
 | `speaker_guidance_scale` | float | 8.0 | Classifier-free guidance scale on the speaker condition (Independent CFG mode). Advertised range is recommended, not enforced by the parser. |
 | `guidance_scale` | float | 8.0 | Classifier-free guidance scale on the text+speaker condition (Joint-CFG mode). Advertised range is recommended, not enforced by the parser. |
-| `cfg_mode` | float | independent | What type of classifier-free guidance to use. `independent` is the default and upstream implementation, using two guidance scales (one for text, one for the speaker). `joint` uses a single guidance scale on both the text and the speaker. |
-| `num_inference_steps` | int | 40/12 | Euler sampler steps. 40 got linear time schedule, 12 for sway. |
+| `cfg_mode` | string | independent | What type of classifier-free guidance to use. `independent` is the default and upstream implementation, using two guidance scales (one for text, one for the speaker). `joint` uses a single guidance scale on both the text and the speaker. |
+| `num_inference_steps` | int | 40/12 | Euler sampler steps. Default 40 for `t_schedule_mode=linear`, default 12 for `t_schedule_mode=sway`. |
 | `t_schedule_mode` | string | linear | `linear` time scheduling is the default upstream; `sway` scheduling modifies the grid to place more timesteps where the noise is higher. Sway time schedules can reduce the number of steps needed to produce similar quality. |
 | `sway_coeff` | float | -1.0 | Sway coefficient for producing timesteps. Values must be finite and produce decreasing timesteps (validated at request) |
 | `truncation_factor` | float | 0.8 | Initial-noise truncation factor. Advertised range is recommended, not enforced by the parser. |
@@ -237,7 +237,7 @@ buffers. These are regenerated at runtime rather than shipped in the GGUF.
 | `guidance_interval` | int | 1 | Refresh the two unconditional CFG lanes only every Nth guided step. 1 reproduces upstream exactly. See [performance notes](../community_models/echo_tts_performance.md). |
 
 Session options are `echo_tts.reference_duration_sec`,
-`echo_tts.reference_cache_slots`, and `echo_tts.mem_saver`.
+`echo_tts.reference_cache_slots`, `echo_tts.mem_saver`, and `echo_tts.cfg_mode`.
 
 ## Text format
 
