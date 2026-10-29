@@ -143,3 +143,21 @@ Local evidence: `outputs/ub3/unpack-parity.json`, `models.json`,
 `matrix-results.json`, `full/`, `full-results.json`, `features-test/`,
 `memory-reuse/`, `memory-reuse-results.json`. Initial BF16 is retained under
 `precision-profiles/`; the hashes above identify the final packages.
+
+## Main merge and shared guide/config regression
+
+Updated against main `aeb7bcf1` after Plus (#1131) merged. Bark C++ inference
+sources are unchanged from the previous Standard validation. One model guide
+(`docs/models/underdog_bark3.md`) and one lazy-loaded server example
+(`examples/server/underdog-bark3-asr.json`) now cover Standard, Plus and Pro;
+per-variant measurement records are retained. Conversion metadata, family UI
+references and validation links point to the shared guide.
+
+CPU-only and combined CUDA/Vulkan builds pass. Ten focused CTest executions,
+26 converter tests and catalog self-tests/synchronization pass. All 54
+Standard/Plus mixed-F16 repeated-request comparisons pass on CPU/CUDA/Vulkan,
+with exact text and word timestamps against the earlier runs. All 18 routes in
+the shared config pass (three variants x offline/streaming x three backends),
+including Pro's original `bark3` / `bark3-stream` IDs and exact original text for
+offline requests. These are compatibility checks, not new timing measurements.
+Local commands/artifacts are under `outputs/bark-native/conflict-validation-*`.
