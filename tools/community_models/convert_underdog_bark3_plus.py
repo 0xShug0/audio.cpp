@@ -16,6 +16,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
 
 import numpy as np
 from convert_phonon2 import (compensate_batch_norm, compensate_projection,
@@ -36,6 +37,20 @@ BASE_SHA256 = {
     "tokenizer_config.json": "0b2fe0037599ee335f0b972fa682bf0ece74e4ccfec755cb7daa3405d3d3e874",
     "generation_config.json": "b141de6ec6d7f982ece13f98f604e3fe1807ea9c0e839185d0ab7064604209d0",
 }
+
+
+@dataclass(frozen=True)
+class BarkPackedProfile:
+    source_repo: str
+    source_revision: str
+    source_sha256: str
+    variant: str
+    display_name: str
+    docs: str
+
+
+PLUS_PROFILE = BarkPackedProfile(SOURCE_REPO, SOURCE_REVISION, SOURCE_SHA256,
+                                VARIANT, "Underdog Bark 3.0 Plus", "docs/models/underdog_bark3_plus.md")
 
 
 def unpack_blob(data, compressed, size):
@@ -133,20 +148,20 @@ def read_container(path):
     return tensors, json.loads(header["config"])
 
 
-def package_spec(repository):
+def package_spec(repository, profile=PLUS_PROFILE):
     spec = pro_package_spec(repository)
-    spec.update(display_name="Underdog Bark 3.0 Plus",
-                description="Conway Research Bark 3.0 Plus English Parakeet-TDT ASR; native expansion of the pinned compressed checkpoint, with the reference 250 ms prefix.")
-    spec["ui"]["docs"] = ["docs/models/underdog_bark3_plus.md"]
+    spec.update(display_name=profile.display_name,
+                description=f"{profile.display_name}: English Parakeet-TDT ASR; native expansion of the pinned compressed checkpoint, with the reference 250 ms prefix.")
+    spec["ui"]["docs"] = [profile.docs]
     return spec
 
 
-def prepare(source, staging):
+def prepare(source, staging, profile=PLUS_PROFILE):
     from safetensors.numpy import save_file
 
     if staging.exists():
         raise FileExistsError("use a new staging directory or --pack-only")
-    if sha256(source / "model.bark") != SOURCE_SHA256:
+    if sha256(source / "model.bark") != profile.source_sha256:
         raise ValueError("Bark container differs from the pinned revision")
     for name, expected in BASE_SHA256.items():
         if sha256(source / name) != expected:
@@ -182,16 +197,16 @@ def prepare(source, staging):
     if len(tensors) != 699 or counters != 24:
         raise ValueError("unexpected inference/training tensor inventory")
     staging.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="bark-plus-", dir=staging.parent) as temporary:
+    with tempfile.TemporaryDirectory(prefix="bark-packed-", dir=staging.parent) as temporary:
         target = Path(temporary) / "package"
         target.mkdir()
-        config["variant"] = VARIANT
+        config["variant"] = profile.variant
         (target / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
         for name in (*SIDECARS, "NOTICE", "README.md"):
             shutil.copyfile(source / name, target / name)
         shutil.copyfile(source / "coreml/LICENSE", target / "LICENSE")
-        provenance = dict(source=SOURCE_REPO, revision=SOURCE_REVISION, model_sha256=SOURCE_SHA256,
-                          variant=VARIANT, base_repo=BASE_REPO, base_revision=BASE_REVISION,
+        provenance = dict(source=profile.source_repo, revision=profile.source_revision, model_sha256=profile.source_sha256,
+                          variant=profile.variant, base_repo=BASE_REPO, base_revision=BASE_REVISION,
                           source_bytes=(source / "model.bark").stat().st_size,
                           input_prefix_samples=4000, sample_rate=16000,
                           subsampling_projection_scale=1 / 32,
@@ -201,15 +216,15 @@ def prepare(source, staging):
         (target / "conversion.json").write_text(json.dumps(provenance, indent=2), encoding="utf-8")
         (target / "tensor_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         repository = Path(__file__).resolve().parents[2]
-        (target / "model_spec.json").write_text(json.dumps(package_spec(repository), indent=2), encoding="utf-8")
+        (target / "model_spec.json").write_text(json.dumps(package_spec(repository, profile), indent=2), encoding="utf-8")
         save_file(tensors, target / "model.safetensors")
         target.rename(staging)
 
 
-def pack(staging, tool, output, storage, overwrite=False):
+def pack(staging, tool, output, storage, overwrite=False, profile=PLUS_PROFILE):
     provenance = json.loads((staging / "conversion.json").read_text(encoding="utf-8"))
     if (provenance.get("source"), provenance.get("revision"), provenance.get("model_sha256"), provenance.get("variant")) != (
-            SOURCE_REPO, SOURCE_REVISION, SOURCE_SHA256, VARIANT):
+            profile.source_repo, profile.source_revision, profile.source_sha256, profile.variant):
         raise ValueError("staging belongs to a different source/variant")
     preserved, half = [], []
     if storage == "mixed-f16":
@@ -218,7 +233,7 @@ def pack(staging, tool, output, storage, overwrite=False):
         preserved, half = mixed_q8_tensors(staging)
     provenance.update(storage=storage, exact_staged_values=storage in ("f32", "mixed-f16"),
                       preserved_f32_tensors=preserved, preserved_f16_tensors=half)
-    with tempfile.TemporaryDirectory(prefix="bark-plus-pack-", dir=staging.parent) as temporary:
+    with tempfile.TemporaryDirectory(prefix="bark-packed-pack-", dir=staging.parent) as temporary:
         root = Path(temporary)
         for name in ("config.json", *SIDECARS, "NOTICE", "LICENSE", "README.md", "model_spec.json", "tensor_manifest.json"):
             shutil.copyfile(staging / name, root / name)
@@ -241,8 +256,8 @@ def pack(staging, tool, output, storage, overwrite=False):
         subprocess.run(command, check=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(profile=PLUS_PROFILE, description=__doc__):
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--staging", required=True, type=Path)
     parser.add_argument("--gguf-tool", type=Path)
@@ -255,12 +270,12 @@ def main():
     if args.prepare_only and args.pack_only:
         parser.error("prepare-only and pack-only are mutually exclusive")
     if not args.pack_only:
-        prepare(args.source.resolve(), args.staging.resolve())
+        prepare(args.source.resolve(), args.staging.resolve(), profile)
     if args.prepare_only:
         return
     if not args.gguf_tool or not args.output:
         parser.error("packing requires --gguf-tool and --output")
-    pack(args.staging.resolve(), args.gguf_tool, args.output, args.type, args.overwrite)
+    pack(args.staging.resolve(), args.gguf_tool, args.output, args.type, args.overwrite, profile)
 
 
 if __name__ == "__main__":
