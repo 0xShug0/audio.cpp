@@ -294,7 +294,8 @@
       "GGUF"
     ],
     "docs": [
-      "docs/models/parakeet_tdt.md"
+      "docs/models/parakeet_tdt.md",
+      "docs/models/underdog_bark3.md"
     ]
   },
   "sources": [

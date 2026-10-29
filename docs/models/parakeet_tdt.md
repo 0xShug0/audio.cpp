@@ -27,6 +27,11 @@ native cache-aware streaming.
 
 ## Architecture
 
+[Underdog Bark 3.0 Pro](underdog_bark3.md) is another English-only Parakeet-TDT
+variant. Its converter and model-local adapter preserve the publisher's weight
+scaling and 250 ms input prefix; use that guide rather than loading its original
+BF16 checkpoint as stock Parakeet.
+
 The same runtime can load the [Phonon-2 English ASR variant](#phonon-2-parakeet-tdt-variant) after
 exact reconstruction of its custom five-value container into a dense F32
 package. The Phonon package supports English-only offline and streaming ASR; it does

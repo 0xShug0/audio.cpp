@@ -1,4 +1,5 @@
 #include "engine/community_models/parakeet_tdt/session.h"
+#include "engine/community_models/parakeet_tdt/bark3.h"
 #include "engine/community_models/parakeet_tdt/phonon_streaming.h"
 
 #include "engine/framework/audio/chunking.h"
@@ -1001,6 +1002,14 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {
                                 const runtime::SessionOptions & options,
                                 std::shared_ptr<const ParakeetTDTAssets> assets,
                                 std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        if (assets->config.variant == "underdog_bark3_pro") {
+            if (task.mode == runtime::RunMode::Streaming) {
+                return std::unique_ptr<runtime::IVoiceTaskSession>(wrap_bark3_streaming(
+                    std::make_unique<ParakeetTDTStreamingSession>(task, options, std::move(assets), std::move(contract))));
+            }
+            return std::unique_ptr<runtime::IVoiceTaskSession>(wrap_bark3_offline(
+                std::make_unique<ParakeetTDTOfflineSession>(task, options, std::move(assets), std::move(contract))));
+        }
         if (task.mode == runtime::RunMode::Streaming) {
             if (assets->config.variant == "phonon2") {
                 return std::unique_ptr<runtime::IVoiceTaskSession>(std::make_unique<PhononStreamingSession>(

@@ -270,6 +270,8 @@ int main(int argc, char ** argv) {
         engine::runtime::ModelLoadRequest load_request;
         load_request.model_path = model_path;
         load_request.family_hint = "parakeet_tdt";
+        const auto spec_override = arg_value(argc, argv, "--model-spec-override", "");
+        if (!spec_override.empty()) load_request.model_spec_override = spec_override;
         auto model = registry.load(load_request);
 
         engine::runtime::SessionOptions session_options;
