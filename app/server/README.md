@@ -431,6 +431,7 @@ file. Starting the full UI without a config enables lazy loading automatically.
 | `max_loaded_models` | `0` | Maximum resident models; `0` disables the limit, `1` keeps one model resident. | `--max-loaded-models <n>` |
 | `idle_unload_ms` | `0` | Unload resident models after the server has had no model load/run activity for this long; `0` disables it. | `--idle-unload-ms <ms>` |
 | `min_free_memory_mb` | `0` | Free-memory headroom in MiB required after an estimated model load; `0` disables the guard. | `--min-free-memory-mb <mb>` |
+| `resample_kernel_cache_mb` | `32` | MiB of resampling kernels kept for reuse across requests, evicting the least recently used first; `0` disables the cache. A kernel larger than the limit, such as the 84.5 MiB one for 44056 Hz to 16 kHz, is rebuilt on every request; raise the limit for such inputs. | `--resample-kernel-cache-mb <mb>` |
 
 > [!WARNING]
 > Lazy loading does not unload a model after each request. Used models stay

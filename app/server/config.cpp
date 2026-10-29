@@ -244,6 +244,7 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
     config.ui_requested = engine::io::json::optional_bool(root, "ui", false);
     config.ui_management = engine::io::json::optional_bool(root, "ui_management", config.ui_management);
     config.backend = parse_server_backend(engine::io::json::optional_string(root, "backend", "cuda"));
+    config.backend_impl = engine::io::json::optional_string(root, "backend_impl", "");
     config.device = engine::io::json::optional_i32(root, "device", config.device);
     config.threads = engine::io::json::optional_i32(root, "threads", config.threads);
     config.lazy_load = engine::io::json::optional_bool(root, "lazy_load", config.lazy_load);
@@ -255,6 +256,16 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
     config.max_loaded_models = engine::io::json::optional_i32(root, "max_loaded_models", config.max_loaded_models);
     config.idle_unload_ms = engine::io::json::optional_i32(root, "idle_unload_ms", config.idle_unload_ms);
     config.min_free_memory_mb = engine::io::json::optional_i32(root, "min_free_memory_mb", config.min_free_memory_mb);
+    if (const auto * value = root.find("resample_kernel_cache_mb")) {
+        // Not require_i32: it narrows first, so 4294967296 would become 0 and disable the cache.
+        const double mb = value->is_number() ? value->as_number() : -1.0;
+        if (mb < 0.0 || mb > std::numeric_limits<int>::max() || std::floor(mb) != mb) {
+            throw std::runtime_error(
+                "server resample_kernel_cache_mb must be an integer in 0.." +
+                std::to_string(std::numeric_limits<int>::max()) + " (0 disables the cache)");
+        }
+        config.resample_kernel_cache_mb = static_cast<int>(mb);
+    }
     if (const auto * value = root.find("live_ingest")) {
         config.live_ingest = parse_live_ingest_limits(*value, config.live_ingest, "server live_ingest");
     }

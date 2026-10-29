@@ -216,11 +216,13 @@ ggml_backend_t init_device_backend(BackendType type, const char * label, const B
     if (device == nullptr) {
         throw std::runtime_error(describe_missing_device(type, label, config.device));
     }
-    ggml_backend_t backend = ggml_backend_dev_init(device, nullptr);
+    ggml_backend_t backend = ggml_backend_dev_init_with_impl(
+        device, config.impl.c_str(), nullptr);
     if (backend == nullptr) {
         throw std::runtime_error(
             "Failed to initialize " + std::string(label) + " backend on device " +
-            std::to_string(config.device));
+            std::to_string(config.device) + " with implementation '" +
+            (config.impl.empty() ? "default" : config.impl) + "'");
     }
     return backend;
 }
@@ -361,6 +363,9 @@ ggml_backend_t init_backend(const BackendConfig & config) {
     ensure_backends_loaded();
     switch (config.type) {
         case BackendType::Cpu: {
+            if (!config.impl.empty() && config.impl != "default") {
+                return init_device_backend(BackendType::Cpu, "CPU", config);
+            }
             ggml_backend_t backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
             if (backend == nullptr) {
                 throw std::runtime_error("Failed to initialize CPU backend");
@@ -376,6 +381,9 @@ ggml_backend_t init_backend(const BackendConfig & config) {
         case BackendType::Metal:
             return init_device_backend(BackendType::Metal, "Metal", config);
         case BackendType::BestAvailable: {
+            if (!config.impl.empty() && config.impl != "default") {
+                throw std::runtime_error("A named backend implementation requires an explicit backend");
+            }
             ggml_backend_t backend = ggml_backend_init_best();
             if (backend == nullptr) {
                 throw std::runtime_error("Failed to initialize best backend");

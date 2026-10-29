@@ -4,8 +4,10 @@
 #include "parallel_runtime.h"
 #include "parallel_http.h"
 
+#include "../cli/args.h"
 #include "../common/build_info.h"
 
+#include "engine/framework/audio/resampling.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
@@ -92,7 +94,7 @@ void print_help() {
         << "                [--model-spec-override <json-or-directory|embedded>] [--voice-dir <directory>]\n"
         << "                [--frontend-listener <name>] [--frontend-option key=value]\n"
         << "                [--log] [--log-file <path>] [--load-progress 0|1]\n"
-        << "                [--cors-origins <origins>]\n"
+        << "                [--cors-origins <origins>] [--resample-kernel-cache-mb <mb>]\n"
         << "  --version                        print build version, commit, compiler, platform, and enabled backends\n"
         << "  --parallel-jobs                  opt into the experimental parallel runtime; per-model slots default to 1\n"
         << "  --ui                             serve the embedded WebUI\n"
@@ -102,6 +104,7 @@ void print_help() {
         << "  --host <ip>                      server bind address; default 127.0.0.1\n"
         << "  --port <port>                    server listening port; default 8080\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal  default cuda (rocm is an alias for hip)\n"
+        << "  --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
         << "  --list-devices                   list available backend devices and exit; add --json\n"
         << "                                   for PCI ids and free/total memory as JSON\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
@@ -115,6 +118,9 @@ void print_help() {
         << "  --min-free-memory-mb <mb>        refuse a model load unless host and GPU each keep at\n"
         << "                                   least this many MiB free after the load; default 0\n"
         << "                                   (guard disabled)\n"
+        << "  --resample-kernel-cache-mb <mb>  keep at most this many MiB of resampling kernels cached,\n"
+        << "                                   evicting the least recently used; default 32, 0 disables;\n"
+        << "                                   a kernel larger than this is rebuilt on every call\n"
         << "  --voice-dir <directory>          override the shared reference voice library directory\n"
         << "  --frontend-listener <name>       opt-in frontend transport listener, e.g. https or websocket\n"
         << "  --frontend-option key=value      listener-specific option; may be repeated\n"
@@ -251,6 +257,9 @@ int main(int argc, char ** argv) {
         if (const auto backend = arg_value(argc, argv, "--backend")) {
             config.backend = minitts::server::parse_server_backend(*backend);
         }
+        if (const auto impl = arg_value(argc, argv, "--backend-impl")) {
+            config.backend_impl = *impl;
+        }
         if (const auto device = arg_value(argc, argv, "--device")) {
             config.device = std::stoi(*device);
         }
@@ -268,6 +277,10 @@ int main(int argc, char ** argv) {
         }
         if (const auto min_free_memory_mb = arg_value(argc, argv, "--min-free-memory-mb")) {
             config.min_free_memory_mb = std::stoi(*min_free_memory_mb);
+        }
+        if (const auto resample_kernel_cache_mb = arg_value(argc, argv, "--resample-kernel-cache-mb")) {
+            config.resample_kernel_cache_mb =
+                minitts::cli::parse_non_negative_int(*resample_kernel_cache_mb, "--resample-kernel-cache-mb");
         }
         if (const auto model_spec = arg_value(argc, argv, "--model-spec-override")) {
             config.model_spec_override = std::filesystem::path(*model_spec);
@@ -302,6 +315,10 @@ int main(int argc, char ** argv) {
         }
         if (config.min_free_memory_mb < 0) {
             throw std::runtime_error("--min-free-memory-mb must be >= 0 (0 disables the memory guard)");
+        }
+        if (config.resample_kernel_cache_mb.has_value()) {
+            engine::audio::set_resample_kernel_cache_budget_bytes(
+                static_cast<size_t>(*config.resample_kernel_cache_mb) * 1024ull * 1024ull);
         }
 
         const auto ui_resource_anchor = executable_directory(argc > 0 ? argv[0] : nullptr);

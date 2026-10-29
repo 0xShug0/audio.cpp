@@ -361,6 +361,28 @@ void test_json_writer_exact_integers_and_nulls() {
     }
 }
 
+void test_backend_impls() {
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        auto dev = ggml_backend_dev_get(i);
+        const char * const * names = ggml_backend_dev_get_impls(dev);
+        require(names && names[0] && std::string(names[0]) == "default", "default implementation is discoverable");
+        BackendHandle original(ggml_backend_dev_init(dev, nullptr));
+        require(original.handle != nullptr, "original initialization");
+        require_eq(std::string(ggml_backend_get_impl(original.handle)), std::string("default"), "default identity");
+        require(ggml_backend_dev_init_with_impl(dev, "invalid-implementation", nullptr) == nullptr,
+                "unknown implementation must not be ignored");
+        for (size_t j = 0; names[j]; ++j) {
+            BackendHandle selected(ggml_backend_dev_init_with_impl(dev, names[j], nullptr));
+            require(selected.handle != nullptr, "advertised implementation initializes");
+            require_eq(std::string(ggml_backend_get_impl(selected.handle)), std::string(names[j]), "selected identity");
+            require_eq(std::string(ggml_backend_get_impl(original.handle)), std::string("default"), "instance isolation");
+        }
+        BackendHandle empty(ggml_backend_dev_init_with_impl(dev, "", nullptr));
+        require(empty.handle != nullptr, "empty implementation initializes the default");
+        require_eq(std::string(ggml_backend_get_impl(empty.handle)), std::string("default"), "empty identity");
+    }
+}
+
 void test_host_and_best_backends_still_resolve() {
     BackendConfig cpu;
     cpu.type = BackendType::Cpu;
@@ -388,6 +410,7 @@ int main() {
         test_every_enumerated_device_resolves();
         test_unregistered_backends_are_rejected();
         test_host_and_best_backends_still_resolve();
+        test_backend_impls();
         test_text_listing_format_is_stable();
         test_json_listing_matches_selection();
         test_json_writer_exact_integers_and_nulls();

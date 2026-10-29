@@ -14,6 +14,7 @@
 
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/conversion.h"
+#include "engine/framework/audio/resampling.h"
 #include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
@@ -62,6 +63,7 @@ void print_task_list_help() {
         << "    --backend cpu|cuda|hip|rocm|vulkan|metal|best  (rocm is an alias for hip)\n"
         << "    --mode offline|streaming  default offline\n"
         << "    --device <n>\n"
+        << "    --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
         << "    --list-devices  List available backend devices and exit; --json adds PCI ids and memory\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
         << "    --registry-config <path>\n"
@@ -72,6 +74,8 @@ void print_task_list_help() {
         << "    --log-file <path>  Stream framework progress and timing logs to a file\n"
         << "    --load-progress 0|1  with --log/--log-file, emit model-load progress keys\n"
         << "                (runtime.load.phase, <store>.weights.upload_progress); default 0\n"
+        << "    --resample-kernel-cache-mb <mb>  Resampling kernel cache in MiB, default 32; 0 disables it\n"
+        << "                (a kernel larger than this is rebuilt on every call)\n"
         << "    --metrics  Print compact wall time, audio duration, and RTF summary after offline generation\n"
         << "    --load-option key=value\n"
         << "    --session-option key=value\n"
@@ -668,6 +672,10 @@ int audiocpp_cli_main(int argc, char ** argv) {
             }
             engine::core::set_load_progress_enabled(*load_progress == "1");
         }
+        if (const auto cache_mb = find_arg(argc, argv, "--resample-kernel-cache-mb")) {
+            const int mb = parse_non_negative_int(*cache_mb, "--resample-kernel-cache-mb");
+            engine::audio::set_resample_kernel_cache_budget_bytes(static_cast<size_t>(mb) * 1024ull * 1024ull);
+        }
         const bool metrics_requested = has_arg(argc, argv, "--metrics");
         if (has_arg(argc, argv, "--version")) {
             minitts::app::print_build_info(std::cout);
@@ -794,6 +802,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
 #endif
             engine::core::BackendConfig backend;
             backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
+            backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
             backend.device = parse_int_arg(argc, argv, "--device", 0);
             backend.threads = threads;
             minitts::app::run_json_workflow(
@@ -828,6 +837,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             recipe_options.session_options = collect_key_value_args(argc, argv, "--session-option");
             recipe_options.model_spec_override = optional_path_arg(argc, argv, "--model-spec-override");
             recipe_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
+            recipe_options.backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
             recipe_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
             recipe_options.backend.threads = threads;
 
@@ -917,6 +927,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
 
         engine::runtime::SessionOptions session_options;
         session_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
+        session_options.backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
         session_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
         const int threads = parse_int_arg(argc, argv, "--threads", 4);
         if (threads <= 0) {

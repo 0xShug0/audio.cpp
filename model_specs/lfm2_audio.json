@@ -59,7 +59,7 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Longest chunk in seconds, at least 1. With fixed chunks, a final piece shorter than 1 second joins the previous chunk.",
+        "description": "Longest chunk in seconds, at least 1. With fixed chunks, a final piece shorter than 1 second and the chunk before it split their audio evenly.",
         "required": false,
         "min": 1,
         "default": 30
