@@ -3871,6 +3871,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             add_engine_unittest(nemotron_transcribe_decoder_safety_test tests/community_models/nemotron_transcribe/decoder_safety_test.cpp)
             target_include_directories(nemotron_transcribe_decoder_safety_test PRIVATE external/ggml/src)
             add_test(NAME nemotron_transcribe_decoder_safety_test COMMAND nemotron_transcribe_decoder_safety_test)
+            add_engine_unittest(nemotron_transcribe_decoder_padding_test tests/community_models/nemotron_transcribe/decoder_padding_test.cpp)
+            add_test(NAME nemotron_transcribe_decoder_padding_test COMMAND nemotron_transcribe_decoder_padding_test)
             add_engine_unittest(nemotron_transcribe_alignment_safety_test tests/community_models/nemotron_transcribe/alignment_safety_test.cpp)
             add_test(NAME nemotron_transcribe_alignment_safety_test COMMAND nemotron_transcribe_alignment_safety_test)
         endif()

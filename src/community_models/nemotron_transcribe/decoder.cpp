@@ -53,6 +53,13 @@ int64_t checked_elements(std::initializer_list<int64_t> dimensions) {
     return static_cast<int64_t>(elements);
 }
 
+int64_t expert_row_width(int64_t logical, int64_t alignment) {
+    const auto physical = ((logical + alignment - 1) / alignment) * alignment;
+    if (physical > std::numeric_limits<int32_t>::max())
+        throw std::runtime_error("Nemotron-H padded expert row exceeds GGML kernel limits");
+    return physical;
+}
+
 void validate_config(const DecoderConfig & c) {
     // Budget at most 64 graph tensors per block, leaving room for inputs/head.
     if (c.hidden_size <= 0 || c.vocab_size <= 0 || c.vocab_size > std::numeric_limits<int32_t>::max() ||
@@ -64,6 +71,7 @@ void validate_config(const DecoderConfig & c) {
         c.experts_per_token <= 0 || c.experts_per_token > c.experts ||
         c.expert_width <= 0 || c.shared_expert_width <= 0 || c.max_context <= 0 ||
         c.prefill_batch_size <= 0 || c.prefill_batch_size > c.max_context ||
+        (c.expert_row_alignment != 1 && c.expert_row_alignment != 256) ||
         !std::isfinite(c.rms_norm_eps) || c.rms_norm_eps <= 0.0F ||
         !std::isfinite(c.routed_scaling_factor) || c.routed_scaling_factor <= 0.0F ||
         c.block_pattern.find_first_not_of("MEA") != std::string::npos) {
@@ -82,6 +90,8 @@ void validate_config(const DecoderConfig & c) {
     const auto grouped_state = checked_elements({c.mamba_groups, c.mamba_state_size});
     const auto q_width = checked_elements({c.attention_heads, c.attention_head_dim});
     const auto kv_width = checked_elements({c.attention_kv_heads, c.attention_head_dim});
+    const auto expert_input = expert_row_width(c.hidden_size, c.expert_row_alignment);
+    const auto expert_hidden = expert_row_width(c.expert_width, c.expert_row_alignment);
     if (inner > max_axis || grouped_state > (max_axis - inner) / 2 || q_width > max_axis || kv_width > max_axis) {
         throw std::runtime_error("Nemotron-H decoder projected axis exceeds GGML kernel limits");
     }
@@ -100,11 +110,14 @@ void validate_config(const DecoderConfig & c) {
              checked_elements({q_width, c.hidden_size}), checked_elements({kv_width, c.max_context}),
              checked_elements({c.max_context, c.prefill_batch_size}),
              checked_elements({c.experts, c.expert_width, c.hidden_size}),
+             checked_elements({c.experts, c.expert_width, expert_input}),
+             checked_elements({c.experts, c.hidden_size, expert_hidden}),
              checked_elements({c.experts, c.prefill_batch_size}),
              checked_elements({c.shared_expert_width, c.hidden_size}),
              checked_elements({c.experts_per_token, std::max(c.expert_width, c.hidden_size), c.prefill_batch_size})}) {
         (void)elements;
     }
+    checked_elements({c.experts_per_token, std::max(expert_input, expert_hidden), c.prefill_batch_size});
 }
 
 struct LayerWeights {
@@ -297,8 +310,14 @@ ggml_tensor * build_moe(ggml_context * g, ggml_tensor * input, const LayerWeight
         std::numeric_limits<float>::infinity());
     selected = ggml_scale(g, ggml_div(g, selected, denominator), c.routed_scaling_factor);
     auto * expanded = ggml_reshape_3d(g, input, c.hidden_size, 1, steps);
+    if (w.experts_up->ne[0] > expanded->ne[0]) {
+        expanded = ggml_pad(g, expanded, static_cast<int>(w.experts_up->ne[0] - expanded->ne[0]), 0, 0, 0);
+    }
     auto * up = ggml_mul_mat_id(g, w.experts_up, expanded, selected_ids);
     auto * activated = ggml_sqr(g, ggml_relu(g, up));
+    if (w.experts_down->ne[0] > activated->ne[0]) {
+        activated = ggml_pad(g, activated, static_cast<int>(w.experts_down->ne[0] - activated->ne[0]), 0, 0, 0);
+    }
     auto * routed = ggml_mul_mat_id(g, w.experts_down, activated, selected_ids);
     routed = ggml_mul(g, routed, ggml_reshape_3d(g, selected, 1, c.experts_per_token, steps));
     routed = ggml_cont(g, ggml_permute(g, routed, 1, 0, 2, 3));
@@ -508,9 +527,9 @@ struct NemotronHDecoderRuntime::Impl {
                 layer.router = store_.load_f32_tensor(s, prefix + "ffn_gate_inp.weight", {c.experts, c.hidden_size}).tensor;
                 layer.router_bias = store_.load_f32_tensor(s, prefix + "exp_probs_b.bias", {c.experts}).tensor;
                 layer.experts_up = store_.load_tensor(s, prefix + "ffn_up_exps.weight", storage,
-                    {c.experts, c.expert_width, c.hidden_size}).tensor;
+                    {c.experts, c.expert_width, expert_row_width(c.hidden_size, c.expert_row_alignment)}).tensor;
                 layer.experts_down = store_.load_tensor(s, prefix + "ffn_down_exps.weight", storage,
-                    {c.experts, c.hidden_size, c.expert_width}).tensor;
+                    {c.experts, c.hidden_size, expert_row_width(c.expert_width, c.expert_row_alignment)}).tensor;
                 layer.shared_up = store_.load_tensor(s, prefix + "ffn_up_shexp.weight", storage,
                     {c.shared_expert_width, c.hidden_size}).tensor;
                 layer.shared_down = store_.load_tensor(s, prefix + "ffn_down_shexp.weight", storage,

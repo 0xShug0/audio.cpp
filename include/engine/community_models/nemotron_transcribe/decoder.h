@@ -33,6 +33,8 @@ struct DecoderConfig {
     float rms_norm_eps = 1.0e-5F;
     int64_t max_context = 65536;
     int64_t prefill_batch_size = 64;
+    // Opt-in physical input-row padding for routed expert banks only.
+    int64_t expert_row_alignment = 1;
 };
 
 struct GenerationOptions {

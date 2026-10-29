@@ -84,6 +84,79 @@ and notices. The encoder includes its CTC tokenizer. Checkpoint IDs must match,
 and packaging checks source identity, config and tokenizer semantics. Keep the
 encoder filename unchanged. No downloadable package is advertised yet.
 
+### Q4_K, Q3_K and Q2_K expert profiles
+
+The K profiles use genuine Q4_K, Q3_K or Q2_K routed expert tensors. Dense decoder
+linears use Q8_0; embeddings, output projection and other floating-point tensors
+retain their source types. They share the F16 speech encoder and F32 CTC head.
+The names describe the routed banks, rather than every tensor in the package.
+
+The logical widths 2,688 and 1,856 do not fit a 256-element K block. A standard
+quantization request can therefore fall back to a different type. The converter
+pads only routed-bank input columns to 2,816 and 2,048 with zeros, and audits the
+actual output types. The model adds matching zero input activations. Logical
+output widths, routing, normalization and dense projections remain unchanged.
+Four-bit K storage can be larger than IQ4_NL because of these padded columns.
+
+These files require this community model's metadata-controlled row-padding
+support. Stock NeMo-Speech.cpp and llama.cpp inference do not load this layout.
+The existing unpadded IQ4_NL path remains available.
+
+Build the pristine pinned quantizer above. Export one floating-point decoder and
+its paired encoder directly from the full checkpoint:
+
+```sh
+uv run --no-project --python .venv-nemotron python \
+  tools/community_models/export_nemotron_transcribe_bf16.py \
+  --source models/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B \
+  --reference reference/NeMo-Speech.cpp \
+  --output models/native/nemotron-transcribe-source-BF16.gguf
+```
+
+The exporter reuses an existing encoder only when its checkpoint identity and CTC
+component agree. `--encoder-only` exports/checks that sibling without writing the
+decoder. Conversion work is retained for inspection. Source tensors use hardlinks,
+so the source and export destination must share a filesystem.
+
+Create a self-contained package, embedding the spec, configs, tokenizer and exact
+trained frontend window while streaming one shared padded cache:
+
+```sh
+uv run --no-project --python .venv-nemotron python \
+  tools/community_models/quantize_nemotron_transcribe.py \
+  --source-bf16-gguf models/native/nemotron-transcribe-source-BF16.gguf \
+  --quantizer build/nemotron-quantizer/bin/llama-quantize \
+  --profile q4_k --threads 16 \
+  --padded-cache models/native/nemotron-transcribe-row256-package-cache.gguf \
+  --package-source models/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B \
+  --encoder models/native/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf \
+  --output models/audiocpp/nemotron-transcribe-30b-a4b-experts-Q4_K.gguf
+```
+
+Repeat with `--profile q3_k` and `q2_k`, changing the output filename accordingly.
+Keep the source, cache and package arguments identical to reuse the cache and
+encoder. No separate packaging copy is needed. The optional `--model-spec` selects
+a spec file; freeze it while creating a set of variants. A cache with different
+source or package inputs is rejected.
+
+The converter never requantizes an existing quantized model. It checks the pinned
+quantizer, every tensor's actual type and physical shape, pairing metadata and
+unchanged floating-point payloads. It retains a quantization receipt and refuses
+to overwrite existing or partial artifacts. Allow roughly 270 GB for the full
+source, floating-point export, shared padded cache, three packages and encoder.
+
+The self-generated converter tests do not need the checkpoint or GPU. Set
+`NEMOTRON_TEST_QUANTIZER` to the pinned executable to include real quantization
+and package round-trips, then run:
+
+```sh
+uv run --no-project --python .venv-nemotron python \
+  tests/community_models/nemotron_transcribe/test_quantize.py
+```
+
+In PowerShell, set the executable with
+`$env:NEMOTRON_TEST_QUANTIZER = 'build/nemotron-quantizer/bin/llama-quantize.exe'`.
+
 ## Run
 
 ```sh
@@ -119,8 +192,9 @@ and output must fit `nemotron_transcribe.max_context`, default 73,728. The custo
 result records token-limit termination. Sampling options are in the model spec.
 
 The server accepts the same options in JSON at `/v1/audio/transcriptions`.
-Use `/v1/audio/transcriptions/details` for word timestamps, speaker turns and the
-custom result. Multipart WAV uploads support the ordinary transcription fields;
+Use `/v1/audio/transcriptions/details` for word timestamps and speaker turns.
+The generic `/v1/tasks/run` route also returns `custom_schema_output`, including
+termination and alignment diagnostics. Multipart WAV uploads support the ordinary transcription fields;
 use JSON `options` for task templates, questions and timestamp requests. For example:
 
 ```json
@@ -156,6 +230,12 @@ frames on an 80 ms grid, with cache/FIFO/update 188/40/300. These differ from th
 HF processor's 30-second chunk setting and the diarizer's training geometry.
 Session options expose the choices. A native C++ comparison does not establish
 complete Python long-form parity.
+
+For longer recordings, caller-managed clips matching the source processor's
+30-second setting are a useful starting point. Shift each result's times by its
+source offset. Separate requests reset speaker identities, and cuts can split
+words. The one-hour acceptance limit describes capacity; it does not guarantee
+recognition quality for one uninterrupted request.
 
 Local validation used MSVC 14.44, CUDA 12.8.61, an RTX PRO 6000 Blackwell 96 GB,
 and an i9-13900K. The final package passed 11 CUDA requests covering English and

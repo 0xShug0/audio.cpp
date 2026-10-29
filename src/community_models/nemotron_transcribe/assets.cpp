@@ -31,6 +31,9 @@ public:
             throw std::runtime_error("Nemotron Transcribe GGUF count is too large: " + name);
         return static_cast<int>(value);
     }
+    int optional_count(const std::string & name, int fallback) const {
+        return gguf_find_key(data_.get(), name.c_str()) < 0 ? fallback : count(name);
+    }
     bool boolean(const std::string & name) const {
         return gguf_get_val_bool(data_.get(), require(name, GGUF_TYPE_BOOL));
     }
@@ -247,6 +250,9 @@ std::shared_ptr<const TranscribeAssets> load_transcribe_assets(const std::filesy
     c.model_name = encoder.text("ctc.model_name");
     result->alignment_tokenizer = decode_tokenizer(encoder.text("ctc.tokenizer.spm_model"));
     parse_decoder(result->resources.parse_json("backbone_config"), *result);
+    result->decoder.expert_row_alignment = decoder.optional_count("nemotron_transcribe.expert_row_alignment", 1);
+    if (result->decoder.expert_row_alignment != 1 && result->decoder.expert_row_alignment != 256)
+        throw std::runtime_error("unsupported Nemotron Transcribe expert row alignment");
     const auto generation = result->resources.parse_json("generation_config");
     if (json::require_i64_array_or_scalar(generation, "eos_token_id") != std::vector<int64_t>{11})
         throw std::runtime_error("Nemotron Transcribe requires the trained end-of-turn token 11");
