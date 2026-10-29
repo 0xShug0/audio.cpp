@@ -9446,8 +9446,133 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_from_file(const c
     return test_cases;
 }
 
+struct test_gfx1151_v1_mul_mat_precision : public test_mul_mat {
+    const bool strict_f32;
+    const bool large_f32_range;
+
+    test_gfx1151_v1_mul_mat_precision(ggml_type type_a, int64_t m, int64_t n, int64_t k, bool strict_f32,
+                                   bool large_f32_range = false, int64_t k_v = 0,
+                                   std::array<int64_t, 2> bs = {1, 1})
+        : test_mul_mat(type_a, GGML_TYPE_F32, m, n, k, bs, {1, 1}, {0, 1, 2, 3}, k_v, 1),
+          strict_f32(strict_f32), large_f32_range(large_f32_range) {}
+
+    std::string vars() override {
+        return test_mul_mat::vars() + (strict_f32 ? ",prec=f32" : ",prec=def") +
+               (large_f32_range ? ",input_range=large_f32" : "");
+    }
+
+    double max_nmse_err() override {
+        return strict_f32 ? 1e-10 : test_mul_mat::max_nmse_err();
+    }
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * out = test_mul_mat::build_graph(ctx);
+        if (strict_f32) {
+            // Exercise the precision guard independently of any backend-specific lowering.
+            for (ggml_tensor * t = ggml_get_first_tensor(ctx); t; t = ggml_get_next_tensor(ctx, t)) {
+                if (t->op == GGML_OP_MUL_MAT) {
+                    ggml_mul_mat_set_prec(t, GGML_PREC_F32);
+                }
+            }
+        }
+        return out;
+    }
+
+    void initialize_tensors(ggml_context * ctx) override {
+        if (!large_f32_range) {
+            test_mul_mat::initialize_tensors(ctx);
+            return;
+        }
+        ggml_tensor * a = ggml_get_tensor(ctx, "a");
+        ggml_tensor * b = ggml_get_tensor(ctx, "b");
+        a = a->view_src ? a->view_src : a;
+        b = b->view_src ? b->view_src : b;
+        // F32 x F32: A~100000, B~1e-5. Mixed inputs keep the large range in F32 B,
+        // so F16 A stays representable while an unintended F16 activation cast overflows.
+        const bool large_a = type_a == GGML_TYPE_F32;
+        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t; t = ggml_get_next_tensor(ctx, t)) {
+            if (t->view_src) {
+                continue; // Do not overwrite a ranged leaf through its view.
+            }
+            if (t == a) {
+                init_tensor_uniform(t, large_a ? 90000.0f : 9e-6f, large_a ? 110000.0f : 11e-6f);
+            } else if (t == b) {
+                init_tensor_uniform(t, large_a ? 9e-6f : 90000.0f, large_a ? 11e-6f : 110000.0f);
+            } else {
+                init_tensor_uniform(t);
+            }
+        }
+    }
+};
+
+
+static std::vector<std::unique_ptr<test_case>> make_test_cases_gfx1151_v1() {
+    std::vector<std::unique_ptr<test_case>> cases;
+    const std::array<int64_t, 2> one = {1, 1};
+    for (bool strict : {false, true}) {
+        for (const auto & shape : std::vector<std::array<int64_t, 3>>{
+                {63, 127, 255}, {128, 768, 256}, {128, 768, 5461}, {128, 768, 5462},
+                {128, 8192, 1792}, {256, 1024, 3584}, {512, 128, 1536},
+                {129, 769, 5376}, {193, 1024, 4096}, {2080, 768, 768}}) {
+            cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(
+                GGML_TYPE_F32, shape[0], shape[1], shape[2], strict));
+        }
+        cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(
+            GGML_TYPE_F32, 128, 768, 256, strict, true));
+        cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(
+            GGML_TYPE_F32, 128, 768, 256, strict, false, 288));
+    }
+    for (ggml_type type : {GGML_TYPE_F16, GGML_TYPE_BF16, GGML_TYPE_Q8_0, GGML_TYPE_Q4_0}) {
+        cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32, 129, 769, 256, one, one));
+    }
+    for (ggml_type type : {GGML_TYPE_F16, GGML_TYPE_BF16}) {
+        for (const auto & shape : std::vector<std::array<int64_t, 3>>{
+                {129, 1, 256}, {2048, 1, 2048}, {2048, 2, 2048},
+                {6144, 2, 2048}, {2048, 8, 6144}, {129, 9, 256},
+                {129, 32, 256}, {2048, 64, 2048}, {2048, 256, 2048}}) {
+            cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32,
+                shape[0], shape[1], shape[2], one, one));
+        }
+        cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(type, 129, 64, 256, false, false, 288));
+        cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(type, 2048, 64, 2048, false, false, 2080));
+        cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(type, 2048, 256, 2048, false, false, 2080));
+        cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(type, 129, 64, 256, false, false, 289));
+    }
+    cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 128, 768, 256,
+                                       std::array<int64_t, 2>{2, 1}, one));
+    cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 128, 768, 256,
+                                       std::array<int64_t, 2>{2, 3}, one,
+                                       std::array<int64_t, 4>{0, 3, 2, 1}));
+    for (int64_t width : {64, 128, 256, 1024, 3072}) {
+        for (int64_t rows : {1, 16, 147}) {
+            cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32,
+                std::array<int64_t, 4>{width, rows, 4, 1}, std::array<int64_t, 4>{0, 2, 1, 3}));
+            cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32,
+                std::array<int64_t, 4>{width, rows, 4, 1}, std::array<int64_t, 4>{0, 0, 0, 0},
+                std::array<int64_t, 4>{0, 2, 1, 3}));
+        }
+    }
+    cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32,
+        std::array<int64_t, 4>{64, 32769, 2, 1}, std::array<int64_t, 4>{0, 2, 1, 3}));
+    cases.emplace_back(new test_cont(GGML_TYPE_F32, {128, 2, 4, 1}, true));
+    cases.emplace_back(new test_cont(GGML_TYPE_F32, {128, 5, 4, 1}, true));
+    // F32/F16 outputs have an independent CPU implementation in the existing harness.
+    for (ggml_type type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+        for (int64_t width : {32, 129, 1365, 1366, 2048, 8193}) {
+            const int dilation = width == 8193 ? 2 : 1;
+            cases.emplace_back(new test_im2col(GGML_TYPE_F32, type, type,
+                std::array<int64_t, 4>{width, 64, 2, 1}, std::array<int64_t, 4>{3, 64, 1, 1},
+                1, 0, dilation, 0, dilation, 0, false));
+            cases.emplace_back(new test_im2col(GGML_TYPE_F32, type, type,
+                std::array<int64_t, 4>{width, 128, 1, 1}, std::array<int64_t, 4>{7, 128, 1, 1},
+                2, 0, 3, 0, 1, 0, false));
+        }
+    }
+    return cases;
+}
+
 static bool test_backend(ggml_backend_t backend, test_mode mode, const char * op_names_filter, const char * params_filter,
-                         printer * output_printer, const char * test_file_path) {
+                         printer * output_printer, const char * test_file_path, bool gfx1151_v1_suite) {
     auto filter_test_cases = [](std::vector<std::unique_ptr<test_case>> & test_cases, const char * params_filter) {
         if (params_filter == nullptr) {
             return;
@@ -9467,7 +9592,9 @@ static bool test_backend(ggml_backend_t backend, test_mode mode, const char * op
 
     std::vector<std::unique_ptr<test_case>> test_cases;
 
-    if (test_file_path == nullptr) {
+    if (gfx1151_v1_suite) {
+        test_cases = make_test_cases_gfx1151_v1();
+    } else if (test_file_path == nullptr) {
         switch (mode) {
         case MODE_TEST:
         case MODE_GRAD:
@@ -9671,6 +9798,8 @@ static void usage(char ** argv) {
     printf("    op names for -o are as given by ggml_op_desc() (e.g. ADD, MUL_MAT, etc),\n");
     printf("        optionally including the full test case string (e.g. \"ADD(type=f16,ne=[1,1,8,1],nr=[1,1,1,1],nf=1)\")\n");
     printf("    --output specifies output format (default: console, options: console, sql, csv)\n");
+    printf("    --backend-impl selects an optional backend implementation\n");
+    printf("    --suite gfx1151_v1 selects focused matmul and IM2COL1D correctness/performance cases\n");
     printf("    --list-ops lists all available GGML operations\n");
     printf("    --show-coverage shows test coverage\n");
     printf("    --test-file reads test operators from a test file generated by llama-export-graph-ops\n");
@@ -9683,6 +9812,8 @@ int main(int argc, char ** argv) {
     const char * backend_filter = nullptr;
     const char * params_filter = nullptr;
     const char * test_file_path = nullptr;
+    const char * impl = nullptr;
+    bool gfx1151_v1_suite = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "test") == 0) {
@@ -9714,6 +9845,12 @@ int main(int argc, char ** argv) {
                 usage(argv);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--backend-impl") == 0) {
+            if (i + 1 >= argc) return 1;
+            impl = argv[++i];
+        } else if (strcmp(argv[i], "--suite") == 0) {
+            if (i + 1 >= argc || strcmp(argv[++i], "gfx1151_v1") != 0) return 1;
+            gfx1151_v1_suite = true;
         } else if (strcmp(argv[i], "--output") == 0) {
             if (i + 1 < argc) {
                 if (!output_format_from_str(argv[++i], output_format)) {
@@ -9742,6 +9879,8 @@ int main(int argc, char ** argv) {
             return 1;
         }
     }
+
+    if (gfx1151_v1_suite && (test_file_path || mode == MODE_GRAD)) return 1;
 
     // load and enumerate backends
     ggml_backend_load_all();
@@ -9773,8 +9912,9 @@ int main(int argc, char ** argv) {
             continue;
         }
 
-        ggml_backend_t backend = ggml_backend_dev_init(dev, NULL);
-        GGML_ASSERT(backend != NULL);
+        ggml_backend_t backend = ggml_backend_dev_init_with_impl(dev, impl, nullptr);
+        if (!backend) return 1;
+        printf("backend.impl=%s\n", ggml_backend_get_impl(backend));
 
         ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
         auto ggml_backend_set_n_threads_fn = (ggml_backend_set_n_threads_t) ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_n_threads");
@@ -9789,7 +9929,7 @@ int main(int argc, char ** argv) {
                                                              false, "", ggml_backend_dev_description(dev),
                                                              total / 1024 / 1024, free / 1024 / 1024, true));
 
-        bool ok = test_backend(backend, mode, op_names_filter, params_filter, output_printer.get(), test_file_path);
+        bool ok = test_backend(backend, mode, op_names_filter, params_filter, output_printer.get(), test_file_path, gfx1151_v1_suite);
 
         if (ok) {
             n_ok++;

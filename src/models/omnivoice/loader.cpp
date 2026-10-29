@@ -59,6 +59,7 @@ runtime::ModelCliInterface cli(const OmniVoiceAssets &) {
         {"omnivoice.weight_type", "native|f32|f16|bf16|q8_0", "Shared generator weight storage type; default native.", false, "native"},
         {"omnivoice.generator_weight_type", "native|f32|f16|bf16|q8_0", "Generator weight storage type; defaults to weight_type, which defaults to native."},
         {"omnivoice.audio_tokenizer_weight_type", "native|f32|f16|bf16|q8_0", "Audio tokenizer weight storage type; default native.", false, "native"},
+        {"omnivoice.audio_tokenizer_codebook_weight_type", "native|f32|f16|bf16", "Storage type for the audio tokenizer codebooks, codebook score matrix, semantic feature projection, and fc2; default f32.", false, "f32"},
         {"omnivoice.audio_tokenizer_graph_arena_mb", "int", "Audio tokenizer graph arena size in MiB; default 128.", false, "128", "1"},
         {"omnivoice.generator_prefill_graph_arena_mb", "int", "Generator prefill graph arena size in MiB; default 256.", false, "256", "1"},
         {"omnivoice.generator_decode_graph_arena_mb", "int", "Generator decode graph arena size in MiB; default 256.", false, "256", "1"},

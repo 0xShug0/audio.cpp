@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <list>
+#include <memory>
 #include <mutex>
 #include <numeric>
 #include <stdexcept>
@@ -201,7 +203,54 @@ struct TorchaudioSincHannResampleKernel {
     std::vector<double> values;
 };
 
-const TorchaudioSincHannResampleKernel & get_cached_torchaudio_sinc_hann_resample_kernel(
+struct TorchaudioSincHannCachedKernel {
+    TorchaudioSincHannResampleKey key;
+    std::shared_ptr<const TorchaudioSincHannResampleKernel> kernel;
+    size_t bytes = 0;
+};
+
+struct TorchaudioSincHannResampleKernelCache {
+    std::mutex mutex;
+    size_t budget_bytes = 32 * 1024 * 1024;
+    size_t bytes = 0;
+    uint64_t hits = 0;
+    uint64_t misses = 0;
+    // Most recently used first.
+    std::list<TorchaudioSincHannCachedKernel> entries;
+    std::unordered_map<
+        TorchaudioSincHannResampleKey,
+        std::list<TorchaudioSincHannCachedKernel>::iterator,
+        TorchaudioSincHannResampleKeyHash>
+        index;
+};
+
+TorchaudioSincHannResampleKernelCache & torchaudio_sinc_hann_resample_kernel_cache() {
+    static TorchaudioSincHannResampleKernelCache cache;
+    return cache;
+}
+
+// Callers hold cache.mutex.
+std::shared_ptr<const TorchaudioSincHannResampleKernel> touch_cached_torchaudio_sinc_hann_resample_kernel(
+    TorchaudioSincHannResampleKernelCache & cache,
+    const TorchaudioSincHannResampleKey & key) {
+    const auto it = cache.index.find(key);
+    if (it == cache.index.end()) {
+        return nullptr;
+    }
+    cache.entries.splice(cache.entries.begin(), cache.entries, it->second);
+    return it->second->kernel;
+}
+
+// Callers hold cache.mutex; callers still using an evicted kernel keep it alive.
+void evict_torchaudio_sinc_hann_resample_kernels(TorchaudioSincHannResampleKernelCache & cache, size_t incoming_bytes) {
+    while (!cache.entries.empty() && cache.bytes + incoming_bytes > cache.budget_bytes) {
+        cache.bytes -= cache.entries.back().bytes;
+        cache.index.erase(cache.entries.back().key);
+        cache.entries.pop_back();
+    }
+}
+
+std::shared_ptr<const TorchaudioSincHannResampleKernel> get_cached_torchaudio_sinc_hann_resample_kernel(
     int source_sample_rate_hz,
     int target_sample_rate_hz,
     const TorchaudioSincHannResampleOptions & options) {
@@ -212,12 +261,7 @@ const TorchaudioSincHannResampleKernel & get_cached_torchaudio_sinc_hann_resampl
         throw std::runtime_error("torchaudio Hann resampling requires rolloff in (0, 1]");
     }
 
-    static std::mutex mutex;
-    static std::unordered_map<
-        TorchaudioSincHannResampleKey,
-        TorchaudioSincHannResampleKernel,
-        TorchaudioSincHannResampleKeyHash>
-        cache;
+    auto & cache = torchaudio_sinc_hann_resample_kernel_cache();
 
     const TorchaudioSincHannResampleKey key{
         source_sample_rate_hz,
@@ -227,11 +271,12 @@ const TorchaudioSincHannResampleKernel & get_cached_torchaudio_sinc_hann_resampl
         options.kernel_mode,
     };
     {
-        std::lock_guard<std::mutex> lock(mutex);
-        const auto it = cache.find(key);
-        if (it != cache.end()) {
-            return it->second;
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        if (auto cached = touch_cached_torchaudio_sinc_hann_resample_kernel(cache, key)) {
+            ++cache.hits;
+            return cached;
         }
+        ++cache.misses;
     }
 
     const int64_t rate_gcd = std::gcd(source_sample_rate_hz, target_sample_rate_hz);
@@ -283,10 +328,23 @@ const TorchaudioSincHannResampleKernel & get_cached_torchaudio_sinc_hann_resampl
         }
     }
 
-    std::lock_guard<std::mutex> lock(mutex);
-    const auto [it, inserted] = cache.emplace(key, std::move(kernel));
-    (void) inserted;
-    return it->second;
+    auto built = std::make_shared<const TorchaudioSincHannResampleKernel>(std::move(kernel));
+    const size_t bytes = built->values.size() * sizeof(double);
+    // Allocate the list node up front so a throwing index insert leaves the cache untouched.
+    std::list<TorchaudioSincHannCachedKernel> staged;
+    staged.push_back({key, built, bytes});
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    if (auto cached = touch_cached_torchaudio_sinc_hann_resample_kernel(cache, key)) {
+        return cached;
+    }
+    if (bytes > cache.budget_bytes) {
+        return built;
+    }
+    cache.index.emplace(key, staged.begin());
+    evict_torchaudio_sinc_hann_resample_kernels(cache, bytes);
+    cache.entries.splice(cache.entries.begin(), staged);
+    cache.bytes += bytes;
+    return built;
 }
 
 }  // namespace
@@ -427,10 +485,11 @@ std::vector<float> resample_mono_torchaudio_sinc_hann(
         return mono_samples;
     }
 
-    const auto & kernel = get_cached_torchaudio_sinc_hann_resample_kernel(
+    const auto kernel_ref = get_cached_torchaudio_sinc_hann_resample_kernel(
         source_sample_rate_hz,
         target_sample_rate_hz,
         options);
+    const auto & kernel = *kernel_ref;
     const int64_t input_length = static_cast<int64_t>(mono_samples.size());
     const int64_t target_length = static_cast<int64_t>(
         std::ceil(static_cast<double>(kernel.new_freq * input_length) /
@@ -510,6 +569,19 @@ std::vector<float> resample_mono_torchaudio_sinc_hann(
         }
     }
     return out;
+}
+
+void set_resample_kernel_cache_budget_bytes(size_t bytes) {
+    auto & cache = torchaudio_sinc_hann_resample_kernel_cache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.budget_bytes = bytes;
+    evict_torchaudio_sinc_hann_resample_kernels(cache, 0);
+}
+
+ResampleKernelCacheStats resample_kernel_cache_stats() {
+    auto & cache = torchaudio_sinc_hann_resample_kernel_cache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    return {cache.entries.size(), cache.bytes, cache.hits, cache.misses};
 }
 
 }  // namespace engine::audio

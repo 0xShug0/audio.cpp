@@ -2,7 +2,7 @@
 // package against the host fp64 reference (lfm3_audio_reference.h): chunked
 // prefill with audio rows and replayed frames, taps, the tied head, decode
 // steps against a longer prefill, frame embeddings, cache capacity reuse and
-// growth, and the error paths.
+// growth, kept block graphs, and the error paths.
 //
 //   lfm3_audio_backbone_test [--backend cpu|cuda|metal|best] [--threads N]
 //
@@ -15,16 +15,22 @@
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/community_models/lfm3_audio/backbone.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/errors.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
+#include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -174,6 +180,8 @@ void test_prefill_reference(const Synthetic & s, core::ExecutionContext & execut
         const auto hidden = runtime->prefill(c.prompt, s.audio_id, s.audio_out_id, c.audio, 5, Lfm3Output::Hidden);
         report(std::string("prefill last hidden ") + mode_name(options), ref::rel_error(hidden, last), tol);
         report(std::string("logits(hidden) == prefill logits ") + mode_name(options), rel_error(runtime->logits(hidden), logits), 0.0);
+        // CUDA runs the kept head eagerly, then captures it, then replays it here.
+        report(std::string("logits(hidden) again == prefill logits ") + mode_name(options), rel_error(runtime->logits(hidden), logits), 0.0);
     }
 }
 
@@ -264,6 +272,103 @@ void test_capacity(const Synthetic & s, core::ExecutionContext & execution) {
     }
 }
 
+// Block graphs built per prefill, in order, as the timing log records them.
+std::vector<int64_t> logged_built_blocks(const std::filesystem::path & log_path) {
+    const std::string key = "lfm3_audio.backbone.prefill.built_blocks ";
+    std::vector<int64_t> counts;
+    std::ifstream log(log_path);
+    for (std::string line; std::getline(log, line);) {
+        const auto at = line.find(key);
+        if (at != std::string::npos) {
+            counts.push_back(std::stoll(line.substr(at + key.size())));
+        }
+    }
+    return counts;
+}
+
+// One runtime against fresh runtimes, counting the block graphs each prefill builds. A block keeps its graph after two
+// runs in a row with the same rows at one capacity; growing the buffer or changing the capacity drops kept graphs.
+void test_block_graph_reuse(const Synthetic & s, core::ExecutionContext & execution) {
+    const auto tiny = make_case(s, 100, 4, 6, {90}, 37);   // one block of 100 rows
+    const auto tail = make_case(s, 300, 4, 6, {290}, 29);  // blocks of 256 and 44 rows
+    const auto full = make_case(s, 512, 4, 6, {500}, 31);  // blocks of 256 and 256 rows
+    const auto prefill = [&](Lfm3BackboneRuntime & runtime, const Case & c, int64_t capacity) {
+        const auto max_new_steps = capacity - static_cast<int64_t>(c.prompt.ids.size());
+        return runtime.prefill(c.prompt, s.audio_id, s.audio_out_id, c.audio, max_new_steps, Lfm3Output::Logits);
+    };
+    struct Run {
+        const Case * c;
+        int64_t capacity;
+        int64_t built;
+    };
+    const std::vector<Run> runs = {
+        {&tiny, 512, 1},
+        {&tiny, 512, 1},  // block 0 repeats its rows: built and kept
+        {&tail, 512, 2},  // the kept graph has other rows; 256 rows grow the buffer, which drops it
+        {&tiny, 512, 1},  // so block 0 is built again
+        {&full, 512, 2},
+        {&full, 512, 2},  // both blocks repeat their rows: built and kept
+        {&full, 512, 0},
+        {&tail, 512, 1},  // block 1 now has 44 rows
+        {&tail, 512, 1},
+        {&tail, 512, 0},
+        {&tiny, 512, 1},
+        {&tiny, 512, 1},   // kept, so the capacity change has a graph to drop
+        {&tiny, 1024, 1},  // a new capacity drops the kept graphs and the rows each block had
+        {&tiny, 1024, 1},
+        {&tiny, 1024, 0},
+    };
+    std::string wanted;
+    for (const auto & run : runs) {
+        wanted += std::to_string(run.built) + " ";
+    }
+    // A per-process file name, so concurrent test runs don't share the log.
+    const auto log_path = std::filesystem::temp_directory_path() /
+                          ("lfm3_audio_backbone_test_" + std::to_string(std::random_device{}()) + "_" +
+                           std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".log");
+    // Turn logging off and remove the file even when a check throws.
+    struct LogGuard {
+        std::filesystem::path path;
+        ~LogGuard() {
+            engine::debug::reset_logging();
+            std::error_code ignored;
+            std::filesystem::remove(path, ignored);
+        }
+    } guard{log_path};
+    for (const auto & options : {reference_mode(), native_mode()}) {
+        auto fresh = make_runtime(s, execution, options);
+        std::map<std::pair<const Case *, int64_t>, std::vector<float>> expected{{{&tail, 512}, prefill(*fresh, tail, 512)}};
+        const auto expected_step = fresh->step_text(7, Lfm3Output::Hidden);
+        for (const auto & run : runs) {
+            if (expected.count({run.c, run.capacity}) == 0) {
+                expected[{run.c, run.capacity}] = prefill(*make_runtime(s, execution, options), *run.c, run.capacity);
+            }
+        }
+
+        auto runtime = make_runtime(s, execution, options);
+        std::filesystem::remove(log_path);
+        engine::debug::configure_logging({true, log_path.string()});
+        for (size_t i = 0; i < runs.size(); ++i) {
+            const auto & run = runs[i];
+            const auto label = "prefill " + std::to_string(i + 1) + " (" + mode_name(options) + ")";
+            const auto got = prefill(*runtime, *run.c, run.capacity);
+            require(runtime->capacity() == run.capacity && got == expected.at({run.c, run.capacity}),
+                    label + " on kept graphs gives the fresh output");
+            if (run.c == &tail) {
+                require(runtime->step_text(7, Lfm3Output::Hidden) == expected_step, label + ": the first step equals the fresh one");
+            }
+        }
+        engine::debug::reset_logging();
+        std::string built;
+        for (const int64_t count : logged_built_blocks(log_path)) {
+            built += std::to_string(count) + " ";
+        }
+        require(built == wanted, std::string("block graphs built per prefill (") + mode_name(options) + "): " + built + "want " + wanted);
+        std::printf("PASS kept block graphs: %zu prefills give the fresh outputs and build %s(%s)\n", runs.size(), built.c_str(),
+                    mode_name(options));
+    }
+}
+
 void test_errors(const Synthetic & s, core::ExecutionContext & execution) {
     auto runtime = make_runtime(s, execution, reference_mode());
     const auto c = make_case(s, 256, 4, 6, {100}, 23);
@@ -334,6 +439,7 @@ int main(int argc, char ** argv) {
         test_steps_match_prefill(synthetic, *execution);
         test_frame_embedding(synthetic, *execution);
         test_capacity(synthetic, *execution);
+        test_block_graph_reuse(synthetic, *execution);
         test_errors(synthetic, *execution);
         std::printf("PASS: lfm3_audio backbone synthetic (%.1f s)\n",
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());

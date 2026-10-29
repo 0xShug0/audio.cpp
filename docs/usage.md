@@ -23,6 +23,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--log` | flag | off | Print progress and timing logs to stdout. |
 | `--log-file` | path | not set | Stream progress and timing logs to a file. |
 | `--metrics` | flag | off | Print compact offline wall time, audio duration, RTF, realtime speed, sample rate, and channel metrics. |
+| `--resample-kernel-cache-mb` | integer MiB | `32` | Memory for cached resampling kernels, evicting the least recently used first; `0` disables the cache. A kernel larger than the limit, such as the 84.5 MiB one for 44056 Hz to 16 kHz, is rebuilt on every call. |
 
 ## Common Inputs And Outputs
 

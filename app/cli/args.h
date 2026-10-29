@@ -39,6 +39,7 @@ void set_option_from_arg(
     const std::string & option_key,
     std::unordered_map<std::string, std::string> & options);
 int parse_int_arg(int argc, char ** argv, const std::string & name, int fallback);
+int parse_non_negative_int(const std::string & value, const std::string & name);
 std::optional<float> parse_optional_float_arg(int argc, char ** argv, const std::string & name);
 std::optional<std::filesystem::path> optional_path_arg(int argc, char ** argv, const std::string & name);
 engine::core::BackendType parse_backend(const std::string & value);

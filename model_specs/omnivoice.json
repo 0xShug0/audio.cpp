@@ -188,6 +188,14 @@
         "default": "native"
       },
       {
+        "name": "audio_tokenizer_codebook_weight_type",
+        "type": "enum",
+        "description": "Storage type for the audio tokenizer codebooks, codebook score matrix, semantic feature projection, and fc2; default f32.",
+        "values": ["native", "f32", "f16", "bf16"],
+        "required": false,
+        "default": "f32"
+      },
+      {
         "name": "audio_tokenizer_graph_arena_mb",
         "type": "int",
         "description": "Audio tokenizer graph arena size in MiB; default 128.",

@@ -218,6 +218,146 @@ private:
     ggml_backend_buffer_ptr buffer_;
 };
 
+// The tied text head on one hidden row. Its shape never changes, so the graph and its buffer live as long as the runtime.
+class HeadGraph {
+public:
+    HeadGraph(const Weights & weights, const Lfm3BackboneConfig & config, core::ExecutionContext & execution) : execution_(execution) {
+        ctx_ = blocks::graph_context(kGraphNodes, "backbone head");
+        auto * g = ctx_.get();
+        core::ModuleBuildContext build{g, "lfm3_audio.backbone.head", execution.backend_type()};
+        const int64_t d = config.stack.hidden;
+        hidden_ = ggml_new_tensor_3d(g, GGML_TYPE_F32, d, 1, 1);
+        ggml_set_input(hidden_);
+        out_ = text_logits(build, core::wrap_tensor(hidden_, TensorShape::from_dims({1, 1, d})), weights, config).tensor;
+        ggml_set_output(out_);
+        graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
+        ggml_build_forward_expand(graph_, out_);
+        core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), graph_, "LFM3-Audio backbone head graph");
+        buffer_.reset(ggml_backend_alloc_ctx_tensors(g, execution.backend()));
+        if (buffer_ == nullptr) {
+            throw runtime::CapacityError("LFM3-Audio backbone head graph does not fit in device memory");
+        }
+    }
+
+    ~HeadGraph() { core::release_backend_graph_resources(execution_.backend(), graph_, true); }
+
+    HeadGraph(const HeadGraph &) = delete;
+    HeadGraph & operator=(const HeadGraph &) = delete;
+
+    std::vector<float> run(const std::vector<float> & hidden_row) {
+        ggml_backend_tensor_set(hidden_, hidden_row.data(), 0, hidden_row.size() * sizeof(float));
+        blocks::compute(execution_, graph_, "backbone head");
+        return core::read_tensor_f32(out_);
+    }
+
+private:
+    core::ExecutionContext & execution_;
+    ggml_context_ptr ctx_;
+    ggml_tensor * hidden_ = nullptr;
+    ggml_tensor * out_ = nullptr;
+    ggml_cgraph * graph_ = nullptr;
+    ggml_backend_buffer_ptr buffer_;
+};
+
+// One prefill block. The runtime places it in its block allocator, whose buffer the kept blocks share, so every run sets all inputs.
+class BlockGraph {
+public:
+    BlockGraph(const Weights & weights, const Lfm3BackboneConfig & config, core::ExecutionContext & execution, blocks::StackState & state,
+               const Lfm3WeightOptions & options, int64_t begin, int64_t steps)
+        : execution_(execution),
+          begin_(begin),
+          steps_(steps),
+          kv_rows_(GGML_PAD(begin + steps, Lfm3BackboneRuntime::kPrefillBlock)),
+          window_(config.stack.sliding_window) {
+        ctx_ = blocks::graph_context(kGraphNodes, "backbone prefill block");
+        auto * g = ctx_.get();
+        core::ModuleBuildContext build{g, "lfm3_audio.backbone.prefill", execution.backend_type()};
+        const int64_t d = config.stack.hidden;
+
+        blocks::StepInputs in;
+        x_ = ggml_new_tensor_3d(g, GGML_TYPE_F32, d, steps, 1);
+        positions_ = input(g, GGML_TYPE_I32, steps);
+        slots_ = input(g, GGML_TYPE_I64, steps);
+        ggml_set_input(x_);
+        in.x = core::wrap_tensor(x_, TensorShape::from_dims({1, steps, d}));
+        in.positions = core::wrap_tensor(positions_, TensorShape::from_dims({steps}), GGML_TYPE_I32);
+        in.slots = core::wrap_tensor(slots_, TensorShape::from_dims({steps}), GGML_TYPE_I64);
+        in.kv_rows = kv_rows_;
+        if (has_kind(config.stack, LayerKind::FullAttention)) {
+            full_mask_ = input(g, GGML_TYPE_F16, kv_rows_, steps);
+            in.full_mask = core::wrap_tensor(full_mask_, TensorShape::from_dims({steps, kv_rows_}), GGML_TYPE_F16);
+        }
+        if (has_kind(config.stack, LayerKind::SlidingAttention)) {
+            sliding_mask_ = input(g, GGML_TYPE_F16, kv_rows_, steps);
+            in.sliding_mask = core::wrap_tensor(sliding_mask_, TensorShape::from_dims({steps, kv_rows_}), GGML_TYPE_F16);
+        }
+
+        graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
+        out_ = blocks::build_stack(build, graph_, config.stack, weights.stack, in, &state.layers, options).tensor;
+        ggml_set_output(out_);
+        ggml_build_forward_expand(graph_, out_);
+        core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), graph_, "LFM3-Audio backbone prefill graph");
+        if (!ggml_is_contiguous(out_)) {
+            fail("prefill hidden must be contiguous");
+        }
+    }
+
+    ~BlockGraph() { core::release_backend_graph_resources(execution_.backend(), graph_, true); }
+
+    BlockGraph(const BlockGraph &) = delete;
+    BlockGraph & operator=(const BlockGraph &) = delete;
+
+    [[nodiscard]] int64_t steps() const noexcept { return steps_; }
+    [[nodiscard]] ggml_cgraph * graph() const noexcept { return graph_; }
+
+    std::vector<float> run(const float * x, const std::vector<int64_t> & wanted) {
+        const int64_t d = x_->ne[0];
+        std::vector<int32_t> positions(static_cast<size_t>(steps_));
+        std::vector<int64_t> slots(static_cast<size_t>(steps_));
+        for (int64_t i = 0; i < steps_; ++i) {
+            positions[static_cast<size_t>(i)] = static_cast<int32_t>(begin_ + i);
+            slots[static_cast<size_t>(i)] = begin_ + i;
+        }
+        ggml_backend_tensor_set(x_, x, 0, static_cast<size_t>(steps_ * d) * sizeof(float));
+        ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(slots_, slots.data(), 0, slots.size() * sizeof(int64_t));
+        // Masks over absolute cache rows: a sliding window reaches back into earlier blocks.
+        if (full_mask_ != nullptr) {
+            const auto mask = blocks::window_mask(positions, kv_rows_, 0);
+            ggml_backend_tensor_set(full_mask_, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
+        }
+        if (sliding_mask_ != nullptr) {
+            const auto mask = blocks::window_mask(positions, kv_rows_, window_);
+            ggml_backend_tensor_set(sliding_mask_, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
+        }
+        blocks::compute(execution_, graph_, "backbone prefill block");
+
+        std::vector<float> out(wanted.size() * static_cast<size_t>(d));
+        for (size_t i = 0; i < wanted.size(); ++i) {
+            ggml_backend_tensor_get(out_, out.data() + i * static_cast<size_t>(d), static_cast<size_t>(wanted[i] - begin_) * out_->nb[1],
+                                    static_cast<size_t>(d) * sizeof(float));
+        }
+        // Eager every run, as before: ggml-cuda would capture a kept block on its 2nd run (+1.5-2.6 ms) to save 1.2-1.7 ms per later run.
+        core::release_backend_graph_resources(execution_.backend(), graph_, true);
+        return out;
+    }
+
+private:
+    core::ExecutionContext & execution_;
+    int64_t begin_ = 0;
+    int64_t steps_ = 0;
+    int64_t kv_rows_ = 0;
+    int64_t window_ = 0;
+    ggml_context_ptr ctx_;
+    ggml_tensor * x_ = nullptr;
+    ggml_tensor * positions_ = nullptr;
+    ggml_tensor * slots_ = nullptr;
+    ggml_tensor * full_mask_ = nullptr;
+    ggml_tensor * sliding_mask_ = nullptr;
+    ggml_tensor * out_ = nullptr;
+    ggml_cgraph * graph_ = nullptr;
+};
+
 }  // namespace
 
 struct Lfm3BackboneRuntime::Impl {
@@ -299,6 +439,8 @@ struct Lfm3BackboneRuntime::Impl {
         if (state != nullptr && state->capacity() == capacity) {
             return;
         }
+        block_graphs.clear();
+        last_steps.clear();
         decode_hidden.reset();
         decode_logits.reset();
         state.reset();
@@ -309,72 +451,36 @@ struct Lfm3BackboneRuntime::Impl {
     // One prefill block: x rows [steps][hidden] at positions begin.., attending over cache rows [0, kv_rows).
     // Returns the final-normed hidden rows `wanted` (absolute positions inside the block), row-major.
     std::vector<float> run_block(const float * x, int64_t begin, int64_t steps, const std::vector<int64_t> & wanted) {
-        const int64_t d = hidden();
-        const int64_t kv_rows = GGML_PAD(begin + steps, kPrefillBlock);
-        auto ctx = blocks::graph_context(kGraphNodes, "backbone prefill block");
-        auto * g = ctx.get();
-        core::ModuleBuildContext build{g, "lfm3_audio.backbone.prefill", execution.backend_type()};
-
-        blocks::StepInputs in;
-        auto * x_in = ggml_new_tensor_3d(g, GGML_TYPE_F32, d, steps, 1);
-        auto * positions_in = input(g, GGML_TYPE_I32, steps);
-        auto * slots_in = input(g, GGML_TYPE_I64, steps);
-        ggml_set_input(x_in);
-        in.x = core::wrap_tensor(x_in, TensorShape::from_dims({1, steps, d}));
-        in.positions = core::wrap_tensor(positions_in, TensorShape::from_dims({steps}), GGML_TYPE_I32);
-        in.slots = core::wrap_tensor(slots_in, TensorShape::from_dims({steps}), GGML_TYPE_I64);
-        in.kv_rows = kv_rows;
-        ggml_tensor * full_mask = nullptr;
-        ggml_tensor * sliding_mask = nullptr;
-        if (has_kind(config.stack, LayerKind::FullAttention)) {
-            full_mask = input(g, GGML_TYPE_F16, kv_rows, steps);
-            in.full_mask = core::wrap_tensor(full_mask, TensorShape::from_dims({steps, kv_rows}), GGML_TYPE_F16);
+        const auto index = static_cast<size_t>(begin / kPrefillBlock);
+        if (block_graphs.size() <= index) {
+            block_graphs.resize(index + 1);
+            last_steps.resize(index + 1);
         }
-        if (has_kind(config.stack, LayerKind::SlidingAttention)) {
-            sliding_mask = input(g, GGML_TYPE_F16, kv_rows, steps);
-            in.sliding_mask = core::wrap_tensor(sliding_mask, TensorShape::from_dims({steps, kv_rows}), GGML_TYPE_F16);
+        // Kept only when this block had these rows the last time it ran: on Linux a kept graph built 0.1-0.2 ms slower than a dropped one.
+        const bool repeated = std::exchange(last_steps[index], steps) == steps;
+        auto & kept = block_graphs[index];
+        if (kept != nullptr && kept->steps() == steps) {
+            return kept->run(x, wanted);
         }
-
-        auto * graph = ggml_new_graph_custom(g, kGraphNodes, false);
-        auto * hidden_out = blocks::build_stack(build, graph, config.stack, weights.stack, in, &state->layers, options).tensor;
-        ggml_set_output(hidden_out);
-        ggml_build_forward_expand(graph, hidden_out);
-        core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), graph, "LFM3-Audio backbone prefill graph");
-        if (!ggml_gallocr_reserve(block_allocator.get(), graph) || !ggml_gallocr_alloc_graph(block_allocator.get(), graph)) {
-            throw runtime::CapacityError("LFM3-Audio backbone prefill block does not fit in device memory at " + std::to_string(kv_rows) +
-                                         " cache rows");
+        auto built = std::make_unique<BlockGraph>(weights, config, execution, *state, options, begin, steps);
+        const size_t held = ggml_gallocr_get_buffer_size(block_allocator.get(), 0);
+        const bool placed = ggml_gallocr_reserve(block_allocator.get(), built->graph()) &&
+                            ggml_gallocr_alloc_graph(block_allocator.get(), built->graph());
+        // Outgrowing the buffer, or failing to, frees the one the kept graphs' tensors point into.
+        // shortcut: the size shows this only while a plan fits one buffer chunk (blocks plan 3-27 MiB); compare chunks if that changes.
+        if (ggml_gallocr_get_buffer_size(block_allocator.get(), 0) != held) {
+            std::fill(block_graphs.begin(), block_graphs.end(), nullptr);
         }
-
-        std::vector<int32_t> positions(static_cast<size_t>(steps));
-        std::vector<int64_t> slots(static_cast<size_t>(steps));
-        for (int64_t i = 0; i < steps; ++i) {
-            positions[static_cast<size_t>(i)] = static_cast<int32_t>(begin + i);
-            slots[static_cast<size_t>(i)] = begin + i;
+        if (!placed) {
+            throw runtime::CapacityError("LFM3-Audio backbone prefill block does not fit in device memory at " +
+                                         std::to_string(GGML_PAD(begin + steps, kPrefillBlock)) + " cache rows");
         }
-        ggml_backend_tensor_set(x_in, x, 0, static_cast<size_t>(steps * d) * sizeof(float));
-        ggml_backend_tensor_set(positions_in, positions.data(), 0, positions.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(slots_in, slots.data(), 0, slots.size() * sizeof(int64_t));
-        // Masks over absolute cache rows: a sliding window reaches back into earlier blocks.
-        if (full_mask != nullptr) {
-            const auto mask = blocks::window_mask(positions, kv_rows, 0);
-            ggml_backend_tensor_set(full_mask, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
+        ++built_blocks;
+        if (!repeated) {
+            return built->run(x, wanted);
         }
-        if (sliding_mask != nullptr) {
-            const auto mask = blocks::window_mask(positions, kv_rows, config.stack.sliding_window);
-            ggml_backend_tensor_set(sliding_mask, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
-        }
-        blocks::compute(execution, graph, "backbone prefill block");
-
-        if (!ggml_is_contiguous(hidden_out)) {
-            fail("prefill hidden must be contiguous");
-        }
-        std::vector<float> out(wanted.size() * static_cast<size_t>(d));
-        for (size_t i = 0; i < wanted.size(); ++i) {
-            ggml_backend_tensor_get(hidden_out, out.data() + i * static_cast<size_t>(d), static_cast<size_t>(wanted[i] - begin) * hidden_out->nb[1],
-                                    static_cast<size_t>(d) * sizeof(float));
-        }
-        core::release_backend_graph_resources(execution.backend(), graph, true);
-        return out;
+        kept = std::move(built);
+        return kept->run(x, wanted);
     }
 
     DecodeGraph & require_started(Lfm3Output output) {
@@ -401,25 +507,10 @@ struct Lfm3BackboneRuntime::Impl {
         if (static_cast<int64_t>(hidden_row.size()) != d) {
             fail("logits() needs a hidden state of " + std::to_string(d) + " values");
         }
-        auto ctx = blocks::graph_context(kGraphNodes, "backbone head");
-        auto * g = ctx.get();
-        core::ModuleBuildContext build{g, "lfm3_audio.backbone.head", execution.backend_type()};
-        auto * h = ggml_new_tensor_3d(g, GGML_TYPE_F32, d, 1, 1);
-        ggml_set_input(h);
-        auto * logits_out = text_logits(build, core::wrap_tensor(h, TensorShape::from_dims({1, 1, d})), weights, config).tensor;
-        ggml_set_output(logits_out);
-        auto * graph = ggml_new_graph_custom(g, kGraphNodes, false);
-        ggml_build_forward_expand(graph, logits_out);
-        core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), graph, "LFM3-Audio backbone head graph");
-        ggml_backend_buffer_ptr buffer(ggml_backend_alloc_ctx_tensors(g, execution.backend()));
-        if (buffer == nullptr) {
-            throw runtime::CapacityError("LFM3-Audio backbone head graph does not fit in device memory");
+        if (head_graph == nullptr) {
+            head_graph = std::make_unique<HeadGraph>(weights, config, execution);
         }
-        ggml_backend_tensor_set(h, hidden_row.data(), 0, hidden_row.size() * sizeof(float));
-        blocks::compute(execution, graph, "backbone head");
-        auto out = core::read_tensor_f32(logits_out);
-        core::release_backend_graph_resources(execution.backend(), graph, true);
-        return out;
+        return head_graph->run(hidden_row);
     }
 
     std::shared_ptr<const assets::TensorSource> source;
@@ -433,6 +524,10 @@ struct Lfm3BackboneRuntime::Impl {
     std::unique_ptr<DecodeGraph> decode_hidden;
     std::unique_ptr<DecodeGraph> decode_logits;
     ggml_gallocr_ptr block_allocator;
+    std::vector<std::unique_ptr<BlockGraph>> block_graphs;  // by block index: they read `state` and live in block_allocator's buffer
+    std::vector<int64_t> last_steps;                        // by block index: its rows the last time it ran at this capacity
+    std::unique_ptr<HeadGraph> head_graph;                  // built on first use: TTS never needs it
+    int64_t built_blocks = 0;                               // block graphs this prefill built, for the timing log
     int64_t position = 0;
     bool started = false;
 };
@@ -458,6 +553,7 @@ std::vector<float> Lfm3BackboneRuntime::prefill(const Lfm3Prompt & prompt, int32
     auto & m = *impl_;
     m.started = false;
     m.position = 0;
+    m.built_blocks = 0;
     const int64_t d = m.hidden();
     const auto steps = static_cast<int64_t>(prompt.ids.size());
     if (steps == 0 || max_new_steps < 0) {
@@ -546,6 +642,7 @@ std::vector<float> Lfm3BackboneRuntime::prefill(const Lfm3Prompt & prompt, int32
     m.started = true;
     auto out = m.output(last, output);
     debug::timing_log_scalar("lfm3_audio.backbone.prefill.ms", engine::debug::elapsed_ms(prefill_start));
+    debug::timing_log_scalar("lfm3_audio.backbone.prefill.built_blocks", m.built_blocks);
     if (lfm3_dump_enabled()) {
         lfm3_dump("prefill_hidden", last.data(), {d});
         if (output == Lfm3Output::Logits) {
