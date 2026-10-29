@@ -102,6 +102,7 @@ void print_help() {
         << "  --host <ip>                      server bind address; default 127.0.0.1\n"
         << "  --port <port>                    server listening port; default 8080\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal  default cuda (rocm is an alias for hip)\n"
+        << "  --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
         << "  --list-devices                   list available backend devices and exit; add --json\n"
         << "                                   for PCI ids and free/total memory as JSON\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
@@ -250,6 +251,9 @@ int main(int argc, char ** argv) {
         }
         if (const auto backend = arg_value(argc, argv, "--backend")) {
             config.backend = minitts::server::parse_server_backend(*backend);
+        }
+        if (const auto impl = arg_value(argc, argv, "--backend-impl")) {
+            config.backend_impl = *impl;
         }
         if (const auto device = arg_value(argc, argv, "--device")) {
             config.device = std::stoi(*device);

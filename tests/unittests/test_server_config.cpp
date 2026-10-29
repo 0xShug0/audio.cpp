@@ -1110,6 +1110,14 @@ void test_per_model_devices() {
 
 int main() {
     try {
+        {
+            const auto root = make_temp_root();
+            const auto path = write_config(root, "implementation.json", R"({"backend":"hip","backend_impl":"gfx1151_v1","ui_management":true,"models":[]})");
+            const auto config = minitts::server::load_server_config(path);
+            require(config.backend == engine::core::BackendType::Hip, "backend remains HIP");
+            require(config.backend_impl == "gfx1151_v1", "backend implementation selection");
+        }
+
         test_per_model_devices();
         test_model_slots();
         test_inline_default_and_named_presets();

@@ -568,6 +568,10 @@ engine::core::BackendConfig parse_step_backend(
     engine::core::BackendConfig fallback) {
     if (const auto backend = workflow_optional_string(step, "backend")) {
         fallback.type = minitts::cli::parse_backend(*backend);
+        fallback.impl.clear();
+    }
+    if (const auto impl = workflow_optional_string(step, "backend_impl")) {
+        fallback.impl = *impl;
     }
     if (const auto device = workflow_optional_number(step, "device")) {
         fallback.device = static_cast<int>(*device);
