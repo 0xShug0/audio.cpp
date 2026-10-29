@@ -104,3 +104,19 @@ request comparisons pass again on CPU/CUDA/Vulkan, including exact word timestam
 against the pre-split runs. Public CLI and Pro/stock-Parakeet GGUF regressions
 also pass after the split. No inference change was introduced, so the earlier
 five-minute paired measurements above remain applicable.
+
+## Current main merge regression
+
+Merged main `aeb7bcf1`, including the released Plus port (#1131), and resolved
+the overlapping README/license entries and Standard/Plus variant tests. The
+Parakeet/Bark C++ inference and compressed-reader sources remain unchanged from
+`f6c95a8f`. The README uses the shared Bark variant guide; format preparation
+continues to use its own compressed-loading guide and remains independent of
+the Standard GGUF port (#1132).
+
+CPU-only and combined CUDA/Vulkan Release builds pass. Twelve focused CTest
+executions, 23 converter regressions, four packed-package tests and catalog
+checks pass. All 54 native packed Standard/Plus reused-request comparisons pass
+on CPU/CUDA/Vulkan with text and timestamps identical to the previous runs.
+This is merge-compatibility validation; the earlier timing tables are retained.
+Final public CLI checks pass on CPU/CUDA/Vulkan, including direct `.bark` loading; Pro BF16 and stock Parakeet Q8 GGUF regressions pass. Local artifacts are under `outputs/bark-native/split-validation/` and `final/`.
