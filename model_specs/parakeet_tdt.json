@@ -98,13 +98,13 @@
       {
         "name": "hotwords",
         "type": "string",
-        "description": "Phonon-2 only: optional vocabulary list, comma-separated or a JSON array of strings / word-spoken objects. Up to 25 terms; an explicit empty list disables prompt biasing.",
+        "description": "Phonon-2 and Underdog Bark 3.0 Pro: optional native vocabulary bias, comma-separated or a JSON array of strings / word-spoken objects. Up to 25 terms; an explicit empty list disables prompt biasing.",
         "required": false
       },
       {
         "name": "hotwords_score",
         "type": "float",
-        "description": "Phonon-2 matching-piece logit bonus; duration scores and blank are not biased.",
+        "description": "Phonon-2/Bark native matching-piece logit bonus; duration scores and blank are not biased.",
         "required": false,
         "min": 0,
         "max": 100,
@@ -294,7 +294,8 @@
       "GGUF"
     ],
     "docs": [
-      "docs/models/parakeet_tdt.md"
+      "docs/models/parakeet_tdt.md",
+      "docs/models/underdog_bark3.md"
     ]
   },
   "sources": [

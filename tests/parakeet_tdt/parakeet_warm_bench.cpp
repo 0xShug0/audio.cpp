@@ -270,6 +270,8 @@ int main(int argc, char ** argv) {
         engine::runtime::ModelLoadRequest load_request;
         load_request.model_path = model_path;
         load_request.family_hint = "parakeet_tdt";
+        const auto spec_override = arg_value(argc, argv, "--model-spec-override", "");
+        if (!spec_override.empty()) load_request.model_spec_override = spec_override;
         auto model = registry.load(load_request);
 
         engine::runtime::SessionOptions session_options;
@@ -355,8 +357,8 @@ int main(int argc, char ** argv) {
                 steps.reserve(wavs.size());
                 streaming_last_wall_ms = 0.0;
                 for (size_t wav_index = 0; wav_index < wavs.size(); ++wav_index) {
-                    session->reset();
                     const auto started = std::chrono::steady_clock::now();
+                    session->start_stream({});
                     const auto & wav = wavs[wav_index];
                     const auto & samples = wav.samples;
                     const size_t chunk_size_samples = static_cast<size_t>(chunk_size);

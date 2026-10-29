@@ -1,7 +1,9 @@
 #include "engine/community_models/parakeet_tdt/session.h"
+#include "engine/community_models/parakeet_tdt/bark3.h"
 #include "engine/community_models/parakeet_tdt/phonon_streaming.h"
 
 #include "engine/framework/audio/chunking.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
@@ -285,7 +287,7 @@ std::string ParakeetTDTSessionBase::family_impl() const { return "parakeet_tdt";
 runtime::VoiceTaskKind ParakeetTDTSessionBase::task_kind_impl() const { return task_.task; }
 runtime::RunMode ParakeetTDTSessionBase::run_mode_impl() const { return task_.mode; }
 
-ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const runtime::TaskRequest & request) const {
+ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const runtime::TaskRequest & request) const try {
     ParakeetDecodeOptions opts;
     if (const auto value = runtime::parse_i64_option(request.options, {"max_tokens"})) {
         if (*value < 0) { throw std::runtime_error("Parakeet TDT max_tokens must be non-negative"); }
@@ -295,17 +297,20 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
         opts.keep_language_tags = runtime::parse_bool_option(*value, "keep_language_tags");
     }
     const bool phonon = assets_->config.variant == "phonon2";
+    const bool bark = assets_->config.variant == "underdog_bark3_pro";
+    const bool native_hotwords = phonon || bark;
     std::optional<std::string> hotwords;
     if (const auto it = request.options.find("hotwords"); it != request.options.end())
         hotwords = it->second;
     const auto array = request.option_arrays.find("hotwords");
-    if (!hotwords && array == request.option_arrays.end() && phonon && request.text_input)
+    if (!hotwords && array == request.option_arrays.end() && native_hotwords && request.text_input)
         hotwords = request.text_input->text;
     const auto strength = runtime::parse_float_option(request.options, {"hotwords_score"}).value_or(2.f);
     if (!std::isfinite(strength) || strength < 0 || strength > 100)
-        throw std::runtime_error("Phonon hotwords_score must be between 0 and 100");
+        throw std::runtime_error(bark ? "Bark hotwords_score must be between 0 and 100"
+                                     : "Phonon hotwords_score must be between 0 and 100");
     if (hotwords || array != request.option_arrays.end()) {
-        if (!phonon) throw std::runtime_error("hotwords currently require a Phonon-2 package");
+        if (!native_hotwords) throw std::runtime_error("hotwords currently require a Phonon-2 package");
         std::vector<PhononHotword> terms;
         if (hotwords) terms = parse_phonon_hotwords(*hotwords);
         else {
@@ -320,6 +325,10 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
         }
     }
     return opts;
+} catch (const std::runtime_error & error) {
+    if (assets_->config.variant == "underdog_bark3_pro")
+        throw runtime::InvalidRequestError(error.what());
+    throw;
 }
 
 ParakeetTDTOfflineSession::ParakeetTDTOfflineSession(
@@ -673,6 +682,13 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
 
     for (const auto& span : spans) {
         auto window = engine::audio::slice_audio_buffer(audio, span);
+        const auto original_window_samples = static_cast<int64_t>(window.samples.size());
+        const bool bark = assets_->config.variant == "underdog_bark3_pro";
+        if (bark) {
+            // Each VAD span is decoded independently. Supply the publisher's
+            // prefix to each span, even when VAD removed the recording prefix.
+            window.samples.insert(window.samples.begin(), kBark3InputPrefixSamples, 0.f);
+        }
         const auto features = frontend_.extract(window, true);
         const auto encoded = encoder_->encode(features);
         if (encoded.valid_frames <= 0) {
@@ -691,6 +707,7 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
             break;
         }
         auto decoded = decoder_->decode(encoded, item_decode_options);
+        if (bark) remove_bark3_prefix_timestamps(decoded.word_timestamps, original_window_samples);
         token_count += static_cast<int64_t>(decoded.token_ids.size());
         if (!decoded.text.empty()) {
             if (!text.empty()) {
@@ -739,6 +756,9 @@ ParakeetTDTStreamingSession::ParakeetTDTStreamingSession(
           std::move(options),
           std::move(assets),
           std::move(contract)) {
+    if (assets_->config.variant == "underdog_bark3_pro") {
+        bark_frontend_ = std::make_unique<BarkStreamingFrontend>(assets_);
+    }
     const int sample_rate = assets_->config.frontend.sample_rate;
     center_samples_ = seconds_to_samples(
         duration_option(
@@ -762,6 +782,8 @@ ParakeetTDTStreamingSession::ParakeetTDTStreamingSession(
             0.f),
         sample_rate);
 }
+
+ParakeetTDTStreamingSession::~ParakeetTDTStreamingSession() = default;
 
 std::string ParakeetTDTStreamingSession::family() const { return family_impl(); }
 runtime::VoiceTaskKind ParakeetTDTStreamingSession::task_kind() const { return task_kind_impl(); }
@@ -829,6 +851,7 @@ void ParakeetTDTStreamingSession::reset_stream_state() {
     token_ids_.clear();
     token_frame_indices_.clear();
     token_durations_.clear();
+    if (bark_frontend_) bark_frontend_->reset();
     decoder_->reset_state();
 }
 
@@ -870,7 +893,7 @@ bool ParakeetTDTStreamingSession::process_center_window(
         streaming_audio_.samples.begin() +
             static_cast<std::ptrdiff_t>(window_end - buffer_start_sample_));
 
-    const auto features = frontend_.extract(window, true);
+    const auto features = bark_frontend_ ? bark_frontend_->extract(window, window_start) : frontend_.extract(window, true);
     const auto encoded = encoder_->encode(features);
     const int64_t samples_per_frame =
         assets_->config.frontend.hop_length * assets_->config.encoder.subsampling_factor;
@@ -1001,6 +1024,14 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {
                                 const runtime::SessionOptions & options,
                                 std::shared_ptr<const ParakeetTDTAssets> assets,
                                 std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        if (assets->config.variant == "underdog_bark3_pro") {
+            if (task.mode == runtime::RunMode::Streaming) {
+                return std::unique_ptr<runtime::IVoiceTaskSession>(wrap_bark3_streaming(
+                    std::make_unique<ParakeetTDTStreamingSession>(task, options, std::move(assets), std::move(contract))));
+            }
+            return std::unique_ptr<runtime::IVoiceTaskSession>(wrap_bark3_offline(
+                std::make_unique<ParakeetTDTOfflineSession>(task, options, std::move(assets), std::move(contract))));
+        }
         if (task.mode == runtime::RunMode::Streaming) {
             if (assets->config.variant == "phonon2") {
                 return std::unique_ptr<runtime::IVoiceTaskSession>(std::make_unique<PhononStreamingSession>(

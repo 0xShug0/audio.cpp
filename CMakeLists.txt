@@ -1082,6 +1082,7 @@ audiocpp_add_model(maya1
 audiocpp_add_model(parakeet_tdt
     SOURCES
         src/community_models/parakeet_tdt/assets.cpp
+        src/community_models/parakeet_tdt/bark3.cpp
         src/community_models/parakeet_tdt/session.cpp
         src/community_models/parakeet_tdt/encoder.cpp
         src/community_models/parakeet_tdt/decoder.cpp
@@ -3709,6 +3710,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     target_include_directories(parakeet_variant_config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
     target_compile_definitions(parakeet_variant_config_test PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME parakeet_variant_config_test COMMAND parakeet_variant_config_test)
+    if (parakeet_tdt IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(parakeet_bark3_session_test tests/parakeet_tdt/test_bark3_session.cpp)
+        target_include_directories(parakeet_bark3_session_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME parakeet_bark3_session_test COMMAND parakeet_bark3_session_test)
+    endif()
 
     # The probe drives the registry/session path end to end, so it needs the
     # full parakeet_tdt model library.

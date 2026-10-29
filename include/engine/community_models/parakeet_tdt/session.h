@@ -21,6 +21,8 @@
 
 namespace engine::community_models::parakeet_tdt {
 
+class BarkStreamingFrontend;
+
 std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader();
 
 class ParakeetTDTSessionBase : public runtime::RuntimeSessionBase {
@@ -98,6 +100,7 @@ public:
         runtime::SessionOptions options,
         std::shared_ptr<const ParakeetTDTAssets> assets,
         std::shared_ptr<const engine::model_spec::ModelContract> contract);
+    ~ParakeetTDTStreamingSession() override;
 
     std::string family() const override;
     runtime::VoiceTaskKind task_kind() const override;
@@ -122,6 +125,7 @@ private:
     int64_t buffer_start_sample_ = 0;
     int64_t received_samples_ = 0;
     runtime::AudioBuffer streaming_audio_;
+    std::unique_ptr<BarkStreamingFrontend> bark_frontend_;
     ParakeetDecodeOptions streaming_decode_options_;
     std::vector<int32_t> token_ids_;
     std::vector<int32_t> token_frame_indices_;
