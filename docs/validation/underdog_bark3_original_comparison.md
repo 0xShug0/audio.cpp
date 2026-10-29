@@ -1,5 +1,10 @@
 # Bark 3.0 Pro: complete-recording PyTorch comparison
 
+This records the initial PR implementation and Q8 profile. The later
+[current validation](underdog_bark3.md) supersedes its CPU allocation failure
+and Q8 punctuation differences: allocator lifetimes are corrected, Q8 protects
+the decoder's source precision, and opt-in native VAD/hotwords are validated.
+
 Follow-up to [the initial validation](underdog_bark3.md), 2026-10-29. The complete
 `We need to talk about 5min.mp4` recording was extracted once to mono 16 kHz WAV
 (299.99375 seconds) and supplied to both implementations. Both add the

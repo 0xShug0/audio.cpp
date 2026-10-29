@@ -3,6 +3,7 @@
 #include "engine/community_models/parakeet_tdt/phonon_streaming.h"
 
 #include "engine/framework/audio/chunking.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
@@ -286,7 +287,7 @@ std::string ParakeetTDTSessionBase::family_impl() const { return "parakeet_tdt";
 runtime::VoiceTaskKind ParakeetTDTSessionBase::task_kind_impl() const { return task_.task; }
 runtime::RunMode ParakeetTDTSessionBase::run_mode_impl() const { return task_.mode; }
 
-ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const runtime::TaskRequest & request) const {
+ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const runtime::TaskRequest & request) const try {
     ParakeetDecodeOptions opts;
     if (const auto value = runtime::parse_i64_option(request.options, {"max_tokens"})) {
         if (*value < 0) { throw std::runtime_error("Parakeet TDT max_tokens must be non-negative"); }
@@ -296,17 +297,20 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
         opts.keep_language_tags = runtime::parse_bool_option(*value, "keep_language_tags");
     }
     const bool phonon = assets_->config.variant == "phonon2";
+    const bool bark = assets_->config.variant == "underdog_bark3_pro";
+    const bool native_hotwords = phonon || bark;
     std::optional<std::string> hotwords;
     if (const auto it = request.options.find("hotwords"); it != request.options.end())
         hotwords = it->second;
     const auto array = request.option_arrays.find("hotwords");
-    if (!hotwords && array == request.option_arrays.end() && phonon && request.text_input)
+    if (!hotwords && array == request.option_arrays.end() && native_hotwords && request.text_input)
         hotwords = request.text_input->text;
     const auto strength = runtime::parse_float_option(request.options, {"hotwords_score"}).value_or(2.f);
     if (!std::isfinite(strength) || strength < 0 || strength > 100)
-        throw std::runtime_error("Phonon hotwords_score must be between 0 and 100");
+        throw std::runtime_error(bark ? "Bark hotwords_score must be between 0 and 100"
+                                     : "Phonon hotwords_score must be between 0 and 100");
     if (hotwords || array != request.option_arrays.end()) {
-        if (!phonon) throw std::runtime_error("hotwords currently require a Phonon-2 package");
+        if (!native_hotwords) throw std::runtime_error("hotwords currently require a Phonon-2 package");
         std::vector<PhononHotword> terms;
         if (hotwords) terms = parse_phonon_hotwords(*hotwords);
         else {
@@ -321,6 +325,10 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
         }
     }
     return opts;
+} catch (const std::runtime_error & error) {
+    if (assets_->config.variant == "underdog_bark3_pro")
+        throw runtime::InvalidRequestError(error.what());
+    throw;
 }
 
 ParakeetTDTOfflineSession::ParakeetTDTOfflineSession(
@@ -674,6 +682,13 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
 
     for (const auto& span : spans) {
         auto window = engine::audio::slice_audio_buffer(audio, span);
+        const auto original_window_samples = static_cast<int64_t>(window.samples.size());
+        const bool bark = assets_->config.variant == "underdog_bark3_pro";
+        if (bark) {
+            // Each VAD span is decoded independently. Supply the publisher's
+            // prefix to each span, even when VAD removed the recording prefix.
+            window.samples.insert(window.samples.begin(), kBark3InputPrefixSamples, 0.f);
+        }
         const auto features = frontend_.extract(window, true);
         const auto encoded = encoder_->encode(features);
         if (encoded.valid_frames <= 0) {
@@ -692,6 +707,7 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
             break;
         }
         auto decoded = decoder_->decode(encoded, item_decode_options);
+        if (bark) remove_bark3_prefix_timestamps(decoded.word_timestamps, original_window_samples);
         token_count += static_cast<int64_t>(decoded.token_ids.size());
         if (!decoded.text.empty()) {
             if (!text.empty()) {

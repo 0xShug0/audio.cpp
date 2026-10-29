@@ -19,6 +19,19 @@ SOURCE_REPO = "ConwayResearch/Underdog-Bark-3.0-Pro"
 SOURCE_REVISION = "4b5c51e04aa8d16dda9ecdff71bc29f7360149e4"
 SOURCE_SHA256 = "6f84b33e63ebd1851e910e8b2fe299d29f5e0efc6f57e84d92d2f79af464e0e5"
 VARIANT = "underdog_bark3_pro"
+Q8_BF16_PREFIXES = ("decoder.", "encoder_projector.", "joint.head.")
+
+
+def validate_q8_protected_weights(staging):
+    """The source decoder is BF16; never silently round a different staging."""
+    from safetensors import safe_open
+
+    with safe_open(str(staging / "model.safetensors"), framework="np") as tensors:
+        for name in tensors.keys():
+            if name.startswith(Q8_BF16_PREFIXES):
+                values = tensors.get_tensor(name)
+                if values.dtype != np.float32 or not np.isfinite(values).all() or np.any(values.view(np.uint32) & 0xffff):
+                    raise ValueError("protected decoder weight is not exactly BF16 representable: " + name)
 
 
 def validate_config(config):
@@ -42,15 +55,16 @@ def package_spec(repository):
     spec.pop("package_defaults", None)
     spec["ui"].pop("recommended_package", None)
     spec["ui"]["docs"] = ["docs/models/underdog_bark3.md"]
-    spec["capabilities"]["asr"] = ["word_timestamps", "partial_results"]
+    spec["capabilities"]["asr"] = ["word_timestamps", "partial_results", "vad_chunking"]
     spec["sources"] = [s for s in spec["sources"] if s["format"] == "gguf"]
-    spec["options"]["request"] = [o for o in spec["options"]["request"]
-                                   if not o["name"].startswith("hotword") and o["name"] != "audio_chunk_duration_sec"]
     for option in spec["options"]["request"]:
         if option["name"] == "audio_chunk_mode":
-            option["values"] = ["auto", "fixed", "none"]
-            option["description"] = "Bark offline scheduling: auto follows offline_mode; fixed uses bounded windows; none uses full-context. VAD is not admitted for this variant."
-    spec["options"]["session"] = [o for o in spec["options"]["session"] if o["name"] != "vad_model_path"]
+            option["values"] = ["auto", "fixed", "vad", "none"]
+            option["description"] = "Offline scheduling: auto follows offline_mode; fixed uses windows; vad decodes VAD speech spans with a prefix per span; none uses full context. Chunking can change the transcript."
+        elif option["name"] == "hotwords":
+            option["description"] = "Optional native token-logit vocabulary bias: comma-separated or JSON terms, up to 25. An empty list disables prompt biasing; not an original Bark runner feature."
+        elif option["name"] == "hotwords_score":
+            option["description"] = "Native matching-piece logit bonus; duration scores and blank are not biased. Zero disables biasing."
     for option in spec["options"]["session"]:
         if option["name"] == "offline_mode":
             option["default"] = "full_context"
@@ -101,6 +115,7 @@ def prepare(source, staging):
                   "subsampling_projection_scale": 1 / 32,
                   "batch_norm_gamma_correction": "sqrt((max(var,1e-5)+1e-5)/(var+1e-5))",
                   "dropped_training_counters": 24, "tensors": records}
+    provenance["q8_bf16_preserved_prefixes"] = list(Q8_BF16_PREFIXES)
     (staging / "conversion.json").write_text(json.dumps(provenance, indent=2), encoding="utf-8")
     save_file(tensors, staging / "model.safetensors")
     repository = Path(__file__).resolve().parents[2]
@@ -134,6 +149,13 @@ def main():
     command = [str(args.gguf_tool.resolve()), "--input", str(stage / "model.safetensors"),
                "--root", str(stage), "--family", "parakeet_tdt", "--model-spec", str(stage / "model_spec.json"),
                "--type", args.type, "--keep-type", "*conv.norm.weight=f32", "--output", str(args.output.resolve())]
+    if args.type == "q8_0":
+        # These unmodified source BF16 weights are exactly representable.
+        # Keep prediction/duration logits stable; LSTM tensors that the generic
+        # converter otherwise leaves F32 also become smaller, losslessly.
+        validate_q8_protected_weights(stage)
+        for prefix in Q8_BF16_PREFIXES:
+            command += ["--keep-type", prefix + "*=bf16"]
     if args.overwrite:
         command.append("--overwrite")
     for name in ["config.json", "processor_config.json", "tokenizer.json", "tokenizer_config.json",

@@ -1,4 +1,5 @@
 #include "engine/community_models/parakeet_tdt/encoder.h"
+#include "engine/community_models/parakeet_tdt/bark3.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
@@ -544,8 +545,11 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     // call at this input length, so this cost is amortized to ~zero and every
     // reused call benefits from the smaller node count.
     const auto opt_backend = graph_optimizer_backend_for(execution_context_->backend_type());
-    const auto pos_opt_report = engine::runtime::optimize_graph(*graph->pos_graph, opt_backend);
-    const auto opt_report = engine::runtime::optimize_graph(*graph->graph, opt_backend);
+    const auto opt_options = assets_->config.variant == "underdog_bark3_pro"
+        ? bark3_encoder_graph_options(opt_backend)
+        : engine::runtime::graph_optimization_options_for_backend(opt_backend);
+    const auto pos_opt_report = engine::runtime::optimize_graph(*graph->pos_graph, opt_options);
+    const auto opt_report = engine::runtime::optimize_graph(*graph->graph, opt_options);
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_before", opt_report.nodes_before);
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_after", opt_report.nodes_after);
     (void)pos_opt_report;
@@ -557,6 +561,8 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
         !ggml_gallocr_alloc_graph(graph->gallocr, graph->graph)) {
         throw std::runtime_error("Failed to allocate Parakeet TDT encoder graph tensors");
     }
+    debug::trace_log_scalar("parakeet_tdt.encoder.graph_buffer_bytes",
+        static_cast<int64_t>(ggml_gallocr_get_buffer_size(graph->gallocr, 0)));
     graph->pos_gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(graph->backend));
     if (graph->pos_gallocr == nullptr ||
         !ggml_gallocr_reserve(graph->pos_gallocr, graph->pos_graph) ||
@@ -585,7 +591,9 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     debug::timing_log_scalar("parakeet_tdt.encoder.pos_copy_ms", engine::debug::elapsed_ms(pos_copy_start, Clock::now()));
 
     if (execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
-        execution_context_->backend_type() == engine::core::BackendType::Cuda) {
+        execution_context_->backend_type() == engine::core::BackendType::Cuda ||
+        (execution_context_->backend_type() == engine::core::BackendType::Cpu &&
+         assets_->config.variant == "underdog_bark3_pro")) {
         // Position projections now live in the main graph's persistent inputs.
         // Their one-shot producer allocation is redundant for warm inference.
         ggml_gallocr_free(graph->pos_gallocr);

@@ -6,6 +6,7 @@ import copy
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 import numpy as np
@@ -16,6 +17,19 @@ import convert_underdog_bark3 as bark
 
 
 class BarkConversionTest(unittest.TestCase):
+    def test_q8_decoder_preservation_is_lossless_or_rejected(self):
+        from safetensors.numpy import save_file
+        with tempfile.TemporaryDirectory() as temp:
+            staging = Path(temp)
+            tensor = staging / "model.safetensors"
+            exact = np.array([[0., -.5, 1., 256.]], dtype=np.float32)
+            save_file({"decoder.lstm.weight_ih_l0": exact}, str(tensor))
+            bark.validate_q8_protected_weights(staging)
+            changed = exact.copy()
+            changed[0, 0] = np.float32(1e-9)
+            save_file({"decoder.lstm.weight_ih_l0": changed}, str(tensor))
+            with self.assertRaises(ValueError):
+                bark.validate_q8_protected_weights(staging)
     def test_projection_compensation_is_exact(self):
         values = np.array([0., -0.00390625, 1., 16., 128.], dtype=np.float32)
         for suffix in ("weight", "bias"):
@@ -58,11 +72,11 @@ class BarkConversionTest(unittest.TestCase):
         self.assertNotIn("package_defaults", spec)
         self.assertEqual([s["format"] for s in spec["sources"]], ["gguf"])
         requests = {o["name"]: o for o in spec["options"]["request"]}
-        self.assertNotIn("hotwords", requests)
-        self.assertNotIn("vad", requests["audio_chunk_mode"]["values"])
+        self.assertIn("hotwords", requests)
+        self.assertIn("vad", requests["audio_chunk_mode"]["values"])
         sessions = {o["name"]: o for o in spec["options"]["session"]}
         self.assertEqual(sessions["offline_mode"]["default"], "full_context")
-        self.assertNotIn("vad_model_path", sessions)
+        self.assertIn("vad_model_path", sessions)
         self.assertEqual((REPO / "model_specs/parakeet_tdt.json").read_bytes(), original)
         json.dumps(spec)  # Embedded metadata must be serializable.
 

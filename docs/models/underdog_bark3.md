@@ -49,7 +49,11 @@ upstream NOTICE and full CC-BY-4.0 license. Conversion cancels the runtime's
 existing 32x input-projection scaling and corrects its BatchNorm variance floor.
 Corrected BatchNorm gamma stays F32 in all packages. Q8 is mixed storage: only
 supported matrices are quantized; convolution tensors retain floating-point
-storage. These packages are manually converted, not advertised as already
+storage. Q8 preserves the predictor, encoder-to-joint projection and output
+head in their exact source BF16 values. This avoids the initial Q8 package's
+punctuation changes on the validation recording and reduces its size by about
+7 MB; overriding `matmul_weight_type` can undo that protection. These packages
+are manually converted, not advertised as already
 published model-manager downloads.
 
 ## CLI and server
@@ -102,25 +106,54 @@ policy, not an independently validated forced aligner.
 Offline input accepts the framework's downmixing/linear resampling; for reference
 parity use identical mono 16 kHz inputs (the publisher uses a different resampler
 for other rates). Streaming requires contiguous mono 16 kHz PCM chunks.
-Empty audio and VAD preprocessing are rejected. Silence is valid.
+Empty audio is rejected. Silence is valid. Offline VAD chunking is opt-in:
+
+```text
+--request-option audio_chunk_mode=vad
+--request-option audio_chunk_duration_sec=30
+--session-option parakeet_tdt.vad_model_path=assets/framework/models/silero_vad
+```
+
+The source/deployment bundle includes the default Silero VAD. Each independent
+speech span receives its own 250 ms prefix; timestamps remain on the original
+recording timeline. VAD changes the input/context, so it is not whole-recording
+reference parity. It is rejected for streaming sessions.
+
+Native vocabulary bias is also opt-in (including HTTP `prompt`):
+
+```text
+--request-option hotwords=Phoebe,Intel
+--request-option hotwords_score=2
+```
+
+Comma-separated terms and JSON word/spoken variants are supported. Zero score
+or an explicit empty list disables bias; zero/empty cases retain the unbiased
+transcript. High scores can force unwanted words. This reuses the native
+Phonon policy; it is an extension rather than a feature of the original runner.
 
 Bark defaults to `offline_mode=full_context`, matching the publisher's
 whole-utterance context. Whole-recording attention grows quadratically and is
 unsuitable for arbitrarily long inputs. Explicit `offline_mode=auto` selects
 bounded windows beyond the 30-second threshold (including the prefix);
-`offline_mode=long_form` always uses them. For CPU long recordings, select one
-of these bounded policies to avoid large graph allocations. Windowed offline
+`offline_mode=long_form` always uses them. CPU full-context execution now keeps
+graph view nodes through allocation so large temporaries can be reused between
+layers. Full-context memory still grows with duration. Windowed offline
 and buffered streaming may produce different text
 from full-context decoding. Buffered streaming re-encodes bidirectional windows;
-it is **not native cache-aware streaming**. No Bark hotword-biasing guarantee is
-made. Metal, HIP and large-corpus accuracy are not validated by this port.
+it is **not native cache-aware streaming**. Unlimited bidirectional attention
+and whole-utterance feature normalization change previous encoder activations
+when future audio arrives, so standard KV reuse would change outputs. A native
+cache-aware mode needs a different trained attention/context contract.
+Metal, HIP and large-corpus accuracy are not validated by this port.
 
 On the tested five-minute recording, native GPU full context with F32/BF16
 storage exactly matched the original PyTorch F32 transcript, while opt-in
-windowed decoding changed punctuation/case and several word spans. Native CPU
-full context failed a 35.2 GiB RAM allocation on that recording. See the
-[complete comparison](../validation/underdog_bark3_original_comparison.md) for
-the context settings, precision differences, timing and GPU-memory tradeoff.
+windowed decoding changed punctuation/case and several word spans. The follow-up
+CPU fix reduces its graph buffer from 35.2 GiB to 2.62 GiB and completes the same
+full recording exactly; current protected Q8 also matches on CPU/CUDA/Vulkan.
+See [current validation](../validation/underdog_bark3.md) and the
+[initial comparison](../validation/underdog_bark3_original_comparison.md) for
+the context settings, precision differences, timing and memory tradeoff.
 
 ## Validation
 
