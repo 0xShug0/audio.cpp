@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -15,6 +16,47 @@ namespace rt = engine::runtime;
 namespace bark = engine::community_models::parakeet_tdt;
 
 namespace {
+void streaming_frontend_test() {
+    auto assets = std::make_shared<bark::ParakeetTDTAssets>();
+    auto & config = assets->config.frontend;
+    config.sample_rate = 16000;
+    config.feature_size = 128;
+    config.n_fft = 512;
+    config.hop_length = 160;
+    config.win_length = 400;
+    config.preemphasis = .97f;
+    config.log_zero_guard = 0x1p-24f;
+    bark::ParakeetFrontend reference(assets);
+    bark::BarkStreamingFrontend cached(assets);
+    std::vector<float> waveform(320000);
+    for (size_t i = 0; i < waveform.size(); ++i)
+        waveform[i] = .3f * std::sin(i * .017) + .2f * std::cos(i * .13);
+    const auto check = [&](int64_t begin, int64_t end) {
+        rt::AudioBuffer window{16000, 1, {waveform.begin() + begin, waveform.begin() + end}};
+        const auto expected = reference.extract(window, true);
+        const auto actual = cached.extract(window, begin);
+        engine::test::require_eq(actual.frames, expected.frames, "cached frontend frame count");
+        engine::test::require_eq(actual.valid_frames, expected.valid_frames, "cached frontend valid frames");
+        engine::test::require(actual.values.size() == expected.values.size() &&
+            std::memcmp(actual.values.data(), expected.values.data(), actual.values.size() * sizeof(float)) == 0,
+            "cached frontend must preserve every normalized value, including boundary frames");
+    };
+    // Growing and sliding windows, unaligned tails/hop grids, short streams,
+    // a gap with no overlap, and zero/one valid frame normalization.
+    for (const auto & span : std::vector<std::pair<int64_t, int64_t>>{
+            {0, 64000}, {0, 96000}, {0, 128000}, {32000, 160000},
+            {64000, 192000}, {96000, 200013}, {128000, 200013},
+            {160001, 210001}, {176001, 240006}, {300000, 310000}})
+        check(span.first, span.second);
+    cached.reset();
+    std::fill(waveform.begin(), waveform.end(), 0.f);
+    check(0, 64000); check(0, 96000); check(16000, 128000);
+    cached.reset(); check(0, 1); check(0, 159); check(0, 160);
+    cached.reset(); check(0, 64000);
+    waveform[32000] = 1.f;
+    cached.reset(); check(0, 64000); check(16000, 96000);
+}
+
 size_t allocation_probe(bool bark_policy) {
     auto context = std::unique_ptr<ggml_context, decltype(&ggml_free)>(
         ggml_init({4 * 1024 * 1024, nullptr, true}), ggml_free);
@@ -173,6 +215,6 @@ void streaming_test() {
 }
 }  // namespace
 int main() {
-    try { allocation_test(); offline_test(); streaming_test(); std::cout << "PASS Bark allocation lifetimes, prefix, sample clocks, repeated requests, resampling, streaming and failure recovery\n"; }
+    try { streaming_frontend_test(); allocation_test(); offline_test(); streaming_test(); std::cout << "PASS Bark frontend reuse, allocation lifetimes, prefix, sample clocks, repeated requests, resampling, streaming and failure recovery\n"; }
     catch (const std::exception & e) { std::cerr << e.what() << '\n'; return 1; }
 }

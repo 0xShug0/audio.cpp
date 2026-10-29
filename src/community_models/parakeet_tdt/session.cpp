@@ -756,6 +756,9 @@ ParakeetTDTStreamingSession::ParakeetTDTStreamingSession(
           std::move(options),
           std::move(assets),
           std::move(contract)) {
+    if (assets_->config.variant == "underdog_bark3_pro") {
+        bark_frontend_ = std::make_unique<BarkStreamingFrontend>(assets_);
+    }
     const int sample_rate = assets_->config.frontend.sample_rate;
     center_samples_ = seconds_to_samples(
         duration_option(
@@ -779,6 +782,8 @@ ParakeetTDTStreamingSession::ParakeetTDTStreamingSession(
             0.f),
         sample_rate);
 }
+
+ParakeetTDTStreamingSession::~ParakeetTDTStreamingSession() = default;
 
 std::string ParakeetTDTStreamingSession::family() const { return family_impl(); }
 runtime::VoiceTaskKind ParakeetTDTStreamingSession::task_kind() const { return task_kind_impl(); }
@@ -846,6 +851,7 @@ void ParakeetTDTStreamingSession::reset_stream_state() {
     token_ids_.clear();
     token_frame_indices_.clear();
     token_durations_.clear();
+    if (bark_frontend_) bark_frontend_->reset();
     decoder_->reset_state();
 }
 
@@ -887,7 +893,7 @@ bool ParakeetTDTStreamingSession::process_center_window(
         streaming_audio_.samples.begin() +
             static_cast<std::ptrdiff_t>(window_end - buffer_start_sample_));
 
-    const auto features = frontend_.extract(window, true);
+    const auto features = bark_frontend_ ? bark_frontend_->extract(window, window_start) : frontend_.extract(window, true);
     const auto encoded = encoder_->encode(features);
     const int64_t samples_per_frame =
         assets_->config.frontend.hop_length * assets_->config.encoder.subsampling_factor;

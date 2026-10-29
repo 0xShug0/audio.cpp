@@ -144,6 +144,11 @@ it is **not native cache-aware streaming**. Unlimited bidirectional attention
 and whole-utterance feature normalization change previous encoder activations
 when future audio arrives, so standard KV reuse would change outputs. A native
 cache-aware mode needs a different trained attention/context contract.
+The Bark streaming frontend reuses only raw log-mel frames whose complete
+FFT/preemphasis support is inside both overlapping windows. It recomputes
+window edges and F64 whole-window normalization every time, and clears the
+cache for each stream. Context sizes and encoder recomputation are unchanged;
+this saves preprocessing without changing the buffered recognition policy.
 Metal, HIP and large-corpus accuracy are not validated by this port.
 
 On the tested five-minute recording, native GPU full context with F32/BF16

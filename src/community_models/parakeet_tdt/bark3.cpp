@@ -3,6 +3,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/runtime/errors.h"
+#include "engine/framework/debug/profiler.h"
 
 #include <algorithm>
 #include <cmath>
@@ -23,6 +24,20 @@ runtime::GraphOptimizationOptions bark3_encoder_graph_options(runtime::GraphOpti
 }
 namespace {
 constexpr int kSampleRate = 16000;
+
+engine::audio::NemoMelFrontendConfig raw_mel_config(const ParakeetTDTAssets & assets) {
+    const auto & source = assets.config.frontend;
+    engine::audio::NemoMelFrontendConfig config;
+    config.sample_rate = source.sample_rate;
+    config.n_mels = source.feature_size;
+    config.stft = {source.n_fft, source.hop_length, source.win_length,
+                   true, engine::audio::STFTPadMode::Constant, engine::audio::STFTFamily::Default};
+    config.preemphasis = source.preemphasis;
+    config.window = engine::audio::MelWindow::SymmetricPrecise;
+    config.log_zero_guard = source.log_zero_guard;
+    config.norm = engine::audio::MelNorm::None;
+    return config;
+}
 
 void validate_chunk_options(const std::unordered_map<std::string, std::string> & options) {
     try {
@@ -54,6 +69,101 @@ runtime::SessionPreparationRequest preparation_with_prefix(runtime::SessionPrepa
 }
 
 }  // namespace
+
+BarkStreamingFrontend::BarkStreamingFrontend(std::shared_ptr<const ParakeetTDTAssets> assets)
+    : raw_frontend_(assets ? raw_mel_config(*assets) : throw std::invalid_argument("Bark frontend requires assets")),
+      sample_rate_(assets->config.frontend.sample_rate),
+      hop_(assets->config.frontend.hop_length),
+      half_fft_(assets->config.frontend.n_fft / 2),
+      feature_dim_(assets->config.frontend.feature_size) {}
+
+void BarkStreamingFrontend::reset() {
+    cached_ = {};
+    cached_start_ = 0;
+    cached_samples_ = 0;
+}
+
+ParakeetFrontendFeatures BarkStreamingFrontend::extract(
+    const runtime::AudioBuffer & window, int64_t start_sample) {
+    const auto started = std::chrono::steady_clock::now();
+    if (window.sample_rate != sample_rate_ || window.channels != 1 || window.samples.empty() || start_sample < 0)
+        throw runtime::InvalidRequestError("Bark streaming frontend requires nonempty mono input at its native rate");
+    const auto samples = static_cast<int64_t>(window.samples.size());
+    const int64_t valid = samples / hop_;
+    // Full FFT support, including the preceding sample used by preemphasis,
+    // must be inside BOTH windows. Padding and the first preemphasis sample
+    // depend on the window boundary and are deliberately never cached.
+    const int64_t guard = (half_fft_ + 1 + hop_ - 1) / hop_;
+    const auto interior_end = [this](int64_t count) {
+        return count < half_fft_ ? int64_t(0) : (count - half_fft_) / hop_ + 1;
+    };
+    const int64_t delta = start_sample - cached_start_;
+    const bool aligned = !cached_.values.empty() && delta >= 0 && delta % hop_ == 0;
+    const int64_t shift = aligned ? delta / hop_ : 0;
+    const int64_t reuse_begin = guard;
+    const int64_t reuse_end = aligned
+        ? std::min({valid, interior_end(samples), cached_.valid_frames - shift,
+                    interior_end(cached_samples_) - shift})
+        : 0;
+    const auto raw_extract = [this, &window](int64_t begin, int64_t end) {
+        std::vector<float> audio(window.samples.begin() + begin, window.samples.begin() + end);
+        return raw_frontend_.extract_mono(std::move(audio), {true, engine::audio::ValidFrameRule::FloorHops});
+    };
+    ParakeetFrontendFeatures raw;
+    if (reuse_end <= reuse_begin) {
+        auto mel = raw_extract(0, samples);
+        raw = {std::move(mel.values), mel.frames, mel.valid_frames, mel.feature_size};
+    } else {
+        raw.frames = valid + 1;
+        raw.valid_frames = valid;
+        raw.feature_dim = feature_dim_;
+        raw.values.assign(static_cast<size_t>(raw.frames * feature_dim_), 0.f);
+        std::copy_n(cached_.values.begin() + (reuse_begin + shift) * feature_dim_,
+                    (reuse_end - reuse_begin) * feature_dim_, raw.values.begin() + reuse_begin * feature_dim_);
+        // The small prefix retains the exact left padding/preemphasis rule.
+        const int64_t prefix_samples = std::min(samples,
+            (reuse_begin - 1) * hop_ + std::max(half_fft_ + 1, hop_));
+        const auto prefix = raw_extract(0, prefix_samples);
+        std::copy_n(prefix.values.begin(), reuse_begin * feature_dim_, raw.values.begin());
+        // Start on the original hop grid with enough real left context. The
+        // suffix ends at the real window end, preserving its right padding.
+        const int64_t suffix_start = std::max<int64_t>(0, reuse_end * hop_ - half_fft_ - 1) / hop_ * hop_;
+        const auto suffix = raw_extract(suffix_start, samples);
+        std::copy_n(suffix.values.begin() + (reuse_end - suffix_start / hop_) * feature_dim_,
+                    (valid - reuse_end) * feature_dim_, raw.values.begin() + reuse_end * feature_dim_);
+    }
+    cached_ = std::move(raw);
+    cached_start_ = start_sample;
+    cached_samples_ = samples;
+
+    // Same F64 reduction order and sample variance as ParakeetFrontend. Raw
+    // features are cached, but statistics always belong to this whole window.
+    ParakeetFrontendFeatures out;
+    out.frames = cached_.frames;
+    out.valid_frames = cached_.valid_frames;
+    out.feature_dim = cached_.feature_dim;
+    out.values.assign(cached_.values.size(), 0.f);
+    if (valid > 0) {
+        for (int64_t m = 0; m < feature_dim_; ++m) {
+            double sum = 0.;
+            for (int64_t t = 0; t < valid; ++t) sum += cached_.values[t * feature_dim_ + m];
+            const double mean = sum / static_cast<double>(valid);
+            double variance = 0.;
+            for (int64_t t = 0; t < valid; ++t) {
+                const double diff = cached_.values[t * feature_dim_ + m] - mean;
+                variance += diff * diff;
+            }
+            double stddev = valid > 1 ? std::sqrt(variance / static_cast<double>(valid - 1)) : 0.;
+            if (std::isnan(stddev)) stddev = 0.;
+            stddev += 1.0e-5f;
+            for (int64_t t = 0; t < valid; ++t)
+                out.values[t * feature_dim_ + m] = static_cast<float>((cached_.values[t * feature_dim_ + m] - mean) / stddev);
+        }
+    }
+    debug::timing_log_scalar("parakeet.frontend_ms", engine::debug::elapsed_ms(started, std::chrono::steady_clock::now()));
+    debug::trace_log_scalar("bark3.frontend.reused_frames", std::max<int64_t>(0, reuse_end - reuse_begin));
+    return out;
+}
 
 void remove_bark3_prefix_timestamps(std::vector<runtime::WordTimestamp> & words, int64_t original_samples) {
     const auto shift = [original_samples](int64_t value) {

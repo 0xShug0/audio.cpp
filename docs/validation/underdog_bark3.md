@@ -95,6 +95,63 @@ PyTorch CUDA timings were 2.436 s F32 and 2.049 s BF16 on the same recording.
 NVML device-total memory was sampled every 100 ms minus a pre-process baseline;
 RSS is sampled process working set. Memory includes model and temporary buffers.
 
+## Buffered streaming frontend reuse
+
+Bark streams now cache one window of **unnormalized** log-mel features. Only
+frames with their full FFT/preemphasis support inside both windows are reused.
+Window edges are recomputed, and F64 normalization is repeated over the entire
+current window in the original reduction order. An unaligned hop grid or absent
+overlap falls back to fresh extraction; starting/resetting a stream clears the
+cache. Default raw-cache data is about 0.68 MiB of host RAM (1401 x 128 floats),
+plus frontend metadata, with no additional GPU tensors. This is Bark-only;
+stock Parakeet/Phonon, offline inference, attention and shared kernels retain
+their existing paths. No GGUF reconversion is required.
+
+The model-local unit test compares every normalized float bit-for-bit against
+fresh extraction for growing/sliding windows, boundary impulses, silence,
+unaligned windows/tails, absent overlap and zero/one-valid-frame cases. Actual
+streaming before/after comparisons pass **81/81** checks: the six fixtures above
+plus repeated short/long/short, for CPU/CUDA/Vulkan x F32/BF16/Q8. Text and word
+timestamps match exactly within each backend/precision. The complete five-minute
+Q8 stream also retains exactly the same text/timestamps on all three backends.
+These comparisons use the prior buffered implementation at `889e3161`, not the
+original model's different whole-recording context. Both warm-bench binaries
+include the `start_stream()` lifecycle correction; the previous benchmark only
+called `reset()`, which cannot activate the Bark stream wrapper.
+
+The 66 HTTP/SSE checks below were repeated successfully with this path, including
+hotwords and stream reuse. The actual stock Parakeet streaming/reset regression
+also passes. Default 2 s centers, 10 s left context and 2 s right context are
+unchanged. Processing-time improvements do not reduce the amount of future
+audio required for an output, and this remains buffered bidirectional inference.
+
+| Five-minute Q8 buffered stream | Before | After | Less processing time |
+|---|---:|---:|---:|
+| CUDA | 3.154 s | 2.735 s | **13.3%** |
+| Vulkan | 4.451 s | 3.911 s | **12.1%** |
+
+These are medians of five streams after one warmup, with identical default
+contexts, 3200-sample input chunks, eight inference threads and
+`OMP_NUM_THREADS=8`, `OMP_WAIT_POLICY=PASSIVE` for both binaries. Input is fed
+without real-time delays. Timing includes preprocessing/decoding and excludes
+model load/file I/O. Logged frontend time falls by about 73-76%. Use the
+`controlled-before/` and `controlled-after/` artifacts for these measurements;
+unrestricted-thread exploratory trials were sensitive to background VM load.
+A separate single-stream CPU trial without warmup, using the original automatic
+frontend thread settings, measured 71.377 -> 69.696 s. That small CPU difference
+is indicative only; encoder computation dominates its runtime.
+
+Reproduce a before/after sequence with the same model and audio on each binary:
+
+```bash
+python tests/parakeet_tdt/compare_bark3_streaming.py \
+  --before-bin build-before/bin/parakeet_warm_bench \
+  --after-bin build/bark3/bin/parakeet_warm_bench \
+  --model models/underdog-bark-3.0-pro-q8_0.gguf --backend cuda \
+  --audio short-16k-mono.wav long-16k-mono.wav short-16k-mono.wav \
+  --output-dir build/bark3/streaming-comparison
+```
+
 ## VAD, hotwords and lifecycle
 
 There are **66 passing server checks**, 22 per backend on CPU/CUDA/Vulkan:
@@ -138,3 +195,6 @@ runs and graph-buffer traces), `memory-fix/matrix/` (81 reference checks),
 (profile comparisons and old Q8 backup). `original-comparison/` retains the
 original reference outputs and baseline timing. Changes are model-local and
 were kept separate from shared backend/kernel work.
+`streaming-optimization/` contains the streaming baseline/updated benchmarks,
+81 comparison checks in `matrix/`, and the repeated HTTP/SSE checks in
+`features-test/`.
