@@ -180,3 +180,11 @@ on the actual package returned HTTP 503 before model allocation: estimated
 GGUFs, expanded expert banks, mandatory F32 parameters and unaligned quant-row
 fallback. The test did not load or evaluate a full F32 model. GPU headroom was
 limited during this follow-up, so its full-model HTTP validation used CPU.
+
+After merging upstream `46e3893b`, the Windows and Linux CPU CLI builds and all
+six CTests passed again on source commit `b00a9ee4`. The isolated Linux build
+used a private `model_specs` discovery link; no framework change was needed.
+The merged CPU server repeated all 24 HTTP checks successfully. It also returned
+all eight turns and 129 aligned words for the distinct 49.055-second dialogue,
+with normalized text matching the earlier CUDA take. English remained identical
+after this longer request. The model was unloaded and the owned server stopped.
