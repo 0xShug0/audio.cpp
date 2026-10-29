@@ -83,7 +83,7 @@ struct BpeVocabulary {
     PreTokenizerType pre_type = PreTokenizerType::Gpt2;
     // HF tokenizer.json model.ignore_merges: a pre-token that is a whole vocab entry is that token, merges or not.
     bool ignore_merges = false;
-    // Opt-in raw UTF-8 pre-tokenization; default dispatch remains pre_type.
+    // Opt-in pre-tokenization returning BPE-formatted pieces; default remains pre_type.
     std::function<std::vector<std::string>(const std::string &)> pre_tokenize;
 
     int32_t text_to_token(const std::string & text) const;

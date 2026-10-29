@@ -61,6 +61,11 @@ int validate_evidence(const CtcEvidence & evidence, const CtcConfig & c) {
         evidence.logsumexp.size() != size_t(frames) || evidence.maximum.size() != size_t(frames)) {
         throw std::invalid_argument("CTC evidence dimensions do not match the head");
     }
+    if (std::any_of(evidence.logsumexp.begin(), evidence.logsumexp.end(),
+            [](float x) { return !std::isfinite(x); }) ||
+        std::any_of(evidence.maximum.begin(), evidence.maximum.end(),
+            [](float x) { return !std::isfinite(x); }))
+        throw std::invalid_argument("non-finite CTC evidence normalizers");
     return frames;
 }
 
@@ -187,7 +192,7 @@ ggml_tensor * linear(core::ModuleBuildContext & ctx, ggml_tensor * x,
 
 std::unique_ptr<Graph> bridge_graph(core::ExecutionContext & execution, const Weights & weights,
     const CtcConfig & c, int encoder_frames) {
-    auto g = std::make_unique<Graph>(execution, std::max<size_t>(4096, 512 + c.layers * 192));
+    auto g = std::make_unique<Graph>(execution, std::max<size_t>(4096, 512 + size_t(c.layers) * 192));
     g->frames = encoder_frames;
     auto * ctx = g->context.get();
     core::ModuleBuildContext build{ctx, "nemotron.ctc.bridge", execution.backend_type()};
@@ -238,7 +243,8 @@ ggml_tensor * row_max(ggml_context * ctx, ggml_tensor * x) {
 
 std::unique_ptr<Graph> normalizer_graph(core::ExecutionContext & execution, const Weights & weights,
     const CtcConfig & c, int frames) {
-    auto g = std::make_unique<Graph>(execution);
+    const size_t chunks = (size_t(c.vocabulary) + kClassChunk - 1) / kClassChunk;
+    auto g = std::make_unique<Graph>(execution, std::max<size_t>(4096, 256 + chunks * 32));
     g->frames = frames;
     auto * ctx = g->context.get();
     auto * w = weights.classifier.weight.tensor;
@@ -247,7 +253,7 @@ std::unique_ptr<Graph> normalizer_graph(core::ExecutionContext & execution, cons
     ggml_tensor * peaks = nullptr, * sums = nullptr;
     // Retain chunk summaries, not full-vocabulary logits. GGML's allocator can
     // reuse one [frames, <=4096] logits buffer between these graph branches.
-    for (int first = 0; first < c.vocabulary; first += kClassChunk) {
+    for (int first = 0; first < c.vocabulary;) {
         const int count = std::min(kClassChunk, c.vocabulary - first);
         auto * logits = ggml_mul_mat(ctx,
             ggml_view_2d(ctx, w, c.dimension, count, w->nb[1], size_t(first) * w->nb[1]), g->input);
@@ -257,6 +263,7 @@ std::unique_ptr<Graph> normalizer_graph(core::ExecutionContext & execution, cons
         auto * sum = ggml_sum_rows(ctx, ggml_exp(ctx, ggml_sub(ctx, logits, peak)));
         peaks = peaks ? ggml_concat(ctx, peaks, peak, 0) : peak;
         sums = sums ? ggml_concat(ctx, sums, sum, 0) : sum;
+        first += count;
     }
     g->maximum = row_max(ctx, peaks);
     g->output = ggml_add(ctx, ggml_log(ctx, ggml_sum_rows(ctx,
@@ -300,8 +307,6 @@ struct CtcTimestampHead::Impl {
           store(execution.backend(), execution.backend_type(), "nemotron.ctc.weights",
               (size_t(config.layers) * 24 + 16) * ggml_tensor_overhead() + 65536) {
         if (!source) throw std::invalid_argument("missing Nemotron CTC tensor source");
-        weights = load_weights(store, *source, config);
-        store.upload();
         if (!serialized_tokenizer.empty()) {
             tokenizer = std::make_unique<sentencepiece::SentencePieceProcessor>();
             const auto status = tokenizer->LoadFromSerializedProto(serialized_tokenizer);
@@ -310,11 +315,16 @@ struct CtcTimestampHead::Impl {
                 throw std::runtime_error("CTC SentencePiece vocabulary does not match blank ID");
             }
         }
+        weights = load_weights(store, *source, config);
+        store.upload();
     }
 
     std::vector<float> bridge(const float * states, int frames) {
         const int count = ctc_frames(frames, config.upsampling);
         if (!states) throw std::invalid_argument("missing CTC ASR states");
+        if (std::any_of(states, states + size_t(frames) * config.dimension,
+                [](float x) { return !std::isfinite(x); }))
+            throw std::invalid_argument("non-finite CTC ASR states");
         if (!bridge_cache || bridge_cache->frames != frames) {
             bridge_cache.reset();
             bridge_cache = bridge_graph(execution, weights, config, frames);
@@ -329,13 +339,16 @@ struct CtcTimestampHead::Impl {
     std::vector<float> project(const float * hidden, int frames, const std::vector<int> & columns) {
         if (!hidden || frames <= 0) throw std::invalid_argument("invalid CTC projection states");
         validate_columns(columns, config.vocabulary);
+        if (std::any_of(hidden, hidden + size_t(frames) * config.dimension,
+                [](float x) { return !std::isfinite(x); }))
+            throw std::invalid_argument("non-finite CTC projection states");
         if (columns.size() > size_t(std::numeric_limits<int>::max())) {
             throw std::invalid_argument("too many CTC projection columns");
         }
         const int tile = std::min<int>(kProjectionFrames,
             std::max<size_t>(1, kProjectionElements / columns.size()));
         std::vector<float> out(size_t(frames) * columns.size());
-        for (int first = 0; first < frames; first += tile) {
+        for (int first = 0; first < frames;) {
             const int count = std::min(tile, frames - first);
             if (!projection_cache || projection_cache->frames != count ||
                 projection_cache->columns != int(columns.size())) {
@@ -346,6 +359,7 @@ struct CtcTimestampHead::Impl {
             projection_cache->run(hidden + size_t(first) * config.dimension, size_t(count) * config.dimension);
             ggml_backend_tensor_get(projection_cache->output, out.data() + size_t(first) * columns.size(),
                 0, size_t(count) * columns.size() * sizeof(float));
+            first += count;
         }
         return out;
     }

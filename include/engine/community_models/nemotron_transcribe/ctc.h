@@ -6,6 +6,8 @@
 #include "engine/community_models/nemotron_transcribe/alignment.h"
 
 #include <memory>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -44,7 +46,8 @@ struct CtcOptions {
 
 // Transcript-independent evidence, kept on the host so the LLM can use the device
 // while decoding. Only h (D floats per CTC frame), logsumexp and maximum are retained.
-// The full recording x vocabulary emission matrix is never materialized.
+// Head normalization never materializes full-recording vocabulary logits.
+// Later alignment emissions still scale as CTC frames x requested classes.
 struct CtcEvidence {
     int encoder_frames = 0;
     int dimension = 0;
@@ -53,7 +56,12 @@ struct CtcEvidence {
     std::vector<float> hidden;     // [encoder_frames*upsampling, dimension]
     std::vector<float> logsumexp;  // one value per CTC frame
     std::vector<float> maximum;    // one value per CTC frame
-    int frames() const noexcept { return encoder_frames * upsampling; }
+    int frames() const {
+        const int64_t count = int64_t(encoder_frames) * upsampling;
+        if (encoder_frames < 0 || upsampling < 0 || count > std::numeric_limits<int>::max())
+            throw std::invalid_argument("invalid CTC evidence frame count");
+        return static_cast<int>(count);
+    }
 };
 
 struct CtcSpeakerEvidence {

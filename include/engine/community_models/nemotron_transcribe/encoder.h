@@ -62,6 +62,7 @@ struct EncoderConfig {
     int chunk_right_context = 50;
     SpeakerCacheConfig speaker_cache;
     bool use_flash_attention = true;
+    // Callers may lower this bound; the released checkpoint supports at most one hour.
     double maximum_audio_seconds = 3600.0;
 };
 

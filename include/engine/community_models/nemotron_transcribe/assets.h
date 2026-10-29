@@ -25,4 +25,11 @@ struct TranscribeAssets {
 
 std::shared_ptr<const TranscribeAssets> load_transcribe_assets(const std::filesystem::path & path);
 
+assets::TensorStorageType transcribe_weight_type(std::string_view value);
+
+// Conservative weight residency before uploads, including mandatory F32
+// parameters and the framework's F32 fallback for unaligned quantized rows.
+size_t estimate_transcribe_weight_bytes(const std::vector<assets::TensorMetadata> & tensors,
+    assets::TensorStorageType storage);
+
 }  // namespace engine::models::nemotron_transcribe

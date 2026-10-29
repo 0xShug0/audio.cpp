@@ -51,6 +51,10 @@ struct GenerationOptions {
     bool return_last_logits = false;
 };
 
+// Validates scalar options without loading weights or processing audio. Prompt
+// budget and vocabulary IDs are checked by generate(). Throws runtime_error.
+void validate_generation_options(const GenerationOptions & options, int64_t max_context);
+
 enum class TerminationReason {
     StopToken,
     TokenLimit,

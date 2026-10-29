@@ -206,9 +206,12 @@ void upload(ggml_tensor * tensor, const std::vector<float> & values) {
 }
 
 std::vector<int> topk(const std::vector<float> & values, int count) {
+    if (values.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::runtime_error("Nemotron Transcribe speaker cache has too many score entries");
+    }
     std::vector<int> indices(values.size());
     std::iota(indices.begin(), indices.end(), 0);
-    count = std::min(count, static_cast<int>(indices.size()));
+    count = std::clamp(count, 0, static_cast<int>(indices.size()));
     std::partial_sort(indices.begin(), indices.begin() + count, indices.end(), [&](int a, int b) {
         return values[a] > values[b] || (values[a] == values[b] && a < b);
     });
@@ -227,9 +230,15 @@ void compress_cache(SpeakerState & state, int dimension, int speakers,
     const SpeakerCacheConfig & config, const std::vector<float> & silence) {
     const int n = static_cast<int>(state.cache.size() / dimension);
     const int per_speaker = config.cache_frames / speakers - config.silence_frames_per_speaker;
-    const int strong = static_cast<int>(std::floor(per_speaker * config.strong_boost_rate));
-    const int weak = static_cast<int>(std::floor(per_speaker * config.weak_boost_rate));
-    const int min_positive = static_cast<int>(std::floor(per_speaker * config.min_positive_score_rate));
+    const auto bounded_count = [&](float rate, int maximum) {
+        if (static_cast<double>(per_speaker) * rate > std::numeric_limits<float>::max()) return maximum;
+        const float count = std::floor(per_speaker * rate);
+        return count >= maximum ? maximum : static_cast<int>(count);
+    };
+    const int strong = bounded_count(config.strong_boost_rate, n);
+    const int weak = bounded_count(config.weak_boost_rate, n);
+    // An unachievable threshold must stay above n rather than overflowing an int.
+    const int min_positive = bounded_count(config.min_positive_score_rate, n + 1);
     const int nt = n + config.silence_frames_per_speaker;
     std::vector<std::vector<float>> scores(static_cast<size_t>(speakers),
         std::vector<float>(static_cast<size_t>(nt), std::numeric_limits<float>::infinity()));
@@ -286,10 +295,15 @@ void compress_cache(SpeakerState & state, int dimension, int speakers,
 }  // namespace
 
 void validate_encoder_config(const EncoderConfig & config) {
+    // Each block needs fewer than 64 nodes; reserve the remaining nodes for the
+    // stacking, head and fusion graph before accepting metadata-driven depths.
+    constexpr int maximum_layers = static_cast<int>((kGraphNodes - 256) / 64);
     for (const auto * expert : {&config.asr, &config.diar}) {
         if (expert->feature_size <= 0 || expert->hidden_size <= 0 || expert->heads <= 0 ||
-            expert->hidden_size % expert->heads != 0 || expert->layers < 0 || expert->intermediate_size <= 0 ||
+            expert->hidden_size % expert->heads != 0 || expert->layers < 0 || expert->layers > maximum_layers ||
+            expert->hidden_size > std::numeric_limits<int>::max() / 3 || expert->intermediate_size <= 0 ||
             expert->subsampling_factor <= 0 || expert->rotary_dimensions <= 0 ||
+            expert->feature_size > std::numeric_limits<int>::max() / expert->subsampling_factor ||
             expert->rotary_dimensions % 2 != 0 || expert->rotary_dimensions > expert->hidden_size / expert->heads ||
             !(expert->layer_norm_epsilon > 0.0f) || !std::isfinite(expert->layer_norm_epsilon) ||
             !(expert->rope_base > 0.0f) || !std::isfinite(expert->rope_base)) {
@@ -304,6 +318,7 @@ void validate_encoder_config(const EncoderConfig & config) {
         config.chunk_left_context < 0 || config.chunk_right_context < 0 ||
         !(config.speaker_activity_threshold >= 0.0f && config.speaker_activity_threshold <= 1.0f) ||
         !(config.maximum_audio_seconds > 0.0) || !std::isfinite(config.maximum_audio_seconds) ||
+        config.maximum_audio_seconds > 3600.0 ||
         cache.cache_frames <= 0 || cache.fifo_frames < 0 ||
         cache.update_period <= 0 || cache.silence_frames_per_speaker < 0 ||
         cache.cache_frames / config.speaker_count <= cache.silence_frames_per_speaker ||
@@ -314,11 +329,30 @@ void validate_encoder_config(const EncoderConfig & config) {
         !std::isfinite(cache.latest_score_boost)) {
         throw std::runtime_error("Nemotron Transcribe encoder configuration is invalid");
     }
+    if (config.speaker_hidden_size > std::numeric_limits<int>::max() / config.upsample_factor) {
+        throw std::runtime_error("Nemotron Transcribe speaker upsample dimensions overflow");
+    }
+    const uint64_t conv_out = static_cast<uint64_t>(config.speaker_hidden_size) * config.upsample_factor;
+    if (static_cast<uint64_t>(config.speaker_hidden_size) >
+        static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / (sizeof(float) * 3 * conv_out)) {
+        throw std::runtime_error("Nemotron Transcribe speaker convolution size overflows");
+    }
+    if (cache.latest_score_boost < std::log(static_cast<double>(std::numeric_limits<float>::denorm_min())) ||
+        cache.latest_score_boost > std::log(static_cast<double>(std::numeric_limits<float>::max()) / 16.0)) {
+        throw std::runtime_error("Nemotron Transcribe speaker score boost is outside its finite range");
+    }
+    const int64_t mel_frames = static_cast<int64_t>(std::ceil(config.maximum_audio_seconds * 100.0));
+    const int64_t encoder_frames = (mel_frames + config.asr.subsampling_factor - 1) / config.asr.subsampling_factor;
+    if (cache.cache_frames < encoder_frames && static_cast<uint64_t>(config.speaker_count) *
+        static_cast<uint64_t>(encoder_frames + cache.silence_frames_per_speaker) >
+        static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+        throw std::runtime_error("Nemotron Transcribe speaker score indices overflow");
+    }
 }
 
 std::vector<EncoderWindow> plan_encoder_windows(int64_t mel_frames, const EncoderConfig & config) {
     validate_encoder_config(config);
-    if (mel_frames <= 0 || mel_frames > config.maximum_audio_seconds * 100.0 + 1.0) {
+    if (mel_frames <= 0 || static_cast<double>(mel_frames) / 100.0 > config.maximum_audio_seconds) {
         throw std::runtime_error("Nemotron Transcribe mel duration is outside the configured limit");
     }
     const int64_t sub = config.asr.subsampling_factor;
@@ -357,7 +391,7 @@ struct ParallelExpertEncoder::Impl {
     Impl(const core::ExecutionContext & e, const assets::TensorSource & source, EncoderConfig c,
         assets::TensorStorageType storage) : execution(e), config(std::move(c)) {
         validate_encoder_config(config);
-        const size_t tensors = static_cast<size_t>(config.asr.layers + config.diar.layers) * 24 + 128;
+        const size_t tensors = (static_cast<size_t>(config.asr.layers) + config.diar.layers) * 24 + 128;
         store = std::make_unique<core::BackendWeightStore>(execution.backend(), execution.backend_type(),
             "nemotron_transcribe.encoder", ggml_tensor_overhead() * tensors * 2);
         asr = load_expert(*store, source, "asr", config.asr, storage);
@@ -406,11 +440,13 @@ struct ParallelExpertEncoder::Impl {
             graph->frames = length;
             auto * ctx = graph->context;
             graph->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, config.diar.hidden_size, length);
-            graph->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, length);
+            if (config.diar.layers > 0) graph->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, length);
             ggml_set_input(graph->input);
-            ggml_set_input(graph->positions);
             // Positions are constant inputs and kept live between graph runs.
-            ggml_set_output(graph->positions);
+            if (graph->positions != nullptr) {
+                ggml_set_input(graph->positions);
+                ggml_set_output(graph->positions);
+            }
             auto * rows = expert_rows(ctx, graph->input, graph->positions, diar, config.diar, config.use_flash_attention);
             auto * projected = linear(ctx, rows, encoder_projection);
             auto * time_major = ggml_cont(ctx, ggml_transpose(ctx, projected));
@@ -443,10 +479,12 @@ struct ParallelExpertEncoder::Impl {
             auto * ctx = graph->context;
             graph->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
                 config.asr.feature_size * config.asr.subsampling_factor, frames);
-            graph->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, frames);
+            if (config.asr.layers > 0) graph->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, frames);
             graph->speaker_probs = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, config.speaker_count, frames);
-            for (auto * tensor : {graph->input, graph->positions, graph->speaker_probs}) ggml_set_input(tensor);
-            ggml_set_output(graph->positions);
+            for (auto * tensor : {graph->input, graph->positions, graph->speaker_probs}) {
+                if (tensor != nullptr) ggml_set_input(tensor);
+            }
+            if (graph->positions != nullptr) ggml_set_output(graph->positions);
             auto * encoded = linear(ctx, graph->input, asr.pre_encode);
             graph->raw = expert_rows(ctx, encoded, graph->positions, asr, config.asr, config.use_flash_attention);
             auto * binary = ggml_step(ctx, ggml_scale_bias(ctx, graph->speaker_probs, 1.0f, -config.speaker_activity_threshold));
@@ -499,7 +537,7 @@ struct ParallelExpertEncoder::Impl {
         check_cancelled();
         if (features.bins != config.asr.feature_size || features.frames <= 0 ||
             // Both experts consume the released model's 10 ms frontend grid.
-            features.frames > config.maximum_audio_seconds * 100.0 + 1.0 ||
+            static_cast<double>(features.frames) / 100.0 > config.maximum_audio_seconds ||
             features.values.size() != static_cast<size_t>(features.frames * features.bins) ||
             !std::isfinite(features.duration_seconds) || features.duration_seconds < 0.0 ||
             features.duration_seconds > config.maximum_audio_seconds ||

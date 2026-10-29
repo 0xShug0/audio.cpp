@@ -4,6 +4,7 @@
 #include "engine/framework/runtime/session.h"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace engine::models::nemotron_transcribe {
@@ -44,5 +45,12 @@ std::vector<float> normalize_asr_features(const MelFeatures & features);
 
 // Native SALM's conservative silence gate: both peak and RMS must be quiet.
 bool is_near_silent(const std::vector<float> & samples);
+
+// Validate the original interleaved audio and return its per-channel duration.
+double validate_input_audio(const runtime::AudioBuffer & input, double maximum_seconds = 3600.0);
+
+// The session accepts ordinary PCM formats without changing shared loaders.
+// No buffer is allocated for the matched 16 kHz mono input path.
+std::optional<runtime::AudioBuffer> normalize_input_audio(const runtime::AudioBuffer & input);
 
 }  // namespace engine::models::nemotron_transcribe

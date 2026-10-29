@@ -24,6 +24,27 @@
 namespace engine::models::nemotron_transcribe::timestamps {
 namespace {
 
+size_t checked_elements(int rows, int columns) {
+    if (rows < 0 || columns < 0 ||
+        (columns && size_t(rows) > std::vector<float>().max_size() / size_t(columns)))
+        throw std::invalid_argument("alignment: invalid matrix shape");
+    return size_t(rows) * size_t(columns);
+}
+
+void require_finite(const float* data, size_t count) {
+    if (std::any_of(data, data + count, [](float value) { return !std::isfinite(value); }))
+        throw std::invalid_argument("alignment: non-finite speaker probabilities");
+}
+
+void require_log_values(const float* data, size_t count) {
+    // Negative infinity is a valid impossible emission/prior. NaN and positive
+    // infinity must not enter argmax, dynamic programming, or time conversion.
+    if (std::any_of(data, data + count, [](float value) {
+            return std::isnan(value) || value == std::numeric_limits<float>::infinity();
+        }))
+        throw std::invalid_argument("alignment: invalid log probabilities");
+}
+
 // Decodes the UTF-8 code point at text[i] and its byte length; an invalid byte is itself (length
 // 1).
 uint32_t
@@ -538,13 +559,17 @@ minimum_frames(const std::vector<int>& labels) {
 std::vector<HeadWindow>
 head_windows(int frames, int core, int left, int right) {
     std::vector<HeadWindow> windows;
+    if (left < 0 || right < 0)
+        throw std::invalid_argument("head_windows: negative context");
     if (frames <= 0)
         return windows;
     if (core <= 0 || frames <= core)
         return {{0, frames, 0, frames}};
-    for (int start = 0; start < frames; start += core) {
-        const int end = std::min(start + core, frames);
-        windows.push_back({start, end, std::max(start - left, 0), std::min(end + right, frames)});
+    for (int start = 0; start < frames;) {
+        const int end = static_cast<int>(std::min<int64_t>(int64_t(start) + core, frames));
+        windows.push_back({start, end, std::max(start - left, 0),
+            static_cast<int>(std::min<int64_t>(int64_t(end) + right, frames))});
+        start = end;
     }
     return windows;
 }
@@ -671,7 +696,10 @@ std::vector<float>
 resample_speaker_probs(const float* probs, int rows, int speakers, int frames) {
     if (!probs || rows < 1 || speakers < 0 || frames < 0)
         throw std::invalid_argument("resample_speaker_probs: invalid shape");
-    std::vector<float> clamped(probs, probs + static_cast<size_t>(rows) * speakers);
+    const size_t count = checked_elements(rows, speakers);
+    checked_elements(frames, speakers);
+    require_finite(probs, count);
+    std::vector<float> clamped(probs, probs + count);
     for (float& v : clamped) v = std::min(std::max(v, 0.0f), 1.0f);  // torch.clamp keeps NaN
     if (rows == frames)
         return clamped;
@@ -680,7 +708,8 @@ resample_speaker_probs(const float* probs, int rows, int speakers, int frames) {
         const float position = torch_linspace(0.0f, static_cast<float>(rows - 1), frames, t);
         const float lower_f = std::floor(position), upper_f = std::ceil(position);
         const float fraction = position - lower_f;
-        const size_t lower = static_cast<size_t>(lower_f), upper = static_cast<size_t>(upper_f);
+        const size_t lower = std::min(static_cast<size_t>(lower_f), size_t(rows - 1)),
+                     upper = std::min(static_cast<size_t>(upper_f), size_t(rows - 1));
         for (int c = 0; c < speakers; ++c) {
             const float a = clamped[lower * speakers + c] * (1.0f - fraction);
             const float b = clamped[upper * speakers + c] * fraction;
@@ -782,9 +811,22 @@ std::vector<int>
 speaker_mapping(
     const std::vector<int>& greedy, int columns, const std::vector<SpeakerStream>& streams,
     const float* speaker, int frames, int speakers, float threshold) {
+    if (columns < 1 || frames < 0 || speakers < 0 || greedy.size() != size_t(frames) ||
+        !std::isfinite(threshold) || threshold < 0 || threshold > 1 ||
+        (speakers > 0 && frames > 0 && !speaker))
+        throw std::invalid_argument("speaker_mapping: invalid inputs");
+    checked_elements(frames, speakers);
+    for (int label : greedy)
+        if (label < 0 || label >= columns)
+            throw std::invalid_argument("speaker_mapping: invalid greedy class ID");
+    for (const auto& stream : streams)
+        for (int label : stream.labels)
+            if (label < 0 || label >= columns)
+                throw std::invalid_argument("speaker_mapping: invalid target class ID");
     std::vector<int> mapping(streams.size(), -1);
     if (streams.empty() || speakers == 0)
         return mapping;
+    if (frames) require_finite(speaker, checked_elements(frames, speakers));
     const size_t C = static_cast<size_t>(columns), S = static_cast<size_t>(speakers),
                  N = streams.size();
     // Greedy non-blank onsets per active column, and target token counts per stream.
@@ -934,6 +976,23 @@ BandedPath
 banded_ctc_search(
     const float* log_probs, int columns, const std::vector<int>& labels,
     const std::vector<int>& positions, const float* prior, const std::vector<int>& greedy) {
+    if (columns < 1 || (!positions.empty() && !log_probs) || labels.empty() ||
+        greedy.size() > size_t(INT_MAX) || labels.size() > size_t(INT_MAX))
+        throw std::invalid_argument("banded_ctc_search: invalid input shape");
+    for (int label : labels)
+        if (label < 0 || label >= columns)
+            throw std::invalid_argument("banded_ctc_search: class ID outside columns");
+    for (int label : greedy)
+        if (label < 0 || label >= columns)
+            throw std::invalid_argument("banded_ctc_search: invalid greedy class ID");
+    int previous_position = -1;
+    for (int position : positions) {
+        if (position <= previous_position || size_t(position) >= greedy.size())
+            throw std::invalid_argument("banded_ctc_search: invalid searched position");
+        previous_position = position;
+        require_log_values(log_probs + size_t(position) * columns, size_t(columns));
+        if (prior) require_log_values(prior + position, 1);
+    }
     const float neg_inf = -std::numeric_limits<float>::infinity();
     const int64_t frames = static_cast<int64_t>(positions.size());
     const int64_t states = static_cast<int64_t>(labels.size());
@@ -1017,15 +1076,21 @@ diarization_segments(
     const float* activity10, int frames, int speakers, double frame_seconds, double duration,
     double time_offset) {
     std::vector<Segment> segments;
+    if (frames < 0 || speakers < 0)
+        throw std::invalid_argument("diarization_segments: negative shape");
     if (!activity10 || frames <= 0 || speakers <= 0)
         return segments;
+    if (!std::isfinite(frame_seconds) || frame_seconds <= 0 || !std::isfinite(duration) ||
+        duration <= 0 || !std::isfinite(time_offset) || !std::isfinite(time_offset + duration))
+        throw std::invalid_argument("diarization_segments: invalid clock");
+    require_finite(activity10, checked_elements(frames, speakers));
     for (int c = 0; c < speakers; ++c) {
         int begin = -1;
-        for (int t = 0; t <= frames; ++t) {
+        for (int64_t t = 0; t <= frames; ++t) {
             const bool active =
                 t < frames && activity10[static_cast<size_t>(t) * speakers + c] > 0.5f;
             if (active && begin < 0)
-                begin = t;
+                begin = static_cast<int>(t);
             if (!active && begin >= 0) {
                 const double start = time_offset + begin * frame_seconds;
                 const double end =
@@ -1117,9 +1182,49 @@ refine_word_timestamps(
 AlignmentResult
 align_record(
     const AlignmentTargets& targets, const AlignmentInputs& inputs, const AlignmentConfig& config) {
+    if (targets.columns.size() > size_t(INT_MAX) || targets.words.size() > size_t(INT_MAX))
+        throw std::invalid_argument("align_record: target is too large");
     const int frames = inputs.frames, C = static_cast<int>(targets.columns.size());
-    if (frames < 1 || C < 1 || !inputs.log_probs || !(inputs.duration > 0.0))
+    if (frames < 1 || C < 1 || !inputs.log_probs || !std::isfinite(inputs.duration) ||
+        inputs.duration <= 0 || !std::isfinite(inputs.time_offset) ||
+        !std::isfinite(inputs.time_offset + inputs.duration) || inputs.speaker_frames < 0 ||
+        inputs.speakers < 0 || inputs.label_frames < 0 || inputs.label_speakers < 0 ||
+        (inputs.speaker_probs && (inputs.speaker_frames < 1 || inputs.speakers < 1)) ||
+        (inputs.activity10 && (inputs.label_frames < 1 || inputs.label_speakers < 1)) ||
+        !std::isfinite(inputs.label_seconds) || inputs.label_seconds <= 0 ||
+        !std::isfinite(config.speaker_activity_threshold) || config.speaker_activity_threshold < 0 ||
+        config.speaker_activity_threshold > 1 || !std::isfinite(config.speaker_logprob_weight) ||
+        !std::isfinite(config.maximum_token_len) || config.maximum_token_len <= 0 ||
+        config.max_word_frames < 1 || !std::isfinite(config.epsilon) || config.epsilon <= 0)
         throw std::invalid_argument("align_record: invalid CTC inputs");
+    require_log_values(inputs.log_probs, checked_elements(frames, C));
+    if (inputs.speaker_probs)
+        require_finite(inputs.speaker_probs, checked_elements(inputs.speaker_frames, inputs.speakers));
+    if (inputs.activity10)
+        require_finite(inputs.activity10, checked_elements(inputs.label_frames, inputs.label_speakers));
+    std::vector<char> assigned(targets.words.size(), 0);
+    std::vector<int> tags;
+    for (const auto& stream : targets.streams) {
+        if (std::find(tags.begin(), tags.end(), stream.tag) != tags.end() || stream.words.empty() ||
+            stream.labels.empty() || stream.labels.size() % 2 != 1 ||
+            stream.state_to_word.size() != stream.labels.size())
+            throw std::invalid_argument("align_record: invalid speaker stream");
+        tags.push_back(stream.tag);
+        for (int word : stream.words) {
+            if (word < 0 || size_t(word) >= targets.words.size() || assigned[word] ||
+                targets.words[word].tag != stream.tag)
+                throw std::invalid_argument("align_record: invalid stream word");
+            assigned[word] = 1;
+        }
+        for (size_t state = 0; state < stream.labels.size(); ++state) {
+            const int label = stream.labels[state], word = stream.state_to_word[state];
+            if (label < 0 || label >= C || (state % 2 == 0 ? label != 0 || word != -1
+                    : label == 0 || word < 0 || size_t(word) >= stream.words.size()))
+                throw std::invalid_argument("align_record: invalid target state");
+        }
+    }
+    if (std::find(assigned.begin(), assigned.end(), 0) != assigned.end())
+        throw std::invalid_argument("align_record: word has no speaker stream");
     AlignmentResult result;
     result.ctc_step = inputs.duration / frames;
     // Greedy column per frame (first maximum, as numpy.argmax).

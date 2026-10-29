@@ -91,7 +91,8 @@ public:
         encoder_config.chunk_right_context = bounded_option(options, "nemotron_transcribe.encoder_right_context",
             encoder_config.chunk_right_context, 0, 5000);
         auto & cache = encoder_config.speaker_cache;
-        cache.cache_frames = bounded_option(options, "nemotron_transcribe.speaker_cache_size", cache.cache_frames, 8, 5000);
+        cache.cache_frames = bounded_option(options, "nemotron_transcribe.speaker_cache_size", cache.cache_frames,
+            2 * encoder_config.speaker_count, 5000);
         cache.fifo_frames = bounded_option(options, "nemotron_transcribe.speaker_fifo_size", cache.fifo_frames, 0, 5000);
         cache.update_period = bounded_option(options, "nemotron_transcribe.speaker_update_period", cache.update_period, 1, 5000);
         if (const auto value = runtime::find_option(options.options, {"nemotron_transcribe.flash_attention"}))
@@ -108,7 +109,7 @@ public:
         max_context_ = decoder_config.max_context;
         decoder_config.prefill_batch_size = bounded_option(options, "nemotron_transcribe.prefill_batch_size",
             static_cast<int>(decoder_config.prefill_batch_size), 1, 2048);
-        const auto storage = assets::parse_tensor_storage_type(
+        const auto storage = transcribe_weight_type(
             runtime::find_option(options.options, {"nemotron_transcribe.weight_type"}).value_or("native"));
         encoder_ = std::make_unique<ParallelExpertEncoder>(execution_context(), *assets_->encoder_weights, encoder_config, storage);
         decoder_ = std::make_unique<NemotronHDecoderRuntime>(assets_->decoder_weights, execution_context(), decoder_config, storage);
@@ -123,58 +124,75 @@ public:
     runtime::RunMode run_mode() const override { return task_.mode; }
 
     void prepare(const runtime::SessionPreparationRequest & request) override {
-        if (!request.audio || request.audio->sample_rate != assets_->frontend.sample_rate || request.audio->channels != 1)
-            throw runtime::InvalidRequestError("Nemotron Transcribe requires 16 kHz mono audio");
+        if (!request.audio || request.audio->sample_rate <= 0 || request.audio->channels <= 0)
+            throw runtime::InvalidRequestError("Nemotron Transcribe requires a valid audio format");
         mark_prepared();
     }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
         require_prepared("Nemotron Transcribe run");
-        runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "Nemotron Transcribe");
-        if (!request.audio_input || request.audio_input->sample_rate != assets_->frontend.sample_rate ||
-            request.audio_input->channels != 1 || request.audio_input->samples.empty())
-            throw runtime::InvalidRequestError("Nemotron Transcribe requires nonempty 16 kHz mono audio");
+        if (!request.audio_input) throw runtime::InvalidRequestError("Nemotron Transcribe requires audio");
         const auto & audio = *request.audio_input;
-        if (static_cast<double>(audio.samples.size()) / audio.sample_rate > assets_->encoder.maximum_audio_seconds)
-            throw runtime::InvalidRequestError("Nemotron Transcribe audio exceeds one hour");
-        const auto mode = runtime::find_option(request.options, {"template_name"}).value_or("default");
-        if (mode != "default" && mode != "translation" && mode != "audio_qa" && mode != "language_id")
-            throw runtime::InvalidRequestError("unknown Nemotron Transcribe template_name");
-        const bool diarization = flag(request.options, "diarization");
-        const bool word_times = flag(request.options, "return_timestamps") || diarization;
-        if (word_times && mode != "default")
-            throw runtime::InvalidRequestError("CTC timestamps and speaker labels require a source-language transcript");
-        auto instruction = runtime::find_option(request.options, {"instruct"}).value_or(
-            request.text_input ? request.text_input->text : "");
-        const auto language = runtime::find_option(request.options, {"language"}).value_or("auto");
-        if (instruction.empty()) {
-            if (mode == "audio_qa") throw runtime::InvalidRequestError("audio_qa requires instruct or text_input");
-            if (mode == "translation") {
-                const auto target = runtime::find_option(request.options, {"target_language"}).value_or("English");
-                if (target.empty() || target == "auto") throw runtime::InvalidRequestError("translation requires a target language");
-                instruction = "Translate the audio into " + language_name(target) + ".";
-            } else if (mode == "language_id") {
-                instruction = "Identify the language spoken in this audio. Output only the language name.";
-            } else {
-                instruction = diarization ? kSpeakerPrompt : kTranscriptionPrompt;
-                if (!language.empty() && language != "auto") instruction += " The speech is in " + language_name(language) + ".";
-            }
-        }
-        const auto system = runtime::find_option(request.options, {"system_prompt"}).value_or("");
-        const auto prompt = tokenizer_.build_prompt(instruction, system);
+        const double duration = validate_input_audio(audio, assets_->encoder.maximum_audio_seconds);
+        std::string mode;
+        bool diarization = false;
+        bool word_times = false;
+        PromptTokens prompt;
         GenerationOptions generation;
-        const auto duration_budget = std::max<int64_t>(24,
-            static_cast<int64_t>(std::ceil(6.0 * audio.samples.size() / audio.sample_rate - 1e-9)) + 24);
-        generation.max_new_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens"},
-            assets_->max_new_tokens > 0 ? assets_->max_new_tokens : duration_budget);
-        generation.do_sample = flag(request.options, "do_sample");
-        generation.temperature = runtime::parse_finite_float_option(request.options, {"temperature"}).value_or(1.0F);
-        generation.top_k = runtime::parse_i64_option(request.options, {"top_k"}).value_or(0);
-        generation.top_p = runtime::parse_finite_float_option(request.options, {"top_p"}).value_or(1.0F);
-        generation.repetition_penalty = runtime::parse_positive_finite_float_option(request.options, {"repetition_penalty"}).value_or(1.0F);
-        generation.seed = runtime::parse_u64_option(request.options, {"seed"}).value_or(0);
-        generation.stop_token_ids = {TextTokenizer::end_of_turn_id};
-        if (is_near_silent(audio.samples)) {
+        // Only input parsing is mapped to a client error. Model execution faults
+        // below remain internal errors, and silence cannot bypass validation.
+        try {
+            runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "Nemotron Transcribe");
+            if (!request.option_arrays.empty())
+                throw runtime::InvalidRequestError("Nemotron Transcribe request options must be scalar values");
+            mode = runtime::find_option(request.options, {"template_name"}).value_or("default");
+            if (mode != "default" && mode != "translation" && mode != "audio_qa" && mode != "language_id")
+                throw runtime::InvalidRequestError("unknown Nemotron Transcribe template_name");
+            diarization = flag(request.options, "diarization");
+            word_times = flag(request.options, "return_timestamps") || diarization;
+            if (word_times && mode != "default")
+                throw runtime::InvalidRequestError("CTC timestamps and speaker labels require a source-language transcript");
+            auto instruction = runtime::find_option(request.options, {"instruct"}).value_or(
+                request.text_input ? request.text_input->text : "");
+            const auto language = runtime::find_option(request.options, {"language"}).value_or(
+                request.text_input && !request.text_input->language.empty() ? request.text_input->language : "auto");
+            if (instruction.empty()) {
+                if (mode == "audio_qa") throw runtime::InvalidRequestError("audio_qa requires instruct or text_input");
+                if (mode == "translation") {
+                    const auto target = runtime::find_option(request.options, {"target_language"}).value_or("English");
+                    if (target.empty() || target == "auto") throw runtime::InvalidRequestError("translation requires a target language");
+                    instruction = "Translate the audio into " + language_name(target) + ".";
+                } else if (mode == "language_id") {
+                    instruction = "Identify the language spoken in this audio. Output only the language name.";
+                } else {
+                    instruction = diarization ? kSpeakerPrompt : kTranscriptionPrompt;
+                    if (!language.empty() && language != "auto") instruction += " The speech is in " + language_name(language) + ".";
+                }
+            }
+            const auto system = runtime::find_option(request.options, {"system_prompt"}).value_or("");
+            prompt = tokenizer_.build_prompt(instruction, system);
+            const auto duration_budget = std::max<int64_t>(24,
+                static_cast<int64_t>(std::ceil(6.0 * duration - 1e-9)) + 24);
+            generation.max_new_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens"},
+                assets_->max_new_tokens > 0 ? assets_->max_new_tokens : duration_budget);
+            generation.do_sample = flag(request.options, "do_sample");
+            generation.temperature = runtime::parse_finite_float_option(request.options, {"temperature"}).value_or(1.0F);
+            generation.top_k = runtime::parse_i64_option(request.options, {"top_k"}).value_or(0);
+            generation.top_p = runtime::parse_finite_float_option(request.options, {"top_p"}).value_or(1.0F);
+            generation.repetition_penalty = runtime::parse_positive_finite_float_option(request.options, {"repetition_penalty"}).value_or(1.0F);
+            generation.seed = runtime::parse_u64_option(request.options, {"seed"}).value_or(0);
+            generation.stop_token_ids = {TextTokenizer::end_of_turn_id};
+            validate_generation_options(generation, max_context_);
+        } catch (const runtime::InvalidRequestError &) {
+            throw;
+        } catch (const std::runtime_error & error) {
+            throw runtime::InvalidRequestError(error.what());
+        }
+        std::optional<runtime::AudioBuffer> normalized;
+        if (audio.sample_rate != assets_->frontend.sample_rate || audio.channels != 1)
+            normalized = normalize_input_audio(audio);
+        const auto & inference_audio = normalized ? *normalized : audio;
+        if (is_near_silent(inference_audio.samples)) {
             runtime::TaskResult empty;
             empty.text_output = runtime::Transcript{"", ""};
             json::Value::Object detail{{"termination", json::Value::make_string("near_silent")},
@@ -188,7 +206,10 @@ public:
             return empty;
         }
         const auto start = std::chrono::steady_clock::now();
-        const auto features = frontend_.extract(audio, execution_context().config().threads);
+        if (inference_audio.samples.size() < static_cast<size_t>(assets_->frontend.hop_length))
+            throw runtime::InvalidRequestError("Nemotron Transcribe audio has no complete feature frame");
+        auto features = frontend_.extract(inference_audio, execution_context().config().threads);
+        features.duration_seconds = duration;
         const auto audio_frames = (features.frames + assets_->encoder.asr.subsampling_factor - 1) /
             assets_->encoder.asr.subsampling_factor;
         const auto prompt_tokens = static_cast<int64_t>(prompt.before_audio.size() + prompt.after_audio.size()) + audio_frames;
@@ -229,10 +250,14 @@ public:
                 // A timestamp failure must not discard a successful transcript.
                 aligned.failure_reason = "ctc_head_error";
                 aligned.error = error.what();
-                aligned.alignment.diarization = timestamps::diarization_segments(encoded.speaker_probs10.data(),
-                    static_cast<int>(encoded.native_speaker_frames), encoded.speaker_count,
-                    static_cast<double>(assets_->frontend.hop_length) / assets_->frontend.sample_rate,
-                    encoded.duration_seconds);
+                try {
+                    aligned.alignment.diarization = timestamps::diarization_segments(encoded.speaker_probs10.data(),
+                        static_cast<int>(encoded.native_speaker_frames), encoded.speaker_count,
+                        static_cast<double>(assets_->frontend.hop_length) / assets_->frontend.sample_rate,
+                        encoded.duration_seconds);
+                } catch (const std::exception & fallback_error) {
+                    aligned.error += std::string("; speaker activity unavailable: ") + fallback_error.what();
+                }
             }
             report.emplace("alignment_status", json::Value::make_string(aligned.status));
             report.emplace("alignment_failure_reason", json::Value::make_string(aligned.failure_reason));
@@ -288,16 +313,28 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_nemotron_transcribe_loader() {
     runtime::SpecBackedVoiceModelConfig<TranscribeAssets> config;
     config.family = kFamily;
     config.load_assets = load_transcribe_assets;
-    config.model_resources = [](const std::filesystem::path & path, const auto &) {
+    config.model_resources = [](const std::filesystem::path & path, const auto & options) {
         const auto assets = load_transcribe_assets(path);
+        const auto storage = transcribe_weight_type(
+            runtime::find_option(options, {"nemotron_transcribe.weight_type"}).value_or("native"));
         runtime::ModelResourcePlan plan;
-        // The host already prices the primary decoder. Account separately for
-        // its external speech/CTC sibling, using the same native-storage
-        // overhead factor as the host's ordinary ggml weight estimate.
-        const auto & file = assets->encoder_weights->source_path();
-        const auto bytes = static_cast<size_t>(std::filesystem::file_size(file));
-        plan.resident_bytes = bytes + bytes / 2;
-        plan.engines.push_back({file, plan.resident_bytes});
+        // Report both files so the host does not price the compressed decoder
+        // again. A storage override can expand it far beyond its file size.
+        for (const auto & source : {assets->decoder_weights, assets->encoder_weights}) {
+            const auto & file = source->source_path();
+            const auto file_size = std::filesystem::file_size(file);
+            if (file_size > std::numeric_limits<size_t>::max())
+                throw std::runtime_error("Nemotron Transcribe weight file is too large");
+            const auto bytes = std::max(static_cast<size_t>(file_size),
+                estimate_transcribe_weight_bytes(source->tensors(), storage));
+            if (bytes / 2 > std::numeric_limits<size_t>::max() - bytes)
+                throw std::runtime_error("Nemotron Transcribe residency estimate overflows");
+            const auto resident = bytes + bytes / 2;
+            if (resident > std::numeric_limits<size_t>::max() - plan.resident_bytes)
+                throw std::runtime_error("Nemotron Transcribe residency estimate overflows");
+            plan.resident_bytes += resident;
+            plan.engines.push_back({file, resident});
+        }
         return plan;
     };
     config.create_session = [](const runtime::TaskSpec & task, const runtime::SessionOptions & options,

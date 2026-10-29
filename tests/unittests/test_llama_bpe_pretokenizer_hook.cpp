@@ -16,6 +16,16 @@ void require(bool condition, const std::string & message) {
     if (!condition) throw std::runtime_error(message);
 }
 
+std::string format_piece(const std::string & text) {
+    std::string encoded;
+    for (const unsigned char byte : text) {
+        if (byte == 0xC3) encoded += "\xC3\x83";
+        else if (byte == 0xA9) encoded += "\xC2\xA9";
+        else encoded.push_back(static_cast<char>(byte));
+    }
+    return encoded;
+}
+
 LlamaBpeTokenizerSpec minimal_spec() {
     // ByteLevel maps the two UTF-8 bytes of e-acute to U+00C3, U+00A9.
     // This vocabulary is entirely self-generated and requires no model files.
@@ -58,18 +68,18 @@ void test_utf8_bytes_and_special_token_fragments() {
 
     auto split_bytes_spec = minimal_spec();
     split_bytes_spec.pre_tokenize = [](const std::string & text) {
-        return std::vector<std::string>{text.substr(0, 1), text.substr(1)};
+        return std::vector<std::string>{format_piece(text.substr(0, 1)), format_piece(text.substr(1))};
     };
     const LlamaBpeTokenizer split_bytes(split_bytes_spec);
     const auto split_ids = split_bytes.encode(acute, false);
-    require(split_ids == std::vector<int32_t>{5, 6}, "hook fragments are byte encoded exactly once");
+    require(split_ids == std::vector<int32_t>{5, 6}, "model-formatted hook fragments must not be byte encoded again");
     require(split_bytes.decode(split_ids) == acute, "split UTF-8 bytes must concatenate without corruption");
 
     auto fragments = std::make_shared<std::vector<std::string>>();
     auto fragment_spec = minimal_spec();
     fragment_spec.pre_tokenize = [fragments](const std::string & text) {
         fragments->push_back(text);
-        return std::vector<std::string>{text};
+        return std::vector<std::string>{format_piece(text)};
     };
     const LlamaBpeTokenizer tokenizer(fragment_spec);
     const auto ids = tokenizer.encode(acute + "<SPECIAL>ab", true);

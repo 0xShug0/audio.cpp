@@ -92,8 +92,10 @@ build/nemotron/bin/audiocpp_cli --task asr --family nemotron_transcribe \
   --backend cuda --audio recording.wav --text-out transcript.txt
 ```
 
-Use 16 kHz mono WAV for matched comparisons. The runtime session requires that
-format; the CLI's audio loader handles decoding and resampling.
+Use 16 kHz mono WAV for matched comparisons. Other PCM rates and channel counts
+are averaged to mono and resampled inside this model, using the framework's
+Soxr helper with its linear fallback. The shared CLI/server loaders are unchanged.
+Matched 16 kHz mono inputs pass through without resampling.
 
 Pass each task option with `--request-option key=value`:
 
@@ -115,6 +117,19 @@ Generation is greedy by default. `max_tokens` overrides the checkpoint setting o
 the native duration budget `max(24, ceil(6 * seconds - 1e-9) + 24)`. Prompt, audio
 and output must fit `nemotron_transcribe.max_context`, default 73,728. The custom
 result records token-limit termination. Sampling options are in the model spec.
+
+The server accepts the same options in JSON at `/v1/audio/transcriptions`.
+Use `/v1/audio/transcriptions/details` for word timestamps, speaker turns and the
+custom result. Multipart WAV uploads support the ordinary transcription fields;
+use JSON `options` for task templates, questions and timestamp requests. For example:
+
+```json
+{"model":"nemotron","audio":"recording.wav","options":{"template_name":"audio_qa","instruct":"What is discussed in this recording?"}}
+```
+
+Replace `nemotron` with the configured server model ID. The JSON audio path is
+local to the server. Invalid request options return a client error, including
+when the recording is silent. `top_p=0` keeps the highest-ranked candidate.
 
 The native silence gate returns empty text only when peak amplitude is below
 0.001 and RMS is below 0.00003. It does not trim audio or repair generated text.
@@ -157,6 +172,7 @@ and normalizing whitespace. CPU transcription with timestamps also passed.
 
 These are individual requests on a small, self-generated synthetic speech set,
 with other GPU workloads active. CUDA model loading took 14.35 seconds separately.
+Loading depends on disk cache and system load; this is not a general cold-load estimate.
 They are not a held-out accuracy or throughput benchmark. Component checks also
 cover official HF frontend parity, full real encoder weights, decoder math,
 actual CTC weights, Unicode alignment and 3,522 tokenizer cases.
@@ -171,6 +187,13 @@ These results do not establish hour-long accuracy. Full-model Metal and Vulkan
 execution, broad multilingual accuracy and actual hour-long audio remain untested.
 See the [validation record](nemotron_transcribe_validation.md) for pinned inputs,
 settings, commands and observed outputs.
+
+A follow-up CPU server audit passed 24 HTTP checks, including malformed requests,
+multipart upload, 48 kHz stereo input and unload/reload. Focused safety tests also
+passed on Windows and WSL GCC. Storage overrides are priced from tensor metadata
+before uploads; the server's existing opt-in memory guard can reject an expanded
+model before allocation. These checks do not establish full-model accuracy at
+every storage type.
 
 Weights retain OpenMDW-1.1 and component notices. Runtime alignment adaptations
 and Unicode/numerical attributions are in the model's `THIRD_PARTY_NOTICES.md`

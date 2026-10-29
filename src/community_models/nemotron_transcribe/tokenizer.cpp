@@ -39,6 +39,21 @@ struct Character {
     bool punctuation_run() const { return !whitespace() && !letter() && !number(); }
 };
 
+std::string byte_encode(const std::string & text) {
+    std::string encoded;
+    for (const unsigned char byte : text) {
+        // GPT-2 ByteLevel alphabet: visible Latin-1 bytes keep their codepoint;
+        // the remaining bytes map, in byte order, to U+0100 through U+0143.
+        const auto codepoint = byte <= 32 ? 256 + byte
+            : byte >= 127 && byte <= 160 ? 162 + byte
+            : byte == 173 ? 323 : byte;
+        utf8proc_uint8_t buffer[4];
+        const auto count = utf8proc_encode_char(codepoint, buffer);
+        encoded.append(reinterpret_cast<const char *>(buffer), static_cast<size_t>(count));
+    }
+    return encoded;
+}
+
 // tokenizer.json's newer Tekken expression, in alternative order:
 // [^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|
 // [^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|
@@ -106,7 +121,7 @@ std::vector<std::string> split_tekken(const std::string & text) {
         }
         if (end == pos) end = pos + 1;
         const auto end_byte = end < size ? chars[end].byte : text.size();
-        pieces.push_back(text.substr(chars[pos].byte, end_byte - chars[pos].byte));
+        pieces.push_back(byte_encode(text.substr(chars[pos].byte, end_byte - chars[pos].byte)));
         pos = end;
     }
     return pieces;

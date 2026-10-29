@@ -173,6 +173,8 @@ struct BandedPath {
 // searched frames, else a half-width of ceil(0.1 * states + 100)) centered through unique trigram
 // anchors of the greedy onsets and the target. `prior` (per frame, nullable) is added to non-blank
 // states; ties prefer stay, step, skip; float32 throughout.
+// Invalid class IDs/positions, NaN and positive-infinite scores are rejected.
+// Negative infinity remains a valid impossible emission or prior.
 BandedPath banded_ctc_search(
     const float* log_probs, int columns, const std::vector<int>& labels,
     const std::vector<int>& positions, const float* prior, const std::vector<int>& greedy);
@@ -235,7 +237,8 @@ struct AlignmentInputs {
 // frames where its column's activity is at least 0.01 with the log activity as the prior, word
 // rows, the diarization segments and _refine_word_timestamps. A stream without a legal path is
 // reported in failed_streams and its words are left out. Throws std::invalid_argument on
-// inconsistent inputs.
+// inconsistent inputs, non-finite clocks/probabilities, NaN or positive-infinite
+// emissions. Negative-infinite emissions return failed streams when no legal path remains.
 AlignmentResult align_record(
     const AlignmentTargets& targets, const AlignmentInputs& inputs,
     const AlignmentConfig& config = {});

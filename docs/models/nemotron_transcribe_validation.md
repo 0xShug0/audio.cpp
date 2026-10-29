@@ -124,3 +124,59 @@ regression, model-spec schema, silence/window policy, and GGUF package round-tri
 Full-model Metal/Vulkan, actual hour-long inference, broader multilingual quality
 and a held-out accuracy benchmark remain untested. No public download package is
 advertised yet; conversion and packaging are local recipes.
+
+## Follow-up compatibility audit
+
+The audit kept fixes within the new model implementation. Pre-existing code has
+one necessary BPE dispatch change: an optional model-owned splitter replaces
+the default split only when supplied. Existing variable names, parameters and
+tokenizer defaults are preserved. Build, registration and documentation additions
+do not alter other models. No GGML changes belong to this contribution.
+
+The audit reproduced decoder allocation-failure recovery and oversized graph
+configuration failures, plus a speaker-cache count overflow from extreme rates.
+The model now rejects invalid bounds before graph construction, recovers from
+failed allocation, and protects timestamp fallback so bad speaker activity cannot
+discard a successful transcript. Self-generated tiny-network regressions exercise
+the actual cache-compression, cancellation and allocation paths.
+
+Six focused CTests passed on MSVC and WSL GCC 13.3: the BPE hook, silence/input/
+residency policy, encoder bounds, decoder safety, alignment safety and model-spec
+system tests. The self-generated Python GGUF package round-trip also passed.
+Run the CTests from a build with `ENGINE_BUILD_TESTS=ON` and
+`ENGINE_BUILD_MODEL_TESTS=ON`:
+
+```sh
+ctest --test-dir build/nemotron --output-on-failure \
+  -R '^(nemotron_transcribe_.*|llama_bpe_pretokenizer_hook_test|model_spec_system_test)$'
+```
+
+A loopback CPU server with one lazy-loaded model, four threads and the same
+native-storage package passed 24 HTTP checks. They covered transcription details,
+translation, Q&A, Japanese language identification, multipart upload, repeated
+requests, unload/reload, valid `top_p=0` sampling and eleven malformed requests.
+Invalid sampling/boolean/seed/token-budget options, unknown options, arrays,
+control-token injection and incompatible task/timestamp combinations returned
+HTTP 400. Before the fix, invalid top-p returned 500 for speech and passed the
+silence shortcut with HTTP 200. The shared server and sampler were unchanged.
+
+English transcription and all 15 word sample spans matched the earlier CUDA
+result exactly. A 48 kHz stereo copy, made by repeating each source sample three
+times and duplicating the channel, returned identical words with every sample
+span multiplied by three. This checks that timestamps retain the original audio
+clock. CPU French translation used different wording from the earlier CUDA take;
+this follow-up was not a new native-reference translation parity test.
+
+The first CPU HTTP request took 148.3 seconds including model loading. Warm
+functional requests took approximately 2.9 to 6.4 seconds. After unload/reload,
+English text remained identical. Unloading reduced the server working set from
+about 20.1 GiB to 182 MiB. The audit server was then stopped. An earlier CUDA HTTP
+observation timed out during cold loading; that timeout was retained and was not
+classified as an inference failure.
+
+With the existing memory guard enabled at 512 MiB headroom, an F32 session override
+on the actual package returned HTTP 503 before model allocation: estimated
+188.42 GiB exceeded 84.18 GiB of available host memory. Estimates include both
+GGUFs, expanded expert banks, mandatory F32 parameters and unaligned quant-row
+fallback. The test did not load or evaluate a full F32 model. GPU headroom was
+limited during this follow-up, so its full-model HTTP validation used CPU.

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <random>
 #include <stdexcept>
@@ -39,9 +40,23 @@ double elapsed_ms(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 
+int64_t checked_elements(std::initializer_list<int64_t> dimensions) {
+    const auto limit = std::min<uint64_t>(std::numeric_limits<int64_t>::max(),
+        std::numeric_limits<size_t>::max()) / sizeof(float);
+    uint64_t elements = 1;
+    for (auto dimension : dimensions) {
+        if (dimension <= 0 || static_cast<uint64_t>(dimension) > limit / elements) {
+            throw std::runtime_error("Nemotron-H decoder dimensions exceed addressable tensor sizes");
+        }
+        elements *= static_cast<uint64_t>(dimension);
+    }
+    return static_cast<int64_t>(elements);
+}
+
 void validate_config(const DecoderConfig & c) {
+    // Budget at most 64 graph tensors per block, leaving room for inputs/head.
     if (c.hidden_size <= 0 || c.vocab_size <= 0 || c.vocab_size > std::numeric_limits<int32_t>::max() ||
-        c.block_pattern.empty() || c.block_pattern.size() > 256 ||
+        c.block_pattern.empty() || c.block_pattern.size() > (kGraphNodes - 64) / 64 ||
         c.attention_heads <= 0 || c.attention_kv_heads <= 0 || c.attention_head_dim <= 0 ||
         c.attention_heads % c.attention_kv_heads != 0 || c.mamba_heads <= 0 || c.mamba_head_dim <= 0 ||
         c.mamba_state_size <= 0 || c.mamba_groups <= 0 || c.mamba_heads % c.mamba_groups != 0 ||
@@ -53,6 +68,42 @@ void validate_config(const DecoderConfig & c) {
         !std::isfinite(c.routed_scaling_factor) || c.routed_scaling_factor <= 0.0F ||
         c.block_pattern.find_first_not_of("MEA") != std::string::npos) {
         throw std::runtime_error("Nemotron-H invalid decoder configuration");
+    }
+    // GGML's SSM kernels use int-sized axes. Also reject oversized tensor
+    // products before channel arithmetic, ggml_new_tensor or cache rounding.
+    const auto max_axis = std::numeric_limits<int32_t>::max();
+    for (auto axis : {c.hidden_size, c.vocab_size, c.attention_heads, c.attention_kv_heads,
+             c.attention_head_dim, c.mamba_heads, c.mamba_head_dim, c.mamba_state_size,
+             c.mamba_groups, c.conv_kernel, c.experts, c.experts_per_token,
+             c.expert_width, c.shared_expert_width, c.max_context, c.prefill_batch_size}) {
+        if (axis > max_axis) throw std::runtime_error("Nemotron-H decoder axis exceeds GGML kernel limits");
+    }
+    const auto inner = checked_elements({c.mamba_heads, c.mamba_head_dim});
+    const auto grouped_state = checked_elements({c.mamba_groups, c.mamba_state_size});
+    const auto q_width = checked_elements({c.attention_heads, c.attention_head_dim});
+    const auto kv_width = checked_elements({c.attention_kv_heads, c.attention_head_dim});
+    if (inner > max_axis || grouped_state > (max_axis - inner) / 2 || q_width > max_axis || kv_width > max_axis) {
+        throw std::runtime_error("Nemotron-H decoder projected axis exceeds GGML kernel limits");
+    }
+    const auto conv_dim = inner + 2 * grouped_state;
+    if (inner > max_axis - conv_dim || c.mamba_heads > max_axis - inner - conv_dim ||
+        c.conv_kernel - 1 > max_axis - c.prefill_batch_size) {
+        throw std::runtime_error("Nemotron-H decoder projected axis exceeds GGML kernel limits");
+    }
+    for (auto elements : {
+             checked_elements({c.vocab_size, c.hidden_size}),
+             checked_elements({inner + conv_dim + c.mamba_heads, c.hidden_size}),
+             checked_elements({inner + conv_dim + c.mamba_heads, c.prefill_batch_size}),
+             checked_elements({inner, c.hidden_size}), checked_elements({conv_dim, c.conv_kernel}),
+             checked_elements({conv_dim, c.conv_kernel - 1 + c.prefill_batch_size}),
+             checked_elements({inner, c.mamba_state_size + c.prefill_batch_size}),
+             checked_elements({q_width, c.hidden_size}), checked_elements({kv_width, c.max_context}),
+             checked_elements({c.max_context, c.prefill_batch_size}),
+             checked_elements({c.experts, c.expert_width, c.hidden_size}),
+             checked_elements({c.experts, c.prefill_batch_size}),
+             checked_elements({c.shared_expert_width, c.hidden_size}),
+             checked_elements({c.experts_per_token, std::max(c.expert_width, c.hidden_size), c.prefill_batch_size})}) {
+        (void)elements;
     }
 }
 
@@ -402,6 +453,15 @@ private:
 
 }  // namespace
 
+void validate_generation_options(const GenerationOptions & options, int64_t max_context) {
+    if (max_context <= 0 || options.max_new_tokens <= 0 || options.max_new_tokens > max_context ||
+        !std::isfinite(options.temperature) || (options.do_sample && options.temperature <= 0.0F) ||
+        options.top_k < 0 || !std::isfinite(options.top_p) || options.top_p < 0.0F || options.top_p > 1.0F ||
+        !std::isfinite(options.repetition_penalty) || options.repetition_penalty <= 0.0F) {
+        throw std::runtime_error("Nemotron-H invalid generation options");
+    }
+}
+
 struct NemotronHDecoderRuntime::Impl {
     Impl(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution,
         DecoderConfig config, assets::TensorStorageType storage)
@@ -465,15 +525,13 @@ struct NemotronHDecoderRuntime::Impl {
         int64_t frames, const std::vector<int32_t> & after, const GenerationOptions & options) {
         const auto & c = config_;
         if (frames < 0 || frames > c.max_context ||
-            audio.size() != static_cast<size_t>(frames) * static_cast<size_t>(c.hidden_size)) {
+            audio.size() % static_cast<size_t>(c.hidden_size) != 0 ||
+            audio.size() / static_cast<size_t>(c.hidden_size) != static_cast<size_t>(frames)) {
             throw std::runtime_error("Nemotron-H audio embeddings must have shape [frames, hidden_size]");
         }
-        if (before.size() > static_cast<size_t>(c.max_context) || after.size() > static_cast<size_t>(c.max_context) ||
-            options.max_new_tokens <= 0 || options.max_new_tokens > c.max_context ||
-            !std::isfinite(options.temperature) || (options.do_sample && options.temperature <= 0.0F) ||
-            options.top_k < 0 || !std::isfinite(options.top_p) || options.top_p <= 0.0F || options.top_p > 1.0F ||
-            !std::isfinite(options.repetition_penalty) || options.repetition_penalty <= 0.0F) {
-            throw std::runtime_error("Nemotron-H invalid generation options or prompt length");
+        validate_generation_options(options, c.max_context);
+        if (before.size() > static_cast<size_t>(c.max_context) || after.size() > static_cast<size_t>(c.max_context)) {
+            throw std::runtime_error("Nemotron-H invalid prompt length");
         }
         const int64_t steps = static_cast<int64_t>(before.size()) + frames + static_cast<int64_t>(after.size());
         if (steps == 0 || steps > c.max_context - options.max_new_tokens) {
@@ -570,8 +628,10 @@ private:
         decode_.reset();
         state_.reset();
         const int64_t capacity = std::min(config_.max_context, ((required + 127) / 128) * 128);
-        state_ = std::make_unique<DecoderState>(config_, execution_, capacity);
-        decode_ = std::make_unique<DecoderGraph>(config_, weights_, *state_, execution_, 1, false);
+        auto state = std::make_unique<DecoderState>(config_, execution_, capacity);
+        auto decode = std::make_unique<DecoderGraph>(config_, weights_, *state, execution_, 1, false);
+        state_ = std::move(state);
+        decode_ = std::move(decode);
     }
 
     DecoderGraph & prompt_graph(int64_t count) {

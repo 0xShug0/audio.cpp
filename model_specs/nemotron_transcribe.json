@@ -35,7 +35,7 @@
       {"name": "encoder_window_size", "type": "int", "min": 1, "max": 5000, "default": 500, "required": false, "description": "Core encoder window in 80 ms output frames; the native default is 40 seconds."},
       {"name": "encoder_left_context", "type": "int", "min": 0, "max": 5000, "default": 50, "required": false, "description": "Encoder window left context in 80 ms frames."},
       {"name": "encoder_right_context", "type": "int", "min": 0, "max": 5000, "default": 50, "required": false, "description": "Encoder window right context in 80 ms frames."},
-      {"name": "speaker_cache_size", "type": "int", "min": 8, "max": 5000, "default": 188, "required": false, "description": "Native serving speaker cache in 80 ms frames, distinct from training configuration."},
+      {"name": "speaker_cache_size", "type": "int", "min": 16, "max": 5000, "default": 188, "required": false, "description": "Native serving speaker cache in 80 ms frames, distinct from training configuration. At least two rows per speaker are required."},
       {"name": "speaker_fifo_size", "type": "int", "min": 0, "max": 5000, "default": 40, "required": false, "description": "Recent speaker FIFO size in 80 ms frames."},
       {"name": "speaker_update_period", "type": "int", "min": 1, "max": 5000, "default": 300, "required": false, "description": "Native serving speaker-cache update period in 80 ms frames."}
     ],

@@ -134,6 +134,54 @@ void parse_decoder(const json::Value & root, TranscribeAssets & assets) {
 }
 }  // namespace
 
+assets::TensorStorageType transcribe_weight_type(std::string_view value) {
+    if (value != "native" && value != "f32" && value != "f16" && value != "bf16" && value != "q8_0")
+        throw std::runtime_error("Nemotron Transcribe weight_type must be native, f32, f16, bf16 or q8_0");
+    return assets::parse_tensor_storage_type(value);
+}
+
+size_t estimate_transcribe_weight_bytes(const std::vector<assets::TensorMetadata> & tensors,
+    assets::TensorStorageType storage) {
+    const auto multiply = [](size_t a, size_t b) {
+        if (b != 0 && a > std::numeric_limits<size_t>::max() / b)
+            throw std::runtime_error("Nemotron Transcribe weight estimate overflows");
+        return a * b;
+    };
+    const auto bytes = [&](const assets::TensorMetadata & tensor, ggml_type type) {
+        if (tensor.shape.empty() || tensor.shape.size() > 4 ||
+            std::any_of(tensor.shape.begin(), tensor.shape.end(), [](int64_t x) {
+                return x <= 0 || static_cast<uint64_t>(x) > std::numeric_limits<size_t>::max();
+            }))
+            throw std::runtime_error("Nemotron Transcribe weight estimate has an invalid shape");
+        const auto row = static_cast<size_t>(tensor.shape.back());
+        const auto block = static_cast<size_t>(ggml_blck_size(type));
+        if (row % block != 0)
+            throw std::runtime_error("Nemotron Transcribe weight estimate has an invalid native row");
+        size_t size = multiply(row / block, ggml_type_size(type));
+        for (size_t i = 0; i + 1 < tensor.shape.size(); ++i)
+            size = multiply(size, static_cast<size_t>(tensor.shape[i]));
+        return size;
+    };
+    size_t total = 0;
+    for (const auto & tensor : tensors) {
+        const auto native = assets::ggml_type_for_tensor_storage(assets::tensor_storage_type_for_dtype(tensor.dtype));
+        auto type = storage == assets::TensorStorageType::Native
+            ? native : assets::ggml_type_for_tensor_storage(storage);
+        const auto & name = tensor.name;
+        const bool fixed_f32 = tensor.shape.size() == 1 || native == GGML_TYPE_F32 ||
+            name.find("norm") != std::string::npos || name.rfind("ctc.", 0) == 0 ||
+            name.find("ssm_conv1d") != std::string::npos || name.find(".ssm_a") != std::string::npos ||
+            name.find(".ssm_d") != std::string::npos || name.find("ffn_gate_inp") != std::string::npos;
+        if (fixed_f32 || (ggml_is_quantized(type) &&
+            (tensor.shape.size() < 2 || tensor.shape.back() % ggml_blck_size(type) != 0))) type = GGML_TYPE_F32;
+        const size_t cost = std::max(bytes(tensor, native), bytes(tensor, type));
+        if (cost > std::numeric_limits<size_t>::max() - total)
+            throw std::runtime_error("Nemotron Transcribe weight estimate overflows");
+        total += cost;
+    }
+    return total;
+}
+
 std::shared_ptr<const TranscribeAssets> load_transcribe_assets(const std::filesystem::path & path) {
     auto result = std::make_shared<TranscribeAssets>();
     result->resources = model_spec::load_resource_bundle_for_family(path, "nemotron_transcribe");
