@@ -17,6 +17,11 @@ namespace bark = engine::community_models::parakeet_tdt;
 
 namespace {
 void streaming_frontend_test() {
+    engine::test::require(bark::is_bark3_variant("underdog_bark3_pro"), "Pro selects Bark policy");
+    engine::test::require(bark::is_bark3_variant("underdog_bark3_plus"), "Plus selects Bark policy");
+    engine::test::require(bark::is_bark3_variant("underdog_bark3_standard"), "standard selects Bark policy");
+    for (const auto * variant : {"", "phonon2", "underdog_bark3_clean", "underdog_bark3_plus_typo"})
+        engine::test::require(!bark::is_bark3_variant(variant), "other variants retain their own policy");
     auto assets = std::make_shared<bark::ParakeetTDTAssets>();
     auto & config = assets->config.frontend;
     config.sample_rate = 16000;

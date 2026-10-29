@@ -54,6 +54,14 @@ void test_config(const std::filesystem::path & root) {
     auto bark = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
     engine::test::require_eq(bark->config.variant, std::string("underdog_bark3_pro"), "explicit Bark variant");
     engine::test::require_eq(bark->config.word_timestamp_mode, std::string("default"), "Bark retains standard TDT timing policy");
+    write(root / "config.json", config("", ",\"variant\":\"underdog_bark3_plus\""));
+    auto plus = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
+    engine::test::require_eq(plus->config.variant, std::string("underdog_bark3_plus"), "explicit Bark Plus variant");
+    engine::test::require_eq(plus->config.word_timestamp_mode, std::string("default"), "Plus retains standard TDT timing policy");
+    write(root / "config.json", config("", ",\"variant\":\"underdog_bark3_standard\""));
+    auto standard = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
+    engine::test::require_eq(standard->config.variant, std::string("underdog_bark3_standard"), "explicit standard Bark variant");
+    engine::test::require_eq(standard->config.word_timestamp_mode, std::string("default"), "standard Bark retains TDT timing policy");
     for (const auto & bad : {config("", ",\"word_timestamp_mode\":\"token_duration\""),
                             config("", ",\"word_timestamp_mode\":\"rounded\""),
                             config("", ",\"audiocpp_punctuation_token_ids\":[3]"),

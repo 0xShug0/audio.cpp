@@ -545,7 +545,7 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     // call at this input length, so this cost is amortized to ~zero and every
     // reused call benefits from the smaller node count.
     const auto opt_backend = graph_optimizer_backend_for(execution_context_->backend_type());
-    const auto opt_options = assets_->config.variant == "underdog_bark3_pro"
+    const auto opt_options = is_bark3_variant(assets_->config.variant)
         ? bark3_encoder_graph_options(opt_backend)
         : engine::runtime::graph_optimization_options_for_backend(opt_backend);
     const auto pos_opt_report = engine::runtime::optimize_graph(*graph->pos_graph, opt_options);
@@ -593,7 +593,7 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     if (execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
         execution_context_->backend_type() == engine::core::BackendType::Cuda ||
         (execution_context_->backend_type() == engine::core::BackendType::Cpu &&
-         assets_->config.variant == "underdog_bark3_pro")) {
+         is_bark3_variant(assets_->config.variant))) {
         // Position projections now live in the main graph's persistent inputs.
         // Their one-shot producer allocation is redundant for warm inference.
         ggml_gallocr_free(graph->pos_gallocr);
