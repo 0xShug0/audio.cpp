@@ -145,6 +145,7 @@ Arena and weight-context sizes are in MiB.
 | `omnivoice.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Generator weight storage fallback. |
 | `omnivoice.generator_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit generator weight storage override. |
 | `omnivoice.audio_tokenizer_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for audio tokenizer weights. |
+| `omnivoice.audio_tokenizer_codebook_weight_type` | `native`, `f32`, `f16`, `bf16` | `f32` | Storage type for the audio tokenizer codebooks, codebook score matrix, semantic feature projection, and `fc2`. These ignore `audio_tokenizer_weight_type`. |
 | `omnivoice.audio_tokenizer_graph_arena_mb` | positive integer | `128` | Audio tokenizer graph arena. |
 | `omnivoice.generator_prefill_graph_arena_mb` | positive integer | `256` | Generator prefill graph arena. |
 | `omnivoice.generator_decode_graph_arena_mb` | positive integer | `256` | Generator decode graph arena. |

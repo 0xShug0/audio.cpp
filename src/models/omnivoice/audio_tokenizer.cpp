@@ -70,6 +70,20 @@ void validate_weight_storage_type(assets_ns::TensorStorageType storage_type) {
     }
 }
 
+// Quantized types are rejected: these tensors are what broke runtime q8_0 tokenizer loading.
+void validate_codebook_weight_storage_type(assets_ns::TensorStorageType storage_type) {
+    switch (storage_type) {
+        case assets_ns::TensorStorageType::Native:
+        case assets_ns::TensorStorageType::F32:
+        case assets_ns::TensorStorageType::F16:
+        case assets_ns::TensorStorageType::BF16:
+            return;
+        default:
+            throw std::runtime_error(
+                "OmniVoice audio tokenizer codebook_weight_type supports only native, f32, f16, and bf16");
+    }
+}
+
 struct NormalizedReferenceAudio {
     std::vector<float> acoustic_samples_24k;
     std::vector<float> semantic_samples_16k_padded;
@@ -970,7 +984,8 @@ std::shared_ptr<const HiggsAudioV2TokenizerWeights> load_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
-    assets_ns::TensorStorageType storage_type) {
+    assets_ns::TensorStorageType storage_type,
+    assets_ns::TensorStorageType codebook_storage_type) {
     const auto & config = assets.config.audio_tokenizer;
     const auto & source = *assets.audio_tokenizer_weights;
     auto weights = std::make_shared<HiggsAudioV2TokenizerWeights>();
@@ -1027,7 +1042,7 @@ std::shared_ptr<const HiggsAudioV2TokenizerWeights> load_weights(
         "semantic_model.feature_projection.projection",
         semantic.hidden_size,
         semantic.conv_dim.back(),
-        assets_ns::TensorStorageType::F32,
+        codebook_storage_type,
         true);
 
     if (semantic.do_stable_layer_norm) {
@@ -1247,7 +1262,7 @@ std::shared_ptr<const HiggsAudioV2TokenizerWeights> load_weights(
         quantizer.score = {
             weights->store->make_from_f32(
                 core::TensorShape::from_dims({config.codebook_size, config.codebook_dim}),
-                assets_ns::TensorStorageType::F32,
+                codebook_storage_type,
                 score_weight),
             weights->store->make_from_f32(
                 core::TensorShape::from_dims({config.codebook_size}),
@@ -1257,7 +1272,7 @@ std::shared_ptr<const HiggsAudioV2TokenizerWeights> load_weights(
         quantizer.codebook = weights->store->load_tensor(
             source,
             prefix + ".codebook.embed",
-            assets_ns::TensorStorageType::F32,
+            codebook_storage_type,
             {config.codebook_size, config.codebook_dim});
         quantizer.project_out = load_linear(
             *weights->store,
@@ -1276,7 +1291,7 @@ std::shared_ptr<const HiggsAudioV2TokenizerWeights> load_weights(
         "fc2",
         acoustic.hidden_size,
         config.hidden_size,
-        assets_ns::TensorStorageType::F32,
+        codebook_storage_type,
         true);
 
     weights->acoustic_decoder.conv1 = load_flat_conv1d(
@@ -2252,12 +2267,14 @@ OmniVoiceHiggsAudioV2TokenizerRuntime::OmniVoiceHiggsAudioV2TokenizerRuntime(
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    engine::assets::TensorStorageType weight_storage_type)
+    engine::assets::TensorStorageType weight_storage_type,
+    engine::assets::TensorStorageType codebook_weight_storage_type)
     : impl_(std::make_unique<Impl>()) {
     if (assets == nullptr) {
         throw std::runtime_error("OmniVoice audio tokenizer requires assets");
     }
     validate_weight_storage_type(weight_storage_type);
+    validate_codebook_weight_storage_type(codebook_weight_storage_type);
     impl_->assets = std::move(assets);
     impl_->execution_context = &execution_context;
     impl_->graph_arena_bytes = graph_arena_bytes;
@@ -2266,7 +2283,8 @@ OmniVoiceHiggsAudioV2TokenizerRuntime::OmniVoiceHiggsAudioV2TokenizerRuntime(
         execution_context.backend(),
         execution_context.backend_type(),
         weight_context_bytes,
-        weight_storage_type);
+        weight_storage_type,
+        codebook_weight_storage_type);
 }
 
 OmniVoiceHiggsAudioV2TokenizerRuntime::~OmniVoiceHiggsAudioV2TokenizerRuntime() = default;
