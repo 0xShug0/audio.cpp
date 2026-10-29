@@ -1,18 +1,77 @@
-# Underdog Bark 3.0 Pro
+# Underdog Bark 3.0
 
-[Conway Research's Bark 3.0 Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro)
-is an **English ASR** fine-tune of Parakeet-TDT v3, not a Bark speech-generation
-model. It reuses the `parakeet_tdt` community runtime; no new GGML kernels or
-shared frontend behavior are needed. The converted package selects the
-`underdog_bark3_pro` variant explicitly. Stock Parakeet and Phonon are unchanged.
+Conway Research's **Standard, Plus and Pro are English ASR variants** of the
+existing `parakeet_tdt` community family, not Bark speech-generation models.
+All share the 0.6B FastConformer/TDT architecture, publisher's 250 ms prefix,
+original-sample timestamps and native runtime. Stock Parakeet and Phonon keep
+their behavior; no shared GGML kernels or parallel server runtime are needed.
+
+| Variant | Pinned Hugging Face source / revision | Source weights | Converter | Recommended GGUF |
+|---|---|---|---|---|
+| Standard | [ConwayResearch/Underdog-Bark-3.0](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0) / `85db2ad18ab41e534a222ee253c29191d77ed919` | 163 MB `model.bark` | `convert_underdog_bark3_standard.py` | `underdog-bark-3.0-mixed-f16.gguf` |
+| Plus | [ConwayResearch/Underdog-Bark-3.0-Plus](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Plus) / `d4fab2f8b95681e5ad3cfb4e8c5f4e0c009b3deb` | 180 MB `model.bark` | `convert_underdog_bark3_plus.py` | `underdog-bark-3.0-plus-mixed-f16.gguf` |
+| Pro | [ConwayResearch/Underdog-Bark-3.0-Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro) / `4b5c51e04aa8d16dda9ecdff71bc29f7360149e4` | About 1.25 GB BF16 safetensors | `convert_underdog_bark3.py` | `underdog-bark-3.0-pro-q8_0.gguf` |
+
+The compressed download sizes are not expanded GGUF/RAM/VRAM requirements.
+Packages explicitly select `underdog_bark3_standard`, `underdog_bark3_plus` or
+`underdog_bark3_pro`. This guide covers GGUF; native compressed `.bark` loading
+is proposed separately in PR #1133.
 
 ## Convert
 
-The source revision is pinned to
-`4b5c51e04aa8d16dda9ecdff71bc29f7360149e4`. The converter checks the checkpoint
-SHA-256 and architecture before preparing 699 inference tensors, omitting 24
-training-only BatchNorm counters. Install `numpy`, `torch`, `safetensors` and
-`huggingface_hub` in a Python environment, then run from the repository root:
+Build shared binaries once. Disable both GPU flags for CPU-only builds; adjust
+paths for your generator/platform (`.exe` on Windows).
+
+```bash
+cmake -S . -B build/bark3 -DCMAKE_BUILD_TYPE=Release \
+  -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=parakeet_tdt \
+  -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=ON \
+  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON -DENGINE_BUILD_WARMBENCH=ON
+cmake --build build/bark3 --config Release --target \
+  audiocpp_cli audiocpp_server audiocpp_gguf parakeet_warm_bench \
+  parakeet_bark3_session_test parakeet_variant_config_test
+```
+
+Conversion needs Python, `numpy`, `safetensors` and `huggingface_hub`; add
+`constriction==0.5.0` for Standard/Plus or `torch` for Pro. Native inference
+requires none of these Python dependencies.
+
+### Standard or Plus
+
+Use the Standard assignments below, or replace all five with the Plus values.
+These assignments use Bash syntax; in PowerShell use `$NAME = '...'` syntax or
+substitute the literal values.
+
+```bash
+NAME=Underdog-Bark-3.0
+REVISION=85db2ad18ab41e534a222ee253c29191d77ed919
+CONVERTER=convert_underdog_bark3_standard.py
+OUTPUT=underdog-bark-3.0-mixed-f16.gguf
+TYPE=mixed-f16
+# Plus: NAME=Underdog-Bark-3.0-Plus
+#       REVISION=d4fab2f8b95681e5ad3cfb4e8c5f4e0c009b3deb
+#       CONVERTER=convert_underdog_bark3_plus.py
+#       OUTPUT=underdog-bark-3.0-plus-mixed-f16.gguf
+#       TYPE=mixed-f16
+
+hf download "ConwayResearch/$NAME" --revision "$REVISION" \
+  --include model.bark bark_loader.py mlx/config.json NOTICE README.md coreml/LICENSE \
+  --local-dir "models/$NAME-source"
+hf download nvidia/parakeet-tdt-0.6b-v3 \
+  --revision 541d1f99c6b0c3cd0b11a95167540bb8edefd82b \
+  --include config.json processor_config.json tokenizer.json tokenizer_config.json generation_config.json \
+  --local-dir "models/$NAME-source"
+python "tools/community_models/$CONVERTER" \
+  --source "models/$NAME-source" --staging "models/$NAME-prepared" \
+  --gguf-tool build/bark3/bin/audiocpp_gguf --type "$TYPE" --output "models/$OUTPUT"
+```
+
+The converters verify checkpoint SHA256, pinned NVIDIA sidecars and vocabulary,
+decode ANS/FP16 levels without executing downloaded Python, and prepare 699
+inference tensors after dropping 24 training counters. Immutable profiles reject
+staging from the other checkpoint. No NVIDIA model weights are downloaded.
+
+### Pro
 
 ```bash
 hf download ConwayResearch/Underdog-Bark-3.0-Pro \
@@ -21,92 +80,85 @@ hf download ConwayResearch/Underdog-Bark-3.0-Pro \
     tokenizer_config.json generation_config.json NOTICE README.md coreml/LICENSE \
     runtime/transcribe_bark_pro.py runtime/requirements.txt \
   --local-dir models/Underdog-Bark-3.0-Pro-source
-
-cmake -S . -B build/bark3 -DCMAKE_BUILD_TYPE=Release \
-  -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=parakeet_tdt \
-  -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=ON \
-  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON \
-  -DENGINE_BUILD_WARMBENCH=ON
-cmake --build build/bark3 --config Release --target \
-  audiocpp_cli audiocpp_server audiocpp_gguf parakeet_warm_bench \
-  parakeet_bark3_session_test parakeet_variant_config_test parakeet_parity_dump
-
 python tools/community_models/convert_underdog_bark3.py \
-  --source models/Underdog-Bark-3.0-Pro-source \
-  --staging models/Underdog-Bark-3.0-Pro-prepared \
-  --gguf-tool build/bark3/bin/audiocpp_gguf \
-  --type q8_0 --output models/underdog-bark-3.0-pro-q8_0.gguf
+  --source models/Underdog-Bark-3.0-Pro-source --staging models/Underdog-Bark-3.0-Pro-prepared \
+  --gguf-tool build/bark3/bin/audiocpp_gguf --type q8_0 \
+  --output models/underdog-bark-3.0-pro-q8_0.gguf
 ```
 
-Adjust executable paths for your CMake generator/platform (`.exe` on Windows).
-For CPU-only builds disable both GPU flags. To pack another storage type, reuse
-the same staging directory with `--pack-only --type f32` or `--type bf16` and a
-different output path. The source checkpoint is BF16; F32 means lossless expanded
-storage with conversion compensation, not additional source precision.
+All converters support `--prepare-only`, or reuse staging with `--pack-only`
+and another `--type`/`--output`. `--overwrite` replaces generated GGUFs; sources
+are never changed. Every GGUF embeds the English model spec v1, tokenizer/configs,
+source/conversion provenance, NOTICE and full CC-BY-4.0 license. No unpublished
+model-manager download is advertised. Projection scaling and BatchNorm variance
+floor compensation match the existing loader; corrected gamma stays F32.
 
-Every GGUF embeds the tokenizer, configs, model spec v1, conversion provenance,
-upstream NOTICE and full CC-BY-4.0 license. Conversion cancels the runtime's
-existing 32x input-projection scaling and corrects its BatchNorm variance floor.
-Corrected BatchNorm gamma stays F32 in all packages. Q8 is mixed storage: only
-supported matrices are quantized; convolution tensors retain floating-point
-storage. Q8 preserves the predictor, encoder-to-joint projection and output
-head in their exact source BF16 values. This avoids the initial Q8 package's
-punctuation changes on the validation recording and reduces its size by about
-7 MB; overriding `matmul_weight_type` can undo that protection. These packages
-are manually converted, not advertised as already
-published model-manager downloads.
+| Variant | Precision policy |
+|---|---|
+| Standard / Plus | `mixed-f16` preserves every staged FP32 value, keeping non-representable row-scale products, normalization and compensated projections in F32. Q8 keeps feed-forward/pointwise matrices in exact F16 and quantizes eligible attention matrices. Q8/BF16 are rounded derivatives. |
+| Standard BF16 | Additionally retains predictor, encoder-to-joint projection and output head in F32 to protect case/duration decisions; Plus's BF16 default is unchanged. |
+| Pro | BF16 is source precision; F32 is lossless expanded storage, not extra precision. Protected Q8 retains predictor/projector/output head in exact source BF16 and keeps convolutions floating point. |
+
+Keep `matmul_weight_type`/`conv_weight_type` at `native`: explicit overrides can
+round protected tensors again.
 
 ## CLI and server
 
+Use any recommended GGUF with the same flags:
+
 ```bash
 build/bark3/bin/audiocpp_cli --task asr --family parakeet_tdt \
-  --model-spec-override embedded \
-  --model models/underdog-bark-3.0-pro-q8_0.gguf --backend cuda \
+  --model-spec-override embedded --backend cuda --threads 8 \
+  --model models/underdog-bark-3.0-mixed-f16.gguf \
   --audio input-16k-mono.wav --text-out transcript.txt --words-out words.json --metrics
 
-# Original-runner comparison with lossless expanded storage.
-build/bark3/bin/audiocpp_cli --task asr --family parakeet_tdt \
-  --model-spec-override embedded \
-  --model models/underdog-bark-3.0-pro-f32.gguf --backend cpu \
-  --session-option parakeet_tdt.offline_mode=full_context --audio input-16k-mono.wav
-
-# Buffered streaming from raw PCM.
 ffmpeg -i input.wav -ar 16000 -ac 1 -f f32le - | \
   build/bark3/bin/audiocpp_cli --task asr --family parakeet_tdt \
-    --model-spec-override embedded \
-    --model models/underdog-bark-3.0-pro-q8_0.gguf --backend cuda \
+    --model-spec-override embedded --backend cuda \
+    --model models/underdog-bark-3.0-mixed-f16.gguf \
     --mode streaming --audio - --input-format f32le --input-rate 16000 --input-channels 1
 ```
 
-For HTTP, edit paths in [the server example](../../examples/server/underdog-bark3-asr.json):
+Select the embedded contract explicitly; the family catalog otherwise describes
+multilingual stock Parakeet. Use `--backend cpu` or `vulkan` for other devices and
+`--device` to choose the intended GPU when needed.
+
+The single [server example](../../examples/server/underdog-bark3-asr.json) has
+offline and buffered-streaming entries for all three variants. Replace the paths,
+or keep only the entries you use. Lazy loading and `max_loaded_models: 1` avoid
+keeping all three resident together. Pro's existing IDs remain available.
+
+| Variant | Offline model ID | Streaming model ID |
+|---|---|---|
+| Standard | `bark3standard` | `bark3standard-stream` |
+| Plus | `bark3plus` | `bark3plus-stream` |
+| Pro | `bark3` | `bark3-stream` |
 
 ```bash
 build/bark3/bin/audiocpp_server --config examples/server/underdog-bark3-asr.json
 curl http://127.0.0.1:8080/v1/audio/transcriptions/details \
-  -F model=bark3 -F file=@input-16k-mono.wav
+  -F model=bark3standard -F file=@input-16k-mono.wav
 ```
 
-Select the embedded contract explicitly: source/deployment builds otherwise
-prefer the current family catalog, which describes multilingual stock Parakeet.
-The embedded contract advertises Bark's English-only options and capabilities.
-
-Use `--backend cpu` or `--backend vulkan` with a suitable device for other
-backends. The streaming entry also supports the server's
+Streaming entries support the raw-PCM/SSE
 [`/v1/audio/transcriptions/live`](../../app/server/api.md#post-v1audiotranscriptionslive)
-raw-PCM/SSE route. No experimental parallel-runtime flag is involved.
+route. These use the ordinary legacy server, without parallel-runtime flags.
 
 ## Input, context and timestamps
 
-The adapter adds the publisher's **4000 zero samples at 16 kHz (250 ms)** once
-per request or stream, after resampling/downmixing. Callers supply the original,
-unpadded audio. Reported word timestamps subtract that prefix and stay within
-the original recording. Timestamps use the existing Parakeet emission-boundary
-policy, not an independently validated forced aligner.
+Supply original unpadded audio. The adapter adds **4000 zero samples at 16 kHz
+(250 ms)** once per request/stream after resampling/downmixing. Word timestamps
+subtract the prefix and stay within the recording; they follow native TDT emission
+boundaries, not an independently validated forced aligner. For source parity use
+identical mono 16 kHz inputs: the publisher uses a different resampler at other
+rates. Streaming requires contiguous mono 16 kHz PCM chunks. Empty audio is
+rejected; silence is valid.
 
-Offline input accepts the framework's downmixing/linear resampling; for reference
-parity use identical mono 16 kHz inputs (the publisher uses a different resampler
-for other rates). Streaming requires contiguous mono 16 kHz PCM chunks.
-Empty audio is rejected. Silence is valid. Offline VAD chunking is opt-in:
+Full context is the default. Bidirectional attention grows quadratically with
+duration and retains the encoder frame limit. Explicit `offline_mode=auto`
+switches to bounded windows after 30 seconds including the prefix; `long_form`
+always uses windows. Windowing and offline VAD can change punctuation/case and
+word spans. Enable offline-only VAD with:
 
 ```text
 --request-option audio_chunk_mode=vad
@@ -114,78 +166,50 @@ Empty audio is rejected. Silence is valid. Offline VAD chunking is opt-in:
 --session-option parakeet_tdt.vad_model_path=assets/framework/models/silero_vad
 ```
 
-The source/deployment bundle includes the default Silero VAD. Each independent
-speech span receives its own 250 ms prefix; timestamps remain on the original
-recording timeline. VAD changes the input/context, so it is not whole-recording
-reference parity. It is rejected for streaming sessions.
+The bundled default is Silero VAD. Each speech span receives its own prefix and
+keeps the original sample clock. Optional `hotwords`/`hotwords_score` provide
+native token-logit bias (also HTTP `prompt`), with comma-separated terms or JSON
+word/spoken forms. Empty lists or zero score disable bias; this is an extension
+to the original runner. Standard emits `Yeah.` on one-second silence; unfiltered
+native inference preserves it, while VAD can skip non-speech.
 
-Native vocabulary bias is also opt-in (including HTTP `prompt`):
-
-```text
---request-option hotwords=Phoebe,Intel
---request-option hotwords_score=2
-```
-
-Comma-separated terms and JSON word/spoken variants are supported. Zero score
-or an explicit empty list disables bias; zero/empty cases retain the unbiased
-transcript. High scores can force unwanted words. This reuses the native
-Phonon policy; it is an extension rather than a feature of the original runner.
-
-Bark defaults to `offline_mode=full_context`, matching the publisher's
-whole-utterance context. Whole-recording attention grows quadratically and is
-unsuitable for arbitrarily long inputs. Explicit `offline_mode=auto` selects
-bounded windows beyond the 30-second threshold (including the prefix);
-`offline_mode=long_form` always uses them. CPU full-context execution now keeps
-graph view nodes through allocation so large temporaries can be reused between
-layers. Full-context memory still grows with duration. Windowed offline
-and buffered streaming may produce different text
-from full-context decoding. Buffered streaming re-encodes bidirectional windows;
-it is **not native cache-aware streaming**. Unlimited bidirectional attention
-and whole-utterance feature normalization change previous encoder activations
-when future audio arrives, so standard KV reuse would change outputs. A native
-cache-aware mode needs a different trained attention/context contract.
-The Bark streaming frontend reuses only raw log-mel frames whose complete
-FFT/preemphasis support is inside both overlapping windows. It recomputes
-window edges and F64 whole-window normalization every time, and clears the
-cache for each stream. Context sizes and encoder recomputation are unchanged;
-this saves preprocessing without changing the buffered recognition policy.
-Metal, HIP and large-corpus accuracy are not validated by this port.
-
-On the tested five-minute recording, native GPU full context with F32/BF16
-storage exactly matched the original PyTorch F32 transcript, while opt-in
-windowed decoding changed punctuation/case and several word spans. The follow-up
-CPU fix reduces its graph buffer from 35.2 GiB to 2.62 GiB and completes the same
-full recording exactly; current protected Q8 also matches on CPU/CUDA/Vulkan.
-See [current validation](../validation/underdog_bark3.md) and the
-[initial comparison](../validation/underdog_bark3_original_comparison.md) for
-the context settings, precision differences, timing and memory tradeoff.
+Streaming is buffered, not native cache-aware: bidirectional attention and
+whole-utterance normalization change earlier activations when future audio
+arrives. The frontend only caches raw log-mel frames whose complete
+FFT/preemphasis support fits both windows. Edges and F64 whole-window normalization
+are recomputed and caches reset for every stream; encoder/context policy is unchanged.
 
 ## Validation
 
-[The validation record](../validation/underdog_bark3.md) records tested backends,
-storage sizes, parity, lifecycle checks and timing. Reproduce reference checks
-using the original, unmodified source snapshot (Transformers 5.19.0,
-PyTorch 2.8.0 CPU, float32):
+Evidence remains in the separate [Standard](../validation/underdog_bark3_standard.md),
+[Plus](../validation/underdog_bark3_plus.md) and [Pro](../validation/underdog_bark3.md)
+validation records, plus the [initial Pro comparison](../validation/underdog_bark3_original_comparison.md).
+CPU/CUDA/Vulkan are tested; Metal/HIP and corpus WER are unvalidated. Fixture
+matches do not imply universal rounded parity. Plus CPU Q8 omitted one comma on
+the five-minute recording; mixed-F16 is recommended for Standard/Plus fidelity.
+The CPU graph fix reduced the tested five-minute allocation from 35.2 GiB to
+2.62 GiB without changing full-context recognition.
+
+For references use a separate Python 3.11 environment with PyTorch 2.8.0,
+Transformers 5.19.0, soundfile, soxr and librosa, plus conversion dependencies.
+Original loaders may fetch processor/generation metadata, not NVIDIA weights.
+The reference scripts are `bark3_standard_reference.py`, `bark3_plus_reference.py`
+and `bark3_reference.py` for Standard, Plus and Pro respectively:
 
 ```bash
-pip install transformers==5.19.0 soundfile librosa
-python tests/parakeet_tdt/bark3_reference.py \
-  --source models/Underdog-Bark-3.0-Pro-source \
+python tests/parakeet_tdt/bark3_standard_reference.py \
+  --source models/Underdog-Bark-3.0-source \
   --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
-  --output build/bark3/reference.json
+  --device cpu --check-official-transcribe --output build/bark3/reference.json
 python tests/parakeet_tdt/validate_bark3.py --bin-dir build/bark3/bin \
-  --model models/underdog-bark-3.0-pro-q8_0.gguf --backend cuda \
+  --model models/underdog-bark-3.0-mixed-f16.gguf --backend cpu \
   --reference build/bark3/reference.json --output-dir build/bark3/validation
-python -m unittest discover -s tests/parakeet_tdt -p test_bark3_conversion.py
+python -m unittest discover -s tests/parakeet_tdt -p 'test_bark3*conversion.py'
 ctest --test-dir build/bark3 -C Release \
   -R 'parakeet_bark3_session_test|parakeet_variant_config_test' --output-on-failure
 ```
 
-The unit test covers prefix/capacity handling, original-sample timestamps,
-repeated requests, stereo resampling, streaming callbacks and exception recovery.
-The native reference harness reuses one session across different recording
-lengths and repeats. Matching these fixtures is not a corpus-level WER claim.
-
-Weights are CC-BY-4.0. Retain the upstream NOTICE/license and credit Conway
-Research, NVIDIA Parakeet v3 and Moondream Parakeet Ultra when distributing
-derivatives. Conversion changes are recorded in the embedded `conversion.json`.
+The harness reuses a session across input lengths and repeats. Unit/path tests
+cover prefix clocks, streaming callbacks, request reuse and exception recovery.
+Weights are CC-BY-4.0: credit Conway Research, NVIDIA Parakeet v3 and Moondream
+Parakeet Ultra, retain NOTICE/license and disclose conversion/rounding changes.

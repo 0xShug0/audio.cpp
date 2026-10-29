@@ -51,7 +51,7 @@ class BarkPackedProfile:
 
 
 PLUS_PROFILE = BarkPackedProfile(SOURCE_REPO, SOURCE_REVISION, SOURCE_SHA256,
-                                VARIANT, "Underdog Bark 3.0 Plus", "docs/models/underdog_bark3_plus.md")
+                                VARIANT, "Underdog Bark 3.0 Plus", "docs/models/underdog_bark3.md")
 
 
 def unpack_blob(data, compressed, size):

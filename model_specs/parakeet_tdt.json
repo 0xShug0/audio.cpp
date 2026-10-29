@@ -295,9 +295,7 @@
     ],
     "docs": [
       "docs/models/parakeet_tdt.md",
-      "docs/models/underdog_bark3.md",
-      "docs/models/underdog_bark3_plus.md",
-      "docs/models/underdog_bark3_standard.md"
+      "docs/models/underdog_bark3.md"
     ]
   },
   "sources": [

@@ -1,4 +1,7 @@
 #include "im2col.cuh"
+#ifdef GGML_USE_HIP
+#include "ggml-hip/impl.cuh"
+#endif
 
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 static __global__ void im2col_f32_tiled_3x3(
@@ -298,6 +301,16 @@ static void im2col_cuda_f32(const float * x, float * dst,
 }
 
 void ggml_cuda_op_im2col(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+#ifdef GGML_USE_HIP
+    if (ctx.impl && ctx.impl->im2col) {
+        const auto buft = ggml_backend_cuda_buffer_type(ctx.device);
+        if (ggml_backend_buffer_get_type(dst->src[1]->buffer) == buft &&
+            ggml_backend_buffer_get_type(dst->buffer) == buft &&
+            ctx.impl->im2col(dst->src[1], dst, ctx.stream())) {
+            return;
+        }
+    }
+#endif
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
     const float * src1_d = (const float *)src1->data;

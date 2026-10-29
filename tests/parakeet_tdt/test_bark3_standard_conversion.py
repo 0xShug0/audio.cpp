@@ -20,7 +20,7 @@ class BarkStandardConversionTest(unittest.TestCase):
         self.assertEqual(spec["family"], "parakeet_tdt")
         self.assertEqual(spec["languages"], ["en"])
         self.assertEqual(spec["packages"], [])
-        self.assertEqual(spec["ui"]["docs"], ["docs/models/underdog_bark3_standard.md"])
+        self.assertEqual(spec["ui"]["docs"], ["docs/models/underdog_bark3.md"])
         self.assertEqual(packed.package_spec(REPO), original)
         self.assertEqual(packed.VARIANT, "underdog_bark3_plus")
         self.assertEqual(packed.PLUS_PROFILE.bf16_f32_prefixes, ())

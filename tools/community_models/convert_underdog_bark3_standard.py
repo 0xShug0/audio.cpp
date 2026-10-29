@@ -12,7 +12,7 @@ SOURCE_REVISION = "85db2ad18ab41e534a222ee253c29191d77ed919"
 SOURCE_SHA256 = "c18de9418d73cbeb80b8c1287b392d480a56e191ef4a81d1baaa1b02e66d92ed"
 VARIANT = "underdog_bark3_standard"
 STANDARD_PROFILE = BarkPackedProfile(SOURCE_REPO, SOURCE_REVISION, SOURCE_SHA256,
-                                    VARIANT, "Underdog Bark 3.0", "docs/models/underdog_bark3_standard.md",
+                                    VARIANT, "Underdog Bark 3.0", "docs/models/underdog_bark3.md",
                                     bf16_f32_prefixes=("decoder.", "encoder_projector.", "joint.head."))
 
 

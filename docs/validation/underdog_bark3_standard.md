@@ -5,7 +5,7 @@ using shared Bark support from #1130 and #1131. Tested on Windows 11, Ryzen 9
 7950X3D, RTX 3090 24 GiB, MSVC 14.43, CUDA 12.4 and Vulkan SDK 1.4.350.0.
 CPU-only and combined CUDA/Vulkan Release builds pass. No shared framework,
 backend/kernel or multi-slot behavior is changed. Exact build/conversion/run
-commands are in [the model guide](../models/underdog_bark3_standard.md).
+commands are in [the model guide](../models/underdog_bark3.md).
 
 ## Source, isolation and storage
 
