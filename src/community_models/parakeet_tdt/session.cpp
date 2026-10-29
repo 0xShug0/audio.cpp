@@ -297,7 +297,7 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
         opts.keep_language_tags = runtime::parse_bool_option(*value, "keep_language_tags");
     }
     const bool phonon = assets_->config.variant == "phonon2";
-    const bool bark = assets_->config.variant == "underdog_bark3_pro";
+    const bool bark = is_bark3_variant(assets_->config.variant);
     const bool native_hotwords = phonon || bark;
     std::optional<std::string> hotwords;
     if (const auto it = request.options.find("hotwords"); it != request.options.end())
@@ -326,7 +326,7 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
     }
     return opts;
 } catch (const std::runtime_error & error) {
-    if (assets_->config.variant == "underdog_bark3_pro")
+    if (is_bark3_variant(assets_->config.variant))
         throw runtime::InvalidRequestError(error.what());
     throw;
 }
@@ -683,7 +683,7 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
     for (const auto& span : spans) {
         auto window = engine::audio::slice_audio_buffer(audio, span);
         const auto original_window_samples = static_cast<int64_t>(window.samples.size());
-        const bool bark = assets_->config.variant == "underdog_bark3_pro";
+        const bool bark = is_bark3_variant(assets_->config.variant);
         if (bark) {
             // Each VAD span is decoded independently. Supply the publisher's
             // prefix to each span, even when VAD removed the recording prefix.
@@ -756,7 +756,7 @@ ParakeetTDTStreamingSession::ParakeetTDTStreamingSession(
           std::move(options),
           std::move(assets),
           std::move(contract)) {
-    if (assets_->config.variant == "underdog_bark3_pro") {
+    if (is_bark3_variant(assets_->config.variant)) {
         bark_frontend_ = std::make_unique<BarkStreamingFrontend>(assets_);
     }
     const int sample_rate = assets_->config.frontend.sample_rate;
@@ -1024,7 +1024,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {
                                 const runtime::SessionOptions & options,
                                 std::shared_ptr<const ParakeetTDTAssets> assets,
                                 std::shared_ptr<const engine::model_spec::ModelContract> contract) {
-        if (assets->config.variant == "underdog_bark3_pro") {
+        if (is_bark3_variant(assets->config.variant)) {
             if (task.mode == runtime::RunMode::Streaming) {
                 return std::unique_ptr<runtime::IVoiceTaskSession>(wrap_bark3_streaming(
                     std::make_unique<ParakeetTDTStreamingSession>(task, options, std::move(assets), std::move(contract))));
