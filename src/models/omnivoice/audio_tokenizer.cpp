@@ -84,6 +84,27 @@ void validate_codebook_weight_storage_type(assets_ns::TensorStorageType storage_
     }
 }
 
+// native keeps the packaged type, so a quantized package (e.g. the Q8_0 GGUF) would load these tensors quantized.
+void validate_native_codebook_tensor_type(
+    const assets_ns::TensorSource & source,
+    const std::string & name,
+    assets_ns::TensorStorageType storage_type) {
+    if (storage_type != assets_ns::TensorStorageType::Native) {
+        return;
+    }
+    const auto dtype = source.require_metadata(name).dtype;
+    switch (assets_ns::tensor_storage_type_for_dtype(dtype)) {
+        case assets_ns::TensorStorageType::F32:
+        case assets_ns::TensorStorageType::F16:
+        case assets_ns::TensorStorageType::BF16:
+            return;
+        default:
+            throw std::runtime_error(
+                "OmniVoice audio tokenizer codebook_weight_type=native requires f32, f16, or bf16 tensors, but " +
+                name + " is " + dtype + " in this package; use codebook_weight_type=f32, f16, or bf16");
+    }
+}
+
 struct NormalizedReferenceAudio {
     std::vector<float> acoustic_samples_24k;
     std::vector<float> semantic_samples_16k_padded;
@@ -988,6 +1009,14 @@ std::shared_ptr<const HiggsAudioV2TokenizerWeights> load_weights(
     assets_ns::TensorStorageType codebook_storage_type) {
     const auto & config = assets.config.audio_tokenizer;
     const auto & source = *assets.audio_tokenizer_weights;
+    validate_native_codebook_tensor_type(source, "semantic_model.feature_projection.projection.weight", codebook_storage_type);
+    for (int64_t quantizer_index = 0; quantizer_index < config.num_codebooks; ++quantizer_index) {
+        validate_native_codebook_tensor_type(
+            source,
+            "quantizer.quantizers." + std::to_string(quantizer_index) + ".codebook.embed",
+            codebook_storage_type);
+    }
+    validate_native_codebook_tensor_type(source, "fc2.weight", codebook_storage_type);
     auto weights = std::make_shared<HiggsAudioV2TokenizerWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
