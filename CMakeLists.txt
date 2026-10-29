@@ -1201,6 +1201,28 @@ audiocpp_add_model(audio_flamingo
         engine::models::audio_flamingo::make_audio_flamingo_loader
 )
 
+audiocpp_add_model(nemotron_transcribe
+    SOURCES
+        src/community_models/nemotron_transcribe/assets.cpp
+        src/community_models/nemotron_transcribe/frontend.cpp
+        src/community_models/nemotron_transcribe/encoder.cpp
+        src/community_models/nemotron_transcribe/decoder.cpp
+        src/community_models/nemotron_transcribe/tokenizer.cpp
+        src/community_models/nemotron_transcribe/ctc.cpp
+        src/community_models/nemotron_transcribe/alignment.cpp
+        src/community_models/nemotron_transcribe/session.cpp
+    INCLUDES engine/community_models/nemotron_transcribe/session.h
+    LOADERS engine::models::nemotron_transcribe::make_nemotron_transcribe_loader
+    OBJECT_LIBRARIES utf8proc_vendor
+)
+# The aligner reproduces NumPy/PyTorch operation ordering. Fused operations in
+# that source are explicit std::fma calls.
+if(MSVC)
+    set_source_files_properties(src/community_models/nemotron_transcribe/alignment.cpp PROPERTIES COMPILE_OPTIONS "/fp:strict")
+else()
+    set_source_files_properties(src/community_models/nemotron_transcribe/alignment.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+
 audiocpp_add_model(samsone
     SOURCES
         src/models/samsone/assets.cpp
@@ -3839,6 +3861,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_dependencies(espeak_phonemizer_test espeak_test_library espeak_test_missing_symbol)
         add_test(NAME espeak_phonemizer_test COMMAND espeak_phonemizer_test
             $<TARGET_FILE:espeak_test_library> $<TARGET_FILE:espeak_test_missing_symbol>)
+        add_engine_unittest(llama_bpe_pretokenizer_hook_test tests/unittests/test_llama_bpe_pretokenizer_hook.cpp)
+        add_test(NAME llama_bpe_pretokenizer_hook_test COMMAND llama_bpe_pretokenizer_hook_test)
+        if(nemotron_transcribe IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(nemotron_transcribe_policy_test tests/community_models/nemotron_transcribe/policy_test.cpp)
+            add_test(NAME nemotron_transcribe_policy_test COMMAND nemotron_transcribe_policy_test)
+        endif()
+
         add_executable(sentencepiece_tokenizer1_test
             tests/unittests/test_sentencepiece_tokenizer1.cpp
         )

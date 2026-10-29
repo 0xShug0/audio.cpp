@@ -341,7 +341,16 @@ void llm_tokenizer_bpe_session::add_new_bigram(int left, int right) {
 
 void llm_tokenizer_bpe_session::tokenize(const std::string & text, std::vector<int32_t> & output) {
     int final_prev_index = -1;
-    const auto word_collection = unicode_regex_split(text, tokenizer.regex_exprs, tokenizer.byte_encode);
+    auto word_collection = vocab.pre_tokenize
+        ? vocab.pre_tokenize(text)
+        : unicode_regex_split(text, tokenizer.regex_exprs, tokenizer.byte_encode);
+    if (vocab.pre_tokenize && tokenizer.byte_encode) {
+        for (auto & word : word_collection) {
+            std::string encoded;
+            for (const unsigned char byte : word) encoded += unicode_byte_to_utf8(byte);
+            word = std::move(encoded);
+        }
+    }
 
     symbols_final.clear();
     for (const auto & word : word_collection) {
