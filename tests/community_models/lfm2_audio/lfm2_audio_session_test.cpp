@@ -266,6 +266,10 @@ void test_max_tokens(const Package & package) {
     require_eq(run(request(tone(3.0), cut_chunks), warnings), std::string("h h h"), "three chunks cut at max_tokens=1");
     require(occurrences(warnings, "[warning][lfm2_audio]") == 3 && warnings.find("2.0-3.0 s") != std::string::npos,
         "a warning per cut chunk: " + warnings);
+    // A 0.4 s tail and the second before it split 1.4 s evenly, so no chunk is over 1 s.
+    require_eq(run(request(tone(2.4), cut_chunks), warnings), std::string("h h h"), "a short tail cut at max_tokens=1");
+    require(warnings.find("1.0-1.7 s") != std::string::npos && warnings.find("1.7-2.4 s") != std::string::npos,
+        "the tail and the chunk before it split evenly: " + warnings);
     require_throws_with([&] { (void)session->run(request(tone(1.0), {{"max_tokens", "0"}})); }, "max_tokens", "max_tokens=0");
     require(!asr.reached_max_tokens(), "a failed request cuts nothing");
 
@@ -344,11 +348,11 @@ void test_chunking(const Package & package) {
         std::string("hi hi hi"), "fixed 1 s chunks");
     require_eq(transcribe(*session, request(audio, {{"audio_chunk_mode", "none"}, {"audio_chunk_seconds", "1"}})),
         std::string("hi"), "no chunks");
-    // A tail under a second joins the previous chunk; alone, 3 ms would fail
-    // the features and half a second is at best a cut-off word.
+    // A tail under a second and the chunk before it split their audio evenly,
+    // so no chunk is over 1 s; alone, 3 ms would fail the features.
     const std::unordered_map<std::string, std::string> fixed_1s = {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "1"}};
-    require_eq(transcribe(*session, request(tone(2.003), fixed_1s)), std::string("hi hi"), "a 3 ms tail");
-    require_eq(transcribe(*session, request(tone(2.5), fixed_1s)), std::string("hi hi"), "a 0.5 s tail");
+    require_eq(transcribe(*session, request(tone(2.003), fixed_1s)), std::string("hi hi hi"), "a 3 ms tail");
+    require_eq(transcribe(*session, request(tone(2.5), fixed_1s)), std::string("hi hi hi"), "a 0.5 s tail");
     // auto takes input that fits one chunk whole, as liquid-audio does.
     require_eq(transcribe(*session, request(tone(0.5), {{"audio_chunk_seconds", "1"}})), std::string("hi"),
         "auto on audio shorter than one chunk");

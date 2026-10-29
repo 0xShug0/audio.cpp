@@ -564,7 +564,7 @@ short input whole and splits longer input:
 |---|---|
 | `auto` | Input up to `audio_chunk_duration_sec` is transcribed whole, as liquid-audio does. Longer input is split at pauses found by the bundled Silero VAD, and silence between speech is skipped. Without the VAD model, it falls back to `fixed`. |
 | `vad` | Always splits at pauses; fails without the VAD model. |
-| `fixed` | Cuts every `audio_chunk_duration_sec`; a last piece shorter than 1 s joins the previous chunk. |
+| `fixed` | Cuts every `audio_chunk_duration_sec`; a last piece shorter than 1 s and the chunk before it split their audio evenly, so no chunk is longer than `audio_chunk_duration_sec`. |
 | `none` | One pass over the whole input, as liquid-audio does; input longer than `lfm2_audio.max_pass_duration_sec` is rejected. |
 
 Each chunk is transcribed on its own, and the transcripts are joined with a
@@ -577,9 +577,8 @@ and the model may then leave out the words that open the next chunk (1 of 12
 such sentences in the Japanese tests below).
 
 No pass takes more than `lfm2_audio.max_pass_duration_sec` of audio, 120 s by
-default, except that `fixed`, and `auto` without the VAD model, can make the
-last chunk up to 1 s longer, from a short tail it absorbs. `none` rejects
-longer input. The other modes reject an `audio_chunk_duration_sec` above the limit
+default. `none` rejects longer input. The other modes reject an
+`audio_chunk_duration_sec` above the limit
 on input longer than the limit, before any chunk is planned or encoded, so
 `vad` is refused on the setting even when its spans would be shorter; a request
 that leaves `audio_chunk_duration_sec` unset gets chunks of the limit when that is

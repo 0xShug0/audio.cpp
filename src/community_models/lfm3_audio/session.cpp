@@ -230,10 +230,12 @@ std::vector<runtime::TimeSpan> plan_fixed_chunks(int64_t samples, int64_t chunk_
         spans.push_back({chunk.output_start_sample, chunk.output_start_sample + chunk.valid_samples});
     }
 
+    // A tail under a second and the chunk before it split their audio evenly; joined, they would pass chunk_samples.
     const auto min_samples = static_cast<int64_t>(kMinChunkSeconds * kSampleRate);
     if (spans.size() > 1 && spans.back().end_sample - spans.back().start_sample < min_samples) {
-        spans.pop_back();
-        spans.back().end_sample = samples;
+        auto & before = spans[spans.size() - 2];
+        before.end_sample = (before.start_sample + samples) / 2;
+        spans.back().start_sample = before.end_sample;
     }
 
     return spans;

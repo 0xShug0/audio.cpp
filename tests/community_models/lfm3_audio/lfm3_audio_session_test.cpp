@@ -221,9 +221,14 @@ void test_asr(const Fixture & f) {
         require_error<runtime::CapacityError>([&] { limited->run(audio_request(tone(1.5), options)); }, "max_pass_duration_sec",
                                               "a 1.5 s pass past a 1 s limit");
     }
-    // 1 s fixed chunks: the 0.5 s tail joins the second, so two transcripts.
-    require_eq(text_of(asr->run(audio_request(tone(2.5), {{"audio_chunk_mode", "fixed"}, {"audio_chunk_duration_sec", "1"}}))),
-               std::string("ok ok"), "fixed chunks join their transcripts");
+    // 1 s fixed chunks: the 0.4 s tail and the second before it split 1.4 s evenly, so no pass is over 1 s.
+    std::string chunked;
+    const auto spans = cerr_of([&] {
+        chunked = text_of(asr->run(audio_request(tone(2.4), {{"audio_chunk_mode", "fixed"}, {"audio_chunk_duration_sec", "1"}, {"max_tokens", "1"}})));
+    });
+    require_eq(chunked, std::string("o o o"), "fixed chunks join their transcripts");
+    require(spans.find("of 1.0-1.7 s") != std::string::npos && spans.find("of 1.7-2.4 s") != std::string::npos,
+            "each cut chunk warns with its span: " + spans);
     // A space between chunks in every script that spaces its words; none inside Chinese or Japanese text.
     const auto joined = [](std::initializer_list<const char *> chunks) {
         std::string text;

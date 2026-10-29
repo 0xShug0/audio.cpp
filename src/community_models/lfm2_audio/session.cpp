@@ -293,7 +293,8 @@ void append_chunk_text(std::string & merged, std::string chunk) {
     merged += chunk;
 }
 
-// Fixed chunks of audio_chunk_seconds. A short tail joins the previous chunk.
+// Fixed chunks of audio_chunk_seconds. A short tail and the chunk before it
+// split their audio evenly; joined, they would pass audio_chunk_seconds.
 std::vector<runtime::TimeSpan> plan_fixed_chunks(int64_t samples, int64_t chunk_samples) {
     std::vector<runtime::TimeSpan> spans;
     for (const auto & chunk : audio::plan_audio_chunks(samples, {chunk_samples, chunk_samples})) {
@@ -302,8 +303,9 @@ std::vector<runtime::TimeSpan> plan_fixed_chunks(int64_t samples, int64_t chunk_
 
     const auto min_samples = static_cast<int64_t>(kMinChunkSeconds * kSampleRate);
     if (spans.size() > 1 && spans.back().end_sample - spans.back().start_sample < min_samples) {
-        spans.pop_back();
-        spans.back().end_sample = samples;
+        auto & before = spans[spans.size() - 2];
+        before.end_sample = (before.start_sample + samples) / 2;
+        spans.back().start_sample = before.end_sample;
     }
 
     return spans;
@@ -426,8 +428,7 @@ std::vector<runtime::TimeSpan> Lfm2AudioSession::plan_chunks(
 
     const auto chunk_samples = static_cast<int64_t>(std::llround(seconds * kSampleRate));
     // Before any chunk is planned or encoded, so vad is held to the setting
-    // rather than to its spans. fixed can make the last chunk up to a second
-    // longer (a shorter tail joins it), which the limit lets through.
+    // rather than to its spans.
     require_one_pass(std::min(total, chunk_samples), kSampleRate, max_pass_seconds_, "audio_chunk_duration_sec allows chunks of up to",
                      "lower audio_chunk_duration_sec, or raise the limit");
     if (mode == audio::AudioChunkMode::Auto && total <= chunk_samples) {
