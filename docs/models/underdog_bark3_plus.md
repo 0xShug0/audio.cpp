@@ -24,7 +24,7 @@ inference needs none of those. Download just the pinned data and license files:
 ```bash
 hf download ConwayResearch/Underdog-Bark-3.0-Plus \
   --revision d4fab2f8b95681e5ad3cfb4e8c5f4e0c009b3deb \
-  --include model.bark mlx/config.json NOTICE README.md coreml/LICENSE \
+  --include model.bark bark_loader.py mlx/config.json NOTICE README.md coreml/LICENSE \
   --local-dir models/Underdog-Bark-3.0-Plus-source
 hf download nvidia/parakeet-tdt-0.6b-v3 \
   --revision 541d1f99c6b0c3cd0b11a95167540bb8edefd82b \
@@ -57,6 +57,10 @@ through F16 stay F32, as do normalization and compensated projection tensors.
 Integer times FP16 row-scale products can require F32; treating this checkpoint
 like Pro's BF16 source would silently round them. Q8/BF16 are additionally rounded
 derivatives and must be assessed separately from the original packed checkpoint.
+Q8 uses the existing Phonon-style mixed policy: eligible attention matrices use
+Q8_0, feed-forward/pointwise matrices retain exact F16, and non-representable
+scale products, normalization and compensated projections retain F32. This
+avoids the initial broad-Q8 profile's Vulkan punctuation change.
 
 ## CLI and server
 
@@ -90,6 +94,27 @@ limit. No parallel-runtime or multi-slot changes are part of this port.
 See [the validation record](../validation/underdog_bark3_plus.md) for exact source
 reconstruction, original-runner comparisons, backends, timing and limitations.
 Matching test recordings is not a corpus-level WER claim.
+
+For the reference only, install PyTorch 2.8.0, Transformers 5.19.0, soundfile,
+soxr and librosa in a separate Python 3.11 environment, in addition to the
+converter dependencies. The original loader may fetch NVIDIA processor/generation
+metadata on first use; it does not download NVIDIA model weights. Then run:
+
+```bash
+python tests/parakeet_tdt/bark3_plus_reference.py \
+  --source models/Underdog-Bark-3.0-Plus-source \
+  --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
+  --device cpu --check-official-transcribe --output build/bark3/plus-reference.json
+python tests/parakeet_tdt/validate_bark3.py --bin-dir build/bark3/bin \
+  --model models/underdog-bark-3.0-plus-mixed-f16.gguf --backend cpu \
+  --reference build/bark3/plus-reference.json --output-dir build/bark3/plus-check
+python -m unittest discover -s tests/parakeet_tdt -p test_bark3_plus_conversion.py
+```
+
+Mixed-F16 is the recommended fidelity package. In the full five-minute test,
+CPU Q8 omitted one comma while retaining the same words; all tested GPU packages
+matched the original text exactly. Quantized/rounded packages can differ on other
+recordings even when particular tests match.
 
 The model is CC-BY-4.0. Credit Conway Research, NVIDIA Parakeet v3 and Moondream
 Parakeet Ultra, retain NOTICE/license, and disclose conversion/rounding changes

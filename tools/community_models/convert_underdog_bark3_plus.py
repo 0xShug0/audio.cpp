@@ -214,12 +214,8 @@ def pack(staging, tool, output, storage, overwrite=False):
     preserved, half = [], []
     if storage == "mixed-f16":
         preserved, _ = lossless_f16_tensors(staging)
-    elif storage == "mixed-q8":
+    elif storage in ("q8_0", "mixed-q8"):
         preserved, half = mixed_q8_tensors(staging)
-    elif storage == "q8_0":
-        # Integer x FP16 row-scale products need F32 in the predictor/head.
-        preserved = [t["name"] for t in json.loads((staging / "tensor_manifest.json").read_text())
-                     if t["name"].startswith(("decoder.", "encoder_projector.", "joint.head."))]
     provenance.update(storage=storage, exact_staged_values=storage in ("f32", "mixed-f16"),
                       preserved_f32_tensors=preserved, preserved_f16_tensors=half)
     with tempfile.TemporaryDirectory(prefix="bark-plus-pack-", dir=staging.parent) as temporary:
