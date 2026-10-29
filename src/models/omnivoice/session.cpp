@@ -231,6 +231,8 @@ OmniVoiceSession::OmniVoiceSession(
           runtime::parse_size_mb_option(options.options, {"omnivoice.generator_weight_context_mb"}, kDefaultGeneratorWeightContextBytes)),
       audio_tokenizer_weight_storage_type_(
           option_weight_type(options, "omnivoice.audio_tokenizer_weight_type", engine::assets::TensorStorageType::Native)),
+      audio_tokenizer_codebook_weight_storage_type_(
+          option_weight_type(options, "omnivoice.audio_tokenizer_codebook_weight_type", engine::assets::TensorStorageType::F32)),
       generator_weight_storage_type_(
           option_weight_type(
               options,
@@ -244,7 +246,8 @@ OmniVoiceSession::OmniVoiceSession(
           execution_context(),
           audio_tokenizer_graph_arena_bytes_,
           audio_tokenizer_weight_context_bytes_,
-          audio_tokenizer_weight_storage_type_),
+          audio_tokenizer_weight_storage_type_,
+          audio_tokenizer_codebook_weight_storage_type_),
       prompt_builder_(assets_, tokenizer_),
       generator_(
           assets_,

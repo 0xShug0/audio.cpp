@@ -33,7 +33,8 @@ public:
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        engine::assets::TensorStorageType weight_storage_type);
+        engine::assets::TensorStorageType weight_storage_type,
+        engine::assets::TensorStorageType codebook_weight_storage_type = engine::assets::TensorStorageType::F32);
     ~OmniVoiceHiggsAudioV2TokenizerRuntime();
 
     OmniVoiceAudioTokens encode_reference_audio(
