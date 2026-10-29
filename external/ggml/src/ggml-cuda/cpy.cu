@@ -1,4 +1,7 @@
 #include "cpy.cuh"
+#ifdef GGML_USE_HIP
+#include "ggml-hip/impl.cuh"
+#endif
 #include "dequantize.cuh"
 #include "cpy-utils.cuh"
 #if defined(GGML_USE_MUSA) && defined(GGML_MUSA_MUDNN_COPY)
@@ -417,7 +420,14 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
         {
             CUDA_CHECK(cudaMemcpyAsync(src1_ddc, src0_ddc, ggml_nbytes(src0), cudaMemcpyDeviceToDevice, main_stream));
         }
-    } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32) {
+    }
+#ifdef GGML_USE_HIP
+    else if (ctx.impl && ctx.impl->cpy &&
+             ctx.impl->cpy(src0, src1, main_stream)) {
+        return;
+    }
+#endif
+    else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32) {
         if (can_be_transposed) {
             ggml_cpy_scalar_cuda<float, float, true>
                 (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);

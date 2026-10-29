@@ -601,6 +601,36 @@ ggml_backend_t ggml_backend_dev_init(ggml_backend_dev_t device, const char * par
     return device->iface.init_backend(device, params);
 }
 
+const char * const * ggml_backend_dev_get_impls(ggml_backend_dev_t device) {
+    GGML_ASSERT(device);
+    auto fn = (ggml_backend_dev_get_impls_t) ggml_backend_reg_get_proc_address(
+        device->reg, "ggml_backend_dev_get_impls");
+    static const char * const defaults[] = { "default", nullptr };
+    return fn ? fn(device) : defaults;
+}
+
+ggml_backend_t ggml_backend_dev_init_with_impl(
+        ggml_backend_dev_t device, const char * impl, const char * params) {
+    GGML_ASSERT(device);
+    if (!impl || !impl[0] || strcmp(impl, "default") == 0) {
+        return ggml_backend_dev_init(device, params);
+    }
+    auto fn = (ggml_backend_dev_init_with_impl_t) ggml_backend_reg_get_proc_address(
+        device->reg, "ggml_backend_dev_init_with_impl");
+    if (!fn) {
+        GGML_LOG_ERROR("%s: implementation '%s' is not supported\n", ggml_backend_dev_name(device), impl);
+        return nullptr;
+    }
+    return fn(device, impl, params);
+}
+
+const char * ggml_backend_get_impl(ggml_backend_t backend) {
+    GGML_ASSERT(backend);
+    auto fn = (ggml_backend_get_impl_t) ggml_backend_reg_get_proc_address(
+        ggml_backend_dev_backend_reg(ggml_backend_get_device(backend)), "ggml_backend_get_impl");
+    return fn ? fn(backend) : "default";
+}
+
 ggml_backend_buffer_type_t ggml_backend_dev_buffer_type(ggml_backend_dev_t device) {
     GGML_ASSERT(device);
     return device->iface.get_buffer_type(device);
