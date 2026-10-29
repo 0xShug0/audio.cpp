@@ -14,7 +14,8 @@ namespace engine::community_models::parakeet_tdt {
 // Parakeet and Phonon sessions keep their existing preprocessing and clocks.
 inline constexpr int64_t kBark3InputPrefixSamples = 4000;
 inline bool is_bark3_variant(std::string_view variant) {
-    return variant == "underdog_bark3_pro" || variant == "underdog_bark3_plus";
+    return variant == "underdog_bark3_pro" || variant == "underdog_bark3_plus" ||
+           variant == "underdog_bark3_standard";
 }
 runtime::GraphOptimizationOptions bark3_encoder_graph_options(runtime::GraphOptimizationBackend backend);
 

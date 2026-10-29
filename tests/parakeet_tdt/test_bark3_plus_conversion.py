@@ -91,7 +91,7 @@ class BarkPlusConversionTest(unittest.TestCase):
         self.assertEqual(spec["languages"], ["en"])
         self.assertEqual(spec["packages"], [])
         self.assertNotIn("package_defaults", spec)
-        self.assertEqual(spec["ui"]["docs"], ["docs/models/underdog_bark3_plus.md"])
+        self.assertEqual(spec["ui"]["docs"], ["docs/models/underdog_bark3.md"])
         self.assertEqual((REPO / "model_specs/parakeet_tdt.json").read_bytes(), original)
 
 
