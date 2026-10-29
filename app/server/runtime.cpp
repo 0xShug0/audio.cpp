@@ -426,6 +426,36 @@ HttpResponse ServerState::handle_ui_upload(const HttpRequest & request) {
 }
 
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
+// Resolves a "package_id" to the installed package's load target before
+// handing the request to handle_model_load, which only ever sees a path.
+// Path-based loads never touch the installer or its mutex.
+HttpResponse ServerState::handle_package_model_load(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return handle_model_load(body_text);
+    }
+    const auto body = engine::io::json::parse(body_text);
+    std::string package_id;
+    if (auto error = ui_model_load_package_id(body, package_id)) {
+        return *error;
+    }
+    if (package_id.empty()) {
+        return handle_model_load(body_text);
+    }
+    std::optional<engine::package_manager::PackageInfo> info;
+    {
+        std::lock_guard<std::mutex> lock(model_installer_mutex_);
+        if (!model_installer_) {
+            return error_response(403, "UI model management is disabled", "forbidden");
+        }
+        info = model_installer_->package_info(package_id);
+    }
+    std::string resolved_body;
+    if (auto error = resolve_ui_package_model_load(body, package_id, info, resolved_body)) {
+        return *error;
+    }
+    return handle_model_load(resolved_body);
+}
+
 HttpResponse ServerState::handle_model_install(const std::string & body_text) {
     if (!config_.ui_management) {
         return error_response(403, "UI model installation is disabled", "forbidden");

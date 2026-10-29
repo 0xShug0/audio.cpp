@@ -277,6 +277,71 @@ HttpResponse ui_model_package_sizes_response(ModelInstaller &installer) {
     return json_response(json::stringify(json::Value::make_object(std::move(inventory))));
 }
 
+std::optional<HttpResponse> ui_model_load_package_id(
+    const engine::io::json::Value &body,
+    std::string &package_id) {
+    package_id.clear();
+    const auto *package_value = body.find("package_id");
+    if (package_value == nullptr) {
+        return std::nullopt;
+    }
+    if (!package_value->is_string() || package_value->as_string().empty()) {
+        return error_response(400, "package_id must be a non-empty string", "invalid_request_error");
+    }
+    if (body.find("path") != nullptr) {
+        return error_response(400, "send either path or package_id, not both", "invalid_request_error");
+    }
+    package_id = package_value->as_string();
+    return std::nullopt;
+}
+
+std::optional<HttpResponse> resolve_ui_package_model_load(
+    const engine::io::json::Value &body,
+    const std::string &package_id,
+    const std::optional<engine::package_manager::PackageInfo> &info,
+    std::string &resolved_body) {
+    namespace json = engine::io::json;
+    if (!info) {
+        return error_response(404, "unknown package id: " + package_id, "not_found");
+    }
+    if (!info->installed) {
+        return error_response(404, "package is not installed: " + package_id, "not_found");
+    }
+    engine::runtime::PackageLoadTarget target;
+    try {
+        target = engine::runtime::make_default_registry().resolve_package_load(info->family, info->package);
+    } catch (const std::exception &error) {
+        return error_response(400, "package " + package_id + " cannot be loaded: " + error.what(),
+            "invalid_request_error");
+    }
+    auto fields = body.as_object();
+    if (const auto found = fields.find("family"); found == fields.end()) {
+        fields["family"] = json::Value::make_string(target.family);
+    } else if (!found->second.is_string() || found->second.as_string() != target.family) {
+        return error_response(400,
+            "package " + package_id + " is for family " + target.family,
+            "invalid_request_error");
+    }
+    // Resolved options fill in what the request leaves out; keys it sends win.
+    const auto merge_options = [&](const char *key, const std::unordered_map<std::string, std::string> &resolved) {
+        if (resolved.empty()) return;
+        json::Value::Object options;
+        if (const auto found = fields.find(key); found != fields.end() && found->second.is_object()) {
+            options = found->second.as_object();
+        }
+        for (const auto &option : resolved) {
+            options.emplace(option.first, json::Value::make_string(option.second));
+        }
+        fields[key] = json::Value::make_object(std::move(options));
+    };
+    merge_options("load_options", target.load_options);
+    merge_options("session_options", target.session_options);
+    fields.erase("package_id");
+    fields["path"] = json::Value::make_string(target.model_path.string());
+    resolved_body = json::stringify(json::Value::make_object(std::move(fields)));
+    return std::nullopt;
+}
+
 HttpResponse ui_models_root_response(
     const std::filesystem::path &models_root,
     const std::filesystem::path &default_models_root) {
