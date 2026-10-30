@@ -42,8 +42,8 @@ Confirmed in your logs: 23 bytes → 128-frame window, `keys` 824 → 312.
 ### 2. KV cache pre-expanded across CFG lanes
 
 `joint_attention` called `expand()` — a `RepeatModule` broadcasting the cached
-text and speaker K/V across the 3 CFG lanes — every layer, every step. The cache
-is now allocated at `kMaxCfgLanes` and broadcast once in the conditioning graph,
+text and speaker K/V across the 2 or 3 CFG lanes — every layer, every step. The cache
+is now allocated at 2 (for Joint-CFG) or 3 (for Independent-CFG) lanes and broadcast once in the conditioning graph,
 so `expand()` short-circuits. The single-lane graph reads lane 0 through
 `kv_for_lanes()`, a zero-copy view (the lane axis is outermost).
 
@@ -71,7 +71,8 @@ became 15 s → 80 tokens, taking `keys` from 824 to 744 at the same window.
 
 ### 4. `guidance_interval` (opt-in, default 1 = off)
 
-Echo guides every step in the t >= 0.5 window with three forward passes:
+Echo guides every step in the t >= 0.5 window with three forward passes (or
+two forward passes in joint CFG mode):
 
 ```
 v_pred = v_cond + 3.0*(v_cond - v_text_uncond) + 8.0*(v_cond - v_speaker_uncond)
@@ -159,8 +160,8 @@ generation, the speaker quickly matches the reference audio.
 
 ### 7 `t_schedule_mode` (opt-in, default linear)
 Like Irodori-TTS, Echo-TTS has two Euler solver timestep schedules available.
-Upstream only implements the linear timeschedule, so here Echo-TTS utilizes the
-Sway timestep schedule from Irodori-TTS, which changes the the timestep grid
+Upstream only implements the linear time schedule, so here Echo-TTS utilizes a shared
+Sway timestep schedule (originally from Irodori-TTS), which changes the timestep grid
 supplied to the ODE solver. Only active when `t_schedule_mode=sway`, and utilizes
 `sway_coeff` to change the grid (default -1.0). Negative coefficients place
 denser timesteps towards the beginning of the time schedule, closer to the
@@ -170,15 +171,15 @@ are rejected. When `t_schedule_mode=sway` is selected, the default for
 `num_inference_steps` is changed to 12.
 
 Sway scheduling can give similar quality at fewer inference steps than linear
-scheduling. By-ear, a listener (@lojack5) was unable to distinguise between
+scheduling. By-ear, a listener (@lojack5) was unable to distinguish between
 linear 40-step and sway 12-step generations in a blind A/B/X test, both for
-Joint-CFG and Independent-CFG; sway 11-step was distinguisable in 20% of the
+Joint-CFG and Independent-CFG; sway 11-step was distinguishable in 20% of the
 tests.
 
 Audio analysis backs this up: a reference audio generated using linear 40-step
 time schedule was compared against a sweep of sway schedules (6-40), using the same
 sampling parameters (seed, prompt, etc) and only changing the timestep schedule
-(8-16 shown). "speaker cosine" is the cosine similarity after embedding with
+(8-16 steps shown). "speaker cosine" is the cosine similarity after embedding with
 speechbrain/spkrec-ecapa-voxceleb; "voiced disagreement" is a pitch and prosody
 comparison.
 
@@ -202,22 +203,22 @@ At 12-step sway versus 40-step linear, the following speedups were observed:
 | GPU | CFG Mode | timestep schedule | Audio Duration | Request Time | RTF | Speedup |
 |---|---|---|---|---|---|---|
 | GTX 1080 Ti | independent | linear-40 | 2.46s | 16.68s | x6.78 | - |
-| GTX 1080 Ti | independent | sway-12 | 2.46s | 6.04s | x2.45 | x2.29 |
+| GTX 1080 Ti | independent | sway-12 | 2.46s | 6.04s | x2.45 | x2.76 |
 | GTX 1080 Ti | independent | linear-40 | 9.20s | 17.80s | x1.94 | - |
-| GTX 1080 Ti | independent | sway-12 | 9.57s | 6.58s | x0.69 | x2.76 |
+| GTX 1080 Ti | independent | sway-12 | 9.57s | 6.58s | x0.69 | x2.70 |
 | GTX 1080 Ti | independent | linear-40 | 26.38s | 36.95s | x1.40 | - |
-| GTX 1080 Ti | independent | sway-12 | 26.38s | 14.28s | x0.54 | x2.70 |
+| GTX 1080 Ti | independent | sway-12 | 26.38s | 14.28s | x0.54 | x2.58 |
 | GTX 1080 Ti | joint | linear-40 | 3.07s | 11.50s | x3.75 | - |
-| GTX 1080 Ti | joint | sway-12 | 3.02s | 2.26s | x1.41 | x2.70 |
+| GTX 1080 Ti | joint | sway-12 | 3.02s | 4.25s | x1.41 | x2.70 |
 | GTX 1080 Ti | joint | linear-40 | 9.85s | 13.51s | x1.37 | - |
-| GTX 1080 Ti | joint | sway-12 | 9.75s | 4.95s | x0.51 | x2.71 |
+| GTX 1080 Ti | joint | sway-12 | 9.75s | 4.98s | x0.51 | x2.71 |
 | GTX 1080 Ti | joint | linear-40 | 27.49s | 28.67s | x1.04 | - |
 | GTX 1080 Ti | joint | sway-12 | 27.49s | 11.08s | x0.40 | x2.59 |
 | RTX 4070 | independent | linear-40 | 2.46s | 3.91s | x1.59 | - |
 | RTX 4070 | independent | sway-12 | 2.55s | 1.52s | x0.59 | x2.57 |
 | RTX 4070 | independent | linear-40 | 9.20s | 4.34s | x0.47 | - |
 | RTX 4070 | independent | sway-12 | 9.20s | 1.66s | x0.18 | x2.61 |
-| RTX 4070 | independent | linear-40 | 26.38s | 8.91s | x0.33 | - |
+| RTX 4070 | independent | linear-40 | 26.38s | 8.91s | x0.38 | - |
 | RTX 4070 | independent | sway-12 | 26.61s | 3.90s | x0.15 | x2.29 |
 | RTX 4070 | joint | linear-40 | 2.83s | 2.92s | x1.03 | - |
 | RTX 4070 | joint | sway-12 | 2.79s | 1.07s | x0.38 | x2.74 |
@@ -226,7 +227,7 @@ At 12-step sway versus 40-step linear, the following speedups were observed:
 | RTX 4070 | joint | linear-40 | 27.49s | 6.80s | x0.25 | - |
 | RTX 4070 | joint | sway-12 | 27.59s | 2.98s | x0.11 | x2.28 |
 
-Mesured with identical sampling parameters except where noted, and "warm" server: model weights loaded, reference speaker cached, GPUs up to temperature. Three prompt lengths, two GPUs, and both CFG modes tested. Again, Sway
+Measured with identical sampling parameters except where noted, and "warm" server: model weights loaded, reference speaker cached, GPUs up to temperature. Three prompt lengths, two GPUs, and both CFG modes tested. Again, Sway
 scheduling does not purport to produce identical audio, merely similar quality at lower step counts. Using the
 recommended step counts gives a ~2.3-2.7 times speedup.
 

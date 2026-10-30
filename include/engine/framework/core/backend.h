@@ -20,6 +20,8 @@ struct BackendConfig {
     BackendType type = BackendType::Cpu;
     int device = 0;
     int threads = 1;
+    // Empty selects the backend's default implementation.
+    std::string impl = {};
 };
 
 struct BackendMemorySnapshot {

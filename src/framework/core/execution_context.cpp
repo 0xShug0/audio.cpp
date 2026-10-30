@@ -20,7 +20,7 @@ ExecutionContext::~ExecutionContext() {
 }
 
 ExecutionContext::ExecutionContext(ExecutionContext && other) noexcept
-    : config_(other.config_),
+    : config_(std::move(other.config_)),
       backend_(other.backend_) {
     other.backend_ = nullptr;
 }
@@ -32,7 +32,7 @@ ExecutionContext & ExecutionContext::operator=(ExecutionContext && other) noexce
     if (backend_ != nullptr) {
         ggml_backend_free(backend_);
     }
-    config_ = other.config_;
+    config_ = std::move(other.config_);
     backend_ = other.backend_;
     other.backend_ = nullptr;
     return *this;

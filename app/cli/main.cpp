@@ -63,6 +63,7 @@ void print_task_list_help() {
         << "    --backend cpu|cuda|hip|rocm|vulkan|metal|best  (rocm is an alias for hip)\n"
         << "    --mode offline|streaming  default offline\n"
         << "    --device <n>\n"
+        << "    --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
         << "    --list-devices  List available backend devices and exit; --json adds PCI ids and memory\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
         << "    --registry-config <path>\n"
@@ -801,6 +802,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
 #endif
             engine::core::BackendConfig backend;
             backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
+            backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
             backend.device = parse_int_arg(argc, argv, "--device", 0);
             backend.threads = threads;
             minitts::app::run_json_workflow(
@@ -835,6 +837,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             recipe_options.session_options = collect_key_value_args(argc, argv, "--session-option");
             recipe_options.model_spec_override = optional_path_arg(argc, argv, "--model-spec-override");
             recipe_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
+            recipe_options.backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
             recipe_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
             recipe_options.backend.threads = threads;
 
@@ -924,6 +927,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
 
         engine::runtime::SessionOptions session_options;
         session_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
+        session_options.backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
         session_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
         const int threads = parse_int_arg(argc, argv, "--threads", 4);
         if (threads <= 0) {

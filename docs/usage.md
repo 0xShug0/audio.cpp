@@ -215,3 +215,10 @@ If a CUDA or HIP device cannot give the process a context, for example a GPU in 
 | ASR models | [asr.md](asr.md) |
 | Classification, wake word, VAD, and diarization | [speech_analysis.md](speech_analysis.md) |
 | Audio tools, voice conversion, codec, and source separation | [audio_tools.md](audio_tools.md) |
+
+### Backend implementation
+
+`--backend-impl <name>` selects an optional implementation of the chosen backend,
+for example `--backend hip --backend-impl gfx1151_v1`. Omission or `default` keeps the
+existing implementation. This is backend configuration, not a model session
+option. Availability depends on the build and device; see [HIP](build/HIP.md).

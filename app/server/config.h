@@ -80,6 +80,7 @@ struct ServerConfig {
     bool ui_requested = false;
     bool ui_management = false;
     engine::core::BackendType backend = engine::core::BackendType::Cuda;
+    std::string backend_impl;
     int device = 0;
     int threads = 1;
     bool lazy_load = false;

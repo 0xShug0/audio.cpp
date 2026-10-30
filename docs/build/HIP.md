@@ -424,3 +424,31 @@ These are skipped entirely on HIP builds. To enable GPU acceleration for ISTFT a
 - GGML HIP backend CMake: `external/ggml/src/ggml-hip/CMakeLists.txt`
 - GGML backend registry: `external/ggml/src/ggml-backend-reg.cpp` (L116: HIP registers via `GGML_USE_CUDA`)
 - llama.cpp HIP build docs: `docs/build.md` (upstream GGML documentation)
+
+## Optional gfx1151_v1 implementation
+
+Use `--backend hip --backend-impl gfx1151_v1` to select the opt-in Strix Halo
+(gfx1151) kernel implementation. Omit `--backend-impl` to retain existing HIP
+execution. The server accepts the same flag, or `"backend_impl": "gfx1151_v1"` next
+to `"backend": "hip"` in its configuration.
+
+The gfx1151_v1 implementation specializes eligible large F32 and strided F16/BF16 matrix multiplications,
+1D convolution patch extraction (`im2col`), and aligned strided F32 tensor copies.
+Contiguous F16/BF16 matmuls and narrow decode batches retain existing HIP kernels. Other
+operations use existing HIP kernels. Eligible default-precision matrix
+multiplications may round operands to BF16 and accumulate in F32; explicit F32
+computation and explicit operation lowerings take precedence.
+Weights on disk are unchanged. Audio can differ numerically from default HIP.
+Unsupported implementation/device combinations fail initialization.
+
+The name reflects its original RDNA3.5 tuning target; selection is available on
+RDNA1–4. RDNA1/2 use copy, im2col, and eligible FP32 tiled matmul kernels, while
+WMMA matmuls require RDNA3 or newer. Correctness and performance have been
+measured on gfx1151; other RDNA devices are available for testing.
+
+Selection belongs to each backend instance and is independent of model
+`perf_mode` presets. The C++ API uses `BackendConfig::impl`; the C API
+provides `audiocpp_session_create_with_impl` without changing the
+existing backend-config structure. GGML exposes implementation discovery,
+initialization and identity through optional backend registry hooks, so other
+backends need no changes until they provide an alternative implementation.

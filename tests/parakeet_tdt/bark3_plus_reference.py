@@ -17,13 +17,13 @@ import torch
 from transformers import AutoProcessor
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/community_models"))
-from convert_underdog_bark3_plus import BASE_SHA256, SOURCE_SHA256, sha256
+from convert_underdog_bark3_plus import BASE_SHA256, PLUS_PROFILE, sha256
 
 LOADER_SHA256 = "e86b7f130bec1a8fa14dd315cfce95785b890dbd30000f6ceb2597fdd4312b02"
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(profile=PLUS_PROFILE, description=__doc__):
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--audio", type=Path, nargs="+", required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -37,7 +37,7 @@ def main():
         parser.error("threads and iterations must be positive")
     if args.device == "cuda" and not torch.cuda.is_available():
         parser.error("CUDA is unavailable")
-    for name, expected in {**BASE_SHA256, "bark_loader.py": LOADER_SHA256, "model.bark": SOURCE_SHA256}.items():
+    for name, expected in {**BASE_SHA256, "bark_loader.py": LOADER_SHA256, "model.bark": profile.source_sha256}.items():
         if sha256(args.source / name) != expected:
             raise ValueError("source differs from pinned snapshot: " + name)
     torch.set_num_threads(args.threads)

@@ -2764,7 +2764,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         if (ggml_backend_buffer_get_type(src0->buffer) == buft &&
             ggml_backend_buffer_get_type(src1->buffer) == buft &&
             ggml_backend_buffer_get_type(dst->buffer) == buft &&
-            ctx.impl->mul_mat(src0, src1, dst, ctx.stream())) {
+            ctx.impl->mul_mat(src0, src1, dst, ctx.stream(), ggml_cuda_info().devices[ctx.device].cc)) {
             return;
         }
     }
@@ -5683,14 +5683,14 @@ static const char * const * ggml_backend_hip_get_impls(ggml_backend_dev_t dev) {
     const auto * ctx = static_cast<ggml_backend_cuda_device_context *>(dev->context);
     static const char * const defaults[] = { "default", nullptr };
     static const char * const gfx1151_v1[] = { "default", "gfx1151_v1", nullptr };
-    return ggml_cuda_info().devices[ctx->device].cc == GGML_CUDA_CC_OFFSET_AMD + 0x1151 ? gfx1151_v1 : defaults;
+    return GGML_CUDA_CC_IS_RDNA(ggml_cuda_info().devices[ctx->device].cc) ? gfx1151_v1 : defaults;
 }
 
 static ggml_backend_t ggml_backend_hip_init_with_impl(
         ggml_backend_dev_t dev, const char * impl, const char * params) {
     const auto * device = static_cast<ggml_backend_cuda_device_context *>(dev->context);
     if (strcmp(impl, "gfx1151_v1") != 0 ||
-        ggml_cuda_info().devices[device->device].cc != GGML_CUDA_CC_OFFSET_AMD + 0x1151) {
+        !GGML_CUDA_CC_IS_RDNA(ggml_cuda_info().devices[device->device].cc)) {
         GGML_LOG_ERROR("ROCm%d: implementation '%s' is unavailable on this device\n", device->device, impl);
         return nullptr;
     }
