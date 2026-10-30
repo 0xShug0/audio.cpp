@@ -322,6 +322,12 @@ std::optional<HttpResponse> resolve_ui_package_model_load(
             "package " + package_id + " is for family " + target.family,
             "invalid_request_error");
     }
+    for (const char *key : {"load_options", "session_options"}) {
+        const auto *options = body.find(key);
+        if (options && !options->is_object() && !options->is_null()) {
+            return error_response(400, std::string(key) + " must be an object or null", "invalid_request_error");
+        }
+    }
     // Resolved options fill in what the request leaves out; keys it sends win.
     const auto merge_options = [&](const char *key, const std::unordered_map<std::string, std::string> &resolved) {
         if (resolved.empty()) return;
