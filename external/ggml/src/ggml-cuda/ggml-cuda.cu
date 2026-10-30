@@ -5733,6 +5733,7 @@ static ggml_backend_t ggml_backend_hip_init_with_impl(
     }
     static const ggml_hip_impl gfx1151_v1 = {
         "gfx1151_v1", ggml_hip_gfx1151_v1_mul_mat, ggml_hip_gfx1151_v1_im2col, ggml_hip_gfx1151_v1_cpy,
+        ggml_hip_ar_mmvq<2, 1, 1>,
     };
     static const ggml_hip_impl ar_nt = {"ar_nt", ggml_hip_gfx1151_v1_mul_mat,
         ggml_hip_gfx1151_v1_im2col, ggml_hip_gfx1151_v1_cpy, ggml_hip_ar_mmvq<2, 1>};
@@ -5750,7 +5751,7 @@ static ggml_backend_t ggml_backend_hip_init_with_impl(
     if (backend) {
         auto * ctx = static_cast<ggml_backend_cuda_context *>(backend->context);
         ctx->impl = selected;
-        ctx->round_bf16_fusion = selected == &gfx1151_v1;
+        ctx->round_bf16_fusion = true;
         GGML_LOG_INFO("ROCm%d: implementation=%s\n", device->device, ctx->impl->name);
     }
     return backend;

@@ -9512,7 +9512,7 @@ struct test_gfx1151_v1_mul_mat_precision : public test_mul_mat {
 static std::vector<std::unique_ptr<test_case>> make_test_cases_gfx1151_v1() {
     std::vector<std::unique_ptr<test_case>> cases;
     const std::array<int64_t, 2> one = {1, 1};
-    for (int64_t queries : {1, 2}) {
+    for (int64_t queries : {1, 2, 3, 5, 8}) {
         for (const auto & shape : std::vector<std::array<int64_t, 2>>{
                 {1536, 1024}, {1024, 1024}, {16384, 1024}, {1024, 8192}, {67, 96}}) {
             cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32,
@@ -9521,6 +9521,23 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_gfx1151_v1() {
     }
     cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 67, 1, 96,
         one, one, {0, 1, 2, 3}, 128));
+    for (ggml_type type : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16, GGML_TYPE_Q8_0}) {
+        for (const auto & shape : std::vector<std::array<int64_t, 3>>{
+                {13, 3, 96}, {65, 5, 288}, {97, 11, 64}}) {
+            cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32,
+                shape[0], shape[1], shape[2], one, one));
+            cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32,
+                shape[0], shape[1], shape[2], {2, 3}, {2, 2}));
+            cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32,
+                shape[0], shape[1], shape[2], {2, 3}, {2, 2}, {0, 1, 2, 3}, shape[2] + 32));
+            cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32,
+                shape[0], shape[1], shape[2], {2, 3}, {2, 2}, {0, 2, 1, 3}));
+            if (type != GGML_TYPE_Q8_0) {
+                cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(
+                    type, shape[0], shape[1], shape[2], true, false, 0, {2, 3}));
+            }
+        }
+    }
     for (int64_t width : {17, 96, 256, 896, 1024, 1536, 2048, 4096}) {
         for (int64_t rows : {1, 3, 6, 17}) {
             for (int64_t channels : {1, 2}) {

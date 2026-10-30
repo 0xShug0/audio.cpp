@@ -2,14 +2,23 @@
 #include "ggml-cuda/convert.cuh"
 #include "ggml-cuda/mma.cuh"
 #include <climits>
+#include <type_traits>
 
 namespace {
 
-template<typename pair_type>
+template<typename pair_type, bool batched>
 __global__ __launch_bounds__(128) void gfx1151_v1_matmul_tiled(
         const char * a, const float * b, float * c,
-        int64_t m, int64_t n, int64_t k, size_t lda, int64_t ldb) {
+        int64_t m, int64_t n, int64_t k, size_t lda, int64_t ldb,
+        size_t sa, int64_t sb, size_t sa3, int64_t sb3, uint3 ne2, uint3 r2, uint3 r3) {
 #if defined(AMD_WMMA_AVAILABLE)
+    if constexpr (batched) {
+        const uint32_t i3 = fastdiv(blockIdx.z, ne2);
+        const uint32_t i2 = blockIdx.z - i3 * ne2.z;
+        a += int64_t(fastdiv(i2, r2)) * sa + int64_t(fastdiv(i3, r3)) * sa3;
+        b += i2 * sb + i3 * sb3;
+        c += int64_t(blockIdx.z) * m * n;
+    }
     using namespace ggml_cuda_mma;
     using tile_AB = tile<16, 8, pair_type, get_input_data_layout()>;
     using tile_C = tile<16, 16, float, DATA_LAYOUT_J_MAJOR>;
@@ -80,13 +89,16 @@ __global__ __launch_bounds__(128) void gfx1151_v1_matmul_tiled(
 #endif
 }
 
-template<ggml_type type>
+template<ggml_type type, bool batched>
 void launch(const ggml_tensor * a, const ggml_tensor * b, ggml_tensor * out, hipStream_t stream) {
     const int64_t m = a->ne[1], n = b->ne[1], k = a->ne[0];
     using pair_type = std::conditional_t<type == GGML_TYPE_BF16, nv_bfloat162, half2>;
-    gfx1151_v1_matmul_tiled<pair_type><<<dim3((m + 63) / 64, (n + 63) / 64), dim3(32, 4), 0, stream>>>(
+    gfx1151_v1_matmul_tiled<pair_type, batched><<<dim3((m + 63) / 64, (n + 63) / 64, b->ne[2] * b->ne[3]), dim3(32, 4), 0, stream>>>(
         static_cast<const char *>(a->data), static_cast<const float *>(b->data),
-        static_cast<float *>(out->data), m, n, k, a->nb[1], b->nb[1] / sizeof(float));
+        static_cast<float *>(out->data), m, n, k, a->nb[1], b->nb[1] / sizeof(float),
+        a->nb[2], b->nb[2] / sizeof(float), a->nb[3], b->nb[3] / sizeof(float),
+        init_fastdiv_values(b->ne[2]), init_fastdiv_values(b->ne[2] / a->ne[2]),
+        init_fastdiv_values(b->ne[3] / a->ne[3]));
 }
 
 } // namespace
@@ -96,7 +108,7 @@ bool ggml_hip_gfx1151_v1_mul_mat_typed(const ggml_tensor * a, const ggml_tensor 
     if (out->op != GGML_OP_MUL_MAT ||
         ggml_get_op_params_i32(out, 1) != GGML_MUL_MAT_LOWERING_DEFAULT ||
         b->type != GGML_TYPE_F32 || out->type != GGML_TYPE_F32 ||
-        a->ne[2] != 1 || a->ne[3] != 1 || b->ne[2] != 1 || b->ne[3] != 1 ||
+        a->ne[0] != b->ne[0] || b->ne[2] % a->ne[2] != 0 || b->ne[3] % a->ne[3] != 0 ||
         b->nb[0] != sizeof(float) || !ggml_is_contiguous(out)) {
         return false;
     }
@@ -104,23 +116,29 @@ bool ggml_hip_gfx1151_v1_mul_mat_typed(const ggml_tensor * a, const ggml_tensor 
         return false;
     }
     const int64_t m = a->ne[1], n = b->ne[1], k = a->ne[0];
-    if (m < 16 || m > INT_MAX || n < 1 || n > 65535 * 64 || k < 32 || k > INT_MAX ||
+    if (m < 1 || m > INT_MAX || n < 1 || n > 65535 * 64 || k < 32 || k > INT_MAX ||
         k % 32 != 0 || a->nb[0] != ggml_type_size(a->type) ||
         a->nb[1] < ggml_row_size(a->type, k) ||
         b->nb[1] < size_t(k) * sizeof(float) || b->nb[1] % sizeof(float) != 0) {
         return false;
     }
-    // Contiguous matrices already have faster HIP GEMV/GEMM implementations.
-    if (n < 32 || ggml_get_op_params_i32(out, 0) == GGML_PREC_F32 ||
-        (ggml_is_contiguous(a) && ggml_is_contiguous(b)) ||
+    if (ggml_get_op_params_i32(out, 0) == GGML_PREC_F32 ||
         reinterpret_cast<std::uintptr_t>(a->data) % alignof(float) != 0 ||
-        a->nb[1] % sizeof(float) != 0) {
+        a->nb[1] % sizeof(float) != 0 ||
+        b->ne[2] > 65535 || b->ne[3] > 65535 / b->ne[2] ||
+        (b->ne[2] > 1 && (a->nb[2] % alignof(float) || b->nb[2] % sizeof(float))) ||
+        (b->ne[3] > 1 && (a->nb[3] % alignof(float) || b->nb[3] % sizeof(float)))) {
         return false;
     }
-    switch (a->type) {
-        case GGML_TYPE_F16:  launch<GGML_TYPE_F16>(a, b, out, stream); break;
-        case GGML_TYPE_BF16: launch<GGML_TYPE_BF16>(a, b, out, stream); break;
-        default: GGML_ABORT("unreachable gfx1151_v1 matmul type");
-    }
+    const auto dispatch = [&](auto batched_tag) {
+        constexpr bool batched = decltype(batched_tag)::value;
+        switch (a->type) {
+            case GGML_TYPE_F16:  launch<GGML_TYPE_F16, batched>(a, b, out, stream); break;
+            case GGML_TYPE_BF16: launch<GGML_TYPE_BF16, batched>(a, b, out, stream); break;
+            default: GGML_ABORT("unreachable gfx1151_v1 matmul type");
+        }
+    };
+    if (b->ne[2] * b->ne[3] > 1) dispatch(std::true_type{});
+    else dispatch(std::false_type{});
     return true;
 }
