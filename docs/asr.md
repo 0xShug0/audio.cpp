@@ -10,6 +10,7 @@ For Qwen3-ASR adapter loading and merged GGUF export, see the [LoRA guide](lora.
 | Cohere Transcribe | `cohere_asr` | offline | [Cohere Transcribe](models/cohere_asr.md) |
 | Confucius4-R2T2 | `confucius4_r2t2` | offline, streaming | [Confucius4-R2T2](models/r2t2.md) |
 | CrisperWhisper 2.0 Large | `crisperwhisper` | offline, streaming | [CrisperWhisper 2.0](models/crisperwhisper.md) |
+| Edda v0.2 Large (experimental) | `edda_asr` | offline, streaming | [Edda ASR](models/edda_asr.md) |
 | Fun-ASR-Nano | `fun_asr_nano` | offline | [Fun-ASR-Nano](#fun-asr-nano) |
 | GigaAM v3 / Multilingual | `gigaam_asr` | offline | [GigaAM ASR](models/gigaam_asr.md) |
 | Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](models/granite5asr.md) |

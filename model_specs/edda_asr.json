@@ -114,18 +114,91 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/edda_asr.md"
-    ]
+      "docs/models/edda_asr.md"
+    ],
+    "recommended_package": "edda_v0_2_large_hurtig_q8_0"
   },
   "package_defaults": {
     "download": {
-      "kind": "huggingface_snapshot",
-      "repo": "syvai/edda-v0.2-large-hurtig",
-      "revision": "main",
-      "gated": false
+      "kind": "unsupported",
+      "reason": "No published audio.cpp GGUF yet: download a safetensors package and convert it locally with audiocpp_gguf (docs/community_models/edda_asr.md)."
     }
   },
-  "packages": [],
+  "packages": [
+    {
+      "id": "edda_v0_2_large_hurtig_q8_0",
+      "display_name": "Edda v0.2 Large Hurtig GGUF Q8_0",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Edda-v0.2-Large-Hurtig-GGUF",
+      "files": [
+        "Edda-v0.2-Large-Hurtig-GGUF/edda-v0.2-large-hurtig-q8_0.gguf"
+      ],
+      "strip_prefix": "Edda-v0.2-Large-Hurtig-GGUF"
+    },
+    {
+      "id": "edda_v0_2_large_hurtig_f16",
+      "display_name": "Edda v0.2 Large Hurtig GGUF F16",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Edda-v0.2-Large-Hurtig-GGUF",
+      "files": [
+        "Edda-v0.2-Large-Hurtig-GGUF/edda-v0.2-large-hurtig-f16.gguf"
+      ],
+      "strip_prefix": "Edda-v0.2-Large-Hurtig-GGUF"
+    },
+    {
+      "id": "edda_v0_2_large_hurtig_safetensors",
+      "display_name": "Edda v0.2 Large Hurtig Safetensors (with drafter)",
+      "description": "Edda v0.2 large with the syv.ai DFlash2 drafter for lossless speculative decoding; Apache-2.0.",
+      "format": "safetensors",
+      "precision": "f16",
+      "target_directory": "edda-v0.2-large-hurtig",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt",
+        "model.safetensors",
+        "drafter.safetensors",
+        "drafter_config.json",
+        "LICENSE",
+        "NOTICE"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "syvai/edda-v0.2-large-hurtig",
+        "revision": "e51b9e9bc1d9e8028f45f154473d65b96955758b",
+        "gated": false
+      }
+    },
+    {
+      "id": "edda_v0_2_large_safetensors",
+      "display_name": "Edda v0.2 Large Safetensors",
+      "description": "Original Edda v0.2 large release without a drafter; decodes greedily. Apache-2.0.",
+      "format": "safetensors",
+      "precision": "f16",
+      "target_directory": "edda-v0.2-large",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "danish-foundation-models/edda-v0.2-large",
+        "revision": "796bf033ce51d03bfe793844fa3412e72997b826",
+        "gated": false
+      }
+    }
+  ],
   "sources": [
     {
       "format": "safetensors",
