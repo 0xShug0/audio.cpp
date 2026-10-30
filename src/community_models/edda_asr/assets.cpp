@@ -98,6 +98,8 @@ std::shared_ptr<const EddaAssets> load_assets(const std::filesystem::path & path
     for (int32_t id = out->eos; id < out->vocabulary_size; ++id) {
         out->special_tokens[static_cast<size_t>(id)] = true;
     }
+    out->clean_up_tokenization_spaces = io::json::optional_bool(
+        out->resources.parse_json("tokenizer_config"), "clean_up_tokenization_spaces", false);
     const auto generation = out->resources.parse_json("generation_config");
     const auto token_list = [&](const char * key) {
         std::vector<int32_t> ids;
@@ -129,7 +131,18 @@ std::string EddaAssets::decode_text(const std::vector<int32_t> & tokens) const {
             visible.push_back(id);
         }
     }
-    return tokenizer->decode(visible, false);
+    auto text = tokenizer->decode(visible, false);
+    if (clean_up_tokenization_spaces) {
+        // Transformers' clean_up_tokenization: drop the space BPE leaves before punctuation and English contractions.
+        for (const auto * piece : {" .", " ?", " !", " ,", " ' ", " n't", " 'm", " 's", " 've", " 're"}) {
+            const std::string from(piece);
+            const std::string to = from == " ' " ? "'" : from.substr(1);
+            for (size_t at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size())) {
+                text.replace(at, from.size(), to);
+            }
+        }
+    }
+    return text;
 }
 
 }  // namespace engine::community_models::edda_asr

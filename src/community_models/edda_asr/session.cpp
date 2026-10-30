@@ -116,6 +116,8 @@ private:
             runtime::find_option(request.options, {"draft_selector"}).value_or("true"), "draft_selector");
         options_.block = runtime::parse_positive_i64_option(request.options, {"draft_block"},
             assets_->drafter ? assets_->drafter->block : 16);
+        options_.num_beams = runtime::parse_positive_i64_option(request.options, {"num_beams"}, 1);
+        options_.length_penalty = runtime::parse_finite_float_option(request.options, {"length_penalty"}).value_or(1.0f);
         if (assets_->drafter && (options_.block < 2 || options_.block > assets_->drafter->block)) {
             throw std::runtime_error("Edda draft_block must be between 2 and " + std::to_string(assets_->drafter->block));
         }
@@ -160,7 +162,8 @@ private:
         result_.text_output = runtime::Transcript{"", language_};
         started_ = true;
         trace(debug::LogLevel::Info, kFamily, "language=" + language_ + " chunks=" + std::to_string(spans_.size()) +
-            " speculative=" + (options_.speculative && weights_->drafter ? "true" : "false"));
+            " speculative=" + (options_.speculative && weights_->drafter && options_.num_beams == 1 ? "true" : "false") +
+            " num_beams=" + std::to_string(options_.num_beams));
     }
     void decode_chunk() {
         const auto [begin, end] = spans_.at(next_chunk_);

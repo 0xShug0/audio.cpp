@@ -54,6 +54,22 @@
         "default": true
       },
       {
+        "name": "num_beams",
+        "type": "int",
+        "description": "Beam-search width. 1 decodes greedily (speculatively when the drafter is loaded); larger values follow Transformers beam search without the drafter. Edda's own generation config uses 5.",
+        "required": false,
+        "default": 1,
+        "min": 1,
+        "max": 16
+      },
+      {
+        "name": "length_penalty",
+        "type": "float",
+        "description": "Exponent that normalizes finished beam scores by generated length; default 1.0.",
+        "required": false,
+        "default": 1.0
+      },
+      {
         "name": "max_tokens",
         "type": "int",
         "description": "Maximum generated tokens per audio chunk, bounded by the 448-position decoder context; default 444.",

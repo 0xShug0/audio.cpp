@@ -88,13 +88,8 @@ DrafterWeights load_drafter(const EddaAssets & assets, core::BackendWeightStore 
         layer.attention_norm = load.norm(p + ".self_attn_layer_norm");
         layer.cross_norm = load.norm(p + ".encoder_attn_layer_norm");
         layer.mlp_norm = load.norm(p + ".final_layer_norm");
-        const auto q = load.linear(p + ".self_attn.q_proj"), k = load.linear(p + ".self_attn.k_proj", false);
-        const auto v = load.linear(p + ".self_attn.v_proj"), o = load.linear(p + ".self_attn.out_proj");
-        layer.q_weight = q.weight;
-        layer.q_bias = *q.bias;
-        layer.k_weight = k.weight;
-        layer.v_weight = v.weight;
-        layer.v_bias = *v.bias;
+        std::tie(layer.qkv_weight, layer.qkv_bias) = load.packed_qkv(p + ".self_attn");
+        const auto o = load.linear(p + ".self_attn.out_proj");
         layer.out_weight = o.weight;
         layer.out_bias = *o.bias;
         layer.cross_attention = load.cross_attention(p + ".encoder_attn");

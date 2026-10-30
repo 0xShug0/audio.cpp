@@ -43,6 +43,7 @@ struct EddaAssets {
     std::vector<int32_t> suppress, begin_suppress;
     std::vector<bool> special_tokens;
     std::optional<DrafterConfig> drafter;
+    bool clean_up_tokenization_spaces = false;
 
     std::vector<int32_t> prompt(const std::string & language) const;
     std::string decode_text(const std::vector<int32_t> & tokens) const;
@@ -57,8 +58,7 @@ struct DrafterConvWeights {
 
 struct DrafterLayerWeights {
     modules::NormWeights attention_norm, cross_norm, mlp_norm;
-    core::TensorValue q_weight, k_weight, v_weight, out_weight;
-    core::TensorValue q_bias, v_bias, out_bias;
+    core::TensorValue qkv_weight, qkv_bias, out_weight, out_bias;
     modules::AttentionWeights cross_attention;
     modules::FeedForwardWeights mlp;
     DrafterConvWeights attention_conv, mlp_conv;
@@ -109,6 +109,8 @@ struct DecodeOptions {
     bool speculative = true;
     bool use_selector = true;
     int64_t block = 16;
+    int64_t num_beams = 1;
+    float length_penalty = 1.0f;
 };
 
 struct DecodeResult {
@@ -130,16 +132,19 @@ private:
     struct State;
     struct TargetGraph;
     struct DrafterGraph;
-    TargetGraph & target_graph(int64_t tokens);
+    TargetGraph & target_graph(int64_t tokens, bool beam = false);
     DrafterGraph & drafter_graph(int64_t block);
     std::vector<int32_t> select_path(const DrafterGraph & graph, int32_t anchor) const;
+    void ensure_beam_cache(int64_t rows);
+    std::vector<int32_t> beam_search(const std::vector<int32_t> & prompt, const DecodeOptions & options,
+        DecodeResult & result);
 
     const EddaAssets & assets_;
     const EddaWeights & weights_;
     core::ExecutionContext & execution_;
     audio::WhisperLogMelExtractor frontend_;
     std::unique_ptr<State> state_;
-    std::vector<std::unique_ptr<TargetGraph>> target_graphs_;
+    std::vector<std::unique_ptr<TargetGraph>> target_graphs_, beam_graphs_;
     std::vector<std::unique_ptr<DrafterGraph>> drafter_graphs_;
 };
 
