@@ -41,9 +41,63 @@
     ],
     "load": []
   },
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "Jmica/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "nemotron_transcribe_iq4_nl",
+      "display_name": "Nemotron 3.5 Transcribe 30B-A4B IQ4_NL experts",
+      "default": true,
+      "format": "gguf",
+      "precision": "iq4_nl",
+      "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "files": [
+        "nemotron-transcribe-30b-a4b-experts-IQ4_NL.gguf",
+        "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+      ]
+    },
+    {
+      "id": "nemotron_transcribe_q4_k",
+      "display_name": "Nemotron 3.5 Transcribe 30B-A4B Q4_K experts",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "files": [
+        "nemotron-transcribe-30b-a4b-experts-Q4_K.gguf",
+        "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+      ]
+    },
+    {
+      "id": "nemotron_transcribe_q3_k",
+      "display_name": "Nemotron 3.5 Transcribe 30B-A4B Q3_K experts",
+      "format": "gguf",
+      "precision": "q3_k",
+      "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "files": [
+        "nemotron-transcribe-30b-a4b-experts-Q3_K.gguf",
+        "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+      ]
+    },
+    {
+      "id": "nemotron_transcribe_q2_k",
+      "display_name": "Nemotron 3.5 Transcribe 30B-A4B Q2_K experts",
+      "format": "gguf",
+      "precision": "q2_k",
+      "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "files": [
+        "nemotron-transcribe-30b-a4b-experts-Q2_K.gguf",
+        "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+      ]
+    }
+  ],
   "dependencies": [],
-  "ui": {"tags": ["GGUF"], "docs": ["docs/models/nemotron_transcribe.md"]},
+  "ui": {"recommended_package": "nemotron_transcribe_iq4_nl", "tags": ["GGUF"], "docs": ["docs/models/nemotron_transcribe.md"]},
   "sources": [
     {
       "format": "gguf",

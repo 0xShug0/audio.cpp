@@ -24,6 +24,30 @@ Omit CUDA for CPU builds. On Windows, use an x64 Visual Studio developer shell
 and the `.exe` suffix. Select the destination GPU architecture when distributing
 a binary.
 
+## Download packages
+
+[Community GGUF packages](https://huggingface.co/Jmica/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF)
+are available for this experimental port. Select one decoder and download the
+shared `NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf` beside it.
+The encoder is 1,670,410,080 bytes and includes the F32 CTC timestamp head.
+
+| Routed expert profile | Decoder file | Decoder bytes |
+| --- | --- | ---: |
+| IQ4_NL | `nemotron-transcribe-30b-a4b-experts-IQ4_NL.gguf` | 20,370,389,728 |
+| Q4_K | `nemotron-transcribe-30b-a4b-experts-Q4_K.gguf` | 21,672,721,184 |
+| Q3_K | `nemotron-transcribe-30b-a4b-experts-Q3_K.gguf` | 17,294,261,024 |
+| Q2_K | `nemotron-transcribe-30b-a4b-experts-Q2_K.gguf` | 13,946,026,784 |
+
+These labels describe the routed experts. All four packages use Q8_0 dense
+decoder linears and preserve other BF16/F32 source types. The encoder stays
+floating-point. File size is not peak runtime memory. Quantization changes
+predictions; the number of bits does not establish an accuracy ranking.
+
+The model-manager entries download the decoder and its shared encoder. Pass the
+chosen decoder file as the model path, rather than the directory containing
+multiple GGUFs. Specs, configs, tokenizer and license notices are embedded.
+The repository also contains readable licenses and a per-tensor format inventory.
+
 ## Prepare weights
 
 Use the full BF16 checkpoint, not the separately packed NVFP4 release. The initial
@@ -82,7 +106,7 @@ The package is two GGUFs in one directory. Pass the decoder to audio.cpp; it
 names its encoder sibling. The decoder embeds its v1 spec, configs, tokenizer
 and notices. The encoder includes its CTC tokenizer. Checkpoint IDs must match,
 and packaging checks source identity, config and tokenizer semantics. Keep the
-encoder filename unchanged. No downloadable package is advertised yet.
+encoder filename unchanged.
 
 ### Q4_K, Q3_K and Q2_K expert profiles
 
@@ -267,6 +291,16 @@ These results do not establish hour-long accuracy. Full-model Metal and Vulkan
 execution, broad multilingual accuracy and actual hour-long audio remain untested.
 See the [validation record](nemotron_transcribe_validation.md) for pinned inputs,
 settings, commands and observed outputs.
+
+All four downloadable profiles also passed CUDA task checks on the synthetic
+fixtures, including English/Japanese transcription, translation, audio Q&A,
+language identification, speaker-tagged dialogue, silence, token-limit reporting
+and repeated requests. The K converter's six self-generated tests passed with
+the pristine pinned quantizer, and the C++ padding test checks floating-point
+parity. These checks establish the exercised routes, not broad accuracy.
+CTC can attach a later turn's leading word to earlier speaker activity even when
+the transcript is complete. Treat precise word times and speaker boundaries as
+experimental.
 
 A follow-up CPU server audit passed 24 HTTP checks, including malformed requests,
 multipart upload, 48 kHz stereo input and unload/reload. Focused safety tests also
