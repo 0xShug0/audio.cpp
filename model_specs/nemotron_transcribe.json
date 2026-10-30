@@ -45,7 +45,7 @@
     "download": {
       "kind": "huggingface_snapshot",
       "repo": "Jmica/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
-      "revision": "main",
+      "revision": "5993355e4d41dc54d3c27a3859f39193757c5a64",
       "gated": false
     }
   },
