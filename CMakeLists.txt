@@ -3646,6 +3646,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         set_tests_properties(cuda_rope_rows_test PROPERTIES SKIP_RETURN_CODE 77)
         # This probe calls an internal CUDA symbol, not the backend registry API.
         if (NOT GGML_BACKEND_DL)
+            add_engine_unittest(cuda_flash_partial_tile_test tests/unittests/test_cuda_flash_partial_tile.cpp)
+            add_test(NAME cuda_flash_partial_tile_test COMMAND cuda_flash_partial_tile_test)
+            set_tests_properties(cuda_flash_partial_tile_test PROPERTIES SKIP_RETURN_CODE 77)
             add_engine_unittest(cuda_head_convert_test tests/unittests/test_cuda_head_convert.cpp)
             target_link_libraries(cuda_head_convert_test PRIVATE CUDA::cudart_static)
             add_test(NAME cuda_head_convert_test COMMAND cuda_head_convert_test)
