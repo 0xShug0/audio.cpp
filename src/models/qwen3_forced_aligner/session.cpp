@@ -241,7 +241,9 @@ runtime::TaskResult Qwen3ForcedAlignerSession::run_single(const runtime::TaskReq
     auto timestamps = processor_.parse_timestamps(
         align_prompt.words,
         timestamp_ids,
-        assets_->config.sample_rate,
+        // Timestamps are milliseconds of real audio time; convert them into the
+        // uploaded audio's sample domain, not the frontend's 16 kHz frame.
+        request.audio_input->sample_rate,
         audio_frames,
         request_clamp_timestamps_to_audio(request));
     const auto postprocess_end = Clock::now();
