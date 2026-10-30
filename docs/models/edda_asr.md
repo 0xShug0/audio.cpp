@@ -150,6 +150,7 @@ test clips by file name. References come from PyTorch FP32 on the CPU: syv.ai's
 | NST, 5 clips, HIP F16, speculative | 5/5 identical to the reference |
 | NST, 5 clips, F16 GGUF, Q8_0 GGUF, Q8_0 decoder with F16 encoder, HIP | 5/5 identical |
 | NST, 5 clips, HIP F16, 5-beam search | 5/5 identical to Transformers beam search |
+| FLEURS, the 10 clips where 5-beam output differs from greedy, HIP F16 | 10/10 identical to Transformers beam search |
 | NST, 1 clip, CPU backend | Identical |
 | FLEURS, 60 clips, HIP F16, speculative | 59/60 identical to the reference |
 | FLEURS, 60 clips, HIP F16, greedy | 59/60 identical to the reference |
