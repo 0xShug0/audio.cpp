@@ -377,7 +377,7 @@ std::string resolve_instruct(const std::string & instruct, bool use_zh) {
     }
 
     std::vector<std::string> raw_items;
-    std::regex separator(R"(\s*[,，]\s*)");
+    std::regex separator(R"(\s*(?:,|\xEF\xBC\x8C)\s*)");
     std::sregex_token_iterator begin(trimmed.begin(), trimmed.end(), separator, -1);
     std::sregex_token_iterator end;
     for (auto it = begin; it != end; ++it) {
