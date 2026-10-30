@@ -34,14 +34,16 @@ __global__ void gfx1151_v1_copy_rows(const char * src, char * dst, int64_t width
 
 bool ggml_hip_gfx1151_v1_cpy(const ggml_tensor * src, ggml_tensor * dst, hipStream_t stream) {
     if (src->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32 ||
-        src->ne[0] != dst->ne[0] || src->ne[0] < 64 || ggml_nelements(src) == 0 ||
+        src->ne[0] != dst->ne[0] || ggml_nelements(src) == 0 ||
         src->ne[0] % 4 != 0 ||
         src->nb[0] != sizeof(float) || dst->nb[0] != sizeof(float)) {
         return false;
     }
     for (const auto * tensor : {src, static_cast<const ggml_tensor *>(dst)}) {
         if (reinterpret_cast<uintptr_t>(tensor->data) % 16 != 0 ||
-            tensor->nb[1] % 16 != 0 || tensor->nb[2] % 16 != 0 || tensor->nb[3] % 16 != 0) {
+            (tensor->ne[1] > 1 && tensor->nb[1] % 16 != 0) ||
+            (tensor->ne[2] > 1 && tensor->nb[2] % 16 != 0) ||
+            (tensor->ne[3] > 1 && tensor->nb[3] % 16 != 0)) {
             return false;
         }
     }

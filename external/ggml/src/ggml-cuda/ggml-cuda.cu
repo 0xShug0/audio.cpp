@@ -2762,10 +2762,16 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
 #ifdef GGML_USE_HIP
     if (ctx.impl && ctx.impl->mul_mat) {
         const auto buft = ggml_backend_cuda_buffer_type(ctx.device);
-        if (ggml_backend_buffer_get_type(src0->buffer) == buft &&
+        const int cc = ggml_cuda_info().devices[ctx.device].cc;
+        const bool use_native = (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16) &&
+            src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 &&
+            (ggml_cuda_should_use_mmvf(src0->type, cc, src0->ne, src0->nb, src1->ne[1]) ||
+             ggml_cuda_should_use_mmf(src0->type, cc, ggml_cuda_info().devices[ctx.device].warp_size,
+                                      src0->ne, src0->nb, src1->ne[1], false));
+        if (!use_native && ggml_backend_buffer_get_type(src0->buffer) == buft &&
             ggml_backend_buffer_get_type(src1->buffer) == buft &&
             ggml_backend_buffer_get_type(dst->buffer) == buft &&
-            ctx.impl->mul_mat(src0, src1, dst, ctx.stream(), ggml_cuda_info().devices[ctx.device].cc)) {
+            ctx.impl->mul_mat(src0, src1, dst, ctx.stream(), cc)) {
             return;
         }
     }

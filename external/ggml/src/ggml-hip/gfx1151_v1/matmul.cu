@@ -118,16 +118,18 @@ bool ggml_hip_gfx1151_v1_mul_mat_typed(const ggml_tensor * a, const ggml_tensor 
     const int64_t m = a->ne[1], n = b->ne[1], k = a->ne[0];
     if (m < 1 || m > INT_MAX || n < 1 || n > 65535 * 64 || k < 32 || k > INT_MAX ||
         k % 32 != 0 || a->nb[0] != ggml_type_size(a->type) ||
-        a->nb[1] < ggml_row_size(a->type, k) ||
-        b->nb[1] < size_t(k) * sizeof(float) || b->nb[1] % sizeof(float) != 0) {
+        (m > 1 && a->nb[1] < ggml_row_size(a->type, k)) ||
+        (n > 1 && (b->nb[1] < size_t(k) * sizeof(float) || b->nb[1] % sizeof(float) != 0))) {
         return false;
     }
     if (ggml_get_op_params_i32(out, 0) == GGML_PREC_F32 ||
         reinterpret_cast<std::uintptr_t>(a->data) % alignof(float) != 0 ||
-        a->nb[1] % sizeof(float) != 0 ||
+        (m > 1 && a->nb[1] % sizeof(float) != 0) ||
         b->ne[2] > 65535 || b->ne[3] > 65535 / b->ne[2] ||
-        (b->ne[2] > 1 && (a->nb[2] % alignof(float) || b->nb[2] % sizeof(float))) ||
-        (b->ne[3] > 1 && (a->nb[3] % alignof(float) || b->nb[3] % sizeof(float)))) {
+        (a->ne[2] > 1 && a->nb[2] % alignof(float)) ||
+        (b->ne[2] > 1 && b->nb[2] % sizeof(float)) ||
+        (a->ne[3] > 1 && a->nb[3] % alignof(float)) ||
+        (b->ne[3] > 1 && b->nb[3] % sizeof(float))) {
         return false;
     }
     const auto dispatch = [&](auto batched_tag) {

@@ -7041,11 +7041,14 @@ struct test_generic_op : public test_case {
 
     double max_nmse_err() override {
         switch (op) {
+        case GGML_OP_CONT:
+            return 0.0;
+        case GGML_OP_IM2COL:
+            return type == GGML_TYPE_F32 ? 0.0 : 5e-4;
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
         case GGML_OP_OUT_PROD:
         case GGML_OP_CONV_TRANSPOSE_2D:
-        case GGML_OP_IM2COL:
         case GGML_OP_CONV_2D:
         case GGML_OP_CONV_3D:
         case GGML_OP_SET_ROWS:
@@ -7067,6 +7070,7 @@ struct test_generic_op : public test_case {
     }
 
     void initialize_tensors(ggml_context * ctx) override {
+        test_case::initialize_tensors(ctx);
         ggml_tensor * out = ggml_get_tensor(ctx, "out");
 
         std::random_device rd;

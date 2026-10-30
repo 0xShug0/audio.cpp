@@ -197,14 +197,16 @@ bool ggml_hip_gfx1151_v1_mul_mat(const ggml_tensor * a, const ggml_tensor * b,
     }
     const int64_t m = a->ne[1], n = b->ne[1], k = a->ne[0];
     if (b->ne[2] > 65535 || b->ne[3] > 65535 / b->ne[2] ||
-        (b->ne[2] > 1 && (a->nb[2] % sizeof(float) || b->nb[2] % sizeof(float))) ||
-        (b->ne[3] > 1 && (a->nb[3] % sizeof(float) || b->nb[3] % sizeof(float)))) {
+        (a->ne[2] > 1 && a->nb[2] % sizeof(float)) ||
+        (b->ne[2] > 1 && b->nb[2] % sizeof(float)) ||
+        (a->ne[3] > 1 && a->nb[3] % sizeof(float)) ||
+        (b->ne[3] > 1 && b->nb[3] % sizeof(float))) {
         return false;
     }
     const int64_t batch = b->ne[2] * b->ne[3];
     if (m < 1 || n < 1 || k < 1 || m > INT_MAX || n > 65535 * 64 || k > INT_MAX ||
-        a->nb[1] < size_t(k) * sizeof(float) || b->nb[1] < size_t(k) * sizeof(float) ||
-        a->nb[1] % sizeof(float) || b->nb[1] % sizeof(float)) {
+        (m > 1 && (a->nb[1] < size_t(k) * sizeof(float) || a->nb[1] % sizeof(float))) ||
+        (n > 1 && (b->nb[1] < size_t(k) * sizeof(float) || b->nb[1] % sizeof(float)))) {
         return false;
     }
     const uint3 r2 = init_fastdiv_values(b->ne[2] / a->ne[2]);
@@ -215,10 +217,12 @@ bool ggml_hip_gfx1151_v1_mul_mat(const ggml_tensor * a, const ggml_tensor * b,
         ggml_get_op_params_i32(out, 1) == GGML_MUL_MAT_LOWERING_DEFAULT &&
         reinterpret_cast<std::uintptr_t>(a->data) % 16 == 0 &&
         reinterpret_cast<std::uintptr_t>(b->data) % 16 == 0 &&
-        (a->nb[1] / sizeof(float)) % 4 == 0 && (b->nb[1] / sizeof(float)) % 4 == 0 &&
+        (m == 1 || a->nb[1] % 16 == 0) && (n == 1 || b->nb[1] % 16 == 0) &&
         k % 32 == 0 &&
-        (batch == 1 || (a->nb[2] % 16 == 0 && a->nb[3] % 16 == 0 &&
-                        b->nb[2] % 16 == 0 && b->nb[3] % 16 == 0))) {
+        (a->ne[2] == 1 || a->nb[2] % 16 == 0) &&
+        (a->ne[3] == 1 || a->nb[3] % 16 == 0) &&
+        (b->ne[2] == 1 || b->nb[2] % 16 == 0) &&
+        (b->ne[3] == 1 || b->nb[3] % 16 == 0)) {
         const auto launch = [&](auto batched_tag) {
             constexpr bool batched = decltype(batched_tag)::value;
             hip_gfx1151_v1_sgemm_bf16_aligned<batched><<<dim3((m + 127) / 128, wide_cols, batch), dim3(32, 8), 0, stream>>>(
