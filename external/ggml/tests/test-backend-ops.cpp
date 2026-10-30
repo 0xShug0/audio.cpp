@@ -9509,6 +9509,15 @@ struct test_gfx1151_v1_mul_mat_precision : public test_mul_mat {
 static std::vector<std::unique_ptr<test_case>> make_test_cases_gfx1151_v1() {
     std::vector<std::unique_ptr<test_case>> cases;
     const std::array<int64_t, 2> one = {1, 1};
+    for (int64_t queries : {1, 2}) {
+        for (const auto & shape : std::vector<std::array<int64_t, 2>>{
+                {1536, 1024}, {1024, 1024}, {16384, 1024}, {1024, 8192}, {67, 96}}) {
+            cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32,
+                shape[0], queries, shape[1], one, one));
+        }
+    }
+    cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 67, 1, 96,
+        one, one, {0, 1, 2, 3}, 128));
     for (bool strict : {false, true}) {
         for (const auto & shape : std::vector<std::array<int64_t, 3>>{
                 {63, 127, 255}, {128, 768, 256}, {128, 768, 5461}, {128, 768, 5462},

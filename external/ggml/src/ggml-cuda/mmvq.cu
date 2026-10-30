@@ -4,6 +4,9 @@
 #include "vecdotq.cuh"
 
 #include <cstdint>
+#ifdef GGML_USE_HIP
+#include "../ggml-hip/impl.cuh"
+#endif
 
 typedef float (*vec_dot_q_cuda_t)(const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs);
 
@@ -1118,6 +1121,13 @@ void ggml_cuda_mul_mat_vec_q(
         const int64_t s13 = src1->nb[3] / ts_src1;
         quantize_row_q8_1_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded, ne11, ne12, ne13, stream);
     }
+
+#ifdef GGML_USE_HIP
+    if (ctx.impl && ctx.impl->mmvq &&
+        ctx.impl->mmvq(src0, src1, ids, src1_q8_1.get(), fusion_local, dst, stream)) {
+        return;
+    }
+#endif
 
     const int64_t s01 = src0->nb[1] / ts_src0;
     const int64_t s11 = ne10_padded / QK8_1;

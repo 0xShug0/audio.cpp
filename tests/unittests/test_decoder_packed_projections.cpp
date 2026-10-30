@@ -4,6 +4,9 @@
 #include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
 #include "engine/framework/modules/optimizations/fast_projection_modules.h"
+#include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
+#include "engine/framework/io/safetensors.h"
 
 #include <cmath>
 #include <initializer_list>
@@ -14,6 +17,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <cstring>
+#include <cstdint>
 
 namespace {
 
@@ -619,6 +624,130 @@ void test_higgs_decode_graph_exposes_cuda_fast_paths() {
     }
 }
 
+
+void run_ar_depth_probe(const std::string & impl, int batch, const std::string & output) {
+    using namespace engine;
+    core::BackendConfig backend_config{core::BackendType::Hip, 0, 8};
+    backend_config.impl = impl;
+    core::ExecutionContext execution(backend_config);
+    core::BackendWeightStore store(execution.backend(), execution.backend_type(), "ar_probe.weights", 1024 * 1024);
+    uint32_t rng = 1234;
+    auto matrix = [&](int64_t rows, int64_t cols) {
+        std::vector<float> values(static_cast<size_t>(rows * cols));
+        for (float & value : values) {
+            rng = rng * 1664525U + 1013904223U;
+            value = (float(rng >> 16) / 32768.0F - 1.0F) * 0.02F;
+        }
+        std::vector<std::byte> bytes(ggml_row_size(GGML_TYPE_Q8_0, cols) * rows);
+        const size_t written = ggml_quantize_chunk(GGML_TYPE_Q8_0, values.data(), bytes.data(), 0, rows, cols, nullptr);
+        if (written != bytes.size()) {
+            throw std::runtime_error("AR fixture quantization size mismatch");
+        }
+        return store.make_tensor(core::TensorShape::from_dims({rows, cols}), GGML_TYPE_Q8_0,
+                                 bytes.data(), bytes.size());
+    };
+    auto norm = [&]() {
+        const std::vector<float> values(1024, 1.0F);
+        return modules::NormWeights{store.make_tensor(core::TensorShape::from_dims({1024}),
+            GGML_TYPE_F32, values.data(), values.size() * sizeof(float)), std::nullopt};
+    };
+    const std::vector<float> rope_factors = {
+        1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F,
+        1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F,
+        1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F,
+        1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.000000000F, 1.234937034F, 1.651329246F, 2.276659536F,
+        3.292262103F, 5.171595583F, 9.666728979F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F,
+        32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F,
+        32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F,
+        32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F, 32.000000000F,
+    };
+    const auto rope = store.make_tensor(core::TensorShape::from_dims({64}), GGML_TYPE_F32,
+        rope_factors.data(), rope_factors.size() * sizeof(float));
+    modules::CausalDecoderRuntimeWeights weights;
+    for (int i = 0; i < 12; ++i) {
+        modules::DecoderLayerWeights layer;
+        layer.input_norm = norm();
+        layer.post_norm = norm();
+        layer.rope_frequency_factors = rope;
+        layer.self_attention.qkv_weight = matrix(1536, 1024);
+        layer.self_attention.out_weight = matrix(1024, 1024);
+        layer.mlp.gate_up_proj = modules::LinearWeights{matrix(16384, 1024), std::nullopt};
+        layer.mlp.down_proj = {matrix(1024, 8192), std::nullopt};
+        weights.stack.layers.push_back(std::move(layer));
+    }
+    weights.final_norm = norm();
+    store.upload();
+
+    modules::CausalDecoderRuntimeConfig config;
+    config.trace_name = "ar_probe.depth";
+    config.prefill_graph_arena_bytes = config.decode_graph_arena_bytes = 16 * 1024 * 1024;
+    config.output_mode = modules::CausalDecoderOutputMode::Hidden;
+    config.return_hidden = true;
+    config.decoder.static_cache_type = GGML_TYPE_BF16;
+    config.decoder.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
+    auto & stack = config.decoder.stack;
+    stack.hidden_size = 1024;
+    stack.intermediate_size = 8192;
+    stack.layers = 12;
+    stack.num_attention_heads = 8;
+    stack.num_key_value_heads = 2;
+    stack.head_dim = 128;
+    stack.rms_norm_eps = 1.0e-5F;
+    stack.rope_theta = 500000.0F;
+    stack.rope_type = GGML_ROPE_TYPE_NEOX;
+    stack.use_qk_norm = false;
+    stack.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
+    stack.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
+    stack.attention_precision = GGML_PREC_F32;
+    stack.projection_precision = GGML_PREC_DEFAULT;
+    stack.runtime.attention.allow_flash_attention = true;
+    stack.runtime.attention.prefill_mode = stack.runtime.attention.static_mode =
+        modules::DecoderAttentionMode::FlashGroupedViewKV;
+    stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    auto & cast = stack.activation_cast;
+    cast.enabled = true;
+    cast.type = GGML_TYPE_BF16;
+    cast.fused_round = true;
+    cast.after_input_norm = cast.after_qkv_projection = cast.after_qk_norm = true;
+    cast.after_rope = cast.after_static_cache_update = cast.after_attention = true;
+    cast.after_attention_output = cast.after_residual = cast.after_ffn_norm = true;
+    cast.after_mlp_projection = cast.after_mlp_silu = cast.after_mlp_mul = cast.after_output = true;
+    modules::CausalDecoderRuntime runtime(execution, config, std::move(weights));
+    const auto prefix = patterned(static_cast<size_t>(batch * 2 * 1024), 0.1F, 0.2F);
+    std::vector<std::vector<float>> inputs;
+    for (int i = 0; i < 14; ++i) {
+        inputs.push_back(patterned(static_cast<size_t>(batch * 1024), float(i) * 0.3F, 0.2F));
+    }
+    std::vector<float> reference;
+    for (int repeat = 0; repeat < 21; ++repeat) {
+        const auto prefill_start = std::chrono::steady_clock::now();
+        auto prefill = runtime.prefill_embeddings_batched(prefix, batch, 2);
+        runtime.start_decode_embeddings_batched(prefill.state, 17);
+        const double prefill_ms = debug::elapsed_ms(prefill_start);
+        std::vector<float> values;
+        const auto decode_start = std::chrono::steady_clock::now();
+        for (const auto & input : inputs) {
+            auto step = runtime.decode_embeddings_batched(input, batch);
+            values.insert(values.end(), step.hidden.begin(), step.hidden.end());
+        }
+        const double decode_ms = debug::elapsed_ms(decode_start);
+        if (repeat == 0) {
+            reference = std::move(values);
+        } else {
+            require_allclose(values, reference, 0.0F, "AR probe repeat");
+            debug::timing_log_scalar("ar_probe.prefill_ms", prefill_ms);
+            debug::timing_log_scalar("ar_probe.decode_ms", decode_ms);
+            debug::timing_log_scalar("ar_probe.frame_ms", prefill_ms + decode_ms);
+        }
+    }
+    debug::trace_log_f32("ar_probe.hidden", {14, batch, 1024}, reference);
+    io::SafeTensorWriteEntry entry{"hidden", "F32", {14, batch, 1024}, {}};
+    entry.data.resize(reference.size() * sizeof(float));
+    std::memcpy(entry.data.data(), reference.data(), entry.data.size());
+    io::write_safetensors_file(output, {entry});
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -626,9 +755,20 @@ int main(int argc, char ** argv) {
     try {
         bool vulkan = false;
         bool cuda = false;
+        bool ar_probe = false;
+        int ar_batch = 1;
+        std::string ar_impl = "gfx1151_v1", ar_output;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
-            if (arg == "--vulkan") {
+            if (arg == "--ar-probe") {
+                ar_probe = true;
+            } else if (arg == "--impl" && i + 1 < argc) {
+                ar_impl = argv[++i];
+            } else if (arg == "--batch" && i + 1 < argc) {
+                ar_batch = std::stoi(argv[++i]);
+            } else if (arg == "--output" && i + 1 < argc) {
+                ar_output = argv[++i];
+            } else if (arg == "--vulkan") {
                 vulkan = true;
             } else if (arg == "--cuda") {
                 cuda = true;
@@ -637,6 +777,14 @@ int main(int argc, char ** argv) {
             } else {
                 throw std::runtime_error("Unknown argument: " + arg);
             }
+        }
+        if (ar_probe) {
+            if ((ar_batch != 1 && ar_batch != 2) || ar_output.empty()) {
+                throw std::runtime_error("AR probe requires batch 1/2 and an output file");
+            }
+            run_ar_depth_probe(ar_impl, ar_batch, ar_output);
+            engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
+            return 0;
         }
         test_packed_qkv_and_gate_up_match_separate_projections();
         for (const bool batched : {false, true}) {
