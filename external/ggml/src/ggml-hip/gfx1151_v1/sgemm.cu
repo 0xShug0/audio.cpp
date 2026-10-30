@@ -162,9 +162,10 @@ __global__ __launch_bounds__(256) void hip_gfx1151_v1_sgemm_bf16_aligned(
 } // namespace
 
 bool ggml_hip_gfx1151_v1_mul_mat(const ggml_tensor * a, const ggml_tensor * b,
-                          ggml_tensor * out, hipStream_t stream) {
+                          ggml_tensor * out, hipStream_t stream, int cc) {
+    const bool wmma = GGML_CUDA_CC_IS_RDNA3(cc) || GGML_CUDA_CC_IS_RDNA4(cc);
     if (a->type != GGML_TYPE_F32) {
-        return ggml_hip_gfx1151_v1_mul_mat_typed(a, b, out, stream);
+        return wmma && ggml_hip_gfx1151_v1_mul_mat_typed(a, b, out, stream);
     }
     if (out->op != GGML_OP_MUL_MAT ||
         ggml_get_op_params_i32(out, 1) != GGML_MUL_MAT_LOWERING_DEFAULT) {
@@ -187,7 +188,7 @@ bool ggml_hip_gfx1151_v1_mul_mat(const ggml_tensor * a, const ggml_tensor * b,
         return false;
     }
     const int64_t wide_cols = (n + 127) / 128;
-    if (out->op == GGML_OP_MUL_MAT &&
+    if (wmma && out->op == GGML_OP_MUL_MAT &&
         ggml_get_op_params_i32(out, 0) == GGML_PREC_DEFAULT &&
         ggml_get_op_params_i32(out, 1) == GGML_MUL_MAT_LOWERING_DEFAULT &&
         reinterpret_cast<std::uintptr_t>(a->data) % 16 == 0 &&
