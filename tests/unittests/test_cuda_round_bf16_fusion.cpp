@@ -1,7 +1,6 @@
 #include <ggml.h>
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
-#include "engine/framework/core/backend.h"
 
 #include <cmath>
 #include <cstring>
@@ -16,7 +15,7 @@
 // disables the fusion, which gives the reference result on the same backend.
 
 namespace {
-enum class Pattern { RmsNormMul, Add, SwiGlu };
+enum class Pattern { RmsNormMul, Add, SwiGlu, RmsNormRoundMul, RmsNormRoundSquare, RmsNormRoundProduct, RmsNormRoundBroadcast };
 
 std::vector<float> values(size_t count, float scale, float phase, bool exceptional) {
     std::vector<float> out(count);
@@ -50,11 +49,19 @@ std::vector<float> run(ggml_backend_t backend, Pattern pattern, int width, int r
         data.push_back(values(static_cast<size_t>(ggml_nelements(t)), scale, phase, exceptional));
         return t;
     };
-    if (pattern == Pattern::RmsNormMul) {
+    if (pattern == Pattern::RmsNormMul || pattern == Pattern::RmsNormRoundMul ||
+        pattern == Pattern::RmsNormRoundSquare || pattern == Pattern::RmsNormRoundProduct ||
+        pattern == Pattern::RmsNormRoundBroadcast) {
         // Keep the normalized rows finite so the row scale itself is meaningful.
         auto * x = input(ggml_new_tensor_2d(ctx, GGML_TYPE_F32, width, rows), 4.0f, 0.1f, false);
-        auto * w = input(ggml_new_tensor_1d(ctx, GGML_TYPE_F32, width), 1.5f, 0.7f);
-        auto * mul = ggml_mul(ctx, ggml_rms_norm(ctx, x, 1e-6f), w);
+        auto * norm = ggml_rms_norm(ctx, x, 1e-6f);
+        auto * rounded = pattern == Pattern::RmsNormMul ? norm : ggml_round_bf16(ctx, norm);
+        auto * w = pattern == Pattern::RmsNormRoundSquare ? rounded :
+                   pattern == Pattern::RmsNormRoundProduct ? norm :
+                   input(ggml_new_tensor_2d(ctx, GGML_TYPE_F32, width,
+                         pattern == Pattern::RmsNormRoundBroadcast ? 2 * rows : 1), 1.5f, 0.7f);
+        auto * mul = pattern == Pattern::RmsNormRoundBroadcast ? ggml_mul(ctx, w, rounded) :
+                                                               ggml_mul(ctx, rounded, w);
         if (reference) ggml_set_output(mul);
         output = ggml_round_bf16(ctx, mul);
     } else if (pattern == Pattern::Add) {
@@ -102,9 +109,9 @@ std::vector<float> run(ggml_backend_t backend, Pattern pattern, int width, int r
 }
 }
 
-int main() {
-    engine::core::ensure_backends_loaded();
-    auto reg = ggml_backend_reg_by_name("CUDA");
+int main(int argc, char ** argv) {
+    ggml_backend_load_all();
+    auto reg = ggml_backend_reg_by_name(argc > 1 ? argv[1] : "CUDA");
     if (!reg || ggml_backend_reg_dev_count(reg) == 0) return 77;
     auto backend = ggml_backend_dev_init(ggml_backend_reg_dev_get(reg, 0), nullptr);
     if (!backend) return 1;
@@ -117,11 +124,13 @@ int main() {
         return 1;
     }
     set_fusion(backend, true);
-    const char * names[] = {"rms_norm*w", "add", "swiglu"};
+    const char * names[] = {"rms_norm*w", "add", "swiglu", "rms_norm-round*w-round",
+                           "rms_norm-round-square", "rms_norm-round-product", "rms_norm-round-broadcast"};
     try {
-        for (Pattern pattern : {Pattern::RmsNormMul, Pattern::Add, Pattern::SwiGlu}) {
-            for (int width : {1, 17, 1024, 2048, 8192}) {
-                for (int rows : {1, 4}) {
+        for (Pattern pattern : {Pattern::RmsNormMul, Pattern::Add, Pattern::SwiGlu, Pattern::RmsNormRoundMul,
+                                Pattern::RmsNormRoundSquare, Pattern::RmsNormRoundProduct, Pattern::RmsNormRoundBroadcast}) {
+            for (int width : {1, 17, 33, 96, 256, 896, 1024, 2048, 4096, 8192}) {
+                for (int rows : {1, 2, 3, 4, 6, 17}) {
                     const auto reference = run(backend, pattern, width, rows, true);
                     const auto fused = run(backend, pattern, width, rows, false);
                     for (size_t i = 0; i < reference.size(); ++i) {
@@ -136,7 +145,7 @@ int main() {
                 }
             }
         }
-        std::cout << "PASS: bf16 rounding fused into rms_norm*w, add and swiglu; odd widths, multiple rows, "
+        std::cout << "PASS: bf16 rounding chains match the unfused results; odd widths, multiple rows, "
                      "strided gate/up views, exceptional values\n";
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';

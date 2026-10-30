@@ -4260,6 +4260,14 @@ static bool ggml_cuda_safe_bias_fusion(const ggml_cgraph * graph, int i) {
 }
 #endif
 
+#if !defined(GGML_USE_MUSA)
+static bool ggml_cuda_ranges_overlap(const ggml_tensor * a, const ggml_tensor * b) {
+    const uintptr_t a0 = reinterpret_cast<uintptr_t>(a->data);
+    const uintptr_t b0 = reinterpret_cast<uintptr_t>(b->data);
+    return a0 < b0 + ggml_nbytes(b) && b0 < a0 + ggml_nbytes(a);
+}
+#endif
+
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 // bf16-reference graphs (see ggml_round_bf16) insert a ROUND_BF16 after most
 // activations, which breaks the usual fusion patterns. These helpers match the
@@ -4279,11 +4287,6 @@ static bool ggml_cuda_is_elidable(const ggml_cgraph * cgraph, int idx) {
     return (cgraph->nodes[idx]->flags & GGML_TENSOR_FLAG_COMPUTE) && ggml_node_has_n_uses(cgraph, idx, 1);
 }
 
-static bool ggml_cuda_ranges_overlap(const ggml_tensor * a, const ggml_tensor * b) {
-    const uintptr_t a0 = reinterpret_cast<uintptr_t>(a->data);
-    const uintptr_t b0 = reinterpret_cast<uintptr_t>(b->data);
-    return a0 < b0 + ggml_nbytes(b) && b0 < a0 + ggml_nbytes(a);
-}
 
 // ROUND(gate) -> SILU -> ROUND, [VIEW up], ROUND(up) -> MUL -> ROUND starting at node i.
 static bool ggml_cuda_can_fuse_swiglu_round_bf16(const ggml_cgraph * cgraph, int i) {
@@ -4402,6 +4405,38 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
         return 6;
     }
 
+#endif
+
+#ifdef GGML_USE_HIP
+    if (cuda_ctx->round_bf16_fusion && node->op == GGML_OP_RMS_NORM && i + 3 < cgraph->n_nodes) {
+        auto * rounded = cgraph->nodes[i + 1];
+        auto * mul = cgraph->nodes[i + 2];
+        auto * output = cgraph->nodes[i + 3];
+        const int nodes[] = {i, i + 1, i + 2, i + 3};
+        const ggml_op ops[] = {GGML_OP_RMS_NORM, GGML_OP_UNARY, GGML_OP_MUL, GGML_OP_UNARY};
+        const int outputs[] = {i + 3};
+        if (ggml_can_fuse_subgraph_ext(cgraph, nodes, 4, ops, outputs, 1) &&
+            ggml_get_unary_op(rounded) == GGML_UNARY_OP_ROUND_BF16 && rounded->src[0] == node &&
+            ggml_get_unary_op(output) == GGML_UNARY_OP_ROUND_BF16 && output->src[0] == mul &&
+            (mul->src[0] == rounded || mul->src[1] == rounded)) {
+            const auto * input = node->src[0];
+            const auto * weight = mul->src[mul->src[0] == rounded ? 1 : 0];
+            const bool input_overlap = ggml_cuda_ranges_overlap(output, input);
+            if (weight != node && weight != rounded &&
+                input->type == GGML_TYPE_F32 && weight->type == GGML_TYPE_F32 &&
+                node->type == GGML_TYPE_F32 && rounded->type == GGML_TYPE_F32 &&
+                mul->type == GGML_TYPE_F32 && output->type == GGML_TYPE_F32 &&
+                input->nb[0] == sizeof(float) && weight->nb[0] == sizeof(float) &&
+                ggml_is_contiguous(output) && ggml_are_same_shape(input, output) &&
+                !ggml_cuda_ranges_overlap(output, weight) &&
+                (!input_overlap || (output->data == input->data && ggml_is_contiguous(input) &&
+                                    ggml_are_same_shape(input, output))) &&
+                ggml_cuda_check_fusion_memory_ranges(cgraph, i, 4, outputs, 1)) {
+                ggml_cuda_op_rms_norm_fused(*cuda_ctx, node, mul, output, rounded);
+                return 3;
+            }
+        }
+    }
 #endif
 
     //topk-moe
@@ -5715,6 +5750,7 @@ static ggml_backend_t ggml_backend_hip_init_with_impl(
     if (backend) {
         auto * ctx = static_cast<ggml_backend_cuda_context *>(backend->context);
         ctx->impl = selected;
+        ctx->round_bf16_fusion = selected == &gfx1151_v1;
         GGML_LOG_INFO("ROCm%d: implementation=%s\n", device->device, ctx->impl->name);
     }
     return backend;

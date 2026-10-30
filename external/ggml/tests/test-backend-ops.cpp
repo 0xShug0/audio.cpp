@@ -3345,23 +3345,24 @@ struct test_rms_norm : public test_case {
     const bool inplace; // whether to do the operation inplace
 
     const bool multiply;
+    const bool round_bf16;
 
     std::string op_desc(ggml_tensor * t) override {
-        return multiply ? "RMS_NORM_MUL" : test_case::op_desc(t);
+        return round_bf16 ? "RMS_NORM_ROUND_MUL" : multiply ? "RMS_NORM_MUL" : test_case::op_desc(t);
     }
 
     bool run_whole_graph() override { return multiply; }
 
     std::string vars() override {
-        return VARS_TO_STR6(type, ne, v, eps, inplace, multiply);
+        return VARS_TO_STR7(type, ne, v, eps, inplace, multiply, round_bf16);
     }
 
     test_rms_norm(ggml_type type = GGML_TYPE_F32,
             std::array<int64_t, 4> ne = {64, 5, 4, 3},
             bool v = false,
             float eps = 1e-6f,
-            bool inplace = false, bool multiply = false)
-        : type(type), ne(ne), v(v), eps(eps), inplace(inplace), multiply(multiply) {}
+            bool inplace = false, bool multiply = false, bool round_bf16 = false)
+        : type(type), ne(ne), v(v), eps(eps), inplace(inplace), multiply(multiply), round_bf16(round_bf16) {}
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
         ggml_tensor * a = ggml_new_tensor(ctx, type, 4, ne.data());
@@ -3379,10 +3380,12 @@ struct test_rms_norm : public test_case {
         } else {
             out = ggml_rms_norm(ctx, a, eps);
         }
+        if (round_bf16) out = ggml_round_bf16(ctx, out);
         if (multiply) {
             ggml_tensor * weight = ggml_new_tensor_1d(ctx, type, a->ne[0]);
             out = ggml_mul(ctx, out, weight);
         }
+        if (round_bf16) out = ggml_round_bf16(ctx, out);
         ggml_set_name(out, "out");
 
         return out;
@@ -9518,6 +9521,33 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_gfx1151_v1() {
     }
     cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 67, 1, 96,
         one, one, {0, 1, 2, 3}, 128));
+    for (int64_t width : {17, 96, 256, 896, 1024, 1536, 2048, 4096}) {
+        for (int64_t rows : {1, 3, 6, 17}) {
+            for (int64_t channels : {1, 2}) {
+                cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {width, rows, channels, 1},
+                                                     false, 1e-6f, false, true, true));
+            }
+        }
+    }
+    for (bool strict : {false, true}) {
+        for (const auto & shape : std::vector<std::array<int64_t, 3>>{
+                {72, 72, 128}, {128, 192, 128}, {384, 640, 160},
+                {257, 449, 256}, {512, 512, 128}, {128, 813, 813}}) {
+            for (const auto & batch : std::vector<std::array<int64_t, 2>>{{16, 2}, {7, 3}}) {
+                cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(
+                    GGML_TYPE_F32, shape[0], shape[1], shape[2], strict, false, 0, batch));
+            }
+        }
+        cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(
+            GGML_TYPE_F32, 384, 640, 160, strict, true, 0, {16, 2}));
+        cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(
+            GGML_TYPE_F32, 384, 640, 160, strict, false, 176, {16, 2}));
+    }
+    cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 384, 640, 160,
+                                       std::array<int64_t, 2>{16, 2}, one,
+                                       std::array<int64_t, 4>{0, 2, 1, 3}));
+    cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 384, 640, 160,
+                                       std::array<int64_t, 2>{8, 2}, std::array<int64_t, 2>{2, 1}));
     for (bool strict : {false, true}) {
         for (const auto & shape : std::vector<std::array<int64_t, 3>>{
                 {63, 127, 255}, {128, 768, 256}, {128, 768, 5461}, {128, 768, 5462},
