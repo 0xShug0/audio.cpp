@@ -42,7 +42,12 @@ stdenv.mkDerivation (finalAttrs: {
   ]
   ++ lib.optional cudaSupport cudaPackages.cuda_nvcc
   ++ lib.optional cudaSupport autoAddDriverRunpath
-  ++ lib.optional rocmSupport rocmPackages.clr;
+  ++ lib.optional rocmSupport rocmPackages.clr
+  # ggml's HIP argsort path needs the hipcub and rocprim headers explicitly.
+  ++ lib.optionals rocmSupport [
+    rocmPackages.hipcub
+    rocmPackages.rocprim
+  ];
 
   buildInputs = [
     python-scripts
