@@ -74,7 +74,7 @@ int main(int argc, char ** argv) {
             request.generation.max_new_tokens = 256;
             qwen::Qwen3Talker talker(assets->config.talker);
             auto weights = talker.create_weights_runtime(
-                assets, backend.type, backend.device, backend.threads, arena, arena, arena,
+                assets, backend, arena, arena, arena,
                 engine::assets::TensorStorageType::Native, qwen::Qwen3TTSPerfMode::Standard);
             auto step = talker.create_step_runtime(weights, assets->config.talker.max_position_embeddings, 256);
             codes = step->generate(prompt_builder.build_prefill(request), request.generation).generated_codes;

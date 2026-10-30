@@ -441,6 +441,11 @@ computation and explicit operation lowerings take precedence.
 Weights on disk are unchanged. Audio can differ numerically from default HIP.
 Unsupported implementation/device combinations fail initialization.
 
+The name reflects its original RDNA3.5 tuning target; selection is available on
+RDNA1–4. RDNA1/2 use copy, im2col, and eligible FP32 tiled matmul kernels, while
+WMMA matmuls require RDNA3 or newer. Correctness and performance have been
+measured on gfx1151; other RDNA devices are available for testing.
+
 Selection belongs to each backend instance and is independent of model
 `perf_mode` presets. The C++ API uses `BackendConfig::impl`; the C API
 provides `audiocpp_session_create_with_impl` without changing the
