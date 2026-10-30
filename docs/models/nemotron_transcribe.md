@@ -28,9 +28,14 @@ a binary.
 
 [Community GGUF packages](https://huggingface.co/Jmica/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF)
 are available for this experimental port. Select one decoder and download the
-shared `NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf` beside it.
+shared `mmproj-NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf` beside it.
 The encoder is 1,670,410,080 bytes and includes the F32 CTC timestamp head.
 It is a required auxiliary component, not a standalone F16 version of the 30B model.
+Speech encoder weights use FP16 by default; the CTC head stays FP32. The
+`mmproj-` prefix identifies the audio encoder/projection sidecar and keeps it
+out of the Hub's standalone-model quantization selector. The updated loader
+also accepts the original native filename without the prefix, preferring it
+when both names are present. No decoder or encoder tensor data was changed.
 
 | Routed expert profile | Decoder file | Decoder bytes |
 | --- | --- | ---: |
@@ -112,7 +117,9 @@ The package is two GGUFs in one directory. Pass the decoder to audio.cpp; it
 names its encoder sibling. The decoder embeds its v1 spec, configs, tokenizer
 and notices. The encoder includes its CTC tokenizer. Checkpoint IDs must match,
 and packaging checks source identity, config and tokenizer semantics. Keep the
-encoder filename unchanged.
+rest of the encoder filename unchanged. Native conversion writes the original
+filename; the runtime accepts that name or the same basename prefixed with
+`mmproj-`, as used by the public downloads.
 
 ### Q4_K, Q3_K and Q2_K expert profiles
 

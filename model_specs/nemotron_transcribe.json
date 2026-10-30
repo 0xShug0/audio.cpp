@@ -45,7 +45,7 @@
     "download": {
       "kind": "huggingface_snapshot",
       "repo": "Jmica/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
-      "revision": "a39dbb026ce0594e55cbb3121fffa20be0b0ff82",
+      "revision": "304032f14e1e9e4042f5491d2d0194c044710bb7",
       "gated": false
     }
   },
@@ -59,7 +59,7 @@
       "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
       "files": [
         "nemotron-transcribe-30b-a4b-experts-IQ4_NL.gguf",
-        "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+        "mmproj-NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
       ]
     },
     {
@@ -70,7 +70,7 @@
       "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
       "files": [
         "nemotron-transcribe-30b-a4b-experts-Q4_K_S.gguf",
-        "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+        "mmproj-NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
       ]
     },
     {
@@ -81,7 +81,7 @@
       "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
       "files": [
         "nemotron-transcribe-30b-a4b-experts-Q3_K_S.gguf",
-        "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+        "mmproj-NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
       ]
     },
     {
@@ -92,7 +92,7 @@
       "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
       "files": [
         "nemotron-transcribe-30b-a4b-experts-Q2_K.gguf",
-        "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+        "mmproj-NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
       ]
     }
   ],
