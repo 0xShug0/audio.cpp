@@ -1,6 +1,8 @@
 #include "engine/community_models/edda_asr/model.h"
 
+#include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/cross_attention.h"
+#include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -90,6 +92,39 @@ TensorValue cached_attention(core::ModuleBuildContext & ctx, const TensorValue &
     return wrap(ggml_reshape_3d(ctx.ggml, out, d, t, 1), {1, t, d});
 }
 
+// Whisper encoder with packed QKV projections and flash attention over F16 keys and values.
+TensorValue build_encoder(core::ModuleBuildContext & ctx, const TensorValue & features, const EncoderWeights & w,
+    const modules::WhisperEmbeddingConfig & config) {
+    const int64_t d = config.n_audio_state, h = config.n_audio_head, hd = d / h;
+    auto x = modules::Conv1dModule({config.n_mels, d, 3, 1, 1, 1, true}).build(ctx, features, w.conv1);
+    x = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx, x);
+    x = modules::Conv1dModule({d, d, 3, 2, 1, 1, true}).build(ctx, x, w.conv2);
+    x = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx, x);
+    const int64_t frames = x.shape.dims[2];
+    x = wrap(ggml_add(ctx.ggml, ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml, ggml_reshape_2d(ctx.ggml, x.tensor, frames, d))),
+        w.positions.tensor), {1, frames, d});
+    const modules::LayerNormModule norm({d, config.layer_norm_eps, true, true});
+    const modules::FeedForwardModule ffn({d, 4 * d, true, modules::GeluApproximation::ExactErf});
+    const float scale = 1.0f / std::sqrt(static_cast<float>(hd));
+    for (const auto & layer : w.layers) {
+        auto qkv = linear(ctx, norm.build(ctx, x, layer.attention_norm), layer.qkv_weight, layer.qkv_bias);
+        const auto lane = [&](int64_t index, ggml_type type) {
+            auto * view = ggml_view_2d(ctx.ggml, qkv.tensor, d, frames, qkv.tensor->nb[1],
+                static_cast<size_t>(index * d) * ggml_element_size(qkv.tensor));
+            auto * heads = type == GGML_TYPE_F32 ? ggml_cont(ctx.ggml, view) : ggml_cast(ctx.ggml, view, type);
+            return ggml_permute(ctx.ggml, ggml_reshape_4d(ctx.ggml, heads, hd, h, frames, 1), 0, 2, 1, 3);
+        };
+        auto * attended = ggml_flash_attn_ext(ctx.ggml, lane(0, GGML_TYPE_F32), lane(1, GGML_TYPE_F16),
+            lane(2, GGML_TYPE_F16), nullptr, scale, 0.0f, 0.0f);
+        ggml_flash_attn_ext_set_prec(attended, GGML_PREC_F32);
+        auto out = linear(ctx, wrap(ggml_reshape_3d(ctx.ggml, attended, d, frames, 1), {1, frames, d}),
+            layer.out_weight, layer.out_bias);
+        x = modules::AddModule().build(ctx, x, out);
+        x = modules::AddModule().build(ctx, x, ffn.build(ctx, norm.build(ctx, x, layer.mlp_norm), layer.mlp));
+    }
+    return norm.build(ctx, x, w.final_norm);
+}
+
 }  // namespace
 
 struct EddaRuntime::State {
@@ -173,7 +208,7 @@ EddaRuntime::EddaRuntime(const EddaAssets & assets, const EddaWeights & weights,
     auto & g = s.encoder;
     auto ectx = g.build_context("edda.encoder");
     ggml_set_input(s.features.tensor);
-    const auto encoded = modules::WhisperEmbeddingModule(assets.encoder).build(ectx, s.features, weights.encoder);
+    const auto encoded = build_encoder(ectx, s.features, weights.encoder, assets.encoder);
     modules::AttentionConfig cross_config{d, h, true};
     cross_config.use_packed_kv = true;
     const auto project = [&](const modules::AttentionWeights & w, const modules::CrossAttentionKeyValue & dst) {
@@ -520,7 +555,9 @@ DecodeResult EddaRuntime::transcribe(const std::vector<float> & samples, const s
             core::write_tensor_i32(dg.context_slot, context_slots);
             core::write_tensor_i32(dg.block_slot, block_slots);
             core::write_tensor_f16(dg.mask, mask);
+            const auto drafting = clock();
             dg.graph.compute();
+            result.drafter_ms += std::chrono::duration<double, std::milli>(clock() - drafting).count();
             if (options.use_selector) {
                 draft = select_path(dg, seq.back());
             } else {

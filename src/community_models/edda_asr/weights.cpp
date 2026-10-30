@@ -6,6 +6,7 @@
 #include "ggml.h"
 
 #include <stdexcept>
+#include <tuple>
 
 namespace engine::community_models::edda_asr {
 namespace {
@@ -48,6 +49,18 @@ struct Loader {
         w.out_weight = o.weight;
         w.out_bias = o.bias;
         return w;
+    }
+    // Packed [Q; K; V] self-attention projections with a zero key-bias lane.
+    std::pair<core::TensorValue, core::TensorValue> packed_qkv(const std::string & prefix) const {
+        std::vector<modules::PackedLinearSource> qkv{{prefix + ".q_proj.weight", std::nullopt, d},
+            {prefix + ".k_proj.weight", std::nullopt, d}, {prefix + ".v_proj.weight", std::nullopt, d}};
+        auto weight = modules::PackedLinearWeightsBuilder({d, qkv, false}).build(store, source, type).weight;
+        std::vector<float> biases(static_cast<size_t>(3 * d), 0.0f);
+        const auto q = source.require_f32_tensor(prefix + ".q_proj.bias", {d});
+        const auto v = source.require_f32_tensor(prefix + ".v_proj.bias", {d});
+        std::copy(q.values.begin(), q.values.end(), biases.begin());
+        std::copy(v.values.begin(), v.values.end(), biases.begin() + 2 * d);
+        return {weight, store.make_f32(core::TensorShape::from_dims({3 * d}), std::move(biases))};
     }
     modules::FeedForwardWeights mlp(const std::string & prefix) const {
         const auto fc1 = linear(prefix + ".fc1"), fc2 = linear(prefix + ".fc2");
@@ -124,14 +137,16 @@ std::unique_ptr<EddaWeights> load_weights(const EddaAssets & assets, core::Execu
     e.conv1 = binding::conv1d_from_source(store, source, "model.encoder.conv1", StorageType::F32,
         d, assets.encoder.n_mels, 3, true);
     e.conv2 = binding::conv1d_from_source(store, source, "model.encoder.conv2", StorageType::F32, d, d, 3, true);
-    e.positional_embedding = load.f32("model.encoder.embed_positions.weight", {assets.encoder.n_audio_ctx, d});
+    e.positions = load.f32("model.encoder.embed_positions.weight", {assets.encoder.n_audio_ctx, d});
     e.final_norm = load.norm("model.encoder.layer_norm");
     for (int64_t i = 0; i < assets.encoder.n_audio_layer; ++i) {
         const auto p = "model.encoder.layers." + std::to_string(i);
-        modules::WhisperEncoderLayerWeights layer;
+        EncoderLayerWeights layer;
         layer.attention_norm = load.norm(p + ".self_attn_layer_norm");
-        layer.attention = {load.linear(p + ".self_attn.q_proj"), load.linear(p + ".self_attn.k_proj", false),
-                           load.linear(p + ".self_attn.v_proj"), load.linear(p + ".self_attn.out_proj")};
+        std::tie(layer.qkv_weight, layer.qkv_bias) = load.packed_qkv(p + ".self_attn");
+        const auto o = load.linear(p + ".self_attn.out_proj");
+        layer.out_weight = o.weight;
+        layer.out_bias = *o.bias;
         layer.mlp_norm = load.norm(p + ".final_layer_norm");
         layer.mlp = load.mlp(p);
         e.layers.push_back(std::move(layer));
@@ -146,15 +161,7 @@ std::unique_ptr<EddaWeights> load_weights(const EddaAssets & assets, core::Execu
         layer.cross_norm = load.norm(p + ".encoder_attn_layer_norm");
         layer.mlp_norm = load.norm(p + ".final_layer_norm");
         const auto a = p + ".self_attn";
-        std::vector<modules::PackedLinearSource> qkv{{a + ".q_proj.weight", std::nullopt, d},
-            {a + ".k_proj.weight", std::nullopt, d}, {a + ".v_proj.weight", std::nullopt, d}};
-        layer.qkv_weight = modules::PackedLinearWeightsBuilder({d, qkv, false}).build(store, source, type).weight;
-        std::vector<float> biases(static_cast<size_t>(3 * d), 0.0f);
-        const auto qb = source.require_f32_tensor(a + ".q_proj.bias", {d});
-        const auto vb = source.require_f32_tensor(a + ".v_proj.bias", {d});
-        std::copy(qb.values.begin(), qb.values.end(), biases.begin());
-        std::copy(vb.values.begin(), vb.values.end(), biases.begin() + 2 * d);
-        layer.qkv_bias = store.make_f32(core::TensorShape::from_dims({3 * d}), std::move(biases));
+        std::tie(layer.qkv_weight, layer.qkv_bias) = load.packed_qkv(a);
         const auto o = load.linear(a + ".out_proj");
         layer.out_weight = o.weight;
         layer.out_bias = *o.bias;

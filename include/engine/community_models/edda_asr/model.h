@@ -79,9 +79,22 @@ struct TargetLayerWeights {
     modules::FeedForwardWeights mlp;
 };
 
+struct EncoderLayerWeights {
+    modules::NormWeights attention_norm, mlp_norm;
+    core::TensorValue qkv_weight, qkv_bias, out_weight, out_bias;
+    modules::FeedForwardWeights mlp;
+};
+
+struct EncoderWeights {
+    modules::Conv1dWeights conv1, conv2;
+    core::TensorValue positions;
+    std::vector<EncoderLayerWeights> layers;
+    modules::NormWeights final_norm;
+};
+
 struct EddaWeights {
     std::unique_ptr<core::BackendWeightStore> store;
-    modules::WhisperEmbeddingWeights encoder;
+    EncoderWeights encoder;
     std::vector<TargetLayerWeights> decoder;
     core::TensorValue embedding, positions;
     modules::NormWeights decoder_norm;
@@ -103,7 +116,7 @@ struct DecodeResult {
     bool reached_eos = false;
     int64_t target_passes = 0;
     int64_t drafted = 0, accepted = 0;
-    double encoder_ms = 0.0, decoder_ms = 0.0;
+    double encoder_ms = 0.0, decoder_ms = 0.0, drafter_ms = 0.0;
 };
 
 class EddaRuntime {

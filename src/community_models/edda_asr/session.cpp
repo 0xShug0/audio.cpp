@@ -180,6 +180,7 @@ private:
             std::to_string(decoded.drafted) + " eos=" + (decoded.reached_eos ? "true" : "false"));
         debug::timing_log_scalar("edda.encoder_ms", decoded.encoder_ms);
         debug::timing_log_scalar("edda.decoder_ms", decoded.decoder_ms);
+        debug::timing_log_scalar("edda.drafter_ms", decoded.drafter_ms);
         ++next_chunk_;
     }
 
