@@ -333,6 +333,29 @@ match the config's, the model keeps the config's `default_request_options`,
 `voice_presets`, `default_voice_preset`, `busy_timeout_ms` and `live_ingest`;
 a load of another family or task under that `id` gets none of them.
 
+### Loading an installed package by id
+
+A server built with `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` also lets
+`POST /v1/models/load` name an installed package with `package_id` instead of
+`path`, so a client does not need to know where the models root is:
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/models/load \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"sep","package_id":"htdemucs_q8_0","task":"sep"}'
+```
+
+The server reads the package's metadata from the package manager and asks the
+family's loader, through `resolve_package_load`, for the path, family, load
+options and session options, the same target the WebUI loads. The request then
+goes through the existing load handler as if it had sent them. `family`
+defaults to the package's family; a different `family` is rejected. A
+`load_options` or `session_options` key the request sends wins over the
+resolved one. Each precision is its own package id, such as `kokoro_82m_q8_0`
+and `kokoro_82m_bf16`. Sending both `path` and `package_id` is rejected with
+400, and an unknown or not-installed package returns 404. Requests with
+`path`, and servers built without the native model manager, are unchanged.
+
 ### Paths and model specs
 
 Relative model and configured voice-library paths resolve against the config

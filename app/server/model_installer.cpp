@@ -564,6 +564,14 @@ std::string ModelInstaller::clean_partial(const std::string & package_id) {
         json_quote(message.empty() ? "Partial download files cleaned" : message) + "}";
 }
 
+std::optional<engine::package_manager::PackageInfo> ModelInstaller::package_info(
+    const std::string & package_id) const {
+    if (!valid_package_id(package_id)) {
+        return std::nullopt;
+    }
+    return state_->native_manager->package_info(package_id);
+}
+
 std::string ModelInstaller::remove(const std::string & package_id) {
     if (!valid_package_id(package_id)) {
         throw std::runtime_error("invalid model-manager package id");

@@ -62,7 +62,11 @@ struct RequestDispatcher {
         response = state.handle_ui_voice_preview(request);
       } else if (request.method == "POST" &&
                  request.path == "/v1/models/load") {
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
+        response = state.handle_package_model_load(request.body);
+#else
         response = state.handle_model_load(request.body);
+#endif
       } else if (request.method == "POST" &&
                  request.path == "/v1/models/unload") {
         response = state.handle_model_unload(request.body);

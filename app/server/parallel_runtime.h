@@ -143,6 +143,7 @@ private:
     HttpResponse handle_path_status(const std::string & body_text) const;
     HttpResponse handle_ui_upload(const HttpRequest & request);
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
+    HttpResponse handle_package_model_load(const std::string & body_text);
     HttpResponse handle_model_install(const std::string & body_text);
     HttpResponse handle_model_install_stop(const std::string & body_text);
     HttpResponse handle_model_clean_partial(const std::string & body_text);
