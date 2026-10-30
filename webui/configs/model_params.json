@@ -144,6 +144,14 @@
     {"name":"min_silence_duration_ms","type":"number","label":"Minimum silence (ms)","default":200,"minimum":0,"step":10},
     {"name":"speech_pad_ms","type":"number","label":"Speech padding (ms)","default":0,"minimum":0,"step":10}
   ],
+  "edda_asr": [
+    {"name":"speculative","type":"bool","label":"Speculative decoding","default":true,"info_en":"Draft up to 15 tokens per edda pass with the hurtig drafter; output matches greedy decoding."},
+    {"name":"num_beams","type":"number","label":"Beam count","default":1,"minimum":1,"maximum":16,"step":1,"info_en":"1 decodes greedily; larger values run beam search without the drafter."},
+    {"name":"length_penalty","type":"number","label":"Length penalty","default":1,"minimum":0,"step":0.1},
+    {"name":"draft_block","type":"number","label":"Draft block","default":16,"minimum":2,"maximum":16,"step":1},
+    {"name":"audio_chunk_mode","type":"choice","label":"Audio chunk mode","default":"auto","choices":["auto","silence","fixed","none"]},
+    {"name":"audio_chunk_duration_sec","type":"number","label":"Chunk duration (s)","default":30,"minimum":1,"maximum":30,"step":0.1}
+  ],
   "hviske_asr_v6": [
     {"name":"audio_chunk_mode","type":"choice","label":"Audio chunk mode","default":"auto","choices":["auto","silence","fixed","none"]},
     {"name":"audio_chunk_duration_sec","type":"number","label":"Chunk duration (s)","default":28,"minimum":0.001,"maximum":30,"step":0.1},
