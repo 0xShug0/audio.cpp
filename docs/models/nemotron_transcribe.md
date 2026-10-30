@@ -30,18 +30,24 @@ a binary.
 are available for this experimental port. Select one decoder and download the
 shared `NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf` beside it.
 The encoder is 1,670,410,080 bytes and includes the F32 CTC timestamp head.
+It is a required auxiliary component, not a standalone F16 version of the 30B model.
 
 | Routed expert profile | Decoder file | Decoder bytes |
 | --- | --- | ---: |
 | IQ4_NL | `nemotron-transcribe-30b-a4b-experts-IQ4_NL.gguf` | 20,370,389,728 |
-| Q4_K | `nemotron-transcribe-30b-a4b-experts-Q4_K.gguf` | 21,672,721,184 |
-| Q3_K | `nemotron-transcribe-30b-a4b-experts-Q3_K.gguf` | 17,294,261,024 |
+| Q4_K | `nemotron-transcribe-30b-a4b-experts-Q4_K_S.gguf` | 21,672,721,184 |
+| Q3_K | `nemotron-transcribe-30b-a4b-experts-Q3_K_S.gguf` | 17,294,261,024 |
 | Q2_K | `nemotron-transcribe-30b-a4b-experts-Q2_K.gguf` | 13,946,026,784 |
 
 These labels describe the routed experts. All four packages use Q8_0 dense
 decoder linears and preserve other BF16/F32 source types. The encoder stays
 floating-point. File size is not peak runtime memory. Quantization changes
 predictions; the number of bits does not establish an accuracy ranking.
+
+The Q3_K and Q4_K expert files use `_K_S` filename suffixes so the Hugging Face
+selector recognizes them. These custom mixed profiles do not use the stock
+whole-model llama.cpp `_S` recipes. The tensor types and weights are unchanged;
+the conversion flags remain `--profile q3_k` and `--profile q4_k`.
 
 The model-manager entries download the decoder and its shared encoder. Pass the
 chosen decoder file as the model path, rather than the directory containing
@@ -154,7 +160,7 @@ uv run --no-project --python .venv-nemotron python \
   --padded-cache models/native/nemotron-transcribe-row256-package-cache.gguf \
   --package-source models/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B \
   --encoder models/native/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf \
-  --output models/audiocpp/nemotron-transcribe-30b-a4b-experts-Q4_K.gguf
+  --output models/audiocpp/nemotron-transcribe-30b-a4b-experts-Q4_K_S.gguf
 ```
 
 Repeat with `--profile q3_k` and `q2_k`, changing the output filename accordingly.
