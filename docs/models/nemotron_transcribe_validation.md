@@ -101,12 +101,22 @@ sentence pair in the four-repeat input. Silence returned empty text and an
 unavailable alignment with `empty_transcript`; the forced one-token request
 reported `token_limit`, not EOS.
 
-After model loading, English ASR plus timestamps took 0.556 seconds for 7.33 seconds
-of audio; the distinct two-speaker request took 1.232 seconds for 49.055 seconds.
-Loader/session creation took 14.35 seconds separately. A CPU CLI run, four
-threads, returned the same English text with aligned timestamps in 6.250 seconds
-of processing. Other GPU workloads were active. These individual timings are not
-a throughput comparison with native CLI process times, which include loading.
+Recorded English checks for the initial IQ4_NL package, with word timestamps:
+
+| Input and backend | Audio duration | Processing time | Real-time factor | Matched reference words |
+| --- | ---: | ---: | ---: | ---: |
+| Short English, CUDA | 7.330 s | 0.556 s | 0.076 | 15/15 |
+| Short English, CPU, four threads | 7.330 s | 6.250 s | 0.853 | 15/15 |
+| Distinct two-speaker English, CUDA | 49.055 s | 1.232 s | 0.025 | 129/129 |
+
+Real-time factor is processing time divided by audio duration. Model loading is
+excluded; loader/session creation took 14.35 seconds separately. Reference-word
+matching ignores case, punctuation and speaker markers. All four released expert
+profiles also matched the same 15-word and 129-word fixtures. This small synthetic
+set does not establish held-out English accuracy. Other GPU workloads were active;
+the individual timings are not a throughput comparison with native CLI process
+times, which include loading. The repeated-sentence omission described above and
+the timestamp limitations below remain unresolved.
 
 Word units/counts matched, but timings were not identical: maximum observed
 differences were 10 ms for English, 119 ms for Japanese, 80 ms for the repeated
@@ -122,8 +132,8 @@ native mixed-quantized decoder loading, repeated/reset calls, public BPE hook
 regression, model-spec schema, silence/window policy, and GGUF package round-trip.
 
 Full-model Metal/Vulkan, actual hour-long inference, broader multilingual quality
-and a held-out accuracy benchmark remain untested. No public download package is
-advertised yet; conversion and packaging are local recipes.
+and a held-out accuracy benchmark remain untested. The current public packages
+and conversion recipes are linked from the [model guide](nemotron_transcribe.md).
 
 ## Follow-up compatibility audit
 

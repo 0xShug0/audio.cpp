@@ -197,7 +197,9 @@ std::shared_ptr<const TranscribeAssets> load_transcribe_assets(const std::filesy
     if (identity.empty() || sibling_name.empty() || sibling_name.is_absolute() ||
         sibling_name.filename() != sibling_name || sibling_name == "." || sibling_name == "..")
         throw std::runtime_error("invalid Nemotron Transcribe encoder pairing metadata");
-    const auto sibling = result->resources.model_directory() / sibling_name;
+    auto sibling = result->resources.model_directory() / sibling_name;
+    if (!std::filesystem::exists(sibling))
+        sibling = result->resources.model_directory() / std::filesystem::u8path("mmproj-" + sibling_name.u8string());
     const Metadata encoder(sibling);
     if (encoder.text("nemo_speech.checkpoint_id") != identity)
         throw std::runtime_error("Nemotron Transcribe encoder and decoder belong to different checkpoints");
