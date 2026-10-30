@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "family": "edda_asr",
+  "display_name": "Edda ASR",
+  "description": "Danish Whisper-large-v3 ASR (Edda v0.2 large) with optional lossless DFlash2 speculative decoding from the edda-v0.2-large-hurtig drafter.",
+  "category": "asr",
+  "status": "experimental",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "da"
+  ],
+  "capabilities": {
+    "asr": [
+      "partial_results"
+    ]
+  },
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Whisper language token for the decoder prompt; default da. The drafter was trained on Danish only.",
+        "required": false,
+        "default": "da"
+      },
+      {
+        "name": "speculative",
+        "type": "bool",
+        "description": "Decode with the drafter when the checkpoint ships one. Output matches greedy decoding up to floating-point near-ties; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "draft_block",
+        "type": "int",
+        "description": "Speculative block size: the anchor token plus up to draft_block - 1 drafted tokens verified in one target pass; default 16, the drafter's trained block.",
+        "required": false,
+        "default": 16,
+        "min": 2,
+        "max": 16
+      },
+      {
+        "name": "draft_selector",
+        "type": "bool",
+        "description": "Pick drafted tokens with the DFlash2 candidate selector instead of per-slot argmax; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated tokens per audio chunk, bounded by the 448-position decoder context; default 444.",
+        "required": false,
+        "default": 444,
+        "min": 1
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "auto splits audio longer than 30 seconds at silence boundaries; silence splits above the configured duration at silence boundaries; fixed splits at the configured duration; none disables splitting and accepts at most 30 seconds.",
+        "required": false,
+        "default": "auto",
+        "values": [
+          "auto",
+          "silence",
+          "fixed",
+          "none"
+        ]
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum chunk duration when splitting. In auto mode the 30-second trigger remains unchanged.",
+        "required": false,
+        "default": 30.0,
+        "min": 1.0,
+        "max": 30.0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "description": "Matmul weight storage override for Edda and the drafter; native preserves the supplied checkpoint types.",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "drafter",
+        "type": "bool",
+        "description": "Load the speculative drafter when the checkpoint ships one; false saves its memory and decodes greedily.",
+        "required": false,
+        "default": true
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/edda_asr.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "syvai/edda-v0.2-large-hurtig",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [],
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "drafter_config": "model:drafter_config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      },
+      "optional_tensors": {
+        "drafter": "model:drafter.safetensors"
+      }
+    },
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "drafter_config": "model:drafter_config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      },
+      "optional_tensors": {
+        "drafter": {
+          "source": "weights:",
+          "prefix": "drafter"
+        }
+      }
+    }
+  ]
+}

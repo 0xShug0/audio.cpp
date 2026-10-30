@@ -1,0 +1,559 @@
+#include "engine/community_models/edda_asr/model.h"
+
+#include "engine/framework/modules/attention/cross_attention.h"
+#include "engine/framework/modules/feed_forward_modules.h"
+#include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
+
+#include "ggml-alloc.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+
+namespace engine::community_models::edda_asr {
+namespace {
+
+using core::TensorShape;
+using core::TensorValue;
+
+constexpr float kNegInf = -std::numeric_limits<float>::infinity();
+
+struct Graph {
+    core::ExecutionContext & execution;
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free};
+    ggml_cgraph * graph = nullptr;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator{nullptr, ggml_gallocr_free};
+    core::HostGraphPlan plan;
+
+    explicit Graph(core::ExecutionContext & execution) : execution(execution) {
+        context.reset(ggml_init({16 * 1024 * 1024, nullptr, true}));
+        if (!context) {
+            throw std::runtime_error("Edda graph context allocation failed");
+        }
+        graph = ggml_new_graph_custom(context.get(), 16384, false);
+        allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
+    }
+    ~Graph() {
+        plan.reset();
+        core::release_backend_graph_resources(execution.backend(), graph, true);
+    }
+    void allocate() {
+        core::validate_backend_graph_supported(execution.backend(), graph, "Edda");
+        if (!ggml_gallocr_alloc_graph(allocator.get(), graph)) {
+            throw std::runtime_error("Edda graph allocation failed");
+        }
+        core::prepare_host_graph_plan(execution, graph, plan);
+    }
+    void compute() {
+        if (core::compute_graph(execution, graph, plan, "Edda") != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("Edda graph execution failed");
+        }
+    }
+    core::ModuleBuildContext build_context(const char * name) const {
+        core::ModuleBuildContext ctx{};
+        ctx.ggml = context.get();
+        ctx.backend_type = execution.backend_type();
+        ctx.module_instance_name = name;
+        return ctx;
+    }
+};
+
+TensorValue wrap(ggml_tensor * tensor, std::initializer_list<int64_t> dims) {
+    return core::wrap_tensor(tensor, TensorShape::from_dims(dims), tensor->type);
+}
+
+TensorValue linear(core::ModuleBuildContext & ctx, const TensorValue & x, const TensorValue & weight,
+    const std::optional<TensorValue> & bias = std::nullopt) {
+    const auto in = weight.shape.dims[1], out = weight.shape.dims[0];
+    return modules::LinearModule({in, out, bias.has_value()}).build(ctx, x, {weight, bias});
+}
+
+// [1, T, d] rows -> flat [T, d] for row scatter into a [rows, d] cache view.
+ggml_tensor * rows_2d(core::ModuleBuildContext & ctx, const TensorValue & x) {
+    return ggml_reshape_2d(ctx.ggml, ggml_cont(ctx.ggml, x.tensor), x.shape.dims[2], x.shape.dims[1]);
+}
+
+// Multi-head attention of [1, T, d] queries over a [1, rows, H, hd] F16 cache with an
+// additive F16 [T, rows] mask; returns [1, T, d].
+TensorValue cached_attention(core::ModuleBuildContext & ctx, const TensorValue & q, ggml_tensor * key,
+    ggml_tensor * value, ggml_tensor * mask, int64_t heads) {
+    const int64_t t = q.shape.dims[1], d = q.shape.dims[2], hd = d / heads;
+    auto * qh = ggml_permute(ctx.ggml, ggml_reshape_4d(ctx.ggml, ggml_cont(ctx.ggml, q.tensor), hd, heads, t, 1), 0, 2, 1, 3);
+    auto * kh = ggml_permute(ctx.ggml, key, 0, 2, 1, 3);
+    auto * vh = ggml_permute(ctx.ggml, value, 0, 2, 1, 3);
+    auto * out = ggml_flash_attn_ext(ctx.ggml, qh, kh, vh, mask, 1.0f / std::sqrt(static_cast<float>(hd)), 0.0f, 0.0f);
+    ggml_flash_attn_ext_set_prec(out, GGML_PREC_F32);
+    return wrap(ggml_reshape_3d(ctx.ggml, out, d, t, 1), {1, t, d});
+}
+
+}  // namespace
+
+struct EddaRuntime::State {
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free};
+    std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> buffer{nullptr, ggml_backend_buffer_free};
+    int64_t positions = 0, frames = 0, block = 0, context_rows = 0;
+    TensorValue features, memory_mask, cross_mask, suppress_bias, staging;
+    std::vector<TensorValue> keys, values;
+    std::vector<modules::CrossAttentionKeyValue> cross, draft_cross;
+    std::vector<TensorValue> draft_keys, draft_values;
+    Graph encoder;
+    bool flash_cross = false;
+
+    explicit State(core::ExecutionContext & execution) : encoder(execution) {}
+};
+
+struct EddaRuntime::TargetGraph {
+    Graph graph;
+    int64_t tokens = 0;
+    TensorValue token, position, slot, mask, logits, argmax;
+    explicit TargetGraph(core::ExecutionContext & execution) : graph(execution) {}
+};
+
+struct EddaRuntime::DrafterGraph {
+    Graph graph;
+    int64_t block = 0;
+    TensorValue anchor, position, context_slot, block_slot, mask, argmax, top_ids, top_logits, projected;
+    explicit DrafterGraph(core::ExecutionContext & execution) : graph(execution) {}
+};
+
+EddaRuntime::EddaRuntime(const EddaAssets & assets, const EddaWeights & weights, core::ExecutionContext & execution)
+    : assets_(assets), weights_(weights), execution_(execution),
+      frontend_({16000, 400, 160, assets.encoder.n_mels, audio::STFTFamily::Kokoro}) {
+    state_ = std::make_unique<State>(execution);
+    auto & s = *state_;
+    const int64_t d = assets.encoder.n_audio_state, h = assets.decoder_heads, hd = d / h;
+    s.positions = assets.max_positions;
+    s.frames = assets.encoder.n_audio_ctx;
+    s.block = weights.drafter ? assets.drafter->block : 1;
+    // Draft cache rows: target positions, then the block being drafted, then one discard row.
+    s.context_rows = ((s.positions + s.block + 1 + 63) / 64) * 64;
+    const auto backend = execution.backend_type();
+    s.flash_cross = backend == core::BackendType::Cuda || backend == core::BackendType::Hip;
+    s.context.reset(ggml_init({4 * 1024 * 1024, nullptr, true}));
+    core::ModuleBuildContext ctx{};
+    ctx.ggml = s.context.get();
+    ctx.backend_type = backend;
+    const int64_t staging_rows = std::max<int64_t>(s.block, 8);
+    s.features = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, assets.encoder.n_mels, 2 * s.frames}));
+    s.memory_mask = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({1, s.frames}));
+    s.cross_mask = core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({1, 1, staging_rows, s.frames}));
+    s.suppress_bias = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({assets.vocabulary_size}));
+    s.staging = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({staging_rows, d}));
+    for (int64_t i = 0; i < assets.decoder_layers; ++i) {
+        s.keys.push_back(core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({1, s.positions, h, hd})));
+        s.values.push_back(core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({1, s.positions, h, hd})));
+        s.cross.push_back({core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({1, h, s.frames, hd})),
+                           core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({1, h, s.frames, hd}))});
+    }
+    if (weights.drafter) {
+        for (size_t i = 0; i < weights.drafter->layers.size(); ++i) {
+            s.draft_keys.push_back(core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({1, s.context_rows, h, hd})));
+            s.draft_values.push_back(core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({1, s.context_rows, h, hd})));
+            s.draft_cross.push_back({core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({1, h, s.frames, hd})),
+                                     core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({1, h, s.frames, hd}))});
+        }
+    }
+    s.buffer.reset(ggml_backend_alloc_ctx_tensors(s.context.get(), execution.backend()));
+    if (!s.buffer) {
+        throw std::runtime_error("Edda state allocation failed");
+    }
+    ggml_backend_buffer_clear(s.buffer.get(), 0);
+    core::write_tensor_i32(s.memory_mask, std::vector<int32_t>(static_cast<size_t>(s.frames), 1));
+    core::write_tensor_f16(s.cross_mask, std::vector<float>(static_cast<size_t>(staging_rows * s.frames), 0.0f));
+    std::vector<float> bias(static_cast<size_t>(assets.vocabulary_size), 0.0f);
+    for (const auto id : assets.suppress) {
+        bias[static_cast<size_t>(id)] = kNegInf;
+    }
+    core::write_tensor_f32(s.suppress_bias, bias);
+
+    auto & g = s.encoder;
+    auto ectx = g.build_context("edda.encoder");
+    ggml_set_input(s.features.tensor);
+    const auto encoded = modules::WhisperEmbeddingModule(assets.encoder).build(ectx, s.features, weights.encoder);
+    modules::AttentionConfig cross_config{d, h, true};
+    cross_config.use_packed_kv = true;
+    const auto project = [&](const modules::AttentionWeights & w, const modules::CrossAttentionKeyValue & dst) {
+        const auto kv = modules::CrossAttentionModule(cross_config).build_key_value(ectx, encoded, w);
+        ggml_build_forward_expand(g.graph, ggml_cpy(ectx.ggml, kv.key.tensor, dst.key.tensor));
+        ggml_build_forward_expand(g.graph, ggml_cpy(ectx.ggml, kv.value.tensor, dst.value.tensor));
+    };
+    for (size_t i = 0; i < weights.decoder.size(); ++i) {
+        project(weights.decoder[i].cross_attention, s.cross[i]);
+    }
+    if (weights.drafter) {
+        for (size_t i = 0; i < weights.drafter->layers.size(); ++i) {
+            project(weights.drafter->layers[i].cross_attention, s.draft_cross[i]);
+        }
+    }
+    g.allocate();
+}
+
+EddaRuntime::~EddaRuntime() {
+    ggml_backend_synchronize(execution_.backend());
+}
+
+EddaRuntime::TargetGraph & EddaRuntime::target_graph(int64_t tokens) {
+    if (static_cast<int64_t>(target_graphs_.size()) <= tokens) {
+        target_graphs_.resize(static_cast<size_t>(tokens + 1));
+    }
+    auto & slot = target_graphs_[static_cast<size_t>(tokens)];
+    if (slot) {
+        return *slot;
+    }
+    auto & s = *state_;
+    auto out = std::make_unique<TargetGraph>(execution_);
+    auto & tg = *out;
+    tg.tokens = tokens;
+    auto ctx = tg.graph.build_context("edda.decoder");
+    const int64_t d = assets_.encoder.n_audio_state, h = assets_.decoder_heads, t = tokens;
+    tg.token = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({1, t}));
+    tg.position = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({1, t}));
+    tg.slot = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({t}));
+    tg.mask = core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({t, s.positions}));
+    for (auto input : {tg.token, tg.position, tg.slot, tg.mask}) {
+        ggml_set_input(input.tensor);
+    }
+    auto x = wrap(ggml_add(ctx.ggml, ggml_get_rows(ctx.ggml, weights_.embedding.tensor, tg.token.tensor),
+        ggml_get_rows(ctx.ggml, weights_.positions.tensor, tg.position.tensor)), {1, t, d});
+    const modules::LayerNormModule norm({d, 1e-5f, true, true});
+    const modules::FeedForwardModule ffn({d, assets_.decoder_ffn, true, modules::GeluApproximation::ExactErf});
+    modules::AttentionConfig cross_config{d, h, true};
+    cross_config.use_packed_kv = true;
+    const modules::CrossAttentionModule cross(cross_config);
+    ggml_tensor * cross_mask = s.flash_cross ? ggml_view_4d(ctx.ggml, s.cross_mask.tensor, s.frames, t, 1, 1,
+        s.cross_mask.tensor->nb[1], s.cross_mask.tensor->nb[2], s.cross_mask.tensor->nb[3], 0) : nullptr;
+    std::vector<ggml_tensor *> taps;
+    const auto & tap_ids = weights_.drafter ? assets_.drafter->target_layer_ids : std::vector<int64_t>{};
+    for (size_t i = 0; i < weights_.decoder.size(); ++i) {
+        const auto & w = weights_.decoder[i];
+        auto qkv = linear(ctx, norm.build(ctx, x, w.attention_norm), w.qkv_weight, w.qkv_bias);
+        const auto lane = [&](int64_t index) {
+            return wrap(ggml_view_3d(ctx.ggml, qkv.tensor, d, t, 1, qkv.tensor->nb[1], qkv.tensor->nb[2],
+                static_cast<size_t>(index * d) * ggml_element_size(qkv.tensor)), {1, t, d});
+        };
+        auto * key2d = ggml_reshape_2d(ctx.ggml, s.keys[i].tensor, d, s.positions);
+        auto * value2d = ggml_reshape_2d(ctx.ggml, s.values[i].tensor, d, s.positions);
+        auto * key = ggml_set_rows(ctx.ggml, key2d, rows_2d(ctx, lane(1)), tg.slot.tensor);
+        auto * value = ggml_set_rows(ctx.ggml, value2d, rows_2d(ctx, lane(2)), tg.slot.tensor);
+        const auto hd = d / h;
+        auto attended = cached_attention(ctx, lane(0), ggml_reshape_4d(ctx.ggml, key, hd, h, s.positions, 1),
+            ggml_reshape_4d(ctx.ggml, value, hd, h, s.positions, 1), tg.mask.tensor, h);
+        x = modules::AddModule().build(ctx, x, linear(ctx, attended, w.out_weight, w.out_bias));
+        const auto y = norm.build(ctx, x, w.cross_norm);
+        x = modules::AddModule().build(ctx, x, s.flash_cross
+            ? cross.build_cached_flash(ctx, y, s.cross[i], w.cross_attention,
+                  wrap(cross_mask, {1, 1, t, s.frames}))
+            : cross.build_cached(ctx, y, s.cross[i], w.cross_attention, s.memory_mask));
+        x = modules::AddModule().build(ctx, x, ffn.build(ctx, norm.build(ctx, x, w.mlp_norm), w.mlp));
+        if (std::find(tap_ids.begin(), tap_ids.end(), static_cast<int64_t>(i)) != tap_ids.end()) {
+            taps.push_back(ggml_cont(ctx.ggml, x.tensor));
+        }
+    }
+    x = norm.build(ctx, x, weights_.decoder_norm);
+    auto * logits = ggml_mul_mat(ctx.ggml, weights_.embedding.tensor, ggml_reshape_2d(ctx.ggml, x.tensor, d, t));
+    logits = ggml_add(ctx.ggml, logits, s.suppress_bias.tensor);
+    tg.logits = wrap(logits, {t, assets_.vocabulary_size});
+    tg.argmax = wrap(ggml_argmax(ctx.ggml, logits), {t});
+    ggml_set_output(tg.logits.tensor);
+    ggml_set_output(tg.argmax.tensor);
+    ggml_build_forward_expand(tg.graph.graph, tg.argmax.tensor);
+    if (!taps.empty()) {
+        // Draft context: concatenated target hidden states -> fc -> RMSNorm, staged for the drafter.
+        auto * features = taps.front();
+        for (size_t i = 1; i < taps.size(); ++i) {
+            features = ggml_concat(ctx.ggml, features, taps[i], 0);
+        }
+        const auto & dw = *weights_.drafter;
+        auto context = linear(ctx, wrap(features, {1, t, static_cast<int64_t>(taps.size()) * d}), dw.context_fc);
+        context = modules::RMSNormModule({d, 1e-6f, true, false}).build(ctx, context, dw.context_norm);
+        auto * staged = ggml_view_2d(ctx.ggml, s.staging.tensor, d, t, s.staging.tensor->nb[1], 0);
+        ggml_build_forward_expand(tg.graph.graph, ggml_cpy(ctx.ggml, rows_2d(ctx, context), staged));
+    }
+    tg.graph.allocate();
+    slot = std::move(out);
+    return *slot;
+}
+
+EddaRuntime::DrafterGraph & EddaRuntime::drafter_graph(int64_t block) {
+    if (static_cast<int64_t>(drafter_graphs_.size()) <= block) {
+        drafter_graphs_.resize(static_cast<size_t>(block + 1));
+    }
+    auto & slot = drafter_graphs_[static_cast<size_t>(block)];
+    if (slot) {
+        return *slot;
+    }
+    auto & s = *state_;
+    const auto & config = *assets_.drafter;
+    const auto & dw = *weights_.drafter;
+    auto out = std::make_unique<DrafterGraph>(execution_);
+    auto & dg = *out;
+    dg.block = block;
+    auto ctx = dg.graph.build_context("edda.drafter");
+    const int64_t d = assets_.encoder.n_audio_state, h = assets_.decoder_heads, hd = d / h, b = block;
+    const int64_t staging_rows = s.staging.shape.dims[0], rows = s.context_rows;
+    const int64_t kernel = config.conv_kernel, groups = d / config.conv_group;
+    dg.anchor = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({1}));
+    dg.position = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({b}));
+    dg.context_slot = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({staging_rows}));
+    dg.block_slot = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({b}));
+    dg.mask = core::make_tensor(ctx, GGML_TYPE_F16, TensorShape::from_dims({b, rows}));
+    for (auto input : {dg.anchor, dg.position, dg.context_slot, dg.block_slot, dg.mask}) {
+        ggml_set_input(input.tensor);
+    }
+    // Block input: the verified anchor token, then mask slots, plus target positions.
+    auto * anchor = ggml_get_rows(ctx.ggml, weights_.embedding.tensor, dg.anchor.tensor);
+    auto * masked = ggml_repeat(ctx.ggml, ggml_reshape_2d(ctx.ggml, dw.mask_embedding.tensor, d, 1),
+        ggml_new_tensor_2d(ctx.ggml, GGML_TYPE_F32, d, b - 1));
+    auto * embedded = ggml_add(ctx.ggml, ggml_concat(ctx.ggml, anchor, masked, 1),
+        ggml_get_rows(ctx.ggml, weights_.positions.tensor, dg.position.tensor));
+    auto hidden = wrap(embedded, {1, b, d});
+    const auto staged = wrap(s.staging.tensor, {1, staging_rows, d});
+    const modules::LayerNormModule norm({d, 1e-5f, true, true});
+    const modules::FeedForwardModule ffn({d, assets_.decoder_ffn, true, modules::GeluApproximation::ExactErf});
+    modules::AttentionConfig cross_config{d, h, true};
+    cross_config.use_packed_kv = true;
+    const modules::CrossAttentionModule cross(cross_config);
+
+    // DFlash2 grouped two-tap dynamic causal convolution within the block:
+    // out[t, c] = sum_k (base[k, c] + dynamic[t, k, c / group]) * x[t - k, c].
+    const auto conv = [&](const TensorValue & x, ggml_tensor * dynamic, const DrafterConvWeights & w, int64_t which) {
+        ggml_tensor * acc = nullptr;
+        auto * flat = ggml_reshape_2d(ctx.ggml, ggml_cont(ctx.ggml, x.tensor), d, b);
+        for (int64_t k = 0; k < kernel && k < b; ++k) {
+            auto * tap = ggml_view_2d(ctx.ggml, dynamic, groups, b, dynamic->nb[3],
+                static_cast<size_t>(k) * dynamic->nb[1] + static_cast<size_t>(which) * dynamic->nb[2]);
+            tap = ggml_reshape_3d(ctx.ggml, ggml_cont(ctx.ggml, tap), 1, groups, b);
+            tap = ggml_repeat(ctx.ggml, tap, ggml_new_tensor_3d(ctx.ggml, GGML_TYPE_F32, config.conv_group, groups, b));
+            auto * base = ggml_view_1d(ctx.ggml, w.base.tensor, d,
+                static_cast<size_t>((which * kernel + k) * d) * sizeof(float));
+            auto * weight = ggml_add(ctx.ggml, ggml_reshape_2d(ctx.ggml, tap, d, b), base);
+            auto * shifted = k == 0 ? flat : ggml_pad_ext(ctx.ggml,
+                ggml_view_2d(ctx.ggml, flat, d, b - k, flat->nb[1], 0), 0, 0, static_cast<int>(k), 0, 0, 0, 0, 0);
+            auto * term = ggml_mul(ctx.ggml, weight, shifted);
+            acc = acc ? ggml_add(ctx.ggml, acc, term) : term;
+        }
+        return wrap(acc, {1, b, d});
+    };
+    const auto dynamic = [&](const TensorValue & x, const DrafterConvWeights & w) {
+        auto projected = linear(ctx, x, w.projection);
+        return ggml_reshape_4d(ctx.ggml, ggml_cont(ctx.ggml, projected.tensor), groups, kernel, 2, b);
+    };
+    for (size_t i = 0; i < dw.layers.size(); ++i) {
+        const auto & w = dw.layers[i];
+        auto * key2d = ggml_reshape_2d(ctx.ggml, s.draft_keys[i].tensor, d, rows);
+        auto * value2d = ggml_reshape_2d(ctx.ggml, s.draft_values[i].tensor, d, rows);
+        // Append newly verified target context, then the block's own keys and values.
+        key2d = ggml_set_rows(ctx.ggml, key2d, rows_2d(ctx, linear(ctx, staged, w.k_weight)), dg.context_slot.tensor);
+        value2d = ggml_set_rows(ctx.ggml, value2d, rows_2d(ctx, linear(ctx, staged, w.v_weight, w.v_bias)),
+            dg.context_slot.tensor);
+        auto x = norm.build(ctx, hidden, w.attention_norm);
+        auto * dyn = dynamic(x, w.attention_conv);
+        x = conv(x, dyn, w.attention_conv, 0);
+        key2d = ggml_set_rows(ctx.ggml, key2d, rows_2d(ctx, linear(ctx, x, w.k_weight)), dg.block_slot.tensor);
+        value2d = ggml_set_rows(ctx.ggml, value2d, rows_2d(ctx, linear(ctx, x, w.v_weight, w.v_bias)),
+            dg.block_slot.tensor);
+        auto attended = cached_attention(ctx, linear(ctx, x, w.q_weight, w.q_bias),
+            ggml_reshape_4d(ctx.ggml, key2d, hd, h, rows, 1), ggml_reshape_4d(ctx.ggml, value2d, hd, h, rows, 1),
+            dg.mask.tensor, h);
+        attended = linear(ctx, attended, w.out_weight, w.out_bias);
+        hidden = modules::AddModule().build(ctx, hidden, conv(attended, dyn, w.attention_conv, 1));
+        hidden = modules::AddModule().build(ctx, hidden,
+            cross.build_cached(ctx, norm.build(ctx, hidden, w.cross_norm), s.draft_cross[i], w.cross_attention,
+                s.memory_mask));
+        x = norm.build(ctx, hidden, w.mlp_norm);
+        dyn = dynamic(x, w.mlp_conv);
+        x = ffn.build(ctx, conv(x, dyn, w.mlp_conv, 0), w.mlp);
+        hidden = modules::AddModule().build(ctx, hidden, conv(x, dyn, w.mlp_conv, 1));
+    }
+    hidden = norm.build(ctx, hidden, dw.final_norm);
+    auto * drafted = ggml_cont(ctx.ggml, ggml_view_2d(ctx.ggml, hidden.tensor, d, b - 1, hidden.tensor->nb[1],
+        hidden.tensor->nb[1]));
+    auto * logits = ggml_mul_mat(ctx.ggml, weights_.embedding.tensor, drafted);
+    dg.argmax = wrap(ggml_argmax(ctx.ggml, logits), {b - 1});
+    ggml_set_output(dg.argmax.tensor);
+    ggml_build_forward_expand(dg.graph.graph, dg.argmax.tensor);
+    const auto top_k = std::min<int64_t>(config.selector_top_k, assets_.vocabulary_size);
+    auto * ids = ggml_cont(ctx.ggml, ggml_argsort_top_k(ctx.ggml, logits, static_cast<int>(top_k)));
+    auto * scores = ggml_get_rows(ctx.ggml, ggml_reshape_3d(ctx.ggml, logits, 1, assets_.vocabulary_size, b - 1), ids);
+    dg.top_ids = wrap(ids, {b - 1, top_k});
+    dg.top_logits = wrap(scores, {b - 1, top_k, 1});
+    dg.projected = linear(ctx, wrap(drafted, {1, b - 1, d}), dw.selector_projection);
+    for (auto output : {dg.top_ids, dg.top_logits, dg.projected}) {
+        ggml_set_output(output.tensor);
+        ggml_build_forward_expand(dg.graph.graph, output.tensor);
+    }
+    dg.graph.allocate();
+    slot = std::move(out);
+    return *slot;
+}
+
+std::vector<int32_t> EddaRuntime::select_path(const DrafterGraph & graph, int32_t anchor) const {
+    // DFlash2 candidate selector: greedy walk where each slot scores its top-k candidates
+    // by drafter logit + <P(previous) * H(h_t), S(candidate)>.
+    const auto & dw = *weights_.drafter;
+    const auto rank = assets_.drafter->selector_rank;
+    std::vector<int32_t> ids;
+    std::vector<float> unary, projected;
+    core::read_tensor_i32_into(graph.top_ids.tensor, ids);
+    core::read_tensor_f32_into(graph.top_logits.tensor, unary);
+    core::read_tensor_f32_into(graph.projected.tensor, projected);
+    const auto slots = graph.block - 1, top_k = graph.top_ids.shape.dims[1];
+    const auto row = [&](const std::vector<uint16_t> & codebook, int32_t id) {
+        return reinterpret_cast<const ggml_fp16_t *>(codebook.data()) + static_cast<size_t>(id) * rank;
+    };
+    std::vector<float> query(static_cast<size_t>(rank));
+    std::vector<int32_t> path;
+    int32_t previous = anchor;
+    for (int64_t t = 0; t < slots; ++t) {
+        const auto * predecessor = row(dw.predecessor_codebook, previous);
+        for (int64_t r = 0; r < rank; ++r) {
+            query[r] = ggml_fp16_to_fp32(predecessor[r]) * projected[static_cast<size_t>(t * rank + r)];
+        }
+        float best = kNegInf;
+        int32_t choice = ids[static_cast<size_t>(t * top_k)];
+        for (int64_t k = 0; k < top_k; ++k) {
+            const auto candidate = ids[static_cast<size_t>(t * top_k + k)];
+            const auto * successor = row(dw.successor_codebook, candidate);
+            float score = unary[static_cast<size_t>(t * top_k + k)];
+            for (int64_t r = 0; r < rank; ++r) {
+                score += query[r] * ggml_fp16_to_fp32(successor[r]);
+            }
+            if (score > best) {
+                best = score;
+                choice = candidate;
+            }
+        }
+        path.push_back(choice);
+        previous = choice;
+    }
+    return path;
+}
+
+DecodeResult EddaRuntime::transcribe(const std::vector<float> & samples, const std::vector<int32_t> & prompt,
+    const DecodeOptions & options) {
+    auto & s = *state_;
+    const auto max_samples = static_cast<size_t>(s.frames * 320);
+    if (samples.empty() || samples.size() > max_samples) {
+        throw std::runtime_error("Edda encoder input must be non-empty and at most 30 seconds");
+    }
+    const auto staging_rows = s.staging.shape.dims[0];
+    if (prompt.empty() || static_cast<int64_t>(prompt.size()) > staging_rows || options.max_tokens < 1) {
+        throw std::runtime_error("Edda invalid decoder prompt or token limit");
+    }
+    const bool speculative = options.speculative && weights_.drafter.has_value();
+    const int64_t block = std::clamp<int64_t>(options.block, 2, s.block);
+    DecodeResult result;
+    const auto clock = std::chrono::steady_clock::now;
+    auto started = clock();
+    std::vector<float> padded = samples;
+    padded.resize(max_samples, 0.0f);
+    const auto features = frontend_.compute(padded, execution_.config().threads);
+    core::write_tensor_f32(s.features, features.values);
+    s.encoder.compute();
+    result.encoder_ms = std::chrono::duration<double, std::milli>(clock() - started).count();
+    started = clock();
+
+    const int64_t max_len = std::min<int64_t>(s.positions, static_cast<int64_t>(prompt.size()) + options.max_tokens);
+    std::vector<int32_t> seq = prompt;
+    std::vector<float> mask, logits;
+    std::vector<int32_t> picked;
+    const auto run_target = [&](const std::vector<int32_t> & tokens, int64_t start) -> TargetGraph & {
+        const auto t = static_cast<int64_t>(tokens.size());
+        auto & tg = target_graph(t);
+        std::vector<int32_t> positions(static_cast<size_t>(t));
+        for (int64_t i = 0; i < t; ++i) {
+            positions[static_cast<size_t>(i)] = static_cast<int32_t>(start + i);
+        }
+        mask.assign(static_cast<size_t>(t * s.positions), kNegInf);
+        for (int64_t i = 0; i < t; ++i) {
+            std::fill_n(mask.begin() + i * s.positions, start + i + 1, 0.0f);
+        }
+        core::write_tensor_i32(tg.token, tokens);
+        core::write_tensor_i32(tg.position, positions);
+        core::write_tensor_i32(tg.slot, positions);
+        core::write_tensor_f16(tg.mask, mask);
+        tg.graph.compute();
+        ++result.target_passes;
+        return tg;
+    };
+
+    // Prefill the prompt; the first generated token also applies begin_suppress_tokens.
+    {
+        auto & tg = run_target(prompt, 0);
+        core::read_tensor_f32_into(tg.logits.tensor, logits);
+        const auto * last = logits.data() + (prompt.size() - 1) * static_cast<size_t>(assets_.vocabulary_size);
+        std::vector<float> row(last, last + assets_.vocabulary_size);
+        for (const auto id : assets_.begin_suppress) {
+            row[static_cast<size_t>(id)] = kNegInf;
+        }
+        seq.push_back(static_cast<int32_t>(std::max_element(row.begin(), row.end()) - row.begin()));
+    }
+    int64_t context_start = 0, context_valid = static_cast<int64_t>(prompt.size());
+    std::vector<int32_t> context_slots(static_cast<size_t>(staging_rows)), block_slots, draft_positions, verify;
+    while (seq.back() != assets_.eos && static_cast<int64_t>(seq.size()) < max_len) {
+        const int64_t p = static_cast<int64_t>(seq.size()) - 1;
+        const int64_t b = speculative ? std::min(block, max_len - p) : 1;
+        std::vector<int32_t> draft;
+        if (b >= 2) {
+            auto & dg = drafter_graph(b);
+            const int64_t discard = s.positions + s.block;
+            for (int64_t i = 0; i < staging_rows; ++i) {
+                context_slots[static_cast<size_t>(i)] = static_cast<int32_t>(i < context_valid ? context_start + i : discard);
+            }
+            block_slots.resize(static_cast<size_t>(b));
+            draft_positions.resize(static_cast<size_t>(b));
+            for (int64_t i = 0; i < b; ++i) {
+                block_slots[static_cast<size_t>(i)] = static_cast<int32_t>(s.positions + i);
+                draft_positions[static_cast<size_t>(i)] = static_cast<int32_t>(std::min(p + i, s.positions - 1));
+            }
+            mask.assign(static_cast<size_t>(b * s.context_rows), kNegInf);
+            for (int64_t i = 0; i < b; ++i) {
+                std::fill_n(mask.begin() + i * s.context_rows, p, 0.0f);
+                std::fill_n(mask.begin() + i * s.context_rows + s.positions, b, 0.0f);
+            }
+            core::write_tensor_i32(dg.anchor, {seq.back()});
+            core::write_tensor_i32(dg.position, draft_positions);
+            core::write_tensor_i32(dg.context_slot, context_slots);
+            core::write_tensor_i32(dg.block_slot, block_slots);
+            core::write_tensor_f16(dg.mask, mask);
+            dg.graph.compute();
+            if (options.use_selector) {
+                draft = select_path(dg, seq.back());
+            } else {
+                core::read_tensor_i32_into(dg.argmax.tensor, draft);
+            }
+        }
+        verify.assign(1, seq.back());
+        verify.insert(verify.end(), draft.begin(), draft.end());
+        auto & tg = run_target(verify, p);
+        core::read_tensor_i32_into(tg.argmax.tensor, picked);
+        size_t accepted = 0;
+        while (accepted < draft.size() && draft[accepted] == picked[accepted]) {
+            ++accepted;
+        }
+        std::vector<int32_t> fresh(draft.begin(), draft.begin() + static_cast<std::ptrdiff_t>(accepted));
+        fresh.push_back(picked[accepted]);
+        if (const auto eos = std::find(fresh.begin(), fresh.end(), assets_.eos); eos != fresh.end()) {
+            fresh.erase(eos + 1, fresh.end());
+        }
+        fresh.resize(std::min<size_t>(fresh.size(), static_cast<size_t>(max_len - static_cast<int64_t>(seq.size()))));
+        result.drafted += static_cast<int64_t>(draft.size());
+        result.accepted += static_cast<int64_t>(std::min(accepted, fresh.size()));
+        seq.insert(seq.end(), fresh.begin(), fresh.end());
+        context_start = p;
+        context_valid = static_cast<int64_t>(fresh.size());
+    }
+    result.decoder_ms = std::chrono::duration<double, std::milli>(clock() - started).count();
+    result.reached_eos = seq.back() == assets_.eos;
+    result.tokens.assign(seq.begin() + static_cast<std::ptrdiff_t>(prompt.size()), seq.end());
+    if (result.reached_eos) {
+        result.tokens.pop_back();
+    }
+    return result;
+}
+
+}  // namespace engine::community_models::edda_asr
