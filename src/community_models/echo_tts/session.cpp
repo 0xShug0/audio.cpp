@@ -115,9 +115,6 @@ constexpr int64_t kWindowQuantum = 64;
 // Include only what the in-memory cache already does. This does mean that
 // encoded speakers from a different precision model, or a backend with
 // different precision compute characteristics may produce different latents.
-// ID:
-//     (as filename)      : audio hash
-//     4 bytes - uint64   : reference_max_samples
 // DATA:
 //     4 bytes - uint64   : speaker_frames (number of audio frames in speaker audio)
 //     4 bytes - uint64   : latent_length (number of floats in the latent data)
