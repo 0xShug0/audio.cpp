@@ -27,7 +27,7 @@ audiocpp_cli --task align --family qwen3_forced_aligner --model models/Qwen3-For
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--audio` | WAV path | required | Speech audio; use 16 kHz WAV for the examples. |
+| `--audio` | WAV path | required | Speech audio at any sample rate; timestamps are reported in that file's sample domain. |
 | `--text` | exact transcript | required | Transcript to align. |
 | `--language` | language code | required | Transcript language. |
 | `--audio-chunk-mode` | `auto`, `none` | `auto` | Standalone forced alignment runs one audio/transcript pair. `fixed` and `vad` are rejected because transcript chunk boundaries would be ambiguous. |

@@ -516,7 +516,6 @@ resolve_aligner_assets(const runtime::SessionOptions &options,
 
 ReferenceAlignment align_reference(
     engine::models::qwen3_forced_aligner::Qwen3ForcedAlignerSession &session,
-    const engine::models::qwen3_asr::Qwen3ASRAssets &aligner_assets,
     const runtime::AudioBuffer &audio,
     const std::string &text,
     const std::string &language) {
@@ -528,8 +527,8 @@ ReferenceAlignment align_reference(
   auto result = session.run(request);
   if (result.word_timestamps.empty())
     throw std::runtime_error("OuteTTS reference aligner returned no words");
-  return ReferenceAlignment{std::move(result.word_timestamps),
-                            aligner_assets.config.sample_rate};
+  // The aligner reports spans in the reference audio's own sample domain.
+  return ReferenceAlignment{std::move(result.word_timestamps), audio.sample_rate};
 }
 
 const runtime::AudioBuffer *
@@ -669,7 +668,7 @@ OuteTTSVoiceProfile OuteTTSSession::prepare_voice_profile(
       aligner_built ? debug::elapsed_ms(ensure_aligner_start) : 0.0);
 
   const auto align_start = Clock::now();
-  const auto alignment = align_reference(*aligner_session_, *aligner_assets_,
+  const auto alignment = align_reference(*aligner_session_,
                                          audio, reference_text, language);
   debug::timing_log_scalar("outetts.reference.align_ms",
                            debug::elapsed_ms(align_start));
