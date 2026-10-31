@@ -17,7 +17,7 @@ on:
 jobs:
   build:
     name: macOS CPU
-    runs-on: macos-14
+    runs-on: macos-26
 
     env:
       BUILD_DIR: build/ci-macos-cpu
