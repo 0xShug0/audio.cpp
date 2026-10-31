@@ -9511,6 +9511,25 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_gfx1151_v1() {
     const std::array<int64_t, 2> one = {1, 1};
     for (bool strict : {false, true}) {
         for (const auto & shape : std::vector<std::array<int64_t, 3>>{
+                {72, 72, 128}, {128, 192, 128}, {384, 640, 160},
+                {257, 449, 256}, {512, 512, 128}, {128, 813, 813}}) {
+            for (const auto & batch : std::vector<std::array<int64_t, 2>>{{16, 2}, {7, 3}}) {
+                cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(
+                    GGML_TYPE_F32, shape[0], shape[1], shape[2], strict, false, 0, batch));
+            }
+        }
+        cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(
+            GGML_TYPE_F32, 384, 640, 160, strict, true, 0, {16, 2}));
+        cases.emplace_back(new test_gfx1151_v1_mul_mat_precision(
+            GGML_TYPE_F32, 384, 640, 160, strict, false, 176, {16, 2}));
+    }
+    cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 384, 640, 160,
+                                       std::array<int64_t, 2>{16, 2}, one,
+                                       std::array<int64_t, 4>{0, 2, 1, 3}));
+    cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 384, 640, 160,
+                                       std::array<int64_t, 2>{8, 2}, std::array<int64_t, 2>{2, 1}));
+    for (bool strict : {false, true}) {
+        for (const auto & shape : std::vector<std::array<int64_t, 3>>{
                 {63, 127, 255}, {128, 768, 256}, {128, 768, 5461}, {128, 768, 5462},
                 {128, 8192, 1792}, {256, 1024, 3584}, {512, 128, 1536},
                 {129, 769, 5376}, {193, 1024, 4096}, {2080, 768, 768}}) {
@@ -9556,6 +9575,13 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_gfx1151_v1() {
         std::array<int64_t, 4>{64, 32769, 2, 1}, std::array<int64_t, 4>{0, 2, 1, 3}));
     cases.emplace_back(new test_cont(GGML_TYPE_F32, {128, 2, 4, 1}, true));
     cases.emplace_back(new test_cont(GGML_TYPE_F32, {128, 5, 4, 1}, true));
+    for (ggml_type type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+        for (int64_t width : {17, 129, 1200}) {
+            cases.emplace_back(new test_im2col(GGML_TYPE_F32, type, type,
+                std::array<int64_t, 4>{width, 1024, 2, 1}, std::array<int64_t, 4>{7, 1024, 1, 1},
+                1, 0, 3, 0, 1, 0, false));
+        }
+    }
     // F32/F16 outputs have an independent CPU implementation in the existing harness.
     for (ggml_type type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
         for (int64_t width : {32, 129, 1365, 1366, 2048, 8193}) {
