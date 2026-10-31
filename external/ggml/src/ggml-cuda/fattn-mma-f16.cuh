@@ -3,6 +3,13 @@
 #include "mma.cuh"
 #include "fattn-common.cuh"
 
+// NVCC 13.4 with split compilation can miscompile partial-tile zero filling.
+// Keep the original implementation for other compilers, including HIP.
+#if defined(__NVCC__) && !defined(GGML_USE_HIP) && !defined(__HIPCC__) && \
+    __CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ == 4
+#define GGML_CUDA_FA_NVCC_13_4_ZERO_FILL_FIX
+#endif
+
 using namespace ggml_cuda_mma;
 
 // Config options for the MMA kernel.
@@ -410,7 +417,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         // 6: max  1*16= 16 bytes,   8 half
         ggml_cuda_unroll<6>{}(load);
     } else {
+#if !defined(GGML_CUDA_FA_NVCC_13_4_ZERO_FILL_FIX)
         const half2 zero[4] = {{0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}};
+#endif
         auto load = [&] __device__ (const int n) {
             const int stride_k = 32 >> n;
             const int k0_start = stride_k == 32 ? 0 : chunks_per_row - chunks_per_row % (2*stride_k);
@@ -433,8 +442,20 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
                 for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                     const int k = k0 + (stride_k == warp_size ? threadIdx.x : threadIdx.x % stride_k);
 
+#if defined(GGML_CUDA_FA_NVCC_13_4_ZERO_FILL_FIX)
+                    if (!oob_check || i < i_sup) {
+                        ggml_cuda_memcpy_1<16>(tile_KV + i*stride_tile + k*4,
+                            KV + i*stride_KV + k*h2_per_chunk);
+                    } else {
+                        // CUDA 13.4 --split-compile can miscompile a copy from a
+                        // local half2 zero array selected through a pointer here
+                        // on sm_120a. Store zeros directly for the partial tile.
+                        *reinterpret_cast<int4 *>(tile_KV + i*stride_tile + k*4) = make_int4(0, 0, 0, 0);
+                    }
+#else
                     ggml_cuda_memcpy_1<16>(tile_KV + i*stride_tile + k*4,
                         !oob_check || i < i_sup ? KV + i*stride_KV + k*h2_per_chunk : zero);
+#endif
                 }
             }
         };
