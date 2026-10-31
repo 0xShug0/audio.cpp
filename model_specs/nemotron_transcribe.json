@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "family": "nemotron_transcribe",
+  "display_name": "NVIDIA Nemotron 3.5 Transcribe 30B-A4B",
+  "description": "Experimental community port of the Nemotron-H speech language model for offline transcription, translation, audio questions, language identification, word timestamps and speaker labels.",
+  "category": "asr",
+  "status": "experimental",
+  "tasks": ["asr"],
+  "modes": ["offline"],
+  "languages": ["auto"],
+  "capabilities": {"asr": ["word_timestamps"]},
+  "runtime": {"tags": ["gguf"]},
+  "options": {
+    "request": [
+      {"name": "instruct", "type": "string", "required": false, "description": "Audio instruction or question. Replaces the template instruction; defaults to text_input when present. Chat controls and audio locators are rejected."},
+      {"name": "template_name", "type": "enum", "values": ["default", "translation", "audio_qa", "language_id"], "default": "default", "required": false, "description": "Instruction template. Audio Q&A requires instruct or text_input. Timestamps and speakers require the default transcription template."},
+      {"name": "language", "type": "string", "default": "auto", "required": false, "description": "Source language hint for the default transcription prompt. An explicit instruct replaces this prompt, including its language hint."},
+      {"name": "target_language", "type": "string", "default": "English", "required": false, "description": "Target language for the translation template."},
+      {"name": "system_prompt", "type": "string", "required": false, "description": "Optional system message; the trained default is empty."},
+      {"name": "return_timestamps", "type": "bool", "default": false, "required": false, "description": "Run the checkpoint CTC head for source-language word timestamps. Failed streams return no fabricated word rows."},
+      {"name": "diarization", "type": "bool", "default": false, "required": false, "description": "Request speaker-tagged transcription, CTC words and speaker activity turns. An explicit instruct must request speaker tags itself."},
+      {"name": "max_tokens", "type": "int", "min": 1, "required": false, "description": "Maximum generated response tokens. Defaults to generation_config or native duration budget max(24,ceil(6*audio_seconds)+24). Prompt and output must fit max_context."},
+      {"name": "do_sample", "type": "bool", "default": false, "required": false, "description": "Sample tokens instead of greedy decoding."},
+      {"name": "temperature", "type": "float", "default": 1, "required": false, "description": "Positive sampling temperature when do_sample is true."},
+      {"name": "top_k", "type": "int", "min": 0, "default": 0, "required": false, "description": "Sampling candidate count; zero disables top-k filtering."},
+      {"name": "top_p", "type": "float", "min": 0, "max": 1, "default": 1, "required": false, "description": "Nucleus probability when sampling."},
+      {"name": "repetition_penalty", "type": "float", "default": 1, "required": false, "description": "Positive token repetition penalty."},
+      {"name": "seed", "type": "int", "min": 0, "default": 0, "required": false, "description": "Sampling seed."}
+    ],
+    "session": [
+      {"name": "weight_type", "type": "enum", "preset": "weight_type_full", "default": "native", "required": false, "description": "Native preserves mixed packaged tensor types. Changing this may greatly increase model memory."},
+      {"name": "max_context", "type": "int", "min": 1, "default": 73728, "required": false, "description": "Combined text, audio and output context, bounded by backbone positions. Matches native SALM serving default."},
+      {"name": "prefill_batch_size", "type": "int", "min": 1, "max": 2048, "default": 64, "required": false, "description": "Text/audio rows per decoder prefill graph."},
+      {"name": "flash_attention", "type": "bool", "default": true, "required": false, "description": "Use flash attention in the speech and speaker encoders."},
+      {"name": "encoder_window_size", "type": "int", "min": 1, "max": 5000, "default": 500, "required": false, "description": "Core encoder window in 80 ms output frames; the native default is 40 seconds."},
+      {"name": "encoder_left_context", "type": "int", "min": 0, "max": 5000, "default": 50, "required": false, "description": "Encoder window left context in 80 ms frames."},
+      {"name": "encoder_right_context", "type": "int", "min": 0, "max": 5000, "default": 50, "required": false, "description": "Encoder window right context in 80 ms frames."},
+      {"name": "speaker_cache_size", "type": "int", "min": 16, "max": 5000, "default": 188, "required": false, "description": "Native serving speaker cache in 80 ms frames, distinct from training configuration. At least two rows per speaker are required."},
+      {"name": "speaker_fifo_size", "type": "int", "min": 0, "max": 5000, "default": 40, "required": false, "description": "Recent speaker FIFO size in 80 ms frames."},
+      {"name": "speaker_update_period", "type": "int", "min": 1, "max": 5000, "default": 300, "required": false, "description": "Native serving speaker-cache update period in 80 ms frames."}
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "Jmica/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "revision": "304032f14e1e9e4042f5491d2d0194c044710bb7",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "nemotron_transcribe_iq4_nl",
+      "display_name": "Nemotron 3.5 Transcribe 30B-A4B IQ4_NL experts",
+      "default": true,
+      "format": "gguf",
+      "precision": "iq4_nl",
+      "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "files": [
+        "nemotron-transcribe-30b-a4b-experts-IQ4_NL.gguf",
+        "mmproj-NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+      ]
+    },
+    {
+      "id": "nemotron_transcribe_q4_k",
+      "display_name": "Nemotron 3.5 Transcribe 30B-A4B Q4_K experts",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "files": [
+        "nemotron-transcribe-30b-a4b-experts-Q4_K_S.gguf",
+        "mmproj-NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+      ]
+    },
+    {
+      "id": "nemotron_transcribe_q3_k",
+      "display_name": "Nemotron 3.5 Transcribe 30B-A4B Q3_K experts",
+      "format": "gguf",
+      "precision": "q3_k",
+      "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "files": [
+        "nemotron-transcribe-30b-a4b-experts-Q3_K_S.gguf",
+        "mmproj-NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+      ]
+    },
+    {
+      "id": "nemotron_transcribe_q2_k",
+      "display_name": "Nemotron 3.5 Transcribe 30B-A4B Q2_K experts",
+      "format": "gguf",
+      "precision": "q2_k",
+      "target_directory": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "files": [
+        "nemotron-transcribe-30b-a4b-experts-Q2_K.gguf",
+        "mmproj-NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "ui": {"recommended_package": "nemotron_transcribe_iq4_nl", "tags": ["GGUF"], "docs": ["docs/models/nemotron_transcribe.md"]},
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {"model": ".", "weights": "$gguf"},
+      "files": {
+        "backbone_config": "model:llm_backbone/config.json",
+        "generation_config": "model:generation_config.json",
+        "processor_config": "model:processor_config.json",
+        "frontend_window": "model:frontend_window.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "tensors": {"weights": {"source": "weights:"}}
+    }
+  ]
+}

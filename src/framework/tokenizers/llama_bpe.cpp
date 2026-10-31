@@ -304,6 +304,7 @@ struct LlamaBpeTokenizer::Impl {
     explicit Impl(const LlamaBpeTokenizerSpec & spec) {
         normalizer_space_replacement = spec.normalizer_space_replacement;
         vocab.pre_type = convert_pre_type(spec.pre_type);
+        vocab.pre_tokenize = spec.pre_tokenize;
         const bool has_vocab = !spec.vocab_path.empty();
         const bool has_merges = !spec.merges_path.empty();
         if (has_vocab != has_merges) {
