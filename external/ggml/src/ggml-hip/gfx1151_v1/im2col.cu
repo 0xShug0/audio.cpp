@@ -65,7 +65,7 @@ void launch(const float * input, void * output,
 
 } // namespace
 
-bool ggml_hip_gfx1151_v1_im2col(const ggml_tensor * input, ggml_tensor * out, hipStream_t stream) {
+bool ggml_hip_gfx1151_v1_im2col(const ggml_tensor * input, ggml_tensor * out, hipStream_t stream, int nsm) {
     const auto * params = reinterpret_cast<const int32_t *>(out->op_params);
     const auto * kernel_tensor = out->src[0];
     if (params[6] != 0 || params[7] != 0 || input->type != GGML_TYPE_F32 ||
@@ -81,6 +81,11 @@ bool ggml_hip_gfx1151_v1_im2col(const ggml_tensor * input, ggml_tensor * out, hi
         return false;
     }
     const auto columns = channels * kernel;
+    const int64_t tiles = ((columns + 31) / 32) * std::min<int64_t>((positions + 31) / 32, 65535) *
+                          std::min<int64_t>(batches, 65535);
+    if (tiles < nsm) {
+        return false;
+    }
     const auto channel_stride = input->nb[1] / sizeof(float);
     const auto batch_stride = input->nb[2] / sizeof(float);
     const auto * data = static_cast<const float *>(input->data);

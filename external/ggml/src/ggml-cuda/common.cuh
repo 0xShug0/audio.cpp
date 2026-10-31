@@ -1388,6 +1388,7 @@ struct ggml_backend_cuda_context {
     cudaEvent_t copy_event = nullptr;
 #ifdef GGML_USE_HIP
     const ggml_hip_impl * impl = nullptr;
+    ggml_backend_buffer_type_t impl_buft = nullptr;
 #endif
 
     cudaStream_t streams[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { { nullptr } };

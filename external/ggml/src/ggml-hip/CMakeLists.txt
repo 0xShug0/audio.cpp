@@ -96,7 +96,6 @@ else()
 endif()
 
 list(APPEND GGML_SOURCES_ROCM gfx1151_v1/sgemm.cu gfx1151_v1/matmul.cu gfx1151_v1/im2col.cu gfx1151_v1/cpy.cu)
-list(APPEND GGML_SOURCES_ROCM gfx1151_v1/mmvq.cu)
 
 if (CXX_IS_HIPCC)
     set_source_files_properties(${GGML_SOURCES_ROCM} PROPERTIES LANGUAGE CXX)

@@ -184,6 +184,10 @@ bool ggml_hip_gfx1151_v1_mul_mat(const ggml_tensor * a, const ggml_tensor * b,
                           ggml_tensor * out, hipStream_t stream, int cc) {
     const bool wmma = GGML_CUDA_CC_IS_RDNA3(cc) || GGML_CUDA_CC_IS_RDNA4(cc);
     if (a->type != GGML_TYPE_F32) {
+        if (a->ne[2] == b->ne[2] && a->ne[3] == b->ne[3] &&
+            ggml_is_contiguous(a) && ggml_is_contiguous(b)) {
+            return false;
+        }
         return wmma && ggml_hip_gfx1151_v1_mul_mat_typed(a, b, out, stream);
     }
     if (out->op != GGML_OP_MUL_MAT ||

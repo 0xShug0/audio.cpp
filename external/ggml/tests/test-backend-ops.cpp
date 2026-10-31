@@ -1089,6 +1089,9 @@ struct csv_printer : public printer {
             "op_name",
             "op_params",
             "supported",
+            "passed",
+            "time_us",
+            "n_runs",
             "error_message",
             "test_mode",
             "backend_reg_name",
@@ -1109,6 +1112,9 @@ static std::unique_ptr<printer> create_printer(output_formats format) {
     }
     GGML_ABORT("invalid output format");
 }
+
+static int64_t perf_duration_us = 1000 * 1000;
+static int perf_max_repeats = 8192;
 
 struct test_case {
     virtual ~test_case() {}
@@ -1514,13 +1520,6 @@ struct test_case {
         ggml_cgraph * gf = ggml_new_graph_custom(ctx.get(), graph_nodes, false);
         ggml_build_forward_expand(gf, out);
 
-        // warmup run
-        ggml_status status = ggml_backend_graph_compute(backend, gf);
-        if (status != GGML_STATUS_SUCCESS) {
-            fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
-            return false;
-        }
-
         // determine number of runs
         int n_runs;
         bool is_cpu = ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_CPU;
@@ -1529,20 +1528,31 @@ struct test_case {
             const uint64_t GFLOP = 1000 * 1000 * 1000;
             const uint64_t target_flops_cpu =   8ULL * GFLOP;
             const uint64_t target_flops_gpu = 100ULL * GFLOP;
-            uint64_t target_flops = is_cpu ? target_flops_cpu : target_flops_gpu;
+            uint64_t target_flops = (is_cpu ? target_flops_cpu : target_flops_gpu) * perf_duration_us / (1000 * 1000);
             n_runs = (int)std::min<int64_t>(ggml_graph_size(gf) - ggml_graph_n_nodes(gf), target_flops / op_flops(out)) + 1;
         } else {
             // based on memory size
             const size_t GB = 1ULL << 30;
             const size_t target_size_cpu =  8 * GB;
             const size_t target_size_gpu = 32 * GB;
-            size_t target_size = is_cpu ? target_size_cpu : target_size_gpu;
+            size_t target_size = (is_cpu ? target_size_cpu : target_size_gpu) * perf_duration_us / (1000 * 1000);
             n_runs = (int)std::min<int64_t>(ggml_graph_size(gf) - ggml_graph_n_nodes(gf), target_size / op_size(out)) + 1;
         }
+
+        n_runs = std::min(n_runs, perf_max_repeats);
 
         // duplicate the op
         for (int i = 1; i < n_runs; i++) {
             ggml_graph_add_node(gf, out);
+        }
+
+        // Warm the repeated graph, including backend capture, before timing.
+        for (int warmup = 0; warmup < 3; ++warmup) {
+            const auto status = ggml_backend_graph_compute(backend, gf);
+            if (status != GGML_STATUS_SUCCESS) {
+                fprintf(stderr, "%s: graph warmup failed: %s\n", __func__, ggml_status_to_string(status));
+                return false;
+            }
         }
 
         // calculate memory
@@ -1580,7 +1590,7 @@ struct test_case {
             total_time_us += end_time - start_time;
             total_mem += mem;
             total_runs += n_runs;
-        } while (total_time_us < 1000*1000); // run for at least 1 second
+        } while (total_time_us < perf_duration_us);
 
         // Create test result
         double avg_time_us      = (double) total_time_us / total_runs;
@@ -7023,7 +7033,10 @@ struct test_generic_op : public test_case {
         }
 
         ggml_tensor * out;
-        if (inplace && source_count > 0) {
+        if (op == GGML_OP_CPY) {
+            GGML_ASSERT(source_count == 2);
+            out = ggml_cpy(ctx, source_tensors[0], source_tensors[1]);
+        } else if (inplace && source_count > 0) {
             out = ggml_view_tensor(ctx, source_tensors[0]);
         } else {
             out = ggml_new_tensor_4d(ctx, type, ne[0], ne[1], ne[2], ne[3]);
@@ -9858,6 +9871,8 @@ static void usage(char ** argv) {
     printf("    op names for -o are as given by ggml_op_desc() (e.g. ADD, MUL_MAT, etc),\n");
     printf("        optionally including the full test case string (e.g. \"ADD(type=f16,ne=[1,1,8,1],nr=[1,1,1,1],nf=1)\")\n");
     printf("    --output specifies output format (default: console, options: console, sql, csv)\n");
+    printf("    --duration-ms sets minimum perf time per case (default: 1000)\n");
+    printf("    --max-repeats caps operations per perf graph (default: 8192)\n");
     printf("    --backend-impl selects an optional backend implementation\n");
     printf("    --suite gfx1151_v1 selects focused matmul and IM2COL1D correctness/performance cases\n");
     printf("    --list-ops lists all available GGML operations\n");
@@ -9905,6 +9920,18 @@ int main(int argc, char ** argv) {
                 usage(argv);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--duration-ms") == 0) {
+            if (i + 1 >= argc) return 1;
+            char * end = nullptr;
+            const auto value = std::strtoll(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0' || value < 1 || value > 60000) return 1;
+            perf_duration_us = value * 1000;
+        } else if (strcmp(argv[i], "--max-repeats") == 0) {
+            if (i + 1 >= argc) return 1;
+            char * end = nullptr;
+            const auto value = std::strtoll(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0' || value < 1 || value > 8192) return 1;
+            perf_max_repeats = static_cast<int>(value);
         } else if (strcmp(argv[i], "--backend-impl") == 0) {
             if (i + 1 >= argc) return 1;
             impl = argv[++i];

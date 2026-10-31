@@ -1,7 +1,6 @@
 #include "ggml-cuda.h"
 #ifdef GGML_USE_HIP
 #include "ggml-hip/gfx1151_v1/gfx1151_v1.cuh"
-#include "ggml-hip/gfx1151_v1/mmvq.cuh"
 #endif
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
@@ -2761,7 +2760,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     const bool split = ggml_backend_buft_is_cuda_split(src0->buffer->buft);
 #ifdef GGML_USE_HIP
     if (ctx.impl && ctx.impl->mul_mat) {
-        const auto buft = ggml_backend_cuda_buffer_type(ctx.device);
+        const auto buft = ctx.impl_buft;
         const int cc = ggml_cuda_info().devices[ctx.device].cc;
         const bool use_native = (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16) &&
             src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 &&
@@ -5724,39 +5723,26 @@ static ggml_backend_t ggml_backend_cuda_device_init_backend(ggml_backend_dev_t d
 static const char * const * ggml_backend_hip_get_impls(ggml_backend_dev_t dev) {
     const auto * ctx = static_cast<ggml_backend_cuda_device_context *>(dev->context);
     static const char * const defaults[] = { "default", nullptr };
-    static const char * const gfx1151_v1[] = { "default", "gfx1151_v1", "ar_nt", "ar_stream", "ar_stream2", "ar_stream4", nullptr };
+    static const char * const gfx1151_v1[] = { "default", "gfx1151_v1", nullptr };
     return GGML_CUDA_CC_IS_RDNA(ggml_cuda_info().devices[ctx->device].cc) ? gfx1151_v1 : defaults;
 }
 
 static ggml_backend_t ggml_backend_hip_init_with_impl(
         ggml_backend_dev_t dev, const char * impl, const char * params) {
     const auto * device = static_cast<ggml_backend_cuda_device_context *>(dev->context);
-    if ((strcmp(impl, "gfx1151_v1") != 0 && strcmp(impl, "ar_nt") != 0 &&
-         strcmp(impl, "ar_stream") != 0 && strcmp(impl, "ar_stream2") != 0 && strcmp(impl, "ar_stream4") != 0) ||
+    if (strcmp(impl, "gfx1151_v1") != 0 ||
         !GGML_CUDA_CC_IS_RDNA(ggml_cuda_info().devices[device->device].cc)) {
         GGML_LOG_ERROR("ROCm%d: implementation '%s' is unavailable on this device\n", device->device, impl);
         return nullptr;
     }
     static const ggml_hip_impl gfx1151_v1 = {
         "gfx1151_v1", ggml_hip_gfx1151_v1_mul_mat, ggml_hip_gfx1151_v1_im2col, ggml_hip_gfx1151_v1_cpy,
-        ggml_hip_ar_mmvq<2, 1, 1>,
     };
-    static const ggml_hip_impl ar_nt = {"ar_nt", ggml_hip_gfx1151_v1_mul_mat,
-        ggml_hip_gfx1151_v1_im2col, ggml_hip_gfx1151_v1_cpy, ggml_hip_ar_mmvq<2, 1>};
-    static const ggml_hip_impl ar_stream = {"ar_stream", ggml_hip_gfx1151_v1_mul_mat,
-        ggml_hip_gfx1151_v1_im2col, ggml_hip_gfx1151_v1_cpy, ggml_hip_ar_mmvq<2, 1, 1>};
-    static const ggml_hip_impl ar_stream2 = {"ar_stream2", ggml_hip_gfx1151_v1_mul_mat,
-        ggml_hip_gfx1151_v1_im2col, ggml_hip_gfx1151_v1_cpy, ggml_hip_ar_mmvq<2, 1, 2>};
-    static const ggml_hip_impl ar_stream4 = {"ar_stream4", ggml_hip_gfx1151_v1_mul_mat,
-        ggml_hip_gfx1151_v1_im2col, ggml_hip_gfx1151_v1_cpy, ggml_hip_ar_mmvq<2, 1, 4>};
-    const ggml_hip_impl * selected = &gfx1151_v1;
-    for (const auto * candidate : {&ar_nt, &ar_stream, &ar_stream2, &ar_stream4}) {
-        if (strcmp(impl, candidate->name) == 0) selected = candidate;
-    }
     ggml_backend_t backend = ggml_backend_cuda_device_init_backend(dev, params);
     if (backend) {
         auto * ctx = static_cast<ggml_backend_cuda_context *>(backend->context);
-        ctx->impl = selected;
+        ctx->impl = &gfx1151_v1;
+        ctx->impl_buft = ggml_backend_cuda_buffer_type(device->device);
         ctx->round_bf16_fusion = true;
         GGML_LOG_INFO("ROCm%d: implementation=%s\n", device->device, ctx->impl->name);
     }
