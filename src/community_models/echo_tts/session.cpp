@@ -21,7 +21,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <optional>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 namespace engine::models::echo_tts {
@@ -102,6 +105,137 @@ constexpr int64_t kMinWindowFrames = 128;
 // so estimates are snapped to a coarse grid: consecutive chunks of similar
 // length then reuse the same graph and the same gallocr reservation.
 constexpr int64_t kWindowQuantum = 64;
+
+// Defines the on-disk cache format for encoded reference speakers
+// HEADER (9-bytes):
+//     8 bytes - char[8]  : MAGIC, must be 'ECHO-TTS' (no null)
+//     1 bytes - uint8    : format version
+
+// Version 1 format:
+// Include only what the in-memory cache already does. This does mean that
+// encoded speakers from a different precision model, or a backend with
+// different precision compute characteristics may produce different latents.
+// DATA:
+//     4 bytes - uint64   : speaker_frames (number of audio frames in speaker audio)
+//     4 bytes - uint64   : latent_length (number of floats in the latent data)
+//     X bytes - float[]  : speaker_latent (array of floats in the speaker_latent)
+constexpr char kReferenceCacheMagic[8] = {'E', 'C', 'H', 'O', '-', 'T', 'T', 'S'};
+constexpr uint8_t kCacheVersion = 1;
+
+using EncodedSpeaker = std::pair<int64_t, std::vector<float>>;
+
+template <class T> bool read(std::istream &in, T &v) {
+    return static_cast<bool>(in.read(reinterpret_cast<char *>(&v), sizeof(v)));
+}
+
+template <class T> void write(std::ostream &out, const T &v) {
+    out.write(reinterpret_cast<const char *>(&v), sizeof(v));
+}
+
+bool read_floats(std::istream &in, std::vector<float> &v, uint64_t count) {
+    v.resize(static_cast<size_t>(count));
+    return static_cast<bool>(in.read(
+        reinterpret_cast<char *>(v.data()),
+        static_cast<std::streamsize>(count * sizeof(float))
+    ));
+}
+
+void write_floats(std::ostream &out, const std::vector<float> &v) {
+    out.write(
+        reinterpret_cast<const char *>(v.data()),
+        static_cast<std::streamsize>(v.size() * sizeof(float))
+    );
+}
+
+
+std::optional<EncodedSpeaker> read_reference_file(const std::filesystem::path & path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return std::nullopt;
+    }
+
+    // Read the header
+    char magic[8];
+    uint8_t version = 0;
+    if (!in.read(magic, sizeof(magic)) || !read(in, version)
+        || !std::equal(std::begin(magic), std::end(magic), std::begin(kReferenceCacheMagic))
+        || !(version <= kCacheVersion)) {
+            return std::nullopt;
+    }
+    // Read based on the version
+    if (version == 1) {
+        uint64_t speaker_frames = 0;
+        uint64_t latent_length = 0;
+        if (!read(in, speaker_frames) || !read(in, latent_length)) {
+            return std::nullopt;
+        }
+        std::vector<float> speaker_latent(0);
+        if (!read_floats(in, speaker_latent, latent_length)) {
+            return std::nullopt;
+        }
+        return std::make_optional<EncodedSpeaker>({speaker_frames, std::move(speaker_latent)});
+    } else {
+        return std::nullopt;
+    }
+}
+
+bool write_reference_file(const std::filesystem::path & path, const EncodedSpeaker & speaker) {
+    auto tmp = path;
+    tmp += ".tmp";
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        return false;
+    }
+    // Write the header
+    out.write(kReferenceCacheMagic, sizeof(kReferenceCacheMagic));
+    write<uint8_t>(out, kCacheVersion);
+    // Write the data
+    write<uint64_t>(out, speaker.first);
+    write<uint64_t>(out, speaker.second.size());
+    write_floats(out, speaker.second);
+    out.close();
+
+    std::error_code ec;
+    if (!out) {
+        std::filesystem::remove(tmp, ec);
+        return false;
+    } else {
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) {
+            std::filesystem::remove(tmp, ec);
+        }
+    }
+    return true;
+}
+
+std::filesystem::path get_cache_path(const std::filesystem::path & cache_dir, const EchoReferenceIdentity & identity) {
+    if (cache_dir.empty()) {
+        return std::filesystem::path();
+    }
+    char name[128];
+    std::snprintf(name, sizeof(name),
+        "echo-tts-ref-%s-%lx.bin",
+        identity.id.c_str(),
+        identity.max_samples
+    );
+    return cache_dir / name;
+}
+
+std::optional<EncodedSpeaker> find_reference_cache(const std::filesystem::path & cache_dir, const EchoReferenceIdentity & identity) {
+    const auto cache_path = get_cache_path(cache_dir, identity);
+    if (cache_path.empty()) {
+        return std::nullopt;
+    }
+    return read_reference_file(cache_path);
+}
+
+bool put_reference_cache(const std::filesystem::path & cache_dir, const EchoReferenceIdentity & identity, const EncodedSpeaker & speaker) {
+    const auto cache_path = get_cache_path(cache_dir, identity);
+    if (cache_path.empty()) {
+        return false;
+    }
+    return write_reference_file(cache_path, speaker);
+}
 
 // Opt-in, not opt-out. See the comment at the adaptive-window call site for why
 // the default is the full trained window.
@@ -220,7 +354,7 @@ runtime::SessionOptions require_supported_session_options(
   // echo_tts.mem_saver + options; keep them usable while still validating
   // the value below.
   auto validation_options = options;
-  for (auto key : {"echo_tts.mem_saver", "echo_tts.cfg_mode"}) {
+  for (auto key : {"echo_tts.mem_saver", "echo_tts.cfg_mode", "echo_tts.reference_cache_dir"}) {
       if (contract->session_option_keys.find(key) ==
           contract->session_option_keys.end()) {
         validation_options.options.erase(key);
@@ -286,6 +420,24 @@ EchoTtsSession::EchoTtsSession(
         reference_cache_.set_capacity(static_cast<std::size_t>(*slots));
     } else {
         reference_cache_.set_capacity(kDefaultReferenceCacheSlots);
+    }
+    if (const auto dir = runtime::find_option(
+        RuntimeSessionBase::options().options, {"echo_tts.reference_cache_dir"})) {
+        if (!dir->empty()) {
+            std::filesystem::path cache_dir{*dir};
+            std::error_code ec;
+            std::filesystem::create_directories(cache_dir, ec);
+            if (echo_debug_enabled()) {
+                if (ec) {
+                    std::fprintf(stderr, "[echo-tts] failed to create reference cache dir\n");
+                } else {
+                    std::fprintf(stderr, "[echo-tts] using reference cache dir: %s\n", cache_dir.lexically_normal().string().c_str());
+                }
+            }
+            if (!ec) {
+                reference_cache_dir_ = cache_dir;
+            }
+        }
     }
     if (assets_ == nullptr) {
         throw std::runtime_error("Echo-TTS session requires loaded assets");
@@ -484,11 +636,22 @@ void EchoTtsSession::encode_speaker(const runtime::AudioBuffer & audio) {
     const auto & config = assets_->config;
 
     const EchoReferenceIdentity identity{reference_identity(audio), reference_max_samples_};
+    // In-memory cache first
     if (const auto * cached = reference_cache_.find(identity)) {
         speaker_latent_ = cached->latent;
         speaker_frames_ = cached->frames;
         if (echo_debug_enabled()) {
             std::fprintf(stderr, "[echo_tts] speaker reference cache hit (%lld frames)\n",
+                         static_cast<long long>(speaker_frames_));
+        }
+        return;
+    }
+    // On-disk cache next
+    if (const auto cached = find_reference_cache(reference_cache_dir_, identity)) {
+        speaker_frames_ = cached->first;
+        speaker_latent_ = cached->second;
+        if (echo_debug_enabled()) {
+            std::fprintf(stderr, "[echo-tts] speaker reference loaded from disk (%lld frames)\n",
                          static_cast<long long>(speaker_frames_));
         }
         return;
@@ -551,6 +714,7 @@ void EchoTtsSession::encode_speaker(const runtime::AudioBuffer & audio) {
     speaker_latent_ = std::move(latents);
     speaker_frames_ = frames;
     reference_cache_.put(identity, EchoPreparedSpeaker{speaker_latent_, speaker_frames_});
+    put_reference_cache(reference_cache_dir_, identity, {speaker_frames_, speaker_latent_});
     if (mem_saver_) {
         codec_->release_encode_graph();
     }
