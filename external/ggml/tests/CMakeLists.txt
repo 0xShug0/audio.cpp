@@ -169,6 +169,27 @@ add_test(NAME ${TEST_TARGET} COMMAND $<TARGET_FILE:${TEST_TARGET}>)
 set_property(TEST ${TEST_TARGET} PROPERTY ENVIRONMENT "LLVM_PROFILE_FILE=${TEST_TARGET}.profraw")
 
 
+if (GGML_CUDA AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT GGML_BACKEND_DL)
+    find_package(CUDAToolkit REQUIRED)
+    if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.0")
+        enable_language(CUDA)
+        add_executable(test-cuda-shared-memory test-cuda-shared-memory.cu)
+        target_include_directories(test-cuda-shared-memory PRIVATE ../src ../src/ggml-cuda)
+        target_compile_definitions(test-cuda-shared-memory PRIVATE $<TARGET_PROPERTY:ggml-cuda,COMPILE_DEFINITIONS>)
+        target_link_libraries(test-cuda-shared-memory PRIVATE ggml ggml-cuda CUDA::cudart CUDA::cuda_driver Threads::Threads)
+        set_target_properties(test-cuda-shared-memory PROPERTIES CUDA_STANDARD 17)
+        add_test(NAME test-cuda-shared-memory COMMAND test-cuda-shared-memory)
+        set_tests_properties(test-cuda-shared-memory PROPERTIES SKIP_RETURN_CODE 77)
+        find_package(Vulkan QUIET)
+        if (Vulkan_FOUND)
+            target_compile_definitions(test-cuda-shared-memory PRIVATE GGML_TEST_VULKAN)
+            target_link_libraries(test-cuda-shared-memory PRIVATE Vulkan::Vulkan)
+            add_test(NAME test-cuda-shared-memory-vulkan COMMAND test-cuda-shared-memory --vulkan)
+            set_tests_properties(test-cuda-shared-memory-vulkan PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
+    endif()
+endif()
+
 if (NOT GGML_BACKEND_DL)
     #
     # test-opt

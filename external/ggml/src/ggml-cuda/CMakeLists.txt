@@ -205,9 +205,8 @@ if (CUDAToolkit_FOUND)
         target_link_libraries(ggml-cuda PRIVATE CUDA::cudart CUDA::cublas)
     endif()
 
-    if (GGML_CUDA_NO_VMM)
-        # No VMM requested, no need to link directly with the cuda driver lib (libcuda.so)
-    else()
+    if (NOT GGML_CUDA_NO_VMM OR CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.0")
+        # CUDA 12+ also uses context-specific kernel attributes without VMM.
         target_link_libraries(ggml-cuda PRIVATE CUDA::cuda_driver)
     endif()
 
