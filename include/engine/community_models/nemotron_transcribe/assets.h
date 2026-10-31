@@ -30,6 +30,6 @@ assets::TensorStorageType transcribe_weight_type(std::string_view value);
 // Conservative weight residency before uploads, including mandatory F32
 // parameters and the framework's F32 fallback for unaligned quantized rows.
 size_t estimate_transcribe_weight_bytes(const std::vector<assets::TensorMetadata> & tensors,
-    assets::TensorStorageType storage);
+    assets::TensorStorageType storage, int64_t expert_cache_size = 0);
 
 }  // namespace engine::models::nemotron_transcribe

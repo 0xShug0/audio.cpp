@@ -153,6 +153,19 @@ int main() {
             NemotronHDecoderRuntime quantized(source, execution, padded);
             NemotronHDecoderRuntime dequantized(source, execution, padded, assets::TensorStorageType::F32);
             const auto quant_result = quantized.generate({1, 2}, audio, 1, {3}, options);
+            DecoderOptions offload;
+            offload.disk_experts = true;
+            offload.expert_cache_size = padded.experts_per_token;
+            offload.disk_expert_read_threads = 1;
+            NemotronHDecoderRuntime cached(source, execution, padded, assets::TensorStorageType::Native, offload);
+            const auto cached_result = cached.generate({1, 2}, audio, 1, {3}, options);
+            require(cached_result.token_ids == quant_result.token_ids &&
+                error(cached_result.last_logits, quant_result.last_logits) < 2e-6F,
+                "bounded expert cache changed padded quantized output");
+            cached.generate({1}, {}, 0, {}, options);
+            const auto cached_repeat = cached.generate({1, 2}, audio, 1, {3}, options);
+            require(cached_repeat.last_logits == cached_result.last_logits,
+                "offload long-short-long contaminated the repeated request");
             const auto f32_result = dequantized.generate({1, 2}, audio, 1, {3}, options);
             require(quant_result.token_ids == f32_result.token_ids, "quantized padded decode token parity");
             require(error(quant_result.last_logits, f32_result.last_logits) < 5e-3F, "quantized padded decode numerical parity");

@@ -245,7 +245,47 @@ when the recording is silent. `top_p=0` keeps the highest-ranked candidate.
 The native silence gate returns empty text only when peak amplitude is below
 0.001 and RMS is below 0.00003. It does not trim audio or repair generated text.
 
+## CPU weight offload
+
+`nemotron_transcribe.disk_experts=true` keeps routed expert banks in their native
+GGUF format in host memory and uploads selected experts into a bounded cache.
+Expert arithmetic, dense decoder layers and the speech encoder still run on
+the selected backend. Offload is disabled by default and requires
+`nemotron_transcribe.weight_type=native`.
+
+```sh
+build/debug/bin/audiocpp_cli --task asr --family nemotron_transcribe \
+  --model models/nemotron-transcribe-30b-a4b-experts-Q4_K_S.gguf \
+  --backend cuda --audio recording.wav --log \
+  --session-option nemotron_transcribe.disk_experts=true \
+  --session-option nemotron_transcribe.expert_cache_size=8 \
+  --session-option nemotron_transcribe.prefill_batch_size=1024
+```
+
+The required encoder GGUF must be beside the decoder. The same offload controls
+apply to Vulkan. Eight resident expert slots per layer is the default; larger
+caches trade device memory for fewer uploads. The cache must cover the selected
+experts per token and cannot exceed the checkpoint's expert count. The existing
+`prefill_batch_size` control also applies to offload: larger batches amortize
+expert transfers, use more activation memory and can change numerical rounding.
+
+`nemotron_transcribe.pin_experts=true` optionally retains complete expert banks
+in pinned host RAM for direct uploads. This consumes host memory approximately
+equal to the native expert payload and requires backend pinned-buffer support.
+With pinning disabled, `disk_expert_read_threads` controls host staging copies
+(default four); parallel staging requires OpenMP or Apple dispatch. Set it to
+one in builds without either facility.
+
+Graphs, recurrent state, staging allocations and the bounded expert cache are
+session-owned. Independent requests reset recurrent state and expert-slot
+placement. Offloading does not change the router, expert activation or routing
+weight formulas, but grouped expert matrix multiplication can change floating
+point rounding and therefore generated text.
+
 ## Timestamps and speakers
+
+The CTC head is loaded on the first timestamp or diarization request and reused
+by later requests in the same session. Plain transcription does not load it.
 
 `TaskResult.word_timestamps` uses sample offsets in the input audio clock.
 `speaker_turns` contains 10 ms speaker-activity segments. Custom output

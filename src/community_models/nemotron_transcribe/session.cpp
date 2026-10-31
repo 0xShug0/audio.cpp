@@ -111,10 +111,17 @@ public:
             static_cast<int>(decoder_config.prefill_batch_size), 1, 2048);
         const auto storage = transcribe_weight_type(
             runtime::find_option(options.options, {"nemotron_transcribe.weight_type"}).value_or("native"));
+        DecoderOptions decoder_options;
+        decoder_options.disk_experts = runtime::parse_bool_option(runtime::find_option(options.options,
+            {"nemotron_transcribe.disk_experts"}).value_or("false"), "nemotron_transcribe.disk_experts");
+        decoder_options.pin_experts = runtime::parse_bool_option(runtime::find_option(options.options,
+            {"nemotron_transcribe.pin_experts"}).value_or("false"), "nemotron_transcribe.pin_experts");
+        decoder_options.expert_cache_size = runtime::parse_positive_i64_option(options.options,
+            {"nemotron_transcribe.expert_cache_size"}, 8);
+        decoder_options.disk_expert_read_threads = bounded_option(options,
+            "nemotron_transcribe.disk_expert_read_threads", 4, 1, 64);
         encoder_ = std::make_unique<ParallelExpertEncoder>(execution_context(), *assets_->encoder_weights, encoder_config, storage);
-        decoder_ = std::make_unique<NemotronHDecoderRuntime>(assets_->decoder_weights, execution_context(), decoder_config, storage);
-        ctc_ = std::make_unique<CtcTimestampHead>(assets_->encoder_weights, execution_context(),
-            assets_->ctc, assets_->alignment_tokenizer);
+        decoder_ = std::make_unique<NemotronHDecoderRuntime>(assets_->decoder_weights, execution_context(), decoder_config, storage, decoder_options);
         assets_->decoder_weights->release_storage();
         assets_->encoder_weights->release_storage();
     }
@@ -223,6 +230,8 @@ public:
         const auto generated = decoder_->generate(prompt.before_audio, encoded.audio_embeddings,
             encoded.frames, prompt.after_audio, generation);
         const auto decoder_ms = debug::elapsed_ms(stage);
+        debug::timing_log_scalar("nemotron_transcribe.decoder.prefill_ms", generated.prefill_ms);
+        debug::timing_log_scalar("nemotron_transcribe.decoder.decode_ms", generated.decode_ms);
         const auto raw_transcript = tokenizer_.decode(generated.token_ids);
         const auto transcript = trim_response(raw_transcript);
         runtime::TaskResult result;
@@ -238,6 +247,11 @@ public:
             {"encoder_ms", json::Value::make_number(encoder_ms)},
             {"decoder_ms", json::Value::make_number(decoder_ms)}};
         if (word_times) {
+            if (!ctc_) {
+                ctc_ = std::make_unique<CtcTimestampHead>(assets_->encoder_weights, execution_context(),
+                    assets_->ctc, assets_->alignment_tokenizer);
+                assets_->encoder_weights->release_storage();
+            }
             stage = std::chrono::steady_clock::now();
             const CtcSpeakerEvidence speakers{encoded.speaker_probs80.data(), static_cast<int>(encoded.frames),
                 encoded.speaker_count, encoded.speaker_probs10.data(), static_cast<int>(encoded.native_speaker_frames),
@@ -317,6 +331,10 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_nemotron_transcribe_loader() {
         const auto assets = load_transcribe_assets(path);
         const auto storage = transcribe_weight_type(
             runtime::find_option(options, {"nemotron_transcribe.weight_type"}).value_or("native"));
+        const bool offload = runtime::parse_bool_option(runtime::find_option(options,
+            {"nemotron_transcribe.disk_experts"}).value_or("false"), "nemotron_transcribe.disk_experts");
+        const auto slots = offload ? runtime::parse_positive_i64_option(options,
+            {"nemotron_transcribe.expert_cache_size"}, 8) : 0;
         runtime::ModelResourcePlan plan;
         // Report both files so the host does not price the compressed decoder
         // again. A storage override can expand it far beyond its file size.
@@ -325,8 +343,10 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_nemotron_transcribe_loader() {
             const auto file_size = std::filesystem::file_size(file);
             if (file_size > std::numeric_limits<size_t>::max())
                 throw std::runtime_error("Nemotron Transcribe weight file is too large");
-            const auto bytes = std::max(static_cast<size_t>(file_size),
-                estimate_transcribe_weight_bytes(source->tensors(), storage));
+            const bool offloaded_decoder = offload && source == assets->decoder_weights;
+            const auto estimate = estimate_transcribe_weight_bytes(source->tensors(), storage,
+                offloaded_decoder ? slots : 0);
+            const auto bytes = offloaded_decoder ? estimate : std::max(static_cast<size_t>(file_size), estimate);
             if (bytes / 2 > std::numeric_limits<size_t>::max() - bytes)
                 throw std::runtime_error("Nemotron Transcribe residency estimate overflows");
             const auto resident = bytes + bytes / 2;

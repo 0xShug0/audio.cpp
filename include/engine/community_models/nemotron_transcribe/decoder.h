@@ -53,6 +53,13 @@ struct GenerationOptions {
     bool return_last_logits = false;
 };
 
+struct DecoderOptions {
+    bool disk_experts = false;
+    bool pin_experts = false;
+    int64_t expert_cache_size = 8;
+    int64_t disk_expert_read_threads = 4;
+};
+
 // Validates scalar options without loading weights or processing audio. Prompt
 // budget and vocabulary IDs are checked by generate(). Throws runtime_error.
 void validate_generation_options(const GenerationOptions & options, int64_t max_context);
@@ -81,7 +88,8 @@ class NemotronHDecoderRuntime {
 public:
     NemotronHDecoderRuntime(std::shared_ptr<const assets::TensorSource> source,
         core::ExecutionContext & execution, DecoderConfig config = {},
-        assets::TensorStorageType storage = assets::TensorStorageType::Native);
+        assets::TensorStorageType storage = assets::TensorStorageType::Native,
+        DecoderOptions options = {});
     ~NemotronHDecoderRuntime();
 
     NemotronHDecoderRuntime(const NemotronHDecoderRuntime &) = delete;

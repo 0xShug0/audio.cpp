@@ -70,6 +70,8 @@ int main() {
             {"blk.1.ffn_up_exps.weight", "IQ4_NL", {128, 1856, 2688}},
             {"blk.1.ffn_down_exps.weight", "IQ4_NL", {128, 2688, 1856}}};
         const auto native = model::estimate_transcribe_weight_bytes(experts, Storage::Native);
+        require(model::estimate_transcribe_weight_bytes(experts, Storage::Native, 8) == native / 16,
+            "offload residency must price eight slots rather than 128 experts");
         const auto expanded = model::estimate_transcribe_weight_bytes(experts, Storage::F32);
         require(expanded == size_t(2) * 128 * 1856 * 2688 * 4 && expanded > 6 * native,
             "F32 residency must reflect expanded routed expert banks");

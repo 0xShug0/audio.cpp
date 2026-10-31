@@ -28,6 +28,10 @@
       {"name": "seed", "type": "int", "min": 0, "default": 0, "required": false, "description": "Sampling seed."}
     ],
     "session": [
+      {"name": "disk_experts", "type": "bool", "default": false, "required": false, "description": "Keep routed expert weights in the GGUF/host memory and stage selected experts through a bounded backend cache. Dense weights and all expert computation remain on the selected backend."},
+      {"name": "pin_experts", "type": "bool", "default": false, "required": false, "description": "With disk_experts, retain complete native expert banks in pinned host RAM for direct uploads. Requires pinned host-buffer support."},
+      {"name": "expert_cache_size", "type": "int", "min": 1, "default": 8, "required": false, "description": "Resident expert slots per routed layer with disk_experts. Must cover the model's experts per token and cannot exceed its expert count."},
+      {"name": "disk_expert_read_threads", "type": "int", "min": 1, "max": 64, "default": 4, "required": false, "description": "Host workers for staging GGUF expert ranges when disk_experts is true and pin_experts is false. Parallel reads require OpenMP or Apple dispatch."},
       {"name": "weight_type", "type": "enum", "preset": "weight_type_full", "default": "native", "required": false, "description": "Native preserves mixed packaged tensor types. Changing this may greatly increase model memory."},
       {"name": "max_context", "type": "int", "min": 1, "default": 73728, "required": false, "description": "Combined text, audio and output context, bounded by backbone positions. Matches native SALM serving default."},
       {"name": "prefill_batch_size", "type": "int", "min": 1, "max": 2048, "default": 64, "required": false, "description": "Text/audio rows per decoder prefill graph."},
