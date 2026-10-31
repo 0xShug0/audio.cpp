@@ -4,6 +4,27 @@ This records a local bring-up on Windows using MSVC 14.44, CUDA 12.8.61,
 RTX PRO 6000 Blackwell 96 GB and an i9-13900K. It is a small functional comparison,
 not a held-out multilingual accuracy benchmark.
 
+## Vulkan normalization follow-up
+
+A user reported `encoder contains unsupported backend op 'NORM'` on Vulkan.
+The encoder's Q/K views retain the combined QKV frame stride. Vulkan requires
+contiguous input for `NORM`, so the model now materializes non-contiguous inputs
+before normalization. Weights, epsilon, sampling and GGML are unchanged.
+
+The original encoder reproduced this rejection on the actual Vulkan backend
+with Mesa llvmpipe 25.2.8 under WSL2. With the fix, a self-generated 37-frame,
+two-layer encoder fixture completed, including repeated requests and a shorter
+request followed by the original shape. Its output tensors differed from CPU
+by at most 5.37e-6 with flash attention disabled. This is software Vulkan
+component validation, not full-model validation on a hardware Vulkan driver.
+
+The public encoder bounds test also runs a one-layer expert pair with Vulkan's
+contiguous-NORM restriction on CPU, with flash attention both enabled and
+disabled. It fails against the original encoder and passes with the fix. CPU
+outputs for the existing small fixture and the released 32/31-layer encoder
+fixture remain byte-identical. The Windows CUDA CLI/server build and all seven
+focused CTests pass. No model files need to be downloaded again.
+
 ## Versions and settings
 
 - Weights: `nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B`, revision `a99e33f698257b8b69ca7834f19c73582eb1fa7e`.

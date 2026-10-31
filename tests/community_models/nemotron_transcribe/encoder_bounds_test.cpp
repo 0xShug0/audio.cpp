@@ -1,4 +1,5 @@
 #include "engine/community_models/nemotron_transcribe/encoder.h"
+#include <ggml-backend-impl.h>
 
 #include <cmath>
 #include <cstring>
@@ -25,14 +26,25 @@ void bad_config(const std::function<void(EncoderConfig &)> & change) {
     rejects([&] { validate_encoder_config(config); }, "invalid encoder configuration was accepted");
 }
 
-// A zero-layer expert pair is sufficient to exercise the real feature-stacking,
-// speaker head and multi-window cache-compression path with no model fixture.
+// Self-generated weights exercise feature stacking, the speaker cache, and
+// optionally one attention layer per expert without a downloaded model fixture.
 class CacheWeights final : public engine::assets::TensorSource {
 public:
-    CacheWeights() {
+    explicit CacheWeights(bool attention = false) {
         for (const auto * prefix : {"asr", "diar"}) {
             add(std::string(prefix) + ".pre_encode.proj.weight", {16, 8});
             for (const auto * suffix : {"embed_norm", "final_norm"}) norm(std::string(prefix) + "." + suffix, 16);
+            if (attention) {
+                const std::string layer = std::string(prefix) + ".layers.0";
+                norm(layer + ".norm1", 16);
+                norm(layer + ".norm2", 16);
+                norm(layer + ".attn.q_norm", 8);
+                norm(layer + ".attn.k_norm", 8);
+                add(layer + ".attn.w_qkv.weight", {48, 16});
+                linear(layer + ".attn.out_proj", 16, 16);
+                linear(layer + ".ffn.net.0", 32, 16);
+                linear(layer + ".ffn.net.3", 16, 32);
+            }
         }
         linear("diar.head.encoder_proj", 8, 16);
         add("diar.head.subpixel_upsample.weight", {16, 8, 3});
@@ -45,6 +57,13 @@ public:
         norm("fusion.asr_norm", 16);
         norm("fusion.diar_norm", 2);
         add("fusion.diar_kernel", {2, 16});
+        if (attention) {
+            for (auto & entry : entries_) {
+                if (entry.second.metadata.shape.size() < 2) continue;
+                for (size_t i = 0; i < entry.second.values.size(); ++i)
+                    entry.second.values[i] = static_cast<float>(static_cast<int>(i % 13) - 6) * 0.03f;
+            }
+        }
     }
     const std::filesystem::path & source_path() const noexcept override { return path_; }
     bool has_tensor(std::string_view name) const noexcept override { return entries_.count(std::string(name)) != 0; }
@@ -114,6 +133,65 @@ void extreme_cache_rates() {
     require(output.audio_embeddings == repeated.audio_embeddings && output.speaker_probs10 == repeated.speaker_probs10,
         "extreme cache rates changed later request output");
 }
+
+// Exercise the real encoder with Vulkan's contiguous-input NORM restriction,
+// including on CPU-only CI. Restore the device callback before leaving the test.
+struct ContiguousNormBackend {
+    using Supports = bool (*)(ggml_backend_dev_t, const ggml_tensor *);
+    static inline Supports original = nullptr;
+    static inline int checked = 0;
+    ggml_backend_dev_t device;
+    explicit ContiguousNormBackend(ggml_backend_t backend) : device(ggml_backend_get_device(backend)) {
+        original = device->iface.supports_op;
+        checked = 0;
+        device->iface.supports_op = [](ggml_backend_dev_t dev, const ggml_tensor * op) {
+            if (op->op == GGML_OP_NORM) {
+                ++checked;
+                if (!ggml_is_contiguous(op->src[0])) return false;
+            }
+            return original(dev, op);
+        };
+    }
+    ~ContiguousNormBackend() { device->iface.supports_op = original; }
+};
+
+void attention_norm_layout() {
+    EncoderConfig config;
+    config.asr.feature_size = config.diar.feature_size = 4;
+    config.asr.hidden_size = config.diar.hidden_size = 16;
+    config.asr.heads = config.diar.heads = 2;
+    config.asr.layers = config.diar.layers = 1;
+    config.asr.intermediate_size = config.diar.intermediate_size = 32;
+    config.asr.subsampling_factor = config.diar.subsampling_factor = config.upsample_factor = 2;
+    config.asr.rotary_dimensions = config.diar.rotary_dimensions = 8;
+    config.asr.qk_norm = config.diar.qk_norm = true;
+    config.projection_dim = 12;
+    config.speaker_count = 2;
+    config.speaker_hidden_size = 8;
+    config.online_inference_length = 4;
+    config.chunk_left_context = config.chunk_right_context = 1;
+    config.speaker_cache.cache_frames = 6;
+    config.speaker_cache.fifo_frames = 2;
+    config.speaker_cache.update_period = 3;
+    CacheWeights source(true);
+    engine::core::ExecutionContext execution({engine::core::BackendType::Cpu, 0, 1});
+    MelFeatures mel{37, 4, 0.37, std::vector<float>(148)};
+    for (size_t i = 0; i < mel.values.size(); ++i) mel.values[i] = std::sin(static_cast<float>(i) * 0.17f);
+    for (bool flash : {false, true}) {
+        config.use_flash_attention = flash;
+        ParallelExpertEncoder reference(execution, source, config);
+        const auto expected = reference.encode(mel);
+        ContiguousNormBackend restricted(execution.backend());
+        ParallelExpertEncoder encoder(execution, source, config);
+        const auto output = encoder.encode(mel);
+        require(ContiguousNormBackend::checked > 0, "encoder layout test did not check normalization");
+        require(output.asr_states == expected.asr_states && output.audio_embeddings == expected.audio_embeddings &&
+            output.speaker_probs80 == expected.speaker_probs80 && output.speaker_probs10 == expected.speaker_probs10,
+            "contiguous normalization changed encoder output");
+        const auto repeated = encoder.encode(mel);
+        require(output.audio_embeddings == repeated.audio_embeddings, "attention layout repeated request changed output");
+    }
+}
 }
 
 int main() {
@@ -152,7 +230,8 @@ int main() {
         engine::runtime::AudioBuffer audio{16000, 1, std::vector<float>(400, std::numeric_limits<float>::max())};
         rejects([&] { frontend.extract(audio, 1); }, "non-finite frontend output accepted");
         extreme_cache_rates();
-        std::cout << "PASS encoder score/dimension/duration bounds, partial-window geometry, malformed mel, trained window and finite frontend output\n";
+        attention_norm_layout();
+        std::cout << "PASS encoder bounds, window geometry, frontend checks and contiguous attention normalization\n";
         return 0;
     } catch (const std::exception & error) {
         std::cerr << "FAIL " << error.what() << '\n';

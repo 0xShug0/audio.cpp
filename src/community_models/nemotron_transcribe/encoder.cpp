@@ -89,6 +89,8 @@ ggml_tensor * linear(ggml_context * ctx, ggml_tensor * x, const LinearWeights & 
 }
 
 ggml_tensor * norm(ggml_context * ctx, ggml_tensor * x, const NormWeights & weights, float epsilon) {
+    // Q/K split views retain the QKV frame stride; Vulkan NORM needs contiguous input.
+    if (!ggml_is_contiguous(x)) x = ggml_cont(ctx, x);
     auto * result = ggml_norm(ctx, x, epsilon);
     return ggml_add(ctx, ggml_mul(ctx, result, weights.weight), weights.bias);
 }
