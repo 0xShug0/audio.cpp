@@ -46,10 +46,13 @@ struct ParakeetTDTDecoderRuntime::StepGraph {
     ggml_cgraph* graph = nullptr;
     ggml_gallocr_t alloc = nullptr;
     engine::core::HostGraphPlan plan;
+    ggml_backend_t backend = nullptr;
     engine::core::TensorValue token_id, enc_frame;
     std::vector<engine::core::TensorValue> h_in, c_in, h_out, c_out;
     engine::core::TensorValue pred_cache, logits;
     ~StepGraph() {
+        plan.reset();
+        engine::core::release_backend_graph_resources(backend, graph, true);
         if (alloc) ggml_gallocr_free(alloc);
         if (state_buffer) ggml_backend_buffer_free(state_buffer);
     }
@@ -60,8 +63,13 @@ struct ParakeetTDTDecoderRuntime::JointGraph {
     ggml_cgraph* graph = nullptr;
     ggml_gallocr_t alloc = nullptr;
     engine::core::HostGraphPlan plan;
+    ggml_backend_t backend = nullptr;
     engine::core::TensorValue enc_frame, pred_cache, logits;
-    ~JointGraph() { if (alloc) ggml_gallocr_free(alloc); }
+    ~JointGraph() {
+        plan.reset();
+        engine::core::release_backend_graph_resources(backend, graph, true);
+        if (alloc) ggml_gallocr_free(alloc);
+    }
 };
 
 ParakeetTDTDecoderRuntime::ParakeetTDTDecoderRuntime(
@@ -78,6 +86,7 @@ void ParakeetTDTDecoderRuntime::ensure_step_graph() {
     const auto t0 = Clock::now();
     const auto& cfg = assets_->config; const auto& dw = weights_->decoder;
     auto g = std::make_unique<StepGraph>();
+    g->backend = execution_context_->backend();
     ggml_init_params p{graph_arena_bytes_, nullptr, true};
     g->ggml.reset(ggml_init(p));
     engine::core::ModuleBuildContext ctx{g->ggml.get(), "parakeet.decoder", execution_context_->backend_type()};
@@ -161,6 +170,7 @@ void ParakeetTDTDecoderRuntime::ensure_joint_graph() {
     if (joint_graph_) return;
     const auto t0 = Clock::now(); const auto& cfg = assets_->config;
     auto g = std::make_unique<JointGraph>();
+    g->backend = execution_context_->backend();
     ggml_init_params p{graph_arena_bytes_, nullptr, true};
     g->ggml.reset(ggml_init(p));
     engine::core::ModuleBuildContext ctx{g->ggml.get(), "parakeet.decoder_joint", execution_context_->backend_type()};
