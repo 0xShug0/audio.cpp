@@ -178,9 +178,9 @@ struct Graph {
 
 ggml_tensor * norm(core::ModuleBuildContext & ctx, ggml_tensor * x,
     const modules::NormWeights & weights, const CtcConfig & c) {
-    // Preserve the Q/K strided views, as NeMo-Speech.cpp does. Normalization is
-    // over each head's ne0 before partial NeoX RoPE.
-    return modules::LayerNormModule({x->ne[0], c.norm_epsilon, true, true, true})
+    // Normalize each head before partial NeoX RoPE, using the module's
+    // portable contiguous-input lowering for the strided Q/K split views.
+    return modules::LayerNormModule({x->ne[0], c.norm_epsilon, true, true})
         .build(ctx, value(x), weights).tensor;
 }
 

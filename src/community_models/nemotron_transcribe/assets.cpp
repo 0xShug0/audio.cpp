@@ -144,7 +144,7 @@ assets::TensorStorageType transcribe_weight_type(std::string_view value) {
 }
 
 size_t estimate_transcribe_weight_bytes(const std::vector<assets::TensorMetadata> & tensors,
-    assets::TensorStorageType storage) {
+    assets::TensorStorageType storage, int64_t expert_cache_size) {
     const auto multiply = [](size_t a, size_t b) {
         if (b != 0 && a > std::numeric_limits<size_t>::max() / b)
             throw std::runtime_error("Nemotron Transcribe weight estimate overflows");
@@ -177,7 +177,14 @@ size_t estimate_transcribe_weight_bytes(const std::vector<assets::TensorMetadata
             name.find(".ssm_d") != std::string::npos || name.find("ffn_gate_inp") != std::string::npos;
         if (fixed_f32 || (ggml_is_quantized(type) &&
             (tensor.shape.size() < 2 || tensor.shape.back() % ggml_blck_size(type) != 0))) type = GGML_TYPE_F32;
-        const size_t cost = std::max(bytes(tensor, native), bytes(tensor, type));
+        size_t cost = std::max(bytes(tensor, native), bytes(tensor, type));
+        if (expert_cache_size > 0 && (name.find("ffn_up_exps.weight") != std::string::npos ||
+            name.find("ffn_down_exps.weight") != std::string::npos)) {
+            if (tensor.shape.size() != 3 || expert_cache_size > tensor.shape.front())
+                throw std::runtime_error("Nemotron Transcribe expert cache exceeds its source bank");
+            cost = multiply(bytes(tensor, native) / static_cast<size_t>(tensor.shape.front()),
+                static_cast<size_t>(expert_cache_size));
+        }
         if (cost > std::numeric_limits<size_t>::max() - total)
             throw std::runtime_error("Nemotron Transcribe weight estimate overflows");
         total += cost;
