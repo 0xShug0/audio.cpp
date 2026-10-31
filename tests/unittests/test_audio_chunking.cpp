@@ -787,6 +787,26 @@ void test_chunk_word_timestamp_merge_rescales_chunk_domain() {
     require_span(merged[0].span, 36000, 42000, "rescaled word timestamp");
 }
 
+// The Qwen3 ASR forced aligner now returns spans in the uploaded audio's own
+// sample domain, so the chunk merge must not rescale them to the frontend rate.
+void test_chunk_word_timestamp_merge_keeps_input_rate_domain() {
+    const int64_t rate = 24000;
+    const int64_t chunk_samples = 12 * rate;
+    std::vector<engine::runtime::WordTimestamp> merged;
+    for (int64_t chunk = 0; chunk < 4; ++chunk) {
+        const int64_t begin = chunk * chunk_samples;
+        engine::audio::append_chunk_word_timestamps(
+            merged,
+            {word("first", 0, 300), word("last", chunk_samples - 300, chunk_samples)},
+            engine::runtime::TimeSpan{begin, begin + chunk_samples},
+            engine::runtime::TimeSpan{begin, begin + chunk_samples},
+            rate,
+            rate);
+    }
+    engine::test::require_eq(merged.size(), static_cast<size_t>(8), "input-rate merged word count");
+    require_span(merged.back().span, 48 * rate - 300, 48 * rate, "last word stays in the input rate");
+}
+
 void test_chunk_speech_metadata_merge_rescales_chunk_domain() {
     engine::runtime::TaskResult chunk;
     auto segment = speech(0, 24000);
@@ -992,6 +1012,7 @@ int main() {
         test_chunk_word_timestamp_merge_appends_multiple_chunks();
         test_chunk_word_timestamp_merge_keeps_non_overlapping_source_span();
         test_chunk_word_timestamp_merge_rescales_chunk_domain();
+        test_chunk_word_timestamp_merge_keeps_input_rate_domain();
         test_chunk_speech_metadata_merge_rescales_chunk_domain();
         test_chunk_word_timestamp_merge_rejects_invalid_spans();
         test_chunk_word_timestamp_merge_drops_outside_words();

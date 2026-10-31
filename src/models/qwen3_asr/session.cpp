@@ -340,8 +340,10 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
             item.word_timestamps,
             chunks.front().source_span,
             chunks.front().keep_span,
+            // The forced aligner reports word spans in the uploaded audio's
+            // sample domain, so chunk merging needs no rate conversion.
             audio.sample_rate,
-            assets_->config.sample_rate);
+            audio.sample_rate);
         log_chunk_word_diagnostics(
             0,
             1,
@@ -351,7 +353,7 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
             merged_before,
             merged_words.size(),
             audio.sample_rate,
-            assets_->config.sample_rate);
+            audio.sample_rate);
         item.word_timestamps = std::move(merged_words);
         return item;
     }
@@ -380,7 +382,7 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
             chunk.source_span,
             chunk.keep_span,
             audio.sample_rate,
-            assets_->config.sample_rate);
+            audio.sample_rate);
         log_chunk_word_diagnostics(
             static_cast<int64_t>(chunk_index),
             static_cast<int64_t>(chunks.size()),
@@ -390,7 +392,7 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
             merged_before,
             merged.word_timestamps.size(),
             audio.sample_rate,
-            assets_->config.sample_rate);
+            audio.sample_rate);
     }
     if (merged.text_output.has_value()) {
         if (request_return_timestamps(request) && !merged.word_timestamps.empty() &&
