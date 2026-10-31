@@ -76,8 +76,9 @@ about 173 MB.
 
 The CUDA graph now lowers non-causal axial attention through the framework's
 view-preserving Flash Attention path with F32 accumulation. Gate values are
-broadcast directly instead of materializing a repeated gate tensor. CPU and
-other backends retain the explicit attention implementation.
+broadcast directly instead of materializing a repeated gate tensor. Vulkan
+uses the same attention lowering; CPU and other backends retain the explicit
+attention implementation.
 
 RTX 3090 results for the same 8-second, 44.1 kHz stereo input:
 
