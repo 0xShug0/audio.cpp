@@ -60,5 +60,9 @@ struct ParakeetTDTAssets {
 };
 
 std::shared_ptr<const ParakeetTDTAssets> load_parakeet_assets(const std::filesystem::path & model_path);
+// Shared asset assembly; alternate model-owned containers supply their own
+// tensor source without changing the framework's checkpoint readers.
+std::shared_ptr<const ParakeetTDTAssets> make_parakeet_assets(
+    assets::ResourceBundle resources, std::shared_ptr<const assets::TensorSource> source);
 
 }  // namespace engine::community_models::parakeet_tdt

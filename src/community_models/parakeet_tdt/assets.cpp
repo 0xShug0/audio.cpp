@@ -144,9 +144,15 @@ std::shared_ptr<const ParakeetTDTAssets> load_parakeet_assets(const std::filesys
     auto resources = engine::model_spec::load_resource_bundle(
         model_path,
         engine::model_spec::default_spec_path("parakeet_tdt"));
+    auto source = resources.open_tensor_source("weights");
+    return make_parakeet_assets(std::move(resources), std::move(source));
+}
+
+std::shared_ptr<const ParakeetTDTAssets> make_parakeet_assets(
+    assets::ResourceBundle resources, std::shared_ptr<const assets::TensorSource> source) {
     auto assets = std::make_shared<ParakeetTDTAssets>();
     assets->resources = std::move(resources);
-    assets->source = assets->resources.open_tensor_source("weights");
+    assets->source = std::move(source);
     assets->config = parse_config(assets->resources);
     const auto & tokenizer_json = assets->resources.require_file("tokenizer_json");
     assets->tokenizer = engine::tokenizers::load_huggingface_tokenizer_json(tokenizer_json);
