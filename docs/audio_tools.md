@@ -89,9 +89,9 @@ Converted SafeTensors package:
 audiocpp_cli --task sep --family bs_roformer --model models/BS-RoFormer-ep368 --backend cuda --audio song_44k.wav --out-dir stems
 ```
 
-CUDA uses F32-accumulating Flash Attention while CPU and other backends keep
-the explicit attention path. The packaged overlap count remains the
-quality-oriented default. Lower overlap is an opt-in speed/quality tradeoff:
+CUDA and Vulkan use F32-accumulating Flash Attention while CPU and other
+backends keep the explicit attention path. The packaged overlap count remains
+the quality-oriented default. Lower overlap is an opt-in speed/quality tradeoff:
 
 | Session option | Default | Notes |
 |---|---:|---|
@@ -341,7 +341,7 @@ Mel-Band RoFormer is wired as a vocal/source-separation model. The CLI uses the 
 | Modes | `offline` |
 | Input | 44.1 kHz music mixture WAV through `--audio` |
 | Output | Named separated artifacts under `--out-dir` |
-| Notes | Uses the package overlap count by default; `mel_band_roformer.num_overlap` can lower the overlap for faster inference with a quality tradeoff |
+| Notes | Uses the package overlap count by default; `mel_band_roformer.num_overlap` can lower the overlap for faster inference with a quality tradeoff. CUDA and Vulkan use F32-accumulating Flash Attention; CPU and other backends use the explicit attention path |
 
 ```bash
 audiocpp_cli --task sep --family mel_band_roformer --model models/mel-roformer-mlx --backend cuda --audio song_44k.wav --out-dir stems

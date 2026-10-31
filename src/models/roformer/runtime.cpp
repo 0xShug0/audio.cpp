@@ -422,7 +422,7 @@ core::TensorValue attention_from_heads(
     const core::TensorValue & k_heads,
     const core::TensorValue & v_heads,
     int64_t dim) {
-    if (ctx.backend_type == core::BackendType::Cuda) {
+    if (ctx.backend_type == core::BackendType::Cuda || ctx.backend_type == core::BackendType::Vulkan) {
         return modules::ScaledDotProductAttentionModule({
             dim,
             modules::ScaledDotProductAttentionLowering::FlashPreserveViews,
