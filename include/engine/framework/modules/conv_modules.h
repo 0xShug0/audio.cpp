@@ -56,6 +56,8 @@ ggml_tensor * conv1d_pertap_channel_fast(
     ggml_tensor * input_cf,
     const Conv1dConfig & config);
 
+enum class Conv2dLayout { ChannelsFirst, ChannelsLast };
+
 struct Conv2dConfig {
     int64_t in_channels = 0;
     int64_t out_channels = 0;
@@ -95,6 +97,10 @@ public:
         core::ModuleBuildContext & ctx,
         const core::TensorValue & input,
         const Conv2dWeights & weights) const;
+
+    // Explicit activation layout; weight layout is unchanged. ChannelsLast uses BHWC.
+    core::TensorValue build(core::ModuleBuildContext & ctx, const core::TensorValue & input,
+        const Conv2dWeights & weights, Conv2dLayout layout) const;
 
     static const core::ModuleSchema & static_schema() noexcept;
 
@@ -280,6 +286,10 @@ public:
         core::ModuleBuildContext & ctx,
         const core::TensorValue & input,
         const Conv2dWeights & weights) const;
+
+    // Explicit activation layout; weight layout is unchanged. ChannelsLast uses BHWC.
+    core::TensorValue build(core::ModuleBuildContext & ctx, const core::TensorValue & input,
+        const Conv2dWeights & weights, Conv2dLayout layout) const;
 
     static const core::ModuleSchema & static_schema() noexcept;
 

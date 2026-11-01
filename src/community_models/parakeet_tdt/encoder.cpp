@@ -33,6 +33,45 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+engine::core::TensorValue build_metal_subsampling(
+    engine::core::ModuleBuildContext & ctx,
+    const engine::core::TensorValue & input,
+    const ParakeetSubsamplingWeights & weights,
+    int64_t kernel, int64_t stride,
+    const std::vector<engine::core::TensorValue> & masks) {
+    const auto channels = weights.conv_in.weight.shape.dims[0];
+    engine::modules::Conv2dConfig conv{1, channels, kernel, kernel,
+        static_cast<int>(stride), static_cast<int>(stride), 1, 1, 1, 1, true};
+    auto x = engine::modules::ReshapeModule({engine::core::TensorShape::from_dims(
+        {input.shape.dims[0], input.shape.dims[2], input.shape.dims[3], 1})}).build(ctx, input);
+    x = engine::modules::Conv2dModule(conv).build(ctx, x, weights.conv_in,
+        engine::modules::Conv2dLayout::ChannelsLast);
+    auto mask = [&](const engine::core::TensorValue & value, size_t index) {
+        const auto & dims = value.shape.dims;
+        auto flat = engine::modules::ReshapeModule({engine::core::TensorShape::from_dims(
+            {dims[0], dims[1], dims[2] * dims[3]})}).build(ctx, value);
+        flat = engine::modules::MaskingModule().build(ctx, flat, masks[index]);
+        return engine::modules::ReshapeModule({value.shape}).build(ctx, flat);
+    };
+    x = engine::modules::ReluModule().build(ctx, mask(x, 0));
+    engine::modules::DepthwiseConv2dConfig depthwise{channels, kernel, kernel,
+        static_cast<int>(stride), static_cast<int>(stride), 1, 1, 1, 1, true};
+    for (size_t i = 0; i < weights.layers.size(); ++i) {
+        const auto & layer = weights.layers[i];
+        x = engine::modules::DepthwiseConv2dModule(depthwise).build(ctx, x,
+            {layer.depthwise_weight, layer.depthwise_bias}, engine::modules::Conv2dLayout::ChannelsLast);
+        x = mask(x, i + 1);
+        const auto weight = engine::modules::ReshapeModule({
+            engine::core::TensorShape::from_dims({channels, channels})}).build(ctx, layer.pointwise.weight);
+        x = engine::modules::LinearModule({channels, channels, true}).build(ctx, x, {weight, layer.pointwise.bias});
+        x = engine::modules::ReluModule().build(ctx, mask(x, i + 1));
+    }
+    const auto shape = x.shape;
+    x = engine::modules::TransposeModule({{0, 1, 3, 2}, 4}).build(ctx, x);
+    x = engine::core::ensure_backend_addressable_layout(ctx, x);
+    return engine::modules::ReshapeModule({engine::core::TensorShape::from_dims(
+        {shape.dims[0], shape.dims[1], channels * shape.dims[2]})}).build(ctx, x);
+}
 
 // NeMo's ConformerConvolution.depthwise_conv is a CausalConv1D, but the
 // full-context (non-streaming) encoder constructs it with an explicit int
@@ -471,28 +510,33 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     }
 
     auto x = engine::core::reshape_tensor(ctx, graph->input, engine::core::TensorShape::from_dims({1, 1, input_frames, feature_dim}));
-    // NeMo uses Conv2D with pad=1 (not causal). Output matches conv_out formula.
-    x = engine::modules::Conv2dModule({1, enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
-            .build(ctx, x, enc_weights.subsampling.conv_in);
-    x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask1));
+    if (ctx.backend_type == engine::core::BackendType::Metal) {
+        x = build_metal_subsampling(ctx, x, enc_weights.subsampling, k, s,
+            {graph->mask1, graph->mask2, graph->mask3});
+    } else {
+        // NeMo uses Conv2D with pad=1 (not causal). Output matches conv_out formula.
+        x = engine::modules::Conv2dModule({1, enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
+                .build(ctx, x, enc_weights.subsampling.conv_in);
+        x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask1));
 
-    x = engine::modules::DepthwiseConv2dModule({enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
-            .build(ctx, x, {enc_weights.subsampling.layers[0].depthwise_weight, enc_weights.subsampling.layers[0].depthwise_bias});
-    x = engine::modules::TimeMask4dModule().build(ctx, x, graph->mask2);
-    x = engine::modules::Conv2dModule({enc.subsampling_channels, enc.subsampling_channels, 1, 1, 1, 1, 0, 0, 1, 1, true})
-            .build(ctx, x, enc_weights.subsampling.layers[0].pointwise);
-    x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask2));
+        x = engine::modules::DepthwiseConv2dModule({enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
+                .build(ctx, x, {enc_weights.subsampling.layers[0].depthwise_weight, enc_weights.subsampling.layers[0].depthwise_bias});
+        x = engine::modules::TimeMask4dModule().build(ctx, x, graph->mask2);
+        x = engine::modules::Conv2dModule({enc.subsampling_channels, enc.subsampling_channels, 1, 1, 1, 1, 0, 0, 1, 1, true})
+                .build(ctx, x, enc_weights.subsampling.layers[0].pointwise);
+        x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask2));
 
-    x = engine::modules::DepthwiseConv2dModule({enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
-            .build(ctx, x, {enc_weights.subsampling.layers[1].depthwise_weight, enc_weights.subsampling.layers[1].depthwise_bias});
-    x = engine::modules::TimeMask4dModule().build(ctx, x, graph->mask3);
-    x = engine::modules::Conv2dModule({enc.subsampling_channels, enc.subsampling_channels, 1, 1, 1, 1, 0, 0, 1, 1, true})
-            .build(ctx, x, enc_weights.subsampling.layers[1].pointwise);
-    x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask3));
+        x = engine::modules::DepthwiseConv2dModule({enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
+                .build(ctx, x, {enc_weights.subsampling.layers[1].depthwise_weight, enc_weights.subsampling.layers[1].depthwise_bias});
+        x = engine::modules::TimeMask4dModule().build(ctx, x, graph->mask3);
+        x = engine::modules::Conv2dModule({enc.subsampling_channels, enc.subsampling_channels, 1, 1, 1, 1, 0, 0, 1, 1, true})
+                .build(ctx, x, enc_weights.subsampling.layers[1].pointwise);
+        x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask3));
 
-    x = engine::modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
-    x = engine::core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
-    x = engine::core::reshape_tensor(ctx, x, engine::core::TensorShape::from_dims({1, stage3_frames, enc.subsampling_channels * stage3_features}));
+        x = engine::modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
+        x = engine::core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
+        x = engine::core::reshape_tensor(ctx, x, engine::core::TensorShape::from_dims({1, stage3_frames, enc.subsampling_channels * stage3_features}));
+    }
     // xscaling (multiply by sqrt(d_model), which Parakeet's RelPositionalEncoding
     // does) is folded into this projection's weight and bias at load time — see
     // load_subsampling in weights.cpp.
