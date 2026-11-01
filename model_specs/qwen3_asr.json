@@ -110,6 +110,60 @@
     ],
     "session": [
       {
+        "name": "perf_mode",
+        "type": "enum",
+        "values": [
+          "off",
+          "cuda_perf"
+        ],
+        "description": "Performance preset. cuda_perf selects flash attention, packed projections, f16 KV, 256-token attention alignment and two independent offline chunks per decode batch. Explicit session options override the preset.",
+        "required": false,
+        "default": "off"
+      },
+      {
+        "name": "attention",
+        "type": "enum",
+        "values": [
+          "mixed",
+          "auto",
+          "eager",
+          "flash"
+        ],
+        "description": "Decoder attention preference. Default mixed preserves manual prefill and flash cached decoding; cuda_perf selects flash for both. auto uses the shared backend policy. Explicit values override the preset.",
+        "required": false
+      },
+      {
+        "name": "packed_projections",
+        "type": "bool",
+        "description": "Pack decoder QKV and gate/up projections without changing weight dtype. Default false, true with cuda_perf. Explicit values override the preset.",
+        "required": false
+      },
+      {
+        "name": "kv_cache_type",
+        "type": "enum",
+        "values": [
+          "f32",
+          "f16"
+        ],
+        "description": "Decoder KV storage. Default f32, f16 with cuda_perf. Explicit values override the preset.",
+        "required": false
+      },
+      {
+        "name": "kv_cache_alignment",
+        "type": "int",
+        "min": 1,
+        "description": "Cached decoder attention prefix alignment in tokens. Default 1 attends over full cache capacity; cuda_perf uses cached 256-token prefix windows. Explicit values override the preset.",
+        "required": false
+      },
+      {
+        "name": "offline_batch_size",
+        "type": "int",
+        "min": 1,
+        "max": 2,
+        "description": "Independent offline chunks decoded together. Default 1, 2 with cuda_perf. Does not change chunk boundaries or streaming scheduling. Explicit values override the preset.",
+        "required": false
+      },
+      {
         "name": "lora",
         "type": "path",
         "description": "PEFT LoRA adapter directory or checkpoint file; merged into matching encoder/decoder weights at session creation.",

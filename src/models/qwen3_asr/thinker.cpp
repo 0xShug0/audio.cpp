@@ -6,6 +6,8 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/transformers/causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
+#include "engine/framework/modules/packed_linear_weights.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -46,6 +48,8 @@ struct GgmlContextDeleter {
 };
 
 struct TextLayerWeights {
+    std::optional<modules::LinearWeights> qkv_proj;
+    std::optional<modules::LinearWeights> gate_up_proj;
     core::TensorValue input_norm;
     core::TensorValue q_proj;
     core::TensorValue k_proj;
@@ -78,19 +82,24 @@ modules::DecoderLayerWeights to_qwen3_layer_weights(const TextLayerWeights & wei
     out.self_attention.q_weight = weights.q_proj;
     out.self_attention.k_weight = weights.k_proj;
     out.self_attention.v_weight = weights.v_proj;
+    if (weights.qkv_proj) {
+        out.self_attention.qkv_weight = weights.qkv_proj->weight;
+    }
     out.self_attention.out_weight = weights.o_proj;
     out.q_norm = {weights.q_norm, std::nullopt};
     out.k_norm = {weights.k_norm, std::nullopt};
     out.post_norm = {weights.post_norm, std::nullopt};
     out.mlp.gate_proj = {weights.gate_proj, std::nullopt};
     out.mlp.up_proj = {weights.up_proj, std::nullopt};
+    out.mlp.gate_up_proj = weights.gate_up_proj;
     out.mlp.down_proj = {weights.down_proj, std::nullopt};
     return out;
 }
 
 modules::CausalDecoderConfig make_qwen3_decoder_config(
     const Qwen3ASRTextDecoderConfig & config,
-    modules::CausalDecoderLogitsMode logits_mode) {
+    const Qwen3ASRPerfSettings & perf,
+    ggml_backend_t backend) {
     modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.num_attention_heads;
@@ -102,8 +111,20 @@ modules::CausalDecoderConfig make_qwen3_decoder_config(
     out.stack.rope_theta = config.rope_theta;
     out.stack.use_qk_norm = true;
     out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.static_cache_type = perf.kv_cache_type;
+    if (perf.packed_projections) {
+        out.stack.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
+        out.stack.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
+    }
+    if (perf.attention) {
+        const bool flash = core::resolve_flash_attention(backend, config.head_dim, *perf.attention);
+        const auto mode = flash ? modules::DecoderAttentionMode::FlashGrouped
+                                : modules::DecoderAttentionMode::ManualRepeat;
+        out.stack.runtime.attention.prefill_mode = mode;
+        out.stack.runtime.attention.static_mode = mode;
+    }
     out.logits_size = config.output_size;
-    out.logits_mode = logits_mode;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     return out;
 }
 
@@ -158,7 +179,8 @@ ThinkerWeights load_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
-    assets::TensorStorageType storage_type) {
+    assets::TensorStorageType storage_type,
+    bool packed_projections) {
     const auto & config = assets.config.text_decoder;
     const auto & source = *assets.model_weights;
     const std::string model_prefix = assets.config.hf_transformers_layout
@@ -181,15 +203,30 @@ ThinkerWeights load_weights(
         const std::string prefix = model_prefix + ".layers." + std::to_string(layer);
         TextLayerWeights w;
         w.input_norm = weights.store->load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.hidden_size});
-        w.q_proj = weights.store->load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, {config.num_attention_heads * dim, config.hidden_size});
-        w.k_proj = weights.store->load_tensor(source, prefix + ".self_attn.k_proj.weight", storage_type, {config.num_key_value_heads * dim, config.hidden_size});
-        w.v_proj = weights.store->load_tensor(source, prefix + ".self_attn.v_proj.weight", storage_type, {config.num_key_value_heads * dim, config.hidden_size});
+        if (packed_projections) {
+            w.qkv_proj = modules::PackedLinearWeightsBuilder({config.hidden_size,
+                {{prefix + ".self_attn.q_proj.weight", std::nullopt, config.num_attention_heads * dim},
+                 {prefix + ".self_attn.k_proj.weight", std::nullopt, config.num_key_value_heads * dim},
+                 {prefix + ".self_attn.v_proj.weight", std::nullopt, config.num_key_value_heads * dim}}, false})
+                .build(*weights.store, source, storage_type);
+        } else {
+            w.q_proj = weights.store->load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, {config.num_attention_heads * dim, config.hidden_size});
+            w.k_proj = weights.store->load_tensor(source, prefix + ".self_attn.k_proj.weight", storage_type, {config.num_key_value_heads * dim, config.hidden_size});
+            w.v_proj = weights.store->load_tensor(source, prefix + ".self_attn.v_proj.weight", storage_type, {config.num_key_value_heads * dim, config.hidden_size});
+        }
         w.o_proj = weights.store->load_tensor(source, prefix + ".self_attn.o_proj.weight", storage_type, {config.hidden_size, config.num_attention_heads * dim});
         w.q_norm = weights.store->load_f32_tensor(source, prefix + ".self_attn.q_norm.weight", {dim});
         w.k_norm = weights.store->load_f32_tensor(source, prefix + ".self_attn.k_norm.weight", {dim});
         w.post_norm = weights.store->load_f32_tensor(source, prefix + ".post_attention_layernorm.weight", {config.hidden_size});
-        w.gate_proj = weights.store->load_tensor(source, prefix + ".mlp.gate_proj.weight", storage_type, {config.intermediate_size, config.hidden_size});
-        w.up_proj = weights.store->load_tensor(source, prefix + ".mlp.up_proj.weight", storage_type, {config.intermediate_size, config.hidden_size});
+        if (packed_projections) {
+            w.gate_up_proj = modules::PackedLinearWeightsBuilder({config.hidden_size,
+                {{prefix + ".mlp.gate_proj.weight", std::nullopt, config.intermediate_size},
+                 {prefix + ".mlp.up_proj.weight", std::nullopt, config.intermediate_size}}, false})
+                .build(*weights.store, source, storage_type);
+        } else {
+            w.gate_proj = weights.store->load_tensor(source, prefix + ".mlp.gate_proj.weight", storage_type, {config.intermediate_size, config.hidden_size});
+            w.up_proj = weights.store->load_tensor(source, prefix + ".mlp.up_proj.weight", storage_type, {config.intermediate_size, config.hidden_size});
+        }
         w.down_proj = weights.store->load_tensor(source, prefix + ".mlp.down_proj.weight", storage_type, {config.hidden_size, config.intermediate_size});
         weights.layers.push_back(std::move(w));
     }
@@ -241,12 +278,14 @@ public:
         std::shared_ptr<const Qwen3ASRAssets> assets,
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        const Qwen3ASRPerfSettings & perf)
         : assets_(std::move(assets)),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
-          weights_(std::make_shared<ThinkerWeights>(load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type))) {
+          weights_(std::make_shared<ThinkerWeights>(load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type, perf.packed_projections))),
+          decoder_config_(make_qwen3_decoder_config(assets_->config.text_decoder, perf, backend_)) {
         if (assets_ == nullptr) {
             throw std::runtime_error("Qwen3 ASR thinker weights runtime requires assets");
         }
@@ -254,6 +293,8 @@ public:
             throw std::runtime_error("Qwen3 ASR thinker backend is not initialized");
         }
     }
+
+    const modules::CausalDecoderConfig & decoder_config() const noexcept { return decoder_config_; }
 
     const Qwen3ASRAssets & assets() const noexcept {
         return *assets_;
@@ -281,6 +322,7 @@ private:
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
     std::shared_ptr<const ThinkerWeights> weights_;
+    modules::CausalDecoderConfig decoder_config_;
 };
 
 struct GgmlGallocrDeleter {
@@ -333,7 +375,7 @@ public:
 
         const auto decoder_weights = make_qwen3_decoder_weights(weights);
         auto decoder_out = modules::CausalDecoderModule(
-                               make_qwen3_decoder_config(config, modules::CausalDecoderLogitsMode::LastStep))
+                               runtime_->decoder_config())
                                .build(ctx, x, positions, decoder_weights);
         for (const auto & layer : decoder_out.state.layers) {
             if (!layer.key.has_value() || !layer.value.has_value()) {
@@ -521,8 +563,9 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_steps_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32);
 
-        auto decoder_out = modules::CausalDecoderModule(
-                               make_qwen3_decoder_config(config, modules::CausalDecoderLogitsMode::AllSteps))
+        auto decoder_config = runtime_->decoder_config();
+        decoder_config.logits_mode = modules::CausalDecoderLogitsMode::AllSteps;
+        auto decoder_out = modules::CausalDecoderModule(decoder_config)
                                .build(ctx, x, positions, make_qwen3_decoder_weights(weights));
         auto token_ids = engine::sampling::GreedyDecodeModule().build(ctx, decoder_out.logits);
         token_ids_ = token_ids.tensor;
@@ -647,7 +690,7 @@ public:
             GGML_TYPE_F16);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         auto decoder_out = modules::CausalDecoderModule(
-                               make_qwen3_decoder_config(config, modules::CausalDecoderLogitsMode::LastStep))
+                               runtime_->decoder_config())
                                .build_static_cache_tail(
                                    ctx,
                                    graph_,
@@ -741,14 +784,17 @@ struct Qwen3ASRThinkerRuntime::Impl {
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        const Qwen3ASRPerfSettings & perf)
         : weights(std::make_shared<ThinkerWeightsRuntime>(
               std::move(assets),
               execution,
               weight_context_bytes,
-              storage_type)),
+              storage_type, perf)),
+          execution(execution),
           prefill_graph_arena_bytes(prefill_graph_arena_bytes),
-          decode_graph_arena_bytes(decode_graph_arena_bytes) {}
+          decode_graph_arena_bytes(decode_graph_arena_bytes),
+          kv_cache_alignment(perf.kv_cache_alignment) {}
 
     void validate_prompt_audio(
         const Qwen3ASRPrompt & prompt,
@@ -774,6 +820,9 @@ struct Qwen3ASRThinkerRuntime::Impl {
         const Qwen3ASRPrompt & prompt,
         const Qwen3ASRAudioEmbeddings & audio_embeddings,
         const Qwen3ASRGenerationOptions & options) {
+        if (kv_cache_alignment > 1) {
+            return generate_batch({prompt}, {audio_embeddings}, {options}).front();
+        }
         const auto & config = weights->assets().config.text_decoder;
         if (prompt.input_ids.empty()) {
             throw std::runtime_error("Qwen3 ASR thinker prompt is empty");
@@ -833,6 +882,103 @@ struct Qwen3ASRThinkerRuntime::Impl {
         return out;
     }
 
+    std::vector<Qwen3ASRGeneratedTokens> generate_batch(
+        const std::vector<Qwen3ASRPrompt> & prompts,
+        const std::vector<Qwen3ASRAudioEmbeddings> & embeddings,
+        const std::vector<Qwen3ASRGenerationOptions> & options) {
+        if (prompts.empty() || embeddings.size() != prompts.size() || options.size() != prompts.size()) {
+            throw std::runtime_error("Qwen3 ASR invalid decode batch");
+        }
+        const auto & config = weights->assets().config.text_decoder;
+        std::vector<PrefillOutput> prefills;
+        int64_t capacity = 0;
+        const auto prefill_start = Clock::now();
+        for (size_t lane = 0; lane < prompts.size(); ++lane) {
+            const auto & prompt = prompts[lane];
+            const int64_t steps = static_cast<int64_t>(prompt.input_ids.size());
+            if (steps <= 0 || options[lane].max_new_tokens <= 0 ||
+                steps + options[lane].max_new_tokens > config.max_position_embeddings) {
+                throw std::runtime_error("Qwen3 ASR invalid batched prompt or token limit");
+            }
+            validate_prompt_audio(prompt, embeddings[lane]);
+            capacity = std::max(capacity, steps + options[lane].max_new_tokens);
+            if (!prefill_graph || !prefill_graph->matches(*weights, steps, embeddings[lane].tokens)) {
+                prefill_graph.reset();
+                prefill_graph = std::make_unique<PrefillGraph>(
+                    weights, steps, embeddings[lane].tokens, prefill_graph_arena_bytes);
+            }
+            prefills.push_back(prefill_graph->run(
+                prompt.input_ids, embeddings[lane].values, prompt.audio_token_positions));
+        }
+        debug::timing_log_scalar("qwen3_asr.thinker.prefill_total_ms", debug::elapsed_ms(prefill_start));
+        if (!batched_decoder) {
+            modules::CausalDecoderRuntimeConfig runtime_config;
+            runtime_config.trace_name = "qwen3_asr.thinker.batched";
+            runtime_config.decoder = weights->decoder_config();
+            runtime_config.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
+            runtime_config.decode_graph_arena_bytes = decode_graph_arena_bytes;
+            runtime_config.batched_attention_alignment = kv_cache_alignment > 1 ? kv_cache_alignment : 0;
+            runtime_config.reuse_batched_decode_scratch = true;
+            const auto decoder_weights = make_qwen3_decoder_weights(weights->weights());
+            modules::CausalDecoderRuntimeWeights runtime_weights;
+            runtime_weights.token_embedding = weights->weights().token_embedding;
+            runtime_weights.stack = decoder_weights.stack;
+            runtime_weights.final_norm = decoder_weights.final_norm;
+            runtime_weights.lm_head = decoder_weights.lm_head;
+            batched_decoder = std::make_unique<modules::CausalDecoderRuntime>(
+                execution, runtime_config, runtime_weights);
+        }
+        runtime::TransformerBatchedKVState state;
+        state.batch_size = static_cast<int64_t>(prompts.size());
+        state.layers.resize(static_cast<size_t>(config.num_hidden_layers));
+        std::vector<float> logits;
+        for (const auto & prefill : prefills) {
+            state.current_end_by_batch.push_back(prefill.kv_state.current_end);
+            state.valid_steps_by_batch.push_back(prefill.kv_state.layers.front().valid_steps);
+            state.current_end = std::max(state.current_end, prefill.kv_state.current_end);
+            logits.insert(logits.end(), prefill.logits.begin(), prefill.logits.end());
+            for (size_t layer = 0; layer < state.layers.size(); ++layer) {
+                auto & dst = state.layers[layer];
+                const auto & src = prefill.kv_state.layers[layer];
+                dst.valid_steps = std::max(dst.valid_steps, src.valid_steps);
+                dst.key.insert(dst.key.end(), src.key.begin(), src.key.end());
+                dst.value.insert(dst.value.end(), src.value.begin(), src.value.end());
+            }
+        }
+        const auto decode_start = Clock::now();
+        batched_decoder->start_decode_tokens_batched(state, capacity);
+        std::vector<Qwen3ASRGeneratedTokens> outputs(prompts.size());
+        std::vector<bool> finished(prompts.size(), false);
+        std::vector<int32_t> tokens(prompts.size());
+        for (int64_t step = 0;; ++step) {
+            bool any_active = false;
+            for (size_t lane = 0; lane < prompts.size(); ++lane) {
+                tokens[lane] = config.eos_token_ids.front();
+                if (finished[lane]) {
+                    continue;
+                }
+                if (step >= options[lane].max_new_tokens) {
+                    finished[lane] = true;
+                    continue;
+                }
+                const auto begin = logits.begin() + lane * static_cast<size_t>(config.output_size);
+                tokens[lane] = static_cast<int32_t>(std::max_element(begin, begin + config.output_size) - begin);
+                if (is_eos(config, tokens[lane])) {
+                    finished[lane] = true;
+                } else {
+                    outputs[lane].token_ids.push_back(tokens[lane]);
+                    any_active = true;
+                }
+            }
+            if (!any_active) {
+                break;
+            }
+            logits = batched_decoder->decode_tokens_batched(tokens).logits;
+        }
+        debug::timing_log_scalar("qwen3_asr.thinker.decode_total_ms", debug::elapsed_ms(decode_start));
+        return outputs;
+    }
+
     std::vector<int32_t> classify_prompt(
         const Qwen3ASRPrompt & prompt,
         const Qwen3ASRAudioEmbeddings & audio_embeddings) {
@@ -869,8 +1015,11 @@ struct Qwen3ASRThinkerRuntime::Impl {
     }
 
     std::shared_ptr<ThinkerWeightsRuntime> weights;
+    core::ExecutionContext & execution;
+    std::unique_ptr<modules::CausalDecoderRuntime> batched_decoder;
     size_t prefill_graph_arena_bytes = 0;
     size_t decode_graph_arena_bytes = 0;
+    int64_t kv_cache_alignment = 1;
     std::unique_ptr<PrefillGraph> prefill_graph;
     std::unique_ptr<DecodeGraph> decode_graph;
     std::unique_ptr<PromptClassificationGraph> classification_graph;
@@ -882,14 +1031,15 @@ Qwen3ASRThinkerRuntime::Qwen3ASRThinkerRuntime(
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType weight_storage_type)
+    assets::TensorStorageType weight_storage_type,
+    const Qwen3ASRPerfSettings & perf)
     : impl_(std::make_unique<Impl>(
           std::move(assets),
           execution,
           prefill_graph_arena_bytes,
           decode_graph_arena_bytes,
           weight_context_bytes,
-          weight_storage_type)) {}
+          weight_storage_type, perf)) {}
 
 Qwen3ASRThinkerRuntime::~Qwen3ASRThinkerRuntime() = default;
 
@@ -898,6 +1048,13 @@ Qwen3ASRGeneratedTokens Qwen3ASRThinkerRuntime::generate(
     const Qwen3ASRAudioEmbeddings & audio_embeddings,
     const Qwen3ASRGenerationOptions & options) {
     return impl_->generate(prompt, audio_embeddings, options);
+}
+
+std::vector<Qwen3ASRGeneratedTokens> Qwen3ASRThinkerRuntime::generate_batch(
+    const std::vector<Qwen3ASRPrompt> & prompts,
+    const std::vector<Qwen3ASRAudioEmbeddings> & embeddings,
+    const std::vector<Qwen3ASRGenerationOptions> & options) {
+    return impl_->generate_batch(prompts, embeddings, options);
 }
 
 std::vector<int32_t> Qwen3ASRThinkerRuntime::classify_prompt(
