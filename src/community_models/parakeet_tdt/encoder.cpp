@@ -33,7 +33,6 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kEncoderGraphNodes = 2097152;
 
 // NeMo's ConformerConvolution.depthwise_conv is a CausalConv1D, but the
 // full-context (non-streaming) encoder constructs it with an explicit int
@@ -326,12 +325,13 @@ struct ParakeetFastConformerEncoderRuntime::Graph {
     ggml_gallocr_t pos_gallocr = nullptr;
     ggml_cgraph * graph = nullptr;
     ggml_cgraph * pos_graph = nullptr;
+    engine::core::HostGraphPlan plan;
     engine::core::TensorValue input;
     engine::core::TensorValue mask1;
     engine::core::TensorValue mask2;
     engine::core::TensorValue mask3;
     engine::core::TensorValue keep_mask;
-    engine::core::TensorValue attention_mask;
+    engine::core::TensorValue attention_mask, attention_keys;
     engine::core::TensorValue pos_emb;
     engine::core::TensorValue xscale;
     std::vector<engine::core::TensorValue> projected_pos_emb;
@@ -339,9 +339,10 @@ struct ParakeetFastConformerEncoderRuntime::Graph {
     engine::core::TensorValue output;
 
     ~Graph() {
+        plan.reset();
         if (backend != nullptr) {
-            engine::core::release_backend_graph_resources(backend, graph);
-            engine::core::release_backend_graph_resources(backend, pos_graph);
+            engine::core::release_backend_graph_resources(backend, graph, true);
+            engine::core::release_backend_graph_resources(backend, pos_graph, true);
         }
         if (pos_gallocr != nullptr) {
             ggml_gallocr_free(pos_gallocr);
@@ -413,13 +414,9 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
         return;
     }
 
-    if (execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
-        execution_context_->backend_type() == engine::core::BackendType::Cuda) {
-        // A mismatched cached graph will never be used again. Release its
-        // allocation before building the replacement instead of overlapping
-        // both full activation/position buffers at the allocation peak.
-        graph_.reset();
-    }
+    // A mismatched graph is no longer reused. Release it before allocating
+    // its replacement, including on CPU and Metal.
+    graph_.reset();
 
     const auto build_start = Clock::now();
     const auto & config = assets_->config;
@@ -459,11 +456,16 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     graph->mask2 = engine::core::make_tensor(ctx, GGML_TYPE_I32, engine::core::TensorShape::from_dims({1, stage2_frames}));
     graph->mask3 = engine::core::make_tensor(ctx, GGML_TYPE_I32, engine::core::TensorShape::from_dims({1, stage3_frames}));
     graph->keep_mask = engine::core::make_tensor(ctx, GGML_TYPE_I32, engine::core::TensorShape::from_dims({1, stage3_frames}));
-    graph->attention_mask = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({stage3_frames, stage3_frames}));
+    graph->attention_keys = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({stage3_frames}));
+    ggml_set_input(graph->attention_keys.tensor);
+    // Upload the shared key row once; materialize the contiguous softmax mask on the backend.
+    graph->attention_mask = engine::core::wrap_tensor(ggml_repeat(ctx.ggml,
+        graph->attention_keys.tensor, ggml_new_tensor_2d(ctx.ggml, GGML_TYPE_F32, stage3_frames, stage3_frames)),
+        engine::core::TensorShape::from_dims({stage3_frames, stage3_frames}));
     graph->pos_emb = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, 2 * stage3_frames - 1, enc.hidden_size}));
     graph->xscale = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, 1, 1}));
     for (auto * tensor : {graph->mask1.tensor, graph->mask2.tensor, graph->mask3.tensor,
-                          graph->keep_mask.tensor, graph->attention_mask.tensor,
+                          graph->keep_mask.tensor,
                           graph->pos_emb.tensor, graph->xscale.tensor}) {
         ggml_set_input(tensor);
     }
@@ -510,7 +512,6 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
                 ctx,
                 graph->pos_emb,
                 {enc_weights.layers[static_cast<size_t>(layer)].pos_weight, std::nullopt}));
-        ggml_set_output(graph->projected_pos_emb_computed.back().tensor);
     }
 
     for (int64_t layer = 0; layer < enc.layers; ++layer) {
@@ -533,10 +534,13 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     ggml_set_output(graph->output.tensor);
 
     graph->pos_graph = ggml_new_graph_custom(graph->ggml, 4096, false);
-    for (const auto & projected : graph->projected_pos_emb_computed) {
-        ggml_build_forward_expand(graph->pos_graph, projected.tensor);
+    for (size_t i = 0; i < graph->projected_pos_emb.size(); ++i) {
+        ggml_build_forward_expand(graph->pos_graph, ggml_cpy(ctx.ggml,
+            graph->projected_pos_emb_computed[i].tensor, graph->projected_pos_emb[i].tensor));
     }
-    graph->graph = ggml_new_graph_custom(graph->ggml, kEncoderGraphNodes, false);
+    // Each layer has a fixed graph structure independent of audio duration.
+    const size_t graph_nodes = 1024 + static_cast<size_t>(enc.layers) * 256;
+    graph->graph = ggml_new_graph_custom(graph->ggml, graph_nodes, false);
     ggml_build_forward_expand(graph->graph, graph->output.tensor);
 
     // Elides redundant nodes (broadcast repeats folded into the consuming op,
@@ -548,7 +552,11 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     const auto opt_options = is_bark3_variant(assets_->config.variant)
         ? bark3_encoder_graph_options(opt_backend)
         : engine::runtime::graph_optimization_options_for_backend(opt_backend);
-    const auto pos_opt_report = engine::runtime::optimize_graph(*graph->pos_graph, opt_options);
+    auto pos_options = opt_options;
+    // Copy destinations share externally allocated inputs; keep their views in
+    // the producer schedule so gallocr accounts for every referenced tensor.
+    pos_options.elide_metadata_only_ops = false;
+    const auto pos_opt_report = engine::runtime::optimize_graph(*graph->pos_graph, pos_options);
     const auto opt_report = engine::runtime::optimize_graph(*graph->graph, opt_options);
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_before", opt_report.nodes_before);
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_after", opt_report.nodes_after);
@@ -584,23 +592,14 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     }
     debug::timing_log_scalar("parakeet_tdt.encoder.pos_compute_ms", engine::debug::elapsed_ms(pos_compute_start, Clock::now()));
 
-    const auto pos_copy_start = Clock::now();
-    for (size_t i = 0; i < graph->projected_pos_emb.size(); ++i) {
-        ggml_backend_tensor_copy(graph->projected_pos_emb_computed[i].tensor, graph->projected_pos_emb[i].tensor);
-    }
-    debug::timing_log_scalar("parakeet_tdt.encoder.pos_copy_ms", engine::debug::elapsed_ms(pos_copy_start, Clock::now()));
+    // Projections are written directly to persistent main-graph inputs. Release
+    // the one-shot producer workspace after its final write completes.
+    engine::core::release_backend_graph_resources(graph->backend, graph->pos_graph, true);
+    ggml_gallocr_free(graph->pos_gallocr);
+    graph->pos_gallocr = nullptr;
+    graph->pos_graph = nullptr;
 
-    if (execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
-        execution_context_->backend_type() == engine::core::BackendType::Cuda ||
-        (execution_context_->backend_type() == engine::core::BackendType::Cpu &&
-         is_bark3_variant(assets_->config.variant))) {
-        // Position projections now live in the main graph's persistent inputs.
-        // Their one-shot producer allocation is redundant for warm inference.
-        ggml_gallocr_free(graph->pos_gallocr);
-        graph->pos_gallocr = nullptr;
-        graph->pos_graph = nullptr;
-    }
-
+    engine::core::prepare_host_graph_plan(*execution_context_, graph->graph, graph->plan);
     graph_ = std::move(graph);
     const double build_ms = engine::debug::elapsed_ms(build_start, Clock::now());
     debug::timing_log_scalar("parakeet_tdt.encoder.graph_build_ms", build_ms);
@@ -667,20 +666,16 @@ ParakeetEncodedAudio ParakeetFastConformerEncoderRuntime::encode(
     // rows (whose outputs are discarded below anyway) with a full set of valid
     // keys, so no softmax row degenerates to all -inf and produces NaN.
     const size_t frames = static_cast<size_t>(graph.encoded_frames);
-    attention_mask_scratch_.assign(frames * frames, 0.0f);
+    attention_mask_scratch_.assign(frames, 0.0f);
     if (valid3 > 0 && valid3 < graph.encoded_frames) {
-        for (size_t query = 0; query < frames; ++query) {
-            std::fill(
-                attention_mask_scratch_.begin() + static_cast<std::ptrdiff_t>(query * frames + valid3),
-                attention_mask_scratch_.begin() + static_cast<std::ptrdiff_t>((query + 1) * frames),
-                -std::numeric_limits<float>::infinity());
-        }
+        std::fill(attention_mask_scratch_.begin() + valid3, attention_mask_scratch_.end(),
+            -std::numeric_limits<float>::infinity());
     }
-    engine::core::write_tensor_f32(graph.attention_mask, attention_mask_scratch_);
+    engine::core::write_tensor_f32(graph.attention_keys, attention_mask_scratch_);
 
     engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
     const auto compute_start = Clock::now();
-    const auto status = engine::core::compute_backend_graph(execution_context_->backend(), graph.graph, nullptr, "Parakeet TDT encoder");
+    const auto status = engine::core::compute_graph(*execution_context_, graph.graph, graph.plan, "Parakeet TDT encoder");
     ggml_backend_synchronize(execution_context_->backend());
     debug::timing_log_scalar("parakeet_tdt.encoder.graph.compute_ms", engine::debug::elapsed_ms(compute_start, Clock::now()));
 
