@@ -1,9 +1,14 @@
 enable f16;
+#include "common_decls.tmpl"
 
 #ifdef SRC_F32
 #define SRC_TYPE f32
 #elif defined(SRC_F16)
 #define SRC_TYPE f16
+#elif defined(SRC_BF16)
+#define SRC_TYPE u32
+#elif defined(SRC_I32)
+#define SRC_TYPE i32
 #endif
 
 #ifdef DST_F32
@@ -18,7 +23,11 @@ enable f16;
 var<storage, read_write> src: array<SRC_TYPE>;
 
 @group(0) @binding(1)
+#ifdef DST_BF16
+var<storage, read_write> dst: array<atomic<u32>>;
+#else
 var<storage, read_write> dst: array<DST_TYPE>;
+#endif
 
 struct Params{
     ne: u32,
@@ -49,7 +58,9 @@ struct Params{
 var<uniform> params: Params;
 
 @compute @workgroup_size(WG_SIZE)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn main(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+) {
     if (gid.x >= params.ne) {
         return;
     }
@@ -76,6 +87,38 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dst_idx = j0 * params.stride_dst0 + j1 * params.stride_dst1 +
                   j2 * params.stride_dst2 + j3 * params.stride_dst3;
 
-    dst[params.offset_dst + dst_idx] = DST_TYPE((src[params.offset_src + src_idx]));
+#ifdef SRC_BF16
+    let source_index = params.offset_src + src_idx;
+    let source_word = src[source_index / 2u];
+    let value = bf16_word_to_f32(source_word, source_index & 1u);
+#else
+    let value = f32(src[params.offset_src + src_idx]);
+#endif
+#ifdef DST_BF16
+#ifdef SRC_BF16
+    let half_bits = (source_word >> ((source_index & 1u) * 16u)) & 0xffffu;
+#else
+    let bits = bitcast<u32>(value);
+    let rounded = (bits + 0x7fffu + ((bits >> 16u) & 1u)) >> 16u;
+    let half_bits = select(rounded, (bits >> 16u) | 0x40u, (bits & 0x7fffffffu) > 0x7f800000u) & 0xffffu;
+#endif
+    let target_index = params.offset_dst + dst_idx;
+    let word_index = target_index / 2u;
+    let shift = (target_index & 1u) * 16u;
+    let mask = 0xffffu << shift;
+    // Two independent BF16 elements can occupy the same storage word.
+    var old = atomicLoad(&dst[word_index]);
+    loop {
+        let desired = (old & ~mask) | (half_bits << shift);
+        let result = atomicCompareExchangeWeak(&dst[word_index], old, desired);
+        if (result.exchanged) { break; }
+        old = result.old_value;
+    }
+#else
+#ifdef SRC_BF16
+    dst[params.offset_dst + dst_idx] = DST_TYPE(value);
+#else
+    dst[params.offset_dst + dst_idx] = DST_TYPE(src[params.offset_src + src_idx]);
+#endif
+#endif
 }
-
