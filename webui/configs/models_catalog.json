@@ -177,6 +177,7 @@
     { "id": "outetts",                "display_name": "Llama-OuteTTS 1.0 1B (tts 克隆, 社区)",     "display_name_en": "Llama-OuteTTS 1.0 1B (tts + clone, community)", "family": "outetts", "path": "models/Llama-OuteTTS-1.0-1B", "task": "tts", "mode": "offline", "download_id": "outetts_1_0_1b", "min_vram_gb": 4,
       "input_hint": "**OuteTTS 1.0 1B**（社区模型）：23 种语言，DAC 编解码；上传参考音色即克隆。",
       "input_hint_en": "**OuteTTS 1.0 1B** (community): 23 languages, IBM DAC codec. Upload a reference voice to clone." },
+    { "id": "magenta-rt2",           "display_name": "Magenta RealTime 2 (music gen)",       "family": "magenta_realtime_2",  "path": "models/Magenta-RealTime-2-GGUF",        "task": "gen",   "mode": "offline", "download_id": "magenta_realtime_2_small_f16", "default_text": "disco funk" },
     { "id": "magpie-tts",             "display_name": "MagpieTTS Multilingual 357M v2607 (tts, preset voices)", "display_name_en": "MagpieTTS Multilingual 357M v2607 (tts, preset voices)", "family": "magpie_tts", "path": "models/MagpieTTS-Multilingual-357M-GGUF", "task": "tts", "mode": "offline", "download_id": "magpie_tts_q8_0", "min_vram_gb": 4,
           "input_hint": "**MagpieTTS**：多语种离线 TTS；使用打包 speaker map 里的 `voice_id`，不需要上传参考音频。当前 GGUF 包不包含日语 phoneme 表，因此日语路径不可用。",
           "input_hint_en": "**MagpieTTS**: multilingual offline TTS with packaged speaker prompts selected by `voice_id`; no reference upload is needed. The current GGUF package does not include the Japanese phoneme table, so Japanese is not available." },

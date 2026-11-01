@@ -296,7 +296,7 @@
 
   // MiniMax-H3 accepts frame counts with the 17n+3 temporal alignment used by
   // its joint audio/video DiT. Keep the user-facing duration and expert frame
-  // control synchronized so duration_seconds actually changes output length.
+  // control synchronized so the duration setting actually changes output length.
   function miniMaxFramesForDuration(seconds: number) {
     const target = Math.max(1, Number.isFinite(seconds) ? seconds : 1) * 24;
     return Math.max(5, Math.round((target - 3) / 17) * 17 + 3);
@@ -544,9 +544,6 @@
   $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
     selected?.id === 'firered-audio-acoustic-edit';
   $: allowsAutoDuration = selected?.family === 'ace_step';
-  $: usesDurationSecOption =
-    selected?.family === 'controlfoley' ||
-    selected?.family === 'midashenglm_gen';
   $: supportsTextOnlyTts = (
     selected?.family === 'breeze_tts' ||
     selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1' || selected?.family === 'kugelaudio' || selected?.family === 'voxtral_tts' ||
@@ -1206,7 +1203,8 @@
     editedPackageOptions = new Set();
     settingsReloadRequired = false;
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
-    const hidesDurationSec = selected?.family === 'controlfoley' || selected?.family === 'midashenglm_gen';
+    const replacements = modelStudioPanelFor(selected?.family, selected?.task)?.replacesGenericControls as GenericControlReplacements | undefined;
+    const hidesDurationSec = selected?.task === 'gen' && !replacements?.duration;
     paramSpecs = byId.filter((spec) =>
       !(['vibevoice', 'moss_ttsd'].includes(selected?.family) && spec.name === 'voice_samples') &&
       !(hidesDurationSec && spec.name === 'duration_sec'));
@@ -2209,8 +2207,7 @@
             if (resolvedText) request.text = resolvedText;
             if (lyrics.trim()) request.lyrics = lyrics;
             if (!isFireRedAudioEdit && selected.family !== 'auk') {
-              if (usesDurationSecOption) options.duration_sec = duration;
-              else request.duration_seconds = duration;
+              options.duration_sec = duration;
             }
           }
           request.seed = resolvedSeed;
