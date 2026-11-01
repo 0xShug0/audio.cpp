@@ -44,6 +44,58 @@ conversion is required:
 audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --text "" --text-out transcript.txt
 ```
 
+## Performance controls
+
+Performance settings are session options. `qwen3_asr.perf_mode=off` preserves
+existing decoder behavior. `cuda_perf` applies the preset below; explicit session
+options always override its values, regardless of argument order.
+
+| Session option (`qwen3_asr.` prefix) | Default / `off` | `cuda_perf` |
+|---|---|---|
+| `attention` | `mixed` | `flash` |
+| `packed_projections` | `false` | `true` |
+| `kv_cache_type` | `f32` | `f16` |
+| `kv_cache_alignment` | `1` | `256` |
+| `offline_batch_size` | `1` | `2` |
+
+`mixed` retains manual prefill and flash cached decoding. `auto` uses the shared
+backend attention policy; `eager` disables flash for prefill and decode; `flash`
+selects flash for both. Attention selection does not affect the audio encoder or
+a separately loaded forced aligner.
+
+Packing combines QKV and gate/up projections without changing stored weight
+precision. KV alignment above 1 uses cached attention graphs over an aligned
+visible prefix; 1 attends over the full reserved cache. Offline batch size accepts
+1 or 2 and pairs independent chunks without changing chunk boundaries, ordering,
+or streaming scheduling. An unpaired tail is decoded individually. F16 KV,
+attention lowering and packed/batched execution may change numerical results.
+The preset can improve long-form throughput while slowing short requests; it is
+opt-in.
+
+Select the preset, including two-chunk batching:
+
+```bash
+audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B --backend cuda --audio speech.wav --session-option qwen3_asr.perf_mode=cuda_perf --log
+```
+
+Keep the preset but decode one chunk at a time:
+
+```bash
+--session-option qwen3_asr.perf_mode=cuda_perf \
+--session-option qwen3_asr.offline_batch_size=1
+```
+
+Enable only packed projections, leaving the other controls at their defaults:
+
+```bash
+--session-option qwen3_asr.packed_projections=true
+```
+
+To recover default behavior while a preset is selected, explicitly set all five
+controls to the Default / `off` column. Decoder scratch memory is reused whenever
+the batched runtime is used; this allocation policy is independent of the preset
+and does not change precision or model math.
+
 ## QwenCleo-ASR (Egyptian Arabic)
 
 [QwenCleo-ASR](https://huggingface.co/mohammedaly22/QwenCleo-ASR) is a

@@ -1763,9 +1763,46 @@ private:
         if (batched_decode_hidden_ != nullptr) {
             ggml_build_forward_expand(batched_decode_graph_, batched_decode_hidden_);
         }
-        batched_decode_buffer_ = ggml_backend_alloc_ctx_tensors(batched_decode_ctx_.get(), backend_);
-        if (batched_decode_buffer_ == nullptr) {
-            throw std::runtime_error("failed to allocate QwenCausalDecodeRuntime batched decode graph");
+        if (config_.reuse_batched_decode_scratch) {
+            // Aligned attention graphs share these tensors across submissions.
+            ggml_set_output(batched_decode_input_);
+            ggml_set_output(batched_decode_positions_);
+            ggml_set_output(batched_decode_cache_slot_);
+            ggml_set_output(batched_decode_attention_mask_);
+            if (batched_decode_logits_readback_token_ids_) {
+                ggml_set_output(batched_decode_logits_readback_token_ids_);
+            }
+            for (size_t layer = 0; layer < weights_.stack.layers.size(); ++layer) {
+                ggml_set_output(batched_decode_cache_.key_tensor(layer).tensor);
+                ggml_set_output(batched_decode_cache_.value_tensor(layer).tensor);
+            }
+            auto * allocation_graph = batched_decode_graph_;
+            if (config_.batched_attention_alignment > 0) {
+                allocation_graph = ggml_new_graph_custom(
+                    batched_decode_ctx_.get(), 4 * weights_.stack.layers.size() + 16, false);
+                ggml_build_forward_expand(allocation_graph, batched_decode_input_);
+                ggml_build_forward_expand(allocation_graph, batched_decode_positions_);
+                ggml_build_forward_expand(allocation_graph, batched_decode_cache_slot_);
+                ggml_build_forward_expand(allocation_graph, batched_decode_attention_mask_);
+                if (batched_decode_logits_readback_token_ids_) {
+                    ggml_build_forward_expand(allocation_graph, batched_decode_logits_readback_token_ids_);
+                }
+                for (size_t layer = 0; layer < weights_.stack.layers.size(); ++layer) {
+                    ggml_build_forward_expand(allocation_graph, batched_decode_cache_.key_tensor(layer).tensor);
+                    ggml_build_forward_expand(allocation_graph, batched_decode_cache_.value_tensor(layer).tensor);
+                }
+            }
+            batched_decode_allocator_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+            if (!batched_decode_allocator_ ||
+                !ggml_gallocr_reserve(batched_decode_allocator_, allocation_graph) ||
+                !ggml_gallocr_alloc_graph(batched_decode_allocator_, allocation_graph)) {
+                throw std::runtime_error("failed to allocate batched decode graph scratch");
+            }
+        } else {
+            batched_decode_buffer_ = ggml_backend_alloc_ctx_tensors(batched_decode_ctx_.get(), backend_);
+            if (batched_decode_buffer_ == nullptr) {
+                throw std::runtime_error("failed to allocate QwenCausalDecodeRuntime batched decode graph");
+            }
         }
         if (batched_decode_logits_readback_token_ids_ != nullptr) {
             upload_logits_readback_token_ids(batched_decode_logits_readback_token_ids_, config_);
@@ -2163,6 +2200,10 @@ private:
             ggml_backend_buffer_free(batched_decode_buffer_);
             batched_decode_buffer_ = nullptr;
         }
+        if (batched_decode_allocator_) {
+            ggml_gallocr_free(batched_decode_allocator_);
+            batched_decode_allocator_ = nullptr;
+        }
         batched_decode_ctx_.reset();
         batched_decode_input_ = nullptr;
         batched_decode_positions_ = nullptr;
@@ -2262,6 +2303,7 @@ private:
     ggml_tensor * batched_decode_hidden_ = nullptr;
     ggml_cgraph * batched_decode_graph_ = nullptr;
     ggml_backend_buffer_t batched_decode_buffer_ = nullptr;
+    ggml_gallocr_t batched_decode_allocator_ = nullptr;
     std::vector<ggml_fp16_t> batched_decode_attention_mask_values_;
     std::vector<int32_t> batched_decode_cache_slots_;
     std::vector<int32_t> batched_decode_positions_values_;

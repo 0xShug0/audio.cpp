@@ -297,6 +297,24 @@ int main(int argc, char ** argv) {
             close({batched.logits.begin(), batched.logits.begin() + row}, lane_a.decode_embedding(next).logits);
             close({batched.logits.begin() + row, batched.logits.end()}, lane_b.decode_embedding(next).logits);
         }
+        for (int64_t alignment : {int64_t{0}, int64_t{8}}) {
+            auto scratch_config = config;
+            scratch_config.reuse_batched_decode_scratch = true;
+            scratch_config.batched_attention_alignment = alignment;
+            engine::modules::CausalDecoderRuntime scratch(execution, scratch_config, weights);
+            for (int request = 0; request < 2; ++request) {
+                const std::vector<std::vector<int32_t>> prompts{
+                    token_prompt(request == 0 ? 7 : 6, 3), token_prompt(request == 0 ? 13 : 6, 11)};
+                const auto expected = lanes.prefill_tokens_into_batched_decode_cache(prompts, 32);
+                const auto actual = scratch.prefill_tokens_into_batched_decode_cache(prompts, 32);
+                close(actual[0].logits, expected[0].logits);
+                close(actual[1].logits, expected[1].logits);
+                for (int step = 0; step < 18; ++step) {
+                    const std::vector<int32_t> ids{step % 97, (step + 13) % 97};
+                    close(scratch.decode_tokens_batched(ids).logits, lanes.decode_tokens_batched(ids).logits);
+                }
+            }
+        }
         std::cout << "PASS chunk boundaries, repeated prefill, kept prefix, decode, reset, capacity, reference parity, "
                      "batched embedding and token lanes\n";
         engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));

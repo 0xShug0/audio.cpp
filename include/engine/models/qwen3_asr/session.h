@@ -61,6 +61,7 @@ private:
     Qwen3ASRRequest make_request(const runtime::TaskRequest & request) const;
     std::vector<AudioChunkPlan> audio_chunk_plan(const runtime::TaskRequest & request);
     runtime::IOfflineVoiceTaskSession & vad_session();
+    std::vector<runtime::TaskResult> run_batch(const Qwen3ASRRequest * requests, size_t count);
     runtime::TaskResult run_single(const Qwen3ASRRequest & request);
     runtime::StreamEvent process_available_stream_chunks(bool final);
     runtime::StreamEvent process_one_stream_chunk(const runtime::AudioBuffer & audio);
@@ -73,6 +74,7 @@ private:
     size_t thinker_weight_context_bytes_ = 64ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType audio_encoder_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType thinker_weight_storage_type_ = engine::assets::TensorStorageType::Native;
+    Qwen3ASRPerfSettings perf_;
     Qwen3ASRTextTokenizer tokenizer_;
     Qwen3ASRWhisperFrontend frontend_;
     modules::Qwen3AudioEncoderRuntime audio_encoder_;
