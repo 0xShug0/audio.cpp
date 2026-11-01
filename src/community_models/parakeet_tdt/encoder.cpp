@@ -39,46 +39,38 @@ engine::core::TensorValue build_metal_subsampling(
     const ParakeetSubsamplingWeights & weights,
     int64_t kernel, int64_t stride,
     const std::vector<engine::core::TensorValue> & masks) {
-    // Metal keeps channels contiguous for depthwise kernels and 1x1 projections.
-    // This avoids batch-one IM2COL dispatches and intervening layout copies.
-    auto * g = ctx.ggml;
-    auto * w = weights.conv_in.weight.tensor;
-    if (w->type == GGML_TYPE_BF16) w = ggml_cast(g, w, GGML_TYPE_F16);
-    if (ggml_is_quantized(w->type)) w = ggml_cast(g, w, GGML_TYPE_F32);
-    auto * columns = ggml_im2col(g, w, input.tensor, stride, stride, 1, 1, 1, 1, true, w->type);
-    const auto channels = w->ne[3];
-    auto * x = ggml_mul_mat(g, ggml_reshape_2d(g, w, kernel * kernel, channels),
-        ggml_reshape_2d(g, columns, kernel * kernel, columns->ne[1] * columns->ne[2]));
-    x = ggml_reshape_3d(g, x, channels, columns->ne[1], columns->ne[2]);
-    x = ggml_add(g, x, weights.conv_in.bias->tensor);
-    auto mask = [&](ggml_tensor * value, size_t index) {
-        auto * keep = ggml_cast(g, masks[index].tensor, GGML_TYPE_F32);
-        return ggml_mul(g, value, ggml_reshape_3d(g, keep, 1, 1, value->ne[2]));
+    const auto channels = weights.conv_in.weight.shape.dims[0];
+    engine::modules::Conv2dConfig conv{1, channels, kernel, kernel,
+        static_cast<int>(stride), static_cast<int>(stride), 1, 1, 1, 1, true};
+    auto x = engine::modules::ReshapeModule({engine::core::TensorShape::from_dims(
+        {input.shape.dims[0], input.shape.dims[2], input.shape.dims[3], 1})}).build(ctx, input);
+    x = engine::modules::Conv2dModule(conv).build(ctx, x, weights.conv_in,
+        engine::modules::Conv2dLayout::ChannelsLast);
+    auto mask = [&](const engine::core::TensorValue & value, size_t index) {
+        const auto & dims = value.shape.dims;
+        auto flat = engine::modules::ReshapeModule({engine::core::TensorShape::from_dims(
+            {dims[0], dims[1], dims[2] * dims[3]})}).build(ctx, value);
+        flat = engine::modules::MaskingModule().build(ctx, flat, masks[index]);
+        return engine::modules::ReshapeModule({value.shape}).build(ctx, flat);
     };
-    x = ggml_relu(g, mask(x, 0));
+    x = engine::modules::ReluModule().build(ctx, mask(x, 0));
+    engine::modules::DepthwiseConv2dConfig depthwise{channels, kernel, kernel,
+        static_cast<int>(stride), static_cast<int>(stride), 1, 1, 1, 1, true};
     for (size_t i = 0; i < weights.layers.size(); ++i) {
         const auto & layer = weights.layers[i];
-        auto * dw = layer.depthwise_weight.tensor;
-        if (dw->type != GGML_TYPE_F32) dw = ggml_cast(g, dw, GGML_TYPE_F32);
-        // Channel-fast activations also require channel-fast kernel taps.
-        dw = ggml_permute(g, ggml_cont(g, ggml_permute(g, dw, 2, 3, 1, 0)), 3, 2, 0, 1);
-        x = ggml_conv_2d_dw_direct(g, dw, ggml_permute(g, x, 2, 0, 1, 3), stride, stride, 1, 1, 1, 1);
-        x = ggml_permute(g, x, 1, 2, 0, 3);
-        x = ggml_add(g, x, layer.depthwise_bias.tensor);
+        x = engine::modules::DepthwiseConv2dModule(depthwise).build(ctx, x,
+            {layer.depthwise_weight, layer.depthwise_bias}, engine::modules::Conv2dLayout::ChannelsLast);
         x = mask(x, i + 1);
-        const auto width = x->ne[1], height = x->ne[2];
-        const auto projected = engine::modules::LinearModule({channels, channels, true}).build(ctx,
-            engine::core::wrap_tensor(ggml_reshape_2d(g, x, channels, width * height),
-                engine::core::TensorShape::from_dims({width * height, channels})),
-            {engine::core::reshape_tensor(ctx, layer.pointwise.weight,
-                engine::core::TensorShape::from_dims({channels, channels})), layer.pointwise.bias});
-        x = ggml_reshape_3d(g, projected.tensor, channels, width, height);
-        x = ggml_relu(g, mask(x, i + 1));
+        const auto weight = engine::modules::ReshapeModule({
+            engine::core::TensorShape::from_dims({channels, channels})}).build(ctx, layer.pointwise.weight);
+        x = engine::modules::LinearModule({channels, channels, true}).build(ctx, x, {weight, layer.pointwise.bias});
+        x = engine::modules::ReluModule().build(ctx, mask(x, i + 1));
     }
-    const auto width = x->ne[1], height = x->ne[2];
-    x = ggml_cont(g, ggml_permute(g, x, 1, 0, 2, 3));
-    return engine::core::wrap_tensor(ggml_reshape_3d(g, x, width * channels, height, 1),
-        engine::core::TensorShape::from_dims({1, height, width * channels}));
+    const auto shape = x.shape;
+    x = engine::modules::TransposeModule({{0, 1, 3, 2}, 4}).build(ctx, x);
+    x = engine::core::ensure_backend_addressable_layout(ctx, x);
+    return engine::modules::ReshapeModule({engine::core::TensorShape::from_dims(
+        {shape.dims[0], shape.dims[1], channels * shape.dims[2]})}).build(ctx, x);
 }
 
 // NeMo's ConformerConvolution.depthwise_conv is a CausalConv1D, but the

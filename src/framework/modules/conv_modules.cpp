@@ -789,6 +789,42 @@ core::TensorValue Conv2dModule::build(
     return output;
 }
 
+core::TensorValue Conv2dModule::build(core::ModuleBuildContext & ctx,
+    const core::TensorValue & input, const Conv2dWeights & weights, Conv2dLayout layout) const {
+    if (layout == Conv2dLayout::ChannelsFirst) return build(ctx, input, weights);
+    if (layout != Conv2dLayout::ChannelsLast) throw std::runtime_error("Invalid Conv2d layout");
+    if (!ctx.ggml) throw std::runtime_error("ModuleBuildContext.ggml is null");
+    core::validate_rank_between(input, 4, 4, "input");
+    core::validate_last_dim(input, config_.in_channels, "input");
+    auto canonical = TransposeModule({{0, 3, 1, 2}, 4}).build(ctx, input);
+    canonical = core::ensure_backend_addressable_layout(ctx, canonical);
+    if (ctx.backend_type != core::BackendType::Metal || config_.cuda_cudnn || config_.metal_per_tap) {
+        auto output = build(ctx, canonical, weights);
+        output = TransposeModule({{0, 2, 3, 1}, 4}).build(ctx, output);
+        return core::ensure_backend_addressable_layout(ctx, output);
+    }
+    core::validate_shape(weights.weight, core::TensorShape::from_dims({config_.out_channels,
+        config_.in_channels, config_.kernel_height, config_.kernel_width}), "weight");
+    if (config_.use_bias) {
+        if (!weights.bias) throw std::runtime_error("bias is required when Conv2dConfig.use_bias is true");
+        core::validate_shape(*weights.bias, core::TensorShape::from_dims({config_.out_channels}), "bias");
+    }
+    const auto x = ensure_f32(ctx, canonical);
+    const auto w = regular_conv_weight(ctx, weights.weight, "Conv2dModule");
+    // Metal: emit channel-fast output directly instead of materializing BCHW.
+    auto * columns = ggml_im2col(ctx.ggml, w.tensor, x.tensor,
+        config_.stride_width, config_.stride_height, config_.padding_width, config_.padding_height,
+        config_.dilation_width, config_.dilation_height, true, w.type);
+    auto * output = ggml_mul_mat(ctx.ggml,
+        ggml_reshape_2d(ctx.ggml, w.tensor, columns->ne[0], config_.out_channels),
+        ggml_reshape_2d(ctx.ggml, columns, columns->ne[0], columns->ne[1] * columns->ne[2] * columns->ne[3]));
+    output = ggml_reshape_4d(ctx.ggml, output, config_.out_channels,
+        columns->ne[1], columns->ne[2], columns->ne[3]);
+    if (config_.use_bias) output = ggml_add(ctx.ggml, output, weights.bias->tensor);
+    return core::wrap_tensor(output, core::TensorShape::from_dims({columns->ne[3],
+        columns->ne[2], columns->ne[1], config_.out_channels}), GGML_TYPE_F32);
+}
+
 const core::ModuleSchema & Conv2dModule::static_schema() noexcept {
     return kConv2dSchema;
 }
@@ -1130,6 +1166,41 @@ core::TensorValue DepthwiseConv2dModule::build(
         output = add_4d_channel_bias_if_needed(ctx, output, config_.channels, weights.bias);
     }
     return output;
+}
+
+core::TensorValue DepthwiseConv2dModule::build(core::ModuleBuildContext & ctx,
+    const core::TensorValue & input, const Conv2dWeights & weights, Conv2dLayout layout) const {
+    if (layout == Conv2dLayout::ChannelsFirst) return build(ctx, input, weights);
+    if (layout != Conv2dLayout::ChannelsLast) throw std::runtime_error("Invalid DepthwiseConv2d layout");
+    if (!ctx.ggml) throw std::runtime_error("ModuleBuildContext.ggml is null");
+    core::validate_rank_between(input, 4, 4, "input");
+    core::validate_last_dim(input, config_.channels, "input");
+    if (ctx.backend_type != core::BackendType::Metal) {
+        auto canonical = TransposeModule({{0, 3, 1, 2}, 4}).build(ctx, input);
+        auto output = build(ctx, core::ensure_backend_addressable_layout(ctx, canonical), weights);
+        output = TransposeModule({{0, 2, 3, 1}, 4}).build(ctx, output);
+        return core::ensure_backend_addressable_layout(ctx, output);
+    }
+    core::validate_shape(weights.weight, core::TensorShape::from_dims({config_.channels, 1,
+        config_.kernel_height, config_.kernel_width}), "weight");
+    if (config_.use_bias) {
+        if (!weights.bias) throw std::runtime_error("bias is required when DepthwiseConv2dConfig.use_bias is true");
+        core::validate_shape(*weights.bias, core::TensorShape::from_dims({config_.channels}), "bias");
+    }
+    const auto x = ensure_f32(ctx, core::ensure_backend_addressable_layout(ctx, input));
+    auto * w = depthwise_conv2d_weight(ctx, weights.weight).tensor;
+    // Metal's channel-fast dispatch requires matching kernel-tap strides.
+    w = ggml_permute(ctx.ggml, ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, w, 2, 3, 1, 0)), 3, 2, 0, 1);
+    auto * output = ggml_conv_2d_dw_direct(ctx.ggml, w, ggml_permute(ctx.ggml, x.tensor, 2, 0, 1, 3),
+        config_.stride_width, config_.stride_height, config_.padding_width, config_.padding_height,
+        config_.dilation_width, config_.dilation_height);
+    output = ggml_permute(ctx.ggml, output, 1, 2, 0, 3);
+    if (config_.use_bias) output = ggml_add(ctx.ggml, output, weights.bias->tensor);
+    return core::wrap_tensor(output, core::TensorShape::from_dims({input.shape.dims[0],
+        conv2d_output_dim(input.shape.dims[1], config_.kernel_height, config_.stride_height,
+            config_.padding_height, config_.dilation_height),
+        conv2d_output_dim(input.shape.dims[2], config_.kernel_width, config_.stride_width,
+            config_.padding_width, config_.dilation_width), config_.channels}), GGML_TYPE_F32);
 }
 
 const core::ModuleSchema & DepthwiseConv2dModule::static_schema() noexcept {
