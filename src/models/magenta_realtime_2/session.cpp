@@ -54,21 +54,27 @@ private:
 
     runtime::TaskResult generate(const runtime::TaskRequest & request, bool streaming) {
         require_prepared("Magenta RealTime 2 generation");
-        runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "Magenta RealTime 2");
+        // The server forwards the legacy top-level duration_seconds field
+        // verbatim, so normalize it before the spec whitelist sees it.
+        const auto options = runtime::apply_option_v1_compatibility(
+            request.options,
+            {{"duration_seconds", "duration_sec"}},
+            "Magenta RealTime 2", "request");
+        runtime::validate_spec_backed_request_options(options, request.option_arrays, *contract_, "Magenta RealTime 2");
         const auto start = std::chrono::steady_clock::now();
-        const float duration = runtime::parse_positive_finite_float_option(request.options, {"duration_sec"}).value_or(10.0F);
+        const float duration = runtime::parse_positive_finite_float_option(options, {"duration_sec"}).value_or(10.0F);
         if (duration < 0.04F) throw std::runtime_error("Magenta duration_sec must be at least one 40 ms frame");
         const int64_t frames = static_cast<int64_t>(std::ceil(duration * 25.0F));
         MagentaSamplingOptions sampling;
-        sampling.temperature = runtime::parse_finite_float_option(request.options, {"temperature"}).value_or(1.3F);
-        sampling.top_k = runtime::parse_int_option(request.options, {"top_k"}).value_or(40);
-        sampling.seed = runtime::parse_u32_option(request.options, {"seed"}).value_or(0);
+        sampling.temperature = runtime::parse_finite_float_option(options, {"temperature"}).value_or(1.3F);
+        sampling.top_k = runtime::parse_int_option(options, {"top_k"}).value_or(40);
+        sampling.seed = runtime::parse_u32_option(options, {"seed"}).value_or(0);
         if (sampling.temperature < 0 || sampling.top_k < 0 || sampling.top_k > 1024)
             throw std::runtime_error("Magenta temperature must be nonnegative and top_k must be between 0 and 1024");
         const float scales[] = {
-            runtime::parse_finite_float_option(request.options, {"guidance_scale"}).value_or(3.0F),
-            runtime::parse_finite_float_option(request.options, {"note_guidance_scale"}).value_or(1.0F),
-            runtime::parse_finite_float_option(request.options, {"drum_guidance_scale"}).value_or(1.0F)};
+            runtime::parse_finite_float_option(options, {"guidance_scale"}).value_or(3.0F),
+            runtime::parse_finite_float_option(options, {"note_guidance_scale"}).value_or(1.0F),
+            runtime::parse_finite_float_option(options, {"drum_guidance_scale"}).value_or(1.0F)};
         for (auto scale : scales) if (scale < -1 || scale > 7) throw std::runtime_error("Magenta guidance scales must be between -1 and 7");
         std::vector<float> embedding;
         if (request.audio_input) {
@@ -78,7 +84,7 @@ private:
         } else {
             if (!request.text_input || request.text_input->text.empty()) throw std::runtime_error("Magenta requires a text prompt or audio style input");
             embedding = musiccoca_->embed_text(request.text_input->text);
-            const auto mapper = runtime::find_option(request.options, {"use_mapper"});
+            const auto mapper = runtime::find_option(options, {"use_mapper"});
             if (!mapper || runtime::parse_bool_option(*mapper, "use_mapper")) embedding = musiccoca_->map_text(embedding);
         }
         auto style = musiccoca_->quantize(embedding);
@@ -86,14 +92,14 @@ private:
         for (size_t i = 0; i < style.size(); ++i) style[i] += 7 + static_cast<int32_t>(i) * 1031;
         std::array<int32_t, 132> controls;
         for (int i = 0; i < 128; ++i) controls[static_cast<size_t>(i)] = i * 11 + 6;
-        const int drums = runtime::parse_int_option(request.options, {"drums"}).value_or(-1);
+        const int drums = runtime::parse_int_option(options, {"drums"}).value_or(-1);
         if (drums < -1 || drums > 1) throw std::runtime_error("Magenta drums must be -1, 0, or 1");
         controls[128] = 1408 + 7 + drums;
         controls[129] = 1417 + 7 + static_cast<int32_t>(std::nearbyint((static_cast<double>(scales[0]) + 1) / 0.2));
         controls[130] = 1464 + 7 + static_cast<int32_t>(std::nearbyint((static_cast<double>(scales[1]) + 1) / 0.2));
         controls[131] = 1511 + 7 + static_cast<int32_t>(std::nearbyint(static_cast<double>(scales[2]) + 1));
         std::vector<std::array<int32_t, 128>> piano;
-        if (const auto path = runtime::find_option(request.options, {"pianoroll_file"})) {
+        if (const auto path = runtime::find_option(options, {"pianoroll_file"})) {
             const auto data = io::json::parse_file(*path);
             if (data.as_array().size() != static_cast<size_t>(frames)) throw std::runtime_error("Magenta pianoroll must have one row per generated 25 Hz frame");
             for (const auto & row : data.as_array()) {
