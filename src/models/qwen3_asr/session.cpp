@@ -424,7 +424,7 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
         const auto & chunk = chunks[chunk_index];
         if (chunk_index % perf_.offline_batch_size == 0) {
             std::vector<Qwen3ASRRequest> batch;
-            for (size_t next = chunk_index; next < std::min(chunks.size(), chunk_index + perf_.offline_batch_size); ++next) {
+            for (size_t next = chunk_index; next < std::min(chunks.size(), chunk_index + static_cast<size_t>(perf_.offline_batch_size)); ++next) {
                 auto item_request = request;
                 item_request.audio_input = engine::audio::slice_audio_buffer(audio, chunks[next].source_span);
                 batch.push_back(make_request(item_request));
