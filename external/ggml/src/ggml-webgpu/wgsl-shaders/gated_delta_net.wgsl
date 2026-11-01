@@ -19,6 +19,16 @@ var<storage, read_write> src_state: array<f32>;
 @group(0) @binding(6)
 var<storage, read_write> dst: array<f32>;
 
+#ifdef FUSED_CACHE
+@group(0) @binding(7)
+var<storage, read_write> dst_fuse: array<f32>;
+#define DST_SNAP dst_fuse
+#define PARAMS_BINDING 8
+#else
+#define DST_SNAP dst
+#define PARAMS_BINDING 7
+#endif
+
 struct Params {
     h: u32,
     n_tokens: u32,
@@ -39,10 +49,13 @@ struct Params {
 
     neq1: u32,
     rq3: u32,
+    K: u32,
     scale: f32,
+    dst_fuse_nb2: u32,
+    dst_fuse_off: u32,
 };
 
-@group(0) @binding(7)
+@group(0) @binding(PARAMS_BINDING)
 var<uniform> params: Params;
 
 var<workgroup> sh_k: array<f32, S_V>;
@@ -62,11 +75,21 @@ fn main(
     let iq3 = seq_id / params.rq3;
 
     let state_size = S_V * S_V;
-    let state_base = (seq_id * params.h + head_id) * state_size;
+    // input state holds s0 only [S_v, S_v, H, n_seqs]: per-seq stride is H*D.
+    let state_in_base = (seq_id * params.h + head_id) * state_size;
+    let state_out_base = (seq_id * params.h + head_id) * state_size;
+
+#ifdef FUSED_CACHE
+    let state_size_per_snap = params.dst_fuse_nb2;
+    let snap_off = params.dst_fuse_off;
+#else
+    let state_size_per_snap = state_size * params.h * params.n_seqs;
+    let snap_off = params.s_off;
+#endif
 
     var state: array<f32, S_V>;
     for (var i = 0u; i < S_V; i++) {
-        state[i] = src_state[state_base + col * S_V + i];
+        state[i] = src_state[state_in_base + col * S_V + i];
     }
 
     var attn_off = (seq_id * params.n_tokens * params.h + head_id) * S_V;
@@ -123,10 +146,23 @@ fn main(
         dst[attn_off + col] = attn_col * params.scale;
         attn_off += S_V * params.h;
 
+        if (params.K > 1u) {
+            // snapshot slot mapping: slot 0 = most recent state, slot s = s tokens back.
+            let target_slot = i32(params.n_tokens) - 1 - i32(t);
+            if (target_slot >= 0 && target_slot < i32(params.K)) {
+                let slot_base = snap_off + u32(target_slot) * state_size_per_snap + state_out_base;
+                for (var i = 0u; i < S_V; i++) {
+                    DST_SNAP[slot_base + col * S_V + i] = state[i];
+                }
+            }
+        }
+
         workgroupBarrier();
     }
 
-    for (var i = 0u; i < S_V; i++) {
-        dst[params.s_off + state_base + col * S_V + i] = state[i];
+    if (params.K == 1u) {
+        for (var i = 0u; i < S_V; i++) {
+            DST_SNAP[snap_off + state_out_base + col * S_V + i] = state[i];
+        }
     }
 }
