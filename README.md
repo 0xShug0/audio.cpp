@@ -31,17 +31,7 @@ Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio 
 >
 > **AMD support and HIP test releases:** Thanks to AMD for providing audio.cpp with access to AMD DevLab! We now offer **HIP release builds for testing** on AMD GPUs.
 
-> [!IMPORTANT]
->
-> - **130+ audio model families and 200+ variants, running locally.** TTS, ASR, music generation, voice conversion, separation, and more through a shared CLI and server API.
->
-> - **Built-in WebUI:** Generate and clone voices in Studio, compare models side by side in Arena, manage models and voice/speaker libraries, and create narration with passage editing, multiple speakers, and audio assembly in the TTS app.
->
-> - **Performance:** Selected CUDA TTS paths run **1.8–8× faster than Python**; tested Q8 packages offer up to **1.53× speedup and 37% lower peak VRAM** versus 16-bit weights ([report](docs/reports/gguf_q8_performance.md)). VibeVoice 1.5B reaches **5.15× real time**, and Supertonic 3 generates **10 hours of audio in 3 minutes** on RTX 5090 ([demo](https://www.reddit.com/r/LocalLLaMA/comments/1uwpvt9/audiocpp_10_hours_of_audio_generated_in_3_minutes/)). Nemotron 3.5 ASR matches WER at roughly **¼ the wall time** in the [TranscrIA benchmark](https://github.com/Martossien/transcria/blob/main/docs/STT_BENCHMARK_REAL_MEETINGS.md).
->
-> - **Integrations and deployment:** audio.cpp powers speech, music, and speech-to-text in [Unsloth Studio](https://github.com/unslothai/unsloth#audiocpp-audio-engine). Deploy Fun-ASR-Nano and SenseVoice through the [FunASR platform](https://www.funasr.com/en/deploy/audio-cpp.html)!
-
-It is built for real end-to-end execution rather than one-off model demos: the same runtime powers TTS, voice cloning, voice conversion, ASR, diarization, VAD, source separation, alignment, codec-style models, and higher-level workflows through a common framework surface.
+audio.cpp is built for real end-to-end execution rather than one-off model demos: the same runtime powers TTS, voice cloning, voice conversion, ASR, diarization, VAD, source separation, alignment, codec-style models, and higher-level workflows through a common framework surface.
 
 Highlights:
 
@@ -53,21 +43,30 @@ Highlights:
 
 <p><strong><span style="font-size:1.1em;">The goal of the framework is to provide highly optimized, reusable building blocks for audio-related models, so new model integrations can be brought up faster, shared components can be improved once and benefit many families, and real end-to-end inference paths can stay efficient, maintainable, and portable.</span></strong></p>
 
-audio.cpp would not be moving this quickly without generous contributors bringing in real fixes, new capabilities, and careful polish. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute and for a shout-out to the people already helping shape the project.
-
-> [!TIP]
-> **Contribution focus:** the most helpful contributions right now are improvements to the UI, API server, and pipeline/workflow subsystems. These areas make the existing model surface easier to use, serve, compose, and validate. See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
+> [!IMPORTANT]
 >
-> **New model PRs:** before starting a new model port, **please check the supported model table because several families are already implemented or under testing** and read the [New Model PRs section in CONTRIBUTING.md](CONTRIBUTING.md#new-model-prs). New ports should start under the community model source tree, where review is lighter than core models but still needs reproducible validation.
+> - **130+ audio model families and 200+ variants, running locally.** TTS, ASR, music generation, voice conversion, separation, and more through a shared CLI and server API.
+>
+> - **Built-in WebUI:** Generate and clone voices in Studio, compare models side by side in Arena, manage models and voice/speaker libraries, and create narration with passage editing, multiple speakers, and audio assembly in the TTS app.
+>
+> - **Performance:** Selected CUDA TTS paths run **1.8–8× faster than Python**; tested Q8 packages offer up to **1.53× speedup and 37% lower peak VRAM** versus 16-bit weights ([report](docs/reports/gguf_q8_performance.md)). VibeVoice 1.5B reaches **5.15× real time**, and Supertonic 3 generates **10 hours of audio in 3 minutes** on RTX 5090 ([demo](https://www.reddit.com/r/LocalLLaMA/comments/1uwpvt9/audiocpp_10_hours_of_audio_generated_in_3_minutes/)). Nemotron 3.5 ASR matches WER at roughly **¼ the wall time** in the [TranscrIA benchmark](https://github.com/Martossien/transcria/blob/main/docs/STT_BENCHMARK_REAL_MEETINGS.md).
+>
+> - **Integrations and deployment:** audio.cpp powers speech, music, and speech-to-text in [Unsloth Studio](https://github.com/unslothai/unsloth#audiocpp-audio-engine). Deploy Fun-ASR-Nano and SenseVoice through the [FunASR platform](https://www.funasr.com/en/deploy/audio-cpp.html)!
+
+## Contributing
+
+audio.cpp would not be moving this quickly without generous contributors bringing in real fixes, new capabilities, and careful polish. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute and for a shout-out to the people already helping shape the project. Before starting a new model port, **check the supported model table because several families are already implemented or under testing**, and read the [New Model PRs section in CONTRIBUTING.md](CONTRIBUTING.md#new-model-prs). New ports should start under the community model source tree, where review is lighter than core models but still needs reproducible validation.
 
 ## News
 
 > [!IMPORTANT]
-> **Release v0.9.3:** New models include **Fish Audio Drama3 and Drama3-small, Ming 3.0 TTS, Ming 3.0 Audio Tiny, Coqui XTTS v2, Plapre 3, Gradium Phonon, and Earshot VAD**, plus experimental **LatentSync 1.6** lip synchronization. Existing families gain Irodori-TTS MeanFlow and multilingual Granite TurboCTC support.
+> **2026-10-31:** Added [NVIDIA Nemotron 3.5 Transcribe](docs/models/nemotron_transcribe.md), with CPU offload only requiring **less than 7 GB of VRAM**.
+>
+> **2026-10-26 — Release v0.9.3:** New models include **Fish Audio Drama3 and Drama3-small, Ming 3.0 TTS, Ming 3.0 Audio Tiny, Coqui XTTS v2, Plapre 3, Gradium Phonon, and Earshot VAD**, plus experimental **LatentSync 1.6** lip synchronization. Existing families gain Irodori-TTS MeanFlow and multilingual Granite TurboCTC support.
 >
 > New features include **LoRA support across 11 models**, Studio adapter controls and GGUF merging, a **TTS workspace with reusable speakers**, Ming3-TTS streaming, Kokoro voice blending, and built-in recipes for voice cloning and cross-language dubbing. Performance optimizations and `perf_mode` presets improve speech and music generation, with further memory reductions for selected models. Hardware support expands with HIP test releases, more ARM NEON acceleration, and additional Rockchip NPU paths and Docker images. Thanks to everyone contributing code, testing, feedback, and hardware access!
 >
-> **Release v0.9.2:** New models include Voxtral TTS, TF-GridNet, MossFormer2, Hviske v6, FireRed VAD, AST, CED, and wake-word detection models. This release expands TTS streaming, adds multi-turn LFM2.5-Audio conversations, and improves model performance and compatibility. The WebUI gains a shared Voice Library and layout improvements. Downloadable C API libraries, Windows Vulkan portable builds, and packaged server configuration examples make integration easier. Thanks to everyone contributing code, testing, and feedback!
+> **2026-10-15 — Release v0.9.2:** New models include Voxtral TTS, TF-GridNet, MossFormer2, Hviske v6, FireRed VAD, AST, CED, and wake-word detection models. This release expands TTS streaming, adds multi-turn LFM2.5-Audio conversations, and improves model performance and compatibility. The WebUI gains a shared Voice Library and layout improvements. Downloadable C API libraries, Windows Vulkan portable builds, and packaged server configuration examples make integration easier. Thanks to everyone contributing code, testing, and feedback!
 >
 > **2026-09-30 - Release v0.9.0:** **100+ audio models**, an enhancement and denoising WebUI tab, speaker-tagged ASR, and performance and memory improvements. Explore the [Architecture Atlas](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas). Thanks to our community!
 
@@ -254,13 +253,14 @@ Official packages for every release are attached to the [Releases page](https://
 
 | Platform | Backends |
 |---|---|
-| Windows x64 | CPU, Vulkan, CUDA (12.4 / 13.3) |
-| Ubuntu x64 | CPU, Vulkan |
+| Windows x64 | CPU, Vulkan, CUDA (12.4 / 13.3), HIP/ROCm (test) |
+| Ubuntu x64 | CPU, Vulkan, HIP/ROCm (test) |
 | macOS (arm64 / x64) | Metal |
 
 The Windows CUDA packages ship the CUDA runtime in a separate `cudart` archive. Extract it next to the binaries so the CUDA backend can load `ggml-cuda.dll` and the CUDA runtime DLLs (`cudart`, cuBLAS, cuFFT).
 
-- **Windows (HIP/ROCm, AMD GPUs):** community-maintained packages with the ROCm runtime bundled, so no HIP SDK installation is required. Published from [@IIIIIllllIIIIIlllll's fork Releases](https://github.com/IIIIIllllIIIIIlllll/audio.cpp/releases) in two tracks: ROCm 6.4 (full coverage incl. RX 7600 / gfx1102) and ROCm 7.1 (recommended for RDNA4). Version numbers follow the upstream releases; see [docs/build/windows-hip-distribution.md](docs/build/windows-hip-distribution.md) for details.
+- **HIP/ROCm (AMD GPUs):** Official Windows and Ubuntu **test builds** are available on the [Releases page](https://github.com/0xShug0/audio.cpp/releases). GPU compatibility and model coverage are still being validated; please report issues with your GPU, driver version, and reproduction command.
+- **Older community Windows HIP packages:** [@IIIIIllllIIIIIlllll's fork Releases](https://github.com/IIIIIllllIIIIIlllll/audio.cpp/releases) provides v0.9.0 packages with the ROCm runtime bundled, in ROCm 6.4 and 7.1 tracks. See [docs/build/windows-hip-distribution.md](docs/build/windows-hip-distribution.md) for packaging details.
 
 
 ### Homebrew Install
@@ -332,8 +332,8 @@ have not moved to spec-backed GGUF packages yet.
 
 GGUF downloads:
 
-- Released model packages: [audio-cpp/audio.cpp-gguf](https://huggingface.co/audio-cpp/audio.cpp-gguf)
-- Community model package: [mirek190/audio.cpp](https://huggingface.co/mirek190/audio.cpp)
+- Official model packages: [audio-cpp on Hugging Face](https://huggingface.co/audio-cpp)
+- Community-hosted model packages: see the individual model guides linked in the supported model tables for repositories and download instructions.
 
 See the [Model Manager guide](docs/model_manager.md) for model-manager usage and
 package notes.
