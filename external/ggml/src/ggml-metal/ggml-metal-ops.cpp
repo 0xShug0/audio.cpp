@@ -481,6 +481,10 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
             {
                 n_fuse = ggml_metal_op_rope(ctx, idx);
             } break;
+        case GGML_OP_IM2COL_3D:
+            {
+                n_fuse = ggml_metal_op_im2col_3d(ctx, idx);
+            } break;
         case GGML_OP_IM2COL:
         case GGML_OP_IM2COL_FAST_1D:
             {
@@ -3960,6 +3964,34 @@ int ggml_metal_op_rope(ggml_metal_op_t ctx, int idx) {
 
     ggml_metal_encoder_dispatch_threadgroups(enc, ne01, ne02, ne03, nth, 1, 1);
 
+    return 1;
+}
+
+int ggml_metal_op_im2col_3d(ggml_metal_op_t ctx, int idx) {
+    const ggml_tensor * op = ctx->node(idx);
+    const ggml_tensor * src = op->src[1];
+    const ggml_tensor * kernel = op->src[0];
+    const int32_t * p = (const int32_t *) op->op_params;
+    const int64_t batches = src->ne[3] / p[9];
+    ggml_metal_kargs_im2col_3d args = {
+        /*.n =*/ (uint64_t) ggml_nelements(op),
+        /*.nb11 =*/ src->nb[1], /*.nb12 =*/ src->nb[2], /*.nb13 =*/ src->nb[3],
+        /*.IW =*/ (int32_t) src->ne[0], /*.IH =*/ (int32_t) src->ne[1], /*.ID =*/ (int32_t) src->ne[2],
+        /*.OW =*/ (int32_t) op->ne[1], /*.OH =*/ (int32_t) op->ne[2], /*.OD =*/ (int32_t) (op->ne[3] / batches),
+        /*.KW =*/ (int32_t) kernel->ne[0], /*.KH =*/ (int32_t) kernel->ne[1], /*.KD =*/ (int32_t) kernel->ne[2],
+        /*.IC =*/ p[9],
+        /*.s0 =*/ p[0], /*.s1 =*/ p[1], /*.s2 =*/ p[2],
+        /*.p0 =*/ p[3], /*.p1 =*/ p[4], /*.p2 =*/ p[5],
+        /*.d0 =*/ p[6], /*.d1 =*/ p[7], /*.d2 =*/ p[8],
+    };
+    auto pipeline = ggml_metal_library_get_pipeline_im2col_3d(ctx->lib, op);
+    const uint64_t nth = std::min<uint64_t>(256, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
+    const uint64_t groups = std::min<uint64_t>((args.n + nth - 1) / nth, 65535);
+    ggml_metal_encoder_set_pipeline(ctx->enc, pipeline);
+    ggml_metal_encoder_set_bytes(ctx->enc, &args, sizeof(args), 0);
+    ggml_metal_encoder_set_buffer(ctx->enc, ggml_metal_get_buffer_id(src), 1);
+    ggml_metal_encoder_set_buffer(ctx->enc, ggml_metal_get_buffer_id(op), 2);
+    ggml_metal_encoder_dispatch_threadgroups(ctx->enc, groups, 1, 1, nth, 1, 1);
     return 1;
 }
 

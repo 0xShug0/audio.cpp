@@ -720,6 +720,20 @@ typedef struct {
     int32_t  KHW; // KH * KW, pre-computed on CPU to save GPU resources
 } ggml_metal_kargs_im2col;
 
+// IM2COL_3D packs [N*IC, ID, IH, IW] into [N*OD, OH, OW, IC*KD*KH*KW].
+typedef struct {
+    uint64_t n;
+    uint64_t nb11;
+    uint64_t nb12;
+    uint64_t nb13;
+    int32_t IW, IH, ID;
+    int32_t OW, OH, OD;
+    int32_t KW, KH, KD, IC;
+    int32_t s0, s1, s2;
+    int32_t p0, p1, p2;
+    int32_t d0, d1, d2;
+} ggml_metal_kargs_im2col_3d;
+
 typedef struct {
     int32_t  IW;
     int32_t  IH;
