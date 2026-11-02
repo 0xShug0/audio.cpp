@@ -664,7 +664,10 @@ while speech synthesis continues. Example with configured model IDs:
 ```
 
 Use `tts.` and `avatar.` prefixes for role-specific request options.
-`avatar_sample_rate` defaults to 16000. Different producer/consumer rates require
+`avatar_sample_rate` defaults to 16000. `speaking_speed` defaults to 1.0 and
+accepts values from 0.5 to 2.0. Other speeds require libsonic for pitch-preserving
+streaming tempo adjustment before both playback and avatar input. Normal speed
+bypasses the processor without loading libsonic. Different producer/consumer rates require
 libsoxr for continuous resampling; missing resampling support raises an error.
 The final response includes the complete synthesized audio for replay, while
 playback can begin from earlier streamed blocks.

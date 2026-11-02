@@ -16,6 +16,7 @@
   let asrId = '', brainId = '', avatarId = '';
   let voice = 'american_english_female';
   let personality = '';
+  let speakingSpeed = 1;
   let settingsOpen = true;
   let portrait: File | null = null;
   let portraitUrl = '';
@@ -162,7 +163,7 @@
       let firstVideo = 0;
       const answer = workflow.speak(speech, synthesis, avatar, { audio, artifacts: history,
         text: personality.trim() ? `Respond with interleaved text and audio. ${personality.trim()}` : undefined,
-        voice_id: voice, options: { 'conversation.return_codes': true,
+        voice_id: voice, options: { speaking_speed: speakingSpeed, 'conversation.return_codes': true,
           'avatar.reference_image_file': image } }, signal, event => {
         const text = event.partial_text as { text?: string } | undefined;
         if (text?.text) {
@@ -217,6 +218,9 @@
     <div class="setup">
       <label>Recognition<select aria-label="Recognition" bind:value={asrId} disabled={busy || recording}><option value="">Choose an ASR model</option>{#each asrChoices as c}<option value={c.id}>{c.name}</option>{/each}</select></label>
       <label>Voice<select aria-label="Voice" bind:value={voice} disabled={busy || recording}>{#each voices as v}<option value={v}>{label(v)}</option>{/each}</select></label>
+      <label>Speaking speed<select aria-label="Speaking speed" bind:value={speakingSpeed} disabled={busy || recording}>
+        <option value={1}>1× · Normal</option><option value={1.15}>1.15× · Faster</option><option value={1.3}>1.3× · Brisk</option><option value={1.5}>1.5× · Fast</option>
+      </select></label>
       <div class="portrait-pick">
         <label>Portrait
           <span class="portrait-control">

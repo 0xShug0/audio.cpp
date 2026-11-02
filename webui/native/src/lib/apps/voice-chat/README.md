@@ -34,6 +34,11 @@ Playback does not wait for the complete reply text or synthesized WAV. LFM3's
 native S2S reply artifacts preserve conversation history; its native audio is
 not played. The complete selected-voice audio remains available for replay.
 
+**Speaking speed** defaults to 1×. Faster settings preserve pitch and process PCM
+before both playback and avatar generation, so animation follows the adjusted
+speech. Speed adjustment requires libsonic on the server; normal speed does not
+load it. The processor keeps state across chunks and flushes once per reply.
+
 Audio is the playback clock. If generation falls behind, audio and animation
 wait together rather than drifting apart. Generation RTF includes recognition,
 conversation, voice synthesis and avatar generation. It excludes recording time

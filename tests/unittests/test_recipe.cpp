@@ -3,6 +3,7 @@
 #include "test_assert.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/audio/streaming_resampler.h"
+#include "streaming_tempo.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -145,6 +146,8 @@ public:
     bool chat = false, fail_conversation = false, conversation_early = false;
     std::atomic<bool> conversation_done{false};
     std::atomic<size_t> tts_calls{0};
+    float speed = 1.0F;
+    std::vector<float> consumed;
     std::mutex mutex;
     std::condition_variable ready;
     bool video_started = false;
@@ -173,6 +176,7 @@ public:
             result.output_artifacts = request.input_artifacts;
         } else if (role == "tts") {
             ++tts_calls;
+            engine::test::require(!request.options.count("speaking_speed"), "recipe tempo is not forwarded to a model");
             phrases.push_back(request.text_input->text);
             engine::test::require(request.options.at("temperature") == "0.5", "TTS options forwarded");
             engine::test::require(request.options.at("seed") == "42", "shared seed forwarded");
@@ -192,7 +196,8 @@ public:
             size_t frames = 0;
             while (source->read(23040, chunk)) {
                 if (fail_avatar) throw std::runtime_error("avatar failed");
-                for (auto value : chunk) engine::test::require(value == 0.25F, "PCM preserved");
+                if (speed == 1.0F) for (auto value : chunk) engine::test::require(value == 0.25F, "PCM preserved");
+                consumed.insert(consumed.end(), chunk.begin(), chunk.end());
                 frames += chunk.size();
                 if (!early && frames >= 23040) {
                     early = !complete.load();
@@ -205,7 +210,8 @@ public:
                     }
                 }
             }
-            engine::test::require_eq(frames, size_t{96000} * tts_calls.load(), "all source frames consumed");
+            if (speed == 1.0F) engine::test::require_eq(frames, size_t{96000} * tts_calls.load(), "all source frames consumed");
+            else engine::test::require(std::abs(double(frames) - 96000.0 * tts_calls.load() / speed) < 48, "avatar consumes the shortened speech duration");
         }
         return result;
     }
@@ -255,6 +261,49 @@ void test_streaming_conversation() {
     engine::test::require(rejected, "conversation failure releases waiting TTS and avatar");
 }
 
+void test_streaming_tempo() {
+    constexpr int rate = 24000;
+    std::vector<float> input(rate * 3);
+    for (size_t i = 0; i < input.size(); ++i) input[i] = .5F * std::sin(float(i) * 2.0F * 3.14159265358979323846F * 220 / rate);
+    minitts::app::StreamingSpeechTempo identity(rate, 1.0F);
+    engine::test::require(identity.process(input, true) == input, "normal tempo is byte-exact passthrough");
+    std::unique_ptr<minitts::app::StreamingSpeechTempo> tempo;
+    try { tempo = std::make_unique<minitts::app::StreamingSpeechTempo>(rate, 1.3F); }
+    catch (const std::runtime_error & error) {
+        if (std::string(error.what()) != "speaking_speed other than 1 requires libsonic") throw;
+        std::cout << "SKIP: libsonic unavailable for optional speech-tempo tests\n";
+        return;
+    }
+    std::vector<float> output;
+    bool incremental = false;
+    for (size_t offset = 0; offset < input.size(); offset += 317) {
+        const size_t end = std::min(input.size(), offset + 317);
+        auto block = tempo->process(std::vector<float>(input.begin() + offset, input.begin() + end));
+        incremental = incremental || !block.empty();
+        output.insert(output.end(), block.begin(), block.end());
+    }
+    const auto tail = tempo->process({}, true);
+    output.insert(output.end(), tail.begin(), tail.end());
+    engine::test::require(incremental, "tempo produces samples before end of input");
+    engine::test::require(std::abs(double(output.size()) - double(input.size()) / 1.3) < 48, "tempo duration matches speed");
+    const size_t first = rate / 2, last = output.size() - rate / 2;
+    size_t crossings = 0;
+    for (size_t i = first; i + 1 < last; ++i) if (output[i] <= 0 && output[i + 1] > 0) ++crossings;
+    const double frequency = double(crossings) * rate / (last - first);
+    engine::test::require(std::abs(frequency - 220.0) < 2.0, "tempo preserves pitch instead of resampling it");
+
+    TaskRequest request;
+    request.text_input = Transcript{"A complete spoken response.", {}};
+    request.options = {{"avatar_sample_rate", "24000"}, {"speaking_speed", "1.3"}, {"seed", "42"}, {"tts.temperature", "0.5"}, {"avatar.reference_image_file", "portrait.png"}};
+    StreamingExecutor executor; executor.speed = 1.3F;
+    std::vector<float> streamed;
+    const auto result = minitts::app::make_recipe_registry().require("speaking-avatar").run(executor, request,
+        [&](const StreamEvent & event) { if (event.audio_output) streamed.insert(streamed.end(), event.audio_output->samples.begin(), event.audio_output->samples.end()); });
+    engine::test::require(executor.early, "fast audio still animates before TTS completion");
+    engine::test::require(streamed == executor.consumed, "browser and avatar receive identical sped-up PCM");
+    engine::test::require(streamed == result.audio_output->samples, "replay and live audio have identical tempo and samples");
+}
+
 void test_streaming_resampling() {
     std::vector<float> input(24000);
     for (size_t i = 0; i < input.size(); ++i) input[i] = std::sin(float(i) * .037F);
@@ -286,6 +335,7 @@ int main() {
     test_streaming_avatar();
     test_streaming_conversation();
     test_streaming_resampling();
+    test_streaming_tempo();
     std::cout << "recipe_test: all passed\n";
     return 0;
 }

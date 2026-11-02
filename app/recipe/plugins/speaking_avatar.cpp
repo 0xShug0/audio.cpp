@@ -2,6 +2,7 @@
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/streaming_resampler.h"
+#include "../streaming_tempo.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
@@ -120,6 +121,8 @@ public:
             throw InvalidRequestError(id() + (conversation_ ? " requires audio" : " requires text"));
         const int rate = parse_int_option(request.options, {"avatar_sample_rate"}).value_or(16000);
         if (rate <= 0) throw InvalidRequestError("avatar_sample_rate must be positive");
+        const float speed = parse_finite_float_option(request.options, {"speaking_speed"}).value_or(1.0F);
+        if (speed < 0.5F || speed > 2.0F) throw InvalidRequestError("speaking_speed must be in [0.5, 2]");
         const auto started = std::chrono::steady_clock::now();
         AudioPipe pipe(rate);
         TextPipe texts;
@@ -171,12 +174,31 @@ public:
         synthesis.voice = request.voice;
         synthesis.options = options_for_recipe_role(request.options, "tts", {"conversation", "tts", "avatar"}, true);
         synthesis.options.erase("avatar_sample_rate");
+        synthesis.options.erase("speaking_speed");
         TaskResult speech;
         std::exception_ptr producer_error;
         std::thread producer([&] {
             try {
                 int source_rate = 0;
                 std::unique_ptr<engine::audio::StreamingSoxrResampler> resampler;
+                std::unique_ptr<minitts::app::StreamingSpeechTempo> tempo;
+                const auto emit_audio = [&](AudioBuffer audio) {
+                    if (audio.samples.empty()) return;
+                    if (first_audio) {
+                        first_audio = false;
+                        engine::debug::timing_log_scalar("recipe.tts.first_audio_ms", engine::debug::elapsed_ms(started));
+                        engine::debug::trace_log_scalar("recipe.tts.first_audio_before_conversation_end", !conversation_done.load());
+                    }
+                    if (tempo) {
+                        if (!speech.audio_output) speech.audio_output = AudioBuffer{source_rate, 1, {}};
+                        append_audio_buffer(*speech.audio_output, audio);
+                    }
+                    StreamEvent pcm;
+                    pcm.audio_output = std::move(audio);
+                    publish(pcm);
+                    pipe.push(resampler->process(engine::audio::mixdown_interleaved_to_mono_average(
+                        pcm.audio_output->samples, pcm.audio_output->channels)));
+                };
                 const auto synthesize = [&](const Transcript & text) {
                     synthesis.text_input = text;
                     const auto part = executor.stream("tts", {VoiceTaskKind::Tts, RunMode::Streaming}, synthesis,
@@ -186,27 +208,25 @@ public:
                             if (!resampler) {
                                 source_rate = audio.sample_rate;
                                 resampler = std::make_unique<engine::audio::StreamingSoxrResampler>(source_rate, rate);
+                                if (speed != 1.0F) tempo = std::make_unique<minitts::app::StreamingSpeechTempo>(source_rate, speed);
                             }
                             if (source_rate != audio.sample_rate) throw std::runtime_error("TTS changed sample rate within a stream");
-                            if (first_audio) {
-                                first_audio = false;
-                                engine::debug::timing_log_scalar("recipe.tts.first_audio_ms", engine::debug::elapsed_ms(started));
-                                engine::debug::trace_log_scalar("recipe.tts.first_audio_before_conversation_end", !conversation_done.load());
-                            }
-                            StreamEvent pcm;
-                            pcm.audio_output = audio;
-                            publish(pcm);
-                            pipe.push(resampler->process(engine::audio::mixdown_interleaved_to_mono_average(audio.samples, audio.channels)));
+                            if (tempo) emit_audio(AudioBuffer{source_rate, 1, tempo->process(
+                                engine::audio::mixdown_interleaved_to_mono_average(audio.samples, audio.channels))});
+                            else emit_audio(audio);
                         });
                     if (!part.audio_output) throw std::runtime_error("TTS returned no audio");
-                    if (!speech.audio_output) speech.audio_output = AudioBuffer{part.audio_output->sample_rate, part.audio_output->channels, {}};
-                    append_audio_buffer(*speech.audio_output, *part.audio_output);
+                    if (!tempo) {
+                        if (!speech.audio_output) speech.audio_output = AudioBuffer{part.audio_output->sample_rate, part.audio_output->channels, {}};
+                        append_audio_buffer(*speech.audio_output, *part.audio_output);
+                    }
                 };
                 if (conversation_) {
                     std::string text;
                     while (texts.read(text)) synthesize(Transcript{std::move(text), {}});
                 } else synthesize(*request.text_input);
                 if (!resampler) throw std::runtime_error("TTS returned no streamed audio");
+                if (tempo) emit_audio(AudioBuffer{source_rate, 1, tempo->process({}, true)});
                 tts_done = true;
                 engine::debug::timing_log_scalar("recipe.tts.wall_ms", engine::debug::elapsed_ms(started));
                 pipe.push(resampler->process({}, true));

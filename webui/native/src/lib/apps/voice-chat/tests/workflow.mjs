@@ -96,6 +96,7 @@ try {
   assert.equal(await page.getByLabel('Avatar model', { exact: true }).count(), 0);
   await page.getByLabel('Portrait', { exact: true }).setInputFiles({ name: 'portrait.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="#678"/></svg>') });
   await page.getByLabel('Voice', { exact: true }).selectOption('british_english_male');
+  await page.getByLabel('Speaking speed', { exact: true }).selectOption('1.3');
   await page.getByLabel('Personality', { exact: true }).fill('A warm, concise assistant.');
   assert.equal(await page.getByRole('button', { name: 'Refresh models', exact: true }).count(), 0);
   const controls = await Promise.all([
@@ -111,6 +112,7 @@ try {
   assert.equal(await page.locator('.messages article').last().locator('p').textContent(), 'Try learning ', 'reply text is still incomplete during playback');
   await page.getByRole('status').filter({ hasText: 'Your turn' }).waitFor({ timeout: 10000 }).catch(async error => { console.error(await page.locator('.voice-chat').innerText()); console.error(errors); throw error; });
   assert.equal(calls.find(c => c.recipe === 'voice-chat-avatar').request.voice_id, 'british_english_male');
+  assert.equal(calls.find(c => c.recipe === 'voice-chat-avatar').request.options.speaking_speed, 1.3);
   assert.equal(calls.find(c => c.recipe === 'voice-chat-avatar').request.text, 'Respond with interleaved text and audio. A warm, concise assistant.');
   assert.deepEqual(calls.find(c => c.recipe === 'voice-chat-avatar').models, { conversation: chatId, tts: voiceId, avatar: avatarId });
   assert.equal(calls.filter(c => c.model === voiceId).length, 0, 'no complete TTS audio request before avatar');
