@@ -1925,6 +1925,23 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rope(ggml_metal_
     return res;
 }
 
+ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col_3d(ggml_metal_library_t lib, const ggml_tensor * op) {
+    assert(op->op == GGML_OP_IM2COL_3D);
+    GGML_ASSERT(op->src[1]->type == GGML_TYPE_F32);
+    GGML_ASSERT(op->src[1]->nb[0] == sizeof(float));
+    GGML_ASSERT(op->type == GGML_TYPE_F16 || op->type == GGML_TYPE_F32);
+    char name[64];
+    // Keep division/modulo at 32 bits for ordinary patches; preserve 64-bit
+    // indexing for very large outputs without slowing down the common path.
+    snprintf(name, sizeof(name), "kernel_im2col_3d_%s_i%d", ggml_type_name(op->type),
+             ggml_nelements(op) <= UINT32_MAX ? 32 : 64);
+    auto res = ggml_metal_library_get_pipeline(lib, name);
+    if (!res.pipeline) {
+        res = ggml_metal_library_compile_pipeline(lib, name, name, nullptr);
+    }
+    return res;
+}
+
 ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col(ggml_metal_library_t lib, const ggml_tensor * op) {
     assert(op->op == GGML_OP_IM2COL || op->op == GGML_OP_IM2COL_FAST_1D);
 
