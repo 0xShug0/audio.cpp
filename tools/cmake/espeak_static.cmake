@@ -3,8 +3,29 @@ include(ExternalProject)
 if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
 endif()
-if(CMAKE_CROSSCOMPILING)
+if(CMAKE_CROSSCOMPILING AND NOT EMSCRIPTEN)
     message(FATAL_ERROR "Static eSpeak data compilation currently requires a native build")
+endif()
+set(_espeak_config Release)
+set(_espeak_target data)
+set(_espeak_cross_args)
+set(_espeak_parallel_args)
+if(EMSCRIPTEN)
+    # Data compilation runs native tools. Reuse their packaged output while
+    # compiling the same phonemizer library for the browser.
+    set(AUDIOCPP_ESPEAK_DATA_PACKAGE "" CACHE FILEPATH "Native-generated eSpeak data package for the browser build")
+    if(NOT EXISTS "${AUDIOCPP_ESPEAK_DATA_PACKAGE}")
+        message(FATAL_ERROR "Browser static eSpeak requires AUDIOCPP_ESPEAK_DATA_PACKAGE from a native build")
+    endif()
+    set(_espeak_config Debug)
+    set(_espeak_target espeak-ng)
+    set(_espeak_parallel_args --parallel 8)
+    list(APPEND _espeak_cross_args
+        "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DCMAKE_C_FLAGS:STRING=${CMAKE_C_FLAGS}"
+        "-DCMAKE_CXX_FLAGS:STRING=${CMAKE_CXX_FLAGS}"
+        "-DCMAKE_C_FLAGS_DEBUG:STRING=${CMAKE_C_FLAGS_DEBUG}"
+        "-DCMAKE_CXX_FLAGS_DEBUG:STRING=${CMAKE_CXX_FLAGS_DEBUG}")
 endif()
 set(_espeak_root "${CMAKE_BINARY_DIR}/_deps/espeak-static")
 set(_espeak_source "${_espeak_root}/source")
@@ -18,10 +39,10 @@ ExternalProject_Add(audiocpp_espeak_source
     DOWNLOAD_NAME espeak-ng-1.52.0.tar.gz
     SOURCE_DIR "${_espeak_source}"
     BINARY_DIR "${_espeak_build}"
-    PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=<SOURCE_DIR>
+    PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=<SOURCE_DIR> -DBROWSER_BUILD=${EMSCRIPTEN}
         -P "${CMAKE_CURRENT_LIST_DIR}/espeak_patch.cmake"
     CMAKE_ARGS
-        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_BUILD_TYPE=${_espeak_config}
         -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
         -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5
@@ -31,7 +52,8 @@ ExternalProject_Add(audiocpp_espeak_source
         -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
         -DUSE_ASYNC=OFF -DUSE_LIBSONIC=OFF -DUSE_LIBPCAUDIO=OFF
         -DUSE_MBROLA=OFF -DUSE_SPEECHPLAYER=OFF -DESPEAK_BUILD_MANPAGES=OFF
-    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release --target data
+        ${_espeak_cross_args}
+    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config ${_espeak_config} --target ${_espeak_target} ${_espeak_parallel_args}
     INSTALL_COMMAND ""
     LOG_BUILD ON
     BUILD_BYPRODUCTS "${_espeak_lib}" "${_espeak_ucd}")
@@ -49,15 +71,22 @@ if(UNIX)
     target_link_libraries(engine_runtime PRIVATE m)
 endif()
 # Data stays separate and relocatable. These are not executable model weights.
-add_executable(audiocpp_espeak_pack tools/espeak_data_pack.cpp src/framework/text/espeak_data.cpp)
-target_include_directories(audiocpp_espeak_pack PRIVATE "${PROJECT_SOURCE_DIR}/include")
-target_link_libraries(audiocpp_espeak_pack PRIVATE ggml-base)
-set(_espeak_package "${_espeak_root}/espeak-ng-data.bin")
-add_custom_command(OUTPUT "${_espeak_package}"
-    COMMAND $<TARGET_FILE:audiocpp_espeak_pack> "${_espeak_build}/espeak-ng-data" "${_espeak_package}"
-    DEPENDS audiocpp_espeak_pack audiocpp_espeak_source
-    VERBATIM)
+if(EMSCRIPTEN)
+    set(_espeak_package "${AUDIOCPP_ESPEAK_DATA_PACKAGE}")
+else()
+    add_executable(audiocpp_espeak_pack tools/espeak_data_pack.cpp src/framework/text/espeak_data.cpp)
+    target_include_directories(audiocpp_espeak_pack PRIVATE "${PROJECT_SOURCE_DIR}/include")
+    target_link_libraries(audiocpp_espeak_pack PRIVATE ggml-base)
+    set(_espeak_package "${_espeak_root}/espeak-ng-data.bin")
+    add_custom_command(OUTPUT "${_espeak_package}"
+        COMMAND $<TARGET_FILE:audiocpp_espeak_pack> "${_espeak_build}/espeak-ng-data" "${_espeak_package}"
+        DEPENDS audiocpp_espeak_pack audiocpp_espeak_source
+        VERBATIM)
+endif()
 add_custom_target(audiocpp_espeak_package DEPENDS "${_espeak_package}")
+if(EMSCRIPTEN)
+    add_dependencies(audiocpp_espeak_package audiocpp_espeak_source)
+endif()
 # One staging target shared by CLI/server/probes. Run on every requested build,
 # even when only the data package changed and executables do not need relinking.
 set(_espeak_bin "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")

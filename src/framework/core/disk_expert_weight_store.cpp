@@ -90,7 +90,7 @@ public:
             const auto expert_bytes = ggml_row_size(tensor->type, tensor->ne[0]) * tensor->ne[1];
             if (bytes != expert_bytes * tensor->ne[2]) throw std::runtime_error("invalid expert bank size: " + name);
             if (!projections.emplace(name, Projection{tensor->type, tensor->ne[0], tensor->ne[1],
-                tensor->ne[2], offset, expert_bytes}).second) throw std::runtime_error("duplicate expert bank: " + name);
+                tensor->ne[2], offset, static_cast<size_t>(expert_bytes)}).second) throw std::runtime_error("duplicate expert bank: " + name);
         }
         mapped_file = io::read_binary_blob(path, true);
     }

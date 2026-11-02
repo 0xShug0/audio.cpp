@@ -31,7 +31,7 @@
 #endif
 #include <process.h>
 #include <windows.h>
-#else
+#elif !defined(__EMSCRIPTEN__)
 #include <spawn.h>
 #include <sys/wait.h>
 extern char ** environ;
@@ -377,6 +377,8 @@ int run_process(const std::string & program, const std::vector<std::string> & ar
             "failed to launch process: " + format_process_args(program, args) + ": " + std::strerror(errno));
     }
     return static_cast<int>(rc);
+#elif defined(__EMSCRIPTEN__)
+    throw std::runtime_error("external processes are unavailable in the browser: " + format_process_args(program, args));
 #else
     std::vector<char *> argv;
     argv.reserve(args.size() + 2);

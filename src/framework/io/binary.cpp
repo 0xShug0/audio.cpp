@@ -200,7 +200,16 @@ BinaryBlob read_binary_blob(const std::filesystem::path & path, bool require_map
     if (require_mapping) {
         throw std::runtime_error("failed to memory-map binary file: " + path.string());
     }
+#ifdef __EMSCRIPTEN__
+    // libc++ otherwise refills this stream just 4 KiB at a time. Each refill
+    // of a WORKERFS file crosses the browser's synchronous FileReader API.
+    std::vector<char> read_buffer(1024u * 1024u);
+    std::ifstream input;
+    input.rdbuf()->pubsetbuf(read_buffer.data(), static_cast<std::streamsize>(read_buffer.size()));
+    input.open(path, std::ios::binary);
+#else
     std::ifstream input(path, std::ios::binary);
+#endif
     if (!input) {
         throw std::runtime_error("failed to open binary file: " + path.string());
     }
@@ -209,7 +218,18 @@ BinaryBlob read_binary_blob(const std::filesystem::path & path, bool require_map
     input.seekg(0, std::ios::beg);
     std::vector<std::byte> bytes(size);
     if (size > 0) {
+#ifdef __EMSCRIPTEN__
+        // Browser file readers cannot materialize a >2 GiB ArrayBuffer in one
+        // read. Keep each read bounded, including with the WASM64 address space.
+        constexpr size_t chunk_bytes = 64u * 1024u * 1024u;
+        for (size_t offset = 0; offset < size && input; ) {
+            const size_t count = std::min(chunk_bytes, size - offset);
+            input.read(reinterpret_cast<char *>(bytes.data() + offset), static_cast<std::streamsize>(count));
+            offset += count;
+        }
+#else
         input.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(size));
+#endif
         if (!input) {
             throw std::runtime_error("failed to read binary file: " + path.string());
         }

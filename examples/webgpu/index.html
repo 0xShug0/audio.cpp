@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>audio.cpp browser WebGPU</title>
+<style>
+  body { max-width: 900px; margin: 36px auto; padding: 0 20px; font: 16px system-ui; color: #172033; background: #f7f9fc; }
+  label { display: block; margin: 20px 0; font-weight: 600; }
+  input, textarea { display: block; margin-top: 8px; width: 100%; box-sizing: border-box; }
+  textarea { padding: 12px; font: 14px monospace; border: 1px solid #b7c3d5; border-radius: 8px; }
+  button, a.download { padding: 10px 18px; margin-right: 10px; cursor: pointer; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #e8edf5; padding: 16px; border-radius: 8px; }
+  audio { display: block; width: 100%; margin: 16px 0; }
+</style>
+<h1>audio.cpp — browser WebGPU</h1>
+<p>The model runs locally in a Web Worker using the WebAssembly CLI and browser WebGPU.
+  Select a GGUF and any required sidecar files. Available models depend on the build configuration.</p>
+<label>Model GGUF <input id="model" type="file" accept=".gguf"></label>
+<label>Sidecar files (PocketTTS: select alba.safetensors) <input id="sidecars" type="file" multiple></label>
+<label>Resource directory (preserves folder paths, for example YuE2 sidecars) <input id="resources" type="file" webkitdirectory></label>
+<label>Input WAV (for ASR or alignment) <input id="audio" type="file" accept=".wav"></label>
+<label>CLI arguments (JSON array; /model.gguf, /input.wav, and sidecars as /filename)
+<textarea id="args" rows="9">["--task","tts","--family","pocket_tts","--model","/model.gguf",
+"--backend","webgpu","--threads","1",
+"--request-option","voice_embedding_file=/alba.safetensors",
+"--text","Hello from the browser WebGPU backend.",
+"--request-option","seed=1234","--out","/output.wav","--log"]</textarea></label>
+<label>Environment variables (JSON object; optional model resource paths)
+<textarea id="environment" rows="2">{}</textarea></label>
+<button id="run">Run in browser</button><button id="stop" disabled>Stop</button>
+<p id="status" role="status">Ready. A WebGPU-capable browser and localhost or HTTPS are required.</p>
+<div id="outputs"></div><pre id="adapter"></pre><pre id="log"></pre>
+<script>
+  let worker;
+  const urls = [];
+  const $ = id => document.getElementById(id);
+  function finished() { $("run").disabled = false; $("stop").disabled = true; worker.terminate(); }
+  $("run").onclick = () => {
+    try {
+      const args = JSON.parse($("args").value);
+      const environment = JSON.parse($("environment").value);
+      if (!environment || Array.isArray(environment) || typeof environment !== "object" ||
+          !Object.values(environment).every(value => typeof value === "string"))
+        throw new Error("Environment variables must be a JSON object of strings.");
+      if (!Array.isArray(args) || !args.every(arg => typeof arg === "string"))
+        throw new Error("CLI arguments must be a JSON array of strings.");
+      if (!args.includes("--version") && (!args.includes("--backend") || args[args.indexOf("--backend") + 1] !== "webgpu"))
+        throw new Error("This example tests browser WebGPU; select --backend webgpu.");
+      if (worker) worker.terminate();
+      urls.splice(0).forEach(URL.revokeObjectURL);
+      $("outputs").replaceChildren(); $("log").textContent = "";
+      $("run").disabled = true; $("stop").disabled = false; $("status").textContent = "Running in browser…";
+      window.browserResult = null;
+      worker = new Worker("worker.js?run=" + Date.now());
+      worker.onerror = event => { window.browserResult = { type: "error", message: event.message || String(event) }; $("status").textContent = window.browserResult.message; finished(); };
+      worker.onmessage = ({ data }) => {
+        if (data.type === "status") $("status").textContent = data.message;
+        if (data.type === "log") $("log").textContent += data.line + "\n";
+        if (data.type === "adapter") $("adapter").textContent = JSON.stringify(data.info, null, 2);
+        if (data.type === "error") { window.browserResult = data; $("status").textContent = data.message; finished(); }
+        if (data.type === "done") {
+          window.browserResult = data;
+          $("status").textContent = `Completed in ${(data.elapsedMs / 1000).toFixed(3)} s (excludes file loading and WebAssembly initialization).`;
+          for (const output of data.outputs) {
+            const wav = output.path.endsWith(".wav");
+            const url = URL.createObjectURL(new Blob([output.bytes], { type: wav ? "audio/wav" : "text/plain" }));
+            urls.push(url);
+            if (wav) { const audio = document.createElement("audio"); audio.controls = true; audio.src = url; $("outputs").append(audio); }
+            const link = document.createElement("a"); link.href = url; link.download = output.path.split("/").pop();
+            link.textContent = `Download ${link.download}`; link.className = "download"; $("outputs").append(link);
+          }
+          finished();
+        }
+      };
+      const files = [];
+      if ($("model").files[0]) files.push({ path: "/model.gguf", file: $("model").files[0] });
+      for (const file of $("sidecars").files) files.push({ path: "/" + file.name, file });
+      for (const file of $("resources").files) files.push({ path: "/" + file.webkitRelativePath, file });
+      if ($("audio").files[0]) files.push({ path: "/input.wav", file: $("audio").files[0] });
+      worker.postMessage({ files, args, environment });
+    } catch (error) { $("status").textContent = error.message; }
+  };
+  $("stop").onclick = () => { finished(); window.browserResult = { type: "error", message: "Stopped by user." }; $("status").textContent = "Stopped."; };
+</script>
+</html>
