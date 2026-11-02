@@ -282,6 +282,53 @@ void test_size_one_dims_ignore_stride() {
     require(row == iota(0, 4), "row should be " + format(iota(0, 4)) + ", got " + format(row));
 }
 
+void test_wrapped_state_dict() {
+    // x = torch.arange(8.)
+    // torch.save({"state_dict": OrderedDict(head=x[:4], tail=x[4:]),
+    //             "metadata": {"names": ["a", "b"], "sizes": [4]}}, path)
+    // Training checkpoints such as Semantic-DACVAE's weights.pth look like this; torch.save
+    // writes the lists with EMPTY_LIST and APPENDS (one item: APPEND).
+    std::vector<uint8_t> pickle = {0x80, 0x02, '}', '('};  // PROTO 2, EMPTY_DICT, MARK
+    put_binunicode(pickle, "state_dict");
+    pickle.insert(pickle.end(), {'}', '('});
+    put_tensor_entry(pickle, "head", 0, {4}, {1}, 8);
+    put_tensor_entry(pickle, "tail", 4, {4}, {1}, 8);
+    pickle.push_back('u');  // SETITEMS: state_dict
+    put_binunicode(pickle, "metadata");
+    pickle.insert(pickle.end(), {'}', '('});
+    put_binunicode(pickle, "names");
+    pickle.insert(pickle.end(), {']', '('});  // EMPTY_LIST, MARK
+    put_binunicode(pickle, "a");
+    put_binunicode(pickle, "b");
+    pickle.push_back('e');  // APPENDS
+    put_binunicode(pickle, "sizes");
+    pickle.push_back(']');
+    pickle.insert(pickle.end(), {'K', 4, 'a'});  // BININT1 4, APPEND
+    pickle.push_back('u');  // SETITEMS: metadata
+    pickle.insert(pickle.end(), {'u', '.'});  // SETITEMS: outer dict, STOP
+
+    std::vector<uint8_t> storage(8 * sizeof(float));
+    for (int i = 0; i < 8; ++i) {
+        const float value = static_cast<float>(i);
+        std::memcpy(storage.data() + static_cast<size_t>(i) * sizeof(float), &value, sizeof(float));
+    }
+    const auto archive = stored_zip({{"archive/data.pkl", pickle}, {"archive/data/0", storage}});
+    const auto path = std::filesystem::temp_directory_path() / "torch_bin_wrapped_state_dict.pth";
+    {
+        std::ofstream out(path, std::ios::binary);
+        require(out.good(), "failed to open temp torch .pth file");
+        out.write(reinterpret_cast<const char *>(archive.data()), static_cast<std::streamsize>(archive.size()));
+        require(out.good(), "failed to write temp torch .pth file");
+    }
+    const auto source = engine::assets::open_tensor_source(path);
+    const auto head = source->require_f32("head");
+    const auto tail = source->require_f32("tail");
+    const auto count = source->tensors().size();
+    std::filesystem::remove(path);
+    require(count == 2, "a wrapped state dict should yield its 2 tensors, got " + std::to_string(count));
+    require(head == iota(0, 4) && tail == iota(4, 4), "wrapped state dict tensors have the wrong values");
+}
+
 void expect_rejected(const std::vector<TensorEntry> & tensors, uint8_t storage_numel, const std::string & what) {
     const auto path = write_checkpoint(tensors, storage_numel);
     bool threw = false;
@@ -311,6 +358,7 @@ int main() {
         test_container_extensions_do_not_select_adapter_layout();
         test_chunked_matrix_honours_storage_offset();
         test_size_one_dims_ignore_stride();
+        test_wrapped_state_dict();
         test_unsupported_views_are_rejected();
     } catch (const std::exception & error) {
         std::cerr << "torch .bin storage offset test failed: " << error.what() << "\n";
