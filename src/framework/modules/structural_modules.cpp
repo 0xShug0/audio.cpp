@@ -535,7 +535,7 @@ core::TensorValue Interpolate1dModule::build(core::ModuleBuildContext & ctx, con
         contiguous.tensor->ne[1],
         contiguous.tensor->ne[2],
         contiguous.tensor->ne[3],
-        mode);
+        static_cast<uint32_t>(mode) | (config_.align_corners ? GGML_SCALE_FLAG_ALIGN_CORNERS : 0));
     return core::wrap_tensor(raw, output_shape, GGML_TYPE_F32);
 }
 

@@ -80,6 +80,8 @@ struct WanVideoRMSNorm3dConfig {
   int64_t channels = 0;
   float eps = 0.0F;
   bool cuda_fast_lowering = false;
+  bool fuse_silu = false;
+  bool cuda_f16_output = false;
 };
 
 struct WanVideoRMSNorm3dWeights {

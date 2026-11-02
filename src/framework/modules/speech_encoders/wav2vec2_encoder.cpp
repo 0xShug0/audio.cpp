@@ -440,6 +440,9 @@ core::TensorValue build_wav2vec2_graph(
         frames = conv1d_output_frames(frames, config.conv_kernel[index], config.conv_stride[index], 0);
         in_channels = config.conv_dim[index];
     }
+    if (config.feature_output_frames > 0) {
+        hidden = Interpolate1dModule({config.feature_output_frames, Interpolate1dMode::Linear, true}).build(ctx, hidden);
+    }
     hidden = transpose_bct_btc(ctx, hidden);
     hidden = LayerNormModule({config.conv_dim.back(), config.layer_norm_eps, true, true})
                  .build(ctx, hidden, norm_weights(weights, "feature_projection.layer_norm"));

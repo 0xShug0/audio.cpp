@@ -1516,6 +1516,13 @@ extern "C" {
             struct ggml_tensor  * gamma,
             float                 eps);
 
+    // CUDA-only F16 storage; identical F32 RMSNorm/SiLU arithmetic before the final cast.
+    GGML_API struct ggml_tensor * ggml_rms_norm_channels_silu_f16(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * gamma,
+            float                 eps);
+
     GGML_API struct ggml_tensor * ggml_rms_norm_channels_add_bias_silu(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
@@ -2376,6 +2383,38 @@ extern "C" {
 
     GGML_API void ggml_conv_2d_direct_set_cudnn(struct ggml_tensor * tensor);
     GGML_API void ggml_conv_2d_direct_set_cudnn_bias(struct ggml_tensor * tensor, struct ggml_tensor * bias);
+
+    // Explicit CUDA-only F16/F32 input, F16 weight, F16/F32 output lowering. Requires
+    // GGML_CUDA_CUDNN_CONV3D; unmarked direct Conv3D retains its existing semantics.
+    // op_params[12] is reserved for this lowering (0 = default, 1 = cuDNN).
+    // src[2] optionally supplies contiguous F32 channel bias; op_params[13]
+    // optionally rounds the F32 sum to BF16, retaining F32 output storage.
+    // Convolution accumulates in F32 and returns F16 before the optional F32 bias.
+    // F16 output casts that sum to F16 and excludes BF16 rounding.
+    // op_params[14]: 1 means physical O,D,H,W,I weights (same logical shape);
+    // 0 retains ordinary O,I,D,H,W weights and per-call packing.
+    // replicate_depth_left >= 0 replaces zero depth padding with replicated borders;
+    // right padding is 2*padding_depth-left. -1 preserves ordinary zero padding.
+#ifdef __cplusplus
+    GGML_API void ggml_conv_3d_direct_set_cudnn(
+            struct ggml_tensor * tensor, struct ggml_tensor * bias = nullptr, bool round_bf16 = false,
+            bool prepacked_weights = false, int replicate_depth_left = -1);
+#else
+    GGML_API void ggml_conv_3d_direct_set_cudnn(
+            struct ggml_tensor * tensor, struct ggml_tensor * bias, bool round_bf16, bool prepacked_weights, int replicate_depth_left);
+#endif
+
+    // Same geometry as ggml_conv_3d_direct, with F16 output storage. CUDA/cuDNN
+    // only: returns an explicitly marked node, initially without bias or BF16 round.
+    // Attach optional contiguous F32 channel bias using the cuDNN setter above.
+    GGML_API struct ggml_tensor * ggml_conv_3d_direct_f16(
+            struct ggml_context * ctx,
+            struct ggml_tensor * a,
+            struct ggml_tensor * b,
+            int s0, int s1, int s2,
+            int p0, int p1, int p2,
+            int d0, int d1, int d2,
+            int n_channels, int n_batch, int n_channels_out);
 
     GGML_API struct ggml_tensor * ggml_conv_3d_direct(
             struct ggml_context * ctx,

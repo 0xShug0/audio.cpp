@@ -4,6 +4,10 @@
 #include "ggml-impl.h"
 #include "ggml-cuda.h"
 
+#ifdef GGML_CUDA_CUDNN_CONV3D
+#include <cudnn.h>
+#endif
+
 #include <cstdint>
 #include <memory>
 
@@ -1392,6 +1396,11 @@ struct ggml_backend_cuda_context {
 
     cudaStream_t streams[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { { nullptr } };
     cublasHandle_t cublas_handles[GGML_CUDA_MAX_DEVICES] = {nullptr};
+
+#ifdef GGML_CUDA_CUDNN_CONV3D
+    // One handle per backend/device, shared by sequential convolution launches.
+    cudnnHandle_t conv3d_cudnn_handle = nullptr;
+#endif
 
     int curr_stream_no = 0;
 
