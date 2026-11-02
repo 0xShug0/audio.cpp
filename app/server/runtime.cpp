@@ -854,7 +854,7 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_impl(
     const engine::runtime::TaskRequest & request,
     const minitts::app::AudioChunkStream * audio,
     const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
-    std::optional<int> busy_timeout_ms) {
+    std::optional<int> busy_timeout_ms, bool include_artifacts) {
     BusyGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
     ensure_model_loaded_locked(model);
     if (model.streaming == nullptr) {
@@ -866,7 +866,7 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_impl(
     const bool diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
     const auto sink = [&](const engine::runtime::StreamEvent & event) {
         if (!timed_result.ttft_ms.has_value() &&
-            (stream_event_has_output(event) || (diarization && !event.speaker_turns.empty()))) {
+            (stream_event_has_output(event, include_artifacts) || (diarization && !event.speaker_turns.empty()))) {
             timed_result.ttft_ms = elapsed_ms(started);
         }
         if (event_sink) {
@@ -893,8 +893,8 @@ ServerState::TimedTaskResult ServerState::run_streaming_model(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
     const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
-    std::optional<int> busy_timeout_ms) {
-    return run_streaming_model_impl(model, request, nullptr, event_sink, busy_timeout_ms);
+    std::optional<int> busy_timeout_ms, bool include_artifacts) {
+    return run_streaming_model_impl(model, request, nullptr, event_sink, busy_timeout_ms, include_artifacts);
 }
 
 ServerState::TimedTaskResult ServerState::run_streaming_model_from(
@@ -2173,6 +2173,7 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const bool sse = task_stream_sse_requested(body);
+    const bool include_artifacts = bool_field(body, "include_artifacts", false);
     const auto * request_json = body.find("request");
     const auto & effective_json = request_json != nullptr ? *request_json : body;
     auto request = apply_default_request_options(
@@ -2193,15 +2194,15 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
         // response puts in "events", and the result follows as the object it
         // puts under "result". The model lock is taken inside the stream, as on
         // the other streamed routes, so a busy model is an error event here.
-        return sse_response([this, model_ptr, request = std::move(request), busy_timeout_ms, diarization](
+        return sse_response([this, model_ptr, request = std::move(request), busy_timeout_ms, diarization, include_artifacts](
                                 HttpStreamWriter & writer) {
             const auto timed_result = run_streaming_model(
                 *model_ptr,
                 request,
                 [&](const engine::runtime::StreamEvent & event) {
-                    write_sse(writer, task_stream_event_line(stream_event_json(event, diarization)));
+                    write_sse(writer, task_stream_event_line(stream_event_json(event, diarization, include_artifacts)));
                 },
-                busy_timeout_ms);
+                busy_timeout_ms, include_artifacts);
             const bool silent_diarization = diarization && !timed_result.ttft_ms.has_value();
             write_sse(writer, task_stream_done_line(
                                   silent_diarization
@@ -2217,7 +2218,7 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
         [&](const engine::runtime::StreamEvent & event) {
             events.push_back(event);
         },
-        parse_busy_timeout_override(body));
+        parse_busy_timeout_override(body), include_artifacts);
     std::ostringstream out;
     std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
     const bool diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
@@ -2226,7 +2227,7 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
         if (i != 0) {
             out << ",";
         }
-        out << stream_event_json(events[i], diarization);
+        out << stream_event_json(events[i], diarization, include_artifacts);
     }
     const bool silent_diarization = diarization && !timed_result.ttft_ms.has_value();
     out << "],\"result\":" << (silent_diarization

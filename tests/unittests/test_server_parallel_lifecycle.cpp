@@ -1,3 +1,5 @@
+#include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 // Run the actual server handlers with tiny controlled loaders. Barriers force
 // lifecycle overlaps without GPU timing, sleeps in production, or large models.
 #include "parallel_runtime.h"
@@ -131,6 +133,7 @@ public:
         emitted_ = true;
         rt::StreamEvent event;
         event.audio_output = result_.audio_output;
+        event.output_artifacts = result_.output_artifacts;
         event.partial_text = result_.text_output; if (control_->final_text == 2) { event.partial_text->text += "!"; }
         event.is_final = true;
         return event;
@@ -1001,6 +1004,25 @@ void generic_request_artifacts(int count) {
 // then the JSON response's "result" and [DONE]. Without the field, or with
 // null, the response is the JSON body. The fixture counts finalize calls, so a
 // writer that records the count at each write shows when an event left.
+void stream_artifacts_are_output() {
+    rt::StreamEvent event;
+    require(!srv::stream_event_has_output(event), "empty event counted as output");
+    require(srv::stream_event_json(event,false)=="{\"is_final\":false}", "empty event shape changed");
+    event.output_artifacts.push_back(rt::make_voice_artifact(rt::ArtifactKind::Custom,"frame",{std::byte{0},std::byte{255}},{{"format","rgb24"}}));
+    require(!srv::stream_event_has_output(event), "artifact-only event changed default output timing");
+    require(parse(srv::stream_event_json(event,false)).find("artifacts") == nullptr, "artifacts leaked without opt-in");
+    require(srv::stream_event_has_output(event, true), "opt-in artifact-only event not counted as output");
+    const auto encoded=parse(srv::stream_event_json(event,false,true));
+    const auto & artifacts=encoded.require("artifacts").as_array();
+    require(artifacts.size()==1 && artifacts[0].require("id").as_string()=="frame" &&
+            artifacts[0].require("payload").as_string()=="AP8=" &&
+            artifacts[0].require("meta").require("format").as_string()=="rgb24", "stream artifact was lost or changed");
+    rt::TaskResult result;result.output_artifacts=event.output_artifacts;
+    const auto final=parse(srv::task_result_json(result,0));
+    require(engine::io::json::stringify(final.require("artifacts"))==engine::io::json::stringify(encoded.require("artifacts")),
+            "stream and final artifact formats differ");
+}
+
 void generic_task_stream_sse(int count) {
     Fixture f(count); auto c = f.add("stream", "streaming");
     const auto active = [&] { return Access::slots(*f.state, "stream").active; };
@@ -1070,6 +1092,17 @@ void generic_task_stream_sse(int count) {
         require(writer.writes[0].first == before && writer.writes[1].first == before + 1,
                 "task stream wrote its event after the run was over");
     }
+    const auto default_events = parse(stream(body("", true)).body).require("events").as_array();
+    require(default_events.front().find("artifacts") == nullptr, "default route leaked event artifacts");
+    const auto opted_events = parse(stream(body(",\"include_artifacts\":true", true)).body).require("events").as_array();
+    require(opted_events.front().require("artifacts").as_array().size() == 1,
+            "opt-in JSON route omitted event artifacts");
+    auto opted_sse = stream(body(sse + ",\"include_artifacts\":true", true));
+    Recorder opted_writer(c);
+    opted_sse.stream_body(opted_writer);
+    require(opted_writer.writes.front().second.find("\"artifacts\"") != std::string::npos,
+            "opt-in SSE route omitted event artifacts");
+    opted_sse.stream_body = {};
     // Only the top-level field of this route opts in: not the Accept header,
     // not a field inside `request`, not the field on /v1/tasks/run.
     srv::HttpRequest accept; accept.method = "POST"; accept.path = "/v1/tasks/stream"; accept.body = body("", true);
@@ -1137,6 +1170,15 @@ void generic_task_stream_sse(int count) {
 int main(int argc, char ** argv) {
     try {
         engine::io::json::enable_serialized_json_parsing();
+        if (argc >= 2 && std::string(argv[1]) == "stream-artifacts") {
+            engine::debug::configure_logging({true});
+            const auto started = std::chrono::steady_clock::now();
+            stream_artifacts_are_output();
+            for (int count : {1, 2}) generic_task_stream_sse(count);
+            engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
+            std::cout << "stream artifact defaults and opt-in JSON/SSE passed\n";
+            return 0;
+        }
         if (argc == 2) {
             const std::string test = argv[1];
             if (test == "audit-capacity") { unsupported_capacity_preserves_registration(); }
@@ -1150,6 +1192,7 @@ int main(int argc, char ** argv) {
         registration_is_visible_while_loading();
         live_policy_does_not_hold_registry_lock();
         concurrent_json_parsing();
+        stream_artifacts_are_output();
         per_model_device_selection();
         unsupported_capacity_preserves_registration();
         dynamic_capacity_changes_use_parallel_lifecycle();

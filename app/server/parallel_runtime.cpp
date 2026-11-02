@@ -944,7 +944,7 @@ ParallelServerState::TimedTaskResult ParallelServerState::run_streaming_model_im
     const minitts::app::AudioChunkStream * audio,
     const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
     std::optional<int> busy_timeout_ms,
-    RequestLease request_lease) {
+    RequestLease request_lease, bool include_artifacts) {
     std::optional<ModelSlots::Lock> lock;
     if (!request_lease) { lock.emplace(acquire_model_run(model, busy_timeout_ms)); }
     const size_t slot = request_lease ? request_lease->slot() : lock->slot();
@@ -960,7 +960,7 @@ ParallelServerState::TimedTaskResult ParallelServerState::run_streaming_model_im
     const bool diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
     const auto sink = [&](const engine::runtime::StreamEvent & event) {
         if (!timed_result.ttft_ms.has_value() &&
-            (stream_event_has_output(event) || (diarization && !event.speaker_turns.empty()))) {
+            (stream_event_has_output(event, include_artifacts) || (diarization && !event.speaker_turns.empty()))) {
             timed_result.ttft_ms = elapsed_ms(started);
         }
         if (event_sink) {
@@ -988,8 +988,8 @@ ParallelServerState::TimedTaskResult ParallelServerState::run_streaming_model(
     const engine::runtime::TaskRequest & request,
     const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
     std::optional<int> busy_timeout_ms,
-    RequestLease request_lease) {
-    return run_streaming_model_impl(model, request, nullptr, event_sink, busy_timeout_ms, std::move(request_lease));
+    RequestLease request_lease, bool include_artifacts) {
+    return run_streaming_model_impl(model, request, nullptr, event_sink, busy_timeout_ms, std::move(request_lease), include_artifacts);
 }
 
 ParallelServerState::TimedTaskResult ParallelServerState::run_streaming_model_from(
@@ -2297,6 +2297,7 @@ HttpResponse ParallelServerState::handle_generic_stream(const std::string & body
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const bool sse = task_stream_sse_requested(body);
+    const bool include_artifacts = bool_field(body, "include_artifacts", false);
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     auto request_lease = bind_request(model, busy_timeout_ms);
     const auto * request_json = body.find("request");
@@ -2318,15 +2319,15 @@ HttpResponse ParallelServerState::handle_generic_stream(const std::string & body
         // response puts in "events", and the result follows as the object it
         // puts under "result". The lease is bound above, before the headers,
         // so a busy model is still a 503 here.
-        return sse_response([this, model_ptr, request = std::move(request), busy_timeout_ms, diarization,
+        return sse_response([this, model_ptr, request = std::move(request), busy_timeout_ms, diarization, include_artifacts,
                              request_lease](HttpStreamWriter & writer) {
             const auto timed_result = run_streaming_model(
                 *model_ptr,
                 request,
                 [&](const engine::runtime::StreamEvent & event) {
-                    write_sse(writer, task_stream_event_line(stream_event_json(event, diarization)));
+                    write_sse(writer, task_stream_event_line(stream_event_json(event, diarization, include_artifacts)));
                 },
-                busy_timeout_ms, request_lease);
+                busy_timeout_ms, request_lease, include_artifacts);
             const bool silent_diarization = diarization && !timed_result.ttft_ms.has_value();
             write_sse(writer, task_stream_done_line(
                                   silent_diarization
@@ -2342,7 +2343,7 @@ HttpResponse ParallelServerState::handle_generic_stream(const std::string & body
         [&](const engine::runtime::StreamEvent & event) {
             events.push_back(event);
         },
-        busy_timeout_ms, request_lease);
+        busy_timeout_ms, request_lease, include_artifacts);
     std::ostringstream out;
     std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
     const bool diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
@@ -2351,7 +2352,7 @@ HttpResponse ParallelServerState::handle_generic_stream(const std::string & body
         if (i != 0) {
             out << ",";
         }
-        out << stream_event_json(events[i], diarization);
+        out << stream_event_json(events[i], diarization, include_artifacts);
     }
     const bool silent_diarization = diarization && !timed_result.ttft_ms.has_value();
     out << "],\"result\":" << (silent_diarization
