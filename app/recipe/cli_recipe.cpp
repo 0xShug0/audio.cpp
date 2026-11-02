@@ -12,6 +12,7 @@ struct CliRecipeModelExecutor::ModelEntry {
     std::unique_ptr<engine::runtime::ILoadedVoiceModel> model;
     std::unique_ptr<engine::runtime::IVoiceTaskSession> session;
     engine::runtime::IOfflineVoiceTaskSession * offline = nullptr;
+    engine::runtime::IStreamingVoiceTaskSession * streaming = nullptr;
 };
 
 CliRecipeModelExecutor::CliRecipeModelExecutor(
@@ -21,10 +22,9 @@ CliRecipeModelExecutor::CliRecipeModelExecutor(
 
 CliRecipeModelExecutor::~CliRecipeModelExecutor() = default;
 
-engine::runtime::TaskResult CliRecipeModelExecutor::run(
-    std::string_view role_view,
-    const engine::runtime::TaskSpec & task,
-    const engine::runtime::TaskRequest & request) {
+CliRecipeModelExecutor::ModelEntry & CliRecipeModelExecutor::model_for(
+    std::string_view role_view, const engine::runtime::TaskSpec & task) {
+    std::lock_guard<std::mutex> lock(models_mutex_);
     const std::string role(role_view);
     auto found = models_.find(role);
     if (found == models_.end()) {
@@ -52,16 +52,35 @@ engine::runtime::TaskResult CliRecipeModelExecutor::run(
         entry->session = entry->model->create_task_session(task, session_options);
         engine::runtime::finish_model_load_trace();
         entry->offline = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(entry->session.get());
-        if (!entry->offline) {
-            throw std::runtime_error("recipe role '" + role + "' requires offline execution");
+        entry->streaming = dynamic_cast<engine::runtime::IStreamingVoiceTaskSession *>(entry->session.get());
+        if ((task.mode == engine::runtime::RunMode::Offline && !entry->offline) ||
+            (task.mode == engine::runtime::RunMode::Streaming && !entry->streaming)) {
+            throw std::runtime_error("recipe role '" + role + "' does not support its execution mode");
         }
         found = models_.emplace(role, std::move(entry)).first;
     }
     if (found->second->task.task != task.task || found->second->task.mode != task.mode) {
         throw std::runtime_error("recipe role '" + role + "' was reused with a different task");
     }
-    found->second->session->prepare(engine::runtime::build_preparation_request(request));
-    return found->second->offline->run(request);
+    return *found->second;
+}
+
+engine::runtime::TaskResult CliRecipeModelExecutor::run(std::string_view role,
+    const engine::runtime::TaskSpec & task, const engine::runtime::TaskRequest & request) {
+    auto & entry = model_for(role, task);
+    if (!entry.offline) throw std::runtime_error("recipe role requires offline execution");
+    entry.session->prepare(engine::runtime::build_preparation_request(request));
+    return entry.offline->run(request);
+}
+
+engine::runtime::TaskResult CliRecipeModelExecutor::stream(std::string_view role,
+    const engine::runtime::TaskSpec & task, const engine::runtime::TaskRequest & request,
+    const RecipeEventSink & sink, const AudioChunkStream * source) {
+    auto & entry = model_for(role, task);
+    if (!entry.streaming) throw std::runtime_error("recipe role requires streaming execution");
+    entry.session->prepare(engine::runtime::build_preparation_request(request));
+    return source ? run_streaming_task(*entry.streaming, request, sink, *source)
+                  : run_streaming_task(*entry.streaming, request, sink);
 }
 
 }  // namespace minitts::app

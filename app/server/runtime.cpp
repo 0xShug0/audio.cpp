@@ -62,7 +62,10 @@ public:
         const engine::runtime::TaskSpec &,
         const engine::runtime::TaskRequest &)>;
 
-    explicit CallbackRecipeModelExecutor(Run run) : run_(std::move(run)) {}
+    using Stream = std::function<engine::runtime::TaskResult(std::string_view,
+        const engine::runtime::TaskSpec &, const engine::runtime::TaskRequest &,
+        const minitts::app::RecipeEventSink &, const minitts::app::AudioChunkStream *)>;
+    CallbackRecipeModelExecutor(Run run, Stream stream) : run_(std::move(run)), stream_(std::move(stream)) {}
 
     engine::runtime::TaskResult run(
         std::string_view role,
@@ -71,8 +74,14 @@ public:
         return run_(role, task, request);
     }
 
+    engine::runtime::TaskResult stream(std::string_view role, const engine::runtime::TaskSpec & task,
+        const engine::runtime::TaskRequest & request, const minitts::app::RecipeEventSink & sink,
+        const minitts::app::AudioChunkStream * source) override {
+        return stream_(role, task, request, sink, source);
+    }
 private:
     Run run_;
+    Stream stream_;
 };
 
 void materialize_embedded_demo_voices(const std::filesystem::path & voice_dir) {
@@ -2269,13 +2278,14 @@ ServerState::TimedTaskResult ServerState::run_recipe(
     auto request = minitts::cli::build_request_from_json(*request_json, request_base_);
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
 
-    CallbackRecipeModelExecutor executor([
+    const auto execute = [
         this,
         &model_ids,
         busy_timeout_ms](
             std::string_view role,
             const engine::runtime::TaskSpec & task,
-            const engine::runtime::TaskRequest & stage_request) {
+            const engine::runtime::TaskRequest & stage_request,
+            const minitts::app::RecipeEventSink & sink, const minitts::app::AudioChunkStream * source) {
         const auto selected = model_ids.find(std::string(role));
         if (selected == model_ids.end()) {
             throw std::runtime_error("recipe requested an undeclared model role: " + std::string(role));
@@ -2297,8 +2307,16 @@ ServerState::TimedTaskResult ServerState::run_recipe(
             }
             effective_request = apply_default_request_options(model.config.default_request_options, stage_request);
         }
+        if (task.mode == engine::runtime::RunMode::Streaming) {
+            return run_streaming_model_impl(model, effective_request, source, sink, busy_timeout_ms, true).result;
+        }
         return run_model(model, effective_request, busy_timeout_ms).result;
-    });
+    };
+    CallbackRecipeModelExecutor executor(
+        [&](std::string_view role, const engine::runtime::TaskSpec & task,
+            const engine::runtime::TaskRequest & stage_request) {
+            return execute(role, task, stage_request, {}, nullptr);
+        }, execute);
 
     const auto started = Clock::now();
     auto result = recipe.run(executor, request, event_sink);
@@ -2317,7 +2335,8 @@ HttpResponse ServerState::handle_recipe_run(const std::string & body_text) {
         const auto timed = run_recipe(
             stream_body,
             [&](const engine::runtime::StreamEvent & event) {
-                write_sse(writer, task_stream_event_line(stream_event_json(event, false)));
+                write_sse(writer, task_stream_event_line(stream_event_json(event, false,
+                    bool_field(stream_body, "include_artifacts", false))));
             });
         write_sse(
             writer,

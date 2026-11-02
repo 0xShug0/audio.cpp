@@ -1,6 +1,8 @@
 #pragma once
 
 #include "engine/framework/runtime/session.h"
+#include "../streaming/streaming.h"
+#include <stdexcept>
 
 #include <functional>
 #include <initializer_list>
@@ -26,6 +28,12 @@ public:
         std::string_view role,
         const engine::runtime::TaskSpec & task,
         const engine::runtime::TaskRequest & request) = 0;
+    virtual engine::runtime::TaskResult stream(
+        std::string_view, const engine::runtime::TaskSpec &,
+        const engine::runtime::TaskRequest &, const RecipeEventSink &,
+        const AudioChunkStream * = nullptr) {
+        throw std::runtime_error("this recipe executor does not support streaming");
+    }
 };
 
 class IRecipe {
