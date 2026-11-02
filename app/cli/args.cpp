@@ -1,13 +1,47 @@
 #include "args.h"
 
+#include "engine/framework/io/yaml.h"
+
 #include <charconv>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <set>
 #include <stdexcept>
 
 namespace minitts::cli {
 
 namespace {
+
+const std::set<std::string> & boolean_flags() {
+    static const std::set<std::string> flags = {
+        "--help",
+        "--inspect",
+        "--json",
+        "--list-devices",
+        "--list-loaders",
+        "--list-pipelines",
+        "--list-recipes",
+        "--log",
+        "--metrics",
+        "--version",
+    };
+    return flags;
+}
+
+std::string normalize_config_option(std::string key) {
+    if (key.rfind("--", 0) == 0) {
+        key.erase(0, 2);
+    }
+    if (key.empty() || key.find_first_of(" \t\r\n=") != std::string::npos) {
+        throw std::runtime_error("invalid CLI option key in YAML: " + key);
+    }
+    const std::string option = "--" + key;
+    if (option == "--config-file") {
+        throw std::runtime_error("CLI YAML config cannot include --config-file");
+    }
+    return option;
+}
 
 // Every option name the CLI looked for, split by whether the lookup consumes the following
 // argument. Populated by the lookups below, so a new flag is recognised the moment its lookup
@@ -88,6 +122,80 @@ void warn_ignored_args(int argc, char ** argv) {
         std::cerr << " " << token;
     }
     std::cerr << "\n";
+}
+
+std::vector<std::string> expand_cli_args(int argc, char ** argv) {
+    std::vector<std::string> arguments;
+    arguments.reserve(static_cast<size_t>(argc));
+    arguments.emplace_back(argv[0]);
+
+    std::optional<std::string> config_path;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--config-file") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("--config-file requires a YAML file path");
+            }
+            if (config_path.has_value()) {
+                throw std::runtime_error("--config-file may only be specified once");
+            }
+            config_path = argv[++i];
+        } else {
+            arguments.emplace_back(argv[i]);
+        }
+    }
+    if (!config_path.has_value()) {
+        return arguments;
+    }
+
+    std::ifstream input(std::filesystem::u8path(*config_path), std::ios::binary);
+    if (!input) {
+        throw std::runtime_error("failed to open CLI YAML config: " + *config_path);
+    }
+    const auto input_begin = std::istreambuf_iterator<char>(input);
+    const auto input_end = std::istreambuf_iterator<char>();
+    const std::string contents(input_begin, input_end);
+    if (input.bad()) {
+        throw std::runtime_error("failed to read CLI YAML config: " + *config_path);
+    }
+
+    const auto config = engine::io::yaml::parse_flattened_document(contents);
+    std::set<std::string> keys;
+    for (const auto & [key, value] : config.scalars) {
+        (void)value;
+        keys.insert(key);
+    }
+    for (const auto & [key, values] : config.lists) {
+        (void)values;
+        if (!keys.insert(key).second) {
+            throw std::runtime_error("CLI YAML option has both scalar and list values: " + key);
+        }
+    }
+
+    for (const auto & key : keys) {
+        const auto option = normalize_config_option(key);
+        const auto scalar = config.scalars.find(key);
+        if (scalar != config.scalars.end()) {
+            if (boolean_flags().count(option) != 0) {
+                if (engine::io::yaml::parse_bool_scalar(scalar->second, key)) {
+                    arguments.push_back(option);
+                }
+            } else {
+                arguments.push_back(option);
+                arguments.push_back(scalar->second);
+            }
+            continue;
+        }
+
+        if (boolean_flags().count(option) != 0) {
+            throw std::runtime_error("CLI YAML boolean flag cannot be a list: " + key);
+        }
+        const auto & values = config.lists.at(key);
+        for (size_t i = 0; i < values.size(); ++i) {
+            arguments.push_back(option);
+            arguments.push_back(values[i]);
+        }
+    }
+    return arguments;
 }
 
 std::optional<std::string> find_arg(int argc, char ** argv, const std::string & name) {

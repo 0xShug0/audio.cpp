@@ -8,6 +8,7 @@
 
 #include "test_assert.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -589,6 +590,60 @@ void test_request_json_voice_ref() {
         "{\"type\":\"base64\",\"data\":\"" + std::string(size_t{8} * 1024 * 1024, 'A') + "\"}", "5 MiB limit");
 }
 
+void test_cli_arguments_can_be_loaded_from_yaml() {
+    const auto config_path = std::filesystem::temp_directory_path() /
+                             ("audiocpp-cli-config-" +
+                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                              ".yaml");
+    {
+        std::ofstream config(config_path);
+        config << "task: tts\n"
+               << "model: model.gguf\n"
+               << "text: configured text\n"
+               << "metrics: true\n"
+               << "inspect: false\n"
+               << "do-sample: false\n"
+               << "request-option:\n"
+               << "  - temperature=0.7\n"
+               << "  - top_k=10\n";
+    }
+
+    const std::string config_argument = config_path.string();
+    const char * argv[] = {
+        "audiocpp_cli",
+        "--config-file",
+        config_argument.c_str(),
+        "--text",
+        "command line text",
+    };
+    const auto expanded = minitts::cli::expand_cli_args(5, const_cast<char **>(argv));
+
+    engine::test::require_eq(expanded.size(), size_t{16}, "expected expanded argument count");
+    engine::test::require_eq(expanded[0], std::string("audiocpp_cli"), "executable preserved");
+    engine::test::require_eq(expanded[1], std::string("--text"), "CLI option retained first");
+    engine::test::require_eq(expanded[2], std::string("command line text"), "CLI value retained first");
+    engine::test::require_eq(expanded[3], std::string("--do-sample"), "boolean value option");
+    engine::test::require_eq(expanded[4], std::string("false"), "false value option");
+    engine::test::require_eq(expanded[5], std::string("--metrics"), "enabled flag emitted");
+    engine::test::require_eq(expanded[6], std::string("--model"), "scalar option emitted");
+    engine::test::require_eq(expanded[7], std::string("model.gguf"), "scalar option value emitted");
+    engine::test::require_eq(expanded[8], std::string("--request-option"), "sequence option emitted");
+    engine::test::require_eq(expanded[9], std::string("temperature=0.7"), "first sequence value emitted");
+    engine::test::require_eq(expanded[10], std::string("--request-option"), "repeated sequence option emitted");
+    engine::test::require_eq(expanded[11], std::string("top_k=10"), "second sequence value emitted");
+    engine::test::require_eq(expanded[12], std::string("--task"), "task option emitted");
+    engine::test::require_eq(expanded[13], std::string("tts"), "task value emitted");
+    engine::test::require_eq(expanded[14], std::string("--text"), "config text appended after CLI");
+    engine::test::require_eq(expanded[15], std::string("configured text"), "config text value appended");
+    engine::test::require(
+        std::find(expanded.begin(), expanded.end(), "--inspect") == expanded.end(),
+        "disabled boolean flag omitted");
+    engine::test::require(
+        std::find(expanded.begin(), expanded.end(), "--config-file") == expanded.end(),
+        "config-file argument consumed");
+    std::filesystem::remove(config_path);
+}
+
 }  // namespace
 
 int main() {
@@ -604,6 +659,7 @@ int main() {
     test_request_json_voice_ref();
     test_component_exec_plans();
     test_non_negative_int_flag_values();
+    test_cli_arguments_can_be_loaded_from_yaml();
     std::cout << "cli_request_options_test passed\n";
     return 0;
 }
