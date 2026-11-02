@@ -2190,6 +2190,39 @@ template [[host_name("kernel_soft_max_f32")]]   kernel kernel_soft_max_t   kerne
 template [[host_name("kernel_soft_max_f16_4")]] kernel kernel_soft_max_4_t kernel_soft_max_4<half4>;
 template [[host_name("kernel_soft_max_f32_4")]] kernel kernel_soft_max_4_t kernel_soft_max_4<float4>;
 
+// Transpose each output tile in shared memory so both the temporal input reads
+// and channel-major output writes are coalesced. The graph's PAD stays observable.
+kernel void kernel_ssm_conv_f32_f32_tiled(
+        constant ggml_metal_kargs_ssm_conv & args,
+        device const char * src0,
+        device const char * src1,
+        device char * dst,
+        threadgroup float * tile [[threadgroup(0)]],
+        uint3 group [[threadgroup_position_in_grid]],
+        uint tid [[thread_index_in_threadgroup]]) {
+    for (uint i = tid; i < 1024; i += 256) {
+        const uint t = group.x * 32 + i % 32;
+        const uint c = group.y * 32 + i / 32;
+        float value = 0;
+        if (t < args.ne1 && c < args.ne0) {
+            for (int k = 0; k < args.ne10; ++k) {
+                float x = *(device const float *)(src0 + group.z * args.nb02 + c * args.nb01 + (t + k) * args.nb00);
+                float w = *(device const float *)(src1 + c * args.nb11 + k * args.nb10);
+                value += x * w;
+            }
+        }
+        tile[(i / 32) * 33 + i % 32] = value;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint i = tid; i < 1024; i += 256) {
+        const uint t = group.x * 32 + i / 32;
+        const uint c = group.y * 32 + i % 32;
+        if (t < args.ne1 && c < args.ne0) {
+            *(device float *)(dst + group.z * args.nb2 + t * args.nb1 + c * args.nb0) = tile[(i % 32) * 33 + i / 32];
+        }
+    }
+}
+
 // ref: ggml.c:ggml_compute_forward_ssm_conv_f32
 kernel void kernel_ssm_conv_f32_f32(
         constant ggml_metal_kargs_ssm_conv & args,
@@ -2477,6 +2510,51 @@ kernel void kernel_ssm_scan_f32(
     }
 
     s_buff[i] = s;
+}
+
+// Neighboring threads own neighboring channels; the complete recurrence stays in registers.
+kernel void kernel_ssm_scan_f32_register16(
+        constant ggml_metal_kargs_ssm_scan & args,
+        device const char * src0,
+        device const char * src1,
+        device const char * src2,
+        device const char * src3,
+        device const char * src4,
+        device const char * src5,
+        device const int32_t * ids,
+        device float * dst,
+        uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= uint(args.d_inner*args.n_head)) return;
+    const int dim = gid.x % args.d_inner, head = gid.x / args.d_inner, seq = gid.y;
+    const int g = head / (args.n_head / args.n_group);
+    device const packed_float4 * initial = (device const packed_float4 *)(src0 + head*args.nb02 + ids[seq]*args.nb03 + dim*16*sizeof(float));
+    device const float * ap = (device const float *)(src3 + head*args.nb31);
+    float4 state[4], a[4];
+    for (int j = 0; j < 4; ++j) {
+        state[j] = initial[j];
+        a[j] = args.ne30 == 1 ? float4(ap[0]) : float4(((device const packed_float4 *)ap)[j]);
+    }
+    device const char * x = src1 + dim*args.nb10 + head*args.nb11 + seq*args.nb13;
+    device const char * dt = src2 + head*args.nb20 + seq*args.nb22;
+    device const char * b = src4 + g*args.nb41 + seq*args.nb43;
+    device const char * c = src5 + g*args.nb51 + seq*args.nb53;
+    for (int t = 0; t < args.n_seq_tokens; ++t) {
+        const float value = *(device const float *)dt;
+        const float delta = value <= 20.0f ? log(1.0f + exp(value)) : value;
+        const float x_dt = *(device const float *)x * delta;
+        float4 sum = 0;
+        for (int j = 0; j < 4; ++j) {
+            state[j] = state[j]*exp(delta*a[j]) + float4(((device const packed_float4 *)b)[j])*x_dt;
+            sum += state[j]*float4(((device const packed_float4 *)c)[j]);
+        }
+        dst[dim + head*args.d_inner + (seq*args.n_seq_tokens + t)*args.n_head*args.d_inner] = sum.x+sum.y+sum.z+sum.w;
+        x += args.nb12;
+        dt += args.nb21;
+        b += args.nb42;
+        c += args.nb52;
+    }
+    device packed_float4 * final_state = (device packed_float4 *)((device char *)dst + args.s_off + head*args.nb02 + seq*args.nb03 + dim*16*sizeof(float));
+    for (int j = 0; j < 4; ++j) final_state[j] = packed_float4(state[j]);
 }
 
 kernel void kernel_rwkv_wkv6_f32(
@@ -4868,6 +4946,55 @@ kernel void kernel_im2col(
 
 template [[host_name("kernel_im2col_f32")]] kernel im2col_t kernel_im2col<float>;
 template [[host_name("kernel_im2col_f16")]] kernel im2col_t kernel_im2col<half>;
+
+typedef void (im2col_tiled_t)(
+        constant ggml_metal_kargs_im2col & args,
+        device const float * x,
+        device char * dst,
+        constant int2 & size,
+        uint3 tgpig [[threadgroup_position_in_grid]],
+        uint3 tpitg [[thread_position_in_threadgroup]],
+        uint3 ntg [[threads_per_threadgroup]]);
+
+template<typename T, typename Index>
+kernel void kernel_im2col_tiled(
+        constant ggml_metal_kargs_im2col & args,
+        device const float * x,
+        device char * dst,
+        constant int2 & size,
+        uint3 group [[threadgroup_position_in_grid]],
+        uint3 tid [[thread_position_in_threadgroup]],
+        uint3 threads [[threads_per_threadgroup]]) {
+    // Spatial lanes coalesce source reads; transpose the tile for patch-contiguous stores.
+    threadgroup T tile[32*33];
+    const int lane = tid.x % 32;
+    const int row = tid.x / 32;
+    const Index spatial = Index(group.x)*32 + lane;
+    const Index pixels = Index(size.x)*size.y;
+    const long ox = spatial % size.x, oy = spatial / size.x;
+    for (int column = row; column < 32; column += threads.x/32) {
+        const uint patch = group.y*32 + column;
+        const int channel = patch / args.KHW;
+        const int tap = patch % args.KHW;
+        const long ix = ox*args.s0 + (tap % args.KW)*args.d0 - args.p0;
+        const long iy = oy*args.s1 + (tap / args.KW)*args.d1 - args.p1;
+        tile[lane*33 + column] = spatial < pixels && patch < args.CHW && ix >= 0 && ix < args.IW && iy >= 0 && iy < args.IH
+            ? T(x[ulong(group.z)*args.ofs0 + ulong(channel)*args.ofs1 + ulong(iy)*args.IW + ix]) : T(0);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (int index = tid.x; index < 32*32; index += threads.x) {
+        const Index pixel = Index(group.x)*32 + index/32;
+        const uint patch = group.y*32 + index%32;
+        if (pixel < pixels && patch < args.CHW) {
+            ((device T *)dst)[(ulong(group.z)*pixels + pixel)*args.CHW + patch] = tile[(index/32)*33 + index%32];
+        }
+    }
+}
+
+template [[host_name("kernel_im2col_tiled_f32_i32")]] kernel im2col_tiled_t kernel_im2col_tiled<float, uint>;
+template [[host_name("kernel_im2col_tiled_f16_i32")]] kernel im2col_tiled_t kernel_im2col_tiled<half, uint>;
+template [[host_name("kernel_im2col_tiled_f32_i64")]] kernel im2col_tiled_t kernel_im2col_tiled<float, ulong>;
+template [[host_name("kernel_im2col_tiled_f16_i64")]] kernel im2col_tiled_t kernel_im2col_tiled<half, ulong>;
 
 typedef void (im2col_1d_t)(
         constant ggml_metal_kargs_im2col & args,

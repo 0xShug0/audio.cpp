@@ -566,6 +566,9 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_conv(ggml_me
     }
 
     snprintf(base, 256, "kernel_ssm_conv_%s_%s%s", ggml_type_name(op->src[0]->type), ggml_type_name(op->src[1]->type), suffix);
+    if (ggml_get_op_params_i32(op, 1) == GGML_SSM_CONV_LOWERING_METAL_TILED) {
+        snprintf(base, 256, "kernel_ssm_conv_f32_f32_tiled");
+    }
     snprintf(name, 256, "%s", base);
 
     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
@@ -617,6 +620,10 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan(ggml_me
     const int nsg = (ne00 + 31)/32;
 
     snprintf(base, 256, "kernel_ssm_scan_%s", ggml_type_name(op->src[0]->type));
+    const bool register16 = ggml_get_op_params_i32(op, 1) == GGML_SSM_SCAN_LOWERING_METAL_REGISTER16 && ne00 == 16;
+    if (register16) {
+        snprintf(base, 256, "kernel_ssm_scan_f32_register16");
+    }
     snprintf(name, 256, "%s_nsg=%d", base, nsg);
 
     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
@@ -629,7 +636,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan(ggml_me
     // - sgptg floats for shared_x_dt (nsg)
     // - sgptg floats for shared_dA (nsg)
     // Total: nsg * (32 + 2) floats
-    res.smem = (32 + 2)*sizeof(float)*nsg;
+    res.smem = register16 ? 0 : (32 + 2)*sizeof(float)*nsg;
 
     return res;
 }
@@ -1954,6 +1961,10 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col(ggml_meta
 
     const bool is_2d = ((const int32_t *) op->op_params)[6] == 1;
     snprintf(base, 256, is_2d ? "kernel_im2col_%s" : "kernel_im2col_1d_%s", ggml_type_name(op->type));
+    if (is_2d && ggml_get_op_params_i32(op, 7) == GGML_IM2COL_2D_LOWERING_METAL_TILED) {
+        snprintf(base, 256, "kernel_im2col_tiled_%s_i%d", ggml_type_name(op->type),
+                 uint64_t(op->ne[1])*op->ne[2] <= UINT32_MAX ? 32 : 64);
+    }
     snprintf(name, 256, "%s", base);
 
     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);

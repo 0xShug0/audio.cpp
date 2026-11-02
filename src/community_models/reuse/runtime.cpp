@@ -120,6 +120,8 @@ public:
                     node->src[0]->type == GGML_TYPE_F32 && node->src[1]->type == GGML_TYPE_F32) {
                     ggml_mul_mat_set_lowering(node, GGML_MUL_MAT_LOWERING_METAL_F32_INPUTS);
                 }
+            } else if (execution.backend_type() == core::BackendType::Metal && node->op == GGML_OP_IM2COL) {
+                ggml_im2col_2d_set_lowering(node, GGML_IM2COL_2D_LOWERING_METAL_TILED);
             } else if (execution.backend_type() == core::BackendType::Cuda &&
                        node->op == GGML_OP_IM2COL && node->type == GGML_TYPE_F32 &&
                        node->src[0]->ne[0] == 3 && node->src[0]->ne[1] == 3 &&
@@ -321,6 +323,8 @@ private:
         projected = ggml_ssm_conv(ctx.ggml, projected, weights_.at(prefix + ".conv1d.weight").tensor);
         if (ctx.backend_type == core::BackendType::Cuda) {
             ggml_ssm_conv_set_fusion(projected, GGML_SSM_CONV_FUSION_CAUSAL_PAD);
+        } else if (ctx.backend_type == core::BackendType::Metal) {
+            ggml_ssm_conv_set_lowering(projected, GGML_SSM_CONV_LOWERING_METAL_TILED);
         }
         const auto sequence_shape = TensorShape::from_dims({batch, length, 256});
         const auto bias = core::wrap_tensor(weights_.at(prefix + ".conv1d.bias").tensor,
@@ -356,6 +360,8 @@ private:
             weights_.at(prefix + ".A_log").tensor, b, c, ids);
         if (ctx.backend_type == core::BackendType::Cuda) {
             ggml_ssm_scan_set_fusion(scan, GGML_SSM_SCAN_FUSION_GATE);
+        } else if (ctx.backend_type == core::BackendType::Metal) {
+            ggml_ssm_scan_set_lowering(scan, GGML_SSM_SCAN_LOWERING_METAL_REGISTER16);
         }
         auto * y = ggml_view_3d(ctx.ggml, scan, 256, length, batch,
             256 * sizeof(float), 256 * length * sizeof(float), 0);

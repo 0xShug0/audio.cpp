@@ -706,6 +706,7 @@ extern "C" {
         GGML_IM2COL_2D_LOWERING_CUDA_N_K3_PAD1_X8 = 1,
         GGML_IM2COL_2D_LOWERING_CUDA_N_K3_NOPAD_X8 = 2,
         GGML_IM2COL_2D_LOWERING_CUDA_F32_K3_TILED = 3,
+        GGML_IM2COL_2D_LOWERING_METAL_TILED = 4,
     };
 
     enum ggml_im2col_3d_lowering {
@@ -718,9 +719,19 @@ extern "C" {
         GGML_SSM_SCAN_FUSION_GATE = 1,
     };
 
+    enum ggml_ssm_scan_lowering {
+        GGML_SSM_SCAN_LOWERING_DEFAULT = 0,
+        GGML_SSM_SCAN_LOWERING_METAL_REGISTER16 = 1,
+    };
+
     enum ggml_ssm_conv_fusion {
         GGML_SSM_CONV_FUSION_NONE = 0,
         GGML_SSM_CONV_FUSION_CAUSAL_PAD = 1,
+    };
+
+    enum ggml_ssm_conv_lowering {
+        GGML_SSM_CONV_LOWERING_DEFAULT = 0,
+        GGML_SSM_CONV_LOWERING_METAL_TILED = 1,
     };
 
     enum ggml_rms_norm_channels_lowering {
@@ -2822,6 +2833,10 @@ extern "C" {
             struct ggml_tensor         * tensor,
             enum ggml_ssm_conv_fusion   fusion);
 
+    GGML_API void ggml_ssm_conv_set_lowering(
+            struct ggml_tensor          * tensor,
+            enum ggml_ssm_conv_lowering   lowering);
+
     GGML_API struct ggml_tensor * ggml_ssm_scan(
             struct ggml_context * ctx,
             struct ggml_tensor  * s,
@@ -2835,6 +2850,11 @@ extern "C" {
     GGML_API void ggml_ssm_scan_set_fusion(
             struct ggml_tensor         * tensor,
             enum ggml_ssm_scan_fusion   fusion);
+
+    // Metal: keep 16-element state vectors in registers; other sizes use the default kernel.
+    GGML_API void ggml_ssm_scan_set_lowering(
+            struct ggml_tensor           * tensor,
+            enum ggml_ssm_scan_lowering   lowering);
 
     // partition into non-overlapping windows with padding if needed
     // example:

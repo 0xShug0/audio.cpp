@@ -3839,6 +3839,18 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         set_tests_properties(metal_im2col_3d_test PROPERTIES
             SKIP_RETURN_CODE 77 LABELS "extended;metal")
 
+        add_executable(metal_ssm_conv_tiled_test tests/unittests/test_metal_ssm_conv_tiled.cpp)
+        target_link_libraries(metal_ssm_conv_tiled_test PRIVATE ggml ggml-metal)
+        add_test(NAME metal_ssm_conv_tiled_test COMMAND metal_ssm_conv_tiled_test)
+        set_tests_properties(metal_ssm_conv_tiled_test PROPERTIES
+            LABELS "extended;metal" SKIP_RETURN_CODE 77)
+
+        add_executable(metal_im2col_tiled_test tests/unittests/test_metal_im2col_tiled.cpp)
+        target_link_libraries(metal_im2col_tiled_test PRIVATE ggml ggml-metal)
+        add_test(NAME metal_im2col_tiled_test COMMAND metal_im2col_tiled_test)
+        set_tests_properties(metal_im2col_tiled_test PROPERTIES
+            SKIP_RETURN_CODE 77 LABELS "extended;metal")
+
         add_executable(metal_im2col_test tests/unittests/test_metal_im2col.cpp)
         target_link_libraries(metal_im2col_test PRIVATE ggml ggml-metal)
         target_compile_definitions(metal_im2col_test PRIVATE

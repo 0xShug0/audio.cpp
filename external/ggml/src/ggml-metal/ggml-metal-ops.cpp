@@ -1621,7 +1621,16 @@ int ggml_metal_op_ssm_conv(ggml_metal_op_t ctx, int idx) {
     // Use batched kernel for prefill (ne1 > 1) to reduce threadgroup dispatch overhead
     const bool use_batched = (ne1 > 1);
 
-    if (use_batched) {
+    if (ggml_get_op_params_i32(op, 1) == GGML_SSM_CONV_LOWERING_METAL_TILED) {
+        auto pipeline = ggml_metal_library_get_pipeline_ssm_conv(lib, op);
+        ggml_metal_encoder_set_pipeline(enc, pipeline);
+        ggml_metal_encoder_set_bytes(enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op->src[0]), 1);
+        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op->src[1]), 2);
+        ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op),         3);
+        ggml_metal_encoder_set_threadgroup_memory_size(enc, 32 * 33 * sizeof(float), 0);
+        ggml_metal_encoder_dispatch_threadgroups(enc, (ne1 + 31) / 32, (ne0 + 31) / 32, ne2, 256, 1, 1);
+    } else if (use_batched) {
         // Determine the smallest power of 2 that's >= ne1, but <= 256
         int BATCH_SIZE;
         if      (ne1 > 128) BATCH_SIZE = 256;
@@ -1750,9 +1759,13 @@ int ggml_metal_op_ssm_scan(ggml_metal_op_t ctx, int idx) {
     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[6]), 7);
     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         8);
 
-    ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
+    if (smem > 0) ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
 
-    ggml_metal_encoder_dispatch_threadgroups(enc, d_inner, n_head, n_seqs, d_state, 1, 1);
+    if (ggml_get_op_params_i32(op, 1) == GGML_SSM_SCAN_LOWERING_METAL_REGISTER16 && d_state == 16) {
+        ggml_metal_encoder_dispatch_threadgroups(enc, (d_inner*n_head + 127)/128, n_seqs, 1, 128, 1, 1);
+    } else {
+        ggml_metal_encoder_dispatch_threadgroups(enc, d_inner, n_head, n_seqs, d_state, 1, 1);
+    }
 
     return 1;
 }
@@ -4056,7 +4069,12 @@ int ggml_metal_op_im2col(ggml_metal_op_t ctx, int idx) {
     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 1);
     ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
 
-    if (!is_2D) {
+    if (is_2D && ggml_get_op_params_i32(op, 7) == GGML_IM2COL_2D_LOWERING_METAL_TILED) {
+        int32_t size[2] = {OW, OH};
+        const uint64_t threads = std::min<uint64_t>(256, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
+        ggml_metal_encoder_set_bytes(enc, size, sizeof(size), 3);
+        ggml_metal_encoder_dispatch_threadgroups(enc, (uint64_t(OW)*OH + 31)/32, (uint64_t(CHW) + 31)/32, N, threads, 1, 1);
+    } else if (!is_2D) {
         int32_t width = OW;
         const uint64_t threads = std::min<uint64_t>(256, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
         ggml_metal_encoder_set_bytes(enc, &width, sizeof(width), 3);

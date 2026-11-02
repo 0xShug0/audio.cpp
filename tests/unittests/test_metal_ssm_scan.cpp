@@ -19,7 +19,7 @@ struct Storage {
     }
 };
 
-void check(ggml_backend_t backend, int states, int tokens, bool mamba1, bool strided) {
+void check(ggml_backend_t backend, int states, int tokens, bool mamba1, bool strided, ggml_ssm_scan_lowering lowering) {
     constexpr int heads = 4, groups = 2, batch = 2, state_batch = 3;
     const int dim = mamba1 ? 1 : 3;
     Storage storage;
@@ -38,6 +38,7 @@ void check(ggml_backend_t backend, int states, int tokens, bool mamba1, bool str
     };
     auto * ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, batch);
     auto * out = ggml_ssm_scan(ctx, s, x, dt, a, view(bb), view(cb), ids);
+    ggml_ssm_scan_set_lowering(out, lowering);
     auto * graph = ggml_new_graph(ctx);
     ggml_build_forward_expand(graph, out);
     if (!ggml_backend_supports_op(backend, out)) throw std::runtime_error("unsupported scan");
@@ -106,7 +107,7 @@ void check(ggml_backend_t backend, int states, int tokens, bool mamba1, bool str
         }
     }
     std::cout << "PASS states=" << states << " tokens=" << tokens << " mamba1=" << mamba1
-              << " strided=" << strided << " max_abs=" << worst << '\n';
+              << " strided=" << strided << " lowering=" << lowering << " max_abs=" << worst << '\n';
 }
 }
 
@@ -116,8 +117,10 @@ int main() {
     int result = 0;
     try {
         for (int states : {16, 32, 64, 128}) for (int tokens : {1, 2, 3, 7, 33, 257})
-        for (bool mamba1 : {true, false}) for (bool strided : {false, true}) check(backend, states, tokens, mamba1, strided);
-        std::cout << "PASS: 96 shapes, three input patterns, two executions per pattern\n";
+        for (bool mamba1 : {true, false}) for (bool strided : {false, true})
+        for (auto lowering : {GGML_SSM_SCAN_LOWERING_DEFAULT, GGML_SSM_SCAN_LOWERING_METAL_REGISTER16})
+            check(backend, states, tokens, mamba1, strided, lowering);
+        std::cout << "PASS: 192 shapes/lowerings, three input patterns, two executions per pattern\n";
     } catch (const std::exception & e) {
         std::cerr << e.what() << '\n';
         result = 1;

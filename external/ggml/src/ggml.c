@@ -6429,6 +6429,13 @@ void ggml_ssm_conv_set_fusion(
 
 // ggml_ssm_scan
 
+void ggml_ssm_conv_set_lowering(
+        struct ggml_tensor          * tensor,
+        enum ggml_ssm_conv_lowering   lowering) {
+    GGML_ASSERT(tensor->op == GGML_OP_SSM_CONV);
+    ggml_set_op_params_i32(tensor, 1, (int32_t) lowering);
+}
+
 struct ggml_tensor * ggml_ssm_scan(
         struct ggml_context * ctx,
         struct ggml_tensor  * s,
@@ -6497,6 +6504,13 @@ void ggml_ssm_scan_set_fusion(
         enum ggml_ssm_scan_fusion   fusion) {
     GGML_ASSERT(tensor->op == GGML_OP_SSM_SCAN);
     ggml_set_op_params_i32(tensor, 0, (int32_t) fusion);
+}
+
+void ggml_ssm_scan_set_lowering(
+        struct ggml_tensor * tensor,
+        enum ggml_ssm_scan_lowering lowering) {
+    GGML_ASSERT(tensor->op == GGML_OP_SSM_SCAN);
+    ggml_set_op_params_i32(tensor, 1, (int32_t) lowering);
 }
 
 // ggml_win_part
