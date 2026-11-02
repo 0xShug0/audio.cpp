@@ -160,6 +160,7 @@ public:
         if (role == "conversation") {
             if (fail_conversation) throw std::runtime_error("conversation failed");
             engine::test::require_eq(request.input_artifacts.size(), size_t{1}, "conversation history forwarded");
+            engine::test::require(request.text_input && request.text_input->text == "A warm, concise assistant.", "conversation system prompt forwarded");
             StreamEvent event; event.partial_text = Transcript{first, {}}; sink(event);
             {
                 std::unique_lock<std::mutex> lock(mutex);
@@ -234,6 +235,7 @@ void test_streaming_conversation() {
     auto recipes = minitts::app::make_recipe_registry();
     TaskRequest request;
     request.audio_input = AudioBuffer{16000, 1, {0.1F}};
+    request.text_input = Transcript{"A warm, concise assistant.", {}};
     request.options = {{"avatar_sample_rate", "24000"}, {"seed", "42"}, {"tts.temperature", "0.5"}, {"avatar.reference_image_file", "portrait.png"}};
     request.input_artifacts.push_back(make_voice_artifact(ArtifactKind::Custom, "history", {std::byte{1}}, {}));
     StreamingExecutor executor;

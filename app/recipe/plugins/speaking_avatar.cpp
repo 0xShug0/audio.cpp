@@ -136,6 +136,7 @@ public:
             try {
                 TaskRequest question;
                 question.audio_input = request.audio_input;
+                question.text_input = request.text_input;
                 question.input_artifacts = request.input_artifacts;
                 question.options = options_for_recipe_role(request.options, "conversation", {"conversation", "tts", "avatar"}, false);
                 std::string pending, streamed;

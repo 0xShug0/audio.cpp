@@ -5,10 +5,14 @@ LFM3-Audio for conversation and voice synthesis and SoulX-FlashHead for portrait
 animation. The app uses its own model selections
 and conversation state, independently of Studio.
 
+LFM3 voice chat currently supports English only. Its multilingual ASR and TTS
+capabilities do not imply multilingual conversation support.
+
 ## Conversation flow
 
 Choose a built-in LFM3 voice and upload a portrait. The portrait preview shows
-its square center crop. Press **Talk**, then **Finish** to send a question, or
+its square center crop. The optional **Personality** field sets how LFM3 should
+respond; changing it starts a new conversation context. Press **Talk**, then **Finish** to send a question, or
 upload an audio recording. Microphone recording requires localhost or HTTPS.
 
 The selected ASR model provides the user's transcript. LFM3 receives the original

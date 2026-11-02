@@ -15,6 +15,7 @@
   let choices: ModelSettings[] = [];
   let asrId = '', brainId = '', avatarId = '';
   let voice = 'american_english_female';
+  let personality = '';
   let settingsOpen = true;
   let portrait: File | null = null;
   let portraitUrl = '';
@@ -133,7 +134,7 @@
     const ttsChoice = choices.find(c => c.model.family === 'lfm3_audio' && c.model.task === 'tts' && c.model.path === speech.model.path);
     if (!ttsChoice) { error = 'Register an LFM3 TTS model using the same checkpoint as the conversation model.'; busy = false; return; }
     const synthesis = appModel(ttsChoice, 'voice');
-    const identity = JSON.stringify(speech.model);
+    const identity = JSON.stringify([speech.model, personality.trim()]);
     if (chatIdentity && identity !== chatIdentity) resetChat();
     chatIdentity = identity;
     const user = messages.length;
@@ -160,6 +161,7 @@
         value => { if (speaking !== value) speaking = value; if (value) videoVisible = true; });
       let firstVideo = 0;
       const answer = workflow.speak(speech, synthesis, avatar, { audio, artifacts: history,
+        text: personality.trim() ? `Respond with interleaved text and audio. ${personality.trim()}` : undefined,
         voice_id: voice, options: { 'conversation.return_codes': true,
           'avatar.reference_image_file': image } }, signal, event => {
         const text = event.partial_text as { text?: string } | undefined;
@@ -230,6 +232,9 @@
           </figure>
         {/if}
       </div>
+      <label class="personality">Personality (optional)
+        <textarea aria-label="Personality" rows="2" placeholder="Describe how the avatar should respond, such as warm, concise and a little witty." bind:value={personality} disabled={busy || recording}></textarea>
+      </label>
       {#if !loading && (!asrChoices.length || !brainChoices.length || !avatarChoices.length)}<p class="setup-note">Install or register ASR, LFM3-Audio (S2S and TTS), and SoulX-FlashHead models first.</p>{/if}
     </div>
   {/if}
@@ -293,6 +298,8 @@
   .portrait-control:focus-within { outline: .125rem solid var(--cyan); outline-offset: .125rem; }
   .portrait-filename { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .portrait-control :global(svg) { flex: none; }
+  .personality { grid-column: 1 / -1; }
+  .personality textarea { width: 100%; min-width: 0; resize: vertical; font: inherit; font-size: .875rem; line-height: 1.5; }
   .setup-note { grid-column: 1 / -1; color: var(--muted); font-size: .75rem; margin: 0; }
   .crop-preview { display: flex; align-items: center; gap: .75rem; margin: .75rem 0 0; }
   .crop-preview img { display: block; inline-size: 4rem; aspect-ratio: 1; object-fit: cover; object-position: center; border-radius: .625rem; border: .0625rem solid var(--line); }

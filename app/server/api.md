@@ -698,8 +698,10 @@ Using model IDs from [the example config](../../examples/server/voice-chat-avata
 }
 ```
 
-Audio and portrait paths refer to files accessible to the server. Prefix
-conversation-specific options with `conversation.`. For LFM3, set
+Audio and portrait paths refer to files accessible to the server. Optional
+`request.text` is forwarded to the conversation model; LFM3 uses it as the
+system prompt, not as text to synthesize. Prefix conversation-specific options
+with `conversation.`. For LFM3, set
 `conversation.return_codes: true` to retain its reply artifact. On subsequent
 turns, send the accumulated `lfm3_audio.question` and `lfm3_audio.reply` artifacts
 in `request.artifacts`, as described in the
