@@ -1,10 +1,12 @@
 #include "engine/models/irodori_tts/tokenizer_text.h"
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/tokenizers/llama_bpe.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -79,6 +81,10 @@ std::string byte_token(unsigned char value) {
 struct IrodoriTextTokenizer::Impl {
     explicit Impl(std::shared_ptr<const IrodoriTTSAssets> input_assets)
         : assets(std::move(input_assets)) {
+        if (assets->config.use_t5gemma2_text_encoder()) {
+            load_gemma_bpe();
+            return;
+        }
         const bool use_v4_tokenizer =
             assets->config.use_pretrained_text_encoder() &&
             assets->resources.has_file("tokenizer_v4_json");
@@ -121,6 +127,33 @@ struct IrodoriTextTokenizer::Impl {
         if (assets->config.text_vocab_size != static_cast<int64_t>(pieces.size())) {
             throw std::runtime_error("Irodori-TTS text_vocab_size does not match tokenizer vocab size");
         }
+    }
+
+    // v4 Large: the Gemma 3 BPE tokenizer of T5Gemma 2. Like Hugging Face's
+    // tokenizer.json, spaces become U+2581 and there is no dummy prefix.
+    void load_gemma_bpe() {
+        bpe = std::make_shared<engine::tokenizers::LlamaBpeTokenizer>(engine::tokenizers::LlamaBpeTokenizerSpec{
+            {},
+            {},
+            {},
+            assets->resources.require_file("tokenizer_v4_json"),
+            engine::tokenizers::LlamaBpePreTokenizer::Gemma4,
+            {},
+            kSentencePieceSpace});
+        const auto bos_id = bpe->find_token_id("<bos>");
+        const auto pad_id = bpe->find_token_id("<pad>");
+        if (!bos_id.has_value() || !pad_id.has_value()) {
+            throw std::runtime_error("Irodori-TTS Gemma tokenizer missing <bos> or <pad>");
+        }
+        bos = *bos_id;
+        pad = *pad_id;
+        if (const auto unk_id = bpe->find_token_id("<unk>"); unk_id.has_value()) {
+            unk = *unk_id;
+        }
+        if (const auto eos_id = bpe->find_token_id("<eos>"); eos_id.has_value()) {
+            eos = *eos_id;
+        }
+        bpe_vocab_size = assets->config.text_vocab_size;
     }
 
     std::vector<int32_t> encode_piece_sequence(const std::string & normalized) const {
@@ -194,6 +227,8 @@ struct IrodoriTextTokenizer::Impl {
     std::vector<std::string> pieces;
     std::vector<float> scores;
     std::unordered_map<std::string, int32_t> token_to_id;
+    std::shared_ptr<engine::tokenizers::LlamaBpeTokenizer> bpe;
+    int64_t bpe_vocab_size = 0;
     int32_t bos = 1;
     int32_t eos = -1;
     int32_t pad = 4;
@@ -205,9 +240,11 @@ IrodoriTextTokenizer::IrodoriTextTokenizer(std::shared_ptr<const IrodoriTTSAsset
     : impl_(std::make_shared<Impl>(require_assets(std::move(assets)))) {}
 
 std::vector<int32_t> IrodoriTextTokenizer::encode(const std::string & text) const {
-    auto ids = impl_->encode_piece_sequence(
-        impl_->uses_metaspace ? normalize_text_for_metaspace(text)
-                              : normalize_text_for_llm_jp(text));
+    auto ids = impl_->bpe != nullptr
+        ? impl_->bpe->encode(text, true)
+        : impl_->encode_piece_sequence(
+              impl_->uses_metaspace ? normalize_text_for_metaspace(text)
+                                    : normalize_text_for_llm_jp(text));
     if (impl_->assets->config.text_add_bos) {
         ids.insert(ids.begin(), impl_->bos);
     }
@@ -245,6 +282,9 @@ int32_t IrodoriTextTokenizer::unk_id() const noexcept {
 }
 
 int64_t IrodoriTextTokenizer::vocab_size() const noexcept {
+    if (impl_->bpe != nullptr) {
+        return impl_->bpe_vocab_size;
+    }
     return static_cast<int64_t>(impl_->pieces.size());
 }
 

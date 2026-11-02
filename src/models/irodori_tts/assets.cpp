@@ -4,6 +4,7 @@
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/json.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -11,6 +12,28 @@
 namespace engine::models::irodori_tts {
 namespace json = engine::io::json;
 namespace {
+
+double optional_nullable_f64(const json::Value & object, const std::string & key, double default_value) {
+    const auto * value = object.find(key);
+    if (value == nullptr || value->is_null()) {
+        return default_value;
+    }
+    return value->as_number();
+}
+
+// Hugging Face rope_parameters entry for one layer type: a linear rope scales
+// positions by 1 / factor, which ggml takes as freq_scale.
+float rope_freq_scale(const json::Value * rope) {
+    if (rope == nullptr || !rope->is_object() ||
+        json::optional_string(*rope, "rope_type", "default") != "linear") {
+        return 1.0F;
+    }
+    const float factor = json::optional_f32(*rope, "factor", 1.0F);
+    if (!(factor > 0.0F)) {
+        throw std::runtime_error("Irodori-TTS pretrained text rope factor must be positive");
+    }
+    return 1.0F / factor;
+}
 
 IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("model_config");
@@ -27,9 +50,9 @@ IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) 
     config.model_dim = json::optional_i64(root, "model_dim", config.model_dim);
     config.num_layers = json::optional_i64(root, "num_layers", config.num_layers);
     config.num_heads = json::optional_i64(root, "num_heads", config.num_heads);
-    config.mlp_ratio = json::optional_f32(root, "mlp_ratio", config.mlp_ratio);
-    config.text_mlp_ratio = json::optional_nullable_f32(root, "text_mlp_ratio", config.mlp_ratio);
-    config.speaker_mlp_ratio = json::optional_nullable_f32(root, "speaker_mlp_ratio", config.mlp_ratio);
+    config.mlp_ratio = optional_nullable_f64(root, "mlp_ratio", config.mlp_ratio);
+    config.text_mlp_ratio = optional_nullable_f64(root, "text_mlp_ratio", config.mlp_ratio);
+    config.speaker_mlp_ratio = optional_nullable_f64(root, "speaker_mlp_ratio", config.mlp_ratio);
     config.dropout = json::optional_f32(root, "dropout", config.dropout);
     config.text_vocab_size = json::optional_i64(root, "text_vocab_size", config.text_vocab_size);
     config.text_encoder_type = json::optional_string(root, "text_encoder_type", config.text_encoder_type);
@@ -48,7 +71,7 @@ IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) 
     config.caption_dim = json::optional_nullable_i64(root, "caption_dim", 0);
     config.caption_layers = json::optional_nullable_i64(root, "caption_layers", 0);
     config.caption_heads = json::optional_nullable_i64(root, "caption_heads", 0);
-    config.caption_mlp_ratio = json::optional_nullable_f32(root, "caption_mlp_ratio", 0.0F);
+    config.caption_mlp_ratio = optional_nullable_f64(root, "caption_mlp_ratio", 0.0);
     config.speaker_dim = json::optional_i64(root, "speaker_dim", config.speaker_dim);
     config.speaker_layers = json::optional_i64(root, "speaker_layers", config.speaker_layers);
     config.speaker_heads = json::optional_i64(root, "speaker_heads", config.speaker_heads);
@@ -84,24 +107,43 @@ IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) 
         if (!resources.has_file("pretrained_text_config")) {
             throw std::runtime_error("Irodori-TTS pretrained text encoder requires pretrained_text_config");
         }
-        const auto text_config = resources.parse_json("pretrained_text_config");
+        const auto text_config_root = resources.parse_json("pretrained_text_config");
+        // v4 Large embeds the whole T5Gemma 2 config; only the text encoder is used.
+        const json::Value * text_config_ptr = &text_config_root;
+        if (json::optional_string(text_config_root, "model_type", "") == "t5gemma2") {
+            config.pretrained_text_model_type = "t5gemma2";
+            text_config_ptr = &text_config_root.require("encoder").require("text_config");
+        }
+        const auto & text_config = *text_config_ptr;
         config.pretrained_text_dim = json::require_i64(text_config, "hidden_size");
         config.pretrained_text_layers = json::require_i64(text_config, "num_hidden_layers");
         config.pretrained_text_heads = json::require_i64(text_config, "num_attention_heads");
         config.pretrained_text_intermediate_dim = json::require_i64(text_config, "intermediate_size");
         const int64_t local_attention = json::optional_i64(text_config, "local_attention", 0);
         config.pretrained_text_sliding_window = json::optional_i64(text_config, "sliding_window", local_attention / 2);
-        if (config.pretrained_text_sliding_window > 0) {
+        if (config.pretrained_text_sliding_window > 0 && !config.use_t5gemma2_text_encoder()) {
             ++config.pretrained_text_sliding_window;
+        }
+        if (config.use_t5gemma2_text_encoder()) {
+            config.pretrained_text_kv_heads = json::require_i64(text_config, "num_key_value_heads");
+            config.pretrained_text_head_dim = json::require_i64(text_config, "head_dim");
+            config.pretrained_text_rms_norm_eps =
+                json::optional_f32(text_config, "rms_norm_eps", config.pretrained_text_rms_norm_eps);
+            config.pretrained_text_query_pre_attn_scalar = json::optional_f32(
+                text_config, "query_pre_attn_scalar", static_cast<float>(config.pretrained_text_head_dim));
+            config.pretrained_text_attn_logit_softcap =
+                json::optional_nullable_f32(text_config, "attn_logit_softcapping", 0.0F);
         }
         if (const auto * rope = text_config.find("rope_parameters"); rope != nullptr && rope->is_object()) {
             if (const auto * full = rope->find("full_attention"); full != nullptr && full->is_object()) {
                 config.pretrained_text_full_rope_theta =
                     json::optional_f32(*full, "rope_theta", config.pretrained_text_full_rope_theta);
+                config.pretrained_text_full_rope_freq_scale = rope_freq_scale(full);
             }
             if (const auto * sliding = rope->find("sliding_attention"); sliding != nullptr && sliding->is_object()) {
                 config.pretrained_text_sliding_rope_theta =
                     json::optional_f32(*sliding, "rope_theta", config.pretrained_text_sliding_rope_theta);
+                config.pretrained_text_sliding_rope_freq_scale = rope_freq_scale(sliding);
             }
         }
         const auto & layer_types = text_config.require("layer_types").as_array();
@@ -116,7 +158,7 @@ IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) 
     engine::io::require_positive(config.model_dim, "model_dim");
     engine::io::require_positive(config.num_layers, "num_layers");
     engine::io::require_positive(config.num_heads, "num_heads");
-    engine::io::require_positive(config.mlp_ratio, "mlp_ratio");
+    engine::io::require_positive(static_cast<float>(config.mlp_ratio), "mlp_ratio");
     engine::io::require_positive(config.text_vocab_size, "text_vocab_size");
     engine::io::require_positive(config.text_dim, "text_dim");
     if (config.text_encoder_type != "scratch" && config.text_encoder_type != "pretrained") {
@@ -127,10 +169,27 @@ IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) 
         engine::io::require_positive(config.pretrained_text_layers, "pretrained_text_layers");
         engine::io::require_positive(config.pretrained_text_heads, "pretrained_text_heads");
         engine::io::require_positive(config.pretrained_text_intermediate_dim, "pretrained_text_intermediate_dim");
-        engine::io::require_divisible(
-            config.pretrained_text_dim,
-            config.pretrained_text_heads,
-            "pretrained_text_dim / pretrained_text_heads");
+        if (config.use_t5gemma2_text_encoder()) {
+            engine::io::require_positive(config.pretrained_text_kv_heads, "pretrained_text_kv_heads");
+            engine::io::require_positive(config.pretrained_text_head_dim, "pretrained_text_head_dim");
+            engine::io::require_divisible(
+                config.pretrained_text_heads,
+                config.pretrained_text_kv_heads,
+                "pretrained_text_heads / pretrained_text_kv_heads");
+            // Every layer runs with the full bidirectional mask. That equals the
+            // sliding-window mask while no sequence is longer than the window.
+            const int64_t longest = std::max(
+                config.max_text_len, config.use_caption_condition ? config.max_caption_len : int64_t{0});
+            if (config.pretrained_text_sliding_window > 0 && longest > config.pretrained_text_sliding_window) {
+                throw std::runtime_error(
+                    "Irodori-TTS T5Gemma 2 text encoder: max_text_len / max_caption_len exceed sliding_window");
+            }
+        } else {
+            engine::io::require_divisible(
+                config.pretrained_text_dim,
+                config.pretrained_text_heads,
+                "pretrained_text_dim / pretrained_text_heads");
+        }
         if (static_cast<int64_t>(config.pretrained_text_layer_types.size()) != config.pretrained_text_layers) {
             throw std::runtime_error("Irodori-TTS pretrained text layer_types count mismatch");
         }
@@ -187,7 +246,29 @@ void validate_model_weights(const IrodoriModelConfig & config, const assets::Ten
     } else if (source.has_tensor("delta_cond_module.0.weight")) {
         throw std::runtime_error("Irodori-TTS interval weights require flow_parameterization=meanflow in model_config.json");
     }
-    if (config.use_pretrained_text_encoder()) {
+    if (config.use_t5gemma2_text_encoder()) {
+        const int64_t attention_size = config.pretrained_text_heads * config.pretrained_text_head_dim;
+        assets::require_tensor_shape(
+            source,
+            "pretrained_text_backbone.backbone.embed_tokens.weight",
+            {config.text_vocab_size, config.pretrained_text_dim});
+        assets::require_tensor_shape(
+            source,
+            "pretrained_text_backbone.backbone.norm.weight",
+            {config.pretrained_text_dim});
+        assets::require_tensor_shape(
+            source,
+            "pretrained_text_backbone.backbone.layers.0.self_attn.q_proj.weight",
+            {attention_size, config.pretrained_text_dim});
+        assets::require_tensor_shape(
+            source,
+            "pretrained_text_backbone.backbone.layers.0.self_attn.k_proj.weight",
+            {config.pretrained_text_kv_heads * config.pretrained_text_head_dim, config.pretrained_text_dim});
+        assets::require_tensor_shape(
+            source,
+            "pretrained_text_backbone.backbone.layers.0.mlp.gate_proj.weight",
+            {config.pretrained_text_intermediate_dim, config.pretrained_text_dim});
+    } else if (config.use_pretrained_text_encoder()) {
         assets::require_tensor_shape(
             source,
             "pretrained_text_backbone.backbone.embeddings.tok_embeddings.weight",
@@ -208,6 +289,8 @@ void validate_model_weights(const IrodoriModelConfig & config, const assets::Ten
             source,
             "pretrained_text_backbone.backbone.layers.0.mlp.Wi.weight",
             {2 * config.pretrained_text_intermediate_dim, config.pretrained_text_dim});
+    }
+    if (config.use_pretrained_text_encoder()) {
         assets::require_tensor_shape(source, "text_encoder.projector.weight", {config.text_dim, config.pretrained_text_dim});
         assets::require_tensor_shape(source, "text_norm.weight", {config.text_dim});
         if (config.pretrained_projector_type == "residual_mlp") {
@@ -294,6 +377,10 @@ bool IrodoriModelConfig::use_pretrained_text_encoder() const noexcept {
     return text_encoder_type == "pretrained";
 }
 
+bool IrodoriModelConfig::use_t5gemma2_text_encoder() const noexcept {
+    return use_pretrained_text_encoder() && pretrained_text_model_type == "t5gemma2";
+}
+
 int64_t IrodoriModelConfig::caption_vocab_size_resolved() const noexcept {
     return caption_vocab_size > 0 ? caption_vocab_size : text_vocab_size;
 }
@@ -310,8 +397,8 @@ int64_t IrodoriModelConfig::caption_heads_resolved() const noexcept {
     return caption_heads > 0 ? caption_heads : text_heads;
 }
 
-float IrodoriModelConfig::caption_mlp_ratio_resolved() const noexcept {
-    return caption_mlp_ratio > 0.0F ? caption_mlp_ratio : text_mlp_ratio;
+double IrodoriModelConfig::caption_mlp_ratio_resolved() const noexcept {
+    return caption_mlp_ratio > 0.0 ? caption_mlp_ratio : text_mlp_ratio;
 }
 
 std::shared_ptr<const IrodoriTTSAssets> load_irodori_tts_assets(const std::filesystem::path & model_path) {
