@@ -6090,22 +6090,32 @@ struct test_group_norm : public test_case {
     const std::array<int64_t, 4> ne;
     const int32_t num_groups;
     const float eps;
+    const bool view;
+    const bool inplace;
 
     std::string vars() override {
-        return VARS_TO_STR4(type, ne, num_groups, eps);
+        return VARS_TO_STR6(type, ne, num_groups, eps, view, inplace);
     }
 
     test_group_norm(ggml_type type = GGML_TYPE_F32,
             std::array<int64_t, 4> ne = {64, 64, 320, 1},
             int32_t num_groups = 32,
-            float eps = 1e-6f)
-        : type(type), ne(ne), num_groups(num_groups), eps(eps) {}
+            float eps = 1e-6f, bool view = false, bool inplace = false)
+        : type(type), ne(ne), num_groups(num_groups), eps(eps), view(view), inplace(inplace) {}
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
-        ggml_tensor * a = ggml_new_tensor(ctx, type, 4, ne.data());
+        ggml_tensor * a;
+        if (view) {
+            ggml_tensor * base = ggml_new_tensor_4d(ctx, type, ne[0] + 3, ne[1] + 2, ne[2] + 1, ne[3]);
+            a = ggml_view_4d(ctx, base, ne[0], ne[1], ne[2], ne[3],
+                            base->nb[1], base->nb[2], base->nb[3], ggml_type_size(type));
+        } else {
+            a = ggml_new_tensor(ctx, type, 4, ne.data());
+        }
         ggml_set_name(a, "a");
 
-        ggml_tensor * out = ggml_group_norm(ctx, a, num_groups, eps);
+        ggml_tensor * out = inplace ? ggml_group_norm_inplace(ctx, a, num_groups, eps)
+                                  : ggml_group_norm(ctx, a, num_groups, eps);
         ggml_set_name(out, "out");
 
         return out;
@@ -8897,6 +8907,13 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_sum_rows(GGML_TYPE_F32, { 33, 256, 1, 1 }));
     test_cases.emplace_back(new test_group_norm(GGML_TYPE_F32, {64, 64, 320, 1}));
     test_cases.emplace_back(new test_group_norm(GGML_TYPE_F32, {9, 9, 1280, 1}));
+    for (const auto & shape : std::vector<std::pair<std::array<int64_t, 4>, int>>{
+             {{3, 5, 7, 2}, 3}, {{5, 3, 9, 3}, 4}, {{17, 9, 8, 2}, 1},
+             {{17, 9, 8, 2}, 8}, {{1, 1, 4, 2}, 4}, {{129, 3, 4, 1}, 2}, {{128, 5, 64, 1}, 64}}) {
+        for (bool view : {false, true}) for (bool inplace : {false, true}) {
+            test_cases.emplace_back(new test_group_norm(GGML_TYPE_F32, shape.first, shape.second, 1e-5f, view, inplace));
+        }
+    }
     test_cases.emplace_back(new test_group_norm_mul_add(GGML_TYPE_F32, {64, 64, 320, 1}));
     test_cases.emplace_back(new test_group_norm_mul_add(GGML_TYPE_F32, {9, 9, 1280, 1}));
     test_cases.emplace_back(new test_acc(GGML_TYPE_F32, {256, 17, 1, 1}, {256, 16, 1, 1}, -1));

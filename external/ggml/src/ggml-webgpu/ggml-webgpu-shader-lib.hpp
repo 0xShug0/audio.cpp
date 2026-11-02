@@ -1357,6 +1357,11 @@ class ggml_webgpu_shader_lib {
                 defines.push_back("NORM");
                 variant = "norm";
                 break;
+            case GGML_OP_GROUP_NORM:
+                defines.push_back("NORM");
+                defines.push_back("GROUP_NORM");
+                variant = "group_norm";
+                break;
             case GGML_OP_L2_NORM:
                 defines.push_back("L2_NORM");
                 variant = "l2_norm";

@@ -2742,6 +2742,7 @@ static std::optional<webgpu_encoded_op> ggml_webgpu_rms_norm_mul(webgpu_context 
 }
 
 static webgpu_encoded_op ggml_webgpu_row_norm(webgpu_context & ctx, ggml_tensor * src, ggml_tensor * dst) {
+    const bool group_norm = dst->op == GGML_OP_GROUP_NORM;
     std::vector<uint32_t> params = {
         (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src) / ggml_type_size(src->type)),
         (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, dst) / ggml_type_size(dst->type)),
@@ -2755,8 +2756,12 @@ static webgpu_encoded_op ggml_webgpu_row_norm(webgpu_context & ctx, ggml_tensor 
         (uint32_t) src->ne[1],
         (uint32_t) src->ne[2],
         (uint32_t) src->ne[3],
-        ggml_webgpu_u32_from_f32(ggml_get_op_params_f32(dst, 0))  // epsilon, treated as f32 in the shader
+        ggml_webgpu_u32_from_f32(ggml_get_op_params_f32(dst, group_norm ? 1 : 0))
     };
+    const uint32_t groups = group_norm ? ggml_get_op_params_i32(dst, 0) : 0;
+    if (group_norm) {
+        params.push_back(groups);
+    }
 
     ggml_webgpu_shader_lib_context shader_lib_ctx = {};
     shader_lib_ctx.src0                           = src;
@@ -2773,7 +2778,8 @@ static webgpu_encoded_op ggml_webgpu_row_norm(webgpu_context & ctx, ggml_tensor 
 
     uint32_t wg_x;
     uint32_t wg_y;
-    compute_2d_workgroups(ggml_nrows(src), ctx->global_ctx->capabilities.limits.maxComputeWorkgroupsPerDimension, wg_x,
+    compute_2d_workgroups(group_norm ? groups * src->ne[3] : ggml_nrows(src),
+                          ctx->global_ctx->capabilities.limits.maxComputeWorkgroupsPerDimension, wg_x,
                           wg_y);
     return ggml_backend_webgpu_build(ctx, pipeline, params, entries, wg_x, wg_y);
 }
@@ -3479,6 +3485,7 @@ static std::optional<webgpu_encoded_op> ggml_webgpu_encode(webgpu_context ctx,
             }
         case GGML_OP_NORM:
         case GGML_OP_L2_NORM:
+        case GGML_OP_GROUP_NORM:
             return ggml_webgpu_row_norm(ctx, src0, node);
         case GGML_OP_ROPE:
             return ggml_webgpu_rope(ctx, src0, src1, src2, node);
@@ -4682,6 +4689,10 @@ static bool ggml_backend_webgpu_device_supports_op(ggml_backend_dev_t dev, const
         case GGML_OP_NORM:
         case GGML_OP_L2_NORM:
             supports_op = (op->type == GGML_TYPE_F32 && src0->type == GGML_TYPE_F32) && ggml_is_contiguous_rows(src0);
+            break;
+        case GGML_OP_GROUP_NORM:
+            supports_op = op->type == GGML_TYPE_F32 && src0->type == GGML_TYPE_F32 &&
+                          src0->nb[0] == sizeof(float) && ggml_get_op_params_i32(op, 0) > 0;
             break;
         case GGML_OP_ROPE:
             supports_op = op->type == GGML_TYPE_F32 || op->type == GGML_TYPE_F16;
