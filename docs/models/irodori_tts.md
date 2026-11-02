@@ -17,6 +17,8 @@ v4 GGUF packages are published in both `q8_0` and `f16`. v3 GGUF packages are al
 
 **Checkpoints without a duration predictor** (`use_duration_predictor` absent or `false` in the model config, such as the original 500M v2 safetensors) also load. With no `duration_sec`, they generate 30 seconds and `trim_tail` cuts the trailing silence, as the Python runtime does; `duration_scale` has no effect. The fallback always samples 30 seconds, so passing `duration_sec` is faster when the length is known.
 
+**Input text** is normalized as in Python Irodori-TTS (`normalize_text`): symbol cleanup, wave dashes (`〜`, `～`) to `ー`, removal of brackets that enclose the whole text, NFKC (half-width katakana to full width, full-width Latin letters and digits to ASCII), and `...` to `…`.
+
 > **v4 reference-conditioning note:** Fresh v4 voice-clone or reference+instruction generations may occasionally add a short extra phrase near the end of the clip. This behavior is also reproducible in the upstream Python path with the same reference/text/seed, so it is treated as a current v4 model/runtime limitation rather than a GGUF-only issue. No-reference and instruction-only paths are usually cleaner; for reference-conditioned use, try a different seed, instruction, or explicit `duration_sec` if the tail matters.
 
 ## Quick Start

@@ -3,6 +3,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/binary.h"
 #include "engine/framework/io/safetensors.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -12,6 +13,7 @@
 #include "engine/models/irodori_tts/rf_dit.h"
 
 #include <ggml.h>
+#include <utf8proc.h>
 
 #include <algorithm>
 #include <cctype>
@@ -19,8 +21,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -229,6 +233,125 @@ generation_options_from_request(const runtime::TaskRequest &request,
   return options;
 }
 
+std::vector<utf8proc_int32_t> decode_utf8(const std::string &text) {
+  std::vector<utf8proc_int32_t> out;
+  out.reserve(text.size());
+  const auto *data = reinterpret_cast<const utf8proc_uint8_t *>(text.data());
+  utf8proc_ssize_t offset = 0;
+  const auto size = static_cast<utf8proc_ssize_t>(text.size());
+  while (offset < size) {
+    utf8proc_int32_t codepoint = 0;
+    const auto width = utf8proc_iterate(data + offset, size - offset, &codepoint);
+    if (width <= 0) {
+      throw runtime::InvalidRequestError("Irodori-TTS text is not valid UTF-8");
+    }
+    out.push_back(codepoint);
+    offset += width;
+  }
+  return out;
+}
+
+std::string encode_utf8(const std::vector<utf8proc_int32_t> &codepoints) {
+  std::string out;
+  out.reserve(codepoints.size() * 3);
+  utf8proc_uint8_t buffer[4];
+  for (const auto codepoint : codepoints) {
+    const auto width = utf8proc_encode_char(codepoint, buffer);
+    out.append(reinterpret_cast<const char *>(buffer), static_cast<size_t>(width));
+  }
+  return out;
+}
+
+// REGEX_REPLACE_MAP of Python's text_normalization.py, applied per character:
+// symbols that are dropped, dash-like characters that are dropped, and wave
+// dashes that become the long-vowel mark.
+std::optional<utf8proc_int32_t> python_regex_replacement(utf8proc_int32_t c) {
+  switch (c) {
+    case U';': case U'\u25BC': case U'\u2640': case U'\u2642':
+    case U'\u300A': case U'\u300B': case U'\u226A': case U'\u226B':
+    case U'\u2460': case U'\u2461': case U'\u2462': case U'\u2463':
+    case U'\u2464': case U'\u2465':
+    case U'\u02D7': case U'\u2043': case U'\u2212': case U'\u23AF':
+    case U'\u23E4': case U'\u2500': case U'\u2501': case U'\u2E3A':
+    case U'\u2E3B':
+      return std::nullopt;
+    case U'\uFF5E': case U'\u301C':
+      return U'\u30FC';
+    default:
+      if (c >= U'\u2010' && c <= U'\u2015') {
+        return std::nullopt;
+      }
+      return c;
+  }
+}
+
+utf8proc_int32_t closing_bracket(utf8proc_int32_t c) {
+  switch (c) {
+    case U'\u300C': return U'\u300D';  // corner brackets
+    case U'\u300E': return U'\u300F';  // white corner brackets
+    case U'\uFF08': return U'\uFF09';  // full-width parentheses
+    case U'\u3010': return U'\u3011';  // black lenticular brackets
+    case U'(': return U')';
+    default: return 0;
+  }
+}
+
+// Python's strip_outer_brackets: remove brackets that enclose the whole text.
+void strip_outer_brackets(std::vector<utf8proc_int32_t> &text) {
+  while (text.size() >= 2) {
+    const auto start = text.front();
+    const auto end = text.back();
+    if (closing_bracket(start) != end || end == 0) {
+      break;
+    }
+    int64_t depth = 0;
+    bool encloses_all = true;
+    for (size_t i = 0; i < text.size(); ++i) {
+      if (text[i] == start) {
+        ++depth;
+      } else if (text[i] == end) {
+        --depth;
+      }
+      if (depth == 0 && i + 1 < text.size()) {
+        encloses_all = false;
+        break;
+      }
+    }
+    if (!encloses_all || depth != 0) {
+      break;
+    }
+    text = std::vector<utf8proc_int32_t>(text.begin() + 1, text.end() - 1);
+  }
+}
+
+std::string nfkc(const std::string &text) {
+  utf8proc_uint8_t *output = nullptr;
+  const auto size = utf8proc_map(
+      reinterpret_cast<const utf8proc_uint8_t *>(text.data()),
+      static_cast<utf8proc_ssize_t>(text.size()), &output,
+      static_cast<utf8proc_option_t>(UTF8PROC_STABLE | UTF8PROC_COMPOSE |
+                                     UTF8PROC_COMPAT));
+  const std::unique_ptr<utf8proc_uint8_t, decltype(&std::free)> normalized(
+      output, &std::free);
+  if (size < 0) {
+    throw runtime::InvalidRequestError(
+        "Irodori-TTS text normalization: " + std::string(utf8proc_errmsg(size)));
+  }
+  return std::string(reinterpret_cast<const char *>(normalized.get()),
+                     static_cast<size_t>(size));
+}
+
+// Python str.isspace(), for the strip() the Python runtime applies afterwards.
+bool python_space(utf8proc_int32_t c) {
+  return (c >= 0x09 && c <= 0x0D) || (c >= 0x1C && c <= 0x20) || c == 0x85 ||
+         c == 0xA0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200A) ||
+         c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F ||
+         c == 0x3000;
+}
+
+// Python Irodori-TTS normalize_text(text).strip(), in the same order: literal
+// replacements, the per-character regex rules, collapsing long ellipsis runs,
+// strip_outer_brackets, NFKC, then "..." and "..".
 std::string normalize_text(std::string text) {
   auto replace_all = [&](const std::string &from, const std::string &to) {
     size_t pos = 0;
@@ -247,17 +370,49 @@ std::string normalize_text(std::string text) {
   replace_all("\xE2\x97\x8F", "\xE2\x97\x8B");
   replace_all("\xE2\x97\xAF", "\xE2\x97\x8B");
   replace_all("\xE3\x80\x87", "\xE2\x97\x8B");
+
+  std::vector<utf8proc_int32_t> codepoints;
+  for (const auto c : decode_utf8(text)) {
+    if (const auto replacement = python_regex_replacement(c)) {
+      codepoints.push_back(*replacement);
+    }
+  }
+  // "…{3,}" -> "……"
+  std::vector<utf8proc_int32_t> collapsed;
+  collapsed.reserve(codepoints.size());
+  for (size_t i = 0; i < codepoints.size();) {
+    size_t run = 0;
+    while (i + run < codepoints.size() && codepoints[i + run] == U'\u2026') {
+      ++run;
+    }
+    if (run >= 3) {
+      collapsed.insert(collapsed.end(), 2, U'\u2026');
+      i += run;
+    } else if (run > 0) {
+      collapsed.insert(collapsed.end(), run, U'\u2026');
+      i += run;
+    } else {
+      collapsed.push_back(codepoints[i++]);
+    }
+  }
+  strip_outer_brackets(collapsed);
+  text = nfkc(encode_utf8(collapsed));
+
   replace_all("...", "\xE2\x80\xA6");
   replace_all("..", "\xE2\x80\xA6");
-  while (!text.empty() && (text.front() == ' ' || text.front() == '\n' ||
-                           text.front() == '\r')) {
-    text.erase(text.begin());
+
+  auto trimmed = decode_utf8(text);
+  size_t begin = 0;
+  size_t end = trimmed.size();
+  while (begin < end && python_space(trimmed[begin])) {
+    ++begin;
   }
-  while (!text.empty() &&
-         (text.back() == ' ' || text.back() == '\n' || text.back() == '\r')) {
-    text.pop_back();
+  while (end > begin && python_space(trimmed[end - 1])) {
+    --end;
   }
-  return text;
+  return encode_utf8(std::vector<utf8proc_int32_t>(
+      trimmed.begin() + static_cast<std::ptrdiff_t>(begin),
+      trimmed.begin() + static_cast<std::ptrdiff_t>(end)));
 }
 
 uint64_t mix_reference_audio_key(uint64_t key, uint64_t value) {

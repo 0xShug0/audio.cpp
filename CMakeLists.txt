@@ -1894,6 +1894,8 @@ audiocpp_add_model(irodori_tts
         engine/models/irodori_tts/session.h
     LOADERS
         engine::models::irodori_tts::make_irodori_tts_loader
+    OBJECT_LIBRARIES
+        utf8proc_vendor
 )
 
 audiocpp_add_model(index_tts2
