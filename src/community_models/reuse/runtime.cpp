@@ -114,6 +114,12 @@ public:
             auto * node = ggml_graph_node(graph_, i);
             if (node->op == GGML_OP_MUL_MAT) {
                 ggml_mul_mat_set_prec(node, GGML_PREC_F32);
+                // Mamba activations can exceed FP16 range; F32 accumulation alone
+                // does not prevent Metal's ordinary input narrowing from overflowing.
+                if (execution.backend_type() == core::BackendType::Metal &&
+                    node->src[0]->type == GGML_TYPE_F32 && node->src[1]->type == GGML_TYPE_F32) {
+                    ggml_mul_mat_set_lowering(node, GGML_MUL_MAT_LOWERING_METAL_F32_INPUTS);
+                }
             } else if (execution.backend_type() == core::BackendType::Cuda &&
                        node->op == GGML_OP_IM2COL && node->type == GGML_TYPE_F32 &&
                        node->src[0]->ne[0] == 3 && node->src[0]->ne[1] == 3 &&

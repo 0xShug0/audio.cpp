@@ -2464,7 +2464,8 @@ kernel void kernel_ssm_scan_f32(
         float sumf = 0.0f;
         if (i2 + sgitg < n_t) {
             for (int g = 0; g < sgptg; g++) {
-                sumf += shared_sums[(i2 + sgitg)*NW + g];
+                // Shared slots are local to this token block, not the sequence.
+                sumf += shared_sums[sgitg*NW + g];
             }
         }
 

@@ -21,9 +21,6 @@ ReuseSession::ReuseSession(runtime::TaskSpec task, runtime::SessionOptions optio
     if (execution_context().backend_type() == core::BackendType::Hip) {
         throw std::runtime_error("RE-USE is disabled on HIP: this backend has not been validated");
     }
-    if (execution_context().backend_type() == core::BackendType::Metal) {
-        throw std::runtime_error("RE-USE is disabled on Metal due to GGML kernel support bugs");
-    }
     if (task.task != runtime::VoiceTaskKind::SpeechToSpeech || task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("RE-USE supports only offline s2s");
     }
