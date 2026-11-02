@@ -1172,6 +1172,16 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
             return has_simdgroup_reduction && (ggml_is_contiguous_rows(op->src[0]));
         case GGML_OP_ROPE:
             return true;
+        case GGML_OP_IM2COL_3D:
+            // Spatial coordinates in the kernel are signed 32-bit; byte offsets
+            // and the total patch size use 64-bit arithmetic.
+            for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+                if (op->ne[i] > INT32_MAX || op->src[0]->ne[i] > INT32_MAX || op->src[1]->ne[i] > INT32_MAX) {
+                    return false;
+                }
+            }
+            return op->src[1]->type == GGML_TYPE_F32 && op->src[1]->nb[0] == sizeof(float) &&
+                   ggml_is_contiguous(op) && (op->type == GGML_TYPE_F16 || op->type == GGML_TYPE_F32);
         case GGML_OP_IM2COL:
         case GGML_OP_IM2COL_FAST_1D:
             return ggml_is_contiguous(op->src[1]) && op->src[1]->type == GGML_TYPE_F32 && (op->type == GGML_TYPE_F16 || op->type == GGML_TYPE_F32);

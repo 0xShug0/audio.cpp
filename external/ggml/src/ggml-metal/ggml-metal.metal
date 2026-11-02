@@ -4759,6 +4759,51 @@ template [[host_name("kernel_rope_multi_f16")]] kernel kernel_rope_multi_t kerne
 template [[host_name("kernel_rope_vision_f32")]] kernel kernel_rope_vision_t kernel_rope_vision<float>;
 template [[host_name("kernel_rope_vision_f16")]] kernel kernel_rope_vision_t kernel_rope_vision<half>;
 
+typedef void (im2col_3d_t)(
+        constant ggml_metal_kargs_im2col_3d & args,
+        device const char * src,
+        device char * dst,
+        uint tid [[thread_position_in_grid]],
+        uint groups [[threadgroups_per_grid]],
+        uint threads [[threads_per_threadgroup]]);
+
+template <typename T, typename Index>
+kernel void kernel_im2col_3d(
+        constant ggml_metal_kargs_im2col_3d & args,
+        device const char * src,
+        device char * dst,
+        uint tid [[thread_position_in_grid]],
+        uint groups [[threadgroups_per_grid]],
+        uint threads [[threads_per_threadgroup]]) {
+    // Adjacent threads write adjacent patch elements. A bounded grid and 64-bit
+    // offsets also cover patch buffers larger than 2^32 elements.
+    for (ulong i = tid; i < args.n; i += ulong(groups) * threads) {
+        Index q = Index(i);
+        const int kw = q % args.KW; q /= args.KW;
+        const int kh = q % args.KH; q /= args.KH;
+        const int kd = q % args.KD; q /= args.KD;
+        const int ic = q % args.IC; q /= args.IC;
+        const int ow = q % args.OW; q /= args.OW;
+        const int oh = q % args.OH; q /= args.OH;
+        const int od = q % args.OD; q /= args.OD;
+        const long iw = long(ow) * args.s0 + long(kw) * args.d0 - args.p0;
+        const long ih = long(oh) * args.s1 + long(kh) * args.d1 - args.p1;
+        const long id = long(od) * args.s2 + long(kd) * args.d2 - args.p2;
+        float value = 0.0f;
+        if (iw >= 0 && iw < args.IW && ih >= 0 && ih < args.IH && id >= 0 && id < args.ID) {
+            const ulong offset = (q * args.IC + ic) * args.nb13 + ulong(id) * args.nb12 +
+                                  ulong(ih) * args.nb11 + ulong(iw) * sizeof(float);
+            value = *(device const float *)(src + offset);
+        }
+        ((device T *) dst)[i] = T(value);
+    }
+}
+
+template [[host_name("kernel_im2col_3d_f32_i32")]] kernel im2col_3d_t kernel_im2col_3d<float, uint>;
+template [[host_name("kernel_im2col_3d_f16_i32")]] kernel im2col_3d_t kernel_im2col_3d<half, uint>;
+template [[host_name("kernel_im2col_3d_f32_i64")]] kernel im2col_3d_t kernel_im2col_3d<float, ulong>;
+template [[host_name("kernel_im2col_3d_f16_i64")]] kernel im2col_3d_t kernel_im2col_3d<half, ulong>;
+
 typedef void (im2col_t)(
         constant ggml_metal_kargs_im2col & args,
         device const float * x,

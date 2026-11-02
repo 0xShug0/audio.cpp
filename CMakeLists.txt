@@ -3798,6 +3798,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         set_tests_properties(metal_f32_matmul_test PROPERTIES
             SKIP_RETURN_CODE 77 LABELS "extended;metal")
 
+        add_executable(metal_im2col_3d_test tests/unittests/test_metal_im2col_3d.cpp)
+        target_link_libraries(metal_im2col_3d_test PRIVATE ggml ggml-metal)
+        add_test(NAME metal_im2col_3d_test COMMAND metal_im2col_3d_test)
+        set_tests_properties(metal_im2col_3d_test PROPERTIES
+            SKIP_RETURN_CODE 77 LABELS "extended;metal")
+
         add_executable(metal_im2col_test tests/unittests/test_metal_im2col.cpp)
         target_link_libraries(metal_im2col_test PRIVATE ggml ggml-metal)
         target_compile_definitions(metal_im2col_test PRIVATE
