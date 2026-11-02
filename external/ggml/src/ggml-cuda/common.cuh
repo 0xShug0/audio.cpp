@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 
 #if defined(GGML_USE_HIP)
 #define GGML_COMMON_DECL_HIP
@@ -204,7 +205,11 @@ void ggml_cuda_error(const char * stmt, const char * func, const char * file, in
 #define NCCL_CHECK(err) CUDA_CHECK_GEN(err, ncclSuccess, ncclGetErrorString)
 #endif // GGML_USE_NCCL
 
-#if !defined(GGML_USE_HIP) && !defined(GGML_CUDA_NO_VMM)
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && CUDART_VERSION >= 12000
+#define GGML_CUDA_CONTEXT_SHARED_MEMORY
+#endif
+
+#if (!defined(GGML_USE_HIP) && !defined(GGML_CUDA_NO_VMM)) || defined(GGML_CUDA_CONTEXT_SHARED_MEMORY)
 static const char * cu_get_error_str(CUresult err) {
     const char * err_str;
     cuGetErrorString(err, &err_str);
@@ -213,7 +218,31 @@ static const char * cu_get_error_str(CUresult err) {
 #define CU_CHECK(err) CUDA_CHECK_GEN(err, CUDA_SUCCESS, cu_get_error_str)
 #endif
 
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+#if defined(GGML_CUDA_CONTEXT_SHARED_MEMORY)
+// Device-wide opt-in can fail when Vulkan acceleration structures are enabled.
+template <auto kernel>
+static void ggml_cuda_set_shared_memory_limit(size_t nbytes) {
+    static std::mutex mutex;
+    static thread_local unsigned long long configured_context = 0;
+    static thread_local size_t configured_nbytes = 0;
+    unsigned long long context_id;
+    CU_CHECK(cuCtxGetId(nullptr, &context_id));
+    if (configured_context != context_id || configured_nbytes < nbytes) {
+        std::lock_guard<std::mutex> lock(mutex);
+        cudaFunction_t function;
+        CUDA_CHECK(cudaGetFuncBySymbol(&function, (const void *) kernel));
+        int current_nbytes;
+        CU_CHECK(cuFuncGetAttribute(&current_nbytes, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (CUfunction) function));
+        // A smaller request on another thread must not invalidate a cached larger limit.
+        if ((size_t) current_nbytes < nbytes) {
+            CU_CHECK(cuFuncSetAttribute((CUfunction) function, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int) nbytes));
+        }
+        configured_context = context_id;
+        configured_nbytes = std::max(nbytes, (size_t) current_nbytes);
+    }
+}
+#    define CUDA_SET_SHARED_MEMORY_LIMIT(kernel, nbytes) ggml_cuda_set_shared_memory_limit<kernel>(nbytes)
+#elif !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 #    define CUDA_SET_SHARED_MEMORY_LIMIT(kernel, nbytes)                                                       \
         do {                                                                                                   \
             static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = { false };                         \
