@@ -155,14 +155,16 @@ private:
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         const std::function<void(const engine::runtime::StreamEvent &)> & event_sink = {},
-        std::optional<int> busy_timeout_ms = std::nullopt);
+        std::optional<int> busy_timeout_ms = std::nullopt,
+        bool include_artifacts = false);
     // Shared body of the two entry points above/below; `audio` selects the source.
     TimedTaskResult run_streaming_model_impl(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         const minitts::app::AudioChunkStream * audio,
         const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
-        std::optional<int> busy_timeout_ms);
+        std::optional<int> busy_timeout_ms,
+        bool include_artifacts = false);
     // Same as run_streaming_model, but pulls audio from `audio` instead of
     // `request.audio_input`, so the samples are never fully materialized.
     TimedTaskResult run_streaming_model_from(

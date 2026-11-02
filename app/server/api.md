@@ -508,12 +508,19 @@ By default the response is one JSON body, sent once the run is over:
 
 An event has the fields it carries: `partial_text`, `audio` (a WAV of that
 event's samples), `named_audio_outputs`, `word_timestamps` and, for a
-diarization model, `speaker_turns`, and always `is_final`. Events do not carry
-voice activity or artifacts, so an event can be just `{"is_final":false}`.
+diarization model, `speaker_turns`, and always `is_final`. With
+`"include_artifacts": true`, artifact outputs are included in `artifacts`, using
+the same id, kind, Base64 payload and metadata as the final result. Events do not carry voice activity,
+so an event can be just `{"is_final":false}`.
 `result` has the fields of the `/v1/tasks/run` result, except that its `timing`
 holds only `ttft_ms`: the time from the start of the run, after the model is
 free and loaded, to its first output (`null` for a diarization run that found
 no speaker).
+
+Set top-level `"include_artifacts": true` to include model artifacts in streamed
+events and count artifact-only events toward first-output timing. It defaults to
+false, preserving existing event fields and timing. This applies to both JSON
+and SSE streaming responses; final-result artifact serialization is unchanged.
 
 With `"stream_format": "sse"` at the top level of the body, the response is
 server-sent events instead, each written as the model produces it:
