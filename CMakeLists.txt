@@ -1092,6 +1092,11 @@ audiocpp_add_model(parakeet_tdt
     SOURCES
         src/community_models/parakeet_tdt/assets.cpp
         src/community_models/parakeet_tdt/bark3.cpp
+        src/community_models/parakeet_tdt/bark_packed.cpp
+        src/community_models/parakeet_tdt/third_party/xz/xz_crc32.c
+        src/community_models/parakeet_tdt/third_party/xz/xz_crc64.c
+        src/community_models/parakeet_tdt/third_party/xz/xz_dec_lzma2.c
+        src/community_models/parakeet_tdt/third_party/xz/xz_dec_stream.c
         src/community_models/parakeet_tdt/session.cpp
         src/community_models/parakeet_tdt/encoder.cpp
         src/community_models/parakeet_tdt/decoder.cpp
@@ -1104,6 +1109,7 @@ audiocpp_add_model(parakeet_tdt
     LOADERS
         engine::community_models::parakeet_tdt::make_parakeet_tdt_loader
 )
+target_compile_definitions(engine_model_parakeet_tdt PRIVATE XZ_DEC_SINGLE XZ_USE_CRC64)
 
 audiocpp_add_model(personaplex
     SOURCES
@@ -3771,6 +3777,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     target_compile_definitions(parakeet_variant_config_test PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME parakeet_variant_config_test COMMAND parakeet_variant_config_test)
     if (parakeet_tdt IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(bark_packed_probe tests/parakeet_tdt/bark_packed_probe.cpp)
+        add_engine_unittest(bark_packed_test tests/parakeet_tdt/test_bark_packed.cpp)
+        target_include_directories(bark_packed_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        target_compile_definitions(bark_packed_test PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+        add_test(NAME bark_packed_test COMMAND bark_packed_test)
         add_engine_unittest(parakeet_bark3_session_test tests/parakeet_tdt/test_bark3_session.cpp)
         target_include_directories(parakeet_bark3_session_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME parakeet_bark3_session_test COMMAND parakeet_bark3_session_test)
