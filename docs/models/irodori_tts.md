@@ -12,6 +12,7 @@ The default downloadable package is the GGUF v4 Small Q8_0 checkpoint. v4 Small 
 | 600M v3 VoiceDesign | `Irodori-TTS-600M-v3-VoiceDesign-GGUF` | `tts`, `clon`, `vdes` | Adds instruction/caption conditioning for voice design. |
 | v4 Small | `Irodori-TTS-v4-Small-GGUF` | `tts`, `clon`, `vdes` | Bundles its v4 tokenizer and supports instruction/caption conditioning in the same checkpoint. |
 | v4.1 Small MeanFlow | `Irodori-TTS-v4-Small-GGUF` | `tts`, `clon`, `vdes` | Distilled checkpoint; four sampling steps by default, with training-time CFG. |
+| v4 Large | convert locally | `tts`, `clon`, `vdes` | 3.29B; T5Gemma 2 text encoder. No published package. See [v4 Large](#v4-large). |
 
 v4 GGUF packages are published in both `q8_0` and `f16`. v3 GGUF packages are also available in `q8_0` and `f16`.
 
@@ -209,6 +210,41 @@ python tools/models/convert_irodori_gguf.py \
 
 The converter preserves the checkpoint's configuration and interval-conditioning
 weights and embeds the required sidecars. Use `--type f16` for the F16 package.
+
+## v4 Large
+
+[Irodori-TTS-v4-Large](https://huggingface.co/Aratako/Irodori-TTS-v4-Large)
+scales the v4 architecture to 3.29B parameters and replaces the ModernBERT text
+encoder with the encoder half of
+[T5Gemma 2](https://huggingface.co/google/t5gemma-2-1b-1b), shared by the text
+and caption paths. Its weights are under the Gemma Terms of Use, so there is no
+published package; convert the downloaded checkpoint. The checkpoint carries the
+T5Gemma 2 weights and configuration, and its `tokenizer/` folder holds the Gemma
+tokenizer, so the gated T5Gemma 2 repository is not needed:
+
+```bash
+python tools/models/convert_irodori_gguf.py \
+  --model models/Irodori-TTS-v4-Large/model.safetensors \
+  --codec models/Semantic-DACVAE-Japanese-32dim/weights.safetensors \
+  --type q8_0 \
+  --output models/Irodori-TTS-v4-Large-GGUF/irodori-tts-v4-large-q8_0.gguf
+```
+
+`--type q6_k`, `q5_k` and `q4_k` make smaller files. The k-quants need input
+widths that are multiples of 256, so the converter stores T5Gemma 2's
+1152-wide projections as Q8_0 instead of leaving them in F32; embeddings stay
+F16 as for every quantized type. Q8_0 follows the Python model most closely and
+Q6_K is close to it; Q5_K and Q4_K can change the delivery of a line.
+
+| Type | File | Peak GPU, 6 s line without reference |
+|---|---|---|
+| `q8_0` | 4.2 GB | 5.4 GB |
+| `q6_k` | 3.6 GB | 4.9 GB |
+| `q5_k` | 3.3 GB | 4.6 GB |
+| `q4_k` | 3.0 GB | 4.3 GB |
+
+Measured with CUDA and 40 steps; a 35-second reference adds about 2.3 GB while it
+is encoded. Requests are the same as for v4 Small.
 
 ## RF Sampling: Linear and Sway
 
