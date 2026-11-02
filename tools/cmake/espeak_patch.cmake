@@ -10,3 +10,13 @@ if(NOT contents MATCHES "ARCHIVE_OUTPUT_NAME espeak-ng-tool")
     string(APPEND contents "\n# Avoid colliding with the static espeak-ng library on MSVC.\nset_target_properties(espeak-ng-bin PROPERTIES ARCHIVE_OUTPUT_NAME espeak-ng-tool)\n")
     file(WRITE "${path}" "${contents}")
 endif()
+if(BROWSER_BUILD)
+    # Musl's wchar.h declares isw* too. Include it before eSpeak redirects those
+    # names to UCD, so the macros do not rewrite libc function declarations.
+    set(path "${SOURCE_DIR}/src/include/compat/wctype.h")
+    file(READ "${path}" contents)
+    if(NOT contents MATCHES "#include <wchar.h>")
+        string(REPLACE "#include <ucd/ucd.h>" "#include <ucd/ucd.h>\n#include <wchar.h>" contents "${contents}")
+        file(WRITE "${path}" "${contents}")
+    endif()
+endif()

@@ -3044,6 +3044,23 @@ add_executable(audiocpp_cli
 )
 
 target_link_libraries(audiocpp_cli PRIVATE engine_runtime ggml)
+if (EMSCRIPTEN AND ENGINE_ENABLE_WEBGPU)
+    target_link_options(audiocpp_cli PRIVATE
+        "-sMODULARIZE=1" "-sEXPORT_NAME=createAudioCpp"
+        "-sINVOKE_RUN=0" "-sEXIT_RUNTIME=0"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sSTACK_SIZE=8388608" "-sFORCE_FILESYSTEM=1"
+        "-sINCOMING_MODULE_JS_API=preRun,print,printErr,locateFile,mainScriptUrlOrBlob,instantiateWasm,wasmMemory"
+        "-sEXPORTED_RUNTIME_METHODS=callMain,FS,ENV" "-sENVIRONMENT=web,worker")
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        target_link_options(audiocpp_cli PRIVATE "-sMAXIMUM_MEMORY=17179869184"
+            "-sEXPORTED_RUNTIME_METHODS=callMain,FS,ENV,WORKERFS" "-lworkerfs.js")
+    else()
+        target_link_options(audiocpp_cli PRIVATE "-sMAXIMUM_MEMORY=4294967296")
+    endif()
+    configure_file(examples/webgpu/index.html "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/index.html" COPYONLY)
+    configure_file(examples/webgpu/worker.js "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/worker.js" COPYONLY)
+endif()
 audiocpp_use_utf8_codepage(audiocpp_cli)
 if(AUDIOCPP_STATIC_ESPEAK)
     audiocpp_stage_espeak(audiocpp_cli)

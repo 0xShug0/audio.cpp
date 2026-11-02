@@ -33,7 +33,7 @@ runtime::ModelResourcePlan engine_resources(
             }
             const auto mib = engine_memory_mib(path.string(), "model resources");
             const auto bytes = mib > 0
-                ? static_cast<size_t>(mib) * (1024ull * 1024ull)
+                ? static_cast<size_t>(mib) * (size_t{1024} * 1024)
                 : static_cast<size_t>(std::filesystem::file_size(path));
             out.engines.push_back({canonical, bytes});
             out.resident_bytes += bytes;
