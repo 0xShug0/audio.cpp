@@ -1312,6 +1312,35 @@ if (GGML_CUDA_CUDNN_CONV2D)
     target_compile_definitions(engine_model_latentsync PRIVATE GGML_CUDA_CUDNN_CONV2D=1)
 endif()
 
+audiocpp_add_model(soulx_flashhead
+    SOURCES
+        src/community_models/soulx_flashhead/color.cpp
+        src/community_models/soulx_flashhead/audio.cpp
+        src/community_models/soulx_flashhead/assets.cpp
+        src/community_models/soulx_flashhead/dit.cpp
+        src/community_models/soulx_flashhead/vae.cpp
+        src/community_models/soulx_flashhead/portrait.cpp
+        src/community_models/soulx_flashhead/pipeline.cpp
+        src/community_models/soulx_flashhead/session.cpp
+    INCLUDES
+        engine/community_models/soulx_flashhead/session.h
+    LOADERS
+        engine::community_models::soulx_flashhead::make_soulx_flashhead_loader
+)
+
+if (TARGET engine_model_soulx_flashhead)
+    if (GGML_CUDA_CUDNN_CONV3D AND ENGINE_ENABLE_CUDA)
+        target_compile_definitions(engine_model_soulx_flashhead PRIVATE GGML_CUDA_CUDNN_CONV3D=1)
+    endif()
+    if (GGML_CUDA_CUDNN_CONV2D)
+        target_compile_definitions(engine_model_soulx_flashhead PRIVATE GGML_CUDA_CUDNN_CONV2D=1)
+    endif()
+    add_executable(soulx_flashhead_components EXCLUDE_FROM_ALL tests/soulx_flashhead/components.cpp)
+    target_link_libraries(soulx_flashhead_components PRIVATE engine_runtime ggml)
+    add_executable(soulx_flashhead_session_test EXCLUDE_FROM_ALL tests/soulx_flashhead/session_test.cpp)
+    target_link_libraries(soulx_flashhead_session_test PRIVATE engine_runtime ggml)
+endif()
+
 audiocpp_add_model(liveavatar
     SOURCES
         src/community_models/liveavatar/assets.cpp
