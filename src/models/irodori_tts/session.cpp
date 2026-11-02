@@ -263,12 +263,15 @@ std::string encode_utf8(const std::vector<utf8proc_int32_t> &codepoints) {
 }
 
 // REGEX_REPLACE_MAP of Python's text_normalization.py, applied per character:
-// symbols that are dropped, dash-like characters that are dropped, and wave
-// dashes that become the long-vowel mark.
+// symbols that are dropped (the class also holds U+E63E, a private-use
+// character between the double angle brackets and the circled digits),
+// dash-like characters that are dropped, and wave dashes that become the
+// long-vowel mark.
 std::optional<utf8proc_int32_t> python_regex_replacement(utf8proc_int32_t c) {
   switch (c) {
     case U';': case U'\u25BC': case U'\u2640': case U'\u2642':
     case U'\u300A': case U'\u300B': case U'\u226A': case U'\u226B':
+    case U'\uE63E':
     case U'\u2460': case U'\u2461': case U'\u2462': case U'\u2463':
     case U'\u2464': case U'\u2465':
     case U'\u02D7': case U'\u2043': case U'\u2212': case U'\u23AF':
@@ -377,7 +380,7 @@ std::string normalize_text(std::string text) {
       codepoints.push_back(*replacement);
     }
   }
-  // "…{3,}" -> "……"
+  // Runs of three or more U+2026 become two (Python's REGEX_REPLACE_MAP).
   std::vector<utf8proc_int32_t> collapsed;
   collapsed.reserve(codepoints.size());
   for (size_t i = 0; i < codepoints.size();) {
