@@ -43,6 +43,7 @@ constexpr BackendRegNames k_backend_reg_names[] = {
     {BackendType::Hip,    "hip",    {"ROCm", nullptr, nullptr}},
     {BackendType::Vulkan, "vulkan", {"Vulkan", nullptr, nullptr}},
     {BackendType::Metal,  "metal",  {"MTL", nullptr, nullptr}},
+    {BackendType::WebGPU, "webgpu", {"WebGPU", nullptr, nullptr}},
 };
 
 bool reg_name_matches(BackendType type, const char * reg_name) {
@@ -309,7 +310,7 @@ void print_backend_devices(std::ostream & out) {
         }
         out << " [" << device.type << "]\n";
     }
-    out << "select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n";
+    out << "select with: --backend <cuda|hip|vulkan|metal|webgpu|cpu> --device <index>\n";
 }
 
 void print_backend_devices_json(std::ostream & out) {
@@ -380,6 +381,8 @@ ggml_backend_t init_backend(const BackendConfig & config) {
             return init_device_backend(BackendType::Vulkan, "Vulkan", config);
         case BackendType::Metal:
             return init_device_backend(BackendType::Metal, "Metal", config);
+        case BackendType::WebGPU:
+            return init_device_backend(BackendType::WebGPU, "WebGPU", config);
         case BackendType::BestAvailable: {
             if (!config.impl.empty() && config.impl != "default") {
                 throw std::runtime_error("A named backend implementation requires an explicit backend");
@@ -482,6 +485,9 @@ BackendType backend_type(ggml_backend_t backend) {
     }
     if (is_metal_backend_handle(backend)) {
         return BackendType::Metal;
+    }
+    if (backend_handle_matches(backend, BackendType::WebGPU)) {
+        return BackendType::WebGPU;
     }
     return BackendType::BestAvailable;
 }

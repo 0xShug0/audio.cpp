@@ -49,8 +49,9 @@ const runtime::SessionOptions & require_supported_backend_options(const runtime:
         options.backend.type != engine::core::BackendType::Cuda &&
         options.backend.type != engine::core::BackendType::Hip &&
         options.backend.type != engine::core::BackendType::Vulkan &&
-        options.backend.type != engine::core::BackendType::Metal) {
-        throw std::runtime_error("VibeVoice session supports only CPU, CUDA, HIP, Vulkan, and Metal backends");
+        options.backend.type != engine::core::BackendType::Metal &&
+        options.backend.type != engine::core::BackendType::WebGPU) {
+        throw std::runtime_error("VibeVoice session supports only CPU, CUDA, HIP, Vulkan, Metal, and WebGPU backends");
     }
     for (const auto & [key, value] : options.options) {
         if (key == "vibevoice.weight_type" ||

@@ -1,7 +1,10 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 
 #include "test_assert.h"
+#include "ggml-alloc.h"
 
 #include <cstdint>
 #include <cstring>
@@ -39,6 +42,7 @@ const char * backend_label(BackendType type) {
         case BackendType::Hip:           return "hip";
         case BackendType::Vulkan:        return "vulkan";
         case BackendType::Metal:         return "metal";
+        case BackendType::WebGPU:        return "webgpu";
         case BackendType::BestAvailable: return "best";
     }
     return "unknown";
@@ -62,6 +66,9 @@ std::optional<BackendType> backend_type_for_reg_name(const char * reg_name) {
     }
     if (std::strcmp(reg_name, "MTL") == 0) {
         return BackendType::Metal;
+    }
+    if (std::strcmp(reg_name, "WebGPU") == 0) {
+        return BackendType::WebGPU;
     }
     return std::nullopt;
 }
@@ -168,6 +175,7 @@ void test_unregistered_backends_are_rejected() {
              BackendType::Hip,
              BackendType::Vulkan,
              BackendType::Metal,
+             BackendType::WebGPU,
          }) {
         bool registered = false;
         for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
@@ -217,7 +225,7 @@ void test_text_listing_format_is_stable() {
         }
     }
     expected = "available_devices=" + std::to_string(count) + "\n" + expected +
-        "select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n";
+        "select with: --backend <cuda|hip|vulkan|metal|webgpu|cpu> --device <index>\n";
 
     std::ostringstream text;
     engine::core::print_backend_devices(text);
@@ -225,7 +233,7 @@ void test_text_listing_format_is_stable() {
 }
 
 std::optional<BackendType> backend_type_for_option(const std::string & option) {
-    for (const BackendType type : {BackendType::Cpu, BackendType::Cuda, BackendType::Hip, BackendType::Vulkan, BackendType::Metal}) {
+    for (const BackendType type : {BackendType::Cpu, BackendType::Cuda, BackendType::Hip, BackendType::Vulkan, BackendType::Metal, BackendType::WebGPU}) {
         if (option == backend_label(type)) {
             return type;
         }
@@ -249,6 +257,9 @@ std::string expected_backend_option(const std::string & registry) {
     }
     if (registry == "MTL") {
         return "metal";
+    }
+    if (registry == "WebGPU") {
+        return "webgpu";
     }
     return {};
 }
@@ -403,9 +414,49 @@ void test_host_and_best_backends_still_resolve() {
     require(best_backend.handle != nullptr, "best backend is null");
 }
 
+void test_webgpu_backend_instances_share_a_stable_device() {
+    auto reg = ggml_backend_reg_by_name("WebGPU");
+    if (reg == nullptr || ggml_backend_reg_dev_count(reg) == 0) return;
+    BackendConfig config;
+    config.type = BackendType::WebGPU;
+    BackendHandle first(engine::core::init_backend(config));
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(
+        ggml_init({1024 * 1024, nullptr, true}), ggml_free);
+    require(ctx != nullptr, "WebGPU lifetime graph context allocation");
+    auto * input = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, 4);
+    auto * output = ggml_scale(ctx.get(), input, 2.0F);
+    ggml_set_input(input);
+    ggml_set_output(output);
+    auto * graph = ggml_new_graph_custom(ctx.get(), 16, false);
+    ggml_build_forward_expand(graph, output);
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> alloc(
+        ggml_gallocr_new(ggml_backend_get_default_buffer_type(first.handle)), ggml_gallocr_free);
+    require(ggml_gallocr_alloc_graph(alloc.get(), graph), "WebGPU lifetime graph allocation");
+    const std::vector<float> values{1.0F, 2.0F, 3.0F, 4.0F};
+    BackendHandle second(nullptr);
+    for (int phase = 0; phase < 3; ++phase) {
+        if (phase == 1) second.handle = engine::core::init_backend(config);
+        if (phase == 2) {
+            ggml_backend_free(second.handle);
+            second.handle = nullptr;
+        }
+        ggml_backend_tensor_set(input, values.data(), 0, values.size() * sizeof(float));
+        require(ggml_backend_graph_compute(first.handle, graph) == GGML_STATUS_SUCCESS,
+                "WebGPU original backend remains executable");
+        std::vector<float> actual(values.size());
+        ggml_backend_tensor_get(output, actual.data(), 0, actual.size() * sizeof(float));
+        for (size_t i = 0; i < actual.size(); ++i) {
+            require_eq(actual[i], values[i] * 2.0F,
+                       "WebGPU original buffers/pipeline, phase " + std::to_string(phase));
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
+    engine::debug::configure_logging({true});
+    const auto started = std::chrono::steady_clock::now();
     try {
         test_every_enumerated_device_resolves();
         test_unregistered_backends_are_rejected();
@@ -414,10 +465,12 @@ int main() {
         test_text_listing_format_is_stable();
         test_json_listing_matches_selection();
         test_json_writer_exact_integers_and_nulls();
+        test_webgpu_backend_instances_share_a_stable_device();
     } catch (const std::exception & error) {
         std::cerr << "backend_device_resolution_test failed: " << error.what() << '\n';
         return 1;
     }
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
     std::cout << "backend_device_resolution_test passed\n";
     return 0;
 }
