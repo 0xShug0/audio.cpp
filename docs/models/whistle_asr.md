@@ -137,7 +137,7 @@ same host attention, mHC, Hadamard and cache logic. Build with
 --session-option 'whistle_asr.exec_plan={"decoder":{"impl":"neon"}}'
 ```
 
-The default is `host`; `impl: "default"` also selects it. Both implementations
+The default is `native`; `impl: "default"` also selects it. Both implementations
 run on CPU independently of the encoder backend and use the session thread
 count. No artifacts or parameters are accepted. Existing embedded GGUF specs
 can use this option without reconversion. The spec exposes the optional `language`

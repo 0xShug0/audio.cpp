@@ -28,7 +28,7 @@ runtime::SessionOptions require_supported_session(
 
 bool use_neon_decoder(const runtime::SessionOptions & options) {
     const auto plan = runtime::parse_exec_plan(options.options, "whistle_asr.exec_plan",
-        {{"decoder", "host", {{"host", {core::BackendType::Cpu}, {}, {}},
+        {{"decoder", "native", {{"native", {core::BackendType::Cpu}, {}, {}},
                               {"neon", {core::BackendType::Cpu}, {}, {}}}}});
     return plan.at("decoder").impl == "neon";
 }
