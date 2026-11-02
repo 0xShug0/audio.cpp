@@ -213,6 +213,7 @@ parse_exec_plan(const std::unordered_map<std::string, std::string> & options, st
                         {"rocm", core::BackendType::Hip},
                         {"vulkan", core::BackendType::Vulkan},
                         {"metal", core::BackendType::Metal},
+                        {"webgpu", core::BackendType::WebGPU},
                         {"best", core::BackendType::BestAvailable},
                     };
                     const auto backend =

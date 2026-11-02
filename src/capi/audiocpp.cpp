@@ -135,6 +135,7 @@ engine::core::BackendType parse_backend_type(const std::string & value) {
     if (value == "hip" || value == "rocm") return engine::core::BackendType::Hip;
     if (value == "vulkan") return engine::core::BackendType::Vulkan;
     if (value == "metal") return engine::core::BackendType::Metal;
+    if (value == "webgpu") return engine::core::BackendType::WebGPU;
     if (value == "best") return engine::core::BackendType::BestAvailable;
     throw std::invalid_argument("unsupported backend: " + value);
 }

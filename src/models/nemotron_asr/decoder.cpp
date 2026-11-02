@@ -231,11 +231,20 @@ void NemotronRnntDecoderRuntime::ensure_graph() {
     graph->logits = engine::modules::LinearModule({config.decoder_hidden_size, config.vocab_size, true})
                         .build(ctx, joint, weights_->decoder.joint_head);
 
-    ggml_set_output(graph->logits.tensor);
-    ggml_set_output(graph->decoder_cache_out.tensor);
+    std::vector<ggml_tensor *> outputs{graph->logits.tensor, graph->decoder_cache_out.tensor};
     for (size_t layer = 0; layer < graph->hidden_out.size(); ++layer) {
-        ggml_set_output(graph->hidden_out[layer].tensor);
-        ggml_set_output(graph->cell_out[layer].tensor);
+        outputs.push_back(graph->hidden_out[layer].tensor);
+        outputs.push_back(graph->cell_out[layer].tensor);
+    }
+    for (auto * output : outputs) {
+        ggml_set_output(output);
+        if (execution_context_->backend_type() == core::BackendType::WebGPU) {
+            // Older vendored ggml_set_output does not protect a view's backing
+            // allocation. WebGPU's workspace layout exposes that reuse here.
+            for (auto * base = output->view_src; base != nullptr; base = base->view_src) {
+                ggml_set_output(base);
+            }
+        }
     }
 
     graph->graph = ggml_new_graph(graph->ggml.get());

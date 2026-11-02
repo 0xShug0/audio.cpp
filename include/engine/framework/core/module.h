@@ -17,6 +17,7 @@ enum class BackendType {
     Vulkan,
     Metal,
     BestAvailable,
+    WebGPU,
 };
 
 // CUDA and HIP share ggml's ggml-cuda implementation for a small set of

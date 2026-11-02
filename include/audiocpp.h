@@ -235,7 +235,7 @@ AUDIOCPP_API audiocpp_status audiocpp_model_option(const audiocpp_model * model,
 /* Session                                                             */
 /* ------------------------------------------------------------------ */
 
-/* backend is "cpu", "cuda", "hip"/"rocm", "vulkan", "metal" or "best";
+/* backend is "cpu", "cuda", "hip"/"rocm", "vulkan", "metal", "webgpu" or "best";
  * NULL means "cpu". device and threads mirror --device / --threads. */
 typedef struct audiocpp_backend_config {
     const char * backend;

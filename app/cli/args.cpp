@@ -204,6 +204,9 @@ engine::core::BackendType parse_backend(const std::string & value) {
     if (value == "metal") {
         return engine::core::BackendType::Metal;
     }
+    if (value == "webgpu") {
+        return engine::core::BackendType::WebGPU;
+    }
     if (value == "best") {
         return engine::core::BackendType::BestAvailable;
     }

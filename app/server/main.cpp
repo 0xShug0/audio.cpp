@@ -103,7 +103,7 @@ void print_help() {
         << "                                   AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON at build time\n"
         << "  --host <ip>                      server bind address; default 127.0.0.1\n"
         << "  --port <port>                    server listening port; default 8080\n"
-        << "  --backend cpu|cuda|hip|rocm|vulkan|metal  default cuda (rocm is an alias for hip)\n"
+        << "  --backend cpu|cuda|hip|rocm|vulkan|metal|webgpu  default cuda (rocm is an alias for hip)\n"
         << "  --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
         << "  --list-devices                   list available backend devices and exit; add --json\n"
         << "                                   for PCI ids and free/total memory as JSON\n"

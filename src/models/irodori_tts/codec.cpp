@@ -229,6 +229,7 @@ core::TensorValue decoder_block(core::ModuleBuildContext &ctx,
   const bool crop_backend_output =
       ctx.backend_type == core::BackendType::Cpu ||
       ctx.backend_type == core::BackendType::Vulkan ||
+      ctx.backend_type == core::BackendType::WebGPU ||
       ctx.backend_type == core::BackendType::Metal;
   hidden = modules::ConvTranspose1dModule({
                                               in_channels,
