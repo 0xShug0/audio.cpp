@@ -1527,9 +1527,11 @@ public:
         request.generation.seed,
         sampling::TorchRandnPrecision::Float32);
 
+    // Without a caption every caption token is masked out, so the context
+    // carries none: no caption K/V, no masked keys in attention.
     IrodoriCaptionCondition rf_caption;
     std::vector<float> rf_caption_state;
-    if (config.use_caption_condition) {
+    if (config.use_caption_condition && request.caption.has_caption) {
       const int64_t dim = config.caption_dim_resolved();
       rf_caption.mask = request.caption.mask;
       rf_caption.has_caption = request.caption.has_caption;
@@ -1656,10 +1658,13 @@ public:
     const SampleShape shape = resolve_sample_shape(request);
 
     const auto context_start = Clock::now();
+    const bool has_caption =
+        config.use_caption_condition && request.caption.has_caption;
     const auto context = build_context_cache(
         request.conditions->text_state, *request.text_mask,
-        request.conditions->caption_state, request.caption, request.speaker,
-        false, false, false);
+        has_caption ? request.conditions->caption_state : std::vector<float>{},
+        has_caption ? request.caption : IrodoriCaptionCondition{},
+        request.speaker, false, false, false);
     if (timing != nullptr) {
       timing->context_cond_ms += debug::elapsed_ms(context_start);
     }
