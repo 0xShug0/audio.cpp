@@ -1,0 +1,89 @@
+{
+  "cases": [
+    {
+      "id": "realtime_reuse_benchmark",
+      "family": "realtime_reuse",
+      "model": "Real-time-RE-USE-GGUF/realtime-reuse-f32.gguf",
+      "task": "s2s",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup",
+          "audio": "assets/resources/sample.wav"
+        },
+        {
+          "id": "request1",
+          "audio": "assets/resources/sample.wav"
+        },
+        {
+          "id": "request2",
+          "audio": "assets/resources/sample.wav"
+        }
+      ]
+    },
+    {
+      "id": "realtime_reuse_offline",
+      "family": "realtime_reuse",
+      "model": "Real-time-RE-USE-GGUF/realtime-reuse-f32.gguf",
+      "task": "s2s",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup",
+          "audio": "assets/resources/sample.wav"
+        },
+        {
+          "id": "request1",
+          "audio": "assets/resources/sample.wav"
+        },
+        {
+          "id": "different",
+          "audio": "assets/resources/b.wav"
+        },
+        {
+          "id": "repeat",
+          "audio": "assets/resources/sample.wav"
+        }
+      ]
+    },
+    {
+      "id": "realtime_reuse_long",
+      "family": "realtime_reuse",
+      "model": "Real-time-RE-USE-GGUF/realtime-reuse-f32.gguf",
+      "task": "s2s",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup",
+          "audio": "assets/resources/sample.wav"
+        },
+        {
+          "id": "long",
+          "audio": "assets/resources/speech.wav"
+        }
+      ]
+    },
+    {
+      "id": "realtime_reuse_streaming",
+      "family": "realtime_reuse",
+      "model": "Real-time-RE-USE-GGUF/realtime-reuse-f32.gguf",
+      "task": "s2s",
+      "mode": "streaming",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "stream",
+          "audio": "assets/resources/sample.wav"
+        }
+      ]
+    }
+  ]
+}

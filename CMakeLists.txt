@@ -956,6 +956,18 @@ audiocpp_add_model(reuse
         engine::models::reuse::make_reuse_loader
 )
 
+audiocpp_add_model(realtime_reuse
+    SOURCES
+        src/community_models/realtime_reuse/assets.cpp
+        src/community_models/realtime_reuse/runtime.cpp
+        src/community_models/realtime_reuse/frontend.cpp
+        src/community_models/realtime_reuse/session.cpp
+    INCLUDES
+        engine/community_models/realtime_reuse/session.h
+    LOADERS
+        engine::models::realtime_reuse::make_realtime_reuse_loader
+)
+
 audiocpp_add_model(glm_tts
     SOURCES
         src/community_models/glm_tts/assets.cpp
@@ -4793,6 +4805,15 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 NAME test_sopro_tts_audio_ops
                 COMMAND test_sopro_tts_audio_ops
             )
+        endif()
+
+        if (realtime_reuse IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(test_realtime_reuse_streaming tests/realtime_reuse/test_streaming.cpp app/cli/args.cpp)
+            target_link_libraries(test_realtime_reuse_streaming PRIVATE engine_runtime ggml)
+            target_include_directories(test_realtime_reuse_streaming PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            add_executable(test_realtime_reuse_reference tests/realtime_reuse/test_reference.cpp app/cli/args.cpp)
+            target_link_libraries(test_realtime_reuse_reference PRIVATE engine_runtime ggml)
+            target_include_directories(test_realtime_reuse_reference PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         endif()
 
         if (reuse IN_LIST AUDIOCPP_LINKED_MODELS)

@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "family": "realtime_reuse",
+  "display_name": "Real-time RE-USE",
+  "description": "Causal universal speech enhancement with selectable exit layer and lookahead.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "s2s"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "s2s": [
+      "audio_enhancement"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type; native preserves GGUF tensor types.",
+        "preset": "weight_type_full",
+        "default": "native",
+        "required": false
+      },
+      {
+        "name": "exit_layer",
+        "type": "int",
+        "description": "Number of causal time-frequency blocks; selects the matching trained decoder.",
+        "min": 3,
+        "max": 12,
+        "default": 8,
+        "required": false
+      },
+      {
+        "name": "lookahead_frames",
+        "type": "int",
+        "description": "Encoder lookahead in 20 ms STFT frames.",
+        "min": 0,
+        "max": 2,
+        "default": 0,
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/RE-USE-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "realtime_reuse_f32",
+      "display_name": "Real-time RE-USE F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "RE-USE-GGUF",
+      "files": [
+        "realtime-reuse-f32.gguf"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "realtime_reuse_f32",
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/realtime_reuse.md",
+      "docs/audio_tools.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}
