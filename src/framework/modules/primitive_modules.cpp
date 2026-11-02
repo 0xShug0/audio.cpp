@@ -67,7 +67,7 @@ const core::ModuleSchema kMulSchema = {
     2,
     kSingleOutput,
     1,
-    "Elementwise multiplication for tensors with the same logical shape.",
+    "Elementwise multiplication; optional RHS broadcasting to the LHS shape.",
 };
 
 const core::ModulePortSpec kTimeMask4dInputs[] = {
@@ -301,7 +301,13 @@ core::TensorValue MulModule::build(
     if (ctx.ggml == nullptr) {
         throw std::runtime_error("ModuleBuildContext.ggml is null");
     }
-    validate_same_shape(lhs, rhs, "Mul rhs");
+    if (allow_broadcast_) {
+        if (!ggml_can_repeat(rhs.tensor, lhs.tensor)) {
+            throw std::runtime_error("Mul rhs shape cannot broadcast to lhs");
+        }
+    } else {
+        validate_same_shape(lhs, rhs, "Mul rhs");
+    }
     const auto lhs_contiguous = tensor_layout::ensure_contiguous_nontransposed_layout_if_needed(ctx, lhs);
     const auto rhs_contiguous = tensor_layout::ensure_contiguous_nontransposed_layout_if_needed(ctx, rhs);
     return core::wrap_tensor(ggml_mul(ctx.ggml, lhs_contiguous.tensor, rhs_contiguous.tensor), lhs.shape, GGML_TYPE_F32);

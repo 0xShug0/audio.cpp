@@ -7126,6 +7126,7 @@ static void ggml_compute_forward_conv_3d_impl(const ggml_compute_params * params
                                               ggml_tensor *               dst,
                                               ggml_type                   kernel_type) {
 
+    GGML_ASSERT(dst->op_params[12] == 0); // CUDA-only cuDNN lowering.
     GGML_ASSERT(ggml_is_contiguous(kernel));
     GGML_ASSERT(kernel_type == GGML_TYPE_F16 || kernel_type == GGML_TYPE_F32);
     GGML_ASSERT(kernel->type == kernel_type);

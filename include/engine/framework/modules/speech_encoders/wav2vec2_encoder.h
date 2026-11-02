@@ -48,6 +48,8 @@ struct Wav2Vec2EncoderConfig {
     Wav2Vec2FeatureExtractorNorm feature_extractor_norm = Wav2Vec2FeatureExtractorNorm::LayerNormEveryLayer;
     Wav2Vec2EncoderLayerNormOrder encoder_layer_norm_order = Wav2Vec2EncoderLayerNormOrder::PreNorm;
     bool record_final_layer_after_final_norm = false;
+    // Optional feature-extractor resampling before projection and attention.
+    int64_t feature_output_frames = 0;
 };
 
 struct Wav2Vec2EncoderLayerWeightNames {

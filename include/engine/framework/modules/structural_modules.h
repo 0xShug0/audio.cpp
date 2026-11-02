@@ -162,6 +162,7 @@ enum class Interpolate1dMode {
 struct Interpolate1dConfig {
     int64_t output_frames = 0;
     Interpolate1dMode mode = Interpolate1dMode::Nearest;
+    bool align_corners = false;
 };
 
 class Interpolate1dModule {

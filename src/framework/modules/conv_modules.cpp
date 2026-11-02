@@ -6,6 +6,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -830,6 +831,23 @@ const core::ModuleSchema & Conv2dModule::static_schema() noexcept {
 }
 
 Conv3dModule::Conv3dModule(Conv3dConfig config) : config_(config) {
+    if (config_.cuda_replicate_depth_left < -1 ||
+        (config_.cuda_replicate_depth_left >= 0 &&
+         (!config_.cuda_cudnn || config_.cuda_replicate_depth_left > 2LL * config_.padding_depth))) {
+        throw std::runtime_error("Invalid cuDNN Conv3D replicated depth padding");
+    }
+    if (config_.cuda_prepacked_weights && !config_.cuda_cudnn) {
+        throw std::runtime_error("Prepacked Conv3D weights require cuDNN lowering");
+    }
+    if (config_.cuda_f16_output && !config_.cuda_cudnn) {
+        throw std::runtime_error("FP16 Conv3D output requires cuDNN lowering");
+    }
+    if (config_.cuda_f16_output && config_.cuda_bf16_round) {
+        throw std::runtime_error("FP16 Conv3D output cannot be combined with BF16 rounding");
+    }
+    if (config_.cuda_bf16_round && !config_.cuda_cudnn) {
+        throw std::runtime_error("Conv3dConfig.cuda_bf16_round requires cuda_cudnn");
+    }
     if (config_.in_channels <= 0 || config_.out_channels <= 0 || config_.kernel_depth <= 0 || config_.kernel_height <= 0 ||
         config_.kernel_width <= 0) {
         throw std::runtime_error("Conv3dConfig dimensions must be positive");
@@ -866,6 +884,18 @@ core::TensorValue Conv3dModule::build(
             {config_.out_channels * config_.in_channels, config_.kernel_depth, config_.kernel_height, config_.kernel_width}),
         "weight");
 
+    if (config_.cuda_cudnn) {
+        if (ctx.backend_type != core::BackendType::Cuda || weights.weight.type != GGML_TYPE_F16 ||
+            (input.type != GGML_TYPE_F16 && input.type != GGML_TYPE_F32)) {
+            throw std::runtime_error("cuDNN Conv3D requires CUDA, F16 weights, and F16 or F32 input");
+        }
+        if (config_.padding_width < 0 || config_.padding_height < 0 || config_.padding_depth < 0 ||
+            config_.in_channels > std::numeric_limits<int>::max() ||
+            config_.out_channels > std::numeric_limits<int>::max() ||
+            batch <= 0 || batch > std::numeric_limits<int>::max()) {
+            throw std::runtime_error("cuDNN Conv3D requires non-negative padding and int-sized channel/batch dimensions");
+        }
+    }
     const auto output_shape = core::TensorShape::from_dims({
         batch * config_.out_channels,
         conv3d_output_dim(
@@ -887,9 +917,17 @@ core::TensorValue Conv3dModule::build(
             config_.padding_width,
             config_.dilation_width),
     });
-    const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
+    const auto input_contiguous = config_.cuda_cudnn
+        ? tensor_layout::ensure_contiguous_layout_if_needed(ctx, input)
+        : ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
     const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "Conv3dModule");
     auto output = core::wrap_tensor(
+        config_.cuda_cudnn ? (config_.cuda_f16_output ? ggml_conv_3d_direct_f16 : ggml_conv_3d_direct)(
+            ctx.ggml, weight_contiguous.tensor, input_contiguous.tensor,
+            config_.stride_width, config_.stride_height, config_.stride_depth,
+            config_.padding_width, config_.padding_height, config_.padding_depth,
+            config_.dilation_width, config_.dilation_height, config_.dilation_depth,
+            static_cast<int>(config_.in_channels), static_cast<int>(batch), static_cast<int>(config_.out_channels)) :
         ggml_conv_3d(
             ctx.ggml,
             weight_contiguous.tensor,
@@ -905,7 +943,23 @@ core::TensorValue Conv3dModule::build(
             config_.dilation_height,
             config_.dilation_depth),
         output_shape,
-        GGML_TYPE_F32);
+        config_.cuda_f16_output ? GGML_TYPE_F16 : GGML_TYPE_F32);
+    if (config_.cuda_cudnn) {
+        ggml_tensor * bias = nullptr;
+        if (config_.use_bias) {
+            if (!weights.bias.has_value()) {
+                throw std::runtime_error("bias is required when Conv3dConfig.use_bias is true");
+            }
+            core::validate_shape(*weights.bias, core::TensorShape::from_dims({config_.out_channels}), "bias");
+            if (weights.bias->type != GGML_TYPE_F32) {
+                throw std::runtime_error("cuDNN Conv3D requires F32 bias");
+            }
+            bias = tensor_layout::ensure_contiguous_layout_if_needed(ctx, *weights.bias).tensor;
+        }
+        ggml_conv_3d_direct_set_cudnn(output.tensor, bias, config_.cuda_bf16_round, config_.cuda_prepacked_weights,
+                                           config_.cuda_replicate_depth_left);
+        return output;
+    }
     if (config_.use_bias) {
         if (!weights.bias.has_value()) {
             throw std::runtime_error("bias is required when Conv3dConfig.use_bias is true");

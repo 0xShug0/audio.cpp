@@ -36,6 +36,8 @@ private:
 
 class MulModule {
 public:
+    MulModule() = default;
+    explicit MulModule(bool allow_broadcast) : allow_broadcast_(allow_broadcast) {}
     const core::ModuleSchema & schema() const noexcept;
     core::TensorValue build(
         core::ModuleBuildContext & ctx,
@@ -43,6 +45,8 @@ public:
         const core::TensorValue & rhs) const;
 
     static const core::ModuleSchema & static_schema() noexcept;
+private:
+    bool allow_broadcast_ = false;
 };
 
 struct ScaleBiasConfig {

@@ -589,6 +589,7 @@ add_library(engine_core OBJECT
     src/framework/modules/speech_encoders/s3_tokenizer.cpp
     src/framework/codecs/nemo_nano_codec_runtime.cpp
     src/framework/codecs/wan_video_vae_runtime.cpp
+    src/framework/codecs/ltx_video_vae_runtime.cpp
     src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
     src/framework/modules/vocoders/bigvgan_vocoder.cpp
     src/framework/modules/vocoders/hifigan_vocoder.cpp
@@ -4314,6 +4315,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME depthwise_conv1d_lowering_test COMMAND depthwise_conv1d_lowering_test)
 
         add_engine_unittest(conv_lowering_matrix_test tests/unittests/test_conv_lowering_matrix.cpp)
+        if (ENGINE_ENABLE_CUDA AND GGML_CUDA_CUDNN_CONV3D)
+            add_engine_unittest(cuda_cudnn_conv3d_test tests/unittests/test_cuda_cudnn_conv3d.cpp)
+            add_test(NAME cuda_cudnn_conv3d_test COMMAND cuda_cudnn_conv3d_test
+                --log "${CMAKE_CURRENT_BINARY_DIR}/cuda_cudnn_conv3d_test.log")
+            set_tests_properties(cuda_cudnn_conv3d_test PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
         if (ENGINE_ENABLE_HIP)
             target_compile_definitions(conv_lowering_matrix_test PRIVATE ENGINE_TEST_ENABLE_HIP=1)
         endif()

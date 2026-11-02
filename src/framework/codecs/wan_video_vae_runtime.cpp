@@ -758,6 +758,9 @@ WanCausalConv3dModule::build(engine::core::ModuleBuildContext &ctx,
 
 WanVideoRMSNorm3dModule::WanVideoRMSNorm3dModule(WanVideoRMSNorm3dConfig config)
     : config_(config) {
+  if (config_.cuda_f16_output && (!config_.cuda_fast_lowering || !config_.fuse_silu)) {
+    throw std::runtime_error("F16 RMSNorm/SiLU output requires CUDA fast lowering and fuse_silu");
+  }
   if (config_.channels <= 0) {
     throw std::runtime_error("Wan video RMSNorm channels must be positive");
   }
@@ -779,6 +782,29 @@ WanVideoRMSNorm3dModule::build(engine::core::ModuleBuildContext &ctx,
       weights.gamma, engine::core::TensorShape::from_dims({config_.channels}),
       "Wan video RMSNorm gamma");
 
+  if (config_.cuda_f16_output &&
+      !use_cuda_wan_vae_fast_path(ctx, config_.cuda_fast_lowering)) {
+    throw std::runtime_error("F16 RMSNorm/SiLU output requires a CUDA backend");
+  }
+  if (config_.fuse_silu) {
+    if (use_cuda_wan_vae_fast_path(ctx, config_.cuda_fast_lowering)) {
+      if (input.type != GGML_TYPE_F16 && input.type != GGML_TYPE_F32) {
+        throw std::runtime_error("CUDA RMSNorm/SiLU requires F16 or F32 input");
+      }
+      const auto contiguous =
+          engine::core::ensure_backend_addressable_layout(ctx, input);
+      auto *raw = (config_.cuda_f16_output ? ggml_rms_norm_channels_silu_f16
+                                          : ggml_rms_norm_channels_silu)(
+          ctx.ggml, contiguous.tensor, ensure_f32(ctx, weights.gamma).tensor, config_.eps);
+      ggml_rms_norm_channels_set_lowering(raw, GGML_RMS_NORM_CHANNELS_LOWERING_CUDA_COALESCED);
+      return engine::core::wrap_tensor(raw, input.shape,
+          config_.cuda_f16_output ? GGML_TYPE_F16 : GGML_TYPE_F32);
+    }
+    auto norm_config = config_;
+    norm_config.fuse_silu = false;
+    auto normalized = WanVideoRMSNorm3dModule(norm_config).build(ctx, input, weights);
+    return engine::modules::SiluModule{}.build(ctx, normalized);
+  }
   const auto input_f32 = ensure_f32(ctx, input);
   if (use_cuda_wan_vae_fast_path(ctx, config_.cuda_fast_lowering)) {
     auto contiguous =
