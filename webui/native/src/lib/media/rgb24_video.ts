@@ -43,14 +43,14 @@ function positiveInteger(value: string | undefined, name: string, label: string)
   return parsed;
 }
 
-function decodeBase64Frame(payload: string, offset: number, length: number): Uint8Array {
+export function decodeBase64Frame(payload: string, offset: number, length: number): Uint8Array {
   const binary = atob(payload.slice(offset, offset + length));
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
 }
 
-function rgb24ToRgba(rgb: Uint8Array): Uint8ClampedArray<ArrayBuffer> {
+export function rgb24ToRgba(rgb: Uint8Array): Uint8ClampedArray<ArrayBuffer> {
   const rgba = new Uint8ClampedArray(rgb.length / 3 * 4);
   for (let source = 0, target = 0; source < rgb.length; source += 3, target += 4) {
     rgba[target] = rgb[source];

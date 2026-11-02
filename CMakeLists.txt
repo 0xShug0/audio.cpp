@@ -3055,6 +3055,7 @@ endfunction()
 file(GLOB AUDIOCPP_RECIPE_PLUGIN_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/app/recipe/plugins/*.cpp")
 set(AUDIOCPP_RECIPE_SOURCES
+    app/recipe/streaming_tempo.cpp
     app/recipe/recipe.cpp
     ${AUDIOCPP_RECIPE_PLUGIN_SOURCES})
 

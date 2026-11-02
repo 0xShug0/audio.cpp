@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -31,8 +32,13 @@ public:
         const engine::runtime::TaskSpec & task,
         const engine::runtime::TaskRequest & request) override;
 
+    engine::runtime::TaskResult stream(std::string_view role,
+        const engine::runtime::TaskSpec & task, const engine::runtime::TaskRequest & request,
+        const RecipeEventSink & sink, const AudioChunkStream * source = nullptr) override;
 private:
     struct ModelEntry;
+    ModelEntry & model_for(std::string_view role, const engine::runtime::TaskSpec & task);
+    std::mutex models_mutex_;
 
     engine::runtime::ModelRegistry & registry_;
     CliRecipeOptions options_;

@@ -18,6 +18,7 @@ refer to entries in your server config, with the task/mode required by the route
 - [Voice discovery](#get-v1audiovoicesmodelid)
 - [Generic tasks and artifacts](#post-v1tasksrun)
 - [Generic streaming](#post-v1tasksstream) and [native batches](#post-v1tasksbatch)
+- [Streaming recipes](#post-v1recipesrun)
 - [Unload selected models](#post-v1tasksunload_models) or [all models](#post-v1tasksunload_all_models)
 
 ## `GET /health`
@@ -636,3 +637,78 @@ Response:
   "unloaded": ["pocket-tts", "qwen3-asr"]
 }
 ```
+
+## `POST /v1/recipes/run`
+
+Recipes connect named model roles. `GET /v1/recipes` lists available recipes
+and their required tasks and modes. With `stream: true`, this endpoint returns
+the same event/done SSE envelope as `/v1/tasks/stream`; set
+`include_artifacts: true` to include streamed video payloads.
+
+The `speaking-avatar` recipe connects a streaming TTS model to a streaming
+`gen` model through a bounded PCM pipe. It starts avatar generation
+while speech synthesis continues. Example with configured model IDs:
+
+```json
+{
+  "recipe": "speaking-avatar",
+  "stream": true,
+  "include_artifacts": true,
+  "models": {"tts": "chat-voice", "avatar": "chat-avatar"},
+  "request": {
+    "text": "Hello! How can I help you today?",
+    "voice_id": "american_english_female",
+    "options": {"avatar.reference_image_file": "/path/to/portrait.png"}
+  }
+}
+```
+
+Use `tts.` and `avatar.` prefixes for role-specific request options.
+`avatar_sample_rate` defaults to 16000. `speaking_speed` defaults to 1.0 and
+accepts values from 0.5 to 2.0. Other speeds require libsonic for pitch-preserving
+streaming tempo adjustment before both playback and avatar input. Normal speed
+bypasses the processor without loading libsonic. Different producer/consumer rates require
+libsoxr for continuous resampling; missing resampling support raises an error.
+The final response includes the complete synthesized audio for replay, while
+playback can begin from earlier streamed blocks.
+
+The `voice-chat-avatar` recipe connects three streaming roles: `conversation`
+(`s2s`), `tts` (`tts`) and `avatar` (`gen`). Conversation text is forwarded
+immediately and queued incrementally for TTS using the framework's UTF-8/tag-aware
+text chunker. TTS audio feeds the avatar while conversation generation continues;
+there is no complete-reply barrier between stages.
+
+Using model IDs from [the example config](../../examples/server/voice-chat-avatar.json):
+
+```json
+{
+  "recipe": "voice-chat-avatar",
+  "stream": true,
+  "include_artifacts": true,
+  "models": {
+    "conversation": "chat-conversation",
+    "tts": "chat-voice",
+    "avatar": "chat-avatar"
+  },
+  "request": {
+    "audio": "/path/to/question.wav",
+    "voice_id": "american_english_female",
+    "options": {
+      "conversation.return_codes": true,
+      "avatar.reference_image_file": "/path/to/portrait.png"
+    }
+  }
+}
+```
+
+Audio and portrait paths refer to files accessible to the server. Optional
+`request.text` is forwarded to the conversation model; LFM3 uses it as the
+system prompt, not as text to synthesize. Prefix conversation-specific options
+with `conversation.`. For LFM3, set
+`conversation.return_codes: true` to retain its reply artifact. On subsequent
+turns, send the accumulated `lfm3_audio.question` and `lfm3_audio.reply` artifacts
+in `request.artifacts`, as described in the
+[LFM3 conversation guide](../../docs/models/lfm3_audio.md). The recipe forwards
+input artifacts only to the conversation role and retains that role's output
+artifacts in its final response. All three roles require separate streaming
+sessions.
