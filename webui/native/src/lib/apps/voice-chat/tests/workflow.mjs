@@ -92,8 +92,17 @@ try {
   await page.goto(base);
   await page.getByRole('button', { name: 'Apps', exact: true }).click();
   await page.getByRole('button', { name: /Voice chat Talk with LFM3/ }).click();
+  assert.equal(await page.getByLabel('Conversation', { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel('Avatar model', { exact: true }).count(), 0);
   await page.getByLabel('Portrait', { exact: true }).setInputFiles({ name: 'portrait.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="#678"/></svg>') });
   await page.getByLabel('Voice', { exact: true }).selectOption('british_english_male');
+  assert.equal(await page.getByRole('button', { name: 'Refresh models', exact: true }).count(), 0);
+  const controls = await Promise.all([
+    page.getByLabel('Recognition', { exact: true }).boundingBox(),
+    page.getByLabel('Voice', { exact: true }).boundingBox(),
+    page.locator('.portrait-control').boundingBox()
+  ]);
+  assert.ok(controls.every(box => Math.abs(box.y - controls[0].y) < 1 && Math.abs(box.height - controls[0].height) < 1), 'setup controls must align');
   const send = () => page.getByLabel('Send a recording', { exact: true }).setInputFiles({ name: 'question.wav', mimeType: 'audio/wav', buffer: wav });
   await send();
   await page.locator('.portrait-stage.speaking').waitFor();

@@ -208,25 +208,28 @@
 </script>
 
 <section class="voice-chat" bind:this={root}>
-  <header><div><span class="eyebrow">LFM3 · SOULX</span><h1>A face to talk to.</h1><p>Your words. A familiar voice. A conversation that moves.</p></div>
+  <header><div><span class="eyebrow">LFM3 · SOULX</span><h1>Voice chat</h1><p>Talk naturally, with a voice and avatar you choose.</p></div>
     <div class="tools"><button disabled={busy || recording} on:click={resetChat} aria-label="New conversation"><RotateCcw size={16}/> New chat</button><button on:click={() => settingsOpen = !settingsOpen} aria-expanded={settingsOpen}><Settings2 size={16}/> Setup</button></div>
   </header>
   {#if settingsOpen}
     <div class="setup">
       <label>Recognition<select aria-label="Recognition" bind:value={asrId} disabled={busy || recording}><option value="">Choose an ASR model</option>{#each asrChoices as c}<option value={c.id}>{c.name}</option>{/each}</select></label>
-      <label>Conversation<select aria-label="Conversation" bind:value={brainId} disabled={busy || recording}><option value="">Choose LFM3-Audio</option>{#each brainChoices as c}<option value={c.id}>{c.name}</option>{/each}</select></label>
       <label>Voice<select aria-label="Voice" bind:value={voice} disabled={busy || recording}>{#each voices as v}<option value={v}>{label(v)}</option>{/each}</select></label>
-      <label>Avatar model<select aria-label="Avatar model" bind:value={avatarId} disabled={busy || recording}><option value="">Choose SoulX-FlashHead</option>{#each avatarChoices as c}<option value={c.id}>{c.name}</option>{/each}</select></label>
       <div class="portrait-pick">
-        <label>Portrait<input type="file" accept="image/*" disabled={busy || recording} on:change={e => choosePortrait(e.currentTarget.files?.[0])}/></label>
+        <label>Portrait
+          <span class="portrait-control">
+            <span class="portrait-filename">{portrait?.name || 'Choose an image…'}</span>
+            <Upload size={16}/>
+            <input aria-label="Portrait" type="file" accept="image/*" disabled={busy || recording} on:change={e => choosePortrait(e.currentTarget.files?.[0])}/>
+          </span>
+        </label>
         {#if portraitUrl}
           <figure class="crop-preview">
             <img src={portraitUrl} alt="Avatar center-crop preview"/>
-            <figcaption>512 × 512 · center crop</figcaption>
+            <figcaption>512 × 512<br/>Center crop</figcaption>
           </figure>
         {/if}
       </div>
-      <button disabled={loading || busy || recording} on:click={refresh}>Refresh models</button>
       {#if !loading && (!asrChoices.length || !brainChoices.length || !avatarChoices.length)}<p class="setup-note">Install or register ASR, LFM3-Audio (S2S and TTS), and SoulX-FlashHead models first.</p>{/if}
     </div>
   {/if}
@@ -244,13 +247,110 @@
       </div>
       {#if metrics}<div class="timing" data-session-wall-ms={metrics.wall} data-audio-duration-ms={metrics.duration} data-first-video-ms={metrics.firstVideo}>{(metrics.wall / 1000).toFixed(1)} s to generate · {(metrics.duration / 1000).toFixed(1)} s of speech · RTF {(metrics.wall / metrics.duration).toFixed(2)}</div>{/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <div class="composer"><div class="status" role="status">{speaking ? 'Speaking…' : status}</div><div class="actions"><label class="upload" title="Send an audio recording"><Upload size={18}/><span class="sr-only">Send a recording</span><input aria-label="Send a recording" type="file" accept="audio/*" disabled={!ready || busy || recording} on:change={e => { void send(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }}/></label>{#if busy}<button class="talk stop" on:click={cancel}><Square size={18}/> Stop</button>{:else}<button class="talk" class:recording on:click={record} disabled={!ready || loading || requestingMicrophone}>{#if recording}<Square size={18}/> Finish{:else}<Mic size={18}/> Talk{/if}</button>{/if}</div></div>
-      <p class="footnote">Press Talk to record. Press Finish to send. New chat clears conversation context.</p>
+      <div class="composer"><div class="status" role="status">{speaking ? 'Speaking…' : status}</div><div class="actions"><label class="upload" title="Upload an audio recording of your question"><Upload size={18}/><span>Upload recording</span><input aria-label="Send a recording" type="file" accept="audio/*" disabled={!ready || busy || recording} on:change={e => { void send(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }}/></label>{#if busy}<button class="talk stop" on:click={cancel}><Square size={18}/> Stop</button>{:else}<button class="talk" class:recording on:click={record} disabled={!ready || loading || requestingMicrophone}>{#if recording}<Square size={18}/> Finish{:else}<Mic size={18}/> Talk{/if}</button>{/if}</div></div>
+      <p class="footnote">Record with Talk, then press Finish to send. Or upload a recording of your question. New chat clears conversation context.</p>
     </div>
   </div>
 </section>
 
 <style>
-  .voice-chat{max-width:1240px;margin:20px auto 40px;color:var(--text)}header{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:26px}.eyebrow{font-size:10px;letter-spacing:.2em;color:var(--cyan)}h1{font-size:36px;letter-spacing:-1.4px;margin:8px 0}header p{color:var(--muted);font-size:13px;margin:0}.tools{display:flex;gap:8px}.tools button{display:flex;gap:7px;align-items:center;font-size:12px}.setup{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;padding:20px;margin-bottom:22px;background:var(--panel);border:1px solid var(--border);border-radius:14px}.setup label{display:flex;flex-direction:column;gap:7px;font-size:11px;color:var(--muted)}select,input{width:100%;min-width:0}.portrait-pick{grid-column:span 2}.setup button{align-self:end}.setup-note{grid-column:1/-1;color:var(--muted);font-size:12px;margin:0}.conversation{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(360px,1.15fr);border:1px solid var(--border);border-radius:20px;overflow:hidden;background:var(--panel);min-height:600px}.portrait-stage{position:relative;background:radial-gradient(ellipse at 50% 30%,#303945,#111922);min-height:560px;overflow:hidden}.portrait-stage img,.portrait-stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center}.portrait-stage canvas{opacity:0;object-fit:cover;background:#111922}.portrait-stage canvas.visible{opacity:1}.portrait-stage:after{content:'';position:absolute;inset:50% 0 0;background:linear-gradient(transparent,#0c1119c9);pointer-events:none}.portrait-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;color:#aab8c9}.portrait-empty span{font-size:18px}.portrait-empty small{font-size:12px}.stage-caption{position:absolute;bottom:24px;left:24px;right:24px;z-index:1;display:flex;align-items:center;gap:10px;color:white;font-size:12px}.live-dot{width:7px;height:7px;border-radius:50%;background:#6b8195}.live-dot.pulse{background:#93dfbd;box-shadow:0 0 16px #93dfbd}.private{margin-left:auto;font-size:9px;letter-spacing:.12em;color:#bbc5cf}.chat-panel{display:flex;flex-direction:column;min-width:0}.chat-heading{padding:23px 25px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;font-size:13px}.session-tag{font-size:11px;color:var(--muted)}.messages{padding:24px;flex:1;overflow:auto;max-height:520px;min-height:330px}.welcome{padding:45px 12px;color:var(--muted)}.greeting{font-size:28px;letter-spacing:-.8px;color:var(--text)}.welcome p{font-size:14px;line-height:1.8;max-width:300px}.suggestion{margin-top:30px;font-size:12px;border:1px solid var(--border);border-radius:10px;padding:14px;display:inline-block}article{max-width:92%;margin:0 0 22px;padding:16px 18px;border-radius:14px;background:var(--bg)}article.user{margin-left:auto;background:color-mix(in srgb,var(--cyan) 9%,var(--panel));border:1px solid color-mix(in srgb,var(--cyan) 18%,transparent)}.speaker-name{font-size:9px;letter-spacing:.12em;color:var(--muted)}article p{font-size:14px;line-height:1.7;margin:7px 0 0;white-space:pre-wrap}article audio{color-scheme:dark;width:100%;height:32px;margin-top:12px}article.failed{border:1px solid var(--danger)}article small,.error{color:var(--danger)}.error{margin:0;padding:12px 24px;font-size:12px}.composer{border-top:1px solid var(--border);padding:18px 24px;display:flex;align-items:center;gap:16px;justify-content:space-between}.status{font-size:12px;color:var(--muted)}.actions{display:flex;align-items:center;gap:12px}.talk{display:flex;align-items:center;gap:9px;background:var(--cyan);color:#07171c;border:0;border-radius:30px;padding:13px 22px;font-weight:650;min-width:110px;justify-content:center}.talk.stop,.talk.recording{background:#f4a99e}.upload{position:relative;cursor:pointer;display:flex;color:var(--muted)}.upload input{position:absolute;inset:0;opacity:0;width:24px;cursor:pointer}.footnote{font-size:10px;color:var(--muted);padding:0 24px 16px;margin:0}.timing{padding:8px 24px;font-size:10px;color:var(--muted)}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}@media(max-width:800px){header{align-items:flex-start}h1{font-size:28px}.conversation{grid-template-columns:1fr}.portrait-stage{min-height:340px;max-height:420px}.setup{grid-template-columns:repeat(2,minmax(0,1fr))}.messages{max-height:430px}.tools button{font-size:0}.tools :global(svg){width:18px}}
-  .crop-preview{margin:12px 0 0}.crop-preview img{display:block;width:160px;height:160px;object-fit:cover;object-position:center;border-radius:10px;border:1px solid var(--border)}.crop-preview figcaption{margin-top:7px;font-size:11px;color:var(--muted)}
+  .voice-chat { max-width: 77.5rem; margin: 1.25rem auto 2.5rem; color: var(--text); }
+  .voice-chat p { font-family: inherit; }
+  header { display: flex; justify-content: space-between; gap: 1.25rem; align-items: center; margin-bottom: 1.625rem; }
+  .eyebrow { font-size: .625rem; letter-spacing: .2em; color: var(--cyan); }
+  h1 { font-size: 2.25rem; letter-spacing: -.04em; margin: .5rem 0; }
+  header p { color: var(--muted); font-size: .8125rem; margin: 0; }
+  .tools { display: flex; gap: .5rem; flex-shrink: 0; }
+  .tools button { display: flex; gap: .4375rem; align-items: center; font-size: .75rem; }
+  .setup {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    gap: 1.25rem;
+    align-items: start;
+    padding: 1.25rem;
+    margin-bottom: 1.375rem;
+    background: var(--panel);
+    border: .0625rem solid var(--line);
+    border-radius: .875rem;
+  }
+  .setup label { display: flex; flex-direction: column; align-self: start; gap: .5rem; margin: 0; line-height: 1.4; font-size: .75rem; color: var(--muted); }
+  select, input { width: 100%; min-width: 0; box-sizing: border-box; }
+  .setup select, .portrait-control {
+    box-sizing: border-box;
+    min-block-size: 3em;
+    margin: 0;
+    padding: .625em .75em;
+    font-size: .875rem;
+    line-height: 1.5;
+    background: var(--control-bg);
+    color: var(--text);
+    border: .0625rem solid var(--control-border);
+    border-radius: .5rem;
+  }
+  .portrait-pick { min-width: 0; }
+  .portrait-control { position: relative; display: flex; align-items: center; justify-content: space-between; gap: .75rem; cursor: pointer; }
+  .portrait-control input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
+  .portrait-control:focus-within { outline: .125rem solid var(--cyan); outline-offset: .125rem; }
+  .portrait-filename { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .portrait-control :global(svg) { flex: none; }
+  .setup-note { grid-column: 1 / -1; color: var(--muted); font-size: .75rem; margin: 0; }
+  .crop-preview { display: flex; align-items: center; gap: .75rem; margin: .75rem 0 0; }
+  .crop-preview img { display: block; inline-size: 4rem; aspect-ratio: 1; object-fit: cover; object-position: center; border-radius: .625rem; border: .0625rem solid var(--line); }
+  .crop-preview figcaption { margin: 0; line-height: 1.6; font-size: .6875rem; color: var(--muted); }
+  .conversation {
+    display: grid;
+    grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
+    block-size: clamp(30rem, 70dvh, 48rem);
+    border: .0625rem solid var(--line);
+    border-radius: 1.25rem;
+    overflow: hidden;
+    background: var(--panel);
+  }
+  .portrait-stage { position: relative; background: radial-gradient(ellipse at 50% 30%, #303945, #111922); min-height: 0; overflow: hidden; }
+  .portrait-stage img, .portrait-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+  .portrait-stage canvas { opacity: 0; background: #111922; }
+  .portrait-stage canvas.visible { opacity: 1; }
+  .portrait-stage:after { content: ''; position: absolute; inset: 50% 0 0; background: linear-gradient(transparent, #0c1119c9); pointer-events: none; }
+  .portrait-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.25rem; color: #aab8c9; }
+  .portrait-empty span { font-size: 1.125rem; }
+  .portrait-empty small { font-size: .75rem; }
+  .stage-caption { position: absolute; bottom: 1.5rem; left: 1.5rem; right: 1.5rem; z-index: 1; display: flex; align-items: center; gap: .625rem; color: white; font-size: .75rem; }
+  .live-dot { width: .4375rem; aspect-ratio: 1; flex: none; border-radius: 50%; background: #6b8195; }
+  .live-dot.pulse { background: #93dfbd; box-shadow: 0 0 1rem #93dfbd; }
+  .private { margin-left: auto; font-size: .5625rem; letter-spacing: .12em; color: #bbc5cf; }
+  .chat-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .chat-heading { padding: 1.4375rem 1.5625rem; border-bottom: .0625rem solid var(--line); display: flex; justify-content: space-between; gap: 1rem; font-size: .8125rem; }
+  .session-tag { font-size: .6875rem; color: var(--muted); text-align: right; }
+  .messages { padding: 1.5rem; flex: 1; overflow: auto; min-height: 0; }
+  .welcome { padding: 2.8125rem .75rem; color: var(--muted); }
+  .greeting { font-size: 1.75rem; letter-spacing: -.03em; color: var(--text); }
+  .welcome p { font-size: .875rem; line-height: 1.8; max-width: 24ch; }
+  .suggestion { margin-top: 1.875rem; font-size: .75rem; border: .0625rem solid var(--line); border-radius: .625rem; padding: .875rem; display: inline-block; }
+  article { max-width: 92%; margin: 0 0 1.375rem; padding: 1rem 1.125rem; border-radius: .875rem; background: var(--bg); }
+  article.user { margin-left: auto; background: color-mix(in srgb, var(--cyan) 9%, var(--panel)); border: .0625rem solid color-mix(in srgb, var(--cyan) 18%, transparent); }
+  .speaker-name { font-size: .5625rem; letter-spacing: .12em; color: var(--muted); }
+  article p { font-size: .875rem; line-height: 1.7; margin: .4375rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  article audio { color-scheme: dark; width: 100%; height: 2rem; margin-top: .75rem; }
+  article.failed { border: .0625rem solid var(--danger); }
+  article small, .error { color: var(--danger); }
+  .error { margin: 0; padding: .75rem 1.5rem; font-size: .75rem; }
+  .composer { border-top: .0625rem solid var(--line); padding: 1.125rem 1.5rem; display: flex; align-items: center; gap: 1rem; justify-content: space-between; }
+  .status { font-size: .75rem; color: var(--muted); }
+  .actions { display: flex; align-items: center; gap: .75rem; flex-shrink: 0; }
+  .talk { display: flex; align-items: center; gap: .5625rem; background: var(--cyan); color: #07171c; border: 0; border-radius: 2em; padding: .8125em 1.375em; font-weight: 650; min-inline-size: 7em; justify-content: center; }
+  .talk.stop, .talk.recording { background: #f4a99e; }
+  .upload { position: relative; cursor: pointer; display: flex; align-items: center; gap: .5em; margin: 0; font-size: .75rem; color: var(--muted); }
+  .upload input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+  .footnote { font-size: .625rem; color: var(--muted); padding: 0 1.5rem 1rem; margin: 0; }
+  .timing { padding: .5rem 1.5rem; font-size: .625rem; color: var(--muted); }
+  @media (max-width: 50rem) {
+    header { align-items: flex-start; flex-wrap: wrap; }
+    h1 { font-size: 1.75rem; }
+    .conversation { grid-template-columns: 1fr; block-size: auto; }
+    .portrait-stage { aspect-ratio: 1; max-block-size: 60dvh; }
+    .chat-panel { block-size: min(65dvh, 38rem); min-block-size: 24rem; }
+    .tools { flex-wrap: wrap; }
+    .composer { flex-wrap: wrap; }
+    .actions { flex-wrap: wrap; max-width: 100%; }
+  }
 </style>

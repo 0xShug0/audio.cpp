@@ -1,7 +1,8 @@
 # Voice chat
 
-Choose an ASR model, LFM3-Audio for conversation and voice synthesis, and
-SoulX-FlashHead for portrait animation. The app uses its own model selections
+Choose an ASR model and a built-in voice. The app automatically uses installed
+LFM3-Audio for conversation and voice synthesis and SoulX-FlashHead for portrait
+animation. The app uses its own model selections
 and conversation state, independently of Studio.
 
 ## Conversation flow
@@ -61,8 +62,9 @@ build/debug/bin/audiocpp_server --config examples/server/voice-chat-avatar.json 
   --log > voice-chat.log 2>&1
 ```
 
-Open **Apps → Voice chat**, select the models, voice and portrait, then press
-**Talk**.
+Open **Apps → Voice chat**, select recognition, voice and portrait, then press
+**Talk**. LFM3-Audio and SoulX-FlashHead are fixed for this app and are selected
+automatically.
 
 The example selects SoulX's cuDNN VAE implementation and requires a binary
 built with cuDNN Conv3D support. Follow
