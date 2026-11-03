@@ -6848,7 +6848,23 @@ template <typename T, uint32_t N> const T *push_constant_data(const std::array<T
 }
 
 template <typename T>
-static void ggml_vk_dispatch_pipeline(ggml_backend_vk_context* ctx, vk_context& subctx, vk_pipeline& pipeline, std::initializer_list<vk::DescriptorBufferInfo> const& descriptor_buffer_infos, const T &push_constants, std::array<uint32_t, 3> elements) {
+static void ggml_vk_dispatch_pipeline(ggml_backend_vk_context* ctx, vk_context& subctx, vk_pipeline& base_pipeline, std::initializer_list<vk::DescriptorBufferInfo> const& descriptor_buffer_infos, const T &push_constants, std::array<uint32_t, 3> elements) {
+    vk_pipeline * selected = &base_pipeline;
+#if defined(VK_EXT_shader_64bit_indexing)
+    if (ctx->device->shader_64b_indexing && std::any_of(descriptor_buffer_infos.begin(), descriptor_buffer_infos.end(),
+            [&](const vk::DescriptorBufferInfo & buffer) {
+                return buffer.range > ctx->device->properties.limits.maxStorageBufferRange;
+            })) {
+        while (*selected && !(*selected)->is_64b_indexing) {
+            selected = &(*selected)->next;
+        }
+        GGML_ASSERT(*selected);
+        if (!(*selected)->compiled) {
+            ggml_pipeline_request_descriptor_sets(ctx, *selected, 0);
+        }
+    }
+#endif
+    vk_pipeline & pipeline = *selected;
     const uint32_t wg0 = CEIL_DIV(elements[0], pipeline->wg_denoms[0]);
     const uint32_t wg1 = CEIL_DIV(elements[1], pipeline->wg_denoms[1]);
     const uint32_t wg2 = CEIL_DIV(elements[2], pipeline->wg_denoms[2]);
