@@ -94,6 +94,8 @@ void ggml_compute_forward_flash_attn_back(
         struct ggml_tensor * dst);
 void ggml_compute_forward_ssm_conv(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_ssm_scan(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_ssm_conv_causal_silu(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_ssm_scan_mamba1(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_win_part(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_win_unpart(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_unary(const struct ggml_compute_params * params, struct ggml_tensor * dst);

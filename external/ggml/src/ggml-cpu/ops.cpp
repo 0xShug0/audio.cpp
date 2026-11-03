@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <vector>
 
 // ggml_compute_forward_dup
 
@@ -9579,6 +9580,69 @@ void ggml_compute_forward_flash_attn_back(
 }
 
 // ggml_compute_forward_ssm_conv
+
+void ggml_compute_forward_ssm_conv_causal_silu(const ggml_compute_params * params, ggml_tensor * dst) {
+    const auto * x = dst->src[0];
+    const auto * w = (const float *) dst->src[1]->data;
+    const auto * bias = (const float *) dst->src[2]->data;
+    const int64_t taps = dst->src[1]->ne[0], channels = x->ne[1], tokens = x->ne[0];
+    auto * output = (float *) dst->data;
+    for (int64_t row = params->ith; row < channels*x->ne[2]; row += params->nth) {
+        const int64_t channel = row % channels, seq = row / channels;
+        for (int64_t t = 0; t < tokens; ++t) {
+            float value = 0;
+            for (int64_t k = 0; k < taps; ++k) {
+                const int64_t time = t + k - taps + 1;
+                const float sample = time < 0 ? 0.0f : *(const float *)
+                    ((const char *) x->data + time*x->nb[0] + channel*x->nb[1] + seq*x->nb[2]);
+                value = std::fma(sample, w[channel*taps + k], value);
+            }
+            value += bias[channel];
+            output[(seq*tokens + t)*channels + channel] = value / (1.0f + std::exp(-value));
+        }
+    }
+}
+
+void ggml_compute_forward_ssm_scan_mamba1(const ggml_compute_params * params, ggml_tensor * dst) {
+    const auto * initial = dst->src[0];
+    const auto * x = dst->src[1];
+    const auto * projected = dst->src[2];
+    const auto * A = dst->src[3];
+    const auto * ids = (const int32_t *) dst->src[4]->data;
+    const auto * dw = (const float *) dst->src[5]->data;
+    const auto * db = (const float *) dst->src[6]->data;
+    const auto * D = (const float *) dst->src[7]->data;
+    const auto * gate = dst->src[8];
+    const int64_t size = initial->ne[0], channels = x->ne[1], tokens = x->ne[2], sequences = x->ne[3];
+    const int64_t rank = dst->src[5]->ne[0];
+    auto * output = (float *) dst->data;
+    std::vector<float> state(size);
+    for (int64_t row = params->ith; row < channels*sequences; row += params->nth) {
+        const int64_t channel = row % channels, seq = row / channels;
+        GGML_ASSERT(ids[seq] >= 0 && ids[seq] < initial->ne[3]);
+        const auto * start = (const float *) ((const char *) initial->data + channel*initial->nb[2] + ids[seq]*initial->nb[3]);
+        std::copy(start, start + size, state.begin());
+        const auto * decay = (const float *) ((const char *) A->data + channel*A->nb[1]);
+        for (int64_t t = 0; t < tokens; ++t) {
+            const auto * p = (const float *) ((const char *) projected->data + t*projected->nb[1] + seq*projected->nb[2]);
+            float delta = 0;
+            for (int64_t k = 0; k < rank; ++k) delta = std::fma(dw[channel*rank + k], p[k], delta);
+            delta += db[channel];
+            delta = delta <= 20.0f ? std::log(1.0f + std::exp(delta)) : delta;
+            const float sample = *(const float *) ((const char *) x->data + channel*x->nb[1] + t*x->nb[2] + seq*x->nb[3]);
+            const float injection = sample*delta;
+            float sum[4] = {0, 0, 0, 0};
+            for (int64_t n = 0; n < size; ++n) {
+                state[n] = std::fma(state[n], std::exp(delta*decay[A->ne[0] == 1 ? 0 : n]), p[rank + n]*injection);
+                sum[n % 4] = std::fma(state[n], p[rank + size + n], sum[n % 4]);
+            }
+            const float y = (sum[0] + sum[1] + sum[2] + sum[3]) + sample*D[channel];
+            const float z = *(const float *) ((const char *) gate->data + channel*gate->nb[0] + t*gate->nb[1] + seq*gate->nb[2]);
+            output[(seq*tokens + t)*channels + channel] = (z / (1.0f + std::exp(-z)))*y;
+        }
+        std::copy(state.begin(), state.end(), output + channels*tokens*sequences + row*size);
+    }
+}
 
 static void ggml_compute_forward_ssm_conv_f32(
         const ggml_compute_params * params,

@@ -623,6 +623,9 @@ extern "C" {
         GGML_OP_SNAKE_1D,
         GGML_OP_FLASH_ATTN_F16_HEAD40,
 
+        GGML_OP_SSM_CONV_CAUSAL_SILU,
+        GGML_OP_SSM_SCAN_MAMBA1,
+
         GGML_OP_COUNT,
     };
 
@@ -727,11 +730,6 @@ extern "C" {
     enum ggml_ssm_conv_fusion {
         GGML_SSM_CONV_FUSION_NONE = 0,
         GGML_SSM_CONV_FUSION_CAUSAL_PAD = 1,
-    };
-
-    enum ggml_ssm_conv_lowering {
-        GGML_SSM_CONV_LOWERING_DEFAULT = 0,
-        GGML_SSM_CONV_LOWERING_METAL_TILED = 1,
     };
 
     enum ggml_rms_norm_channels_lowering {
@@ -2395,6 +2393,10 @@ extern "C" {
     GGML_API void ggml_conv_2d_direct_set_cudnn(struct ggml_tensor * tensor);
     GGML_API void ggml_conv_2d_direct_set_cudnn_bias(struct ggml_tensor * tensor, struct ggml_tensor * bias);
 
+    // Explicit F32 Metal MMA lowering, IC divisible by 32. Adds channel-fast
+    // packed inputs as allocator-visible sources; other backends retain W/X.
+    GGML_API void ggml_conv_2d_direct_set_metal_implicit(struct ggml_context * ctx, struct ggml_tensor * tensor);
+
     // Explicit CUDA-only F16/F32 input, F16 weight, F16/F32 output lowering. Requires
     // GGML_CUDA_CUDNN_CONV3D; unmarked direct Conv3D retains its existing semantics.
     // op_params[12] is reserved for this lowering (0 = default, 1 = cuDNN).
@@ -2833,10 +2835,6 @@ extern "C" {
             struct ggml_tensor         * tensor,
             enum ggml_ssm_conv_fusion   fusion);
 
-    GGML_API void ggml_ssm_conv_set_lowering(
-            struct ggml_tensor          * tensor,
-            enum ggml_ssm_conv_lowering   lowering);
-
     GGML_API struct ggml_tensor * ggml_ssm_scan(
             struct ggml_context * ctx,
             struct ggml_tensor  * s,
@@ -2850,6 +2848,33 @@ extern "C" {
     GGML_API void ggml_ssm_scan_set_fusion(
             struct ggml_tensor         * tensor,
             enum ggml_ssm_scan_fusion   fusion);
+
+    // Opt-in causal depthwise convolution + channel bias + SiLU; ordinary SSM_CONV is unchanged.
+    // x: [tokens, channels, sequences], w: [taps, channels], bias: [channels].
+    // Output: [channels, tokens, sequences]. F32, including strided input views.
+    GGML_API struct ggml_tensor * ggml_ssm_conv_causal_silu(
+            struct ggml_context * ctx,
+            struct ggml_tensor * x,
+            struct ggml_tensor * w,
+            struct ggml_tensor * bias);
+
+    // Opt-in Mamba-1 scan with inline DT projection, D skip and SiLU gate. F32.
+    // Metal specializes the DT rank internally; ordinary SSM_SCAN is unchanged.
+    // state: [state_size, 1, channels, slots], x: [1, channels, tokens, sequences],
+    // projected: [dt_rank + 2*state_size, tokens, sequences], dt_w: [dt_rank, channels],
+    // A: [state_size or 1, channels], dt_bias/D: [channels], gate: [channels, tokens, sequences].
+    // ids selects valid input state slots. Output is flattened gated y followed by final states.
+    GGML_API struct ggml_tensor * ggml_ssm_scan_mamba1(
+            struct ggml_context * ctx,
+            struct ggml_tensor * state,
+            struct ggml_tensor * x,
+            struct ggml_tensor * projected,
+            struct ggml_tensor * A,
+            struct ggml_tensor * ids,
+            struct ggml_tensor * dt_w,
+            struct ggml_tensor * dt_bias,
+            struct ggml_tensor * D,
+            struct ggml_tensor * gate);
 
     // Metal: keep 16-element state vectors in registers; other sizes use the default kernel.
     GGML_API void ggml_ssm_scan_set_lowering(

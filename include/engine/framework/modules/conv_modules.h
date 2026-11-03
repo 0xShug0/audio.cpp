@@ -77,6 +77,8 @@ struct Conv2dConfig {
     bool cuda_f16_output = false;
     // Metal: FP32 per-tap GEMMs avoid materializing large im2col buffers.
     bool metal_per_tap = false;
+    // Opt-in Metal F32 implicit MMA, IC divisible by 32; other cases retain the existing path.
+    bool implicit_gemm = false;
 };
 
 struct Conv2dWeights {
