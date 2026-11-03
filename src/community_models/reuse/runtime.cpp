@@ -324,13 +324,14 @@ private:
         }
         const auto projection = modules::SliceModule({2, 0, 256}).build(ctx, packed);
         auto * projected = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, projection).tensor;
-        // Metal consumes the strided projection directly; conv weights are loaded as F32.
-        const bool metal_mamba = ctx.backend_type == core::BackendType::Metal;
-        const bool compact_scan = metal_mamba &&
+        // The explicit causal op consumes the strided projection directly; conv weights are F32.
+        const bool fused_mamba = ctx.backend_type == core::BackendType::Metal ||
+            ctx.backend_type == core::BackendType::Vulkan;
+        const bool compact_scan = fused_mamba &&
             weights_.at(prefix + ".dt_proj.weight").tensor->type == GGML_TYPE_F32;
         const auto sequence_shape = TensorShape::from_dims({batch, length, 256});
         core::TensorValue value;
-        if (metal_mamba) {
+        if (fused_mamba) {
             projected = ggml_ssm_conv_causal_silu(ctx.ggml, projected,
                 weights_.at(prefix + ".conv1d.weight").tensor,
                 weights_.at(prefix + ".conv1d.bias").tensor);

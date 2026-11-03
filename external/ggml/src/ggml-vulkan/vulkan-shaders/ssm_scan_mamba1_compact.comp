@@ -1,0 +1,49 @@
+#version 450
+#extension GL_EXT_control_flow_attributes : require
+layout(constant_id = 0) const uint WORKGROUP_SIZE = 128;
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+layout(binding = 0) readonly buffer Initial { float initial[]; };
+layout(binding = 1) readonly buffer X { float x[]; };
+layout(binding = 2) readonly buffer Projected { float projected[]; };
+layout(binding = 3) readonly buffer A { float a[]; };
+layout(binding = 4) readonly buffer Ids { int ids[]; };
+layout(binding = 5) readonly buffer Weights { float dt_w[]; };
+layout(binding = 6) readonly buffer Bias { float dt_bias[]; };
+layout(binding = 7) readonly buffer Skip { float skip[]; };
+layout(binding = 8) readonly buffer Gate { float gate[]; };
+layout(binding = 9) writeonly buffer Output { float dst[]; };
+layout(push_constant) uniform PushConstants {
+    uint channels; uint tokens; uint sequences; uint rank; uint a_size;
+    uint state_stride; uint x_token_stride; uint x_seq_stride;
+    uint p_token_stride; uint p_seq_stride; uint gate_token_stride; uint gate_seq_stride;
+    uint offsets[9]; uint dst_offset;
+};
+void main() {
+    const uint channel = gl_GlobalInvocationID.x, seq = gl_WorkGroupID.y;
+    if (channel >= channels) return;
+    float state[16], decay[16];
+    [[unroll]] for (uint j = 0; j < 16; ++j) {
+        state[j] = initial[offsets[0] + uint(ids[offsets[4] + seq])*state_stride + channel*16 + j];
+        decay[j] = a[offsets[3] + channel*a_size + (a_size == 1 ? 0 : j)];
+    }
+    for (uint t = 0; t < tokens; ++t) {
+        const uint pi = seq*p_seq_stride + t*p_token_stride;
+        float delta = 0;
+        for (uint k = 0; k < rank; ++k) delta = fma(dt_w[offsets[5] + channel*rank + k], projected[offsets[2] + pi + k], delta);
+        delta += dt_bias[offsets[6] + channel];
+        delta = delta <= 20.0 ? log(1.0 + exp(delta)) : delta;
+        const float value = x[offsets[1] + seq*x_seq_stride + t*x_token_stride + channel];
+        const float injection = value*delta;
+        float sum = 0;
+        [[unroll]] for (uint j = 0; j < 16; ++j) {
+            state[j] = fma(state[j], exp(delta*decay[j]), projected[offsets[2] + pi + rank + j]*injection);
+            sum = fma(state[j], projected[offsets[2] + pi + rank + 16 + j], sum);
+        }
+        precise float scaled = value*skip[offsets[7] + channel];
+        precise float added = sum + scaled;
+        const float z = gate[offsets[8] + seq*gate_seq_stride + t*gate_token_stride + channel];
+        dst[dst_offset + (seq*tokens + t)*channels + channel] = (z/(1.0 + exp(-z)))*added;
+    }
+    [[unroll]] for (uint j = 0; j < 16; ++j)
+        dst[dst_offset + channels*tokens*sequences + (seq*channels + channel)*16 + j] = state[j];
+}

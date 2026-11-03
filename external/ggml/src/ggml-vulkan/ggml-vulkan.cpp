@@ -874,6 +874,8 @@ struct vk_device_struct {
     // [size_idx][kda] where size_idx: 0=d32, 1=d64, 2=d128
     vk_pipeline pipeline_gated_delta_net[3][2];
     vk_pipeline pipeline_ssm_scan_mamba1_f32;
+    vk_pipeline pipeline_ssm_scan_mamba1_compact_f32;
+    vk_pipeline pipeline_ssm_conv_causal_f32;
     vk_pipeline pipeline_ssm_scan_f32_d128;
     vk_pipeline pipeline_ssm_scan_f32_d256;
     vk_pipeline pipeline_ssm_conv_f32;
@@ -1539,6 +1541,18 @@ struct vk_op_gated_delta_net_push_constants {
     uint32_t neq1, rq3;
     float scale;
     uint32_t K;
+};
+
+struct vk_op_ssm_scan_compact_push_constants {
+    uint32_t channels, tokens, sequences, rank, a_size;
+    uint32_t state_stride, x_token_stride, x_seq_stride;
+    uint32_t p_token_stride, p_seq_stride, gate_token_stride, gate_seq_stride;
+    uint32_t offsets[9], dst_offset;
+};
+struct vk_op_ssm_conv_causal_push_constants {
+    uint32_t channels, tokens, kernel_size;
+    uint32_t token_stride, channel_stride, seq_stride;
+    uint32_t offsets[3], dst_offset;
 };
 
 struct vk_op_ssm_scan_push_constants {
@@ -4960,6 +4974,8 @@ static void ggml_vk_load_shaders(vk_device& device) {
         }
     }
 
+    ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_mamba1_compact_f32, "ssm_scan_mamba1_compact_f32", ssm_scan_mamba1_compact_f32_len, ssm_scan_mamba1_compact_f32_data, "main", 10, sizeof(vk_op_ssm_scan_compact_push_constants), {128, 1, 1}, {128}, 1, true);
+    ggml_vk_create_pipeline(device, device->pipeline_ssm_conv_causal_f32, "ssm_conv_causal_f32", ssm_conv_causal_f32_len, ssm_conv_causal_f32_data, "main", 4, sizeof(vk_op_ssm_conv_causal_push_constants), {32, 4, 1}, {32, 4}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_mamba1_f32, "ssm_scan_mamba1_f32", ssm_scan_mamba1_f32_len, ssm_scan_mamba1_f32_data, "main", 8, sizeof(vk_op_ssm_scan_push_constants), {128, 1, 1}, {128}, 1, true);
 
     if (device->subgroup_arithmetic && device->subgroup_require_full_support) {
@@ -6832,7 +6848,23 @@ template <typename T, uint32_t N> const T *push_constant_data(const std::array<T
 }
 
 template <typename T>
-static void ggml_vk_dispatch_pipeline(ggml_backend_vk_context* ctx, vk_context& subctx, vk_pipeline& pipeline, std::initializer_list<vk::DescriptorBufferInfo> const& descriptor_buffer_infos, const T &push_constants, std::array<uint32_t, 3> elements) {
+static void ggml_vk_dispatch_pipeline(ggml_backend_vk_context* ctx, vk_context& subctx, vk_pipeline& base_pipeline, std::initializer_list<vk::DescriptorBufferInfo> const& descriptor_buffer_infos, const T &push_constants, std::array<uint32_t, 3> elements) {
+    vk_pipeline * selected = &base_pipeline;
+#if defined(VK_EXT_shader_64bit_indexing)
+    if (ctx->device->shader_64b_indexing && std::any_of(descriptor_buffer_infos.begin(), descriptor_buffer_infos.end(),
+            [&](const vk::DescriptorBufferInfo & buffer) {
+                return buffer.range > ctx->device->properties.limits.maxStorageBufferRange;
+            })) {
+        while (*selected && !(*selected)->is_64b_indexing) {
+            selected = &(*selected)->next;
+        }
+        GGML_ASSERT(*selected);
+        if (!(*selected)->compiled) {
+            ggml_pipeline_request_descriptor_sets(ctx, *selected, 0);
+        }
+    }
+#endif
+    vk_pipeline & pipeline = *selected;
     const uint32_t wg0 = CEIL_DIV(elements[0], pipeline->wg_denoms[0]);
     const uint32_t wg1 = CEIL_DIV(elements[1], pipeline->wg_denoms[1]);
     const uint32_t wg2 = CEIL_DIV(elements[2], pipeline->wg_denoms[2]);
@@ -10065,6 +10097,10 @@ static vk_pipeline ggml_vk_op_get_pipeline(ggml_backend_vk_context * ctx, const 
             return ctx->device->pipeline_gated_delta_net[si][kda];
         }
         return nullptr;
+    case GGML_OP_SSM_SCAN_MAMBA1:
+        return ctx->device->pipeline_ssm_scan_mamba1_compact_f32;
+    case GGML_OP_SSM_CONV_CAUSAL_SILU:
+        return ctx->device->pipeline_ssm_conv_causal_f32;
     case GGML_OP_SSM_SCAN:
         if (src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
             const uint32_t d_state = src0->ne[0];
@@ -10979,6 +11015,46 @@ static void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& s
     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
         {src_buf[0], src_buf[1], src_buf[2], src_buf[3], src_buf[4], src_buf[5], dst_buf},
         pc, { H, n_seqs, S_v });
+}
+
+static void ggml_vk_ssm_scan_compact(ggml_backend_vk_context * ctx, vk_context & subctx, ggml_tensor * dst) {
+    const auto * state = dst->src[0];
+    const auto * x = dst->src[1];
+    const auto * p = dst->src[2];
+    const auto * gate = dst->src[8];
+    vk_op_ssm_scan_compact_push_constants pc = {
+        uint32_t(x->ne[1]), uint32_t(x->ne[2]), uint32_t(x->ne[3]),
+        uint32_t(dst->src[5]->ne[0]), uint32_t(dst->src[3]->ne[0]),
+        uint32_t(state->nb[3]/4), uint32_t(x->nb[2]/4), uint32_t(x->nb[3]/4),
+        uint32_t(p->nb[1]/4), uint32_t(p->nb[2]/4), uint32_t(gate->nb[1]/4), uint32_t(gate->nb[2]/4), {}, 0
+    };
+    auto pipeline = ctx->device->pipeline_ssm_scan_mamba1_compact_f32;
+    ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
+    vk_subbuffer src[9];
+    for (int i = 0; i < 9; ++i) {
+        pc.offsets[i] = get_misalign_bytes(ctx, dst->src[i])/4;
+        src[i] = ggml_vk_tensor_subbuffer(ctx, dst->src[i], true);
+    }
+    pc.dst_offset = get_misalign_bytes(ctx, dst)/4;
+    ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
+        {src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7], src[8], ggml_vk_tensor_subbuffer(ctx, dst, true)},
+        pc, {pc.channels, pc.sequences, 1});
+}
+
+static void ggml_vk_ssm_conv_causal(ggml_backend_vk_context * ctx, vk_context & subctx, ggml_tensor * dst) {
+    const auto * x = dst->src[0];
+    vk_op_ssm_conv_causal_push_constants pc = {
+        uint32_t(x->ne[1]), uint32_t(x->ne[0]), uint32_t(dst->src[1]->ne[0]),
+        uint32_t(x->nb[0]/4), uint32_t(x->nb[1]/4), uint32_t(x->nb[2]/4), {}, 0
+    };
+    for (int i = 0; i < 3; ++i) pc.offsets[i] = get_misalign_bytes(ctx, dst->src[i])/4;
+    pc.dst_offset = get_misalign_bytes(ctx, dst)/4;
+    auto pipeline = ctx->device->pipeline_ssm_conv_causal_f32;
+    ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
+    ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
+        {ggml_vk_tensor_subbuffer(ctx, dst->src[0], true), ggml_vk_tensor_subbuffer(ctx, dst->src[1], true),
+         ggml_vk_tensor_subbuffer(ctx, dst->src[2], true), ggml_vk_tensor_subbuffer(ctx, dst, true)},
+        pc, {pc.channels, pc.tokens, uint32_t(x->ne[2])});
 }
 
 static void ggml_vk_ssm_scan(ggml_backend_vk_context * ctx, vk_context& subctx, ggml_tensor * dst) {
@@ -13777,6 +13853,12 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
 
         break;
 
+    case GGML_OP_SSM_SCAN_MAMBA1:
+        ggml_vk_ssm_scan_compact(ctx, compute_ctx, node);
+        break;
+    case GGML_OP_SSM_CONV_CAUSAL_SILU:
+        ggml_vk_ssm_conv_causal(ctx, compute_ctx, node);
+        break;
     case GGML_OP_SSM_SCAN:
         ggml_vk_ssm_scan(ctx, compute_ctx, node);
 
@@ -16294,6 +16376,10 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                 }
                 return op->type == GGML_TYPE_F32;
             }
+        case GGML_OP_SSM_SCAN_MAMBA1:
+            return op->src[0]->ne[0] == 16;
+        case GGML_OP_SSM_CONV_CAUSAL_SILU:
+            return true;
         case GGML_OP_SSM_SCAN:
             {
                 for (int i = 0; i < 6; i++) {
@@ -17228,6 +17314,11 @@ static void ggml_vk_check_results_0(ggml_backend_vk_context * ctx, ggml_cgraph *
             src_clone[2]);
         } else if (tensor->op == GGML_OP_ADD_ID) {
             tensor_clone = ggml_add_id(ggml_ctx, src_clone[0], src_clone[1], src_clone[2]);
+        } else if (tensor->op == GGML_OP_SSM_SCAN_MAMBA1) {
+            tensor_clone = ggml_ssm_scan_mamba1(ggml_ctx, src_clone[0], src_clone[1], src_clone[2],
+                src_clone[3], src_clone[4], src_clone[5], src_clone[6], src_clone[7], src_clone[8]);
+        } else if (tensor->op == GGML_OP_SSM_CONV_CAUSAL_SILU) {
+            tensor_clone = ggml_ssm_conv_causal_silu(ggml_ctx, src_clone[0], src_clone[1], src_clone[2]);
         } else if (tensor->op == GGML_OP_SSM_SCAN) {
             tensor_clone = ggml_ssm_scan(ggml_ctx, src_clone[0], src_clone[1], src_clone[2],
                                          src_clone[3], src_clone[4], src_clone[5], src_clone[6]);
