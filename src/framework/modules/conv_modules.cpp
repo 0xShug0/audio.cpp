@@ -693,6 +693,22 @@ core::TensorValue Conv2dModule::build(
     });
     const auto height = output_shape.dims[2];
     const auto width = output_shape.dims[3];
+    if (config_.implicit_gemm && ctx.backend_type == core::BackendType::Metal &&
+        input.type == GGML_TYPE_F32 && weights.weight.type == GGML_TYPE_F32 &&
+        config_.in_channels % 32 == 0 && !config_.cuda_cudnn) {
+        auto * w = regular_conv_weight(ctx, weights.weight, "Conv2dModule").tensor;
+        auto * result = ggml_conv_2d_direct(ctx.ggml, w, input.tensor,
+            config_.stride_width, config_.stride_height, config_.padding_width, config_.padding_height,
+            config_.dilation_width, config_.dilation_height);
+        ggml_conv_2d_direct_set_metal_implicit(ctx.ggml, result);
+        if (config_.use_bias) {
+            if (!weights.bias) throw std::runtime_error("bias is required when Conv2dConfig.use_bias is true");
+            core::validate_shape(*weights.bias, core::TensorShape::from_dims({config_.out_channels}), "bias");
+            result = ggml_add(ctx.ggml, result,
+                ggml_reshape_4d(ctx.ggml, weights.bias->tensor, 1, 1, config_.out_channels, 1));
+        }
+        return core::wrap_tensor(result, output_shape);
+    }
     if (config_.metal_per_tap && ctx.backend_type == core::BackendType::Metal &&
         input.type == GGML_TYPE_F32 && weights.weight.type == GGML_TYPE_F32 &&
         config_.in_channels >= 64 && config_.out_channels > 8 && width > 8 && !config_.cuda_cudnn) {
@@ -799,7 +815,7 @@ core::TensorValue Conv2dModule::build(core::ModuleBuildContext & ctx,
     core::validate_last_dim(input, config_.in_channels, "input");
     auto canonical = TransposeModule({{0, 3, 1, 2}, 4}).build(ctx, input);
     canonical = core::ensure_backend_addressable_layout(ctx, canonical);
-    if (ctx.backend_type != core::BackendType::Metal || config_.cuda_cudnn || config_.metal_per_tap) {
+    if (ctx.backend_type != core::BackendType::Metal || config_.cuda_cudnn || config_.metal_per_tap || config_.implicit_gemm) {
         auto output = build(ctx, canonical, weights);
         output = TransposeModule({{0, 2, 3, 1}, 4}).build(ctx, output);
         return core::ensure_backend_addressable_layout(ctx, output);

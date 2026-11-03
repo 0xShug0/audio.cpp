@@ -2190,39 +2190,6 @@ template [[host_name("kernel_soft_max_f32")]]   kernel kernel_soft_max_t   kerne
 template [[host_name("kernel_soft_max_f16_4")]] kernel kernel_soft_max_4_t kernel_soft_max_4<half4>;
 template [[host_name("kernel_soft_max_f32_4")]] kernel kernel_soft_max_4_t kernel_soft_max_4<float4>;
 
-// Transpose each output tile in shared memory so both the temporal input reads
-// and channel-major output writes are coalesced. The graph's PAD stays observable.
-kernel void kernel_ssm_conv_f32_f32_tiled(
-        constant ggml_metal_kargs_ssm_conv & args,
-        device const char * src0,
-        device const char * src1,
-        device char * dst,
-        threadgroup float * tile [[threadgroup(0)]],
-        uint3 group [[threadgroup_position_in_grid]],
-        uint tid [[thread_index_in_threadgroup]]) {
-    for (uint i = tid; i < 1024; i += 256) {
-        const uint t = group.x * 32 + i % 32;
-        const uint c = group.y * 32 + i / 32;
-        float value = 0;
-        if (t < args.ne1 && c < args.ne0) {
-            for (int k = 0; k < args.ne10; ++k) {
-                float x = *(device const float *)(src0 + group.z * args.nb02 + c * args.nb01 + (t + k) * args.nb00);
-                float w = *(device const float *)(src1 + c * args.nb11 + k * args.nb10);
-                value += x * w;
-            }
-        }
-        tile[(i / 32) * 33 + i % 32] = value;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint i = tid; i < 1024; i += 256) {
-        const uint t = group.x * 32 + i / 32;
-        const uint c = group.y * 32 + i % 32;
-        if (t < args.ne1 && c < args.ne0) {
-            *(device float *)(dst + group.z * args.nb2 + t * args.nb1 + c * args.nb0) = tile[(i % 32) * 33 + i / 32];
-        }
-    }
-}
-
 // ref: ggml.c:ggml_compute_forward_ssm_conv_f32
 kernel void kernel_ssm_conv_f32_f32(
         constant ggml_metal_kargs_ssm_conv & args,
@@ -2554,6 +2521,180 @@ kernel void kernel_ssm_scan_f32_register16(
         c += args.nb52;
     }
     device packed_float4 * final_state = (device packed_float4 *)((device char *)dst + args.s_off + head*args.nb02 + seq*args.nb03 + dim*16*sizeof(float));
+    for (int j = 0; j < 4; ++j) final_state[j] = packed_float4(state[j]);
+}
+
+constant int c2_iw [[function_constant(FC_CONV_2D_IMPLICIT + 0)]];
+constant int c2_ih [[function_constant(FC_CONV_2D_IMPLICIT + 1)]];
+constant int c2_kw [[function_constant(FC_CONV_2D_IMPLICIT + 2)]];
+constant int c2_kh [[function_constant(FC_CONV_2D_IMPLICIT + 3)]];
+constant int c2_ow [[function_constant(FC_CONV_2D_IMPLICIT + 4)]];
+constant int c2_oh [[function_constant(FC_CONV_2D_IMPLICIT + 5)]];
+constant int c2_sw [[function_constant(FC_CONV_2D_IMPLICIT + 6)]];
+constant int c2_sh [[function_constant(FC_CONV_2D_IMPLICIT + 7)]];
+constant int c2_pw [[function_constant(FC_CONV_2D_IMPLICIT + 8)]];
+constant int c2_ph [[function_constant(FC_CONV_2D_IMPLICIT + 9)]];
+constant int c2_dw [[function_constant(FC_CONV_2D_IMPLICIT + 10)]];
+constant int c2_dh [[function_constant(FC_CONV_2D_IMPLICIT + 11)]];
+constant int c2_k [[function_constant(FC_CONV_2D_IMPLICIT + 12)]];
+constant int c2_oc [[function_constant(FC_CONV_2D_IMPLICIT + 13)]];
+
+// The full-F32 64x32x32 MMA tile, with patches loaded from compact NHWC input.
+// Channel-fast K order makes each vector load contiguous without an im2col buffer.
+kernel void kernel_conv_2d_implicit_f32(
+        device const float * input,
+        device const float * weights,
+        device float * output,
+        threadgroup float * shared [[threadgroup(0)]],
+        uint3 group [[threadgroup_position_in_grid]],
+        ushort tid [[thread_index_in_threadgroup]],
+        ushort sg [[simdgroup_index_in_threadgroup]]) {
+    const int channels = c2_k/(c2_kh*c2_kw);
+    const int positions = c2_ow*c2_oh;
+    input += ulong(group.z)*c2_iw*c2_ih*channels;
+    output += ulong(group.z)*positions*c2_oc;
+    threadgroup float * sa = shared, * sb = shared + 2048;
+    const int r0 = group.y*64, r1 = group.x*32;
+    const int n0 = min(64, positions - r0), n1 = min(32, c2_oc - r1);
+    const int row = r0 + min(int(tid/2), n0 - 1);
+    const int oy = row/c2_ow, ox = row%c2_ow;
+    const int weight_row = r1 + min(int(tid/4), n1 - 1);
+    simdgroup_float8x8 ma[4], mb[2], mc[8];
+    for (short i = 0; i < 8; ++i) mc[i] = make_filled_simdgroup_matrix<float, 8>(0.0f);
+    for (int base = 0; base < c2_k; base += 32) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        const int k0 = base + 16*(tid%2), channel = k0%channels, tap = k0/channels;
+        const int ix = ox*c2_sw + (tap%c2_kw)*c2_dw - c2_pw;
+        const int iy = oy*c2_sh + (tap/c2_kw)*c2_dh - c2_ph;
+        float4 values[4];
+        if (ix >= 0 && ix < c2_iw && iy >= 0 && iy < c2_ih) {
+            device const float4 * data = (device const float4 *)(input + (iy*c2_iw + ix)*channels + channel);
+            for (short j = 0; j < 4; ++j) values[j] = data[j];
+        } else {
+            for (short j = 0; j < 4; ++j) values[j] = 0;
+        }
+        for (short i = 0; i < 16; ++i) {
+            const short sx = 2*(tid%2) + i/8, sy = (tid/2)/8;
+            sa[64*(8*sx + sy) + 8*(i%8) + (tid/2)%8] = values[i/4][i%4];
+        }
+        for (short i = 0; i < 8; ++i) {
+            const short sx = tid%4, sy = (tid/4)/8;
+            sb[64*(4*sx + sy) + 8*((tid/4)%8) + i] = weights[weight_row*c2_k + base + 8*(tid%4) + i];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        threadgroup const float * a = sa + 4*64*(sg%2), * b = sb + 2*64*(sg/2);
+        for (short k = 0; k < 4; ++k) {
+            simdgroup_barrier(mem_flags::mem_none);
+            for (short i = 0; i < 4; ++i) simdgroup_load(ma[i], a + 64*i, 8, 0, false);
+            simdgroup_barrier(mem_flags::mem_none);
+            for (short i = 0; i < 2; ++i) simdgroup_load(mb[i], b + 64*i, 8, 0, false);
+            simdgroup_barrier(mem_flags::mem_none);
+            for (short i = 0; i < 8; ++i) simdgroup_multiply_accumulate(mc[i], mb[i/4], ma[i%4], mc[i]);
+            a += 8*64; b += 4*64;
+        }
+    }
+    if (n0 == 64 && n1 == 32) {
+        device float * dst = output + r0 + 32*(sg&1) + (r1 + 16*(sg>>1))*positions;
+        for (short i = 0; i < 8; ++i) simdgroup_store(mc[i], dst + 8*(i%4) + 8*positions*(i/4), positions, 0, false);
+    } else {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        threadgroup float * temp = shared + 32*(sg&1) + 16*(sg>>1)*64;
+        for (short i = 0; i < 8; ++i) simdgroup_store(mc[i], temp + 8*(i%4) + 8*64*(i/4), 64, 0, false);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (int i = tid; i < n0*n1; i += 128) output[r0 + i%n0 + (r1 + i/n0)*positions] = shared[(i/n0)*64 + i%n0];
+    }
+}
+
+// Keep the four causal taps in registers instead of materializing left padding.
+kernel void kernel_ssm_conv_causal_silu_f32(
+        constant ggml_metal_kargs_ssm_conv_causal_silu & args,
+        device const char * x,
+        device const float * w,
+        device const float * bias,
+        device float * dst,
+        uint2 gid [[thread_position_in_grid]]) {
+    const uint channel = gid.x, seq = gid.y;
+    if (channel >= uint(args.channels)) return;
+    const float4 weights = float4(w[4*channel], w[4*channel+1], w[4*channel+2], w[4*channel+3]);
+    float p0 = 0, p1 = 0, p2 = 0;
+    x += channel*args.nb1 + seq*args.nb2;
+    dst += seq*args.channels*args.tokens + channel;
+    for (int t = 0; t < args.tokens; ++t) {
+        const float current = *(device const float *)x;
+        float value = fma(p0, weights.x, 0.0f);
+        value = fma(p1, weights.y, value);
+        value = fma(p2, weights.z, value);
+        value = fma(current, weights.w, value) + bias[channel];
+        *dst = value / (1.0f + exp(-value));
+        p0 = p1; p1 = p2; p2 = current;
+        x += args.nb0;
+        dst += args.channels;
+    }
+}
+
+// Consume compact DT/B/C directly; export only gated Y and the complete final state.
+constant int mamba1_rank [[function_constant(FC_SSM_SCAN_MAMBA1)]];
+
+kernel void kernel_ssm_scan_mamba1_f32(
+        constant ggml_metal_kargs_ssm_scan_mamba1 & args,
+        device const char * initial,
+        device const char * x,
+        device const char * projected,
+        device const float * A,
+        device const int32_t * ids,
+        device const float * dt_w,
+        device const float * dt_bias,
+        device const float * D,
+        device const char * gate,
+        device float * dst,
+        uint2 gid [[thread_position_in_grid]]) {
+    const uint channel = gid.x, seq = gid.y;
+    if (channel >= uint(args.channels)) return;
+    device const packed_float4 * start = (device const packed_float4 *)
+        (initial + channel*args.state_nb2 + ids[seq]*args.state_nb3);
+    float4 state[4], decay[4];
+    for (int j = 0; j < 4; ++j) {
+        state[j] = start[j];
+        decay[j] = args.a_size == 1 ? float4(A[channel]) :
+            float4(((device const packed_float4 *)(A + 16*channel))[j]);
+    }
+    dt_w += channel*args.rank;
+    x += channel*sizeof(float) + seq*args.x_nb3;
+    projected += seq*args.p_nb2;
+    gate += channel*sizeof(float) + seq*args.gate_nb2;
+    for (int t = 0; t < args.tokens; ++t) {
+        device const float * p = (device const float *)projected;
+        float delta = 0;
+        if (mamba1_rank == 4) {
+            delta = fma(dt_w[0], p[0], delta);
+            delta = fma(dt_w[1], p[1], delta);
+            delta = fma(dt_w[2], p[2], delta);
+            delta = fma(dt_w[3], p[3], delta);
+        } else {
+            for (int k = 0; k < mamba1_rank; ++k) delta = fma(dt_w[k], p[k], delta);
+        }
+        delta += dt_bias[channel];
+        delta = delta <= 20.0f ? log(1.0f + exp(delta)) : delta;
+        const float sample = *(device const float *)x;
+        const float injection = sample*delta;
+        device const packed_float4 * b = (device const packed_float4 *)(p + mamba1_rank);
+        device const packed_float4 * c = (device const packed_float4 *)(p + mamba1_rank + 16);
+        float4 sum = 0;
+        for (int j = 0; j < 4; ++j) {
+            state[j] = state[j]*exp(delta*decay[j]) + float4(b[j])*injection;
+            sum += state[j]*float4(c[j]);
+        }
+        const float raw = sum.x + sum.y + sum.z + sum.w;
+        // Match the separate MUL and ADD rounding of the unfused graph.
+        const float added = fma(1.0f, raw, fma(sample, D[channel], 0.0f));
+        const float z = *(device const float *)gate;
+        dst[channel + (seq*args.tokens + t)*args.channels] = (z/(1.0f + exp(-z)))*added;
+        x += args.x_nb2;
+        projected += args.p_nb1;
+        gate += args.gate_nb1;
+    }
+    device packed_float4 * final_state = (device packed_float4 *)
+        (dst + args.channels*args.tokens*args.sequences + (seq*args.channels + channel)*16);
     for (int j = 0; j < 4; ++j) final_state[j] = packed_float4(state[j]);
 }
 

@@ -101,6 +101,8 @@
 #define FC_SUM_ROWS                    1400
 #define FC_UPSCALE                     1500
 #define FC_GATED_DELTA_NET             1600
+#define FC_CONV_2D_IMPLICIT            1700
+#define FC_SSM_SCAN_MAMBA1             1800
 
 // op-specific constants
 #define OP_FLASH_ATTN_EXT_NQPSG 8
@@ -920,6 +922,17 @@ typedef struct {
     uint64_t nb53;
     uint64_t nb0;
 } ggml_metal_kargs_ssm_scan;
+
+typedef struct {
+    int64_t channels, tokens;
+    uint64_t nb0, nb1, nb2;
+} ggml_metal_kargs_ssm_conv_causal_silu;
+
+typedef struct {
+    int64_t channels, tokens, sequences, rank, a_size;
+    uint64_t x_nb2, x_nb3, p_nb1, p_nb2, gate_nb1, gate_nb2;
+    uint64_t state_nb2, state_nb3;
+} ggml_metal_kargs_ssm_scan_mamba1;
 
 typedef struct {
     int32_t  ne00;

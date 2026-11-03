@@ -1147,9 +1147,11 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "MUL_MAT_ACC",
     "SNAKE_1D",
     "FLASH_ATTN_F16_HEAD40",
+    "SSM_CONV_CAUSAL_SILU",
+    "SSM_SCAN_MAMBA1",
 };
 
-static_assert(GGML_OP_COUNT == 115, "GGML_OP_COUNT != 115");
+static_assert(GGML_OP_COUNT == 117, "GGML_OP_COUNT != 117");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1277,9 +1279,11 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "mul_mat_acc(a, b, acc)",
     "snake_1d(a, alpha)",
     "flash_attn_f16_head40(q, k, v)",
+    "ssm_conv_causal_silu(x, w, bias)",
+    "ssm_scan_mamba1(state, x, projected, A, ids, dt_w, dt_bias, D, gate)",
 };
 
-static_assert(GGML_OP_COUNT == 115, "GGML_OP_COUNT != 115");
+static_assert(GGML_OP_COUNT == 117, "GGML_OP_COUNT != 117");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -5931,6 +5935,16 @@ void ggml_conv_2d_direct_set_cudnn(struct ggml_tensor * tensor) {
     ggml_set_op_params_i32(tensor, 7, 1);
 }
 
+void ggml_conv_2d_direct_set_metal_implicit(struct ggml_context * ctx, struct ggml_tensor * tensor) {
+    GGML_ASSERT(tensor && tensor->op == GGML_OP_CONV_2D && ggml_get_op_params_i32(tensor, 7) == 0);
+    GGML_ASSERT(tensor->src[0]->type == GGML_TYPE_F32 && tensor->src[1]->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(tensor->src[0]) && tensor->src[0]->ne[2] % 32 == 0);
+    // Retain the ordinary inputs for a correct CPU fallback.
+    tensor->src[2] = ggml_cont(ctx, ggml_permute(ctx, tensor->src[0], 1, 2, 0, 3));
+    tensor->src[3] = ggml_cont(ctx, ggml_permute(ctx, tensor->src[1], 1, 2, 0, 3));
+    ggml_set_op_params_i32(tensor, 8, 1);
+}
+
 void ggml_conv_2d_direct_set_cudnn_bias(struct ggml_tensor * tensor, struct ggml_tensor * bias) {
     GGML_ASSERT(tensor && tensor->op == GGML_OP_CONV_2D);
     GGML_ASSERT(ggml_get_op_params_i32(tensor, 7) == 1);
@@ -6429,13 +6443,6 @@ void ggml_ssm_conv_set_fusion(
 
 // ggml_ssm_scan
 
-void ggml_ssm_conv_set_lowering(
-        struct ggml_tensor          * tensor,
-        enum ggml_ssm_conv_lowering   lowering) {
-    GGML_ASSERT(tensor->op == GGML_OP_SSM_CONV);
-    ggml_set_op_params_i32(tensor, 1, (int32_t) lowering);
-}
-
 struct ggml_tensor * ggml_ssm_scan(
         struct ggml_context * ctx,
         struct ggml_tensor  * s,
@@ -6511,6 +6518,46 @@ void ggml_ssm_scan_set_lowering(
         enum ggml_ssm_scan_lowering lowering) {
     GGML_ASSERT(tensor->op == GGML_OP_SSM_SCAN);
     ggml_set_op_params_i32(tensor, 1, (int32_t) lowering);
+}
+
+// Explicit Mamba-1 convolution and scan.
+
+struct ggml_tensor * ggml_ssm_conv_causal_silu(
+        struct ggml_context * ctx, struct ggml_tensor * x,
+        struct ggml_tensor * w, struct ggml_tensor * bias) {
+    GGML_ASSERT(x->type == GGML_TYPE_F32 && w->type == GGML_TYPE_F32 && bias->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_3d(x) && ggml_is_matrix(w) && ggml_is_vector(bias));
+    GGML_ASSERT(x->ne[0] > 0 && w->ne[0] > 0 && x->ne[1] == w->ne[1] && bias->ne[0] == w->ne[1]);
+    GGML_ASSERT(ggml_is_contiguous(w) && ggml_is_contiguous(bias));
+    struct ggml_tensor * result = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, x->ne[1], x->ne[0], x->ne[2]);
+    result->op = GGML_OP_SSM_CONV_CAUSAL_SILU;
+    result->src[0] = x; result->src[1] = w; result->src[2] = bias;
+    return result;
+}
+
+struct ggml_tensor * ggml_ssm_scan_mamba1(
+        struct ggml_context * ctx, struct ggml_tensor * state, struct ggml_tensor * x,
+        struct ggml_tensor * projected, struct ggml_tensor * A, struct ggml_tensor * ids,
+        struct ggml_tensor * dt_w, struct ggml_tensor * dt_bias, struct ggml_tensor * D,
+        struct ggml_tensor * gate) {
+    struct ggml_tensor * inputs[] = { state, x, projected, A, ids, dt_w, dt_bias, D, gate };
+    for (int i = 0; i < 9; ++i) GGML_ASSERT(inputs[i]->type == (i == 4 ? GGML_TYPE_I32 : GGML_TYPE_F32));
+    const int64_t channels = x->ne[1], tokens = x->ne[2], sequences = x->ne[3];
+    GGML_ASSERT(x->ne[0] == 1 && x->nb[0] == sizeof(float) && x->nb[1] == sizeof(float));
+    GGML_ASSERT(state->ne[1] == 1 && state->ne[2] == channels && ggml_is_contiguous(state));
+    GGML_ASSERT(ggml_is_matrix(dt_w) && dt_w->ne[0] > 0 && dt_w->ne[1] == channels && ggml_is_contiguous(dt_w));
+    GGML_ASSERT(ggml_is_3d(projected) && projected->nb[0] == sizeof(float));
+    GGML_ASSERT(projected->ne[0] == dt_w->ne[0] + 2*state->ne[0] && projected->ne[1] == tokens && projected->ne[2] == sequences);
+    GGML_ASSERT(ggml_is_matrix(A) && (A->ne[0] == state->ne[0] || A->ne[0] == 1) && A->ne[1] == channels && ggml_is_contiguous(A));
+    GGML_ASSERT(ggml_is_vector(ids) && ids->ne[0] == sequences && ggml_is_contiguous(ids));
+    GGML_ASSERT(ggml_is_vector(dt_bias) && dt_bias->ne[0] == channels && ggml_is_contiguous(dt_bias));
+    GGML_ASSERT(ggml_is_vector(D) && D->ne[0] == channels && ggml_is_contiguous(D));
+    GGML_ASSERT(ggml_is_3d(gate) && gate->ne[0] == channels && gate->ne[1] == tokens && gate->ne[2] == sequences && gate->nb[0] == sizeof(float));
+    struct ggml_tensor * result = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,
+        channels*tokens*sequences + state->ne[0]*channels*sequences);
+    result->op = GGML_OP_SSM_SCAN_MAMBA1;
+    for (int i = 0; i < 9; ++i) result->src[i] = inputs[i];
+    return result;
 }
 
 // ggml_win_part
