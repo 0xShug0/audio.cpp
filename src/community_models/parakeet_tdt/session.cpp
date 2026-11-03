@@ -1,5 +1,6 @@
 #include "engine/community_models/parakeet_tdt/session.h"
 #include "engine/community_models/parakeet_tdt/bark3.h"
+#include "engine/community_models/parakeet_tdt/bark_packed.h"
 #include "engine/community_models/parakeet_tdt/phonon_streaming.h"
 
 #include "engine/framework/audio/chunking.h"
@@ -1018,7 +1019,9 @@ void ParakeetTDTStreamingSession::complete_stream(runtime::TaskResult & result) 
 std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {
     runtime::SpecBackedVoiceModelConfig<ParakeetTDTAssets> config;
     config.family = kFamily;
-    config.load_assets = load_parakeet_assets;
+    config.load_assets = [](const std::filesystem::path & path) {
+        return is_bark_packed_package(path) ? load_bark_packed_assets(path) : load_parakeet_assets(path);
+    };
     config.create_session = [](
                                 const runtime::TaskSpec & task,
                                 const runtime::SessionOptions & options,
@@ -1051,7 +1054,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {
                 std::move(assets),
                 std::move(contract)));
     };
-    return runtime::make_spec_backed_voice_loader(std::move(config));
+    return wrap_bark_packed_loader(runtime::make_spec_backed_voice_loader(std::move(config)));
 }
 
 }  // namespace engine::community_models::parakeet_tdt

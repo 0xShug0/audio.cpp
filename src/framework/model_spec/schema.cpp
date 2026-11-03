@@ -103,7 +103,8 @@ const std::unordered_set<std::string> & statuses() {
 const std::unordered_set<std::string> & source_formats() {
     // `rknn` is the compiled RKNPU2 engine image: a per-SoC, per-stage artefact the RKNN sidecar
     // paths load next to the GGUF weights they accelerate (docs/build/rockchip-npu.md).
-    static const std::unordered_set<std::string> values = {"safetensors", "gguf", "onnx", "ggml", "pytorch", "rknn"};
+    // `bark` is decoded by the model-local Parakeet adapter, not the generic tensor reader.
+    static const std::unordered_set<std::string> values = {"safetensors", "gguf", "onnx", "ggml", "pytorch", "rknn", "bark"};
     return values;
 }
 

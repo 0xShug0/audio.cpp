@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare a native Bark GGUF to original-runner references in one reused session.
+"""Compare native Bark GGUF/packed weights to original references in one reused session.
 
 The native default is checked unless --offline-mode is explicitly selected.
 Bounded-window decoding is a different policy and must not be presented as
@@ -34,11 +34,12 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     binary = args.bin_dir / ("parakeet_warm_bench.exe" if os.name == "nt" else "parakeet_warm_bench")
     command = [str(binary.resolve()), "--model", str(args.model.resolve()),
-               "--model-spec-override", "embedded",
                "--audio", cases[0]["path"], "--audio-sequence", ",".join(c["path"] for c in sequence),
                "--backend", args.backend, "--device", str(args.device), "--threads", str(args.threads),
                "--warmup", "0", "--iterations", "1",
                "--timing-file", str((args.output_dir / "timing.log").resolve())]
+    if args.model.suffix.lower() == ".gguf":
+        command += ["--model-spec-override", "embedded"]
     if args.offline_mode:
         command += ["--offline-mode", args.offline_mode]
     with (args.output_dir / "native.log").open("w", encoding="utf-8") as log:

@@ -1,0 +1,3 @@
+XZ Embedded subset, commit ae63ae3a36ed01724674e8f3d750dc47bf125410
+https://github.com/tukaani-project/xz-embedded
+License: 0BSD (COPYING). Built with XZ_DEC_SINGLE and XZ_USE_CRC64.
