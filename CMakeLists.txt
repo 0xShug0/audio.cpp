@@ -4453,16 +4453,20 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
             )
             add_test(NAME earshot_vad_test COMMAND earshot_vad_test)
+        endif()
+
+        if(nemotron_transcribe IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(nemotron_transcribe_encoder_bounds_test tests/community_models/nemotron_transcribe/encoder_bounds_test.cpp)
             target_include_directories(nemotron_transcribe_encoder_bounds_test PRIVATE external/ggml/src)
             add_test(NAME nemotron_transcribe_encoder_bounds_test COMMAND nemotron_transcribe_encoder_bounds_test)
             add_engine_unittest(nemotron_transcribe_decoder_safety_test tests/community_models/nemotron_transcribe/decoder_safety_test.cpp)
             target_include_directories(nemotron_transcribe_decoder_safety_test PRIVATE external/ggml/src)
             add_test(NAME nemotron_transcribe_decoder_safety_test COMMAND nemotron_transcribe_decoder_safety_test)
-        endif()
-        if(nemotron_transcribe IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(nemotron_transcribe_decoder_padding_test tests/community_models/nemotron_transcribe/decoder_padding_test.cpp)
             add_test(NAME nemotron_transcribe_decoder_padding_test COMMAND nemotron_transcribe_decoder_padding_test)
+        endif()
+
+        if(fish_drama3 IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(fish_drama3_backbone_allocation_test tests/community_models/fish_drama3/backbone_allocation_test.cpp)
             add_test(NAME fish_drama3_backbone_allocation_test COMMAND fish_drama3_backbone_allocation_test)
             add_engine_unittest(fish_drama3_codec_source_test tests/community_models/fish_drama3/codec_source_test.cpp)
