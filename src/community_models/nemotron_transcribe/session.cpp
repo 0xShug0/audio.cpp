@@ -40,17 +40,39 @@ int bounded_option(const runtime::SessionOptions & options, const char * key, in
     return static_cast<int>(value);
 }
 
+}  // namespace
+
 std::string language_name(const std::string & value) {
     static const std::map<std::string, std::string> names = {
         {"en", "English"}, {"zh", "Chinese"}, {"ja", "Japanese"}, {"es", "Spanish"},
         {"fr", "French"}, {"de", "German"}, {"it", "Italian"}, {"pt", "Portuguese"},
         {"ko", "Korean"}, {"ru", "Russian"}, {"ar", "Arabic"}, {"hi", "Hindi"},
         {"nl", "Dutch"}, {"pl", "Polish"}, {"uk", "Ukrainian"}, {"vi", "Vietnamese"},
-        {"th", "Thai"}, {"id", "Indonesian"}, {"tr", "Turkish"}, {"fa", "Persian"}};
-    const auto found = names.find(value);
+        {"th", "Thai"}, {"id", "Indonesian"}, {"tr", "Turkish"}, {"fa", "Persian"},
+        {"hy", "Armenian"}, {"nn", "Norwegian"}, {"nb", "Norwegian"}, {"no", "Norwegian"},
+        {"bg", "Bulgarian"}, {"hr", "Croatian"}, {"cs", "Czech"}, {"da", "Danish"},
+        {"et", "Estonian"}, {"fi", "Finnish"}, {"el", "Greek"}, {"he", "Hebrew"},
+        {"hu", "Hungarian"}, {"lv", "Latvian"}, {"lt", "Lithuanian"}, {"mt", "Maltese"},
+        {"ta", "Tamil"}, {"bn", "Bengali"}, {"ro", "Romanian"}, {"sk", "Slovak"},
+        {"sl", "Slovenian"}, {"sv", "Swedish"}, {"tl", "Filipino"}, {"fil", "Filipino"}};
+    // Match the reference's short and regional language tags, retaining custom names.
+    const auto first = value.find_first_not_of(" \t\r\n\f\v");
+    if (first == std::string::npos) return value;
+    auto normalized = value.substr(first, value.find_last_not_of(" \t\r\n\f\v") - first + 1);
+    for (auto & character : normalized) {
+        if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+        if (character == '_') character = '-';
+    }
+    const auto separator = normalized.find('-');
+    if (separator != std::string::npos) {
+        if (normalized.find('-', separator + 1) != std::string::npos) return value;
+        normalized.resize(separator);
+    }
+    const auto found = names.find(normalized);
     return found == names.end() ? value : found->second;
 }
 
+namespace {
 runtime::TimeSpan span(double start, double end, const runtime::AudioBuffer & audio) {
     const auto count = static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels));
     return {std::clamp<int64_t>(std::llround(start * audio.sample_rate), 0, count),
