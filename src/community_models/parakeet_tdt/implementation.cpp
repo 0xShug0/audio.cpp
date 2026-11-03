@@ -1,5 +1,6 @@
 #include "engine/community_models/parakeet_tdt/implementation.h"
 #include "engine/community_models/parakeet_tdt/bark3.h"
+#include "engine/community_models/parakeet_tdt/kda_predictor.h"
 #include "engine/community_models/parakeet_tdt/phonon_streaming.h"
 #include "engine/community_models/parakeet_tdt/session.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -68,15 +69,22 @@ const ParakeetImplementation kBarkImplementation = [] {
     return implementation;
 }();
 
+const ParakeetImplementation kHaasImplementation = [] {
+    auto implementation = kParakeetImplementation;
+    implementation.load_predictor = load_kda_predictor;
+    return implementation;
+}();
+
 const ParakeetImplementation & implementation_for_family(std::string_view family) {
     struct Registration {
         std::string_view family;
         const ParakeetImplementation * implementation;
     };
-    static constexpr std::array<Registration, 3> registrations{{
+    static constexpr std::array<Registration, 4> registrations{{
         {"parakeet_tdt", &kParakeetImplementation},
         {"phonon2_asr", &kPhononImplementation},
         {"underdog_bark3", &kBarkImplementation},
+        {"haas_asr", &kHaasImplementation},
     }};
     const auto found = std::find_if(registrations.begin(), registrations.end(),
         [family](const auto & entry) { return entry.family == family; });
@@ -115,6 +123,10 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_phonon2_asr_loader() {
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_underdog_bark3_loader() {
     return make_family_loader("underdog_bark3");
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_haas_asr_loader() {
+    return make_family_loader("haas_asr");
 }
 
 }  // namespace engine::community_models::parakeet_tdt

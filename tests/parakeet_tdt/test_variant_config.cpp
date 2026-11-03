@@ -112,6 +112,12 @@ int main() {
     try {
         test_config(root);
         test_token_duration_timestamps();
+        engine::test::require(
+            &engine::community_models::parakeet_tdt::implementation_for_family("haas_asr") ==
+                &engine::community_models::parakeet_tdt::kHaasImplementation, "Haas selects its registered KDA implementation");
+        engine::test::require_eq(engine::community_models::parakeet_tdt::make_haas_asr_loader()->family(),
+                                std::string("haas_asr"), "Haas public family");
+        engine::test::require(engine::model_spec::model_contract("haas_asr").has_value(), "Haas family contract");
         const auto phonon_contract = engine::model_spec::model_contract("phonon2_asr");
         const auto bark_contract = engine::model_spec::model_contract("underdog_bark3");
         engine::test::require(phonon_contract.has_value() && bark_contract.has_value(), "dedicated family contracts");

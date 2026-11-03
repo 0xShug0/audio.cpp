@@ -288,12 +288,12 @@ std::vector<runtime::WordTimestamp> ParakeetTDTDecoderRuntime::build_word_timest
             pieces, audio_end_sample >= 0 ? audio_end_sample : audio_end_frame * spf);
     }
 
-    std::string current_word;
+    std::vector<int32_t> current_word_ids;
     int64_t current_start_frame = 0;
     int64_t current_natural_end_frame = 0;
 
     auto flush_word = [&](int64_t boundary_frame) {
-        if (current_word.empty()) return;
+        if (current_word_ids.empty()) return;
         const int64_t end_frame = std::clamp(
             boundary_frame,
             current_start_frame,
@@ -301,10 +301,11 @@ std::vector<runtime::WordTimestamp> ParakeetTDTDecoderRuntime::build_word_timest
         runtime::WordTimestamp ts;
         ts.span.start_sample = current_start_frame * spf;
         ts.span.end_sample = end_frame * spf;
-        ts.word = std::move(current_word);
+        // Decode together so byte-fallback pieces form valid UTF-8.
+        ts.word = assets_->tokenizer->decode_ids(current_word_ids);
         ts.confidence = 0.f;
         out.push_back(std::move(ts));
-        current_word.clear();
+        current_word_ids.clear();
     };
 
     for (size_t i = 0; i < count; ++i) {
@@ -329,19 +330,19 @@ std::vector<runtime::WordTimestamp> ParakeetTDTDecoderRuntime::build_word_timest
             token_start,
             audio_end_frame);
 
-        if (starts_word && !current_word.empty()) {
+        if (starts_word && !current_word_ids.empty()) {
             // A word ends at the emission boundary of the next word. This
             // keeps adjacent spans non-overlapping even when a token predicts
             // a longer duration than the next observed boundary.
             flush_word(token_start);
         }
-        if (current_word.empty()) {
+        if (current_word_ids.empty()) {
             current_start_frame = token_start;
             current_natural_end_frame = token_end;
         } else {
             current_natural_end_frame = std::max(current_natural_end_frame, token_end);
         }
-        current_word += piece;
+        current_word_ids.push_back(tid);
     }
     flush_word(std::max(current_natural_end_frame, current_start_frame));
     return out;

@@ -3552,6 +3552,56 @@
       ]
     },
     {
+      "id": "haas_ja_offline",
+      "coverage": "Haas Japanese KDA predictor, full-context and bounded-window scheduling, state reset",
+      "family": "haas_asr",
+      "model": "models/Haas-ja-v1.0-GGUF/haas-ja-v1.0-q8_0.gguf",
+      "task": "asr",
+      "session_options": {
+        "haas_asr.matmul_weight_type": "q8_0"
+      },
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "full",
+          "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav"
+        },
+        {
+          "id": "windowed",
+          "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav",
+          "options": {
+            "audio_chunk_mode": "fixed"
+          }
+        },
+        {
+          "id": "repeat",
+          "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav"
+        }
+      ]
+    },
+    {
+      "id": "haas_ja_streaming",
+      "coverage": "Haas Japanese buffered streaming chunk ingestion and finalize",
+      "family": "haas_asr",
+      "model": "models/Haas-ja-v1.0-GGUF/haas-ja-v1.0-q8_0.gguf",
+      "task": "asr",
+      "session_options": {
+        "haas_asr.matmul_weight_type": "q8_0"
+      },
+      "outputs": [
+        "text"
+      ],
+      "mode": "streaming",
+      "requests": [
+        {
+          "id": "stream",
+          "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav"
+        }
+      ]
+    },
+    {
       "id": "parakeet_tdt_offline_long",
       "coverage": "Parakeet offline pre-encode, long-context encoder, TDT decoder",
       "family": "parakeet_tdt",

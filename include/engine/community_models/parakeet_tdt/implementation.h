@@ -31,6 +31,7 @@ struct ParakeetImplementation {
 extern const ParakeetImplementation kParakeetImplementation;
 extern const ParakeetImplementation kPhononImplementation;
 extern const ParakeetImplementation kBarkImplementation;
+extern const ParakeetImplementation kHaasImplementation;
 
 const ParakeetImplementation & implementation_for_family(std::string_view family);
 
