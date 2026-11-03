@@ -1,4 +1,5 @@
 #include "engine/community_models/parakeet_tdt/bark3.h"
+#include "engine/community_models/parakeet_tdt/implementation.h"
 #include "test_assert.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/runtime/errors.h"
@@ -17,11 +18,9 @@ namespace bark = engine::community_models::parakeet_tdt;
 
 namespace {
 void streaming_frontend_test() {
-    engine::test::require(bark::is_bark3_variant("underdog_bark3_pro"), "Pro selects Bark policy");
-    engine::test::require(bark::is_bark3_variant("underdog_bark3_plus"), "Plus selects Bark policy");
-    engine::test::require(bark::is_bark3_variant("underdog_bark3_standard"), "standard selects Bark policy");
-    for (const auto * variant : {"", "phonon2", "underdog_bark3_clean", "underdog_bark3_plus_typo"})
-        engine::test::require(!bark::is_bark3_variant(variant), "other variants retain their own policy");
+    engine::test::require_eq(bark::kBarkImplementation.input_prefix_samples, int64_t(4000), "Bark prefix policy");
+    engine::test::require_eq(bark::kParakeetImplementation.input_prefix_samples, int64_t(0), "Parakeet has no prefix");
+    engine::test::require_eq(bark::kPhononImplementation.input_prefix_samples, int64_t(0), "Phonon has no prefix");
     auto assets = std::make_shared<bark::ParakeetTDTAssets>();
     auto & config = assets->config.frontend;
     config.sample_rate = 16000;

@@ -274,7 +274,7 @@ def convert(source: Path, reference: Path, output: Path) -> Path:
         (staged / "config.json").write_text(json.dumps(runtime_config, indent=2) + "\n", encoding="utf-8")
         for name in LICENSES:
             shutil.copyfile(source / name, staged / name)
-        spec_path = Path(__file__).resolve().parents[2] / "model_specs" / "parakeet_tdt.json"
+        spec_path = Path(__file__).resolve().parents[2] / "model_specs" / "phonon2_asr.json"
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
         spec.update(display_name="Phonon-2 (dense F32)", status="experimental", languages=["en"],
                     modes=["offline", "streaming"], packages=[],
@@ -289,7 +289,7 @@ def convert(source: Path, reference: Path, output: Path) -> Path:
         provenance = {"source_repo": SOURCE_REPO, "source_revision": SOURCE_REVISION,
                       "archive_sha256": ARCHIVE_SHA256, "container_sha256": CONTAINER_SHA256,
                       "base_repo": BASE_REPO, "base_revision": BASE_REVISION,
-                      "weights_license": "CC-BY-4.0", "family": "parakeet_tdt", "language": "en",
+                      "weights_license": "CC-BY-4.0", "family": "phonon2_asr", "language": "en",
                       "storage": "F32", "records": len(records), "tensors": len(tensors),
                       "runtime_config_overrides": {"variant": "phonon2", "word_timestamp_mode": "token_duration"},
                       "conversion_projection_scale": 1 / 32,
@@ -408,7 +408,7 @@ def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> Non
         provenance["output_sidecar_sha256"]["config.json"] = sha256(metadata / "config.json")
         (metadata / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
         command = [str(converter.resolve()), "--input", str(staged / "model.safetensors"),
-                   "--root", str(metadata), "--family", "parakeet_tdt", "--model-spec",
+                   "--root", str(metadata), "--family", "phonon2_asr", "--model-spec",
                    str(metadata / "model_spec.json"), "--type",
                    "f16" if storage == "mixed-f16" else "q8_0" if storage == "mixed-q8" else storage,
                    "--output", str(output.resolve())]

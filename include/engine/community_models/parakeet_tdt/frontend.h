@@ -17,6 +17,13 @@ struct ParakeetFrontendFeatures {
     int64_t feature_dim = 0;
 };
 
+class WindowFrontend {
+public:
+    virtual ~WindowFrontend() = default;
+    virtual ParakeetFrontendFeatures extract(const runtime::AudioBuffer & window, int64_t start_sample) = 0;
+    virtual void reset() = 0;
+};
+
 class ParakeetFrontend {
 public:
     explicit ParakeetFrontend(std::shared_ptr<const ParakeetTDTAssets> assets);

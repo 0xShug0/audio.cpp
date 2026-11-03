@@ -1,5 +1,5 @@
 #include "engine/community_models/parakeet_tdt/encoder.h"
-#include "engine/community_models/parakeet_tdt/bark3.h"
+#include "engine/community_models/parakeet_tdt/implementation.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
@@ -594,9 +594,7 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     // call at this input length, so this cost is amortized to ~zero and every
     // reused call benefits from the smaller node count.
     const auto opt_backend = graph_optimizer_backend_for(execution_context_->backend_type());
-    const auto opt_options = is_bark3_variant(assets_->config.variant)
-        ? bark3_encoder_graph_options(opt_backend)
-        : engine::runtime::graph_optimization_options_for_backend(opt_backend);
+    const auto opt_options = assets_->implementation->encoder_graph_options(opt_backend);
     auto pos_options = opt_options;
     // Copy destinations share externally allocated inputs; keep their views in
     // the producer schedule so gallocr accounts for every referenced tensor.

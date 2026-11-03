@@ -48,7 +48,7 @@ def validate_config(config):
 
 
 def package_spec(repository):
-    spec = json.loads((repository / "model_specs/parakeet_tdt.json").read_text(encoding="utf-8"))
+    spec = json.loads((repository / "model_specs/underdog_bark3.json").read_text(encoding="utf-8"))
     spec.update(display_name="Underdog Bark 3.0 Pro", status="experimental", languages=["en"],
                 description="Conway Research Bark 3.0 Pro English Parakeet-TDT ASR; includes the reference 250 ms input prefix.",
                 packages=[])
@@ -147,7 +147,7 @@ def main():
             provenance.get("model_sha256") != SOURCE_SHA256 or provenance.get("variant") != VARIANT):
         raise ValueError("staging does not belong to this model/revision")
     command = [str(args.gguf_tool.resolve()), "--input", str(stage / "model.safetensors"),
-               "--root", str(stage), "--family", "parakeet_tdt", "--model-spec", str(stage / "model_spec.json"),
+               "--root", str(stage), "--family", "underdog_bark3", "--model-spec", str(stage / "model_spec.json"),
                "--type", args.type, "--keep-type", "*conv.norm.weight=f32", "--output", str(args.output.resolve())]
     if args.type == "q8_0":
         # These unmodified source BF16 weights are exactly representable.

@@ -1,7 +1,8 @@
 # Underdog Bark 3.0
 
 Conway Research's **Standard, Plus and Pro are English ASR variants** of the
-existing `parakeet_tdt` community family, not Bark speech-generation models.
+`underdog_bark3` community family, sharing the implementation under
+`parakeet_tdt`. These are ASR models, not Bark speech-generation models.
 All share the 0.6B FastConformer/TDT architecture, publisher's 250 ms prefix,
 original-sample timestamps and native runtime. Stock Parakeet and Phonon keep
 their behavior; no shared GGML kernels or parallel server runtime are needed.
@@ -13,8 +14,8 @@ their behavior; no shared GGML kernels or parallel server runtime are needed.
 | Pro | [ConwayResearch/Underdog-Bark-3.0-Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro) / `4b5c51e04aa8d16dda9ecdff71bc29f7360149e4` | About 1.25 GB BF16 safetensors | `convert_underdog_bark3.py` | `underdog-bark-3.0-pro-q8_0.gguf` |
 
 The compressed download sizes are not expanded GGUF/RAM/VRAM requirements.
-Packages explicitly select `underdog_bark3_standard`, `underdog_bark3_plus` or
-`underdog_bark3_pro`. This guide covers GGUF; native compressed `.bark` loading
+All three packages select the `underdog_bark3` family. Checkpoint variant
+labels describe the weights; they do not select runtime behavior. This guide covers GGUF; native compressed `.bark` loading
 is proposed separately in PR #1133.
 
 ## Convert
@@ -24,7 +25,7 @@ paths for your generator/platform (`.exe` on Windows).
 
 ```bash
 cmake -S . -B build/bark3 -DCMAKE_BUILD_TYPE=Release \
-  -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=parakeet_tdt \
+  -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=underdog_bark3 \
   -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=ON \
   -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON -DENGINE_BUILD_WARMBENCH=ON
 cmake --build build/bark3 --config Release --target \
@@ -107,13 +108,13 @@ round protected tensors again.
 Use any recommended GGUF with the same flags:
 
 ```bash
-build/bark3/bin/audiocpp_cli --task asr --family parakeet_tdt \
+build/bark3/bin/audiocpp_cli --task asr --family underdog_bark3 \
   --model-spec-override embedded --backend cuda --threads 8 \
   --model models/underdog-bark-3.0-mixed-f16.gguf \
   --audio input-16k-mono.wav --text-out transcript.txt --words-out words.json --metrics
 
 ffmpeg -i input.wav -ar 16000 -ac 1 -f f32le - | \
-  build/bark3/bin/audiocpp_cli --task asr --family parakeet_tdt \
+  build/bark3/bin/audiocpp_cli --task asr --family underdog_bark3 \
     --model-spec-override embedded --backend cuda \
     --model models/underdog-bark-3.0-mixed-f16.gguf \
     --mode streaming --audio - --input-format f32le --input-rate 16000 --input-channels 1
@@ -163,7 +164,7 @@ word spans. Enable offline-only VAD with:
 ```text
 --request-option audio_chunk_mode=vad
 --request-option audio_chunk_duration_sec=30
---session-option parakeet_tdt.vad_model_path=assets/framework/models/silero_vad
+--session-option underdog_bark3.vad_model_path=assets/framework/models/silero_vad
 ```
 
 The bundled default is Silero VAD. Each speech span receives its own prefix and
