@@ -18,6 +18,7 @@
 | MossFormer2 | `mossformer2` | `sep` | [MossFormer2](models/mossformer2.md) |
 | MuScriptor | `muscriptor` | audio to MIDI/events | [MuScriptor](#muscriptor) |
 | PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
+| Real-time RE-USE | `realtime_reuse` | Offline / streaming `s2s` speech restoration | [Real-time RE-USE](models/realtime_reuse.md) |
 | RE-USE | `reuse` | `s2s` speech restoration | [RE-USE](models/reuse.md) |
 | RVC | `rvc` | `vc` | [RVC](#rvc) |
 | SAM Audio | `sam_audio` | `s2s` prompt-conditioned separation | [SAM Audio](models/sam_audio.md) |
