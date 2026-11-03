@@ -3827,6 +3827,15 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME granite5asr_ctc_timestamps_test COMMAND granite5asr_ctc_timestamps_test)
     endif()
 
+    if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_VULKAN)
+        add_executable(vulkan_ssm_mamba1_test tests/unittests/test_ssm_mamba1.cpp app/cli/args.cpp)
+        target_link_libraries(vulkan_ssm_mamba1_test PRIVATE engine_runtime ggml)
+        target_include_directories(vulkan_ssm_mamba1_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME vulkan_ssm_mamba1_test COMMAND vulkan_ssm_mamba1_test --backend vulkan --log
+            --log-file "${CMAKE_CURRENT_BINARY_DIR}/ssm-mamba1-vulkan.log")
+        set_tests_properties(vulkan_ssm_mamba1_test PROPERTIES LABELS "extended;vulkan" SKIP_RETURN_CODE 77)
+    endif()
+
     if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_METAL)
         add_executable(metal_f32_matmul_test tests/unittests/test_metal_f32_matmul.cpp)
         target_link_libraries(metal_f32_matmul_test PRIVATE ggml ggml-metal)
@@ -3839,9 +3848,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME metal_conv_implicit_test COMMAND metal_conv_implicit_test)
         set_tests_properties(metal_conv_implicit_test PROPERTIES LABELS "extended;metal" SKIP_RETURN_CODE 77)
 
-        add_executable(metal_ssm_mamba1_test tests/unittests/test_metal_ssm_mamba1.cpp)
-        target_link_libraries(metal_ssm_mamba1_test PRIVATE ggml ggml-metal ggml-cpu)
-        add_test(NAME metal_ssm_mamba1_test COMMAND metal_ssm_mamba1_test)
+        add_executable(metal_ssm_mamba1_test tests/unittests/test_ssm_mamba1.cpp app/cli/args.cpp)
+        target_link_libraries(metal_ssm_mamba1_test PRIVATE engine_runtime ggml)
+        target_include_directories(metal_ssm_mamba1_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME metal_ssm_mamba1_test COMMAND metal_ssm_mamba1_test --backend metal --log
+            --log-file "${CMAKE_CURRENT_BINARY_DIR}/ssm-mamba1-metal.log")
         set_tests_properties(metal_ssm_mamba1_test PROPERTIES LABELS "extended;metal" SKIP_RETURN_CODE 77)
 
         add_executable(metal_ssm_scan_test tests/unittests/test_metal_ssm_scan.cpp)
