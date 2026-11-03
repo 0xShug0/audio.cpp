@@ -135,7 +135,7 @@ int main() {
             };
             check(R"({"input":"x","voice":"styled"})", no_default, key, "calm");
             check(R"({"input":"x"})", styled, key, "calm");
-            for (const std::string request_key : {key, alias}) {
+            for (const std::string & request_key : {key, alias}) {
                 check("{\"input\":\"x\",\"voice\":\"styled\",\"options\":{\"" + request_key + "\":\"cheerful\"}}",
                       no_default, request_key, "cheerful");
                 check("{\"input\":\"x\",\"options\":{\"" + request_key + "\":\"cheerful\"}}",

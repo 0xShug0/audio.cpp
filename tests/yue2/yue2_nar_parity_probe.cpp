@@ -15,8 +15,7 @@
 //   metadata.json     {"seed": .., "ode_steps": .., "context": .., "latent_dim": ..}
 //
 // Example:
-//   yue2_nar_parity_probe --model models/Yue2-3B-GGUF --reference /tmp/yue2nar \
-//                         --backend cuda --threads 8
+//   yue2_nar_parity_probe --model models/Yue2-3B-GGUF --reference /tmp/yue2nar --backend cuda --threads 8
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
