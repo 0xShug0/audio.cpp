@@ -1,12 +1,14 @@
 #include "engine/community_models/nemotron_transcribe/encoder.h"
 #include "engine/community_models/nemotron_transcribe/frontend.h"
 #include "engine/community_models/nemotron_transcribe/assets.h"
+#include "engine/community_models/nemotron_transcribe/session.h"
 #include "engine/framework/runtime/errors.h"
 
 #include <cmath>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace model = engine::models::nemotron_transcribe;
 
@@ -23,6 +25,15 @@ void invalid_audio(F action) {
 
 int main() {
     try {
+        for (const auto & entry : std::vector<std::pair<std::string, std::string>>{
+            {"zh", "Chinese"}, {"zh-CN", "Chinese"}, {"ZH_cn", "Chinese"}, {" zh ", "Chinese"},
+            {"en-US", "English"}, {"pt_BR", "Portuguese"}, {"ja-JP", "Japanese"},
+            {"sv-SE", "Swedish"}, {"fil-PH", "Filipino"}, {"tl", "Filipino"},
+            {"nb-NO", "Norwegian"}, {"no", "Norwegian"}, {"fa", "Persian"}}) {
+            require(model::language_name(entry.first) == entry.second, "language tags must resolve to source-language names");
+        }
+        for (const auto & value : {"", "auto", "Chinese", "Mandarin", "und", "zz-ZZ", "zh-Hans-CN", "-CN", "  Custom name  "})
+            require(model::language_name(value) == value, "custom or unknown language names must remain unchanged");
         require(model::is_near_silent({}), "empty native sample sequence");
         require(model::is_near_silent(std::vector<float>(16000, 0.0F)), "digital silence");
         require(model::is_near_silent(std::vector<float>(16000, 1e-6F)), "low energy noise floor");

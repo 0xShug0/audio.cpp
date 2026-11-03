@@ -218,6 +218,16 @@ Pass each task option with `--request-option key=value`:
 | Word timestamps | `return_timestamps=true` |
 | Speaker-tagged transcription and timings | `diarization=true` |
 
+For the built-in transcription instructions, `language` is a source-language
+hint. Common short and regional tags such as `zh`, `zh-CN` and `ZH_cn` resolve
+to the same language name; custom names such as `Mandarin` are passed through.
+The hint does not force the decoder's output language, and long recordings can
+still produce translations instead of transcripts.
+
+The built-in speaker instruction requests no punctuation or capitalization,
+matching the reference's trained speaker prompt. To request punctuation as well
+as speaker tags, supply an explicit `instruct` that asks for both.
+
 `instruct` replaces the template instruction, including its language hint and
 speaker-tag request. `--text` supplies the instruction when `instruct` is absent.
 Response formatting is preserved. Translation and Q&A templates reject timestamps
