@@ -151,8 +151,11 @@ private:
                 value = modules::Pad2dModule({0, 0, history - ahead, ahead}).build(ctx_, value);
             }
         }
-        return modules::Conv2dModule({dims[1], dims[0], dims[2], dims[3], 1, stride, 0,
-            symmetric_frequency ? static_cast<int>(dims[3] / 2) : 0, dilation, 1, true})
+        modules::Conv2dConfig config{dims[1], dims[0], dims[2], dims[3], 1, stride, 0,
+            symmetric_frequency ? static_cast<int>(dims[3] / 2) : 0, dilation, 1, true};
+        // Metal: avoid im2col; the module checks kernel eligibility.
+        config.implicit_gemm = ctx_.backend_type == core::BackendType::Metal;
+        return modules::Conv2dModule(config)
             .build(ctx_, value, {weight, weights_.at(prefix + ".bias")}).tensor;
     }
 
@@ -201,7 +204,9 @@ private:
         if (ctx_.backend_type == core::BackendType::Vulkan) gate = core::ensure_backend_addressable_layout(ctx_, gate);
         auto projected = modules::SliceModule({2, 0, 256}).build(ctx_, packed);
         projected = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, projected);
-        const bool fused_mamba = ctx_.backend_type == core::BackendType::Vulkan;
+        // Metal opts into the existing compact scan and stateless causal convolution.
+        const bool fused_mamba = ctx_.backend_type == core::BackendType::Vulkan ||
+            ctx_.backend_type == core::BackendType::Metal;
         const bool compact_scan = fused_mamba && weights_.at(prefix + ".dt_proj.weight").tensor->type == GGML_TYPE_F32;
         const bool fused_conv = fused_mamba && !(streaming_ && temporal);
         if (streaming_ && temporal) {
