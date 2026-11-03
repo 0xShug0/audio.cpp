@@ -5,9 +5,34 @@ note-event JSON or a MIDI file. The default download is the standalone F32
 GGUF package; the original safetensors layout is still supported for local
 development.
 
+## Model Sizes
+
+The official variants share the same model architecture and runtime. Width,
+head count, layer count and vocabulary size are read from the embedded config.
+Small remains the default package. All three sizes use F32 GGUFs.
+
+| Variant | Parameters | Width | Heads | Layers | Vocabulary (`card`) | Original precision |
+|---|---:|---:|---:|---:|---:|---|
+| [Small](https://huggingface.co/MuScriptor/muscriptor-small) | 103M | 768 | 12 | 14 | 1393 | F32 |
+| [Medium](https://huggingface.co/MuScriptor/muscriptor-medium) | 307M | 1024 | 16 | 24 | 1395 | F32 |
+| [Large](https://huggingface.co/MuScriptor/muscriptor-large) | 1.366B | 1536 | 24 | 48 | 1395 | F32 |
+
+## Download And Run
+
 ```bash
 python3 tools/model_manager_v2.py install muscriptor
 ```
+
+Select another size explicitly:
+
+```bash
+python3 tools/model_manager_v2.py install muscriptor_medium_f32
+python3 tools/model_manager_v2.py install muscriptor_large_f32
+```
+
+All three packages share `models/MuScriptor-Small-GGUF/` for compatibility with
+the existing download directory. Pass the specific GGUF filename to `--model`
+when that directory contains multiple variants.
 
 ```bash
 audiocpp_cli --task midi --family muscriptor \
@@ -27,6 +52,47 @@ audiocpp_cli --task midi --mode streaming --family muscriptor \
   --audio song.wav \
   --request-option instruments=drums,electric_bass \
   --out result.mid
+```
+
+## Convert Original Checkpoints
+
+Accept the license on the chosen upstream model page, then download its
+`config.json` and `model.safetensors` into one directory. Install the Python
+conversion dependencies:
+
+```bash
+python3 -m pip install numpy safetensors
+```
+
+Build the converter and CLI (Metal on macOS; select your backend on other
+platforms):
+
+```bash
+cmake -S . -B build/muscriptor -DCMAKE_BUILD_TYPE=Release \
+  -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=muscriptor \
+  -DENGINE_ENABLE_METAL=ON
+cmake --build build/muscriptor --config Release \
+  --target audiocpp_gguf audiocpp_cli -j
+```
+
+Convert the downloaded checkpoint without changing precision or model math:
+
+```bash
+python3 tests/muscriptor/convert_gguf.py \
+  --source <checkpoint-directory> \
+  --output models/MuScriptor-Small-GGUF/muscriptor-medium-f32.gguf \
+  --converter build/muscriptor/bin/audiocpp_gguf
+```
+
+For Large, use its checkpoint directory and an output such as
+`models/MuScriptor-Small-GGUF/muscriptor-large-f32.gguf`. The same script also
+accepts Small. Each generated GGUF is self-contained; no sidecar files are
+needed for inference.
+
+```bash
+build/muscriptor/bin/audiocpp_cli --task midi --family muscriptor \
+  --model models/MuScriptor-Small-GGUF/muscriptor-medium-f32.gguf \
+  --backend metal --audio <music.wav> --out result.mid --log
 ```
 
 ## Common Options (use directly)
