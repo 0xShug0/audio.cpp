@@ -4,7 +4,7 @@
   "display_name": "Phonon-2",
   "description": "Fermion Research Phonon-2 English ASR using the shared Parakeet implementation, with native hotwords and phrase-based streaming.",
   "category": "asr",
-  "status": "experimental",
+  "status": "community",
   "tasks": [
     "asr"
   ],
@@ -207,9 +207,42 @@
     ],
     "load": []
   },
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "phonon2_asr_q8_0",
+      "display_name": "Phonon-2 mixed Q8 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Phonon-2-GGUF",
+      "files": [
+        "Phonon-2-GGUF/phonon-2-mixed-q8.gguf"
+      ],
+      "strip_prefix": "Phonon-2-GGUF",
+      "default": true
+    },
+    {
+      "id": "phonon2_asr_f16",
+      "display_name": "Phonon-2 mixed F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Phonon-2-GGUF",
+      "files": [
+        "Phonon-2-GGUF/phonon-2-mixed-f16.gguf"
+      ],
+      "strip_prefix": "Phonon-2-GGUF"
+    }
+  ],
   "dependencies": [],
   "ui": {
+    "recommended_package": "phonon2_asr_q8_0",
     "tags": [
       "ASR",
       "GGUF"

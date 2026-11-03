@@ -1098,6 +1098,7 @@ audiocpp_add_model(parakeet_tdt
         src/community_models/parakeet_tdt/session.cpp
         src/community_models/parakeet_tdt/encoder.cpp
         src/community_models/parakeet_tdt/decoder.cpp
+        src/community_models/parakeet_tdt/kda_predictor.cpp
         src/community_models/parakeet_tdt/hotwords.cpp
         src/community_models/parakeet_tdt/phonon_streaming.cpp
         src/community_models/parakeet_tdt/frontend.cpp
@@ -1108,9 +1109,11 @@ audiocpp_add_model(parakeet_tdt
         engine::community_models::parakeet_tdt::make_parakeet_tdt_loader
         engine::community_models::parakeet_tdt::make_phonon2_asr_loader
         engine::community_models::parakeet_tdt::make_underdog_bark3_loader
+        engine::community_models::parakeet_tdt::make_haas_asr_loader
     ALIASES
         phonon2_asr
         underdog_bark3
+        haas_asr
 )
 
 audiocpp_add_model(personaplex

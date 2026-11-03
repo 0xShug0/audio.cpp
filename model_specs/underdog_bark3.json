@@ -4,7 +4,7 @@
   "display_name": "Underdog Bark 3",
   "description": "Conway Research Underdog Bark 3 Standard, Plus and Pro English ASR, with the publisher input prefix and model-local streaming frontend.",
   "category": "asr",
-  "status": "experimental",
+  "status": "community",
   "tasks": [
     "asr"
   ],
@@ -207,9 +207,31 @@
     ],
     "load": []
   },
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "underdog_bark3_standard_f16",
+      "display_name": "Underdog Bark 3.0 Standard mixed F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Underdog-Bark-3.0-GGUF",
+      "files": [
+        "Underdog-Bark-3.0-GGUF/underdog-bark-3.0-mixed-f16.gguf"
+      ],
+      "strip_prefix": "Underdog-Bark-3.0-GGUF",
+      "default": true
+    }
+  ],
   "dependencies": [],
   "ui": {
+    "recommended_package": "underdog_bark3_standard_f16",
     "tags": [
       "ASR",
       "GGUF"

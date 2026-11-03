@@ -13,6 +13,7 @@ For Qwen3-ASR adapter loading and merged GGUF export, see the [LoRA guide](lora.
 | Fun-ASR-Nano | `fun_asr_nano` | offline | [Fun-ASR-Nano](#fun-asr-nano) |
 | GigaAM v3 / Multilingual | `gigaam_asr` | offline | [GigaAM ASR](models/gigaam_asr.md) |
 | Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](models/granite5asr.md) |
+| Haas Japanese ASR | `haas_asr` | offline, streaming | [Haas-ja-v1.0](models/haas.md) |
 | Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](models/higgs_audio_stt.md) |
 | Hviske ASR | `hviske_asr` | offline | [Hviske ASR](#hviske-asr) |
 | Hviske v6 | `hviske_asr_v6` | offline | [Hviske v6](models/hviske_asr_v6.md) |

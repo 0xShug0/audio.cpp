@@ -23,6 +23,7 @@
 #include "engine/community_models/parakeet_tdt/assets.h"
 #include "engine/community_models/parakeet_tdt/decoder.h"
 #include "engine/community_models/parakeet_tdt/encoder.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/community_models/parakeet_tdt/frontend.h"
 #include "engine/community_models/parakeet_tdt/weights.h"
 #include "engine/framework/audio/wav_reader.h"
@@ -125,6 +126,7 @@ std::vector<float> run_isolated_layer(
 }  // namespace
 
 int main(int argc, char ** argv) {
+    engine::debug::configure_logging({argc > 1 && std::string(argv[1]) == "--log", std::nullopt});
     const std::filesystem::path model_path = arg_value(argc, argv, "--model", "models/parakeet-tdt-0.6b-v3");
     const std::filesystem::path audio_path = arg_value(argc, argv, "--audio", "");
     const std::filesystem::path nemo_dir = arg_value(argc, argv, "--nemo-dir", "");
@@ -154,7 +156,7 @@ int main(int argc, char ** argv) {
     try {
         std::filesystem::create_directories(output_dir);
 
-        auto assets = load_parakeet_assets(model_path);
+        auto assets = load_parakeet_assets(model_path, arg_value(argc, argv, "--family", "parakeet_tdt"));
 
         engine::core::BackendConfig backend_config;
         backend_config.device = std::stoi(arg_value(argc, argv, "--device", "0"));

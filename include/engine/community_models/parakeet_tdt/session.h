@@ -24,6 +24,7 @@ namespace engine::community_models::parakeet_tdt {
 std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader();
 std::shared_ptr<runtime::IVoiceModelLoader> make_phonon2_asr_loader();
 std::shared_ptr<runtime::IVoiceModelLoader> make_underdog_bark3_loader();
+std::shared_ptr<runtime::IVoiceModelLoader> make_haas_asr_loader();
 
 class ParakeetTDTSessionBase : public runtime::RuntimeSessionBase {
 public:
