@@ -61,9 +61,8 @@ __global__ void __launch_bounds__(splitD, 1)
     __shared__ CubTempStorage cub_temp_storage;
 
     BlockLoad(cub_temp_storage.load_temp).Load(A_block, regA);
-    if constexpr (gated) {
-        __syncthreads();
-    }
+    // Both loads reuse the same CUB shared storage.
+    __syncthreads();
     BlockLoad(cub_temp_storage.load_temp).Load(s0_block, regs0);
 #else
     const int stride_s0 = src0_nb2 / sizeof(float);
@@ -108,9 +107,8 @@ __global__ void __launch_bounds__(splitD, 1)
             sumf = ggml_cuda_op_silu_single(g) * __fadd_rn(sumf, product);
         }
         y_block[i * stride_y + threadIdx.x] = sumf;
-        if constexpr (gated) {
-            __syncthreads();
-        }
+        // Finish reading B/C before the next token overwrites them.
+        __syncthreads();
     }
 
     if constexpr (!gated) {
