@@ -24,6 +24,7 @@ struct TransformerEncoderBlockConfig {
     AttentionPrefixCacheLayout prefix_cache_layout = AttentionPrefixCacheLayout::SequenceHeads;
     bool use_packed_qkv = false;
     bool use_flash_attention = false;
+    GeluApproximation gelu_approximation = GeluApproximation::ExactErf;
 };
 
 struct TransformerEncoderBlockWeights {

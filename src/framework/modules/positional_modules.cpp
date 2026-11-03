@@ -130,6 +130,22 @@ core::TensorValue RoPEModule::build(
         input.type);
 }
 
+core::TensorValue RoPEModule::build_batched(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const core::TensorValue * frequency_factors) const {
+    core::validate_rank_between(input, 4, 4, "batched RoPE input");
+    const auto batch = input.shape.dims[0];
+    const auto steps = input.shape.dims[1];
+    core::validate_shape(positions, core::TensorShape::from_dims({batch, steps}), "batched RoPE positions");
+    const auto flat_input = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, input),
+        core::TensorShape::from_dims({1, batch * steps, input.shape.dims[2], input.shape.dims[3]}));
+    const auto flat_positions = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, positions),
+        core::TensorShape::from_dims({batch * steps}));
+    return core::reshape_tensor(ctx, build(ctx, flat_input, flat_positions, frequency_factors), input.shape);
+}
+
 SplitRoPEModule::SplitRoPEModule(SplitRoPEConfig config) : config_(config) {
     require_positive(config_.dimensions, "SplitRoPEConfig.dimensions");
     if (config_.dimensions % 2 != 0) {

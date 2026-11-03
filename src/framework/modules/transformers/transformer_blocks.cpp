@@ -44,7 +44,7 @@ core::TensorValue TransformerEncoderBlockModule::build(
         config_.hidden_size,
         config_.intermediate_size,
         config_.use_bias,
-        GeluApproximation::ExactErf,
+        config_.gelu_approximation,
         config_.projection_precision,
     });
     const ResidualAddModule add;
@@ -105,7 +105,7 @@ StreamingTransformerEncoderBlockOutputs StreamingTransformerEncoderBlockModule::
         config_.hidden_size,
         config_.intermediate_size,
         config_.use_bias,
-        GeluApproximation::ExactErf,
+        config_.gelu_approximation,
         config_.projection_precision,
     });
     const ResidualAddModule add;

@@ -46,6 +46,7 @@ For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
 | Piper TTS | `piper_tts` | `tts` | [Piper TTS](models/piper_tts.md) |
 | Plapre 3 | `plapre` | `tts`, `clon` | [Plapre 3](models/plapre.md) |
 | PocketTTS | `pocket_tts` | `tts`, `clon` | [PocketTTS](#pockettts) |
+| PocketTTS Small | `pocket_tts_small` | `tts`, `clon` | [PocketTTS Small](models/pocket_tts_small.md) |
 | Qwen3 TTS | `qwen3_tts` | `tts`, `clon`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
 | sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |

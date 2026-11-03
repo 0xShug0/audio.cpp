@@ -29,6 +29,13 @@ public:
         const core::TensorValue & positions,
         const core::TensorValue * frequency_factors = nullptr) const;
 
+    // Independent positions [batch, time] for input [batch, time, heads, dimension].
+    core::TensorValue build_batched(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const core::TensorValue & positions,
+        const core::TensorValue * frequency_factors = nullptr) const;
+
 private:
     RoPEConfig config_;
 };
