@@ -740,7 +740,8 @@ void unsupported_capacity_preserves_registration() {
             } catch (const std::exception & error) {
                 response.status = 500; response.body = error.what();
             }
-            const auto & model = Access::model(*f.state, "shared");
+            const std::string model_id = "shared";
+            const auto & model = Access::model(*f.state, model_id);
             require(model.sessions.get() == before && model.config.slots == count &&
                     model.config.path == f.root / "shared" && Access::resident(*f.state, "shared") &&
                     old->destructions == 0 && old->loads == 1,

@@ -317,7 +317,6 @@ private:
         int64_t k) {
         const auto & config = assets_->config.local_transformer;
         const int64_t hidden_size = config.hidden_size;
-        const int64_t head_dim = hidden_size / config.num_attention_heads;
         Row row;
         ggml_cgraph * graph = ggml_new_graph_custom(ctx.ggml, 4096, false);
 

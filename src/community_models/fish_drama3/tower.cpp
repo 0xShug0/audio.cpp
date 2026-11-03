@@ -408,7 +408,7 @@ private:
     struct PrefillGraphs {
         int64_t steps;
         size_t bytes = 0;
-        std::unique_ptr<LayerGraph> graph;
+        std::unique_ptr<LayerGraph> graph{};
     };
 
     LayerGraph * prefill_graph(int64_t steps, std::unique_ptr<LayerGraph> & temporary) {

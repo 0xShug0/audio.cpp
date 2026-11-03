@@ -127,7 +127,7 @@ AUDIOCPP_API audiocpp_status audiocpp_registry_family(const audiocpp_registry * 
  *
  * The tasks this build knows, askable without a model. Every other task-aware
  * entry point takes an audiocpp_model, so a caller that is deciding what to
- * install -- reading model_specs/*.json to build a picker, say -- has had
+ * install -- reading JSON files in model_specs/ to build a picker, say -- has had
  * nothing to ask and has had to hardcode a copy of the table in
  * src/framework/model_spec/metadata.cpp.
  *

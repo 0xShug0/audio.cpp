@@ -221,6 +221,7 @@ engine::runtime::GraphOptimizationBackend graph_optimizer_backend_for_test(engin
             return engine::runtime::GraphOptimizationBackend::Gpu;
         case engine::core::BackendType::Vulkan:
         case engine::core::BackendType::Metal:
+        case engine::core::BackendType::WebGPU:
         case engine::core::BackendType::BestAvailable:
             return engine::runtime::GraphOptimizationBackend::Other;
     }

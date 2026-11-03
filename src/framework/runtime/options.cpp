@@ -95,6 +95,8 @@ std::string tensor_storage_type_name(assets::TensorStorageType storage_type) {
         return "bf16";
     case assets::TensorStorageType::I8:
         return "i8";
+    case assets::TensorStorageType::TQ2_1:
+        return "tq2_1";
     case assets::TensorStorageType::Q4_0:
         return "q4_0";
     case assets::TensorStorageType::Q4_1:

@@ -88,7 +88,7 @@ int main() {
         }
         rejects([&] { ts::banded_ctc_search(scores.data(), 2, {0, 2, 0}, {0, 1}, nullptr, {0, 1}); },
             "search accepted invalid class");
-        for (const std::vector<int> positions : {std::vector<int>{-1}, {2}, {0, 0}, {1, 0}})
+        for (const std::vector<int> & positions : {std::vector<int>{-1}, {2}, {0, 0}, {1, 0}})
             rejects([&] { ts::banded_ctc_search(scores.data(), 2, {0, 1, 0}, positions, nullptr, {0, 1}); },
                 "search accepted invalid timeline position");
         rejects([&] { ts::speaker_mapping({2}, 2, targets.streams, activity.data(), 1, 1, .5f); },

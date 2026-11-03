@@ -444,7 +444,7 @@ runtime::RunMode Granite5ASROfflineSession::run_mode() const {
     return run_mode_impl();
 }
 
-void Granite5ASROfflineSession::prepare(const runtime::SessionPreparationRequest & request) {
+void Granite5ASROfflineSession::prepare(const runtime::SessionPreparationRequest &) {
     mark_prepared();
 }
 
@@ -482,7 +482,7 @@ runtime::RunMode Granite5ASRStreamingSession::run_mode() const {
     return run_mode_impl();
 }
 
-void Granite5ASRStreamingSession::prepare(const runtime::SessionPreparationRequest & request) {
+void Granite5ASRStreamingSession::prepare(const runtime::SessionPreparationRequest &) {
     mark_prepared();
 }
 

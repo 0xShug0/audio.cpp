@@ -42,19 +42,6 @@ modules::LinearWeights load_linear_with_bias(
     };
 }
 
-modules::LinearWeights load_linear_no_bias(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix,
-    int64_t in_features,
-    int64_t out_features,
-    assets::TensorStorageType storage_type) {
-    return {
-        store.load_tensor(source, prefix + ".weight", storage_type, {out_features, in_features}),
-        std::nullopt,
-    };
-}
-
 modules::NormWeights load_layer_norm(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
