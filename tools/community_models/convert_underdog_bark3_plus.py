@@ -245,7 +245,7 @@ def pack(staging, tool, output, storage, overwrite=False, profile=PLUS_PROFILE):
         target_type = "f16" if storage == "mixed-f16" else "q8_0" if storage == "mixed-q8" else storage
         output.parent.mkdir(parents=True, exist_ok=True)
         command = [str(tool.resolve()), "--input", str((staging / "model.safetensors").resolve()),
-                   "--root", str(root.resolve()), "--family", "parakeet_tdt", "--model-spec", str(root / "model_spec.json"),
+                   "--root", str(root.resolve()), "--family", "underdog_bark3", "--model-spec", str(root / "model_spec.json"),
                    "--type", target_type, "--keep-type", "*conv.norm.weight=f32", "--output", str(output.resolve())]
         for name in preserved:
             command += ["--keep-type", name + "=orig"]

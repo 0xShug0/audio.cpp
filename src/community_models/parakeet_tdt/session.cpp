@@ -1,6 +1,5 @@
 #include "engine/community_models/parakeet_tdt/session.h"
-#include "engine/community_models/parakeet_tdt/bark3.h"
-#include "engine/community_models/parakeet_tdt/phonon_streaming.h"
+#include "engine/community_models/parakeet_tdt/implementation.h"
 
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/runtime/errors.h"
@@ -25,7 +24,6 @@ using Clock = std::chrono::steady_clock;
 constexpr size_t kDefaultWeightContextBytes = 3072ull * 1024ull * 1024ull;
 constexpr size_t kDefaultEncoderGraphArenaBytes = 1024ull * 1024ull * 1024ull;
 constexpr size_t kDefaultDecoderGraphArenaBytes = 256ull * 1024ull * 1024ull;
-constexpr const char * kFamily = "parakeet_tdt";
 constexpr float kDefaultCenterDurationSec = 2.0f;
 constexpr float kDefaultLeftContextSec = 10.0f;
 constexpr float kDefaultRightContextSec = 2.0f;
@@ -54,11 +52,12 @@ void validate_session_option_keys(
     // Older standalone GGUF packages embed a v1 contract that predates native
     // Parakeet VAD wiring. Keep those packages usable while validating the
     // option against current local specs.
-    if (contract.session_option_keys.find("parakeet_tdt.vad_model_path") ==
+    const std::string vad_key = contract.metadata.family + ".vad_model_path";
+    if (contract.session_option_keys.find(vad_key) ==
         contract.session_option_keys.end()) {
-        validation_options.options.erase("parakeet_tdt.vad_model_path");
+        validation_options.options.erase(vad_key);
     }
-    const std::string family_prefix = std::string(kFamily) + ".";
+    const std::string family_prefix = contract.metadata.family + ".";
     for (const auto & [key, _] : validation_options.options) {
         if (key.rfind(family_prefix, 0) == 0 &&
             contract.session_option_keys.find(key) == contract.session_option_keys.end()) {
@@ -105,9 +104,9 @@ std::unordered_map<std::string, std::string> normalize_request_options(
     return options;
 }
 
-bool use_flash_attention(const runtime::SessionOptions & options) {
+bool use_flash_attention(const runtime::SessionOptions & options, const std::string & prefix) {
     const auto value =
-        runtime::find_option(options.options, {"parakeet_tdt.perf_mode"}).value_or("off");
+        runtime::find_option(options.options, {prefix + "perf_mode"}).value_or("off");
     if (value == "off") {
         return false;
     }
@@ -115,19 +114,19 @@ bool use_flash_attention(const runtime::SessionOptions & options) {
         return true;
     }
     throw std::runtime_error(
-        "parakeet_tdt.perf_mode must be 'off' or 'flash_attention'");
+        prefix + "perf_mode must be 'off' or 'flash_attention'");
 }
 
 engine::assets::TensorStorageType option_weight_type(
     const runtime::SessionOptions & options,
-    const char * key,
+    const std::string & key,
     engine::assets::TensorStorageType fallback) {
     const auto it = options.options.find(key);
     if (it == options.options.end()) { return fallback; }
     return engine::assets::parse_tensor_storage_type(it->second);
 }
 
-void validate_matmul_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
+void validate_matmul_weight_storage(engine::assets::TensorStorageType storage_type, std::string_view option_name) {
     if (storage_type == engine::assets::TensorStorageType::Native ||
         storage_type == engine::assets::TensorStorageType::F32 ||
         storage_type == engine::assets::TensorStorageType::F16 ||
@@ -136,7 +135,7 @@ void validate_matmul_weight_storage(engine::assets::TensorStorageType storage_ty
     throw std::runtime_error(std::string(option_name) + " supports only native, f32, f16, bf16, and q8_0");
 }
 
-void validate_conv_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
+void validate_conv_weight_storage(engine::assets::TensorStorageType storage_type, std::string_view option_name) {
     if (storage_type == engine::assets::TensorStorageType::Native ||
         storage_type == engine::assets::TensorStorageType::F32 ||
         storage_type == engine::assets::TensorStorageType::F16) { return; }
@@ -158,7 +157,7 @@ int64_t frontend_frames_for_samples(
 
 float duration_option(
     const runtime::SessionOptions& options,
-    const char* key,
+    std::string_view key,
     float fallback,
     float minimum) {
     const float value = runtime::parse_finite_float_option(options.options, {key}).value_or(fallback);
@@ -169,47 +168,47 @@ float duration_option(
     return value;
 }
 
-void validate_duration_contract_options(const runtime::SessionOptions& options) {
+void validate_duration_contract_options(const runtime::SessionOptions& options, const std::string & prefix) {
     (void)duration_option(
         options,
-        "parakeet_tdt.audio_chunk_duration_sec",
+        prefix + "audio_chunk_duration_sec",
         kDefaultCenterDurationSec,
         kMinimumPositiveDurationSec);
     (void)duration_option(
         options,
-        "parakeet_tdt.left_context_sec",
+        prefix + "left_context_sec",
         kDefaultLeftContextSec,
         0.f);
     (void)duration_option(
         options,
-        "parakeet_tdt.right_context_sec",
+        prefix + "right_context_sec",
         kDefaultRightContextSec,
         0.f);
     (void)duration_option(
         options,
-        "parakeet_tdt.audio_chunk_threshold_sec",
+        prefix + "audio_chunk_threshold_sec",
         kDefaultAudioChunkThresholdSec,
         kMinimumPositiveDurationSec);
 }
 
-std::string offline_mode_option(const runtime::SessionOptions& options) {
+std::string offline_mode_option(const runtime::SessionOptions& options, const std::string & prefix) {
     const auto value =
-        runtime::find_option(options.options, {"parakeet_tdt.offline_mode"})
+        runtime::find_option(options.options, {prefix + "offline_mode"})
             .value_or("full_context");
     if (value != "full_context" && value != "long_form" && value != "auto") {
         throw std::runtime_error(
-            "parakeet_tdt.offline_mode must be 'full_context', 'long_form', or 'auto'");
+            prefix + "offline_mode must be 'full_context', 'long_form', or 'auto'");
     }
     return value;
 }
 
-std::string streaming_attention_mode_option(const runtime::SessionOptions& options) {
+std::string streaming_attention_mode_option(const runtime::SessionOptions& options, const std::string & prefix) {
     const auto value =
-        runtime::find_option(options.options, {"parakeet_tdt.streaming_attention_mode"})
+        runtime::find_option(options.options, {prefix + "streaming_attention_mode"})
             .value_or("full_context");
     if (value != "full_context") {
         throw std::runtime_error(
-            "parakeet_tdt.streaming_attention_mode currently supports only 'full_context'");
+            prefix + "streaming_attention_mode currently supports only 'full_context'");
     }
     return value;
 }
@@ -218,9 +217,9 @@ std::filesystem::path default_vad_model_path() {
     return std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
 }
 
-void validate_enum_contract_options(const runtime::SessionOptions& options) {
-    (void)offline_mode_option(options);
-    (void)streaming_attention_mode_option(options);
+void validate_enum_contract_options(const runtime::SessionOptions& options, const std::string & prefix) {
+    (void)offline_mode_option(options, prefix);
+    (void)streaming_attention_mode_option(options, prefix);
 }
 
 int64_t seconds_to_samples(float seconds, int sample_rate) {
@@ -239,15 +238,16 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
       task_(task),
       assets_(require_assets(std::move(assets))),
       contract_(require_contract(std::move(contract))),
-      weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"parakeet_tdt.weight_context_mb"}, kDefaultWeightContextBytes)),
-      encoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"parakeet_tdt.encoder_graph_arena_mb"}, kDefaultEncoderGraphArenaBytes)),
-      decoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"parakeet_tdt.decoder_graph_arena_mb"}, kDefaultDecoderGraphArenaBytes)),
+      option_prefix_(contract_->metadata.family + "."),
+      weight_context_bytes_(runtime::parse_size_mb_option(options.options, {option_prefix_ + "weight_context_mb"}, kDefaultWeightContextBytes)),
+      encoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {option_prefix_ + "encoder_graph_arena_mb"}, kDefaultEncoderGraphArenaBytes)),
+      decoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {option_prefix_ + "decoder_graph_arena_mb"}, kDefaultDecoderGraphArenaBytes)),
       matmul_weight_storage_type_(option_weight_type(
           options,
-          "parakeet_tdt.matmul_weight_type",
-          option_weight_type(options, "parakeet_tdt.weight_type", engine::assets::TensorStorageType::Native))),
-      conv_weight_storage_type_(option_weight_type(options, "parakeet_tdt.conv_weight_type", engine::assets::TensorStorageType::Native)),
-      encoder_flash_attention_(use_flash_attention(options)),
+          option_prefix_ + "matmul_weight_type",
+          option_weight_type(options, option_prefix_ + "weight_type", engine::assets::TensorStorageType::Native))),
+      conv_weight_storage_type_(option_weight_type(options, option_prefix_ + "conv_weight_type", engine::assets::TensorStorageType::Native)),
+      encoder_flash_attention_(use_flash_attention(options, option_prefix_)),
       frontend_(assets_) {
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Parakeet TDT only supports VoiceTaskKind::Asr");
@@ -256,11 +256,11 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
         task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Parakeet TDT supports offline and buffered-streaming sessions");
     }
-    validate_matmul_weight_storage(matmul_weight_storage_type_, "parakeet_tdt.weight_type");
-    validate_conv_weight_storage(conv_weight_storage_type_, "parakeet_tdt.conv_weight_type");
+    validate_matmul_weight_storage(matmul_weight_storage_type_, option_prefix_ + "weight_type");
+    validate_conv_weight_storage(conv_weight_storage_type_, option_prefix_ + "conv_weight_type");
     validate_session_option_keys(options, *contract_);
-    validate_duration_contract_options(options);
-    validate_enum_contract_options(options);
+    validate_duration_contract_options(options, option_prefix_);
+    validate_enum_contract_options(options, option_prefix_);
     weights_ = load_parakeet_weights(
         *assets_,
         execution_context().backend(),
@@ -283,7 +283,7 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
 
 ParakeetTDTSessionBase::~ParakeetTDTSessionBase() = default;
 
-std::string ParakeetTDTSessionBase::family_impl() const { return "parakeet_tdt"; }
+std::string ParakeetTDTSessionBase::family_impl() const { return contract_->metadata.family; }
 runtime::VoiceTaskKind ParakeetTDTSessionBase::task_kind_impl() const { return task_.task; }
 runtime::RunMode ParakeetTDTSessionBase::run_mode_impl() const { return task_.mode; }
 
@@ -296,9 +296,8 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
     if (const auto value = runtime::find_option(request.options, {"keep_language_tags"})) {
         opts.keep_language_tags = runtime::parse_bool_option(*value, "keep_language_tags");
     }
-    const bool phonon = assets_->config.variant == "phonon2";
-    const bool bark = is_bark3_variant(assets_->config.variant);
-    const bool native_hotwords = phonon || bark;
+    const auto & implementation = *assets_->implementation;
+    const bool native_hotwords = implementation.hotwords;
     std::optional<std::string> hotwords;
     if (const auto it = request.options.find("hotwords"); it != request.options.end())
         hotwords = it->second;
@@ -307,8 +306,7 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
         hotwords = request.text_input->text;
     const auto strength = runtime::parse_float_option(request.options, {"hotwords_score"}).value_or(2.f);
     if (!std::isfinite(strength) || strength < 0 || strength > 100)
-        throw std::runtime_error(bark ? "Bark hotwords_score must be between 0 and 100"
-                                     : "Phonon hotwords_score must be between 0 and 100");
+        throw std::runtime_error(std::string(implementation.hotword_name) + " hotwords_score must be between 0 and 100");
     if (hotwords || array != request.option_arrays.end()) {
         if (!native_hotwords) throw std::runtime_error("hotwords currently require a Phonon-2 package");
         std::vector<PhononHotword> terms;
@@ -326,7 +324,7 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
     }
     return opts;
 } catch (const std::runtime_error & error) {
-    if (is_bark3_variant(assets_->config.variant))
+    if (assets_->implementation->invalid_request_errors)
         throw runtime::InvalidRequestError(error.what());
     throw;
 }
@@ -341,38 +339,38 @@ ParakeetTDTOfflineSession::ParakeetTDTOfflineSession(
           std::move(options),
           std::move(assets),
           std::move(contract)) {
-    offline_mode_ = offline_mode_option(this->options());
+    offline_mode_ = offline_mode_option(this->options(), option_prefix_);
     const int sample_rate = assets_->config.frontend.sample_rate;
     center_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
-            "parakeet_tdt.audio_chunk_duration_sec",
+            option_prefix_ + "audio_chunk_duration_sec",
             kDefaultCenterDurationSec,
             kMinimumPositiveDurationSec),
         sample_rate);
     left_context_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
-            "parakeet_tdt.left_context_sec",
+            option_prefix_ + "left_context_sec",
             kDefaultLeftContextSec,
             0.f),
         sample_rate);
     right_context_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
-            "parakeet_tdt.right_context_sec",
+            option_prefix_ + "right_context_sec",
             kDefaultRightContextSec,
             0.f),
         sample_rate);
     auto_full_context_max_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
-            "parakeet_tdt.audio_chunk_threshold_sec",
+            option_prefix_ + "audio_chunk_threshold_sec",
             kDefaultAudioChunkThresholdSec,
             kMinimumPositiveDurationSec),
         sample_rate);
     vad_model_path_ =
-        runtime::find_option(this->options().options, {"parakeet_tdt.vad_model_path"})
+        runtime::find_option(this->options().options, {option_prefix_ + "vad_model_path"})
             .value_or(default_vad_model_path().string());
 }
 
@@ -470,7 +468,7 @@ void ParakeetTDTOfflineSession::prepare(const runtime::SessionPreparationRequest
     }
     decoder_->prepare();
     mark_prepared();
-    debug::timing_log_scalar("parakeet_tdt.prepare_ms", engine::debug::elapsed_ms(prepare_start, Clock::now()));
+    debug::timing_log_scalar(option_prefix_ + "prepare_ms", engine::debug::elapsed_ms(prepare_start, Clock::now()));
 }
 
 runtime::TaskResult ParakeetTDTOfflineSession::run(const runtime::TaskRequest & request) {
@@ -683,11 +681,11 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
     for (const auto& span : spans) {
         auto window = engine::audio::slice_audio_buffer(audio, span);
         const auto original_window_samples = static_cast<int64_t>(window.samples.size());
-        const bool bark = is_bark3_variant(assets_->config.variant);
-        if (bark) {
+        const auto prefix_samples = assets_->implementation->input_prefix_samples;
+        if (prefix_samples > 0) {
             // Each VAD span is decoded independently. Supply the publisher's
             // prefix to each span, even when VAD removed the recording prefix.
-            window.samples.insert(window.samples.begin(), kBark3InputPrefixSamples, 0.f);
+            window.samples.insert(window.samples.begin(), prefix_samples, 0.f);
         }
         const auto features = frontend_.extract(window, true);
         const auto encoded = encoder_->encode(features);
@@ -707,7 +705,8 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
             break;
         }
         auto decoded = decoder_->decode(encoded, item_decode_options);
-        if (bark) remove_bark3_prefix_timestamps(decoded.word_timestamps, original_window_samples);
+        if (assets_->implementation->window_timestamps)
+            assets_->implementation->window_timestamps(decoded.word_timestamps, original_window_samples);
         token_count += static_cast<int64_t>(decoded.token_ids.size());
         if (!decoded.text.empty()) {
             if (!text.empty()) {
@@ -756,28 +755,28 @@ ParakeetTDTStreamingSession::ParakeetTDTStreamingSession(
           std::move(options),
           std::move(assets),
           std::move(contract)) {
-    if (is_bark3_variant(assets_->config.variant)) {
-        bark_frontend_ = std::make_unique<BarkStreamingFrontend>(assets_);
+    if (assets_->implementation->window_frontend) {
+        window_frontend_ = assets_->implementation->window_frontend(assets_);
     }
     const int sample_rate = assets_->config.frontend.sample_rate;
     center_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
-            "parakeet_tdt.audio_chunk_duration_sec",
+            option_prefix_ + "audio_chunk_duration_sec",
             kDefaultCenterDurationSec,
             kMinimumPositiveDurationSec),
         sample_rate);
     left_context_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
-            "parakeet_tdt.left_context_sec",
+            option_prefix_ + "left_context_sec",
             kDefaultLeftContextSec,
             0.f),
         sample_rate);
     right_context_samples_ = seconds_to_samples(
         duration_option(
             this->options(),
-            "parakeet_tdt.right_context_sec",
+            option_prefix_ + "right_context_sec",
             kDefaultRightContextSec,
             0.f),
         sample_rate);
@@ -812,7 +811,7 @@ void ParakeetTDTStreamingSession::prepare(
     mark_prepared();
     reset();
     debug::timing_log_scalar(
-        "parakeet_tdt.prepare_ms",
+        option_prefix_ + "prepare_ms",
         engine::debug::elapsed_ms(prepare_start, Clock::now()));
 }
 
@@ -851,7 +850,7 @@ void ParakeetTDTStreamingSession::reset_stream_state() {
     token_ids_.clear();
     token_frame_indices_.clear();
     token_durations_.clear();
-    if (bark_frontend_) bark_frontend_->reset();
+    if (window_frontend_) window_frontend_->reset();
     decoder_->reset_state();
 }
 
@@ -893,7 +892,7 @@ bool ParakeetTDTStreamingSession::process_center_window(
         streaming_audio_.samples.begin() +
             static_cast<std::ptrdiff_t>(window_end - buffer_start_sample_));
 
-    const auto features = bark_frontend_ ? bark_frontend_->extract(window, window_start) : frontend_.extract(window, true);
+    const auto features = window_frontend_ ? window_frontend_->extract(window, window_start) : frontend_.extract(window, true);
     const auto encoded = encoder_->encode(features);
     const int64_t samples_per_frame =
         assets_->config.frontend.hop_length * assets_->config.encoder.subsampling_factor;
@@ -1015,43 +1014,5 @@ void ParakeetTDTStreamingSession::complete_stream(runtime::TaskResult & result) 
     result.word_timestamps = std::move(decoded.word_timestamps);
 }
 
-std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {
-    runtime::SpecBackedVoiceModelConfig<ParakeetTDTAssets> config;
-    config.family = kFamily;
-    config.load_assets = load_parakeet_assets;
-    config.create_session = [](
-                                const runtime::TaskSpec & task,
-                                const runtime::SessionOptions & options,
-                                std::shared_ptr<const ParakeetTDTAssets> assets,
-                                std::shared_ptr<const engine::model_spec::ModelContract> contract) {
-        if (is_bark3_variant(assets->config.variant)) {
-            if (task.mode == runtime::RunMode::Streaming) {
-                return std::unique_ptr<runtime::IVoiceTaskSession>(wrap_bark3_streaming(
-                    std::make_unique<ParakeetTDTStreamingSession>(task, options, std::move(assets), std::move(contract))));
-            }
-            return std::unique_ptr<runtime::IVoiceTaskSession>(wrap_bark3_offline(
-                std::make_unique<ParakeetTDTOfflineSession>(task, options, std::move(assets), std::move(contract))));
-        }
-        if (task.mode == runtime::RunMode::Streaming) {
-            if (assets->config.variant == "phonon2") {
-                return std::unique_ptr<runtime::IVoiceTaskSession>(std::make_unique<PhononStreamingSession>(
-                    task, options, std::move(assets), std::move(contract)));
-            }
-            return std::unique_ptr<runtime::IVoiceTaskSession>(
-                std::make_unique<ParakeetTDTStreamingSession>(
-                    task,
-                    options,
-                    std::move(assets),
-                    std::move(contract)));
-        }
-        return std::unique_ptr<runtime::IVoiceTaskSession>(
-            std::make_unique<ParakeetTDTOfflineSession>(
-                task,
-                options,
-                std::move(assets),
-                std::move(contract)));
-    };
-    return runtime::make_spec_backed_voice_loader(std::move(config));
-}
 
 }  // namespace engine::community_models::parakeet_tdt

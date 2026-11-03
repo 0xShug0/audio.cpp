@@ -7,7 +7,6 @@
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
-#include "engine/framework/modules/recurrent_modules.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 
@@ -77,6 +76,7 @@ ParakeetTDTDecoderRuntime::ParakeetTDTDecoderRuntime(
     engine::core::ExecutionContext& ec, size_t arena)
     : assets_(std::move(a)), weights_(std::move(w)), execution_context_(&ec), graph_arena_bytes_(arena) {
     if (!assets_ || !weights_) throw std::runtime_error("decoder requires assets/weights");
+    state_widths_ = weights_->decoder.predictor->state_widths();
 }
 ParakeetTDTDecoderRuntime::~ParakeetTDTDecoderRuntime() = default;
 void ParakeetTDTDecoderRuntime::prepare() { ensure_step_graph(); ensure_joint_graph(); }
@@ -91,7 +91,7 @@ void ParakeetTDTDecoderRuntime::ensure_step_graph() {
     g->ggml.reset(ggml_init(p));
     engine::core::ModuleBuildContext ctx{g->ggml.get(), "parakeet.decoder", execution_context_->backend_type()};
 
-    const bool resident_state =
+    const bool resident_state = dw.predictor->requires_resident_state() ||
         execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
         execution_context_->backend_type() == engine::core::BackendType::Cuda;
     if (resident_state) {
@@ -105,8 +105,8 @@ void ParakeetTDTDecoderRuntime::ensure_step_graph() {
     g->token_id = engine::core::make_tensor(ctx, GGML_TYPE_I32, engine::core::TensorShape::from_dims({1}));
     g->enc_frame = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.encoder.hidden_size}));
     for (int64_t l = 0; l < cfg.decoder_layers; ++l) {
-        g->h_in.push_back(engine::core::make_tensor(state_ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size})));
-        g->c_in.push_back(engine::core::make_tensor(state_ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size})));
+        g->h_in.push_back(engine::core::make_tensor(state_ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, state_widths_[0]})));
+        g->c_in.push_back(engine::core::make_tensor(state_ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, state_widths_[1]})));
     }
     if (resident_state) {
         g->resident_pred_cache = engine::core::make_tensor(state_ctx, GGML_TYPE_F32,
@@ -120,11 +120,10 @@ void ParakeetTDTDecoderRuntime::ensure_step_graph() {
 
     auto h = engine::modules::EmbeddingModule({cfg.vocab_size, cfg.decoder_hidden_size}).build(ctx, g->token_id, dw.embedding);
     h = engine::core::reshape_tensor(ctx, h, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size}));
-    for (int64_t l = 0; l < cfg.decoder_layers; ++l) {
-        auto out = engine::modules::LSTMCellModule({cfg.decoder_hidden_size, cfg.decoder_hidden_size})
-                       .build(ctx, h, g->h_in[static_cast<size_t>(l)], g->c_in[static_cast<size_t>(l)], dw.lstm_layers[static_cast<size_t>(l)]);
-        g->h_out.push_back(out.hidden); g->c_out.push_back(out.cell); h = g->h_out.back();
-    }
+    auto prediction = dw.predictor->build(ctx, h, g->h_in, g->c_in);
+    h = prediction.hidden;
+    g->h_out = std::move(prediction.recurrent);
+    g->c_out = std::move(prediction.auxiliary);
     auto pred = engine::modules::LinearModule({cfg.decoder_hidden_size, cfg.decoder_hidden_size, true}).build(ctx, h, dw.decoder_projector);
     g->pred_cache = pred;
     auto proj_enc = engine::modules::LinearModule({cfg.encoder.hidden_size, cfg.decoder_hidden_size, true}).build(ctx, g->enc_frame, dw.joint_enc);
@@ -157,11 +156,11 @@ void ParakeetTDTDecoderRuntime::ensure_step_graph() {
 
     size_t vt = static_cast<size_t>(cfg.vocab_size + cfg.durations.size());
     logits_scratch_.assign(vt, 0.f);
-    hidden_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
-    cell_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
+    hidden_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * state_widths_[0]), 0.f);
+    cell_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * state_widths_[1]), 0.f);
     decoder_cache_scratch_.assign(static_cast<size_t>(cfg.decoder_hidden_size), 0.f);
-    hidden_read_scratch_.assign(static_cast<size_t>(cfg.decoder_hidden_size), 0.f);
-    cell_read_scratch_.assign(static_cast<size_t>(cfg.decoder_hidden_size), 0.f);
+    hidden_read_scratch_.assign(static_cast<size_t>(state_widths_[0]), 0.f);
+    cell_read_scratch_.assign(static_cast<size_t>(state_widths_[1]), 0.f);
     step_graph_ = std::move(g);
     debug::timing_log_scalar("parakeet.decoder.graph_build_ms", engine::debug::elapsed_ms(t0, Clock::now()));
 }
@@ -213,20 +212,22 @@ int32_t ParakeetTDTDecoderRuntime::run_step(int32_t tok, const float* enc, bool 
         engine::core::write_tensor_i32(g.token_id, &tok, 1);
         engine::core::write_tensor_f32(g.enc_frame, enc, static_cast<size_t>(cfg.encoder.hidden_size));
         for (int64_t l = 0; !g.state_buffer && l < cfg.decoder_layers; ++l) {
-            size_t off = static_cast<size_t>(l * cfg.decoder_hidden_size);
-            engine::core::write_tensor_f32(g.h_in[static_cast<size_t>(l)], hidden_scratch_.data() + off, static_cast<size_t>(cfg.decoder_hidden_size));
-            engine::core::write_tensor_f32(g.c_in[static_cast<size_t>(l)], cell_scratch_.data() + off, static_cast<size_t>(cfg.decoder_hidden_size));
+            const auto h_off = static_cast<size_t>(l * state_widths_[0]);
+            const auto c_off = static_cast<size_t>(l * state_widths_[1]);
+            engine::core::write_tensor_f32(g.h_in[static_cast<size_t>(l)], hidden_scratch_.data() + h_off, static_cast<size_t>(state_widths_[0]));
+            engine::core::write_tensor_f32(g.c_in[static_cast<size_t>(l)], cell_scratch_.data() + c_off, static_cast<size_t>(state_widths_[1]));
         }
         if (engine::core::compute_graph(*execution_context_, g.graph, g.plan, "Parakeet step") != GGML_STATUS_SUCCESS)
             throw std::runtime_error("step compute failed");
         engine::core::read_tensor_f32_into(g.logits.tensor, logits_scratch_);
         if (!g.state_buffer) engine::core::read_tensor_f32_into(g.pred_cache.tensor, decoder_cache_scratch_);
         for (int64_t l = 0; !g.state_buffer && l < cfg.decoder_layers; ++l) {
-            size_t off = static_cast<size_t>(l * cfg.decoder_hidden_size);
+            const auto h_off = static_cast<size_t>(l * state_widths_[0]);
+            const auto c_off = static_cast<size_t>(l * state_widths_[1]);
             engine::core::read_tensor_f32_into(g.h_out[static_cast<size_t>(l)].tensor, hidden_read_scratch_);
-            std::copy(hidden_read_scratch_.begin(), hidden_read_scratch_.end(), hidden_scratch_.begin() + static_cast<std::ptrdiff_t>(off));
+            std::copy(hidden_read_scratch_.begin(), hidden_read_scratch_.end(), hidden_scratch_.begin() + static_cast<std::ptrdiff_t>(h_off));
             engine::core::read_tensor_f32_into(g.c_out[static_cast<size_t>(l)].tensor, cell_read_scratch_);
-            std::copy(cell_read_scratch_.begin(), cell_read_scratch_.end(), cell_scratch_.begin() + static_cast<std::ptrdiff_t>(off));
+            std::copy(cell_read_scratch_.begin(), cell_read_scratch_.end(), cell_scratch_.begin() + static_cast<std::ptrdiff_t>(c_off));
         }
     } else {
         return run_joint_step(enc, out_dur_id);
@@ -350,8 +351,8 @@ void ParakeetTDTDecoderRuntime::reset_state() {
     hotword_state_ = 0;
     hotwords_.reset();
     const auto& cfg = assets_->config;
-    hidden_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
-    cell_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
+    hidden_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * state_widths_[0]), 0.f);
+    cell_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * state_widths_[1]), 0.f);
     decoder_cache_scratch_.assign(static_cast<size_t>(cfg.decoder_hidden_size), 0.f);
     if (step_graph_ && step_graph_->state_buffer) {
         ggml_backend_buffer_clear(step_graph_->state_buffer, 0);

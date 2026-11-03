@@ -32,7 +32,7 @@ variant. Its converter and model-local adapter preserve the publisher's weight
 scaling and 250 ms input prefix; use that guide rather than loading its original
 BF16 checkpoint as stock Parakeet.
 
-The same runtime can load the [Phonon-2 English ASR variant](#phonon-2-parakeet-tdt-variant) after
+The same runtime can load the [Phonon-2 English ASR variant](#phonon-2) after
 exact reconstruction of its custom five-value container into a dense F32
 package. The Phonon package supports English-only offline and streaming ASR; it does
 not inherit this base checkpoint's 25-language claims.
@@ -416,11 +416,17 @@ you're touching this code:
   waveform noise, standard to disable at inference time in most ASR
   pipelines) — no observed effect on transcription correctness.
 
-## Phonon-2 (Parakeet TDT variant)
+## Phonon-2
 
-English-only, experimental Phonon-2 weights use the existing `parakeet_tdt`
-family, loader and backend arithmetic. There is no CUDA precision-policy API
-dependency, separate model family, or packed five-value runtime.
+> [!IMPORTANT]
+> Routing now follows the registered family: `parakeet_tdt`, `phonon2_asr`, or
+> `underdog_bark3`. The `variant` field no longer selects Phonon or Bark behavior.
+> Regenerate or refresh older Phonon/Bark GGUF specs with the matching family;
+> renaming the file or changing `--family` alone does not update embedded metadata.
+
+English-only Phonon-2 uses the `phonon2_asr` family and its own model contract,
+sharing Parakeet’s encoder, predictor, joint and backend arithmetic. There is
+no packed five-value runtime.
 
 The model-local additions are optional hotwords, rolling live transcription,
 and `word_timestamp_mode: "token_duration"`. Other Parakeet packages retain
@@ -460,8 +466,8 @@ scale compensation; Q8 also keeps the duration-sensitive joint head in F32.
 The dense packages are approximately 2.51/1.26/0.94 GB, not the original 164 MB
 packed package. No public download/package-manager URL is advertised here.
 
-The converter sets `variant=phonon2` in the runtime configuration to select its
-hotword and rolling-streaming behavior. `word_timestamp_mode` controls timestamp
+The `phonon2_asr` family registration selects hotwords and rolling streaming.
+`variant` is descriptive metadata and does not select an implementation. `word_timestamp_mode` controls timestamp
 formatting only. Regenerate unpublished development packages with this converter;
 there is no compatibility fallback for earlier Phonon metadata or option names.
 
@@ -471,8 +477,8 @@ and compensated projections stay F32. The package is about 1.30 GB. It does
 not override backend precision policy; different storage types can select
 different native kernels, so exact weights do not guarantee identical duration
 decisions. To reproduce the F32 package's runtime weight types,
-use existing session options `parakeet_tdt.matmul_weight_type=f32` and
-`parakeet_tdt.conv_weight_type=f32`; this restores its working weight memory.
+use existing session options `phonon2_asr.matmul_weight_type=f32` and
+`phonon2_asr.conv_weight_type=f32`; this restores its working weight memory.
 
 `--gguf-type mixed-q8` creates `phonon-2-mixed-q8.gguf` (about 1.18 GB).
 It keeps feed-forward and pointwise matrices in exact F16, normalization and
@@ -498,7 +504,7 @@ with an actionable error rather than silently applying incompatible scaling.
 ### CLI and hotwords
 
 ```bash
-audiocpp_cli --task asr --family parakeet_tdt \
+audiocpp_cli --task asr --family phonon2_asr \
   --model models/Phonon-2-Parakeet-GGUF/phonon-2-mixed-f16.gguf \
   --backend cuda --device 0 --threads 8 --audio recording.wav \
   --request-option 'hotwords=["Ada Lovelace","CUDA"]' \
