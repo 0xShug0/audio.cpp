@@ -713,6 +713,11 @@ DecoderLayerOutputs DecoderLayerModule::build(
     if (config_.activation_cast.enabled && config_.activation_cast.after_output) {
         output = activation_cast(ctx, output, config_.activation_cast);
     }
+    // With a prefix, return the concatenation the attention consumed, so the
+    // caller does not have to build the same tensor again.
+    if (config_.runtime.attention.prefix_state_returns_full_kv && prefix_key.has_value()) {
+        return {output, all_k, all_v};
+    }
     return {output, k, v};
 }
 

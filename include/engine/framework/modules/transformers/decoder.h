@@ -83,6 +83,9 @@ struct DecoderAttentionPolicy {
     // False routes flash branches through repeat-KV + matmul/softmax for GPUs
     // without a flash kernel (e.g. CUDA sm70). True preserves historical behavior.
     bool allow_flash_attention = true;
+    // Return the prefix+new K/V concatenation the attention already built. Off
+    // by default: callers that feed it back would otherwise rebuild it.
+    bool prefix_state_returns_full_kv = false;
 };
 
 struct DecoderStaticCachePolicy {
