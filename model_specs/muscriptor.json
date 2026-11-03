@@ -178,6 +178,28 @@
         "MuScriptor-Small-GGUF/muscriptor-small-f32.gguf"
       ],
       "strip_prefix": "MuScriptor-Small-GGUF"
+    },
+    {
+      "id": "muscriptor_medium_f32",
+      "display_name": "MuScriptor Medium F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "MuScriptor-Small-GGUF",
+      "files": [
+        "MuScriptor-Small-GGUF/muscriptor-medium-f32.gguf"
+      ],
+      "strip_prefix": "MuScriptor-Small-GGUF"
+    },
+    {
+      "id": "muscriptor_large_f32",
+      "display_name": "MuScriptor Large F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "MuScriptor-Small-GGUF",
+      "files": [
+        "MuScriptor-Small-GGUF/muscriptor-large-f32.gguf"
+      ],
+      "strip_prefix": "MuScriptor-Small-GGUF"
     }
   ],
   "dependencies": [],
