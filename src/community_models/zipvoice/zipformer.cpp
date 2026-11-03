@@ -303,7 +303,6 @@ ggml_tensor * nonlin_attention(
     ggml_tensor * x,
     ggml_tensor * attn_weights,  // [src, tgt, H, B]
     int64_t C,
-    int64_t H,
     int64_t T,
     int64_t B,
     ggml_tensor ** tap_gated = nullptr,
@@ -322,8 +321,6 @@ ggml_tensor * nonlin_attention(
                             frame_stride, batch_stride, 0);
     auto * xx = ggml_view_3d(ctx, h, hidden, T, B,
                              frame_stride, batch_stride, hidden * sizeof(float));
-    auto * y = ggml_view_3d(ctx, h, hidden, T, B,
-                            frame_stride, batch_stride, 2 * hidden * sizeof(float));
     auto * gated = t_mul(ctx, xx, modules::TanhModule().build(ctx, value(s)).tensor);  // [hidden, T, B]
     if (tap_gated != nullptr) *tap_gated = gated;
 
@@ -352,7 +349,7 @@ ggml_tensor * nonlin_attention(
         auto * a3 = t_reshape_4d(ctx, attended, attended->ne[0], attended->ne[1], B, 1);
         ch2 = t_cont(ctx, t_permute(ctx, a3, 1, 0, 2, 3));
     }
-    // y is a strided view; reshape would assert. Slice h directly as 2D:
+    // Slice the final third of h directly as 2D:
     // element (c, r) with r = t + b*T sits at 2*hidden + c + r*3*hidden.
     auto * y2 = t_cont(ctx, ggml_view_2d(ctx, h, hidden, T * B,
                              h->nb[1], 2 * hidden * sizeof(float)));
@@ -478,7 +475,6 @@ ggml_tensor * encoder_layer(
     ggml_tensor * conv_gate,    // [1, T, 1]
     ggml_tensor * time_row,     // [C, 1, 1] or null
     const ZipVoiceConfig & config,
-    int64_t kernel,
     int64_t T,
     int64_t B,
     bool fm,
@@ -528,7 +524,7 @@ ggml_tensor * encoder_layer(
     ggml_tensor * na_mul = nullptr;
     ggml_tensor * na_h = nullptr;
     ggml_tensor * na_y2 = nullptr;
-    auto * na_out = nonlin_attention(ctx, w, x, attn_weights, C, H, T, B,
+    auto * na_out = nonlin_attention(ctx, w, x, attn_weights, C, T, B,
                                      &na_gated, &na_attended, &na_gtb, &na_attnrep,
                                      &na_mul, &na_h, &na_y2);
     if (taps != nullptr) {
@@ -674,7 +670,6 @@ ggml_tensor * zipformer_forward(
     for (size_t s = 0; s < w.stacks.size(); ++s) {
         auto & stack = w.stacks[s];
         const int64_t ds = fm ? config.fm_downsampling_factor[s] : 1;
-        const int64_t kernel = fm ? config.fm_cnn_kernel[s] : config.text_cnn_kernel;
 
         ggml_tensor * time_row = nullptr;
         if (with_time && stack.time_proj_w.tensor != nullptr) {
@@ -694,7 +689,7 @@ ggml_tensor * zipformer_forward(
         for (size_t li = 0; li < stack.layers.size(); ++li) {
             h = encoder_layer(
                 ctx, consts, stack.layers[li], h, pad_bias[s], conv_gate[s], time_row,
-                config, kernel, Ts, B, fm,
+                config, Ts, B, fm,
                 first_layer_taps != nullptr && s == 0 && li == 0 ? first_layer_taps : nullptr);
             if (layer_taps != nullptr) {
                 layer_taps->push_back(h);

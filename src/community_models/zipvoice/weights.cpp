@@ -3,8 +3,6 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/json.h"
 
-#include <fstream>
-#include <sstream>
 #include <cstdlib>
 #include <cstdio>
 #include <vector>
@@ -14,16 +12,6 @@
 
 namespace engine::models::zipvoice {
 namespace {
-
-std::string read_file(const std::filesystem::path & path) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) {
-        throw std::runtime_error("cannot open " + path.string());
-    }
-    std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    return buffer.str();
-}
 
 std::vector<int> require_int_list(const io::json::Value & object, const std::string & key) {
     const auto & array = object.require(key);

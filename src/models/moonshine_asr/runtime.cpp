@@ -139,17 +139,6 @@ MoonshineAttentionConfig attention_config(const MoonshineEncoderConfig & config)
     };
 }
 
-MoonshineAttentionConfig attention_config(const MoonshineDecoderConfig & config) {
-    return {
-        config.hidden_size,
-        config.heads,
-        config.kv_heads,
-        config.head_dim,
-        config.rotary_dim,
-        config.rope_theta,
-    };
-}
-
 engine::core::TensorValue build_attention(
     engine::core::ModuleBuildContext & ctx,
     const engine::modules::AttentionWeights & weights,
@@ -394,45 +383,6 @@ engine::core::TensorValue build_decoder_mlp(
     hidden = engine::modules::MulModule().build(ctx, hidden, gate);
     return engine::modules::LinearModule({config.intermediate_size, config.hidden_size, true})
         .build(ctx, hidden, weights.mlp_fc2);
-}
-
-engine::core::TensorValue build_decoder_layer(
-    engine::core::ModuleBuildContext & ctx,
-    const MoonshineDecoderConfig & config,
-    const MoonshineDecoderLayerWeights & weights,
-    const engine::core::TensorValue & input,
-    const engine::core::TensorValue & memory,
-    const engine::core::TensorValue & positions) {
-    auto hidden = engine::modules::LayerNormModule({config.hidden_size, 1.0e-5F, true, false})
-                      .build(ctx, input, weights.input_norm);
-    hidden = build_attention(
-        ctx,
-        weights.self_attn,
-        hidden,
-        hidden,
-        attention_config(config),
-        std::nullopt,
-        true,
-        &positions);
-    auto x = engine::modules::AddModule().build(ctx, input, hidden);
-
-    hidden = engine::modules::LayerNormModule({config.hidden_size, 1.0e-5F, true, false})
-                 .build(ctx, x, weights.post_attention_norm);
-    hidden = build_attention(
-        ctx,
-        weights.cross_attn,
-        hidden,
-        memory,
-        attention_config(config),
-        std::nullopt,
-        false,
-        nullptr);
-    x = engine::modules::AddModule().build(ctx, x, hidden);
-
-    hidden = engine::modules::LayerNormModule({config.hidden_size, 1.0e-5F, true, false})
-                 .build(ctx, x, weights.final_norm);
-    hidden = build_decoder_mlp(ctx, config, weights, hidden);
-    return engine::modules::AddModule().build(ctx, x, hidden);
 }
 
 std::vector<float> prepare_compressed_frames(

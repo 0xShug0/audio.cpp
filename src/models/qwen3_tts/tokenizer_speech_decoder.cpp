@@ -50,11 +50,8 @@ constexpr int64_t kSampleRate = 24000;
 constexpr int64_t kDecodeSamplesPerCode = 1920;
 constexpr int64_t kChunkCodes = 300;
 constexpr int64_t kLeftContextCodes = Qwen3SpeechTokenizerDecoderRuntime::kLeftContextFrames;
-constexpr std::array<int64_t, 2> kStrixHaloCachedChunkFrames{300, 105};
 #if defined(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
-constexpr bool kStrixHaloGraphCacheEnabled = true;
-#else
-constexpr bool kStrixHaloGraphCacheEnabled = false;
+constexpr std::array<int64_t, 2> kStrixHaloCachedChunkFrames{300, 105};
 #endif
 constexpr float kCodebookEps = 1.0e-5F;
 constexpr float kMaskNegInf = -1.0e9F;
@@ -1429,8 +1426,9 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
     int64_t chunks = 0;
     int64_t graph_rebuilds = 0;
     int64_t max_chunk_frames = 0;
-    const bool optimized_cache_enabled =
-        kStrixHaloGraphCacheEnabled && execution_context_->backend_type() == core::BackendType::Hip;
+#if defined(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
+    const bool optimized_cache_enabled = execution_context_->backend_type() == core::BackendType::Hip;
+#endif
     for (int64_t start = 0; start < codec_codes.frames; start += kChunkCodes) {
         const int64_t end = std::min<int64_t>(start + kChunkCodes, codec_codes.frames);
         const int64_t context = start > kLeftContextCodes ? kLeftContextCodes : start;
