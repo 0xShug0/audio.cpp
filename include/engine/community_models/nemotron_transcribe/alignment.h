@@ -39,7 +39,7 @@ struct TranscriptWord {
     UnitKind kind = UnitKind::word;
     // The unit in running text when that differs from `word` (a character keeps the punctuation
     // around it), and whether it follows the previous unit without a space (one word's characters).
-    std::string display;
+    std::string display{};
     bool joins_previous = false;
 };
 
