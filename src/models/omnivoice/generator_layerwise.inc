@@ -481,29 +481,25 @@ public:
     Qwen3DiffusionLayerwiseGraph(
         std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
-        int64_t batch,
-        int64_t total_token_capacity,
-        int64_t target_frame_capacity)
+        const std::vector<GraphItemShape> & items)
         : runtime_(std::move(runtime)),
           graph_arena_bytes_(graph_arena_bytes) {
-        rebuild(batch, total_token_capacity, target_frame_capacity);
+        rebuild(items);
     }
 
-    bool matches(
-        const Qwen3DiffusionWeightsRuntime & runtime,
-        int64_t batch,
-        int64_t total_tokens,
-        int64_t target_frames) const override {
+    bool matches(const Qwen3DiffusionWeightsRuntime & runtime, const std::vector<GraphItemShape> & items) const override {
+        const GraphCapacity capacity(items);
         return runtime_.get() == &runtime &&
-            batch_capacity_ == batch &&
-            total_tokens_capacity_ == total_tokens &&
-            target_frame_capacity_ == target_frames;
+            batch_capacity_ == capacity.batch &&
+            total_tokens_capacity_ == capacity.total_tokens &&
+            target_frame_capacity_ == capacity.target_frames;
     }
 
-    void rebuild(int64_t batch, int64_t total_token_capacity, int64_t target_frame_capacity) override {
-        if (batch <= 0 || total_token_capacity <= 0 || target_frame_capacity <= 0) {
-            throw std::runtime_error("OmniVoice layerwise generator capacities are invalid");
-        }
+    void rebuild(const std::vector<GraphItemShape> & items) override {
+        const GraphCapacity capacity(items);
+        const int64_t batch = capacity.batch;
+        const int64_t total_token_capacity = capacity.total_tokens;
+        const int64_t target_frame_capacity = capacity.target_frames;
         const auto clear_start = Clock::now();
         embedding_.clear_graph();
         decoder_.clear_graph();
@@ -526,9 +522,8 @@ public:
         // The layerwise stages use the unpacked [2 * batch, tokens] layout.
         host_.reset(
             runtime_->assets(),
-            batch_capacity_,
-            total_tokens_capacity_,
-            total_tokens_capacity_,
+            std::vector<int64_t>(static_cast<size_t>(batch_capacity_), total_tokens_capacity_),
+            std::vector<int64_t>(static_cast<size_t>(batch_capacity_), total_tokens_capacity_),
             target_frame_capacity_,
             false);
         hidden_a_.clear();

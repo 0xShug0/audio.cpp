@@ -380,51 +380,62 @@ core::TensorValue decoder_layer(
     });
 }
 
-// Decoder layer on the packed layout [1, flat_tokens, hidden]: `batch`
-// conditional rows of `conditional_tokens` positions, then `batch`
-// unconditional rows of `unconditional_tokens` positions. Every per-token
-// op runs once over all tokens; attention runs per segment with its own
-// mask, so the short unconditional rows are not padded to the prompt length.
+// One attention segment of the packed layout: `rows` consecutive sequences
+// of `tokens` positions each, starting at flat token `token_start`, with a
+// [rows, 1, tokens, tokens] mask.
+struct AttentionSegment {
+    int64_t token_start = 0;
+    int64_t rows = 1;
+    int64_t tokens = 0;
+    core::TensorValue mask;
+};
+
+// Decoder layer on the packed layout [1, flat_tokens, hidden], where every
+// sequence (the conditional and the unconditional row of each request) has
+// exactly its own length. Every per-token op runs once over all tokens;
+// attention runs per segment of equal-length sequences, so nothing is padded.
 core::TensorValue packed_decoder_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & flat_positions,
     const Qwen3DiffusionLayerWeights & weights,
     const OmniVoiceQwen3DiffusionConfig & config,
-    const core::TensorValue & conditional_mask,
-    const core::TensorValue & unconditional_mask,
-    int64_t batch,
-    int64_t conditional_tokens,
-    int64_t unconditional_tokens,
+    const std::vector<AttentionSegment> & segments,
     OmniVoiceGeneratorPerfMode perf_mode) {
     const int64_t dim = head_dim(config);
+    const int64_t flat_tokens = input.shape.dims[1];
     return decoder_layer_with(ctx, input, flat_positions, weights, config, [&](const auto & q, const auto & k, const auto & v) {
-        // [1, flat_tokens, heads, dim] -> [batch, tokens, heads, dim] rows of one segment.
-        const auto segment = [&](const core::TensorValue & value, int64_t token_start, int64_t tokens) {
-            auto part = modules::SliceModule({1, token_start, batch * tokens}).build(ctx, value);
-            part = ensure_contiguous(ctx, part);
+        // [1, flat_tokens, heads, dim] -> [rows, tokens, heads, dim] of one segment.
+        const auto slice = [&](const core::TensorValue & value, const AttentionSegment & segment) {
+            auto part = ensure_contiguous(
+                ctx,
+                modules::SliceModule({1, segment.token_start, segment.rows * segment.tokens}).build(ctx, value));
             return core::reshape_tensor(
                 ctx,
                 part,
-                core::TensorShape::from_dims({batch, tokens, value.shape.dims[2], dim}));
+                core::TensorShape::from_dims({segment.rows, segment.tokens, value.shape.dims[2], dim}));
         };
-        const auto segment_context = [&](int64_t token_start, int64_t tokens, const core::TensorValue & mask) {
-            auto context = self_attention(
-                ctx,
-                segment(q, token_start, tokens),
-                segment(k, token_start, tokens),
-                segment(v, token_start, tokens),
-                config,
-                mask,
-                perf_mode);
-            return core::reshape_tensor(
-                ctx,
-                context,
-                core::TensorShape::from_dims({1, batch * tokens, config.num_attention_heads * dim}));
-        };
-        auto conditional = segment_context(0, conditional_tokens, conditional_mask);
-        auto unconditional = segment_context(batch * conditional_tokens, unconditional_tokens, unconditional_mask);
-        return modules::ConcatModule({1}).build(ctx, conditional, unconditional);
+        // Each segment's context is written into its slot of one
+        // [flat_tokens, heads * dim] buffer (seeded from q, whose every
+        // element is overwritten), so the layer copies each context once.
+        // ggml_set writes with the destination's row stride, so the buffer
+        // is viewed as heads * dim wide rows.
+        const int64_t width = config.num_attention_heads * dim;
+        auto * base = ggml_reshape_2d(ctx.ggml, q.tensor, width, flat_tokens);
+        ggml_tensor * context = nullptr;
+        for (const auto & segment : segments) {
+            auto segment_context =
+                self_attention(ctx, slice(q, segment), slice(k, segment), slice(v, segment), config, segment.mask, perf_mode);
+            auto * rows = ggml_reshape_2d(ctx.ggml, segment_context.tensor, width, segment.rows * segment.tokens);
+            const size_t offset = static_cast<size_t>(segment.token_start * width) * sizeof(float);
+            context = context == nullptr
+                ? ggml_set_1d(ctx.ggml, base, rows, offset)
+                : ggml_set_1d_inplace(ctx.ggml, context, rows, offset);
+        }
+        return core::wrap_tensor(
+            ggml_reshape_3d(ctx.ggml, context, width, flat_tokens, 1),
+            core::TensorShape::from_dims({1, flat_tokens, width}),
+            GGML_TYPE_F32);
     });
 }
 
@@ -498,32 +509,45 @@ struct PackedInputs {
 // Host copies of the generator graph inputs for a batch of requests.
 //
 // The graph runs 2 * batch sequences: rows 0..batch-1 are the conditional
-// sequences of the requests (`conditional_tokens` positions each) and rows
-// batch..2*batch-1 their unconditional, classifier-free guidance sequences
-// (`unconditional_tokens` positions each). The rows are stored back to back,
-// conditional rows first. Every row is padded to its length; padded positions
-// only attend to themselves, so they never change the valid positions.
+// sequences of the requests and rows batch..2*batch-1 their unconditional,
+// classifier-free guidance sequences. The rows are stored back to back,
+// conditional rows first, each with its own length. A request shorter than
+// its rows is padded; padded positions only attend to themselves, so they
+// never change the valid positions.
 //
-// The unconditional sequence of a request is only its target frames, so a
-// packed layout uses unconditional_tokens = target_frames. The unpacked
-// layout pads it to the full prompt length (unconditional_tokens =
-// conditional_tokens), which is a plain [2 * batch, tokens] tensor; for a
-// batch of one it is exactly the two-row layout of a single request.
+// The packed layout gives every row exactly its request's length (the
+// prompt for the conditional row, the target frames for the unconditional
+// one), so nothing is padded. The unpacked layout gives every row the
+// longest prompt of the batch, which is a plain [2 * batch, tokens] tensor;
+// for a batch of one it is exactly the two-row layout of a single request.
 class BatchedGraphInputs {
 public:
+    // conditional_lengths[i] / unconditional_lengths[i]: row lengths of
+    // request i. target_frames: frames gathered per request for the logits.
     void reset(
         const OmniVoiceAssets & assets,
-        int64_t batch,
-        int64_t conditional_tokens,
-        int64_t unconditional_tokens,
+        const std::vector<int64_t> & conditional_lengths,
+        const std::vector<int64_t> & unconditional_lengths,
         int64_t target_frames,
         bool f16_attention) {
-        if (batch <= 0 || conditional_tokens <= 0 || unconditional_tokens < target_frames || target_frames <= 0) {
+        if (conditional_lengths.empty() || conditional_lengths.size() != unconditional_lengths.size() ||
+            target_frames <= 0) {
             throw std::runtime_error("OmniVoice generator batch capacities are invalid");
         }
-        batch_ = batch;
-        conditional_tokens_ = conditional_tokens;
-        unconditional_tokens_ = unconditional_tokens;
+        batch_ = static_cast<int64_t>(conditional_lengths.size());
+        row_lengths_ = conditional_lengths;
+        row_lengths_.insert(row_lengths_.end(), unconditional_lengths.begin(), unconditional_lengths.end());
+        row_offsets_.assign(row_lengths_.size() + 1, 0);
+        attention_offsets_.assign(row_lengths_.size() + 1, 0);
+        int64_t longest_row = 0;
+        for (size_t row = 0; row < row_lengths_.size(); ++row) {
+            if (row_lengths_[row] <= 0) {
+                throw std::runtime_error("OmniVoice generator batch capacities are invalid");
+            }
+            row_offsets_[row + 1] = row_offsets_[row] + row_lengths_[row];
+            attention_offsets_[row + 1] = attention_offsets_[row] + row_lengths_[row] * row_lengths_[row];
+            longest_row = std::max(longest_row, row_lengths_[row]);
+        }
         target_frames_ = target_frames;
         codebooks_ = assets.config.num_audio_codebook;
         audio_vocab_size_ = assets.config.audio_vocab_size;
@@ -536,8 +560,7 @@ public:
         }
         audio_mask.assign(token_values, 0.0F);
         text_mask.assign(token_values, 0.0F);
-        const size_t attention_values = static_cast<size_t>(
-            batch_ * (conditional_tokens_ * conditional_tokens_ + unconditional_tokens_ * unconditional_tokens_));
+        const size_t attention_values = static_cast<size_t>(attention_offsets_.back());
         if (f16_attention_) {
             attention_f16.assign(attention_values, ggml_fp32_to_fp16(kMaskedAttentionBias));
             attention_f32.clear();
@@ -547,8 +570,8 @@ public:
         }
         target_indices.assign(static_cast<size_t>(2 * batch_ * target_frames_), 0);
         guidance_scales.assign(static_cast<size_t>(batch_), 0.0F);
-        positions.assign(static_cast<size_t>(conditional_tokens_), 0);
-        for (int64_t i = 0; i < conditional_tokens_; ++i) {
+        positions.assign(static_cast<size_t>(longest_row), 0);
+        for (int64_t i = 0; i < longest_row; ++i) {
             positions[static_cast<size_t>(i)] = static_cast<int32_t>(i);
         }
         flat_positions.assign(token_values, 0);
@@ -582,8 +605,8 @@ public:
         for (int64_t item = 0; item < batch_; ++item) {
             const auto & input = inputs[static_cast<size_t>(item)];
             const int64_t total = input.total_tokens();
-            if (total <= 0 || total > conditional_tokens_ || input.target_frames <= 0 ||
-                input.target_frames > target_frames_) {
+            if (total <= 0 || total > row_tokens(item) || input.target_frames <= 0 ||
+                input.target_frames > target_frames_ || input.target_frames > row_tokens(batch_ + item)) {
                 throw std::runtime_error("OmniVoice generator packed input shape exceeds graph capacity");
             }
             if (static_cast<int64_t>(input.conditional_text_ids.size()) != total ||
@@ -592,7 +615,7 @@ public:
             }
             // The unconditional ids past the target frames are mask ids, the
             // same as the padding, so only the part that fits is copied.
-            const int64_t unconditional_copy = std::min(total, unconditional_tokens_);
+            const int64_t unconditional_copy = std::min(total, row_tokens(batch_ + item));
             const size_t conditional_row = row_offset(item);
             const size_t unconditional_row = row_offset(batch_ + item);
             for (int64_t pos = 0; pos < total; ++pos) {
@@ -664,10 +687,20 @@ public:
     bool take_layout_dirty() noexcept { return std::exchange(layout_dirty_, false); }
     bool take_guidance_dirty() noexcept { return std::exchange(guidance_dirty_, false); }
     int64_t batch() const noexcept { return batch_; }
-    int64_t conditional_tokens() const noexcept { return conditional_tokens_; }
-    int64_t unconditional_tokens() const noexcept { return unconditional_tokens_; }
-    int64_t flat_tokens() const noexcept { return batch_ * (conditional_tokens_ + unconditional_tokens_); }
+    int64_t flat_tokens() const noexcept { return row_offsets_.back(); }
     int64_t target_frames() const noexcept { return target_frames_; }
+    // Row r: conditional row of request r for r < batch, else the
+    // unconditional row of request r - batch.
+    int64_t row_tokens(int64_t row) const noexcept {
+        return row_lengths_[static_cast<size_t>(row)];
+    }
+    size_t row_offset(int64_t row) const noexcept {
+        return static_cast<size_t>(row_offsets_[static_cast<size_t>(row)]);
+    }
+    // First value of row r's [tokens, tokens] mask in attention_f32/f16.
+    size_t attention_offset(int64_t row) const noexcept {
+        return static_cast<size_t>(attention_offsets_[static_cast<size_t>(row)]);
+    }
 
     // One value per token of the back-to-back rows.
     std::vector<int32_t> text_ids;
@@ -683,7 +716,7 @@ public:
     // ignored by the caller.
     std::vector<int32_t> target_indices;
     std::vector<float> guidance_scales;
-    // 0..conditional_tokens-1, shared by every row of the unpacked layout.
+    // 0..longest row - 1, shared by every row of the unpacked layout.
     std::vector<int32_t> positions;
     // Position of every token of the back-to-back rows (packed layout).
     std::vector<int32_t> flat_positions;
@@ -705,24 +738,6 @@ private:
             return !(*this == other);
         }
     };
-
-    int64_t row_tokens(int64_t row) const noexcept {
-        return row < batch_ ? conditional_tokens_ : unconditional_tokens_;
-    }
-
-    size_t row_offset(int64_t row) const noexcept {
-        return row < batch_
-            ? static_cast<size_t>(row * conditional_tokens_)
-            : static_cast<size_t>(batch_ * conditional_tokens_ + (row - batch_) * unconditional_tokens_);
-    }
-
-    size_t attention_offset(int64_t row) const noexcept {
-        return row < batch_
-            ? static_cast<size_t>(row * conditional_tokens_ * conditional_tokens_)
-            : static_cast<size_t>(
-                  batch_ * conditional_tokens_ * conditional_tokens_ +
-                  (row - batch_) * unconditional_tokens_ * unconditional_tokens_);
-    }
 
     void rebuild_masks_and_indices() {
         std::fill(audio_mask.begin(), audio_mask.end(), 0.0F);
@@ -777,8 +792,9 @@ private:
     }
 
     int64_t batch_ = 0;
-    int64_t conditional_tokens_ = 0;
-    int64_t unconditional_tokens_ = 0;
+    std::vector<int64_t> row_lengths_;
+    std::vector<int64_t> row_offsets_;
+    std::vector<int64_t> attention_offsets_;
     int64_t target_frames_ = 0;
     int64_t codebooks_ = 0;
     int64_t audio_vocab_size_ = 0;
@@ -892,15 +908,38 @@ struct GraphStepOutputs {
     const std::vector<float> * best_log_probs = nullptr;  // [batch, frame capacity, codebooks]
 };
 
+// Sequence lengths of one request in a batch.
+struct GraphItemShape {
+    int64_t total_tokens = 0;
+    int64_t target_frames = 0;
+
+    bool operator==(const GraphItemShape & other) const noexcept {
+        return total_tokens == other.total_tokens && target_frames == other.target_frames;
+    }
+};
+
+struct GraphCapacity {
+    int64_t batch = 0;
+    int64_t total_tokens = 0;
+    int64_t target_frames = 0;
+
+    explicit GraphCapacity(const std::vector<GraphItemShape> & items)
+        : batch(static_cast<int64_t>(items.size())) {
+        for (const auto & item : items) {
+            total_tokens = std::max(total_tokens, item.total_tokens);
+            target_frames = std::max(target_frames, item.target_frames);
+        }
+        if (batch <= 0 || total_tokens <= 0 || target_frames <= 0) {
+            throw std::runtime_error("OmniVoice generator total token capacity is invalid");
+        }
+    }
+};
+
 class Qwen3DiffusionGraph {
 public:
     virtual ~Qwen3DiffusionGraph() = default;
-    virtual bool matches(
-        const Qwen3DiffusionWeightsRuntime & runtime,
-        int64_t batch,
-        int64_t total_tokens,
-        int64_t target_frames) const = 0;
-    virtual void rebuild(int64_t batch, int64_t total_token_capacity, int64_t target_frame_capacity) = 0;
+    virtual bool matches(const Qwen3DiffusionWeightsRuntime & runtime, const std::vector<GraphItemShape> & items) const = 0;
+    virtual void rebuild(const std::vector<GraphItemShape> & items) = 0;
     virtual void prepare_request(const std::vector<PackedInputs> & inputs, const std::vector<float> & guidance_scales) = 0;
     virtual void update_generated_target_tokens(const std::vector<PackedInputs> & inputs) = 0;
     // Whether compute() can return greedy best tokens scored on the device.
@@ -920,9 +959,7 @@ public:
     Qwen3DiffusionForwardGraph(
         std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
-        int64_t batch,
-        int64_t total_token_capacity,
-        int64_t target_frame_capacity,
+        const std::vector<GraphItemShape> & items,
         OmniVoiceGeneratorPerfMode perf_mode,
         bool packed_cfg,
         bool device_scoring)
@@ -931,40 +968,51 @@ public:
           perf_mode_(perf_mode),
           packed_cfg_(packed_cfg),
           device_scoring_(device_scoring) {
-        rebuild(batch, total_token_capacity, target_frame_capacity);
+        rebuild(items);
     }
 
     ~Qwen3DiffusionForwardGraph() {
         clear_graph();
     }
 
-    bool matches(
-        const Qwen3DiffusionWeightsRuntime & runtime,
-        int64_t batch,
-        int64_t total_tokens,
-        int64_t target_frames) const override {
-        return runtime_.get() == &runtime &&
-            batch_capacity_ == batch &&
-            total_tokens_capacity_ == total_tokens &&
-            target_frame_capacity_ == target_frames;
+    // Packed graphs have one segment per sequence, so they fit only the exact
+    // lengths they were built for; unpacked graphs pad to the longest ones.
+    bool matches(const Qwen3DiffusionWeightsRuntime & runtime, const std::vector<GraphItemShape> & items) const override {
+        if (runtime_.get() != &runtime) {
+            return false;
+        }
+        if (packed_cfg_) {
+            return items == items_;
+        }
+        const GraphCapacity capacity(items);
+        return batch_capacity_ == capacity.batch &&
+            total_tokens_capacity_ == capacity.total_tokens &&
+            target_frame_capacity_ == capacity.target_frames;
     }
 
-    void rebuild(int64_t batch, int64_t total_token_capacity, int64_t target_frame_capacity) override {
-        if (batch <= 0 || total_token_capacity <= 0 || target_frame_capacity <= 0) {
-            throw std::runtime_error("OmniVoice generator total token capacity is invalid");
-        }
+    void rebuild(const std::vector<GraphItemShape> & items) override {
+        const GraphCapacity capacity(items);
         const auto clear_start = Clock::now();
         clear_graph();
         const auto clear_end = Clock::now();
         rebuild_clear_ms_ = engine::debug::elapsed_ms(clear_start, clear_end);
-        batch_capacity_ = batch;
-        total_tokens_capacity_ = total_token_capacity;
-        target_frame_capacity_ = target_frame_capacity;
+        items_ = items;
+        batch_capacity_ = capacity.batch;
+        total_tokens_capacity_ = capacity.total_tokens;
+        target_frame_capacity_ = capacity.target_frames;
         const int64_t rows = 2 * batch_capacity_;
         const bool f16_attention = perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention;
-        // Packed: the unconditional rows hold only the target frames.
-        const int64_t unconditional_tokens = packed_cfg_ ? target_frame_capacity_ : total_tokens_capacity_;
-        const int64_t flat_tokens = batch_capacity_ * (total_tokens_capacity_ + unconditional_tokens);
+        // Packed: each row is exactly its request's prompt or target length.
+        std::vector<int64_t> conditional_lengths(items.size(), total_tokens_capacity_);
+        std::vector<int64_t> unconditional_lengths(items.size(), total_tokens_capacity_);
+        if (packed_cfg_) {
+            for (size_t item = 0; item < items.size(); ++item) {
+                conditional_lengths[item] = items[item].total_tokens;
+                unconditional_lengths[item] = items[item].target_frames;
+            }
+        }
+        host_.reset(runtime_->assets(), conditional_lengths, unconditional_lengths, target_frame_capacity_, f16_attention);
+        const int64_t flat_tokens = host_.flat_tokens();
         // Token-major shapes: [1, flat_tokens] packed, [rows, tokens] unpacked.
         const int64_t token_dim0 = packed_cfg_ ? 1 : rows;
         const int64_t token_dim1 = packed_cfg_ ? flat_tokens : total_tokens_capacity_;
@@ -1019,39 +1067,49 @@ public:
         target_indices_ = target_indices.tensor;
         ggml_set_input(target_indices_);
         // One buffer holds every row's mask, conditional rows first; packed
-        // graphs view it as one [batch, 1, T, T] and one [batch, 1, F, F] mask.
+        // graphs view it as one [1, 1, tokens, tokens] mask per row.
         const ggml_type mask_type = f16_attention ? GGML_TYPE_F16 : GGML_TYPE_F32;
-        const int64_t conditional_mask_values = batch_capacity_ * total_tokens_capacity_ * total_tokens_capacity_;
-        const int64_t unconditional_mask_values = batch_capacity_ * unconditional_tokens * unconditional_tokens;
+        const int64_t mask_values = static_cast<int64_t>(host_.attention_offset(rows));
         auto attention_mask = packed_cfg_
-            ? core::make_tensor(
-                  input_ctx,
-                  mask_type,
-                  core::TensorShape::from_dims({conditional_mask_values + unconditional_mask_values}))
+            ? core::make_tensor(input_ctx, mask_type, core::TensorShape::from_dims({mask_values}))
             : core::make_tensor(
                   input_ctx,
                   mask_type,
                   core::TensorShape::from_dims({rows, 1, total_tokens_capacity_, total_tokens_capacity_}));
         attention_mask_ = attention_mask.tensor;
         ggml_set_input(attention_mask_);
-        const auto mask_view = [&](int64_t tokens, int64_t first_value) {
+        // Consecutive rows of equal length share one attention segment.
+        std::vector<AttentionSegment> segments;
+        if (packed_cfg_) {
             const size_t element = ggml_type_size(mask_type);
-            auto * view = ggml_view_4d(
-                ctx.ggml,
-                attention_mask_,
-                tokens,
-                tokens,
-                1,
-                batch_capacity_,
-                static_cast<size_t>(tokens) * element,
-                static_cast<size_t>(tokens * tokens) * element,
-                static_cast<size_t>(tokens * tokens) * element,
-                static_cast<size_t>(first_value) * element);
-            return core::wrap_tensor(
-                view,
-                core::TensorShape::from_dims({batch_capacity_, 1, tokens, tokens}),
-                mask_type);
-        };
+            for (int64_t first = 0; first < rows;) {
+                const int64_t tokens = host_.row_tokens(first);
+                int64_t end = first + 1;
+                while (end < rows && host_.row_tokens(end) == tokens) {
+                    ++end;
+                }
+                const int64_t segment_rows = end - first;
+                const size_t mask_stride = static_cast<size_t>(tokens * tokens) * element;
+                auto * view = ggml_view_4d(
+                    ctx.ggml,
+                    attention_mask_,
+                    tokens,
+                    tokens,
+                    1,
+                    segment_rows,
+                    static_cast<size_t>(tokens) * element,
+                    mask_stride,
+                    mask_stride,
+                    host_.attention_offset(first) * element);
+                segments.push_back({
+                    static_cast<int64_t>(host_.row_offset(first)),
+                    segment_rows,
+                    tokens,
+                    core::wrap_tensor(view, core::TensorShape::from_dims({segment_rows, 1, tokens, tokens}), mask_type),
+                });
+                first = end;
+            }
+        }
         auto guidance_scales =
             core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_capacity_}));
         guidance_scales_ = guidance_scales.tensor;
@@ -1067,21 +1125,8 @@ public:
 
         auto x = build_embeddings(ctx, config, weights, text_ids, audio_id_values, audio_mask, text_mask);
         if (packed_cfg_) {
-            const auto conditional_mask = mask_view(total_tokens_capacity_, 0);
-            const auto unconditional_mask = mask_view(unconditional_tokens, conditional_mask_values);
             for (const auto & layer : weights.layers) {
-                x = packed_decoder_layer(
-                    ctx,
-                    x,
-                    positions,
-                    layer,
-                    config.llm,
-                    conditional_mask,
-                    unconditional_mask,
-                    batch_capacity_,
-                    total_tokens_capacity_,
-                    unconditional_tokens,
-                    perf_mode_);
+                x = packed_decoder_layer(ctx, x, positions, layer, config.llm, segments, perf_mode_);
             }
         } else {
             for (const auto & layer : weights.layers) {
@@ -1129,13 +1174,6 @@ public:
         rebuild_alloc_ms_ = engine::debug::elapsed_ms(alloc_start, alloc_end);
 
         const auto init_start = Clock::now();
-        host_.reset(
-            runtime_->assets(),
-            batch_capacity_,
-            total_tokens_capacity_,
-            unconditional_tokens,
-            target_frame_capacity_,
-            f16_attention);
         const auto & position_values = packed_cfg_ ? host_.flat_positions : host_.positions;
         ggml_backend_tensor_set(positions_, position_values.data(), 0, position_values.size() * sizeof(int32_t));
         if (device_scoring_) {
@@ -1300,6 +1338,7 @@ private:
     OmniVoiceGeneratorPerfMode perf_mode_ = OmniVoiceGeneratorPerfMode::Standard;
     bool packed_cfg_ = true;
     bool device_scoring_ = true;
+    std::vector<GraphItemShape> items_;
     int64_t batch_capacity_ = 0;
     int64_t total_tokens_capacity_ = 0;
     int64_t target_frame_capacity_ = 0;
@@ -1688,12 +1727,39 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
     if (rngs.size() != prompts.size()) {
         throw std::runtime_error("OmniVoice generator batch needs one RNG per prompt");
     }
-    std::vector<std::mt19937 *> rng_ptrs;
-    rng_ptrs.reserve(rngs.size());
-    for (auto & rng : rngs) {
-        rng_ptrs.push_back(&rng);
+    // Requests of equal length next to each other share attention segments
+    // (and graph shapes repeat more often), so run them sorted by length.
+    const auto length_key = [&](size_t index) {
+        const auto & prompt = prompts[index];
+        const int64_t reference_frames =
+            prompt.reference_audio_tokens.has_value() ? prompt.reference_audio_tokens->frames : 0;
+        return std::make_pair(
+            static_cast<int64_t>(prompt.style_token_ids.size() + prompt.text_token_ids.size()) + reference_frames +
+                prompt.target_audio_tokens,
+            prompt.target_audio_tokens);
+    };
+    std::vector<size_t> order(prompts.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [&](size_t lhs, size_t rhs) {
+        return length_key(lhs) < length_key(rhs);
+    });
+    std::vector<OmniVoicePrompt> sorted_prompts;
+    std::vector<OmniVoiceGenerationOptions> sorted_options;
+    std::vector<std::mt19937 *> sorted_rngs;
+    sorted_prompts.reserve(order.size());
+    sorted_options.reserve(order.size());
+    sorted_rngs.reserve(order.size());
+    for (const size_t index : order) {
+        sorted_prompts.push_back(prompts[index]);
+        sorted_options.push_back(options.at(index));
+        sorted_rngs.push_back(&rngs[index]);
     }
-    return generate_items(prompts, options, rng_ptrs);
+    auto sorted_results = generate_items(sorted_prompts, sorted_options, sorted_rngs);
+    std::vector<OmniVoiceGeneratedAudioTokens> results(order.size());
+    for (size_t slot = 0; slot < order.size(); ++slot) {
+        results[order[slot]] = std::move(sorted_results[slot]);
+    }
+    return results;
 }
 
 std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::generate_items(
@@ -1723,8 +1789,6 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
     std::vector<PackedInputs> inputs(batch);
     std::vector<ItemState> items(batch);
     std::vector<float> guidance_scales(batch, 0.0F);
-    int64_t required_total_tokens = 0;
-    int64_t required_target_frames = 0;
     int64_t max_steps = 0;
     for (size_t item = 0; item < batch; ++item) {
         const auto & prompt = prompts[item];
@@ -1754,11 +1818,8 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
         std::iota(state.active_indices.begin(), state.active_indices.end(), 0);
         update_generated_tokens(inputs[item], assets, state.accepted);
         guidance_scales[item] = options[item].guidance_scale;
-        required_total_tokens = std::max(required_total_tokens, inputs[item].total_tokens());
-        required_target_frames = std::max(required_target_frames, target_frames);
         max_steps = std::max(max_steps, options[item].num_inference_steps);
     }
-    const int64_t batch_size = static_cast<int64_t>(batch);
 
     impl_->last_stats.graph_rebuilt = false;
     impl_->last_stats.rebuild_ms = 0.0;
@@ -1766,9 +1827,12 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
     impl_->last_stats.rebuild_build_ms = 0.0;
     impl_->last_stats.rebuild_alloc_ms = 0.0;
     impl_->last_stats.rebuild_init_ms = 0.0;
+    std::vector<GraphItemShape> shapes(batch);
+    for (size_t item = 0; item < batch; ++item) {
+        shapes[item] = {inputs[item].total_tokens(), inputs[item].target_frames};
+    }
     const bool needs_rebuild =
-        impl_->forward_graph == nullptr ||
-        !impl_->forward_graph->matches(*impl_->runtime, batch_size, required_total_tokens, required_target_frames);
+        impl_->forward_graph == nullptr || !impl_->forward_graph->matches(*impl_->runtime, shapes);
     if (needs_rebuild) {
         const auto rebuild_start = Clock::now();
         if (impl_->forward_graph == nullptr) {
@@ -1776,22 +1840,18 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
                 impl_->forward_graph = std::make_unique<Qwen3DiffusionLayerwiseGraph>(
                     impl_->runtime,
                     impl_->graph_arena_bytes,
-                    batch_size,
-                    required_total_tokens,
-                    required_target_frames);
+                    shapes);
             } else {
                 impl_->forward_graph = std::make_unique<Qwen3DiffusionForwardGraph>(
                     impl_->runtime,
                     impl_->graph_arena_bytes,
-                    batch_size,
-                    required_total_tokens,
-                    required_target_frames,
+                    shapes,
                     impl_->perf_mode,
                     impl_->packed_cfg,
                     impl_->device_scoring);
             }
         } else {
-            impl_->forward_graph->rebuild(batch_size, required_total_tokens, required_target_frames);
+            impl_->forward_graph->rebuild(shapes);
         }
         const auto rebuild_end = Clock::now();
         impl_->last_stats.graph_rebuilt = true;
