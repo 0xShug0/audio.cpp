@@ -55,6 +55,49 @@ export function saveVoice(voice: SavedVoice): Promise<IDBValidKey> {
   return transaction<IDBValidKey>(voiceStoreName, 'readwrite', (store) => store.put(voice));
 }
 
+// A portable browser backup: metadata and original audio bytes, with no server paths.
+export async function exportVoiceLibrary(): Promise<Blob> {
+  const voices = await listVoices();
+  const records = await Promise.all(voices.map(async ({ audio, ...metadata }) => {
+    const data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1]);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(audio);
+    });
+    return { ...metadata, audio: data, audioType: audio.type };
+  }));
+  return new Blob([JSON.stringify({ format: 'audiocpp-voices', version: 1, voices: records })], { type: 'application/json' });
+}
+
+export async function importVoiceLibrary(file: File): Promise<number> {
+  const backup = JSON.parse(await file.text());
+  if (backup?.format !== 'audiocpp-voices' || backup.version !== 1 || !Array.isArray(backup.voices)) {
+    throw new Error('Not a supported audio.cpp voice library backup.');
+  }
+  const ids = new Set<string>();
+  const voices: SavedVoice[] = backup.voices.map((record: Record<string, unknown>) => {
+    if (!record || typeof record.id !== 'string' || !record.id || ids.has(record.id) ||
+        typeof record.name !== 'string' || !record.name.trim() || typeof record.transcript !== 'string' ||
+        typeof record.createdAt !== 'number' || !Number.isFinite(record.createdAt) ||
+        typeof record.audio !== 'string' || !record.audio || typeof record.audioType !== 'string') {
+      throw new Error('The backup contains an invalid voice. No voices were imported.');
+    }
+    ids.add(record.id);
+    const bytes = Uint8Array.from(atob(record.audio), character => character.charCodeAt(0));
+    return { id: record.id, name: record.name, transcript: record.transcript,
+      createdAt: record.createdAt, audio: new Blob([bytes], { type: record.audioType }) };
+  });
+  const database = await openDatabase(voiceStoreName);
+  await new Promise<void>((resolve, reject) => {
+    const tx = database.transaction(voiceStoreName, 'readwrite');
+    for (const voice of voices) tx.objectStore(voiceStoreName).put(voice);
+    tx.oncomplete = () => { database.close(); resolve(); };
+    tx.onabort = () => { database.close(); reject(tx.error || new Error('Voice import failed.')); };
+  });
+  return voices.length;
+}
+
 export function deleteVoice(id: string): Promise<undefined> {
   return transaction<undefined>(voiceStoreName, 'readwrite', (store) => store.delete(id));
 }
