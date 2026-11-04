@@ -61,3 +61,31 @@ only the Python standard library.
 `omnivoice_warm_bench.cpp` and `omnivoice_python_warm_bench.py` are the
 framework warmbench helpers driven by `tests/warmbench.py`, and are unrelated to
 the sweep scripts above.
+
+## Native batch test
+
+`omnivoice_batch_test.cpp` (target `omnivoice_batch_test`, built with
+`-DENGINE_BUILD_WARMBENCH=ON`) runs the same requests through `run()` one at a
+time and through one `run_batch()` call for each `--batch-sizes` entry, and
+reports both wall times and per-request parity. Request *i* uses line
+*i* of `--text-file` (cycled) and seed `--seed + i`.
+
+```bash
+cmake -S . -B build -DENGINE_ENABLE_CUDA=ON -DENGINE_BUILD_WARMBENCH=ON
+cmake --build build --parallel --target omnivoice_batch_test
+./build/bin/omnivoice_batch_test --model models/OmniVoice \
+  --clone-audio tests/omnivoice/assets/ref_audio_02.wav \
+  --reference-text-file tests/omnivoice/assets/ref_text_02.txt \
+  --text-file tests/omnivoice/assets/clone_batch_prompts.txt \
+  --num-step 16 --batch-sizes 1,2,4,8 \
+  --session-option omnivoice.generator_weight_type=f16
+```
+
+- `--out-dir` keeps every output as WAV and raw float32 (`.f32`).
+- `--compare-dir <dir>` compares the `run()` outputs bit for bit with the
+  `.f32` files of an earlier build, e.g. to check that a change left the
+  single-request path untouched.
+- `--timing-log <file>` writes the engine `[TIMING]` lines (generator
+  compute, readback, scoring, decode) of every call.
+- `--session-option` and `--request-option` pass options through, e.g.
+  `--session-option omnivoice.packed_cfg=false`.

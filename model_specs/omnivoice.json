@@ -249,6 +249,20 @@
         "preset": "perf_mode_flash_attention",
         "required": false,
         "default": "off"
+      },
+      {
+        "name": "packed_cfg",
+        "type": "bool",
+        "description": "Give every guidance (unconditional) sequence only its target frames and pack batched requests without padding; default true. false restores the padded layout.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "device_scoring",
+        "type": "bool",
+        "description": "Score greedy (class_temperature=0) decoding steps on the backend and read back only the best tokens; default true. Ignored with mem_saver=true.",
+        "required": false,
+        "default": true
       }
     ],
     "load": []

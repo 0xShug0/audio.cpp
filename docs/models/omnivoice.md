@@ -142,6 +142,8 @@ Arena and weight-context sizes are in MiB.
 |---|---|---:|---|
 | `omnivoice.mem_saver` | bool | `false` | Release staged runtime graphs after request phases; default false. Cannot be combined with perf_mode=flash_attention. |
 | `omnivoice.perf_mode` | `off`, `flash_attention` | `off` | Generator performance mode; default off keeps the exact-safe attention path. flash_attention requires mem_saver=false. |
+| `omnivoice.packed_cfg` | bool | `true` | Give every guidance (unconditional) sequence only its target frames instead of the full prompt length, and pack batched requests without padding. `false` restores the padded layout, which reproduces earlier output exactly. |
+| `omnivoice.device_scoring` | bool | `true` | For greedy class decoding (`class_temperature=0`), pick each step's best tokens on the backend and read back only those instead of the full logits. Ignored with `mem_saver=true` and for sampled class decoding. |
 | `omnivoice.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Generator weight storage fallback. |
 | `omnivoice.generator_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit generator weight storage override. |
 | `omnivoice.audio_tokenizer_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for audio tokenizer weights. |
@@ -153,6 +155,43 @@ Arena and weight-context sizes are in MiB.
 | `omnivoice.generator_weight_context_mb` | positive integer | `256` | Generator weight tensor context. |
 
 `omnivoice.perf_mode=flash_attention` is only available on the normal graph path and cannot be combined with `omnivoice.mem_saver=true`.
+
+`omnivoice.packed_cfg` and `omnivoice.device_scoring` change only
+floating-point rounding: with f32 generator weights the first-step logits of
+the packed layout match the padded one to within 0.002 (mean), and device
+scoring picks the same tokens as host scoring. With both set to `false` the
+output is bit-identical to the padded, host-scored path.
+
+## Native Batching
+
+Offline OmniVoice sessions implement native batching
+(`IBatchedOfflineVoiceTaskSession::run_batch`), so the server's
+[`/v1/tasks/batch`](../../app/server/api.md#post-v1tasksbatch) runs several
+requests in one generator pass per decoding step instead of one after
+another. The model must be configured with `mode=offline`.
+
+- Requests may differ in text, length, reference voice, guidance scale and
+  step count. They are packed without padding and ordered by length
+  internally; results keep the request order.
+- Each request has its own seeded RNG: with `seed` set, a request in a batch
+  follows the same sampling path as `run()` with that seed. Batched kernels
+  can still round differently, so audio is identical to `run()` only when
+  the kernels happen to match (most requests with f32 weights, many with
+  f16).
+- Requests above `audio_chunk_threshold_sec` are split into chunks as in
+  `run()`; chunk *k* of every request is batched together.
+- Audio decoding and post-processing still run per request.
+
+RTX 4090, `generator_weight_type=f16`, `audio_tokenizer_weight_type=f16`, 16
+steps, voice clone (`tests/omnivoice/omnivoice_batch_test`):
+
+| Workload | Before (`packed_cfg=false`, `device_scoring=false`) | Default | `perf_mode=flash_attention` |
+|---|---:|---:|---:|
+| 1 request, 9 words | 0.281 s | 0.147 s | 0.138 s |
+| 8 x `run()`, 9 words | 2.228 s | 1.180 s | 1.096 s |
+| `run_batch()` of 8, 9 words | 1.995 s | 0.995 s | 0.824 s |
+| 8 x `run()`, 5-20 words | 2.822 s | 1.569 s | 1.362 s |
+| `run_batch()` of 8, 5-20 words | 4.327 s | 1.442 s | 1.226 s |
 
 The two `weight_type` options quantize SafeTensors weights at load time, which is not the same as loading a prebuilt Q8 GGUF package. On CUDA, `omnivoice.generator_weight_type=f16` measured 1.26x faster than `native`, while runtime `omnivoice.audio_tokenizer_weight_type=q8_0` produced unusable audio without being faster. See the [OmniVoice weight-type benchmark](../reports/omnivoice_weight_type_benchmark.md).
 
