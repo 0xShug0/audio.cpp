@@ -42,7 +42,8 @@ public:
         size_t weight_context_bytes,
         engine::assets::TensorStorageType weight_storage_type,
         bool mem_saver,
-        OmniVoiceGeneratorPerfMode perf_mode);
+        OmniVoiceGeneratorPerfMode perf_mode,
+        bool packed_cfg = true);
     ~OmniVoiceQwen3DiffusionRuntime();
 
     // One request, drawing from the runtime RNG (see seed_rng()).

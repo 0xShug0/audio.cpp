@@ -96,6 +96,7 @@ private:
     engine::assets::TensorStorageType generator_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     bool mem_saver_ = false;
     OmniVoiceGeneratorPerfMode generator_perf_mode_ = OmniVoiceGeneratorPerfMode::Standard;
+    bool generator_packed_cfg_ = true;
     OmniVoiceTextTokenizer tokenizer_;
     OmniVoiceHiggsAudioV2TokenizerRuntime audio_tokenizer_;
     OmniVoicePromptBuilder prompt_builder_;

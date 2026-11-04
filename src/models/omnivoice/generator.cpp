@@ -292,16 +292,41 @@ core::TensorValue build_embeddings(
     return modules::AddModule{}.build(ctx, text_part, audio_part);
 }
 
-core::TensorValue decoder_layer(
+// q, k, v: [rows, tokens, heads, dim] after RoPE. Returns the attention
+// context as [rows, tokens, heads * dim].
+core::TensorValue self_attention(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & q,
+    const core::TensorValue & k,
+    const core::TensorValue & v,
+    const OmniVoiceQwen3DiffusionConfig & config,
+    const core::TensorValue & attention_mask,
+    OmniVoiceGeneratorPerfMode perf_mode) {
+    const int64_t dim = head_dim(config);
+    const int64_t kv_repeats = config.num_attention_heads / config.num_key_value_heads;
+    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
+    auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k), kv_repeats);
+    auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v), kv_repeats);
+    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask, perf_mode);
+    context = ensure_contiguous(ctx, context);
+    return core::reshape_tensor(
+        ctx,
+        context,
+        core::TensorShape::from_dims({q.shape.dims[0], q.shape.dims[1], config.num_attention_heads * dim}));
+}
+
+// One Qwen3 decoder layer on [rows, tokens, hidden]. `attention` maps the
+// RoPE'd q, k, v ([rows, tokens, heads, dim]) to the [rows, tokens,
+// heads * dim] context, so the token layout decides how attention is split.
+template <typename Attention>
+core::TensorValue decoder_layer_with(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const Qwen3DiffusionLayerWeights & weights,
     const OmniVoiceQwen3DiffusionConfig & config,
-    const core::TensorValue & attention_mask,
-    OmniVoiceGeneratorPerfMode perf_mode = OmniVoiceGeneratorPerfMode::Standard) {
+    Attention && attention) {
     const int64_t dim = head_dim(config);
-    const int64_t kv_repeats = config.num_attention_heads / config.num_key_value_heads;
     const modules::LinearModule q_proj(
         binding::linear_config(config.hidden_size, config.num_attention_heads * dim, false));
     const modules::LinearModule k_proj(
@@ -322,15 +347,7 @@ core::TensorValue decoder_layer(
     q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
     k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
 
-    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k), kv_repeats);
-    auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v), kv_repeats);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask, perf_mode);
-    context = ensure_contiguous(ctx, context);
-    context = core::reshape_tensor(
-        ctx,
-        context,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_attention_heads * dim}));
+    auto context = attention(q, k, v);
     auto x = modules::AddModule{}.build(ctx, input, o_proj.build(ctx, context, binding::linear_data(ctx, weights.o_proj)));
 
     auto ff_in = hidden_norm.build(ctx, x, binding::norm_data(ctx, weights.post_norm));
@@ -345,6 +362,69 @@ core::TensorValue decoder_layer(
                   binding::linear_config(config.intermediate_size, config.hidden_size, false))
                   .build(ctx, modules::MulModule{}.build(ctx, gate, up), binding::linear_data(ctx, weights.down_proj));
     return modules::AddModule{}.build(ctx, x, ff);
+}
+
+// Decoder layer on [rows, tokens, hidden] rows of equal length, with one
+// [rows, 1, tokens, tokens] attention mask.
+core::TensorValue decoder_layer(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const Qwen3DiffusionLayerWeights & weights,
+    const OmniVoiceQwen3DiffusionConfig & config,
+    const core::TensorValue & attention_mask,
+    OmniVoiceGeneratorPerfMode perf_mode = OmniVoiceGeneratorPerfMode::Standard) {
+    return decoder_layer_with(ctx, input, positions, weights, config, [&](const auto & q, const auto & k, const auto & v) {
+        return self_attention(ctx, q, k, v, config, attention_mask, perf_mode);
+    });
+}
+
+// Decoder layer on the packed layout [1, flat_tokens, hidden]: `batch`
+// conditional rows of `conditional_tokens` positions, then `batch`
+// unconditional rows of `unconditional_tokens` positions. Every per-token
+// op runs once over all tokens; attention runs per segment with its own
+// mask, so the short unconditional rows are not padded to the prompt length.
+core::TensorValue packed_decoder_layer(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & flat_positions,
+    const Qwen3DiffusionLayerWeights & weights,
+    const OmniVoiceQwen3DiffusionConfig & config,
+    const core::TensorValue & conditional_mask,
+    const core::TensorValue & unconditional_mask,
+    int64_t batch,
+    int64_t conditional_tokens,
+    int64_t unconditional_tokens,
+    OmniVoiceGeneratorPerfMode perf_mode) {
+    const int64_t dim = head_dim(config);
+    return decoder_layer_with(ctx, input, flat_positions, weights, config, [&](const auto & q, const auto & k, const auto & v) {
+        // [1, flat_tokens, heads, dim] -> [batch, tokens, heads, dim] rows of one segment.
+        const auto segment = [&](const core::TensorValue & value, int64_t token_start, int64_t tokens) {
+            auto part = modules::SliceModule({1, token_start, batch * tokens}).build(ctx, value);
+            part = ensure_contiguous(ctx, part);
+            return core::reshape_tensor(
+                ctx,
+                part,
+                core::TensorShape::from_dims({batch, tokens, value.shape.dims[2], dim}));
+        };
+        const auto segment_context = [&](int64_t token_start, int64_t tokens, const core::TensorValue & mask) {
+            auto context = self_attention(
+                ctx,
+                segment(q, token_start, tokens),
+                segment(k, token_start, tokens),
+                segment(v, token_start, tokens),
+                config,
+                mask,
+                perf_mode);
+            return core::reshape_tensor(
+                ctx,
+                context,
+                core::TensorShape::from_dims({1, batch * tokens, config.num_attention_heads * dim}));
+        };
+        auto conditional = segment_context(0, conditional_tokens, conditional_mask);
+        auto unconditional = segment_context(batch * conditional_tokens, unconditional_tokens, unconditional_mask);
+        return modules::ConcatModule({1}).build(ctx, conditional, unconditional);
+    });
 }
 
 class Qwen3DiffusionWeightsRuntime {
@@ -416,39 +496,47 @@ struct PackedInputs {
 
 // Host copies of the generator graph inputs for a batch of requests.
 //
-// The graph runs 2 * batch sequences of `tokens` positions each: rows
-// 0..batch-1 are the conditional sequences of the requests and rows
-// batch..2*batch-1 their unconditional (classifier-free guidance) sequences.
-// Every row is padded to `tokens`; padded positions only attend to
-// themselves, so they never change the valid positions. A batch of one is
-// exactly the two-row layout of a single request.
+// The graph runs 2 * batch sequences: rows 0..batch-1 are the conditional
+// sequences of the requests (`conditional_tokens` positions each) and rows
+// batch..2*batch-1 their unconditional, classifier-free guidance sequences
+// (`unconditional_tokens` positions each). The rows are stored back to back,
+// conditional rows first. Every row is padded to its length; padded positions
+// only attend to themselves, so they never change the valid positions.
+//
+// The unconditional sequence of a request is only its target frames, so a
+// packed layout uses unconditional_tokens = target_frames. The unpacked
+// layout pads it to the full prompt length (unconditional_tokens =
+// conditional_tokens), which is a plain [2 * batch, tokens] tensor; for a
+// batch of one it is exactly the two-row layout of a single request.
 class BatchedGraphInputs {
 public:
     void reset(
         const OmniVoiceAssets & assets,
         int64_t batch,
-        int64_t tokens,
+        int64_t conditional_tokens,
+        int64_t unconditional_tokens,
         int64_t target_frames,
         bool f16_attention) {
-        if (batch <= 0 || tokens <= 0 || target_frames <= 0) {
+        if (batch <= 0 || conditional_tokens <= 0 || unconditional_tokens < target_frames || target_frames <= 0) {
             throw std::runtime_error("OmniVoice generator batch capacities are invalid");
         }
         batch_ = batch;
-        rows_ = 2 * batch;
-        tokens_ = tokens;
+        conditional_tokens_ = conditional_tokens;
+        unconditional_tokens_ = unconditional_tokens;
         target_frames_ = target_frames;
         codebooks_ = assets.config.num_audio_codebook;
         audio_vocab_size_ = assets.config.audio_vocab_size;
         mask_id_ = assets.config.audio_mask_id;
         f16_attention_ = f16_attention;
-        const size_t row_values = static_cast<size_t>(rows_ * tokens_);
-        text_ids.assign(row_values, 0);
+        const size_t token_values = static_cast<size_t>(flat_tokens());
+        text_ids.assign(token_values, 0);
         for (auto & ids : audio_ids) {
-            ids.assign(row_values, 0);
+            ids.assign(token_values, 0);
         }
-        audio_mask.assign(row_values, 0.0F);
-        text_mask.assign(row_values, 0.0F);
-        const size_t attention_values = static_cast<size_t>(rows_ * tokens_ * tokens_);
+        audio_mask.assign(token_values, 0.0F);
+        text_mask.assign(token_values, 0.0F);
+        const size_t attention_values = static_cast<size_t>(
+            batch_ * (conditional_tokens_ * conditional_tokens_ + unconditional_tokens_ * unconditional_tokens_));
         if (f16_attention_) {
             attention_f16.assign(attention_values, ggml_fp32_to_fp16(kMaskedAttentionBias));
             attention_f32.clear();
@@ -456,11 +544,17 @@ public:
             attention_f32.assign(attention_values, kMaskedAttentionBias);
             attention_f16.clear();
         }
-        target_indices.assign(static_cast<size_t>(rows_ * target_frames_), 0);
+        target_indices.assign(static_cast<size_t>(2 * batch_ * target_frames_), 0);
         guidance_scales.assign(static_cast<size_t>(batch_), 0.0F);
-        positions.assign(static_cast<size_t>(tokens_), 0);
-        for (int64_t i = 0; i < tokens_; ++i) {
+        positions.assign(static_cast<size_t>(conditional_tokens_), 0);
+        for (int64_t i = 0; i < conditional_tokens_; ++i) {
             positions[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+        }
+        flat_positions.assign(token_values, 0);
+        for (int64_t row = 0; row < 2 * batch_; ++row) {
+            for (int64_t pos = 0; pos < row_tokens(row); ++pos) {
+                flat_positions[row_offset(row) + static_cast<size_t>(pos)] = static_cast<int32_t>(pos);
+            }
         }
         layout_.clear();
         last_layout_.clear();
@@ -487,17 +581,23 @@ public:
         for (int64_t item = 0; item < batch_; ++item) {
             const auto & input = inputs[static_cast<size_t>(item)];
             const int64_t total = input.total_tokens();
-            if (total <= 0 || total > tokens_ || input.target_frames <= 0 || input.target_frames > target_frames_) {
+            if (total <= 0 || total > conditional_tokens_ || input.target_frames <= 0 ||
+                input.target_frames > target_frames_) {
                 throw std::runtime_error("OmniVoice generator packed input shape exceeds graph capacity");
             }
             if (static_cast<int64_t>(input.conditional_text_ids.size()) != total ||
                 static_cast<int64_t>(input.unconditional_text_ids.size()) != total) {
                 throw std::runtime_error("OmniVoice generator text id tensor shape is invalid");
             }
+            // The unconditional ids past the target frames are mask ids, the
+            // same as the padding, so only the part that fits is copied.
+            const int64_t unconditional_copy = std::min(total, unconditional_tokens_);
             const size_t conditional_row = row_offset(item);
             const size_t unconditional_row = row_offset(batch_ + item);
             for (int64_t pos = 0; pos < total; ++pos) {
                 text_ids[conditional_row + static_cast<size_t>(pos)] = input.conditional_text_ids[static_cast<size_t>(pos)];
+            }
+            for (int64_t pos = 0; pos < unconditional_copy; ++pos) {
                 text_ids[unconditional_row + static_cast<size_t>(pos)] = input.unconditional_text_ids[static_cast<size_t>(pos)];
             }
             for (int64_t codebook = 0; codebook < codebooks_; ++codebook) {
@@ -510,6 +610,8 @@ public:
                 auto & ids = audio_ids[static_cast<size_t>(codebook)];
                 for (int64_t pos = 0; pos < total; ++pos) {
                     ids[conditional_row + static_cast<size_t>(pos)] = conditional_ids[static_cast<size_t>(pos)];
+                }
+                for (int64_t pos = 0; pos < unconditional_copy; ++pos) {
                     ids[unconditional_row + static_cast<size_t>(pos)] = unconditional_ids[static_cast<size_t>(pos)];
                 }
             }
@@ -561,23 +663,29 @@ public:
     bool take_layout_dirty() noexcept { return std::exchange(layout_dirty_, false); }
     bool take_guidance_dirty() noexcept { return std::exchange(guidance_dirty_, false); }
     int64_t batch() const noexcept { return batch_; }
-    int64_t rows() const noexcept { return rows_; }
-    int64_t tokens() const noexcept { return tokens_; }
+    int64_t conditional_tokens() const noexcept { return conditional_tokens_; }
+    int64_t unconditional_tokens() const noexcept { return unconditional_tokens_; }
+    int64_t flat_tokens() const noexcept { return batch_ * (conditional_tokens_ + unconditional_tokens_); }
     int64_t target_frames() const noexcept { return target_frames_; }
 
+    // One value per token of the back-to-back rows.
     std::vector<int32_t> text_ids;
     std::array<std::vector<int32_t>, 8> audio_ids{};
     std::vector<float> audio_mask;
     std::vector<float> text_mask;
+    // Per-row [tokens, tokens] attention biases, conditional rows first.
     std::vector<float> attention_f32;
     std::vector<ggml_fp16_t> attention_f16;
-    // Rows of the flattened [rows * tokens, hidden] state gathered for the
+    // Tokens of the flattened [flat_tokens, hidden] state gathered for the
     // logits: target frames of every conditional row, then of every
     // unconditional row. Padded frames point at a valid position and are
     // ignored by the caller.
     std::vector<int32_t> target_indices;
     std::vector<float> guidance_scales;
+    // 0..conditional_tokens-1, shared by every row of the unpacked layout.
     std::vector<int32_t> positions;
+    // Position of every token of the back-to-back rows (packed layout).
+    std::vector<int32_t> flat_positions;
 
 private:
     struct ItemLayout {
@@ -597,8 +705,22 @@ private:
         }
     };
 
+    int64_t row_tokens(int64_t row) const noexcept {
+        return row < batch_ ? conditional_tokens_ : unconditional_tokens_;
+    }
+
     size_t row_offset(int64_t row) const noexcept {
-        return static_cast<size_t>(row * tokens_);
+        return row < batch_
+            ? static_cast<size_t>(row * conditional_tokens_)
+            : static_cast<size_t>(batch_ * conditional_tokens_ + (row - batch_) * unconditional_tokens_);
+    }
+
+    size_t attention_offset(int64_t row) const noexcept {
+        return row < batch_
+            ? static_cast<size_t>(row * conditional_tokens_ * conditional_tokens_)
+            : static_cast<size_t>(
+                  batch_ * conditional_tokens_ * conditional_tokens_ +
+                  (row - batch_) * unconditional_tokens_ * unconditional_tokens_);
     }
 
     void rebuild_masks_and_indices() {
@@ -609,22 +731,24 @@ private:
         } else {
             std::fill(attention_f32.begin(), attention_f32.end(), kMaskedAttentionBias);
         }
-        const auto write_zero = [&](int64_t row, int64_t q, int64_t k) {
-            const size_t index = static_cast<size_t>(k + tokens_ * (q + tokens_ * row));
-            if (f16_attention_) {
-                attention_f16[index] = ggml_fp32_to_fp16(0.0F);
-            } else {
-                attention_f32[index] = 0.0F;
-            }
-        };
         const auto write_row_attention = [&](int64_t row, int64_t valid) {
+            const int64_t tokens = row_tokens(row);
+            const size_t base = attention_offset(row);
+            const auto write_zero = [&](int64_t q, int64_t k) {
+                const size_t index = base + static_cast<size_t>(k + tokens * q);
+                if (f16_attention_) {
+                    attention_f16[index] = ggml_fp32_to_fp16(0.0F);
+                } else {
+                    attention_f32[index] = 0.0F;
+                }
+            };
             for (int64_t q = 0; q < valid; ++q) {
                 for (int64_t k = 0; k < valid; ++k) {
-                    write_zero(row, q, k);
+                    write_zero(q, k);
                 }
             }
-            for (int64_t q = valid; q < tokens_; ++q) {
-                write_zero(row, q, q);
+            for (int64_t q = valid; q < tokens; ++q) {
+                write_zero(q, q);
             }
         };
         for (int64_t item = 0; item < batch_; ++item) {
@@ -643,17 +767,17 @@ private:
             write_row_attention(unconditional_row, layout.target_frames);
             for (int64_t frame = 0; frame < target_frames_; ++frame) {
                 const int64_t valid_frame = frame < layout.target_frames ? frame : 0;
-                target_indices[static_cast<size_t>(conditional_row * target_frames_ + frame)] =
-                    static_cast<int32_t>(conditional_row * tokens_ + layout.conditional_target_start + valid_frame);
-                target_indices[static_cast<size_t>(unconditional_row * target_frames_ + frame)] =
-                    static_cast<int32_t>(unconditional_row * tokens_ + valid_frame);
+                target_indices[static_cast<size_t>(conditional_row * target_frames_ + frame)] = static_cast<int32_t>(
+                    row_offset(conditional_row) + static_cast<size_t>(layout.conditional_target_start + valid_frame));
+                target_indices[static_cast<size_t>(unconditional_row * target_frames_ + frame)] = static_cast<int32_t>(
+                    row_offset(unconditional_row) + static_cast<size_t>(valid_frame));
             }
         }
     }
 
     int64_t batch_ = 0;
-    int64_t rows_ = 0;
-    int64_t tokens_ = 0;
+    int64_t conditional_tokens_ = 0;
+    int64_t unconditional_tokens_ = 0;
     int64_t target_frames_ = 0;
     int64_t codebooks_ = 0;
     int64_t audio_vocab_size_ = 0;
@@ -667,8 +791,9 @@ private:
 };
 
 // Final norm, target-frame gather, audio head and classifier-free guidance
-// for a [2 * batch, tokens, hidden] state. Returns [batch, frames, codebooks *
-// vocab] guided logits.
+// for the decoder output of BatchedGraphInputs' rows (`flat_tokens` tokens of
+// any [..., hidden] shape). Returns [batch, frames, codebooks * vocab] guided
+// logits.
 core::TensorValue build_guided_logits(
     core::ModuleBuildContext & ctx,
     const OmniVoiceConfig & config,
@@ -677,7 +802,7 @@ core::TensorValue build_guided_logits(
     const core::TensorValue & target_indices,
     const core::TensorValue & guidance_scales,
     int64_t batch,
-    int64_t tokens,
+    int64_t flat_tokens,
     int64_t target_frames) {
     const int64_t rows = 2 * batch;
     auto x = modules::RMSNormModule({config.llm.hidden_size, config.llm.rms_norm_eps, true, false})
@@ -685,8 +810,8 @@ core::TensorValue build_guided_logits(
     x = core::reshape_tensor(
         ctx,
         ensure_contiguous(ctx, x),
-        core::TensorShape::from_dims({rows * tokens, config.llm.hidden_size}));
-    auto hidden = modules::EmbeddingModule({rows * tokens, config.llm.hidden_size}).build(ctx, target_indices, x);
+        core::TensorShape::from_dims({flat_tokens, config.llm.hidden_size}));
+    auto hidden = modules::EmbeddingModule({flat_tokens, config.llm.hidden_size}).build(ctx, target_indices, x);
     hidden = core::reshape_tensor(
         ctx,
         hidden,
@@ -741,10 +866,12 @@ public:
         int64_t batch,
         int64_t total_token_capacity,
         int64_t target_frame_capacity,
-        OmniVoiceGeneratorPerfMode perf_mode)
+        OmniVoiceGeneratorPerfMode perf_mode,
+        bool packed_cfg)
         : runtime_(std::move(runtime)),
           graph_arena_bytes_(graph_arena_bytes),
-          perf_mode_(perf_mode) {
+          perf_mode_(perf_mode),
+          packed_cfg_(packed_cfg) {
         rebuild(batch, total_token_capacity, target_frame_capacity);
     }
 
@@ -776,6 +903,14 @@ public:
         target_frame_capacity_ = target_frame_capacity;
         const int64_t rows = 2 * batch_capacity_;
         const bool f16_attention = perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention;
+        // Packed: the unconditional rows hold only the target frames.
+        const int64_t unconditional_tokens = packed_cfg_ ? target_frame_capacity_ : total_tokens_capacity_;
+        const int64_t flat_tokens = batch_capacity_ * (total_tokens_capacity_ + unconditional_tokens);
+        // Token-major shapes: [1, flat_tokens] packed, [rows, tokens] unpacked.
+        const int64_t token_dim0 = packed_cfg_ ? 1 : rows;
+        const int64_t token_dim1 = packed_cfg_ ? flat_tokens : total_tokens_capacity_;
+        const auto token_ids_shape = core::TensorShape::from_dims({token_dim0, token_dim1});
+        const auto token_mask_shape = core::TensorShape::from_dims({token_dim0, token_dim1, 1});
 
         const auto build_start = Clock::now();
         ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
@@ -799,49 +934,92 @@ public:
 
         std::array<core::TensorValue, 8> audio_id_values = {};
 
-        auto text_ids =
-            core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows, total_tokens_capacity_}));
+        auto text_ids = core::make_tensor(input_ctx, GGML_TYPE_I32, token_ids_shape);
         text_ids_ = text_ids.tensor;
         ggml_set_input(text_ids_);
         for (int64_t codebook = 0; codebook < config.num_audio_codebook; ++codebook) {
-            auto audio_ids =
-                core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows, total_tokens_capacity_}));
+            auto audio_ids = core::make_tensor(input_ctx, GGML_TYPE_I32, token_ids_shape);
             audio_ids_[static_cast<size_t>(codebook)] = audio_ids.tensor;
             ggml_set_input(audio_ids_[static_cast<size_t>(codebook)]);
             audio_id_values[static_cast<size_t>(codebook)] = audio_ids;
         }
-        auto audio_mask =
-            core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({rows, total_tokens_capacity_, 1}));
-        auto text_mask =
-            core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({rows, total_tokens_capacity_, 1}));
+        auto audio_mask = core::make_tensor(input_ctx, GGML_TYPE_F32, token_mask_shape);
+        auto text_mask = core::make_tensor(input_ctx, GGML_TYPE_F32, token_mask_shape);
         audio_mask_ = audio_mask.tensor;
         text_mask_ = text_mask.tensor;
         ggml_set_input(audio_mask_);
         ggml_set_input(text_mask_);
+        const int64_t position_count = packed_cfg_ ? flat_tokens : total_tokens_capacity_;
         positions_ =
-            core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({total_tokens_capacity_})).tensor;
+            core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({position_count})).tensor;
         ggml_set_input(positions_);
         auto positions =
-            core::wrap_tensor(positions_, core::TensorShape::from_dims({total_tokens_capacity_}), GGML_TYPE_I32);
+            core::wrap_tensor(positions_, core::TensorShape::from_dims({position_count}), GGML_TYPE_I32);
         auto target_indices =
             core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows * target_frame_capacity_}));
         target_indices_ = target_indices.tensor;
         ggml_set_input(target_indices_);
-        auto attention_mask =
-            core::make_tensor(
-                input_ctx,
-                f16_attention ? GGML_TYPE_F16 : GGML_TYPE_F32,
-                core::TensorShape::from_dims({rows, 1, total_tokens_capacity_, total_tokens_capacity_}));
+        // One buffer holds every row's mask, conditional rows first; packed
+        // graphs view it as one [batch, 1, T, T] and one [batch, 1, F, F] mask.
+        const ggml_type mask_type = f16_attention ? GGML_TYPE_F16 : GGML_TYPE_F32;
+        const int64_t conditional_mask_values = batch_capacity_ * total_tokens_capacity_ * total_tokens_capacity_;
+        const int64_t unconditional_mask_values = batch_capacity_ * unconditional_tokens * unconditional_tokens;
+        auto attention_mask = packed_cfg_
+            ? core::make_tensor(
+                  input_ctx,
+                  mask_type,
+                  core::TensorShape::from_dims({conditional_mask_values + unconditional_mask_values}))
+            : core::make_tensor(
+                  input_ctx,
+                  mask_type,
+                  core::TensorShape::from_dims({rows, 1, total_tokens_capacity_, total_tokens_capacity_}));
         attention_mask_ = attention_mask.tensor;
         ggml_set_input(attention_mask_);
+        const auto mask_view = [&](int64_t tokens, int64_t first_value) {
+            const size_t element = ggml_type_size(mask_type);
+            auto * view = ggml_view_4d(
+                ctx.ggml,
+                attention_mask_,
+                tokens,
+                tokens,
+                1,
+                batch_capacity_,
+                static_cast<size_t>(tokens) * element,
+                static_cast<size_t>(tokens * tokens) * element,
+                static_cast<size_t>(tokens * tokens) * element,
+                static_cast<size_t>(first_value) * element);
+            return core::wrap_tensor(
+                view,
+                core::TensorShape::from_dims({batch_capacity_, 1, tokens, tokens}),
+                mask_type);
+        };
         auto guidance_scales =
             core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_capacity_}));
         guidance_scales_ = guidance_scales.tensor;
         ggml_set_input(guidance_scales_);
 
         auto x = build_embeddings(ctx, config, weights, text_ids, audio_id_values, audio_mask, text_mask);
-        for (const auto & layer : weights.layers) {
-            x = decoder_layer(ctx, x, positions, layer, config.llm, attention_mask, perf_mode_);
+        if (packed_cfg_) {
+            const auto conditional_mask = mask_view(total_tokens_capacity_, 0);
+            const auto unconditional_mask = mask_view(unconditional_tokens, conditional_mask_values);
+            for (const auto & layer : weights.layers) {
+                x = packed_decoder_layer(
+                    ctx,
+                    x,
+                    positions,
+                    layer,
+                    config.llm,
+                    conditional_mask,
+                    unconditional_mask,
+                    batch_capacity_,
+                    total_tokens_capacity_,
+                    unconditional_tokens,
+                    perf_mode_);
+            }
+        } else {
+            for (const auto & layer : weights.layers) {
+                x = decoder_layer(ctx, x, positions, layer, config.llm, attention_mask, perf_mode_);
+            }
         }
         logits_ = build_guided_logits(
             ctx,
@@ -851,7 +1029,7 @@ public:
             target_indices,
             guidance_scales,
             batch_capacity_,
-            total_tokens_capacity_,
+            flat_tokens,
             target_frame_capacity_).tensor;
 
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
@@ -875,8 +1053,15 @@ public:
         rebuild_alloc_ms_ = engine::debug::elapsed_ms(alloc_start, alloc_end);
 
         const auto init_start = Clock::now();
-        host_.reset(runtime_->assets(), batch_capacity_, total_tokens_capacity_, target_frame_capacity_, f16_attention);
-        ggml_backend_tensor_set(positions_, host_.positions.data(), 0, host_.positions.size() * sizeof(int32_t));
+        host_.reset(
+            runtime_->assets(),
+            batch_capacity_,
+            total_tokens_capacity_,
+            unconditional_tokens,
+            target_frame_capacity_,
+            f16_attention);
+        const auto & position_values = packed_cfg_ ? host_.flat_positions : host_.positions;
+        ggml_backend_tensor_set(positions_, position_values.data(), 0, position_values.size() * sizeof(int32_t));
         logits_host_.clear();
         const auto init_end = Clock::now();
         rebuild_init_ms_ = engine::debug::elapsed_ms(init_start, init_end);
@@ -1006,6 +1191,7 @@ private:
     std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
     OmniVoiceGeneratorPerfMode perf_mode_ = OmniVoiceGeneratorPerfMode::Standard;
+    bool packed_cfg_ = true;
     int64_t batch_capacity_ = 0;
     int64_t total_tokens_capacity_ = 0;
     int64_t target_frame_capacity_ = 0;
@@ -1316,6 +1502,7 @@ struct OmniVoiceQwen3DiffusionRuntime::Impl {
     std::unique_ptr<Qwen3DiffusionGraph> forward_graph;
     bool mem_saver = false;
     OmniVoiceGeneratorPerfMode perf_mode = OmniVoiceGeneratorPerfMode::Standard;
+    bool packed_cfg = true;
     OmniVoiceQwen3DiffusionRuntimeStats last_stats = {};
     std::mt19937 rng{std::random_device{}()};
 };
@@ -1328,7 +1515,8 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
     size_t weight_context_bytes,
     assets_ns::TensorStorageType weight_storage_type,
     bool mem_saver,
-    OmniVoiceGeneratorPerfMode perf_mode)
+    OmniVoiceGeneratorPerfMode perf_mode,
+    bool packed_cfg)
     : impl_(std::make_unique<Impl>()) {
     if (assets == nullptr) {
         throw std::runtime_error("OmniVoice generator requires assets");
@@ -1345,6 +1533,7 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
         weight_storage_type);
     impl_->mem_saver = mem_saver;
     impl_->perf_mode = perf_mode;
+    impl_->packed_cfg = packed_cfg;
 }
 
 OmniVoiceQwen3DiffusionRuntime::~OmniVoiceQwen3DiffusionRuntime() = default;
@@ -1480,7 +1669,8 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
                     batch_size,
                     required_total_tokens,
                     required_target_frames,
-                    impl_->perf_mode);
+                    impl_->perf_mode,
+                    impl_->packed_cfg);
             }
         } else {
             impl_->forward_graph->rebuild(batch_size, required_total_tokens, required_target_frames);

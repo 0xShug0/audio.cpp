@@ -67,6 +67,13 @@ OmniVoiceGeneratorPerfMode perf_mode_from_options(const runtime::SessionOptions 
     return OmniVoiceGeneratorPerfMode::Standard;
 }
 
+bool packed_cfg_from_options(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"omnivoice.packed_cfg"})) {
+        return runtime::parse_bool_option(*value, "omnivoice.packed_cfg");
+    }
+    return true;
+}
+
 std::string_view perf_mode_name(OmniVoiceGeneratorPerfMode mode) {
     switch (mode) {
         case OmniVoiceGeneratorPerfMode::Standard:
@@ -243,6 +250,7 @@ OmniVoiceSession::OmniVoiceSession(
               option_weight_type(options, "omnivoice.weight_type", engine::assets::TensorStorageType::Native))),
       mem_saver_(mem_saver_from_options(options)),
       generator_perf_mode_(perf_mode_from_options(options, mem_saver_)),
+      generator_packed_cfg_(packed_cfg_from_options(options)),
       tokenizer_(assets_),
       audio_tokenizer_(
           assets_,
@@ -260,7 +268,8 @@ OmniVoiceSession::OmniVoiceSession(
           generator_weight_context_bytes_,
           generator_weight_storage_type_,
           mem_saver_,
-          generator_perf_mode_) {
+          generator_perf_mode_,
+          generator_packed_cfg_) {
     engine::debug::trace_log_scalar("omnivoice.perf_mode", perf_mode_name(generator_perf_mode_));
     if (task_.task != runtime::VoiceTaskKind::Tts &&
         task_.task != runtime::VoiceTaskKind::VoiceCloning &&

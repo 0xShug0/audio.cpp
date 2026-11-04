@@ -407,7 +407,7 @@ public:
             target_indices,
             guidance_scales,
             batch_,
-            total_tokens_capacity_,
+            rows * total_tokens_capacity_,
             target_frame_capacity_).tensor;
         graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
         ggml_set_output(logits_);
@@ -523,7 +523,14 @@ public:
         rebuild_alloc_ms_ = 0.0;
 
         const auto init_start = Clock::now();
-        host_.reset(runtime_->assets(), batch_capacity_, total_tokens_capacity_, target_frame_capacity_, false);
+        // The layerwise stages use the unpacked [2 * batch, tokens] layout.
+        host_.reset(
+            runtime_->assets(),
+            batch_capacity_,
+            total_tokens_capacity_,
+            total_tokens_capacity_,
+            target_frame_capacity_,
+            false);
         hidden_a_.clear();
         hidden_b_.clear();
         logits_host_.clear();
