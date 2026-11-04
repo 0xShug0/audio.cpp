@@ -67,6 +67,57 @@ speech and 5.9 GiB for cloning. This measurement has not been repeated after
 the cleanup. The estimate includes headroom; it is guidance, not a tested
 minimum for every input or weight type.
 
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `kitten_tts2` |
+| Tasks | `tts`, `clon` |
+| Modes | `offline` |
+| Languages | `en`, `ar`, `zh`, `fr`, `de`, `hi`, `it`, `pt`, `ru`, `es`, `nl`, `id`, `ja`, `ko`, `pl`, `tr` |
+| Default package | `kitten_tts2_20261021_q8_0` |
+| Input | Text; voice conditioning as shown in the examples |
+| Output | Generated speech audio |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--text` | Input text; see the examples for the expected prompt format. |
+| `--voice-ref` | Reference audio for voice cloning. |
+| `--out` | Output WAV file. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `voice_id` | `Bella`, `Jasper`, `Luna`, `Bruno`, `Rosie`, `Hugo`, `Kiki`, `Leo`, `Matthew`, `Elliot`, `Willow`, `Dolores`, `Victor`, `Dante`, `Alfred`, `Saoirse`, `Claire`, `Raven`, `Marcus`, `Herbert`, `Diana`, `Laurence`, `Maeve`, `Walter`, `Edith`, `Miles`, `Grace`, `Reginald`, `Iris`, `Frank`, `Serena`, `Julian`, `Eleanor`, `Otis`, `Vincent`, `Martha`, `Sable`, `Victoria`, `PreparedBruno`, `Arabic`, `Chinese`, `French`, `German`, `Hindi`, `Italian`, `Portuguese`, `Russian`, `Spanish`, `AirportAnnouncer`, `ArabicChildSchool`, `ArabicFalconer`, `ArabicMother`, `ArabicNews`, `AudiobookNarratorFemale`, `BoredTeenager`, `CalmHostageNegotiator`, `ChineseKidSpringFestival`, `ChineseLivestreamSeller`, `ChineseNewsCctv`, `ChineseXianxiaMaster`, `DutchBaker`, `DutchGrandpaStory`, `DutchWeatherPresenter`, `FairytaleNarratorWhimsical`, `FrenchDocumentary`, `FrenchGrandmereRecette`, `FrenchTeacher`, `FrenchWaiter`, `GermanKidBirthday`, `GermanKneipe`, `GermanProfessor`, `GermanTrainAnnouncement`, `GrandmaBedtimeStory`, `GriefEulogy`, `HindiBollywoodDrama`, `HindiCollegeFriends`, `HindiDadiKahani`, `HindiYogaTeacher`, `IndonesianNewsAnchor`, `IndonesianTourGuide`, `ItalianChildSchool`, `ItalianFashionDesigner`, `ItalianFootballFan`, `ItalianGondolier`, `ItalianNonnaKitchen`, `ItalianOperaTenor`, `JapaneseAnimeHeroine`, `JapaneseGrandma`, `JapaneseSalarymanApology`, `JapaneseTrainConductor`, `KoreanGrandpaAdvice`, `KoreanKdramaConfession`, `KoreanNewsAnchor`, `LittleGirlExplaining`, `NervousFirstDate`, `NewsAnchorFemale`, `PilotCabinAnnouncement`, `PolishBabciaPierogi`, `PolishMountainGuide`, `PolishNewsAnchor`, `PolishPoetryStudent`, `PortugueseBeach`, `PortugueseBusiness`, `PortugueseFado`, `PortugueseGrandpaFarm`, `PortugueseKidFutebol`, `PortugueseNewsAnchor`, `RussianBabushka`, `RussianFairyTale`, `RussianHockeyCheer`, `RussianLiteratureTeacher`, `RussianSpaceControl`, `RussianTaxiDriver`, `SarcasticCoworker`, `SchoolboyPresentation`, `SpanishAbuela`, `SpanishBreakupSad`, `SpanishChildCuento`, `SpanishNews`, `SpanishTango`, `TurkishFisherman`, `TurkishGrandmaCooking`, `TurkishNewsAnchor`, `WeatherPresenterCheerful` | `Bruno` | Prepared voice name available in the loaded package. A supplied reference clip takes precedence. |
+| `preset` | `stable`, `expressive` | `stable` | Upstream sampling preset. |
+| `temperature` | `float` | Model/session default | Sampling temperature; zero selects greedy decoding. Otherwise defaults to the preset. Declared range: minimum 0. |
+| `top_k` | `int` | Model/session default | Top-k sampling cutoff; defaults to the preset. Declared range: minimum 0. |
+| `top_p` | `float` | Model/session default | Nucleus sampling cutoff; defaults to the preset. Must be in (0, 1]. Declared range: maximum 1. |
+| `min_p` | `float` | Model/session default | Minimum relative probability; defaults to the preset. Declared range: minimum 0, maximum 1. |
+| `repetition_penalty` | `float` | `1.1` | Penalty over the last 50 generated tokens; silence and ending tokens are exempt. Declared range: minimum 1. |
+| `max_tokens` | `int` | Model/session default | Speech-token budget per text chunk. Omitted budgets scale with text length, with a minimum of 200. Declared range: minimum 1, maximum 8192. |
+| `seed` | `int` | Model/session default | Seed for sampling and waveform decoding. Declared range: minimum 0. |
+| `text_chunk_size` | `int` | `380` | Maximum Unicode codepoints per framework text chunk. Declared range: minimum 32, maximum 1000. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework long-form text chunking mode. |
+| `reference_text` | `string` | Model/session default | Transcript of the reference audio; required when cloning from a 1–30 second clip. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `kitten_tts2.exec_plan` | `string` | `{}` | Component execution plan JSON. vocoder accepts impl=ggml (default) or neon with backend=cpu. NEON requires ENGINE_ENABLE_NEON=ON and an AArch64 NEON CPU, and replaces only the HiFT neural convolution stack. |
+| `kitten_tts2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q4_0`, `q8_0` | `native` | Qwen projection storage. native preserves the GGUF's intended tensor types. An explicit override changes projection storage only. |
+
 ## Download and preset speech
 
 The refreshed [packages](https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/main/KittenTTS2-GGUF)

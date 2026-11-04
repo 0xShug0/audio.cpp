@@ -101,7 +101,7 @@ process; the separate optimization report uses alternating timing trials.
 
 ## Reproduce
 
-Use the [Phonon-2 section in the Parakeet guide](../models/parakeet_tdt.md#phonon-2-parakeet-tdt-variant).
+Use the [Phonon-2 guide](../models/phonon2_asr.md).
 Actual build commands use Ninja Release, `AUDIOCPP_MODEL_SET=custom`,
 `ENGINE_BUILD_TESTS=ON`, `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF` and
 `AUDIOCPP_BUILD_SERVER_FRONTENDS=OFF`. The combined build enables CUDA/Vulkan,

@@ -24,24 +24,6 @@ hf download audio-cpp/SoulX-FlashHead-GGUF SoulX-FlashHead-Lite-Q8_0.gguf \
   --local-dir models/SoulX-FlashHead-GGUF
 ```
 
-## Convert Lite
-
-Download `Model_Lite/` and `VAE_LTX/` from
-[Soul-AILab/SoulX-FlashHead-1_3B](https://huggingface.co/Soul-AILab/SoulX-FlashHead-1_3B),
-and the model and configuration files from
-[facebook/wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h).
-
-```bash
-python tools/community_models/soulx_flashhead/convert_gguf.py \
-  --source /path/to/SoulX-FlashHead-1_3B \
-  --audio-encoder /path/to/wav2vec2-base-960h \
-  --type bf16 \
-  --output /path/to/SoulX-FlashHead-GGUF/SoulX-FlashHead-Lite-BF16.gguf
-```
-
-The GGUF contains the DiT, video VAE, speech encoder, configuration and model
-contract. No Python runtime or original checkpoint files are needed for C++ inference.
-
 ## Generate
 
 ```bash
@@ -63,15 +45,6 @@ A partial final audio block is padded with silence, matching upstream.
 Output artifacts contain RGB24 frames with width, height, frame count, frame rate
 and chunk index metadata. Streaming consumers can display each chunk as it arrives.
 
-| Request option | Default | Meaning |
-|---|---:|---|
-| `reference_image_file` | required | Reference portrait; resized and center-cropped. |
-| `height`, `width` | 512 | Frame size; divisible by the variant's VAE spatial stride. |
-| `num_inference_steps` | 4 | Denoising steps for distilled checkpoints. |
-| `seed` | 42 | Generation seed. |
-| `color_correction_strength` | 1 | Match the portrait's color statistics; zero disables correction. |
-| `audio_guidance_scale` | 3 | Audio guidance for non-distilled checkpoints; unused by Lite/Pro. |
-
 Encode the artifacts as an MP4, optionally muxing the source speech:
 
 ```bash
@@ -79,6 +52,64 @@ python tools/community_models/soulx_flashhead/render_video.py \
   --input outputs/flashhead --audio /path/to/speech.wav \
   --output outputs/flashhead/video.mp4
 ```
+
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `soulx_flashhead` |
+| Tasks | `sfx` |
+| Modes | `offline`, `streaming` |
+| Languages | `auto` |
+| Default package | `soulx_flashhead_lite_q8_0` |
+| Input | Reference portrait and speech audio |
+| Output | Portrait video frames; see MP4 export instructions |
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--audio` | Input audio, where required by the selected task. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `reference_image_file` | `path` | required | Portrait image used to condition appearance. |
+| `height` | `int` | `512` | Output height, divisible by the VAE spatial stride. Declared range: minimum 32. |
+| `width` | `int` | `512` | Output width, divisible by the VAE spatial stride. Declared range: minimum 32. |
+| `num_inference_steps` | `int` | `4` | Distilled denoising steps. Declared range: minimum 1. |
+| `seed` | `int` | `42` | Generation seed. Declared range: minimum 0. |
+| `color_correction_strength` | `float` | `1` | Blend output color statistics toward the reference portrait. Declared range: minimum 0, maximum 1. |
+| `audio_guidance_scale` | `float` | `3` | Audio CFG scale for non-distilled pretrained checkpoints; distilled Lite/Pro do not use CFG. Declared range: minimum 0. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `soulx_flashhead.exec_plan` | `string` | `{}` | JSON component execution plan. vae.impl is ggml (default) or cudnn. cudnn requires the Lite variant, CUDA backend, and cuDNN Conv3D build support. No artifacts or params are used. |
+
+## Convert Lite
+
+Download `Model_Lite/` and `VAE_LTX/` from
+[Soul-AILab/SoulX-FlashHead-1_3B](https://huggingface.co/Soul-AILab/SoulX-FlashHead-1_3B),
+and the model and configuration files from
+[facebook/wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h).
+
+```bash
+python tools/community_models/soulx_flashhead/convert_gguf.py \
+  --source /path/to/SoulX-FlashHead-1_3B \
+  --audio-encoder /path/to/wav2vec2-base-960h \
+  --type bf16 \
+  --output /path/to/SoulX-FlashHead-GGUF/SoulX-FlashHead-Lite-BF16.gguf
+```
+
+The GGUF contains the DiT, video VAE, speech encoder, configuration and model
+contract. No Python runtime or original checkpoint files are needed for C++ inference.
 
 ## Variant boundaries
 

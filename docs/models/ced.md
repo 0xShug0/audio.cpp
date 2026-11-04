@@ -30,13 +30,43 @@ same model graph. The output is `custom_schema_output` with schema
 `score` (sigmoid probability), and `logit`. Categories are independent, so
 their probabilities need not sum to one.
 
-## Options
+## Model
 
-| Scope | Option | Default | Meaning |
-| --- | --- | --- | --- |
-| Request | `top_k` | 10 | Return the highest-scoring categories, from 1 to 527. |
-| Session | `ced.attention` | `auto` | `auto`, `flash`, or `eager`. |
-| Session | `ced.weight_type` | `native` | Preserve stored weights or request a storage conversion. |
+| Field | Value |
+|---|---|
+| Family | `ced` |
+| Tasks | `classify` |
+| Modes | `offline` |
+| Languages | `language_agnostic` |
+| Default package | `ced_tiny_f32` |
+| Input | Audio recording |
+| Output | Audio tag scores |
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--audio` | Input audio, where required by the selected task. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `top_k` | `int` | `10` | Number of highest-scoring AudioSet categories returned. Declared range: minimum 1, maximum 527. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `ced.attention` | `auto`, `flash`, `eager` | `auto` | Attention implementation; auto selects a supported fast path. |
+| `ced.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Weight storage override; native preserves packaged tensor types. |
+
+## Usage Notes
+
 
 Input is mixed to mono and resampled to 16 kHz with the framework's torchaudio
 sinc implementation. Audio must provide at least one 16-frame spectrogram

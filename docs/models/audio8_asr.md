@@ -7,27 +7,6 @@ decoder with only ~103M language-model parameters (324M end-to-end). The
 checkpoint ships under **CC-BY-NC-4.0**, so audio.cpp loads it from locally
 converted weights only; the converted GGUF must not be redistributed.
 
-## Architecture
-
-- **Audio frontend**: 16 kHz Whisper log-mel, 128 bins, hop 160, n_fft 400
-  (shared with the `qwen3_asr` family). The reference processor emits
-  bfloat16 mel values; the audio8_asr frontend rounds to bfloat16 before
-  encoding to match.
-- **Audio encoder**: Qwen3-ASR audio tower (d_model 896, 18 layers, 14 heads,
-  FFN 3584, 128 mel bins, output dim 1024) — bit-for-bit the same
-  architecture as `Qwen/Qwen3-ASR-0.6B`, loaded through the shared
-  `qwen3_asr` encoder implementation.
-- **Adapter**: 4 pre-norm residual MLP blocks (1024 → 4096, erf GELU), a
-  final LayerNorm, then an adaptive average pool (merge factor 4 against the
-  mel-frame count) followed by LayerNorm + Linear(1024 → 512).
-- **Decoder**: Qwen2-style causal LM, 8 layers, hidden 512, 8 heads,
-  head_dim 64, SwiGLU FFN 1408, tied embeddings over a 151,936 Qwen BPE
-  vocabulary, RoPE theta 1e6, RMSNorm eps 1e-6.
-- **Prompt**: `<|user|><|begin_of_audio|><|audio|>×N<|end_of_audio|>Please
-  transcribe this audio.<|assistant|>` where
-  `N = max(floor(floor((floor(samples / hop) + 1) / 2) / merge_factor), 1)`
-  (all divisions integer).
-
 ## Usage
 
 ```bash
@@ -49,27 +28,59 @@ audiocpp_cli --task asr --family audio8_asr \
     --model models/Audio8-ASR-0.1B-hf --audio sample.wav
 ```
 
-## Parity
+## Model
 
-`tools/community_models/audio8_asr/audio8_asr_reference.py` runs the Hugging Face
-`trust_remote_code` reference (torch CPU, fp32) and
-`tools/community_models/audio8_asr/audio8_asr_stages.py` captures staged tensors (mel,
-encoder output, projected audio embeddings) for comparison.
+| Field | Value |
+|---|---|
+| Family | `audio8_asr` |
+| Tasks | `asr` |
+| Modes | `offline` |
+| Languages | `en`, `zh`, `yue`, `ja`, `ko`, `fr`, `de` |
+| Default package | `audio8_asr_0_1b_q8_0` |
+| Input | Speech audio |
+| Output | Transcript text |
 
-Greedy transcription on the repo test clips matched the fp32 reference
-exactly with the Q8_0 GGUF on both the Metal and CPU backends:
+## Common Options (use directly)
 
-| Audio | Reference (fp32) | audio.cpp (Q8_0 GGUF, Metal + CPU) |
-|---|---|---|
-| `assets/resources/a.wav` (5.95 s) | "This little work was finished in the year eighteen o three, and intended for immediate publication." | identical |
-| `assets/resources/sample_16k.wav` (14.07 s) | "Some call me nature. Others call me Mother Nature. I've been here for over four point five billion years, twenty-two thousand five hundred times longer than you." | identical |
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--audio` | Input audio, where required by the selected task. |
 
-A 61-second clip transcribed through rate-correct 30-second windows matched
-the per-window reference transcripts (also verified by an independent review
-pass). `test_audio8_asr_golden_transcription` asserts the first row
-end-to-end — run it manually once weights exist (it is not part of ctest,
-matching the granite5asr golden-test convention); `test_audio8_asr_units`
-covers the token-count formula and bfloat16 rounding and runs under ctest.
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `audio8_asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Decoder and adapter weight storage type. |
+| `audio8_asr.audio_encoder_weight_type` | `native`, `f32`, `f16` | `native` | Audio encoder weight storage type (quantized storage is rejected for the encoder; already-quantized GGUF tensors load as native). |
+| `audio8_asr.encoder_graph_arena_mb` | `int` | `128` | Audio encoder graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Declared range: minimum 1. |
+| `audio8_asr.projector_graph_arena_mb` | `int` | `256` | Adapter (MLP tower + pooling + projector) graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Declared range: minimum 1. |
+| `audio8_asr.prefill_graph_arena_mb` | `int` | `256` | Decoder prefill graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Declared range: minimum 1. |
+| `audio8_asr.decode_graph_arena_mb` | `int` | `256` | Decoder step decode graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Declared range: minimum 1. |
+
+## Architecture
+
+- **Audio frontend**: 16 kHz Whisper log-mel, 128 bins, hop 160, n_fft 400
+  (shared with the `qwen3_asr` family). The reference processor emits
+  bfloat16 mel values; the audio8_asr frontend rounds to bfloat16 before
+  encoding to match.
+- **Audio encoder**: Qwen3-ASR audio tower (d_model 896, 18 layers, 14 heads,
+  FFN 3584, 128 mel bins, output dim 1024) — bit-for-bit the same
+  architecture as `Qwen/Qwen3-ASR-0.6B`, loaded through the shared
+  `qwen3_asr` encoder implementation.
+- **Adapter**: 4 pre-norm residual MLP blocks (1024 → 4096, erf GELU), a
+  final LayerNorm, then an adaptive average pool (merge factor 4 against the
+  mel-frame count) followed by LayerNorm + Linear(1024 → 512).
+- **Decoder**: Qwen2-style causal LM, 8 layers, hidden 512, 8 heads,
+  head_dim 64, SwiGLU FFN 1408, tied embeddings over a 151,936 Qwen BPE
+  vocabulary, RoPE theta 1e6, RMSNorm eps 1e-6.
+- **Prompt**: `<|user|><|begin_of_audio|><|audio|>×N<|end_of_audio|>Please
+  transcribe this audio.<|assistant|>` where
+  `N = max(floor(floor((floor(samples / hop) + 1) / 2) / merge_factor), 1)`
+  (all divisions integer).
 
 ## Measured performance
 

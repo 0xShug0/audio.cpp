@@ -24,29 +24,58 @@ only the speaker identity, corresponding to upstream `speak(speaker_wav=...)`.
 Built-in voices are `tor` (default), `ida`, `liv`, `ask`, and `kaj`.
 The server's standard `"voice":"default"` selects the configured/default voice.
 
-## Controls
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `plapre` |
+| Tasks | `tts`, `clon` |
+| Modes | `offline`, `streaming` |
+| Languages | `da` |
+| Default package | `plapre_3_bf16` |
+| Input | Text; voice conditioning as shown in the examples |
+| Output | Generated speech audio |
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--text` | Input text; see the examples for the expected prompt format. |
+| `--voice-ref` | Reference audio for voice cloning. |
+| `--out` | Output WAV file. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `voice_id` | `tor`, `ida`, `liv`, `ask`, `kaj` | `tor` | Built-in speaker. |
+| `reference_text` | `string` | `` | Transcript of the reference audio, used for voice cloning. |
+| `x_vector_only_mode` | `bool` | `false` | Use only the reference speaker embedding, without the reference transcript/audio-token prefix. |
+| `word_duration_frames` | `string` | Unset | JSON array of per-word integer durations, from 0 to 399 frames at 25 Hz. Duration-controlled text is generated in one chunk. |
+| `context_text` | `string` | Unset | Previous utterance for prosodic context. |
+| `context_audio_file` | `audio_path` | Unset | Optional previous-utterance WAV accompanying context_text. |
+| `same_speaker` | `bool` | `true` | Whether context_text belongs to the target speaker. |
+| `pronunciations` | `string` | Unset | Ordered JSON array of pronunciation references: [{"word":"morgen","audio_file":"morgen.wav"}]. Up to 10 references, 60 codes each and 200 total codes are used. |
+| `edit_start_frame` | `int` | Unset | Start of the masked span in voice_ref, in 25-Hz codec frames. Supply both edit boundaries and the complete desired text. Declared range: minimum 0. |
+| `edit_end_frame` | `int` | Unset | Exclusive end of the masked span in voice_ref. Editing runs in one text chunk. Declared range: minimum 0. |
+| `max_tokens` | `int` | `500` | Maximum generated tokens per text chunk; each audio token represents 40 ms. Declared range: minimum 1. |
+| `min_tokens` | `int` | `0` | Minimum generated tokens before a stop token can be selected. Declared range: minimum 0. |
+| `temperature` | `float` | `0.8` | Sampling temperature; zero selects greedy decoding. Declared range: minimum 0. |
+| `top_p` | `float` | `0.95` | Nucleus sampling probability in (0, 1]. Declared range: minimum 0, maximum 1. |
+| `top_k` | `int` | `50` | Top-k sampling; -1 or zero disables filtering. Declared range: minimum -1. |
+| `seed` | `int` | `0` | Sampling and vocoder noise seed. Declared range: minimum 0. |
+| `text_chunk_size` | `int` | `300` | Maximum Unicode codepoints per long-form text chunk. Declared range: minimum 1. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking policy. |
+| `silence_duration_sec` | `float` | `0.1` | Silence inserted between text chunks. Declared range: minimum 0. |
+
+## Usage Notes
 
 Set model controls with `--request-option name=value`, or the server request's
 `options` map. There are no model-specific load or session options.
-
-| Option | Default | Meaning |
-|---|---|---|
-| `voice_id` | `tor` | Built-in speaker; reference audio overrides its embedding. |
-| `reference_text` | Empty | Transcript accompanying the reference audio. |
-| `x_vector_only_mode` | `false` | Omit the reference text/audio-token prefix. |
-| `word_duration_frames` | Unset | JSON integer array, one duration per word; 25 frames/second, 0-399 frames per word. Generates the text in one chunk. |
-| `context_text` | Unset | Previous utterance for prosodic conditioning. |
-| `context_audio_file` | Unset | Previous-utterance WAV accompanying `context_text`. |
-| `same_speaker` | `true` | Whether the previous utterance belongs to the target speaker. |
-| `pronunciations` | Unset | JSON array of `{"word":"morgen","audio_file":"morgen.wav"}`. Uses at most 10 references, 60 codes each, 200 codes total. |
-| `edit_start_frame`, `edit_end_frame` | Unset | Replace this half-open span of `voice_ref`, in 25-Hz frames. Supply both and the complete desired text. Returns the spliced full utterance; no text splitting. |
-| `temperature` | `0.8` | Zero selects greedy decoding. |
-| `top_k`, `top_p` | `50`, `0.95` | Sampling filters; `top_k=0` or `-1` disables top-k filtering. |
-| `seed` | `0` | AR sampling and vocoder noise seed. |
-| `max_tokens`, `min_tokens` | `500`, `0` | Per-chunk generated token limits. One audio token represents 40 ms. |
-| `text_chunk_size` | `300` | Framework text-chunk budget in Unicode codepoints. |
-| `text_chunk_mode` | `default` | `default`, `tag_aware`, `japanese`, or `endline`. |
-| `silence_duration_sec` | `0.1` | Gap between generated text chunks. |
 
 Context/pronunciation files must be accessible to the CLI/server process.
 Numbers are expanded into Danish words before tokenization. Chunking and

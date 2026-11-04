@@ -30,6 +30,71 @@ The package's `default-voice.safetensors` is the `default` voice. `--mode stream
 emits one audio event per generated frame. The safetensors package installs to
 `models/phonon-31m-en-safetensors` and runs the same way.
 
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `gradium_phonon` |
+| Tasks | `tts` |
+| Modes | `offline`, `streaming` |
+| Languages | `en` |
+| Default package | `gradium_phonon_31m_en_q8_0` |
+| Input | Text; voice conditioning as shown in the examples |
+| Output | Generated speech audio |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--text` | Input text; see the examples for the expected prompt format. |
+| `--out` | Output WAV file. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `frames_after_eos` | `int` | `-1` | Frames kept after EOS, counting the EOS frame; -1 keeps 4 for texts of up to four words and 2 otherwise, as the reference does. Declared range: minimum -1. |
+| `max_frames` | `int` | `0` | Maximum generated audio frames; zero estimates the cap from text length. Captured during session preparation. Declared range: minimum 0. |
+| `text_chunk_tokens` | `int` | `50` | Tokenizer tokens per text chunk; must be positive, default 50. Set during preparation and overridable per request. Declared range: minimum 1. |
+| `temperature` | `float` | `0.3` | Positive flow noise temperature. Captured during session preparation. |
+| `seed` | `int` | random | Noise seed; omitted chooses a random seed. Captured during session preparation. Declared range: minimum 0, maximum 4294967295. |
+| `noise_clamp` | `float` | `-1` | Noise clamp; a negative value disables clamping. Captured during session preparation. |
+| `eos_threshold` | `float` | `4` | EOS detection threshold on the EOS logit. Captured during session preparation. |
+| `noise_file` | `path` | Model/session default | Precomputed noise schedule, raw float32 [frames, 32], used as given. Captured during session preparation. |
+| `voice_embedding_file` | `path` | unset | Voice file: a speaker_wavs latent file such as those of gradium/phonon-voices, or an exported voice state. Captured during session preparation. |
+| `text_chunk_size` | `int` | unset | Optional per-request character chunk size; otherwise use sentence/token budgeting. |
+| `export_voice_state_file` | `path` | unset | Export the prepared voice state during session preparation. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `gradium_phonon.voice_state_cache_slots` | `int` | `4` | Cached prepared voice states; zero disables reuse. Declared range: minimum 0. |
+| `gradium_phonon.offline_graph_capacity_mode` | `fixed`, `double`, `tiered`, `grow` | Model/session default | Offline graph capacity policy; CPU/Metal default tiered, other backends double. |
+| `gradium_phonon.prompt_graph_capacity` | `int` | Model/session default | Optional reserved prompt capacity. Declared range: minimum 1. |
+| `gradium_phonon.generation_graph_capacity` | `int` | Model/session default | Optional reserved generation capacity. Declared range: minimum 1. |
+| `gradium_phonon.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | Model/session default | Shared matmul weight storage; component matmul settings inherit it. Convolution storage remains independently native unless overridden. |
+| `gradium_phonon.matmul_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | Model/session default | Weight storage type; component-specific settings inherit weight_type. |
+| `gradium_phonon.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage. |
+| `gradium_phonon.weight_context_mb` | `int` | `64` | Context or graph arena size in MiB. Declared range: minimum 1. |
+| `gradium_phonon.flow_weight_context_mb` | `int` | Model/session default | Flow weight context in MiB; inherits gradium_phonon.weight_context_mb when omitted. Declared range: minimum 1. |
+| `gradium_phonon.mimi_decoder_weight_context_mb` | `int` | Model/session default | Mimi decoder weight context in MiB; inherits gradium_phonon.weight_context_mb when omitted. Declared range: minimum 1. |
+| `gradium_phonon.flow_weights_view_context_mb` | `int` | `256` | Context or graph arena size in MiB. Declared range: minimum 1. |
+| `gradium_phonon.flow_step_graph_arena_mb` | `int` | `256` | Flow-step host graph-metadata arena size in MiB, not device workspace. Declared range: minimum 1. |
+| `gradium_phonon.mimi_conv_graph_arena_mb` | `int` | `32` | Mimi convolution host graph-metadata arena size in MiB, not device workspace. Declared range: minimum 1. |
+| `gradium_phonon.mimi_transformer_graph_arena_mb` | `int` | `96` | Mimi transformer host graph-metadata arena size in MiB, not device workspace. Declared range: minimum 1. |
+| `gradium_phonon.mimi_tail_graph_arena_mb` | `int` | `512` | Mimi tail host graph-metadata arena size in MiB, not device workspace. Declared range: minimum 1. |
+| `gradium_phonon.mimi_full_chunk_frames` | `int` | `90` | Full-sequence decoder chunk frames. Declared range: minimum 1. |
+| `gradium_phonon.mimi_stage2_chunk_frames` | `int` | `900` | Second-stage decoder chunk frames. Declared range: minimum 1. |
+| `gradium_phonon.use_full_mimi` | `bool` | `true` | Use full-sequence Mimi decoding. |
+
 ## Voices
 
 Phonon has no voice cloning from audio: the released checkpoints carry no Mimi
@@ -49,25 +114,6 @@ collapsed, first letter capitalized, a final period added. There is no number or
 normalization, so write numbers, currencies and abbreviations out in words for the best
 results. Letters the tokenizer has no piece for, such as `û` and `ï`, reach the model as
 byte tokens.
-
-## Controls
-
-Request options (`--request-option name=value`). An option not listed here is an error:
-
-| Option | Default | Meaning |
-|---|---|---|
-| `temperature` | `0.3` | Flow noise temperature. The reference runtime samples at 0.3 and does not read the config's `temp`. |
-| `seed` | random | Noise seed. |
-| `eos_threshold` | `4` | EOS logit threshold, from the checkpoint's `config.json`. |
-| `frames_after_eos` | `-1` | Frames kept after EOS, counting the EOS frame. `-1` keeps 4 for texts of up to four words and 2 otherwise, as the reference does. |
-| `max_frames` | `0` | Frame cap; zero estimates it from the text length. |
-| `text_chunk_tokens` | `50` | Tokens per text chunk. |
-| `text_chunk_size` | unset | Character chunk size instead of sentence/token budgeting. |
-| `voice_embedding_file` | unset | A voice file outside the model folder. |
-| `export_voice_state_file` | unset | Export the prepared voice state. |
-
-Session options are those of PocketTTS under the `gradium_phonon.` prefix, for example
-`--session-option gradium_phonon.weight_type=f32`, minus the Mimi encoder ones.
 
 ## Conversion
 

@@ -9,40 +9,6 @@ model-manager package is the standalone Q8_0 GGUF. The repository also supports
 a Transformers-compatible `model.safetensors` checkpoint rather than a `.nemo`
 archive.
 
-## Status
-
-Offline full-context, bounded-window long-form, and buffered-streaming sessions
-are implemented. The full-context path is verified end to end on CPU and CUDA
-against the real NeMo reference model, both by final transcription and by
-numerical comparison at selected intermediate and full-encoder boundaries; see
-[Validation](#validation).
-Buffered modes deliberately re-encode fixed bidirectional windows and are not
-native cache-aware streaming.
-
-| Mode | Context and memory | Result timing |
-|---|---|---|
-| Offline `full_context` | Whole utterance; quadratic attention grows with duration | One final result |
-| Offline `long_form` | Bounded overlapping windows; center regions decoded once | One final result |
-| Streaming | Same bounded windows with retained predictor state | Partial snapshots after right-context lookahead, then a final result |
-
-## Architecture
-
-[Underdog Bark 3.0 Pro](underdog_bark3.md) is another English-only Parakeet-TDT
-variant. Its converter and model-local adapter preserve the publisher's weight
-scaling and 250 ms input prefix; use that guide rather than loading its original
-BF16 checkpoint as stock Parakeet.
-
-The same runtime can load the [Phonon-2 English ASR variant](#phonon-2) after
-exact reconstruction of its custom five-value container into a dense F32
-package. The Phonon package supports English-only offline and streaming ASR; it does
-not inherit this base checkpoint's 25-language claims.
-
-```
-Frontend: 16kHz -> 128 mel bins, preemphasis=0.97, NeMo per-feature normalization
-Encoder:  3-stage Conv2D subsampling (8x) -> 24-layer FastConformer -> 1024-dim
-Decoder:  2-layer LSTM predictor + joint network (TDT: 5 duration classes [0..4])
-```
-
 ## Build and run
 
 ```bash
@@ -136,6 +102,92 @@ types stored in that file. The performance study below used the safetensors
 package plus session-time storage conversion; the GGUF checks validate
 standalone loading and output, not a separate GGUF-vs-safetensors speed claim.
 
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `parakeet_tdt` |
+| Tasks | `asr` |
+| Modes | `offline`, `streaming` |
+| Languages | `bg`, `cs`, `da`, `de`, `el`, `en`, `es`, `et`, `fi`, `fr`, `hr`, `hu`, `it`, `lt`, `lv`, `mt`, `nl`, `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `sv`, `uk` |
+| Default package | `parakeet_tdt_q8_0` |
+| Input | Speech audio |
+| Output | Transcript text and optional timestamps |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--audio` | Input audio, where required by the selected task. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `return_timestamps` | `bool` | Model/session default | Accepted for CLI --words-out compatibility. Word timestamps are always returned, including when false or omitted. |
+| `max_tokens` | `int` | `0` | Maximum TDT generated tokens; 0 or omitted uses the model-derived limit. Declared range: minimum 0. |
+| `keep_language_tags` | `bool` | `false` | Keep language tag tokens in decoded text; default false. |
+| `audio_chunk_mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Offline audio chunking mode. fixed selects overlapping long-form windows regardless of offline_mode; vad uses the configured VAD model (Silero by default) to skip silence; auto follows offline_mode. Offline input is downmixed and resampled as needed. |
+| `audio_chunk_duration_sec` | `float` | Model/session default | VAD maximum chunk duration; omitted inherits the session duration. Fixed/long_form windows use the session setting, not this request override. Declared range: minimum 0.001. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `parakeet_tdt.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared matmul weight storage type; default native. |
+| `parakeet_tdt.matmul_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | Model/session default | Encoder and decoder matmul weight storage type; defaults to weight_type, which defaults to native. Q8_0 measured 1.79x faster on the tested CPU and changed roughly 8 percent of transcripts without moving aggregate word error rate. |
+| `parakeet_tdt.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage type; default native. |
+| `parakeet_tdt.perf_mode` | `off`, `flash_attention` | `off` | Encoder attention implementation. Default off uses the validated relative-attention path; flash_attention enables the fused implementation, which was numerically validated but slower on the tested hardware. |
+| `parakeet_tdt.weight_context_mb` | `int` | `3072` | Weight context arena size in MiB; default 3072. Declared range: minimum 1. |
+| `parakeet_tdt.encoder_graph_arena_mb` | `int` | `1024` | Encoder graph arena size in MiB; default 1024. Declared range: minimum 1. |
+| `parakeet_tdt.decoder_graph_arena_mb` | `int` | `256` | Decoder graph arena size in MiB; default 256. Declared range: minimum 1. |
+| `parakeet_tdt.audio_chunk_duration_sec` | `float` | `2` | Center-region duration for buffered streaming in seconds; default 2. Fixed context windows are re-encoded rather than cache-aware. Also sizes offline fixed/long_form windows. Declared range: minimum 0.001. |
+| `parakeet_tdt.left_context_sec` | `float` | `10` | Past context included when re-encoding each buffered-streaming window in seconds; default 10. Also applies to offline fixed/long_form windows. Declared range: minimum 0. |
+| `parakeet_tdt.right_context_sec` | `float` | `2` | Future lookahead included when re-encoding each buffered-streaming window in seconds; default 2 and adds equivalent partial-result latency. Also applies to offline fixed/long_form windows. Declared range: minimum 0. |
+| `parakeet_tdt.streaming_attention_mode` | `full_context` | `full_context` | Attention policy inside each buffered window. full_context preserves bidirectional attention over the bounded window. |
+| `parakeet_tdt.offline_mode` | `full_context`, `long_form`, `auto` | `full_context` | Offline encoder scheduling. full_context encodes the whole utterance, long_form uses bounded overlapping windows, and auto selects long_form beyond audio_chunk_threshold_sec. |
+| `parakeet_tdt.audio_chunk_threshold_sec` | `float` | `30.0` | Duration threshold used by offline_mode=auto before switching to bounded-window long-form execution; default 30 seconds. Declared range: minimum 0.001. |
+| `parakeet_tdt.vad_model_path` | `path` | `assets/framework/models/silero_vad` | VAD model path used by audio_chunk_mode=vad (any built-in VAD family); default assets/framework/models/silero_vad. |
+
+## Status
+
+Offline full-context, bounded-window long-form, and buffered-streaming sessions
+are implemented. The full-context path is verified end to end on CPU and CUDA
+against the NeMo reference model.
+Buffered modes deliberately re-encode fixed bidirectional windows and are not
+native cache-aware streaming.
+
+| Mode | Context and memory | Result timing |
+|---|---|---|
+| Offline `full_context` | Whole utterance; quadratic attention grows with duration | One final result |
+| Offline `long_form` | Bounded overlapping windows; center regions decoded once | One final result |
+| Streaming | Same bounded windows with retained predictor state | Partial snapshots after right-context lookahead, then a final result |
+
+## Architecture
+
+[Underdog Bark 3.0 Pro](underdog_bark3.md) is another English-only Parakeet-TDT
+variant. Its converter and model-local adapter preserve the publisher's weight
+scaling and 250 ms input prefix; use that guide rather than loading its original
+BF16 checkpoint as stock Parakeet.
+
+The same runtime can load the [Phonon-2 English ASR variant](phonon2_asr.md) after
+exact reconstruction of its custom five-value container into a dense F32
+package. The Phonon package supports English-only offline and streaming ASR; it does
+not inherit this base checkpoint's 25-language claims.
+
+```
+Frontend: 16kHz -> 128 mel bins, preemphasis=0.97, NeMo per-feature normalization
+Encoder:  3-stage Conv2D subsampling (8x) -> 24-layer FastConformer -> 1024-dim
+Decoder:  2-layer LSTM predictor + joint network (TDT: 5 duration classes [0..4])
+```
+
 ## Orukeet r3 checkpoint
 
 [Orukeet r3](https://huggingface.co/oruk/orukeet) (Oruk AI) is a fine-tune of
@@ -188,32 +240,10 @@ carries the ShareAlike terms. See the upstream
 [weight license](https://huggingface.co/oruk/orukeet/blob/main/LICENSE-WEIGHTS).
 The converter records both in the staging `provenance.json`.
 
-## Options
+## Usage Notes
 
 Request options are bare names. Session options use the
 `parakeet_tdt.` prefix.
-
-| Option | Scope | Values/default | Meaning |
-|---|---|---|---|
-| `max_tokens` | request | integer >= 0; `0` | TDT token limit; `0` uses the model-derived limit |
-| `keep_language_tags` | request | boolean; `false` | Preserve language-tag tokens in decoded text |
-| `return_timestamps` | request | boolean; optional | Accepted for CLI `--words-out` compatibility. Word timestamps remain present when false or omitted. |
-| `audio_chunk_mode` | request | `auto`, `fixed`, `vad`, `none`; `auto` | Offline chunking mode; `vad` skips silent spans with Silero VAD |
-| `audio_chunk_duration_sec` | request | see description | VAD maximum chunk duration; omitted inherits the session duration. Fixed/long_form windows use the session setting, not this request override. |
-| `weight_type` | session | `native`, `f32`, `f16`, `bf16`, `q8_0`; `native` | Fallback storage type for matmul weights |
-| `matmul_weight_type` | session | same values; inherits `weight_type` | Encoder and decoder matmul storage type |
-| `conv_weight_type` | session | `native`, `f32`, `f16`; `native` | True convolution-weight storage type |
-| `perf_mode` | session | `off`, `flash_attention`; `off` | Attention implementation; flash attention was slower on the tested hardware |
-| `weight_context_mb` | session | integer >= 1; `3072` | Weight arena size in MiB |
-| `encoder_graph_arena_mb` | session | integer >= 1; `1024` | Encoder graph arena size in MiB |
-| `decoder_graph_arena_mb` | session | integer >= 1; `256` | Decoder graph arena size in MiB |
-| `audio_chunk_duration_sec` | session | float >= 0.001; `2` | Center-window duration for streaming and offline long-form execution; also the default maximum VAD chunk duration. |
-| `left_context_sec` | session | float >= 0; `10` | Past context included in each bounded window |
-| `right_context_sec` | session | float >= 0; `2` | Future context/lookahead included in each bounded window |
-| `streaming_attention_mode` | session | `full_context`; `full_context` | Bidirectional attention within each bounded streaming window |
-| `offline_mode` | session | `full_context`, `long_form`, `auto`; `full_context` | Offline scheduling policy |
-| `audio_chunk_threshold_sec` | session | float >= 0.001; `30` | `auto` threshold for switching to long-form execution |
-| `vad_model_path` | session | path; `assets/framework/models/silero_vad` | Silero VAD model directory for `audio_chunk_mode=vad` |
 
 Word timestamps are built from the decoder's actual nonblank token-emission
 frames. SentencePiece fragments and following punctuation are merged into
@@ -329,59 +359,6 @@ exactly. Full methodology, profiling, and the optimizations that were tried
 and rejected are in
 [docs/reports/parakeet_tdt_performance.md](../reports/parakeet_tdt_performance.md).
 
-## Validation
-
-- **Golden-transcription regression test** (`ctest -R parakeet_golden_transcription_test`,
-  wired into the normal `ENGINE_BUILD_TESTS` suite, skips cleanly when the model
-  isn't downloaded): runs full-context and bounded-window long-form decoding
-  against a checked-in LibriSpeech test-clean clip
-  (`tests/parakeet_tdt/assets/2086-149220-0033.wav`) and asserts the decoded
-  text matches the real NeMo model's transcription for that clip exactly:
-  *"Well, I don't wish to see it any more, observed Phoebe, turning away her eyes.
-  It is certainly very like the old portrait."*
-- **Buffered-streaming regression test**
-  (`ctest -R parakeet_streaming_transcription_test`): checks partial output,
-  finalization, reset/reuse, option validation, and the final transcript on the
-  same fixture.
-- **Standalone GGUF path tests:** original F32, F16, BF16, and Q8_0 GGUFs with
-  embedded specs and sidecars pass the offline, long-form, timestamp, and
-  buffered-streaming regression paths while using their stored tensor types.
-- **Multilingual precision study:** 120 FLEURS clips across the 24 supported
-  languages covered by FLEURS measure transcript and WER movement for
-  `native`, F16, BF16, and Q8_0. This is a precision comparison, not a general
-  benchmark of Parakeet's absolute WER.
-- **Numerical parity harness** (`tests/parakeet_tdt/parity/`, manual/pre-release
-  check, not a CI gate — needs a NeMo install): compares mel features, a single
-  isolated encoder layer, and the full encoder output directly against real NeMo
-  activations via forward hooks. See `tests/parakeet_tdt/parity/README.md` for
-  exact setup and run commands. This is what actually caught the encoder
-  conv-module bug below — the golden-transcription test alone did not, since
-  greedy decoding happened to be robust enough to it on that one clip.
-  Currently passing on both backends: `mel_features` and `layer_0` at cosine
-  1.000000, `enc_out` at 0.972258 on CPU and CUDA alike.
-- Backends tested: CPU and CUDA (GTX 1650 Max-Q), both producing the exact same
-  transcription.
-
-Two real bugs were found and fixed getting to this state, worth knowing about if
-you're touching this code:
-
-1. The frontend was missing NeMo's per-feature mel normalization (subtract the
-   per-mel-bin mean, divide by the per-mel-bin unbiased std over valid frames).
-   Without it the encoder saw wildly out-of-distribution input and produced
-   garbage (~500x too large in magnitude by the end of the conv subsampling
-   stack).
-2. The FastConformer encoder layer's conv module used causal (left-only)
-   padding, and separately built the depthwise conv with `use_bias=false`,
-   silently dropping the folded batch-norm bias term. The padding mode is
-   wrong for this model's full-context (non-streaming) configuration — NeMo's
-   `CausalConv1D` is only actually causal when constructed with `padding=None`;
-   this model constructs it with an explicit symmetric `padding=(kernel-1)//2`.
-   The dropped bias corrupted every layer's output by a per-channel constant
-   offset; because greedy/argmax decoding is somewhat robust to numerical
-   drift, this second bug did not visibly break transcription on the one test
-   clip and was only caught by the numerical parity harness comparing actual
-   activations against NeMo, not just final decoded text.
-
 ## Known limitations
 
 - **Buffered streaming is not native cache-aware streaming.**
@@ -416,147 +393,8 @@ you're touching this code:
   waveform noise, standard to disable at inference time in most ASR
   pipelines) — no observed effect on transcription correctness.
 
-## Phonon-2
+## Related Families
 
-> [!IMPORTANT]
-> Routing now follows the registered family: `parakeet_tdt`, `phonon2_asr`, or
-> `underdog_bark3`. The `variant` field no longer selects Phonon or Bark behavior.
-> Regenerate or refresh older Phonon/Bark GGUF specs with the matching family;
-> renaming the file or changing `--family` alone does not update embedded metadata.
-
-English-only Phonon-2 uses the `phonon2_asr` family and its own model contract,
-sharing Parakeet’s encoder, predictor, joint and backend arithmetic. There is
-no packed five-value runtime.
-
-The model-local additions are optional hotwords, rolling live transcription,
-and `word_timestamp_mode: "token_duration"`. Other Parakeet packages retain
-their defaults. Shared transport support is limited to an optional revisable
-transcript snapshot; no scheduler or multislot admission changes are included.
-
-### Convert
-
-Download the official Fermion Research artifact at revision
-`7e153e4054c0a10db6d47d6fff5c062d4c77c154`, including the archive, NOTICE and
-license files. Parakeet config/tokenizer sidecars use revision
-`541d1f99c6b0c3cd0b11a95167540bb8edefd82b`. Install `numpy`, `safetensors` and
-`zstandard`; conversion does not require PyTorch or NeMo.
-
-```bash
-python tools/community_models/convert_phonon2.py \
-  --source-dir models/Phonon-2-source \
-  --reference-dir models/Phonon-2-source/parakeet-reference \
-  --output-dir models/Phonon-2-Parakeet-F32 \
-  --converter build/bin/audiocpp_gguf \
-  --gguf-type mixed-f16 \
-  --gguf-output models/Phonon-2-Parakeet-GGUF/phonon-2-mixed-f16.gguf
-```
-
-The example selects the lossless mixed-F16 package described below. For F32,
-BF16 or Q8 derivatives, choose `--gguf-type orig`, `bf16` or `q8_0` and distinct
-output paths. F32 expands the published trained checkpoint; it is not a pre-quantization
-FP32 checkpoint. The converter verifies the container, retains attribution,
-expands 699 inference tensors and omits 24 training-only counters. It compensates
-the projection by 1/32 to cancel the normal loader's input-scale fold and adjusts
-BatchNorm gamma in the two channels affected by its variance floor. These are
-documented conversion transforms, not byte-identical original tensor claims.
-The F32 audit checks every transformed tensor and the resulting encoder output.
-
-BF16/Q8 are rounded derivatives. Projection tensors remain F32 to preserve their
-scale compensation; Q8 also keeps the duration-sensitive joint head in F32.
-The dense packages are approximately 2.51/1.26/0.94 GB, not the original 164 MB
-packed package. No public download/package-manager URL is advertised here.
-
-The `phonon2_asr` family registration selects hotwords and rolling streaming.
-`variant` is descriptive metadata and does not select an implementation. `word_timestamp_mode` controls timestamp
-formatting only. Regenerate unpublished development packages with this converter;
-there is no compatibility fallback for earlier Phonon metadata or option names.
-
-`--gguf-type mixed-f16` offers lossless storage of the staged values: tensors
-use F16 only when conversion back to F32 is exact. Other tensors, normalization
-and compensated projections stay F32. The package is about 1.30 GB. It does
-not override backend precision policy; different storage types can select
-different native kernels, so exact weights do not guarantee identical duration
-decisions. To reproduce the F32 package's runtime weight types,
-use existing session options `phonon2_asr.matmul_weight_type=f32` and
-`phonon2_asr.conv_weight_type=f32`; this restores its working weight memory.
-
-`--gguf-type mixed-q8` creates `phonon-2-mixed-q8.gguf` (about 1.18 GB).
-It keeps feed-forward and pointwise matrices in exact F16, normalization and
-non-F16-representable values in F32, and quantizes the remaining matrices to
-Q8_0. It is a mixed-precision, rounded derivative, not lossless whole-model
-storage. Across the 21 local clips on each of CPU, CUDA and Vulkan, all 63
-transcripts match the dense reference, with 60/63 word timestamp matches
-versus 51/63 for the previous Q8. One CPU clip acquires a 240 ms end shift;
-the sampled improvement does not establish full timestamp parity or corpus
-WER equivalence. See the [mixed-storage validation](../reports/phonon2_validation.md#mixed-gguf-storage-follow-up).
-The original `q8_0` conversion remains available with its previous policy.
-
-TDT timestamps advance on an 80 ms grid. Small score differences can change
-blank/token selection or the predicted duration, producing whole-frame shifts
-even when the final transcript matches. See the
-[duration investigation](../reports/phonon2_validation.md#duration-diagnostics) for
-decoder replays, reference-mask checks and conversion tradeoffs.
-
-Earlier development packages used unscaled projections and special runtime
-precision controls. Reconvert them; the loader rejects their obsolete metadata
-with an actionable error rather than silently applying incompatible scaling.
-
-### CLI and hotwords
-
-```bash
-audiocpp_cli --task asr --family phonon2_asr \
-  --model models/Phonon-2-Parakeet-GGUF/phonon-2-mixed-f16.gguf \
-  --backend cuda --device 0 --threads 8 --audio recording.wav \
-  --request-option 'hotwords=["Ada Lovelace","CUDA"]' \
-  --request-option hotwords_score=2
-```
-
-Use `cpu`, or `vulkan --device 1` on the tested RTX 3090 setup. The device index
-depends on the machine. For Windows executable paths add `.exe`.
-
-Hotwords can be a JSON string array, `{ "word": "...", "spoken": ["..."] }`
-entries, or comma/newline/semicolon-separated terms. Without separators, whitespace
-separates terms. The model uses recognition-context text as a vocabulary fallback;
-explicit hotwords, including an empty list, take precedence.
-The policy accepts at most 25 distinct terms, strength 0–100 (default 2), 16 KiB
-input, 256-byte terms and at most eight spoken alternatives. It does not bias
-blank/duration logits or guarantee correction of every named entity. Request
-state is cleared on reset/finalization. Stock Parakeet does not opt into it.
-
-### Streaming
-
-Use the same CLI command with `--mode streaming`, or configure a legacy server
-model with `family: "parakeet_tdt"`, the new GGUF path, `task: "asr"` and
-`mode: "streaming"`. Transcription uploads with `stream=true` and
-`POST /v1/audio/transcriptions/live` (mono 16 kHz PCM) use existing transports.
-JSON requests and batch multipart uploads can pass `hotwords` and
-`hotwords_score` through the existing generic `options` object. Single-file
-multipart uploads and live requests use the existing `prompt` field or query
-parameter for vocabulary hints. JSON requests use `text` for recognition context.
-There are no dedicated top-level hotword fields or live hotword query parameters.
-
-The Phonon policy processes 50 ms energy blocks, allows a first provisional
-decode after 350 ms of a voiced phrase, then every 500 ms of new audio, and
-commits after 700 ms silence, 30 seconds, or input completion. It re-encodes the
-growing phrase; this is not a cache-aware encoder or an offline speedup.
-
-`partial_text_snapshot` and SSE `transcript.text.partial` contain the complete
-current hypothesis and may revise previous words. Replace the provisional
-display. `partial_text` and `transcript.text.delta` contain committed segments;
-their concatenation equals final text. Committed timestamps have absolute
-sample offsets. The original Phonon WebSocket protocol is not implemented.
-
-### Validation and limits
-
-See the [current validation report](../reports/phonon2_validation.md) and
-[portable evidence](../../tests/parakeet_tdt/phonon2_validation.json) for exact inputs,
-backend/storage results, numerical checks, route tests and build commands.
-Backend/storage differences are measured rather than hidden by mandatory F32
-kernel controls. Exact reference agreement is diagnostic; quantized storage,
-provisional text and segmentation boundaries can differ. The sampled comparisons
-do not establish corpus-level WER equivalence. RTX 5090, Metal, HIP and MUSA
-runtime behavior was not tested locally.
-
-Vulkan state/graph allocation optimizations are reviewed separately and are not
-part of this minimal model PR. Raw previous and current evidence remains in
-`outputs/phonon2-review-20261010/` and the earlier local Phonon artifact folders.
+[Phonon-2 ASR](phonon2_asr.md), [Underdog Bark 3](underdog_bark3.md), and
+[Haas Japanese ASR](haas.md) have dedicated families and usage guides while
+sharing the Parakeet implementation. Select their own `--family` values.
