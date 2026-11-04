@@ -1,7 +1,9 @@
 #include "engine/community_models/fish_drama3/prompt.h"
 
 #include "engine/framework/runtime/errors.h"
+#include "engine/framework/debug/trace.h"
 
+#include <algorithm>
 #include <array>
 #include <regex>
 #include <stdexcept>
@@ -75,7 +77,8 @@ void validate_drama3_codes(const codecs::FishDacCodes & codes, int64_t size) {
 
 std::vector<Drama3Frame> build_drama3_prompt(const Drama3Assets & assets,
     const Drama3TextTokenizer & tokenizer, const std::string & text,
-    const std::vector<Drama3Take> & references, const std::vector<Drama3Take> & history) {
+    const std::vector<Drama3Take> & references, const std::vector<Drama3Take> & history,
+    const std::vector<Drama3Take> & generated_history, size_t max_rows) {
     std::vector<Drama3Frame> frames;
     const auto append_text = [&](const std::string & segment) {
         for (const auto token : tokenizer.encode(segment)) {
@@ -108,12 +111,32 @@ std::vector<Drama3Frame> build_drama3_prompt(const Drama3Assets & assets,
         append_text("<|im_end|>\n");
         append_text("<|im_start|>assistant\n<|voice|>");
     };
-    for (const auto & take : history) {
+    const auto append_take = [&](const Drama3Take & take) {
         user_turn(take.text);
         append_codes(take.codes);
         append_text("<|im_end|>\n");
-    }
+    };
+    for (const auto & take : history) append_take(take);
+    const auto first_begin = frames.size();
+    if (!generated_history.empty()) append_take(generated_history.front());
+    const auto latest_begin = frames.size();
+    if (generated_history.size() > 1) append_take(generated_history.back());
+    auto input_begin = frames.size();
     user_turn(text);
+    size_t retained = std::min<size_t>(generated_history.size(), 2);
+    if (frames.size() > max_rows && generated_history.size() > 1) {
+        frames.erase(frames.begin() + latest_begin, frames.begin() + input_begin);
+        input_begin = latest_begin;
+        --retained;
+    }
+    if (frames.size() > max_rows && !generated_history.empty()) {
+        frames.erase(frames.begin() + first_begin, frames.begin() + input_begin);
+        retained = 0;
+    }
+    if (frames.size() > max_rows) {
+        throw runtime::CapacityError("Drama 3 required prompt leaves no room to generate within fish_drama3.context_length");
+    }
+    debug::trace_log_scalar("drama3.history.generated_turns", retained);
     return frames;
 }
 

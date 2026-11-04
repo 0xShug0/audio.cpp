@@ -368,8 +368,16 @@ returns the complete audio and the reusable take artifact. An application can
 invoke generation on its worker thread to keep its UI responsive.
 
 Long-form text uses the framework chunker, with `text_chunk_size=128` and
-`text_chunk_mode=tag_aware` by default. Each new chunk includes the previous
-chunk as context. Caller-supplied history remains ordered in every chunk.
+`text_chunk_mode=tag_aware` by default. Each new chunk includes the first generated
+chunk as an anchor and the latest chunk as recent context, without duplicating
+the first chunk. If that prompt does not fit, automatic history is reduced to the first chunk only, then removed.
+References and caller-supplied history remain ordered and are never dropped.
+
+`max_tokens` is an upper bound: generation is capped to the rows remaining after
+the selected prompt within `fish_drama3.context_length`. Reductions are logged,
+and `reached_limit` reports reaching this effective budget. A required prompt
+that leaves no generation room is still rejected. These rules apply to both
+offline and streaming generation.
 
 ## Validation limits
 
