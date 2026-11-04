@@ -8,6 +8,7 @@
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/codecs/fish_dac_codec_runtime.h"
 
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -94,6 +95,7 @@ private:
     int64_t speaker_frames_ = 0;
     runtime::CacheSlots<EchoReferenceIdentity, EchoPreparedSpeaker, EchoReferenceIdentityEqual>
         reference_cache_;
+    std::filesystem::path reference_cache_dir_;
 };
 
 }  // namespace engine::models::echo_tts

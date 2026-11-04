@@ -163,6 +163,12 @@
         ],
         "required": false,
         "default": "independent"
+      },
+      {
+        "name": "reference_cache_dir",
+        "type": "string",
+        "description": "Directory where encoded reference speakers are kept across restarts, named by a hash of their inputs. Unset: use in-memory cache only.",
+        "required": false
       }
     ],
     "load": []
