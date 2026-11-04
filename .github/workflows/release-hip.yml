@@ -50,6 +50,9 @@ jobs:
           python-version: '3.12'
       - name: Linux build dependencies
         if: runner.os == 'Linux'
+        env:
+          # DevLab home directories are RAM-backed; use temporary scratch for pip's cache.
+          PIP_CACHE_DIR: ${{ runner.temp }}/pip-cache
         run: |
           python -m pip install ninja patchelf
           tools="$RUNNER_TEMP/hip-release-tools"
