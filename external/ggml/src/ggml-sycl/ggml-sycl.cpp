@@ -4371,6 +4371,12 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
                 case GGML_UNARY_OP_EXP:
                     ggml_sycl_exp(ctx, dst);
                     break;
+                case GGML_UNARY_OP_EXPM1:
+                    ggml_sycl_expm1(ctx, dst);
+                    break;
+                case GGML_UNARY_OP_ROUND_BF16:
+                    ggml_sycl_round_bf16(ctx, dst);
+                    break;
                 case GGML_UNARY_OP_SOFTPLUS:
                     ggml_sycl_softplus(ctx, dst);
                     break;
@@ -5017,10 +5023,17 @@ static bool ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, const g
                 case GGML_UNARY_OP_GELU_QUICK:
                 case GGML_UNARY_OP_GELU_ERF:
                 case GGML_UNARY_OP_EXP:
+                case GGML_UNARY_OP_EXPM1:
                 case GGML_UNARY_OP_SOFTPLUS:
                 case GGML_UNARY_OP_ELU:
                 case GGML_UNARY_OP_CEIL:
                     return true;
+                case GGML_UNARY_OP_ROUND_BF16:
+                    // f32/f16/bf16 src with contiguous rows, contiguous f32 dst.
+                    return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 ||
+                            op->src[0]->type == GGML_TYPE_BF16) &&
+                           op->type == GGML_TYPE_F32 && ggml_is_contiguous(op) &&
+                           ggml_is_contiguous_rows(op->src[0]);
                 case GGML_UNARY_OP_FLOOR:
                 case GGML_UNARY_OP_ROUND:
                 case GGML_UNARY_OP_TRUNC:

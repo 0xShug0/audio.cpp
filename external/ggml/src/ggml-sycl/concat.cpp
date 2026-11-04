@@ -192,6 +192,14 @@ void ggml_sycl_op_concat(ggml_backend_sycl_context & ctx, ggml_tensor *dst) {
     case GGML_TYPE_F32:
         concat_impl_sycl<float>(ctx, dst);
         break;
+    case GGML_TYPE_F16:
+        concat_impl_sycl<sycl::half>(ctx, dst);
+        break;
+#ifdef GGML_SYCL_HAS_BF16
+    case GGML_TYPE_BF16:
+        concat_impl_sycl<sycl::ext::oneapi::bfloat16>(ctx, dst);
+        break;
+#endif
     case GGML_TYPE_I32:
         concat_impl_sycl<int32_t>(ctx, dst);
         break;
