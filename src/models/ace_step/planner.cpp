@@ -162,6 +162,7 @@ bool planner_prefill_uses_host_backend(core::BackendType backend_type) {
     case core::BackendType::Cuda:
     case core::BackendType::Hip:
     case core::BackendType::WebGPU:
+    case core::BackendType::Sycl:
     case core::BackendType::BestAvailable:
         return false;
     }

@@ -212,6 +212,7 @@ engine::runtime::GraphOptimizationBackend graph_optimizer_backend_for(engine::co
         case engine::core::BackendType::Vulkan:
         case engine::core::BackendType::Metal:
         case engine::core::BackendType::WebGPU:
+        case engine::core::BackendType::Sycl:
         case engine::core::BackendType::BestAvailable:
             return engine::runtime::GraphOptimizationBackend::Other;
     }
