@@ -44,6 +44,7 @@ struct GenerationOptions {
     int64_t top_k = 0;
     float top_p = 1.0F;
     float repetition_penalty = 1.0F;
+    bool repetition_guard = false;
     uint64_t seed = 0;
     std::vector<int32_t> stop_token_ids = {11};
     // Cooperative cancellation is checked between prefill chunks and tokens.
@@ -68,6 +69,7 @@ enum class TerminationReason {
     StopToken,
     TokenLimit,
     Cancelled,
+    RepetitionDetected,
 };
 
 struct GenerationResult {

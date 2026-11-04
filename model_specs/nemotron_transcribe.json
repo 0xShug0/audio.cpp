@@ -24,6 +24,7 @@
       {"name": "temperature", "type": "float", "default": 1, "required": false, "description": "Positive sampling temperature when do_sample is true."},
       {"name": "top_k", "type": "int", "min": 0, "default": 0, "required": false, "description": "Sampling candidate count; zero disables top-k filtering."},
       {"name": "top_p", "type": "float", "min": 0, "max": 1, "default": 1, "required": false, "description": "Nucleus probability when sampling."},
+      {"name": "repetition_guard", "type": "bool", "default": false, "required": false, "description": "Stop runaway token repetition and report repetition_detected termination. May truncate genuine repeated speech; does not repair the transcript."},
       {"name": "repetition_penalty", "type": "float", "default": 1, "required": false, "description": "Positive token repetition penalty."},
       {"name": "seed", "type": "int", "min": 0, "default": 0, "required": false, "description": "Sampling seed."}
     ],

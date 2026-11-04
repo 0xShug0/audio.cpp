@@ -1,4 +1,5 @@
 #include "engine/community_models/nemotron_transcribe/decoder.h"
+#include "engine/community_models/nemotron_transcribe/repetition_guard.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/disk_expert_weight_store.h"
@@ -14,6 +15,7 @@
 #include <initializer_list>
 #include <limits>
 #include <map>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <type_traits>
@@ -852,6 +854,8 @@ struct NemotronHDecoderRuntime::Impl {
         std::mt19937 rng(seed);
         auto history = before;
         history.insert(history.end(), after.begin(), after.end());
+        std::optional<RepetitionGuard> repetition_guard;
+        if (options.repetition_guard) repetition_guard.emplace();
         for (int64_t i = 0; i < options.max_new_tokens; ++i) {
             if (options.cancelled && options.cancelled()) {
                 out.termination = TerminationReason::Cancelled;
@@ -867,6 +871,10 @@ struct NemotronHDecoderRuntime::Impl {
             out.token_ids.push_back(token);
             history.push_back(token);
             if (options.on_token) options.on_token(token);
+            if (repetition_guard && repetition_guard->push(token)) {
+                out.termination = TerminationReason::RepetitionDetected;
+                break;
+            }
             if (i + 1 < options.max_new_tokens) {
                 if (options.cancelled && options.cancelled()) {
                     out.termination = TerminationReason::Cancelled;

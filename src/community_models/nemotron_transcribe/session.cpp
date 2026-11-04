@@ -84,6 +84,7 @@ const char * termination_name(TerminationReason reason) {
         case TerminationReason::StopToken: return "end_of_turn";
         case TerminationReason::TokenLimit: return "token_limit";
         case TerminationReason::Cancelled: return "cancelled";
+        case TerminationReason::RepetitionDetected: return "repetition_detected";
     }
     return "unknown";
 }
@@ -205,6 +206,7 @@ public:
             generation.max_new_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens"},
                 assets_->max_new_tokens > 0 ? assets_->max_new_tokens : duration_budget);
             generation.do_sample = flag(request.options, "do_sample");
+            generation.repetition_guard = flag(request.options, "repetition_guard");
             generation.temperature = runtime::parse_finite_float_option(request.options, {"temperature"}).value_or(1.0F);
             generation.top_k = runtime::parse_i64_option(request.options, {"top_k"}).value_or(0);
             generation.top_p = runtime::parse_finite_float_option(request.options, {"top_p"}).value_or(1.0F);

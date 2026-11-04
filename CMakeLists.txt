@@ -1239,6 +1239,7 @@ audiocpp_add_model(nemotron_transcribe
         src/community_models/nemotron_transcribe/frontend.cpp
         src/community_models/nemotron_transcribe/encoder.cpp
         src/community_models/nemotron_transcribe/decoder.cpp
+        src/community_models/nemotron_transcribe/repetition_guard.cpp
         src/community_models/nemotron_transcribe/tokenizer.cpp
         src/community_models/nemotron_transcribe/ctc.cpp
         src/community_models/nemotron_transcribe/alignment.cpp
