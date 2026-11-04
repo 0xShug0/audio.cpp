@@ -7,6 +7,7 @@
 #include "engine/framework/modules/conformer_modules.h"
 #include "engine/framework/modules/convnext_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/graph_optimizer.h"
@@ -1298,6 +1299,51 @@ void test_interpolate_align_corners() {
     require_allclose(runner.run_f32(single),{0},1.e-6F,"interpolation aligned singleton");
 }
 
+void test_batched_rope_matches_independent_rows() {
+    using namespace engine;
+    for (const int64_t batch : {1, 2, 5}) {
+        for (const int64_t steps : {1, 3}) {
+            for (const int mode : {GGML_ROPE_TYPE_NORMAL, GGML_ROPE_TYPE_NEOX}) {
+                for (const bool half : {false, true}) {
+                    for (const bool use_factors : {false, true}) {
+                        CpuModuleRunner runner;
+                        const auto shape = core::TensorShape::from_dims({batch, steps, 3, 8});
+                        const auto source = runner.make_f32(shape);
+                        const auto input = half ? core::wrap_tensor(ggml_cast(runner.ggml, source.tensor, GGML_TYPE_F16),
+                            shape, GGML_TYPE_F16) : source;
+                        const auto positions = runner.make_i32(core::TensorShape::from_dims({batch, steps}));
+                        const auto factors = runner.make_f32(core::TensorShape::from_dims({4}));
+                        const modules::RoPEModule rope({8, mode, 10000.0F});
+                        const auto actual = rope.build_batched(runner.ctx, input, positions, use_factors ? &factors : nullptr);
+                        std::vector<core::TensorValue> independent;
+                        for (int64_t row = 0; row < batch; ++row) {
+                            const auto x = modules::SliceModule({0, row, 1}).build(runner.ctx, input);
+                            auto p = modules::SliceModule({0, row, 1}).build(runner.ctx, positions);
+                            p = core::reshape_tensor(runner.ctx, p, core::TensorShape::from_dims({steps}));
+                            independent.push_back(rope.build(runner.ctx, x, p, use_factors ? &factors : nullptr));
+                        }
+                        auto expected = independent.front();
+                        for (size_t row = 1; row < independent.size(); ++row)
+                            expected = modules::ConcatModule({0}).build(runner.ctx, expected, independent[row]);
+                        const auto actual_f32 = core::wrap_tensor(ggml_cast(runner.ggml, actual.tensor, GGML_TYPE_F32), shape, GGML_TYPE_F32);
+                        const auto expected_f32 = core::wrap_tensor(ggml_cast(runner.ggml, expected.tensor, GGML_TYPE_F32), shape, GGML_TYPE_F32);
+                        runner.allocate_tensors();
+                        core::write_tensor_f32(source, make_patterned_f32(shape.num_elements(), 0.3F, 0.8F));
+                        core::write_tensor_f32(factors, {1.0F, 1.5F, 2.0F, 0.5F});
+                        for (int round = 0; round < 2; ++round) {
+                            std::vector<int32_t> ids(batch * steps);
+                            for (int64_t row = 0; row < batch; ++row)
+                                for (int64_t t = 0; t < steps; ++t) ids[row * steps + t] = row * 137 + t * 3 + round * 4096;
+                            core::write_tensor_i32(positions, ids);
+                            require_allclose(runner.run_f32(actual_f32), runner.run_f32(expected_f32), 0.0F, "Independent batched RoPE");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -1307,6 +1353,7 @@ int main(int argc, char ** argv) {
             engine::debug::configure_logging({true, argv[2]});
         else if (argc != 1)
             throw std::runtime_error("Usage: encoder_module_test [--log FILE]");
+        test_batched_rope_matches_independent_rows();
         test_cuda_f16_lowerings_default_off();
         test_mul_optional_broadcasting();
         test_weighted_statistics_and_scale_bias();

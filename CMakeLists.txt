@@ -1468,6 +1468,24 @@ audiocpp_add_model(pocket_tts
         gradium_phonon
 )
 
+audiocpp_add_model(pocket_tts_small
+    SOURCES
+        src/models/pocket_tts_small/assets.cpp
+        src/models/pocket_tts_small/conditioning.cpp
+        src/models/pocket_tts_small/flow_lm.cpp
+        src/models/pocket_tts_small/mimi_decoder.cpp
+        src/models/pocket_tts_small/mimi_encoder.cpp
+        src/models/pocket_tts_small/session.cpp
+    INCLUDES
+        engine/models/pocket_tts_small/session.h
+    LOADERS
+        engine::models::pocket_tts_small::make_pocket_tts_small_loader
+)
+
+if (ENGINE_ENABLE_NEON)
+    target_sources(engine_model_pocket_tts_small PRIVATE src/models/pocket_tts_small/native_flow.cpp)
+endif()
+
 audiocpp_add_model(miocodec
     SOURCES
         src/models/miocodec/assets.cpp
@@ -4805,6 +4823,15 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 NAME test_sopro_tts_audio_ops
                 COMMAND test_sopro_tts_audio_ops
             )
+        endif()
+
+        if (pocket_tts_small IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(pocket_tts_small_batch tests/pocket_tts_small/batch.cpp app/cli/args.cpp app/streaming/streaming.cpp)
+            target_link_libraries(pocket_tts_small_batch PRIVATE engine_runtime ggml)
+            target_include_directories(pocket_tts_small_batch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            add_executable(pocket_tts_small_reference tests/pocket_tts_small/reference.cpp app/cli/args.cpp)
+            target_link_libraries(pocket_tts_small_reference PRIVATE engine_runtime ggml)
+            target_include_directories(pocket_tts_small_reference PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         endif()
 
         if (realtime_reuse IN_LIST AUDIOCPP_LINKED_MODELS)
