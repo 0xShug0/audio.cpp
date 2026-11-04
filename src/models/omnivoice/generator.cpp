@@ -405,17 +405,326 @@ struct PackedInputs {
     std::vector<int32_t> unconditional_text_ids;
     std::array<std::vector<int32_t>, 8> conditional_audio_ids;
     std::array<std::vector<int32_t>, 8> unconditional_audio_ids;
+
+    int64_t total_tokens() const noexcept {
+        return style_tokens + text_tokens + reference_frames + target_frames;
+    }
+    int64_t conditional_target_start() const noexcept {
+        return style_tokens + text_tokens + reference_frames;
+    }
 };
+
+// Host copies of the generator graph inputs for a batch of requests.
+//
+// The graph runs 2 * batch sequences of `tokens` positions each: rows
+// 0..batch-1 are the conditional sequences of the requests and rows
+// batch..2*batch-1 their unconditional (classifier-free guidance) sequences.
+// Every row is padded to `tokens`; padded positions only attend to
+// themselves, so they never change the valid positions. A batch of one is
+// exactly the two-row layout of a single request.
+class BatchedGraphInputs {
+public:
+    void reset(
+        const OmniVoiceAssets & assets,
+        int64_t batch,
+        int64_t tokens,
+        int64_t target_frames,
+        bool f16_attention) {
+        if (batch <= 0 || tokens <= 0 || target_frames <= 0) {
+            throw std::runtime_error("OmniVoice generator batch capacities are invalid");
+        }
+        batch_ = batch;
+        rows_ = 2 * batch;
+        tokens_ = tokens;
+        target_frames_ = target_frames;
+        codebooks_ = assets.config.num_audio_codebook;
+        audio_vocab_size_ = assets.config.audio_vocab_size;
+        mask_id_ = assets.config.audio_mask_id;
+        f16_attention_ = f16_attention;
+        const size_t row_values = static_cast<size_t>(rows_ * tokens_);
+        text_ids.assign(row_values, 0);
+        for (auto & ids : audio_ids) {
+            ids.assign(row_values, 0);
+        }
+        audio_mask.assign(row_values, 0.0F);
+        text_mask.assign(row_values, 0.0F);
+        const size_t attention_values = static_cast<size_t>(rows_ * tokens_ * tokens_);
+        if (f16_attention_) {
+            attention_f16.assign(attention_values, ggml_fp32_to_fp16(kMaskedAttentionBias));
+            attention_f32.clear();
+        } else {
+            attention_f32.assign(attention_values, kMaskedAttentionBias);
+            attention_f16.clear();
+        }
+        target_indices.assign(static_cast<size_t>(rows_ * target_frames_), 0);
+        guidance_scales.assign(static_cast<size_t>(batch_), 0.0F);
+        positions.assign(static_cast<size_t>(tokens_), 0);
+        for (int64_t i = 0; i < tokens_; ++i) {
+            positions[static_cast<size_t>(i)] = static_cast<int32_t>(i);
+        }
+        layout_.clear();
+        last_layout_.clear();
+        last_guidance_scales_.clear();
+        layout_dirty_ = true;
+        guidance_dirty_ = true;
+    }
+
+    // Copies every request's token ids into its two rows. Masks and target
+    // indices are rebuilt only when the per-request layout changed, and the
+    // guidance scales only when they changed.
+    void prepare(const std::vector<PackedInputs> & inputs, const std::vector<float> & scales) {
+        if (static_cast<int64_t>(inputs.size()) != batch_ || static_cast<int64_t>(scales.size()) != batch_) {
+            throw std::runtime_error("OmniVoice generator batch size does not match graph capacity");
+        }
+        layout_.assign(inputs.size(), {});
+        std::fill(text_ids.begin(), text_ids.end(), static_cast<int32_t>(mask_id_));
+        for (int64_t codebook = 0; codebook < codebooks_; ++codebook) {
+            std::fill(
+                audio_ids[static_cast<size_t>(codebook)].begin(),
+                audio_ids[static_cast<size_t>(codebook)].end(),
+                static_cast<int32_t>(codebook * audio_vocab_size_ + mask_id_));
+        }
+        for (int64_t item = 0; item < batch_; ++item) {
+            const auto & input = inputs[static_cast<size_t>(item)];
+            const int64_t total = input.total_tokens();
+            if (total <= 0 || total > tokens_ || input.target_frames <= 0 || input.target_frames > target_frames_) {
+                throw std::runtime_error("OmniVoice generator packed input shape exceeds graph capacity");
+            }
+            if (static_cast<int64_t>(input.conditional_text_ids.size()) != total ||
+                static_cast<int64_t>(input.unconditional_text_ids.size()) != total) {
+                throw std::runtime_error("OmniVoice generator text id tensor shape is invalid");
+            }
+            const size_t conditional_row = row_offset(item);
+            const size_t unconditional_row = row_offset(batch_ + item);
+            for (int64_t pos = 0; pos < total; ++pos) {
+                text_ids[conditional_row + static_cast<size_t>(pos)] = input.conditional_text_ids[static_cast<size_t>(pos)];
+                text_ids[unconditional_row + static_cast<size_t>(pos)] = input.unconditional_text_ids[static_cast<size_t>(pos)];
+            }
+            for (int64_t codebook = 0; codebook < codebooks_; ++codebook) {
+                const auto & conditional_ids = input.conditional_audio_ids[static_cast<size_t>(codebook)];
+                const auto & unconditional_ids = input.unconditional_audio_ids[static_cast<size_t>(codebook)];
+                if (static_cast<int64_t>(conditional_ids.size()) != total ||
+                    static_cast<int64_t>(unconditional_ids.size()) != total) {
+                    throw std::runtime_error("OmniVoice generator audio id tensor shape is invalid");
+                }
+                auto & ids = audio_ids[static_cast<size_t>(codebook)];
+                for (int64_t pos = 0; pos < total; ++pos) {
+                    ids[conditional_row + static_cast<size_t>(pos)] = conditional_ids[static_cast<size_t>(pos)];
+                    ids[unconditional_row + static_cast<size_t>(pos)] = unconditional_ids[static_cast<size_t>(pos)];
+                }
+            }
+            auto & layout = layout_[static_cast<size_t>(item)];
+            layout.conditional_total = total;
+            layout.conditional_audio_start = input.style_tokens + input.text_tokens;
+            layout.conditional_target_start = input.conditional_target_start();
+            layout.target_frames = input.target_frames;
+        }
+        if (layout_ != last_layout_) {
+            rebuild_masks_and_indices();
+            last_layout_ = layout_;
+            layout_dirty_ = true;
+        }
+        if (scales != last_guidance_scales_) {
+            guidance_scales = scales;
+            last_guidance_scales_ = scales;
+            guidance_dirty_ = true;
+        }
+    }
+
+    // Copies the current target tokens of every request into its two rows.
+    void update_targets(const std::vector<PackedInputs> & inputs) {
+        if (static_cast<int64_t>(inputs.size()) != batch_ || layout_.size() != inputs.size()) {
+            throw std::runtime_error("OmniVoice generator target token update requires a prepared request");
+        }
+        for (int64_t item = 0; item < batch_; ++item) {
+            const auto & input = inputs[static_cast<size_t>(item)];
+            const auto & layout = layout_[static_cast<size_t>(item)];
+            if (input.target_frames != layout.target_frames) {
+                throw std::runtime_error("OmniVoice generator target token update requires a prepared request");
+            }
+            const size_t conditional_row = row_offset(item);
+            const size_t unconditional_row = row_offset(batch_ + item);
+            for (int64_t codebook = 0; codebook < codebooks_; ++codebook) {
+                const auto & conditional_ids = input.conditional_audio_ids[static_cast<size_t>(codebook)];
+                const auto & unconditional_ids = input.unconditional_audio_ids[static_cast<size_t>(codebook)];
+                auto & ids = audio_ids[static_cast<size_t>(codebook)];
+                for (int64_t frame = 0; frame < layout.target_frames; ++frame) {
+                    const size_t pos = static_cast<size_t>(layout.conditional_target_start + frame);
+                    ids[conditional_row + pos] = conditional_ids[pos];
+                    ids[unconditional_row + static_cast<size_t>(frame)] = unconditional_ids[static_cast<size_t>(frame)];
+                }
+            }
+        }
+    }
+
+    bool prepared() const noexcept { return !layout_.empty(); }
+    bool take_layout_dirty() noexcept { return std::exchange(layout_dirty_, false); }
+    bool take_guidance_dirty() noexcept { return std::exchange(guidance_dirty_, false); }
+    int64_t batch() const noexcept { return batch_; }
+    int64_t rows() const noexcept { return rows_; }
+    int64_t tokens() const noexcept { return tokens_; }
+    int64_t target_frames() const noexcept { return target_frames_; }
+
+    std::vector<int32_t> text_ids;
+    std::array<std::vector<int32_t>, 8> audio_ids{};
+    std::vector<float> audio_mask;
+    std::vector<float> text_mask;
+    std::vector<float> attention_f32;
+    std::vector<ggml_fp16_t> attention_f16;
+    // Rows of the flattened [rows * tokens, hidden] state gathered for the
+    // logits: target frames of every conditional row, then of every
+    // unconditional row. Padded frames point at a valid position and are
+    // ignored by the caller.
+    std::vector<int32_t> target_indices;
+    std::vector<float> guidance_scales;
+    std::vector<int32_t> positions;
+
+private:
+    struct ItemLayout {
+        int64_t conditional_total = 0;
+        int64_t conditional_audio_start = 0;
+        int64_t conditional_target_start = 0;
+        int64_t target_frames = 0;
+
+        bool operator==(const ItemLayout & other) const noexcept {
+            return conditional_total == other.conditional_total &&
+                conditional_audio_start == other.conditional_audio_start &&
+                conditional_target_start == other.conditional_target_start &&
+                target_frames == other.target_frames;
+        }
+        bool operator!=(const ItemLayout & other) const noexcept {
+            return !(*this == other);
+        }
+    };
+
+    size_t row_offset(int64_t row) const noexcept {
+        return static_cast<size_t>(row * tokens_);
+    }
+
+    void rebuild_masks_and_indices() {
+        std::fill(audio_mask.begin(), audio_mask.end(), 0.0F);
+        std::fill(text_mask.begin(), text_mask.end(), 1.0F);
+        if (f16_attention_) {
+            std::fill(attention_f16.begin(), attention_f16.end(), ggml_fp32_to_fp16(kMaskedAttentionBias));
+        } else {
+            std::fill(attention_f32.begin(), attention_f32.end(), kMaskedAttentionBias);
+        }
+        const auto write_zero = [&](int64_t row, int64_t q, int64_t k) {
+            const size_t index = static_cast<size_t>(k + tokens_ * (q + tokens_ * row));
+            if (f16_attention_) {
+                attention_f16[index] = ggml_fp32_to_fp16(0.0F);
+            } else {
+                attention_f32[index] = 0.0F;
+            }
+        };
+        const auto write_row_attention = [&](int64_t row, int64_t valid) {
+            for (int64_t q = 0; q < valid; ++q) {
+                for (int64_t k = 0; k < valid; ++k) {
+                    write_zero(row, q, k);
+                }
+            }
+            for (int64_t q = valid; q < tokens_; ++q) {
+                write_zero(row, q, q);
+            }
+        };
+        for (int64_t item = 0; item < batch_; ++item) {
+            const auto & layout = layout_[static_cast<size_t>(item)];
+            const int64_t conditional_row = item;
+            const int64_t unconditional_row = batch_ + item;
+            for (int64_t pos = layout.conditional_audio_start; pos < layout.conditional_total; ++pos) {
+                audio_mask[row_offset(conditional_row) + static_cast<size_t>(pos)] = 1.0F;
+                text_mask[row_offset(conditional_row) + static_cast<size_t>(pos)] = 0.0F;
+            }
+            for (int64_t pos = 0; pos < layout.target_frames; ++pos) {
+                audio_mask[row_offset(unconditional_row) + static_cast<size_t>(pos)] = 1.0F;
+                text_mask[row_offset(unconditional_row) + static_cast<size_t>(pos)] = 0.0F;
+            }
+            write_row_attention(conditional_row, layout.conditional_total);
+            write_row_attention(unconditional_row, layout.target_frames);
+            for (int64_t frame = 0; frame < target_frames_; ++frame) {
+                const int64_t valid_frame = frame < layout.target_frames ? frame : 0;
+                target_indices[static_cast<size_t>(conditional_row * target_frames_ + frame)] =
+                    static_cast<int32_t>(conditional_row * tokens_ + layout.conditional_target_start + valid_frame);
+                target_indices[static_cast<size_t>(unconditional_row * target_frames_ + frame)] =
+                    static_cast<int32_t>(unconditional_row * tokens_ + valid_frame);
+            }
+        }
+    }
+
+    int64_t batch_ = 0;
+    int64_t rows_ = 0;
+    int64_t tokens_ = 0;
+    int64_t target_frames_ = 0;
+    int64_t codebooks_ = 0;
+    int64_t audio_vocab_size_ = 0;
+    int64_t mask_id_ = 0;
+    bool f16_attention_ = false;
+    std::vector<ItemLayout> layout_;
+    std::vector<ItemLayout> last_layout_;
+    std::vector<float> last_guidance_scales_;
+    bool layout_dirty_ = true;
+    bool guidance_dirty_ = true;
+};
+
+// Final norm, target-frame gather, audio head and classifier-free guidance
+// for a [2 * batch, tokens, hidden] state. Returns [batch, frames, codebooks *
+// vocab] guided logits.
+core::TensorValue build_guided_logits(
+    core::ModuleBuildContext & ctx,
+    const OmniVoiceConfig & config,
+    const Qwen3DiffusionWeights & weights,
+    const core::TensorValue & hidden_states,
+    const core::TensorValue & target_indices,
+    const core::TensorValue & guidance_scales,
+    int64_t batch,
+    int64_t tokens,
+    int64_t target_frames) {
+    const int64_t rows = 2 * batch;
+    auto x = modules::RMSNormModule({config.llm.hidden_size, config.llm.rms_norm_eps, true, false})
+                 .build(ctx, hidden_states, binding::norm_data(ctx, weights.norm));
+    x = core::reshape_tensor(
+        ctx,
+        ensure_contiguous(ctx, x),
+        core::TensorShape::from_dims({rows * tokens, config.llm.hidden_size}));
+    auto hidden = modules::EmbeddingModule({rows * tokens, config.llm.hidden_size}).build(ctx, target_indices, x);
+    hidden = core::reshape_tensor(
+        ctx,
+        hidden,
+        core::TensorShape::from_dims({rows, target_frames, config.llm.hidden_size}));
+    auto logits =
+        modules::LinearModule(
+            binding::linear_config(
+                config.llm.hidden_size,
+                config.num_audio_codebook * config.audio_vocab_size,
+                false))
+            .build(ctx, hidden, binding::linear_data(ctx, weights.audio_head));
+    auto conditional_logits = modules::SliceModule({0, 0, batch}).build(ctx, logits);
+    auto unconditional_logits = modules::SliceModule({0, batch, batch}).build(ctx, logits);
+    auto scale = core::reshape_tensor(ctx, guidance_scales, core::TensorShape::from_dims({batch, 1, 1}));
+    auto scale_expanded = modules::RepeatModule({conditional_logits.shape}).build(ctx, scale);
+    auto diff = core::wrap_tensor(
+        ggml_sub(ctx.ggml, conditional_logits.tensor, unconditional_logits.tensor),
+        conditional_logits.shape,
+        GGML_TYPE_F32);
+    auto scaled_diff = modules::MulModule{}.build(ctx, diff, scale_expanded);
+    auto combined = modules::AddModule{}.build(ctx, conditional_logits, scaled_diff);
+    return ensure_contiguous(ctx, combined);
+}
 
 class Qwen3DiffusionGraph {
 public:
     virtual ~Qwen3DiffusionGraph() = default;
-    virtual bool matches(const Qwen3DiffusionWeightsRuntime & runtime, int64_t total_tokens, int64_t target_frames) const = 0;
-    virtual void rebuild(int64_t total_token_capacity, int64_t target_frame_capacity) = 0;
-    virtual void prepare_request(const PackedInputs & inputs) = 0;
-    virtual void set_guidance_scale(float value) noexcept = 0;
-    virtual void update_generated_target_tokens(const PackedInputs & inputs) = 0;
+    virtual bool matches(
+        const Qwen3DiffusionWeightsRuntime & runtime,
+        int64_t batch,
+        int64_t total_tokens,
+        int64_t target_frames) const = 0;
+    virtual void rebuild(int64_t batch, int64_t total_token_capacity, int64_t target_frame_capacity) = 0;
+    virtual void prepare_request(const std::vector<PackedInputs> & inputs, const std::vector<float> & guidance_scales) = 0;
+    virtual void update_generated_target_tokens(const std::vector<PackedInputs> & inputs) = 0;
+    // Guided logits, [batch, target_frame_capacity, codebooks * vocab].
     virtual const std::vector<float> & compute_logits(double & compute_ms, double & readback_ms) = 0;
+    virtual int64_t batch_capacity() const noexcept = 0;
     virtual int64_t total_token_capacity() const noexcept = 0;
     virtual int64_t target_frame_capacity() const noexcept = 0;
     virtual double rebuild_clear_ms() const noexcept = 0;
@@ -429,13 +738,14 @@ public:
     Qwen3DiffusionForwardGraph(
         std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
+        int64_t batch,
         int64_t total_token_capacity,
         int64_t target_frame_capacity,
         OmniVoiceGeneratorPerfMode perf_mode)
         : runtime_(std::move(runtime)),
           graph_arena_bytes_(graph_arena_bytes),
           perf_mode_(perf_mode) {
-        rebuild(total_token_capacity, target_frame_capacity);
+        rebuild(batch, total_token_capacity, target_frame_capacity);
     }
 
     ~Qwen3DiffusionForwardGraph() {
@@ -444,23 +754,28 @@ public:
 
     bool matches(
         const Qwen3DiffusionWeightsRuntime & runtime,
+        int64_t batch,
         int64_t total_tokens,
         int64_t target_frames) const override {
         return runtime_.get() == &runtime &&
-            total_tokens_capacity_ >= total_tokens &&
-            target_frame_capacity_ >= target_frames;
+            batch_capacity_ == batch &&
+            total_tokens_capacity_ == total_tokens &&
+            target_frame_capacity_ == target_frames;
     }
 
-    void rebuild(int64_t total_token_capacity, int64_t target_frame_capacity) override {
-        if (total_token_capacity <= 0 || target_frame_capacity <= 0) {
+    void rebuild(int64_t batch, int64_t total_token_capacity, int64_t target_frame_capacity) override {
+        if (batch <= 0 || total_token_capacity <= 0 || target_frame_capacity <= 0) {
             throw std::runtime_error("OmniVoice generator total token capacity is invalid");
         }
         const auto clear_start = Clock::now();
         clear_graph();
         const auto clear_end = Clock::now();
         rebuild_clear_ms_ = engine::debug::elapsed_ms(clear_start, clear_end);
+        batch_capacity_ = batch;
         total_tokens_capacity_ = total_token_capacity;
         target_frame_capacity_ = target_frame_capacity;
+        const int64_t rows = 2 * batch_capacity_;
+        const bool f16_attention = perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention;
 
         const auto build_start = Clock::now();
         ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
@@ -485,22 +800,20 @@ public:
         std::array<core::TensorValue, 8> audio_id_values = {};
 
         auto text_ids =
-            core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({2, total_tokens_capacity_}));
+            core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows, total_tokens_capacity_}));
         text_ids_ = text_ids.tensor;
         ggml_set_input(text_ids_);
         for (int64_t codebook = 0; codebook < config.num_audio_codebook; ++codebook) {
             auto audio_ids =
-                core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({2, total_tokens_capacity_}));
+                core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows, total_tokens_capacity_}));
             audio_ids_[static_cast<size_t>(codebook)] = audio_ids.tensor;
             ggml_set_input(audio_ids_[static_cast<size_t>(codebook)]);
             audio_id_values[static_cast<size_t>(codebook)] = audio_ids;
         }
-        audio_mask_value_ =
-            core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, total_tokens_capacity_, 1}));
-        auto audio_mask = audio_mask_value_;
-        text_mask_value_ =
-            core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, total_tokens_capacity_, 1}));
-        auto text_mask = text_mask_value_;
+        auto audio_mask =
+            core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({rows, total_tokens_capacity_, 1}));
+        auto text_mask =
+            core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({rows, total_tokens_capacity_, 1}));
         audio_mask_ = audio_mask.tensor;
         text_mask_ = text_mask.tensor;
         ggml_set_input(audio_mask_);
@@ -510,85 +823,36 @@ public:
         ggml_set_input(positions_);
         auto positions =
             core::wrap_tensor(positions_, core::TensorShape::from_dims({total_tokens_capacity_}), GGML_TYPE_I32);
-        conditional_target_indices_ =
-            core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({target_frame_capacity_})).tensor;
-        ggml_set_input(conditional_target_indices_);
-        unconditional_target_indices_ =
-            core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({target_frame_capacity_})).tensor;
-        ggml_set_input(unconditional_target_indices_);
+        auto target_indices =
+            core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows * target_frame_capacity_}));
+        target_indices_ = target_indices.tensor;
+        ggml_set_input(target_indices_);
         auto attention_mask =
             core::make_tensor(
                 input_ctx,
-                perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention ? GGML_TYPE_F16 : GGML_TYPE_F32,
-                core::TensorShape::from_dims({2, 1, total_tokens_capacity_, total_tokens_capacity_}));
+                f16_attention ? GGML_TYPE_F16 : GGML_TYPE_F32,
+                core::TensorShape::from_dims({rows, 1, total_tokens_capacity_, total_tokens_capacity_}));
         attention_mask_ = attention_mask.tensor;
-        guidance_scale_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1})).tensor;
         ggml_set_input(attention_mask_);
-        ggml_set_input(guidance_scale_);
+        auto guidance_scales =
+            core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_capacity_}));
+        guidance_scales_ = guidance_scales.tensor;
+        ggml_set_input(guidance_scales_);
 
         auto x = build_embeddings(ctx, config, weights, text_ids, audio_id_values, audio_mask, text_mask);
         for (const auto & layer : weights.layers) {
             x = decoder_layer(ctx, x, positions, layer, config.llm, attention_mask, perf_mode_);
         }
-        x = modules::RMSNormModule({config.llm.hidden_size, config.llm.rms_norm_eps, true, false})
-                .build(ctx, x, binding::norm_data(ctx, weights.norm));
-        auto conditional_hidden = modules::SliceModule({0, 0, 1}).build(ctx, x);
-        conditional_hidden = core::reshape_tensor(
+        logits_ = build_guided_logits(
             ctx,
-            ensure_contiguous(ctx, conditional_hidden),
-            core::TensorShape::from_dims({total_tokens_capacity_, config.llm.hidden_size}));
-        auto conditional_index_value = core::wrap_tensor(
-            conditional_target_indices_,
-            core::TensorShape::from_dims({target_frame_capacity_}),
-            GGML_TYPE_I32);
-        conditional_hidden = modules::EmbeddingModule({total_tokens_capacity_, config.llm.hidden_size})
-                                 .build(ctx, conditional_index_value, conditional_hidden);
-        conditional_hidden = core::reshape_tensor(
-            ctx,
-            conditional_hidden,
-            core::TensorShape::from_dims({1, target_frame_capacity_, config.llm.hidden_size}));
-        auto unconditional_hidden = modules::SliceModule({0, 1, 1}).build(ctx, x);
-        unconditional_hidden = core::reshape_tensor(
-            ctx,
-            ensure_contiguous(ctx, unconditional_hidden),
-            core::TensorShape::from_dims({total_tokens_capacity_, config.llm.hidden_size}));
-        auto unconditional_index_value = core::wrap_tensor(
-            unconditional_target_indices_,
-            core::TensorShape::from_dims({target_frame_capacity_}),
-            GGML_TYPE_I32);
-        unconditional_hidden = modules::EmbeddingModule({total_tokens_capacity_, config.llm.hidden_size})
-                                   .build(ctx, unconditional_index_value, unconditional_hidden);
-        unconditional_hidden = core::reshape_tensor(
-            ctx,
-            unconditional_hidden,
-            core::TensorShape::from_dims({1, target_frame_capacity_, config.llm.hidden_size}));
-        auto hidden = modules::ConcatModule({0}).build(ctx, conditional_hidden, unconditional_hidden);
-        auto logits =
-            modules::LinearModule(
-                binding::linear_config(
-                    config.llm.hidden_size,
-                    config.num_audio_codebook * config.audio_vocab_size,
-                    false))
-                .build(ctx, hidden, binding::linear_data(ctx, weights.audio_head));
-        auto conditional_logits = modules::SliceModule({0, 0, 1}).build(ctx, logits);
-        auto unconditional_logits = modules::SliceModule({0, 1, 1}).build(ctx, logits);
-        auto guidance_scale_value = core::wrap_tensor(
-            guidance_scale_,
-            core::TensorShape::from_dims({1}),
-            GGML_TYPE_F32);
-        guidance_scale_value = core::reshape_tensor(
-            ctx,
-            guidance_scale_value,
-            core::TensorShape::from_dims({1, 1, 1}));
-        auto guidance_scale_expanded = modules::RepeatModule({conditional_logits.shape}).build(ctx, guidance_scale_value);
-        auto diff = core::wrap_tensor(
-            ggml_sub(ctx.ggml, conditional_logits.tensor, unconditional_logits.tensor),
-            conditional_logits.shape,
-            GGML_TYPE_F32);
-        auto scaled_diff = modules::MulModule{}.build(ctx, diff, guidance_scale_expanded);
-        auto combined_raw = modules::AddModule{}.build(ctx, conditional_logits, scaled_diff);
-        combined_raw = ensure_contiguous(ctx, combined_raw);
-        logits_ = combined_raw.tensor;
+            config,
+            weights,
+            x,
+            target_indices,
+            guidance_scales,
+            batch_capacity_,
+            total_tokens_capacity_,
+            target_frame_capacity_).tensor;
 
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_set_output(logits_);
@@ -611,174 +875,57 @@ public:
         rebuild_alloc_ms_ = engine::debug::elapsed_ms(alloc_start, alloc_end);
 
         const auto init_start = Clock::now();
-        std::vector<int32_t> position_host(static_cast<size_t>(total_tokens_capacity_), 0);
-        for (int64_t i = 0; i < total_tokens_capacity_; ++i) {
-            position_host[static_cast<size_t>(i)] = static_cast<int32_t>(i);
-        }
-        ggml_backend_tensor_set(positions_, position_host.data(), 0, position_host.size() * sizeof(int32_t));
-
-        text_ids_host_.assign(static_cast<size_t>(2 * total_tokens_capacity_), 0);
-        conditional_target_indices_host_.assign(static_cast<size_t>(target_frame_capacity_), 0);
-        unconditional_target_indices_host_.assign(static_cast<size_t>(target_frame_capacity_), 0);
-        audio_mask_values_host_.assign(static_cast<size_t>(2 * total_tokens_capacity_), 0.0F);
-        text_mask_values_host_.assign(static_cast<size_t>(2 * total_tokens_capacity_), 0.0F);
-        if (perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention) {
-            attention_values_host_f16_.assign(
-                static_cast<size_t>(2 * total_tokens_capacity_ * total_tokens_capacity_),
-                ggml_fp32_to_fp16(kMaskedAttentionBias));
-            attention_values_host_.clear();
-        } else {
-            attention_values_host_.assign(
-                static_cast<size_t>(2 * total_tokens_capacity_ * total_tokens_capacity_),
-                kMaskedAttentionBias);
-            attention_values_host_f16_.clear();
-        }
-        for (auto & ids : audio_ids_host_) {
-            ids.assign(static_cast<size_t>(2 * total_tokens_capacity_), 0);
-        }
-        current_total_tokens_ = 0;
-        current_target_frames_ = 0;
-        current_conditional_target_start_ = 0;
-        last_target_frames_ = -1;
-        last_conditional_target_start_ = -1;
-        last_mask_conditional_total_ = -1;
-        last_mask_conditional_audio_start_ = -1;
-        last_mask_unconditional_total_ = -1;
-        guidance_scale_host_ = 0.0F;
-        last_guidance_scale_ = std::numeric_limits<float>::quiet_NaN();
+        host_.reset(runtime_->assets(), batch_capacity_, total_tokens_capacity_, target_frame_capacity_, f16_attention);
+        ggml_backend_tensor_set(positions_, host_.positions.data(), 0, host_.positions.size() * sizeof(int32_t));
         logits_host_.clear();
         const auto init_end = Clock::now();
         rebuild_init_ms_ = engine::debug::elapsed_ms(init_start, init_end);
     }
 
-    void prepare_request(const PackedInputs & inputs) override {
-        const int64_t total_tokens =
-            inputs.style_tokens + inputs.text_tokens + inputs.reference_frames + inputs.target_frames;
-        if (total_tokens <= 0 ||
-            total_tokens > total_tokens_capacity_ ||
-            inputs.target_frames > target_frame_capacity_) {
-            throw std::runtime_error("OmniVoice generator packed input shape exceeds graph capacity");
-        }
-        if (static_cast<int64_t>(inputs.conditional_text_ids.size()) != total_tokens ||
-            static_cast<int64_t>(inputs.unconditional_text_ids.size()) != total_tokens) {
-            throw std::runtime_error("OmniVoice generator text id tensor shape is invalid");
-        }
-        current_total_tokens_ = total_tokens;
-        current_target_frames_ = inputs.target_frames;
-        current_conditional_target_start_ =
-            inputs.style_tokens + inputs.text_tokens + inputs.reference_frames;
-        std::fill(
-            text_ids_host_.begin(),
-            text_ids_host_.end(),
-            static_cast<int32_t>(runtime_->assets().config.audio_mask_id));
-        for (int64_t pos = 0; pos < total_tokens; ++pos) {
-            text_ids_host_[static_cast<size_t>(pos)] = inputs.conditional_text_ids[static_cast<size_t>(pos)];
-            text_ids_host_[static_cast<size_t>(total_tokens_capacity_ + pos)] =
-                inputs.unconditional_text_ids[static_cast<size_t>(pos)];
-        }
-        ggml_backend_tensor_set(text_ids_, text_ids_host_.data(), 0, text_ids_host_.size() * sizeof(int32_t));
-        for (int64_t codebook = 0; codebook < runtime_->assets().config.num_audio_codebook; ++codebook) {
-            const auto & conditional_ids = inputs.conditional_audio_ids[static_cast<size_t>(codebook)];
-            const auto & unconditional_ids = inputs.unconditional_audio_ids[static_cast<size_t>(codebook)];
-            if (static_cast<int64_t>(conditional_ids.size()) != total_tokens ||
-                static_cast<int64_t>(unconditional_ids.size()) != total_tokens) {
-                throw std::runtime_error("OmniVoice generator audio id tensor shape is invalid");
-            }
-            auto & ids = audio_ids_host_[static_cast<size_t>(codebook)];
-            std::fill(
-                ids.begin(),
-                ids.end(),
-                static_cast<int32_t>(codebook * runtime_->assets().config.audio_vocab_size +
-                                     runtime_->assets().config.audio_mask_id));
-            for (int64_t pos = 0; pos < total_tokens; ++pos) {
-                ids[static_cast<size_t>(pos)] = conditional_ids[static_cast<size_t>(pos)];
-                ids[static_cast<size_t>(total_tokens_capacity_ + pos)] =
-                    unconditional_ids[static_cast<size_t>(pos)];
+    void prepare_request(const std::vector<PackedInputs> & inputs, const std::vector<float> & guidance_scales) override {
+        host_.prepare(inputs, guidance_scales);
+        upload_token_ids();
+        if (host_.take_layout_dirty()) {
+            ggml_backend_tensor_set(audio_mask_, host_.audio_mask.data(), 0, host_.audio_mask.size() * sizeof(float));
+            ggml_backend_tensor_set(text_mask_, host_.text_mask.data(), 0, host_.text_mask.size() * sizeof(float));
+            if (perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention) {
+                ggml_backend_tensor_set(
+                    attention_mask_,
+                    host_.attention_f16.data(),
+                    0,
+                    host_.attention_f16.size() * sizeof(ggml_fp16_t));
+            } else {
+                ggml_backend_tensor_set(
+                    attention_mask_,
+                    host_.attention_f32.data(),
+                    0,
+                    host_.attention_f32.size() * sizeof(float));
             }
             ggml_backend_tensor_set(
-                audio_ids_[static_cast<size_t>(codebook)],
-                ids.data(),
+                target_indices_,
+                host_.target_indices.data(),
                 0,
-                ids.size() * sizeof(int32_t));
+                host_.target_indices.size() * sizeof(int32_t));
         }
-        if (last_conditional_target_start_ != current_conditional_target_start_ ||
-            last_target_frames_ != current_target_frames_) {
-            for (int64_t frame = 0; frame < inputs.target_frames; ++frame) {
-                conditional_target_indices_host_[static_cast<size_t>(frame)] =
-                    static_cast<int32_t>(current_conditional_target_start_ + frame);
-                unconditional_target_indices_host_[static_cast<size_t>(frame)] =
-                    static_cast<int32_t>(frame);
-            }
-            const size_t target_index_bytes = static_cast<size_t>(inputs.target_frames) * sizeof(int32_t);
+        if (host_.take_guidance_dirty()) {
             ggml_backend_tensor_set(
-                conditional_target_indices_,
-                conditional_target_indices_host_.data(),
+                guidance_scales_,
+                host_.guidance_scales.data(),
                 0,
-                target_index_bytes);
-            ggml_backend_tensor_set(
-                unconditional_target_indices_,
-                unconditional_target_indices_host_.data(),
-                0,
-                target_index_bytes);
-            last_conditional_target_start_ = current_conditional_target_start_;
-            last_target_frames_ = current_target_frames_;
-        }
-        if (last_guidance_scale_ != guidance_scale_host_) {
-            ggml_backend_tensor_set(guidance_scale_, &guidance_scale_host_, 0, sizeof(guidance_scale_host_));
-            last_guidance_scale_ = guidance_scale_host_;
-        }
-        const int64_t conditional_total =
-            inputs.style_tokens + inputs.text_tokens + inputs.reference_frames + inputs.target_frames;
-        const int64_t conditional_audio_start = inputs.style_tokens + inputs.text_tokens;
-        const int64_t unconditional_total = inputs.target_frames;
-        if (last_mask_conditional_total_ != conditional_total ||
-            last_mask_conditional_audio_start_ != conditional_audio_start ||
-            last_mask_unconditional_total_ != unconditional_total) {
-            upload_runtime_masks(inputs, conditional_total, conditional_audio_start, unconditional_total);
-            last_mask_conditional_total_ = conditional_total;
-            last_mask_conditional_audio_start_ = conditional_audio_start;
-            last_mask_unconditional_total_ = unconditional_total;
+                host_.guidance_scales.size() * sizeof(float));
         }
     }
 
-    void set_guidance_scale(float value) noexcept override {
-        guidance_scale_host_ = value;
-    }
-
-    void update_generated_target_tokens(const PackedInputs & inputs) override {
-        if (current_total_tokens_ <= 0 || current_target_frames_ != inputs.target_frames) {
-            throw std::runtime_error("OmniVoice generator target token update requires a prepared request");
-        }
-        const size_t conditional_offset_bytes =
-            static_cast<size_t>(current_conditional_target_start_) * sizeof(int32_t);
-        const size_t unconditional_offset_bytes =
-            static_cast<size_t>(total_tokens_capacity_) * sizeof(int32_t);
-        const size_t byte_count = static_cast<size_t>(current_target_frames_) * sizeof(int32_t);
+    void update_generated_target_tokens(const std::vector<PackedInputs> & inputs) override {
+        host_.update_targets(inputs);
         for (int64_t codebook = 0; codebook < runtime_->assets().config.num_audio_codebook; ++codebook) {
-            const auto & conditional_ids = inputs.conditional_audio_ids[static_cast<size_t>(codebook)];
-            const auto & unconditional_ids = inputs.unconditional_audio_ids[static_cast<size_t>(codebook)];
-            auto & host_ids = audio_ids_host_[static_cast<size_t>(codebook)];
-            for (int64_t frame = 0; frame < current_target_frames_; ++frame) {
-                host_ids[static_cast<size_t>(current_conditional_target_start_ + frame)] =
-                    conditional_ids[static_cast<size_t>(current_conditional_target_start_ + frame)];
-                host_ids[static_cast<size_t>(total_tokens_capacity_ + frame)] =
-                    unconditional_ids[static_cast<size_t>(frame)];
-            }
-            ggml_backend_tensor_set(
-                audio_ids_[static_cast<size_t>(codebook)],
-                host_ids.data() + current_conditional_target_start_,
-                conditional_offset_bytes,
-                byte_count);
-            ggml_backend_tensor_set(
-                audio_ids_[static_cast<size_t>(codebook)],
-                host_ids.data() + total_tokens_capacity_,
-                unconditional_offset_bytes,
-                byte_count);
+            const auto & ids = host_.audio_ids[static_cast<size_t>(codebook)];
+            ggml_backend_tensor_set(audio_ids_[static_cast<size_t>(codebook)], ids.data(), 0, ids.size() * sizeof(int32_t));
         }
     }
 
     const std::vector<float> & compute_logits(double & compute_ms, double & readback_ms) override {
-        if (current_total_tokens_ <= 0 || current_target_frames_ <= 0) {
+        if (!host_.prepared()) {
             throw std::runtime_error("OmniVoice generator compute requires a prepared request");
         }
 
@@ -793,7 +940,7 @@ public:
         compute_ms += engine::debug::elapsed_ms(compute_start, compute_end);
 
         const size_t logits_count = static_cast<size_t>(
-            target_frame_capacity_ * runtime_->assets().config.num_audio_codebook *
+            batch_capacity_ * target_frame_capacity_ * runtime_->assets().config.num_audio_codebook *
             runtime_->assets().config.audio_vocab_size);
         if (logits_host_.size() != logits_count) {
             logits_host_.assign(logits_count, 0.0F);
@@ -805,6 +952,9 @@ public:
         return logits_host_;
     }
 
+    int64_t batch_capacity() const noexcept override {
+        return batch_capacity_;
+    }
     int64_t total_token_capacity() const noexcept override {
         return total_tokens_capacity_;
     }
@@ -817,6 +967,14 @@ public:
     double rebuild_init_ms() const noexcept override { return rebuild_init_ms_; }
 
 private:
+    void upload_token_ids() {
+        ggml_backend_tensor_set(text_ids_, host_.text_ids.data(), 0, host_.text_ids.size() * sizeof(int32_t));
+        for (int64_t codebook = 0; codebook < runtime_->assets().config.num_audio_codebook; ++codebook) {
+            const auto & ids = host_.audio_ids[static_cast<size_t>(codebook)];
+            ggml_backend_tensor_set(audio_ids_[static_cast<size_t>(codebook)], ids.data(), 0, ids.size() * sizeof(int32_t));
+        }
+    }
+
     void clear_graph() {
         if (graph_ != nullptr) {
             engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
@@ -831,10 +989,9 @@ private:
             input_buffer_ = nullptr;
         }
         logits_ = nullptr;
-        guidance_scale_ = nullptr;
+        guidance_scales_ = nullptr;
         attention_mask_ = nullptr;
-        conditional_target_indices_ = nullptr;
-        unconditional_target_indices_ = nullptr;
+        target_indices_ = nullptr;
         positions_ = nullptr;
         audio_mask_ = nullptr;
         text_mask_ = nullptr;
@@ -846,88 +1003,10 @@ private:
         ctx_.reset();
     }
 
-    void upload_runtime_masks(
-        const PackedInputs &,
-        int64_t conditional_total,
-        int64_t conditional_audio_start,
-        int64_t unconditional_total) {
-        std::fill(audio_mask_values_host_.begin(), audio_mask_values_host_.end(), 0.0F);
-        std::fill(text_mask_values_host_.begin(), text_mask_values_host_.end(), 1.0F);
-        for (int64_t pos = 0; pos < conditional_total; ++pos) {
-            if (pos >= conditional_audio_start) {
-                audio_mask_values_host_[static_cast<size_t>(pos)] = 1.0F;
-                text_mask_values_host_[static_cast<size_t>(pos)] = 0.0F;
-            }
-        }
-        for (int64_t pos = 0; pos < unconditional_total; ++pos) {
-            const size_t offset = static_cast<size_t>(total_tokens_capacity_ + pos);
-            audio_mask_values_host_[offset] = 1.0F;
-            text_mask_values_host_[offset] = 0.0F;
-        }
-        ggml_backend_tensor_set(
-            audio_mask_,
-            audio_mask_values_host_.data(),
-            0,
-            audio_mask_values_host_.size() * sizeof(float));
-        ggml_backend_tensor_set(
-            text_mask_,
-            text_mask_values_host_.data(),
-            0,
-            text_mask_values_host_.size() * sizeof(float));
-        if (perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention) {
-            std::fill(
-                attention_values_host_f16_.begin(),
-                attention_values_host_f16_.end(),
-                ggml_fp32_to_fp16(kMaskedAttentionBias));
-        } else {
-            std::fill(
-                attention_values_host_.begin(),
-                attention_values_host_.end(),
-                kMaskedAttentionBias);
-        }
-        const auto write_zero = [&](int batch, int64_t q, int64_t k) {
-            const size_t index = static_cast<size_t>(
-                k + total_tokens_capacity_ * (q + total_tokens_capacity_ * batch));
-            if (perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention) {
-                attention_values_host_f16_[index] = ggml_fp32_to_fp16(0.0F);
-            } else {
-                attention_values_host_[index] = 0.0F;
-            }
-        };
-        for (int64_t q = 0; q < conditional_total; ++q) {
-            for (int64_t k = 0; k < conditional_total; ++k) {
-                write_zero(0, q, k);
-            }
-        }
-        for (int64_t q = conditional_total; q < total_tokens_capacity_; ++q) {
-            write_zero(0, q, q);
-        }
-        for (int64_t q = 0; q < unconditional_total; ++q) {
-            for (int64_t k = 0; k < unconditional_total; ++k) {
-                write_zero(1, q, k);
-            }
-        }
-        for (int64_t q = unconditional_total; q < total_tokens_capacity_; ++q) {
-            write_zero(1, q, q);
-        }
-        if (perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention) {
-            ggml_backend_tensor_set(
-                attention_mask_,
-                attention_values_host_f16_.data(),
-                0,
-                attention_values_host_f16_.size() * sizeof(ggml_fp16_t));
-        } else {
-            ggml_backend_tensor_set(
-                attention_mask_,
-                attention_values_host_.data(),
-                0,
-                attention_values_host_.size() * sizeof(float));
-        }
-    }
-
     std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
     OmniVoiceGeneratorPerfMode perf_mode_ = OmniVoiceGeneratorPerfMode::Standard;
+    int64_t batch_capacity_ = 0;
     int64_t total_tokens_capacity_ = 0;
     int64_t target_frame_capacity_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
@@ -935,36 +1014,16 @@ private:
     ggml_backend_buffer_t input_buffer_ = nullptr;
     ggml_tensor * text_ids_ = nullptr;
     std::array<ggml_tensor *, 8> audio_ids_{};
-    core::TensorValue audio_mask_value_;
-    core::TensorValue text_mask_value_;
     ggml_tensor * audio_mask_ = nullptr;
     ggml_tensor * text_mask_ = nullptr;
     ggml_tensor * positions_ = nullptr;
-    ggml_tensor * conditional_target_indices_ = nullptr;
-    ggml_tensor * unconditional_target_indices_ = nullptr;
+    ggml_tensor * target_indices_ = nullptr;
     ggml_tensor * attention_mask_ = nullptr;
-    ggml_tensor * guidance_scale_ = nullptr;
+    ggml_tensor * guidance_scales_ = nullptr;
     ggml_tensor * logits_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
-    int64_t current_total_tokens_ = 0;
-    int64_t current_target_frames_ = 0;
-    int64_t current_conditional_target_start_ = 0;
-    int64_t last_target_frames_ = -1;
-    int64_t last_conditional_target_start_ = -1;
-    int64_t last_mask_conditional_total_ = -1;
-    int64_t last_mask_conditional_audio_start_ = -1;
-    int64_t last_mask_unconditional_total_ = -1;
-    std::vector<int32_t> text_ids_host_;
-    std::array<std::vector<int32_t>, 8> audio_ids_host_{};
-    std::vector<int32_t> conditional_target_indices_host_;
-    std::vector<int32_t> unconditional_target_indices_host_;
-    std::vector<float> audio_mask_values_host_;
-    std::vector<float> text_mask_values_host_;
-    std::vector<float> attention_values_host_;
-    std::vector<ggml_fp16_t> attention_values_host_f16_;
-    float guidance_scale_host_ = 0.0F;
-    float last_guidance_scale_ = std::numeric_limits<float>::quiet_NaN();
+    BatchedGraphInputs host_;
     std::vector<float> logits_host_;
     double rebuild_clear_ms_ = 0.0;
     double rebuild_build_ms_ = 0.0;
@@ -1302,24 +1361,99 @@ void OmniVoiceQwen3DiffusionRuntime::release_runtime_graphs() {
     impl_->forward_graph.reset();
 }
 
+std::mt19937 OmniVoiceQwen3DiffusionRuntime::make_request_rng(const std::optional<uint32_t> & seed) {
+    if (seed.has_value()) {
+        return std::mt19937(*seed);
+    }
+    return std::mt19937(static_cast<std::mt19937::result_type>(impl_->rng()));
+}
+
 OmniVoiceGeneratedAudioTokens OmniVoiceQwen3DiffusionRuntime::generate(
     const OmniVoicePrompt & prompt,
     const OmniVoiceGenerationOptions & options) {
-    if (prompt.style_token_ids.empty()) {
-        throw std::runtime_error("OmniVoice generator requires non-empty style tokens");
-    }
-    if (prompt.text_token_ids.empty()) {
-        throw std::runtime_error("OmniVoice generator requires non-empty text tokens");
-    }
-    if (prompt.reference_audio_tokens.has_value() &&
-        prompt.reference_audio_tokens->codebooks != impl_->assets->config.num_audio_codebook) {
-        throw std::runtime_error("OmniVoice generator reference audio token codebooks do not match model configuration");
-    }
-    validate_prompt_token_ranges(*impl_->assets, prompt);
+    auto results = generate_items({prompt}, {options}, {&impl_->rng});
+    return std::move(results.front());
+}
 
-    PackedInputs packed = pack_initial_inputs(*impl_->assets, prompt);
-    const int64_t required_total_tokens =
-        packed.style_tokens + packed.text_tokens + packed.reference_frames + packed.target_frames;
+std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::generate_batch(
+    const std::vector<OmniVoicePrompt> & prompts,
+    const std::vector<OmniVoiceGenerationOptions> & options,
+    std::vector<std::mt19937> & rngs) {
+    if (rngs.size() != prompts.size()) {
+        throw std::runtime_error("OmniVoice generator batch needs one RNG per prompt");
+    }
+    std::vector<std::mt19937 *> rng_ptrs;
+    rng_ptrs.reserve(rngs.size());
+    for (auto & rng : rngs) {
+        rng_ptrs.push_back(&rng);
+    }
+    return generate_items(prompts, options, rng_ptrs);
+}
+
+std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::generate_items(
+    const std::vector<OmniVoicePrompt> & prompts,
+    const std::vector<OmniVoiceGenerationOptions> & options,
+    const std::vector<std::mt19937 *> & rngs) {
+    const size_t batch = prompts.size();
+    if (batch == 0) {
+        throw std::runtime_error("OmniVoice generator batch is empty");
+    }
+    if (options.size() != batch || rngs.size() != batch) {
+        throw std::runtime_error("OmniVoice generator batch needs options and an RNG per prompt");
+    }
+    const auto & assets = *impl_->assets;
+    const int64_t codebooks = assets.config.num_audio_codebook;
+    const int64_t vocab_size = assets.config.audio_vocab_size;
+    const int64_t mask_id = assets.config.audio_mask_id;
+
+    // Per-request decoding state. Each request keeps its own schedule, RNG and
+    // accepted tokens; only the forward pass is shared.
+    struct ItemState {
+        std::vector<int64_t> schedule;
+        std::vector<int32_t> accepted;
+        std::vector<size_t> active_indices;
+        int64_t executed_steps = 0;
+    };
+    std::vector<PackedInputs> inputs(batch);
+    std::vector<ItemState> items(batch);
+    std::vector<float> guidance_scales(batch, 0.0F);
+    int64_t required_total_tokens = 0;
+    int64_t required_target_frames = 0;
+    int64_t max_steps = 0;
+    for (size_t item = 0; item < batch; ++item) {
+        const auto & prompt = prompts[item];
+        if (prompt.style_token_ids.empty()) {
+            throw std::runtime_error("OmniVoice generator requires non-empty style tokens");
+        }
+        if (prompt.text_token_ids.empty()) {
+            throw std::runtime_error("OmniVoice generator requires non-empty text tokens");
+        }
+        if (prompt.reference_audio_tokens.has_value() &&
+            prompt.reference_audio_tokens->codebooks != codebooks) {
+            throw std::runtime_error("OmniVoice generator reference audio token codebooks do not match model configuration");
+        }
+        if (rngs[item] == nullptr) {
+            throw std::runtime_error("OmniVoice generator batch RNG is null");
+        }
+        validate_prompt_token_ranges(assets, prompt);
+        inputs[item] = pack_initial_inputs(assets, prompt);
+        auto & state = items[item];
+        const int64_t target_frames = inputs[item].target_frames;
+        state.schedule = make_schedule(
+            codebooks * target_frames,
+            options[item].num_inference_steps,
+            options[item].t_shift);
+        state.accepted.assign(static_cast<size_t>(codebooks * target_frames), static_cast<int32_t>(mask_id));
+        state.active_indices.resize(static_cast<size_t>(codebooks * target_frames));
+        std::iota(state.active_indices.begin(), state.active_indices.end(), 0);
+        update_generated_tokens(inputs[item], assets, state.accepted);
+        guidance_scales[item] = options[item].guidance_scale;
+        required_total_tokens = std::max(required_total_tokens, inputs[item].total_tokens());
+        required_target_frames = std::max(required_target_frames, target_frames);
+        max_steps = std::max(max_steps, options[item].num_inference_steps);
+    }
+    const int64_t batch_size = static_cast<int64_t>(batch);
+
     impl_->last_stats.graph_rebuilt = false;
     impl_->last_stats.rebuild_ms = 0.0;
     impl_->last_stats.rebuild_clear_ms = 0.0;
@@ -1328,12 +1462,7 @@ OmniVoiceGeneratedAudioTokens OmniVoiceQwen3DiffusionRuntime::generate(
     impl_->last_stats.rebuild_init_ms = 0.0;
     const bool needs_rebuild =
         impl_->forward_graph == nullptr ||
-        !impl_->forward_graph->matches(
-            *impl_->runtime,
-            required_total_tokens,
-            packed.target_frames) ||
-        impl_->forward_graph->total_token_capacity() != required_total_tokens ||
-        impl_->forward_graph->target_frame_capacity() != packed.target_frames;
+        !impl_->forward_graph->matches(*impl_->runtime, batch_size, required_total_tokens, required_target_frames);
     if (needs_rebuild) {
         const auto rebuild_start = Clock::now();
         if (impl_->forward_graph == nullptr) {
@@ -1341,18 +1470,20 @@ OmniVoiceGeneratedAudioTokens OmniVoiceQwen3DiffusionRuntime::generate(
                 impl_->forward_graph = std::make_unique<Qwen3DiffusionLayerwiseGraph>(
                     impl_->runtime,
                     impl_->graph_arena_bytes,
+                    batch_size,
                     required_total_tokens,
-                    packed.target_frames);
+                    required_target_frames);
             } else {
                 impl_->forward_graph = std::make_unique<Qwen3DiffusionForwardGraph>(
                     impl_->runtime,
                     impl_->graph_arena_bytes,
+                    batch_size,
                     required_total_tokens,
-                    packed.target_frames,
+                    required_target_frames,
                     impl_->perf_mode);
             }
         } else {
-            impl_->forward_graph->rebuild(required_total_tokens, packed.target_frames);
+            impl_->forward_graph->rebuild(batch_size, required_total_tokens, required_target_frames);
         }
         const auto rebuild_end = Clock::now();
         impl_->last_stats.graph_rebuilt = true;
@@ -1362,199 +1493,252 @@ OmniVoiceGeneratedAudioTokens OmniVoiceQwen3DiffusionRuntime::generate(
         impl_->last_stats.rebuild_alloc_ms = impl_->forward_graph->rebuild_alloc_ms();
         impl_->last_stats.rebuild_init_ms = impl_->forward_graph->rebuild_init_ms();
     }
+    impl_->last_stats.batch_capacity = impl_->forward_graph->batch_capacity();
     impl_->last_stats.total_token_capacity = impl_->forward_graph->total_token_capacity();
     impl_->last_stats.target_frame_capacity = impl_->forward_graph->target_frame_capacity();
+    const int64_t frame_capacity = impl_->forward_graph->target_frame_capacity();
+    const size_t item_logits_stride = static_cast<size_t>(frame_capacity * codebooks * vocab_size);
 
-    const int64_t codebooks = impl_->assets->config.num_audio_codebook;
-    const int64_t vocab_size = impl_->assets->config.audio_vocab_size;
-    const int64_t mask_id = impl_->assets->config.audio_mask_id;
-    const int64_t target_frames = packed.target_frames;
-    const auto schedule = make_schedule(codebooks * target_frames, options.num_inference_steps, options.t_shift);
-    std::vector<int32_t> accepted(static_cast<size_t>(codebooks * target_frames), static_cast<int32_t>(mask_id));
-    std::vector<size_t> active_indices(static_cast<size_t>(codebooks * target_frames), 0);
-    std::iota(active_indices.begin(), active_indices.end(), 0);
-    PackedInputs inference = std::move(packed);
-    update_generated_tokens(inference, *impl_->assets, accepted);
     double upload_ms = 0.0;
     double compute_ms = 0.0;
     double readback_ms = 0.0;
     double scoring_ms = 0.0;
     double update_ms = 0.0;
-    int64_t executed_steps = 0;
     const auto prepare_upload_start = Clock::now();
-    impl_->forward_graph->set_guidance_scale(options.guidance_scale);
-    impl_->forward_graph->prepare_request(inference);
-    const auto prepare_upload_end = Clock::now();
-    upload_ms += engine::debug::elapsed_ms(prepare_upload_start, prepare_upload_end);
-    for (int64_t step = 0; step < options.num_inference_steps; ++step) {
-        const int64_t fill_count = schedule[static_cast<size_t>(step)];
-        if (fill_count <= 0) {
+    impl_->forward_graph->prepare_request(inputs, guidance_scales);
+    upload_ms += engine::debug::elapsed_ms(prepare_upload_start, Clock::now());
+
+    struct Candidate {
+        float score = -std::numeric_limits<float>::infinity();
+        int32_t predicted = 0;
+        size_t index = 0;
+    };
+    struct GreedySlot {
+        size_t item = 0;
+        size_t slot = 0;
+    };
+    std::vector<int64_t> fill_counts(batch, 0);
+    std::vector<std::vector<Candidate>> candidates(batch);
+    std::vector<GreedySlot> greedy_slots;
+    for (int64_t step = 0; step < max_steps; ++step) {
+        bool any_fill = false;
+        for (size_t item = 0; item < batch; ++item) {
+            const auto & state = items[item];
+            fill_counts[item] =
+                step < options[item].num_inference_steps && !state.active_indices.empty()
+                ? state.schedule[static_cast<size_t>(step)]
+                : 0;
+            any_fill = any_fill || fill_counts[item] > 0;
+        }
+        if (!any_fill) {
             continue;
         }
-        ++executed_steps;
 
         const auto & batched_logits = impl_->forward_graph->compute_logits(compute_ms, readback_ms);
-        struct Candidate {
-            float score = -std::numeric_limits<float>::infinity();
-            int32_t predicted = 0;
-            size_t index = 0;
-        };
         const auto scoring_start = Clock::now();
-        std::vector<Candidate> candidates;
-        candidates.reserve(active_indices.size());
-        if (options.class_temperature == 0.0F) {
-            const size_t candidate_slots = active_indices.size();
-            const unsigned desired_threads = static_cast<unsigned>(
-                std::max<int>(1, impl_->runtime->threads()));
+
+        // Greedy-class requests: score every active slot of every request in
+        // one parallel pass. Each candidate lands at its slot position, so a
+        // request sees its candidates in the same order as when run alone.
+        greedy_slots.clear();
+        for (size_t item = 0; item < batch; ++item) {
+            candidates[item].clear();
+            if (fill_counts[item] <= 0 || options[item].class_temperature != 0.0F) {
+                continue;
+            }
+            candidates[item].resize(items[item].active_indices.size());
+            for (size_t slot = 0; slot < items[item].active_indices.size(); ++slot) {
+                greedy_slots.push_back({item, slot});
+            }
+        }
+        if (!greedy_slots.empty()) {
+            const size_t slot_count = greedy_slots.size();
+            const unsigned desired_threads = static_cast<unsigned>(std::max<int>(1, impl_->runtime->threads()));
             const unsigned worker_count = std::min<unsigned>(
                 desired_threads,
-                static_cast<unsigned>(std::max<size_t>(1, candidate_slots)));
-            std::vector<std::vector<Candidate>> staged_candidates(std::max<unsigned>(1, worker_count));
-            std::vector<std::thread> workers;
-            workers.reserve(worker_count > 0 ? worker_count - 1 : 0);
-            auto score_range = [&](unsigned worker_index, size_t begin_index, size_t end_index) {
-                auto & local_candidates = staged_candidates[worker_index];
-                local_candidates.clear();
-                local_candidates.reserve(end_index > begin_index ? end_index - begin_index : 0);
-                std::vector<float> conditional_log_probs;
-                std::vector<float> unconditional_log_probs;
-                std::vector<float> guided_scores;
-                std::vector<float> final_log_probs_storage;
-                for (size_t slot_index = begin_index; slot_index < end_index; ++slot_index) {
-                    const size_t flat_index = active_indices[slot_index];
+                static_cast<unsigned>(std::max<size_t>(1, slot_count)));
+            auto score_range = [&](size_t begin_index, size_t end_index) {
+                for (size_t index = begin_index; index < end_index; ++index) {
+                    const auto [item, slot] = greedy_slots[index];
+                    const auto & state = items[item];
+                    const int64_t target_frames = inputs[item].target_frames;
+                    const size_t flat_index = state.active_indices[slot];
                     const int64_t codebook = static_cast<int64_t>(flat_index / static_cast<size_t>(target_frames));
                     const int64_t frame = static_cast<int64_t>(flat_index % static_cast<size_t>(target_frames));
-                    const size_t conditional_offset = static_cast<size_t>(
-                        frame * codebooks * vocab_size + codebook * vocab_size);
-                    const float * combined_logits = batched_logits.data() + static_cast<std::ptrdiff_t>(conditional_offset);
-                    auto [best_token, best_score] =
-                        best_log_prob_excluding_mask(combined_logits, vocab_size, mask_id);
+                    const size_t offset = item * item_logits_stride +
+                        static_cast<size_t>(frame * codebooks * vocab_size + codebook * vocab_size);
+                    const float * combined_logits = batched_logits.data() + static_cast<std::ptrdiff_t>(offset);
+                    auto [best_token, best_score] = best_log_prob_excluding_mask(combined_logits, vocab_size, mask_id);
                     Candidate candidate;
-                    candidate.score = best_score - static_cast<float>(codebook) * options.layer_penalty_factor;
+                    candidate.score = best_score - static_cast<float>(codebook) * options[item].layer_penalty_factor;
                     candidate.predicted = best_token;
                     candidate.index = flat_index;
-                    local_candidates.push_back(candidate);
+                    candidates[item][slot] = candidate;
                 }
             };
-            const size_t block = (candidate_slots + worker_count - 1) / worker_count;
+            const size_t block = (slot_count + worker_count - 1) / worker_count;
+            std::vector<std::thread> workers;
+            workers.reserve(worker_count > 0 ? worker_count - 1 : 0);
             size_t begin = 0;
             for (unsigned worker = 1; worker < worker_count; ++worker) {
-                const size_t end = std::min(candidate_slots, begin + block);
-                workers.emplace_back(score_range, worker, begin, end);
+                const size_t end = std::min(slot_count, begin + block);
+                workers.emplace_back(score_range, begin, end);
                 begin = end;
             }
-            score_range(0, begin, candidate_slots);
+            score_range(begin, slot_count);
             for (auto & worker : workers) {
                 worker.join();
             }
-            size_t total_candidates = 0;
-            for (const auto & local_candidates : staged_candidates) {
-                total_candidates += local_candidates.size();
-            }
-            candidates.reserve(total_candidates);
-            for (const auto & local_candidates : staged_candidates) {
-                candidates.insert(candidates.end(), local_candidates.begin(), local_candidates.end());
-            }
-            for (auto & candidate : candidates) {
-                if (options.position_temperature > 0.0F) {
+            for (size_t item = 0; item < batch; ++item) {
+                if (fill_counts[item] <= 0 || options[item].class_temperature != 0.0F) {
+                    continue;
+                }
+                // Keep the candidate order of the single-request scorer, which
+                // split the slots into per-thread blocks and listed the last
+                // block first. The position noise below is drawn in this
+                // order, so it decides the result for a given seed.
+                auto & item_candidates = candidates[item];
+                const size_t item_slots = item_candidates.size();
+                const unsigned item_workers = std::min<unsigned>(
+                    desired_threads,
+                    static_cast<unsigned>(std::max<size_t>(1, item_slots)));
+                const size_t item_block = (item_slots + item_workers - 1) / item_workers;
+                size_t last_block_begin = 0;
+                for (unsigned worker = 1; worker < item_workers; ++worker) {
+                    last_block_begin = std::min(item_slots, last_block_begin + item_block);
+                }
+                std::rotate(
+                    item_candidates.begin(),
+                    item_candidates.begin() + static_cast<std::ptrdiff_t>(last_block_begin),
+                    item_candidates.end());
+                if (options[item].position_temperature <= 0.0F) {
+                    continue;
+                }
+                for (auto & candidate : item_candidates) {
                     candidate.score =
-                        gumbel_sample_scalar(candidate.score, options.position_temperature, impl_->rng);
+                        gumbel_sample_scalar(candidate.score, options[item].position_temperature, *rngs[item]);
                 }
             }
-        } else {
-            std::vector<float> conditional_log_probs;
+        }
+
+        // Sampled-class requests draw from their RNG per slot, so they are
+        // scored one request at a time.
+        for (size_t item = 0; item < batch; ++item) {
+            if (fill_counts[item] <= 0 || options[item].class_temperature == 0.0F) {
+                continue;
+            }
+            const auto & state = items[item];
+            const auto & option = options[item];
+            const int64_t target_frames = inputs[item].target_frames;
             std::vector<float> combined_log_probs;
-            for (const size_t token_index : active_indices) {
+            candidates[item].reserve(state.active_indices.size());
+            for (const size_t token_index : state.active_indices) {
                 const int64_t codebook = static_cast<int64_t>(token_index / static_cast<size_t>(target_frames));
                 const int64_t frame = static_cast<int64_t>(token_index % static_cast<size_t>(target_frames));
-                const size_t conditional_offset = static_cast<size_t>(
-                    frame * codebooks * vocab_size + codebook * vocab_size);
-                const float * combined_logits = batched_logits.data() + static_cast<std::ptrdiff_t>(conditional_offset);
+                const size_t offset = item * item_logits_stride +
+                    static_cast<size_t>(frame * codebooks * vocab_size + codebook * vocab_size);
+                const float * combined_logits = batched_logits.data() + static_cast<std::ptrdiff_t>(offset);
                 log_softmax_into(combined_logits, vocab_size, combined_log_probs);
                 auto [best_token, best_score] =
                     argmax_with_value_excluding_mask(combined_log_probs.data(), vocab_size, mask_id);
                 Candidate candidate;
                 candidate.index = token_index;
                 candidate.predicted =
-                    sample_class(combined_log_probs.data(), vocab_size, options.class_temperature, mask_id, impl_->rng);
-                candidate.score = best_score -
-                    static_cast<float>(codebook) * options.layer_penalty_factor;
-                if (options.position_temperature > 0.0F) {
-                    candidate.score =
-                        gumbel_sample_scalar(candidate.score, options.position_temperature, impl_->rng);
+                    sample_class(combined_log_probs.data(), vocab_size, option.class_temperature, mask_id, *rngs[item]);
+                candidate.score = best_score - static_cast<float>(codebook) * option.layer_penalty_factor;
+                if (option.position_temperature > 0.0F) {
+                    candidate.score = gumbel_sample_scalar(candidate.score, option.position_temperature, *rngs[item]);
                 }
-                candidates.push_back(candidate);
+                candidates[item].push_back(candidate);
             }
         }
-        if (candidates.empty()) {
-            break;
-        }
-        const int64_t actual_fill = std::min<int64_t>(fill_count, static_cast<int64_t>(candidates.size()));
+
         const auto candidate_order = [](const Candidate & lhs, const Candidate & rhs) {
             if (lhs.score != rhs.score) {
                 return lhs.score > rhs.score;
             }
             return lhs.index < rhs.index;
         };
-        if (actual_fill < static_cast<int64_t>(candidates.size())) {
-            auto top_end = candidates.begin() + actual_fill;
-            std::nth_element(candidates.begin(), top_end, candidates.end(), candidate_order);
-            std::sort(candidates.begin(), top_end, candidate_order);
-        } else {
-            std::sort(candidates.begin(), candidates.end(), candidate_order);
+        for (size_t item = 0; item < batch; ++item) {
+            auto & item_candidates = candidates[item];
+            if (fill_counts[item] <= 0 || item_candidates.empty()) {
+                continue;
+            }
+            ++items[item].executed_steps;
+            const int64_t actual_fill = std::min<int64_t>(fill_counts[item], static_cast<int64_t>(item_candidates.size()));
+            if (actual_fill < static_cast<int64_t>(item_candidates.size())) {
+                auto top_end = item_candidates.begin() + actual_fill;
+                std::nth_element(item_candidates.begin(), top_end, item_candidates.end(), candidate_order);
+                std::sort(item_candidates.begin(), top_end, candidate_order);
+            } else {
+                std::sort(item_candidates.begin(), item_candidates.end(), candidate_order);
+            }
         }
         const auto scoring_end = Clock::now();
         scoring_ms += engine::debug::elapsed_ms(scoring_start, scoring_end);
+
         const auto update_start = Clock::now();
-        for (int64_t i = 0; i < actual_fill; ++i) {
-            const auto & candidate = candidates[static_cast<size_t>(i)];
-            accepted[candidate.index] = candidate.predicted;
+        for (size_t item = 0; item < batch; ++item) {
+            auto & item_candidates = candidates[item];
+            if (fill_counts[item] <= 0 || item_candidates.empty()) {
+                continue;
+            }
+            auto & state = items[item];
+            const int64_t actual_fill = std::min<int64_t>(fill_counts[item], static_cast<int64_t>(item_candidates.size()));
+            for (int64_t i = 0; i < actual_fill; ++i) {
+                const auto & candidate = item_candidates[static_cast<size_t>(i)];
+                state.accepted[candidate.index] = candidate.predicted;
+            }
+            update_generated_tokens(inputs[item], assets, state.accepted);
+            state.active_indices.erase(
+                std::remove_if(
+                    state.active_indices.begin(),
+                    state.active_indices.end(),
+                    [&](size_t flat_index) { return state.accepted[flat_index] != static_cast<int32_t>(mask_id); }),
+                state.active_indices.end());
         }
-        update_generated_tokens(inference, *impl_->assets, accepted);
         const auto upload_start = Clock::now();
-        impl_->forward_graph->update_generated_target_tokens(inference);
+        impl_->forward_graph->update_generated_target_tokens(inputs);
         const auto upload_end = Clock::now();
         upload_ms += engine::debug::elapsed_ms(upload_start, upload_end);
-        active_indices.erase(
-            std::remove_if(
-                active_indices.begin(),
-                active_indices.end(),
-                [&](size_t flat_index) { return accepted[flat_index] != static_cast<int32_t>(mask_id); }),
-            active_indices.end());
-        const auto update_end = Clock::now();
-        update_ms += engine::debug::elapsed_ms(update_start, update_end);
+        update_ms += engine::debug::elapsed_ms(update_start, upload_end);
     }
 
-    for (int32_t token : accepted) {
-        if (token == static_cast<int32_t>(mask_id)) {
-            throw std::runtime_error("OmniVoice generator left masked tokens after iterative decoding");
+    std::vector<OmniVoiceGeneratedAudioTokens> outputs(batch);
+    for (size_t item = 0; item < batch; ++item) {
+        const auto & state = items[item];
+        for (int32_t token : state.accepted) {
+            if (token == static_cast<int32_t>(mask_id)) {
+                throw std::runtime_error("OmniVoice generator left masked tokens after iterative decoding");
+            }
+        }
+        const int64_t target_frames = inputs[item].target_frames;
+        auto & out = outputs[item];
+        out.frames = target_frames;
+        out.codebooks = codebooks;
+        out.graph_rebuilt = impl_->last_stats.graph_rebuilt;
+        out.graph_total_token_capacity = impl_->last_stats.total_token_capacity;
+        out.graph_target_frame_capacity = impl_->last_stats.target_frame_capacity;
+        // Timings cover the whole batch: every request shares the passes.
+        out.forward_ms = upload_ms + compute_ms + readback_ms;
+        out.upload_ms = upload_ms;
+        out.compute_ms = compute_ms;
+        out.readback_ms = readback_ms;
+        out.scoring_ms = scoring_ms;
+        out.update_ms = update_ms;
+        out.decode_steps = state.executed_steps;
+        out.token_ids.resize(static_cast<size_t>(target_frames * codebooks), 0);
+        for (int64_t frame = 0; frame < target_frames; ++frame) {
+            for (int64_t codebook = 0; codebook < codebooks; ++codebook) {
+                out.token_ids[static_cast<size_t>(frame * codebooks + codebook)] =
+                    state.accepted[static_cast<size_t>(codebook * target_frames + frame)];
+            }
         }
     }
-
-    OmniVoiceGeneratedAudioTokens out;
-    out.frames = target_frames;
-    out.codebooks = codebooks;
-    out.graph_rebuilt = impl_->last_stats.graph_rebuilt;
-    out.graph_total_token_capacity = impl_->last_stats.total_token_capacity;
-    out.graph_target_frame_capacity = impl_->last_stats.target_frame_capacity;
-    out.forward_ms = upload_ms + compute_ms + readback_ms;
-    out.upload_ms = upload_ms;
-    out.compute_ms = compute_ms;
-    out.readback_ms = readback_ms;
-    out.scoring_ms = scoring_ms;
-    out.update_ms = update_ms;
-    out.decode_steps = executed_steps;
-    out.token_ids.resize(static_cast<size_t>(target_frames * codebooks), 0);
-    for (int64_t frame = 0; frame < target_frames; ++frame) {
-        for (int64_t codebook = 0; codebook < codebooks; ++codebook) {
-            out.token_ids[static_cast<size_t>(frame * codebooks + codebook)] =
-                accepted[static_cast<size_t>(codebook * target_frames + frame)];
-        }
-    }
-    impl_->last_stats.upload_ms = out.upload_ms;
-    impl_->last_stats.compute_ms = out.compute_ms;
-    impl_->last_stats.readback_ms = out.readback_ms;
-    return out;
+    impl_->last_stats.upload_ms = upload_ms;
+    impl_->last_stats.compute_ms = compute_ms;
+    impl_->last_stats.readback_ms = readback_ms;
+    return outputs;
 }
 
 }  // namespace engine::models::omnivoice
