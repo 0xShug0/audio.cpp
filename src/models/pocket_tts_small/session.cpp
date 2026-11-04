@@ -597,13 +597,19 @@ SessionConfig Session::resolve_config() const {
         default_mode,
         {"pocket_tts_small.offline_graph_capacity_mode", "graph_capacity_mode"});
     SessionConfig config;
+    const auto plan = runtime::parse_exec_plan(options().options, "pocket_tts_small.exec_plan",
+        {{"flow", "ggml", {{"ggml", {execution_context().backend_type()}, {}, {}, {}},
+            {"native", {core::BackendType::Cpu}, {}, {}, {"threads"}}}}});
+    const auto & flow = plan.at("flow");
+    config.native_flow = flow.impl == "native";
     if (const auto value = runtime::find_option(options().options, {"pocket_tts_small.kv_cache_type"})) {
         if (*value != "f32" && *value != "f16") throw std::runtime_error("pocket_tts_small.kv_cache_type must be f32 or f16");
         config.kv_cache_type = *value == "f16" ? GGML_TYPE_F16 : GGML_TYPE_F32;
     }
-    auto attention = core::AttentionPreference::Eager;
+    auto attention = core::AttentionPreference::Auto;
     if (const auto value = runtime::find_option(options().options, {"pocket_tts_small.attention"}))
         attention = core::parse_attention_preference(*value, "pocket_tts_small.attention");
+    if (config.native_flow && attention == core::AttentionPreference::Auto) attention = core::AttentionPreference::Eager;
     config.flash_attention = core::resolve_flash_attention(execution_context().backend(),
         manifest_->model_config.flow_attention_dim / manifest_->model_config.flow_heads, attention);
     debug::trace_log_scalar("pocket_tts_small.attention", std::string_view(config.flash_attention ? "flash" : "eager"));
@@ -683,11 +689,6 @@ SessionConfig Session::resolve_config() const {
         config.conv_weight_storage_type = assets::parse_tensor_storage_type(*weight_type);
         validate_conv_weight_storage(config.conv_weight_storage_type, "pocket_tts_small.conv_weight_type");
     }
-    const auto plan = runtime::parse_exec_plan(options().options, "pocket_tts_small.exec_plan",
-        {{"flow", "ggml", {{"ggml", {execution_context().backend_type()}, {}, {}, {}},
-            {"native", {core::BackendType::Cpu}, {}, {}, {"threads"}}}}});
-    const auto & flow = plan.at("flow");
-    config.native_flow = flow.impl == "native";
     if (config.native_flow) {
         if (config.kv_cache_type != GGML_TYPE_F32 || config.flash_attention)
             throw std::runtime_error("Native FlowLM requires eager attention and f32 KV cache storage");
@@ -1072,6 +1073,7 @@ bool Session::start_next_stream_text_chunk() {
         capacities.generation_capacity,
         runtime_config_.flow_weights_view_context_bytes,
         runtime_config_.flow_step_graph_context_bytes);
+    audio_decoder_.reset_streaming_state();
     stream_acoustic_state_ = acoustic_model_.start_stream(
         acoustic_runtime,
         *manifest_,

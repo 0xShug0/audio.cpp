@@ -66,8 +66,8 @@ The checkpoints come from [Kyutai PocketTTS](https://huggingface.co/kyutai/pocke
 and use the CC-BY-4.0 license. The implementation follows upstream revision
 [`4cc57533`](https://github.com/kyutai-labs/pocket-tts/tree/4cc5753319ceddc5cbf70598d9011f1f22858ba0).
 
-On CPU, offline synthesis uses cached causal decoder windows by default; GPU
-backends use full-sequence decoding. `--session-option pocket_tts_small.use_full_mimi=true`
+Offline synthesis uses bounded causal blocks of four latent frames by default
+on every backend. `--session-option pocket_tts_small.use_full_mimi=true`
 selects full-sequence decoding explicitly.
 
 ## Experimental native CPU flow
@@ -115,7 +115,7 @@ batch-size-one runtime; C++ callers use the batch interface to group requests.
 
 `pocket_tts_small.attention` (`auto`, `eager`, or `flash`) and
 `pocket_tts_small.kv_cache_type` (`f32` or `f16`) independently control acoustic
-attention and KV storage. Defaults are eager attention and F32 KV storage.
+attention and KV storage. Defaults are automatic attention selection and F32 KV storage.
 These session options apply equally to ordinary, streaming, and batched GGML
 generation. Native CPU flow requires eager attention and F32 state.
 

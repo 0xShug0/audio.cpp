@@ -96,3 +96,11 @@ batch graph. This check is outside the measured pass. Run measurements sequentia
 `--session-options` accepts a JSON object of existing session controls for
 capacity-policy checks. The generic per-row RoPE check belongs to the existing
 `encoder_module_test`; it requires no model weights.
+
+For streaming validation, add `--mode streaming --batch-size 1`. The test uses
+the same application streaming runner as the CLI/server. It records
+`session.ttfa_ms` at the first nonempty audio event, measured from request start
+(after initial model/voice preparation), and checks that incremental audio events
+concatenate exactly to the final WAV. Request indices and warmup/measured-pass
+markers distinguish the first request from warmed requests. WAV writing is
+outside request timing. Streaming batching is not supported.

@@ -112,7 +112,7 @@
           "eager",
           "flash"
         ],
-        "default": "eager"
+        "default": "auto"
       },
       {
         "name": "kv_cache_type",
