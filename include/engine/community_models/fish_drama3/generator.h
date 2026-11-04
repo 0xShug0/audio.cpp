@@ -31,7 +31,8 @@ public:
     void warm_streaming_codec(const codecs::FishDacCodes & reference);
     Drama3Generation generate(const std::string & text, const std::vector<Drama3Take> & references,
         const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
-        const std::function<void(const runtime::AudioBuffer &)> & on_audio = {}, bool continuation = false);
+        const std::function<void(const runtime::AudioBuffer &)> & on_audio = {}, bool continuation = false,
+        const std::vector<Drama3Take> & generated_history = {});
 
 private:
     std::shared_ptr<const Drama3Assets> assets_;

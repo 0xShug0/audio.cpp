@@ -213,8 +213,6 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
     for (size_t index = 0; index < chunks.size(); ++index) {
         auto chunk_sampling = sampling;
         chunk_sampling.seed += static_cast<uint32_t>(index);
-        auto context = history;
-        if (!generated_takes.empty()) context.push_back(generated_takes.back());
         std::function<void(const runtime::AudioBuffer &)> callback;
         if (streaming && stream_event_sink()) {
             callback = [&](const runtime::AudioBuffer & audio) {
@@ -224,7 +222,7 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
             };
         }
         const auto & text = chunks[index].text_input->text;
-        auto generated = generator_->generate(text, references, context, chunk_sampling, streaming, callback, index > 0);
+        auto generated = generator_->generate(text, references, history, chunk_sampling, streaming, callback, index > 0, generated_takes);
         runtime::append_audio_buffer(merged, generated.audio);
         limited = limited || generated.reached_limit;
         generated_takes.push_back({text, std::move(generated.codes)});

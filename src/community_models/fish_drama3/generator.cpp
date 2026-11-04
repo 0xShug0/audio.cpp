@@ -224,7 +224,8 @@ void Drama3Generator::warm_streaming_codec(const codecs::FishDacCodes & referenc
 
 Drama3Generation Drama3Generator::generate(const std::string & text, const std::vector<Drama3Take> & references,
     const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
-    const std::function<void(const runtime::AudioBuffer &)> & on_audio, bool continuation) {
+    const std::function<void(const runtime::AudioBuffer &)> & on_audio, bool continuation,
+    const std::vector<Drama3Take> & generated_history) {
     if (!std::isfinite(sampling.temperature) || sampling.temperature < 0 ||
         !std::isfinite(sampling.top_p) || sampling.top_p <= 0 || sampling.top_p > 1 ||
         sampling.top_k <= 0 || sampling.max_frames <= 0) throw runtime::InvalidRequestError("invalid Drama 3 sampling parameters");
@@ -240,10 +241,14 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         first_audio_phases.emplace_back(name, std::chrono::duration<double, std::milli>(now - profile_marked).count());
         profile_marked = now;
     };
-    const auto prompt = build_drama3_prompt(*assets_, tokenizer_, text, references, history);
-    if (sampling.max_frames > cache_steps_ ||
-        prompt.size() > static_cast<size_t>(cache_steps_ - sampling.max_frames)) {
-        throw runtime::CapacityError("Drama 3 prompt plus max_tokens exceeds fish_drama3.context_length; increase it or shorten history");
+    const auto prompt = build_drama3_prompt(*assets_, tokenizer_, text, references, history,
+        generated_history, static_cast<size_t>(cache_steps_ - 1));
+    const auto max_frames = std::min(sampling.max_frames, cache_steps_ - static_cast<int64_t>(prompt.size()));
+    debug::trace_log_scalar("drama3.prompt_rows", prompt.size());
+    debug::trace_log_scalar("drama3.generation_budget", max_frames);
+    if (max_frames < sampling.max_frames) {
+        std::cerr << "[fish_drama3] max_tokens reduced from " << sampling.max_frames << " to " << max_frames
+                  << " to fit fish_drama3.context_length after " << prompt.size() << " prompt rows\n";
     }
     auto & decoder = decoder_;
     // A continuation may extend the exact frames already evaluated. Never
@@ -369,7 +374,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
             }
         });
     }
-    for (int64_t step = 0; step < sampling.max_frames; ++step) {
+    for (int64_t step = 0; step < max_frames; ++step) {
         component_started = ProfileClock::now();
         auto logits = backbone_->lm_head(hidden);
         component_ms[4] += debug::elapsed_ms(component_started);
@@ -431,7 +436,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
                 streaming_audio_.push({next.begin() + 1, next.end()});
             }
         }
-        if (step + 1 == sampling.max_frames) { result.reached_limit = true; break; }
+        if (step + 1 == max_frames) { result.reached_limit = true; break; }
         current = next;
         component_started = ProfileClock::now();
         auto embedding = backbone_->token_embedding({current[0]});
@@ -479,7 +484,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         "drama3.backbone_step_ms", "drama3.codec_ms"};
     for (size_t i = 0; i < component_ms.size(); ++i) debug::timing_log_scalar(component_keys[i], component_ms[i]);
     debug::timing_log_scalar("drama3.generated_frames", output_frames.size());
-    if (result.reached_limit) std::cerr << "[fish_drama3] max_tokens reached; audio may be incomplete\n";
+    if (result.reached_limit) std::cerr << "[fish_drama3] generation budget reached; audio may be incomplete\n";
     return result;
 }
 
