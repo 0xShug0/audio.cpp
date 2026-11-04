@@ -230,6 +230,9 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
         limited = limited || generated.reached_limit;
         generated_takes.push_back({text, std::move(generated.codes)});
     }
+    if (generated_takes.empty()) {
+        throw std::runtime_error("Drama 3 produced no audio: all text chunks were empty");
+    }
     Drama3Take take{effective.text_input->text, join_codes(generated_takes)};
     result.output_artifacts.push_back(runtime::make_text_artifact(runtime::ArtifactKind::AcousticTokens,
         "drama3_take", json::stringify(take_json(take)), {{"family", "fish_drama3"}, {"schema", "drama3_take_v1"}}));
