@@ -9459,6 +9459,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     test_cases.emplace_back(new test_argsort(GGML_TYPE_F32, {200000, 1,  1, 1}));
     test_cases.emplace_back(new test_argsort(GGML_TYPE_F32, {200000, 16, 1, 1}));
 
+    // Independent perf cases using upsampling layer shapes from the Drama 3 audio codec decoder.
+    test_cases.emplace_back(new test_conv_transpose_1d({16,   1536, 1, 1}, {16, 768, 1536, 1}, 8, 0, 1));
+    test_cases.emplace_back(new test_conv_transpose_1d({128,  768,  1, 1}, {16, 384, 768,  1}, 8, 0, 1));
+    test_cases.emplace_back(new test_conv_transpose_1d({1024, 384,  1, 1}, {8,  192, 384,  1}, 4, 0, 1));
+    test_cases.emplace_back(new test_conv_transpose_1d({4096, 192,  1, 1}, {4,  96,  192,  1}, 2, 0, 1));
+
     test_cases.emplace_back(new test_top_k(GGML_TYPE_F32, {2, 1, 1, 1}, 1));
     for (auto k : {1, 10, 40, 400}) {
         for (auto nrows : {1, 16}) {
