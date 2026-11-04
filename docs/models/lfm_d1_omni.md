@@ -31,6 +31,42 @@ The result is an `audio_decisions` custom-schema output containing `answers`
 and `usage`. Answer names match the input question names. `output_tokens` is
 zero because the model reads answer slots rather than generating tokens.
 
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `lfm_d1_omni` |
+| Tasks | `classify` |
+| Modes | `offline` |
+| Languages | `en`, `ar`, `zh`, `fr`, `de`, `it`, `ja`, `ko`, `pt`, `es`, `ru`, `pl` |
+| Default package | `lfm_d1_omni_2b_q8_0` |
+| Input | Audio recording and named questions |
+| Output | JSON audio decisions |
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--audio` | Input audio, where required by the selected task. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `questions` | `string` | Required | JSON object mapping question names to typed questions, in input order. |
+| `set_size` | `int` | `16` | Questions packed together per forward pass. Larger sets may affect accuracy. Declared range: minimum 1. |
+| `score_readout` | `median`, `mean`, `mode` | `median` | How ordered score probabilities are reduced to a score. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `lfm_d1_omni.attention` | `auto`, `flash`, `eager` | `auto` | Attention lowering for the audio encoder and decoder. |
+
 ## Questions
 
 `questions` is a JSON object whose insertion order is preserved, including the
@@ -59,24 +95,6 @@ The model has no temperature or token-generation request options.
 The `lfm_d1_omni.attention` session option accepts `auto` (default), `flash`, or
 `eager`. The audio frontend resamples to 16 kHz and follows upstream's log-mel
 and normalization recipe. It does not silently truncate long recordings.
-
-## Component boundaries
-
-The model owns GGUF metadata and tensor binding, audio preprocessing, question
-rendering and packing, visibility masks, calibration, and answer interpretation.
-Backend weights remain session-owned through the existing `BackendWeightStore`.
-
-The framework's `Lfm3AudioEncoderRuntime` accepts prepared mel features and resolved
-weights, caches its downsampler/encoder/projector graphs, and returns borrowed
-device embeddings. `LfmDecoderRuntime` consumes those rows through modality-neutral
-embedding replacements. It caches full-sequence graphs and creates independent
-causal decode sessions. Each session owns its KV and short-convolution state,
-prefill/step graphs, and scratch allocation. Releasing scratch preserves state;
-resetting the stream clears it. Checkpoint loading and generation policy remain
-outside both runtimes.
-
-D1 uses only independent full-sequence execution with its explicit visibility
-masks. It does not enable an autoregressive cache or speech generation.
 
 ## License
 

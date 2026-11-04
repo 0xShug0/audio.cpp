@@ -80,7 +80,7 @@ same voices over these eight distinct turns, with 250 ms after each:
 7. Our train was delayed by twenty minutes, so we read the notice board and waited on platform six.
 8. Before going home, please check that the kitchen window is closed and the blue bicycle is locked.
 
-Use the [model guide](nemotron_transcribe.md) to build and package the pinned
+Use the [model guide](../models/nemotron_transcribe.md) to build and package the pinned
 weights. A CLI transcription with timestamps uses:
 
 ```sh
@@ -154,7 +154,7 @@ regression, model-spec schema, silence/window policy, and GGUF package round-tri
 
 Full-model Metal/Vulkan, actual hour-long inference, broader multilingual quality
 and a held-out accuracy benchmark remain untested. The current public packages
-and conversion recipes are linked from the [model guide](nemotron_transcribe.md).
+and conversion recipes are linked from the [model guide](../models/nemotron_transcribe.md).
 
 ## Follow-up compatibility audit
 

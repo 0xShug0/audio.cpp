@@ -248,7 +248,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/models/parakeet_tdt.md#phonon-2"
+      "docs/models/phonon2_asr.md"
     ]
   },
   "sources": [

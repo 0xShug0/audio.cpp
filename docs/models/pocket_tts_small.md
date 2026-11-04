@@ -29,26 +29,6 @@ configuration and tokenizer resolved through sidecars, or a Safetensors source
 containing `model.safetensors`, `config.yaml`, and `tokenizer.model` at the
 model root, with predefined voices under `embeddings/`. The six managed packages use GGUF.
 
-## Controls
-
-The request controls match PocketTTS: `frames_after_eos`, `max_frames`,
-`text_chunk_tokens`, `temperature`, `seed`, `noise_clamp`, `eos_threshold`,
-`noise_file`, `voice_embedding_file`, `truncate_clone_audio`, `text_chunk_size`,
-and `export_voice_state_file`. Defaults and ranges are recorded in
-[`model_specs/pocket_tts_small.json`](../../model_specs/pocket_tts_small.json).
-
-Session controls use the `pocket_tts_small.` namespace, including
-`pocket_tts_small.weight_type`, `pocket_tts_small.voice_state_cache_slots`,
-`pocket_tts_small.offline_graph_capacity_mode`, and the corresponding PocketTTS
-flow/Mimi storage and graph capacity controls. Use `--session-option name=value`
-for session controls and `--request-option name=value` for request controls.
-There are no public family or option aliases and no language load selector;
-these packages are English.
-
-Select `--family pocket_tts_small`, `--task tts` for a predefined voice or
-`--task clon` with speaker reference audio. Both tasks accept `--mode offline`
-and `--mode streaming`. Enable `--log` and save the log when running either mode.
-
 ## Quick start
 
 ```sh
@@ -69,6 +49,77 @@ and use the CC-BY-4.0 license. The implementation follows upstream revision
 Offline synthesis uses bounded causal blocks of four latent frames by default
 on every backend. `--session-option pocket_tts_small.use_full_mimi=true`
 selects full-sequence decoding explicitly.
+
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `pocket_tts_small` |
+| Tasks | `tts`, `clon` |
+| Modes | `offline`, `streaming` |
+| Languages | `en` |
+| Default package | `pocket_tts_small_english_18m_refl_f32` |
+| Input | Text; voice conditioning as shown in the examples |
+| Output | Generated speech audio |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--text` | Input text; see the examples for the expected prompt format. |
+| `--voice-ref` | Reference audio for voice cloning. |
+| `--out` | Output WAV file. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `frames_after_eos` | `int` | `-1` | Extra frames after EOS; -1 uses the model-derived value. Declared range: minimum -1. |
+| `max_frames` | `int` | `0` | Maximum generated audio frames; zero estimates the cap from text length. Captured during session preparation. Declared range: minimum 0. |
+| `text_chunk_tokens` | `int` | `50` | Tokenizer tokens per text chunk; must be positive, default 50. Set during preparation and overridable per request. Declared range: minimum 1. |
+| `temperature` | `float` | Model/session default | Positive flow noise temperature; defaults to the model configuration. Captured during session preparation. |
+| `seed` | `int` | Model/session default | Noise seed; omitted chooses a random seed. Captured during session preparation. Declared range: minimum 0, maximum 4294967295. |
+| `noise_clamp` | `float` | `-1` | Noise clamp; a negative value disables clamping. Captured during session preparation. |
+| `eos_threshold` | `float` | `-1` | EOS detection threshold; defaults to the checkpoint recommendation. |
+| `noise_file` | `path` | Model/session default | Precomputed noise schedule file. Captured during session preparation. |
+| `voice_embedding_file` | `path` | Model/session default | Precomputed voice-state embedding path. Captured during session preparation. |
+| `truncate_clone_audio` | `bool` | `false` | Truncate voice clone audio. Captured during session preparation. |
+| `text_chunk_size` | `int` | Model/session default | Optional per-request character chunk size; otherwise use sentence/token budgeting. |
+| `export_voice_state_file` | `path` | Model/session default | Export the prepared voice state during session preparation. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `pocket_tts_small.attention` | `auto`, `eager`, `flash` | `auto` | GGML acoustic attention implementation. |
+| `pocket_tts_small.kv_cache_type` | `f32`, `f16` | `f32` | GGML acoustic KV cache storage. Native CPU flow requires f32. |
+| `pocket_tts_small.voice_state_cache_slots` | `int` | `4` | Cached prepared voice states; zero disables reuse. Declared range: minimum 0. |
+| `pocket_tts_small.offline_graph_capacity_mode` | `fixed`, `double`, `tiered`, `grow` | Model/session default | Offline graph capacity policy; CPU/Metal default tiered, other backends double. |
+| `pocket_tts_small.prompt_graph_capacity` | `int` | Model/session default | Optional reserved prompt capacity. Declared range: minimum 1. |
+| `pocket_tts_small.generation_graph_capacity` | `int` | Model/session default | Optional reserved generation capacity. Declared range: minimum 1. |
+| `pocket_tts_small.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | Model/session default | Shared matmul weight storage; component matmul settings inherit it. Convolution storage remains independently native unless overridden. |
+| `pocket_tts_small.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage. |
+| `pocket_tts_small.weight_context_mb` | `int` | `64` | Context or graph arena size in MiB. Declared range: minimum 1. |
+| `pocket_tts_small.flow_weight_context_mb` | `int` | Model/session default | Flow weight context in MiB; inherits pocket_tts_small.weight_context_mb when omitted. Declared range: minimum 1. |
+| `pocket_tts_small.mimi_encoder_weight_context_mb` | `int` | Model/session default | Mimi encoder weight context in MiB; inherits pocket_tts_small.weight_context_mb when omitted. Declared range: minimum 1. |
+| `pocket_tts_small.mimi_decoder_weight_context_mb` | `int` | Model/session default | Mimi decoder weight context in MiB; inherits pocket_tts_small.weight_context_mb when omitted. Declared range: minimum 1. |
+| `pocket_tts_small.flow_weights_view_context_mb` | `int` | `256` | Context or graph arena size in MiB. Declared range: minimum 1. |
+| `pocket_tts_small.flow_step_graph_arena_mb` | `int` | `256` | Flow-step host graph-metadata arena size in MiB, not device workspace. Declared range: minimum 1. |
+| `pocket_tts_small.mimi_encoder_graph_arena_mb` | `int` | `512` | Mimi encoder host graph-metadata arena size in MiB, not device workspace. Declared range: minimum 1. |
+| `pocket_tts_small.mimi_conv_graph_arena_mb` | `int` | `32` | Mimi convolution host graph-metadata arena size in MiB, not device workspace. Declared range: minimum 1. |
+| `pocket_tts_small.mimi_transformer_graph_arena_mb` | `int` | `96` | Mimi transformer host graph-metadata arena size in MiB, not device workspace. Declared range: minimum 1. |
+| `pocket_tts_small.mimi_tail_graph_arena_mb` | `int` | `512` | Mimi tail host graph-metadata arena size in MiB, not device workspace. Declared range: minimum 1. |
+| `pocket_tts_small.mimi_chunk_frames` | `int` | `4` | Latent frames per bounded causal waveform-decoder block. Declared range: minimum 1. |
+| `pocket_tts_small.mimi_stage2_chunk_frames` | `int` | `900` | Second-stage decoder chunk frames. Declared range: minimum 1. |
+| `pocket_tts_small.use_full_mimi` | `bool` | `false` | Use a full-utterance waveform graph instead of bounded causal blocks. This can use more device memory. |
+| `pocket_tts_small.exec_plan` | `string` | Model/session default | Component execution plan. Flow defaults to ggml; native is an experimental CPU F32 implementation with an optional threads parameter. |
 
 ## Experimental native CPU flow
 

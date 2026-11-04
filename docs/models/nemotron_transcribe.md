@@ -59,6 +59,139 @@ chosen decoder file as the model path, rather than the directory containing
 multiple GGUFs. Specs, configs, tokenizer and license notices are embedded.
 The repository also contains readable licenses and a per-tensor format inventory.
 
+## Run
+
+```sh
+build/nemotron/bin/audiocpp_cli --task asr --family nemotron_transcribe \
+  --model models/audiocpp/nemotron-transcribe-iq4_nl.gguf \
+  --backend cuda --audio recording.wav --text-out transcript.txt
+```
+
+Use 16 kHz mono WAV for matched comparisons. Other PCM rates and channel counts
+are averaged to mono and resampled inside this model, using the framework's
+Soxr helper with its linear fallback. The shared CLI/server loaders are unchanged.
+Matched 16 kHz mono inputs pass through without resampling.
+
+Pass each task option with `--request-option key=value`:
+
+| Task | Options |
+| --- | --- |
+| Transcription | Default; optionally `language=ja` |
+| Translation | `template_name=translation`, `target_language=English` |
+| Audio Q&A | `template_name=audio_qa`, `instruct=What is discussed in this recording?` |
+| Language identification | `template_name=language_id` |
+| Word timestamps | `return_timestamps=true` |
+| Speaker-tagged transcription and timings | `diarization=true` |
+
+For the built-in transcription instructions, `language` is a source-language
+hint. Common short and regional tags such as `zh`, `zh-CN` and `ZH_cn` resolve
+to the same language name; custom names such as `Mandarin` are passed through.
+The hint does not force the decoder's output language, and long recordings can
+still produce translations instead of transcripts.
+
+The built-in speaker instruction requests no punctuation or capitalization,
+matching the reference's trained speaker prompt. To request punctuation as well
+as speaker tags, supply an explicit `instruct` that asks for both.
+
+`instruct` replaces the template instruction, including its language hint and
+speaker-tag request. `--text` supplies the instruction when `instruct` is absent.
+Response formatting is preserved. Translation and Q&A templates reject timestamps
+and diarization because their output need not match the source words.
+
+Generation is greedy by default. `max_tokens` overrides the checkpoint setting or
+the native duration budget `max(24, ceil(6 * seconds - 1e-9) + 24)`. Prompt, audio
+and output must fit `nemotron_transcribe.max_context`, default 73,728. The custom
+result records token-limit termination. Sampling options are in the model spec.
+
+Optional `--request-option repetition_guard=true` stops short token loops or sustained
+replay using NVIDIA NeMo-Speech.cpp's repetition guard. It leaves sampling unchanged
+and reports `termination: "repetition_detected"` in the custom result, rather than
+claiming EOS. The partial transcript is retained. This limits runaway generation;
+it does not correct wrong-language output or recover missing speech. The default
+is `false` because legitimate repeated speech can trigger the guard. Guard state
+is local to each generation and is not carried between requests.
+
+The server accepts the same options in JSON at `/v1/audio/transcriptions`.
+Use `/v1/audio/transcriptions/details` for word timestamps and speaker turns.
+The generic `/v1/tasks/run` route also returns `custom_schema_output`, including
+termination and alignment diagnostics. Multipart WAV uploads support the ordinary transcription fields;
+use JSON `options` for task templates, questions and timestamp requests. For example:
+
+```json
+{"model":"nemotron","audio":"recording.wav","options":{"template_name":"audio_qa","instruct":"What is discussed in this recording?"}}
+```
+
+Replace `nemotron` with the configured server model ID. The JSON audio path is
+local to the server. Invalid request options return a client error, including
+when the recording is silent. `top_p=0` keeps the highest-ranked candidate.
+
+The native silence gate returns empty text only when peak amplitude is below
+0.001 and RMS is below 0.00003. It does not trim audio or repair generated text.
+
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `nemotron_transcribe` |
+| Tasks | `asr` |
+| Modes | `offline` |
+| Languages | `auto` |
+| Default package | `nemotron_transcribe_iq4_nl` |
+| Input | Speech audio |
+| Output | Transcript text, with optional word timestamps and speaker turns |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--audio` | Input audio, where required by the selected task. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `instruct` | `string` | Model/session default | Audio instruction or question. Replaces the template instruction; defaults to text_input when present. Chat controls and audio locators are rejected. |
+| `template_name` | `default`, `translation`, `audio_qa`, `language_id` | `default` | Instruction template. Audio Q&A requires instruct or text_input. Timestamps and speakers require the default transcription template. |
+| `language` | `string` | `auto` | Source language hint for the default transcription prompt. An explicit instruct replaces this prompt, including its language hint. |
+| `target_language` | `string` | `English` | Target language for the translation template. |
+| `system_prompt` | `string` | Model/session default | Optional system message; the trained default is empty. |
+| `return_timestamps` | `bool` | `false` | Run the checkpoint CTC head for source-language word timestamps. Failed streams return no fabricated word rows. |
+| `diarization` | `bool` | `false` | Request speaker-tagged transcription, CTC words and speaker activity turns. An explicit instruct must request speaker tags itself. |
+| `max_tokens` | `int` | Model/session default | Maximum generated response tokens. Defaults to generation_config or native duration budget max(24,ceil(6*audio_seconds)+24). Prompt and output must fit max_context. Declared range: minimum 1. |
+| `do_sample` | `bool` | `false` | Sample tokens instead of greedy decoding. |
+| `temperature` | `float` | `1` | Positive sampling temperature when do_sample is true. |
+| `top_k` | `int` | `0` | Sampling candidate count; zero disables top-k filtering. Declared range: minimum 0. |
+| `top_p` | `float` | `1` | Nucleus probability when sampling. Declared range: minimum 0, maximum 1. |
+| `repetition_guard` | `bool` | `false` | Stop runaway token repetition and report repetition_detected termination. May truncate genuine repeated speech; does not repair the transcript. |
+| `repetition_penalty` | `float` | `1` | Positive token repetition penalty. |
+| `seed` | `int` | `0` | Sampling seed. Declared range: minimum 0. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `nemotron_transcribe.disk_experts` | `bool` | `false` | Keep routed expert weights in the GGUF/host memory and stage selected experts through a bounded backend cache. Dense weights and all expert computation remain on the selected backend. |
+| `nemotron_transcribe.pin_experts` | `bool` | `false` | With disk_experts, retain complete native expert banks in pinned host RAM for direct uploads. Requires pinned host-buffer support. |
+| `nemotron_transcribe.expert_cache_size` | `int` | `8` | Resident expert slots per routed layer with disk_experts. Must cover the model's experts per token and cannot exceed its expert count. Declared range: minimum 1. |
+| `nemotron_transcribe.disk_expert_read_threads` | `int` | `4` | Host workers for staging GGUF expert ranges when disk_experts is true and pin_experts is false. Parallel reads require OpenMP or Apple dispatch. Declared range: minimum 1, maximum 64. |
+| `nemotron_transcribe.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Native preserves mixed packaged tensor types. Changing this may greatly increase model memory. |
+| `nemotron_transcribe.max_context` | `int` | `73728` | Combined text, audio and output context, bounded by backbone positions. Matches native SALM serving default. Declared range: minimum 1. |
+| `nemotron_transcribe.prefill_batch_size` | `int` | `64` | Text/audio rows per decoder prefill graph. Declared range: minimum 1, maximum 2048. |
+| `nemotron_transcribe.flash_attention` | `bool` | `true` | Use flash attention in the speech and speaker encoders. |
+| `nemotron_transcribe.encoder_window_size` | `int` | `500` | Core encoder window in 80 ms output frames; the native default is 40 seconds. Declared range: minimum 1, maximum 5000. |
+| `nemotron_transcribe.encoder_left_context` | `int` | `50` | Encoder window left context in 80 ms frames. Declared range: minimum 0, maximum 5000. |
+| `nemotron_transcribe.encoder_right_context` | `int` | `50` | Encoder window right context in 80 ms frames. Declared range: minimum 0, maximum 5000. |
+| `nemotron_transcribe.speaker_cache_size` | `int` | `188` | Native serving speaker cache in 80 ms frames, distinct from training configuration. At least two rows per speaker are required. Declared range: minimum 16, maximum 5000. |
+| `nemotron_transcribe.speaker_fifo_size` | `int` | `40` | Recent speaker FIFO size in 80 ms frames. Declared range: minimum 0, maximum 5000. |
+| `nemotron_transcribe.speaker_update_period` | `int` | `300` | Native serving speaker-cache update period in 80 ms frames. Declared range: minimum 1, maximum 5000. |
+
 ## Prepare weights
 
 Use the full BF16 checkpoint, not the separately packed NVFP4 release. The initial
@@ -194,75 +327,6 @@ uv run --no-project --python .venv-nemotron python \
 In PowerShell, set the executable with
 `$env:NEMOTRON_TEST_QUANTIZER = 'build/nemotron-quantizer/bin/llama-quantize.exe'`.
 
-## Run
-
-```sh
-build/nemotron/bin/audiocpp_cli --task asr --family nemotron_transcribe \
-  --model models/audiocpp/nemotron-transcribe-iq4_nl.gguf \
-  --backend cuda --audio recording.wav --text-out transcript.txt
-```
-
-Use 16 kHz mono WAV for matched comparisons. Other PCM rates and channel counts
-are averaged to mono and resampled inside this model, using the framework's
-Soxr helper with its linear fallback. The shared CLI/server loaders are unchanged.
-Matched 16 kHz mono inputs pass through without resampling.
-
-Pass each task option with `--request-option key=value`:
-
-| Task | Options |
-| --- | --- |
-| Transcription | Default; optionally `language=ja` |
-| Translation | `template_name=translation`, `target_language=English` |
-| Audio Q&A | `template_name=audio_qa`, `instruct=What is discussed in this recording?` |
-| Language identification | `template_name=language_id` |
-| Word timestamps | `return_timestamps=true` |
-| Speaker-tagged transcription and timings | `diarization=true` |
-
-For the built-in transcription instructions, `language` is a source-language
-hint. Common short and regional tags such as `zh`, `zh-CN` and `ZH_cn` resolve
-to the same language name; custom names such as `Mandarin` are passed through.
-The hint does not force the decoder's output language, and long recordings can
-still produce translations instead of transcripts.
-
-The built-in speaker instruction requests no punctuation or capitalization,
-matching the reference's trained speaker prompt. To request punctuation as well
-as speaker tags, supply an explicit `instruct` that asks for both.
-
-`instruct` replaces the template instruction, including its language hint and
-speaker-tag request. `--text` supplies the instruction when `instruct` is absent.
-Response formatting is preserved. Translation and Q&A templates reject timestamps
-and diarization because their output need not match the source words.
-
-Generation is greedy by default. `max_tokens` overrides the checkpoint setting or
-the native duration budget `max(24, ceil(6 * seconds - 1e-9) + 24)`. Prompt, audio
-and output must fit `nemotron_transcribe.max_context`, default 73,728. The custom
-result records token-limit termination. Sampling options are in the model spec.
-
-Optional `--request-option repetition_guard=true` stops short token loops or sustained
-replay using NVIDIA NeMo-Speech.cpp's repetition guard. It leaves sampling unchanged
-and reports `termination: "repetition_detected"` in the custom result, rather than
-claiming EOS. The partial transcript is retained. This limits runaway generation;
-it does not correct wrong-language output or recover missing speech. The default
-is `false` because legitimate repeated speech can trigger the guard. Guard state
-is local to each generation and is not carried between requests.
-
-The server accepts the same options in JSON at `/v1/audio/transcriptions`.
-Use `/v1/audio/transcriptions/details` for word timestamps and speaker turns.
-The generic `/v1/tasks/run` route also returns `custom_schema_output`, including
-termination and alignment diagnostics. Multipart WAV uploads support the ordinary transcription fields;
-use JSON `options` for task templates, questions and timestamp requests. For example:
-
-```json
-{"model":"nemotron","audio":"recording.wav","options":{"template_name":"audio_qa","instruct":"What is discussed in this recording?"}}
-```
-
-Replace `nemotron` with the configured server model ID. The JSON audio path is
-local to the server. Invalid request options return a client error, including
-when the recording is silent. `top_p=0` keeps the highest-ranked candidate.
-
-The native silence gate returns empty text only when peak amplitude is below
-0.001 and RMS is below 0.00003. It does not trim audio or repair generated text.
-
 ## CPU weight offload
 
 `nemotron_transcribe.disk_experts=true` keeps routed expert banks in their native
@@ -360,7 +424,7 @@ frontend. Both runtimes also omit one repeated sentence pair in a four-repeat
 56.44-second fixture; the distinct 49-second dialogue includes all eight turns.
 These results do not establish hour-long accuracy. Full-model Metal and Vulkan
 execution, broad multilingual accuracy and actual hour-long audio remain untested.
-See the [validation record](nemotron_transcribe_validation.md) for pinned inputs,
+See the [validation record](../reports/nemotron_transcribe_validation.md) for pinned inputs,
 settings, commands and observed outputs.
 
 All four downloadable profiles also passed CUDA task checks on the synthetic

@@ -12,27 +12,6 @@ nine residual codebook layers with persistent timeline caches, and the Fish DAC
 encoder/decoder. It supports offline and streaming TTS, voice references,
 speaker and event tags in text, long-form chunking, and continuation/edit history.
 
-## Variants
-
-Both variants use `--family fish_drama3` and the same CLI and server routes.
-The loader reads layer-specific expert counts and the output-head layout from
-the checkpoint, so Drama3-small does not need a separate family.
-
-| Variant | GGUF packages | Source |
-|---|---|---|
-| Drama3 base | Q2_K, Q3_K, and Q4_K expert packages | [Jmica/Drama-3-GGUF](https://huggingface.co/Jmica/Drama-3-GGUF) |
-| Drama3-small | `fish_drama3_small_iq3_xxs`: `Drama3-small-GGUF/drama3-small-IQ3_XXS.gguf` | [pentacoxian-dev/drama3-small-GGUF](https://huggingface.co/pentacoxian-dev/drama3-small-GGUF) |
-
-Install the small variant with:
-
-```bash
-python tools/model_manager_v2.py install fish_drama3_small_iq3_xxs --models-root models
-```
-
-Use `--model models/Drama3-small-GGUF/drama3-small-IQ3_XXS.gguf` with the
-generation examples below. Base-model weight sizes and memory measurements
-in this guide do not describe the small checkpoint.
-
 ## Windows build
 
 Install Visual Studio 2022 C++ build tools, a CUDA toolkit that supports your GPU,
@@ -103,46 +82,6 @@ Backbone and audio-tower normalization vectors stay FP32; codec normalization
 vectors use FP16 with the rest of the codec. The packages embed their tokenizer,
 configuration and model contract. Stock audio.cpp releases without this port
 cannot run Drama 3.
-
-## Prepare weights with uv
-
-Conversion is optional when using a downloaded package. Build the native
-converter if you want to prepare a different precision:
-
-```powershell
-.\scripts\build_windows.ps1 -Preset windows-cpu-release -ModelSet custom -Models fish_drama3 -Target audiocpp_gguf -Jobs 4
-```
-
-Download the complete official checkpoint into `models\drama-3-original`.
-The revision below is the checkpoint used for validation:
-
-```powershell
-uv run --no-project --python 3.12 --with huggingface_hub hf download fishaudio/drama-3 --revision dd64a85cd82e9521f7202610ede97b367fc83946 --local-dir models\drama-3-original
-```
-
-Its original per-expert FP8 tensors have 128-by-128 inverse scales. The
-preparation script applies those scales and packs each projection into an
-expert bank.
-
-```powershell
-uv run --python 3.12 tools\community_models\convert_fish_drama3.py `
-  --checkpoint models\drama-3-original `
-  --output models\drama3-f16-local.gguf `
-  --quantized-output models\drama-3-backbone-8bit-experts-Q4_K_S.gguf `
-  --gguf-tool build\windows-cpu-release\bin\audiocpp_gguf.exe
-```
-
-The intermediate tensor archive is approximately 68.2 GiB. The runnable package
-is approximately 22.9 GiB, with Q4_K routed experts, Q8_0 backbone matrices,
-FP16 audio tower and codec weights, and embedded configuration, tokenizer and
-license files. Codec weight normalization is folded during packaging. Allow
-space for both files during conversion. The intermediate archive is retained.
-
-An existing intermediate can be reused with `--input-gguf` in place of `--output`.
-`--expert-type` selects the routed expert format; `--backbone-type` selects other
-backbone matrices; `--embedding-type` selects the text embedding format. Keep the
-embedding at a CUDA-supported lookup type such as Q8_0 or Q4_0. Conversion uses
-CPU PyTorch dependencies managed by uv and does not load weights onto a GPU.
 
 ## Generate and stream
 
@@ -241,7 +180,139 @@ stall for about 9-21 s. The repetition-avoiding resample keeps its own
 Host memory is required for offloaded weights. Context capacity includes text,
 reference audio frames, prior takes, and the requested generation budget.
 
-### Disk-backed experts
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `fish_drama3` |
+| Tasks | `tts`, `clon` |
+| Modes | `offline`, `streaming` |
+| Languages | `auto` |
+| Default package | `fish_drama3_q4_experts_q8_backbone` |
+| Input | Text; voice conditioning as shown in the examples |
+| Output | Generated speech audio |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--text` | Input text; see the examples for the expected prompt format. |
+| `--voice-ref` | Reference audio for voice cloning. |
+| `--out` | Output WAV file. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `encode_reference_only` | `bool` | `false` | Prepare reference VQ codes without generating speech. Use the task API to receive drama3_reference_v1 acoustic-token artifacts. |
+| `reference_text` | `string` | Model/session default | Transcript of inline reference audio. |
+| `multi_reference_cond` | `string` | Model/session default | Ordered references as JSON: [{text, audio_path or vq_codes}]. Speaker tags 0..15 select voices. |
+| `references` | `string` | Model/session default | Alias of multi_reference_cond. |
+| `previous_takes` | `string` | Model/session default | Continuation/edit history as a JSON array of {text, vq_codes or audio_path}; a string generates that earlier take first. |
+| `previous_takes_file` | `string` | Model/session default | JSON history file containing a take object or an ordered array of earlier takes. Avoids the Windows command-line length limit for VQ grids. |
+| `max_tokens` | `int` | `1024` | Maximum generated acoustic frames per text chunk (about 21.5 frames/second). Declared range: minimum 1. |
+| `text_chunk_size` | `int` | `128` | Maximum characters per long-form chunk. Declared range: minimum 1. |
+| `skip_empty_chunks` | `bool` | `false` | Log and skip chunks that emit EOS before producing audio. The request fails if all chunks are empty. |
+| `text_chunk_mode` | `word_budget`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode. |
+| `temperature` | `float` | `1.0` | Main and residual sampling temperature. Zero makes the initial draws greedy; semantic repeat redraws retain the fixed Drama 3 RAS settings. Declared range: minimum 0. |
+| `top_p` | `float` | `0.9` | Inclusive nucleus cutoff before top-k filtering, matching Drama 3. Declared range: minimum 0, maximum 1. |
+| `top_k` | `int` | `4097` | Top-k candidate count. The default 4097 keeps every candidate (no cap), as Fish's Drama 3 Space does; 30 can stall in long silences. Declared range: minimum 1. |
+| `seed` | `int` | Model/session default | Reproducible native sampling seed. Declared range: minimum 0. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `fish_drama3.perf_mode` | `off`, `cuda_perf` | `off` | AR decode preset. cuda_perf enables fused MoE, 256-row attention buckets and device sampling. F16 KV storage, codec batching/overlap and prefill-cache defaults remain unchanged in both modes. Explicit session options override the preset. |
+| `fish_drama3.fused_moe` | `bool` | `false` | Fuse cached backbone MoE routing and SwiGLU activations. Fused arithmetic may change sampled output; prompt prefill is unchanged. |
+| `fish_drama3.kv_cache_alignment` | `int` | `1` | Cached decode attention prefix bucket size. Values above 1 retain all history while skipping unused KV capacity; execution shapes may change numerical results. Declared range: minimum 1. |
+| `fish_drama3.kv_cache_type` | `f32`, `f16` | `f16` | Storage precision for full-attention backbone KV caches. |
+| `fish_drama3.backbone_prefill_cache_mb` | `int` | `256` | Bounded cache of backbone prefill graphs, in MiB. Reuses exact shapes and their CUDA captures. One active graph is retained even if larger than this budget. Zero retains only the active graph. Declared range: minimum 0, maximum 4096. |
+| `fish_drama3.tower_prefill_cache_mb` | `int` | `256` | Bounded cache of audio-tower prefill graphs, in MiB. Reuses exact shapes and their CUDA captures. Zero disables it. Declared range: minimum 0, maximum 4096. |
+| `fish_drama3.codec_batch_frames` | `int` | `4` | Streaming codec batch ceiling. Starts at one frame and grows to this size; partial final batches are flushed. Offline decoding is unchanged. Declared range: minimum 1. |
+| `fish_drama3.codec_async_decode` | `bool` | `true` | Overlap streaming codec decoding with AR generation on the dedicated codec backend. Uses a bounded queue and waits for all audio before completing the request. |
+| `fish_drama3.device_sampling` | `bool` | `false` | Enable tower decode and codebook sampling in one cached backend graph. Disabled by default; enabled by cuda_perf unless explicitly overridden. Uses F32 probabilities; sampled outputs may differ from the host sampler. |
+| `fish_drama3.profile_first_audio` | `bool` | `false` | Emit first-audio stage timings to stderr for performance diagnosis. Disabled by default. |
+| `fish_drama3.context_length` | `int` | `2048` | Cache capacity for prompt plus generated frames; includes references and history. Declared range: minimum 1. |
+| `fish_drama3.cpu_expert_layers` | `int` | `4` | Number of the 40 expert banks kept and evaluated on CPU; use 4 for a 24 GB profile or 24 for a 16 GB profile. Dense layers and the tower use the selected backend. Declared range: minimum 0, maximum 40. |
+| `fish_drama3.disk_experts` | `bool` | `false` | Read routed expert weights from GGUF on demand into a bounded cache instead of keeping full expert banks resident. Trades speed for memory; default false. |
+| `fish_drama3.pin_experts` | `bool` | `false` | Keep full expert banks in pinned host RAM for direct cache-miss uploads. Requires disk_experts and pinned host-buffer support; default false. |
+| `fish_drama3.expert_cache_size` | `int` | `32` | Resident expert slots per layer in disk_experts mode; 8 to 256. Larger caches trade memory for fewer disk reads; ignored in resident mode. Declared range: minimum 8, maximum 256. |
+| `fish_drama3.disk_expert_read_threads` | `int` | `1` | Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 use OpenMP or Apple dispatch. Declared range: minimum 1, maximum 64. |
+| `fish_drama3.codec_encoder_f32_accumulation` | `bool` | `false` | Use F32 accumulation for F16 reference-encoder GEMMs on Vulkan. Try this if voice cloning produces incomplete speech or reaches the token limit. Other backends and codec decoding are unchanged. |
+| `fish_drama3.codec_encoder_bf16_compute` | `bool` | `true` | Use BF16 reference-encoder arithmetic on CUDA with F16/BF16 codec weights; default true. Decoding is unchanged. |
+| `fish_drama3.codec_encoder_chunk_samples` | `int` | `0` | Reference-encoder convolution chunk size in samples at the codec sample rate. Use 0 for full encoding or a positive multiple of 512; default 0. Declared range: minimum 0. |
+| `fish_drama3.codec_backend` | `same`, `cpu` | `same` | Run the codec on the selected backend or on CPU. |
+
+## Variants
+
+Both variants use `--family fish_drama3` and the same CLI and server routes.
+The loader reads layer-specific expert counts and the output-head layout from
+the checkpoint, so Drama3-small does not need a separate family.
+
+| Variant | GGUF packages | Source |
+|---|---|---|
+| Drama3 base | Q2_K, Q3_K, and Q4_K expert packages | [Jmica/Drama-3-GGUF](https://huggingface.co/Jmica/Drama-3-GGUF) |
+| Drama3-small | `fish_drama3_small_iq3_xxs`: `Drama3-small-GGUF/drama3-small-IQ3_XXS.gguf` | [pentacoxian-dev/drama3-small-GGUF](https://huggingface.co/pentacoxian-dev/drama3-small-GGUF) |
+
+Install the small variant with:
+
+```bash
+python tools/model_manager_v2.py install fish_drama3_small_iq3_xxs --models-root models
+```
+
+Use `--model models/Drama3-small-GGUF/drama3-small-IQ3_XXS.gguf` with the
+generation examples below. Base-model weight sizes and memory measurements
+in this guide do not describe the small checkpoint.
+
+## Prepare weights with uv
+
+Conversion is optional when using a downloaded package. Build the native
+converter if you want to prepare a different precision:
+
+```powershell
+.\scripts\build_windows.ps1 -Preset windows-cpu-release -ModelSet custom -Models fish_drama3 -Target audiocpp_gguf -Jobs 4
+```
+
+Download the complete official checkpoint into `models\drama-3-original`.
+The revision below is the checkpoint used for validation:
+
+```powershell
+uv run --no-project --python 3.12 --with huggingface_hub hf download fishaudio/drama-3 --revision dd64a85cd82e9521f7202610ede97b367fc83946 --local-dir models\drama-3-original
+```
+
+Its original per-expert FP8 tensors have 128-by-128 inverse scales. The
+preparation script applies those scales and packs each projection into an
+expert bank.
+
+```powershell
+uv run --python 3.12 tools\community_models\convert_fish_drama3.py `
+  --checkpoint models\drama-3-original `
+  --output models\drama3-f16-local.gguf `
+  --quantized-output models\drama-3-backbone-8bit-experts-Q4_K_S.gguf `
+  --gguf-tool build\windows-cpu-release\bin\audiocpp_gguf.exe
+```
+
+The intermediate tensor archive is approximately 68.2 GiB. The runnable package
+is approximately 22.9 GiB, with Q4_K routed experts, Q8_0 backbone matrices,
+FP16 audio tower and codec weights, and embedded configuration, tokenizer and
+license files. Codec weight normalization is folded during packaging. Allow
+space for both files during conversion. The intermediate archive is retained.
+
+An existing intermediate can be reused with `--input-gguf` in place of `--output`.
+`--expert-type` selects the routed expert format; `--backbone-type` selects other
+backbone matrices; `--embedding-type` selects the text embedding format. Keep the
+embedding at a CUDA-supported lookup type such as Q8_0 or Q4_0. Conversion uses
+CPU PyTorch dependencies managed by uv and does not load weights onto a GPU.
+
+## Disk-backed experts
 
 Set `fish_drama3.disk_experts=true` to keep the full routed expert banks in the
 GGUF file and read only selected experts into a bounded native-format cache.

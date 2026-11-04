@@ -59,18 +59,56 @@ MOSS-VoiceGenerator/
 The standalone `OpenMOSS-Team/MOSS-VoiceGenerator` snapshot does not contain
 `audio_tokenizer/`, so it is not enough for safetensors inference by itself.
 
-### Decoding defaults
+Use the model-specific sampling defaults in the tables below. Generic TTS
+settings can cause speech to end on the first frame.
 
-From the model card, applied as the family's defaults rather than left to the caller:
+## Model
 
-| Option | Default |
-|---|---:|
-| `temperature` | 1.5 |
-| `top_p` | 0.6 |
-| `top_k` | 50 |
-| `repetition_penalty` | 1.1 |
+| Field | Value |
+|---|---|
+| Family | `moss_voicegen` |
+| Tasks | `design` |
+| Modes | `offline` |
+| Languages | `en`, `zh` |
+| Default package | `moss_voicegen_bf16_codec_f16_decode` |
+| Input | Text and a voice description |
+| Output | Generated speech audio |
 
-The family is sensitive to these. At a generic TTS preset it ends speech on the first frame.
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--text` | Input text; see the examples for the expected prompt format. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `min_frames` | `int` | `0` | Minimum generated audio frames per text chunk; nonpositive values derive a text-length-based floor. |
+| `max_frames` | `int` | `0` | Generated audio-frame ceiling per text chunk; nonpositive values derive a text-length-based ceiling. Runtime raises it to at least the effective min_frames plus the number of codebooks. |
+| `instruct` | `string` | Model/session default | Voice description: timbre, age, pace, emotion. |
+| `text_temperature` | `float` | `1.5` | Text-token sampling temperature. Must be finite and positive when sampling. |
+| `language` | `string` | Model/session default | Optional full language name, such as English or Chinese; not an ISO language code. |
+| `seed` | `int` | `0` | Generation seed; later text chunks add their chunk index. Parsed as signed 32-bit integer then converted to uint32; negative values wrap. |
+| `temperature` | `float` | `1.5` | Audio-token sampling temperature. Must be finite and positive when sampling. |
+| `top_p` | `float` | `0.6` | Audio-token nucleus sampling cutoff. |
+| `top_k` | `int` | `50` | Audio-token top-k sampling limit. |
+| `repetition_penalty` | `float` | `1.1` | Audio-token repetition penalty. Must be finite and positive when history is nonempty. |
+| `text_chunk_size` | `int` | `200` | Maximum characters per generated text chunk; must be positive. Declared range: minimum 1. |
+| `text_chunk_mode` | `word_budget`, `tag_aware`, `japanese`, `endline` | `word_budget` | Text chunking policy. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `moss_voicegen.weight_type` | `native`, `f32`, `bf16`, `q8_0` | `bf16` | Backbone weight storage. f16 is not supported. |
 
 ## Behaviour Worth Knowing
 
@@ -111,26 +149,6 @@ the backbone needs the exponent range, the codec the mantissa.
 
 **Ship decode only.** VoiceGenerator never encodes audio, so
 `--exclude-prefix "audio_tokenizer_weights/encoder"` takes the package from 7.3 GB to 5.7 GB.
-
-## Validation
-
-Parity is measured against the checkpoint's own PyTorch implementation, which ships with the
-weights. The scripts under `tools/community_models/` regenerate every reference used here.
-
-| Check | Result |
-|---|---|
-| Prompt tokens vs `MossTTSDelayProcessor` | identical, 4 cases (trailing punctuation, none, Chinese, no instruction) |
-| Backbone hidden state vs `MossTTSDelayModel`, bf16 | max relative 1.9e-5 (prefill), 1.6e-5 (cached step) |
-| Backbone hidden state, f32 | max relative 3.5e-7 |
-| Backbone hidden state, f16 | 2048/2048 non-finite — the f16 failure, reproducible |
-| Greedy generation vs `generate()`, f32 | 40/40 rows identical, text tokens and all 16 codes |
-| Greedy generation, bf16 | first 16 rows identical, then diverges on a 0.003 logit gap |
-| Codec decode vs `MossAudioTokenizerModel`, f32 source | max abs 3e-5, correlation 1.000000; worst probe 5.0e-7 |
-| Codec decode from the shipped package, codec f16 | worst probe 7.1e-4 |
-| Codec decode with the codec stored bf16 | worst probe 1.1e-2 — rejected, hence the f16 override |
-
-Row-for-row greedy parity holds at f32 only: bf16 rounding is coarser than the gaps between
-near-tied candidates, so the trajectories separate after 16 rows.
 
 ## Long-form
 
@@ -184,20 +202,3 @@ Other backends, same model and prompt:
 The gfx1103 HIP crash is not specific to this model: the same workload runs on that card
 under Vulkan, and a hand-written HIP gather kernel runs on it too, so it is ggml's HIP
 `get_rows` path on this ROCm build (7.1, distribution packages). Reported separately.
-
-## Framework Changes This Needed
-
-MOSS-Audio-Tokenizer v1 is a different generation from the v2 and Nano codecs already in the
-tree, so `src/models/moss/shared/` needed five additions. None of them change v2 or Nano
-behaviour:
-
-| Change | Why |
-|---|---|
-| `samples_per_frame` taken from the config rather than a constant | v1's hop is 1920, not 3840 |
-| `channels` config field; the stereo de-interleave is skipped when it is 1 | v1 is mono |
-| The stage output projection is optional | upstream only creates one when a stage changes width; v1 omits it on three of four decoder stages |
-| Attention projections also accept `in_projs.0` / `out_projs.0` | v1 keeps them in an indexed `ModuleList` |
-| Feed-forward also accepts `linear1` / `linear2` | v1 names them directly where v2 uses an `nn.Sequential` |
-
-A local copy of the codec would have meant duplicating roughly 1500 lines to change five
-names and two numbers.

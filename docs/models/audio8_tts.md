@@ -4,63 +4,6 @@ Audio8 TTS Preview 0.6B (Qwen backbone) and 0.1B (Falcon-H1 hybrid Mamba2+attent
 S2 Pro: a slow semantic transformer generates speech semantics, a fast codebook transformer expands each semantic step into a full codec frame, and a neural codec renders 44.1 kHz audio. The native path executes all three
 stages directly on ggml with no Python dependency.
 
-> **Status:** `0.6B` Qwen is fully native. The `0.1B` Falcon-H1 path uses a
-> stateful native Mamba2 + hybrid-GQA slow-AR forward and has been validated
-> against the Transformers reference. The resolved implementation diary is
-> retained in the [archive](../archive/audio8_tts_falcon_h1_status.md).
-
-| Field | Value |
-|---|---|
-| Family | `audio8_tts` |
-| Model directory | any directory holding the standalone GGUF (or a safetensors snapshot layout) |
-| Task | `tts`, `clon` |
-| Modes | `offline`, `streaming` |
-| Languages | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es |
-| Voice input | optional reference WAV plus its exact transcript (clone) |
-| Output | mono 44.1 kHz WAV |
-| Backbones | `0.6B`: Qwen `slow_backbone=qwen` (24L, dim 896, 14H/2KV, RoPE 1e6), `0.1B`: Falcon-H1 `slow_backbone=falcon_h1` (dim 512, `d_inner 768=32×24`, `d_state 64`, `d_conv 4`, `dt_rank 24`, `GQA 8/2`, RoPE 1e11) |
-| GGUF examples | `Audio8-TTS-Preview-0.6b-GGUF/audio8-tts-preview-0.6b-q8_0.gguf` (1.4G), `Audio8-TTS-Preview-0.1B-GGUF/audio8-tts-preview-0.1b-q8_0.gguf` (812M) |
-| External ggml SSM | `external/ggml` already provides `ggml_ssm_conv/scan` for `cpu/cuda/metal/vulkan/opencl/sycl/cann` — no fork needed |
-
-## Source
-
-Upstream project and checkpoints:
-
-- Project: <https://github.com/Audio8-AI/Audio8_TTS>
-- Hugging Face organization: <https://huggingface.co/Audio8> (an official
-  `Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4` runtime export is published;
-  the PyTorch preview checkpoint ships the files below)
-- License: Apache-2.0
-
-The port targets the HF preview checkpoint snapshot containing:
-
-```
-config.json                     flat arktts configuration
-model.safetensors               226 DualAR tensors (BF16)
-codec.pth                       neural codec weights (PyTorch pickle)
-tokenizer.json                  Qwen-style BPE tokenizer
-tokenizer_config.json           tokenizer metadata
-modeling_arktts.py              slow/fast AR reference implementation
-modeling_arktts_codec.py        codec reference implementation
-processing_arktts.py            prompt-format reference implementation
-```
-
-## What it does
-
-Two tasks are exposed:
-
-- **TTS** (`--task tts`): synthesize speech from text with automatic language
-  handling across the eleven advertised languages.
-- **Clone** (`--task clon`, or `tts` with a reference): condition generation
-  on a speaker-reference WAV and its transcript to reproduce that voice.
-
-Generation applies repetition-aware sampling (RAS): semantic logits are
-restricted to the valid semantic range plus EOS, sampled at the request
-temperature, and re-sampled with a high-stability fallback distribution when
-the drawn token repeats within a sliding window, which suppresses the
-looping artifacts typical of small AR speech models. Long inputs are split
-into word-budget chunks (default 200 characters) and concatenated.
-
 ## Usage
 
 Build with the family enabled and run against a converted GGUF:
@@ -101,26 +44,101 @@ Multiple ordered references can be conditioned through one request option:
 --request-option 'multi_reference_cond=[{"audio":"ref1.wav","text":"..."},{"audio":"ref2.wav","text":"..."}]'
 ```
 
-### Controls
+## Model
 
-| Option | Default | Meaning |
-|---|---:|---|
-| `--voice-ref <wav>` | none | Speaker-reference audio for cloning. |
-| `--reference-text <text>` | none | Exact transcript of the reference audio. |
-| `--request-option temperature=<f>` | `0.8` | Semantic-token sampling temperature in `(0, 2)`; both endpoints excluded. |
-| `--request-option top_p=<f>` | `0.8` | Nucleus threshold in `(0, 1]`; zero excluded, one included. |
-| `--request-option top_k=<n>` | `30` | Top-k limit. |
-| `--request-option seed=<n>` | random | Sampling seed for reproducible output. |
-| `--request-option max_tokens=<n>` | `1024` | Maximum semantic steps per chunk; zero selects the default. |
-| `--request-option text_chunk_size=<n>` | `200` | Word-budget chunk size in characters. |
-| `--session-option audio8_tts.weight_type=<mode>` | `native` | AR matmul weight storage type. |
-| `--session-option audio8_tts.codec_weight_type=<mode>` | `native` | Codec weight storage type. |
-| `--session-option audio8_tts.mem_saver=<bool>` | `false` | Release cached AR graphs after each request. |
-| `--session-option audio8_tts.reference_cache_slots=<n>` | `1` | Prepared reference cache slots. |
-| `--session-option audio8_tts.ar_graph_arena_mb=<n>` | `512` | AR graph arena size; integer MiB >= 1. |
-| `--session-option audio8_tts.ar_weight_context_mb=<n>` | `512` | AR weight context size; integer MiB >= 1. |
-| `--session-option audio8_tts.codec_graph_arena_mb=<n>` | `512` | Codec graph arena size; integer MiB >= 1. |
-| `--session-option audio8_tts.codec_weight_context_mb=<n>` | `512` | Codec weight context size; integer MiB >= 1. |
+| Field | Value |
+|---|---|
+| Family | `audio8_tts` |
+| Model directory | any directory holding the standalone GGUF (or a safetensors snapshot layout) |
+| Task | `tts`, `clon` |
+| Modes | `offline`, `streaming` |
+| Languages | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es |
+| Voice input | optional reference WAV plus its exact transcript (clone) |
+| Output | mono 44.1 kHz WAV |
+| Backbones | `0.6B`: Qwen `slow_backbone=qwen` (24L, dim 896, 14H/2KV, RoPE 1e6), `0.1B`: Falcon-H1 `slow_backbone=falcon_h1` (dim 512, `d_inner 768=32×24`, `d_state 64`, `d_conv 4`, `dt_rank 24`, `GQA 8/2`, RoPE 1e11) |
+| GGUF examples | `Audio8-TTS-Preview-0.6b-GGUF/audio8-tts-preview-0.6b-q8_0.gguf` (1.4G), `Audio8-TTS-Preview-0.1B-GGUF/audio8-tts-preview-0.1b-q8_0.gguf` (812M) |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--text` | Input text; see the examples for the expected prompt format. |
+| `--voice-ref` | Reference audio for voice cloning. |
+| `--out` | Output WAV file. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `reference_text` | `string` | Model/session default | Reference transcript used with speaker reference audio. |
+| `multi_reference_cond` | `string` | Model/session default | Ordered Audio8 TTS reference conditioning pairs as a JSON array: [{"audio":"ref.wav","text":"transcript"}, ...]. |
+| `max_tokens` | `int` | `1024` | Maximum semantic tokens to generate; default 1024. Zero selects the default. Declared range: minimum 0. |
+| `text_chunk_size` | `int` | `200` | Maximum characters per generated text chunk; default 200. Declared range: minimum 1. |
+| `text_chunk_mode` | `word_budget`, `tag_aware`, `japanese`, `endline` | `word_budget` | Framework text chunking mode. |
+| `top_p` | `float` | `0.8` | Top-p sampling value in (0, 1]; default 0.8. Declared range: minimum 0.0, maximum 1.0. |
+| `top_k` | `int` | `30` | Top-k sampling value; default 30. Declared range: minimum 1. |
+| `temperature` | `float` | `0.8` | Semantic-token sampling temperature in (0, 2); default 0.8. Declared range: minimum 0.0, maximum 2.0. |
+| `seed` | `int` | random | Sampling seed for reproducible output; omitted uses a random seed. Declared range: minimum 0. |
+| `language` | `string` | Model/session default | Language hint for Chinese-script normalization; Cantonese/yue preserves Traditional characters. Inherits structured transcript or voice language when provided. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `audio8_tts.mem_saver` | `bool` | `false` | Release cached AR runtime graphs after each request; default false. |
+| `audio8_tts.reference_cache_slots` | `int` | `1` | Prepared reference-audio cache slots; default 1. Declared range: minimum 0. |
+| `audio8_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | AR matmul weight storage type; default native. |
+| `audio8_tts.codec_weight_type` | `native`, `f32`, `f16`, `q8_0` | `native` | Codec conv/matmul weight storage type; default native. |
+| `audio8_tts.ar_graph_arena_mb` | `int` | `512` | AR runtime graph arena size in MiB; default 512. Declared range: minimum 1. |
+| `audio8_tts.ar_weight_context_mb` | `int` | `512` | AR weight context size in MiB; default 512. Declared range: minimum 1. |
+| `audio8_tts.codec_graph_arena_mb` | `int` | `512` | Codec encode/decode graph arena size in MiB; default 512. Declared range: minimum 1. |
+| `audio8_tts.codec_weight_context_mb` | `int` | `512` | Codec weight context size in MiB; default 512. Declared range: minimum 1. |
+
+## Source
+
+Upstream project and checkpoints:
+
+- Project: <https://github.com/Audio8-AI/Audio8_TTS>
+- Hugging Face organization: <https://huggingface.co/Audio8> (an official
+  `Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4` runtime export is published;
+  the PyTorch preview checkpoint ships the files below)
+- License: Apache-2.0
+
+The port targets the HF preview checkpoint snapshot containing:
+
+```
+config.json                     flat arktts configuration
+model.safetensors               226 DualAR tensors (BF16)
+codec.pth                       neural codec weights (PyTorch pickle)
+tokenizer.json                  Qwen-style BPE tokenizer
+tokenizer_config.json           tokenizer metadata
+modeling_arktts.py              slow/fast AR reference implementation
+modeling_arktts_codec.py        codec reference implementation
+processing_arktts.py            prompt-format reference implementation
+```
+
+## What it does
+
+Two tasks are exposed:
+
+- **TTS** (`--task tts`): synthesize speech from text with automatic language
+  handling across the eleven advertised languages.
+- **Clone** (`--task clon`, or `tts` with a reference): condition generation
+  on a speaker-reference WAV and its transcript to reproduce that voice.
+
+Generation applies repetition-aware sampling (RAS): semantic logits are
+restricted to the valid semantic range plus EOS, sampled at the request
+temperature, and re-sampled with a high-stability fallback distribution when
+the drawn token repeats within a sliding window, which suppresses the
+looping artifacts typical of small AR speech models. Long inputs are split
+into word-budget chunks (default 200 characters) and concatenated.
 
 ## Architecture
 
@@ -164,50 +182,6 @@ scaling, which arktts does not use.
 Sampling is Gumbel-max (`argmax(softmax(logits/T) − log u)`) with legacy
 top-k/top-p filtering, RAS window 10, and EOS `151645`.
 
-## Porting procedure
-
-The port reused the proven `fish_audio` family instead of starting from
-scratch, since arktts shares its DualAR design:
-
-1. **Copy + rename**: duplicate `src/models/fish_audio/*` into
-   `src/community_models/audio8_tts/*` (headers likewise), rename
-   `FishAudio*` → `Audio8Tts*`, rewrite namespaces and include paths, add
-   the `audiocpp_add_model(audio8_tts …)` CMake block. The renamed skeleton
-   had to compile before any semantic change.
-2. **Contract first**: `types.h` (flat `arktts` config parsing, RAS
-   parameters, uniform 10×4096 codebooks), `assets.h/.cpp`, the spec-backed
-   `make_audio8_tts_loader()` in `session.cpp`, and schema-v1
-   `model_specs/audio8_tts.json`.
-3. **Parallel adaptation**, each citing the mirrored Python line:
-   prompt format (`prompt_builder.cpp`), embedding lookup + sampling
-   (`ar.cpp`), codec graphs (`codec.cpp`), option plumbing
-   (`session.cpp`, `generator.cpp`).
-4. **Codec conversion tooling** (below), then GGUF packaging.
-5. **End-to-end validation** by SenseVoice ASR round-trip: every generated
-   clip must transcribe verbatim. This caught one real bug — a leftover
-   fish_audio `semantic_scale` multiply in the embedding lookup produced
-   stationary noise until removed, after which seed-fixed clips transcribe
-   verbatim (e.g. *"The quick brown fox jumps over the lazy dog."*, 3.44 s,
-   RMS 0.13).
-
-## Created files
-
-| File | Purpose |
-|---|---|
-| `include/engine/community_models/audio8_tts/types.h` | Flat `arktts` config structs (slow/fast AR, codec, RAS params). |
-| `include/.../audio8_tts/assets.h` + `src/.../assets.cpp` | Checkpoint loading: config, tokenizer, safetensors/GGUF tensor binding into host/device weights. |
-| `include/.../audio8_tts/session.h` + `src/.../session.cpp` | `Audio8TtsSession`, request/session options, reference handling, and the spec-backed `make_audio8_tts_loader()`. |
-| `include/.../audio8_tts/prompt_builder.h` + `src/.../prompt_builder.cpp` | Chat-prompt assembly and reference-code placement (`_prompt_segments`). |
-| `include/.../audio8_tts/tokenizer_text.h` + `src/.../tokenizer_text.h/.cpp` | Text normalization matching Python `clean()` (`" ".join(split())`). |
-| `include/.../audio8_tts/ar.h` + `src/.../ar.cpp` | Slow AR prefill/step graphs, fast codebook AR, embeddings, RAS/top-k/top-p/Gumbel sampling. |
-| `include/.../audio8_tts/generator.h` + `src/.../generator.cpp` | Generation loop orchestration across both AR runtimes. |
-| `include/.../audio8_tts/codec.h` + `src/.../codec.cpp` | Codec decode graphs (codes → 44.1 kHz waveform) and reference-audio encode for cloning. |
-| `model_specs/audio8_tts.json` | Schema-v1 contract: metadata, languages, options, packages, GGUF/safetensors sources. |
-| `CMakeLists.txt` | `audiocpp_add_model(audio8_tts …)` registration block. |
-| `tools/community_models/convert_audio8_tts_codec.py` | Torch-free `codec.pth` → `codec.safetensors` converter. |
-| `tools/community_models/convert_audio8_tts.py` | Safetensors snapshot → standalone GGUF packager. |
-| `docs/models/audio8_tts.md` | This document. |
-
 ## Converting to GGUF
 
 Two offline steps turn a fresh HF snapshot into standalone GGUFs. Neither tool downloads anything or requires a Python torch install.
@@ -237,21 +211,4 @@ python3 tools/community_models/convert_audio8_tts.py \
 Each output embeds 681 tensors (226 AR + 455 codec) in two namespaces `model_weights.*`, `codec_weights.*`). If a Q8_0 package audibly drifts, keep the codec namespace at 16 bit via the tool's mixed-storage options —codec conv stacks are quantization-sensitive.
 
 **Where to get the inputs**: the upstream checkpoint from the
-[Audio8 Hugging Face organization](https://huggingface.co/Audio8) / [Audio8-AI GitHub](https://github.com/Audio8-AI/Audio8_TTS) (file list under *Source* above). 
-
-## Limitations and TODO
-
-Current limitations (2026-08-29):
-
-- **0.6B**: validated on CPU via SenseVoice ASR (`The quick brown fox…` 3.02s RMS 0.15, `你好，欢迎使用audio8。` 2.32s, `Artificial intelligence…` 2.97s) with `--family audio8_tts` GGUF `q8_0`/`bf16`; CUDA/Vulkan/Metal SSM backends are built but not yet exercised for this family (ggml kernels already present).
-- **0.1B**: weight-complete and `audiocpp_cli` builds, but slow AR is a documented stub (`ar.cpp:861 TODO(Falcon-H1)`, `attn_out=0`, no `ggml_ssm_scan`/state, full recompute) — STT currently `like.` vs target; no `/tmp` writes or Python dependency. Full hybrid Mamba2 port is planned, not blocked on ggml (see `docs/FALCON_H1_0.1B_PORT_PLAN.md`).
-- Streaming is supported for TTS and voice cloning through the standard pull-event session path.
-- Cloning uses the same DualAR loop (reference WAV + `reference_text` → prompt builder) — 0.6B cloning path is structurally identical to TTS but has not yet been ASR-evaluated against real reference voices beyond the TTS evidence above.
-- No conversation-turn continuation (Python supports multi-turn prompting; the C++ v1 path is single-request).
-- ASR round-trip verifies intelligibility, not speaker similarity; formal parity runs against the Python/ONNX reference are still outstanding.
-
-TODO:
-
-- [ ] Complete 0.1B Falcon-H1 Mamba2 port (`ggml_ssm_conv/B/C/dt/A/D/scan` + recurrent `conv/ssm` ring + hybrid attention `K=1`) — `docs/FALCON_H1_0.1B_PORT_PLAN.md` M2/M3 (3–3.5d), then SenseVoice verification of `out/*0.1b.wav`
-- [ ] Clone-task validation with real reference voices (0.6B first, then 0.1B after Mamba2)
-- [ ] Exercise CUDA/Metal/Vulkan backends for both models (ggml SSM kernels already vendored)
+[Audio8 Hugging Face organization](https://huggingface.co/Audio8) / [Audio8-AI GitHub](https://github.com/Audio8-AI/Audio8_TTS) (file list under *Source* above).

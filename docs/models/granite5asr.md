@@ -2,12 +2,6 @@
 
 IBM Granite Speech 5.0 TurboCTC is a compact 470-million-parameter Automatic Speech Recognition (ASR) model. The current checkpoint transcribes English, French, German, Spanish, Portuguese, Italian, and Japanese, and it writes punctuation and capitals itself. There is no language input: a request language is accepted and ignored. A result is labelled `en` unless the decoder emits a trained language token such as `<|fr|>`. An older English-only checkpoint still loads and is still labelled `en`.
 
-## Architecture
-
-- **Audio Frontend**: 16 kHz, 80-bin HTK mel spectrogram with 8.0 dB dynamic flooring, first-order deltas, and 2x frame stacking (320-dim features).
-- **Acoustic Conformer**: 16 layers ($d_{model}=1024, d_{ff}=4096, d_{conv}=2048, heads=8, head\_dim=128$) with block self-attention ($context\_size=128$), Shaw relative positional embeddings, depthwise convolution with folded batch-norm, and mid-layer CTC self-conditioning at layer 8.
-- **Decoder**: Non-autoregressive Connectionist Temporal Classification (CTC) with greedy decoding and 16,384 BPE vocabulary via fast HuggingFace tokenizer.
-
 ## CLI Usage
 
 ### Offline Transcription
@@ -41,6 +35,53 @@ file, or if VAD fails, transcription uses fixed chunks.
 
 Streaming mode buffers incoming audio and transcribes it when the input closes.
 It returns a final transcript rather than incremental text.
+
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `granite5asr` |
+| Tasks | `asr` |
+| Modes | `offline`, `streaming` |
+| Languages | `en`, `fr`, `de`, `es`, `pt`, `it`, `ja` |
+| Default package | `granite5asr_q8_0` |
+| Input | Speech audio |
+| Output | Transcript text and optional word timestamps |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--audio` | Input audio, where required by the selected task. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `language` | `string` | `en` | Accepted and ignored. Granite has no language input. A result is labelled en unless decoding emits a trained language token such as <\|fr\|>. |
+| `audio_chunk_mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Offline chunk mode: auto, fixed, vad, or none. VAD requires a regular model file; otherwise fixed chunks are used. |
+| `audio_chunk_duration_sec` | `float` | `30` | Positive maximum audio chunk duration for fixed and VAD chunking. Declared range: minimum 0.001. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `granite5asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared model weight storage type. |
+| `granite5asr.encoder_graph_arena_mb` | `int` | `1024` | Encoder graph arena size in MB. Positive MiB allocation; invalid/nonpositive values resolve to 1024 MiB. Declared range: minimum 1. |
+| `granite5asr.vad_model_path` | `string` | Model/session default | Path to a VAD weight file of any built-in VAD family (e.g. silero_vad_16k.safetensors), not a directory; VAD runs only when this path is a regular file. |
+
+## Architecture
+
+- **Audio Frontend**: 16 kHz, 80-bin HTK mel spectrogram with 8.0 dB dynamic flooring, first-order deltas, and 2x frame stacking (320-dim features).
+- **Acoustic Conformer**: 16 layers ($d_{model}=1024, d_{ff}=4096, d_{conv}=2048, heads=8, head\_dim=128$) with block self-attention ($context\_size=128$), Shaw relative positional embeddings, depthwise convolution with folded batch-norm, and mid-layer CTC self-conditioning at layer 8.
+- **Decoder**: Non-autoregressive Connectionist Temporal Classification (CTC) with greedy decoding and 16,384 BPE vocabulary via fast HuggingFace tokenizer.
 
 ## Word timestamps
 

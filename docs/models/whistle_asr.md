@@ -13,7 +13,44 @@ clip checked through automatic and forced-language CLI requests. See the
 [five-language spot checks](../../tests/whistle_asr/MULTILINGUAL_VALIDATION.md).
 This limited coverage does not qualify general accuracy in all seven languages.
 
-## GGUF package
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `whistle_asr` |
+| Tasks | `asr` |
+| Modes | `offline` |
+| Languages | `en`, `de`, `fr`, `es`, `it`, `nl`, `pl` |
+| Default package | `whistle_asr_f32` |
+| Input | Speech audio |
+| Output | Transcript text |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--audio` | Input audio, where required by the selected task. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `language` | `string` | Model/session default | Force one supported language; omit to detect the language. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `whistle_asr.exec_plan` | `string` | `{}` | JSON component execution plans. Component decoder accepts impl native/neon (default native), both on CPU independently of the encoder backend. The experimental neon implementation accelerates the vocabulary projection with the framework NEON library and requires ENGINE_ENABLE_NEON=ON and AArch64 NEON. No artifacts or params are used. |
+
+## Quick Start
 
 The default package is `whistle_asr_f32`, containing
 `Whistle-GGUF/whistle-f32.gguf` in
@@ -75,37 +112,6 @@ amplitude-based noise gate. Digital silence returns an empty transcript.
 Inputs shorter than 40 milliseconds also return an empty transcript.
 This family has no speech activity detector, so noise-only recordings may
 produce words.
-
-## Runtime structure
-
-The mel frontend reuses the shared `NemoMelFrontend` (512-point FFT, 400-sample
-symmetric Hann window, 160-sample hop, constant padding, natural-log mel energies,
-per-bin mean and unbiased-variance normalization). Whistle's 99th-percentile block
-RMS gain normalization is applied locally before it.
-
-The encoder runs as one GGML graph on the selected backend. It is built from the
-framework `Conv2dModule`, `DepthwiseConv2dModule`, `DepthwiseConv1dModule`,
-`LinearModule`, `RMSNormModule`, `GemmaRMSNormModule`, `RoPEModule`, `SiluModule`,
-`SigmoidModule`, `SoftmaxModule`, and `GLUModule`. The stem does not use the shared
-`DepthwiseConvSubsamplingModule` because that module hardcodes ReLU and Whistle's
-stem uses SiLU. Whistle-specific math stays model-local in `graph.cpp`, shared by
-the encoder graph: the four-lane manifold hyper-connection mixing with
-its Sinkhorn normalization, the conditioned Kronecker-factored Hadamard MLP with its
-two fixed permutations, and the per-head RMS norm and rotary embedding over 48-wide
-heads. Checkpoint tensors are JAX `[in, out]` kernels; the loader transposes them
-once into the backend weight store.
-
-The autoregressive decoder uses the original host implementation from PR #824,
-with OpenMP workers bounded by `--threads`. Its weights are retained across
-requests; self-attention caches and three-tap projection history reset for each
-recording. The encoder graph computes cross-attention keys and values, which
-are transferred to the host decoder once per request. Grouped-query and
-cross-attention preserve the model's 48-wide queries/keys and 64-wide values.
-Engram lookup, projections, gates and greedy argmax also run on the host.
-
-This avoids thousands of small GGML decoder nodes per token. Four-thread CPU
-and Metal sessions benefit on the tested M4 Pro; one-thread decoding is slower
-than the previous one-thread GGML graph.
 
 ## Build and request options
 
