@@ -4,6 +4,7 @@
 |---|---|---|---|
 | AST AudioSet | `ast_audioset` | `cls` | [Model guide](models/ast_audioset.md) |
 | CED Audio Tagging | `ced` | `cls` | [Model guide](models/ced.md) |
+| d1-Omni-2B | `lfm_d1_omni` | `cls` | [Model guide](models/lfm_d1_omni.md) |
 | Earshot VAD | `earshot_vad` | `vad` | [Model guide](models/earshot_vad.md) |
 | FireRed VAD / Stream-VAD | `firered_vad` | `vad` | [Model guide](models/firered_vad.md) |
 | MarbleNet VAD | `marblenet_vad` | `vad` | [MarbleNet VAD](#marblenet-vad) |
@@ -225,3 +226,9 @@ See the [community-model guide](models/sortformer_diar_v2.md) for
 conversion commands, weight profiles, streaming geometry, and validation
 limits. CUDA offline F32 execution is memory-heavy; streaming is the supported
 path for long recordings.
+
+## Audio decisions
+
+[d1-Omni-2B](models/lfm_d1_omni.md) answers named yes/no, choice, score,
+and numeric-estimate questions about audio using the `lfm_d1_omni` family and the
+`cls` task. Use the matching published main/mmproj GGUF pair from Liquid AI.

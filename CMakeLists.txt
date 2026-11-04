@@ -616,6 +616,8 @@ add_library(engine_core OBJECT
     src/framework/modules/transformers/decoder.cpp
     src/framework/modules/transformers/causal_decoder.cpp
     src/framework/modules/transformers/causal_decoder_runtime.cpp
+    src/framework/modules/speech_encoders/lfm3_audio_encoder_runtime.cpp
+    src/framework/modules/transformers/lfm_decoder_runtime.cpp
     src/framework/modules/transformers/qwen35_decoder_runtime.cpp
     src/framework/modules/text_encoders/qwen3_vl_encoder_runtime.cpp
     src/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.cpp
@@ -857,6 +859,18 @@ audiocpp_add_model(ced
         engine/models/ced/session.h
     LOADERS
         engine::models::ced::make_ced_loader
+)
+
+audiocpp_add_model(lfm_d1_omni
+    SOURCES
+        src/models/lfm_d1_omni/assets.cpp
+        src/models/lfm_d1_omni/audio.cpp
+        src/models/lfm_d1_omni/questions.cpp
+        src/models/lfm_d1_omni/session.cpp
+    INCLUDES
+        engine/models/lfm_d1_omni/session.h
+    LOADERS
+        engine::models::lfm_d1_omni::make_lfm_d1_omni_loader
 )
 
 audiocpp_add_model(ast_audioset
@@ -5128,6 +5142,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             decoder_packed_projection_test
             tests/unittests/test_decoder_packed_projections.cpp
         )
+        add_engine_unittest(lfm_decoder_test tests/unittests/test_lfm_decoder.cpp)
+        add_test(NAME lfm_decoder_test COMMAND lfm_decoder_test --backend cpu --log "${CMAKE_CURRENT_BINARY_DIR}/lfm_decoder_test.log")
         add_engine_unittest(causal_decoder_chunked_prefill_test tests/unittests/test_causal_decoder_chunked_prefill.cpp)
         add_test(NAME causal_decoder_chunked_prefill_test COMMAND causal_decoder_chunked_prefill_test)
         add_test(

@@ -136,6 +136,7 @@ Model weights keep the license of their original release, which is separate from
 | **hviske_asr** | ASR | da | Hviske v5.3 | GGUF Q8 |
 | **hviske_asr_v6** | ASR | da | Hviske v6 | GGUF BF16 / Q8 |
 | **index_echo** | ASR, Translate | zh → en, es, ja | Index-Echo-S2TT 2B<br>Index-Echo-S2TT 9B | GGUF original/Q8_0/Q4_K |
+| **lfm_d1_omni** | Classify | multilingual | [d1-Omni-2B](docs/models/lfm_d1_omni.md) calibrated audio decisions with named yes/no, choice, score, and numeric-estimate questions | GGUF Q8_0/F16/BF16 |
 | **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | Bundled |
 | **micro_wake_word** | Wake | model dependent | microWakeWord MixedNet TFLite models converted to GGUF | GGUF F32, Stream |
 | **ming3_audio** | ASR, Understanding, TTS, Clone, S2S | zh, en | Ming 3.0 Audio Tiny | GGUF BF16/Q8_0/Q4_K |
