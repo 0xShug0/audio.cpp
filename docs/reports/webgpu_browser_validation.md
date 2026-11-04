@@ -15,6 +15,7 @@ Peak VRAM is the observed NVML graphics-memory peak of a dedicated Chrome GPU pr
 | Irodori-TTS Small MF | TTS | Q8_0 | 205 chars | 41.800 | 4.766 | 0.1140 | 3581.3 | 32 |
 | Irodori-TTS Small RF | TTS | Q8_0 | 205 chars | 41.800 | 13.736 | 0.3286 | 3708.9 | 32 |
 | Kokoro-82M | TTS | Q8_0 | 245 chars | 15.075 | 1.086 | 0.0720 | 1811.0 | 32 |
+| LFM3-Audio-2B | TTS | Q8_0 + F16 codec | 245 chars; American English female | 15.360 | 5.088 | 0.3313 | 2118.4 | 64 |
 | Magpie Multilingual | TTS | Q8_0 | 245 chars | 13.375 | 50.691 | 3.7901 | 1457.2 | 32 |
 | Ming3-TTS-0.5B | TTS | Q8_0 | 245 chars | 12.500 | 20.262 | 1.6210 | 1385.1 | 32 |
 | MOSS-TTS Nano | TTS | Q8_0 | 245 chars | 14.000 | 15.075 | 1.0768 | 561.6 | 32 |
@@ -28,6 +29,7 @@ Peak VRAM is the observed NVML graphics-memory peak of a dedicated Chrome GPU pr
 | Fun-ASR Nano | ASR | Q8_0 | 40 s audio | 40.000 | 2.609 | 0.0652 | 1795.4 | 32 |
 | GigaAM Multilingual Large | ASR | F16 | 40 s audio | 40.000 | 0.329 | 0.0082 | 1216.2 | 32 |
 | Moonshine Streaming Medium | ASR | Q8_0 | 40 s audio | 40.000 | 1.628 | 0.0407 | 730.2 | 32 |
+| LFM3-Audio-2B | ASR | Q8_0 + F16 codec | 40 s audio; English | 40.000 | 1.855 | 0.0464 | 2270.6 | 64 |
 | MOSS Transcribe Diarize | ASR | Q4_K | 40 s audio | 40.000 | 4.748 | 0.1187 | 1642.2 | 32 |
 | Nemotron-3.5-ASR-Streaming-0.6B | ASR | Q8_0 | 40 s audio | 40.000 | 32.524 | 0.8131 | 1111.0 | 32 |
 | OWSM-CTC-v4-1B | ASR | Q8_0 | 40 s audio | 40.000 | 1.115 | 0.0279 | 2891.5 | 32 |
@@ -46,6 +48,7 @@ Peak VRAM is the observed NVML graphics-memory peak of a dedicated Chrome GPU pr
 
 - TTS used 245 English characters; Irodori used 205 Japanese characters. VibeVoice's 256-character script includes its `Speaker 0:` control label. ASR/alignment used 40 seconds of speech, and separation used 40 seconds of stereo music.
 - Irodori RF/MF used `codec_decode_chunk_steps=256` to fit the browser storage-buffer binding limit. Several WASM32 cases used reduced model metadata arenas. These were request/session settings, not model-default changes.
+- LFM3-Audio used the published Q8_0 backbone and Q8_0 mmproj (which retains an F16 codec), WASM64 and default model controls. Fresh first-request TTS/ASR measurements were collected on 2026-11-03 without warmup. TTS used seed 1234 and the American English female voice. WASM ASR used the existing sinc resampler because optional native libsoxr is unavailable.
 - VibeVoice used Q8 weights and WASM64 with a 16 GiB host-memory ceiling. That ceiling is separate from GPU memory.
 - YuE2 used Q4 main weights, an F16 VAE, `cot=off`, eight NAR steps, `semantic_max_tokens=1500` and `vae_tile_frames=256`. It reached the token cap and generated approximately 60 seconds.
 - Supertonic's Q8-labelled package contains F32/I64 tensors; the table reports the actual tensor types rather than inferring them from the package name.
@@ -53,6 +56,8 @@ Peak VRAM is the observed NVML graphics-memory peak of a dedicated Chrome GPU pr
 - These observations have no cold-cache guarantee and do not establish warmed throughput, hardware-independent performance or a complete regression comparison. This report does not include the input assets or per-case configurations required for exact reproduction. See [the build guide](../build/webgpu.md) to run models with your own GGUFs and inputs.
 
 ## Output checks
+
+LFM3-Audio TTS produced finite, nonconstant 24 kHz speech; independent Whisper Small transcription matched all 43 input words after English normalization (0% WER). The ASR case produced a coherent English transcript of the 40-second input; no reference WER was measured for that case.
 
 RE-USE and Realtime RE-USE produced finite, nonconstant 24 kHz WAVs with the input sample count; waveform cosine similarity against matched native CUDA runs exceeded 0.9999997. Streaming validates incremental inference and final WAV collection, not progressive browser playback or TTFA.
 
