@@ -24,6 +24,14 @@ oneDNN is used for SYCL matrix multiplication when ggml finds it (`GGML_SYCL_DNN
 
 Load the oneAPI environment in the shell that runs the binary, then pass `--backend sycl`. Use `--list-devices` and `--device <index>` to pick a GPU. To hide other SYCL devices, set `ONEAPI_DEVICE_SELECTOR=level_zero:gpu` (or `level_zero:<index>`).
 
+## Checked models
+
+| Model | Status |
+|---|---|
+| YuE2 | Full song generation (AR, NAR, VAE). See [docs/models/yue2.md](../models/yue2.md). |
+
+Other models may use ggml operators that the SYCL backend does not implement yet.
+
 ## Known issues
 
 - With the oneAPI compiler, `kaldi_fbank_sparse_test` and `mel_spectrogram_frontend_test` fail on CPU value checks. They fail the same way on an unmodified tree built with `icx`, independent of `ENGINE_ENABLE_SYCL`.

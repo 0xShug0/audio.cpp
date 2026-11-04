@@ -185,7 +185,7 @@ engine::modules::CausalDecoderRuntimeConfig make_runtime_config(
     out.decoder.stack.runtime.static_cache.set_rows_mode =
         engine::modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
-        backend_type == core::BackendType::Vulkan) {
+        backend_type == core::BackendType::Vulkan || backend_type == core::BackendType::Sycl) {
         out.decoder.static_cache_type = GGML_TYPE_F16;
     }
     out.decoder.logits_size = logits_size > 0 ? logits_size : config.vocab_size;

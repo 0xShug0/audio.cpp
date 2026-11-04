@@ -1,4 +1,6 @@
 #include "engine/models/yue2/nar_runtime.h"
+#include "attention_layout.h"
+#include "nar_conditioning.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
@@ -292,7 +294,10 @@ core::TensorValue mixed_attention(
     bool allow_flash_attention,
     int64_t attention_tile_rows) {
     auto q_heads = engine::modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
+    q_heads = core::wrap_tensor(
+        detail::prepare_attention_queries(ctx.ggml, q_heads.tensor, backend_type, allow_flash_attention),
+        q_heads.shape,
+        q_heads.type);
     auto k_heads = engine::modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = engine::modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     if (backend_type != core::BackendType::Cpu && allow_flash_attention) {
@@ -539,15 +544,16 @@ struct Yue2NARRuntime::Impl {
             time_hidden = engine::modules::LinearModule({config.hidden_size, config.hidden_size, true})
                               .build(build, time_hidden, owner.weights->time2);
             time_hidden = core::reshape_tensor(build, time_hidden, core::TensorShape::from_dims({1, 1, config.hidden_size}));
-            time_hidden = engine::modules::RepeatModule(
-                {core::TensorShape::from_dims({1, nar_length, config.hidden_size})})
-                              .build(build, time_hidden);
+
             auto pos = engine::modules::SliceModule({0, 0, nar_length}).build(build, owner.weights->latent_pos_embed);
             pos = core::reshape_tensor(build, pos, core::TensorShape::from_dims({1, nar_length, config.hidden_size}));
             if (pos.type != GGML_TYPE_F32) {
                 pos = core::wrap_tensor(ggml_cast(build.ggml, pos.tensor, GGML_TYPE_F32), pos.shape, GGML_TYPE_F32);
             }
-            nar_hidden = engine::modules::AddModule{}.build(build, nar_hidden, time_hidden);
+            nar_hidden = core::wrap_tensor(
+                detail::add_time_conditioning(
+                    build.ggml, nar_hidden.tensor, time_hidden.tensor, owner.execution.backend_type()),
+                nar_hidden.shape, GGML_TYPE_F32);
             nar_hidden = engine::modules::AddModule{}.build(build, nar_hidden, pos);
             auto hidden = nar_hidden;
 

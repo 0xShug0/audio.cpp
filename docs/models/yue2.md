@@ -112,6 +112,8 @@ preset settings but release stages between requests:
 `attention` controls NAR attention only; AR already uses flash attention.
 The `cuda_perf` preset is tuned for CUDA but is not backend-gated.
 
+On SYCL (`--backend sycl`, see [docs/build/sycl.md](../build/sycl.md)), AR KV storage is F16 as on CUDA, HIP and Vulkan, and the `cuda_perf` controls apply unchanged. The cached CFG attention windows that `kv_cache_alignment` enables remain CUDA-only.
+
 ## AR and NAR LoRA
 
 Use `yue2.ar_lora` for score/semantic planning and `yue2.nar_lora` for acoustic

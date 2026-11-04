@@ -3950,6 +3950,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     if(yue2 IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(yue2_request_test tests/yue2/request_test.cpp)
         add_test(NAME yue2_request_test COMMAND yue2_request_test)
+        add_engine_unittest(yue2_attention_layout_test tests/yue2/attention_layout_test.cpp)
+        add_test(NAME yue2_attention_layout_test COMMAND yue2_attention_layout_test)
+        add_engine_unittest(yue2_nar_conditioning_test tests/yue2/nar_conditioning_test.cpp)
+        add_test(NAME yue2_nar_conditioning_test COMMAND yue2_nar_conditioning_test)
     endif()
 
     # Registered here rather than in the extended block below so it runs in the

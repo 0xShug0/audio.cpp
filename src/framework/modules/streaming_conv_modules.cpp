@@ -168,6 +168,30 @@ core::TensorValue DepthwiseConv1dModule::build(
         "weight");
     const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
     const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "DepthwiseConv1dModule");
+    // SYCL has no CONV_2D_DW kernel. A pre-padded stride-1 depthwise conv is exactly SSM_CONV
+    // (per-channel correlation over a [frames, channels, batch] window), which SYCL implements.
+    if (ctx.backend_type == core::BackendType::Sycl && config_.stride == 1 && config_.dilation == 1 &&
+        config_.padding == 0 && input.shape.dims[2] >= config_.kernel_size) {
+        auto weight_2d = ggml_reshape_2d(ctx.ggml, ensure_f32(ctx, weight_contiguous).tensor, config_.kernel_size, config_.channels);
+        if (!ggml_is_contiguous(weight_2d)) weight_2d = ggml_cont(ctx.ggml, weight_2d);
+        auto y = ggml_ssm_conv(ctx.ggml, input_contiguous.tensor, weight_2d);  // [channels, frames, batch]
+        y = ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml, y));                   // [frames, channels, batch]
+        if (config_.use_bias) {
+            if (!weights.bias.has_value()) {
+                throw std::runtime_error("bias is required when DepthwiseConv1dConfig.use_bias is true");
+            }
+            auto bias = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, *weights.bias));
+            y = ggml_add(ctx.ggml, y, ggml_reshape_2d(ctx.ggml, bias.tensor, 1, config_.channels));
+        }
+        return core::wrap_tensor(
+            y,
+            core::TensorShape::from_dims({
+                input.shape.dims[0],
+                config_.channels,
+                depthwise_conv1d_output_frames(config_, input.shape.dims[2]),
+            }),
+            GGML_TYPE_F32);
+    }
     auto input_4d = core::reshape_tensor(
         ctx,
         input_contiguous,
