@@ -549,7 +549,14 @@ public:
         host_.update_targets(inputs);
     }
 
-    const std::vector<float> & compute_logits(double & compute_ms, double & readback_ms) override {
+    bool computes_best_tokens() const noexcept override {
+        return false;
+    }
+
+    GraphStepOutputs compute(bool, bool read_best_tokens, double & compute_ms, double & readback_ms) override {
+        if (read_best_tokens) {
+            throw std::runtime_error("OmniVoice layerwise generator does not score on the device");
+        }
         if (!host_.prepared()) {
             throw std::runtime_error("OmniVoice layerwise generator compute requires a prepared request");
         }
@@ -586,7 +593,9 @@ public:
             logits_host_,
             compute_ms,
             readback_ms);
-        return logits_host_;
+        GraphStepOutputs out;
+        out.logits = &logits_host_;
+        return out;
     }
 
     int64_t batch_capacity() const noexcept override { return batch_capacity_; }

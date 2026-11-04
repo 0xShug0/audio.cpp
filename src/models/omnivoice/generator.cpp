@@ -30,6 +30,7 @@
 #include <string>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
 #include <chrono>
 #include <utility>
 #include <vector>
@@ -836,6 +837,61 @@ core::TensorValue build_guided_logits(
     return ensure_contiguous(ctx, combined);
 }
 
+struct BestTokenTensors {
+    ggml_tensor * tokens = nullptr;
+    ggml_tensor * log_probs = nullptr;
+};
+
+// Greedy scoring of guided logits on the device: for every [vocab] row, the
+// best token other than `mask_bias`'s masked id and its log-probability
+// under the full row (logit - logsumexp), as the CPU scorer computes it.
+// f16 weights make exact ties common, and ggml_argmax does not say which
+// tied index it returns, so ties are broken towards the lowest index like
+// the CPU scorer: `index_ramp` holds vocab - i for token i.
+BestTokenTensors build_best_tokens(
+    core::ModuleBuildContext & ctx,
+    ggml_tensor * guided_logits,
+    ggml_tensor * mask_bias,
+    ggml_tensor * index_ramp,
+    int64_t vocab_size) {
+    const int64_t rows = ggml_nelements(guided_logits) / vocab_size;
+    auto * logits = ggml_reshape_2d(ctx.ggml, guided_logits, vocab_size, rows);
+    // Gathers logits[row, index[row]] for an i32 [rows] index.
+    const auto pick = [&](ggml_tensor * index) {
+        auto * picked = ggml_get_rows(
+            ctx.ggml,
+            ggml_reshape_3d(ctx.ggml, logits, 1, vocab_size, rows),
+            ggml_reshape_2d(ctx.ggml, index, 1, rows));
+        return ggml_reshape_2d(ctx.ggml, picked, 1, rows);
+    };
+    BestTokenTensors out;
+    auto * masked = ggml_add(ctx.ggml, logits, mask_bias);
+    auto * masked_max = ggml_get_rows(
+        ctx.ggml,
+        ggml_reshape_3d(ctx.ggml, masked, 1, vocab_size, rows),
+        ggml_reshape_2d(ctx.ggml, ggml_argmax(ctx.ggml, masked), 1, rows));
+    masked_max = ggml_reshape_2d(ctx.ggml, masked_max, 1, rows);
+    // 1 where the token reaches the row maximum (logit differences are far
+    // above 1e-30), else 0; times the ramp, the lowest tied index wins.
+    auto * at_max = ggml_step(
+        ctx.ggml,
+        ggml_scale_bias(ctx.ggml, ggml_sub(ctx.ggml, masked, masked_max), 1.0F, 1.0e-30F));
+    out.tokens = ggml_argmax(ctx.ggml, ggml_mul(ctx.ggml, at_max, index_ramp));
+    auto * row_max = pick(ggml_argmax(ctx.ggml, logits));
+    auto * sum_exp = ggml_sum_rows(ctx.ggml, ggml_exp(ctx.ggml, ggml_sub(ctx.ggml, logits, row_max)));
+    auto * log_sum_exp = ggml_add(ctx.ggml, row_max, ggml_log(ctx.ggml, sum_exp));
+    out.log_probs = ggml_sub(ctx.ggml, pick(out.tokens), log_sum_exp);
+    return out;
+}
+
+// What one decoding step reads back. Pointers are null for outputs that were
+// not requested.
+struct GraphStepOutputs {
+    const std::vector<float> * logits = nullptr;          // [batch, frame capacity, codebooks * vocab]
+    const std::vector<int32_t> * best_tokens = nullptr;   // [batch, frame capacity, codebooks]
+    const std::vector<float> * best_log_probs = nullptr;  // [batch, frame capacity, codebooks]
+};
+
 class Qwen3DiffusionGraph {
 public:
     virtual ~Qwen3DiffusionGraph() = default;
@@ -847,8 +903,9 @@ public:
     virtual void rebuild(int64_t batch, int64_t total_token_capacity, int64_t target_frame_capacity) = 0;
     virtual void prepare_request(const std::vector<PackedInputs> & inputs, const std::vector<float> & guidance_scales) = 0;
     virtual void update_generated_target_tokens(const std::vector<PackedInputs> & inputs) = 0;
-    // Guided logits, [batch, target_frame_capacity, codebooks * vocab].
-    virtual const std::vector<float> & compute_logits(double & compute_ms, double & readback_ms) = 0;
+    // Whether compute() can return greedy best tokens scored on the device.
+    virtual bool computes_best_tokens() const noexcept = 0;
+    virtual GraphStepOutputs compute(bool read_logits, bool read_best_tokens, double & compute_ms, double & readback_ms) = 0;
     virtual int64_t batch_capacity() const noexcept = 0;
     virtual int64_t total_token_capacity() const noexcept = 0;
     virtual int64_t target_frame_capacity() const noexcept = 0;
@@ -867,11 +924,13 @@ public:
         int64_t total_token_capacity,
         int64_t target_frame_capacity,
         OmniVoiceGeneratorPerfMode perf_mode,
-        bool packed_cfg)
+        bool packed_cfg,
+        bool device_scoring)
         : runtime_(std::move(runtime)),
           graph_arena_bytes_(graph_arena_bytes),
           perf_mode_(perf_mode),
-          packed_cfg_(packed_cfg) {
+          packed_cfg_(packed_cfg),
+          device_scoring_(device_scoring) {
         rebuild(batch, total_token_capacity, target_frame_capacity);
     }
 
@@ -997,6 +1056,14 @@ public:
             core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_capacity_}));
         guidance_scales_ = guidance_scales.tensor;
         ggml_set_input(guidance_scales_);
+        if (device_scoring_) {
+            mask_bias_ =
+                core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({config.audio_vocab_size})).tensor;
+            ggml_set_input(mask_bias_);
+            index_ramp_ =
+                core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({config.audio_vocab_size})).tensor;
+            ggml_set_input(index_ramp_);
+        }
 
         auto x = build_embeddings(ctx, config, weights, text_ids, audio_id_values, audio_mask, text_mask);
         if (packed_cfg_) {
@@ -1035,6 +1102,15 @@ public:
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_set_output(logits_);
         ggml_build_forward_expand(graph_, logits_);
+        if (device_scoring_) {
+            const auto best = build_best_tokens(ctx, logits_, mask_bias_, index_ramp_, config.audio_vocab_size);
+            best_tokens_ = best.tokens;
+            best_log_probs_ = best.log_probs;
+            ggml_set_output(best_tokens_);
+            ggml_set_output(best_log_probs_);
+            ggml_build_forward_expand(graph_, best_tokens_);
+            ggml_build_forward_expand(graph_, best_log_probs_);
+        }
         const auto build_end = Clock::now();
         rebuild_build_ms_ = engine::debug::elapsed_ms(build_start, build_end);
 
@@ -1062,7 +1138,19 @@ public:
             f16_attention);
         const auto & position_values = packed_cfg_ ? host_.flat_positions : host_.positions;
         ggml_backend_tensor_set(positions_, position_values.data(), 0, position_values.size() * sizeof(int32_t));
+        if (device_scoring_) {
+            std::vector<float> mask_bias(static_cast<size_t>(config.audio_vocab_size), 0.0F);
+            mask_bias[static_cast<size_t>(config.audio_mask_id)] = std::numeric_limits<float>::lowest();
+            ggml_backend_tensor_set(mask_bias_, mask_bias.data(), 0, mask_bias.size() * sizeof(float));
+            std::vector<float> index_ramp(static_cast<size_t>(config.audio_vocab_size), 0.0F);
+            for (int64_t token = 0; token < config.audio_vocab_size; ++token) {
+                index_ramp[static_cast<size_t>(token)] = static_cast<float>(config.audio_vocab_size - token);
+            }
+            ggml_backend_tensor_set(index_ramp_, index_ramp.data(), 0, index_ramp.size() * sizeof(float));
+        }
         logits_host_.clear();
+        best_tokens_host_.clear();
+        best_log_probs_host_.clear();
         const auto init_end = Clock::now();
         rebuild_init_ms_ = engine::debug::elapsed_ms(init_start, init_end);
     }
@@ -1109,9 +1197,16 @@ public:
         }
     }
 
-    const std::vector<float> & compute_logits(double & compute_ms, double & readback_ms) override {
+    bool computes_best_tokens() const noexcept override {
+        return device_scoring_;
+    }
+
+    GraphStepOutputs compute(bool read_logits, bool read_best_tokens, double & compute_ms, double & readback_ms) override {
         if (!host_.prepared()) {
             throw std::runtime_error("OmniVoice generator compute requires a prepared request");
+        }
+        if (read_best_tokens && !device_scoring_) {
+            throw std::runtime_error("OmniVoice generator graph was built without device scoring");
         }
 
         core::set_backend_threads(runtime_->backend(), runtime_->threads());
@@ -1124,17 +1219,25 @@ public:
         }
         compute_ms += engine::debug::elapsed_ms(compute_start, compute_end);
 
-        const size_t logits_count = static_cast<size_t>(
-            batch_capacity_ * target_frame_capacity_ * runtime_->assets().config.num_audio_codebook *
-            runtime_->assets().config.audio_vocab_size);
-        if (logits_host_.size() != logits_count) {
-            logits_host_.assign(logits_count, 0.0F);
-        }
+        GraphStepOutputs out;
         const auto readback_start = Clock::now();
-        ggml_backend_tensor_get(logits_, logits_host_.data(), 0, logits_host_.size() * sizeof(float));
-        const auto readback_end = Clock::now();
-        readback_ms += engine::debug::elapsed_ms(readback_start, readback_end);
-        return logits_host_;
+        const size_t row_count = static_cast<size_t>(
+            batch_capacity_ * target_frame_capacity_ * runtime_->assets().config.num_audio_codebook);
+        if (read_logits) {
+            logits_host_.resize(row_count * static_cast<size_t>(runtime_->assets().config.audio_vocab_size));
+            ggml_backend_tensor_get(logits_, logits_host_.data(), 0, logits_host_.size() * sizeof(float));
+            out.logits = &logits_host_;
+        }
+        if (read_best_tokens) {
+            best_tokens_host_.resize(row_count);
+            best_log_probs_host_.resize(row_count);
+            ggml_backend_tensor_get(best_tokens_, best_tokens_host_.data(), 0, row_count * sizeof(int32_t));
+            ggml_backend_tensor_get(best_log_probs_, best_log_probs_host_.data(), 0, row_count * sizeof(float));
+            out.best_tokens = &best_tokens_host_;
+            out.best_log_probs = &best_log_probs_host_;
+        }
+        readback_ms += engine::debug::elapsed_ms(readback_start, Clock::now());
+        return out;
     }
 
     int64_t batch_capacity() const noexcept override {
@@ -1174,6 +1277,10 @@ private:
             input_buffer_ = nullptr;
         }
         logits_ = nullptr;
+        best_tokens_ = nullptr;
+        best_log_probs_ = nullptr;
+        mask_bias_ = nullptr;
+        index_ramp_ = nullptr;
         guidance_scales_ = nullptr;
         attention_mask_ = nullptr;
         target_indices_ = nullptr;
@@ -1192,6 +1299,7 @@ private:
     size_t graph_arena_bytes_ = 0;
     OmniVoiceGeneratorPerfMode perf_mode_ = OmniVoiceGeneratorPerfMode::Standard;
     bool packed_cfg_ = true;
+    bool device_scoring_ = true;
     int64_t batch_capacity_ = 0;
     int64_t total_tokens_capacity_ = 0;
     int64_t target_frame_capacity_ = 0;
@@ -1207,10 +1315,16 @@ private:
     ggml_tensor * attention_mask_ = nullptr;
     ggml_tensor * guidance_scales_ = nullptr;
     ggml_tensor * logits_ = nullptr;
+    ggml_tensor * mask_bias_ = nullptr;
+    ggml_tensor * index_ramp_ = nullptr;
+    ggml_tensor * best_tokens_ = nullptr;
+    ggml_tensor * best_log_probs_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     BatchedGraphInputs host_;
     std::vector<float> logits_host_;
+    std::vector<int32_t> best_tokens_host_;
+    std::vector<float> best_log_probs_host_;
     double rebuild_clear_ms_ = 0.0;
     double rebuild_build_ms_ = 0.0;
     double rebuild_alloc_ms_ = 0.0;
@@ -1503,6 +1617,7 @@ struct OmniVoiceQwen3DiffusionRuntime::Impl {
     bool mem_saver = false;
     OmniVoiceGeneratorPerfMode perf_mode = OmniVoiceGeneratorPerfMode::Standard;
     bool packed_cfg = true;
+    bool device_scoring = true;
     OmniVoiceQwen3DiffusionRuntimeStats last_stats = {};
     std::mt19937 rng{std::random_device{}()};
 };
@@ -1516,7 +1631,8 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
     assets_ns::TensorStorageType weight_storage_type,
     bool mem_saver,
     OmniVoiceGeneratorPerfMode perf_mode,
-    bool packed_cfg)
+    bool packed_cfg,
+    bool device_scoring)
     : impl_(std::make_unique<Impl>()) {
     if (assets == nullptr) {
         throw std::runtime_error("OmniVoice generator requires assets");
@@ -1534,6 +1650,7 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
     impl_->mem_saver = mem_saver;
     impl_->perf_mode = perf_mode;
     impl_->packed_cfg = packed_cfg;
+    impl_->device_scoring = device_scoring;
 }
 
 OmniVoiceQwen3DiffusionRuntime::~OmniVoiceQwen3DiffusionRuntime() = default;
@@ -1670,7 +1787,8 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
                     required_total_tokens,
                     required_target_frames,
                     impl_->perf_mode,
-                    impl_->packed_cfg);
+                    impl_->packed_cfg,
+                    impl_->device_scoring);
             }
         } else {
             impl_->forward_graph->rebuild(batch_size, required_total_tokens, required_target_frames);
@@ -1724,7 +1842,23 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
             continue;
         }
 
-        const auto & batched_logits = impl_->forward_graph->compute_logits(compute_ms, readback_ms);
+        // Greedy-class requests use the device scores when the graph has
+        // them; sampled-class requests (and the layerwise graph) need the
+        // full logits on the host.
+        bool any_greedy = false;
+        bool any_sampled = false;
+        for (size_t item = 0; item < batch; ++item) {
+            if (fill_counts[item] > 0) {
+                any_greedy = any_greedy || options[item].class_temperature == 0.0F;
+                any_sampled = any_sampled || options[item].class_temperature != 0.0F;
+            }
+        }
+        const bool device_scores = any_greedy && impl_->forward_graph->computes_best_tokens();
+        const auto outputs = impl_->forward_graph->compute(
+            any_sampled || (any_greedy && !device_scores),
+            device_scores,
+            compute_ms,
+            readback_ms);
         const auto scoring_start = Clock::now();
 
         // Greedy-class requests: score every active slot of every request in
@@ -1744,9 +1878,10 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
         if (!greedy_slots.empty()) {
             const size_t slot_count = greedy_slots.size();
             const unsigned desired_threads = static_cast<unsigned>(std::max<int>(1, impl_->runtime->threads()));
-            const unsigned worker_count = std::min<unsigned>(
-                desired_threads,
-                static_cast<unsigned>(std::max<size_t>(1, slot_count)));
+            // Device scores are a lookup, so they need no worker threads.
+            const unsigned worker_count = device_scores
+                ? 1U
+                : std::min<unsigned>(desired_threads, static_cast<unsigned>(std::max<size_t>(1, slot_count)));
             auto score_range = [&](size_t begin_index, size_t end_index) {
                 for (size_t index = begin_index; index < end_index; ++index) {
                     const auto [item, slot] = greedy_slots[index];
@@ -1755,10 +1890,20 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
                     const size_t flat_index = state.active_indices[slot];
                     const int64_t codebook = static_cast<int64_t>(flat_index / static_cast<size_t>(target_frames));
                     const int64_t frame = static_cast<int64_t>(flat_index % static_cast<size_t>(target_frames));
-                    const size_t offset = item * item_logits_stride +
-                        static_cast<size_t>(frame * codebooks * vocab_size + codebook * vocab_size);
-                    const float * combined_logits = batched_logits.data() + static_cast<std::ptrdiff_t>(offset);
-                    auto [best_token, best_score] = best_log_prob_excluding_mask(combined_logits, vocab_size, mask_id);
+                    int32_t best_token = 0;
+                    float best_score = 0.0F;
+                    if (device_scores) {
+                        const size_t row = (item * static_cast<size_t>(frame_capacity) + static_cast<size_t>(frame)) *
+                                static_cast<size_t>(codebooks) +
+                            static_cast<size_t>(codebook);
+                        best_token = (*outputs.best_tokens)[row];
+                        best_score = (*outputs.best_log_probs)[row];
+                    } else {
+                        const size_t offset = item * item_logits_stride +
+                            static_cast<size_t>(frame * codebooks * vocab_size + codebook * vocab_size);
+                        const float * combined_logits = outputs.logits->data() + static_cast<std::ptrdiff_t>(offset);
+                        std::tie(best_token, best_score) = best_log_prob_excluding_mask(combined_logits, vocab_size, mask_id);
+                    }
                     Candidate candidate;
                     candidate.score = best_score - static_cast<float>(codebook) * options[item].layer_penalty_factor;
                     candidate.predicted = best_token;
@@ -1827,7 +1972,7 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
                 const int64_t frame = static_cast<int64_t>(token_index % static_cast<size_t>(target_frames));
                 const size_t offset = item * item_logits_stride +
                     static_cast<size_t>(frame * codebooks * vocab_size + codebook * vocab_size);
-                const float * combined_logits = batched_logits.data() + static_cast<std::ptrdiff_t>(offset);
+                const float * combined_logits = outputs.logits->data() + static_cast<std::ptrdiff_t>(offset);
                 log_softmax_into(combined_logits, vocab_size, combined_log_probs);
                 auto [best_token, best_score] =
                     argmax_with_value_excluding_mask(combined_log_probs.data(), vocab_size, mask_id);

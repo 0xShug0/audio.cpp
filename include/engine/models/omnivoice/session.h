@@ -97,6 +97,7 @@ private:
     bool mem_saver_ = false;
     OmniVoiceGeneratorPerfMode generator_perf_mode_ = OmniVoiceGeneratorPerfMode::Standard;
     bool generator_packed_cfg_ = true;
+    bool generator_device_scoring_ = true;
     OmniVoiceTextTokenizer tokenizer_;
     OmniVoiceHiggsAudioV2TokenizerRuntime audio_tokenizer_;
     OmniVoicePromptBuilder prompt_builder_;
