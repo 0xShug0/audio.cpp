@@ -84,6 +84,13 @@
         "default": 128
       },
       {
+        "name": "skip_empty_chunks",
+        "type": "bool",
+        "description": "Skip text chunks that emit EOS before producing audio, matching upstream. The request fails if all chunks are empty.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "text_chunk_mode",
         "type": "enum",
         "description": "Framework text chunking mode.",
