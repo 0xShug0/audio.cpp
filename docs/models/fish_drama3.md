@@ -373,6 +373,11 @@ chunk as an anchor and the latest chunk as recent context, without duplicating
 the first chunk. If that prompt does not fit, automatic history is reduced to the first chunk only, then removed.
 References and caller-supplied history remain ordered and are never dropped.
 
+`skip_empty_chunks=false` preserves the error when a chunk emits EOS before any
+audio frame. Set `--request-option skip_empty_chunks=true` to skip such chunks
+and continue in offline or streaming mode. Skipped chunks do not enter generated
+voice history, matching upstream. Other errors are not suppressed.
+
 `max_tokens` is an upper bound: generation is capped to the rows remaining after
 the selected prompt within `fish_drama3.context_length`. Reductions are logged,
 and `reached_limit` reports reaching this effective budget. A required prompt

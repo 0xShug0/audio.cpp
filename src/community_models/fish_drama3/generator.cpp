@@ -225,7 +225,7 @@ void Drama3Generator::warm_streaming_codec(const codecs::FishDacCodes & referenc
 Drama3Generation Drama3Generator::generate(const std::string & text, const std::vector<Drama3Take> & references,
     const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
     const std::function<void(const runtime::AudioBuffer &)> & on_audio, bool continuation,
-    const std::vector<Drama3Take> & generated_history) {
+    const std::vector<Drama3Take> & generated_history, bool allow_empty) {
     if (!std::isfinite(sampling.temperature) || sampling.temperature < 0 ||
         !std::isfinite(sampling.top_p) || sampling.top_p <= 0 || sampling.top_p > 1 ||
         sampling.top_k <= 0 || sampling.max_frames <= 0) throw runtime::InvalidRequestError("invalid Drama 3 sampling parameters");
@@ -453,7 +453,13 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         if (!codec_async_decode_) result.audio = streaming_audio_.finish();
         component_ms[8] += streaming_audio_.decode_ms() + streaming_audio_.publish_ms();
     }
-    if (output_frames.empty()) throw std::runtime_error("Drama 3 ended before producing an audio frame");
+    if (output_frames.empty()) {
+        if (allow_empty) {
+            std::cerr << "[fish_drama3] The model emitted EOS before any audio frame; skipping chunk\n";
+            return result;
+        }
+        throw std::runtime_error("Drama 3 ended before producing an audio frame");
+    }
     if (disk_experts_) {
         cached_prefix_ = prompt;
         cached_prefix_.insert(cached_prefix_.end(), output_frames.begin(), output_frames.end());
