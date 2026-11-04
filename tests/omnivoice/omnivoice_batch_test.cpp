@@ -15,9 +15,13 @@
 //     --reference-text-file tests/omnivoice/assets/ref_text_02.txt \
 //     --text-file tests/omnivoice/assets/clone_batch_prompts.txt \
 //     --batch-sizes 1,2,4,8 --out-dir tests/omnivoice/outputs/batch_test
+//
+// --timing-log <file> writes the engine [TIMING] lines (generator compute,
+// readback, scoring, decode, ...) of every call.
 
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/audio/wav_writer.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/registry.h"
 #include "engine/framework/runtime/session.h"
 
@@ -213,7 +217,8 @@ int main(int argc, char ** argv) {
                    "--reference-text-file <txt>] [--language <lang>] [--batch-sizes 1,2,4,8] [--repeats 3] "
                    "[--warmup 1] [--mode both|sequential|batch] [--seed 42] [--num-step 32] "
                    "[--backend cuda] [--device 0] [--threads 4] [--session-option key=value]... "
-                   "[--out-dir <dir>] [--compare-dir <dir>]\n";
+                   "[--request-option key=value]... "
+                   "[--out-dir <dir>] [--compare-dir <dir>] [--timing-log <file>]\n";
             return 2;
         }
         const std::string language = arg_or(argc, argv, "--language", "");
@@ -231,6 +236,10 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("--mode must be both, sequential, or batch");
         }
         std::filesystem::create_directories(out_dir);
+        if (const auto timing_log = find_arg(argc, argv, "--timing-log")) {
+            // Per-call engine timings ([TIMING] lines), e.g. omnivoice.generator.compute_ms.
+            engine::debug::configure_logging({true, *timing_log});
+        }
 
         const auto texts = read_lines(*text_file);
         if (texts.empty()) {
@@ -263,6 +272,14 @@ int main(int argc, char ** argv) {
             }
             session_options.options[option.substr(0, eq)] = option.substr(eq + 1);
         }
+        std::vector<std::pair<std::string, std::string>> request_options;
+        for (const auto & option : all_args(argc, argv, "--request-option")) {
+            const auto eq = option.find('=');
+            if (eq == std::string::npos) {
+                throw std::runtime_error("--request-option expects key=value: " + option);
+            }
+            request_options.emplace_back(option.substr(0, eq), option.substr(eq + 1));
+        }
         auto session_base = model->create_task_session(
             rt::TaskSpec{rt::VoiceTaskKind::Tts, rt::RunMode::Offline},
             session_options);
@@ -286,6 +303,9 @@ int main(int argc, char ** argv) {
             }
             request.options["num_inference_steps"] = num_step;
             request.options["seed"] = std::to_string(seed + static_cast<uint32_t>(index));
+            for (const auto & [key, value] : request_options) {
+                request.options[key] = value;
+            }
             return request;
         };
 
