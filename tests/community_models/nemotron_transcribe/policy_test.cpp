@@ -2,8 +2,10 @@
 #include "engine/community_models/nemotron_transcribe/frontend.h"
 #include "engine/community_models/nemotron_transcribe/assets.h"
 #include "engine/community_models/nemotron_transcribe/session.h"
+#include "engine/community_models/nemotron_transcribe/repetition_guard.h"
 #include "engine/framework/runtime/errors.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -23,8 +25,31 @@ void invalid_audio(F action) {
     throw std::runtime_error("malformed input must produce a client error");
 }
 
+void repetition_guard_boundaries() {
+    // Thresholds and the one-token commit convention match NVIDIA's LoopGuard.
+    for (int period = 1; period <= 32; ++period) {
+        model::RepetitionGuard guard;
+        const int need = std::max(period >= 4 && period <= 12 ? 15 : 32, period * 4);
+        const int check = 15 + ((need - 15 + 3) / 4) * 4;
+        for (int i = 0; i <= check; ++i)
+            require(guard.push(100 + i % period) == (i == check), "periodic loop boundary");
+    }
+    model::RepetitionGuard phrase;
+    for (int i = 0; i < 18; ++i) require(!phrase.push(100 + i % 6), "three phrase repetitions are retained");
+    model::RepetitionGuard replay;
+    for (int i = 0; i <= 546; ++i)
+        require(replay.push(1000 + i % 300) == (i == 546), "long replay boundary matches upstream");
+    require(replay.push(7777), "guard stays fired");
+    replay.reset();
+    for (int i = 0; i < 1000; ++i) require(!replay.push(i), "new output has no history from previous generation");
+    // A long phrase repeated only twice must not be mistaken for sustained replay.
+    model::RepetitionGuard partial;
+    for (int i = 0; i < 400; ++i) require(!partial.push(1000 + i % 300), "partial replay is retained");
+}
+
 int main() {
     try {
+        repetition_guard_boundaries();
         for (const auto & entry : std::vector<std::pair<std::string, std::string>>{
             {"zh", "Chinese"}, {"zh-CN", "Chinese"}, {"ZH_cn", "Chinese"}, {" zh ", "Chinese"},
             {"en-US", "English"}, {"pt_BR", "Portuguese"}, {"ja-JP", "Japanese"},

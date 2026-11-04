@@ -238,6 +238,14 @@ the native duration budget `max(24, ceil(6 * seconds - 1e-9) + 24)`. Prompt, aud
 and output must fit `nemotron_transcribe.max_context`, default 73,728. The custom
 result records token-limit termination. Sampling options are in the model spec.
 
+Optional `--request-option repetition_guard=true` stops short token loops or sustained
+replay using NVIDIA NeMo-Speech.cpp's repetition guard. It leaves sampling unchanged
+and reports `termination: "repetition_detected"` in the custom result, rather than
+claiming EOS. The partial transcript is retained. This limits runaway generation;
+it does not correct wrong-language output or recover missing speech. The default
+is `false` because legitimate repeated speech can trigger the guard. Guard state
+is local to each generation and is not carried between requests.
+
 The server accepts the same options in JSON at `/v1/audio/transcriptions`.
 Use `/v1/audio/transcriptions/details` for word timestamps and speaker turns.
 The generic `/v1/tasks/run` route also returns `custom_schema_output`, including

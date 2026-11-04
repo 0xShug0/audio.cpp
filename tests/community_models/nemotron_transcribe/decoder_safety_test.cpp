@@ -2,6 +2,7 @@
 
 #include <ggml-backend-impl.h>
 
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -159,6 +160,47 @@ void allocation_failure_is_retryable(core::ExecutionContext & execution, const D
     }
 }
 
+void repetition_guard_stops_without_changing_sampling(core::ExecutionContext & execution) {
+    auto config = small_config();
+    config.max_context = 128;
+    auto weights = std::make_shared<TestWeights>(config);
+    NemotronHDecoderRuntime runtime(weights, execution, config);
+    GenerationOptions options;
+    options.max_new_tokens = 64;
+    options.stop_token_ids.clear();
+    const auto baseline = runtime.generate({1, 2}, {}, 0, {}, options);
+    require(baseline.termination == TerminationReason::TokenLimit && baseline.token_ids.size() == 64,
+        "default keeps the existing token-limit behavior");
+    options.repetition_guard = true;
+    std::vector<int32_t> streamed;
+    options.on_token = [&](int32_t token) { streamed.push_back(token); };
+    const auto guarded = runtime.generate({1, 2}, {}, 0, {}, options);
+    require(guarded.termination == TerminationReason::RepetitionDetected && guarded.stop_token_id == -1 &&
+        guarded.token_ids.size() == 36 && streamed == guarded.token_ids &&
+        std::equal(guarded.token_ids.begin(), guarded.token_ids.end(), baseline.token_ids.begin()),
+        "guard retains the sampled prefix and callback tokens without claiming EOS");
+    const auto again = runtime.generate({1, 2}, {}, 0, {}, options);
+    require(again.token_ids == guarded.token_ids, "guard is reset for each generation");
+    options.stop_token_ids = {0};
+    const auto eos = runtime.generate({1, 2}, {}, 0, {}, options);
+    require(eos.termination == TerminationReason::StopToken && eos.token_ids.empty(), "EOS takes precedence");
+    options.stop_token_ids.clear();
+    options.max_new_tokens = 20;
+    const auto limited = runtime.generate({1, 2}, {}, 0, {}, options);
+    require(limited.termination == TerminationReason::TokenLimit && limited.token_ids.size() == 20,
+        "token cap before guard remains a token cap");
+    options.cancelled = [] { return true; };
+    const auto cancelled = runtime.generate({1, 2}, {}, 0, {}, options);
+    require(cancelled.termination == TerminationReason::Cancelled && cancelled.token_ids.empty(),
+        "cancellation remains effective with guard enabled");
+    options.cancelled = {};
+    options.max_new_tokens = 64;
+    options.repetition_guard = false;
+    const auto disabled = runtime.generate({1, 2}, {}, 0, {}, options);
+    require(disabled.token_ids == baseline.token_ids && disabled.termination == baseline.termination,
+        "turning guard off restores complete baseline output after guarded requests");
+}
+
 void scalar_options_can_be_validated_without_execution(const DecoderConfig & c) {
     GenerationOptions options;
     options.max_new_tokens = 2;
@@ -206,6 +248,7 @@ int main() {
         core::ExecutionContext execution({core::BackendType::Cpu, 0, 1});
         const auto config = small_config();
         scalar_options_can_be_validated_without_execution(config);
+        repetition_guard_stops_without_changing_sampling(execution);
         allocation_failure_is_retryable(execution, config);
         invalid_config_is_rejected_before_tensor_access(execution, config);
     } catch (const std::exception & error) {
