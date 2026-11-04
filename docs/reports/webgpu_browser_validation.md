@@ -38,6 +38,8 @@ Peak VRAM is the observed NVML graphics-memory peak of a dedicated Chrome GPU pr
 | BS-RoFormer | SEP | Q8_0 | 40 s audio | 40.000 | 37.927 | 0.9482 | 2133.7 | 32 |
 | HTDemucs | SEP | Q8_0 | 40 s audio | 40.000 | 1.689 | 0.0422 | 502.0 | 32 |
 | YuE2 | GEN | Q4_0 + F16 VAE | Instrumental; 1,500-token cap | 59.999 | 37.021 | 0.6170 | 3014.4 | 64 |
+| NVIDIA NemotronLabs RE-USE | S2S enhancement | F32 | 14.07 s audio; offline, 10 s chunks / 1 s overlap | 14.072 | 4.335 | 0.3080 | 3090.0 | 32 |
+| Realtime RE-USE | S2S enhancement | F32 | 14.07 s audio; streaming, exit layer 8, lookahead 0 | 14.072 | 1.569 | 0.1115 | 522.5 | 32 |
 
 
 ## Workload and configuration notes
@@ -51,6 +53,8 @@ Peak VRAM is the observed NVML graphics-memory peak of a dedicated Chrome GPU pr
 - These observations have no cold-cache guarantee and do not establish warmed throughput, hardware-independent performance or a complete regression comparison. This report does not include the input assets or per-case configurations required for exact reproduction. See [the build guide](../build/webgpu.md) to run models with your own GGUFs and inputs.
 
 ## Output checks
+
+RE-USE and Realtime RE-USE produced finite, nonconstant 24 kHz WAVs with the input sample count; waveform cosine similarity against matched native CUDA runs exceeded 0.9999997. Streaming validates incremental inference and final WAV collection, not progressive browser playback or TTFA.
 
 All generated TTS/music WAVs were finite and nonconstant. Independent SenseVoice ASR found seven of twelve TTS transcripts exact after normalizing punctuation, whitespace and case: Kokoro, VoxCPM, OmniVoice, Ming3, Qwen3-TTS, Irodori RF and VibeVoice. Pocket, Magpie and Irodori MF had small differences; Supertonic and MOSS Nano had larger discrepancies requiring further verification. ASR differences alone cannot be attributed to synthesis, and these checks do not establish waveform parity or a model-quality score.
 
