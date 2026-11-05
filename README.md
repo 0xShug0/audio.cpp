@@ -12,14 +12,6 @@ Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio 
 
 **Supported backends:** [![CPU](https://img.shields.io/badge/CPU-555555)](#linux-build) [![CUDA](https://img.shields.io/badge/CUDA-76B900?logo=nvidia&logoColor=white)](#linux-build) [![HIP/ROCm](https://img.shields.io/badge/HIP%2FROCm-ED1C24?logo=amd&logoColor=white)](#hiprocm-build) [![Vulkan](https://img.shields.io/badge/Vulkan-AC162C?logo=vulkan&logoColor=white)](#linux-build) [![Metal](https://img.shields.io/badge/Metal-000000?logo=apple&logoColor=white)](#metal-build) [![WebGPU](https://img.shields.io/badge/WebGPU-005A9C?logo=webgpu&logoColor=white)](#webgpu-build)
 
-<p align="center">
-  <a href="assets/figure/technology_cloud_v1.png">
-    <img src="assets/figure/technology_cloud_v1.png" alt="Core technologies used by audio.cpp models" width="36%" align="top">
-  </a>
-  <a href="https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas">
-    <img src="assets/figure/architecture_atlas.png" alt="Interactive Audio Model Architecture Atlas" width="61.35%" align="top">
-  </a>
-</p>
 
 > [!TIP]
 >
@@ -62,15 +54,13 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
-> **2026-10-31:** Added [NVIDIA Nemotron 3.5 Transcribe](docs/models/nemotron_transcribe.md), with CPU offload only requiring **less than 7 GB of VRAM**.
->
-> **2026-10-26 — Release v0.9.3:** New models include **Fish Audio Drama3 and Drama3-small, Ming 3.0 TTS, Ming 3.0 Audio Tiny, Coqui XTTS v2, Plapre 3, Gradium Phonon, and Earshot VAD**, plus experimental **LatentSync 1.6** lip synchronization. Existing families gain Irodori-TTS MeanFlow and multilingual Granite TurboCTC support.
->
-> New features include **LoRA support across 11 models**, Studio adapter controls and GGUF merging, a **TTS workspace with reusable speakers**, Ming3-TTS streaming, Kokoro voice blending, and built-in recipes for voice cloning and cross-language dubbing. Performance optimizations and `perf_mode` presets improve speech and music generation, with further memory reductions for selected models. Hardware support expands with HIP test releases, more ARM NEON acceleration, and additional Rockchip NPU paths and Docker images. Thanks to everyone contributing code, testing, feedback, and hardware access!
->
-> **2026-10-15 — Release v0.9.2:** New models include Voxtral TTS, TF-GridNet, MossFormer2, Hviske v6, FireRed VAD, AST, CED, and wake-word detection models. This release expands TTS streaming, adds multi-turn LFM2.5-Audio conversations, and improves model performance and compatibility. The WebUI gains a shared Voice Library and layout improvements. Downloadable C API libraries, Windows Vulkan portable builds, and packaged server configuration examples make integration easier. Thanks to everyone contributing code, testing, and feedback!
->
-> **2026-09-30 - Release v0.9.0:** **100+ audio models**, an enhancement and denoising WebUI tab, speaker-tagged ASR, and performance and memory improvements. Explore the [Architecture Atlas](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas). Thanks to our community!
+> **2026-11-04 — Release v0.9.4:** **WebGPU support brings audio inference to the browser with WASM**, and the WebUI gains **streaming voice chat with animated SoulX avatars**, cross-language dubbing, and voice-library export, import, and sorting. New models include **Nemotron 3.5 Transcribe** with CPU offload below 7 GB VRAM, **LFM3-Audio, LFM D1-Omni, PocketTTS Small, SoulX-FlashHead, Real-time RE-USE, Magenta RealTime 2, Music Flamingo, Haas, and Underdog Bark 3**, plus Irodori-TTS v4 Large. Experimental AMD kernel selection, new performance controls, and backend fixes improve speed, memory use, and compatibility. This release brings together community model ports, backend optimizations, and fixes shaped by real deployment reports.
+
+**2026-10-26 — Release v0.9.3:** New speech models including Drama3, Ming 3.0 TTS/Audio Tiny, XTTS v2, Plapre 3, Gradium Phonon, and Earshot VAD, plus experimental LatentSync lip sync. Highlights include **LoRA across 11 models**, a **TTS workspace**, voice-cloning and dubbing recipes, `perf_mode` presets, lower memory use, and expanded HIP, ARM NEON, and Rockchip NPU support. Thanks to our contributors!
+
+**2026-10-15 — Release v0.9.2:** New models include Voxtral TTS, TF-GridNet, MossFormer2, Hviske v6, FireRed VAD, AST, CED, and wake-word detection models. This release expands TTS streaming, adds multi-turn LFM2.5-Audio conversations, and improves model performance and compatibility. The WebUI gains a shared Voice Library and layout improvements. Downloadable C API libraries, Windows Vulkan portable builds, and packaged server configuration examples make integration easier. Thanks to everyone contributing code, testing, and feedback!
+
+**2026-09-30 - Release v0.9.0:** **100+ audio models**, an enhancement and denoising WebUI tab, speaker-tagged ASR, and performance and memory improvements. Explore the [Architecture Atlas](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas). Thanks to our community!
 
 **2026-06-25 to 2026-09-23 (releases 0.1 to 0.8):** audio.cpp grew to **80+ model families and 120+ variants** across TTS, ASR, music generation, voice conversion, separation, and speech analysis. Major additions included the **native WebUI and Arena**, GGUF packaging, LoRA adapters, streaming, and CUDA/Metal performance improvements, alongside Vulkan and experimental HIP support. The C ABI, Colab integration, MP3/HTTPS frontends, and models such as YuE2 and SheetSage2 expanded integration and audio-to-score workflows.
 
