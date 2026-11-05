@@ -1306,6 +1306,8 @@ class ggml_webgpu_shader_lib {
         conv2d_dw_pipelines;
     std::unordered_map<ggml_webgpu_im2col_pipeline_key, webgpu_pipeline, ggml_webgpu_im2col_pipeline_key_hash>
         im2col_pipelines;
+    std::unordered_map<ggml_webgpu_im2col_pipeline_key, webgpu_pipeline, ggml_webgpu_im2col_pipeline_key_hash>
+        im2col_3d_pipelines;
 
     std::unordered_map<ggml_webgpu_rms_norm_mul_pipeline_key,
                        webgpu_pipeline,
@@ -3514,6 +3516,27 @@ class ggml_webgpu_shader_lib {
         pipeline.context         = decisions;
         im2col_pipelines[key]    = pipeline;
         return im2col_pipelines[key];
+    }
+
+    webgpu_pipeline get_im2col_3d_pipeline(const ggml_webgpu_shader_lib_context & context) {
+        const ggml_webgpu_im2col_pipeline_key key = {context.src1->type, context.dst->type};
+        const auto it = im2col_3d_pipelines.find(key);
+        if (it != im2col_3d_pipelines.end()) {
+            return it->second;
+        }
+
+        const uint32_t wg_size = std::min(256u, context.max_wg_size);
+        const std::vector<std::string> defines = {
+            std::string("OUTPUT_TYPE=") + (key.output_type == GGML_TYPE_F16 ? "f16" : "f32"),
+            "WG_SIZE=" + std::to_string(wg_size),
+        };
+        auto processed = preprocessor.preprocess(wgsl_im2col_3d, defines);
+        auto decisions = std::make_shared<ggml_webgpu_generic_shader_decisions>();
+        decisions->wg_size = wg_size;
+        webgpu_pipeline pipeline = ggml_webgpu_create_pipeline(device, processed, "im2col_3d");
+        pipeline.context = decisions;
+        im2col_3d_pipelines[key] = pipeline;
+        return pipeline;
     }
 
     webgpu_pipeline get_upscale_pipeline(const ggml_webgpu_shader_lib_context & context) {

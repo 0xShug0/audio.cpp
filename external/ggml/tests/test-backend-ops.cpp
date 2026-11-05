@@ -5203,9 +5203,10 @@ struct test_im2col_3d : public test_case {
 
     const int64_t IC;
     const bool v;
+    const size_t offset;
 
     std::string vars() override {
-        return VARS_TO_STR16(type_input, type_kernel, dst_type, ne_input, ne_kernel, IC, s0, s1, s2, p0, p1, p2, d0, d1, d2, v);
+        return VARS_TO_STR16(type_input, type_kernel, dst_type, ne_input, ne_kernel, IC, s0, s1, s2, p0, p1, p2, d0, d1, d2, v) + ",offset=" + std::to_string(offset);
     }
 
     test_im2col_3d(ggml_type type_input = GGML_TYPE_F32, ggml_type type_kernel = GGML_TYPE_F16, ggml_type dst_type = GGML_TYPE_F32,
@@ -5215,8 +5216,10 @@ struct test_im2col_3d : public test_case {
                 int s0 = 1, int s1 = 1, int s2 = 1,
                 int p0 = 1, int p1 = 1, int p2 = 1,
                 int d0 = 1, int d1 = 1, int d2 = 1,
-                bool v = false)
-        : type_input(type_input), type_kernel(type_kernel), dst_type(dst_type), ne_input(ne_input), ne_kernel(ne_kernel), s0(s0), s1(s1), s2(s2), p0(p0), p1(p1), p2(p2), d0(d0), d1(d1), d2(d2), IC(IC), v(v) {}
+                bool v = false, size_t offset = 0)
+        : type_input(type_input), type_kernel(type_kernel), dst_type(dst_type), ne_input(ne_input), ne_kernel(ne_kernel), s0(s0), s1(s1), s2(s2), p0(p0), p1(p1), p2(p2), d0(d0), d1(d1), d2(d2), IC(IC), v(v), offset(offset) {}
+
+    double max_err(ggml_backend_t) override { return 0.0; }
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
         ggml_tensor * input = ggml_new_tensor(ctx, type_input, 4, ne_input.data());
@@ -5224,7 +5227,7 @@ struct test_im2col_3d : public test_case {
         ggml_set_name(input, "input");
 
         if (v) {
-            input = ggml_view_4d(ctx, input, ne_input[0] - 2, ne_input[1] - 2, ne_input[2] - 2, ne_input[3] - 2, input->nb[1], input->nb[2], input->nb[3], 0);
+            input = ggml_view_4d(ctx, input, ne_input[0] - 2, ne_input[1] - 2, ne_input[2] - 2, ne_input[3] - 2, input->nb[1], input->nb[2], input->nb[3], offset);
             ggml_set_name(input, "view_of_input");
         }
 
@@ -7824,6 +7827,21 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_im2col(GGML_TYPE_F32, GGML_TYPE_F32, GGML_TYPE_F32, {2, 2, 1536, 729}, {2, 2, 1536, 4096}, 1, 1, 0, 0, 1, 1, true));
 
     // im2col 3D
+    // Non-cubic kernels, batched/strided views, and nonzero buffer offsets.
+    for (ggml_type dst_type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+        for (bool view : {false, true}) {
+            test_cases.emplace_back(new test_im2col_3d(
+                GGML_TYPE_F32, GGML_TYPE_F16, dst_type, {13, 11, 9, 6}, {2, 3, 2, 8},
+                2, 2, 1, 2, 1, 2, 1, 2, 1, 2, view, view ? sizeof(float) : 0));
+        }
+        // More workgroups than fit in one dispatch dimension, including a view offset.
+        test_cases.emplace_back(new test_im2col_3d(
+            GGML_TYPE_F32, GGML_TYPE_F16, dst_type, {516, 516, 5, 5}, {3, 3, 3, 192},
+            3, 1, 1, 1, 0, 0, 0, 1, 1, 1, true, sizeof(float)));
+        test_cases.emplace_back(new test_im2col_3d(
+            GGML_TYPE_F32, GGML_TYPE_F16, dst_type, {7, 5, 3, 2}, {1, 1, 1, 2},
+            1, 1, 1, 1, 0, 0, 0, 1, 1, 1));
+    }
     test_cases.emplace_back(new test_im2col_3d(GGML_TYPE_F32, GGML_TYPE_F32, GGML_TYPE_F32));
     test_cases.emplace_back(new test_im2col_3d(GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_F32));
     test_cases.emplace_back(new test_im2col_3d(GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_F16));
@@ -9187,6 +9205,25 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
 // Test cases for performance evaluation: should be representative of real-world use cases
 static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     std::vector<std::unique_ptr<test_case>> test_cases;
+
+    for (ggml_type dst_type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+        test_cases.emplace_back(new test_im2col_3d(
+            GGML_TYPE_F32, GGML_TYPE_F16, dst_type, {514, 514, 3, 3}, {3, 3, 3, 192},
+            3, 1, 1, 1, 0, 0, 0, 1, 1, 1));
+        test_cases.emplace_back(new test_im2col_3d(
+            GGML_TYPE_F32, GGML_TYPE_F16, dst_type, {66, 66, 3, 64}, {3, 3, 3, 4096},
+            64, 1, 1, 1, 0, 0, 0, 1, 1, 1));
+        test_cases.emplace_back(new test_im2col_3d(
+            GGML_TYPE_F32, GGML_TYPE_F16, dst_type, {35, 21, 9, 8}, {3, 2, 3, 32},
+            4, 1, 1, 1, 1, 0, 1, 1, 1, 1));
+        test_cases.emplace_back(new test_im2col_3d(
+            GGML_TYPE_F32, GGML_TYPE_F16, dst_type, {7, 5, 3, 2}, {1, 1, 1, 2},
+            1, 1, 1, 1, 0, 0, 0, 1, 1, 1));
+        // The same output volume as the large 3D case, for throughput comparison.
+        test_cases.emplace_back(new test_im2col(
+            GGML_TYPE_F32, GGML_TYPE_F16, dst_type, {514, 514, 9, 1}, {3, 3, 9, 64},
+            1, 1, 0, 0, 1, 1, true));
+    }
 
     // Conv2d: K=CRS=NPQ=4096 matmul performance
     uint32_t                        iwh_idx  = 0;
