@@ -487,7 +487,9 @@ private:
             std::unordered_set<int32_t> seen;
             for (size_t i=codes.size()>50?codes.size()-50:0;i<codes.size();++i) {
                 auto code=codes[i];
-                if (code==4299 || !seen.insert(code).second) continue;
+                // Silence (4299) is penalised like any other code, matching upstream
+                // KittenML/KittenTTS@64baa6a; exempting it lets decoding stall in silence runs.
+                if (!seen.insert(code).second) continue;
                 logits[code]=logits[code]<0?logits[code]*repetition:logits[code]/repetition;
             }
             auto token=sampler.sample(logits,{},sampling_options,scratch,rng,nullptr,"Kitten TTS 2");
