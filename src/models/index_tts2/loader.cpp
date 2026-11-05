@@ -44,7 +44,7 @@ runtime::ModelCliInterface cli(const IndexTTS2Assets & assets) {
         {"top_k", "n", "GPT top-k sampling limit.", false, "30", "1"},
         {"temperature", "float", "Positive GPT sampling temperature.", false, "0.8"},
         {"repetition_penalty", "float", "GPT repetition penalty.", false, "10"},
-        {"max_text_tokens_per_segment", "n", "Maximum text-token budget per internal segment.", false, "120", "1", "600"},
+        {"text_chunk_tokens", "n", "Maximum text-token budget per internal segment.", false, "120", "1", "600"},
         {"max_tokens", "n", "Maximum generated GPT speech tokens.", false, "1500", "1"},
         {"seed", "int", "Generation seed; omitted chooses a random seed.", false, std::nullopt, "0", "4294967295"},
         {"emotion_alpha", "float", "Blend strength for explicit emotion conditioning.", false, "1", "0", "1"},

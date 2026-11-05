@@ -364,10 +364,20 @@ void IndexTTS2Session::prepare(const runtime::SessionPreparationRequest & reques
                 language = normalize_index_tts2_language(*value);
             }
         }
+        const int text_chunk_tokens = runtime::parse_int_option(request.options, {"text_chunk_tokens"})
+            .value_or(IndexTTS2Request{}.text_chunk_tokens);
+        if (text_chunk_tokens <= 0 || text_chunk_tokens > 600) {
+            throw std::runtime_error("IndexTTS2 text_chunk_tokens must be between 1 and 600");
+        }
+        const auto normalization = runtime::find_option(request.options, {"text_normalization"});
+        const bool text_normalization = normalization
+            ? runtime::parse_bool_option(*normalization, "text_normalization")
+            : IndexTTS2Request{}.text_normalization;
         const auto text_encoding = tokenizer_.encode_for_inference(
             text,
-            IndexTTS2Request{}.max_text_tokens_per_segment,
-            language);
+            text_chunk_tokens,
+            language,
+            text_normalization);
         for (const auto & segment : text_encoding.segment_token_ids) {
             const int64_t gpt_text_tokens = is_v2_5_variant(*assets_)
                 ? static_cast<int64_t>(align_index_tts2_gpt_text_tokens(segment).size())
@@ -782,7 +792,7 @@ runtime::TaskResult IndexTTS2Session::synthesize(const runtime::TaskRequest & re
     for (const auto & text_chunk : text_chunks) {
         const auto text_encoding = tokenizer_.encode_for_inference(
             text_chunk,
-            parsed.max_text_tokens_per_segment,
+            parsed.text_chunk_tokens,
             parsed.language,
             parsed.text_normalization);
         const int32_t lang_id = v2_5 ? IndexTTS2TextTokenizer::lang_to_id(text_encoding.lang) : 0;

@@ -89,7 +89,7 @@ A streaming session emits each completed text segment immediately, including the
 | `num_beams` | integer >= 1 | `3` | Beam search width. |
 | `repetition_penalty` | float | `10` | Sampling repetition penalty. |
 | `max_tokens` | integer >= 1 | `1500` | Maximum generated mel tokens. |
-| `max_text_tokens_per_segment` | integer in `[1, 600]` | `120` | Internal text-token budget, independent of the framework character chunk size. Applies to 2.0 and 2.5. |
+| `text_chunk_tokens` | integer in `[1, 600]` | `120` | Internal text-token budget, independent of the framework character chunk size. Applies to 2.0 and 2.5. |
 | `text_normalization` | bool | `true` | IndexTTS2.5 number/symbol normalization; `false` keeps the basic punctuation map, case rules and pronunciation annotations. Does not add NeMo normalization for Japanese/Spanish. Disabling it for 2.0 is rejected. |
 | `duration_scale` | positive float | `1` | Positive waveform duration rescaling, supported by both IndexTTS2 and IndexTTS2.5. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
@@ -242,7 +242,7 @@ or commercial use.
 | `num_beams` | integer | `3` | GPT beam count. |
 | `repetition_penalty` | float | `10` | Sampling repetition penalty. |
 | `max_tokens` | integer >= 1 | `1500` | Maximum generated mel tokens. |
-| `max_text_tokens_per_segment` | integer in `[1, 600]` | `120` | Internal text-token budget, independent of the framework character chunk size. Applies to 2.0 and 2.5. |
+| `text_chunk_tokens` | integer in `[1, 600]` | `120` | Internal text-token budget, independent of the framework character chunk size. Applies to 2.0 and 2.5. |
 | `text_normalization` | bool | `true` | IndexTTS2.5 number/symbol normalization; `false` keeps the basic punctuation map, case rules and pronunciation annotations. Does not add NeMo normalization for Japanese/Spanish. Disabling it for 2.0 is rejected. |
 | `duration_scale` | positive float | `1` | Positive waveform duration rescaling, supported by both IndexTTS2 and IndexTTS2.5. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |

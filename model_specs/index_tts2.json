@@ -128,7 +128,7 @@
         "default": 10
       },
       {
-        "name": "max_text_tokens_per_segment",
+        "name": "text_chunk_tokens",
         "type": "int",
         "description": "Maximum text tokens per internal segment, separate from framework character chunking.",
         "required": false,

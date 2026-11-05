@@ -16,22 +16,22 @@ int main() {
         request.voice = runtime::VoiceCondition{
             runtime::VoiceReference{runtime::AudioBuffer{24000, 1, {0.25F}}, std::nullopt}, std::nullopt};
         const auto defaults = parse_index_tts2_request(request);
-        require_eq(defaults.max_text_tokens_per_segment, 120, "unchanged default segment budget");
+        require_eq(defaults.text_chunk_tokens, 120, "unchanged default segment budget");
         require(defaults.text_normalization, "normalization stays enabled by default");
-        request.options["max_text_tokens_per_segment"] = "60";
+        request.options["text_chunk_tokens"] = "60";
         request.options["text_normalization"] = "false";
         const auto custom = parse_index_tts2_request(request);
-        require_eq(custom.max_text_tokens_per_segment, 60, "custom segment budget");
+        require_eq(custom.text_chunk_tokens, 60, "custom segment budget");
         require(!custom.text_normalization, "explicit normalization bypass");
         for (const auto & value : {"0", "-1", "601", "1.5", "invalid"}) {
-            request.options["max_text_tokens_per_segment"] = value;
+            request.options["text_chunk_tokens"] = value;
             bool rejected = false;
             try { (void)parse_index_tts2_request(request); }
             catch (const std::exception &) { rejected = true; }
             require(rejected, std::string("invalid segment budget: ") + value);
         }
-        request.options["max_text_tokens_per_segment"] = "600";
-        require_eq(parse_index_tts2_request(request).max_text_tokens_per_segment, 600, "upper segment budget");
+        request.options["text_chunk_tokens"] = "600";
+        require_eq(parse_index_tts2_request(request).text_chunk_tokens, 600, "upper segment budget");
         request.options["text_normalization"] = "invalid";
         bool rejected = false;
         try { (void)parse_index_tts2_request(request); }

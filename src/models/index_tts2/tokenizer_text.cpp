@@ -213,7 +213,7 @@ std::vector<std::vector<std::string>> split_segments_by_token(
     }
     if (current_segment_tokens_len > 0) {
         if (current_segment_tokens_len > max_text_tokens_per_segment) {
-            throw std::runtime_error("IndexTTS2 text segment exceeds max_text_tokens_per_segment");
+            throw std::runtime_error("IndexTTS2 text segment exceeds text_chunk_tokens");
         }
         segments.push_back(current_segment);
     }
@@ -779,7 +779,7 @@ IndexTTS2TextEncoding IndexTTS2TextTokenizer::encode_for_inference(
     const std::string & lang,
     bool text_normalization) const {
     if (max_text_tokens_per_segment <= 0) {
-        throw std::runtime_error("IndexTTS2 max_text_tokens_per_segment must be positive");
+        throw std::runtime_error("IndexTTS2 text_chunk_tokens must be positive");
     }
     if (variant_ == IndexTTS2Variant::kV2_5) {
         return encode_for_inference_v2_5(text, max_text_tokens_per_segment, lang, text_normalization);
