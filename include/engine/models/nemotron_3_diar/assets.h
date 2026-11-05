@@ -4,7 +4,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/nemo_mel_frontend.h"
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/modules/attention/types.h"
+#include "engine/framework/modules/speech_encoders/rope_transformer_encoder_runtime.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -71,20 +71,10 @@ struct ModelConfig {
     StreamingConfig streaming;
 };
 
-struct EncoderLayerWeights {
-    modules::NormWeights norm1;
-    modules::AttentionWeights attention;
-    modules::NormWeights norm2;
-    modules::LinearWeights ffn_in;
-    modules::LinearWeights ffn_out;
-};
-
 struct ModelWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::LinearWeights pre_encode;
-    modules::NormWeights embed_norm;
-    std::vector<EncoderLayerWeights> layers;
-    modules::NormWeights final_norm;
+    modules::RopeTransformerEncoderWeights encoder;
     modules::LinearWeights encoder_projection;
     modules::Conv1dWeights subpixel_upsample;
     modules::LinearWeights head_hidden;

@@ -1,4 +1,5 @@
 #include "engine/community_models/nemotron_transcribe/encoder.h"
+#include "engine/community_models/nemotron_transcribe/ctc.h"
 #include <ggml-backend-impl.h>
 
 #include <cmath>
@@ -30,7 +31,7 @@ void bad_config(const std::function<void(EncoderConfig &)> & change) {
 // optionally one attention layer per expert without a downloaded model fixture.
 class CacheWeights final : public engine::assets::TensorSource {
 public:
-    explicit CacheWeights(bool attention = false) {
+    explicit CacheWeights(bool attention = false, bool ctc = false) {
         for (const auto * prefix : {"asr", "diar"}) {
             add(std::string(prefix) + ".pre_encode.proj.weight", {16, 8});
             for (const auto * suffix : {"embed_norm", "final_norm"}) norm(std::string(prefix) + "." + suffix, 16);
@@ -57,11 +58,33 @@ public:
         norm("fusion.asr_norm", 16);
         norm("fusion.diar_norm", 2);
         add("fusion.diar_kernel", {2, 16});
+        if (ctc) {
+            linear("ctc.upsample", 32, 16);
+            norm("ctc.transformer.embed_norm", 16);
+            norm("ctc.transformer.final_norm", 16);
+            const std::string layer = "ctc.transformer.layers.0";
+            norm(layer + ".norm1", 16); norm(layer + ".norm2", 16);
+            norm(layer + ".attn.q_norm", 8); norm(layer + ".attn.k_norm", 8);
+            add(layer + ".attn.w_qkv.weight", {48, 16});
+            linear(layer + ".attn.out_proj", 16, 16);
+            linear(layer + ".ffn.net.0", 32, 16);
+            linear(layer + ".ffn.net.3", 16, 32);
+            linear("ctc.classifier", 5, 16);
+        }
         if (attention) {
             for (auto & entry : entries_) {
                 if (entry.second.metadata.shape.size() < 2) continue;
                 for (size_t i = 0; i < entry.second.values.size(); ++i)
                     entry.second.values[i] = static_cast<float>(static_cast<int>(i % 13) - 6) * 0.03f;
+            }
+        }
+        if (ctc) {
+            // Zero residual branches give an independent, closed-form bridge
+            // oracle while still exercising the real Transformer graph.
+            for (const char * name : {"ctc.transformer.layers.0.attn.out_proj.weight",
+                    "ctc.transformer.layers.0.ffn.net.3.weight"}) {
+                auto & values = entries_.at(name).values;
+                std::fill(values.begin(), values.end(), 0.0f);
             }
         }
     }
@@ -102,6 +125,48 @@ private:
     std::filesystem::path path_ = "self-generated-cache-weights";
     std::map<std::string, Entry> entries_;
 };
+
+void ctc_bridge_math() {
+    auto source = std::make_shared<CacheWeights>(true, true);
+    engine::core::ExecutionContext execution({engine::core::BackendType::Cpu, 0, 1});
+    CtcConfig config;
+    config.dimension = 16; config.heads = 2; config.layers = 1;
+    config.ff_hidden = 32; config.rotary_dims = 8; config.vocabulary = 5; config.blank = 4;
+    CtcTimestampHead head(source, execution, config, "");
+    std::vector<float> input(48);
+    for (size_t i = 0; i < input.size(); ++i) input[i] = std::sin(float(i) * 0.41f);
+    const auto weights = source->require_f32("ctc.upsample.weight");
+    std::vector<float> expected(96);
+    for (int t = 0; t < 3; ++t) for (int out = 0; out < 32; ++out)
+        for (int in = 0; in < 16; ++in)
+            expected[static_cast<size_t>(t * 32 + out)] += weights[static_cast<size_t>(out * 16 + in)] * input[static_cast<size_t>(t * 16 + in)];
+    const auto normalize = [&](const std::vector<float> & row) {
+        double mean = 0, variance = 0;
+        for (float value : row) mean += value / 16.0;
+        for (float value : row) variance += (value - mean) * (value - mean) / 16.0;
+        std::vector<float> result(16);
+        for (int i = 0; i < 16; ++i) result[i] = static_cast<float>((row[i] - mean) / std::sqrt(variance + config.norm_epsilon));
+        return result;
+    };
+    for (int t = 0; t < 6; ++t) {
+        const auto begin = expected.begin() + t * 16;
+        const auto transformed = normalize(normalize(std::vector<float>(begin, begin + 16)));
+        for (int i = 0; i < 16; ++i) expected[static_cast<size_t>(t * 16 + i)] += config.residual_scale * transformed[i];
+    }
+    const auto first = head.bridge(input.data(), 3);
+    const auto repeated = head.bridge(input.data(), 3);
+    require(first == repeated, "CTC bridge cache changed repeated execution");
+    for (size_t i = 0; i < first.size(); ++i)
+        require(std::abs(first[i] - expected[i]) < 1e-5f, "CTC upsampling/scaled residual changed");
+    CtcOptions options; options.bf16_emissions = false;
+    const auto evidence = head.prepare(input.data(), 3, options);
+    require(evidence.hidden == first, "CTC evidence changed full-window bridge output");
+    const auto projection = head.project(first.data(), 6, {0, 4});
+    const auto emissions = head.emissions(evidence, {0, 4}, options);
+    for (size_t i = 0; i < emissions.size(); ++i)
+        require(std::abs(emissions[i] - (projection[i] - evidence.logsumexp[i / 2])) < 1e-6f,
+            "CTC selected-class normalization changed");
+}
 
 void extreme_cache_rates() {
     EncoderConfig config;
@@ -229,9 +294,10 @@ int main() {
         Frontend frontend({}, fb);
         engine::runtime::AudioBuffer audio{16000, 1, std::vector<float>(400, std::numeric_limits<float>::max())};
         rejects([&] { frontend.extract(audio, 1); }, "non-finite frontend output accepted");
+        ctc_bridge_math();
         extreme_cache_rates();
         attention_norm_layout();
-        std::cout << "PASS encoder bounds, window geometry, frontend checks and contiguous attention normalization\n";
+        std::cout << "PASS CTC bridge, encoder bounds, window geometry, frontend checks and contiguous attention normalization\n";
         return 0;
     } catch (const std::exception & error) {
         std::cerr << "FAIL " << error.what() << '\n';

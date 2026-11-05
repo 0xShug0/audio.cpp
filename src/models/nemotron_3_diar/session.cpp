@@ -187,18 +187,14 @@ std::vector<float> Session::encode(
     ensure_encoder_graph(
         encoder_graph_, execution_context(), *assets_, *weights_, graph_arena_bytes_,
         batch, frames, use_flash_attention_);
-    core::write_tensor_f32(encoder_graph_->input, embeddings);
+    core::write_tensor_f32(encoder_graph_->runtime->input(), embeddings);
     core::write_tensor_f16(
-        encoder_graph_->attention_mask,
+        encoder_graph_->runtime->attention_mask(),
         attention_mask(valid_frames, frames));
     core::write_tensor_f32(encoder_graph_->frame_mask, frame_mask(valid_frames, frames));
-    core::set_backend_threads(execution_context().backend(), encoder_graph_->threads);
-    if (core::compute_backend_graph(
-            execution_context().backend(), encoder_graph_->graph, encoder_graph_->plan) != GGML_STATUS_SUCCESS) {
-        throw std::runtime_error("Nemotron 3 diarization encoder graph failed");
-    }
+    encoder_graph_->runtime->run();
     std::vector<float> probabilities;
-    core::read_tensor_f32_into(encoder_graph_->probabilities.tensor, probabilities);
+    core::read_tensor_f32_into(encoder_graph_->runtime->output().tensor, probabilities);
     return probabilities;
 }
 

@@ -6,9 +6,11 @@
 // plugin's public result (speechlm2/vllm/salm/ctc_timestamps.py): transcript words and speaker
 // streams, their CTC targets, the token-distribution speaker mapping, the anchor-banded max-sum CTC
 // search, word rows, diarization-assisted word refinement and the 10 ms diarization segments. Pure
-// functions over host buffers; the CTC head that produces the log-probabilities is in
-// ctc_timestamp.h.
+// operations over host buffers; generic CTC search is framework-owned. The CTC
+// head that produces the log-probabilities is in ctc.h.
 #pragma once
+
+#include "engine/framework/decoders/ctc_host_decoder.h"
 
 #include <cstdint>
 #include <memory>
@@ -163,22 +165,6 @@ std::vector<int> speaker_mapping(
     const std::vector<int>& greedy, int columns, const std::vector<SpeakerStream>& streams,
     const float* speaker, int frames, int speakers, float threshold);
 
-struct BandedPath {
-    std::vector<int> path;  // target state per searched frame, all -1 when no path exists
-    float score = 0.0f;     // -inf when no path exists
-};
-
-// NeMo's _banded_ctc_search: max-sum CTC over `positions` (indices of the searched frames of
-// `log_probs`, frames x columns, blank column 0) in a band of states (every state under 1000
-// searched frames, else a half-width of ceil(0.1 * states + 100)) centered through unique trigram
-// anchors of the greedy onsets and the target. `prior` (per frame, nullable) is added to non-blank
-// states; ties prefer stay, step, skip; float32 throughout.
-// Invalid class IDs/positions, NaN and positive-infinite scores are rejected.
-// Negative infinity remains a valid impossible emission or prior.
-BandedPath banded_ctc_search(
-    const float* log_probs, int columns, const std::vector<int>& labels,
-    const std::vector<int>& positions, const float* prior, const std::vector<int>& greedy);
-
 struct WordRow {
     int word = 0;  // unit index
     int tag = -1;
@@ -240,7 +226,7 @@ struct AlignmentInputs {
 // inconsistent inputs, non-finite clocks/probabilities, NaN or positive-infinite
 // emissions. Negative-infinite emissions return failed streams when no legal path remains.
 AlignmentResult align_record(
-    const AlignmentTargets& targets, const AlignmentInputs& inputs,
+    const AlignmentTargets& targets, const AlignmentInputs& inputs, decoders::CtcHostDecoder& ctc,
     const AlignmentConfig& config = {});
 
 // NeMo's diarization_labels (10 ms activity > 0.5) as diarization_segments: per row the

@@ -6,6 +6,8 @@
 #include "engine/community_models/nemotron_transcribe/encoder.h"
 
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/modules/speech_encoders/rope_transformer_encoder_runtime.h"
+#include "engine/framework/modules/weight_binding.h"
 
 #include <ggml-alloc.h>
 
@@ -23,126 +25,50 @@ namespace {
 
 constexpr size_t kGraphNodes = 32768;
 
-struct LinearWeights {
-    ggml_tensor * weight = nullptr;
-    ggml_tensor * bias = nullptr;
-};
-struct NormWeights {
-    ggml_tensor * weight = nullptr;
-    ggml_tensor * bias = nullptr;
-};
-struct LayerWeights {
-    NormWeights norm1, norm2, q_norm, k_norm;
-    LinearWeights qkv, attention_output, ff_in, ff_out;
-};
+using modules::LinearWeights;
+using modules::NormWeights;
+
 struct ExpertWeights {
     LinearWeights pre_encode;
-    NormWeights embed_norm, final_norm;
-    std::vector<LayerWeights> layers;
+    modules::RopeTransformerEncoderWeights transformer;
+    modules::RopeTransformerEncoderConfig config;
 };
 
-LinearWeights load_linear(core::BackendWeightStore & store, const assets::TensorSource & source,
-    const std::string & prefix, int in, int out, bool bias, assets::TensorStorageType storage) {
-    LinearWeights result;
-    result.weight = store.load_tensor(source, prefix + ".weight", storage, {out, in}).tensor;
-    if (bias) result.bias = store.load_f32_tensor(source, prefix + ".bias", {out}).tensor;
-    return result;
-}
-
-NormWeights load_norm(core::BackendWeightStore & store, const assets::TensorSource & source,
-    const std::string & prefix, int size) {
-    return {store.load_f32_tensor(source, prefix + ".weight", {size}).tensor,
-            store.load_f32_tensor(source, prefix + ".bias", {size}).tensor};
-}
-
 ExpertWeights load_expert(core::BackendWeightStore & store, const assets::TensorSource & source,
-    const std::string & prefix, const RopeExpertConfig & config, assets::TensorStorageType storage) {
+    const std::string & prefix, const RopeExpertConfig & config, assets::TensorStorageType storage, bool flash) {
     ExpertWeights result;
     const int d = config.hidden_size;
-    result.pre_encode = load_linear(store, source, prefix + ".pre_encode.proj",
-        config.feature_size * config.subsampling_factor, d, false, storage);
-    if (config.pre_block_norm) result.embed_norm = load_norm(store, source, prefix + ".embed_norm", d);
-    result.final_norm = load_norm(store, source, prefix + ".final_norm", d);
+    result.pre_encode = modules::binding::linear_from_source(store, source, prefix + ".pre_encode.proj",
+        storage, d, config.feature_size * config.subsampling_factor, false);
+    if (config.pre_block_norm) result.transformer.input_norm = modules::binding::norm_from_source(store, source, prefix + ".embed_norm", d);
+    result.transformer.final_norm = modules::binding::norm_from_source(store, source, prefix + ".final_norm", d);
     for (int i = 0; i < config.layers; ++i) {
         const std::string p = prefix + ".layers." + std::to_string(i);
-        LayerWeights layer;
-        layer.norm1 = load_norm(store, source, p + ".norm1", d);
-        layer.norm2 = load_norm(store, source, p + ".norm2", d);
-        layer.qkv = load_linear(store, source, p + ".attn.w_qkv", d, 3 * d, config.qkv_bias, storage);
-        layer.attention_output = load_linear(store, source, p + ".attn.out_proj", d, d, true, storage);
+        modules::RopeTransformerEncoderLayerWeights layer;
+        layer.norm1 = modules::binding::norm_from_source(store, source, p + ".norm1", d);
+        layer.norm2 = modules::binding::norm_from_source(store, source, p + ".norm2", d);
+        layer.qkv = modules::binding::linear_from_source(store, source, p + ".attn.w_qkv", storage, 3 * d, d, config.qkv_bias);
+        layer.attention_output = modules::binding::linear_from_source(store, source, p + ".attn.out_proj", storage, d, d, true);
         if (config.qk_norm) {
-            layer.q_norm = load_norm(store, source, p + ".attn.q_norm", d / config.heads);
-            layer.k_norm = load_norm(store, source, p + ".attn.k_norm", d / config.heads);
+            layer.q_norm = modules::binding::norm_from_source(store, source, p + ".attn.q_norm", d / config.heads);
+            layer.k_norm = modules::binding::norm_from_source(store, source, p + ".attn.k_norm", d / config.heads);
         }
-        layer.ff_in = load_linear(store, source, p + ".ffn.net.0", d, config.intermediate_size, true, storage);
-        layer.ff_out = load_linear(store, source, p + ".ffn.net.3", config.intermediate_size, d, true, storage);
-        result.layers.push_back(layer);
+        layer.ffn_in = modules::binding::linear_from_source(store, source, p + ".ffn.net.0", storage, config.intermediate_size, d, true);
+        layer.ffn_out = modules::binding::linear_from_source(store, source, p + ".ffn.net.3", storage, d, config.intermediate_size, true);
+        result.transformer.layers.push_back(layer);
     }
+    result.config.hidden_size = d;
+    result.config.intermediate_size = config.intermediate_size;
+    result.config.heads = config.heads;
+    result.config.rotary_dimensions = config.rotary_dimensions;
+    result.config.norm_epsilon = config.layer_norm_epsilon;
+    result.config.rope_theta = config.rope_base;
+    result.config.projection_precision = GGML_PREC_F32;
+    result.config.qk_norm = config.qk_norm;
+    result.config.input_norm = config.pre_block_norm;
+    result.config.flash_attention = flash;
+    result.config.f16_kv = true;
     return result;
-}
-
-ggml_tensor * linear(ggml_context * ctx, ggml_tensor * x, const LinearWeights & weights) {
-    auto * result = ggml_mul_mat(ctx, weights.weight, x);
-    // Explicit F32 accumulation matches the upstream speech encoder.
-    ggml_mul_mat_set_prec(result, GGML_PREC_F32);
-    return weights.bias == nullptr ? result : ggml_add(ctx, result, weights.bias);
-}
-
-ggml_tensor * norm(ggml_context * ctx, ggml_tensor * x, const NormWeights & weights, float epsilon) {
-    // Q/K split views retain the QKV frame stride; Vulkan NORM needs contiguous input.
-    if (!ggml_is_contiguous(x)) x = ggml_cont(ctx, x);
-    auto * result = ggml_norm(ctx, x, epsilon);
-    return ggml_add(ctx, ggml_mul(ctx, result, weights.weight), weights.bias);
-}
-
-ggml_tensor * expert_rows(ggml_context * ctx, ggml_tensor * rows, ggml_tensor * positions,
-    const ExpertWeights & weights, const RopeExpertConfig & config, bool flash) {
-    ggml_tensor * x = rows;
-    if (config.pre_block_norm) x = norm(ctx, x, weights.embed_norm, config.layer_norm_epsilon);
-    const int d = config.hidden_size;
-    const int dk = d / config.heads;
-    const int64_t frames = x->ne[1];
-    for (const auto & layer : weights.layers) {
-        auto * qkv = linear(ctx, norm(ctx, x, layer.norm1, config.layer_norm_epsilon), layer.qkv);
-        const auto split = [&](int offset) {
-            return ggml_view_3d(ctx, qkv, dk, config.heads, frames,
-                static_cast<size_t>(dk) * sizeof(float), qkv->nb[1],
-                static_cast<size_t>(offset * d) * sizeof(float));
-        };
-        auto * q = split(0);
-        auto * k = split(1);
-        auto * v = split(2);
-        if (config.qk_norm) {
-            q = norm(ctx, q, layer.q_norm, config.layer_norm_epsilon);
-            k = norm(ctx, k, layer.k_norm, config.layer_norm_epsilon);
-        }
-        q = ggml_rope_ext(ctx, q, positions, nullptr, config.rotary_dimensions,
-            GGML_ROPE_TYPE_NEOX, 0, config.rope_base, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        k = ggml_rope_ext(ctx, k, positions, nullptr, config.rotary_dimensions,
-            GGML_ROPE_TYPE_NEOX, 0, config.rope_base, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        auto * qp = ggml_permute(ctx, q, 0, 2, 1, 3);
-        auto * kp = ggml_cast(ctx, ggml_permute(ctx, k, 0, 2, 1, 3), GGML_TYPE_F16);
-        auto * vp = ggml_cast(ctx, ggml_permute(ctx, v, 0, 2, 1, 3), GGML_TYPE_F16);
-        const float scale = 1.0f / std::sqrt(static_cast<float>(dk));
-        ggml_tensor * attention;
-        if (flash) {
-            attention = ggml_flash_attn_ext(ctx, qp, kp, vp, nullptr, scale, 0.0f, 0.0f);
-            ggml_flash_attn_ext_set_prec(attention, GGML_PREC_F32);
-        } else {
-            auto * scores = ggml_mul_mat(ctx, kp, qp);
-            ggml_mul_mat_set_prec(scores, GGML_PREC_F32);
-            auto * probabilities = ggml_soft_max_ext(ctx, scores, nullptr, scale, 0.0f);
-            auto * value_rows = ggml_cont(ctx, ggml_permute(ctx, vp, 1, 0, 2, 3));
-            auto * attended = ggml_mul_mat(ctx, value_rows, probabilities);
-            ggml_mul_mat_set_prec(attended, GGML_PREC_F32);
-            attention = ggml_cont(ctx, ggml_permute(ctx, attended, 0, 2, 1, 3));
-        }
-        auto * merged = ggml_reshape_2d(ctx, attention, d, frames);
-        x = ggml_add(ctx, x, linear(ctx, merged, layer.attention_output));
-        auto * hidden = linear(ctx, norm(ctx, x, layer.norm2, config.layer_norm_epsilon), layer.ff_in);
-        x = ggml_add(ctx, x, linear(ctx, ggml_gelu_erf(ctx, hidden), layer.ff_out));
-    }
-    return norm(ctx, x, weights.final_norm, config.layer_norm_epsilon);
 }
 
 // One reusable graph per stage. No backend allocations survive encoder teardown.
@@ -153,13 +79,8 @@ struct Graph {
     ggml_gallocr_t allocator = nullptr;
     ggml_backend_graph_plan_t plan = nullptr;
     ggml_tensor * input = nullptr;
-    ggml_tensor * previous = nullptr;
-    ggml_tensor * positions = nullptr;
-    ggml_tensor * speaker_probs = nullptr;
     ggml_tensor * output = nullptr;
-    ggml_tensor * raw = nullptr;
     int64_t frames = 0;
-    int64_t previous_frames = 0;
 
     explicit Graph(const core::ExecutionContext & execution) : backend(execution.backend()) {
         const size_t bytes = ggml_tensor_overhead() * kGraphNodes * 2 + ggml_graph_overhead_custom(kGraphNodes, false);
@@ -186,11 +107,6 @@ struct Graph {
         if (execution.uses_host_graph_plan()) {
             plan = core::create_backend_graph_plan_if_host(backend, graph);
             if (plan == nullptr) throw std::runtime_error("Nemotron Transcribe CPU graph plan failed");
-        }
-        if (positions != nullptr) {
-            std::vector<int32_t> values(static_cast<size_t>(positions->ne[0]));
-            std::iota(values.begin(), values.end(), 0);
-            ggml_backend_tensor_set(positions, values.data(), 0, values.size() * sizeof(int32_t));
         }
     }
     void run() {
@@ -387,7 +303,9 @@ struct ParallelExpertEncoder::Impl {
     NormWeights asr_norm, diar_norm;
     ggml_tensor * kernel = nullptr;
     std::vector<float> silence;
-    std::unique_ptr<Graph> pre_graph, speaker_graph, asr_graph;
+    std::unique_ptr<Graph> pre_graph;
+    std::unique_ptr<modules::RopeTransformerEncoderRuntime> speaker_graph, asr_graph;
+    core::TensorValue speaker_input;
     std::mutex mutex;
 
     Impl(const core::ExecutionContext & e, const assets::TensorSource & source, EncoderConfig c,
@@ -396,18 +314,18 @@ struct ParallelExpertEncoder::Impl {
         const size_t tensors = (static_cast<size_t>(config.asr.layers) + config.diar.layers) * 24 + 128;
         store = std::make_unique<core::BackendWeightStore>(execution.backend(), execution.backend_type(),
             "nemotron_transcribe.encoder", ggml_tensor_overhead() * tensors * 2);
-        asr = load_expert(*store, source, "asr", config.asr, storage);
-        diar = load_expert(*store, source, "diar", config.diar, storage);
+        asr = load_expert(*store, source, "asr", config.asr, storage, config.use_flash_attention);
+        diar = load_expert(*store, source, "diar", config.diar, storage, config.use_flash_attention);
         const int h = config.speaker_hidden_size;
-        encoder_projection = load_linear(*store, source, "diar.head.encoder_proj", config.diar.hidden_size, h, true, storage);
+        encoder_projection = modules::binding::linear_from_source(*store, source, "diar.head.encoder_proj", storage, h, config.diar.hidden_size, true);
         upsample_weight = store->load_tensor(source, "diar.head.subpixel_upsample.weight", assets::TensorStorageType::F16,
             {h * config.upsample_factor, h, 3}).tensor;
         upsample_bias = store->load_f32_tensor(source, "diar.head.subpixel_upsample.bias", {h * config.upsample_factor}).tensor;
-        head_hidden = load_linear(*store, source, "diar.head.first_hidden_to_hidden", h, h, true, storage);
-        speaker_head = load_linear(*store, source, "diar.head.single_hidden_to_spks", h, config.speaker_count, true, storage);
-        projection = load_linear(*store, source, "fusion.proj", config.asr.hidden_size, config.projection_dim, true, storage);
-        asr_norm = load_norm(*store, source, "fusion.asr_norm", config.asr.hidden_size);
-        diar_norm = load_norm(*store, source, "fusion.diar_norm", config.speaker_count);
+        head_hidden = modules::binding::linear_from_source(*store, source, "diar.head.first_hidden_to_hidden", storage, h, h, true);
+        speaker_head = modules::binding::linear_from_source(*store, source, "diar.head.single_hidden_to_spks", storage, config.speaker_count, h, true);
+        projection = modules::binding::linear_from_source(*store, source, "fusion.proj", storage, config.projection_dim, config.asr.hidden_size, true);
+        asr_norm = modules::binding::norm_from_source(*store, source, "fusion.asr_norm", config.asr.hidden_size);
+        diar_norm = modules::binding::norm_from_source(*store, source, "fusion.diar_norm", config.speaker_count);
         kernel = store->load_f32_tensor(source, "fusion.diar_kernel", {config.speaker_count, config.asr.hidden_size}).tensor;
         // Required for multi-window identity continuity. Never silently reset
         // the diarizer between windows when an older conversion omits this.
@@ -423,7 +341,11 @@ struct ParallelExpertEncoder::Impl {
             graph->input = ggml_new_tensor_2d(graph->context, GGML_TYPE_F32,
                 config.diar.feature_size * config.diar.subsampling_factor, frames);
             ggml_set_input(graph->input);
-            graph->output = linear(graph->context, graph->input, diar.pre_encode);
+            core::ModuleBuildContext build{graph->context, "nemotron_transcribe.pre_encode", execution.backend_type()};
+            graph->output = modules::LinearModule({config.diar.feature_size * config.diar.subsampling_factor,
+                config.diar.hidden_size, false, GGML_PREC_F32}).build(build,
+                core::wrap_tensor(graph->input, core::TensorShape::from_dims({frames,
+                    config.diar.feature_size * config.diar.subsampling_factor})), diar.pre_encode).tensor;
             graph->allocate(execution, {graph->output});
             pre_graph = std::move(graph);
         }
@@ -436,73 +358,76 @@ struct ParallelExpertEncoder::Impl {
         const SpeakerState & state, int64_t frames) {
         const int64_t previous = static_cast<int64_t>((state.cache.size() + state.fifo.size()) / config.diar.hidden_size);
         const int64_t length = previous + frames;
-        if (!speaker_graph || speaker_graph->frames != length) {
-            speaker_graph.reset();
-            auto graph = std::make_unique<Graph>(execution);
-            graph->frames = length;
-            auto * ctx = graph->context;
-            graph->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, config.diar.hidden_size, length);
-            if (config.diar.layers > 0) graph->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, length);
-            ggml_set_input(graph->input);
-            // Positions are constant inputs and kept live between graph runs.
-            if (graph->positions != nullptr) {
-                ggml_set_input(graph->positions);
-                ggml_set_output(graph->positions);
-            }
-            auto * rows = expert_rows(ctx, graph->input, graph->positions, diar, config.diar, config.use_flash_attention);
-            auto * projected = linear(ctx, rows, encoder_projection);
-            auto * time_major = ggml_cont(ctx, ggml_transpose(ctx, projected));
-            auto * upsampled = ggml_conv_1d(ctx, upsample_weight, time_major, 1, 1, 1);
-            upsampled = ggml_add(ctx, upsampled, ggml_reshape_2d(ctx, upsample_bias, 1,
-                config.speaker_hidden_size * config.upsample_factor));
-            auto * channels = ggml_cont(ctx, ggml_transpose(ctx, upsampled));
-            auto * native = ggml_reshape_2d(ctx, channels, config.speaker_hidden_size, length * config.upsample_factor);
-            auto * hidden = linear(ctx, ggml_relu(ctx, native), head_hidden);
-            graph->output = ggml_sigmoid(ctx, linear(ctx, ggml_relu(ctx, hidden), speaker_head));
-            graph->allocate(execution, {graph->output});
-            speaker_graph = std::move(graph);
+        if (!speaker_graph) {
+            auto head = [this](core::ModuleBuildContext & build, const core::TensorValue & encoded) {
+                auto * ctx = build.ggml;
+                const auto length = encoded.shape.at(1);
+                const int h = config.speaker_hidden_size;
+                auto projected = modules::LinearModule({config.diar.hidden_size, h, true, GGML_PREC_F32})
+                    .build(build, encoded, encoder_projection);
+                auto * time_major = ggml_cont(ctx, ggml_transpose(ctx, projected.tensor));
+                auto * upsampled = ggml_conv_1d(ctx, upsample_weight, time_major, 1, 1, 1);
+                upsampled = ggml_add(ctx, upsampled, ggml_reshape_2d(ctx, upsample_bias, 1, h * config.upsample_factor));
+                auto * channels = ggml_cont(ctx, ggml_transpose(ctx, upsampled));
+                auto * native = ggml_reshape_2d(ctx, channels, h, length * config.upsample_factor);
+                auto hidden = modules::LinearModule({h, h, true, GGML_PREC_F32}).build(build,
+                    core::wrap_tensor(ggml_relu(ctx, native), core::TensorShape::from_dims({length * config.upsample_factor, h})),
+                    head_hidden);
+                auto output = modules::LinearModule({h, config.speaker_count, true, GGML_PREC_F32}).build(build,
+                    core::wrap_tensor(ggml_relu(ctx, hidden.tensor), hidden.shape), speaker_head);
+                return std::vector<core::TensorValue>{core::wrap_tensor(ggml_sigmoid(ctx, output.tensor), output.shape)};
+            };
+            modules::RopeTransformerEncoderGraphConfig graph_config;
+            graph_config.head = std::move(head);
+            speaker_graph = std::make_unique<modules::RopeTransformerEncoderRuntime>(execution,
+                diar.config, diar.transformer, std::move(graph_config));
         }
+        speaker_graph->prepare(1, length);
         std::vector<float> rows;
         rows.reserve(static_cast<size_t>(length) * config.diar.hidden_size);
         rows.insert(rows.end(), state.cache.begin(), state.cache.end());
         rows.insert(rows.end(), state.fifo.begin(), state.fifo.end());
         rows.insert(rows.end(), embeddings.begin(), embeddings.end());
-        upload(speaker_graph->input, rows);
+        core::write_tensor_f32(speaker_graph->input(), rows);
         speaker_graph->run();
-        return core::read_tensor_f32(speaker_graph->output);
+        return core::read_tensor_f32(speaker_graph->output().tensor);
     }
 
     std::pair<std::vector<float>, std::vector<float>> asr_forward(
         const std::vector<float> & stacked, const std::vector<float> & probabilities, int64_t frames) {
-        if (!asr_graph || asr_graph->frames != frames) {
-            asr_graph.reset();
-            auto graph = std::make_unique<Graph>(execution);
-            graph->frames = frames;
-            auto * ctx = graph->context;
-            graph->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
-                config.asr.feature_size * config.asr.subsampling_factor, frames);
-            if (config.asr.layers > 0) graph->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, frames);
-            graph->speaker_probs = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, config.speaker_count, frames);
-            for (auto * tensor : {graph->input, graph->positions, graph->speaker_probs}) {
-                if (tensor != nullptr) ggml_set_input(tensor);
-            }
-            if (graph->positions != nullptr) ggml_set_output(graph->positions);
-            auto * encoded = linear(ctx, graph->input, asr.pre_encode);
-            graph->raw = expert_rows(ctx, encoded, graph->positions, asr, config.asr, config.use_flash_attention);
-            auto * binary = ggml_step(ctx, ggml_scale_bias(ctx, graph->speaker_probs, 1.0f, -config.speaker_activity_threshold));
-            auto * speaker_features = norm(ctx, binary, diar_norm, config.asr.layer_norm_epsilon);
-            auto * transposed_kernel = ggml_cont(ctx, ggml_transpose(ctx, kernel));
-            auto * infusion = ggml_mul_mat(ctx, transposed_kernel, speaker_features);
-            ggml_mul_mat_set_prec(infusion, GGML_PREC_F32);
-            auto * fused = ggml_add(ctx, norm(ctx, graph->raw, asr_norm, config.asr.layer_norm_epsilon), infusion);
-            graph->output = linear(ctx, fused, projection);
-            graph->allocate(execution, {graph->raw, graph->output});
-            asr_graph = std::move(graph);
+        if (!asr_graph) {
+            auto head = [this](core::ModuleBuildContext & build, const core::TensorValue & encoded) {
+                auto * ctx = build.ggml;
+                const auto frames = encoded.shape.at(1);
+                speaker_input = core::make_tensor(build, GGML_TYPE_F32,
+                    core::TensorShape::from_dims({frames, config.speaker_count}));
+                ggml_set_input(speaker_input.tensor);
+                auto * binary = ggml_step(ctx, ggml_scale_bias(ctx, speaker_input.tensor, 1.0f,
+                    -config.speaker_activity_threshold));
+                auto speaker_features = modules::LayerNormModule({config.speaker_count,
+                    config.asr.layer_norm_epsilon, true, true}).build(build,
+                    core::wrap_tensor(binary, speaker_input.shape), diar_norm);
+                auto * transposed_kernel = ggml_cont(ctx, ggml_transpose(ctx, kernel));
+                auto * infusion = ggml_mul_mat(ctx, transposed_kernel, speaker_features.tensor);
+                ggml_mul_mat_set_prec(infusion, GGML_PREC_F32);
+                auto normalized = modules::LayerNormModule({config.asr.hidden_size,
+                    config.asr.layer_norm_epsilon, true, true}).build(build, encoded, asr_norm);
+                auto * fused = ggml_add(ctx, normalized.tensor, infusion);
+                auto output = modules::LinearModule({config.asr.hidden_size, config.projection_dim, true, GGML_PREC_F32})
+                    .build(build, core::wrap_tensor(fused, encoded.shape), projection);
+                return std::vector<core::TensorValue>{encoded, output};
+            };
+            modules::RopeTransformerEncoderGraphConfig graph_config;
+            graph_config.head = std::move(head);
+            graph_config.input_projection = asr.pre_encode;
+            asr_graph = std::make_unique<modules::RopeTransformerEncoderRuntime>(execution,
+                asr.config, asr.transformer, std::move(graph_config));
         }
-        upload(asr_graph->input, stacked);
-        upload(asr_graph->speaker_probs, probabilities);
+        asr_graph->prepare(1, frames);
+        core::write_tensor_f32(asr_graph->input(), stacked);
+        core::write_tensor_f32(speaker_input, probabilities);
         asr_graph->run();
-        return {core::read_tensor_f32(asr_graph->raw), core::read_tensor_f32(asr_graph->output)};
+        return {core::read_tensor_f32(asr_graph->output(0).tensor), core::read_tensor_f32(asr_graph->output(1).tensor)};
     }
 
     void update_speakers(SpeakerState & state, const std::vector<float> & embeddings,

@@ -534,6 +534,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/graph_executor.cpp
     src/framework/runtime/graph_optimizer.cpp
     src/framework/runtime/host_ops.cpp
+    src/framework/decoders/ctc_host_decoder.cpp
     src/framework/runtime/kv_cache.cpp
     src/framework/runtime/bounded_static_kv_decode.cpp
     src/framework/runtime/greedy_causal_decoder.cpp
@@ -618,6 +619,7 @@ add_library(engine_core OBJECT
     src/framework/modules/transformers/causal_decoder.cpp
     src/framework/modules/transformers/causal_decoder_runtime.cpp
     src/framework/modules/speech_encoders/lfm3_audio_encoder_runtime.cpp
+    src/framework/modules/speech_encoders/rope_transformer_encoder_runtime.cpp
     src/framework/modules/transformers/lfm_decoder_runtime.cpp
     src/framework/modules/transformers/qwen35_decoder_runtime.cpp
     src/framework/modules/text_encoders/qwen3_vl_encoder_runtime.cpp
@@ -1266,9 +1268,9 @@ audiocpp_add_model(nemotron_transcribe
 # The aligner reproduces NumPy/PyTorch operation ordering. Fused operations in
 # that source are explicit std::fma calls.
 if(MSVC)
-    set_source_files_properties(src/community_models/nemotron_transcribe/alignment.cpp PROPERTIES COMPILE_OPTIONS "/fp:strict")
+    set_source_files_properties(src/community_models/nemotron_transcribe/alignment.cpp src/framework/decoders/ctc_host_decoder.cpp PROPERTIES COMPILE_OPTIONS "/fp:strict")
 else()
-    set_source_files_properties(src/community_models/nemotron_transcribe/alignment.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+    set_source_files_properties(src/community_models/nemotron_transcribe/alignment.cpp src/framework/decoders/ctc_host_decoder.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
 
 audiocpp_add_model(samsone
@@ -3697,6 +3699,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         endif()
     endif()
 
+    add_engine_unittest(ctc_host_decoder_test tests/unittests/test_ctc_host_decoder.cpp)
+    add_test(NAME ctc_host_decoder_test COMMAND ctc_host_decoder_test)
+    add_engine_unittest(rope_transformer_encoder_test tests/unittests/test_rope_transformer_encoder.cpp)
+    add_test(NAME rope_transformer_encoder_test COMMAND rope_transformer_encoder_test)
     add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
     add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
     add_engine_unittest(cpu_extra_buffers_test tests/unittests/test_cpu_extra_buffers.cpp)
