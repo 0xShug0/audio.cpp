@@ -4,7 +4,7 @@
   export let file: File | null = null;
   export let src = '';
   export let name = '';
-  export let kind: 'audio' | 'video' = 'audio';
+  export let kind: 'audio' | 'video' | 'image' = 'audio';
   export let label = 'Preview';
 
   let objectUrl = '';
@@ -36,7 +36,9 @@
       <strong>{label}</strong>
       {#if previewName}<span>{previewName}</span>{/if}
     </div>
-    {#if kind === 'video'}
+    {#if kind === 'image'}
+      <img src={previewUrl} alt={label} on:error={() => (failedUrl = previewUrl)} />
+    {:else if kind === 'video'}
       <!-- svelte-ignore a11y_media_has_caption -->
       <video controls preload="metadata" src={previewUrl} on:error={() => (failedUrl = previewUrl)}></video>
     {:else}
@@ -80,6 +82,13 @@
   audio {
     width: 100%;
     height: 38px;
+  }
+
+  img {
+    width: 100%;
+    max-height: 18rem;
+    object-fit: contain;
+    border-radius: .25rem;
   }
 
   video {

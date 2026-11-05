@@ -193,7 +193,7 @@
     demo_4_woman: 'demo_4_woman'
   };
   const exposeAllStudioPackageFamilies = new Set([
-    'ming3_tts', 'ming3_audio', 'latentsync', 'xtts_v2',
+    'lfm3_audio', 'ming3_tts', 'ming3_audio', 'latentsync', 'xtts_v2',
     'kugelaudio', 'crisperwhisper', 'index_echo', 'audio_flamingo', 'owsm', 'owsm_ctc', 'reuse', 'sidon', 'smart_turn',
     'maya1',
     'gigaam_asr',
@@ -289,9 +289,9 @@
     return translate(`param.${selected?.family}.${spec.name}.${field}`, {}, fallback);
   }
 
-  function localizedModelHint(translate = tr) {
-    const fallback = selected?.input_hint_en || selected?.input_hint || '';
-    return translate(`model.${selected?.family}.hint`, {}, fallback);
+  function localizedModelHint(entry: typeof selected, translate = tr) {
+    const fallback = entry?.input_hint_en || entry?.input_hint || '';
+    return translate(`model.${entry?.family}.hint`, {}, fallback);
   }
 
   // MiniMax-H3 accepts frame counts with the 17n+3 temporal alignment used by
@@ -364,7 +364,11 @@
     fish_drama3: 'Fish Audio Drama 3',
     kugelaudio: 'KugelAudio', crisperwhisper: 'CrisperWhisper', index_echo: 'Index-Echo S2TT',
     audio_flamingo: 'Audio Flamingo', owsm: 'OWSM', owsm_ctc: 'OWSM-CTC',
-    reuse: 'RE-USE', sidon: 'Sidon', smart_turn: 'Smart Turn',
+    reuse: 'RE-USE', realtime_reuse: 'Real-time RE-USE',
+    haas_asr: 'Haas Japanese ASR', lfm_d1_omni: 'd1-Omni audio decisions',
+    nemotron_transcribe: 'Nemotron 3.5 Transcribe', phonon2_asr: 'Phonon-2 ASR',
+    pocket_tts_small: 'PocketTTS Small', underdog_bark3: 'Underdog Bark 3',
+    magenta_realtime_2: 'Magenta RealTime 2', soulx_flashhead: 'SoulX-FlashHead', sidon: 'Sidon', smart_turn: 'Smart Turn',
     gigaam_asr: 'GigaAM ASR',
     ced: 'CED',
     firered_vad: 'FireRed VAD',
@@ -550,7 +554,7 @@
     (selected?.family === 'lfm2_audio' && !selected?.builtin_voices?.length)
   ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi', 'turn', 'wake', 'cls'].includes(selected?.task) ||
-    isFireRedAudioEdit || selected?.family === 'liveavatar' || selected?.family === 'latentsync' ||
+    isFireRedAudioEdit || selected?.family === 'liveavatar' || selected?.family === 'latentsync' || selected?.family === 'soulx_flashhead' ||
     (selected?.family === 'auk' && selected?.task === 'gen');
   $: acceptsSource = needsSource || (selected?.task === 'gen' && !replacesGenericControls.genSource);
   $: acceptsVideo = selected?.request_options?.includes('video') === true;
@@ -590,7 +594,7 @@
   // from another model is not sent.
   $: usesFixedChatPrompt = ['lfm2_audio', 'lfm3_audio'].includes(selected?.family) && selected?.task === 's2s';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
-    !['apollo', 'universr', 'builtin_audio_utils', 'reuse', 'sidon'].includes(selected?.family) &&
+    !['apollo', 'universr', 'builtin_audio_utils', 'reuse', 'realtime_reuse', 'sidon'].includes(selected?.family) &&
     !usesFixedChatPrompt && !replacesGenericControls.text;
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming', 'confucius4_r2t2'].includes(selected?.family);
@@ -1222,14 +1226,17 @@
         lora_scale: Number(configured?.['ace_step.lora_scale'] ?? 1) };
     }
     if (selected?.family in asrTokenDefaults) asrMaxTokens = asrTokenDefaults[selected.family];
-    if (selected?.family === 'confucius4_r2t2') language = 'Auto';
+    if (['haas_asr', 'phonon2_asr', 'underdog_bark3', 'lfm_d1_omni', 'realtime_reuse'].includes(selected?.family)) language = '';
+    else if (selected?.family === 'nemotron_transcribe') language = 'auto';
+    else if (selected?.family === 'confucius4_r2t2') language = 'Auto';
     else if (['owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'smart_turn', 'reuse', 'sidon', 'hviske_asr_v6', 'voxtral_tts'].includes(selected?.family)) language = '';
     else if (selected?.family in asrLanguages) language = 'en';
+    else language = '';
     if (selected?.family === 'minimax_h3') {
       duration = 15;
       advancedValues = { ...advancedValues, num_frames: miniMaxFramesForDuration(duration), dit_acceleration: 'none' };
     } else if (selected?.task === 'gen') {
-      duration = 30;
+      duration = selected.family === 'magenta_realtime_2' ? 10 : 30;
     }
     if (selected?.family === 'yue2') {
       if (isConfiguredEntry(selected)) {
@@ -2026,7 +2033,7 @@
   }
 
   async function run() {
-    if (running || rewritingCaption || modelPanelUploading || restoringHistory) return;
+    if (running || loadingModel || rewritingCaption || modelPanelUploading || restoringHistory) return;
     if (!selectedId) {
       status = 'Choose an installed model before running a request.';
       warningStatus = status;
@@ -2186,7 +2193,8 @@
           text: context,
           options
         };
-        const detail = ['owsm', 'crisperwhisper'].includes(selected.family) && options.return_timestamps === true;
+        const detail = ['owsm', 'crisperwhisper', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'nemotron_transcribe'].includes(selected.family) &&
+          (options.return_timestamps === true || options.diarization === true);
         submittedRequests.push({
           endpoint: detail ? '/v1/audio/transcriptions/details' : '/v1/audio/transcriptions',
           body: JSON.parse(JSON.stringify(body))
@@ -2197,8 +2205,8 @@
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
         const request: Record<string, unknown> = { options };
-        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request && !usesFixedChatPrompt && !['apollo', 'universr', 'reuse', 'sidon'].includes(selected.family)) request.text = text;
-        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request && !['apollo', 'universr', 'reuse', 'sidon'].includes(selected.family)) request.language = language;
+        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request && !usesFixedChatPrompt && !['apollo', 'universr', 'reuse', 'realtime_reuse', 'sidon'].includes(selected.family)) request.text = text;
+        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request && !['apollo', 'universr', 'reuse', 'realtime_reuse', 'sidon'].includes(selected.family)) request.language = language;
         if (selected.task === 'gen') {
           if (usesYue2Request) {
             request.lyrics = lyrics.trim();
@@ -2213,7 +2221,7 @@
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
-          if (!['apollo', 'reuse', 'sidon'].includes(selected.family)) request.seed = resolvedSeed;
+          if (!['apollo', 'reuse', 'realtime_reuse', 'sidon'].includes(selected.family)) request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         }
         if (audio) request.audio = audio;
@@ -2800,7 +2808,7 @@
         </div>
 
         {#if selectedId && (selected?.input_hint_en || selected?.input_hint)}
-          <div class="hint">{localizedModelHint(tr)}</div>
+          <div class="hint">{localizedModelHint(selected, tr)}</div>
         {/if}
       </aside>
 
@@ -2900,7 +2908,7 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'sidon', 'hviske_asr_v6', 'voxtral_tts'].includes(selected.family)}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'realtime_reuse', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'sidon', 'hviske_asr_v6', 'voxtral_tts'].includes(selected.family)}
             <div>
               <label for="language">{tr('request.language')} {#if !asrLanguages[selected.family]}<span>{tr('request.autoLanguage')}</span>{/if}</label>
               {#if ['moss_ttsd', 'moss_voicegen'].includes(selected.family)}
@@ -2914,13 +2922,13 @@
               {/if}
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && !['apollo', 'builtin_audio_utils', 'reuse', 'sidon'].includes(selected.family)}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && !['apollo', 'builtin_audio_utils', 'reuse', 'realtime_reuse', 'sidon'].includes(selected.family)}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
             </div>
           {/if}
-          {#if supportsMaxTokens(selected) && !['kugelaudio', 'crisperwhisper', 'audio_flamingo', 'owsm', 'hviske_asr_v6', 'voxtral_tts'].includes(selected.family)}
+          {#if supportsMaxTokens(selected) && !['kugelaudio', 'crisperwhisper', 'audio_flamingo', 'owsm', 'hviske_asr_v6', 'voxtral_tts', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'nemotron_transcribe'].includes(selected.family)}
             <div>
               <label for="tokens">{tr('request.maxTokens')}</label>
               {#if selected.family in asrTokenDefaults}
@@ -3125,6 +3133,11 @@
                         on:input={(event) => setParameterValue(spec, event.currentTarget.valueAsNumber)} />
                       <output>{String(advancedValues[spec.name])}</output>
                     </div>
+                  {:else if spec.type === 'text' && (spec.lines || 1) > 1}
+                    <textarea id={'param-' + spec.name} rows={spec.lines}
+                      value={String(advancedValues[spec.name] ?? '')}
+                      placeholder={localizedParameterText(spec, 'placeholder', tr)}
+                      on:input={(event) => setParameterValue(spec, event.currentTarget.value)}></textarea>
                   {:else}
                     <input id={'param-' + spec.name} type={spec.type === 'number' ? 'number' : 'text'}
                       min={spec.minimum} max={spec.maximum} step={spec.step}
@@ -3148,7 +3161,7 @@
         {/if}
 
         <div class="runbar">
-          <button class="run" disabled={!selectedId || running || rewritingCaption || restoringHistory || modelPanelUploading ||
+          <button class="run" disabled={!selectedId || running || loadingModel || rewritingCaption || restoringHistory || modelPanelUploading ||
             (!isLoaded && (installed === false || !packageLoadReady))} on:click={run}
             title={!selectedId ? tr('run.chooseModel') : !isLoaded && installed === false ? tr('run.installModel') : ''}>
             <Play size={15} /><span>{running ? tr('run.working') : tr('run.run')}</span>
@@ -3201,7 +3214,7 @@
             {/each}
           </div>
         {/if}
-        {#if !outputAudio.length && !outputArtifacts.length}
+        {#if !outputAudio.length && !outputArtifacts.length && !outputText && !outputJson}
           <div class="empty-output"><div class="wave">∿</div><p>{tr('result.empty')}</p></div>
         {/if}
         {#if outputText}<textarea class="transcript" readonly rows="7" value={outputText}></textarea>{/if}
