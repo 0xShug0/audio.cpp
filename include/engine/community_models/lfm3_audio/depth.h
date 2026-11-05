@@ -6,7 +6,6 @@
 
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/community_models/lfm3_audio/weights.h"
-#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 
 #include <array>
@@ -22,7 +21,7 @@ class Lfm3AudioSampler;  // sampling.h
 
 class Lfm3DepthDecoderRuntime {
 public:
-    Lfm3DepthDecoderRuntime(std::shared_ptr<const assets::TensorSource> model, const Lfm3DepthConfig & config,
+    Lfm3DepthDecoderRuntime(Lfm3DepthWeights weights, const Lfm3DepthConfig & config,
                             core::ExecutionContext & execution, const Lfm3WeightOptions & options);
     ~Lfm3DepthDecoderRuntime();
     // One forward: x = depth_linear(h).view(12,1024) + (masked ? mask_embedding : E_i[code_i]);

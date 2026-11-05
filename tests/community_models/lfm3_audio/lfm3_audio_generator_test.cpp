@@ -253,9 +253,9 @@ Synthetic make_synthetic() {
     s.tokenizer = std::make_unique<lfm3::Lfm3Tokenizer>(s.assets->tokenizer_json);
     s.execution = std::make_unique<engine::core::ExecutionContext>(engine::core::BackendConfig{engine::core::BackendType::Cpu, 0, 2});
     const lfm3::Lfm3WeightOptions f32{lfm3::Lfm3WeightType::F32, true};
-    s.backbone = std::make_unique<lfm3::Lfm3BackboneRuntime>(s.assets->model, s.assets->backbone, s.assets->depth.codebooks,
+    s.backbone = std::make_unique<lfm3::Lfm3BackboneRuntime>(lfm3::load_lfm3_backbone_weights(*s.assets, *s.execution, f32), s.assets->backbone, s.assets->depth.codebooks,
                                                               s.assets->depth.audio_vocab_size, *s.execution, f32);
-    s.depth = std::make_unique<lfm3::Lfm3DepthDecoderRuntime>(s.assets->model, s.assets->depth, *s.execution, f32);
+    s.depth = std::make_unique<lfm3::Lfm3DepthDecoderRuntime>(lfm3::load_lfm3_depth_weights(*s.assets, *s.execution, f32), s.assets->depth, *s.execution, f32);
     return s;
 }
 

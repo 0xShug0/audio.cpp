@@ -7,12 +7,11 @@
 //   including the codec dims derived from tensor shapes, and clear errors for
 //   a wrong directory.
 // - The same package written in the layout of Liquid's published GGUFs: the
-//   same configs, tensors and tokenizer, the speech sampling metadata, which
+//   same configs and tokenizer, native tensor layout, speech sampling metadata, which
 //   backbone and mmproj a path picks, and the loader claiming the directory.
 // - npy dumps read back with lfm3_read_npy_*, and MaskGIT order injection.
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/community_models/lfm3_audio/debug.h"
-#include "engine/community_models/lfm3_audio/published_gguf.h"
 #include "engine/community_models/lfm3_audio/session.h"
 #include "engine/community_models/lfm3_audio/tokenizer.h"
 #include "engine/community_models/lfm3_audio/weights.h"
@@ -332,21 +331,6 @@ void write_published(const lfm3_audio_test::Package & package, const std::filesy
     mmproj.write(mmproj_path);
 }
 
-// Shapes may differ by trailing unit axes (lin_out drops its Conv1d one).
-void require_same_values(const engine::assets::TensorSource & source, const lfm3_audio_test::TensorMap & expected, float tolerance) {
-    const auto squeezed = [](std::vector<int64_t> shape) {
-        while (shape.size() > 1 && shape.back() == 1) shape.pop_back();
-        return shape;
-    };
-    for (const auto & [name, tensor] : expected) {
-        require(squeezed(source.require_metadata(name).shape) == squeezed(tensor.shape), name + " has the checkpoint's shape");
-        const auto values = source.require_f32(name);
-        float worst = 0.0f;
-        for (size_t i = 0; i < values.size(); ++i) worst = std::max(worst, std::abs(values[i] - tensor.values[i]));
-        require(worst <= tolerance, name + " from the published layout differs by " + std::to_string(worst));
-    }
-}
-
 void test_published_package() {
     // The codec config is constant in llama.cpp's layout, so the codec takes the real one.
     lfm3_audio_test::PackageShape shape;
@@ -360,8 +344,8 @@ void test_published_package() {
     const auto dir = lfm3_audio_test::fresh_directory("lfm3_audio_published");
     const auto backbone = dir / "LFM3-Audio-2B-F32.gguf";
     write_published(package, backbone, dir / "mmproj-LFM3-Audio-2B-F32.gguf");
-    require(lfm3::is_lfm3_audio_published_gguf(dir) && lfm3::is_lfm3_audio_published_gguf(backbone) &&
-                !lfm3::is_lfm3_audio_published_gguf(dir / "mmproj-LFM3-Audio-2B-F32.gguf") && !lfm3::is_lfm3_audio_published_gguf(package.root),
+    require(lfm3::is_lfm3_audio_gguf(dir) && lfm3::is_lfm3_audio_gguf(backbone) &&
+                !lfm3::is_lfm3_audio_gguf(dir / "mmproj-LFM3-Audio-2B-F32.gguf") && !lfm3::is_lfm3_audio_gguf(package.root),
             "the published layout is recognized, and only it");
     engine::runtime::ModelLoadRequest load;
     load.model_path = dir;
@@ -371,8 +355,13 @@ void test_published_package() {
     const auto reference = lfm3::load_lfm3_audio_assets(package.root);
     const auto published = lfm3::load_lfm3_audio_assets(dir);
     require_eq(describe(*published), describe(*reference), "the published layout gives the checkpoint's configs");
-    require_same_values(*published->model, package.model, 0.0f);
-    require_same_values(*published->codec_weights, package.codec, 1e-6f);  // the ISTFT window is recomputed
+    require(published->model->has_tensor("token_embd.weight") && !published->model->has_tensor("lfm.model.embed_tokens.weight"),
+            "GGUF backbone retains its native tensor names");
+    require(published->audio_weights->has_tensor("a.gen.code.embd.weight") && !published->audio_weights->has_tensor("depth_embeddings.0.embedding.weight"),
+            "GGUF codebooks remain stacked in the native source");
+    const auto & raw = *published->audio_weights;
+    require(raw.require_f32("a.gen.code.proj_in.weight") == package.model.at("depth_linear.weight").values,
+            "GGUF depth projection retains the checkpoint values");
     const auto & speech = published->generation.speech;
     require(speech.temperature == 0.9f && speech.top_k == 7 && speech.repetition_penalty == 1.25f && speech.repetition_window == 99,
             "speech sampling comes from clip.gen.audio.sampling.*");
@@ -405,7 +394,7 @@ void test_published_package() {
         write_published(package, backbone, dir / "mmproj-LFM3-Audio-2B-F32.gguf", {{key, value}});
         lfm3_audio_test::require_throws_with([&] { (void) lfm3::load_lfm3_audio_assets(backbone); }, key, key + " = " + std::to_string(value));
     }
-    std::cout << "published layout: configs, " << package.model.size() + package.codec.size() << " tensors and the tokenizer match\n";
+    std::cout << "published layout: typed configs, native tensor layout and tokenizer match\n";
     std::filesystem::remove_all(dir);
     std::filesystem::remove_all(package.root);
 }

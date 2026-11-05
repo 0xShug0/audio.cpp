@@ -139,7 +139,7 @@ void test_synthetic(core::ExecutionContext & execution) {
     const double stage_tol = ref::reference_tolerance(execution);
     const double wave_tol = gpu ? kGpuWaveTolerance : kWaveTolerance;
 
-    Lfm3CodecDecoder codec(assets->codec_weights, config, execution, {Lfm3WeightType::F32, true});
+    Lfm3CodecDecoder codec(load_lfm3_codec_weights(*assets, execution, {Lfm3WeightType::F32, true}), config, execution, {Lfm3WeightType::F32, true});
     ref::require_throws_with([&] { (void)codec.push(frames); }, "not been started", "push before start_stream");
 
     codec.start_stream();
@@ -178,7 +178,7 @@ void test_synthetic(core::ExecutionContext & execution) {
     ref::require_throws_with([&] { (void)codec.push({std::vector<int32_t>(static_cast<size_t>(config.codebooks), static_cast<int32_t>(codes))}); },
                              "EOS", "an EOS frame");
 
-    Lfm3CodecDecoder native(assets->codec_weights, config, execution, {Lfm3WeightType::Native, true});
+    Lfm3CodecDecoder native(load_lfm3_codec_weights(*assets, execution, {Lfm3WeightType::Native, true}), config, execution, {Lfm3WeightType::Native, true});
     native.start_stream();
     report("synthetic native spectrum", ref::rel_error(native.spectrum(frames), expected.spectrum), kNativeTolerance);
 }

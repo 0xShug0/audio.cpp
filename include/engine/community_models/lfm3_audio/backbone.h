@@ -8,7 +8,6 @@
 #include "engine/community_models/lfm3_audio/encoder.h"
 #include "engine/community_models/lfm3_audio/prompt.h"
 #include "engine/community_models/lfm3_audio/weights.h"
-#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 
 #include <cstdint>
@@ -23,7 +22,7 @@ class Lfm3BackboneRuntime {
 public:
     static constexpr int64_t kPrefillBlock = 256;
 
-    Lfm3BackboneRuntime(std::shared_ptr<const assets::TensorSource> model, const Lfm3BackboneConfig & config,
+    Lfm3BackboneRuntime(Lfm3BackboneWeights weights, const Lfm3BackboneConfig & config,
                         int64_t codebooks, int64_t audio_vocab_size, core::ExecutionContext & execution,
                         const Lfm3WeightOptions & options);
     ~Lfm3BackboneRuntime();

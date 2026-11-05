@@ -6,7 +6,6 @@
 
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/community_models/lfm3_audio/weights.h"
-#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 
 #include <cstdint>
@@ -29,7 +28,7 @@ class Lfm3CodecDecoder {
 public:
     static constexpr int64_t kChunkFrames = 128;
 
-    Lfm3CodecDecoder(std::shared_ptr<const assets::TensorSource> codec, const Lfm3CodecConfig & config,
+    Lfm3CodecDecoder(Lfm3CodecWeights weights, const Lfm3CodecConfig & config,
                      core::ExecutionContext & execution, const Lfm3WeightOptions & options);
     ~Lfm3CodecDecoder();
     // Frames must not contain EOS. Attention K/V live in a ring of kChunkFrames * 6 + window rows (rounded up

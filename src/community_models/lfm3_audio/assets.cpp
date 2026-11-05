@@ -1,10 +1,15 @@
 #include "engine/community_models/lfm3_audio/assets.h"
 
-#include "engine/community_models/lfm3_audio/published_gguf.h"
+#include "../lfm2_audio/weight_stores.h"
+#include "engine/framework/assets/gguf_metadata.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/package.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -17,6 +22,8 @@ namespace engine::community_models::lfm3_audio {
 namespace {
 
 namespace json = engine::io::json;
+using core::TensorShape;
+using core::TensorValue;
 using blocks::LayerKind;
 using blocks::StackConfig;
 using engine::debug::format_dims;
@@ -319,8 +326,8 @@ Lfm3GenerationConfig load_generation(const json::Value & config, const json::Val
     return out;
 }
 
-// The parts every layout gives; the loader fills in where they come from.
-void load_parts(Lfm3AudioAssets & out, const json::Value & config, const json::Value & codec_config, const json::Value & generation) {
+// HF configuration and tensor validation.
+void load_hf_configs(Lfm3AudioAssets & out, const json::Value & config, const json::Value & codec_config, const json::Value & generation) {
     if (json::require_string(config, "model_type") != "lfm3_audio") {
         throw std::runtime_error("LFM3-Audio requires an lfm3_audio config.json");
     }
@@ -332,26 +339,497 @@ void load_parts(Lfm3AudioAssets & out, const json::Value & config, const json::V
     out.generation = load_generation(config, generation);
 }
 
-}  // namespace
+ggml_type stored_type(const assets::TensorSource & source, const std::string & name) {
+    return assets::ggml_type_for_tensor_dtype(source.require_metadata(name).dtype);
+}
 
-std::shared_ptr<const Lfm3AudioAssets> load_lfm3_audio_assets(const std::filesystem::path & model_path) {
-    auto out = std::make_shared<Lfm3AudioAssets>();
-    if (is_lfm3_audio_published_gguf(model_path)) {
-        auto published = open_lfm3_audio_published_gguf(model_path);
-        out->model = std::move(published.model);
-        out->codec_weights = std::move(published.codec);
-        out->vocabulary = std::move(published.vocabulary);
-        out->published_backbone = std::move(published.backbone_path);
-        load_parts(*out, published.config, published.codec_config, published.generation_config);
-        return out;
+TensorValue lookup_of(WeightStores & stores, ggml_backend_t backend, const assets::TensorSource & source, const std::string & name,
+                      const TensorValue & table) {
+    if (lfm3_backend_gathers(backend, table.tensor->type)) {
+        return table;
+    }
+    return stores.plain().load_tensor(source, name, assets::TensorStorageType::F16, {table.shape.dims[0], table.shape.dims[1]});
+}
+
+
+using assets::GgufMetadata;
+
+constexpr const char * kMmprojPrefix = "mmproj-";
+
+bool has_gguf_extension(const std::filesystem::path & path) {
+    auto extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return std::tolower(c); });
+    return extension == ".gguf";
+}
+
+bool is_mmproj_name(const std::filesystem::path & path) {
+    return path.filename().string().rfind(kMmprojPrefix, 0) == 0;
+}
+
+bool is_backbone(const std::filesystem::path & path) {
+    return has_gguf_extension(path) && !is_mmproj_name(path) && GgufMetadata(path).find_string("general.architecture") == "lfm3";
+}
+
+bool is_audio_mmproj(const std::filesystem::path & path) {
+    return has_gguf_extension(path) && is_mmproj_name(path) && GgufMetadata(path).find_string("clip.audio.projector_type") == "lfm3a";
+}
+
+std::vector<std::filesystem::path> list(const std::filesystem::path & root, bool (*keep)(const std::filesystem::path &)) {
+    auto out = assets::directory_gguf_files(root);
+    out.erase(std::remove_if(out.begin(), out.end(), [&](const auto & path) { return !keep(path); }), out.end());
+    return out;
+}
+
+std::string names(const std::vector<std::filesystem::path> & paths) {
+    std::string out;
+    for (const auto & path : paths) {
+        out += (out.empty() ? "" : ", ") + path.filename().string();
     }
 
+    return out;
+}
+
+std::filesystem::path pick_mmproj(const std::filesystem::path & backbone) {
+    const auto root = backbone.parent_path().empty() ? std::filesystem::path(".") : backbone.parent_path();
+    const auto mmprojs = list(root, is_audio_mmproj);
+    const auto named = [&](const std::string & name) {
+        return std::find_if(mmprojs.begin(), mmprojs.end(), [&](const auto & path) { return path.filename() == name; });
+    };
+
+    if (const auto paired = named(kMmprojPrefix + backbone.filename().string()); paired != mmprojs.end()) {
+        return *paired;
+    }
+
+    // LFM3-Audio-2B-Q4_K_M.gguf goes with mmproj-LFM3-Audio-2B-Q8_0.gguf in Liquid's own instructions.
+    const auto stem = backbone.stem().string();
+    const auto quant = stem.rfind('-');
+    if (quant != std::string::npos) {
+        if (const auto q8 = named(kMmprojPrefix + stem.substr(0, quant) + "-Q8_0.gguf"); q8 != mmprojs.end()) {
+            return *q8;
+        }
+    }
+
+    if (mmprojs.size() == 1) {
+        return mmprojs.front();
+    }
+
+    throw std::runtime_error("LFM3-Audio cannot pick the mmproj GGUF for " + backbone.filename().string() +
+                             (mmprojs.empty() ? std::string(": none found in ") + root.string() : " among " + names(mmprojs)));
+}
+
+std::filesystem::path pick_backbone(const std::filesystem::path & model_path) {
+    if (!io::is_existing_directory(model_path)) {
+        return model_path;
+    }
+
+    const auto backbones = list(model_path, is_backbone);
+    if (backbones.size() != 1) {
+        throw std::runtime_error("LFM3-Audio model directory " + model_path.string() +
+                                 (backbones.empty() ? std::string(" has no LFM3 backbone GGUF")
+                                                    : " has several LFM3 backbone GGUFs (" + names(backbones) + "); pass one as the model"));
+    }
+
+    return backbones.front();
+}
+
+
+void load_gguf_configs(Lfm3AudioAssets & out, const GgufMetadata & model, const GgufMetadata & mmproj) {
+    const auto & backbone = *out.model;
+    const auto & tower = *out.audio_weights;
+    auto & b = out.backbone.stack;
+    b.hidden = model.require_int("lfm3.embedding_length");
+    b.ffn = backbone.require_metadata("blk.0.ffn_gate.weight").shape.at(0);
+    b.heads = model.require_int("lfm3.attention.head_count");
+    b.head_dim = model.require_int("lfm3.attention.key_length");
+    b.conv_kernel = model.require_int("lfm3.shortconv.l_cache");
+    b.sliding_window = model.require_int("lfm3.attention.sliding_window");
+    b.eps = model.require_f32("lfm3.attention.layer_norm_rms_epsilon");
+    b.full_theta = model.require_f32("lfm3.rope.freq_base");
+    b.sliding_theta = model.require_f32("lfm3.rope.freq_base_swa");
+    b.sandwich_norm = backbone.has_tensor("blk.0.post_attention_norm.weight");
+    b.output_gate = true;
+    const auto kv = model.require_int_array("lfm3.attention.head_count_kv");
+    const auto sliding = model.require_int_array("lfm3.attention.sliding_window_pattern", true);
+    if (kv.size() != sliding.size() || kv.size() != static_cast<size_t>(model.require_int("lfm3.block_count", 1, model.tensor_count()))) {
+        throw std::runtime_error("LFM3-Audio backbone GGUF layer metadata does not match its block count");
+    }
+    for (size_t i = 0; i < kv.size(); ++i) {
+        b.layers.push_back(kv[i] == 0 ? LayerKind::Conv : sliding[i] != 0 ? LayerKind::SlidingAttention : LayerKind::FullAttention);
+        b.kv_heads = std::max(b.kv_heads, kv[i]);
+    }
+    if (const auto factors = backbone.optional_f32("rope_freqs.weight", {b.head_dim / 2})) {
+        const int64_t rotated = 2 * std::count(factors->begin(), factors->end(), 1.0f);
+        if (rotated <= 0 || rotated > b.head_dim) {
+            throw std::runtime_error("LFM3-Audio GGUF partial rotary dimensions are out of range");
+        }
+        b.full_rotary_dims = rotated == b.head_dim ? 0 : rotated;
+    }
+    out.backbone.vocab_size = backbone.require_metadata("token_embd.weight").shape.at(0);
+    if (backbone.has_tensor("output.weight")) {
+        throw std::runtime_error("LFM3-Audio backbone must tie its LM head to embed_tokens");
+    }
+
+    auto & encoder = out.encoder;
+    auto & e = encoder.stack;
+    encoder.n_mels = mmproj.require_int("clip.audio.num_mel_bins");
+    encoder.conv_channels = tower.require_metadata("a.conv1d.0.weight").shape.at(0);
+    encoder.mel_after_downsample = (((encoder.n_mels + 1) / 2 + 1) / 2 + 1) / 2;
+    encoder.output_size = b.hidden;
+    e.hidden = mmproj.require_int("clip.audio.embedding_length");
+    e.ffn = tower.require_metadata("a.blk.0.ffn_gate.weight").shape.at(0);
+    e.heads = mmproj.require_int("clip.audio.attention.head_count", 1, e.hidden);
+    e.kv_heads = mmproj.require_int("clip.audio.attention.head_count_kv");
+    if (e.hidden % e.heads != 0) {
+        throw std::runtime_error("LFM3-Audio GGUF encoder hidden size is not divisible by its head count");
+    }
+    e.head_dim = e.hidden / e.heads;
+    e.conv_kernel = tower.require_metadata("a.blk.0.conv_dw.weight").shape.at(1);
+    e.sliding_window = mmproj.require_int("clip.audio.window_size");
+    e.eps = mmproj.require_f32("clip.audio.attention.layer_norm_epsilon");
+    e.names = blocks::Names::Lfm2;
+    const auto encoder_layers = mmproj.require_int("clip.audio.block_count", 1, mmproj.tensor_count());
+    for (int64_t i = 0; i < encoder_layers; ++i) {
+        e.layers.push_back(tower.has_tensor("a.blk." + std::to_string(i) + ".attn_q.weight") ? LayerKind::SlidingAttention : LayerKind::Conv);
+    }
+
+    auto & depth = out.depth;
+    auto & d = depth.stack;
+    const auto & embedding = tower.require_metadata("a.gen.code.embd.weight").shape;
+    depth.codebooks = embedding.at(0);
+    depth.audio_vocab_size = embedding.at(1);
+    depth.input_size = b.hidden;
+    if (depth.codebooks != 12 || depth.audio_vocab_size != 2017) {
+        throw std::runtime_error("LFM3-Audio GGUF requires 12 codebooks with 2017 audio tokens");
+    }
+    depth.maskgit_schedule = {4, 4, 4};
+    d.hidden = mmproj.require_int("clip.gen.audio.embedding_length");
+    d.ffn = tower.require_metadata("a.gen.code.blk.0.ffn_gate.weight").shape.at(0);
+    d.heads = mmproj.require_int("clip.gen.audio.attention.head_count", 1, d.hidden);
+    d.kv_heads = mmproj.require_int("clip.gen.audio.attention.head_count_kv");
+    if (d.hidden % d.heads != 0) {
+        throw std::runtime_error("LFM3-Audio GGUF depth hidden size is not divisible by its head count");
+    }
+    d.head_dim = d.hidden / d.heads;
+    d.conv_kernel = b.conv_kernel;
+    d.sliding_window = b.sliding_window;
+    d.eps = mmproj.require_f32("clip.gen.audio.attention.layer_norm_epsilon");
+    d.output_gate = true;
+    d.causal = false;
+    d.layers.assign(static_cast<size_t>(mmproj.require_int("clip.gen.audio.block_count", 1, mmproj.tensor_count())), LayerKind::FullAttention);
+
+    // The published LiquidCodec layout fixes these values; the converter rejects other configurations.
+    auto & codec = out.codec;
+    codec.fsq_levels = {8, 7, 6, 6};
+    codec.codebooks = 12;
+    codec.quantizer_dim = 256;
+    codec.upsample = 6;
+    codec.n_fft = 1280;
+    codec.hop = 320;
+    codec.sample_rate = 24000;
+    auto & c = codec.stack;
+    c.hidden = tower.require_metadata("a.gen.wav.tfm.in_proj.weight").shape.at(0);
+    c.ffn = tower.require_metadata("a.gen.wav.tfm.blk.0.ffn_gate.weight").shape.at(0);
+    for (int64_t i = 0; tower.has_tensor("a.gen.wav.tfm.blk." + std::to_string(i) + ".ffn_gate.weight"); ++i) {
+        const auto prefix = "a.gen.wav.tfm.blk." + std::to_string(i) + ".";
+        if (tower.has_tensor(prefix + "conv_dw.weight")) {
+            c.layers.push_back(LayerKind::Conv);
+            c.conv_kernel = tower.require_metadata(prefix + "conv_dw.weight").shape.at(1);
+        } else if (tower.has_tensor(prefix + "attn_q.weight")) {
+            c.layers.push_back(LayerKind::SlidingAttention);
+            c.head_dim = tower.require_metadata(prefix + "attn_q_norm.weight").shape.at(0);
+            if (c.head_dim <= 0) {
+                throw std::runtime_error("LFM3-Audio GGUF codec q_norm is empty");
+            }
+            c.heads = tower.require_metadata(prefix + "attn_q.weight").shape.at(0) / c.head_dim;
+            c.kv_heads = tower.require_metadata(prefix + "attn_k.weight").shape.at(0) / c.head_dim;
+        } else {
+            throw std::runtime_error("LFM3-Audio GGUF codec layer is neither conv nor attention");
+        }
+    }
+    if (std::find(c.layers.begin(), c.layers.end(), LayerKind::SlidingAttention) == c.layers.end()) {
+        throw std::runtime_error("LFM3-Audio codec decoder has no attention layers");
+    }
+    c.sliding_window = 30;
+    c.sandwich_norm = tower.has_tensor("a.gen.wav.tfm.blk.0.attn_post_norm.weight");
+    c.output_gate = true;
+
+    const auto text_end = std::find(out.vocabulary.tokens.begin(), out.vocabulary.tokens.end(), "<|text_end|>");
+    if (text_end == out.vocabulary.tokens.end()) {
+        throw std::runtime_error("LFM3-Audio backbone GGUF vocabulary has no <|text_end|>");
+    }
+    auto & generation = out.generation;
+    generation.interleaved_text = 6;
+    generation.interleaved_audio = 12;
+    generation.specials.eos_ids = {static_cast<int32_t>(model.require_int("tokenizer.ggml.eos_token_id")),
+                                  static_cast<int32_t>(text_end - out.vocabulary.tokens.begin())};
+    auto & speech = generation.speech;
+    if (const auto value = mmproj.find_number("clip.gen.audio.sampling.temp")) speech.temperature = static_cast<float>(*value);
+    if (const auto value = mmproj.find_number("clip.gen.audio.sampling.top_k")) {
+        if (*value < 0 || *value >= static_cast<double>(INT64_MAX) || std::floor(*value) != *value) {
+            throw std::runtime_error("LFM3-Audio GGUF audio_top_k must be a nonnegative integer");
+        }
+        speech.top_k = static_cast<int64_t>(*value);
+    }
+    if (const auto value = mmproj.find_number("clip.gen.audio.sampling.penalty_repeat")) speech.repetition_penalty = static_cast<float>(*value);
+    if (const auto value = mmproj.find_number("clip.gen.audio.sampling.penalty_last_n")) {
+        if (*value < 0 || *value >= static_cast<double>(INT64_MAX) || std::floor(*value) != *value) {
+            throw std::runtime_error("LFM3-Audio GGUF audio_repetition_window must be a nonnegative integer");
+        }
+        speech.repetition_window = static_cast<int64_t>(*value);
+    }
+    if (speech.temperature < 0 || !std::isfinite(speech.temperature) || speech.repetition_penalty <= 0 || !std::isfinite(speech.repetition_penalty)) {
+        throw std::runtime_error("LFM3-Audio GGUF audio sampling is out of range");
+    }
+}
+
+}  // namespace
+
+
+bool is_lfm3_audio_gguf(const std::filesystem::path & model_path) noexcept {
+    try {
+        const bool file = io::is_existing_file(model_path);
+        if (!file && !io::is_existing_directory(model_path)) {
+            return false;
+        }
+
+        const auto root = file ? (model_path.parent_path().empty() ? std::filesystem::path(".") : model_path.parent_path()) : model_path;
+        const bool backbone = file ? is_backbone(model_path) : !list(root, is_backbone).empty();
+        return backbone && !list(root, is_audio_mmproj).empty();
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+std::shared_ptr<const Lfm3AudioAssets> load_lfm3_audio_gguf_assets(const std::filesystem::path & model_path) {
+    auto result = std::make_shared<Lfm3AudioAssets>();
+    auto & out = *result;
+    out.published_backbone = pick_backbone(model_path);
+    if (!is_backbone(out.published_backbone)) {
+        throw std::runtime_error("LFM3-Audio model must be a backbone GGUF with general.architecture lfm3: " + out.published_backbone.string());
+    }
+
+    const auto mmproj_path = pick_mmproj(out.published_backbone);
+    const GgufMetadata model_meta(out.published_backbone);
+    const GgufMetadata mmproj_meta(mmproj_path);
+    if (mmproj_meta.find_bool("clip.has_vision_encoder").value_or(false)) {
+        throw std::runtime_error("LFM3-Audio does not run LFM3-Omni; " + mmproj_path.filename().string() + " has a vision encoder");
+    }
+
+    if (!mmproj_meta.find_bool("clip.has_gen_audio_encoder").value_or(false)) {
+        throw std::runtime_error("LFM3-Audio mmproj GGUF has no audio output (clip.has_gen_audio_encoder): " + mmproj_path.string());
+    }
+
+    if (model_meta.find_string("tokenizer.ggml.model") != "gpt2" || model_meta.find_string("tokenizer.ggml.pre") != "lfm2") {
+        throw std::runtime_error("LFM3-Audio expects the byte-level BPE tokenizer (gpt2, pre lfm2) in " + out.published_backbone.string());
+    }
+
+    out.vocabulary.tokens = model_meta.require_string_array("tokenizer.ggml.tokens");
+    out.vocabulary.merges = model_meta.require_string_array("tokenizer.ggml.merges");
+    const auto types = model_meta.require_int_array("tokenizer.ggml.token_type");
+    out.vocabulary.token_types.assign(types.begin(), types.end());
+
+    out.model = assets::open_tensor_source(out.published_backbone);
+    out.audio_weights = assets::open_tensor_source(mmproj_path);
+    out.codec_weights = out.audio_weights;
+    load_gguf_configs(out, model_meta, mmproj_meta);
+    return result;
+}
+
+Lfm3BackboneWeights::Lfm3BackboneWeights() = default;
+Lfm3BackboneWeights::~Lfm3BackboneWeights() = default;
+Lfm3BackboneWeights::Lfm3BackboneWeights(Lfm3BackboneWeights &&) noexcept = default;
+
+Lfm3EncoderWeights::Lfm3EncoderWeights() = default;
+Lfm3EncoderWeights::~Lfm3EncoderWeights() = default;
+Lfm3EncoderWeights::Lfm3EncoderWeights(Lfm3EncoderWeights &&) noexcept = default;
+
+Lfm3DepthWeights::Lfm3DepthWeights() = default;
+Lfm3DepthWeights::~Lfm3DepthWeights() = default;
+Lfm3DepthWeights::Lfm3DepthWeights(Lfm3DepthWeights &&) noexcept = default;
+
+Lfm3CodecWeights::Lfm3CodecWeights() = default;
+Lfm3CodecWeights::~Lfm3CodecWeights() = default;
+Lfm3CodecWeights::Lfm3CodecWeights(Lfm3CodecWeights &&) noexcept = default;
+
+std::shared_ptr<const Lfm3AudioAssets> load_lfm3_audio_assets(const std::filesystem::path & model_path) {
+    if (is_lfm3_audio_gguf(model_path)) {
+        return load_lfm3_audio_gguf_assets(model_path);
+    }
+
+    auto out = std::make_shared<Lfm3AudioAssets>();
     out->resources = engine::model_spec::load_resource_bundle_for_family(model_path, "lfm3_audio");
     out->model = out->resources.open_tensor_source("model");
     out->codec_weights = out->resources.open_tensor_source("codec");
     out->tokenizer_json = out->resources.require_file("tokenizer_json");
-    load_parts(*out, out->resources.parse_json("config"), out->resources.parse_json("codec_config"),
+    load_hf_configs(*out, out->resources.parse_json("config"), out->resources.parse_json("codec_config"),
                out->resources.parse_json("generation_config"));
+    return out;
+}
+
+Lfm3BackboneWeights load_lfm3_backbone_weights(const Lfm3AudioAssets & assets, core::ExecutionContext & execution,
+    const Lfm3WeightOptions & options) {
+    const bool gguf = !assets.published_backbone.empty();
+    const auto & config = assets.backbone;
+    const auto & source = *assets.model;
+    const auto & frame_source = gguf ? *assets.audio_weights : source;
+    const std::string token_name = gguf ? "token_embd.weight" : "lfm.model.embed_tokens.weight";
+    const std::string frame_name = gguf ? "a.gen.code.out_embd.weight" : "codebook_embedding.weight";
+    const int64_t d = config.stack.hidden;
+    Lfm3BackboneWeights out;
+    auto * backend = execution.backend();
+    out.stores = std::make_unique<WeightStores>(execution, "lfm3_audio.backbone.weights", 16ull * 1024ull * 1024ull, options.cpu_repack);
+    auto & plain = out.stores->plain();
+    out.stack = blocks::load_stack(*out.stores, backend, source, gguf ? "" : "lfm.model.", config.stack, options,
+        gguf ? blocks::StackLayout::GgufBackbone : blocks::StackLayout::Hf);
+
+    const auto storage = lfm3_storage_type(backend, stored_type(source, token_name), options);
+    const auto table = plain.load_tensor(source, token_name, storage, {config.vocab_size, d});
+    out.token_lookup = lookup_of(*out.stores, backend, source, token_name, table);
+    // The tied head gets its own repacked copy where a CPU extra buffer supports it.
+    const bool repack = storage == assets::TensorStorageType::Native &&
+                        out.stores->matmul_buffer_type(table.tensor->type, config.vocab_size, d) != nullptr;
+    out.text_head = repack ? out.stores->load_matmul(source, token_name, {config.vocab_size, d}) : table;
+
+    const auto frames = plain.load_tensor(frame_source, frame_name, lfm3_storage_type(backend, stored_type(frame_source, frame_name), options),
+        {assets.depth.codebooks * assets.depth.audio_vocab_size, d});
+    out.frame_lookup = lookup_of(*out.stores, backend, frame_source, frame_name, frames);
+    out.stores->upload();
+    return out;
+}
+
+Lfm3EncoderWeights load_lfm3_encoder_weights(const Lfm3AudioAssets & assets, core::ExecutionContext & execution,
+    const Lfm3WeightOptions & options) {
+    const bool gguf = !assets.published_backbone.empty();
+    const auto & config = assets.encoder;
+    const auto & source = gguf ? *assets.audio_weights : *assets.model;
+    static constexpr const char * hf_convs[] = {"encoder.downsample.conv_in", "encoder.downsample.conv_mid",
+        "encoder.downsample.lin_mid", "encoder.downsample.conv_end", "encoder.downsample.lin_end"};
+    static constexpr const char * gguf_convs[] = {"a.conv1d.0", "a.conv1d.2", "a.conv1d.3", "a.conv1d.5", "a.conv1d.6"};
+    const auto & conv_names = gguf ? gguf_convs : hf_convs;
+    const std::string projector = gguf ? "mm.a.mlp." : "mlp.model.";
+    Lfm3EncoderWeights out;
+    out.stores = std::make_unique<WeightStores>(execution, "lfm3_audio.encoder.weights", 4ull * 1024ull * 1024ull, options.cpu_repack);
+    auto & store = out.stores->plain();
+    auto * backend = execution.backend();
+    const int64_t c = config.conv_channels;
+    const int64_t d = config.stack.hidden;
+    const int64_t o = config.output_size;
+
+    // Conv weights stay F32: Metal's depthwise convolution requires it.
+    const auto conv = [&](size_t index, int64_t in, int64_t k) {
+        const std::string p = conv_names[index];
+        auto weight = store.load_f32_tensor(source, p + ".weight", {c, in, k, k});
+        auto bias = gguf ? store.make_f32(TensorShape::from_dims({c}), source.require_f32(p + ".bias", {c, 1, 1})) :
+            store.load_f32_tensor(source, p + ".bias", {c});
+        return modules::Conv2dWeights{weight, bias};
+    };
+    const auto linear = [&](const std::string & name, int64_t in, int64_t rows) {
+        return modules::LinearWeights{blocks::load_matmul(*out.stores, backend, source, name + ".weight", {rows, in}, options),
+            store.load_f32_tensor(source, name + ".bias", {rows})};
+    };
+    out.conv_in = conv(0, 1, 3);
+    out.conv_mid = conv(1, 1, 3);
+    out.lin_mid = conv(2, c, 1);
+    out.conv_end = conv(3, 1, 3);
+    out.lin_end = conv(4, c, 1);
+    out.lin_out = linear(gguf ? "a.pre_encode.out" : "encoder.downsample.lin_out", c * config.mel_after_downsample, d);
+    out.stack = blocks::load_stack(*out.stores, backend, source, gguf ? "a." : "encoder.lfm.lfm.", config.stack, options,
+        gguf ? blocks::StackLayout::GgufEncoder : blocks::StackLayout::Hf);
+    out.projector_norm = {store.load_f32_tensor(source, projector + "0.weight", {d}), store.load_f32_tensor(source, projector + "0.bias", {d})};
+    out.projector_1 = linear(projector + "1", d, o);
+    out.projector_2 = linear(projector + "3", o, o);
+    out.stores->upload();
+    return out;
+}
+
+Lfm3DepthWeights load_lfm3_depth_weights(const Lfm3AudioAssets & assets, core::ExecutionContext & execution,
+    const Lfm3WeightOptions & options) {
+    const bool gguf = !assets.published_backbone.empty();
+    const auto & config = assets.depth;
+    const auto & source = gguf ? *assets.audio_weights : *assets.model;
+    const std::string projection = gguf ? "a.gen.code.proj_in" : "depth_linear";
+    const std::string table_name = gguf ? "a.gen.code.embd.weight" : "depth_embeddings.0.embedding.weight";
+    const int64_t d = config.stack.hidden;
+    const int64_t vocab = config.audio_vocab_size;
+    const int64_t books = config.codebooks;
+    auto * backend = execution.backend();
+    Lfm3DepthWeights out;
+    out.stores = std::make_unique<WeightStores>(execution, "lfm3_audio.depth.weights", 1024 * ggml_tensor_overhead(), options.cpu_repack);
+    auto & store = out.stores->plain();
+    out.input_weight = blocks::load_matmul(*out.stores, backend, source, projection + ".weight", {books * d, config.input_size}, options);
+    out.input_bias = store.load_f32_tensor(source, projection + ".bias", {books * d});
+
+    const auto mask = source.require_f32(gguf ? "a.gen.code.mask_embd" : "mask_embedding", {d});
+    std::vector<float> mask_rows;
+    for (int64_t i = 0; i < books; ++i) mask_rows.insert(mask_rows.end(), mask.begin(), mask.end());
+    out.mask_rows = store.make_f32(TensorShape::from_dims({books, d}), std::move(mask_rows));
+
+    // These tables serve both embedding lookup and tied logits heads.
+    const auto table_type = stored_type(source, table_name);
+    auto table_storage = lfm3_storage_type(backend, table_type, options);
+    if (table_storage == assets::TensorStorageType::Native && !lfm3_backend_gathers(backend, table_type)) {
+        table_storage = assets::TensorStorageType::F16;
+    }
+    if (gguf) {
+        if (table_storage == assets::TensorStorageType::Native && ggml_is_quantized(table_type)) {
+            // Flatten without dequantizing and requantizing stored blocks.
+            const auto tables = source.require_tensor(table_name, table_storage, {books, vocab, d});
+            out.embeddings = store.make_tensor(TensorShape::from_dims({books * vocab, d}), tables.type, tables.bytes.data(), tables.bytes.size());
+        } else {
+            out.embeddings = store.load_tensor_as_shape(source, table_name, table_storage, {books, vocab, d}, TensorShape::from_dims({books * vocab, d}));
+        }
+        out.norms = store.load_f32_tensor(source, "a.gen.code.head_norm.weight", {books, d});
+    } else {
+        std::vector<core::BackendWeightStore::TensorPart> tables;
+        std::vector<float> norms;
+        for (int64_t i = 0; i < books; ++i) {
+            const auto p = "depth_embeddings." + std::to_string(i) + ".";
+            tables.push_back({p + "embedding.weight", {vocab, d}});
+            const auto norm = source.require_f32(p + "embedding_norm.weight", {d});
+            norms.insert(norms.end(), norm.begin(), norm.end());
+        }
+        out.embeddings = store.load_tensor(source, tables, table_storage);
+        out.norms = store.make_f32(TensorShape::from_dims({books, d}), std::move(norms));
+    }
+    out.stack = blocks::load_stack(*out.stores, backend, source, gguf ? "a.gen.code." : "depthformer.model.", config.stack, options,
+        gguf ? blocks::StackLayout::GgufAudio : blocks::StackLayout::Hf);
+    out.stores->upload();
+    return out;
+}
+
+Lfm3CodecWeights load_lfm3_codec_weights(const Lfm3AudioAssets & assets, core::ExecutionContext & execution,
+    const Lfm3WeightOptions & options) {
+    const bool gguf = !assets.published_backbone.empty();
+    const auto & config = assets.codec;
+    const auto & source = *assets.codec_weights;
+    const std::string project_out = gguf ? "a.gen.wav.quant.first.out_proj" : "quantizer.project_out";
+    const std::string from_quantizer = gguf ? "a.gen.wav.tfm.in_proj" : "from_quantizer";
+    const std::string output = gguf ? "a.gen.wav.tfm.out_proj" : "decoder.lin";
+    const int64_t d = config.stack.hidden;
+    const int64_t latent = config.codebooks * static_cast<int64_t>(config.fsq_levels.size());
+    const int64_t q = config.quantizer_dim;
+    auto * backend = execution.backend();
+    Lfm3CodecWeights out;
+    out.stores = std::make_unique<WeightStores>(execution, "lfm3_audio.codec.weights", 1024 * ggml_tensor_overhead(), options.cpu_repack);
+    auto & plain = out.stores->plain();
+    out.project_out = plain.load_f32_tensor(source, project_out + ".weight", {q, latent});
+    out.project_out_bias = plain.load_f32_tensor(source, project_out + ".bias", {q});
+    out.from_quantizer = blocks::load_matmul(*out.stores, backend, source, from_quantizer + ".weight", {d, q}, options);
+    out.from_quantizer_bias = plain.load_f32_tensor(source, from_quantizer + ".bias", {d});
+    out.stack = blocks::load_stack(*out.stores, backend, source, gguf ? "a.gen.wav.tfm." : "decoder.lfm.", config.stack, options,
+        gguf ? blocks::StackLayout::GgufAudio : blocks::StackLayout::Hf);
+    out.lin = blocks::load_matmul(*out.stores, backend, source, output + ".weight", {config.n_fft + 2, d}, options);
+    out.lin_bias = plain.load_f32_tensor(source, output + ".bias", {config.n_fft + 2});
+    if (gguf) {
+        const double pi = std::acos(-1.0);
+        out.window.resize(static_cast<size_t>(config.n_fft));
+        for (int64_t i = 0; i < config.n_fft; ++i) {
+            out.window[static_cast<size_t>(i)] = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * pi * static_cast<double>(i) / static_cast<double>(config.n_fft)));
+        }
+    } else {
+        out.window = source.require_f32_tensor("decoder.istft.window", {config.n_fft}).values;
+    }
+    out.stores->upload();
     return out;
 }
 

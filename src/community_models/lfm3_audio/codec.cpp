@@ -1,7 +1,5 @@
 #include "engine/community_models/lfm3_audio/codec.h"
 
-#include "../lfm2_audio/weight_stores.h"
-
 #include "engine/community_models/lfm2_audio/detokenizer.h"
 #include "engine/community_models/lfm3_audio/blocks.h"
 #include "engine/framework/core/backend.h"
@@ -36,36 +34,6 @@ constexpr size_t kKeptGraphs = 3;
     throw std::runtime_error("LFM3-Audio codec: " + message);
 }
 
-struct CodecWeights {
-    std::unique_ptr<WeightStores> stores;
-    // project_out stays F32: its 48 inputs are not a multiple of the 32-wide blocks of BF16/F16 GPU kernels.
-    TensorValue project_out, project_out_bias, from_quantizer, from_quantizer_bias, lin, lin_bias;
-    blocks::StackWeights stack;
-    std::vector<float> window;
-};
-
-CodecWeights load_weights(const assets::TensorSource & source, const Lfm3CodecConfig & config, core::ExecutionContext & execution,
-                          const Lfm3WeightOptions & options) {
-    const int64_t d = config.stack.hidden;
-    const int64_t latent = config.codebooks * static_cast<int64_t>(config.fsq_levels.size());
-    const int64_t q = config.quantizer_dim;
-    auto * backend = execution.backend();
-
-    CodecWeights out;
-    out.stores = std::make_unique<WeightStores>(execution, "lfm3_audio.codec.weights", 1024 * ggml_tensor_overhead(), options.cpu_repack);
-    auto & plain = out.stores->plain();
-    out.project_out = plain.load_f32_tensor(source, "quantizer.project_out.weight", {q, latent});
-    out.project_out_bias = plain.load_f32_tensor(source, "quantizer.project_out.bias", {q});
-    out.from_quantizer = blocks::load_matmul(*out.stores, backend, source, "from_quantizer.weight", {d, q}, options);
-    out.from_quantizer_bias = plain.load_f32_tensor(source, "from_quantizer.bias", {d});
-    out.stack = blocks::load_stack(*out.stores, backend, source, "decoder.lfm.", config.stack, options);
-    out.lin = blocks::load_matmul(*out.stores, backend, source, "decoder.lin.weight", {config.n_fft + 2, d}, options);
-    out.lin_bias = plain.load_f32_tensor(source, "decoder.lin.bias", {config.n_fft + 2});
-    out.window = source.require_f32_tensor("decoder.istft.window", {config.n_fft}).values;
-    out.stores->upload();
-    return out;
-}
-
 // Ring row r holds the latest position p with p % capacity == r. Query q sees positions q - window + 1 .. q,
 // all still in the ring because capacity >= steps + window - 1.
 std::vector<ggml_fp16_t> ring_mask(int64_t start, int64_t steps, int64_t capacity, int64_t window) {
@@ -87,7 +55,7 @@ struct ChunkOutput {
 // FSQ latents of `frames` frames to spectrum rows, continuing the stream state at an absolute step.
 class ChunkGraph {
 public:
-    ChunkGraph(const CodecWeights & weights, const Lfm3CodecConfig & config, std::vector<blocks::LayerState> & state, int64_t capacity,
+    ChunkGraph(const Lfm3CodecWeights & weights, const Lfm3CodecConfig & config, std::vector<blocks::LayerState> & state, int64_t capacity,
                core::ExecutionContext & execution, const Lfm3WeightOptions & options, int64_t frames)
         : execution_(execution), capacity_(capacity), window_(config.stack.sliding_window), steps_(frames * config.upsample) {
         ctx_ = blocks::graph_context(kGraphNodes, "codec");
@@ -223,13 +191,12 @@ std::vector<float> lfm3_fsq_latents(const std::vector<std::vector<int32_t>> & fr
 }
 
 struct Lfm3CodecDecoder::Impl {
-    Impl(std::shared_ptr<const assets::TensorSource> source_in, const Lfm3CodecConfig & config_in, core::ExecutionContext & execution_in,
+    Impl(Lfm3CodecWeights weights_in, const Lfm3CodecConfig & config_in, core::ExecutionContext & execution_in,
          const Lfm3WeightOptions & options_in)
-        : source(std::move(source_in)),
-          config(config_in),
+        : config(config_in),
           execution(execution_in),
           options(options_in),
-          weights(load_weights(*source, config, execution, options)),
+          weights(std::move(weights_in)),
           capacity(GGML_PAD(kChunkFrames * config.upsample + config.stack.sliding_window, blocks::kKvRowAlignment)) {
         if (static_cast<int64_t>(config.fsq_levels.size()) * config.codebooks <= 0 || config.upsample <= 0 || config.hop <= 0) {
             fail("config needs FSQ levels, codebooks, an upsample factor and a hop");
@@ -285,11 +252,10 @@ struct Lfm3CodecDecoder::Impl {
         uint64_t last_use = 0;
     };
 
-    std::shared_ptr<const assets::TensorSource> source;
     Lfm3CodecConfig config;
     core::ExecutionContext & execution;
     Lfm3WeightOptions options;
-    CodecWeights weights;
+    Lfm3CodecWeights weights;
     int64_t capacity = 0;
     std::optional<blocks::StackState> state;
     std::map<int64_t, KeptGraph> graphs;  // after the state they write into
@@ -298,9 +264,9 @@ struct Lfm3CodecDecoder::Impl {
     std::optional<lfm2_audio::Lfm2StreamingIstft> istft;
 };
 
-Lfm3CodecDecoder::Lfm3CodecDecoder(std::shared_ptr<const assets::TensorSource> codec, const Lfm3CodecConfig & config,
+Lfm3CodecDecoder::Lfm3CodecDecoder(Lfm3CodecWeights weights, const Lfm3CodecConfig & config,
                                    core::ExecutionContext & execution, const Lfm3WeightOptions & options)
-    : impl_(std::make_unique<Impl>(std::move(codec), config, execution, options)) {}
+    : impl_(std::make_unique<Impl>(std::move(weights), config, execution, options)) {}
 
 Lfm3CodecDecoder::~Lfm3CodecDecoder() = default;
 

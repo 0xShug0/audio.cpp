@@ -73,10 +73,13 @@ struct StackWeights {
     std::optional<core::TensorValue> full_freq_factors;
 };
 
-// prefix e.g. "lfm.model.", "encoder.lfm.lfm.", "depthformer.model.", "decoder.lfm."; final norm "<prefix>embedding_norm.weight".
+enum class StackLayout { Hf, GgufBackbone, GgufEncoder, GgufAudio };
+
+// Bind a component prefix and physical checkpoint layout to the shared stack weights.
 // `backend` is the stores' backend (WeightStores does not expose it); it only feeds the BF16 probe.
 StackWeights load_stack(WeightStores & stores, ggml_backend_t backend, const assets::TensorSource & source,
-                        const std::string & prefix, const StackConfig & config, const Lfm3WeightOptions & options);
+                        const std::string & prefix, const StackConfig & config, const Lfm3WeightOptions & options,
+                        StackLayout layout = StackLayout::Hf);
 
 // A [rows, cols] matmul weight in the storage lfm3_storage_type picks. The source may add trailing unit dims
 // (the checkpoint's encoder lin_out is a Conv1d [768, 4096, 1]); any other shape must match.

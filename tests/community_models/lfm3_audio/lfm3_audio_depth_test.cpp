@@ -136,8 +136,8 @@ void test_synthetic(core::ExecutionContext & execution) {
     const int64_t vocab = config.audio_vocab_size;
     lfm2_audio_test::Random random(7);
 
-    Lfm3DepthDecoderRuntime depth(assets->model, config, execution, {Lfm3WeightType::F32, true});
-    Lfm3DepthDecoderRuntime native(assets->model, config, execution, {Lfm3WeightType::Native, true});
+    Lfm3DepthDecoderRuntime depth(load_lfm3_depth_weights(*assets, execution, {Lfm3WeightType::F32, true}), config, execution, {Lfm3WeightType::F32, true});
+    Lfm3DepthDecoderRuntime native(load_lfm3_depth_weights(*assets, execution, {Lfm3WeightType::Native, true}), config, execution, {Lfm3WeightType::Native, true});
     const double tolerance = ref::reference_tolerance(execution);
     const bool gpu = execution.backend_type() != core::BackendType::Cpu;
 

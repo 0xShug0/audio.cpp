@@ -1,7 +1,5 @@
 #include "engine/community_models/lfm3_audio/backbone.h"
 
-#include "../lfm2_audio/weight_stores.h"
-
 #include "engine/community_models/lfm3_audio/blocks.h"
 #include "engine/community_models/lfm3_audio/chat.h"
 #include "engine/community_models/lfm3_audio/debug.h"
@@ -33,11 +31,7 @@ using blocks::LayerKind;
 using core::TensorShape;
 using core::TensorValue;
 
-constexpr size_t kWeightContextBytes = 16ull * 1024ull * 1024ull;
 constexpr size_t kGraphNodes = 16384;
-const char * const kPrefix = "lfm.model.";
-const char * const kEmbedTokens = "lfm.model.embed_tokens.weight";
-const char * const kCodebookEmbedding = "codebook_embedding.weight";
 
 [[noreturn]] void fail(const std::string & message) {
     throw std::runtime_error("LFM3-Audio backbone: " + message);
@@ -49,52 +43,8 @@ ggml_tensor * input(ggml_context * g, ggml_type type, int64_t ne0, int64_t ne1 =
     return t;
 }
 
-ggml_type stored_type(const assets::TensorSource & source, const std::string & name) {
-    return assets::ggml_type_for_tensor_dtype(source.require_metadata(name).dtype);
-}
-
 bool has_kind(const blocks::StackConfig & config, LayerKind kind) {
     return std::find(config.layers.begin(), config.layers.end(), kind) != config.layers.end();
-}
-
-struct Weights {
-    std::unique_ptr<WeightStores> stores;
-    blocks::StackWeights stack;
-    TensorValue token_lookup;  // embed_tokens, or an F16 copy where the backend cannot gather its type
-    TensorValue text_head;     // embed_tokens (tied), or a CPU-repacked copy of it
-    TensorValue frame_lookup;  // codebook_embedding [codebooks * audio_vocab, hidden]
-};
-
-TensorValue lookup_of(WeightStores & stores, ggml_backend_t backend, const assets::TensorSource & source, const std::string & name,
-                      const TensorValue & table) {
-    if (lfm3_backend_gathers(backend, table.tensor->type)) {
-        return table;
-    }
-    return stores.plain().load_tensor(source, name, assets::TensorStorageType::F16, {table.shape.dims[0], table.shape.dims[1]});
-}
-
-Weights load_weights(const assets::TensorSource & source, const Lfm3BackboneConfig & config, int64_t codebooks, int64_t audio_vocab,
-                     core::ExecutionContext & execution, const Lfm3WeightOptions & options) {
-    Weights out;
-    auto * backend = execution.backend();
-    const int64_t d = config.stack.hidden;
-    out.stores = std::make_unique<WeightStores>(execution, "lfm3_audio.backbone.weights", kWeightContextBytes, options.cpu_repack);
-    auto & plain = out.stores->plain();
-    out.stack = blocks::load_stack(*out.stores, backend, source, kPrefix, config.stack, options);
-
-    const auto storage = lfm3_storage_type(backend, stored_type(source, kEmbedTokens), options);
-    const auto table = plain.load_tensor(source, kEmbedTokens, storage, {config.vocab_size, d});
-    out.token_lookup = lookup_of(*out.stores, backend, source, kEmbedTokens, table);
-    // Where a CPU extra buffer takes the tied head's type, the head gets a repacked copy of its own, as in lfm2_audio.
-    const bool repack = storage == assets::TensorStorageType::Native &&
-                        out.stores->matmul_buffer_type(table.tensor->type, config.vocab_size, d) != nullptr;
-    out.text_head = repack ? out.stores->load_matmul(source, kEmbedTokens, {config.vocab_size, d}) : table;
-
-    const auto frames = plain.load_tensor(source, kCodebookEmbedding, lfm3_storage_type(backend, stored_type(source, kCodebookEmbedding), options),
-                                          {codebooks * audio_vocab, d});
-    out.frame_lookup = lookup_of(*out.stores, backend, source, kCodebookEmbedding, frames);
-    out.stores->upload();
-    return out;
 }
 
 // [hidden, frames]: each frame the sum of its codes' rows (codebook k reads row k * audio_vocab + code_k). Prompts,
@@ -107,7 +57,7 @@ ggml_tensor * frame_embeddings(ggml_context * g, ggml_tensor * table, ggml_tenso
     return ggml_reshape_2d(g, sums, d, frames);
 }
 
-TensorValue text_logits(core::ModuleBuildContext & ctx, const TensorValue & hidden, const Weights & weights,
+TensorValue text_logits(core::ModuleBuildContext & ctx, const TensorValue & hidden, const Lfm3BackboneWeights & weights,
                         const Lfm3BackboneConfig & config) {
     return modules::LinearModule({config.stack.hidden, config.vocab_size, false, blocks::kMatmulPrecision})
         .build(ctx, hidden, {weights.text_head, std::nullopt});
@@ -119,7 +69,7 @@ TensorValue text_logits(core::ModuleBuildContext & ctx, const TensorValue & hidd
 // first node, so a hidden graph and a logits graph sharing nodes would re-capture at every S2S text/audio switch.
 class DecodeGraph {
 public:
-    DecodeGraph(const Weights & weights, const Lfm3BackboneConfig & config, int64_t codebooks, core::ExecutionContext & execution,
+    DecodeGraph(const Lfm3BackboneWeights & weights, const Lfm3BackboneConfig & config, int64_t codebooks, core::ExecutionContext & execution,
                 blocks::StackState & state, const Lfm3WeightOptions & options, Lfm3Output output)
         : execution_(execution), capacity_(state.capacity()), codebooks_(codebooks), window_(config.stack.sliding_window) {
         ctx_ = blocks::graph_context(kGraphNodes, "backbone decode");
@@ -221,7 +171,7 @@ private:
 // The tied text head on one hidden row. Its shape never changes, so the graph and its buffer live as long as the runtime.
 class HeadGraph {
 public:
-    HeadGraph(const Weights & weights, const Lfm3BackboneConfig & config, core::ExecutionContext & execution) : execution_(execution) {
+    HeadGraph(const Lfm3BackboneWeights & weights, const Lfm3BackboneConfig & config, core::ExecutionContext & execution) : execution_(execution) {
         ctx_ = blocks::graph_context(kGraphNodes, "backbone head");
         auto * g = ctx_.get();
         core::ModuleBuildContext build{g, "lfm3_audio.backbone.head", execution.backend_type()};
@@ -262,7 +212,7 @@ private:
 // One prefill block. The runtime places it in its block allocator, whose buffer the kept blocks share, so every run sets all inputs.
 class BlockGraph {
 public:
-    BlockGraph(const Weights & weights, const Lfm3BackboneConfig & config, core::ExecutionContext & execution, blocks::StackState & state,
+    BlockGraph(const Lfm3BackboneWeights & weights, const Lfm3BackboneConfig & config, core::ExecutionContext & execution, blocks::StackState & state,
                const Lfm3WeightOptions & options, int64_t begin, int64_t steps)
         : execution_(execution),
           begin_(begin),
@@ -361,15 +311,14 @@ private:
 }  // namespace
 
 struct Lfm3BackboneRuntime::Impl {
-    Impl(std::shared_ptr<const assets::TensorSource> source_in, const Lfm3BackboneConfig & config_in, int64_t codebooks_in,
+    Impl(Lfm3BackboneWeights weights_in, const Lfm3BackboneConfig & config_in, int64_t codebooks_in,
          int64_t audio_vocab_in, core::ExecutionContext & execution_in, const Lfm3WeightOptions & options_in)
-        : source(std::move(source_in)),
-          config(config_in),
+        : config(config_in),
           codebooks(codebooks_in),
           audio_vocab(audio_vocab_in),
           execution(execution_in),
           options(options_in),
-          weights(load_weights(*source, config, codebooks, audio_vocab, execution, options)) {}
+          weights(std::move(weights_in)) {}
 
     [[nodiscard]] int64_t hidden() const noexcept { return config.stack.hidden; }
 
@@ -513,13 +462,12 @@ struct Lfm3BackboneRuntime::Impl {
         return head_graph->run(hidden_row);
     }
 
-    std::shared_ptr<const assets::TensorSource> source;
     Lfm3BackboneConfig config;
     int64_t codebooks = 0;
     int64_t audio_vocab = 0;
     core::ExecutionContext & execution;
     Lfm3WeightOptions options;
-    Weights weights;
+    Lfm3BackboneWeights weights;
     std::unique_ptr<blocks::StackState> state;  // K/V row p holds position p
     std::unique_ptr<DecodeGraph> decode_hidden;
     std::unique_ptr<DecodeGraph> decode_logits;
@@ -532,13 +480,13 @@ struct Lfm3BackboneRuntime::Impl {
     bool started = false;
 };
 
-Lfm3BackboneRuntime::Lfm3BackboneRuntime(std::shared_ptr<const assets::TensorSource> model, const Lfm3BackboneConfig & config,
+Lfm3BackboneRuntime::Lfm3BackboneRuntime(Lfm3BackboneWeights weights, const Lfm3BackboneConfig & config,
                                          int64_t codebooks, int64_t audio_vocab_size, core::ExecutionContext & execution,
                                          const Lfm3WeightOptions & options) {
-    if (model == nullptr || codebooks <= 0 || audio_vocab_size <= 0 || config.vocab_size <= 0) {
+    if (weights.token_lookup.tensor == nullptr || codebooks <= 0 || audio_vocab_size <= 0 || config.vocab_size <= 0) {
         fail("needs the model tensors, a vocabulary and the codebook sizes");
     }
-    impl_ = std::make_unique<Impl>(std::move(model), config, codebooks, audio_vocab_size, execution, options);
+    impl_ = std::make_unique<Impl>(std::move(weights), config, codebooks, audio_vocab_size, execution, options);
     impl_->block_allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
     if (impl_->block_allocator == nullptr) {
         fail("failed to create the prefill allocator");

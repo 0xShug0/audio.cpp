@@ -511,6 +511,7 @@ add_library(engine_core OBJECT
     src/framework/model_spec/options.cpp
     src/framework/model_spec/schema.cpp
     src/framework/assets/tensor_source.cpp
+    src/framework/assets/gguf_metadata.cpp
     src/framework/assets/weight_norm_folding.cpp
     src/framework/assets/weight_adapter.cpp
     src/framework/assets/weight_adapter_source.cpp
@@ -2836,7 +2837,6 @@ audiocpp_add_model(lfm2_audio
 audiocpp_add_model(lfm3_audio
     SOURCES
         src/community_models/lfm3_audio/assets.cpp
-        src/community_models/lfm3_audio/published_gguf.cpp
         src/community_models/lfm3_audio/weights.cpp
         src/community_models/lfm3_audio/tokenizer.cpp
         src/community_models/lfm3_audio/prompt.cpp

@@ -1,11 +1,8 @@
 #include "engine/community_models/lfm3_audio/depth.h"
 
-#include "../lfm2_audio/weight_stores.h"
-
 #include "engine/community_models/lfm3_audio/blocks.h"
 #include "engine/community_models/lfm3_audio/sampling.h"
 #include "engine/framework/core/backend.h"
-#include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/linear_module.h"
 
 #include <ggml-backend.h>
@@ -34,61 +31,10 @@ constexpr size_t kGraphNodes = 2048;
     throw std::runtime_error("LFM3-Audio depth decoder: " + message);
 }
 
-struct DepthWeights {
-    std::unique_ptr<WeightStores> stores;
-    TensorValue input_weight;  // depth_linear [codebooks * hidden, input_size]
-    TensorValue input_bias;    // [codebooks * hidden]
-    TensorValue mask_rows;     // mask_embedding repeated per codebook, F32 [codebooks, hidden]
-    TensorValue embeddings;    // depth_embeddings.{i}.embedding packed, [codebooks * vocab, hidden]
-    TensorValue norms;         // depth_embeddings.{i}.embedding_norm packed, F32 [codebooks, hidden]
-    blocks::StackWeights stack;
-};
-
-DepthWeights load_weights(const assets::TensorSource & source, const Lfm3DepthConfig & config, core::ExecutionContext & execution,
-                          const Lfm3WeightOptions & options) {
-    const int64_t d = config.stack.hidden;
-    const int64_t vocab = config.audio_vocab_size;
-    DepthWeights out;
-    out.stores = std::make_unique<WeightStores>(execution, "lfm3_audio.depth.weights", 1024 * ggml_tensor_overhead(), options.cpu_repack);
-    auto & store = out.stores->plain();
-
-    out.input_weight =
-        blocks::load_matmul(*out.stores, execution.backend(), source, "depth_linear.weight", {kCodebooks * d, config.input_size}, options);
-    out.input_bias = store.load_f32_tensor(source, "depth_linear.bias", {kCodebooks * d});
-
-    const auto mask = source.require_f32("mask_embedding", {d});
-    std::vector<float> mask_rows;
-    for (int64_t i = 0; i < kCodebooks; ++i) {
-        mask_rows.insert(mask_rows.end(), mask.begin(), mask.end());
-    }
-    out.mask_rows = store.make_f32(TensorShape::from_dims({kCodebooks, d}), std::move(mask_rows));
-
-    // The tables are gathered (inputs) and batch-multiplied (tied heads), so they stay in the plain store.
-    std::vector<core::BackendWeightStore::TensorPart> tables;
-    std::vector<float> norms;
-    for (int64_t i = 0; i < kCodebooks; ++i) {
-        const std::string p = "depth_embeddings." + std::to_string(i) + ".";
-        tables.push_back({p + "embedding.weight", {vocab, d}});
-        const auto norm = source.require_f32(p + "embedding_norm.weight", {d});
-        norms.insert(norms.end(), norm.begin(), norm.end());
-    }
-    const ggml_type table_type = assets::ggml_type_for_tensor_dtype(source.require_metadata(tables.front().name).dtype);
-    auto table_storage = lfm3_storage_type(execution.backend(), table_type, options);
-    if (table_storage == assets::TensorStorageType::Native && !lfm3_backend_gathers(execution.backend(), table_type)) {
-        table_storage = assets::TensorStorageType::F16;
-    }
-    out.embeddings = store.load_tensor(source, tables, table_storage);
-    out.norms = store.make_f32(TensorShape::from_dims({kCodebooks, d}), std::move(norms));
-
-    out.stack = blocks::load_stack(*out.stores, execution.backend(), source, "depthformer.model.", config.stack, options);
-    out.stores->upload();
-    return out;
-}
-
 // One 12-token pass, built once. The trunk ends with its own final norm, before the per-codebook RMSNorm.
 class PassGraph {
 public:
-    PassGraph(const DepthWeights & weights, const Lfm3DepthConfig & config, core::ExecutionContext & execution,
+    PassGraph(const Lfm3DepthWeights & weights, const Lfm3DepthConfig & config, core::ExecutionContext & execution,
               const Lfm3WeightOptions & options)
         : config_(config), execution_(execution), ctx_(blocks::graph_context(kGraphNodes, "depth decoder")) {
         auto * g = ctx_.get();
@@ -200,22 +146,20 @@ void validate_config(const Lfm3DepthConfig & config) {
 }  // namespace
 
 struct Lfm3DepthDecoderRuntime::Impl {
-    Impl(std::shared_ptr<const assets::TensorSource> source_in, const Lfm3DepthConfig & config_in, core::ExecutionContext & execution,
+    Impl(Lfm3DepthWeights weights_in, const Lfm3DepthConfig & config_in, core::ExecutionContext & execution,
          const Lfm3WeightOptions & options)
-        : source(std::move(source_in)),
-          config((validate_config(config_in), config_in)),
-          weights(load_weights(*source, config, execution, options)),
+        : config((validate_config(config_in), config_in)),
+          weights(std::move(weights_in)),
           graph(weights, config, execution, options) {}
 
-    std::shared_ptr<const assets::TensorSource> source;
     Lfm3DepthConfig config;
-    DepthWeights weights;
+    Lfm3DepthWeights weights;
     PassGraph graph;
 };
 
-Lfm3DepthDecoderRuntime::Lfm3DepthDecoderRuntime(std::shared_ptr<const assets::TensorSource> model, const Lfm3DepthConfig & config,
+Lfm3DepthDecoderRuntime::Lfm3DepthDecoderRuntime(Lfm3DepthWeights weights, const Lfm3DepthConfig & config,
                                                  core::ExecutionContext & execution, const Lfm3WeightOptions & options)
-    : impl_(std::make_unique<Impl>(std::move(model), config, execution, options)) {}
+    : impl_(std::make_unique<Impl>(std::move(weights), config, execution, options)) {}
 
 Lfm3DepthDecoderRuntime::~Lfm3DepthDecoderRuntime() = default;
 

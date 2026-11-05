@@ -10,7 +10,7 @@
 #include "engine/community_models/lfm3_audio/features.h"
 #include "engine/community_models/lfm3_audio/generator.h"
 #include "engine/community_models/lfm3_audio/prompt.h"
-#include "engine/community_models/lfm3_audio/published_gguf.h"
+#include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/community_models/lfm3_audio/tokenizer.h"
 #include "engine/community_models/lfm3_audio/weights.h"
 #include "engine/framework/audio/chunking.h"
@@ -284,16 +284,19 @@ struct Model {
           max_pass_seconds(parse_max_pass_seconds(session)),
           tokenizer(assets->vocabulary.tokens.empty() ? Lfm3Tokenizer(assets->tokenizer_json) : Lfm3Tokenizer(assets->vocabulary)),
           text_vocab(tokenizer_size()),
-          backbone(assets->model, assets->backbone, assets->depth.codebooks, assets->depth.audio_vocab_size, execution, weights) {
+          backbone(load_lfm3_backbone_weights(*assets, execution, weights), assets->backbone, assets->depth.codebooks, assets->depth.audio_vocab_size, execution, weights) {
         if (audio_in) {
-            encoder = std::make_unique<Lfm3AudioEncoderRuntime>(assets->model, assets->encoder, execution, weights);
+            encoder = std::make_unique<Lfm3AudioEncoderRuntime>(load_lfm3_encoder_weights(*assets, execution, weights), assets->encoder, execution, weights);
         }
         if (audio_out) {
-            depth = std::make_unique<Lfm3DepthDecoderRuntime>(assets->model, assets->depth, execution, weights);
-            codec = std::make_unique<Lfm3CodecDecoder>(assets->codec_weights, assets->codec, execution, weights);
+            depth = std::make_unique<Lfm3DepthDecoderRuntime>(load_lfm3_depth_weights(*assets, execution, weights), assets->depth, execution, weights);
+            codec = std::make_unique<Lfm3CodecDecoder>(load_lfm3_codec_weights(*assets, execution, weights), assets->codec, execution, weights);
             assets->codec_weights->release_storage();
         }
         assets->model->release_storage();
+        if (assets->audio_weights && !audio_out) {
+            assets->audio_weights->release_storage();
+        }
     }
 
     // Ids past the tokenizer (untrained rows of the head) have no text, though a reply keeps them as steps.
@@ -1208,7 +1211,7 @@ public:
             return false;
         }
 
-        if (is_lfm3_audio_published_gguf(request.model_path)) {
+        if (is_lfm3_audio_gguf(request.model_path)) {
             return true;
         }
         try {
@@ -1222,7 +1225,7 @@ public:
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        if (!is_lfm3_audio_published_gguf(request.model_path)) {
+        if (!is_lfm3_audio_gguf(request.model_path)) {
             return spec_backed_->inspect(request);
         }
 

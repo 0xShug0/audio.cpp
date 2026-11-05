@@ -302,15 +302,15 @@ int main(int argc, char ** argv) {
         const auto assets = lfm3::load_lfm3_audio_assets(ctx.model);
         engine::core::ExecutionContext execution(ctx.backend);
         {
-            lfm3::Lfm3AudioEncoderRuntime encoder(assets->model, assets->encoder, execution, ctx.weight_options());
+            lfm3::Lfm3AudioEncoderRuntime encoder(lfm3::load_lfm3_encoder_weights(*assets, execution, ctx.weight_options()), assets->encoder, execution, ctx.weight_options());
             for (const char * clip : {"c", "syn_1s", "syn_037s"}) check_encoder_fixture_features(checks, ctx, encoder, clip);
         }
         {
-            lfm3::Lfm3DepthDecoderRuntime depth(assets->model, assets->depth, execution, ctx.weight_options());
+            lfm3::Lfm3DepthDecoderRuntime depth(lfm3::load_lfm3_depth_weights(*assets, execution, ctx.weight_options()), assets->depth, execution, ctx.weight_options());
             check_depth(checks, ctx, depth, "tts_fox_greedy");
             check_depth(checks, ctx, depth, "s2s_c_greedy");
         }
-        lfm3::Lfm3CodecDecoder codec(assets->codec_weights, assets->codec, execution, ctx.weight_options());
+        lfm3::Lfm3CodecDecoder codec(lfm3::load_lfm3_codec_weights(*assets, execution, ctx.weight_options()), assets->codec, execution, ctx.weight_options());
         check_codec(checks, ctx, codec, "tts");
         check_codec(checks, ctx, codec, "rand200");
     } catch (const std::exception & error) {

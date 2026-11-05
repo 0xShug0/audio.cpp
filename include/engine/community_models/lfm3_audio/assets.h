@@ -1,16 +1,13 @@
 #pragma once
 
-// LFM3-Audio assets. The model is one checkpoint: the backbone with its ASR
-// encoder and MaskGIT depth decoder ("model" tensors, HF names such as
-// lfm.model.layers.0...), and the LiquidCodec decoder ("codec" tensors). It
-// loads from the upstream safetensors directory, with config.json,
-// generation_config.json, tokenizer.json and audio_tokenizer/config.json, or
-// from Liquid's published GGUFs (published_gguf.h), which give the same.
+// HF and GGUF checkpoints bind to the same component configurations and weights.
 
 #include "engine/community_models/lfm3_audio/blocks.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
+#include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/linear_module.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -71,12 +68,77 @@ struct Lfm3AudioAssets {
     Lfm3CodecConfig codec;
     Lfm3GenerationConfig generation;
     std::shared_ptr<const assets::TensorSource> model;
-    std::shared_ptr<const assets::TensorSource> codec_weights;  // resource id "codec" (decoder.*, quantizer.*, from_quantizer.*)
+    std::shared_ptr<const assets::TensorSource> audio_weights;  // GGUF mmproj; HF components use model
+    std::shared_ptr<const assets::TensorSource> codec_weights;  // HF codec checkpoint or GGUF mmproj
     std::filesystem::path tokenizer_json;
     // Published GGUFs: no resources or tokenizer.json, but the backbone's vocabulary and its path.
     tokenizers::LlamaBpeGgufVocabulary vocabulary;
     std::filesystem::path published_backbone;
 };
+
+struct Lfm3BackboneWeights {
+    Lfm3BackboneWeights();
+    ~Lfm3BackboneWeights();
+    Lfm3BackboneWeights(Lfm3BackboneWeights &&) noexcept;
+
+    std::unique_ptr<WeightStores> stores;
+    blocks::StackWeights stack;
+    core::TensorValue token_lookup;  // embed_tokens, or an F16 copy where the backend cannot gather its type
+    core::TensorValue text_head;     // embed_tokens (tied), or a CPU-repacked copy of it
+    core::TensorValue frame_lookup;  // codebook_embedding [codebooks * audio_vocab, hidden]
+};
+
+struct Lfm3EncoderWeights {
+    Lfm3EncoderWeights();
+    ~Lfm3EncoderWeights();
+    Lfm3EncoderWeights(Lfm3EncoderWeights &&) noexcept;
+
+    std::unique_ptr<WeightStores> stores;
+    modules::Conv2dWeights conv_in, conv_mid, lin_mid, conv_end, lin_end;
+    modules::LinearWeights lin_out;
+    blocks::StackWeights stack;
+    modules::NormWeights projector_norm;
+    modules::LinearWeights projector_1, projector_2;
+};
+
+struct Lfm3DepthWeights {
+    Lfm3DepthWeights();
+    ~Lfm3DepthWeights();
+    Lfm3DepthWeights(Lfm3DepthWeights &&) noexcept;
+
+    std::unique_ptr<WeightStores> stores;
+    core::TensorValue input_weight;  // depth_linear [codebooks * hidden, input_size]
+    core::TensorValue input_bias;    // [codebooks * hidden]
+    core::TensorValue mask_rows;     // mask_embedding repeated per codebook, F32 [codebooks, hidden]
+    core::TensorValue embeddings;    // depth_embeddings.{i}.embedding packed, [codebooks * vocab, hidden]
+    core::TensorValue norms;         // depth_embeddings.{i}.embedding_norm packed, F32 [codebooks, hidden]
+    blocks::StackWeights stack;
+};
+
+struct Lfm3CodecWeights {
+    Lfm3CodecWeights();
+    ~Lfm3CodecWeights();
+    Lfm3CodecWeights(Lfm3CodecWeights &&) noexcept;
+
+    std::unique_ptr<WeightStores> stores;
+    // project_out stays F32: its 48 inputs are not a multiple of the 32-wide blocks of BF16/F16 GPU kernels.
+    core::TensorValue project_out, project_out_bias, from_quantizer, from_quantizer_bias, lin, lin_bias;
+    blocks::StackWeights stack;
+    std::vector<float> window;
+};
+
+Lfm3BackboneWeights load_lfm3_backbone_weights(const Lfm3AudioAssets & assets, core::ExecutionContext & execution,
+    const Lfm3WeightOptions & options);
+Lfm3EncoderWeights load_lfm3_encoder_weights(const Lfm3AudioAssets & assets, core::ExecutionContext & execution,
+    const Lfm3WeightOptions & options);
+Lfm3DepthWeights load_lfm3_depth_weights(const Lfm3AudioAssets & assets, core::ExecutionContext & execution,
+    const Lfm3WeightOptions & options);
+Lfm3CodecWeights load_lfm3_codec_weights(const Lfm3AudioAssets & assets, core::ExecutionContext & execution,
+    const Lfm3WeightOptions & options);
+
+// Liquid's backbone GGUF paired with its audio mmproj.
+[[nodiscard]] bool is_lfm3_audio_gguf(const std::filesystem::path & model_path) noexcept;
+[[nodiscard]] std::shared_ptr<const Lfm3AudioAssets> load_lfm3_audio_gguf_assets(const std::filesystem::path & model_path);
 
 std::shared_ptr<const Lfm3AudioAssets> load_lfm3_audio_assets(const std::filesystem::path & model_path);
 

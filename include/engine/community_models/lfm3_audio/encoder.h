@@ -7,7 +7,6 @@
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/community_models/lfm3_audio/features.h"
 #include "engine/community_models/lfm3_audio/weights.h"
-#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 
 #include <cstdint>
@@ -28,7 +27,7 @@ struct Lfm3EncoderTaps {
 
 class Lfm3AudioEncoderRuntime {
 public:
-    Lfm3AudioEncoderRuntime(std::shared_ptr<const assets::TensorSource> model, const Lfm3EncoderConfig & config,
+    Lfm3AudioEncoderRuntime(Lfm3EncoderWeights weights, const Lfm3EncoderConfig & config,
                             core::ExecutionContext & execution, const Lfm3WeightOptions & options);
     ~Lfm3AudioEncoderRuntime();
     // One embedding per 8 feature frames, rounded up. The graph stays for the next call, which reuses it for the

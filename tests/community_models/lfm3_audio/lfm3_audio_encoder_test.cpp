@@ -130,7 +130,7 @@ void test_synthetic(core::ExecutionContext & execution) {
     for (const auto & options : {lfm3::Lfm3WeightOptions{lfm3::Lfm3WeightType::F32, true}, lfm3::Lfm3WeightOptions{lfm3::Lfm3WeightType::Native, true}}) {
         const bool f32 = lfm3::lfm3_reference_precision(options);
         const double tolerance = f32 ? ref::reference_tolerance(execution) : kSyntheticNativeTolerance;
-        lfm3::Lfm3AudioEncoderRuntime encoder(assets->model, config, execution, options);
+        lfm3::Lfm3AudioEncoderRuntime encoder(lfm3::load_lfm3_encoder_weights(*assets, execution, options), config, execution, options);
         // 37: odd frames, 5 tokens (> window 4); 40: even; 8: one token; 300: 38 tokens, far past the window; 1: one frame.
         for (const int64_t frames : {37, 40, 8, 300, 1}) {
             const auto features = random_features(frames, static_cast<uint64_t>(frames));
@@ -156,7 +156,7 @@ void test_synthetic(core::ExecutionContext & execution) {
         require_eq(encoder.graphs_built(), int64_t{6}, "a new length builds a graph");
     }
 
-    lfm3::Lfm3AudioEncoderRuntime encoder(assets->model, config, execution, {});
+    lfm3::Lfm3AudioEncoderRuntime encoder(lfm3::load_lfm3_encoder_weights(*assets, execution, {}), config, execution, {});
     ref::require_throws([&] { (void)encoder.encode({std::vector<float>(127 * 4), 4}); }, "features of the wrong size");
 }
 

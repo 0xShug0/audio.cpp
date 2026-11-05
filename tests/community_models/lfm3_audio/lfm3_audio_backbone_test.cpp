@@ -79,7 +79,7 @@ Synthetic make_synthetic() {
 
 std::unique_ptr<Lfm3BackboneRuntime> make_runtime(const Synthetic & s, core::ExecutionContext & execution,
                                                   const lfm3::Lfm3WeightOptions & options) {
-    return std::make_unique<Lfm3BackboneRuntime>(s.assets->model, s.assets->backbone, s.codebooks, s.audio_vocab, execution, options);
+    return std::make_unique<Lfm3BackboneRuntime>(lfm3::load_lfm3_backbone_weights(*s.assets, execution, options), s.assets->backbone, s.codebooks, s.audio_vocab, execution, options);
 }
 
 struct Case {

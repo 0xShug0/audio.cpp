@@ -7,6 +7,7 @@
 #include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -81,13 +82,6 @@ void validate_config(const StackConfig & config) {
     }
 }
 
-std::string layer_prefix(const std::string & prefix, size_t layer) {
-    return prefix + "layers." + std::to_string(layer) + ".";
-}
-
-modules::NormWeights load_norm(WeightStores & stores, const assets::TensorSource & source, const std::string & name, int64_t size) {
-    return {stores.plain().load_f32_tensor(source, name, {size}), std::nullopt};
-}
 
 TensorValue rms_norm(core::ModuleBuildContext & ctx, const TensorValue & x, const modules::NormWeights & weights, int64_t size, float eps) {
     return modules::RMSNormModule({size, eps, true, false}).build(ctx, x, weights);
@@ -227,32 +221,72 @@ void StackState::clear() {
 }
 
 StackWeights load_stack(WeightStores & stores, ggml_backend_t backend, const assets::TensorSource & source, const std::string & prefix,
-                        const StackConfig & config, const Lfm3WeightOptions & options) {
+                        const StackConfig & config, const Lfm3WeightOptions & options, StackLayout layout) {
     validate_config(config);
     const int64_t d = config.hidden;
     const int64_t hd = config.head_dim;
-    const bool lfm2 = config.names == Names::Lfm2;
+    struct TensorNames {
+        const char * layers;
+        const char * final_norm;
+        const char * operator_norm;
+        const char * ffn_norm;
+        const char * post_operator_norm;
+        const char * post_ffn_norm;
+        const char * w1;
+        const char * w2;
+        const char * w3;
+        const char * conv_in;
+        const char * conv_out;
+        const char * conv_kernel;
+        const char * q;
+        const char * k;
+        const char * v;
+        const char * o;
+        const char * q_norm;
+        const char * k_norm;
+        const char * gate;
+    };
+    static constexpr TensorNames hf = {
+        "layers.", "embedding_norm", "operator_norm", "ffn_norm", "post_operator_norm", "post_ffn_norm",
+        "feed_forward.w1", "feed_forward.w2", "feed_forward.w3", "conv.in_proj", "conv.out_proj", "conv.conv",
+        "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj", "self_attn.q_norm", "self_attn.k_norm", "self_attn.gate_proj"};
+    static constexpr TensorNames gguf_backbone = {
+        "blk.", "output_norm", "attn_norm", "ffn_norm", "post_attention_norm", "post_ffw_norm",
+        "ffn_gate", "ffn_down", "ffn_up", "shortconv.in_proj", "shortconv.out_proj", "shortconv.conv",
+        "attn_q", "attn_k", "attn_v", "attn_output", "attn_q_norm", "attn_k_norm", "attn_gate"};
+    static constexpr TensorNames gguf_audio = {
+        "blk.", "output_norm", "ln1", "ln2", "attn_post_norm", "ffn_post_norm",
+        "ffn_gate", "ffn_down", "ffn_up", "conv_pw1", "conv_pw2", "conv_dw",
+        "attn_q", "attn_k", "attn_v", "attn_out", "attn_q_norm", "attn_k_norm", "attn_gate"};
+    auto names = layout == StackLayout::Hf ? hf : layout == StackLayout::GgufBackbone ? gguf_backbone : gguf_audio;
+    if (layout == StackLayout::Hf && config.names == Names::Lfm2) {
+        names.o = "self_attn.out_proj";
+        names.q_norm = "self_attn.q_layernorm";
+        names.k_norm = "self_attn.k_layernorm";
+    }
+    if (layout == StackLayout::GgufEncoder) names.final_norm = "post_ln";
 
     StackWeights out;
     for (size_t layer = 0; layer < config.layers.size(); ++layer) {
-        const std::string p = layer_prefix(prefix, layer);
+        const std::string p = prefix + names.layers + std::to_string(layer) + ".";
         LayerWeights w;
         w.kind = config.layers[layer];
-        w.operator_norm = load_norm(stores, source, p + "operator_norm.weight", d);
-        w.ffn_norm = load_norm(stores, source, p + "ffn_norm.weight", d);
+        w.operator_norm = modules::binding::norm_weight_from_source(stores.plain(), source, p + names.operator_norm, d);
+        w.ffn_norm = modules::binding::norm_weight_from_source(stores.plain(), source, p + names.ffn_norm, d);
         if (config.sandwich_norm) {
-            w.post_operator_norm = load_norm(stores, source, p + "post_operator_norm.weight", d);
-            w.post_ffn_norm = load_norm(stores, source, p + "post_ffn_norm.weight", d);
+            w.post_operator_norm = modules::binding::norm_weight_from_source(stores.plain(), source, p + names.post_operator_norm, d);
+            w.post_ffn_norm = modules::binding::norm_weight_from_source(stores.plain(), source, p + names.post_ffn_norm, d);
         }
-        w.w1 = load_matmul(stores, backend, source, p + "feed_forward.w1.weight", {config.ffn, d}, options);
-        w.w3 = load_matmul(stores, backend, source, p + "feed_forward.w3.weight", {config.ffn, d}, options);
-        w.w2 = load_matmul(stores, backend, source, p + "feed_forward.w2.weight", {d, config.ffn}, options);
+        w.w1 = load_matmul(stores, backend, source, p + names.w1 + ".weight", {config.ffn, d}, options);
+        w.w3 = load_matmul(stores, backend, source, p + names.w3 + ".weight", {config.ffn, d}, options);
+        w.w2 = load_matmul(stores, backend, source, p + names.w2 + ".weight", {d, config.ffn}, options);
 
         if (w.kind == LayerKind::Conv) {
             const int64_t k = config.conv_kernel;
-            w.conv.in_proj = load_matmul(stores, backend, source, p + "conv.in_proj.weight", {3 * d, d}, options);
-            w.conv.out_proj = load_matmul(stores, backend, source, p + "conv.out_proj.weight", {d, d}, options);
-            const auto kernel = source.require_f32(p + "conv.conv.weight", {d, 1, k});
+            w.conv.in_proj = load_matmul(stores, backend, source, p + names.conv_in + ".weight", {3 * d, d}, options);
+            w.conv.out_proj = load_matmul(stores, backend, source, p + names.conv_out + ".weight", {d, d}, options);
+            const auto kernel_shape = layout == StackLayout::Hf ? std::vector<int64_t>{d, 1, k} : std::vector<int64_t>{d, k};
+            const auto kernel = source.require_f32(p + names.conv_kernel + ".weight", kernel_shape);
             std::vector<float> kernel_t(kernel.size());
             for (int64_t c = 0; c < d; ++c) {
                 for (int64_t i = 0; i < k; ++i) {
@@ -262,23 +296,22 @@ StackWeights load_stack(WeightStores & stores, ggml_backend_t backend, const ass
             w.conv.kernel_t = stores.plain().make_f32(TensorShape::from_dims({k, d}), std::move(kernel_t));
             w.conv.kernel = stores.plain().make_f32(TensorShape::from_dims({d, k}), kernel);
         } else {
-            const std::string a = p + "self_attn.";
             const int64_t q_rows = config.heads * hd;
             const int64_t kv_rows = config.kv_heads * hd;
-            w.attention.q = load_matmul(stores, backend, source, a + "q_proj.weight", {q_rows, d}, options);
-            w.attention.k = load_matmul(stores, backend, source, a + "k_proj.weight", {kv_rows, d}, options);
-            w.attention.v = load_matmul(stores, backend, source, a + "v_proj.weight", {kv_rows, d}, options);
-            w.attention.o = load_matmul(stores, backend, source, a + (lfm2 ? "out_proj.weight" : "o_proj.weight"), {d, q_rows}, options);
-            w.attention.q_norm = load_norm(stores, source, a + (lfm2 ? "q_layernorm.weight" : "q_norm.weight"), hd);
-            w.attention.k_norm = load_norm(stores, source, a + (lfm2 ? "k_layernorm.weight" : "k_norm.weight"), hd);
+            w.attention.q = load_matmul(stores, backend, source, p + names.q + ".weight", {q_rows, d}, options);
+            w.attention.k = load_matmul(stores, backend, source, p + names.k + ".weight", {kv_rows, d}, options);
+            w.attention.v = load_matmul(stores, backend, source, p + names.v + ".weight", {kv_rows, d}, options);
+            w.attention.o = load_matmul(stores, backend, source, p + names.o + ".weight", {d, q_rows}, options);
+            w.attention.q_norm = modules::binding::norm_weight_from_source(stores.plain(), source, p + names.q_norm, hd);
+            w.attention.k_norm = modules::binding::norm_weight_from_source(stores.plain(), source, p + names.k_norm, hd);
             if (config.output_gate) {
-                w.attention.gate = load_matmul(stores, backend, source, a + "gate_proj.weight", {config.heads, d}, options);
+                w.attention.gate = load_matmul(stores, backend, source, p + names.gate + ".weight", {config.heads, d}, options);
             }
         }
         out.layers.push_back(std::move(w));
     }
 
-    out.final_norm = load_norm(stores, source, prefix + "embedding_norm.weight", d);
+    out.final_norm = modules::binding::norm_weight_from_source(stores.plain(), source, prefix + names.final_norm, d);
     if (config.full_rotary_dims != 0 && config.full_rotary_dims != hd) {
         out.full_freq_factors = stores.plain().make_f32(TensorShape::from_dims({hd / 2}), zero_tail_freq_factors(hd, config.full_rotary_dims));
     }

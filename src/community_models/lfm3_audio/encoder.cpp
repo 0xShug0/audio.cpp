@@ -1,7 +1,5 @@
 #include "engine/community_models/lfm3_audio/encoder.h"
 
-#include "../lfm2_audio/weight_stores.h"
-
 #include "engine/community_models/lfm3_audio/debug.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
@@ -30,55 +28,10 @@ namespace {
 using core::TensorShape;
 using core::TensorValue;
 
-constexpr size_t kWeightContextBytes = 4ull * 1024ull * 1024ull;
 constexpr size_t kGraphNodes = 8192;
 constexpr float kLayerNormEps = 1e-5f;  // nn.LayerNorm default
 // 30 s of features. A longer pass (ASR runs up to 300 s in one) frees its compute buffer afterwards.
 constexpr int64_t kMaxRetainedFrames = 3000;
-
-struct EncoderWeights {
-    std::unique_ptr<WeightStores> stores;
-    modules::Conv2dWeights conv_in, conv_mid, lin_mid, conv_end, lin_end;
-    modules::LinearWeights lin_out;
-    blocks::StackWeights stack;
-    modules::NormWeights projector_norm;
-    modules::LinearWeights projector_1, projector_2;
-};
-
-EncoderWeights load_weights(const assets::TensorSource & source, const Lfm3EncoderConfig & config, core::ExecutionContext & execution,
-                            const Lfm3WeightOptions & options) {
-    EncoderWeights out;
-    out.stores = std::make_unique<WeightStores>(execution, "lfm3_audio.encoder.weights", kWeightContextBytes, options.cpu_repack);
-    auto & store = out.stores->plain();
-    const auto backend = execution.backend();
-    const int64_t c = config.conv_channels;
-    const int64_t d = config.stack.hidden;
-    const int64_t o = config.output_size;
-
-    // Conv weights stay F32 whatever the file holds: Metal's depthwise conv is F32 only.
-    const auto conv = [&](const std::string & name, int64_t in, int64_t k) {
-        const std::string p = "encoder.downsample." + name;
-        return modules::Conv2dWeights{store.load_f32_tensor(source, p + ".weight", {c, in, k, k}),
-                                      store.load_f32_tensor(source, p + ".bias", {c})};
-    };
-    const auto linear = [&](const std::string & name, int64_t in, int64_t out_features) {
-        return modules::LinearWeights{blocks::load_matmul(*out.stores, backend, source, name + ".weight", {out_features, in}, options),
-                                      store.load_f32_tensor(source, name + ".bias", {out_features})};
-    };
-
-    out.conv_in = conv("conv_in", 1, 3);
-    out.conv_mid = conv("conv_mid", 1, 3);
-    out.lin_mid = conv("lin_mid", c, 1);
-    out.conv_end = conv("conv_end", 1, 3);
-    out.lin_end = conv("lin_end", c, 1);
-    out.lin_out = linear("encoder.downsample.lin_out", c * config.mel_after_downsample, d);
-    out.stack = blocks::load_stack(*out.stores, backend, source, "encoder.lfm.lfm.", config.stack, options);
-    out.projector_norm = {store.load_f32_tensor(source, "mlp.model.0.weight", {d}), store.load_f32_tensor(source, "mlp.model.0.bias", {d})};
-    out.projector_1 = linear("mlp.model.1", d, o);
-    out.projector_2 = linear("mlp.model.3", o, o);
-    out.stores->upload();
-    return out;
-}
 
 // An output that is a view (a reshape after a linear) also needs its source kept: the allocator frees a view's
 // source once the view's consumers ran, whatever the view's own flags.
@@ -103,7 +56,7 @@ TensorValue depthwise(core::ModuleBuildContext & ctx, const TensorValue & x, con
 // The encoder graph for one feature length; its tensors live in the runtime's compute buffer.
 class EncoderGraph {
 public:
-    EncoderGraph(const EncoderWeights & weights, const Lfm3EncoderConfig & config, core::ExecutionContext & execution,
+    EncoderGraph(const Lfm3EncoderWeights & weights, const Lfm3EncoderConfig & config, core::ExecutionContext & execution,
                  ggml_gallocr_t allocator, const Lfm3WeightOptions & options, int64_t frames)
         : config_(config), execution_(execution), frames_(frames), ctx_(blocks::graph_context(kGraphNodes, "encoder")) {
         auto * g = ctx_.get();
@@ -216,13 +169,12 @@ private:
 }  // namespace
 
 struct Lfm3AudioEncoderRuntime::Impl {
-    Impl(std::shared_ptr<const assets::TensorSource> source_in, const Lfm3EncoderConfig & config_in, core::ExecutionContext & execution_in,
+    Impl(Lfm3EncoderWeights weights_in, const Lfm3EncoderConfig & config_in, core::ExecutionContext & execution_in,
          const Lfm3WeightOptions & options_in)
-        : source(std::move(source_in)),
-          config(config_in),
+        : config(config_in),
           execution(execution_in),
           options(options_in),
-          weights(load_weights(*source, config_in, execution_in, options_in)) {}
+          weights(std::move(weights_in)) {}
 
     Lfm3AudioEmbeddings encode(const Lfm3Features & features, Lfm3EncoderTaps * taps) {
         const auto start = std::chrono::steady_clock::now();
@@ -261,20 +213,19 @@ struct Lfm3AudioEncoderRuntime::Impl {
         allocator.reset();
     }
 
-    std::shared_ptr<const assets::TensorSource> source;
     Lfm3EncoderConfig config;
     core::ExecutionContext & execution;
     Lfm3WeightOptions options;
-    EncoderWeights weights;
+    Lfm3EncoderWeights weights;
     int64_t graphs_built = 0;
     // The graph, declared after the allocator, is destroyed first.
     ggml_gallocr_ptr allocator;
     std::unique_ptr<EncoderGraph> graph;
 };
 
-Lfm3AudioEncoderRuntime::Lfm3AudioEncoderRuntime(std::shared_ptr<const assets::TensorSource> model, const Lfm3EncoderConfig & config,
+Lfm3AudioEncoderRuntime::Lfm3AudioEncoderRuntime(Lfm3EncoderWeights weights, const Lfm3EncoderConfig & config,
                                                  core::ExecutionContext & execution, const Lfm3WeightOptions & options)
-    : impl_(std::make_unique<Impl>(std::move(model), config, execution, options)) {}
+    : impl_(std::make_unique<Impl>(std::move(weights), config, execution, options)) {}
 
 Lfm3AudioEncoderRuntime::~Lfm3AudioEncoderRuntime() = default;
 
