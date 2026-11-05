@@ -3631,6 +3631,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
 
+    if (ENGINE_BUILD_TESTS AND index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(index_tts2_request_test tests/index_tts2/request_test.cpp)
+        add_test(NAME index_tts2_request_test COMMAND index_tts2_request_test)
+    endif()
+    if (ENGINE_BUILD_MODEL_TESTS AND index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(index_tts2_text_controls_probe tests/index_tts2/text_controls_probe.cpp)
+    endif()
+
     if (ENGINE_BUILD_MODEL_TESTS AND ENGINE_ENABLE_WEBGPU AND nemotron_asr IN_LIST AUDIOCPP_LINKED_MODELS)
         # Manual parity test: requires an external Nemotron GGUF via --model.
         add_engine_unittest(nemotron_asr_webgpu_rnnt_test tests/nemotron_asr/webgpu_rnnt_test.cpp)

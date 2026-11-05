@@ -9,7 +9,8 @@
     "clone"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "zh",
@@ -125,6 +126,22 @@
         "description": "Sampling repetition penalty.",
         "required": false,
         "default": 10
+      },
+      {
+        "name": "text_chunk_tokens",
+        "type": "int",
+        "description": "Maximum text tokens per internal segment, separate from framework character chunking.",
+        "required": false,
+        "min": 1,
+        "max": 600,
+        "default": 120
+      },
+      {
+        "name": "text_normalization",
+        "type": "bool",
+        "description": "Apply IndexTTS2.5 number/symbol text normalization before case and pronunciation processing. False is not supported by IndexTTS2.0.",
+        "required": false,
+        "default": true
       },
       {
         "name": "max_tokens",

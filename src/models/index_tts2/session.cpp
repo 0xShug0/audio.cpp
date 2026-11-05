@@ -264,9 +264,9 @@ IndexTTS2Session::IndexTTS2Session(
             throw std::runtime_error("unknown IndexTTS2 session option: " + key);
         }
     }
-    if (task_.mode != runtime::RunMode::Offline ||
+    if ((task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) ||
         (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning)) {
-        throw std::runtime_error("IndexTTS2 currently supports offline TTS and voice-cloning sessions");
+        throw std::runtime_error("IndexTTS2 supports offline and segment-streaming TTS and voice-cloning sessions");
     }
 
     semantic_encoder_ = std::make_unique<IndexTTS2Wav2Vec2BertRuntime>(
@@ -364,10 +364,20 @@ void IndexTTS2Session::prepare(const runtime::SessionPreparationRequest & reques
                 language = normalize_index_tts2_language(*value);
             }
         }
+        const int text_chunk_tokens = runtime::parse_int_option(request.options, {"text_chunk_tokens"})
+            .value_or(IndexTTS2Request{}.text_chunk_tokens);
+        if (text_chunk_tokens <= 0 || text_chunk_tokens > 600) {
+            throw std::runtime_error("IndexTTS2 text_chunk_tokens must be between 1 and 600");
+        }
+        const auto normalization = runtime::find_option(request.options, {"text_normalization"});
+        const bool text_normalization = normalization
+            ? runtime::parse_bool_option(*normalization, "text_normalization")
+            : IndexTTS2Request{}.text_normalization;
         const auto text_encoding = tokenizer_.encode_for_inference(
             text,
-            IndexTTS2Request{}.max_text_tokens_per_segment,
-            language);
+            text_chunk_tokens,
+            language,
+            text_normalization);
         for (const auto & segment : text_encoding.segment_token_ids) {
             const int64_t gpt_text_tokens = is_v2_5_variant(*assets_)
                 ? static_cast<int64_t>(align_index_tts2_gpt_text_tokens(segment).size())
@@ -737,6 +747,14 @@ runtime::AudioBuffer IndexTTS2Session::synthesize_segment(
 }
 
 runtime::TaskResult IndexTTS2Session::run(const runtime::TaskRequest & request) {
+    return synthesize(request, false);
+}
+
+runtime::TaskResult IndexTTS2Session::generate_stream(const runtime::TaskRequest & request) {
+    return synthesize(request, true);
+}
+
+runtime::TaskResult IndexTTS2Session::synthesize(const runtime::TaskRequest & request, bool streaming) {
     require_prepared("IndexTTS2 run");
     const auto wall_start = Clock::now();
     auto parsed = parse_index_tts2_request(request);
@@ -774,8 +792,9 @@ runtime::TaskResult IndexTTS2Session::run(const runtime::TaskRequest & request) 
     for (const auto & text_chunk : text_chunks) {
         const auto text_encoding = tokenizer_.encode_for_inference(
             text_chunk,
-            parsed.max_text_tokens_per_segment,
-            parsed.language);
+            parsed.text_chunk_tokens,
+            parsed.language,
+            parsed.text_normalization);
         const int32_t lang_id = v2_5 ? IndexTTS2TextTokenizer::lang_to_id(text_encoding.lang) : 0;
         for (const auto & ids : text_encoding.segment_token_ids) {
             segment_token_ids.push_back(ids);
@@ -785,9 +804,6 @@ runtime::TaskResult IndexTTS2Session::run(const runtime::TaskRequest & request) 
 
     runtime::AudioBuffer merged;
     for (size_t i = 0; i < segment_token_ids.size(); ++i) {
-        if (i > 0) {
-            append_silence(merged, parsed.interval_silence_ms);
-        }
         auto segment_audio = synthesize_segment(
             segment_token_ids[i],
             segment_lang_ids[i],
@@ -796,7 +812,19 @@ runtime::TaskResult IndexTTS2Session::run(const runtime::TaskRequest & request) 
             emotion_vector,
             parsed.generation,
             parsed.generation.seed + static_cast<uint32_t>(i));
-        runtime::append_audio_buffer(merged, segment_audio);
+        runtime::AudioBuffer chunk;
+        chunk.sample_rate = segment_audio.sample_rate;
+        chunk.channels = segment_audio.channels;
+        if (i > 0) {
+            append_silence(chunk, parsed.interval_silence_ms);
+        }
+        runtime::append_audio_buffer(chunk, segment_audio);
+        runtime::append_audio_buffer(merged, chunk);
+        if (streaming && stream_event_sink()) {
+            runtime::StreamEvent event;
+            event.audio_output = std::move(chunk);
+            stream_event_sink()(event);
+        }
     }
 
     runtime::TaskResult result;
