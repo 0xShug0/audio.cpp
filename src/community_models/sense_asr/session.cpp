@@ -3,6 +3,7 @@
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/decoders/ctc_host_decoder.h"
 #include "engine/framework/io/text.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -147,22 +148,9 @@ SenseAsrDecodedTokens decode_ctc(const std::vector<float> &logits,
   }
   std::vector<int32_t> ids;
   ids.reserve(static_cast<size_t>(frames));
-  int32_t previous = -1;
-  for (int64_t frame = 0; frame < frames; ++frame) {
-    const float *column = logits.data() + static_cast<size_t>(frame) *
-                                              static_cast<size_t>(vocab_size);
-    int32_t argmax = 0;
-    float best = column[0];
-    for (int64_t token = 1; token < vocab_size; ++token) {
-      if (column[token] > best) {
-        best = column[token];
-        argmax = static_cast<int32_t>(token);
-      }
-    }
-    if (argmax != previous && argmax != blank_id) {
-      ids.push_back(argmax);
-    }
-    previous = argmax;
+  const auto frame_ids = decoders::CtcHostDecoder::frame_ids(logits.data(), frames, vocab_size);
+  for (const auto & span : decoders::CtcHostDecoder(static_cast<int32_t>(blank_id)).decode(frame_ids)) {
+    ids.push_back(span.id);
   }
   if (std::getenv("SENSE_ASR_DUMP_IDS") != nullptr) {
     std::string s = "ids(" + std::to_string(frames) + "):";
@@ -179,14 +167,8 @@ SenseAsrDecodedTokens decode_ctc(const std::vector<float> &logits,
          ++frame) {
       const float *column = logits.data() + static_cast<size_t>(frame) *
                                                 static_cast<size_t>(vocab_size);
-      int32_t argmax = 0;
-      float best = column[0];
-      for (int64_t token = 1; token < vocab_size; ++token) {
-        if (column[token] > best) {
-          best = column[token];
-          argmax = static_cast<int32_t>(token);
-        }
-      }
+      const int32_t argmax = frame_ids[static_cast<size_t>(frame)];
+      const float best = column[argmax];
       fprintf(stderr, "frame %lld: argmax=%d (%.4f)\n", (long long)frame,
               argmax, best);
     }
