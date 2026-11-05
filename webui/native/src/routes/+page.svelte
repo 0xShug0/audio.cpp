@@ -67,6 +67,8 @@
   let tab: 'studio' | 'arena' | 'models' | 'logs' | 'configuration' | 'library' | 'apps' = 'studio';
   let library: Library | null = null;
   let appsPage: Apps | null = null;
+  let modelSearch = '';
+  let modelTask = '';
   let appsOpened = false;
   $: if (tab === 'apps') appsOpened = true;
   let arenaComponent: { runArena: () => Promise<void> } | null = null;
@@ -981,6 +983,8 @@
   }
 
   function openModelsPage() {
+    modelSearch = '';
+    modelTask = '';
     if (tab === 'library' && !library?.canClose()) return;
     if (tab === 'apps' && !appsPage?.canClose()) return;
     if (!server?.ui_management) {
@@ -2717,7 +2721,7 @@
 </header>
 
 <main>
-  {#if appsOpened}<div hidden={tab !== 'apps'}><Apps bind:this={appsPage} active={tab === 'apps'}/></div>{/if}
+  {#if appsOpened}<div hidden={tab !== 'apps'}><Apps bind:this={appsPage} active={tab === 'apps'} on:models={event => { openModelsPage(); modelSearch = event.detail.search; modelTask = event.detail.task; }}/></div>{/if}
   {#if tab === 'studio'}
     <nav class="workflow-tabs" aria-label={tr('nav.workflows')}>
       {#each workflowTabs as workflow}
@@ -3262,7 +3266,7 @@
       {tr}
     />
   {:else if tab === 'models'}
-    <ModelLibrary groups={modelGroups} {packageSizes} {installJobs} {packageSizeState}
+    <ModelLibrary search={modelSearch} task={modelTask} groups={modelGroups} {packageSizes} {installJobs} {packageSizeState}
       bind:modelsFolderInput {modelsFolder} {modelsFolderHistory} {defaultModelsFolder} {applyingModelsFolder} {modelsFolderIsDefault}
       {openFolderBrowser} {applyModelsFolder} {installPackage} {removePackage} {stopPackageDownload}
       {cleanPartialDownload} {formatBytes} {installProgressLabel} {workflowForEntry}
