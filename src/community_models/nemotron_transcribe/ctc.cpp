@@ -8,6 +8,7 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/speech_encoders/rope_transformer_encoder_runtime.h"
 #include "engine/framework/modules/weight_binding.h"
 
 #include <ggml-alloc.h>
@@ -69,20 +70,9 @@ int validate_evidence(const CtcEvidence & evidence, const CtcConfig & c) {
     return frames;
 }
 
-core::TensorValue value(ggml_tensor * tensor) {
-    return core::wrap_tensor(tensor, core::TensorShape::from_dims(
-        {tensor->ne[3], tensor->ne[2], tensor->ne[1], tensor->ne[0]}), tensor->type);
-}
-
-struct LayerWeights {
-    modules::NormWeights norm1, norm2, q_norm, k_norm;
-    modules::LinearWeights qkv, out, ff_in, ff_out;
-};
-
 struct Weights {
-    modules::NormWeights embed, final;
+    modules::RopeTransformerEncoderWeights transformer;
     modules::LinearWeights upsample, classifier;
-    std::vector<LayerWeights> layers;
 };
 
 Weights load_weights(core::BackendWeightStore & store, const assets::TensorSource & source,
@@ -94,26 +84,26 @@ Weights load_weights(core::BackendWeightStore & store, const assets::TensorSourc
         weights.upsample = binding::linear_from_source(store, source, "ctc.upsample", type,
             c.upsampling * c.dimension, c.dimension, true);
     }
-    weights.embed = binding::norm_from_source(store, source, "ctc.transformer.embed_norm", c.dimension);
-    weights.final = binding::norm_from_source(store, source, "ctc.transformer.final_norm", c.dimension);
+    weights.transformer.input_norm = binding::norm_from_source(store, source, "ctc.transformer.embed_norm", c.dimension);
+    weights.transformer.final_norm = binding::norm_from_source(store, source, "ctc.transformer.final_norm", c.dimension);
     for (int i = 0; i < c.layers; ++i) {
         const auto prefix = "ctc.transformer.layers." + std::to_string(i);
-        LayerWeights layer;
+        modules::RopeTransformerEncoderLayerWeights layer;
         layer.norm1 = binding::norm_from_source(store, source, prefix + ".norm1", c.dimension);
         layer.norm2 = binding::norm_from_source(store, source, prefix + ".norm2", c.dimension);
         layer.qkv = binding::linear_from_source(store, source, prefix + ".attn.w_qkv", type,
             3 * c.dimension, c.dimension, c.qkv_bias);
-        layer.out = binding::linear_from_source(store, source, prefix + ".attn.out_proj", type,
+        layer.attention_output = binding::linear_from_source(store, source, prefix + ".attn.out_proj", type,
             c.dimension, c.dimension, true);
         if (c.qk_norm) {
             layer.q_norm = binding::norm_from_source(store, source, prefix + ".attn.q_norm", c.dimension / c.heads);
             layer.k_norm = binding::norm_from_source(store, source, prefix + ".attn.k_norm", c.dimension / c.heads);
         }
-        layer.ff_in = binding::linear_from_source(store, source, prefix + ".ffn.net.0", type,
+        layer.ffn_in = binding::linear_from_source(store, source, prefix + ".ffn.net.0", type,
             c.ff_hidden, c.dimension, true);
-        layer.ff_out = binding::linear_from_source(store, source, prefix + ".ffn.net.3", type,
+        layer.ffn_out = binding::linear_from_source(store, source, prefix + ".ffn.net.3", type,
             c.dimension, c.ff_hidden, true);
-        weights.layers.push_back(std::move(layer));
+        weights.transformer.layers.push_back(std::move(layer));
     }
     weights.classifier = binding::linear_from_source(store, source, "ctc.classifier", type,
         c.vocabulary, c.dimension, true);
@@ -176,60 +166,34 @@ struct Graph {
     }
 };
 
-ggml_tensor * norm(core::ModuleBuildContext & ctx, ggml_tensor * x,
-    const modules::NormWeights & weights, const CtcConfig & c) {
-    // Normalize each head before partial NeoX RoPE, using the module's
-    // portable contiguous-input lowering for the strided Q/K split views.
-    return modules::LayerNormModule({x->ne[0], c.norm_epsilon, true, true})
-        .build(ctx, value(x), weights).tensor;
-}
-
-ggml_tensor * linear(core::ModuleBuildContext & ctx, ggml_tensor * x,
-    const modules::LinearWeights & weights) {
-    return modules::LinearModule({weights.weight.tensor->ne[0], weights.weight.tensor->ne[1],
-        weights.bias.has_value(), GGML_PREC_F32}).build(ctx, value(x), weights).tensor;
-}
-
 std::unique_ptr<Graph> bridge_graph(core::ExecutionContext & execution, const Weights & weights,
     const CtcConfig & c, int encoder_frames) {
     auto g = std::make_unique<Graph>(execution, std::max<size_t>(4096, 512 + size_t(c.layers) * 192));
     g->frames = encoder_frames;
     auto * ctx = g->context.get();
     core::ModuleBuildContext build{ctx, "nemotron.ctc.bridge", execution.backend_type()};
-    const int T = ctc_frames(encoder_frames, c.upsampling), D = c.dimension, H = c.heads, K = D / H;
+    const int T = ctc_frames(encoder_frames, c.upsampling), D = c.dimension;
     g->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, D, encoder_frames);
     g->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T);
-    auto * x = g->input;
-    if (c.upsampling > 1) x = ggml_reshape_2d(ctx, linear(build, x, weights.upsample), D, T);
-    auto * h = norm(build, x, weights.embed, c);
-    for (const auto & layer : weights.layers) {
-        auto * qkv = linear(build, norm(build, h, layer.norm1, c), layer.qkv);
-        const auto split = [&](int part) {
-            return ggml_view_3d(ctx, qkv, K, H, T, size_t(K) * sizeof(float), qkv->nb[1],
-                size_t(part) * D * sizeof(float));
-        };
-        auto * q = split(0);
-        auto * k = split(1);
-        auto * v = split(2);
-        if (c.qk_norm) {
-            q = norm(build, q, layer.q_norm, c);
-            k = norm(build, k, layer.k_norm, c);
-        }
-        q = ggml_rope_ext(ctx, q, g->positions, nullptr, c.rotary_dims, GGML_ROPE_TYPE_NEOX,
-            0, 10000.0f, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        k = ggml_rope_ext(ctx, k, g->positions, nullptr, c.rotary_dims, GGML_ROPE_TYPE_NEOX,
-            0, 10000.0f, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        // Match the reference's F16 K/V attention inputs and F32 accumulation.
-        auto * attended = ggml_flash_attn_ext(ctx, ggml_permute(ctx, q, 0, 2, 1, 3),
-            ggml_cast(ctx, ggml_permute(ctx, k, 0, 2, 1, 3), GGML_TYPE_F16),
-            ggml_cast(ctx, ggml_permute(ctx, v, 0, 2, 1, 3), GGML_TYPE_F16), nullptr,
-            1.0f / std::sqrt(float(K)), 0.0f, 0.0f);
-        ggml_flash_attn_ext_set_prec(attended, GGML_PREC_F32);
-        h = ggml_add(ctx, h, linear(build, ggml_reshape_2d(ctx, attended, D, T), layer.out));
-        auto * ff = linear(build, norm(build, h, layer.norm2, c), layer.ff_in);
-        h = ggml_add(ctx, h, linear(build, ggml_gelu_erf(ctx, ff), layer.ff_out));
+    auto input = core::wrap_tensor(g->input, core::TensorShape::from_dims({1, encoder_frames, D}));
+    if (c.upsampling > 1) {
+        input = modules::LinearModule({D, c.upsampling * D, true, GGML_PREC_F32})
+            .build(build, input, weights.upsample);
+        input = core::reshape_tensor(build, input, core::TensorShape::from_dims({1, T, D}));
     }
-    g->output = ggml_add(ctx, x, ggml_scale(ctx, norm(build, h, weights.final, c), c.residual_scale));
+    modules::RopeTransformerEncoderConfig config;
+    config.hidden_size = D;
+    config.intermediate_size = c.ff_hidden;
+    config.heads = c.heads;
+    config.rotary_dimensions = c.rotary_dims;
+    config.norm_epsilon = c.norm_epsilon;
+    config.qk_norm = c.qk_norm;
+    config.projection_precision = GGML_PREC_F32;
+    config.f16_kv = true;
+    auto encoded = modules::RopeTransformerEncoderModule(config).build(build, input,
+        {core::wrap_tensor(g->positions, core::TensorShape::from_dims({T}), GGML_TYPE_I32), {}, {}, {}},
+        weights.transformer);
+    g->output = ggml_add(ctx, input.tensor, ggml_scale(ctx, encoded.tensor, c.residual_scale));
     g->allocate();
     return g;
 }
@@ -300,6 +264,7 @@ struct CtcTimestampHead::Impl {
     std::unique_ptr<sentencepiece::SentencePieceProcessor> tokenizer;
     std::unique_ptr<Graph> bridge_cache, normalizer_cache, projection_cache;
     std::mutex mutex;
+    decoders::CtcHostDecoder alignment;
 
     Impl(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution_in,
         CtcConfig config_in, const std::string & serialized_tokenizer)
@@ -501,7 +466,10 @@ CtcTimestampResult CtcTimestampHead::timestamps(const CtcEvidence & evidence,
         inputs.time_offset = speakers.time_offset;
         ts::AlignmentConfig align_config;
         align_config.max_word_frames = 12 * impl_->config.upsampling;
-        result.alignment = ts::align_record(result.targets, inputs, align_config);
+        {
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            result.alignment = ts::align_record(result.targets, inputs, impl_->alignment, align_config);
+        }
         result.alignment.words = ts::public_words(result.alignment.words);
         for (auto & segment : result.alignment.diarization) {
             segment.start = ts::round_decimals(segment.start, 3);

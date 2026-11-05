@@ -3,8 +3,6 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/grouped_query_attention.h"
-#include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
@@ -29,68 +27,6 @@ void release_graph(
     if (context != nullptr) ggml_free(context);
 }
 
-core::TensorValue build_attention(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & mask,
-    const core::TensorValue & cos,
-    const core::TensorValue & sin,
-    const EncoderLayerWeights & weights,
-    const EncoderConfig & config,
-    bool use_flash_attention) {
-    const int64_t head_dim = config.hidden_size / config.heads;
-    auto qkv = modules::LinearModule({config.hidden_size, 3 * config.hidden_size, false})
-                   .build(ctx, input, {*weights.attention.qkv_weight, std::nullopt});
-    qkv = core::ensure_backend_addressable_layout(ctx, qkv);
-    auto make_heads = [&](int64_t offset) {
-        auto value = modules::SliceModule({2, offset, config.hidden_size}).build(ctx, qkv);
-        value = core::ensure_backend_addressable_layout(ctx, value);
-        value = core::reshape_tensor(
-            ctx, value,
-            core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads, head_dim}));
-        return modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, value);
-    };
-    auto query = modules::SplitRoPEModule({head_dim}).build(ctx, make_heads(0), cos, sin);
-    auto key = modules::SplitRoPEModule({head_dim}).build(ctx, make_heads(config.hidden_size), cos, sin);
-    auto value = make_heads(2 * config.hidden_size);
-    auto context = modules::GroupedQueryAttentionModule({
-        head_dim,
-        use_flash_attention ? modules::GroupedQueryAttentionLowering::FlashGroupedViewKV
-                            : modules::GroupedQueryAttentionLowering::ManualRepeat,
-        GGML_PREC_F32,
-        modules::AttentionCausality::NonCausal,
-    }).build(ctx, query, key, value, mask);
-    context = core::ensure_backend_addressable_layout(ctx, context);
-    context = core::reshape_tensor(
-        ctx, context,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.hidden_size}));
-    return modules::LinearModule({config.hidden_size, config.hidden_size, true})
-        .build(ctx, context, {weights.attention.out_weight, weights.attention.out_bias});
-}
-
-core::TensorValue build_encoder_layer(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & mask,
-    const core::TensorValue & cos,
-    const core::TensorValue & sin,
-    const EncoderLayerWeights & weights,
-    const EncoderConfig & config,
-    bool use_flash_attention) {
-    auto normalized = modules::LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
-                          .build(ctx, input, weights.norm1);
-    auto output = modules::AddModule().build(
-        ctx, input, build_attention(ctx, normalized, mask, cos, sin, weights, config, use_flash_attention));
-    normalized = modules::LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
-                     .build(ctx, output, weights.norm2);
-    auto feed_forward = modules::LinearModule({config.hidden_size, config.intermediate_size, true})
-                            .build(ctx, normalized, weights.ffn_in);
-    feed_forward = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx, feed_forward);
-    feed_forward = modules::LinearModule({config.intermediate_size, config.hidden_size, true})
-                       .build(ctx, feed_forward, weights.ffn_out);
-    return modules::AddModule().build(ctx, output, feed_forward);
-}
-
 void allocate_graph(
     const core::ExecutionContext & execution,
     ggml_cgraph * graph,
@@ -110,7 +46,6 @@ void allocate_graph(
 }  // namespace
 
 PreEncodeGraph::~PreEncodeGraph() { release_graph(backend, ggml, graph, plan, allocator); }
-Nemotron3DiarTransformerEncoderGraph::~Nemotron3DiarTransformerEncoderGraph() { release_graph(backend, ggml, graph, plan, allocator); }
 
 void ensure_pre_encode_graph(
     std::unique_ptr<PreEncodeGraph> & graph,
@@ -155,118 +90,66 @@ void ensure_encoder_graph(
     int64_t batch,
     int64_t frames,
     bool use_flash_attention) {
-    if (graph != nullptr && graph->batch == batch && graph->frames == frames && graph->backend == execution.backend()) return;
-    graph.reset();
-    auto next = std::make_unique<Nemotron3DiarTransformerEncoderGraph>();
-    next->batch = batch;
-    next->frames = frames;
-    next->backend = execution.backend();
-    next->threads = std::max(1, execution.config().threads);
-    next->ggml = ggml_init({arena_bytes, nullptr, true});
-    if (next->ggml == nullptr) throw std::runtime_error("failed to initialize Nemotron encoder context");
-    core::ModuleBuildContext ctx{
-        next->ggml, "nemotron_3_diar.encoder", execution.backend_type()};
-    const auto & config = assets.model_config;
-    const int64_t head_dim = config.encoder.hidden_size / config.encoder.heads;
-    next->input = core::make_tensor(
-        ctx, GGML_TYPE_F32,
-        core::TensorShape::from_dims({batch, frames, config.encoder.hidden_size}));
-    next->frame_mask = core::make_tensor(
-        ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, frames, 1}));
-    next->attention_mask = core::make_tensor(
-        ctx, GGML_TYPE_F16,
-        core::TensorShape::from_dims({batch, 1, frames, frames}));
-    next->rope_cos = core::make_tensor(
-        ctx, GGML_TYPE_F32,
-        core::TensorShape::from_dims({1, config.encoder.heads, frames, head_dim / 2}));
-    next->rope_sin = core::make_tensor(
-        ctx, GGML_TYPE_F32,
-        core::TensorShape::from_dims({1, config.encoder.heads, frames, head_dim / 2}));
-
-    auto output = modules::LayerNormModule({
-        config.encoder.hidden_size, config.encoder.layer_norm_eps, true, true,
-    }).build(ctx, next->input, weights.embed_norm);
-    for (size_t index = 0; index < weights.layers.size(); ++index) {
-        output = build_encoder_layer(
-            ctx, output, next->attention_mask, next->rope_cos, next->rope_sin,
-            weights.layers[index], config.encoder, use_flash_attention);
+    if (!graph) {
+        auto next = std::make_unique<Nemotron3DiarTransformerEncoderGraph>();
+        const auto config = assets.model_config;
+        modules::RopeTransformerEncoderConfig encoder;
+        encoder.hidden_size = config.encoder.hidden_size;
+        encoder.intermediate_size = config.encoder.intermediate_size;
+        encoder.heads = config.encoder.heads;
+        encoder.rotary_dimensions = config.encoder.hidden_size / config.encoder.heads;
+        encoder.norm_epsilon = config.encoder.layer_norm_eps;
+        encoder.rope_theta = config.encoder.rope_theta;
+        encoder.rotary = modules::EncoderRoPE::SplitTables;
+        encoder.flash_attention = use_flash_attention;
+        auto head = [state = next.get(), config, &weights](core::ModuleBuildContext & ctx,
+            const core::TensorValue & encoded) {
+            const auto batch = encoded.shape.at(0), frames = encoded.shape.at(1);
+            state->frame_mask = core::make_tensor(ctx, GGML_TYPE_F32,
+                core::TensorShape::from_dims({batch, frames, 1}));
+            ggml_set_input(state->frame_mask.tensor);
+            auto output = encoded;
+            output = modules::LinearModule({config.encoder.hidden_size, config.head.hidden_size, true})
+                         .build(ctx, output, weights.encoder_projection);
+            // Zero padded frames so the subpixel convolution at the last valid
+            // frame sees zero padding, as in an unpadded forward.
+            output = core::wrap_tensor(
+                ggml_mul(ctx.ggml, output.tensor, state->frame_mask.tensor), output.shape, GGML_TYPE_F32);
+            output = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, output);
+            output = modules::Conv1dModule({
+                config.head.hidden_size,
+                config.head.hidden_size * config.head.upsample_factor,
+                config.head.upsample_kernel_size,
+                1,
+                static_cast<int>(config.head.upsample_kernel_size / 2),
+                1,
+                true,
+            }).build(ctx, output, weights.subpixel_upsample);
+            output = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, output);
+            output = core::ensure_backend_addressable_layout(ctx, output);
+            output = core::reshape_tensor(
+                ctx, output,
+                core::TensorShape::from_dims({
+                    batch, frames * config.head.upsample_factor, config.head.hidden_size,
+                }));
+            output = modules::ReluModule().build(ctx, output);
+            output = modules::LinearModule({config.head.hidden_size, config.head.hidden_size, true})
+                         .build(ctx, output, weights.head_hidden);
+            output = modules::ReluModule().build(ctx, output);
+            output = modules::LinearModule({config.head.hidden_size, config.num_speakers, true})
+                         .build(ctx, output, weights.speaker_head);
+            output = modules::SigmoidModule().build(ctx, output);
+            return std::vector<core::TensorValue>{output};
+        };
+        modules::RopeTransformerEncoderGraphConfig graph_config;
+        graph_config.head = std::move(head);
+        graph_config.masked_attention = true;
+        graph_config.arena_bytes = arena_bytes;
+        next->runtime = std::make_unique<modules::RopeTransformerEncoderRuntime>(execution,
+            encoder, weights.encoder, std::move(graph_config));
+        graph = std::move(next);
     }
-    output = modules::LayerNormModule({
-        config.encoder.hidden_size, config.encoder.layer_norm_eps, true, true,
-    }).build(ctx, output, weights.final_norm);
-    output = modules::LinearModule({config.encoder.hidden_size, config.head.hidden_size, true})
-                 .build(ctx, output, weights.encoder_projection);
-    // Zero padded frames so the subpixel convolution at the last valid
-    // frame sees zero padding, as in an unpadded forward.
-    output = core::wrap_tensor(
-        ggml_mul(ctx.ggml, output.tensor, next->frame_mask.tensor), output.shape, GGML_TYPE_F32);
-    output = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, output);
-    output = modules::Conv1dModule({
-        config.head.hidden_size,
-        config.head.hidden_size * config.head.upsample_factor,
-        config.head.upsample_kernel_size,
-        1,
-        static_cast<int>(config.head.upsample_kernel_size / 2),
-        1,
-        true,
-    }).build(ctx, output, weights.subpixel_upsample);
-    output = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, output);
-    output = core::ensure_backend_addressable_layout(ctx, output);
-    output = core::reshape_tensor(
-        ctx, output,
-        core::TensorShape::from_dims({
-            batch, frames * config.head.upsample_factor, config.head.hidden_size,
-        }));
-    output = modules::ReluModule().build(ctx, output);
-    output = modules::LinearModule({config.head.hidden_size, config.head.hidden_size, true})
-                 .build(ctx, output, weights.head_hidden);
-    output = modules::ReluModule().build(ctx, output);
-    output = modules::LinearModule({config.head.hidden_size, config.num_speakers, true})
-                 .build(ctx, output, weights.speaker_head);
-    next->probabilities = modules::SigmoidModule().build(ctx, output);
-    ggml_set_input(next->input.tensor);
-    ggml_set_input(next->attention_mask.tensor);
-    ggml_set_input(next->frame_mask.tensor);
-    // These tables are populated once and must survive every graph execution.
-    ggml_set_input(next->rope_cos.tensor);
-    ggml_set_input(next->rope_sin.tensor);
-    ggml_set_output(next->rope_cos.tensor);
-    ggml_set_output(next->rope_sin.tensor);
-    ggml_set_output(next->probabilities.tensor);
-    next->graph = ggml_new_graph_custom(next->ggml, kGraphNodes, false);
-    ggml_build_forward_expand(next->graph, next->probabilities.tensor);
-    allocate_graph(execution, next->graph, next->allocator, next->plan);
-    core::write_tensor_f32(
-        next->rope_cos,
-        rope_table(1, config.encoder.heads, frames, head_dim, config.encoder.rope_theta, true));
-    core::write_tensor_f32(
-        next->rope_sin,
-        rope_table(1, config.encoder.heads, frames, head_dim, config.encoder.rope_theta, false));
-    graph = std::move(next);
-}
-
-std::vector<float> rope_table(
-    int64_t batch,
-    int64_t heads,
-    int64_t frames,
-    int64_t head_dim,
-    float theta,
-    bool cosine) {
-    const int64_t half = head_dim / 2;
-    std::vector<float> values(static_cast<size_t>(batch * heads * frames * half));
-    for (int64_t b = 0; b < batch; ++b) {
-        for (int64_t h = 0; h < heads; ++h) {
-            for (int64_t t = 0; t < frames; ++t) {
-                for (int64_t i = 0; i < half; ++i) {
-                    const double frequency = std::pow(static_cast<double>(theta), -2.0 * i / head_dim);
-                    const double phase = static_cast<double>(t) * frequency;
-                    const size_t index = static_cast<size_t>(((b * heads + h) * frames + t) * half + i);
-                    values[index] = static_cast<float>(cosine ? std::cos(phase) : std::sin(phase));
-                }
-            }
-        }
-    }
-    return values;
+    graph->runtime->prepare(batch, frames);
 }
 
 std::vector<float> attention_mask(const std::vector<int64_t> & lengths, int64_t frames) {

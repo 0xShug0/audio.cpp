@@ -1,3 +1,4 @@
+#include "engine/framework/decoders/ctc_host_decoder.h"
 #include "engine/community_models/nemotron_transcribe/alignment.h"
 #include "engine/community_models/nemotron_transcribe/ctc.h"
 
@@ -27,6 +28,7 @@ int main() {
     try {
         const float nan = std::numeric_limits<float>::quiet_NaN();
         const float inf = std::numeric_limits<float>::infinity();
+        engine::decoders::CtcHostDecoder ctc;
         ts::AlignmentTargets targets;
         targets.columns = {10, 3};
         targets.words = {{"test", 0, 0}};
@@ -36,44 +38,44 @@ int main() {
         inputs.log_probs = scores.data();
         inputs.frames = 3;
         inputs.duration = .12;
-        const auto valid = ts::align_record(targets, inputs);
+        const auto valid = ts::align_record(targets, inputs, ctc);
         require(valid.words.size() == 1 && valid.failed_streams.empty(), "valid one-word alignment");
 
         auto bad = targets;
         bad.streams[0].labels[1] = 2;
-        rejects([&] { ts::align_record(bad, inputs); }, "out-of-range class accepted");
+        rejects([&] { ts::align_record(bad, inputs, ctc); }, "out-of-range class accepted");
         bad = targets;
         bad.streams[0].state_to_word[1] = 1;
-        rejects([&] { ts::align_record(bad, inputs); }, "out-of-range state word accepted");
+        rejects([&] { ts::align_record(bad, inputs, ctc); }, "out-of-range state word accepted");
         bad = targets;
         bad.streams[0].state_to_word.pop_back();
-        rejects([&] { ts::align_record(bad, inputs); }, "short state mapping accepted");
+        rejects([&] { ts::align_record(bad, inputs, ctc); }, "short state mapping accepted");
         bad = targets;
         bad.streams[0].words[0] = -1;
-        rejects([&] { ts::align_record(bad, inputs); }, "negative word index accepted");
+        rejects([&] { ts::align_record(bad, inputs, ctc); }, "negative word index accepted");
         bad = targets;
         bad.words[0].tag = 1;
-        rejects([&] { ts::align_record(bad, inputs); }, "speaker tag/stream mismatch accepted");
+        rejects([&] { ts::align_record(bad, inputs, ctc); }, "speaker tag/stream mismatch accepted");
         for (float invalid : {nan, inf}) {
             scores[0] = invalid;
-            rejects([&] { ts::align_record(targets, inputs); }, "invalid emissions accepted");
+            rejects([&] { ts::align_record(targets, inputs, ctc); }, "invalid emissions accepted");
         }
         scores[0] = 0;
         auto bad_inputs = inputs;
         bad_inputs.duration = std::numeric_limits<double>::infinity();
-        rejects([&] { ts::align_record(targets, bad_inputs); }, "infinite clock accepted");
+        rejects([&] { ts::align_record(targets, bad_inputs, ctc); }, "infinite clock accepted");
         ts::AlignmentConfig config;
         config.maximum_token_len = nan;
-        rejects([&] { ts::align_record(targets, inputs, config); }, "NaN token duration accepted");
+        rejects([&] { ts::align_record(targets, inputs, ctc, config); }, "NaN token duration accepted");
         config = {};
         config.epsilon = 0;
-        rejects([&] { ts::align_record(targets, inputs, config); }, "zero logarithm epsilon accepted");
+        rejects([&] { ts::align_record(targets, inputs, ctc, config); }, "zero logarithm epsilon accepted");
         std::vector<float> activity{1, nan, 1};
         bad_inputs = inputs;
         bad_inputs.speaker_probs = activity.data();
         bad_inputs.speaker_frames = 3;
         bad_inputs.speakers = 1;
-        rejects([&] { ts::align_record(targets, bad_inputs); }, "NaN speaker evidence accepted");
+        rejects([&] { ts::align_record(targets, bad_inputs, ctc); }, "NaN speaker evidence accepted");
         rejects([&] { ts::diarization_segments(activity.data(), 3, 1, .01, .03); },
             "NaN activity became an inactive segment");
         rejects([&] { ts::resample_speaker_probs(activity.data(), 3, 1, 6); },
@@ -86,19 +88,19 @@ int main() {
             const auto endpoints = ts::resample_speaker_probs(large.data(), int(large.size()), 1, 2);
             require(endpoints == std::vector<float>({.75f, .25f}), "float32 endpoint gathered past input rows");
         }
-        rejects([&] { ts::banded_ctc_search(scores.data(), 2, {0, 2, 0}, {0, 1}, nullptr, {0, 1}); },
+        rejects([&] { engine::decoders::CtcHostDecoder().align(scores.data(), 2, {0, 2, 0}, {0, 1}, nullptr, {0, 1}); },
             "search accepted invalid class");
         for (const std::vector<int> & positions : {std::vector<int>{-1}, {2}, {0, 0}, {1, 0}})
-            rejects([&] { ts::banded_ctc_search(scores.data(), 2, {0, 1, 0}, positions, nullptr, {0, 1}); },
+            rejects([&] { engine::decoders::CtcHostDecoder().align(scores.data(), 2, {0, 1, 0}, positions, nullptr, {0, 1}); },
                 "search accepted invalid timeline position");
         rejects([&] { ts::speaker_mapping({2}, 2, targets.streams, activity.data(), 1, 1, .5f); },
             "speaker mapping accepted invalid class");
 
         std::fill(scores.begin(), scores.end(), -inf);
-        const auto unavailable = ts::align_record(targets, inputs);
+        const auto unavailable = ts::align_record(targets, inputs, ctc);
         require(unavailable.words.empty() && unavailable.failed_streams.size() == 1,
             "impossible negative-infinity emissions fabricated a word");
-        require(ts::banded_ctc_search(nullptr, 2, {0, 1, 0}, {}, nullptr, {}).path.empty(),
+        require(engine::decoders::CtcHostDecoder().align(nullptr, 2, {0, 1, 0}, {}, nullptr, {}).path.empty(),
             "an empty search must remain an unavailable path");
 
         // More streams than available speaker columns preserves the aligned
@@ -113,7 +115,7 @@ int main() {
         inputs.speaker_probs = activity.data();
         inputs.speaker_frames = 3;
         inputs.speakers = 1;
-        const auto partial = ts::align_record(targets, inputs);
+        const auto partial = ts::align_record(targets, inputs, ctc);
         require(partial.words.size() == 1 && partial.failed_streams.size() == 1 &&
             partial.words[0].tag == 7 && partial.words[0].column == 0 && partial.failed_streams[0].tag == 2,
             "partial alignment lost tag/column distinction");
