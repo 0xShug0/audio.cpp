@@ -9,6 +9,7 @@
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/packed_linear_weights.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
@@ -158,6 +159,36 @@ core::TensorValue attention_from_heads(
     return modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
 }
 
+// [rows, tokens, heads, dim] view of `heads` heads starting at feature
+// `feature_offset` of a contiguous packed projection [rows, tokens, width].
+core::TensorValue packed_heads_view(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & packed,
+    int64_t feature_offset,
+    int64_t heads,
+    int64_t dim) {
+    ggml_tensor * tensor = packed.tensor;
+    if (!ggml_is_contiguous(tensor) || packed.shape.rank != 3) {
+        throw std::runtime_error("OmniVoice generator packed projection must be a contiguous rank-3 tensor");
+    }
+    const size_t element = ggml_element_size(tensor);
+    auto * view = ggml_view_4d(
+        ctx.ggml,
+        tensor,
+        dim,
+        heads,
+        tensor->ne[1],
+        tensor->ne[2],
+        static_cast<size_t>(dim) * element,
+        tensor->nb[1],
+        tensor->nb[2],
+        static_cast<size_t>(feature_offset) * element);
+    return core::wrap_tensor(
+        view,
+        core::TensorShape::from_dims({packed.shape.dims[0], packed.shape.dims[1], heads, dim}),
+        packed.type);
+}
+
 // Flash attention on [batch, heads, steps, dim] heads where K/V may have
 // fewer heads than Q (grouped-query attention): ggml_flash_attn_ext
 // broadcasts each K/V head over its query-head group, so K/V are never
@@ -206,6 +237,10 @@ struct Qwen3DiffusionLayerWeights {
     core::TensorValue gate_proj;
     core::TensorValue up_proj;
     core::TensorValue down_proj;
+    // Fused projections (omnivoice.fused_projections): rows [q | k | v] and
+    // [gate | up]. When valid, q/k/v_proj and gate/up_proj are not loaded.
+    core::TensorValue qkv_proj;
+    core::TensorValue gate_up_proj;
 };
 
 struct Qwen3DiffusionWeights {
@@ -222,7 +257,8 @@ Qwen3DiffusionWeights load_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
-    assets_ns::TensorStorageType storage_type) {
+    assets_ns::TensorStorageType storage_type,
+    bool fused_projections) {
     validate_weight_storage_type(storage_type);
     const auto & config = assets.config;
     const auto & source = *assets.model_weights;
@@ -248,21 +284,57 @@ Qwen3DiffusionWeights load_weights(
         const std::string prefix = "llm.layers." + std::to_string(layer);
         Qwen3DiffusionLayerWeights w;
         w.input_norm = weights.store->load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.llm.hidden_size});
-        w.q_proj = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.q_proj.weight",
-            storage_type,
-            {config.llm.num_attention_heads * dim, config.llm.hidden_size});
-        w.k_proj = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.k_proj.weight",
-            storage_type,
-            {config.llm.num_key_value_heads * dim, config.llm.hidden_size});
-        w.v_proj = weights.store->load_tensor(
-            source,
-            prefix + ".self_attn.v_proj.weight",
-            storage_type,
-            {config.llm.num_key_value_heads * dim, config.llm.hidden_size});
+        const int64_t q_out = config.llm.num_attention_heads * dim;
+        const int64_t kv_out = config.llm.num_key_value_heads * dim;
+        if (fused_projections) {
+            // One GEMM per group: the shared input is converted to f16 once
+            // instead of once per projection.
+            w.qkv_proj = modules::PackedLinearWeightsBuilder({
+                config.llm.hidden_size,
+                {
+                    {prefix + ".self_attn.q_proj.weight", std::nullopt, q_out},
+                    {prefix + ".self_attn.k_proj.weight", std::nullopt, kv_out},
+                    {prefix + ".self_attn.v_proj.weight", std::nullopt, kv_out},
+                },
+                false,
+                true,
+            }).build(*weights.store, source, storage_type).weight;
+            w.gate_up_proj = modules::PackedLinearWeightsBuilder({
+                config.llm.hidden_size,
+                {
+                    {prefix + ".mlp.gate_proj.weight", std::nullopt, config.llm.intermediate_size},
+                    {prefix + ".mlp.up_proj.weight", std::nullopt, config.llm.intermediate_size},
+                },
+                false,
+                true,
+            }).build(*weights.store, source, storage_type).weight;
+        } else {
+            w.q_proj = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.q_proj.weight",
+                storage_type,
+                {q_out, config.llm.hidden_size});
+            w.k_proj = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.k_proj.weight",
+                storage_type,
+                {kv_out, config.llm.hidden_size});
+            w.v_proj = weights.store->load_tensor(
+                source,
+                prefix + ".self_attn.v_proj.weight",
+                storage_type,
+                {kv_out, config.llm.hidden_size});
+            w.gate_proj = weights.store->load_tensor(
+                source,
+                prefix + ".mlp.gate_proj.weight",
+                storage_type,
+                {config.llm.intermediate_size, config.llm.hidden_size});
+            w.up_proj = weights.store->load_tensor(
+                source,
+                prefix + ".mlp.up_proj.weight",
+                storage_type,
+                {config.llm.intermediate_size, config.llm.hidden_size});
+        }
         w.o_proj = weights.store->load_tensor(
             source,
             prefix + ".self_attn.o_proj.weight",
@@ -274,16 +346,6 @@ Qwen3DiffusionWeights load_weights(
             source,
             prefix + ".post_attention_layernorm.weight",
             {config.llm.hidden_size});
-        w.gate_proj = weights.store->load_tensor(
-            source,
-            prefix + ".mlp.gate_proj.weight",
-            storage_type,
-            {config.llm.intermediate_size, config.llm.hidden_size});
-        w.up_proj = weights.store->load_tensor(
-            source,
-            prefix + ".mlp.up_proj.weight",
-            storage_type,
-            {config.llm.intermediate_size, config.llm.hidden_size});
         w.down_proj = weights.store->load_tensor(
             source,
             prefix + ".mlp.down_proj.weight",
@@ -382,12 +444,33 @@ core::TensorValue decoder_layer_with(
     const modules::RMSNormModule hidden_norm({config.hidden_size, config.rms_norm_eps, true, false});
     const modules::RMSNormModule head_norm({dim, config.rms_norm_eps, true, false});
     auto x_norm = hidden_norm.build(ctx, input, binding::norm_data(ctx, weights.input_norm));
-    auto q = q_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.q_proj));
-    auto k = k_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.k_proj));
-    auto v = v_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.v_proj));
-    q = head_norm.build(ctx, reshape_heads(ctx, q, config.num_attention_heads, dim), binding::norm_data(ctx, weights.q_norm));
-    k = head_norm.build(ctx, reshape_heads(ctx, k, config.num_key_value_heads, dim), binding::norm_data(ctx, weights.k_norm));
-    v = reshape_heads(ctx, v, config.num_key_value_heads, dim);
+    core::TensorValue q;
+    core::TensorValue k;
+    core::TensorValue v;
+    if (weights.qkv_proj.valid()) {
+        const int64_t q_out = config.num_attention_heads * dim;
+        const int64_t kv_out = config.num_key_value_heads * dim;
+        const auto qkv = modules::LinearModule(binding::linear_config(config.hidden_size, q_out + 2 * kv_out, false))
+                             .build(ctx, x_norm, binding::linear_data(ctx, weights.qkv_proj));
+        // The head norm reads the strided q/k views in place; v stays a view.
+        const modules::RMSNormModule strided_head_norm({dim, config.rms_norm_eps, true, false, true});
+        q = strided_head_norm.build(
+            ctx,
+            packed_heads_view(ctx, qkv, 0, config.num_attention_heads, dim),
+            binding::norm_data(ctx, weights.q_norm));
+        k = strided_head_norm.build(
+            ctx,
+            packed_heads_view(ctx, qkv, q_out, config.num_key_value_heads, dim),
+            binding::norm_data(ctx, weights.k_norm));
+        v = packed_heads_view(ctx, qkv, q_out + kv_out, config.num_key_value_heads, dim);
+    } else {
+        q = q_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.q_proj));
+        k = k_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.k_proj));
+        v = v_proj.build(ctx, x_norm, binding::linear_data(ctx, weights.v_proj));
+        q = head_norm.build(ctx, reshape_heads(ctx, q, config.num_attention_heads, dim), binding::norm_data(ctx, weights.q_norm));
+        k = head_norm.build(ctx, reshape_heads(ctx, k, config.num_key_value_heads, dim), binding::norm_data(ctx, weights.k_norm));
+        v = reshape_heads(ctx, v, config.num_key_value_heads, dim);
+    }
     q = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
     k = modules::RoPEModule({dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
 
@@ -395,6 +478,19 @@ core::TensorValue decoder_layer_with(
     auto x = modules::AddModule{}.build(ctx, input, o_proj.build(ctx, context, binding::linear_data(ctx, weights.o_proj)));
 
     auto ff_in = hidden_norm.build(ctx, x, binding::norm_data(ctx, weights.post_norm));
+    if (weights.gate_up_proj.valid()) {
+        const auto gate_up =
+            modules::LinearModule(binding::linear_config(config.hidden_size, 2 * config.intermediate_size, false))
+                .build(ctx, ff_in, binding::linear_data(ctx, weights.gate_up_proj));
+        // silu(gate) * up in one kernel; gate is the first half of each row.
+        auto act_shape = gate_up.shape;
+        act_shape.dims[act_shape.rank - 1] = config.intermediate_size;
+        const auto act = core::wrap_tensor(ggml_swiglu(ctx.ggml, gate_up.tensor), act_shape, GGML_TYPE_F32);
+        auto ff = modules::LinearModule(
+                      binding::linear_config(config.intermediate_size, config.hidden_size, false))
+                      .build(ctx, act, binding::linear_data(ctx, weights.down_proj));
+        return modules::AddModule{}.build(ctx, x, ff);
+    }
     auto gate = modules::LinearModule(
                     binding::linear_config(config.hidden_size, config.intermediate_size, false))
                     .build(ctx, ff_in, binding::linear_data(ctx, weights.gate_proj));
@@ -488,13 +584,14 @@ public:
         std::shared_ptr<const OmniVoiceAssets> assets,
         core::ExecutionContext & execution_context,
         size_t weight_context_bytes,
-        assets_ns::TensorStorageType storage_type)
+        assets_ns::TensorStorageType storage_type,
+        bool fused_projections)
         : assets_(std::move(assets)),
           backend_(execution_context.backend()),
           backend_type_(execution_context.backend_type()),
           threads_(std::max(1, execution_context.config().threads)),
           weights_(std::make_shared<Qwen3DiffusionWeights>(
-              load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type))) {
+              load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type, fused_projections))) {
         if (assets_ == nullptr) {
             throw std::runtime_error("OmniVoice generator requires assets");
         }
@@ -1714,7 +1811,8 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
     bool mem_saver,
     OmniVoiceGeneratorPerfMode perf_mode,
     bool packed_cfg,
-    bool device_scoring)
+    bool device_scoring,
+    bool fused_projections)
     : impl_(std::make_unique<Impl>()) {
     if (assets == nullptr) {
         throw std::runtime_error("OmniVoice generator requires assets");
@@ -1728,7 +1826,8 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
         impl_->assets,
         execution_context,
         weight_context_bytes,
-        weight_storage_type);
+        weight_storage_type,
+        fused_projections);
     impl_->mem_saver = mem_saver;
     impl_->perf_mode = perf_mode;
     impl_->packed_cfg = packed_cfg;

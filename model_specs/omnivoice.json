@@ -263,6 +263,13 @@
         "description": "Score greedy (class_temperature=0) decoding steps on the backend and read back only the best tokens; default true. Ignored with mem_saver=true.",
         "required": false,
         "default": true
+      },
+      {
+        "name": "fused_projections",
+        "type": "bool",
+        "description": "Load q/k/v and gate/up as one packed weight each: one GEMM per group and a fused SwiGLU; default true. false keeps separate projections.",
+        "required": false,
+        "default": true
       }
     ],
     "load": []
