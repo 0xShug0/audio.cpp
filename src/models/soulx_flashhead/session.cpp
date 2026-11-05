@@ -1,12 +1,12 @@
-#include "engine/community_models/soulx_flashhead/session.h"
-#include "engine/community_models/soulx_flashhead/pipeline.h"
+#include "engine/models/soulx_flashhead/session.h"
+#include "engine/models/soulx_flashhead/pipeline.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/debug/profiler.h"
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 namespace {
 constexpr const char * kFamily = "soulx_flashhead";
 bool resolve_vae_cudnn(const runtime::SessionOptions & options, const Assets & assets) {
@@ -165,4 +165,4 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_soulx_flashhead_loader() {
     };
     return runtime::make_spec_backed_voice_loader(std::move(config));
 }
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

@@ -48,7 +48,7 @@ and chunk index metadata. Streaming consumers can display each chunk as it arriv
 Encode the artifacts as an MP4, optionally muxing the source speech:
 
 ```bash
-python tools/community_models/soulx_flashhead/render_video.py \
+python tools/models/soulx_flashhead/render_video.py \
   --input outputs/flashhead --audio /path/to/speech.wav \
   --output outputs/flashhead/video.mp4
 ```
@@ -101,7 +101,7 @@ and the model and configuration files from
 [facebook/wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h).
 
 ```bash
-python tools/community_models/soulx_flashhead/convert_gguf.py \
+python tools/models/soulx_flashhead/convert_gguf.py \
   --source /path/to/SoulX-FlashHead-1_3B \
   --audio-encoder /path/to/wav2vec2-base-960h \
   --type bf16 \
@@ -126,7 +126,7 @@ Use `--prepare-only` with an output directory to normalize a source checkpoint
 without creating a GGUF. The directory can be loaded directly by this family:
 
 ```bash
-python tools/community_models/soulx_flashhead/convert_gguf.py \
+python tools/models/soulx_flashhead/convert_gguf.py \
   --source /path/to/SoulX-FlashHead-1_3B \
   --audio-encoder /path/to/wav2vec2-base-960h \
   --variant pro --prepare-only --output /path/to/FlashHead-Pro-normalized

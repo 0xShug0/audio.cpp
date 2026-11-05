@@ -16,7 +16,7 @@
 #include <map>
 #include <unordered_map>
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 using core::TensorShape;
 using core::TensorValue;
 
@@ -146,4 +146,4 @@ class Graph {
     core::HostGraphPlan host_plan;
     std::vector<float> result;
 };
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

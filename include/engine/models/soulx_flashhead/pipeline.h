@@ -1,9 +1,9 @@
 #pragma once
-#include "engine/community_models/soulx_flashhead/assets.h"
+#include "engine/models/soulx_flashhead/assets.h"
 #include "engine/framework/core/execution_context.h"
 #include <cstddef>
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 struct GenerateOptions {
     std::filesystem::path reference_image;
     int64_t height = 512, width = 512, steps = 4;
@@ -26,4 +26,4 @@ class Pipeline {
     struct State;
     std::unique_ptr<State> state_;
 };
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

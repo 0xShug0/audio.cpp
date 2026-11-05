@@ -1,8 +1,8 @@
 #pragma once
-#include "engine/community_models/soulx_flashhead/assets.h"
+#include "engine/models/soulx_flashhead/assets.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 class VideoVae {
   public:
     VideoVae(core::ExecutionContext & execution, const Assets & assets, bool cuda_cudnn = false);
@@ -22,4 +22,4 @@ class VideoVae {
     struct State;
     std::unique_ptr<State> state_;
 };
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

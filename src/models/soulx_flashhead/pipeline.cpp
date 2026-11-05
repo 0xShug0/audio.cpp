@@ -1,9 +1,9 @@
-#include "engine/community_models/soulx_flashhead/pipeline.h"
-#include "engine/community_models/soulx_flashhead/dit.h"
-#include "engine/community_models/soulx_flashhead/audio.h"
-#include "engine/community_models/soulx_flashhead/color.h"
-#include "engine/community_models/soulx_flashhead/portrait.h"
-#include "engine/community_models/soulx_flashhead/vae.h"
+#include "engine/models/soulx_flashhead/pipeline.h"
+#include "engine/models/soulx_flashhead/dit.h"
+#include "engine/models/soulx_flashhead/audio.h"
+#include "engine/models/soulx_flashhead/color.h"
+#include "engine/models/soulx_flashhead/portrait.h"
+#include "engine/models/soulx_flashhead/vae.h"
 #include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/framework/debug/profiler.h"
@@ -11,7 +11,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 struct Pipeline::State {
     core::ExecutionContext & execution;
     std::shared_ptr<const Assets> assets;
@@ -211,4 +211,4 @@ void Pipeline::reset() {
     s.random_offset = 0;
     s.index = 0;
 }
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead
