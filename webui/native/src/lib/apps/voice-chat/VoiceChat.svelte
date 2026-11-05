@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { afterUpdate, onDestroy, onMount, tick } from 'svelte';
+  import { afterUpdate, createEventDispatcher, onDestroy, tick } from 'svelte';
   import { Mic, Square, Upload, Settings2, RotateCcw, AudioLines } from '@lucide/svelte';
   import { base64AudioBlob, uploadFile, uploadWav } from '$lib/api';
   import { browserDecodeToWav } from '$lib/audio';
@@ -12,6 +12,8 @@
 
   export let busy = false;
   export let active = true;
+  const dispatch = createEventDispatcher<{ models: { search: string; task: string } }>();
+  let wasActive = false;
   let choices: ModelSettings[] = [];
   let asrId = '', brainId = '', avatarId = '';
   let voice = 'american_english_female';
@@ -42,10 +44,13 @@
   let chatIdentity = '';
   const workflow = new ChatWorkflow();
   $: asrChoices = choices.filter(c => c.model.task === 'asr');
-  $: brainChoices = choices.filter(c => c.model.family === 'lfm3_audio' && c.model.task === 's2s');
+  $: brainChoices = choices.filter(c => c.model.family === 'lfm3_audio' && c.model.task === 's2s' &&
+    choices.some(t => t.model.family === 'lfm3_audio' && t.model.task === 'tts' && t.model.path === c.model.path));
   $: avatarChoices = choices.filter(c => c.model.family === 'soulx_flashhead');
   $: voices = catalog.find(c => c.family === 'lfm3_audio' && c.task === 'tts')?.builtin_voices || [];
-  $: ready = Boolean(asrId && brainId && avatarId && portrait);
+  $: modelsReady = asrChoices.some(c => c.id === asrId) && brainChoices.some(c => c.id === brainId) && avatarChoices.some(c => c.id === avatarId);
+  $: ready = !loading && modelsReady && Boolean(portrait);
+  $: { if (active && !wasActive) void refresh(); wasActive = active; }
   $: if (ready && status === 'Choose your models and a portrait to begin.') status = 'Ready when you are.';
   $: if (!active && (busy || recording)) cancel();
 
@@ -54,13 +59,11 @@
   async function refresh() {
     loading = true; error = '';
     try {
-      choices = await loadModelChoices();
-      asrId = choices.find(c => c.model.task === 'asr' && c.model.family === 'owsm' && /base[ -_]102m/i.test(`${c.model.path} ${c.name}`))?.id
-        || choices.find(c => c.model.task === 'asr' && c.model.family === 'owsm_ctc')?.id
-        || choices.find(c => c.model.task === 'asr' && c.model.family === 'lfm3_audio')?.id
-        || choices.find(c => c.model.task === 'asr' && c.model.family === 'crisperwhisper')?.id || '';
-      brainId = choices.find(c => c.model.family === 'lfm3_audio' && c.model.task === 's2s')?.id || '';
-      avatarId = choices.find(c => c.model.family === 'soulx_flashhead')?.id || '';
+      choices = (await loadModelChoices()).filter(c => c.model.task !== 'asr' ||
+        (c.model.family === 'owsm' && /base[ -_]102m/i.test(`${c.model.path} ${c.name}`)));
+      if (!choices.some(c => c.id === asrId)) asrId = choices.find(c => c.model.task === 'asr')?.id || '';
+      if (!choices.some(c => c.id === brainId)) brainId = choices.find(c => c.model.family === 'lfm3_audio' && c.model.task === 's2s')?.id || '';
+      if (!choices.some(c => c.id === avatarId)) avatarId = choices.find(c => c.model.family === 'soulx_flashhead')?.id || '';
     } catch (e) { error = String(e); }
     finally { loading = false; }
   }
@@ -206,7 +209,7 @@
   afterUpdate(() => {
     if (busy && scroll && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120) scroll.scrollTop = scroll.scrollHeight;
   });
-  onMount(refresh);
+
   onDestroy(() => { cancel(); for (const m of messages) if (m.audio) URL.revokeObjectURL(m.audio); if (portraitUrl) URL.revokeObjectURL(portraitUrl); void audioContext?.close(); });
 </script>
 
@@ -214,9 +217,24 @@
   <header><div><span class="eyebrow">LFM3 · SOULX</span><h1>Voice chat</h1><p>Talk naturally, with a voice and avatar you choose.</p></div>
     <div class="tools"><button disabled={busy || recording} on:click={resetChat} aria-label="New conversation"><RotateCcw size={16}/> New chat</button><button on:click={() => settingsOpen = !settingsOpen} aria-expanded={settingsOpen}><Settings2 size={16}/> Setup</button></div>
   </header>
+  <div class="setup">
+  <section class="model-readiness" class:collapsed={!settingsOpen} aria-label="Model readiness">
+    {#each [
+      { name: 'ASR', available: asrChoices.some(c => c.id === asrId), selected: choices.find(c => c.id === asrId)?.name, missing: 'OWSM v4 Base 102M not installed', search: 'OWSM v4 Base 102M', task: 'asr' },
+      { name: 'LFM3-Audio', available: brainChoices.some(c => c.id === brainId), selected: choices.find(c => c.id === brainId)?.name, missing: 'LFM3-Audio not installed', search: 'LFM3', task: '' },
+      { name: 'SoulX', available: avatarChoices.some(c => c.id === avatarId), selected: choices.find(c => c.id === avatarId)?.name, missing: 'SoulX-FlashHead not installed', search: 'SoulX', task: '' }
+    ] as requirement}
+      <div class="readiness-row" class:ready={!loading && requirement.available} class:checking={loading}>
+        {#if !loading && !requirement.available}
+          <button class="install-link" aria-label={`Install ${requirement.name}`} title={requirement.missing} disabled={busy || recording} on:click={() => dispatch('models', { search: requirement.search, task: requirement.task })}><span class="status-dot" aria-hidden="true"></span>{requirement.name}</button>
+        {:else}
+          <span class="readiness-indicator" title={requirement.selected}><span class="status-dot" role="img" aria-label={loading ? 'Checking' : 'Ready'}></span>{requirement.name}</span>
+        {/if}
+      </div>
+    {/each}
+  </section>
   {#if settingsOpen}
-    <div class="setup">
-      <label>Recognition<select aria-label="Recognition" bind:value={asrId} disabled={busy || recording}><option value="">Choose an ASR model</option>{#each asrChoices as c}<option value={c.id}>{c.name}</option>{/each}</select></label>
+      <label>Recognition<select aria-label="Recognition" bind:value={asrId} disabled={busy || recording}><option value="">Install OWSM v4 Base 102M</option>{#each asrChoices as c}<option value={c.id}>{c.name}</option>{/each}</select></label>
       <label>Voice<select aria-label="Voice" bind:value={voice} disabled={busy || recording}>{#each voices as v}<option value={v}>{label(v)}</option>{/each}</select></label>
       <label>Speaking speed<select aria-label="Speaking speed" bind:value={speakingSpeed} disabled={busy || recording}>
         <option value={1}>1× · Normal</option><option value={1.15}>1.15× · Faster</option><option value={1.3}>1.3× · Brisk</option><option value={1.5}>1.5× · Fast</option>
@@ -239,12 +257,11 @@
       <label class="personality">Personality (optional)
         <textarea aria-label="Personality" rows="2" placeholder="Describe how the avatar should respond, such as warm, concise and a little witty." bind:value={personality} disabled={busy || recording}></textarea>
       </label>
-      {#if !loading && (!asrChoices.length || !brainChoices.length || !avatarChoices.length)}<p class="setup-note">Install or register ASR, LFM3-Audio (S2S and TTS), and SoulX-FlashHead models first.</p>{/if}
-    </div>
   {/if}
+  </div>
   <div class="conversation">
     <div class="portrait-stage" class:speaking>
-      {#if portraitUrl}<img src={portraitUrl} alt="Your conversation portrait"/>{:else}<div class="portrait-empty"><AudioLines size={48}/><span>Give your conversation a face</span><small>Choose a portrait in Setup</small></div>{/if}
+      {#if portraitUrl}<img src={portraitUrl} alt="Your conversation portrait"/>{:else}<div class="portrait-empty"><AudioLines size={48}/><span>Give your assistant a visual interface</span></div>{/if}
       <canvas bind:this={canvas} aria-label="Animated speaking portrait" class:visible={videoVisible}></canvas>
       <div class="stage-caption"><span class="live-dot" class:pulse={speaking || recording}></span>{speaking ? 'Speaking' : recording ? 'Listening' : 'LFM3-Audio'}<span class="private">ON YOUR SERVER</span></div>
     </div>
@@ -263,6 +280,15 @@
 </section>
 
 <style>
+  .model-readiness { grid-column: 1 / -1; display: flex; align-items: center; gap: clamp(.75rem, 3vw, 2rem); overflow-x: auto; padding-bottom: 1rem; border-bottom: .0625rem solid var(--line); }
+  .model-readiness.collapsed { padding-bottom: 0; border-bottom: 0; }
+  .readiness-row { flex-shrink: 0; }
+  .readiness-indicator, .install-link { display: inline-flex; align-items: center; gap: .5rem; font-size: .8125rem; line-height: 1.5; white-space: nowrap; }
+  .status-dot { width: .875rem; height: .875rem; flex-shrink: 0; border-radius: 50%; background: var(--danger); }
+  .readiness-row.ready .status-dot { background: var(--green, #a6e3a1); }
+  .readiness-row.checking .status-dot { background: var(--muted); }
+  .install-link { padding: 0; border: 0; background: none; color: var(--text); }
+  .install-link:hover { color: var(--cyan); }
   .voice-chat { max-width: 77.5rem; margin: 1.25rem auto 2.5rem; color: var(--text); }
   .voice-chat p { font-family: inherit; }
   header { display: flex; justify-content: space-between; gap: 1.25rem; align-items: center; margin-bottom: 1.625rem; }
@@ -304,7 +330,6 @@
   .portrait-control :global(svg) { flex: none; }
   .personality { grid-column: 1 / -1; }
   .personality textarea { width: 100%; min-width: 0; resize: vertical; font: inherit; font-size: .875rem; line-height: 1.5; }
-  .setup-note { grid-column: 1 / -1; color: var(--muted); font-size: .75rem; margin: 0; }
   .crop-preview { display: flex; align-items: center; gap: .75rem; margin: .75rem 0 0; }
   .crop-preview img { display: block; inline-size: 4rem; aspect-ratio: 1; object-fit: cover; object-position: center; border-radius: .625rem; border: .0625rem solid var(--line); }
   .crop-preview figcaption { margin: 0; line-height: 1.6; font-size: .6875rem; color: var(--muted); }
@@ -324,7 +349,6 @@
   .portrait-stage:after { content: ''; position: absolute; inset: 50% 0 0; background: linear-gradient(transparent, #0c1119c9); pointer-events: none; }
   .portrait-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.25rem; color: #aab8c9; }
   .portrait-empty span { font-size: 1.125rem; }
-  .portrait-empty small { font-size: .75rem; }
   .stage-caption { position: absolute; bottom: 1.5rem; left: 1.5rem; right: 1.5rem; z-index: 1; display: flex; align-items: center; gap: .625rem; color: white; font-size: .75rem; }
   .live-dot { width: .4375rem; aspect-ratio: 1; flex: none; border-radius: 50%; background: #6b8195; }
   .live-dot.pulse { background: #93dfbd; box-shadow: 0 0 1rem #93dfbd; }

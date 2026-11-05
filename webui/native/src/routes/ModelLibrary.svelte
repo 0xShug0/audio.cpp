@@ -26,8 +26,8 @@
   export let workflowForEntry: (entry: CatalogEntry) => string;
   export let workflows: { id: string; label: string }[];
 
-  let search = '';
-  let task = '';
+  export let search = '';
+  export let task = '';
   let installation = 'all';
   let choices: Record<string, string> = {};
   const active = (job?: ModelInstallJob) => !!job && ['queued', 'running', 'cancelling'].includes(job.state);

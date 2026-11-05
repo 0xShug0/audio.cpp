@@ -1,6 +1,6 @@
 # Voice chat
 
-Choose an ASR model and a built-in voice. The app automatically uses installed
+Choose an OWSM v4 Base 102M package and a built-in voice. The app automatically uses installed
 LFM3-Audio for conversation and voice synthesis and SoulX-FlashHead for portrait
 animation. The app uses its own model selections
 and conversation state, independently of Studio.
@@ -15,10 +15,9 @@ its square center crop. The optional **Personality** field sets how LFM3 should
 respond; changing it starts a new conversation context. Press **Talk**, then **Finish** to send a question, or
 upload an audio recording. Microphone recording requires localhost or HTTPS.
 
-The selected ASR model provides the user's transcript. LFM3 receives the original
-recording, not that transcript. The app prefers OWSM v4 Base 102M when available
-and enables automatic language detection for OWSM and OWSM-CTC. Other ASR choices
-retain their model defaults.
+OWSM v4 Base 102M provides the user's transcript with automatic language detection.
+LFM3 receives the original recording, not that transcript. The app restricts
+recognition to this OWSM model.
 
 Recognition runs alongside the `voice-chat-avatar` recipe:
 
