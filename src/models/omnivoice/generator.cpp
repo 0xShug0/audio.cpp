@@ -158,6 +158,42 @@ core::TensorValue attention_from_heads(
     return modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
 }
 
+// Flash attention on [batch, heads, steps, dim] heads where K/V may have
+// fewer heads than Q (grouped-query attention): ggml_flash_attn_ext
+// broadcasts each K/V head over its query-head group, so K/V are never
+// repeated (the repeat costs copies, and the kernel would convert twice the
+// K/V data to f16). Returns [batch, steps, heads, dim].
+core::TensorValue grouped_flash_attention(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & q_heads,
+    const core::TensorValue & k_heads,
+    const core::TensorValue & v_heads,
+    int64_t dim,
+    const core::TensorValue & attention_mask) {
+    if (q_heads.shape.dims[1] % k_heads.shape.dims[1] != 0 || k_heads.shape.dims[1] != v_heads.shape.dims[1]) {
+        throw std::runtime_error("OmniVoice generator grouped attention head counts mismatch");
+    }
+    // CUDA reads the permuted views directly; other backends get contiguous inputs.
+    const bool preserve_views = ctx.backend_type == core::BackendType::Cuda;
+    const auto q = preserve_views ? q_heads : core::ensure_backend_addressable_layout(ctx, q_heads);
+    const auto k = preserve_views ? k_heads : core::ensure_backend_addressable_layout(ctx, k_heads);
+    const auto v = preserve_views ? v_heads : core::ensure_backend_addressable_layout(ctx, v_heads);
+    auto * flash = ggml_flash_attn_ext(
+        ctx.ggml,
+        q.tensor,
+        k.tensor,
+        v.tensor,
+        attention_mask.tensor,
+        1.0F / std::sqrt(static_cast<float>(dim)),
+        0.0F,
+        0.0F);
+    ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
+    return core::wrap_tensor(
+        flash,
+        core::TensorShape::from_dims({q.shape.dims[0], q.shape.dims[2], q.shape.dims[1], q.shape.dims[3]}),
+        GGML_TYPE_F32);
+}
+
 struct Qwen3DiffusionLayerWeights {
     core::TensorValue input_norm;
     core::TensorValue q_proj;
@@ -306,9 +342,16 @@ core::TensorValue self_attention(
     const int64_t dim = head_dim(config);
     const int64_t kv_repeats = config.num_attention_heads / config.num_key_value_heads;
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    auto k_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k), kv_repeats);
-    auto v_heads = repeat_kv_heads(ctx, modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v), kv_repeats);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask, perf_mode);
+    auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
+    auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
+    core::TensorValue context;
+    if (perf_mode == OmniVoiceGeneratorPerfMode::FlashAttention) {
+        context = grouped_flash_attention(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
+    } else {
+        k_heads = repeat_kv_heads(ctx, k_heads, kv_repeats);
+        v_heads = repeat_kv_heads(ctx, v_heads, kv_repeats);
+        context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask, perf_mode);
+    }
     context = ensure_contiguous(ctx, context);
     return core::reshape_tensor(
         ctx,
