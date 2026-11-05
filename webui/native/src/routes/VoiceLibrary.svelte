@@ -21,7 +21,6 @@
     ? a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) || a.id.localeCompare(b.id)
     : b.createdAt - a.createdAt);
   $: dirty = !!draft && (!original || draft.name !== original.name || draft.transcript !== original.transcript || draft.audio !== original.audio);
-  $: previewFile = draft ? new File([draft.audio], `${draft.name}.wav`, { type: 'audio/wav' }) : null;
 
   export function canClose() {
     return !busy && (!dirty || confirm('Discard unsaved voice edits?'));
@@ -138,7 +137,7 @@
     <aside class="voice-editor">
       {#if draft}
         <label>Name<input aria-label="Voice name" bind:value={draft.name} disabled={busy}/></label>
-        <MediaPreview file={previewFile} label="Voice preview"/>
+        <MediaPreview file={draft.audio} name={draft.name} label="Voice preview"/>
         <label>Words spoken in the recording (optional)<textarea aria-label="Voice transcript" rows="5" bind:value={draft.transcript} disabled={busy}></textarea></label>
         <div class="tools">
           <button class="primary" disabled={busy || !dirty} on:click={save}><Save size={16}/>{dirty ? 'Save voice' : 'Saved'}</button>

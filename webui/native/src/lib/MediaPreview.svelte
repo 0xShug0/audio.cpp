@@ -1,18 +1,18 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
 
-  export let file: File | null = null;
+  export let file: Blob | null = null;
   export let src = '';
   export let name = '';
   export let kind: 'audio' | 'video' | 'image' = 'audio';
   export let label = 'Preview';
 
   let objectUrl = '';
-  let lastFile: File | null = null;
+  let lastFile: Blob | null = null;
   let failedUrl = '';
   $: previewUrl = objectUrl || src;
   $: failed = Boolean(previewUrl) && failedUrl === previewUrl;
-  $: previewName = file?.name || name;
+  $: previewName = name || (file instanceof File ? file.name : '');
 
   function clearObjectUrl() {
     if (objectUrl) {
