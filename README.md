@@ -15,37 +15,36 @@ Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio 
 
 > [!TIP]
 >
-> **v0.9.3 highlights:** **LoRA support across 11 models**, with adapter loading, strength controls, Studio integration, and a shared tool for merging adapters into GGUF packages. See the [LoRA guide](docs/lora.md) for supported models and formats.
+> **v0.9.4 highlights**
 >
-> **Performance optimizations and performance modes:** Faster execution across speech and music models, with `perf_mode` presets to select model-specific optimizations. Tested CUDA presets reduce RTF by **27% for Qwen3-TTS streaming, 25–26% for BreezeTTS2, 16% for VoxCPM2, 15–47% for YuE2, 59–62% for ACE-Step, and 33% for MiniMax Music3** versus the paths before these optimizations. Some models also benefit from further reductions in peak VRAM usage.
+> **Experimental HIP kernels:** Select `--backend hip --backend-impl gfx1151_v1` to try alternative AMD kernels. On the tested Strix Halo GPU, Q8 generation time fell by **76.7%** for Irodori-TTS Small MF, **30.9%** for Qwen3-TTS 1.7B VoiceDesign, and **14.0%** for BreezeTTS2 versus default HIP. Despite its name, `gfx1151_v1` can also run on RDNA1/2, as well as RDNA3/4; available fast paths vary by architecture. Gains vary by model and hardware; the implementation is opt-in. See the [HIP guide](docs/build/HIP.md#optional-gfx1151_v1-implementation). Contributions are welcome: test other AMD GPUs, report model performance and correctness, or help improve the kernels. Thanks to AMD DevLab for providing hardware access!
 >
-> Many performance optimizations are disabled by default for broader compatibility. Not happy with performance? Enable the `cuda_perf` preset or create your own preset for your hardware!
+> **Metal optimizations:** New SSM scan, convolution, and dataflow optimizations reduce RE-USE processing time by **56.5%** on M4 Pro. Parakeet’s channel-contiguous subsampling and matrix projections reduce end-to-end processing time by **12.1–13.9%**, with unchanged transcripts.
 >
-> **New TTS app in the WebUI:** Turn scripts into narration in a dedicated workspace. Import text, split it into passages, and assign each passage a reusable speaker with its own model, voice, and generation settings. Generate or refine passages individually, compare takes, edit waveforms and pauses, then combine, enhance, and export your finished audio. Projects and speaker presets are saved for reuse.
+> **Browser inference with WASM + WebGPU:** Run supported models locally in the browser. On RTX 5090 in Chrome, measured throughput reaches **23.3×** real time for Supertonic 3, **13.9×** for Kokoro, **94.3×** for SenseVoice ASR, and **25.0×** for warmed LFM3-Audio ASR. See the [tested models, settings, and performance table](docs/reports/webgpu_browser_validation.md).
 >
-> **AMD support and HIP test releases:** Thanks to AMD for providing audio.cpp with access to AMD DevLab! We now offer **HIP release builds for testing** on AMD GPUs.
+> **Experimental streaming avatar voice chat:** Talk to **LFM3-Audio** through the WebUI while **SoulX-FlashHead** animates your chosen portrait. Responses stream as text, speech, and synchronized head animation, with voice selection, adjustable speaking speed, and a customizable personality.
+>
+> <p align="center"><img src="assets/figure/voice_chat_demo.png" alt="audio.cpp Voice Chat with a speaking dog avatar and LFM3-Audio’s response" width="480"></p>
+>
 
-audio.cpp is built for real end-to-end execution rather than one-off model demos: the same runtime powers TTS, voice cloning, voice conversion, ASR, diarization, VAD, source separation, alignment, codec-style models, and higher-level workflows through a common framework surface.
+audio.cpp is built for real end-to-end execution rather than one-off model demos. Its optimized, reusable building blocks support speech generation and recognition, separation, alignment, and multi-model workflows. Shared components make new models easier to integrate and let improvements benefit multiple model families while keeping inference efficient, maintainable, and portable.
 
-Highlights:
+## Features
 
-- **Parity.** Strong parity tooling against Python reference paths.
-- **Performance.** Performance-focused execution, reusable sessions, and batch-style offline inference. **Optimized for CUDA**.
-- **Portability.** A portable native stack centered on `ggml`, with CUDA, HIP/ROCm, Vulkan, Metal, WebGPU, and CPU backends behind shared CLI and server entry points instead of Python-only deployment paths.
-- **Pipelines.** Experimental JSON pipeline support for higher-level multi-step workflows.
-- **Audio Utilities.** Built-in denoise, enhancement, resampling, and STFT/ISTFT utilities for real production-style task paths. Model-based utilities need separately downloaded weights; see [downloads and usage](docs/audio_tools.md#built-in-audio-utilities).
+⭐ **143 audio model families and 250+ variants.** Run TTS, ASR, music generation, voice cloning, conversion, separation, and more locally through a shared CLI and server API.
 
-<p><strong><span style="font-size:1.1em;">The goal of the framework is to provide highly optimized, reusable building blocks for audio-related models, so new model integrations can be brought up faster, shared components can be improved once and benefit many families, and real end-to-end inference paths can stay efficient, maintainable, and portable.</span></strong></p>
+⭐ **Built-in WebUI.** Generate and clone voices in Studio, compare models in Arena, manage models and voice libraries, and assemble narration with reusable speakers and passage editing in the TTS app.
 
-> [!IMPORTANT]
->
-> - **130+ audio model families and 200+ variants, running locally.** TTS, ASR, music generation, voice conversion, separation, and more through a shared CLI and server API.
->
-> - **Built-in WebUI:** Generate and clone voices in Studio, compare models side by side in Arena, manage models and voice/speaker libraries, and create narration with passage editing, multiple speakers, and audio assembly in the TTS app.
->
-> - **Performance:** Selected CUDA TTS paths run **1.8–8× faster than Python**; tested Q8 packages offer up to **1.53× speedup and 37% lower peak VRAM** versus 16-bit weights ([report](docs/reports/gguf_q8_performance.md)). VibeVoice 1.5B reaches **5.15× real time**, and Supertonic 3 generates **10 hours of audio in 3 minutes** on RTX 5090 ([demo](https://www.reddit.com/r/LocalLLaMA/comments/1uwpvt9/audiocpp_10_hours_of_audio_generated_in_3_minutes/)). Nemotron 3.5 ASR matches WER at roughly **¼ the wall time** in the [TranscrIA benchmark](https://github.com/Martossien/transcria/blob/main/docs/STT_BENCHMARK_REAL_MEETINGS.md).
->
-> - **Integrations and deployment:** audio.cpp powers speech, music, and speech-to-text in [Unsloth Studio](https://github.com/unslothai/unsloth#audiocpp-audio-engine). Deploy Fun-ASR-Nano and SenseVoice through the [FunASR platform](https://www.funasr.com/en/deploy/audio-cpp.html)!
+⭐ **Performance.** Reusable sessions, cached graphs, and batched offline inference. Selected TTS paths run **1.8–8×** faster than Python; tested Q8 packages deliver up to **1.53×** speedup and **37%** lower peak VRAM versus 16-bit weights ([report](docs/reports/gguf_q8_performance.md)). Supertonic 3 generates **10 hours** of audio in **3 minutes** on RTX 5090 ([demo](https://www.reddit.com/r/LocalLLaMA/comments/1uwpvt9/audiocpp_10_hours_of_audio_generated_in_3_minutes/)), while Nemotron 3.5 ASR matches WER at roughly **¼** the wall time in the [TranscrIA benchmark](https://github.com/Martossien/transcria/blob/main/docs/STT_BENCHMARK_REAL_MEETINGS.md). audio.cpp is among the fastest inference engines for streaming TTS latency on the [Open TTS Leaderboard](https://huggingface.co/spaces/hf-audio/open_tts_leaderboard).
+
+⭐ **Portability.** A native `ggml` runtime supporting CUDA, HIP/ROCm, Vulkan, Metal, WebGPU, and CPU through common CLI and server interfaces.
+
+⭐ **Hardware-specific optimizations.** ARM NEON acceleration, Rockchip RKNN component execution, experimental HIP kernels, and CUDA, Metal, and Vulkan optimizations. Model-specific `perf_mode` presets expose optional fast paths for supported hardware.
+
+⭐ **Parity.** Validation tooling for comparing model outputs against Python reference implementations.
+
+⭐ **Integrations and deployment.** Powers speech, music, and transcription in [Unsloth Studio](https://github.com/unslothai/unsloth#audiocpp-audio-engine). Fun-ASR-Nano and SenseVoice can also be deployed through the [FunASR platform](https://www.funasr.com/en/deploy/audio-cpp.html).
 
 ## Contributing
 
