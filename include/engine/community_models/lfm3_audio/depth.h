@@ -34,14 +34,7 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-struct Lfm3FrameTaps {  // for dumps
-    std::vector<std::vector<float>> pass_logits;
-};
-
-// MaskGIT: passes over `order` split by `schedule`; samples each picked codebook in order; stops after
-// the first pass that yields the EOS code (output-identical shortcut); EOS -> all 2016.
 Lfm3Codes lfm3_maskgit_frame(Lfm3DepthDecoderRuntime & depth, const std::vector<float> & hidden, const Lfm3Codes & order,
-                             const std::vector<int64_t> & schedule, class Lfm3AudioSampler & sampler, int32_t end_of_audio,
-                             Lfm3FrameTaps * taps = nullptr);
+                             const std::vector<int64_t> & schedule, class Lfm3AudioSampler & sampler, int32_t end_of_audio);
 
 }  // namespace engine::community_models::lfm3_audio

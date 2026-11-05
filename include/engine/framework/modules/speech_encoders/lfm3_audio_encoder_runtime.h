@@ -12,6 +12,7 @@ struct Lfm3AudioEncoderConfig {
     int64_t output_size = 0;
     int64_t sliding_window = 0;
     float projector_norm_eps = 1e-5f;
+    bool broadcast_conv_bias = false;
 };
 
 struct Lfm3AudioEncoderWeights {

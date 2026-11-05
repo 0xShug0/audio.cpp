@@ -5,7 +5,7 @@
 // keep-special and skip-special decode) and probes/ignore_merges_cases.json
 // (the vocab strings ignore_merges tokenizes as one token). With --gguf, a
 // published backbone GGUF's tokenizer must match tokenizer.json.
-#include "engine/community_models/lfm3_audio/tokenizer.h"
+#include "engine/community_models/lfm3_audio/prompt.h"
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/tokenizers/llama_bpe.h"

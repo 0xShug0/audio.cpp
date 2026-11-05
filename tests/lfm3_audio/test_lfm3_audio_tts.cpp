@@ -1,6 +1,5 @@
 // LFM3-Audio TTS end to end on real weights (see lfm3_audio_model_test.h for the arguments and tolerances):
-// - greedy speech of the fixture's fox sentence with its MaskGIT orders injected: prompt ids, the frames up to
-//   the fixture's EOS frame, the orders and per-pass depth logits, and with identical frames the codec's codes;
+// - the reference prompt and teacher-forced text/audio slots produce the reference waveform;
 // - the default sampling is deterministic for a fixed seed, and streaming (1 and 4 frames per event) gives
 //   the offline audio;
 // - five English sentences spoken and transcribed back by the ASR session: WER <= 10% overall;
@@ -43,26 +42,14 @@ std::vector<float> stream_audio(lfm3::Lfm3TtsSession & session, const runtime::T
     return out;
 }
 
-void check_greedy(Checks & checks, const Context & ctx, lfm3::Lfm3TtsSession & tts) {
-    ScopedDumps dumps("tts_greedy", ctx.fixture("gen/tts_fox_greedy_frame_order.npy"));
-    tts.run(tts_request("The quick brown fox jumps over the lazy dog",
-                        {{"temperature", "0"}, {"repetition_penalty", "1"}, {"max_tokens", "400"}, {"seed", "42"}}, "american_english_female"));
-    dumps.stop();
-    checks.expect(dumps.i32("prompt_ids") == ctx.i32("prompt/tts_fox_ids"), "tts_fox prompt ids");
-    if (!check_greedy_run(checks, ctx, dumps, "tts_fox_greedy", true)) {
-        return;
-    }
-
-    // The same frames, so the codec saw the fixture's codes.
-    std::vector<int64_t> shape;
-    const auto codes = dumps.i32("codes", &shape);
-    const auto want = ctx.i32("codec/tts_codes", &shape);  // [12, T]
-    const auto count = static_cast<size_t>(shape[1]);
-    bool same = codes.size() == want.size();
-    for (size_t f = 0; same && f < count; ++f) {
-        for (size_t k = 0; k < kCodebooks; ++k) same = same && codes[f * kCodebooks + k] == want[k * count + f];
-    }
-    checks.expect(same, "tts_fox codes dump equals codec/tts_codes");
+void check_reference_audio(Checks & checks, const Context & ctx) {
+    const auto assets = lfm3::load_lfm3_audio_assets(ctx.model);
+    engine::core::ExecutionContext execution(ctx.backend);
+    const lfm3::Lfm3Tokenizer tokenizer(*assets);
+    const auto prompt = lfm3::make_lfm3_tts_prompt(tokenizer, lfm3::lfm3_tts_system_prompt(lfm3::lfm3_tts_voice("american_english_female", "auto")),
+                                                "The quick brown fox jumps over the lazy dog");
+    checks.expect(prompt.ids == ctx.i32("prompt/tts_fox_ids"), "tts_fox prompt ids");
+    check_teacher_forced_audio(checks, ctx, "tts_fox_greedy", prompt, {}, assets, execution, "codec/tts_wave");
 }
 
 void check_sampling_and_stream(Checks & checks, Context & ctx, lfm3::Lfm3TtsSession & tts) {
@@ -137,7 +124,7 @@ int main(int argc, char ** argv) {
     Checks checks;
     try {
         auto tts = ctx.open<lfm3::Lfm3TtsSession>(runtime::VoiceTaskKind::Tts, runtime::RunMode::Offline);
-        check_greedy(checks, ctx, *tts);
+        check_reference_audio(checks, ctx);
         check_sampling_and_stream(checks, ctx, *tts);
         check_round_trip(checks, ctx, *tts);
         if (has_flag(argc, argv, "--skip-voices")) {

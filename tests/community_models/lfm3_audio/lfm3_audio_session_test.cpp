@@ -7,9 +7,8 @@
 // prefill, decode, depth decoder and codec all run. The codec has 1680 codes
 // per codebook, not the checkpoint's 2016, so a replayed cut reply's EOS frame
 // must come from the config.
-#include "engine/community_models/lfm3_audio/chat.h"
-#include "engine/community_models/lfm3_audio/debug.h"
-#include "engine/community_models/lfm3_audio/features.h"
+#include "engine/community_models/lfm3_audio/prompt.h"
+#include "engine/community_models/lfm3_audio/frontend.h"
 #include "engine/community_models/lfm3_audio/session.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/audio/wav_writer.h"
@@ -353,30 +352,19 @@ void test_s2s(const Fixture & f) {
     // Turn 2 replays turn 1 from the artifacts; the reply was cut at max_tokens, so its replay closes the audio
     // with an EOS frame, then <|im_end|> and "\n".
     require(offline->reached_max_tokens(), "turn 1 is cut at max_tokens inside its first audio block");
-    const auto dump_dir = lfm3_audio_test::fresh_directory("lfm3_audio_session_test_dumps");
-    lfm3_audio_test::set_env("LFM3_AUDIO_DUMP_DIR", dump_dir.string());
     auto turn2 = audio_request(tone(0.5), {{"seed", "4"}, {"max_tokens", "8"}});
     turn2.input_artifacts = {runtime::make_voice_artifact(runtime::ArtifactKind::Custom, lfm3::kLfm3QuestionArtifactId, wav_bytes(question)), artifact};
     const auto second = offline->run(turn2);
-    lfm3_audio_test::set_env("LFM3_AUDIO_DUMP_DIR", "");
     require(!second.audio_output->samples.empty(), "turn 2 audio");
 
     const lfm3::Lfm3Tokenizer tokenizer(f.package.root / "tokenizer.json");
     const auto tokens = [](double seconds) { return lfm3::lfm3_audio_tokens(lfm3::lfm3_feature_frames(static_cast<int64_t>(std::llround(seconds * 16000)))); };
     const auto expected = lfm3::make_lfm3_s2s_prompt(tokenizer, lfm3::kLfm3S2sSystemPrompt, {tokens(1.0)}, {steps}, tokens(0.5), vocab - 1);
-    std::vector<int64_t> shape;
-    const auto dumped = lfm3::lfm3_read_npy_i32(dump_dir / "prompt_ids.npy", &shape);
-    require(dumped == expected.ids, "turn 2 prompt replays turn 1");
     const auto & ids = tokenizer.ids();
     const std::vector<int32_t> closing = {ids.audio_out, ids.im_end, ids.nl, ids.im_start};
-    require(std::search(dumped.begin(), dumped.end(), closing.begin(), closing.end()) != dumped.end(),
+    require(std::search(expected.ids.begin(), expected.ids.end(), closing.begin(), closing.end()) != expected.ids.end(),
             "the cut reply is closed by <|audio_out|> <|im_end|> \\n before the next user turn");
     require(expected.frames.back() == std::vector<int32_t>(12, vocab - 1), "the closing frame is the EOS frame");
-    for (const char * name : {"wave16k", "features", "downsample", "encoder", "projector", "prompt_ids", "prefill_hidden", "steps",
-                              "maskgit_orders", "depth_logits_f0_p0", "codes", "codec_spectrum", "audio24k"}) {
-        require(std::filesystem::exists(dump_dir / (std::string(name) + ".npy")), std::string("dump ") + name);
-    }
-
     // A stream finished after its first event: its reply artifact is not ended, and replays in the next turn.
     streaming->start_stream(request);
     streaming->process_audio_chunk({question.sample_rate, 1, 0, question.samples});
@@ -399,7 +387,7 @@ void test_s2s(const Fixture & f) {
     lonely.input_artifacts = {turn2.input_artifacts.front()};
     require_throws_with([&] { offline->run(lonely); }, "has no reply after it", "question without reply");
     require_error<runtime::CapacityError>([&] { offline->run(audio_request(question, {{"max_tokens", "9000"}})); }, "9000", "max_tokens past 8192");
-    std::cout << "  S2S: offline == streaming, reply artifact, 2-turn replay, early finish, dumps, options ok\n";
+    std::cout << "  S2S: offline == streaming, reply artifact, 2-turn replay, early finish, options ok\n";
 }
 
 }  // namespace

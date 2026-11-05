@@ -2,7 +2,7 @@
 // repetition penalty (once per unique code of that codebook's window), top-k
 // ties, suppression and portable MaskGIT orders.
 #include "../lfm2_audio/lfm2_audio_test_package.h"
-#include "engine/community_models/lfm3_audio/sampling.h"
+#include "engine/community_models/lfm3_audio/generator.h"
 #include "test_assert.h"
 
 #include <algorithm>

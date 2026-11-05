@@ -41,6 +41,8 @@ struct LfmDecoderConfig {
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     ggml_prec attention_precision = GGML_PREC_DEFAULT;
     GroupedQueryAttentionLowering attention_lowering = GroupedQueryAttentionLowering::ManualRepeat;
+    // Materialize attention layouts explicitly when required by the execution recipe.
+    bool contiguous_attention = false;
     // Optional rounding before the RMSNorm weight multiplication, as in upstream.
     // This alone does not emulate all BF16 activation rounding.
     std::optional<ggml_type> normalized_round_type;
@@ -56,6 +58,7 @@ struct LfmDecoderConvWeights {
     LinearWeights in_proj, out_proj;
     core::TensorValue kernel; // F32 logical [hidden_size, 1, kernel_size], oldest tap first
     std::optional<core::TensorValue> bias; // F32 [hidden_size]
+    std::optional<core::TensorValue> time_major_kernel; // optional F32 [kernel_size, hidden_size]
 };
 
 struct LfmDecoderLayerWeights {
@@ -89,6 +92,36 @@ struct LfmDecoderInputs {
     std::vector<int64_t> capture_layers;
 };
 
+// Caller-owned state for composition into a larger cached graph. Cache tensors
+// are [capacity, kv_heads * head_dim]; convolution history is [kernel-1, hidden].
+struct LfmDecoderLayerState {
+    core::TensorValue key, value, conv_tail;
+};
+
+// Persistent storage shared by composed decoder graphs. Graphs borrow these
+// tensors; destroying or replacing the state requires destroying their bindings first.
+class LfmDecoderState {
+public:
+    LfmDecoderState(core::ExecutionContext & execution, const LfmDecoderConfig & config,
+                    int64_t capacity, ggml_type cache_type = GGML_TYPE_F32);
+    ~LfmDecoderState();
+    LfmDecoderState(const LfmDecoderState &) = delete;
+    LfmDecoderState & operator=(const LfmDecoderState &) = delete;
+    int64_t capacity() const noexcept;
+    const std::vector<LfmDecoderLayerState> & layers() const noexcept;
+    void clear();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+struct LfmDecoderCacheInputs {
+    const std::vector<LfmDecoderLayerState> & layers;
+    core::TensorValue slots; // I64 [steps], rows to append
+    int64_t attention_rows = 0; // visible prefix; masks use this extent
+};
+
 struct LfmDecoderOutputs {
     core::TensorValue hidden;
     std::vector<core::TensorValue> captured_hidden;
@@ -98,6 +131,12 @@ struct LfmDecoderOutputs {
 LfmDecoderOutputs build_lfm_decoder(
     core::ModuleBuildContext & ctx, const LfmDecoderInputs & inputs,
     const LfmDecoderWeights & weights, const LfmDecoderConfig & config);
+
+// Cached composition registers state updates on graph; storage and masks are
+// explicit, so vocoder graphs can retain a single backend submission.
+LfmDecoderOutputs build_lfm_decoder(
+    core::ModuleBuildContext & ctx, ggml_cgraph * graph, const LfmDecoderInputs & inputs,
+    const LfmDecoderWeights & weights, const LfmDecoderConfig & config, const LfmDecoderCacheInputs & cache);
 
 struct LfmDecoderRuntimeWeights {
     LfmDecoderWeights decoder;
@@ -122,6 +161,8 @@ struct LfmDecoderForward {
     // Empty selects every hidden row / every output-projection row respectively.
     std::vector<int32_t> readout_positions, output_tokens;
     LfmDecoderReadout readout = LfmDecoderReadout::Hidden;
+    // Optional aligned visible prefix for cached execution; zero uses the full cache.
+    int64_t attention_rows = 0;
 };
 
 struct LfmDecoderForwardResult {
@@ -182,7 +223,8 @@ public:
 
     // Sliding layers require their architectural window length. Streams borrow
     // the same weights/context but own independent state; no hidden shared cursor.
-    std::unique_ptr<DecodeSession> create_decode_session(int64_t cache_steps, int64_t sliding_window = 0) const;
+    std::unique_ptr<DecodeSession> create_decode_session(int64_t cache_steps, int64_t sliding_window = 0,
+                                                          ggml_type cache_type = GGML_TYPE_F32) const;
 
 private:
     std::unique_ptr<Impl> impl_;

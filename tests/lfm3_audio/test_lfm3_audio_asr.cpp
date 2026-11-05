@@ -3,6 +3,7 @@
 // - chat=true: the reference's chat_nothink_c prompt ids, and an answer without <think> markup.
 // q8_0 and q4_k transcripts are reported, not checked.
 #include "lfm3_audio_model_test.h"
+#include "engine/community_models/lfm3_audio/prompt.h"
 
 #include <exception>
 
@@ -32,10 +33,11 @@ int main(int argc, char ** argv) {
         check_transcript(checks, ctx, text_of(asr->run(audio_request(c16k))), ctx.result_text("asr_plain_c_greedy_fp32"),
                          "c_16k transcript, language=auto");
 
-        ScopedDumps dumps("asr_chat");
         const auto answer = text_of(asr->run(audio_request(c16k, {{"chat", "true"}})));
-        dumps.stop();
-        checks.expect(dumps.i32("prompt_ids") == ctx.i32("prompt/chat_nothink_c_ids"), "chat_nothink_c prompt ids");
+        const auto assets = lfm3::load_lfm3_audio_assets(ctx.model);
+        const lfm3::Lfm3Tokenizer tokenizer(*assets);
+        const auto prompt = lfm3::make_lfm3_chat_prompt(tokenizer, lfm3::lfm3_question_tokens(c16k), false);
+        checks.expect(prompt.ids == ctx.i32("prompt/chat_nothink_c_ids"), "chat_nothink_c prompt ids");
         checks.expect(!answer.empty() && answer.find("<think>") == std::string::npos && answer.find("</think>") == std::string::npos,
                       "chat answer has text and no <think> markup", std::to_string(answer.size()) + " bytes: \"" + answer.substr(0, 80) + "...\"");
     } catch (const std::exception & error) {

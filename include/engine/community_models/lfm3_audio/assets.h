@@ -2,7 +2,8 @@
 
 // HF and GGUF checkpoints bind to the same component configurations and weights.
 
-#include "engine/community_models/lfm3_audio/blocks.h"
+#include "engine/community_models/lfm3_audio/weights.h"
+#include "engine/framework/modules/speech_encoders/lfm3_audio_encoder_runtime.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
@@ -21,28 +22,26 @@ struct Lfm3TokenSpecials {         // from generation_config.json
 };
 
 struct Lfm3BackboneConfig {  // lfm.* ; vocab 128000, tied head
-    blocks::StackConfig stack;
+    modules::LfmDecoderConfig stack;
     int64_t vocab_size = 0;
+    int64_t sliding_window = 0;
 };
 
-struct Lfm3EncoderConfig {
-    int64_t n_mels = 128, conv_channels = 256, mel_after_downsample = 16;  // 128/8
-    blocks::StackConfig stack;  // LFM2 names, 17 layers, conv k3, all attention = sliding(32), theta 1e6
-    int64_t output_size = 2048;
-};
+using Lfm3EncoderConfig = modules::Lfm3AudioEncoderConfig;
 
 struct Lfm3DepthConfig {
-    blocks::StackConfig stack;  // 3 layers, bidirectional, gate, no sandwich, theta 1e6, hd 32
+    modules::LfmDecoderConfig stack;  // 3 layers, bidirectional, gate, no sandwich, theta 1e6, hd 32
     int64_t input_size = 2048, codebooks = 12, audio_vocab_size = 2017;
     std::vector<int64_t> maskgit_schedule;  // [4,4,4] (config maskgit_steps=3)
     [[nodiscard]] int32_t end_of_audio() const noexcept { return static_cast<int32_t>(audio_vocab_size - 1); }
 };
 
 struct Lfm3CodecConfig {
-    blocks::StackConfig stack;  // dims from tensor shapes: the upstream python hard-codes them
+    modules::LfmDecoderConfig stack;  // dims from tensor shapes: the upstream python hard-codes them
     std::vector<int64_t> fsq_levels;  // [8,7,6,6]
     int64_t codebooks = 12, quantizer_dim = 256, upsample = 6, n_fft = 1280, hop = 320;
     int sample_rate = 24000;
+    int64_t sliding_window = 0;
 };
 
 // generation_config.json audio_* (the published GGUF's clip.gen.audio.sampling.*): the speech sampling of
@@ -74,58 +73,43 @@ struct Lfm3AudioAssets {
     // Published GGUFs: no resources or tokenizer.json, but the backbone's vocabulary and its path.
     tokenizers::LlamaBpeGgufVocabulary vocabulary;
     std::filesystem::path published_backbone;
+    void release_storage() const;
 };
 
 struct Lfm3BackboneWeights {
-    Lfm3BackboneWeights();
-    ~Lfm3BackboneWeights();
-    Lfm3BackboneWeights(Lfm3BackboneWeights &&) noexcept;
-
-    std::unique_ptr<WeightStores> stores;
-    blocks::StackWeights stack;
+    std::unique_ptr<Lfm3Weights> stores;
+    modules::LfmDecoderWeights stack;
     core::TensorValue token_lookup;  // embed_tokens, or an F16 copy where the backend cannot gather its type
     core::TensorValue text_head;     // embed_tokens (tied), or a CPU-repacked copy of it
     core::TensorValue frame_lookup;  // codebook_embedding [codebooks * audio_vocab, hidden]
 };
 
 struct Lfm3EncoderWeights {
-    Lfm3EncoderWeights();
-    ~Lfm3EncoderWeights();
-    Lfm3EncoderWeights(Lfm3EncoderWeights &&) noexcept;
-
-    std::unique_ptr<WeightStores> stores;
-    modules::Conv2dWeights conv_in, conv_mid, lin_mid, conv_end, lin_end;
-    modules::LinearWeights lin_out;
-    blocks::StackWeights stack;
-    modules::NormWeights projector_norm;
-    modules::LinearWeights projector_1, projector_2;
+    std::unique_ptr<Lfm3Weights> stores;
+    modules::Lfm3AudioEncoderWeights tensors;
 };
 
 struct Lfm3DepthWeights {
-    Lfm3DepthWeights();
-    ~Lfm3DepthWeights();
-    Lfm3DepthWeights(Lfm3DepthWeights &&) noexcept;
-
-    std::unique_ptr<WeightStores> stores;
+    std::unique_ptr<Lfm3Weights> stores;
     core::TensorValue input_weight;  // depth_linear [codebooks * hidden, input_size]
     core::TensorValue input_bias;    // [codebooks * hidden]
     core::TensorValue mask_rows;     // mask_embedding repeated per codebook, F32 [codebooks, hidden]
     core::TensorValue embeddings;    // depth_embeddings.{i}.embedding packed, [codebooks * vocab, hidden]
     core::TensorValue norms;         // depth_embeddings.{i}.embedding_norm packed, F32 [codebooks, hidden]
-    blocks::StackWeights stack;
+    modules::LfmDecoderWeights stack;
 };
 
 struct Lfm3CodecWeights {
-    Lfm3CodecWeights();
-    ~Lfm3CodecWeights();
-    Lfm3CodecWeights(Lfm3CodecWeights &&) noexcept;
-
-    std::unique_ptr<WeightStores> stores;
+    std::unique_ptr<Lfm3Weights> stores;
     // project_out stays F32: its 48 inputs are not a multiple of the 32-wide blocks of BF16/F16 GPU kernels.
     core::TensorValue project_out, project_out_bias, from_quantizer, from_quantizer_bias, lin, lin_bias;
-    blocks::StackWeights stack;
+    modules::LfmDecoderWeights stack;
     std::vector<float> window;
 };
+
+enum class Lfm3StackLayout { Hf, HfEncoder, GgufBackbone, GgufEncoder, GgufAudio };
+modules::LfmDecoderWeights load_lfm3_stack_weights(Lfm3Weights & stores, const assets::TensorSource & source,
+    const std::string & prefix, const modules::LfmDecoderConfig & config, Lfm3StackLayout layout = Lfm3StackLayout::Hf);
 
 Lfm3BackboneWeights load_lfm3_backbone_weights(const Lfm3AudioAssets & assets, core::ExecutionContext & execution,
     const Lfm3WeightOptions & options);
