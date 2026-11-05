@@ -830,6 +830,8 @@ public:
         if (hidden_config_.stack.runtime.attention.prefill_mode == modules::DecoderAttentionMode::FlashGroupedViewKV) {
             hidden_config_.stack.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::FlashWithPrefix;
         }
+        // Let the decoder hand back the prefix K/V it already concatenated.
+        hidden_config_.stack.runtime.attention.prefix_state_returns_full_kv = true;
         hidden_weights_.stack = weights.depth.stack;
         hidden_weights_.final_norm = weights.depth.final_norm;
         // The CPU path embeds from the f32 table. Reuse the device copy when it
@@ -1066,11 +1068,10 @@ private:
             if (!cached) {
                 state = out.state;
             } else {
+                // The decoder already concatenated the prefix K/V; reuse it.
                 for (size_t layer = 0; layer < state->layers.size(); ++layer) {
-                    auto & full = state->layers[layer];
-                    const auto & added = out.state.layers[layer];
-                    full.key = modules::ConcatModule({1}).build(ctx, *full.key, *added.key);
-                    full.value = modules::ConcatModule({1}).build(ctx, *full.value, *added.value);
+                    state->layers[layer].key = out.state.layers[layer].key;
+                    state->layers[layer].value = out.state.layers[layer].value;
                 }
             }
             auto * last = ggml_reshape_2d(g, ggml_cont(g, out.hidden.tensor), depth_hidden, batch);
