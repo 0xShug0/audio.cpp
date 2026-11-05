@@ -69,7 +69,8 @@ public:
     IndexTTS2TextEncoding encode_for_inference(
         const std::string & text,
         int max_text_tokens_per_segment,
-        const std::string & lang = "") const;
+        const std::string & lang = "",
+        bool text_normalization = true) const;
 
 private:
     // v2 SentencePiece path.
@@ -86,7 +87,8 @@ private:
     IndexTTS2TextEncoding encode_for_inference_v2_5(
         const std::string & text,
         int max_text_tokens_per_segment,
-        const std::string & lang) const;
+        const std::string & lang,
+        bool text_normalization) const;
 
     std::shared_ptr<const IndexTTS2Assets> assets_;
     IndexTTS2Variant variant_ = IndexTTS2Variant::kV2;

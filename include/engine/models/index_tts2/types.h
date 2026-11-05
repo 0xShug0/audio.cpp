@@ -163,6 +163,7 @@ struct IndexTTS2Request {
     bool use_random_emotion = false;
     int interval_silence_ms = 200;
     int max_text_tokens_per_segment = 120;
+    bool text_normalization = true;
     IndexTTS2GenerationOptions generation;
 };
 

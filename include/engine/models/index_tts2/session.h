@@ -2,6 +2,7 @@
 
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/models/index_tts2/assets.h"
 #include "engine/models/index_tts2/audio_features.h"
 #include "engine/models/index_tts2/gpt.h"
@@ -32,7 +33,8 @@ struct IndexTTS2AudioIdentity {
 
 class IndexTTS2Session final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::StreamingTtsSessionBase {
 public:
     IndexTTS2Session(
         runtime::TaskSpec task,
@@ -46,6 +48,10 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override {}
+
     struct SpeakerState {
         IndexTTS2AudioIdentity identity;
         IndexTTS2SemanticEmbedding semantic;
