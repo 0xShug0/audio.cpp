@@ -1,6 +1,7 @@
 #include "engine/models/gigaam_asr/model.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/decoders/ctc_host_decoder.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -191,14 +192,9 @@ struct GigaAMRuntime::Impl {
         auto & ids = result.ids;
         if (!assets.rnnt) {
             const auto labels = core::read_tensor_i32(encoded.tensor);
-            int32_t previous = blank;
-            for (size_t t = 0; t < labels.size(); ++t) {
-                const auto token = labels[t];
-                if (token != blank && token != previous) {
-                    ids.push_back(token);
-                    if (timestamps) result.frames.push_back(static_cast<int64_t>(t));
-                }
-                previous = token;
+            for (const auto & span : decoders::CtcHostDecoder(blank).decode(labels)) {
+                ids.push_back(span.id);
+                if (timestamps) result.frames.push_back(span.start_frame);
             }
         } else {
             const auto projected = core::read_tensor_f32(encoded.tensor);

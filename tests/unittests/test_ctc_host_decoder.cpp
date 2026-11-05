@@ -53,6 +53,35 @@ int main(int argc, char ** argv) {
         require(shifted.size() == 2 && shifted[0].id == 0, "nonzero blank discarded valid token zero");
         std::vector<float> tied{0, 0, -1, -1, 1, 1};
         require(decoders::CtcHostDecoder::frame_ids(tied.data(), 2, 3) == std::vector<int32_t>({0, 1}), "argmax ties");
+        // Cover every short frame sequence, including blank-separated repeats,
+        // for callers retaining IDs, first frames, or complete nonblank runs.
+        for (int blank : {0, 3}) {
+            decoders::CtcHostDecoder decoder(blank);
+            for (int pattern = 0; pattern < 4096; ++pattern) {
+                std::vector<int32_t> ids(6);
+                for (size_t t = 0; t < ids.size(); ++t) ids[t] = (pattern >> (2 * t)) & 3;
+                std::vector<decoders::CtcTokenSpan> expected;
+                for (size_t begin = 0; begin < ids.size();) {
+                    size_t end = begin + 1;
+                    while (end < ids.size() && ids[end] == ids[begin]) ++end;
+                    if (ids[begin] != blank)
+                        expected.push_back({ids[begin], static_cast<int64_t>(begin), static_cast<int64_t>(end)});
+                    begin = end;
+                }
+                const auto actual = decoder.decode(ids);
+                require(actual.size() == expected.size(), "CTC run count differs");
+                for (size_t i = 0; i < actual.size(); ++i)
+                    require(actual[i].id == expected[i].id && actual[i].start_frame == expected[i].start_frame &&
+                        actual[i].end_frame == expected[i].end_frame, "CTC run ID or boundary differs");
+            }
+        }
+        // Host argmax keeps the first winner, matching Sense-ASR's original
+        // strict-greater comparison, including nonfinite logits.
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        const std::vector<float> logits{nan, 3, 4, 1, nan, 2, -inf, -inf, -inf, 1, inf, inf};
+        require(decoders::CtcHostDecoder::frame_ids(logits.data(), 4, 3) == std::vector<int32_t>({0, 2, 0, 1}),
+            "CTC host argmax changed nonfinite/tie behavior");
         const auto padded = runtime::CTCDecoder().compute({0, 2, 0, 3, 0, 0, 0, 2, 0, 3, 0, 0}, 2, 2, 3, 0);
         require(padded.values == std::vector<int32_t>({1, 0, 1, 0}), "legacy batched CTC output changed");
         std::mt19937 rng(17);

@@ -4,6 +4,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/decoders/ctc_host_decoder.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
@@ -118,12 +119,8 @@ private:
         runtime::PartialTextPublisher publisher;
         const auto decode_frames = [&]() {
             std::vector<int32_t> tokens;
-            int32_t previous = -1;
-            for (const auto token : frames) {
-                if (token != previous && token != assets_->config.blank_id) {
-                    tokens.push_back(token);
-                }
-                previous = token;
+            for (const auto & span : decoders::CtcHostDecoder(assets_->config.blank_id).decode(frames)) {
+                tokens.push_back(span.id);
             }
             return assets_->decode_visible(tokens);
         };

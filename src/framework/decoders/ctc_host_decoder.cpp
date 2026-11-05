@@ -31,7 +31,13 @@ std::vector<int32_t> CtcHostDecoder::frame_ids(const float * logits, int64_t fra
     for (int64_t t = 0; t < frames; ++t) {
         const auto * row = logits + static_cast<size_t>(t) * classes;
         int32_t best = 0;
-        for (int64_t v = 1; v < classes; ++v) if (row[v] > row[best]) best = static_cast<int32_t>(v);
+        float best_value = row[0];
+        for (int64_t v = 1; v < classes; ++v) {
+            if (row[v] > best_value) {
+                best_value = row[v];
+                best = static_cast<int32_t>(v);
+            }
+        }
         ids[static_cast<size_t>(t)] = best;
     }
     return ids;
