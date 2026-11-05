@@ -511,6 +511,7 @@ add_library(engine_core OBJECT
     src/framework/model_spec/options.cpp
     src/framework/model_spec/schema.cpp
     src/framework/assets/tensor_source.cpp
+    src/framework/assets/gguf_metadata.cpp
     src/framework/assets/weight_norm_folding.cpp
     src/framework/assets/weight_adapter.cpp
     src/framework/assets/weight_adapter_source.cpp
@@ -2836,20 +2837,12 @@ audiocpp_add_model(lfm2_audio
 audiocpp_add_model(lfm3_audio
     SOURCES
         src/community_models/lfm3_audio/assets.cpp
-        src/community_models/lfm3_audio/published_gguf.cpp
         src/community_models/lfm3_audio/weights.cpp
-        src/community_models/lfm3_audio/tokenizer.cpp
         src/community_models/lfm3_audio/prompt.cpp
-        src/community_models/lfm3_audio/chat.cpp
-        src/community_models/lfm3_audio/features.cpp
-        src/community_models/lfm3_audio/blocks.cpp
-        src/community_models/lfm3_audio/encoder.cpp
-        src/community_models/lfm3_audio/backbone.cpp
         src/community_models/lfm3_audio/depth.cpp
-        src/community_models/lfm3_audio/sampling.cpp
         src/community_models/lfm3_audio/codec.cpp
         src/community_models/lfm3_audio/generator.cpp
-        src/community_models/lfm3_audio/debug.cpp
+        src/community_models/lfm3_audio/frontend.cpp
         src/community_models/lfm3_audio/session.cpp
     INCLUDES
         engine/community_models/lfm3_audio/session.h

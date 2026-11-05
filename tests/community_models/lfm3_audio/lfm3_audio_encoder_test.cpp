@@ -10,8 +10,7 @@
 #include "test_assert.h"
 
 #include "engine/community_models/lfm3_audio/assets.h"
-#include "engine/community_models/lfm3_audio/encoder.h"
-#include "engine/community_models/lfm3_audio/features.h"
+#include "engine/community_models/lfm3_audio/frontend.h"
 #include "engine/framework/core/execution_context.h"
 
 #include <cmath>
@@ -76,7 +75,7 @@ Reference reference_encoder(const engine::assets::TensorSource & source, const l
     const int64_t c = config.conv_channels;
     const std::string p = "encoder.downsample.";
     int64_t h = 0, w = 0, h2 = 0, w2 = 0;
-    auto x = conv2d(ref::to_values(mel), 1, config.n_mels, frames, read(p + "conv_in.weight"), read(p + "conv_in.bias"), c, 1, 3, 2, 1, &h, &w);
+    auto x = conv2d(ref::to_values(mel), 1, config.mel_bins, frames, read(p + "conv_in.weight"), read(p + "conv_in.bias"), c, 1, 3, 2, 1, &h, &w);
     silu(x);
     for (const std::string stage : {"mid", "end"}) {
         x = conv2d(x, c, h, w, read(p + "conv_" + stage + ".weight"), read(p + "conv_" + stage + ".bias"), c, c, 3, 2, 1, &h2, &w2);
@@ -91,12 +90,12 @@ Reference reference_encoder(const engine::assets::TensorSource & source, const l
         for (int64_t i = 0; i < features; ++i) rows[static_cast<size_t>(n * features + i)] = x[static_cast<size_t>(i * w + n)];
     }
 
-    const int64_t d = config.stack.hidden;
+    const int64_t d = config.decoder.hidden_size;
     const int64_t o = config.output_size;
     Reference out;
     out.downsample = ref::linear_bias(rows, read(p + "lin_out.weight"), read(p + "lin_out.bias"), features, d);
     out.encoder =
-        ref::stack(config.stack, ref::read_ref_stack(source, "encoder.lfm.lfm.", config.stack), out.downsample, ref::positions_from(0, w));
+        ref::stack(config.decoder, ref::read_ref_stack(source, "encoder.lfm.lfm.", config.decoder), out.downsample, ref::positions_from(0, w), config.sliding_window);
 
     // LayerNorm (eps 1e-5) -> Linear -> exact GELU -> Linear.
     const auto gamma = read("mlp.model.0.weight");
@@ -130,18 +129,15 @@ void test_synthetic(core::ExecutionContext & execution) {
     for (const auto & options : {lfm3::Lfm3WeightOptions{lfm3::Lfm3WeightType::F32, true}, lfm3::Lfm3WeightOptions{lfm3::Lfm3WeightType::Native, true}}) {
         const bool f32 = lfm3::lfm3_reference_precision(options);
         const double tolerance = f32 ? ref::reference_tolerance(execution) : kSyntheticNativeTolerance;
-        lfm3::Lfm3AudioEncoderRuntime encoder(assets->model, config, execution, options);
+        lfm3::Lfm3AudioFrontend encoder(lfm3::load_lfm3_encoder_weights(*assets, execution, options), config, execution, options);
         // 37: odd frames, 5 tokens (> window 4); 40: even; 8: one token; 300: 38 tokens, far past the window; 1: one frame.
         for (const int64_t frames : {37, 40, 8, 300, 1}) {
             const auto features = random_features(frames, static_cast<uint64_t>(frames));
-            lfm3::Lfm3EncoderTaps taps;
-            const auto out = encoder.encode(features, &taps);
+            const auto out = encoder.encode(features);
             require_eq(out.tokens, lfm3::lfm3_audio_tokens(frames), "tokens");
             require_eq(out.hidden, config.output_size, "hidden");
             const auto expected = reference_encoder(*assets->model, config, features.values, frames);
             const std::string label = std::string(f32 ? "f32" : "native") + " T=" + std::to_string(frames);
-            ref::report(label + " downsample", ref::rel_error(taps.downsample, expected.downsample), tolerance);
-            ref::report(label + " encoder", ref::rel_error(taps.encoder, expected.encoder), tolerance);
             ref::report(label + " projector", ref::rel_error(out.values, expected.projector), tolerance);
         }
         require_eq(encoder.graphs_built(), int64_t{5}, "one graph per length");
@@ -150,13 +146,12 @@ void test_synthetic(core::ExecutionContext & execution) {
         const auto features = random_features(1, 1);
         const auto again = encoder.encode(features);
         require_eq(encoder.graphs_built(), int64_t{5}, "a same-length call builds no graph");
-        lfm3::Lfm3EncoderTaps taps;
-        require(encoder.encode(features, &taps).values == again.values, "a reused graph gives the same values");
+        require(encoder.encode(features).values == again.values, "a reused graph gives the same values");
         (void)encoder.encode(random_features(37, 37));
         require_eq(encoder.graphs_built(), int64_t{6}, "a new length builds a graph");
     }
 
-    lfm3::Lfm3AudioEncoderRuntime encoder(assets->model, config, execution, {});
+    lfm3::Lfm3AudioFrontend encoder(lfm3::load_lfm3_encoder_weights(*assets, execution, {}), config, execution, {});
     ref::require_throws([&] { (void)encoder.encode({std::vector<float>(127 * 4), 4}); }, "features of the wrong size");
 }
 

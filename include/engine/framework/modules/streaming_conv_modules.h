@@ -30,6 +30,13 @@ public:
         const core::TensorValue & input,
         const DepthwiseConv1dWeights & weights) const;
 
+    // Unpadded unit-stride F32 convolution of [1, frames, channels].
+    // Keeps the ordered-tap/SSM lowering instead of converting to channel-first.
+    core::TensorValue build_time_major(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const DepthwiseConv1dWeights & weights) const;
+
 private:
     DepthwiseConv1dConfig config_;
 };

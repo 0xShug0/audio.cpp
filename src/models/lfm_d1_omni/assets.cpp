@@ -1,11 +1,8 @@
 #include "engine/models/lfm_d1_omni/assets.h"
 
-#include <ggml-cpp.h>
-#include <gguf.h>
+#include "engine/framework/assets/gguf_metadata.h"
 
 #include <algorithm>
-#include <cmath>
-#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -55,91 +52,24 @@ constexpr const char * kContractTables = R"json({
   ]
 })json";
 
-// Configuration is read at asset load, never while creating a session or binding weights.
-class Metadata {
-public:
-    explicit Metadata(const fs::path & path) : ctx_(gguf_init_from_file(path.string().c_str(), {true, nullptr})) {
-        if (!ctx_) { throw std::runtime_error("d1: cannot read GGUF metadata: " + path.string()); }
-    }
-    bool has(const char * name) const { return gguf_find_key(ctx_.get(), name) >= 0; }
-    int64_t key(const char * name, gguf_type type) const {
-        const auto id = gguf_find_key(ctx_.get(), name);
-        if (id < 0 || gguf_get_kv_type(ctx_.get(), id) != type) {
-            throw std::runtime_error(std::string("d1: missing or incorrectly typed GGUF field: ") + name);
-        }
-        return id;
-    }
-    std::string string(const char * name) const { return gguf_get_val_str(ctx_.get(), key(name, GGUF_TYPE_STRING)); }
-    bool boolean(const char * name) const { return gguf_get_val_bool(ctx_.get(), key(name, GGUF_TYPE_BOOL)); }
-    int64_t integer(const char * name) const {
-        const auto id = gguf_find_key(ctx_.get(), name);
-        if (id >= 0) {
-            switch (gguf_get_kv_type(ctx_.get(), id)) {
-                case GGUF_TYPE_UINT32: return gguf_get_val_u32(ctx_.get(), id);
-                case GGUF_TYPE_INT32: return gguf_get_val_i32(ctx_.get(), id);
-                case GGUF_TYPE_INT64: return gguf_get_val_i64(ctx_.get(), id);
-                default: break;
-            }
-        }
-        throw std::runtime_error(std::string("d1: missing or incorrectly typed integer: ") + name);
-    }
-    double number(const char * name) const {
-        const auto id = gguf_find_key(ctx_.get(), name);
-        if (id >= 0) {
-            const auto type = gguf_get_kv_type(ctx_.get(), id);
-            const double value = type == GGUF_TYPE_FLOAT32 ? gguf_get_val_f32(ctx_.get(), id)
-                : type == GGUF_TYPE_FLOAT64 ? gguf_get_val_f64(ctx_.get(), id)
-                : std::numeric_limits<double>::quiet_NaN();
-            if (std::isfinite(value)) { return value; }
-        }
-        throw std::runtime_error(std::string("d1: missing or invalid floating-point field: ") + name);
-    }
-    std::vector<std::string> strings(const char * name) const {
-        const auto id = key(name, GGUF_TYPE_ARRAY);
-        if (gguf_get_arr_type(ctx_.get(), id) != GGUF_TYPE_STRING) {
-            throw std::runtime_error(std::string("d1: expected string array: ") + name);
-        }
-        std::vector<std::string> out;
-        out.reserve(gguf_get_arr_n(ctx_.get(), id));
-        for (size_t i = 0; i < gguf_get_arr_n(ctx_.get(), id); ++i) { out.emplace_back(gguf_get_arr_str(ctx_.get(), id, i)); }
-        return out;
-    }
-    std::vector<int64_t> integers(const char * name, bool booleans = false) const {
-        const auto id = key(name, GGUF_TYPE_ARRAY);
-        const auto type = gguf_get_arr_type(ctx_.get(), id);
-        const auto * data = gguf_get_arr_data(ctx_.get(), id);
-        std::vector<int64_t> out;
-        out.reserve(gguf_get_arr_n(ctx_.get(), id));
-        for (size_t i = 0; i < gguf_get_arr_n(ctx_.get(), id); ++i) {
-            if (type == GGUF_TYPE_INT32) { out.push_back(static_cast<const int32_t *>(data)[i]); }
-            else if (type == GGUF_TYPE_UINT32) { out.push_back(static_cast<const uint32_t *>(data)[i]); }
-            else if (booleans && type == GGUF_TYPE_BOOL) { out.push_back(static_cast<const bool *>(data)[i]); }
-            else { throw std::runtime_error(std::string("d1: incorrectly typed array: ") + name); }
-        }
-        return out;
-    }
-private:
-    gguf_context_ptr ctx_;
-};
-
-LfmD1OmniBackboneSpec backbone_spec(const Metadata & meta, const assets::TensorSource & source) {
-    if (meta.string("general.architecture") != "lfm3" || meta.string("general.type") != "model" ||
-        meta.string("lfm3.decision.type") != "lfm3-d1-omni") {
+LfmD1OmniBackboneSpec backbone_spec(const assets::GgufMetadata & meta, const assets::TensorSource & source) {
+    if (meta.require_string("general.architecture") != "lfm3" || meta.require_string("general.type") != "model" ||
+        meta.require_string("lfm3.decision.type") != "lfm3-d1-omni") {
         throw std::runtime_error("d1: expected an official lfm3-d1-omni backbone GGUF");
     }
     LfmD1OmniBackboneSpec out;
     auto & d = out.decoder;
-    const int64_t layers = meta.integer("lfm3.block_count");
-    d.hidden_size = meta.integer("lfm3.embedding_length");
-    d.intermediate_size = meta.integer("lfm3.feed_forward_length");
-    d.num_attention_heads = meta.integer("lfm3.attention.head_count");
-    d.head_dim = meta.integer("lfm3.attention.key_length");
-    d.conv_kernel_size = meta.integer("lfm3.shortconv.l_cache");
-    d.norm_eps = static_cast<float>(meta.number("lfm3.attention.layer_norm_rms_epsilon"));
-    d.full_rope.theta = static_cast<float>(meta.number("lfm3.rope.freq_base"));
-    d.sliding_rope.theta = static_cast<float>(meta.number("lfm3.rope.freq_base_swa"));
-    const auto kv = meta.integers("lfm3.attention.head_count_kv");
-    const auto sliding = meta.integers("lfm3.attention.sliding_window_pattern", true);
+    const int64_t layers = meta.require_int("lfm3.block_count");
+    d.hidden_size = meta.require_int("lfm3.embedding_length");
+    d.intermediate_size = meta.require_int("lfm3.feed_forward_length");
+    d.num_attention_heads = meta.require_int("lfm3.attention.head_count");
+    d.head_dim = meta.require_int("lfm3.attention.key_length");
+    d.conv_kernel_size = meta.require_int("lfm3.shortconv.l_cache");
+    d.norm_eps = static_cast<float>(meta.require_number("lfm3.attention.layer_norm_rms_epsilon"));
+    d.full_rope.theta = static_cast<float>(meta.require_number("lfm3.rope.freq_base"));
+    d.sliding_rope.theta = static_cast<float>(meta.require_number("lfm3.rope.freq_base_swa"));
+    const auto kv = meta.require_int_array("lfm3.attention.head_count_kv");
+    const auto sliding = meta.require_int_array("lfm3.attention.sliding_window_pattern", true);
     if (layers <= 0 || static_cast<int64_t>(kv.size()) != layers || kv.size() != sliding.size()) {
         throw std::runtime_error("d1: backbone layer metadata lengths disagree");
     }
@@ -157,12 +87,12 @@ LfmD1OmniBackboneSpec backbone_spec(const Metadata & meta, const assets::TensorS
     if (d.hidden_size <= 0 || d.intermediate_size <= 0 || d.head_dim <= 0 || d.head_dim % 2 != 0 ||
         d.num_attention_heads <= 0 || d.num_key_value_heads <= 0 || d.num_attention_heads % d.num_key_value_heads != 0 ||
         d.hidden_size != d.num_attention_heads * d.head_dim || d.conv_kernel_size <= 0 || d.norm_eps <= 0 ||
-        meta.integer("lfm3.attention.value_length") != d.head_dim || meta.integer("lfm3.rope.dimension_count") != d.head_dim) {
+        meta.require_int("lfm3.attention.value_length") != d.head_dim || meta.require_int("lfm3.rope.dimension_count") != d.head_dim) {
         throw std::runtime_error("d1: unsupported backbone dimensions");
     }
-    out.context_length = meta.integer("lfm3.context_length");
-    out.sliding_window = meta.integer("lfm3.attention.sliding_window");
-    if (out.context_length <= 0 || out.sliding_window <= 0 || meta.boolean("lfm3.attention.causal")) {
+    out.context_length = meta.require_int("lfm3.context_length");
+    out.sliding_window = meta.require_int("lfm3.attention.sliding_window");
+    if (out.context_length <= 0 || out.sliding_window <= 0 || meta.require_bool("lfm3.attention.causal")) {
         throw std::runtime_error("d1: expected noncausal full attention and a positive context/window");
     }
     const auto embedding_metadata = source.require_metadata("token_embd.weight");
@@ -184,22 +114,22 @@ LfmD1OmniBackboneSpec backbone_spec(const Metadata & meta, const assets::TensorS
     return out;
 }
 
-LfmD1OmniAudioSpec audio_spec(const Metadata & meta, const assets::TensorSource & source, int64_t output_size) {
-    if (meta.string("general.architecture") != "clip" || meta.string("general.type") != "mmproj" ||
-        !meta.boolean("clip.has_audio_encoder") || meta.string("clip.audio.projector_type") != "lfm3a") {
+LfmD1OmniAudioSpec audio_spec(const assets::GgufMetadata & meta, const assets::TensorSource & source, int64_t output_size) {
+    if (meta.require_string("general.architecture") != "clip" || meta.require_string("general.type") != "mmproj" ||
+        !meta.require_bool("clip.has_audio_encoder") || meta.require_string("clip.audio.projector_type") != "lfm3a") {
         throw std::runtime_error("d1: expected an lfm3a audio projector GGUF");
     }
     LfmD1OmniAudioSpec out;
     auto & d = out.decoder;
-    d.hidden_size = meta.integer("clip.audio.embedding_length");
-    d.intermediate_size = meta.integer("clip.audio.feed_forward_length");
-    d.num_attention_heads = meta.integer("clip.audio.attention.head_count");
-    d.num_key_value_heads = meta.integer("clip.audio.attention.head_count_kv");
-    d.norm_eps = static_cast<float>(meta.number("clip.audio.attention.layer_norm_epsilon"));
+    d.hidden_size = meta.require_int("clip.audio.embedding_length");
+    d.intermediate_size = meta.require_int("clip.audio.feed_forward_length");
+    d.num_attention_heads = meta.require_int("clip.audio.attention.head_count");
+    d.num_key_value_heads = meta.require_int("clip.audio.attention.head_count_kv");
+    d.norm_eps = static_cast<float>(meta.require_number("clip.audio.attention.layer_norm_epsilon"));
     d.attention_gate = false;
     d.sandwich_norm = false;
-    const int64_t layers = meta.integer("clip.audio.block_count");
-    const int64_t mels = meta.integer("clip.audio.num_mel_bins");
+    const int64_t layers = meta.require_int("clip.audio.block_count");
+    const int64_t mels = meta.require_int("clip.audio.num_mel_bins");
     if (layers <= 0 || d.hidden_size <= 0 || d.intermediate_size <= 0 || d.num_attention_heads <= 0 ||
         d.num_key_value_heads <= 0 || d.hidden_size % d.num_attention_heads != 0 ||
         d.num_attention_heads % d.num_key_value_heads != 0 || d.norm_eps <= 0 || mels <= 0 || mels % 8 != 0) {
@@ -220,8 +150,8 @@ LfmD1OmniAudioSpec audio_spec(const Metadata & meta, const assets::TensorSource 
             d.conv_kernel_size = shape[1];
         }
     }
-    out.output_size = meta.integer("clip.audio.projection_dim");
-    out.sliding_window = meta.integer("clip.audio.window_size");
+    out.output_size = meta.require_int("clip.audio.projection_dim");
+    out.sliding_window = meta.require_int("clip.audio.window_size");
     const auto conv = source.require_metadata("a.conv1d.0.weight").shape;
     if (conv.size() != 4 || conv[0] <= 0 || conv[1] != 1 || conv[2] != 3 || conv[3] != 3 ||
         out.output_size != output_size || out.sliding_window <= 0) {
@@ -316,12 +246,12 @@ std::shared_ptr<const LfmD1OmniAssets> load_lfm_d1_omni_assets(assets::ResourceB
     auto out = std::make_shared<LfmD1OmniAssets>();
     out->resources = std::move(resources);
     out->model = out->resources.open_tensor_source("model", {true});
-    const Metadata meta(main_path);
+    const assets::GgufMetadata meta(main_path);
     out->backbone = backbone_spec(meta, *out->model);
     auto & decision = out->decision;
-    decision.noul_temperature = meta.number("lfm3.decision.temperature.noul");
-    decision.choice_temperature = meta.number("lfm3.decision.temperature.choice");
-    decision.score_temperature = meta.number("lfm3.decision.temperature.score");
+    decision.noul_temperature = meta.require_number("lfm3.decision.temperature.noul");
+    decision.choice_temperature = meta.require_number("lfm3.decision.temperature.choice");
+    decision.score_temperature = meta.require_number("lfm3.decision.temperature.score");
     if (decision.noul_temperature <= 0 || decision.choice_temperature <= 0 || decision.score_temperature <= 0) {
         throw std::runtime_error("d1: decision temperatures must be positive");
     }
@@ -341,19 +271,19 @@ std::shared_ptr<const LfmD1OmniAssets> load_lfm_d1_omni_assets(assets::ResourceB
         {"checkpoint", io::json::Value::make_string("LiquidAI/d1-Omni-2B")},
         {"revision", io::json::Value::make_string("81222dae8bf8bdd7f903643b5b2a8803bf2e3176")},
     });
-    if (meta.string("tokenizer.ggml.model") != "gpt2" || meta.string("tokenizer.ggml.pre") != "lfm2") {
+    if (meta.require_string("tokenizer.ggml.model") != "gpt2" || meta.require_string("tokenizer.ggml.pre") != "lfm2") {
         throw std::runtime_error("d1: unsupported tokenizer model/pre-tokenizer");
     }
     tokenizers::LlamaBpeGgufVocabulary vocabulary;
-    vocabulary.tokens = meta.strings("tokenizer.ggml.tokens");
-    vocabulary.merges = meta.strings("tokenizer.ggml.merges");
-    const auto types = meta.integers("tokenizer.ggml.token_type");
+    vocabulary.tokens = meta.require_string_array("tokenizer.ggml.tokens");
+    vocabulary.merges = meta.require_string_array("tokenizer.ggml.merges");
+    const auto types = meta.require_int_array("tokenizer.ggml.token_type");
     vocabulary.token_types.assign(types.begin(), types.end());
     if (static_cast<int64_t>(vocabulary.tokens.size()) != out->backbone.vocab_size) {
         throw std::runtime_error("d1: tokenizer and embedding vocabulary sizes disagree");
     }
     // GGUF's lfm2 preset implies ignore_merges=true unless explicitly stored.
-    vocabulary.ignore_merges = !meta.has("tokenizer.ggml.ignore_merges") || meta.boolean("tokenizer.ggml.ignore_merges");
+    vocabulary.ignore_merges = !meta.has("tokenizer.ggml.ignore_merges") || meta.require_bool("tokenizer.ggml.ignore_merges");
     tokenizers::LlamaBpeTokenizerSpec tokenizer;
     tokenizer.pre_type = tokenizers::LlamaBpePreTokenizer::Llama3;
     tokenizer.gguf_vocabulary = std::move(vocabulary);
@@ -362,7 +292,7 @@ std::shared_ptr<const LfmD1OmniAssets> load_lfm_d1_omni_assets(assets::ResourceB
     if (!audio_id) { throw std::runtime_error("d1: tokenizer has no audio placeholder"); }
     out->audio_token_id = *audio_id;
     out->mmproj = out->resources.open_tensor_source("mmproj", {true});
-    out->audio = audio_spec(Metadata(projector_path), *out->mmproj, out->backbone.decoder.hidden_size);
+    out->audio = audio_spec(assets::GgufMetadata(projector_path), *out->mmproj, out->backbone.decoder.hidden_size);
     return out;
 }
 

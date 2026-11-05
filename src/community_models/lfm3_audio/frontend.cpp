@@ -1,18 +1,19 @@
-#include "engine/community_models/lfm3_audio/features.h"
-
-#include "engine/community_models/lfm3_audio/debug.h"
+#include "engine/community_models/lfm3_audio/frontend.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/mel_spectrogram_frontend.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/runtime/errors.h"
-
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "engine/framework/debug/profiler.h"
+#include <chrono>
+#include <utility>
 
 namespace engine::community_models::lfm3_audio {
+
 namespace {
 
 constexpr int kSampleRate = 16000;
@@ -104,10 +105,44 @@ Lfm3Features Lfm3FeatureExtractor::extract(const std::vector<float> & mono16k, s
         value = (value + kLogShift) / kLogDivisor;
     }
 
-    if (lfm3_dump_enabled()) {
-        lfm3_dump("features", out.values.data(), {kMelBins, out.frames});
-    }
     return out;
 }
+
+struct Lfm3AudioFrontend::Impl {
+    Impl(Lfm3EncoderWeights weights_in, Lfm3EncoderConfig config_in, core::ExecutionContext & execution,
+         const Lfm3WeightOptions & options)
+        : weights(std::move(weights_in)), config(std::move(config_in)), threads(execution.config().threads), encoder([&] {
+              auto resolved = config;
+              resolved.decoder = lfm3_decoder_config(config.decoder, options);
+              return resolved;
+          }(), weights.tensors, execution, 1) {}
+
+    Lfm3EncoderWeights weights;
+    Lfm3EncoderConfig config;
+    int threads;
+    Lfm3FeatureExtractor features;
+    modules::Lfm3AudioEncoderRuntime encoder;
+};
+
+Lfm3AudioFrontend::Lfm3AudioFrontend(Lfm3EncoderWeights weights, const Lfm3EncoderConfig & config,
+    core::ExecutionContext & execution, const Lfm3WeightOptions & options)
+    : impl_(std::make_unique<Impl>(std::move(weights), config, execution, options)) {}
+Lfm3AudioFrontend::~Lfm3AudioFrontend() = default;
+
+Lfm3AudioEmbeddings Lfm3AudioFrontend::encode(const Lfm3Features & features) {
+    auto & m = *impl_;
+    const auto start = std::chrono::steady_clock::now();
+    const auto encoded = m.encoder.encode(features.values, features.frames);
+    Lfm3AudioEmbeddings out{core::read_tensor_f32(encoded.projected.tensor), encoded.tokens, m.config.output_size};
+    if (features.frames > 3000) m.encoder.release_workspace();
+    debug::timing_log_scalar("lfm3_audio.encoder.ms", debug::elapsed_ms(start));
+    return out;
+}
+
+Lfm3AudioEmbeddings Lfm3AudioFrontend::encode_audio(const std::vector<float> & mono16k) {
+    return encode(impl_->features.extract(mono16k, static_cast<size_t>(std::max(0, impl_->threads))));
+}
+
+int64_t Lfm3AudioFrontend::graphs_built() const noexcept { return static_cast<int64_t>(impl_->encoder.graphs_built()); }
 
 }  // namespace engine::community_models::lfm3_audio

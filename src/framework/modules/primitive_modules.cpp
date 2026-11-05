@@ -308,6 +308,9 @@ core::TensorValue MulModule::build(
     } else {
         validate_same_shape(lhs, rhs, "Mul rhs");
     }
+    if (preserve_input_layout_) {
+        return core::wrap_tensor(ggml_mul(ctx.ggml, lhs.tensor, rhs.tensor), lhs.shape, GGML_TYPE_F32);
+    }
     const auto lhs_contiguous = tensor_layout::ensure_contiguous_nontransposed_layout_if_needed(ctx, lhs);
     const auto rhs_contiguous = tensor_layout::ensure_contiguous_nontransposed_layout_if_needed(ctx, rhs);
     return core::wrap_tensor(ggml_mul(ctx.ggml, lhs_contiguous.tensor, rhs_contiguous.tensor), lhs.shape, GGML_TYPE_F32);

@@ -1,5 +1,6 @@
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/assets/gguf_metadata.h"
 #include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/io/filesystem.h"
@@ -17,12 +18,97 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace {
+
+void test_typed_gguf_metadata() {
+    using engine::test::require;
+    using engine::test::require_eq;
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp_gguf_metadata_test";
+    std::filesystem::create_directories(root);
+    const auto path = root / "metadata.gguf";
+    gguf_context_ptr fixture(gguf_init_empty());
+    gguf_set_val_str(fixture.get(), "architecture", "test");
+    gguf_set_val_bool(fixture.get(), "enabled", true);
+    gguf_set_val_bool(fixture.get(), "disabled", false);
+    gguf_set_val_u8(fixture.get(), "u8", 255);
+    gguf_set_val_i8(fixture.get(), "i8", -128);
+    gguf_set_val_u16(fixture.get(), "u16", 65535);
+    gguf_set_val_i16(fixture.get(), "i16", -32768);
+    gguf_set_val_u32(fixture.get(), "u32", UINT32_MAX);
+    gguf_set_val_i32(fixture.get(), "i32", INT32_MIN);
+    gguf_set_val_u64(fixture.get(), "u64", INT64_MAX);
+    gguf_set_val_i64(fixture.get(), "i64", INT64_MIN);
+    gguf_set_val_u64(fixture.get(), "overflow", UINT64_MAX);
+    gguf_set_val_f32(fixture.get(), "f32", 0.125f);
+    gguf_set_val_f64(fixture.get(), "f64", 0.0625);
+    gguf_set_val_f32(fixture.get(), "nan", std::numeric_limits<float>::quiet_NaN());
+    gguf_set_val_f64(fixture.get(), "inf", std::numeric_limits<double>::infinity());
+    const int32_t signed_values[] = {-1, 2};
+    const uint32_t unsigned_values[] = {0, UINT32_MAX};
+    const bool pattern[] = {false, true};
+    const char * tokens[] = {"first", "second"};
+    gguf_set_arr_data(fixture.get(), "signed", GGUF_TYPE_INT32, signed_values, 2);
+    gguf_set_arr_data(fixture.get(), "unsigned", GGUF_TYPE_UINT32, unsigned_values, 2);
+    gguf_set_arr_data(fixture.get(), "pattern", GGUF_TYPE_BOOL, pattern, 2);
+    gguf_set_arr_str(fixture.get(), "tokens", tokens, 2);
+    require(gguf_write_to_file(fixture.get(), path.string().c_str(), true), "write metadata fixture");
+
+    const engine::assets::GgufMetadata metadata(path);
+    require_eq(metadata.tensor_count(), int64_t{0}, "metadata-only GGUF tensor count");
+    require(metadata.has("enabled") && !metadata.has("missing"), "key presence");
+    require_eq(metadata.require_string("architecture"), std::string("test"), "string metadata");
+    require(metadata.find_string("architecture") == "test" && !metadata.find_string("missing"), "optional string");
+    require(metadata.require_bool("enabled") && !metadata.require_bool("disabled"), "boolean metadata");
+    require(metadata.find_bool("disabled").has_value() && !*metadata.find_bool("disabled"), "false is not missing");
+    require(!metadata.find_bool("missing") && !metadata.find_number("missing"), "absent optional fields");
+    const std::pair<const char *, int64_t> integers[] = {
+        {"u8", 255}, {"i8", -128}, {"u16", 65535}, {"i16", -32768},
+        {"u32", UINT32_MAX}, {"i32", INT32_MIN}, {"u64", INT64_MAX}, {"i64", INT64_MIN},
+    };
+    for (const auto & entry : integers) {
+        require_eq(metadata.require_int(entry.first), entry.second, "exact integer metadata");
+    }
+    require_eq(metadata.require_int("u8", 1, 255), int64_t{255}, "bounded integer");
+    require(metadata.require_f32("f32") == 0.125f && metadata.require_number("f64") == 0.0625, "floating metadata");
+    require(metadata.find_number("u32") == static_cast<double>(UINT32_MAX), "integer as numeric metadata");
+    require(metadata.require_number("overflow") == static_cast<double>(UINT64_MAX), "uint64 as numeric metadata");
+    require(metadata.require_int_array("signed") == std::vector<int64_t>({-1, 2}), "signed array");
+    require(metadata.require_int_array("unsigned") == std::vector<int64_t>({0, UINT32_MAX}), "unsigned array");
+    require(metadata.require_int_array("pattern", true) == std::vector<int64_t>({0, 1}), "explicit boolean array");
+    require(metadata.require_string_array("tokens") == std::vector<std::string>({"first", "second"}), "string array");
+
+    const auto rejects = [&](const char * key, auto read) {
+        try { read(); }
+        catch (const std::runtime_error & error) {
+            const std::string message = error.what();
+            require(message.find(key) != std::string::npos && message.find(path.string()) != std::string::npos,
+                    "metadata errors must identify the field and file");
+            return;
+        }
+        throw std::runtime_error(std::string("metadata reader accepted invalid field: ") + key);
+    };
+    rejects("missing", [&] { (void)metadata.require_string("missing"); });
+    rejects("u8", [&] { (void)metadata.find_string("u8"); });
+    rejects("u8", [&] { (void)metadata.find_bool("u8"); });
+    rejects("architecture", [&] { (void)metadata.find_number("architecture"); });
+    rejects("f32", [&] { (void)metadata.require_int("f32"); });
+    rejects("overflow", [&] { (void)metadata.require_int("overflow"); });
+    rejects("u8", [&] { (void)metadata.require_int("u8", 1, 254); });
+    rejects("nan", [&] { (void)metadata.require_f32("nan"); });
+    rejects("inf", [&] { (void)metadata.require_number("inf"); });
+    rejects("f64", [&] { (void)metadata.require_f32("f64"); });
+    rejects("pattern", [&] { (void)metadata.require_int_array("pattern"); });
+    rejects("tokens", [&] { (void)metadata.require_int_array("tokens"); });
+    rejects("signed", [&] { (void)metadata.require_string_array("signed"); });
+    rejects("enabled", [&] { (void)metadata.require_string_array("enabled"); });
+    std::filesystem::remove_all(root);
+}
 
 template <typename T>
 std::vector<unsigned char> bytes_for(const std::vector<T> & values) {
@@ -739,6 +825,7 @@ void test_weight_norm_folded_source_uses_direct_backend_upload() {
 int main() {
     try {
         engine::io::json::enable_serialized_json_parsing();
+        test_typed_gguf_metadata();
         test_safetensors_to_gguf_roundtrip();
         test_concurrent_storage_release();
         test_source_policy_cache_and_views();

@@ -372,6 +372,10 @@ std::optional<int32_t> LlamaBpeTokenizer::find_token_id(const std::string & toke
     return it->second;
 }
 
+bool LlamaBpeTokenizer::contains_token_id(int32_t token_id) const noexcept {
+    return impl_->vocab.id_to_token.find(token_id) != impl_->vocab.id_to_token.end();
+}
+
 bool LlamaBpeTokenizer::is_special_token_id(const int32_t token_id) const {
     const auto it = impl_->vocab.id_to_token.find(token_id);
     if (it == impl_->vocab.id_to_token.end()) {

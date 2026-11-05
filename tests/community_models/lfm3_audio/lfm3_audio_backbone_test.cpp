@@ -1,6 +1,6 @@
 // The LFM3-Audio backbone runtime (backbone.h). Synthetic: the tiny test
 // package against the host fp64 reference (lfm3_audio_reference.h): chunked
-// prefill with audio rows and replayed frames, taps, the tied head, decode
+// prefill with audio rows and replayed frames, the tied head, decode
 // steps against a longer prefill, frame embeddings, cache capacity reuse and
 // growth, kept block graphs, and the error paths.
 //
@@ -13,7 +13,7 @@
 #include "test_assert.h"
 
 #include "engine/community_models/lfm3_audio/assets.h"
-#include "engine/community_models/lfm3_audio/backbone.h"
+#include "engine/community_models/lfm3_audio/generator.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/errors.h"
@@ -70,7 +70,7 @@ Synthetic make_synthetic() {
     s.reference = ref::read_ref_stack(*s.assets->model, "lfm.model.", s.assets->backbone.stack);
     s.audio_id = s.package.ids.at("<|audio|>");
     s.audio_out_id = s.package.ids.at("<|audio_out|>");
-    s.d = s.assets->backbone.stack.hidden;
+    s.d = s.assets->backbone.stack.hidden_size;
     s.vocab = s.assets->backbone.vocab_size;
     s.codebooks = s.assets->depth.codebooks;
     s.audio_vocab = s.assets->depth.audio_vocab_size;
@@ -79,7 +79,7 @@ Synthetic make_synthetic() {
 
 std::unique_ptr<Lfm3BackboneRuntime> make_runtime(const Synthetic & s, core::ExecutionContext & execution,
                                                   const lfm3::Lfm3WeightOptions & options) {
-    return std::make_unique<Lfm3BackboneRuntime>(s.assets->model, s.assets->backbone, s.codebooks, s.audio_vocab, execution, options);
+    return std::make_unique<Lfm3BackboneRuntime>(lfm3::load_lfm3_backbone_weights(*s.assets, execution, options), s.assets->backbone, s.codebooks, s.audio_vocab, execution, options);
 }
 
 struct Case {
@@ -158,22 +158,14 @@ ref::Values host_logits(const Synthetic & s, const ref::Values & hidden) {
 void test_prefill_reference(const Synthetic & s, core::ExecutionContext & execution) {
     const int64_t steps = 600;
     const auto c = make_case(s, steps, 20, 30, {270, 271, 300, 520}, 3);
-    const auto expected = ref::stack(s.assets->backbone.stack, s.reference, host_embeddings(s, c), ref::positions_from(0, steps));
+    const auto expected = ref::stack(s.assets->backbone.stack, s.reference, host_embeddings(s, c), ref::positions_from(0, steps), s.assets->backbone.sliding_window);
 
     for (const auto & options : {reference_mode(), native_mode()}) {
         auto runtime = make_runtime(s, execution, options);
-        Lfm3BackboneRuntime::Taps taps;
-        taps.positions = {0, 3, 255, 256, 259, 511, 512, 599};
-        const auto logits = runtime->prefill(c.prompt, s.audio_id, s.audio_out_id, c.audio, 5, Lfm3Output::Logits, &taps);
+        const auto logits = runtime->prefill(c.prompt, s.audio_id, s.audio_out_id, c.audio, 5, Lfm3Output::Logits);
         require(runtime->capacity() == 768 && runtime->position() == steps, "capacity 605 rounded up to 256 = 768, position = prompt length");
 
-        ref::Values expected_taps;
-        for (const int64_t p : taps.positions) {
-            const auto row = row_of(expected, p, s.d);
-            expected_taps.insert(expected_taps.end(), row.begin(), row.end());
-        }
         const double tol = tolerance_of(execution, options);
-        report(std::string("prefill taps (8 positions, 3 blocks) ") + mode_name(options), ref::rel_error(taps.rows, expected_taps), tol);
         const auto last = row_of(expected, steps - 1, s.d);
         report(std::string("prefill last logits ") + mode_name(options), ref::rel_error(logits, host_logits(s, last)), tol);
 
@@ -194,11 +186,8 @@ void test_steps_match_prefill(const Synthetic & s, core::ExecutionContext & exec
 
     for (const auto & options : {reference_mode(), native_mode()}) {
         auto runtime = make_runtime(s, execution, options);
-        Lfm3BackboneRuntime::Taps taps;
-        for (int64_t p = head - 1; p < total; ++p) {
-            taps.positions.push_back(p);
-        }
-        runtime->prefill(c.prompt, s.audio_id, s.audio_out_id, c.audio, 0, Lfm3Output::Hidden, &taps);
+        const auto expected_rows = ref::stack(s.assets->backbone.stack, s.reference, host_embeddings(s, c),
+                                               ref::positions_from(0, total), s.assets->backbone.sliding_window);
 
         lfm3::Lfm3Prompt prefix;
         prefix.ids.assign(c.prompt.ids.begin(), c.prompt.ids.begin() + head);
@@ -210,7 +199,7 @@ void test_steps_match_prefill(const Synthetic & s, core::ExecutionContext & exec
         const auto first = runtime->prefill(prefix, s.audio_id, s.audio_out_id, c.audio, total - head, Lfm3Output::Hidden);
         const double tol = tolerance_of(execution, options);
         report(std::string("prefill(250) last vs prefill(270) row 249 ") + mode_name(options),
-               rel_error(first, std::vector<float>(taps.rows.begin(), taps.rows.begin() + s.d)), tol);
+               rel_error(first, row_of(expected_rows, head - 1, s.d)), tol);
 
         std::vector<float> stepped;
         std::vector<float> expected;
@@ -219,7 +208,8 @@ void test_steps_match_prefill(const Synthetic & s, core::ExecutionContext & exec
             const int32_t id = c.prompt.ids[static_cast<size_t>(p)];
             const auto output = p % 3 == 0 ? Lfm3Output::Logits : Lfm3Output::Hidden;
             const auto out = id == s.audio_out_id ? runtime->step_frame(c.prompt.frames[frame++], output) : runtime->step_text(id, output);
-            const std::vector<float> want(taps.rows.begin() + (p - head + 1) * s.d, taps.rows.begin() + (p - head + 2) * s.d);
+            const auto expected_row = row_of(expected_rows, p, s.d);
+            const std::vector<float> want(expected_row.begin(), expected_row.end());
             if (output == Lfm3Output::Logits) {
                 logits_rel = std::max(logits_rel, rel_error(out, runtime->logits(want)));
             } else {
@@ -228,8 +218,8 @@ void test_steps_match_prefill(const Synthetic & s, core::ExecutionContext & exec
             }
         }
         require(runtime->position() == total, "position after the steps");
-        report(std::string("steps hidden vs prefill(270) taps ") + mode_name(options), rel_error(stepped, expected), tol);
-        report(std::string("steps logits vs prefill(270) taps (worst step) ") + mode_name(options), logits_rel, tol);
+        report(std::string("steps hidden vs full-sequence oracle ") + mode_name(options), rel_error(stepped, expected), tol);
+        report(std::string("steps logits vs full-sequence oracle (worst step) ") + mode_name(options), logits_rel, tol);
     }
 }
 
@@ -286,8 +276,8 @@ std::vector<int64_t> logged_built_blocks(const std::filesystem::path & log_path)
     return counts;
 }
 
-// One runtime against fresh runtimes, counting the block graphs each prefill builds. A block keeps its graph after two
-// runs in a row with the same rows at one capacity; growing the buffer or changing the capacity drops kept graphs.
+// Compare cached execution with fresh runtimes. Framework graphs are cached on
+// first use; replacing stream capacity requires newly bound graphs.
 void test_block_graph_reuse(const Synthetic & s, core::ExecutionContext & execution) {
     const auto tiny = make_case(s, 100, 4, 6, {90}, 37);   // one block of 100 rows
     const auto tail = make_case(s, 300, 4, 6, {290}, 29);  // blocks of 256 and 44 rows
@@ -303,19 +293,19 @@ void test_block_graph_reuse(const Synthetic & s, core::ExecutionContext & execut
     };
     const std::vector<Run> runs = {
         {&tiny, 512, 1},
-        {&tiny, 512, 1},  // block 0 repeats its rows: built and kept
-        {&tail, 512, 2},  // the kept graph has other rows; 256 rows grow the buffer, which drops it
-        {&tiny, 512, 1},  // so block 0 is built again
-        {&full, 512, 2},
-        {&full, 512, 2},  // both blocks repeat their rows: built and kept
+        {&tiny, 512, 0},
+        {&tail, 512, 2},
+        {&tiny, 512, 0},
+        {&full, 512, 1},
         {&full, 512, 0},
-        {&tail, 512, 1},  // block 1 now has 44 rows
-        {&tail, 512, 1},
+        {&full, 512, 0},
         {&tail, 512, 0},
-        {&tiny, 512, 1},
-        {&tiny, 512, 1},   // kept, so the capacity change has a graph to drop
-        {&tiny, 1024, 1},  // a new capacity drops the kept graphs and the rows each block had
+        {&tail, 512, 0},
+        {&tail, 512, 0},
+        {&tiny, 512, 0},
+        {&tiny, 512, 0},
         {&tiny, 1024, 1},
+        {&tiny, 1024, 0},
         {&tiny, 1024, 0},
     };
     std::string wanted;

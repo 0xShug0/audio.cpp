@@ -311,6 +311,26 @@ void test_mul_optional_broadcasting() {
     }
 }
 
+
+void test_mul_preserved_views() {
+    using namespace engine;
+    CpuModuleRunner runner;
+    const auto packed = runner.make_f32(core::TensorShape::from_dims({2, 6}));
+    const auto lhs = modules::SliceModule({1, 0, 3}).build(runner.ctx, packed);
+    const auto rhs = modules::SliceModule({1, 3, 3}).build(runner.ctx, packed);
+    const auto output = modules::MulModule(false, true).build(runner.ctx, lhs, rhs);
+    require(output.tensor->src[0] == lhs.tensor && output.tensor->src[1] == rhs.tensor,
+            "Mul preserved views were materialized");
+    const auto broadcast_rhs = modules::SliceModule({0, 1, 1}).build(runner.ctx, rhs);
+    const auto broadcast = modules::MulModule(true, true).build(runner.ctx, lhs, broadcast_rhs);
+    const auto original = modules::MulModule().build(runner.ctx, lhs, rhs);
+    runner.allocate_tensors();
+    core::write_tensor_f32(packed, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
+    require_allclose(runner.run_f32(output), {4, 10, 18, 70, 88, 108}, 0, "Mul strided views");
+    require_allclose(runner.run_f32(original), {4, 10, 18, 70, 88, 108}, 0, "Mul default view handling");
+    require_allclose(runner.run_f32(broadcast), {10, 22, 36, 70, 88, 108}, 0, "Mul strided broadcast");
+}
+
 void test_graph_optimizer_elides_metadata_nodes_without_changing_output() {
     CpuModuleRunner runner;
     auto input = runner.make_f32(engine::core::TensorShape::from_dims({2, 2}));
@@ -1356,6 +1376,7 @@ int main(int argc, char ** argv) {
         test_batched_rope_matches_independent_rows();
         test_cuda_f16_lowerings_default_off();
         test_mul_optional_broadcasting();
+        test_mul_preserved_views();
         test_weighted_statistics_and_scale_bias();
         test_convnext_default_matches_composition();
         test_prelu_broadcasting();

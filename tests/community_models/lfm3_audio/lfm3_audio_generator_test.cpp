@@ -1,11 +1,10 @@
 // The generator. The mode machine: scripted slot sequences for every
 // transition of the upstream generate() loop. The slot loop, on the synthetic
 // package (CPU, F32): it equals a hand-written loop over the backbone,
-// MaskGIT and the samplers with injected orders, stops at max_steps, sets
+// MaskGIT and the samplers with seeded orders, stops at max_steps, sets
 // ended, skips the last backbone step, and caps the audio tail with an
 // unsampled EOS frame.
 #include "engine/community_models/lfm3_audio/assets.h"
-#include "engine/community_models/lfm3_audio/debug.h"
 #include "engine/community_models/lfm3_audio/generator.h"
 #include "engine/community_models/lfm3_audio/prompt.h"
 #include "engine/framework/core/execution_context.h"
@@ -253,9 +252,9 @@ Synthetic make_synthetic() {
     s.tokenizer = std::make_unique<lfm3::Lfm3Tokenizer>(s.assets->tokenizer_json);
     s.execution = std::make_unique<engine::core::ExecutionContext>(engine::core::BackendConfig{engine::core::BackendType::Cpu, 0, 2});
     const lfm3::Lfm3WeightOptions f32{lfm3::Lfm3WeightType::F32, true};
-    s.backbone = std::make_unique<lfm3::Lfm3BackboneRuntime>(s.assets->model, s.assets->backbone, s.assets->depth.codebooks,
+    s.backbone = std::make_unique<lfm3::Lfm3BackboneRuntime>(lfm3::load_lfm3_backbone_weights(*s.assets, *s.execution, f32), s.assets->backbone, s.assets->depth.codebooks,
                                                               s.assets->depth.audio_vocab_size, *s.execution, f32);
-    s.depth = std::make_unique<lfm3::Lfm3DepthDecoderRuntime>(s.assets->model, s.assets->depth, *s.execution, f32);
+    s.depth = std::make_unique<lfm3::Lfm3DepthDecoderRuntime>(lfm3::load_lfm3_depth_weights(*s.assets, *s.execution, f32), s.assets->depth, *s.execution, f32);
     return s;
 }
 
@@ -289,7 +288,6 @@ void test_matches_manual_loop(Synthetic & s) {
     options.audio.repetition_penalty = 1.5f;
     options.seed = 7;
     options.stop_after_audio_eos = true;
-    options.maskgit_orders = {{11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, {0, 2, 4, 6, 8, 10, 1, 3, 5, 7, 9, 11}};
 
     auto generator = make_generator(s, prompt, options);
     const auto steps = run_all(*generator);
@@ -300,7 +298,7 @@ void test_matches_manual_loop(Synthetic & s) {
                                       lfm3::Lfm3Output::Hidden);
     std::vector<Lfm3Step> expected;
     for (size_t i = 0; i < static_cast<size_t>(options.max_steps); ++i) {
-        const auto order = i < options.maskgit_orders.size() ? options.maskgit_orders[i] : sampler.next_order();
+        const auto order = sampler.next_order();
         const auto codes = lfm3::lfm3_maskgit_frame(*s.depth, hidden, order, s.assets->depth.maskgit_schedule, sampler, eoa);
         expected.push_back(Lfm3Step{-1, {codes.begin(), codes.end()}});
         if (codes[0] == eoa) break;
@@ -316,7 +314,7 @@ void test_matches_manual_loop(Synthetic & s) {
     // The last step does not go through the backbone.
     require_eq(after, static_cast<int64_t>(prompt.ids.size() + steps.size()) - 1, "manual loop backbone position");
     require(!generator->next().has_value(), "manual loop: nothing after the end");
-    std::cout << "  manual loop: equal, injected orders used, last step skipped\n";
+    std::cout << "  manual loop: equal, seeded orders used, last step skipped\n";
 }
 
 // Interleaved turn where every text slot can only pick <|text_end|>: it ends the text at once, the tail is
@@ -334,21 +332,14 @@ void test_tail_cap_and_ended(Synthetic & s) {
         if (id != ids.text_end) options.suppress.push_back(id);
     }
 
-    // The maskgit_orders dump has a row per sampled frame.
-    const auto dumps = lfm3_audio_test::fresh_directory("lfm3_audio_generator_test_dumps");
-    lfm3_audio_test::set_env("LFM3_AUDIO_DUMP_DIR", dumps.string());
     auto generator = make_generator(s, prompt, options);
     const auto steps = run_all(*generator);
-    lfm3_audio_test::set_env("LFM3_AUDIO_DUMP_DIR", "");
     require_eq(steps.size(), size_t{5}, "tail cap steps");
     require_eq(steps[0].token, ids.text_end, "tail cap: text ends first");
     for (size_t i = 1; i <= 2; ++i) {
         require(!steps[i].codes.empty() && steps[i].codes[0] != eoa, "tail frame " + std::to_string(i) + " is sampled speech");
     }
     require(steps[3].codes == std::vector<int32_t>(12, eoa), "the capped tail ends with the EOS frame");
-    std::vector<int64_t> shape;
-    (void)lfm3::lfm3_read_npy_i32(dumps / "maskgit_orders.npy", &shape);
-    require(shape == std::vector<int64_t>{2, 12}, "the EOS frame is not sampled");
     require_eq(steps[4].token, ids.text_end, "tail cap: <|text_end|> in text ends the turn");
     require(generator->ended(), "tail cap: ended");
     require_eq(s.backbone->position(), static_cast<int64_t>(prompt.ids.size()) + 4, "tail cap: last step skipped");

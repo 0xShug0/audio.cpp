@@ -2,8 +2,8 @@
 // request artifacts that carry earlier turns, the room a conversation has,
 // and the S2S prompt that replays earlier replies step by step, on a
 // synthetic tokenizer.
-#include "engine/community_models/lfm3_audio/chat.h"
-#include "engine/community_models/lfm3_audio/features.h"
+#include "engine/community_models/lfm3_audio/prompt.h"
+#include "engine/community_models/lfm3_audio/frontend.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/session.h"
 #include "lfm3_audio_test_tokenizer.h"

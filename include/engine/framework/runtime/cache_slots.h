@@ -69,6 +69,11 @@ public:
         });
     }
 
+    template <typename Fn>
+    void for_each_value(Fn && fn) {
+        for (auto & entry : entries_) { fn(entry.value); }
+    }
+
     void clear() {
         entries_.clear();
     }

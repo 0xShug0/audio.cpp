@@ -9,7 +9,7 @@
 // and codec tests, with the tolerances, weight modes, report and backend
 // options they have in common.
 
-#include "engine/community_models/lfm3_audio/blocks.h"
+#include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 #include "test_assert.h"
@@ -29,7 +29,6 @@
 namespace lfm3_audio_test {
 
 namespace lfm3 = engine::community_models::lfm3_audio;
-namespace blocks = lfm3::blocks;
 
 using Values = std::vector<double>;  // row-major, outermost dimension first
 
@@ -63,7 +62,7 @@ inline std::vector<int32_t> positions_from(int64_t start, int64_t steps) {
 }
 
 struct RefLayer {
-    blocks::LayerKind kind = blocks::LayerKind::Conv;
+    engine::modules::LfmDecoderLayerKind kind = engine::modules::LfmDecoderLayerKind::ShortConv;
     Values operator_norm, ffn_norm;
     Values post_operator_norm, post_ffn_norm;  // empty without sandwich norms
     Values w1, w2, w3;
@@ -81,8 +80,8 @@ inline Values to_values(const std::vector<float> & values) {
     return Values(values.begin(), values.end());
 }
 
-inline RefStack read_ref_stack(const engine::assets::TensorSource & source, const std::string & prefix, const blocks::StackConfig & config) {
-    const bool lfm2 = config.names == blocks::Names::Lfm2;
+inline RefStack read_ref_stack(const engine::assets::TensorSource & source, const std::string & prefix, const engine::modules::LfmDecoderConfig & config) {
+    const bool lfm2 = prefix == "encoder.lfm.lfm.";
     auto read = [&](const std::string & name) { return to_values(source.require_f32(name)); };
 
     RefStack out;
@@ -99,7 +98,7 @@ inline RefStack read_ref_stack(const engine::assets::TensorSource & source, cons
         w.w1 = read(p + "feed_forward.w1.weight");
         w.w2 = read(p + "feed_forward.w2.weight");
         w.w3 = read(p + "feed_forward.w3.weight");
-        if (w.kind == blocks::LayerKind::Conv) {
+        if (w.kind == engine::modules::LfmDecoderLayerKind::ShortConv) {
             w.in_proj = read(p + "conv.in_proj.weight");
             w.out_proj = read(p + "conv.out_proj.weight");
             w.conv = read(p + "conv.conv.weight");
@@ -111,7 +110,7 @@ inline RefStack read_ref_stack(const engine::assets::TensorSource & source, cons
             w.o = read(a + (lfm2 ? "out_proj.weight" : "o_proj.weight"));
             w.q_norm = read(a + (lfm2 ? "q_layernorm.weight" : "q_norm.weight"));
             w.k_norm = read(a + (lfm2 ? "k_layernorm.weight" : "k_norm.weight"));
-            if (config.output_gate) {
+            if (config.attention_gate) {
                 w.gate = read(a + "gate_proj.weight");
             }
         }
@@ -175,9 +174,9 @@ inline Values causal_conv(const Values & padded, const Values & kernel_t, int64_
 }
 
 // The short conv over a whole sequence from zero history: B, C, x = in_proj(hn); out_proj(C * conv(B * x)).
-inline Values short_conv(const blocks::StackConfig & config, const RefLayer & w, const Values & hn) {
-    const int64_t d = config.hidden;
-    const int64_t k = config.conv_kernel;
+inline Values short_conv(const engine::modules::LfmDecoderConfig & config, const RefLayer & w, const Values & hn) {
+    const int64_t d = config.hidden_size;
+    const int64_t k = config.conv_kernel_size;
     const int64_t steps = static_cast<int64_t>(hn.size()) / d;
     const auto bcx = linear(hn, w.in_proj, d, 3 * d);
     Values padded(static_cast<size_t>((steps + k - 1) * d), 0.0);
@@ -225,22 +224,22 @@ inline bool visible(int64_t q, int64_t k, int64_t window) {
     return k <= q && (window == 0 || q - k < window);
 }
 
-inline Values attention(const blocks::StackConfig & config, blocks::LayerKind kind, const RefLayer & w, const Values & hn,
-                        const std::vector<int32_t> & positions) {
-    const int64_t d = config.hidden;
-    const int64_t heads = config.heads;
-    const int64_t kv_heads = config.kv_heads;
+inline Values attention(const engine::modules::LfmDecoderConfig & config, engine::modules::LfmDecoderLayerKind kind, const RefLayer & w, const Values & hn,
+                        const std::vector<int32_t> & positions, int64_t sliding_window = 0, bool causal = true) {
+    const int64_t d = config.hidden_size;
+    const int64_t heads = config.num_attention_heads;
+    const int64_t kv_heads = config.num_key_value_heads;
     const int64_t hd = config.head_dim;
     const int64_t steps = static_cast<int64_t>(positions.size());
-    const bool full = kind == blocks::LayerKind::FullAttention;
-    const int64_t window = full ? 0 : config.sliding_window;
+    const bool full = kind == engine::modules::LfmDecoderLayerKind::FullAttention;
+    const int64_t window = full ? 0 : sliding_window;
 
-    auto q = rms_norm(linear(hn, w.q, d, heads * hd), w.q_norm, hd, config.eps);
-    auto k = rms_norm(linear(hn, w.k, d, kv_heads * hd), w.k_norm, hd, config.eps);
+    auto q = rms_norm(linear(hn, w.q, d, heads * hd), w.q_norm, hd, config.norm_eps);
+    auto k = rms_norm(linear(hn, w.k, d, kv_heads * hd), w.k_norm, hd, config.norm_eps);
     const auto v = linear(hn, w.v, d, kv_heads * hd);
-    const double theta = full ? config.full_theta : config.sliding_theta;
-    rope(q, heads, hd, positions, theta, full ? config.full_rotary_dims : 0);
-    rope(k, kv_heads, hd, positions, theta, full ? config.full_rotary_dims : 0);
+    const double theta = full ? config.full_rope.theta : config.sliding_rope.theta;
+    rope(q, heads, hd, positions, theta, full ? std::max<int64_t>(0, config.full_rope.rotary_dims) : 0);
+    rope(k, kv_heads, hd, positions, theta, full ? std::max<int64_t>(0, config.full_rope.rotary_dims) : 0);
 
     Values context(static_cast<size_t>(steps * heads * hd), 0.0);
     const double scale = 1.0 / std::sqrt(static_cast<double>(hd));
@@ -250,7 +249,7 @@ inline Values attention(const blocks::StackConfig & config, blocks::LayerKind ki
             std::vector<double> scores(static_cast<size_t>(steps), -INFINITY);
             double max_score = -INFINITY;
             for (int64_t j = 0; j < steps; ++j) {
-                if (!config.causal || visible(positions[static_cast<size_t>(i)], positions[static_cast<size_t>(j)], window)) {
+                if (!causal || visible(positions[static_cast<size_t>(i)], positions[static_cast<size_t>(j)], window)) {
                     double s = 0.0;
                     for (int64_t c = 0; c < hd; ++c) {
                         s += q[static_cast<size_t>((i * heads + h) * hd + c)] * k[static_cast<size_t>((j * kv_heads + g) * hd + c)];
@@ -287,36 +286,36 @@ inline Values attention(const blocks::StackConfig & config, blocks::LayerKind ki
     return linear(context, w.o, heads * hd, d);
 }
 
-inline Values feed_forward(const blocks::StackConfig & config, const RefLayer & w, const Values & x) {
-    auto a = linear(x, w.w1, config.hidden, config.ffn);
-    const auto b = linear(x, w.w3, config.hidden, config.ffn);
+inline Values feed_forward(const engine::modules::LfmDecoderConfig & config, const RefLayer & w, const Values & x) {
+    auto a = linear(x, w.w1, config.hidden_size, config.intermediate_size);
+    const auto b = linear(x, w.w3, config.hidden_size, config.intermediate_size);
     for (size_t i = 0; i < a.size(); ++i) {
         a[i] = a[i] / (1.0 + std::exp(-a[i])) * b[i];
     }
-    return linear(a, w.w2, config.ffn, config.hidden);
+    return linear(a, w.w2, config.intermediate_size, config.hidden_size);
 }
 
 // x [steps][D], from empty state; returns the final-normed hidden.
-inline Values stack(const blocks::StackConfig & config, const RefStack & weights, Values x, const std::vector<int32_t> & positions) {
-    const int64_t d = config.hidden;
+inline Values stack(const engine::modules::LfmDecoderConfig & config, const RefStack & weights, Values x, const std::vector<int32_t> & positions, int64_t sliding_window = 0, bool causal = true) {
+    const int64_t d = config.hidden_size;
     for (const auto & w : weights.layers) {
-        const auto hn = rms_norm(x, w.operator_norm, d, config.eps);
-        auto y = w.kind == blocks::LayerKind::Conv ? short_conv(config, w, hn) : attention(config, w.kind, w, hn, positions);
+        const auto hn = rms_norm(x, w.operator_norm, d, config.norm_eps);
+        auto y = w.kind == engine::modules::LfmDecoderLayerKind::ShortConv ? short_conv(config, w, hn) : attention(config, w.kind, w, hn, positions, sliding_window, causal);
         if (!w.post_operator_norm.empty()) {
-            y = rms_norm(y, w.post_operator_norm, d, config.eps);
+            y = rms_norm(y, w.post_operator_norm, d, config.norm_eps);
         }
         for (size_t i = 0; i < x.size(); ++i) {
             x[i] += y[i];
         }
-        auto f = feed_forward(config, w, rms_norm(x, w.ffn_norm, d, config.eps));
+        auto f = feed_forward(config, w, rms_norm(x, w.ffn_norm, d, config.norm_eps));
         if (!w.post_ffn_norm.empty()) {
-            f = rms_norm(f, w.post_ffn_norm, d, config.eps);
+            f = rms_norm(f, w.post_ffn_norm, d, config.norm_eps);
         }
         for (size_t i = 0; i < x.size(); ++i) {
             x[i] += f[i];
         }
     }
-    return rms_norm(x, weights.final_norm, d, config.eps);
+    return rms_norm(x, weights.final_norm, d, config.norm_eps);
 }
 
 inline double rel_error(const std::vector<float> & actual, const Values & expected) {

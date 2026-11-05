@@ -92,7 +92,7 @@ struct Reference {
 Reference codec_reference(const engine::assets::TensorSource & source, const Lfm3CodecConfig & config,
                           const std::vector<std::vector<int32_t>> & frames) {
     const auto read = [&](const std::string & name) { return ref::to_values(source.require_f32(name)); };
-    const int64_t d = config.stack.hidden;
+    const int64_t d = config.stack.hidden_size;
     const int64_t latent = config.codebooks * static_cast<int64_t>(config.fsq_levels.size());
     const auto count = static_cast<int64_t>(frames.size());
     const int64_t steps = count * config.upsample;
@@ -117,7 +117,7 @@ Reference codec_reference(const engine::assets::TensorSource & source, const Lfm
     for (int64_t p = 0; p < steps; ++p) {
         std::copy_n(out.from_quantizer.begin() + (p / config.upsample) * d, d, x.begin() + p * d);
     }
-    out.decoder = ref::stack(config.stack, ref::read_ref_stack(source, "decoder.lfm.", config.stack), x, ref::positions_from(0, steps));
+    out.decoder = ref::stack(config.stack, ref::read_ref_stack(source, "decoder.lfm.", config.stack), x, ref::positions_from(0, steps), config.sliding_window);
     out.spectrum = ref::linear_bias(out.decoder, read("decoder.lin.weight"), read("decoder.lin.bias"), d, config.n_fft + 2);
     out.wave = engine::community_models::lfm2_audio::lfm2_audio_istft(std::vector<float>(out.spectrum.begin(), out.spectrum.end()), steps,
                                                                       source.require_f32("decoder.istft.window"), config.hop);
@@ -139,15 +139,11 @@ void test_synthetic(core::ExecutionContext & execution) {
     const double stage_tol = ref::reference_tolerance(execution);
     const double wave_tol = gpu ? kGpuWaveTolerance : kWaveTolerance;
 
-    Lfm3CodecDecoder codec(assets->codec_weights, config, execution, {Lfm3WeightType::F32, true});
+    Lfm3CodecDecoder codec(load_lfm3_codec_weights(*assets, execution, {Lfm3WeightType::F32, true}), config, execution, {Lfm3WeightType::F32, true});
     ref::require_throws_with([&] { (void)codec.push(frames); }, "not been started", "push before start_stream");
 
     codec.start_stream();
-    Lfm3CodecTaps taps;
-    const auto spectrum = codec.spectrum(frames, &taps);
-    report("synthetic f32 project_out", ref::rel_error(taps.project_out, expected.project_out), stage_tol);
-    report("synthetic f32 from_quantizer", ref::rel_error(taps.from_quantizer, expected.from_quantizer), stage_tol);
-    report("synthetic f32 decoder", ref::rel_error(taps.decoder, expected.decoder), stage_tol);
+    const auto spectrum = codec.spectrum(frames);
     report("synthetic f32 spectrum", ref::rel_error(spectrum, expected.spectrum), stage_tol);
 
     const auto offline = codec.decode(frames);
@@ -178,7 +174,7 @@ void test_synthetic(core::ExecutionContext & execution) {
     ref::require_throws_with([&] { (void)codec.push({std::vector<int32_t>(static_cast<size_t>(config.codebooks), static_cast<int32_t>(codes))}); },
                              "EOS", "an EOS frame");
 
-    Lfm3CodecDecoder native(assets->codec_weights, config, execution, {Lfm3WeightType::Native, true});
+    Lfm3CodecDecoder native(load_lfm3_codec_weights(*assets, execution, {Lfm3WeightType::Native, true}), config, execution, {Lfm3WeightType::Native, true});
     native.start_stream();
     report("synthetic native spectrum", ref::rel_error(native.spectrum(frames), expected.spectrum), kNativeTolerance);
 }

@@ -149,6 +149,7 @@ public:
     std::string decode(const std::vector<int32_t> & token_ids, bool skip_special_tokens = false) const;
 
     std::optional<int32_t> find_token_id(const std::string & token) const;
+    bool contains_token_id(int32_t token_id) const noexcept;
     bool is_special_token_id(int32_t token_id) const;
     bool is_control_token_id(int32_t token_id) const;
     std::optional<int32_t> configured_pad_token_id() const noexcept;

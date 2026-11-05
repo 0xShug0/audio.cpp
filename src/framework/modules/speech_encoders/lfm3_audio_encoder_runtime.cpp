@@ -70,6 +70,7 @@ public:
         inputs.positions = positions_;
         // Encoder attention uses its configured causal window.
         inputs.full_mask = mask_;
+        inputs.sliding_mask = mask_;
         x = build_lfm_decoder(ctx, inputs, weights.decoder, config.decoder).hidden;
         x = LayerNormModule({d, config.projector_norm_eps}).build(ctx, x, weights.projector_norm);
         x = LinearModule({d, config.output_size, true, config.decoder.projection_precision})

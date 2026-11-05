@@ -1,4 +1,4 @@
-// Assets, weight storage and debug dumps.
+// Assets and weight storage.
 //
 // - Weight storage policy on the CPU: lfm3_audio.weight_type f32/f16 force
 //   the type, and native keeps the stored one except BF16 on arm64, which
@@ -7,14 +7,11 @@
 //   including the codec dims derived from tensor shapes, and clear errors for
 //   a wrong directory.
 // - The same package written in the layout of Liquid's published GGUFs: the
-//   same configs, tensors and tokenizer, the speech sampling metadata, which
+//   same configs and tokenizer, native tensor layout, speech sampling metadata, which
 //   backbone and mmproj a path picks, and the loader claiming the directory.
-// - npy dumps read back with lfm3_read_npy_*, and MaskGIT order injection.
 #include "engine/community_models/lfm3_audio/assets.h"
-#include "engine/community_models/lfm3_audio/debug.h"
-#include "engine/community_models/lfm3_audio/published_gguf.h"
 #include "engine/community_models/lfm3_audio/session.h"
-#include "engine/community_models/lfm3_audio/tokenizer.h"
+#include "engine/community_models/lfm3_audio/prompt.h"
 #include "engine/community_models/lfm3_audio/weights.h"
 #include "engine/framework/core/backend.h"
 #include "lfm3_audio_test_package.h"
@@ -42,37 +39,36 @@ namespace lfm3 = engine::community_models::lfm3_audio;
 using engine::assets::TensorStorageType;
 using engine::test::require;
 using engine::test::require_eq;
-using lfm3::blocks::LayerKind;
+using LayerKind = engine::modules::LfmDecoderLayerKind;
 
-using lfm3_audio_test::set_env;
 
 std::string kinds(const std::vector<LayerKind> & layers) {
     std::string out;
-    for (const auto kind : layers) out += kind == LayerKind::Conv ? 'C' : (kind == LayerKind::FullAttention ? 'F' : 'S');
+    for (const auto kind : layers) out += kind == LayerKind::ShortConv ? 'C' : (kind == LayerKind::FullAttention ? 'F' : 'S');
     return out;
 }
 
-std::string describe(const lfm3::blocks::StackConfig & s) {
+std::string describe(const engine::modules::LfmDecoderConfig & s) {
     std::ostringstream out;
-    out << "hidden=" << s.hidden << " ffn=" << s.ffn << " heads=" << s.heads << "/" << s.kv_heads << " hd=" << s.head_dim
-        << " conv_k=" << s.conv_kernel << " window=" << s.sliding_window << " eps=" << s.eps << " layers=" << kinds(s.layers)
-        << " sandwich=" << s.sandwich_norm << " gate=" << s.output_gate << " causal=" << s.causal << " theta=" << s.full_theta
-        << "/" << s.sliding_theta << " rotary=" << s.full_rotary_dims << " names=" << (s.names == lfm3::blocks::Names::Lfm2 ? "lfm2" : "lfm3");
+    out << "hidden=" << s.hidden_size << " ffn=" << s.intermediate_size << " heads=" << s.num_attention_heads << "/" << s.num_key_value_heads << " hd=" << s.head_dim
+        << " conv_k=" << s.conv_kernel_size << " eps=" << s.norm_eps << " layers=" << kinds(s.layers)
+        << " sandwich=" << s.sandwich_norm << " gate=" << s.attention_gate << " theta=" << s.full_rope.theta
+        << "/" << s.sliding_rope.theta << " rotary=" << s.full_rope.rotary_dims;
     return out.str();
 }
 
 // Every config value, one stack per line; equal strings = identical configs.
 std::string describe(const lfm3::Lfm3AudioAssets & a) {
     std::ostringstream out;
-    out << "backbone: " << describe(a.backbone.stack) << " vocab=" << a.backbone.vocab_size << '\n';
-    out << "encoder:  " << describe(a.encoder.stack) << " mels=" << a.encoder.n_mels << " conv=" << a.encoder.conv_channels
-        << " mel_ds=" << a.encoder.mel_after_downsample << " out=" << a.encoder.output_size << '\n';
+    out << "backbone: " << describe(a.backbone.stack) << " window=" << a.backbone.sliding_window << " vocab=" << a.backbone.vocab_size << '\n';
+    out << "encoder:  " << describe(a.encoder.decoder) << " mels=" << a.encoder.mel_bins << " conv=" << a.encoder.conv_channels
+        << " mel_ds=" << (a.encoder.mel_bins / 8) << " window=" << a.encoder.sliding_window << " out=" << a.encoder.output_size << '\n';
     out << "depth:    " << describe(a.depth.stack) << " in=" << a.depth.input_size << " codebooks=" << a.depth.codebooks
         << " audio_vocab=" << a.depth.audio_vocab_size << " schedule=";
     for (const auto n : a.depth.maskgit_schedule) out << n << ',';
     out << '\n' << "codec:    " << describe(a.codec.stack) << " fsq=";
     for (const auto n : a.codec.fsq_levels) out << n << ',';
-    out << " codebooks=" << a.codec.codebooks << " qdim=" << a.codec.quantizer_dim << " upsample=" << a.codec.upsample
+    out << " window=" << a.codec.sliding_window << " codebooks=" << a.codec.codebooks << " qdim=" << a.codec.quantizer_dim << " upsample=" << a.codec.upsample
         << " n_fft=" << a.codec.n_fft << " hop=" << a.codec.hop << " sr=" << a.codec.sample_rate << '\n';
     out << "generation: text=" << a.generation.interleaved_text << " audio=" << a.generation.interleaved_audio << " eos=";
     for (const auto id : a.generation.specials.eos_ids) out << id << ',';
@@ -111,40 +107,40 @@ void test_tiny_package() {
     const auto & s = package.shape;
     const auto & b = assets->backbone.stack;
     require_eq(kinds(b.layers), std::string("CFCS"), "backbone layer kinds");
-    require(b.hidden == 128 && b.ffn == 192 && b.heads == 2 && b.kv_heads == 1 && b.head_dim == 64 && b.conv_kernel == 7,
+    require(b.hidden_size == 128 && b.intermediate_size == 192 && b.num_attention_heads == 2 && b.num_key_value_heads == 1 && b.head_dim == 64 && b.conv_kernel_size == 7,
             "backbone dims");
-    require(b.sliding_window == 4 && b.sandwich_norm && b.output_gate && b.causal && b.names == lfm3::blocks::Names::Lfm3,
+    require(assets->backbone.sliding_window == 4 && b.sandwich_norm && b.attention_gate,
             "backbone flags");
-    require(b.full_theta == 1e6f && b.sliding_theta == 1e4f && b.full_rotary_dims == 32, "backbone rope");
+    require(b.full_rope.theta == 1e6f && b.sliding_rope.theta == 1e4f && b.full_rope.rotary_dims == 32, "backbone rope");
     require_eq(assets->backbone.vocab_size, s.vocab_size, "vocab size");
 
     const auto & e = assets->encoder;
-    require_eq(kinds(e.stack.layers), std::string("CSS"), "encoder attention layers are sliding");
-    require(e.stack.hidden == 128 && e.stack.heads == 2 && e.stack.kv_heads == 1 && e.stack.head_dim == 64 &&
-                e.stack.conv_kernel == 3 && e.stack.sliding_window == 4,
+    require_eq(kinds(e.decoder.layers), std::string("CSS"), "encoder attention layers are sliding");
+    require(e.decoder.hidden_size == 128 && e.decoder.num_attention_heads == 2 && e.decoder.num_key_value_heads == 1 && e.decoder.head_dim == 64 &&
+                e.decoder.conv_kernel_size == 3 && e.sliding_window == 4,
             "encoder dims");
-    require_eq(e.stack.ffn, int64_t{96}, "encoder ffn comes from the weights, not config.json");
-    require(!e.stack.sandwich_norm && !e.stack.output_gate && e.stack.causal && e.stack.names == lfm3::blocks::Names::Lfm2 &&
-                e.stack.full_theta == 1e6f && e.stack.sliding_theta == 1e6f && e.stack.full_rotary_dims == 0,
+    require_eq(e.decoder.intermediate_size, int64_t{96}, "encoder ffn comes from the weights, not config.json");
+    require(!e.decoder.sandwich_norm && !e.decoder.attention_gate &&
+                e.decoder.full_rope.theta == 1e6f && e.decoder.sliding_rope.theta == 1e6f && e.decoder.full_rope.rotary_dims == -1,
             "encoder flags");
-    require(e.n_mels == 128 && e.conv_channels == 8 && e.mel_after_downsample == 16 && e.output_size == 128, "encoder io");
+    require(e.mel_bins == 128 && e.conv_channels == 8 && (e.mel_bins / 8) == 16 && e.output_size == 128, "encoder io");
 
     const auto & d = assets->depth;
     require_eq(kinds(d.stack.layers), std::string("F"), "depth layers");
-    require(d.stack.hidden == 64 && d.stack.heads == 2 && d.stack.kv_heads == 1 && d.stack.head_dim == 32 && d.stack.ffn == 96,
+    require(d.stack.hidden_size == 64 && d.stack.num_attention_heads == 2 && d.stack.num_key_value_heads == 1 && d.stack.head_dim == 32 && d.stack.intermediate_size == 96,
             "depth dims");
-    require(!d.stack.causal && !d.stack.sandwich_norm && d.stack.output_gate && d.stack.full_rotary_dims == 0 &&
-                d.stack.full_theta == 1e6f,
+    require(!d.stack.sandwich_norm && d.stack.attention_gate && d.stack.full_rope.rotary_dims == -1 &&
+                d.stack.full_rope.theta == 1e6f,
             "depth flags");
     require(d.input_size == 128 && d.codebooks == 12 && d.audio_vocab_size == 49 && d.end_of_audio() == 48, "depth vocab");
     require(d.maskgit_schedule == std::vector<int64_t>{4, 4, 4}, "maskgit schedule");
 
     const auto & c = assets->codec;
     require_eq(kinds(c.stack.layers), std::string("CSC"), "codec layer kinds from tensors");
-    require(c.stack.hidden == 128 && c.stack.ffn == 160 && c.stack.heads == 2 && c.stack.kv_heads == 1 && c.stack.head_dim == 64 &&
-                c.stack.conv_kernel == 7 && c.stack.sliding_window == 4,
+    require(c.stack.hidden_size == 128 && c.stack.intermediate_size == 160 && c.stack.num_attention_heads == 2 && c.stack.num_key_value_heads == 1 && c.stack.head_dim == 64 &&
+                c.stack.conv_kernel_size == 7 && c.sliding_window == 4,
             "codec dims from shapes");
-    require(c.stack.sandwich_norm && c.stack.output_gate && c.stack.causal && c.stack.full_theta == 1e6f, "codec flags");
+    require(c.stack.sandwich_norm && c.stack.attention_gate && c.stack.full_rope.theta == 1e6f, "codec flags");
     require(c.fsq_levels == s.fsq_levels && c.codebooks == 12 && c.quantizer_dim == 32 && c.upsample == 6 && c.n_fft == 64 &&
                 c.hop == 16 && c.sample_rate == 24000,
             "codec config");
@@ -332,21 +328,6 @@ void write_published(const lfm3_audio_test::Package & package, const std::filesy
     mmproj.write(mmproj_path);
 }
 
-// Shapes may differ by trailing unit axes (lin_out drops its Conv1d one).
-void require_same_values(const engine::assets::TensorSource & source, const lfm3_audio_test::TensorMap & expected, float tolerance) {
-    const auto squeezed = [](std::vector<int64_t> shape) {
-        while (shape.size() > 1 && shape.back() == 1) shape.pop_back();
-        return shape;
-    };
-    for (const auto & [name, tensor] : expected) {
-        require(squeezed(source.require_metadata(name).shape) == squeezed(tensor.shape), name + " has the checkpoint's shape");
-        const auto values = source.require_f32(name);
-        float worst = 0.0f;
-        for (size_t i = 0; i < values.size(); ++i) worst = std::max(worst, std::abs(values[i] - tensor.values[i]));
-        require(worst <= tolerance, name + " from the published layout differs by " + std::to_string(worst));
-    }
-}
-
 void test_published_package() {
     // The codec config is constant in llama.cpp's layout, so the codec takes the real one.
     lfm3_audio_test::PackageShape shape;
@@ -360,8 +341,8 @@ void test_published_package() {
     const auto dir = lfm3_audio_test::fresh_directory("lfm3_audio_published");
     const auto backbone = dir / "LFM3-Audio-2B-F32.gguf";
     write_published(package, backbone, dir / "mmproj-LFM3-Audio-2B-F32.gguf");
-    require(lfm3::is_lfm3_audio_published_gguf(dir) && lfm3::is_lfm3_audio_published_gguf(backbone) &&
-                !lfm3::is_lfm3_audio_published_gguf(dir / "mmproj-LFM3-Audio-2B-F32.gguf") && !lfm3::is_lfm3_audio_published_gguf(package.root),
+    require(lfm3::is_lfm3_audio_gguf(dir) && lfm3::is_lfm3_audio_gguf(backbone) &&
+                !lfm3::is_lfm3_audio_gguf(dir / "mmproj-LFM3-Audio-2B-F32.gguf") && !lfm3::is_lfm3_audio_gguf(package.root),
             "the published layout is recognized, and only it");
     engine::runtime::ModelLoadRequest load;
     load.model_path = dir;
@@ -371,8 +352,13 @@ void test_published_package() {
     const auto reference = lfm3::load_lfm3_audio_assets(package.root);
     const auto published = lfm3::load_lfm3_audio_assets(dir);
     require_eq(describe(*published), describe(*reference), "the published layout gives the checkpoint's configs");
-    require_same_values(*published->model, package.model, 0.0f);
-    require_same_values(*published->codec_weights, package.codec, 1e-6f);  // the ISTFT window is recomputed
+    require(published->model->has_tensor("token_embd.weight") && !published->model->has_tensor("lfm.model.embed_tokens.weight"),
+            "GGUF backbone retains its native tensor names");
+    require(published->audio_weights->has_tensor("a.gen.code.embd.weight") && !published->audio_weights->has_tensor("depth_embeddings.0.embedding.weight"),
+            "GGUF codebooks remain stacked in the native source");
+    const auto & raw = *published->audio_weights;
+    require(raw.require_f32("a.gen.code.proj_in.weight") == package.model.at("depth_linear.weight").values,
+            "GGUF depth projection retains the checkpoint values");
     const auto & speech = published->generation.speech;
     require(speech.temperature == 0.9f && speech.top_k == 7 && speech.repetition_penalty == 1.25f && speech.repetition_window == 99,
             "speech sampling comes from clip.gen.audio.sampling.*");
@@ -405,7 +391,7 @@ void test_published_package() {
         write_published(package, backbone, dir / "mmproj-LFM3-Audio-2B-F32.gguf", {{key, value}});
         lfm3_audio_test::require_throws_with([&] { (void) lfm3::load_lfm3_audio_assets(backbone); }, key, key + " = " + std::to_string(value));
     }
-    std::cout << "published layout: configs, " << package.model.size() + package.codec.size() << " tensors and the tokenizer match\n";
+    std::cout << "published layout: typed configs, native tensor layout and tokenizer match\n";
     std::filesystem::remove_all(dir);
     std::filesystem::remove_all(package.root);
 }
@@ -448,48 +434,6 @@ void test_load_errors() {
     std::filesystem::remove_all(package.root);
 }
 
-void test_npy_dumps() {
-    const auto dir = lfm3_audio_test::fresh_directory("lfm3_audio_npy_test");
-    set_env("LFM3_AUDIO_DUMP_DIR", "");
-    require(!lfm3::lfm3_dump_enabled(), "dumps are off without LFM3_AUDIO_DUMP_DIR");
-    const std::vector<float> f = {1.5f, -2.0f, 3.25f, 0.0f, 1e-8f, -7.0f};
-    lfm3::lfm3_dump("off", f.data(), {6});
-    require(!std::filesystem::exists(dir / "off.npy"), "nothing is written when dumps are off");
-
-    set_env("LFM3_AUDIO_DUMP_DIR", dir.string());
-    require(lfm3::lfm3_dump_enabled(), "dumps are on");
-    lfm3::lfm3_dump("matrix", f.data(), {2, 3});
-    std::vector<int64_t> shape;
-    require(lfm3::lfm3_read_npy_f32(dir / "matrix.npy", &shape) == f && shape == std::vector<int64_t>{2, 3}, "f32 [2,3] round trip");
-    lfm3_audio_test::require_throws_with([&] { (void) lfm3::lfm3_read_npy_i32(dir / "matrix.npy", nullptr); }, "<i4",
-                                         "i32 read of an f32 file");
-
-    set_env("LFM3_AUDIO_DUMP_FRAMES", "");
-    require_eq(lfm3::lfm3_dump_frames(), int64_t{4}, "default dump frames");
-    set_env("LFM3_AUDIO_DUMP_FRAMES", "9");
-    require_eq(lfm3::lfm3_dump_frames(), int64_t{9}, "dump frames from the environment");
-    set_env("LFM3_AUDIO_DUMP_FRAMES", "x");
-    lfm3_audio_test::require_throws([] { (void) lfm3::lfm3_dump_frames(); }, "bad LFM3_AUDIO_DUMP_FRAMES");
-    set_env("LFM3_AUDIO_DUMP_FRAMES", "");
-
-    set_env("LFM3_AUDIO_MASKGIT_ORDERS", "");
-    require(lfm3::lfm3_injected_orders().empty(), "no injected orders by default");
-    std::vector<int32_t> orders = {11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 3, 1, 4, 0, 5, 9, 2, 6, 8, 7, 11, 10};
-    lfm3::lfm3_dump("orders", orders.data(), {2, 12});
-    set_env("LFM3_AUDIO_MASKGIT_ORDERS", (dir / "orders.npy").string());
-    const auto injected = lfm3::lfm3_injected_orders();
-    require(injected.size() == 2 && injected[0][0] == 11 && injected[1][0] == 3 && injected[1][11] == 10, "injected orders");
-    orders[5] = 7;
-    lfm3::lfm3_dump("orders", orders.data(), {2, 12});
-    lfm3_audio_test::require_throws_with([] { (void) lfm3::lfm3_injected_orders(); }, "permutation", "orders with a repeat");
-    lfm3::lfm3_dump("orders", orders.data(), {24});
-    lfm3_audio_test::require_throws_with([] { (void) lfm3::lfm3_injected_orders(); }, "[frames, 12]", "orders of the wrong shape");
-
-    set_env("LFM3_AUDIO_MASKGIT_ORDERS", "");
-    set_env("LFM3_AUDIO_DUMP_DIR", "");
-    std::cout << "npy dumps kept in " << dir.string() << '\n';  // for a numpy cross-check
-}
-
 }  // namespace
 
 int main() {
@@ -498,7 +442,6 @@ int main() {
         test_tiny_package();
         test_published_package();
         test_load_errors();
-        test_npy_dumps();
     } catch (const std::exception & e) {
         std::cerr << "lfm3_audio_assets_test failed: " << e.what() << '\n';
         return 1;

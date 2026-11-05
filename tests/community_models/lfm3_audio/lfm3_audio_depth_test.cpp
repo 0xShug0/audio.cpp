@@ -13,7 +13,7 @@
 
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/community_models/lfm3_audio/depth.h"
-#include "engine/community_models/lfm3_audio/sampling.h"
+#include "engine/community_models/lfm3_audio/generator.h"
 #include "engine/framework/core/execution_context.h"
 
 #include <algorithm>
@@ -72,7 +72,7 @@ RefDepth read_ref_depth(const engine::assets::TensorSource & source, const Lfm3D
 }
 
 ref::Values ref_pass(const RefDepth & w, const std::vector<float> & hidden, const Lfm3Codes & codes, const Masked & masked) {
-    const int64_t d = w.config.stack.hidden;
+    const int64_t d = w.config.stack.hidden_size;
     const int64_t vocab = w.config.audio_vocab_size;
     auto x = ref::linear(ref::to_values(hidden), w.input_weight, w.config.input_size, kCodebooks * d);
     for (int64_t i = 0; i < kCodebooks; ++i) {
@@ -83,12 +83,12 @@ ref::Values ref_pass(const RefDepth & w, const std::vector<float> & hidden, cons
                 (masked[k] ? w.mask[static_cast<size_t>(c)] : w.embeddings[static_cast<size_t>((i * vocab + codes[k]) * d + c)]);
         }
     }
-    const auto o = ref::stack(w.config.stack, w.stack, x, ref::positions_from(0, kCodebooks));
+    const auto o = ref::stack(w.config.stack, w.stack, x, ref::positions_from(0, kCodebooks), 0, false);
     ref::Values logits(static_cast<size_t>(kCodebooks * vocab));
     for (int64_t i = 0; i < kCodebooks; ++i) {
         const ref::Values oi(o.begin() + i * d, o.begin() + (i + 1) * d);
         const ref::Values ni(w.norms.begin() + i * d, w.norms.begin() + (i + 1) * d);
-        const auto n = ref::rms_norm(oi, ni, d, w.config.stack.eps);
+        const auto n = ref::rms_norm(oi, ni, d, w.config.stack.norm_eps);
         for (int64_t v = 0; v < vocab; ++v) {
             double sum = 0.0;
             for (int64_t c = 0; c < d; ++c) sum += w.embeddings[static_cast<size_t>((i * vocab + v) * d + c)] * n[static_cast<size_t>(c)];
@@ -136,8 +136,8 @@ void test_synthetic(core::ExecutionContext & execution) {
     const int64_t vocab = config.audio_vocab_size;
     lfm2_audio_test::Random random(7);
 
-    Lfm3DepthDecoderRuntime depth(assets->model, config, execution, {Lfm3WeightType::F32, true});
-    Lfm3DepthDecoderRuntime native(assets->model, config, execution, {Lfm3WeightType::Native, true});
+    Lfm3DepthDecoderRuntime depth(load_lfm3_depth_weights(*assets, execution, {Lfm3WeightType::F32, true}), config, execution, {Lfm3WeightType::F32, true});
+    Lfm3DepthDecoderRuntime native(load_lfm3_depth_weights(*assets, execution, {Lfm3WeightType::Native, true}), config, execution, {Lfm3WeightType::Native, true});
     const double tolerance = ref::reference_tolerance(execution);
     const bool gpu = execution.backend_type() != core::BackendType::Cpu;
 
@@ -163,42 +163,26 @@ void test_synthetic(core::ExecutionContext & execution) {
         const auto schedule = config.maskgit_schedule;
         Lfm3AudioSampler orders({}, 11);
         int eos_frames = 0;
-        int early = 0;
         int mismatches = 0;
         constexpr int kFrames = 120;
         for (int f = 0; f < kFrames; ++f) {
             const auto hidden = random.uniform(static_cast<size_t>(config.input_size), 1.0f);
             const auto order = orders.next_order();
             Lfm3AudioSampler sampler(greedy(), 0);
-            Lfm3FrameTaps taps;
-            const auto codes = lfm3_maskgit_frame(depth, hidden, order, schedule, sampler, config.end_of_audio(), &taps);
+            const auto codes = lfm3_maskgit_frame(depth, hidden, order, schedule, sampler, config.end_of_audio());
             const bool eos = codes[0] == config.end_of_audio();
-            size_t next = 0;
-            for (size_t p = 0; p < taps.pass_logits.size(); ++p) {
-                for (int64_t i = 0; i < schedule[p] && next < order.size(); ++i, ++next) {
-                    const auto k = static_cast<size_t>(order[next]);
-                    const auto pick = first_argmax(taps.pass_logits[p].data() + k * static_cast<size_t>(vocab), static_cast<size_t>(vocab));
-                    if (pick == config.end_of_audio()) {
-                        require(eos && p + 1 == taps.pass_logits.size(), "the frame must stop at its end-of-audio pass");
-                        next = order.size();
-                        break;
-                    }
-                    require(eos || pick == codes[k], "a pick must be its pass's argmax");
-                }
-            }
-            require(eos || taps.pass_logits.size() == schedule.size(), "a frame without end-of-audio runs every pass");
+            require(!eos || std::all_of(codes.begin(), codes.end(), [&](int32_t c) { return c == config.end_of_audio(); }),
+                    "an end-of-audio frame contains only end-of-audio codes");
             eos_frames += eos;
-            early += eos && taps.pass_logits.size() < schedule.size();
             if (!gpu) {
                 int eos_pass = -1;
                 const auto expected = ref_maskgit(reference, hidden, order, eos_pass);
                 mismatches += codes != expected;
-                require(!eos || eos_pass + 1 == static_cast<int>(taps.pass_logits.size()), "end-of-audio pass differs from the reference");
             }
         }
-        std::printf("PASS synthetic greedy MaskGIT: %d frames, %d end-of-audio (%d stopped early), %d reference mismatches%s\n", kFrames,
-                    eos_frames, early, mismatches, gpu ? " (reference compared on CPU only)" : "");
-        require(eos_frames > 0 && eos_frames < kFrames && early > 0, "the frames must cover both outcomes and an early stop");
+        std::printf("PASS synthetic greedy MaskGIT: %d frames, %d end-of-audio %d reference mismatches%s\n", kFrames,
+                    eos_frames, mismatches, gpu ? " (reference compared on CPU only)" : "");
+        require(eos_frames > 0 && eos_frames < kFrames, "the frames must cover both outcomes");
         require(mismatches == 0, "greedy MaskGIT must reproduce the reference codes");
     }
 

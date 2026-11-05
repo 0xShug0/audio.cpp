@@ -5,8 +5,8 @@
 // keep-special and skip-special decode) and probes/ignore_merges_cases.json
 // (the vocab strings ignore_merges tokenizes as one token). With --gguf, a
 // published backbone GGUF's tokenizer must match tokenizer.json.
-#include "engine/community_models/lfm3_audio/tokenizer.h"
-#include "engine/community_models/lfm3_audio/published_gguf.h"
+#include "engine/community_models/lfm3_audio/prompt.h"
+#include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
 #include "lfm3_audio_test_tokenizer.h"
@@ -225,7 +225,7 @@ Counts check_cases(const lfm3::Lfm3Tokenizer & tokenizer, const std::filesystem:
 // The tokenizer built from a published GGUF's tokenizer.ggml.* against the one from tokenizer.json.
 void test_gguf(const RealData & real) {
     const lfm3::Lfm3Tokenizer from_json(real.tokenizer_json());
-    const auto vocabulary = lfm3::open_lfm3_audio_published_gguf(real.gguf).vocabulary;
+    const auto vocabulary = lfm3::load_lfm3_audio_gguf_assets(real.gguf)->vocabulary;
     const lfm3::Lfm3Tokenizer from_gguf(vocabulary);
     const auto & a = from_json.ids();
     const auto & b = from_gguf.ids();

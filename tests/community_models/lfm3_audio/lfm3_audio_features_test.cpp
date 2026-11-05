@@ -1,6 +1,6 @@
 // The LFM3-Audio ASR frontend: frame and token counts, the log-mel features
 // against a host fp64 DFT reference, and the 16 kHz mono conversion.
-#include "engine/community_models/lfm3_audio/features.h"
+#include "engine/community_models/lfm3_audio/frontend.h"
 #include "engine/framework/runtime/errors.h"
 #include "test_assert.h"
 
