@@ -48,7 +48,8 @@ function transaction<T>(
 
 export async function listVoices(): Promise<SavedVoice[]> {
   const voices = await transaction<SavedVoice[]>(voiceStoreName, 'readonly', (store) => store.getAll());
-  return voices.sort((left, right) => right.createdAt - left.createdAt);
+  return voices.sort((left, right) =>
+    left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' }) || left.id.localeCompare(right.id));
 }
 
 export function saveVoice(voice: SavedVoice): Promise<IDBValidKey> {
