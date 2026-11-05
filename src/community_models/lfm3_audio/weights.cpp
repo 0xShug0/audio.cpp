@@ -63,7 +63,7 @@ core::TensorValue Lfm3Weights::load_tensor(const assets::TensorSource & source, 
         ? lfm3_storage_type(execution_.backend(), type, options_) : requested;
     auto stored_shape = metadata.shape;
     while (stored_shape.size() > shape.size() && stored_shape.back() == 1) stored_shape.pop_back();
-    if (stored_shape != metadata.shape && stored_shape == shape) {
+    if (shape.size() == 2 && stored_shape != metadata.shape && stored_shape == shape) {
         return plain_.load_tensor_as_shape(source, name, storage, metadata.shape, core::TensorShape::from_dims({shape.at(0), shape.at(1)}));
     }
     const auto buffer_type = storage == assets::TensorStorageType::Native && shape.size() == 2
@@ -124,7 +124,8 @@ bool lfm3_backend_gathers(ggml_backend_t backend, ggml_type type) {
 modules::LfmDecoderConfig lfm3_decoder_config(modules::LfmDecoderConfig config, const Lfm3WeightOptions & options) {
     config.projection_precision = kLfm3MatmulPrecision;
     config.attention_precision = GGML_PREC_F32;
-    config.contiguous_attention = true;
+    config.conv_lowering = modules::LfmDecoderConvLowering::OrderedTaps;
+    config.preserve_mul_input_layout = true;
     const auto hd = config.head_dim;
     config.attention_lowering = !lfm3_reference_precision(options) && (hd == 64 || hd == 96 || hd == 128)
         ? modules::GroupedQueryAttentionLowering::FlashGroupedViewKV : modules::GroupedQueryAttentionLowering::ManualRepeat;

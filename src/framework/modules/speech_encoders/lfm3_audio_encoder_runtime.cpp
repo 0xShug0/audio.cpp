@@ -39,25 +39,14 @@ public:
         input_ = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, 1, config.mel_bins, frames}));
         ggml_set_input(input_.tensor);
 
-        const auto conv = [&](const TensorValue & input, const Conv2dConfig & spec, const Conv2dWeights & weight) {
-            if (!config.broadcast_conv_bias) { return Conv2dModule(spec).build(ctx, input, weight); }
-            auto lowering = spec;
-            lowering.use_bias = false;
-            auto out = Conv2dModule(lowering).build(ctx, input, {weight.weight, std::nullopt});
-            if (spec.use_bias) {
-                out = core::wrap_tensor(ggml_add(g, out.tensor,
-                    ggml_reshape_4d(g, weight.bias.value().tensor, 1, 1, spec.out_channels, 1)), out.shape);
-            }
-            return out;
-        };
         // Official downsampler: SiLU after conv_in and after each depthwise/pointwise pair.
-        auto x = conv(input_, {1, c, 3, 3, 2, 2, 1, 1}, weights.conv_in);
+        auto x = Conv2dModule({1, c, 3, 3, 2, 2, 1, 1}).build(ctx, input_, weights.conv_in);
         x = SiluModule{}.build(ctx, x);
         x = DepthwiseConv2dModule({c, 3, 3, 2, 2, 1, 1}).build(ctx, x, weights.conv_mid);
-        x = conv(x, {c, c, 1, 1}, weights.lin_mid);
+        x = Conv2dModule({c, c, 1, 1}).build(ctx, x, weights.lin_mid);
         x = SiluModule{}.build(ctx, x);
         x = DepthwiseConv2dModule({c, 3, 3, 2, 2, 1, 1}).build(ctx, x, weights.conv_end);
-        x = conv(x, {c, c, 1, 1}, weights.lin_end);
+        x = Conv2dModule({c, c, 1, 1}).build(ctx, x, weights.lin_end);
         x = SiluModule{}.build(ctx, x);
         tokens_ = x.shape.dims[3];
         if (tokens_ != (frames + kDownsampleStride - 1) / kDownsampleStride ||

@@ -862,6 +862,129 @@ void test_cached_runtime(core::ExecutionContext & execution) {
     }
 }
 
+
+// Compare a growing F16 cache with an independently allocated full-capacity
+// control. Input/readout changes exercise the retained decode arenas; releasing
+// scratch and growing storage must preserve both KV rows and convolution history.
+void test_f16_cache_lifecycle(core::ExecutionContext & execution) {
+    for (const auto lowering : {modules::LfmDecoderConvLowering::Depthwise2d, modules::LfmDecoderConvLowering::OrderedTaps}) {
+        for (const bool preserve_layout : {false, true}) {
+            auto c = configuration({Kind::ShortConv, Kind::FullAttention, Kind::SlidingAttention});
+            c.conv_lowering = lowering;
+            c.preserve_mul_input_layout = preserve_layout;
+            Fixture f(execution, c);
+            f.weights.token_embedding = f.tensor({11, c.hidden_size});
+            f.weights.output_projection = f.linear(7, c.hidden_size);
+            f.upload();
+            modules::LfmDecoderRuntime runtime(c, f.weights, execution, 8);
+            auto growing = runtime.create_decode_session(4, 2, GGML_TYPE_F16);
+            auto control = runtime.create_decode_session(12, 2, GGML_TYPE_F16);
+            const auto in = input(c.hidden_size, 1, 11);
+            const auto request = [&](int64_t begin, int64_t count) {
+                modules::LfmDecoderForward out;
+                if (count == 1 && begin % 2) {
+                    out.token_ids = {static_cast<int32_t>(begin % 11)};
+                } else {
+                    out.hidden.assign(in.hidden.begin() + begin * c.hidden_size,
+                                      in.hidden.begin() + (begin + count) * c.hidden_size);
+                }
+                out.readout = begin % 3 ? modules::LfmDecoderReadout::Hidden : modules::LfmDecoderReadout::Logits;
+                return out;
+            };
+            const auto prefix = request(0, 3);
+            close(growing->prefill(prefix).values, doubles(control->prefill(prefix).values), "F16 cache prefix");
+            for (int64_t row = 3; row < in.steps; ++row) {
+                if (row == 4) {
+                    growing->release_workspace();
+                    growing->reserve(12);
+                }
+                const auto next = request(row, 1);
+                close(growing->decode_step(next).values, doubles(control->decode_step(next).values), "F16 cache growth and graph switching");
+                require_eq(growing->valid_steps(), row + 1, "F16 state advances once per step");
+            }
+            growing->reset();
+            control->reset();
+            close(growing->prefill(prefix).values, doubles(control->prefill(prefix).values), "F16 reset reproduces prefix");
+            f.intact();
+        }
+    }
+}
+
+// The composed builder and DecodeSession must agree on full-cache and explicit
+// prefix extents while retaining independently owned KV and convolution history.
+void test_composed_cache_extent(core::ExecutionContext & execution) {
+    const auto c = configuration({Kind::ShortConv, Kind::FullAttention, Kind::SlidingAttention});
+    Fixture f(execution, c);
+    f.upload();
+    const auto in = input(c.hidden_size, 1, 6);
+    constexpr int64_t capacity = 8, steps = 2;
+    for (const auto type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+        for (const int64_t extent : {int64_t{0}, capacity, in.steps}) {
+            modules::LfmDecoderRuntime runtime(c, f.weights, execution);
+            auto control = runtime.create_decode_session(capacity, 2, type);
+            modules::LfmDecoderState state(execution, c, capacity, type);
+            const int64_t keys = extent ? extent : capacity;
+            for (int64_t begin = 0; begin < in.steps; begin += steps) {
+                Graph g(execution);
+                core::ModuleBuildContext ctx{g.context.get(), "lfm_decoder_test.composed", execution.backend_type()};
+                modules::LfmDecoderInputs x;
+                x.hidden = g.input(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, steps, c.hidden_size}));
+                x.positions = g.input(ctx, GGML_TYPE_I32, TensorShape::from_dims({steps}));
+                x.full_mask = g.input(ctx, GGML_TYPE_F16, TensorShape::from_dims({steps, keys}));
+                x.sliding_mask = g.input(ctx, GGML_TYPE_F16, TensorShape::from_dims({steps, keys}));
+                const auto slots = g.input(ctx, GGML_TYPE_I64, TensorShape::from_dims({steps}));
+                modules::LfmDecoderCacheInputs cache{state.layers(), slots};
+                cache.attention_rows = extent;
+                for (const int64_t invalid : {int64_t{-1}, capacity + 1}) {
+                    cache.attention_rows = invalid;
+                    bool rejected = false;
+                    try { (void)modules::build_lfm_decoder(ctx, g.graph, x, f.weights.decoder, c, cache); }
+                    catch (const std::invalid_argument &) { rejected = true; }
+                    require(rejected, "invalid composed attention extent rejected");
+                }
+                cache.attention_rows = extent;
+                if (extent == 0 && begin == 0) {
+                    modules::LfmDecoderState wider(execution, c, capacity + 2, type);
+                    auto mixed = state.layers();
+                    mixed.back() = wider.layers().back();
+                    bool rejected = false;
+                    try { (void)modules::build_lfm_decoder(ctx, g.graph, x, f.weights.decoder, c, {mixed, slots}); }
+                    catch (const std::invalid_argument &) { rejected = true; }
+                    require(rejected, "ambiguous full-cache extent rejected");
+                }
+                const auto out = modules::build_lfm_decoder(ctx, g.graph, x, f.weights.decoder, c, cache).hidden;
+                ggml_set_output(out.tensor);
+                ggml_build_forward_expand(g.graph, out.tensor);
+                core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), g.graph, "lfm_decoder_test.composed");
+                g.allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
+                require(g.allocator && ggml_gallocr_reserve(g.allocator.get(), g.graph) &&
+                        ggml_gallocr_alloc_graph(g.allocator.get(), g.graph), "composed graph allocation");
+                modules::LfmDecoderForward request;
+                request.hidden.assign(in.hidden.begin() + begin * c.hidden_size,
+                                      in.hidden.begin() + (begin + steps) * c.hidden_size);
+                core::write_tensor_f32(x.hidden, request.hidden);
+                const std::vector<int32_t> positions{static_cast<int32_t>(begin), static_cast<int32_t>(begin + 1)};
+                const std::vector<int64_t> indices{begin, begin + 1};
+                core::write_tensor_i32(x.positions, positions);
+                ggml_backend_tensor_set(slots.tensor, indices.data(), 0, indices.size() * sizeof(int64_t));
+                std::vector<ggml_fp16_t> full(steps * keys), sliding(steps * keys);
+                for (int64_t q = 0; q < steps; ++q) {
+                    for (int64_t k = 0; k < keys; ++k) {
+                        full[q * keys + k] = ggml_fp32_to_fp16(k <= begin + q ? 0.f : -INFINITY);
+                        sliding[q * keys + k] = ggml_fp32_to_fp16(k <= begin + q && k > begin + q - 2 ? 0.f : -INFINITY);
+                    }
+                }
+                ggml_backend_tensor_set(x.full_mask->tensor, full.data(), 0, full.size() * sizeof(ggml_fp16_t));
+                ggml_backend_tensor_set(x.sliding_mask->tensor, sliding.data(), 0, sliding.size() * sizeof(ggml_fp16_t));
+                require(core::compute_backend_graph(execution.backend(), g.graph) == GGML_STATUS_SUCCESS, "composed graph compute");
+                ggml_backend_synchronize(execution.backend());
+                close(core::read_tensor_f32(out.tensor), doubles(control->prefill(request).values), "composed cache extent");
+            }
+            f.intact();
+        }
+    }
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -906,6 +1029,8 @@ int main(int argc, char ** argv) {
         test_frequency_factors(execution);
         test_runtime(execution);
         test_cached_runtime(execution);
+        test_f16_cache_lifecycle(execution);
+        test_composed_cache_extent(execution);
         if (execution.backend_type() == core::BackendType::Cpu) { test_correlated_cpu_stress(execution); }
         engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         std::cout << "lfm_decoder_test: PASS\n";

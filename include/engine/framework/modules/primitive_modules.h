@@ -37,7 +37,9 @@ private:
 class MulModule {
 public:
     MulModule() = default;
-    explicit MulModule(bool allow_broadcast) : allow_broadcast_(allow_broadcast) {}
+    // Preserve views only when the caller accepts strided elementwise inputs.
+    explicit MulModule(bool allow_broadcast, bool preserve_input_layout = false)
+        : allow_broadcast_(allow_broadcast), preserve_input_layout_(preserve_input_layout) {}
     const core::ModuleSchema & schema() const noexcept;
     core::TensorValue build(
         core::ModuleBuildContext & ctx,
@@ -47,6 +49,7 @@ public:
     static const core::ModuleSchema & static_schema() noexcept;
 private:
     bool allow_broadcast_ = false;
+    bool preserve_input_layout_ = false;
 };
 
 struct ScaleBiasConfig {

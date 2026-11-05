@@ -114,7 +114,6 @@ struct Lfm3AudioFrontend::Impl {
         : weights(std::move(weights_in)), config(std::move(config_in)), threads(execution.config().threads), encoder([&] {
               auto resolved = config;
               resolved.decoder = lfm3_decoder_config(config.decoder, options);
-              resolved.broadcast_conv_bias = true;
               return resolved;
           }(), weights.tensors, execution, 1) {}
 

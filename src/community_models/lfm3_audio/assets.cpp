@@ -734,13 +734,6 @@ modules::LfmDecoderWeights load_lfm3_stack_weights(Lfm3Weights & stores, const a
             w.conv.out_proj = modules::binding::linear_from_source(stores, source, p + names.conv_out, assets::TensorStorageType::Native, d, d, false);
             const auto kernel_shape = (layout == Lfm3StackLayout::Hf || layout == Lfm3StackLayout::HfEncoder) ? std::vector<int64_t>{d, 1, k} : std::vector<int64_t>{d, k};
             const auto kernel = source.require_f32(p + names.conv_kernel + ".weight", kernel_shape);
-            std::vector<float> kernel_t(kernel.size());
-            for (int64_t c = 0; c < d; ++c) {
-                for (int64_t i = 0; i < k; ++i) {
-                    kernel_t[static_cast<size_t>(i * d + c)] = kernel[static_cast<size_t>(c * k + i)];
-                }
-            }
-            w.conv.time_major_kernel = stores.plain().make_f32(TensorShape::from_dims({k, d}), std::move(kernel_t));
             w.conv.kernel = stores.plain().make_f32(TensorShape::from_dims({d, 1, k}), kernel);
         } else {
             const int64_t q_rows = config.num_attention_heads * hd;

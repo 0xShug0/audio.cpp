@@ -492,6 +492,7 @@ struct Lfm3Generator::Impl {
     std::vector<float> out;  // the backbone's output for the next slot: logits (text) or hidden (audio)
     std::vector<Lfm3Step> steps;
     bool started = false;
+    bool advance_pending = false;
     bool ended = false;
     bool done = false;
 };
@@ -514,6 +515,12 @@ std::optional<Lfm3Step> Lfm3Generator::next() {
         g.audio = {};
         g.started = true;
     }
+    if (g.advance_pending) {
+        const auto & previous = g.steps.back();
+        const auto output = g.output_for_next();
+        g.out = previous.codes.empty() ? g.backbone.step_text(previous.token, output) : g.backbone.step_frame(previous.codes, output);
+        g.advance_pending = false;
+    }
 
     Lfm3Step step;
     if (g.machine.next_slot() == Lfm3SlotKind::Audio) {
@@ -528,10 +535,8 @@ std::optional<Lfm3Step> Lfm3Generator::next() {
     const bool eos_frame = !step.codes.empty() && step.codes[0] == g.end_of_audio;
     g.ended = g.machine.finished() || (g.options.stop_after_audio_eos && eos_frame);
     g.done = g.ended || static_cast<int64_t>(g.steps.size()) >= g.options.max_steps;
-    if (!g.done) {
-        const auto output = g.output_for_next();
-        g.out = step.codes.empty() ? g.backbone.step_text(step.token, output) : g.backbone.step_frame(step.codes, output);
-    }
+    // Yield the requested output before doing work for the following pull.
+    g.advance_pending = !g.done;
     return step;
 }
 

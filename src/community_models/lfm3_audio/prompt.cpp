@@ -84,7 +84,7 @@ std::string Lfm3Tokenizer::decode(const std::vector<int32_t> & ids, bool skip_sp
     std::vector<int32_t> kept;
     kept.reserve(ids.size());
     for (const int32_t id : ids) {
-        if (id < bpe_->token_id_limit() && id != ids_.audio_out && !bpe_->is_control_token_id(id)) {
+        if (bpe_->contains_token_id(id) && id != ids_.audio_out && !bpe_->is_control_token_id(id)) {
             kept.push_back(id);
         }
     }

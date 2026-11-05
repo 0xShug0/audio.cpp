@@ -335,13 +335,9 @@ struct LlamaBpeTokenizer::Impl {
         }
         add_runtime_special_tokens(spec.additional_special_tokens, vocab);
         vendor::rebuild_special_tokens_cache(vocab);
-        for (const auto & entry : vocab.id_to_token) {
-            token_id_limit = std::max(token_id_limit, static_cast<int64_t>(entry.first) + 1);
-        }
     }
 
     BpeVocabulary vocab;
-    int64_t token_id_limit = 0;
     std::string normalizer_space_replacement;
 };
 
@@ -376,8 +372,8 @@ std::optional<int32_t> LlamaBpeTokenizer::find_token_id(const std::string & toke
     return it->second;
 }
 
-int64_t LlamaBpeTokenizer::token_id_limit() const noexcept {
-    return impl_->token_id_limit;
+bool LlamaBpeTokenizer::contains_token_id(int32_t token_id) const noexcept {
+    return impl_->vocab.id_to_token.find(token_id) != impl_->vocab.id_to_token.end();
 }
 
 bool LlamaBpeTokenizer::is_special_token_id(const int32_t token_id) const {

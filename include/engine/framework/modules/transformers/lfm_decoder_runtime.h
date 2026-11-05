@@ -15,6 +15,7 @@
 namespace engine::modules {
 
 enum class LfmDecoderLayerKind { ShortConv, FullAttention, SlidingAttention };
+enum class LfmDecoderConvLowering { Depthwise2d, OrderedTaps };
 
 struct LfmDecoderRopeConfig {
     float theta = 1000000.0f;
@@ -41,8 +42,9 @@ struct LfmDecoderConfig {
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     ggml_prec attention_precision = GGML_PREC_DEFAULT;
     GroupedQueryAttentionLowering attention_lowering = GroupedQueryAttentionLowering::ManualRepeat;
-    // Materialize attention layouts explicitly when required by the execution recipe.
-    bool contiguous_attention = false;
+    LfmDecoderConvLowering conv_lowering = LfmDecoderConvLowering::Depthwise2d;
+    // Elementwise multiplication may consume views without materializing inputs.
+    bool preserve_mul_input_layout = false;
     // Optional rounding before the RMSNorm weight multiplication, as in upstream.
     // This alone does not emulate all BF16 activation rounding.
     std::optional<ggml_type> normalized_round_type;
@@ -58,7 +60,6 @@ struct LfmDecoderConvWeights {
     LinearWeights in_proj, out_proj;
     core::TensorValue kernel; // F32 logical [hidden_size, 1, kernel_size], oldest tap first
     std::optional<core::TensorValue> bias; // F32 [hidden_size]
-    std::optional<core::TensorValue> time_major_kernel; // optional F32 [kernel_size, hidden_size]
 };
 
 struct LfmDecoderLayerWeights {
@@ -93,7 +94,7 @@ struct LfmDecoderInputs {
 };
 
 // Caller-owned state for composition into a larger cached graph. Cache tensors
-// are [capacity, kv_heads * head_dim]; convolution history is [kernel-1, hidden].
+// are [1, capacity, kv_heads, head_dim]; convolution history is [kernel-1, hidden].
 struct LfmDecoderLayerState {
     core::TensorValue key, value, conv_tail;
 };
@@ -119,7 +120,7 @@ private:
 struct LfmDecoderCacheInputs {
     const std::vector<LfmDecoderLayerState> & layers;
     core::TensorValue slots; // I64 [steps], rows to append
-    int64_t attention_rows = 0; // visible prefix; masks use this extent
+    int64_t attention_rows = 0; // zero uses the full cache; attention layers must then have equal capacities
 };
 
 struct LfmDecoderOutputs {

@@ -222,6 +222,12 @@ struct Lfm3CodecDecoder::Impl {
         return out;
     }
 
+    Lfm3CodecConfig config;
+    core::ExecutionContext & execution;
+    Lfm3WeightOptions options;
+    Lfm3CodecWeights weights;
+    int64_t capacity;
+    std::optional<modules::LfmDecoderState> state;
     runtime::CacheSlots<int64_t, std::unique_ptr<ChunkGraph>> graphs{kKeptGraphs};
     int64_t step = 0;  // the stream's next absolute step
     std::optional<lfm2_audio::Lfm2StreamingIstft> istft;

@@ -31,9 +31,8 @@ using LayerState = LfmDecoderLayerState;
 struct CachedBuild {
     const std::vector<LayerState> & layers;
     ggml_tensor * slots;
-    int64_t capacity;
-    std::vector<std::pair<ggml_tensor *, ggml_tensor *>> tail_updates;
-    ggml_cgraph * graph = nullptr;
+    int64_t attention_rows;
+    ggml_cgraph * graph;
 };
 
 // The upstream zero-tail RoPE rotates pairs (i, i + head_dim/2), with
@@ -105,19 +104,11 @@ TensorValue attention(
     if (state) {
         // Cache RoPE-applied K and projected V. SET_ROWS retains backend residency
         // and makes the attention read depend on the append, without a host copy.
-        const int64_t capacity = state->key.tensor->ne[1];
+        const int64_t capacity = state->key.shape.dims[1];
         const int64_t count = attention_rows ? attention_rows : capacity;
-        const auto cache_rows = [&](const TensorValue & rows, ggml_tensor * cache) {
-            ggml_tensor * view;
-            if (cache->type == GGML_TYPE_F16) {
-                auto * shaped = ggml_reshape_4d(ctx.ggml, cache, dim, kv_heads, capacity, 1);
-                view = FastKVSetRowsModule{}.build_block(ctx,
-                    core::wrap_tensor(shaped, TensorShape::from_dims({1, capacity, kv_heads, dim}), cache->type), rows,
-                    core::wrap_tensor(slots, TensorShape::from_dims({steps}), GGML_TYPE_I64)).tensor;
-            } else {
-                auto * flat = ggml_reshape_2d(ctx.ggml, ggml_cont(ctx.ggml, rows.tensor), kv_heads * dim, steps);
-                view = ggml_reshape_4d(ctx.ggml, ggml_set_rows(ctx.ggml, cache, flat, slots), dim, kv_heads, capacity, 1);
-            }
+        const auto cache_rows = [&](const TensorValue & rows, const TensorValue & cache) {
+            auto * view = FastKVSetRowsModule{}.build_block(ctx, cache, rows,
+                core::wrap_tensor(slots, TensorShape::from_dims({steps}), GGML_TYPE_I64)).tensor;
             if (count != capacity) {
                 view = ggml_view_4d(ctx.ggml, view, dim, kv_heads, count, 1, view->nb[1], view->nb[2], view->nb[3], 0);
             }
@@ -126,20 +117,16 @@ TensorValue attention(
             }
             return core::wrap_tensor(view, TensorShape::from_dims({1, count, kv_heads, dim}), view->type);
         };
-        k = cache_rows(k, state->key.tensor);
-        v = cache_rows(v, state->value.tensor);
+        k = cache_rows(k, state->key);
+        v = cache_rows(v, state->value);
     }
 
     const TransposeModule heads_first({{0, 2, 1, 3}, 4});
     auto queries = heads_first.build(ctx, q);
-    if (config.contiguous_attention) {
-        queries = core::wrap_tensor(ggml_cont(ctx.ggml, queries.tensor), queries.shape, queries.type);
-    }
     auto context = GroupedQueryAttentionModule({dim, config.attention_lowering, config.attention_precision,
                                                AttentionCausality::NonCausal})
                        .build(ctx, queries, heads_first.build(ctx, k), heads_first.build(ctx, v),
                               full ? inputs.full_mask : inputs.sliding_mask);
-    if (config.contiguous_attention) { context = core::ensure_backend_addressable_layout(ctx, context); }
     if (config.attention_gate) {
         auto gate = LinearModule({config.hidden_size, heads, false, config.projection_precision})
                         .build(ctx, hidden, *weights.gate_proj);
@@ -177,7 +164,8 @@ TensorValue short_conv(
     const auto b = SliceModule({2, 0, width}).build(ctx, packed);
     const auto c = SliceModule({2, width, width}).build(ctx, packed);
     const auto x = SliceModule({2, 2 * width, width}).build(ctx, packed);
-    auto bx = MulModule{}.build(ctx, b, x);
+    const MulModule multiply(false, config.preserve_mul_input_layout);
+    auto bx = multiply.build(ctx, b, x);
     if (keep) {
         bx = core::wrap_tensor(ggml_mul(ctx.ggml, bx.tensor, keep->tensor), bx.shape);
     }
@@ -186,29 +174,25 @@ TensorValue short_conv(
         auto * joined = ggml_concat(ctx.ggml, state->conv_tail.tensor, bx.tensor, 1);
         padded = core::wrap_tensor(joined, TensorShape::from_dims({batch, steps + kernel - 1, width}));
         auto * tail = ggml_view_2d(ctx.ggml, joined, width, kernel - 1, joined->nb[1], steps * joined->nb[1]);
-        if (weights.time_major_kernel && cached->graph) {
-            ggml_build_forward_expand(cached->graph, ggml_cpy(ctx.ggml, tail, state->conv_tail.tensor));
-        } else if (weights.time_major_kernel) {
-            cached->tail_updates.emplace_back(tail, state->conv_tail.tensor);
-        } else {
-            cached->tail_updates.emplace_back(ggml_cont(ctx.ggml, tail), state->conv_tail.tensor);
-        }
+        // Concat has materialized the old history. Remaining layer operations
+        // read joined, so advancing the persistent tail cannot overwrite input.
+        ggml_build_forward_expand(cached->graph, ggml_cpy(ctx.ggml, tail, state->conv_tail.tensor));
     } else {
         padded = core::wrap_tensor(
             ggml_pad_ext(ctx.ggml, bx.tensor, 0, 0, static_cast<int>(kernel - 1), 0, 0, 0, 0, 0),
             TensorShape::from_dims({batch, steps + kernel - 1, width}));
     }
     TensorValue output;
-    if (weights.time_major_kernel) {
+    if (config.conv_lowering == LfmDecoderConvLowering::OrderedTaps) {
         output = DepthwiseConv1dModule({width, kernel, 1, 0, 1, config.conv_bias})
-            .build_time_major(ctx, padded, {weights.kernel, weights.bias}, *weights.time_major_kernel);
+            .build_time_major(ctx, padded, {weights.kernel, weights.bias});
     } else {
         const TransposeModule channels_first({{0, 2, 1}, 3});
         output = DepthwiseConv1dModule({width, kernel, 1, 0, 1, config.conv_bias})
             .build(ctx, channels_first.build(ctx, padded), {weights.kernel, weights.bias});
         output = channels_first.build(ctx, output);
     }
-    output = MulModule{}.build(ctx, c, output);
+    output = multiply.build(ctx, c, output);
     return LinearModule({width, width, config.conv_bias, config.projection_precision}).build(ctx, output, weights.out_proj);
 }
 
@@ -267,7 +251,7 @@ static LfmDecoderOutputs build_stack(
     }
     for (const auto * mask : {&inputs.full_mask, &inputs.sliding_mask}) {
         if (*mask) {
-            core::validate_shape(**mask, TensorShape::from_dims({steps, cached ? cached->capacity : steps}), "attention mask");
+            core::validate_shape(**mask, TensorShape::from_dims({steps, cached ? cached->attention_rows : steps}), "attention mask");
             if ((*mask)->type != GGML_TYPE_F32 && (*mask)->type != GGML_TYPE_F16) {
                 throw std::invalid_argument("LfmDecoder attention masks must be additive F32 or F16 tensors");
             }
@@ -322,7 +306,7 @@ static LfmDecoderOutputs build_stack(
             const auto & factors = config.layers[layer] == LfmDecoderLayerKind::FullAttention
                                       ? weights.full_freq_factors : weights.sliding_freq_factors;
             operated = attention(ctx, normalized, inputs, w.attention, config.layers[layer], config, factors ? &*factors : nullptr,
-                                 cached ? &cached->layers[layer] : nullptr, cached ? cached->slots : nullptr, cached ? cached->capacity : 0);
+                                 cached ? &cached->layers[layer] : nullptr, cached ? cached->slots : nullptr, cached ? cached->attention_rows : 0);
         }
         if (config.sandwich_norm) {
             operated = norm.build(ctx, operated, *w.post_operator_norm);
@@ -352,8 +336,8 @@ LfmDecoderOutputs build_lfm_decoder(core::ModuleBuildContext & ctx, const LfmDec
 LfmDecoderOutputs build_lfm_decoder(
     core::ModuleBuildContext & ctx, ggml_cgraph * graph, const LfmDecoderInputs & inputs,
     const LfmDecoderWeights & weights, const LfmDecoderConfig & config, const LfmDecoderCacheInputs & cache) {
-    if (!graph || cache.layers.size() != config.layers.size() || cache.attention_rows <= 0) {
-        throw std::invalid_argument("LFM cached composition requires a graph, per-layer state and positive attention extent");
+    if (!graph || cache.layers.size() != config.layers.size() || cache.attention_rows < 0) {
+        throw std::invalid_argument("LFM cached composition requires a graph, per-layer state and nonnegative attention extent");
     }
     core::validate_rank_between(inputs.hidden, 3, 3, "hidden");
     core::validate_shape(cache.slots, TensorShape::from_dims({inputs.hidden.shape.dims[1]}), "cache slots");
@@ -361,6 +345,7 @@ LfmDecoderOutputs build_lfm_decoder(
     if (inputs.hidden.shape.dims[0] != 1) {
         throw std::invalid_argument("LFM cached composition requires a single sequence");
     }
+    int64_t attention_rows = cache.attention_rows;
     for (size_t i = 0; i < cache.layers.size(); ++i) {
         const auto & layer = cache.layers[i];
         if (config.layers[i] == LfmDecoderLayerKind::ShortConv) {
@@ -369,22 +354,24 @@ LfmDecoderOutputs build_lfm_decoder(
                 if (layer.conv_tail.type != GGML_TYPE_F32) throw std::invalid_argument("LFM convolution history must be F32");
             }
         } else {
-            core::validate_rank_between(layer.key, 2, 2, "key cache");
-            const auto expected = TensorShape::from_dims({layer.key.shape.dims[0], config.num_key_value_heads * config.head_dim});
+            core::validate_rank_between(layer.key, 4, 4, "key cache");
+            const auto expected = TensorShape::from_dims({1, layer.key.shape.dims[1], config.num_key_value_heads, config.head_dim});
             core::validate_shape(layer.key, expected, "key cache");
             core::validate_shape(layer.value, expected, "value cache");
-            if (cache.attention_rows > expected.dims[0] || layer.key.type != layer.value.type ||
+            if (cache.attention_rows == 0) {
+                if (attention_rows != 0 && attention_rows != expected.dims[1]) {
+                    throw std::invalid_argument("LFM full-cache attention requires equal per-layer cache capacities");
+                }
+                attention_rows = expected.dims[1];
+            }
+            if (attention_rows <= 0 || attention_rows > expected.dims[1] || layer.key.type != layer.value.type ||
                 (layer.key.type != GGML_TYPE_F16 && layer.key.type != GGML_TYPE_F32)) {
                 throw std::invalid_argument("LFM cache must have matching F16/F32 storage and contain the attention prefix");
             }
         }
     }
-    CachedBuild cached{cache.layers, cache.slots.tensor, cache.attention_rows, {}, graph};
-    auto result = build_stack(ctx, inputs, weights, config, &cached);
-    for (const auto & update : cached.tail_updates) {
-        ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, update.first, update.second));
-    }
-    return result;
+    CachedBuild cached{cache.layers, cache.slots.tensor, attention_rows, graph};
+    return build_stack(ctx, inputs, weights, config, &cached);
 }
 
 namespace {
@@ -406,7 +393,7 @@ struct LfmStateStorage {
                         TensorShape::from_dims({config.conv_kernel_size - 1, config.hidden_size}));
                 }
             } else {
-                const auto shape = TensorShape::from_dims({capacity, config.num_key_value_heads * config.head_dim});
+                const auto shape = TensorShape::from_dims({1, capacity, config.num_key_value_heads, config.head_dim});
                 layer.key = core::make_tensor(build, cache_type, shape);
                 layer.value = core::make_tensor(build, cache_type, shape);
             }
@@ -527,7 +514,8 @@ struct DecoderGraph {
             slots = ggml_new_tensor_1d(g, GGML_TYPE_I64, steps);
             ggml_set_input(slots);
         }
-        CachedBuild cached{state ? state->layers : empty_layers, slots, keys, {}};
+        graph = ggml_new_graph_custom(g, kNodes, false);
+        CachedBuild cached{state ? state->layers : empty_layers, slots, keys, graph};
         auto out = build_stack(ctx, input, weights.decoder, config, state ? &cached : nullptr).hidden;
         if (readouts) {
             row_ids = ggml_new_tensor_1d(g, GGML_TYPE_I32, readouts);
@@ -555,18 +543,12 @@ struct DecoderGraph {
         }
         output = out.tensor;
         ggml_set_output(output);
-        graph = ggml_new_graph_custom(g, kNodes, false);
         // Inputs are part of the execution contract even for a recipe which does
         // not consume one (e.g. positions when every layer is convolutional).
         for (auto * tensor : {ids, hidden_values, positions, patch_positions, patch_values, full, sliding, row_ids, output_ids, slots}) {
             if (tensor) { ggml_build_forward_expand(graph, tensor); }
         }
         ggml_build_forward_expand(graph, output);
-        // Copies run after all consumers of the old convolution history. Scratch
-        // release never touches their destinations in the persistent-state context.
-        for (const auto & update : cached.tail_updates) {
-            ggml_build_forward_expand(graph, ggml_cpy(g, update.first, update.second));
-        }
         core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), graph, "LFM decoder forward");
     }
 
@@ -583,6 +565,7 @@ struct DecoderGraph {
     core::ExecutionContext & execution;
     ggml_context_ptr context;
     ggml_cgraph * graph = nullptr;
+    ggml_gallocr_ptr decode_allocator;
     const std::vector<LayerState> empty_layers;
     ggml_tensor * slots = nullptr;
     ggml_tensor * ids = nullptr, * hidden_values = nullptr, * positions = nullptr;
@@ -609,6 +592,12 @@ struct LfmDecoderRuntime::Impl {
     void release_workspace() {
         if (bound) { bound->unbind(); bound.reset(); }
         allocator.reset();
+        graphs.for_each_value([](auto & graph) {
+            if (graph->decode_allocator) {
+                graph->unbind();
+                graph->decode_allocator.reset();
+            }
+        });
     }
 
     GraphKey resolve_request(const LfmDecoderForward & input) const;
@@ -724,7 +713,24 @@ LfmDecoderDeviceResult LfmDecoderRuntime::Impl::run(const LfmDecoderForward & in
         ++built;
     }
     auto & graph = **entry;
-    if (bound.get() != &graph) {
+    if (append && steps == 1) {
+        // Stable autoregressive graphs keep their own scratch and backend capture.
+        // Prefill shapes still share a disposable arena rather than retaining one
+        // large allocation per cached sequence length.
+        if (bound) {
+            bound->unbind();
+            bound.reset();
+            allocator.reset();
+        }
+        if (!graph.decode_allocator) {
+            graph.decode_allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
+            if (!graph.decode_allocator || !ggml_gallocr_reserve(graph.decode_allocator.get(), graph.graph) ||
+                !ggml_gallocr_alloc_graph(graph.decode_allocator.get(), graph.graph)) {
+                release_workspace();
+                throw runtime::CapacityError("LFM decoder step scratch allocation failed");
+            }
+        }
+    } else if (bound.get() != &graph) {
         if (bound) { bound->unbind(); }
         bound = *entry;
         if (!allocator) { allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend()))); }
@@ -817,9 +823,8 @@ void LfmDecoderRuntime::Impl::reserve(int64_t cache_steps) {
             for (const auto & pair : {std::make_pair(old.key.tensor, target.key.tensor), std::make_pair(old.value.tensor, target.value.tensor)}) {
                 if (pair.first && state->valid) {
                     ggml_tensor from = *pair.first;
-                    from.ne[1] = state->valid;
-                    from.nb[2] = from.nb[1] * from.ne[1];
-                    from.nb[3] = from.nb[2];
+                    from.ne[2] = state->valid;
+                    from.nb[3] = from.nb[2] * from.ne[2];
                     ggml_tensor to = *pair.second;
                     std::copy(std::begin(from.ne), std::end(from.ne), std::begin(to.ne));
                     std::copy(std::begin(from.nb), std::end(from.nb), std::begin(to.nb));

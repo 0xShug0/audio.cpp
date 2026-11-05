@@ -117,7 +117,7 @@ DepthwiseConv1dModule::DepthwiseConv1dModule(DepthwiseConv1dConfig config) : con
 
 core::TensorValue DepthwiseConv1dModule::build_time_major(
     core::ModuleBuildContext & ctx, const core::TensorValue & input,
-    const DepthwiseConv1dWeights & weights, const core::TensorValue & kernel_rows) const {
+    const DepthwiseConv1dWeights & weights) const {
     if (config_.stride != 1 || config_.padding != 0 || config_.dilation != 1 || config_.use_bias || weights.bias) {
         throw std::invalid_argument("Time-major depthwise convolution requires unit stride/dilation, no padding and no bias");
     }
@@ -125,15 +125,13 @@ core::TensorValue DepthwiseConv1dModule::build_time_major(
     const int64_t steps = input.shape.dims[1] - config_.kernel_size + 1;
     core::validate_shape(input, core::TensorShape::from_dims({1, input.shape.dims[1], config_.channels}), "time-major input");
     core::validate_shape(weights.weight, core::TensorShape::from_dims({config_.channels, 1, config_.kernel_size}), "weight");
-    core::validate_shape(kernel_rows, core::TensorShape::from_dims({config_.kernel_size, config_.channels}), "kernel rows");
-    if (steps <= 0 || input.type != GGML_TYPE_F32 || weights.weight.type != GGML_TYPE_F32 || kernel_rows.type != GGML_TYPE_F32 ||
-        !ggml_is_contiguous(input.tensor) || !ggml_is_contiguous(weights.weight.tensor) || !ggml_is_contiguous(kernel_rows.tensor)) {
+    if (steps <= 0 || input.type != GGML_TYPE_F32 || weights.weight.type != GGML_TYPE_F32 ||
+        !ggml_is_contiguous(input.tensor) || !ggml_is_contiguous(weights.weight.tensor)) {
         throw std::invalid_argument("Time-major depthwise convolution requires contiguous F32 tensors and at least one output frame");
     }
     auto * g = ctx.ggml;
     auto * p = input.tensor;
-    auto * kt = kernel_rows.tensor;
-    const int64_t width = kt->ne[0], taps = kt->ne[1];
+    const int64_t width = config_.channels, taps = config_.kernel_size;
     const bool ssm = ctx.backend_type == core::BackendType::Cpu || ctx.backend_type == core::BackendType::Metal;
     if (ssm || steps == 1) {
         auto * x = ggml_cont(g, ggml_transpose(g, p));
@@ -141,6 +139,7 @@ core::TensorValue DepthwiseConv1dModule::build_time_major(
         auto * y = ssm ? ggml_ssm_conv(g, x, c) : ggml_sum_rows(g, ggml_mul(g, x, c));
         return core::wrap_tensor(ggml_reshape_3d(g, y, width, steps, 1), core::TensorShape::from_dims({1, steps, width}));
     }
+    auto * kt = ggml_cont(g, ggml_transpose(g, ggml_reshape_2d(g, weights.weight.tensor, taps, width)));
     ggml_tensor * output = nullptr;
     for (int64_t i = 0; i < taps; ++i) {
         auto * rows = ggml_view_2d(g, p, width, steps, p->nb[1], static_cast<size_t>(i) * p->nb[1]);
