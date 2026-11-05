@@ -1,9 +1,9 @@
-#include "engine/community_models/soulx_flashhead/color.h"
+#include "engine/models/soulx_flashhead/color.h"
 #include "graph.h"
 #include <array>
 #include <tuple>
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 namespace {
 class ColorGraph final : public Graph {
   public:
@@ -194,4 +194,4 @@ ColorMatchResult ColorMatcher::match_device(const TensorValue & video, const std
         : graph->run_device({{"portrait", &portrait}, {"strength", &weight}}, {{"video", video}});
     return {output, graph->motion};
 }
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

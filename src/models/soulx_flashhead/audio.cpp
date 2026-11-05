@@ -1,8 +1,8 @@
-#include "engine/community_models/soulx_flashhead/audio.h"
+#include "engine/models/soulx_flashhead/audio.h"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 AudioConditioner::AudioConditioner(core::BackendConfig backend, const Assets & assets) {
     modules::Wav2Vec2EncoderConfig config;
     config.hidden_size = 768;
@@ -43,4 +43,4 @@ std::vector<float> AudioConditioner::encode(const std::vector<float> & window) {
             }
     return context;
 }
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

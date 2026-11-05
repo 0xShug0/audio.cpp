@@ -3,7 +3,7 @@
 #include "engine/framework/core/module.h"
 #include <memory>
 #include <vector>
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 struct ColorMatchResult {
     core::TensorValue video;
     core::TensorValue motion;
@@ -25,4 +25,4 @@ class ColorMatcher {
     struct State;
     std::unique_ptr<State> state_;
 };
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

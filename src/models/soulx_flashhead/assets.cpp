@@ -1,7 +1,7 @@
-#include "engine/community_models/soulx_flashhead/assets.h"
+#include "engine/models/soulx_flashhead/assets.h"
 #include <stdexcept>
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 Config Config::from_json(const io::json::Value & json, const std::string & variant) {
     Config c;
     c.variant = variant;
@@ -41,4 +41,4 @@ std::shared_ptr<const Assets> load_assets(const std::filesystem::path & path) {
     result->audio = result->resources.open_tensor_source("audio");
     return result;
 }
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

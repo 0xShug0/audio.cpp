@@ -1,8 +1,8 @@
-#include "engine/community_models/soulx_flashhead/dit.h"
+#include "engine/models/soulx_flashhead/dit.h"
 #include "graph.h"
 #include <cmath>
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 namespace {
 class DenoiserGraph final : public Graph {
   public:
@@ -326,4 +326,4 @@ std::vector<float> Denoiser::predict(const std::vector<float> & noisy, const std
     core::round_f32_to_bf16_in_place(time);
     return graph->second->run({{"noisy", &noisy}, {"reference", &reference}, {"time", &time}});
 }
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

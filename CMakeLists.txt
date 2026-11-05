@@ -1351,18 +1351,18 @@ endif()
 
 audiocpp_add_model(soulx_flashhead
     SOURCES
-        src/community_models/soulx_flashhead/color.cpp
-        src/community_models/soulx_flashhead/audio.cpp
-        src/community_models/soulx_flashhead/assets.cpp
-        src/community_models/soulx_flashhead/dit.cpp
-        src/community_models/soulx_flashhead/vae.cpp
-        src/community_models/soulx_flashhead/portrait.cpp
-        src/community_models/soulx_flashhead/pipeline.cpp
-        src/community_models/soulx_flashhead/session.cpp
+        src/models/soulx_flashhead/color.cpp
+        src/models/soulx_flashhead/audio.cpp
+        src/models/soulx_flashhead/assets.cpp
+        src/models/soulx_flashhead/dit.cpp
+        src/models/soulx_flashhead/vae.cpp
+        src/models/soulx_flashhead/portrait.cpp
+        src/models/soulx_flashhead/pipeline.cpp
+        src/models/soulx_flashhead/session.cpp
     INCLUDES
-        engine/community_models/soulx_flashhead/session.h
+        engine/models/soulx_flashhead/session.h
     LOADERS
-        engine::community_models::soulx_flashhead::make_soulx_flashhead_loader
+        engine::models::soulx_flashhead::make_soulx_flashhead_loader
 )
 
 if (TARGET engine_model_soulx_flashhead)

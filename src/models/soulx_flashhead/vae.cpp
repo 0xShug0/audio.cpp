@@ -1,11 +1,11 @@
-#include "engine/community_models/soulx_flashhead/vae.h"
+#include "engine/models/soulx_flashhead/vae.h"
 #include "graph.h"
 #include "wan_vae.h"
 #include "engine/framework/codecs/ltx_video_vae_runtime.h"
 #include "engine/framework/sampling/torch_random.h"
 #include <tuple>
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 struct VideoVae::State {
     core::ExecutionContext & execution;
     const Assets & assets;
@@ -127,4 +127,4 @@ std::vector<float> VideoVae::encode_device(const TensorValue & pixels, int64_t f
     core::read_tensor_float_into(output.tensor, result);
     return result;
 }
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

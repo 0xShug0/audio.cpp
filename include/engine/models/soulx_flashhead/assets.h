@@ -3,7 +3,7 @@
 #include <array>
 #include <memory>
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 
 struct Config {
     std::string variant;
@@ -20,4 +20,4 @@ struct Assets {
     std::shared_ptr<const assets::TensorSource> dit, vae, audio;
 };
 std::shared_ptr<const Assets> load_assets(const std::filesystem::path & path);
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

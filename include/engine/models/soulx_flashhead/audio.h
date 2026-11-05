@@ -1,7 +1,7 @@
 #pragma once
-#include "engine/community_models/soulx_flashhead/assets.h"
+#include "engine/models/soulx_flashhead/assets.h"
 #include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 class AudioConditioner {
   public:
     AudioConditioner(core::BackendConfig backend, const Assets & assets);
@@ -10,4 +10,4 @@ class AudioConditioner {
   private:
     modules::Wav2Vec2EncoderRuntime runtime_;
 };
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

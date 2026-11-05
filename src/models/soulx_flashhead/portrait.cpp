@@ -1,4 +1,4 @@
-#include "engine/community_models/soulx_flashhead/portrait.h"
+#include "engine/models/soulx_flashhead/portrait.h"
 #include "engine/framework/core/backend.h"
 #include <algorithm>
 #include <cmath>
@@ -17,7 +17,7 @@
 #pragma GCC diagnostic pop
 #endif
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 namespace {
 struct Taps {
     int begin;
@@ -101,4 +101,4 @@ std::vector<float> load_portrait(const std::filesystem::path & path, int64_t hei
     core::round_f32_to_bf16_in_place(result);
     return result;
 }
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

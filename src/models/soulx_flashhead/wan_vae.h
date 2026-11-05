@@ -2,7 +2,7 @@
 #include "graph.h"
 #include "engine/framework/codecs/wan_video_vae_runtime.h"
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 class WanGraph final : public Graph {
   public:
     WanGraph(core::ExecutionContext & execution, Weights & weights, bool encode, int64_t frames, int64_t height,
@@ -127,4 +127,4 @@ class WanGraph final : public Graph {
         return w;
     }
 };
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead

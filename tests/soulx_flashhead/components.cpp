@@ -1,9 +1,9 @@
-#include "engine/community_models/soulx_flashhead/assets.h"
-#include "engine/community_models/soulx_flashhead/dit.h"
-#include "engine/community_models/soulx_flashhead/audio.h"
-#include "engine/community_models/soulx_flashhead/vae.h"
-#include "engine/community_models/soulx_flashhead/color.h"
-#include "engine/community_models/soulx_flashhead/portrait.h"
+#include "engine/models/soulx_flashhead/assets.h"
+#include "engine/models/soulx_flashhead/dit.h"
+#include "engine/models/soulx_flashhead/audio.h"
+#include "engine/models/soulx_flashhead/vae.h"
+#include "engine/models/soulx_flashhead/color.h"
+#include "engine/models/soulx_flashhead/portrait.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/core/constant_tensor_cache.h"
@@ -19,7 +19,7 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("Usage: flashhead_components MODEL.gguf REFERENCE_DIR encode|decode|dit "
                                      "cpu|cuda|vulkan LOG [PREPARED_SOURCE]");
         engine::debug::configure_logging({true, argv[5]});
-        namespace fh = engine::community_models::soulx_flashhead;
+        namespace fh = engine::models::soulx_flashhead;
         auto assets = std::make_shared<fh::Assets>(*fh::load_assets(argv[1]));
         if (argc == 7) {
             const auto root = std::filesystem::path(argv[6]);

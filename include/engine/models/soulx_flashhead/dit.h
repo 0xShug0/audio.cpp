@@ -1,8 +1,8 @@
 #pragma once
-#include "engine/community_models/soulx_flashhead/assets.h"
+#include "engine/models/soulx_flashhead/assets.h"
 #include "engine/framework/core/execution_context.h"
 
-namespace engine::community_models::soulx_flashhead {
+namespace engine::models::soulx_flashhead {
 class Denoiser {
   public:
     Denoiser(core::ExecutionContext & execution, const Assets & assets);
@@ -15,4 +15,4 @@ class Denoiser {
     struct State;
     std::unique_ptr<State> state_;
 };
-} // namespace engine::community_models::soulx_flashhead
+} // namespace engine::models::soulx_flashhead
