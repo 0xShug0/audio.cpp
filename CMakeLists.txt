@@ -3635,6 +3635,19 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(index_tts2_text_controls_probe tests/index_tts2/text_controls_probe.cpp)
     endif()
 
+    if (ENGINE_BUILD_MODEL_TESTS AND omnivoice IN_LIST AUDIOCPP_LINKED_MODELS)
+        # Batching and fast-path parity; registered with ctest when a local
+        # OmniVoice model directory is configured.
+        add_engine_unittest(omnivoice_batch_parity_test tests/omnivoice/batch_parity_test.cpp)
+        set(AUDIOCPP_OMNIVOICE_TEST_MODEL "" CACHE PATH "Local OmniVoice model directory for integration tests")
+        if (AUDIOCPP_OMNIVOICE_TEST_MODEL)
+            add_test(NAME omnivoice_batch_parity COMMAND omnivoice_batch_parity_test
+                --model "${AUDIOCPP_OMNIVOICE_TEST_MODEL}"
+                --clone-audio "${CMAKE_CURRENT_SOURCE_DIR}/tests/omnivoice/assets/ref_audio_02.wav"
+                --reference-text-file "${CMAKE_CURRENT_SOURCE_DIR}/tests/omnivoice/assets/ref_text_02.txt")
+        endif()
+    endif()
+
     if (ENGINE_BUILD_MODEL_TESTS AND ENGINE_ENABLE_WEBGPU AND nemotron_asr IN_LIST AUDIOCPP_LINKED_MODELS)
         # Manual parity test: requires an external Nemotron GGUF via --model.
         add_engine_unittest(nemotron_asr_webgpu_rnnt_test tests/nemotron_asr/webgpu_rnnt_test.cpp)

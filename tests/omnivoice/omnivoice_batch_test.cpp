@@ -7,7 +7,12 @@
 //   - per-request parity between the two (sample count, max abs diff),
 //   - optionally, exact comparison of the run() output against raw float32
 //     files saved by an earlier build (--compare-dir), to prove that the
-//     single-request path did not change.
+//     single-request path did not change. Any mismatch or missing baseline
+//     makes the program exit with status 1.
+//
+// The run() vs run_batch() lines are informational: with f16 weights batched
+// kernels can round differently. omnivoice_batch_parity_test asserts the
+// exact guarantees.
 //
 // Example:
 //   build/bin/omnivoice_batch_test --model models/OmniVoice \
@@ -235,6 +240,9 @@ int main(int argc, char ** argv) {
         if (!run_sequential && !run_batched) {
             throw std::runtime_error("--mode must be both, sequential, or batch");
         }
+        if (compare_dir && !run_sequential) {
+            throw std::runtime_error("--compare-dir compares run() outputs and needs --mode both or sequential");
+        }
         std::filesystem::create_directories(out_dir);
         if (const auto timing_log = find_arg(argc, argv, "--timing-log")) {
             // Per-call engine timings ([TIMING] lines), e.g. omnivoice.generator.compute_ms.
@@ -314,6 +322,7 @@ int main(int argc, char ** argv) {
             (void) offline->run(make_request(0));
         }
 
+        int compare_failures = 0;
         std::cout << std::fixed << std::setprecision(3);
         for (const int batch_size : batch_sizes) {
             if (batch_size <= 0) {
@@ -359,13 +368,17 @@ int main(int argc, char ** argv) {
                             ("sequential_" + tag + "_" + std::to_string(i) + ".f32");
                         const auto baseline = load_raw(path);
                         if (!baseline) {
-                            std::cout << "  baseline " << path.string() << " missing\n";
+                            std::cout << "  FAIL baseline " << path.string() << " missing\n";
+                            ++compare_failures;
                             continue;
                         }
                         const auto & samples = audio_of(sequential_results[i]).samples;
                         const auto diff = compare(samples, *baseline);
-                        std::cout << "  request " << i << " run() vs baseline: "
-                                  << describe(diff, samples.size(), baseline->size()) << "\n";
+                        std::cout << "  " << (diff.identical ? "PASS" : "FAIL") << " request " << i
+                                  << " run() vs baseline: " << describe(diff, samples.size(), baseline->size()) << "\n";
+                        if (!diff.identical) {
+                            ++compare_failures;
+                        }
                     }
                 }
             }
@@ -398,6 +411,10 @@ int main(int argc, char ** argv) {
                     std::cout << "\n";
                 }
             }
+        }
+        if (compare_failures > 0) {
+            std::cout << "\n" << compare_failures << " --compare-dir check(s) failed\n";
+            return 1;
         }
         return 0;
     } catch (const std::exception & e) {
