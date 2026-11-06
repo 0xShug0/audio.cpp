@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "family": "mulacover",
+  "display_name": "MuLaCover",
+  "description": "Generate cover songs from reference audio or melody/chord MIDI with new lyrics and musical style.",
+  "category": "audio_generation",
+  "status": "experimental",
+  "tasks": [
+    "music"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "capabilities": {
+    "music": [
+      "lyrics",
+      "style_control"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "melody_file",
+        "type": "string",
+        "description": "Melody MIDI file path.",
+        "required": false
+      },
+      {
+        "name": "chord_file",
+        "type": "string",
+        "description": "Chord MIDI file path.",
+        "required": false
+      },
+      {
+        "name": "drum_file",
+        "type": "string",
+        "description": "Optional drum MIDI file path.",
+        "required": false
+      },
+      {
+        "name": "bpm",
+        "type": "float",
+        "description": "Reference-audio tempo in beats per minute; zero estimates tempo automatically.",
+        "required": false,
+        "default": 0.0,
+        "min": 0.0
+      },
+      {
+        "name": "lyrics",
+        "type": "string",
+        "description": "Lyrics text.",
+        "required": false
+      },
+      {
+        "name": "tags",
+        "type": "string",
+        "description": "Style tags encoded with Qwen3 embeddings.",
+        "required": false
+      },
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Maximum generated duration in seconds.",
+        "required": false,
+        "default": 300.0,
+        "min": 0.08
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Positive audio-token sampling temperature.",
+        "required": false,
+        "default": 1.0,
+        "min": 0.0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Audio-token top-k sampling limit.",
+        "required": false,
+        "default": 250,
+        "min": 1
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Positive generator classifier-free guidance scale.",
+        "required": false,
+        "default": 1.5,
+        "min": 0.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation random seed.",
+        "required": false,
+        "default": 1234,
+        "min": 0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "HeartCodec flow solver steps.",
+        "required": false,
+        "default": 10,
+        "min": 1
+      },
+      {
+        "name": "codec_guidance_scale",
+        "type": "float",
+        "description": "Positive HeartCodec classifier-free guidance scale.",
+        "required": false,
+        "default": 1.25,
+        "min": 0.0
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "packages": [
+    {
+      "id": "mulacover_q8_0",
+      "display_name": "MuLaCover Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MuLaCover-GGUF",
+      "files": [
+        "MuLaCover-GGUF/mulacover-q8_0.gguf"
+      ],
+      "strip_prefix": "MuLaCover-GGUF",
+      "default": true
+    },
+    {
+      "id": "mulacover_f16",
+      "display_name": "MuLaCover F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "MuLaCover-GGUF",
+      "files": [
+        "MuLaCover-GGUF/mulacover-f16.gguf"
+      ],
+      "strip_prefix": "MuLaCover-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "mula_config": "model:MuLaCover/config.json",
+        "generation_config": "model:MuLaCover/gen_config.json",
+        "tokenizer_json": "model:MuLaCover/tokenizer.json",
+        "codec_config": "model:HeartCodec-oss/config.json",
+        "qwen_config": "model:Qwen3-Embedding-0.6B/config.json",
+        "qwen_tokenizer": "model:Qwen3-Embedding-0.6B/tokenizer.json",
+        "qwen_tokenizer_config": "model:Qwen3-Embedding-0.6B/tokenizer_config.json",
+        "chord_vocabulary": "model:SymbolicTranscriptor/chord/vocabulary.txt"
+      },
+      "tensors": {
+        "mula_weights": {
+          "source": "weights:",
+          "prefix": "mula_weights"
+        },
+        "codec_weights": {
+          "source": "weights:",
+          "prefix": "codec_weights"
+        },
+        "qwen_weights": {
+          "source": "weights:",
+          "prefix": "qwen_weights"
+        },
+        "transcriber_weights": {
+          "source": "weights:",
+          "prefix": "transcriber_weights"
+        },
+        "chord_weights_0": {
+          "source": "weights:",
+          "prefix": "chord_weights_0"
+        },
+        "chord_weights_1": {
+          "source": "weights:",
+          "prefix": "chord_weights_1"
+        },
+        "chord_weights_2": {
+          "source": "weights:",
+          "prefix": "chord_weights_2"
+        },
+        "chord_weights_3": {
+          "source": "weights:",
+          "prefix": "chord_weights_3"
+        },
+        "chord_weights_4": {
+          "source": "weights:",
+          "prefix": "chord_weights_4"
+        }
+      }
+    }
+  ],
+  "languages": [
+    "multilingual"
+  ],
+  "ui": {
+    "recommended_package": "mulacover_q8_0",
+    "tags": [
+      "Music",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/mulacover.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  }
+}

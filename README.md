@@ -184,6 +184,7 @@ Model weights keep the license of their original release, which is separate from
 | **midashenglm_gen** | Music, SFX | auto | MiDashengLM-Gen structured-prompt generation for speech, music, sound effects, and ambience | GGUF F32/Q8 |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | MiniMax-H3 Q4_K with optional INT8 ConvRot DiT | GGUF Q4/INT8 |
 | **minimax_music3** | Music | auto | MiniMax Music 3 text-to-music generation with lyrics conditioning | GGUF Q4/Q8 |
+| **mulacover** | Music | multilingual | [MuLaCover](docs/models/mulacover.md) cover-song generation from reference audio or melody/chord MIDI, with new lyrics and style | GGUF 16/Q8 |
 | **soulx_flashhead** | Audio-to-video | lang agnostic | [SoulX-FlashHead Lite](docs/models/soulx_flashhead.md) audio-driven portrait video generation | GGUF Q8/BF16, Stream |
 | **stable_audio** | Music, SFX, Edit | en | Stable Audio 3 Small Music<br>Stable Audio 3 Small SFX<br>Stable Audio 3 Medium | GGUF 16/Q8 |
 | **vevo2** | TTS, Music, VC, Edit | en, zh | Vevo2 with Qwen2.5-0.5B AR model | GGUF 16 |
