@@ -106,7 +106,8 @@ public:
     ParallelExpertEncoder & operator=(const ParallelExpertEncoder &) = delete;
 
     // Cancellation is observed between graph launches and before every window.
-    EncoderOutput encode(const MelFeatures & features, const std::function<bool()> & should_stop = {});
+    EncoderOutput encode(const MelFeatures & features, const std::function<bool()> & should_stop = {},
+        bool return_asr_states = true);
     const EncoderConfig & config() const noexcept;
 
 private:

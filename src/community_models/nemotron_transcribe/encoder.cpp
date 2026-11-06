@@ -394,7 +394,8 @@ struct ParallelExpertEncoder::Impl {
     }
 
     std::pair<std::vector<float>, std::vector<float>> asr_forward(
-        const std::vector<float> & stacked, const std::vector<float> & probabilities, int64_t frames) {
+        const std::vector<float> & stacked, const std::vector<float> & probabilities, int64_t frames,
+        bool return_asr_states) {
         if (!asr_graph) {
             auto head = [this](core::ModuleBuildContext & build, const core::TensorValue & encoded) {
                 auto * ctx = build.ggml;
@@ -427,7 +428,8 @@ struct ParallelExpertEncoder::Impl {
         core::write_tensor_f32(asr_graph->input(), stacked);
         core::write_tensor_f32(speaker_input, probabilities);
         asr_graph->run();
-        return {core::read_tensor_f32(asr_graph->output(0).tensor), core::read_tensor_f32(asr_graph->output(1).tensor)};
+        return {return_asr_states ? core::read_tensor_f32(asr_graph->output(0).tensor) : std::vector<float>{},
+            core::read_tensor_f32(asr_graph->output(1).tensor)};
     }
 
     void update_speakers(SpeakerState & state, const std::vector<float> & embeddings,
@@ -456,7 +458,8 @@ struct ParallelExpertEncoder::Impl {
         }
     }
 
-    EncoderOutput encode(const MelFeatures & features, const std::function<bool()> & should_stop) {
+    EncoderOutput encode(const MelFeatures & features, bool return_asr_states,
+        const std::function<bool()> & should_stop) {
         std::lock_guard<std::mutex> lock(mutex);
         const auto check_cancelled = [&] {
             if (should_stop && should_stop()) throw std::runtime_error("Nemotron Transcribe encoder cancelled");
@@ -483,7 +486,7 @@ struct ParallelExpertEncoder::Impl {
         result.speaker_count = speakers;
         result.duration_seconds = features.duration_seconds;
         result.audio_embeddings.reserve(static_cast<size_t>(result.frames) * config.projection_dim);
-        result.asr_states.reserve(static_cast<size_t>(result.frames) * config.asr.hidden_size);
+        if (return_asr_states) result.asr_states.reserve(static_cast<size_t>(result.frames) * config.asr.hidden_size);
         result.speaker_probs80.reserve(static_cast<size_t>(result.frames) * speakers);
         result.speaker_probs10.reserve(static_cast<size_t>(result.frames * sub) * speakers);
         SpeakerState state;
@@ -526,10 +529,12 @@ struct ParallelExpertEncoder::Impl {
                 result.speaker_probs10.insert(result.speaker_probs10.end(), p10.begin() + source * sub * speakers,
                     p10.begin() + (source + 1) * sub * speakers);
             }
-            auto [states, projected] = asr_forward(asr_input, window_probs, frames);
+            auto [states, projected] = asr_forward(asr_input, window_probs, frames, return_asr_states);
             check_cancelled();
-            result.asr_states.insert(result.asr_states.end(), states.begin() + window.left_drop * config.asr.hidden_size,
-                states.begin() + (window.left_drop + window.core_frames) * config.asr.hidden_size);
+            if (return_asr_states) {
+                result.asr_states.insert(result.asr_states.end(), states.begin() + window.left_drop * config.asr.hidden_size,
+                    states.begin() + (window.left_drop + window.core_frames) * config.asr.hidden_size);
+            }
             result.audio_embeddings.insert(result.audio_embeddings.end(), projected.begin() + window.left_drop * config.projection_dim,
                 projected.begin() + (window.left_drop + window.core_frames) * config.projection_dim);
             result.speaker_probs80.insert(result.speaker_probs80.end(), window_probs.begin() + window.left_drop * speakers,
@@ -537,7 +542,7 @@ struct ParallelExpertEncoder::Impl {
             if (i + 1 < windows.size()) update_speakers(state, embeddings, probabilities, window.left_drop, speaker_core);
         }
         result.speaker_probs10.resize(static_cast<size_t>(result.native_speaker_frames) * speakers);
-        if (result.asr_states.size() != static_cast<size_t>(result.frames) * result.asr_dim ||
+        if ((return_asr_states && result.asr_states.size() != static_cast<size_t>(result.frames) * result.asr_dim) ||
             result.audio_embeddings.size() != static_cast<size_t>(result.frames) * result.embedding_dim ||
             result.speaker_probs80.size() != static_cast<size_t>(result.frames) * speakers) {
             throw std::runtime_error("Nemotron Transcribe window stitching geometry mismatch");
@@ -550,8 +555,9 @@ ParallelExpertEncoder::ParallelExpertEncoder(const core::ExecutionContext & exec
     const assets::TensorSource & source, EncoderConfig config, assets::TensorStorageType storage)
     : impl_(std::make_unique<Impl>(execution, source, std::move(config), storage)) {}
 ParallelExpertEncoder::~ParallelExpertEncoder() = default;
-EncoderOutput ParallelExpertEncoder::encode(const MelFeatures & features, const std::function<bool()> & should_stop) {
-    return impl_->encode(features, should_stop);
+EncoderOutput ParallelExpertEncoder::encode(const MelFeatures & features, const std::function<bool()> & should_stop,
+    bool return_asr_states) {
+    return impl_->encode(features, return_asr_states, should_stop);
 }
 const EncoderConfig & ParallelExpertEncoder::config() const noexcept { return impl_->config; }
 

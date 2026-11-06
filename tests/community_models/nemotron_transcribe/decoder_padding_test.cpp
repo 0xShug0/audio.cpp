@@ -8,6 +8,7 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 using namespace engine;
@@ -83,6 +84,17 @@ void write_fixture(const std::filesystem::path & path, const DecoderConfig & c, 
     add("output.weight", {c.vocab_size, h}, head);
     add("output_norm.weight", {h}, std::vector<float>(h, 1.0F));
     add("blk.0.attn_norm.weight", {h}, std::vector<float>(h, 1.0F));
+    if (c.block_pattern == "A") {
+        for (const auto & entry : {std::make_pair("attn_q", c.attention_heads * c.attention_head_dim),
+                 std::make_pair("attn_k", c.attention_kv_heads * c.attention_head_dim),
+                 std::make_pair("attn_v", c.attention_kv_heads * c.attention_head_dim),
+                 std::make_pair("attn_output", h)}) {
+            std::vector<float> values(static_cast<size_t>(entry.second * h));
+            for (size_t i = 0; i < values.size(); ++i)
+                values[i] = 0.03F * std::sin(static_cast<float>(i) * 0.13F);
+            add("blk.0." + std::string(entry.first) + ".weight", {entry.second, h}, values);
+        }
+    }
     std::vector<float> router(e * h), bias(e);
     for (size_t i = 0; i < router.size(); ++i) router[i] = 0.02F * std::sin(static_cast<float>(i) * 0.33F);
     for (int64_t i = 0; i < e; ++i) bias[i] = 0.03F * static_cast<float>(i);
@@ -144,6 +156,31 @@ int main() {
             "F32 input-column padding changed decoder output");
         const auto repeat = zero_padded.generate({1, 2}, audio, 1, {3}, options);
         require(repeat.last_logits == actual.last_logits, "padded decoder repeated request changed output");
+        auto single_config = native;
+        single_config.prefill_batch_size = 1;
+        NemotronHDecoderRuntime single(unpadded_source, execution, single_config);
+        const auto full_chunk = baseline.generate({1, 2}, audio, 1, {3, 2, 1}, options);
+        const auto single_rows = single.generate({1, 2}, audio, 1, {3, 2, 1}, options);
+        require(full_chunk.token_ids == single_rows.token_ids &&
+            error(full_chunk.last_logits, single_rows.last_logits) < 2e-6F,
+            "final full prefill chunk lost its vocabulary head");
+        {
+            auto attention = native;
+            attention.block_pattern = "A";
+            attention.attention_heads = 2;
+            attention.attention_kv_heads = 1;
+            attention.attention_head_dim = 64;
+            const auto path = files.add();
+            write_fixture(path, attention, GGML_TYPE_F32);
+            auto source = assets::open_tensor_source(path);
+            NemotronHDecoderRuntime batched(source, execution, attention);
+            attention.prefill_batch_size = 1;
+            NemotronHDecoderRuntime sequential(source, execution, attention);
+            const auto batch = batched.generate({1, 2}, audio, 1, {3, 2, 1}, options);
+            const auto sequential_result = sequential.generate({1, 2}, audio, 1, {3, 2, 1}, options);
+            require(batch.token_ids == sequential_result.token_ids && error(batch.last_logits, sequential_result.last_logits) < 2e-6F,
+                "headless prefill omitted attention KV updates");
+        }
         for (auto type : {GGML_TYPE_Q4_K, GGML_TYPE_Q3_K, GGML_TYPE_Q2_K}) {
             const auto path = files.add();
             write_fixture(path, padded, type);
@@ -166,6 +203,11 @@ int main() {
             const auto cached_repeat = cached.generate({1, 2}, audio, 1, {3}, options);
             require(cached_repeat.last_logits == cached_result.last_logits,
                 "offload long-short-long contaminated the repeated request");
+            const auto cached_full = cached.generate({1, 2}, audio, 1, {3, 2, 1}, options);
+            const auto resident_full = quantized.generate({1, 2}, audio, 1, {3, 2, 1}, options);
+            require(cached_full.token_ids == resident_full.token_ids &&
+                error(cached_full.last_logits, resident_full.last_logits) < 2e-6F,
+                "offloaded final full prefill chunk lost its vocabulary head");
             const auto f32_result = dequantized.generate({1, 2}, audio, 1, {3}, options);
             require(quant_result.token_ids == f32_result.token_ids, "quantized padded decode token parity");
             require(error(quant_result.last_logits, f32_result.last_logits) < 5e-3F, "quantized padded decode numerical parity");
