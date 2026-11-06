@@ -3587,6 +3587,7 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(nemotron_asr_warm_bench tests/nemotron_asr/nemotron_asr_warm_bench.cpp)
     add_engine_warmbench(neutts_warm_bench tests/neutts/neutts_warm_bench.cpp)
     add_engine_warmbench(omnivoice_warm_bench tests/omnivoice/omnivoice_warm_bench.cpp)
+    add_engine_warmbench(omnivoice_batch_test tests/omnivoice/omnivoice_batch_test.cpp)
     add_engine_warmbench(outetts_warm_bench tests/outetts/outetts_warm_bench.cpp)
     add_engine_warmbench(parakeet_warm_bench tests/parakeet_tdt/parakeet_warm_bench.cpp)
     add_engine_warmbench(glm_tts_tokenizer_probe tests/glm_tts/glm_tts_tokenizer_probe.cpp)
@@ -3669,6 +3670,19 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
     if (ENGINE_BUILD_MODEL_TESTS AND index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(index_tts2_text_controls_probe tests/index_tts2/text_controls_probe.cpp)
+    endif()
+
+    if (ENGINE_BUILD_MODEL_TESTS AND omnivoice IN_LIST AUDIOCPP_LINKED_MODELS)
+        # Batching and fast-path parity; registered with ctest when a local
+        # OmniVoice model directory is configured.
+        add_engine_unittest(omnivoice_batch_parity_test tests/omnivoice/batch_parity_test.cpp)
+        set(AUDIOCPP_OMNIVOICE_TEST_MODEL "" CACHE PATH "Local OmniVoice model directory for integration tests")
+        if (AUDIOCPP_OMNIVOICE_TEST_MODEL)
+            add_test(NAME omnivoice_batch_parity COMMAND omnivoice_batch_parity_test
+                --model "${AUDIOCPP_OMNIVOICE_TEST_MODEL}"
+                --clone-audio "${CMAKE_CURRENT_SOURCE_DIR}/tests/omnivoice/assets/ref_audio_02.wav"
+                --reference-text-file "${CMAKE_CURRENT_SOURCE_DIR}/tests/omnivoice/assets/ref_text_02.txt")
+        endif()
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS AND ENGINE_ENABLE_WEBGPU AND nemotron_asr IN_LIST AUDIOCPP_LINKED_MODELS)
