@@ -139,6 +139,53 @@ Authentication is provider-scoped: Hugging Face requests may carry
 `AUDIOCPP_MS_TOKEN` (optional, for access-restricted ModelScope repos). The
 Hugging Face token is never sent to a ModelScope endpoint, and vice versa.
 
+### Hugging Face Xet Transfers
+
+Most large files on Hugging Face are stored with
+[Xet](https://huggingface.co/docs/xet/index). For those files the native
+manager uses the Xet download protocol directly instead of streaming the
+`/resolve` redirect over a single connection:
+
+1. The metadata request that already reads file size and revision (redirects
+   not followed) also reads `X-Xet-Hash` and the commit-pinned `xet-auth` link.
+2. A read-scoped CAS token is requested from the Hub
+   (`/api/models/{repo}/xet-read-token/{revision}`).
+3. The file's reconstruction (`/v2/reconstructions/{hash}`) is fetched in
+   10 GB batches. It lists the compressed xorb byte ranges that make up the
+   file, each with a short-lived signed URL.
+4. Those ranges are downloaded in parallel, decoded as they stream in (LZ4
+   frames, optionally byte-grouped), and written straight to their offsets in
+   the usual staging file. Memory stays bounded; whole ranges are never
+   buffered.
+
+The installed result goes through the same staging, size check, atomic
+publication, and manifest logic as the HTTP route. When the Hub reports the
+file's SHA-256 (`X-Linked-ETag`), the reconstructed file is also verified
+against it. The hash runs on a background thread while the transfer is in
+progress, so it adds little time.
+
+Files without Xet metadata, ModelScope packages, and any Xet failure before
+publication (no token, no v2 endpoint, an unexpected response) fall back to
+the regular HTTP download. The progress message then says
+`(Xet unavailable: …; using HTTP)`. A complete reconstruction that fails size
+or SHA-256 verification is reported as an error instead of being retried.
+
+Credentials stay scoped. The Hugging Face token is sent only to the Hub, the
+CAS token only to the CAS endpoint the Hub returned, and the signed xorb URLs
+receive no credentials. Redirects are not followed for any Xet request.
+
+Environment controls:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `AUDIOCPP_HF_XET` | enabled | `0` disables Xet and always uses HTTP |
+| `AUDIOCPP_HF_XET_CONCURRENCY` | `16` | Parallel xorb range requests per file (1-256) |
+| `AUDIOCPP_HF_XET_VERIFY` | enabled | `0` skips the SHA-256 check (size and per-term length checks remain) |
+
+Xet support is download-only and needs no extra system dependency. LZ4 is
+vendored under `external/lz4` and SHA-256 comes from the TLS library already
+linked for HTTPS.
+
 ### Python Source Override
 
 The Python v2 manager can redirect any package to ModelScope on demand,
