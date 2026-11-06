@@ -45,7 +45,7 @@ public:
         OmniVoiceGeneratorPerfMode perf_mode,
         bool packed_cfg = true,
         bool device_scoring = true,
-        bool fused_projections = true);
+        bool packed_projections = true);
     ~OmniVoiceQwen3DiffusionRuntime();
 
     // One request, drawing from the runtime RNG (see seed_rng()).

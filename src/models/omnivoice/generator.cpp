@@ -237,7 +237,7 @@ struct Qwen3DiffusionLayerWeights {
     core::TensorValue gate_proj;
     core::TensorValue up_proj;
     core::TensorValue down_proj;
-    // Fused projections (omnivoice.fused_projections): rows [q | k | v] and
+    // Packed projections (omnivoice.packed_projections): rows [q | k | v] and
     // [gate | up]. When valid, q/k/v_proj and gate/up_proj are not loaded.
     core::TensorValue qkv_proj;
     core::TensorValue gate_up_proj;
@@ -258,7 +258,7 @@ Qwen3DiffusionWeights load_weights(
     core::BackendType backend_type,
     size_t weight_context_bytes,
     assets_ns::TensorStorageType storage_type,
-    bool fused_projections) {
+    bool packed_projections) {
     validate_weight_storage_type(storage_type);
     const auto & config = assets.config;
     const auto & source = *assets.model_weights;
@@ -286,7 +286,7 @@ Qwen3DiffusionWeights load_weights(
         w.input_norm = weights.store->load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.llm.hidden_size});
         const int64_t q_out = config.llm.num_attention_heads * dim;
         const int64_t kv_out = config.llm.num_key_value_heads * dim;
-        if (fused_projections) {
+        if (packed_projections) {
             // One GEMM per group: the shared input is converted to f16 once
             // instead of once per projection.
             w.qkv_proj = modules::PackedLinearWeightsBuilder({
@@ -585,13 +585,13 @@ public:
         core::ExecutionContext & execution_context,
         size_t weight_context_bytes,
         assets_ns::TensorStorageType storage_type,
-        bool fused_projections)
+        bool packed_projections)
         : assets_(std::move(assets)),
           backend_(execution_context.backend()),
           backend_type_(execution_context.backend_type()),
           threads_(std::max(1, execution_context.config().threads)),
           weights_(std::make_shared<Qwen3DiffusionWeights>(
-              load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type, fused_projections))) {
+              load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type, packed_projections))) {
         if (assets_ == nullptr) {
             throw std::runtime_error("OmniVoice generator requires assets");
         }
@@ -1821,7 +1821,7 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
     OmniVoiceGeneratorPerfMode perf_mode,
     bool packed_cfg,
     bool device_scoring,
-    bool fused_projections)
+    bool packed_projections)
     : impl_(std::make_unique<Impl>()) {
     if (assets == nullptr) {
         throw std::runtime_error("OmniVoice generator requires assets");
@@ -1836,7 +1836,7 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
         execution_context,
         weight_context_bytes,
         weight_storage_type,
-        fused_projections);
+        packed_projections);
     impl_->mem_saver = mem_saver;
     impl_->perf_mode = perf_mode;
     impl_->packed_cfg = packed_cfg;

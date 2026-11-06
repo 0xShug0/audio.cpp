@@ -144,7 +144,7 @@ Arena and weight-context sizes are in MiB.
 | `omnivoice.perf_mode` | `off`, `flash_attention` | `off` | Generator performance mode; default off keeps the exact-safe attention path. flash_attention requires mem_saver=false. |
 | `omnivoice.packed_cfg` | bool | `true` | Give every guidance (unconditional) sequence only its target frames instead of the full prompt length, and pack batched requests without padding. `false` restores the padded layout, which reproduces earlier output exactly. |
 | `omnivoice.device_scoring` | bool | `true` | For greedy class decoding (`class_temperature=0`), pick each step's best tokens on the backend and read back only those instead of the full logits. Ignored with `mem_saver=true` and for sampled class decoding. |
-| `omnivoice.fused_projections` | bool | `true` | Load the q/k/v projections and the gate/up projections as one packed weight each, so every layer runs one GEMM per group (its shared input is converted to f16 once instead of three and two times) and one fused SwiGLU kernel. `false` keeps separate projections. |
+| `omnivoice.packed_projections` | bool | `true` | Load the q/k/v projections and the gate/up projections as one packed weight each, so every layer runs one GEMM per group (its shared input is converted to f16 once instead of three and two times) and one fused SwiGLU kernel. `false` keeps separate projections. |
 | `omnivoice.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Generator weight storage fallback. |
 | `omnivoice.generator_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit generator weight storage override. |
 | `omnivoice.audio_tokenizer_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for audio tokenizer weights. |
@@ -162,7 +162,7 @@ floating-point rounding: with f32 generator weights the first-step logits of
 the packed layout match the padded one to within 0.002 (mean), and device
 scoring picks the same tokens as host scoring. With both set to `false` the
 output is bit-identical to the padded, host-scored path.
-`omnivoice.fused_projections` is bit-identical with f32 generator weights on
+`omnivoice.packed_projections` is bit-identical with f32 generator weights on
 the standard path; with f16 weights the larger GEMMs can round differently.
 
 `perf_mode=flash_attention` passes the 8 K/V heads to the kernel as they are
@@ -200,7 +200,7 @@ steps, voice clone (`tests/omnivoice/omnivoice_batch_test`):
 | `run_batch()` of 8, 5-20 words | 4.327 s | 1.442 s | 1.226 s |
 
 Tesla T4, same settings, total GPU kernel time (nsys) before -> after the
-un-repeated flash K/V heads and `fused_projections`:
+un-repeated flash K/V heads and `packed_projections`:
 
 | Workload | Before | After |
 |---|---:|---:|

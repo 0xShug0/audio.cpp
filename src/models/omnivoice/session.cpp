@@ -81,9 +81,9 @@ bool device_scoring_from_options(const runtime::SessionOptions & options) {
     return true;
 }
 
-bool fused_projections_from_options(const runtime::SessionOptions & options) {
-    if (const auto value = runtime::find_option(options.options, {"omnivoice.fused_projections"})) {
-        return runtime::parse_bool_option(*value, "omnivoice.fused_projections");
+bool packed_projections_from_options(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"omnivoice.packed_projections"})) {
+        return runtime::parse_bool_option(*value, "omnivoice.packed_projections");
     }
     return true;
 }
@@ -266,7 +266,7 @@ OmniVoiceSession::OmniVoiceSession(
       generator_perf_mode_(perf_mode_from_options(options, mem_saver_)),
       generator_packed_cfg_(packed_cfg_from_options(options)),
       generator_device_scoring_(device_scoring_from_options(options)),
-      generator_fused_projections_(fused_projections_from_options(options)),
+      generator_packed_projections_(packed_projections_from_options(options)),
       tokenizer_(assets_),
       audio_tokenizer_(
           assets_,
@@ -287,7 +287,7 @@ OmniVoiceSession::OmniVoiceSession(
           generator_perf_mode_,
           generator_packed_cfg_,
           generator_device_scoring_,
-          generator_fused_projections_) {
+          generator_packed_projections_) {
     engine::debug::trace_log_scalar("omnivoice.perf_mode", perf_mode_name(generator_perf_mode_));
     if (task_.task != runtime::VoiceTaskKind::Tts &&
         task_.task != runtime::VoiceTaskKind::VoiceCloning &&
