@@ -41,6 +41,26 @@ Open `http://127.0.0.1:8080`, install a model package from the model library,
 then select it in the matching studio tab. Replace `cuda` with a backend your
 binary and selected model support, such as `cpu`, `vulkan`, or `metal`.
 
+Models default to `models/` beside the server executable. To choose another
+startup folder, add `--models-root /path/to/models`, or set it in a config:
+
+```json
+{
+  "ui": true,
+  "ui_management": true,
+  "models_root": "/path/to/models",
+  "models": []
+}
+```
+
+`--models-root` overrides `models_root` in the config. Relative CLI paths use
+the working directory; relative config paths use the config file's directory.
+The WebUI reads the server's current folder on startup; an older browser-saved
+selection does not override it. Explicit changes in **Models** apply to the
+server and all connected clients, while folder history stays browser-local.
+**Use default** restores the startup folder. Restarting the server also restores
+that folder; changing it in the UI does not rewrite the config file.
+
 Use **Lib → Speakers → New speaker preset** to save a model, voice, and
 generation settings together, then select that speaker in **Apps → Text to
 speech**. **Lib → Voices** manages reference recordings and their transcripts.

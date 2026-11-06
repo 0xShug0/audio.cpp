@@ -1139,8 +1139,6 @@
     try {
       const root = await setModelsRoot(useDefault ? '' : modelsFolderInput.trim());
       acceptModelsRoot(root);
-      if (root.is_default) localStorage.removeItem('audiocpp.ui.modelsFolder');
-      else localStorage.setItem('audiocpp.ui.modelsFolder', root.models_root);
       installJobs = {};
       packageSizes = {};
       packageSizeState = 'idle';
@@ -2627,11 +2625,7 @@
     if (paramSpecs.some((spec) => spec.group === 'lora')) resetParams();
     if (server?.ui_management) {
       try {
-        let root = await getModelsRoot();
-        const storedModelsFolder = localStorage.getItem('audiocpp.ui.modelsFolder');
-        if (storedModelsFolder && storedModelsFolder !== root.models_root) {
-          root = await setModelsRoot(storedModelsFolder);
-        }
+        const root = await getModelsRoot();
         acceptModelsRoot(root);
       } catch (error) {
         status = error instanceof Error ? error.message : String(error);

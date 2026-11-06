@@ -101,6 +101,7 @@ void print_help() {
         << "  --no-ui                          disable the embedded WebUI\n"
         << "  --ui-management                  allow WebUI model management and downloads; requires\n"
         << "                                   AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON at build time\n"
+        << "  --models-root <directory>         default WebUI models folder; overrides config models_root\n"
         << "  --host <ip>                      server bind address; default 127.0.0.1\n"
         << "  --port <port>                    server listening port; default 8080\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal|webgpu  default cuda (rocm is an alias for hip)\n"
@@ -143,7 +144,7 @@ void print_help() {
         << "  POST /v1/ui/models/install/stop  stop one active package download\n"
         << "  POST /v1/ui/models/clean-partial remove abandoned package staging files\n"
         << "  POST /v1/ui/models/delete        remove one installed package precision\n"
-        << "  GET  /v1/ui/models-root          current and binary-local default models folders\n"
+        << "  GET  /v1/ui/models-root          current and default models folders\n"
         << "  POST /v1/ui/models-root          select a models folder (empty path restores default)\n"
         << "  POST /v1/ui/browse-directories   list local folders for the native folder picker\n"
         << "  GET  /v1/ui/models/install-status[?id=<package>]\n"
@@ -238,6 +239,13 @@ int main(int argc, char ** argv) {
         }
         if (has_arg(argc, argv, "--ui-management")) {
             config.ui_management = true;
+        }
+        if (has_arg(argc, argv, "--models-root")) {
+            const auto models_root = arg_value(argc, argv, "--models-root");
+            if (!models_root || models_root->empty() || models_root->rfind("--", 0) == 0) {
+                throw std::runtime_error("--models-root requires a non-empty directory");
+            }
+            config.models_root = std::filesystem::path(*models_root);
         }
 #if !defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
         if (config.ui_management) {
