@@ -110,6 +110,40 @@
       ]
     },
     {
+      "id": "edda_hurtig_asr",
+      "coverage": "Danish ASR with speculative, greedy, argmax-draft, short-block and beam-search decoding, varying input length and repeated requests",
+      "family": "edda_asr",
+      "model": "models/edda-v0.2-large-hurtig",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "first", "audio": "resources/hviske_asr/danish_unified_00.wav"},
+        {"id": "different", "audio": "resources/hviske_asr/danish_unified_01.wav"},
+        {"id": "third", "audio": "resources/hviske_asr/danish_unified_02.wav"},
+        {"id": "greedy", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"speculative": false}},
+        {"id": "argmax_draft", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"draft_selector": false}},
+        {"id": "block_4", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"draft_block": 4}},
+        {"id": "beam_5", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"num_beams": 5}},
+        {"id": "repeat_first", "audio": "resources/hviske_asr/danish_unified_00.wav"}
+      ]
+    },
+    {
+      "id": "edda_hurtig_longform",
+      "coverage": "Danish longform with silence splitting, fixed and unsplit modes, and repeated requests",
+      "family": "edda_asr",
+      "model": "models/edda-v0.2-large-hurtig",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "warmup", "audio": "resources/hviske_asr/danish_unified_00.wav"},
+        {"id": "longform", "audio": "resources/hviske_asr/da_solen_180s.wav"},
+        {"id": "fixed_28", "audio": "resources/hviske_asr/da_solen_180s.wav", "options": {"audio_chunk_mode": "fixed", "audio_chunk_duration_sec": 28}},
+        {"id": "none_short", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"audio_chunk_mode": "none"}},
+        {"id": "repeat_default", "audio": "resources/hviske_asr/da_solen_180s.wav"},
+        {"id": "short_after_long", "audio": "resources/hviske_asr/danish_unified_00.wav"}
+      ]
+    },
+    {
       "id": "hviske_v6_longform",
       "coverage": "Danish longform, auto versus explicit silence splitting, fixed and unsplit modes, and repeated requests",
       "family": "hviske_asr_v6",
