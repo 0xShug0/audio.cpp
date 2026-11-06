@@ -283,12 +283,16 @@ ggml_tensor * build_mamba(ggml_context * g, ggml_cgraph * graph, ggml_tensor * i
 
 ggml_tensor * build_attention(ggml_context * g, ggml_tensor * input, const LayerWeights & w,
     const DecoderConfig & c, DecoderState & state, size_t layer, ggml_tensor * slots,
-    ggml_tensor * mask, int64_t steps) {
+    ggml_tensor * mask, int64_t steps, ggml_cgraph * cache_updates = nullptr) {
     auto * q = ggml_mul_mat(g, w.q, input);
     auto * k = ggml_mul_mat(g, w.k, input);
     auto * v = ggml_mul_mat(g, w.v, input);
     k = ggml_set_rows(g, state.key(layer), k, slots);
     v = ggml_set_rows(g, state.value(layer), v, slots);
+    if (cache_updates) {
+        ggml_build_forward_expand(cache_updates, k);
+        ggml_build_forward_expand(cache_updates, v);
+    }
     q = ggml_cont(g, ggml_permute(g,
         ggml_reshape_3d(g, q, c.attention_head_dim, c.attention_heads, steps), 0, 2, 1, 3));
     k = ggml_permute(g, ggml_reshape_3d(g, k,
@@ -399,17 +403,22 @@ public:
             build_offload(c, w, cur);
             return;
         }
+        if (prompt) prefill_body_ = ggml_new_graph_custom(g, kGraphNodes, false);
         for (size_t i = 0; i < c.block_pattern.size(); ++i) {
             const auto & layer = w.layers[i];
             auto * residual = cur;
             cur = rms_norm(g, cur, layer.norm, c.rms_norm_eps);
             switch (c.block_pattern[i]) {
-                case 'M': cur = build_mamba(g, graph_, cur, layer, c, state, i, sequence_id_, steps); break;
-                case 'A': cur = build_attention(g, cur, layer, c, state, i, slots_, mask_, steps); break;
+                case 'M': cur = build_mamba(g, prefill_body_ ? prefill_body_ : graph_,
+                    cur, layer, c, state, i, sequence_id_, steps); break;
+                case 'A': cur = build_attention(g, cur, layer, c, state, i, slots_, mask_, steps, prefill_body_); break;
                 case 'E': cur = build_moe(g, cur, layer, c, steps); break;
             }
             cur = ggml_add(g, cur, residual);
         }
+        // Intermediate chunks need only recurrent/KV updates. Copy their graph
+        // into the full graph so both executions share the same tensor allocation.
+        if (prefill_body_) ggml_graph_cpy(prefill_body_, graph_);
         // All tokens update state, but only the last row needs the large head.
         cur = ggml_view_2d(g, cur, c.hidden_size, 1, cur->nb[1], (steps - 1) * cur->nb[1]);
         cur = rms_norm(g, cur, w.final_norm, c.rms_norm_eps);
@@ -422,10 +431,14 @@ public:
             throw std::runtime_error("Nemotron-H decoder graph allocation failed");
         }
         core::prepare_host_graph_plan(execution_, graph_, plan_);
+        if (prefill_body_ && ggml_graph_n_nodes(prefill_body_) > 0)
+            core::prepare_host_graph_plan(execution_, prefill_body_, body_plan_);
     }
 
     ~DecoderGraph() {
         plan_.reset();
+        body_plan_.reset();
+        if (prefill_body_) core::release_backend_graph_resources(execution_.backend(), prefill_body_, true);
         if (offload_graphs_.empty()) core::release_backend_graph_resources(execution_.backend(), graph_, true);
         for (auto & entry : offload_plans_) entry.second.reset();
         for (auto * graph : offload_graphs_) core::release_backend_graph_resources(execution_.backend(), graph, true);
@@ -434,7 +447,7 @@ public:
     int64_t steps() const { return steps_; }
 
     void run_prompt(const std::vector<int32_t> & ids, const std::vector<float> & audio,
-        int64_t first_audio, int64_t audio_frames, int64_t offset) {
+        int64_t first_audio, int64_t audio_frames, int64_t offset, bool output_logits) {
         if (!prompt_) throw std::runtime_error("Nemotron-H prompt graph mismatch");
         std::fill(audio_scratch_.begin(), audio_scratch_.end(), 0.0F);
         std::fill(text_mask_scratch_.begin(), text_mask_scratch_.end(), 1.0F);
@@ -448,7 +461,7 @@ public:
         }
         ggml_backend_tensor_set(audio_, audio_scratch_.data(), 0, audio_scratch_.size() * sizeof(float));
         ggml_backend_tensor_set(text_mask_, text_mask_scratch_.data(), 0, text_mask_scratch_.size() * sizeof(float));
-        run(ids.data() + offset);
+        run(ids.data() + offset, output_logits);
     }
 
     void run_token(int32_t token) {
@@ -620,7 +633,7 @@ private:
         compute(final_);
     }
 
-    void run(const int32_t * ids) {
+    void run(const int32_t * ids, bool output_logits = true) {
         const int64_t offset = state_.processed();
         if (offset + steps_ > state_.capacity()) throw std::runtime_error("Nemotron-H cache capacity exceeded");
         ggml_backend_tensor_set(ids_, ids, 0, static_cast<size_t>(steps_) * sizeof(int32_t));
@@ -639,9 +652,15 @@ private:
             ggml_backend_tensor_set(slots_, slots_scratch_.data(), 0, slots_scratch_.size() * sizeof(int64_t));
             ggml_backend_tensor_set(mask_, mask_scratch_.data(), 0, mask_scratch_.size() * sizeof(ggml_fp16_t));
         }
-        if (!offload_graphs_.empty()) run_offload();
-        else if (core::compute_graph(execution_, graph_, plan_, "nemotron_transcribe.decoder") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Nemotron-H decoder graph execution failed");
+        if (!offload_graphs_.empty()) {
+            run_offload();
+        } else {
+            auto * graph = output_logits ? graph_ : prefill_body_;
+            auto & plan = output_logits ? plan_ : body_plan_;
+            if (ggml_graph_n_nodes(graph) > 0 &&
+                core::compute_graph(execution_, graph, plan, "nemotron_transcribe.decoder") != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("Nemotron-H decoder graph execution failed");
+            }
         }
         state_.advance(steps_);
     }
@@ -681,6 +700,8 @@ private:
     std::vector<int64_t> slots_scratch_;
     std::vector<float> audio_scratch_;
     std::vector<float> text_mask_scratch_;
+    core::HostGraphPlan body_plan_;
+    ggml_cgraph * prefill_body_ = nullptr;
 };
 
 }  // namespace
@@ -835,7 +856,7 @@ struct NemotronHDecoderRuntime::Impl {
             }
             const auto count = std::min(c.prefill_batch_size, steps - offset);
             auto & graph = prompt_graph(count);
-            graph.run_prompt(prompt, audio, static_cast<int64_t>(before.size()), frames, offset);
+            graph.run_prompt(prompt, audio, static_cast<int64_t>(before.size()), frames, offset, offset + count == steps);
             offset += count;
             out.processed_prompt_tokens = offset;
             if (offset == steps) logits = graph.logits();

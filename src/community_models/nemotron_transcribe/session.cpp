@@ -248,7 +248,7 @@ public:
             throw runtime::CapacityError("Nemotron Transcribe prompt, audio and output budget exceed max_context");
         const auto frontend_ms = debug::elapsed_ms(start);
         auto stage = std::chrono::steady_clock::now();
-        const auto encoded = encoder_->encode(features);
+        const auto encoded = encoder_->encode(features, {}, word_times);
         const auto encoder_ms = debug::elapsed_ms(stage);
         stage = std::chrono::steady_clock::now();
         const auto generated = decoder_->generate(prompt.before_audio, encoded.audio_embeddings,

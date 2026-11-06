@@ -2,6 +2,7 @@
 #include "engine/community_models/nemotron_transcribe/ctc.h"
 #include <ggml-backend-impl.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -166,6 +167,19 @@ void ctc_bridge_math() {
     for (size_t i = 0; i < emissions.size(); ++i)
         require(std::abs(emissions[i] - (projection[i] - evidence.logsumexp[i / 2])) < 1e-6f,
             "CTC selected-class normalization changed");
+    options.head_window = 1;
+    options.head_left_context = options.head_right_context = 2;
+    const auto windowed = head.prepare(input.data(), 3, options);
+    require(windowed.hidden == first, "CTC cropped windows changed bridge states");
+    const auto logits = head.project(first.data(), 6, {0, 1, 2, 3, 4});
+    for (int frame = 0; frame < 6; ++frame) {
+        const auto begin = logits.begin() + frame * 5;
+        const float peak = *std::max_element(begin, begin + 5);
+        float sum = 0.0f;
+        for (auto it = begin; it != begin + 5; ++it) sum += std::exp(*it - peak);
+        require(std::abs(windowed.logsumexp[frame] - (std::log(sum) + peak)) < 2e-6f &&
+            windowed.maximum[frame] == peak, "CTC cropped-window normalizers changed");
+    }
 }
 
 void extreme_cache_rates() {
@@ -197,6 +211,11 @@ void extreme_cache_rates() {
     const auto repeated = encoder.encode(mel);
     require(output.audio_embeddings == repeated.audio_embeddings && output.speaker_probs10 == repeated.speaker_probs10,
         "extreme cache rates changed later request output");
+    const auto without_states = encoder.encode(mel, {}, false);
+    require(without_states.asr_states.empty() && without_states.audio_embeddings == output.audio_embeddings &&
+        without_states.speaker_probs80 == output.speaker_probs80 && without_states.speaker_probs10 == output.speaker_probs10,
+        "omitting ASR state readback changed encoder outputs");
+    require(encoder.encode(mel).asr_states == output.asr_states, "omitted ASR states leaked into a later request");
 }
 
 // Exercise the real encoder with Vulkan's contiguous-input NORM restriction,
