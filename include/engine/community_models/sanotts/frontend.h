@@ -50,6 +50,9 @@ public:
     /** Pause inserted between chunks, longer after a sentence end. */
     [[nodiscard]] static double boundary_pause_seconds(const std::string & chunk);
 
+    /** The vocabulary symbol for a token id; empty for specials/unknown ids. */
+    [[nodiscard]] static std::string symbol_for_id(int32_t id);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

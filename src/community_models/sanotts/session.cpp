@@ -112,6 +112,68 @@ RequestOptions parse_request_options(const runtime::TaskRequest & request) {
     return out;
 }
 
+bool request_return_timestamps(const runtime::TaskRequest & request) {
+    if (const auto value = runtime::find_option(request.options, {"return_timestamps"})) {
+        return runtime::parse_bool_option(*value, "return_timestamps");
+    }
+    return false;
+}
+
+// Word spans from the duration model's per-token frame counts: tokens between
+// space symbols form one spoken word, punctuation tokens only add pause time.
+// Token t covers frames [sum(d[<t]), sum(d[<=t])); the iSTFT output drops
+// hop/2 samples at the front, so a frame boundary f sits at f*hop - hop/2.
+void append_word_timestamps(
+    std::vector<runtime::WordTimestamp> & out,
+    const std::vector<int32_t> & token_ids,
+    const std::vector<int64_t> & token_frames,
+    int64_t hop_length,
+    int64_t offset_samples,
+    int64_t chunk_samples) {
+    static const std::string punctuation[] = {
+        "!", "\"", "(", ")", ",", ".", ":", ";", "?", "\u2014", "\u201c", "\u201d"};
+    const auto to_sample = [&](int64_t frame) {
+        const int64_t local = std::clamp<int64_t>(
+            frame * hop_length - hop_length / 2, 0, chunk_samples);
+        return offset_samples + local;
+    };
+    std::string word;
+    int64_t word_start = 0;
+    int64_t word_end = 0;
+    const auto flush = [&] {
+        if (!word.empty()) {
+            runtime::WordTimestamp stamp;
+            stamp.span.start_sample = to_sample(word_start);
+            stamp.span.end_sample = to_sample(word_end);
+            stamp.word = word;
+            stamp.confidence = 1.0F;
+            out.push_back(std::move(stamp));
+            word.clear();
+        }
+    };
+    int64_t frame = 0;
+    const size_t count = std::min(token_ids.size(), token_frames.size());
+    for (size_t index = 0; index < count; ++index) {
+        const int64_t start = frame;
+        frame += token_frames[index];
+        const std::string symbol = SanoTtsFrontend::symbol_for_id(token_ids[index]);
+        if (symbol.empty() || symbol == " ") {
+            flush();
+            continue;
+        }
+        if (std::find(std::begin(punctuation), std::end(punctuation), symbol) !=
+            std::end(punctuation)) {
+            continue;
+        }
+        if (word.empty()) {
+            word_start = start;
+        }
+        word += symbol;
+        word_end = frame;
+    }
+    flush();
+}
+
 void append_pause(runtime::AudioBuffer & output, double seconds) {
     if (output.sample_rate <= 0 || seconds <= 0.0) {
         return;
@@ -206,6 +268,8 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
     }
 
     const auto request_options = parse_request_options(request);
+    const bool want_words = request_return_timestamps(request) && runtime_ != nullptr;
+    std::vector<runtime::WordTimestamp> words;
     runtime::AudioBuffer merged;
     uint64_t rendered_chunks = 0;
     // Renders one chunk, bisecting at whitespace when it phonemizes past the
@@ -254,7 +318,20 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
                 chunk_options.seed = request_options.seed_from_text
                     ? sanotts_text_seed(chunk)
                     : request_options.seed + rendered_chunks;
-                audio = runtime_->synthesize(encoded.token_ids, chunk_options);
+                std::vector<int64_t> token_frames;
+                audio = runtime_->synthesize(
+                    encoded.token_ids,
+                    chunk_options,
+                    want_words ? &token_frames : nullptr);
+                if (want_words) {
+                    append_word_timestamps(
+                        words,
+                        encoded.token_ids,
+                        token_frames,
+                        assets_->config.hop_length,
+                        static_cast<int64_t>(merged.samples.size()),
+                        static_cast<int64_t>(audio.samples.size()));
+                }
             } else {
                 // The piperlite decoder is deterministic; the seed option is
                 // documented as ignored for these voices.
@@ -282,6 +359,7 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
         static_cast<int64_t>(chunks.size()));
     runtime::TaskResult result;
     result.audio_output = std::move(merged);
+    result.word_timestamps = std::move(words);
     return result;
 }
 
