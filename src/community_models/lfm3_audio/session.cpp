@@ -247,7 +247,8 @@ struct PulledSteps {
 };
 
 // The generator's steps until it has given `max_frames` speech frames, or until its end.
-PulledSteps pull_steps(Lfm3Generator & generator, int32_t end_of_audio, size_t max_frames = std::numeric_limits<size_t>::max()) {
+PulledSteps pull_steps(Lfm3Generator & generator, int32_t end_of_audio, size_t max_frames = std::numeric_limits<size_t>::max(),
+                       bool emit_text = false) {
     PulledSteps out;
     while (out.frames.size() < max_frames) {
         auto step = generator.next();
@@ -257,6 +258,7 @@ PulledSteps pull_steps(Lfm3Generator & generator, int32_t end_of_audio, size_t m
         }
         if (step->codes.empty()) {
             out.tokens.push_back(step->token);
+            if (emit_text && out.frames.empty()) break;
         } else if (!is_end_of_audio_frame(step->codes, end_of_audio)) {
             out.frames.push_back(std::move(step->codes));
         }
@@ -1061,7 +1063,8 @@ std::optional<runtime::StreamEvent> Lfm3ChatSession::next_stream_event() {
         codec.start_stream();
     }
 
-    const auto pulled = pull_steps(*st.generator, m.model.end_of_audio(), static_cast<size_t>(st.options.stream_frames_per_event));
+    // Text is independently consumable; do not wait for the next speech frame.
+    const auto pulled = pull_steps(*st.generator, m.model.end_of_audio(), static_cast<size_t>(st.options.stream_frames_per_event), true);
     st.frames += pulled.frames.size();
     auto samples = codec.push(pulled.frames);
     if (pulled.done) {

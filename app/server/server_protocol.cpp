@@ -930,8 +930,9 @@ static void write_artifact_json(std::ostream &out,
                                 const engine::runtime::VoiceArtifact &artifact) {
   out << "{\"id\":" << json_quote(artifact.id)
       << ",\"kind\":" << json_quote(artifact_kind_name(artifact.kind))
-      << ",\"payload\":" << json_quote(base64_encode(artifact.payload))
-      << ",\"meta\":{";
+      // Base64 contains no JSON escapes; avoid copying large video payloads through cJSON.
+      << ",\"payload\":\"" << base64_encode(artifact.payload)
+      << "\",\"meta\":{";
   bool first_meta = true;
   for (const auto &[key, value] : artifact.meta) {
     if (!first_meta)
