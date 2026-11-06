@@ -51,6 +51,25 @@ uv run --no-project --python 3.12 --with huggingface_hub hf download `
   --local-dir models\Drama-3-GGUF
 ```
 
+### Checkpoint versions
+
+The default files in [Jmica/Drama-3-GGUF](https://huggingface.co/Jmica/Drama-3-GGUF)
+use the October 29, 2026 upstream checkpoint,
+[revision `78e5ab7`](https://huggingface.co/fishaudio/drama-3/tree/78e5ab79e49aa9a25abe8799eff2c4d73a1c3216),
+labeled V2 by the conversion repository. The original V1 packages, based on
+upstream revision `dd64a85`, remain available at
+[revision `original-2026-10-13`](https://huggingface.co/Jmica/Drama-3-GGUF/tree/original-2026-10-13).
+V1 and V2 are GGUF release labels, not official Fish Audio model-version names.
+
+Both releases retain the same filenames. Select the revision explicitly and
+use separate directories when keeping both. For example, to download V1:
+
+```powershell
+uv run --no-project --python 3.12 --with huggingface_hub hf download `
+  Jmica/Drama-3-GGUF drama-3-backbone-8bit-experts-Q2_K.gguf `
+  --revision original-2026-10-13 --local-dir models\Drama-3-GGUF-V1
+```
+
 The model manager lists the base and small packages:
 
 ```powershell
@@ -63,7 +82,9 @@ uv run --no-project --python 3.12 tools\model_manager_v2.py install fish_drama3_
 | `drama-3-backbone-8bit-experts-Q4_K_S.gguf` | 22.91 GiB | Q4_K | Q8_0 |
 | `drama-3-backbone-8bit-experts-Q3_K_S.gguf` | 18.93 GiB | Q3_K | Q8_0 |
 | `drama-3-backbone-8bit-experts-Q2_K.gguf` | 15.88 GiB | Q2_K | Q8_0 |
-| `drama-3-backbone-4bit-experts-Q4_K_S.gguf` | 21.78 GiB | Q4_K | Q4_K, with Q4_0 text embedding |
+| `drama-3-backbone-4bit-experts-Q4_K_S.gguf` | 21.77 GiB | Q4_K | Q4_K, with Q4_0 text embedding |
+| `drama-3-backbone-8bit-F32-routers-experts-Q4_K_S.gguf` | 22.97 GiB | Q4_K | Q8_0, with FP32 routers/shared-expert gates |
+| `drama-3-backbone-8bit-F32-routers-BF16-embed-head-experts-Q4_K_S.gguf` | 23.87 GiB | Q4_K | Q8_0, with FP32 routers/shared-expert gates and BF16 text embedding/output head |
 
 These packages use standard GGML K-quants. The Q3_K_S and Q4_K_S file profiles
 use pure expert banks: all 120 routed expert projection banks have uniform
@@ -77,7 +98,7 @@ The native converter takes `--expert-type q3_k` or `--expert-type q4_k`.
 `backbone-8bit` means Q8_0 backbone matrices; `backbone-4bit` means Q4_K matrices
 with a Q4_0 text embedding. Q2 experts use uniform Q2_K storage.
 
-All four packages retain FP16 audio-tower matrices and waveform codec weights.
+All six packages retain FP16 audio-tower matrices and waveform codec weights.
 Backbone and audio-tower normalization vectors stay FP32; codec normalization
 vectors use FP16 with the rest of the codec. The packages embed their tokenizer,
 configuration and model contract. Stock audio.cpp releases without this port
@@ -282,7 +303,10 @@ converter if you want to prepare a different precision:
 ```
 
 Download the complete official checkpoint into `models\drama-3-original`.
-The revision below is the checkpoint used for validation:
+The example below pins the original V1 checkpoint used for the earlier port
+checks. To prepare V2, select revision
+`78e5ab79e49aa9a25abe8799eff2c4d73a1c3216` and use separate checkpoint and output
+paths so the original files remain available:
 
 ```powershell
 uv run --no-project --python 3.12 --with huggingface_hub hf download fishaudio/drama-3 --revision dd64a85cd82e9521f7202610ede97b367fc83946 --local-dir models\drama-3-original
@@ -458,6 +482,42 @@ that leaves no generation room is still rejected. These rules apply to both
 offline and streaming generation.
 
 ## Validation limits
+
+### V1/V2 checkpoint comparison
+
+A [community evaluation](https://github.com/0xShug0/audio.cpp/discussions/891#discussioncomment-19427812)
+replayed the same 5,000 requests across English, Japanese, Chinese, French and
+Spanish, with 1,000 requests per language. Seeds, reference voices, runtime and
+generation settings stayed unchanged between checkpoints.
+
+The comparison used Q4_K experts, FP32 routers and BF16 text embedding/full
+output head, with all experts on GPU. The native runtime was pinned to
+`4faef969850e2dd485e717fe2159875b91cfa3dc`. Settings were temperature `1.0`,
+`top_p=0.9`, `top_k=4097`, `text_chunk_size=128`, context `8192` and a maximum of
+`1024` acoustic frames per text chunk. These results describe this precision
+profile, not every quantization or Drama3-small.
+
+| Automatic check | V1 | V2 |
+|---|---:|---:|
+| Trailing quiet >=2 seconds | 25 | 0 |
+| Internal quiet >=2 seconds | 35 | 0 |
+| Clips reaching a chunk's frame cap before EOS | 9 | 14 |
+
+The updated checkpoint improved silent-continuation behavior in this test.
+However, repetitive speech and prolonged nonverbal reactions remain possible,
+sometimes continuing until the generation limit. An ASR-assisted pass over the
+V2 outputs flagged 29 potential speech-repetition cases. All five selected cases
+checked by listening contained repetition. Review generated audio for looping
+speech even when no long quiet sections are detected.
+
+These results describe a fixed benchmark with 5,000 text strings representing
+1,000 translated meaning families, not a general failure rate or a guarantee
+that trailing silence is eliminated. The full V1 corpus was not evaluated with
+the same repetition screen, so the repetition results do not establish a V1/V2
+regression. ASR discrepancies are review flags, not a full assessment of spoken
+content, voice similarity or acting quality.
+
+### Port validation
 
 Reproducible codec, tokenizer, quantization and HTTP smoke commands are in the
 [Drama 3 test guide](../../tests/community_models/fish_drama3/README.md).
