@@ -372,7 +372,6 @@ struct FetchJob {
     const Fetch * fetch = nullptr;
     std::vector<std::vector<Placement>> placements;  // per range descriptor
     uint64_t first_offset = std::numeric_limits<uint64_t>::max();  // earliest file byte it writes
-    uint64_t reported = 0;  // progress already reported across attempts
 };
 
 // Builds the fetch jobs for the terms of one segment that are not done yet.
@@ -602,9 +601,15 @@ struct TransferState {
     std::exception_ptr error;
     bool refresh_needed = false;
 
+    // Progress counts each file byte once, however often it is rewritten by
+    // retries or refresh passes: a term contributes the furthest point any
+    // attempt has reached, and the segment total never moves backwards.
     const std::function<void(uint64_t)> * progress = nullptr;
     std::mutex progress_mutex;
-    uint64_t * progress_total = nullptr;
+    uint64_t progress_base = 0;                        // bytes of earlier segments
+    std::vector<uint64_t> * term_progress = nullptr;   // per term, furthest byte written
+    uint64_t * segment_progress = nullptr;             // sum of term_progress
+    uint64_t * segment_reported = nullptr;             // highest segment_progress reported
 
     void fail(std::exception_ptr exception) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -626,11 +631,16 @@ struct TransferState {
         abort = true;
     }
 
-    void add_progress(uint64_t bytes) {
-        if (bytes == 0) return;
+    // `reached` is how many bytes of `term` (from its clipped start) are written.
+    void note_progress(size_t term, uint64_t reached) {
         std::lock_guard<std::mutex> lock(progress_mutex);
-        *progress_total += bytes;
-        if (progress != nullptr && *progress) (*progress)(*progress_total);
+        auto & previous = (*term_progress)[term];
+        if (reached <= previous) return;
+        *segment_progress += reached - previous;
+        previous = reached;
+        if (*segment_progress <= *segment_reported) return;
+        *segment_reported = *segment_progress;
+        if (progress != nullptr && *progress) (*progress)(progress_base + *segment_reported);
     }
 };
 
@@ -671,8 +681,7 @@ private:
         return *client;
     }
 
-    void write_clipped(FetchJob & job, uint64_t position, const uint8_t * data, size_t size,
-                       uint64_t & attempt_written) {
+    void write_clipped(const Placement & placement, uint64_t position, const uint8_t * data, size_t size) {
         const uint64_t lo = std::max(position, state_.segment_start);
         const uint64_t hi = std::min(position + size, state_.segment_end);
         if (lo >= hi) return;
@@ -680,11 +689,7 @@ private:
         output_.write(reinterpret_cast<const char *>(data + (lo - position)),
             static_cast<std::streamsize>(hi - lo));
         if (!output_) throw std::runtime_error("could not write downloaded model file");
-        attempt_written += hi - lo;
-        if (attempt_written > job.reported) {
-            state_.add_progress(attempt_written - job.reported);
-            job.reported = attempt_written;
-        }
+        state_.note_progress(placement.term, hi - (*state_.term_starts)[placement.term]);
     }
 
     void run_job(FetchJob & job) {
@@ -731,7 +736,6 @@ private:
         // credentials to the storage host.
         const httplib::Headers headers{{"User-Agent", kUserAgent}, {"Range", range_header}};
 
-        uint64_t attempt_written = 0;
         size_t active_range = 0;
         const auto chunk_sink = [&](uint32_t chunk, const uint8_t * data, size_t size) {
             for (auto & placement : job.placements[active_range]) {
@@ -740,7 +744,7 @@ private:
                 if (placement.cursor + size > placement.unpacked_length) {
                     throw XetProtocolError("Xet term is longer than its unpacked_length");
                 }
-                write_clipped(job, placement.file_offset + placement.cursor, data, size, attempt_written);
+                write_clipped(placement, placement.file_offset + placement.cursor, data, size);
                 placement.cursor += size;
                 if (chunk + 1 == placement.end_chunk && placement.cursor != placement.unpacked_length) {
                     throw XetProtocolError("Xet term length does not match its unpacked_length");
@@ -1219,13 +1223,15 @@ void xet_download(
     if (options.verify_sha256 && is_xet_hash(request.expected_sha256)) {
         hasher = std::make_unique<PrefixHasher>(destination, cancelled);
     }
-    uint64_t written = 0;
     for (uint64_t segment_start = 0; segment_start < request.size;) {
         const uint64_t segment_end = std::min(request.size, segment_start + options.segment_bytes);
         std::vector<char> done;
         std::vector<uint64_t> term_starts;
         size_t prefix_term = 0;
         std::vector<std::string> signature;
+        std::vector<uint64_t> term_progress;
+        uint64_t segment_progress = 0;
+        uint64_t segment_reported = 0;
         for (int refresh = 0;; ++refresh) {
             if (refresh > options.max_refreshes) {
                 throw XetUnavailable("signed xorb URLs kept expiring or failing authorization");
@@ -1244,6 +1250,10 @@ void xet_download(
                 signature = std::move(current);
                 done.assign(recipe.terms.size(), 0);
                 prefix_term = 0;
+                // Term indices changed meaning; bytes already reported stay
+                // reported, so progress pauses until the redo catches up.
+                term_progress.assign(recipe.terms.size(), 0);
+                segment_progress = 0;
             }
             auto jobs = plan_jobs(recipe, segment_start, segment_end, done, term_starts);
             if (jobs.empty()) break;
@@ -1259,7 +1269,10 @@ void xet_download(
             state.prefix_term = &prefix_term;
             state.hasher = hasher.get();
             state.progress = &progress;
-            state.progress_total = &written;
+            state.progress_base = segment_start;
+            state.term_progress = &term_progress;
+            state.segment_progress = &segment_progress;
+            state.segment_reported = &segment_reported;
             if (run_jobs(jobs, state)) break;
         }
         if (hasher) hasher->advance(segment_end);

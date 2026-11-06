@@ -194,6 +194,10 @@ struct Fixture {
     std::atomic<bool> xorb_ignore_range{false};
     std::atomic<bool> xorb_slow{false};
     std::atomic<bool> skew_lengths{false};  // move one byte between the first two terms
+    // Streams xorb 0 slowly and rejects xorb 1 once xorb 0 is partly written,
+    // so a refresh pass redoes a transfer that already reported progress.
+    std::atomic<bool> refresh_mid_transfer{false};
+    std::atomic<uint64_t> slow_streamed{0};
 
     Fixture() {
         // Mixed compression, BG4 with lengths % 4 == 1, 2, 3, and multi-chunk xorbs.
@@ -377,6 +381,25 @@ struct Fixture {
                 return;
             }
             if (xorb_slow.load()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            if (refresh_mid_transfer.load()) {
+                if (found != xorbs.begin()) {
+                    for (int i = 0; i < 1000 && slow_streamed.load() < 120000; ++i) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                    }
+                    refresh_mid_transfer = false;
+                    response.status = 403;
+                    return;
+                }
+                const auto body = std::make_shared<std::string>(found->serialized.begin(), found->serialized.end());
+                response.set_content_provider(body->size(), "application/octet-stream",
+                    [this, body](size_t offset, size_t length, httplib::DataSink & sink) {
+                        const size_t piece = std::min<size_t>(length, 4096);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+                        slow_streamed += piece;
+                        return sink.write(body->data() + offset, piece);
+                    });
+                return;
+            }
             if (xorb_ignore_range.load()) response.status = 200;  // ignore Range: whole object, 200
             // Otherwise httplib answers 206 itself, multipart for several ranges.
             response.set_content(std::string(found->serialized.begin(), found->serialized.end()),
@@ -591,6 +614,27 @@ void test_direct_transfer(Fixture & fixture, const fs::path & root) {
     {
         std::lock_guard<std::mutex> lock(fixture.mutex);
         check(fixture.recipe_requests == 2, "403 on a xorb URL re-queries the reconstruction");
+    }
+
+    // A refresh that redoes a partly finished transfer counts its bytes once.
+    fixture.reset_counters();
+    fixture.slow_streamed = 0;
+    fixture.refresh_mid_transfer = true;
+    uint64_t highest_progress = 0;
+    last_progress = 0;
+    monotonic = true;
+    xet::xet_download(fixture.request(), output, fast_options(), nullptr, [&](uint64_t bytes) {
+        monotonic = monotonic && bytes >= last_progress;
+        last_progress = bytes;
+        highest_progress = std::max(highest_progress, bytes);
+    });
+    check(read_file(output) == fixture.file, "reconstruction after mid-transfer refresh");
+    check(fixture.slow_streamed.load() >= 120000, "refresh interrupted a partly written transfer");
+    check(highest_progress == fixture.file.size() && last_progress == fixture.file.size() && monotonic,
+        "progress is not counted twice across a refresh");
+    {
+        std::lock_guard<std::mutex> lock(fixture.mutex);
+        check(fixture.recipe_requests == 2, "mid-transfer 403 re-queries the reconstruction");
     }
 
     // Transient errors are retried on the same URL.
