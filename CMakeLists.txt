@@ -2981,8 +2981,26 @@ target_include_directories(cjson_vendor PUBLIC
 # source checkout or an external model_specs directory.
 if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     add_subdirectory(external/cpp-httplib)
+
+    # Hugging Face Xet xorb chunks are LZ4-frame compressed.
+    add_library(lz4_vendor STATIC
+        external/lz4/lz4.c
+        external/lz4/lz4frame.c
+        external/lz4/lz4hc.c
+        external/lz4/xxhash.c
+    )
+    target_include_directories(lz4_vendor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/lz4)
+    set_property(TARGET lz4_vendor PROPERTY COMPILE_WARNING_AS_ERROR OFF)
+    if (MSVC)
+        target_compile_options(lz4_vendor PRIVATE /w)
+    else()
+        target_compile_options(lz4_vendor PRIVATE -w)
+    endif()
+
     add_library(audiocpp_package_manager STATIC
         src/framework/package_manager/manager.cpp
+        src/framework/package_manager/http_util.cpp
+        src/framework/package_manager/xet.cpp
         src/framework/io/json.cpp
         src/framework/io/filesystem.cpp
     )
@@ -2995,6 +3013,7 @@ if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     target_link_libraries(audiocpp_package_manager PRIVATE
         cjson_vendor
         audiocpp_cpp_httplib
+        lz4_vendor
     )
 endif()
 
@@ -4486,6 +4505,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_link_libraries(package_manager_http_test PRIVATE
                 Threads::Threads audiocpp_package_manager audiocpp_cpp_httplib)
             add_test(NAME package_manager_http_test COMMAND package_manager_http_test)
+
+            add_executable(package_manager_xet_test tests/unittests/test_package_manager_xet.cpp)
+            target_include_directories(package_manager_xet_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/framework/package_manager)
+            target_link_libraries(package_manager_xet_test PRIVATE
+                Threads::Threads audiocpp_package_manager audiocpp_cpp_httplib lz4_vendor)
+            add_test(NAME package_manager_xet_test COMMAND package_manager_xet_test)
         endif()
     endif()
 
