@@ -4,7 +4,7 @@
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/heartmula/assets.h"
-#include "engine/models/heartmula/codec.h"
+#include "engine/framework/codecs/heartcodec_runtime.h"
 #include "engine/models/heartmula/generator.h"
 #include "engine/models/heartmula/mula.h"
 #include "engine/models/heartmula/tokenizer_text.h"
@@ -53,7 +53,7 @@ private:
     bool mem_saver_ = false;
     HeartMuLaTextTokenizer text_tokenizer_;
     HeartMuLaWeightsRuntime mula_;
-    HeartCodecWeightsRuntime codec_;
+    codecs::HeartCodecRuntime codec_;
 };
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_heartmula_loader();

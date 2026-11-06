@@ -10,6 +10,7 @@
 // the Metal kernels for those ops are covered by their own tests.
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/conv_modules.h"
 
 #include <ggml-backend.h>
@@ -208,12 +209,14 @@ ModuleRun run_module_case(
     engine::core::BackendType build_backend,
     int stride = 1,
     int padding = 0,
-    engine::core::BackendType compute_backend = engine::core::BackendType::Cpu) {
+    engine::core::BackendType compute_backend = engine::core::BackendType::Cpu,
+    bool per_tap = false, int64_t batch = 1) {
     GraphRunner runner("conv1d_pertap_fast_path_test", build_backend, compute_backend);
-    const auto config = make_config(test_case, stride, padding);
+    auto config = make_config(test_case, stride, padding);
+    config.per_tap = per_tap;
     const int64_t frames = test_case.frames;
 
-    const auto input = runner.make_f32(engine::core::TensorShape::from_dims({1, config.in_channels, frames}));
+    const auto input = runner.make_f32(engine::core::TensorShape::from_dims({batch, config.in_channels, frames}));
     const auto weight = runner.make_f32(
         engine::core::TensorShape::from_dims({config.out_channels, config.in_channels, config.kernel_size}));
     std::optional<engine::core::TensorValue> bias;
@@ -278,6 +281,24 @@ void test_fast_path_matches_reference() {
             std::string("reference path did not go through ggml_conv_1d in case ") + test_case.name);
     }
     std::cout << "ok: fast path matches the reference for " << (sizeof(cases) / sizeof(cases[0])) << " shapes\n";
+}
+
+void test_explicit_per_tap_matches_reference() {
+    const Conv1dCase cases[] = {
+        {"pointwise", 64, 32, 37, 1, 1, true},
+        {"dilated", 12, 8, 49, 7, 3, false},
+        {"stereo", 64, 64, 35, 7, 1, true},
+    };
+    for (const auto & shape : cases) for (int64_t batch : {1, 2}) {
+        const auto reference = run_module_case(shape, engine::core::BackendType::Cpu,
+            1, 0, engine::core::BackendType::Cpu, false, batch);
+        const auto actual = run_module_case(shape, engine::core::BackendType::Cpu,
+            1, 0, engine::core::BackendType::Cpu, true, batch);
+        require(actual.im2cols == 0, "Explicit per-tap path materialized im2col");
+        require(reference.result.shape.dims == actual.result.shape.dims, "Per-tap batch shape mismatch");
+        require(max_abs_diff(reference.result.values, actual.result.values) <=
+            1e-4f * std::max(1.0f, max_abs(reference.result.values)), "Per-tap batch math mismatch");
+    }
 }
 
 void test_ineligible_configs_stay_on_the_reference_path() {
@@ -390,9 +411,15 @@ void report_backend_timing(engine::core::BackendType compute_backend, const char
 
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
     try {
+        if (argc != 1 && (argc != 3 || std::string(argv[1]) != "--log")) {
+            throw std::runtime_error("Usage: conv1d_pertap_fast_path_test [--log FILE]");
+        }
+        engine::debug::configure_logging({true, argc == 3 ? std::optional<std::string>(argv[2]) : std::nullopt});
+        const auto started = std::chrono::steady_clock::now();
         test_fast_path_matches_reference();
+        test_explicit_per_tap_matches_reference();
         test_ineligible_configs_stay_on_the_reference_path();
         test_raw_channel_fast_helper();
         if (backend_available(engine::core::BackendType::Metal)) {
@@ -400,6 +427,7 @@ int main() {
         } else {
             std::cout << "skip: Metal backend not available\n";
         }
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
     } catch (const std::exception & error) {
         std::cerr << "conv1d_pertap_fast_path_test failed: " << error.what() << "\n";
         return 1;

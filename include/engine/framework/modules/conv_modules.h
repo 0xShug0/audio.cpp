@@ -17,6 +17,8 @@ struct Conv1dConfig {
     bool use_bias = true;
     // Preserve BF16 convolution and bias rounding, with F32 graph outputs.
     bool bf16_compute = false;
+    // Stride-one, pre-padded convolution without an im2col matrix.
+    bool per_tap = false;
 };
 
 struct Conv1dWeights {

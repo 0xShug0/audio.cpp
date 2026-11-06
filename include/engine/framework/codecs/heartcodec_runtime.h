@@ -5,7 +5,7 @@
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
-#include "engine/models/heartmula/assets.h"
+#include "engine/framework/assets/tensor_source.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -17,12 +17,48 @@ class BackendWeightStore;
 class ExecutionContext;
 }
 
-namespace engine::models::heartmula {
+namespace engine::codecs {
 
 class HeartCodecFlowEstimatorGraph;
 class HeartCodecConditioningGraph;
 class HeartCodecScalarDecoderGraph;
-struct HeartMuLaGenerationOptions;
+
+struct HeartCodecConfig {
+    int64_t dim = 0;
+    int64_t codebook_size = 0;
+    int64_t codebook_dim = 0;
+    int64_t num_quantizers = 0;
+    int64_t attention_head_dim = 0;
+    int64_t in_channels = 0;
+    int64_t num_attention_heads = 0;
+    int64_t num_layers = 0;
+    int64_t num_layers_2 = 0;
+    int64_t out_channels = 0;
+    int64_t num_bands = 0;
+    int sample_rate = 0;
+    int64_t num_samples = 0;
+    std::vector<int64_t> upsample_factors;
+    std::vector<int64_t> upsample_kernel_sizes;
+    int64_t latent_hidden_dim = 0;
+    int64_t default_kernel_size = 0;
+    int64_t delay_kernel_size = 0;
+    int64_t init_channel = 0;
+    int64_t res_kernel_size = 0;
+};
+
+struct HeartCodecRuntimeOptions {
+    size_t weight_context_bytes = 32ull * 1024ull * 1024ull;
+    size_t flow_estimator_graph_arena_bytes = 2048ull * 1024ull * 1024ull;
+    size_t conditioning_graph_arena_bytes = 512ull * 1024ull * 1024ull;
+    size_t scalar_decoder_graph_arena_bytes = 1536ull * 1024ull * 1024ull;
+    assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
+};
+
+struct HeartCodecDecodeOptions {
+    float chunk_duration_seconds = 29.76F;
+    int64_t num_inference_steps = 10;
+    float guidance_scale = 1.25F;
+};
 
 struct HeartCodecProjectLayerWeights {
     modules::Conv1dWeights ffn_1;
@@ -69,15 +105,11 @@ struct HeartCodecFlowWeights {
     HeartCodecFlowEstimatorWeights estimator;
 };
 
-struct HeartCodecPreluWeights {
-    core::TensorValue weight;
-};
-
 struct HeartCodecResidualUnitWeights {
     modules::Conv1dWeights conv1;
     modules::Conv1dWeights conv2;
-    HeartCodecPreluWeights activation1;
-    HeartCodecPreluWeights activation2;
+    float slope1 = 0.0F;
+    float slope2 = 0.0F;
 };
 
 struct HeartCodecDecoderBlockWeights {
@@ -87,7 +119,7 @@ struct HeartCodecDecoderBlockWeights {
 
 struct HeartCodecPostProcessorWeights {
     modules::Conv1dWeights conv;
-    HeartCodecPreluWeights activation;
+    float slope = 0.0F;
 };
 
 struct HeartCodecScalarDecoderWeights {
@@ -124,22 +156,20 @@ struct HeartCodecConditioning {
     int64_t channels = 0;
 };
 
-class HeartCodecWeightsRuntime final {
+class HeartCodecRuntime final {
 public:
-    HeartCodecWeightsRuntime(
-        std::shared_ptr<const HeartMuLaAssets> assets,
-        core::ExecutionContext & execution_context,
-        size_t weight_context_bytes = 32ull * 1024ull * 1024ull,
-        size_t flow_estimator_graph_arena_bytes = 2048ull * 1024ull * 1024ull,
-        size_t conditioning_graph_arena_bytes = 512ull * 1024ull * 1024ull,
-        size_t scalar_decoder_graph_arena_bytes = 1536ull * 1024ull * 1024ull,
-        assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native);
-    ~HeartCodecWeightsRuntime();
+    // The execution context must outlive this runtime.
+    HeartCodecRuntime(
+        std::shared_ptr<const assets::TensorSource> source,
+        core::ExecutionContext & execution,
+        HeartCodecConfig config,
+        HeartCodecRuntimeOptions options = {});
+    ~HeartCodecRuntime();
 
-    HeartCodecWeightsRuntime(const HeartCodecWeightsRuntime &) = delete;
-    HeartCodecWeightsRuntime & operator=(const HeartCodecWeightsRuntime &) = delete;
+    HeartCodecRuntime(const HeartCodecRuntime &) = delete;
+    HeartCodecRuntime & operator=(const HeartCodecRuntime &) = delete;
 
-    const HeartMuLaAssets & assets() const noexcept;
+    const HeartCodecConfig & config() const noexcept;
     const HeartCodecWeights & weights() const noexcept;
     ggml_backend_t backend() const noexcept;
     core::BackendType backend_type() const noexcept;
@@ -158,37 +188,39 @@ public:
         const std::vector<float> & latents,
         int64_t batch_size,
         int64_t frames) const;
+    // Codes are codebook-major [batch, codebooks, code_frames].
     HeartCodecConditioning build_conditioning(
         const std::vector<int32_t> & codes,
         int64_t batch_size,
         int64_t code_frames) const;
+    // Frame-major [frames, codebooks] input; interleaved stereo output.
     HeartCodecDecodedAudio detokenize_codes(
         const std::vector<int32_t> & codes,
         int64_t frames,
         int64_t codebooks,
-        const HeartMuLaGenerationOptions & options,
+        const HeartCodecDecodeOptions & options,
         uint64_t seed,
         uint64_t randn_philox_offset = 0,
         uint64_t randn_call_offset_blocks = 1) const;
     void clear_graph_cache() const;
+    void release_graph_workspaces() const;
 
 private:
-    std::shared_ptr<const HeartMuLaAssets> assets_;
+    HeartCodecConfig config_;
     std::shared_ptr<const HeartCodecWeights> weights_;
     mutable std::unique_ptr<HeartCodecFlowEstimatorGraph> flow_estimator_graph_;
     mutable std::unique_ptr<HeartCodecConditioningGraph> conditioning_graph_;
     mutable std::unique_ptr<HeartCodecScalarDecoderGraph> scalar_decoder_graph_;
-    core::ExecutionContext * execution_context_ = nullptr;
-    size_t flow_estimator_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
-    size_t conditioning_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
-    size_t scalar_decoder_graph_arena_bytes_ = 1536ull * 1024ull * 1024ull;
+    core::ExecutionContext & execution_;
+    HeartCodecRuntimeOptions options_;
 };
 
 HeartCodecWeights load_heartcodec_weights(
-    const HeartMuLaAssets & assets,
+    const assets::TensorSource & source,
+    const HeartCodecConfig & config,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type);
 
-}  // namespace engine::models::heartmula
+}  // namespace engine::codecs

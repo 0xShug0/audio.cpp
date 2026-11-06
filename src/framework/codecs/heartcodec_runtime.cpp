@@ -1,4 +1,4 @@
-#include "engine/models/heartmula/codec.h"
+#include "engine/framework/codecs/heartcodec_runtime.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
@@ -12,7 +12,6 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
-#include "engine/models/heartmula/tokenizer_text.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -25,7 +24,7 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::heartmula {
+namespace engine::codecs {
 namespace {
 
 namespace binding = engine::modules::binding;
@@ -45,12 +44,6 @@ struct FlowEstimatorBuildResult {
     core::TensorValue output;
     ggml_tensor * first_stage_state = nullptr;
 };
-
-void require_assets(const HeartMuLaAssets & assets) {
-    if (assets.codec_weights == nullptr) {
-        throw std::runtime_error("HeartCodec requires codec weights");
-    }
-}
 
 int64_t pow2_i64(size_t exponent) {
     int64_t value = 1;
@@ -140,13 +133,6 @@ modules::ConvTranspose1dWeights load_weight_norm_conv_transpose1d(
         weights.bias = store.load_f32_tensor(source, prefix + ".bias", {out_channels});
     }
     return weights;
-}
-
-HeartCodecPreluWeights load_prelu(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix) {
-    return {store.load_f32_tensor(source, prefix + ".weight", {1})};
 }
 
 HeartCodecProjectLayerWeights load_project_layer(
@@ -377,8 +363,8 @@ HeartCodecResidualUnitWeights load_residual_unit(
         channels,
         channels,
         1);
-    weights.activation1 = load_prelu(store, source, prefix + ".activation1");
-    weights.activation2 = load_prelu(store, source, prefix + ".activation2");
+    weights.slope1 = source.require_f32(prefix + ".activation1.weight", {1})[0];
+    weights.slope2 = source.require_f32(prefix + ".activation2.weight", {1})[0];
     return weights;
 }
 
@@ -434,8 +420,8 @@ HeartCodecScalarDecoderWeights load_scalar_decoder_weights(
         config.init_channel,
         config.default_kernel_size,
         true);
-    weights.post_processor.activation =
-        load_prelu(store, source, "scalar_model.decoder." + std::to_string(post_index) + ".activation");
+    weights.post_processor.slope = source.require_f32(
+        "scalar_model.decoder." + std::to_string(post_index) + ".activation.weight", {1})[0];
     weights.output_conv = load_weight_norm_conv1d(
         store,
         source,
@@ -503,6 +489,8 @@ core::TensorValue causal_conv1d(
         0,
         static_cast<int>(dilation),
         weights.bias.has_value(),
+        false,
+        ctx.backend_type == core::BackendType::Cuda || ctx.backend_type == core::BackendType::Vulkan,
     }).build(ctx, padded, weights);
 }
 
@@ -594,9 +582,9 @@ core::TensorValue scalar_residual_unit(
     int64_t kernel_size,
     int64_t dilation) {
     auto x = causal_conv1d(ctx, input, weights.conv1, channels, channels, kernel_size, dilation);
-    x = modules::PReluModule().build(ctx, x, weights.activation1.weight);
+    x = modules::LeakyReluModule({weights.slope1}).build(ctx, x);
     x = causal_conv1d(ctx, x, weights.conv2, channels, channels, 1);
-    x = modules::PReluModule().build(ctx, x, weights.activation2.weight);
+    x = modules::LeakyReluModule({weights.slope2}).build(ctx, x);
     return modules::AddModule{}.build(ctx, input, x);
 }
 
@@ -648,7 +636,7 @@ core::TensorValue scalar_decoder(
             config.init_channel,
             config.init_channel,
             config.default_kernel_size);
-        x = modules::PReluModule().build(ctx, x, weights.post_processor.activation.weight);
+        x = modules::LeakyReluModule({weights.post_processor.slope}).build(ctx, x);
     }
     return causal_conv1d(
         ctx,
@@ -887,7 +875,7 @@ FlowEstimatorBuildResult flow_estimator(
 class HeartCodecFlowEstimatorGraph {
 public:
     HeartCodecFlowEstimatorGraph(
-        const HeartCodecWeightsRuntime & runtime,
+        const HeartCodecRuntime & runtime,
         int64_t batch_size,
         int64_t frames)
         : runtime_(&runtime),
@@ -896,7 +884,7 @@ public:
         if (batch_size_ <= 0 || frames_ <= 0) {
             throw std::runtime_error("HeartCodec flow estimator graph shape is invalid");
         }
-        const auto & config = runtime_->assets().codec_config;
+        const auto & config = runtime_->config();
         ggml_init_params params{runtime_->flow_estimator_graph_arena_bytes(), nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
@@ -929,6 +917,11 @@ public:
         graph_ = ggml_new_graph_custom(ctx_.get(), 262144, false);
         ggml_build_forward_expand(graph_, first_stage_state_);
         ggml_build_forward_expand(graph_, output_);
+        for (auto * input : {input_, timesteps_, positions_, freqs_}) ggml_set_input(input);
+        // These inputs are uploaded only when the workspace is bound.
+        for (auto * input : {positions_, freqs_}) {
+            if (input != nullptr) ggml_set_output(input);
+        }
         allocate_workspace();
     }
 
@@ -938,13 +931,22 @@ public:
 
     void release_workspace() {
         if (gallocr_ != nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
             ggml_gallocr_free(gallocr_);
             gallocr_ = nullptr;
+            engine::debug::timing_log_scalar("heartcodec.flow.graph_buffer_mb", 0.0);
+            // Only graph-local tensors are detached; session weights/constants
+            // live in separate contexts and keep their backend storage.
+            for (auto * tensor = ggml_get_first_tensor(ctx_.get()); tensor;
+                 tensor = ggml_get_next_tensor(ctx_.get(), tensor)) {
+                tensor->data = nullptr;
+                tensor->buffer = nullptr;
+                tensor->extra = nullptr;
+            }
         }
     }
 
-    bool matches(const HeartCodecWeightsRuntime & runtime, int64_t batch_size, int64_t frames) const {
+    bool matches(const HeartCodecRuntime & runtime, int64_t batch_size, int64_t frames) const {
         return runtime_ == &runtime && batch_size_ == batch_size && frames_ == frames;
     }
 
@@ -952,7 +954,7 @@ public:
         const std::vector<float> & hidden_states,
         const std::vector<float> & timesteps) {
         allocate_workspace();
-        const auto & config = runtime_->assets().codec_config;
+        const auto & config = runtime_->config();
         const size_t expected_hidden = static_cast<size_t>(batch_size_ * frames_ * config.in_channels);
         if (hidden_states.size() != expected_hidden) {
             throw std::runtime_error("HeartCodec flow estimator hidden-state payload size mismatch");
@@ -993,6 +995,8 @@ private:
             }
             throw std::runtime_error("failed to allocate HeartCodec flow estimator graph");
         }
+        engine::debug::timing_log_scalar("heartcodec.flow.graph_buffer_mb",
+            static_cast<double>(ggml_gallocr_get_buffer_size(gallocr_, 0)) / (1024.0 * 1024.0));
         upload_static_inputs();
     }
 
@@ -1010,7 +1014,7 @@ private:
         }
         ggml_backend_tensor_set(freqs_, freq_values.data(), 0, freq_values.size() * sizeof(float));
     }
-    const HeartCodecWeightsRuntime * runtime_ = nullptr;
+    const HeartCodecRuntime * runtime_ = nullptr;
     int64_t batch_size_ = 0;
     int64_t frames_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -1027,7 +1031,7 @@ private:
 class HeartCodecConditioningGraph {
 public:
     HeartCodecConditioningGraph(
-        const HeartCodecWeightsRuntime & runtime,
+        const HeartCodecRuntime & runtime,
         int64_t batch_size,
         int64_t code_frames)
         : runtime_(&runtime),
@@ -1036,7 +1040,7 @@ public:
         if (batch_size_ <= 0 || code_frames_ <= 0) {
             throw std::runtime_error("HeartCodec conditioning graph shape is invalid");
         }
-        const auto & config = runtime_->assets().codec_config;
+        const auto & config = runtime_->config();
         ggml_init_params params{runtime_->conditioning_graph_arena_bytes(), nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
@@ -1054,6 +1058,7 @@ public:
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, output_);
+        for (auto * input : {input_}) ggml_set_input(input);
         allocate_workspace();
     }
 
@@ -1063,19 +1068,28 @@ public:
 
     void release_workspace() {
         if (gallocr_ != nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
             ggml_gallocr_free(gallocr_);
             gallocr_ = nullptr;
+            engine::debug::timing_log_scalar("heartcodec.conditioning.graph_buffer_mb", 0.0);
+            // Only graph-local tensors are detached; session weights/constants
+            // live in separate contexts and keep their backend storage.
+            for (auto * tensor = ggml_get_first_tensor(ctx_.get()); tensor;
+                 tensor = ggml_get_next_tensor(ctx_.get(), tensor)) {
+                tensor->data = nullptr;
+                tensor->buffer = nullptr;
+                tensor->extra = nullptr;
+            }
         }
     }
 
-    bool matches(const HeartCodecWeightsRuntime & runtime, int64_t batch_size, int64_t code_frames) const {
+    bool matches(const HeartCodecRuntime & runtime, int64_t batch_size, int64_t code_frames) const {
         return runtime_ == &runtime && batch_size_ == batch_size && code_frames_ == code_frames;
     }
 
     HeartCodecConditioning run(const std::vector<int32_t> & codes) {
         allocate_workspace();
-        const auto & config = runtime_->assets().codec_config;
+        const auto & config = runtime_->config();
         const size_t expected_codes = static_cast<size_t>(batch_size_ * config.num_quantizers * code_frames_);
         if (codes.size() != expected_codes) {
             throw std::runtime_error("HeartCodec conditioning code payload size mismatch");
@@ -1112,8 +1126,10 @@ private:
             }
             throw std::runtime_error("failed to allocate HeartCodec conditioning graph");
         }
+        engine::debug::timing_log_scalar("heartcodec.conditioning.graph_buffer_mb",
+            static_cast<double>(ggml_gallocr_get_buffer_size(gallocr_, 0)) / (1024.0 * 1024.0));
     }
-    const HeartCodecWeightsRuntime * runtime_ = nullptr;
+    const HeartCodecRuntime * runtime_ = nullptr;
     int64_t batch_size_ = 0;
     int64_t code_frames_ = 0;
     int64_t output_frames_ = 0;
@@ -1127,7 +1143,7 @@ private:
 class HeartCodecScalarDecoderGraph {
 public:
     HeartCodecScalarDecoderGraph(
-        const HeartCodecWeightsRuntime & runtime,
+        const HeartCodecRuntime & runtime,
         int64_t batch_size,
         int64_t frames)
         : runtime_(&runtime),
@@ -1136,7 +1152,7 @@ public:
         if (batch_size_ <= 0 || frames_ <= 0) {
             throw std::runtime_error("HeartCodec scalar decoder graph shape is invalid");
         }
-        const auto & config = runtime_->assets().codec_config;
+        const auto & config = runtime_->config();
         ggml_init_params params{runtime_->scalar_decoder_graph_arena_bytes(), nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
@@ -1154,6 +1170,7 @@ public:
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 262144, false);
         ggml_build_forward_expand(graph_, output_);
+        for (auto * input : {input_}) ggml_set_input(input);
         allocate_workspace();
     }
 
@@ -1163,19 +1180,28 @@ public:
 
     void release_workspace() {
         if (gallocr_ != nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
             ggml_gallocr_free(gallocr_);
             gallocr_ = nullptr;
+            engine::debug::timing_log_scalar("heartcodec.scalar.graph_buffer_mb", 0.0);
+            // Only graph-local tensors are detached; session weights/constants
+            // live in separate contexts and keep their backend storage.
+            for (auto * tensor = ggml_get_first_tensor(ctx_.get()); tensor;
+                 tensor = ggml_get_next_tensor(ctx_.get(), tensor)) {
+                tensor->data = nullptr;
+                tensor->buffer = nullptr;
+                tensor->extra = nullptr;
+            }
         }
     }
 
-    bool matches(const HeartCodecWeightsRuntime & runtime, int64_t batch_size, int64_t frames) const {
+    bool matches(const HeartCodecRuntime & runtime, int64_t batch_size, int64_t frames) const {
         return runtime_ == &runtime && batch_size_ == batch_size && frames_ == frames;
     }
 
     HeartCodecDecodedAudio run(const std::vector<float> & latents) {
         allocate_workspace();
-        const auto & config = runtime_->assets().codec_config;
+        const auto & config = runtime_->config();
         const size_t expected_latents = static_cast<size_t>(batch_size_ * config.latent_hidden_dim * frames_);
         if (latents.size() != expected_latents) {
             throw std::runtime_error("HeartCodec scalar decoder latent payload size mismatch");
@@ -1212,8 +1238,10 @@ private:
             }
             throw std::runtime_error("failed to allocate HeartCodec scalar decoder graph");
         }
+        engine::debug::timing_log_scalar("heartcodec.scalar.graph_buffer_mb",
+            static_cast<double>(ggml_gallocr_get_buffer_size(gallocr_, 0)) / (1024.0 * 1024.0));
     }
-    const HeartCodecWeightsRuntime * runtime_ = nullptr;
+    const HeartCodecRuntime * runtime_ = nullptr;
     int64_t batch_size_ = 0;
     int64_t frames_ = 0;
     int64_t output_samples_ = 0;
@@ -1225,102 +1253,95 @@ private:
 };
 
 HeartCodecWeights load_heartcodec_weights(
-    const HeartMuLaAssets & assets,
+    const assets::TensorSource & source,
+    const HeartCodecConfig & config,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type) {
-    require_assets(assets);
     HeartCodecWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        "heartmula.codec.weights",
+        "heartcodec.weights",
         weight_context_bytes);
-    const auto & source = *assets.codec_weights;
-    weights.flow = load_flow_weights(*weights.store, source, assets.codec_config, weight_storage_type);
+    weights.flow = load_flow_weights(*weights.store, source, config, weight_storage_type);
     weights.scalar_decoder =
-        load_scalar_decoder_weights(*weights.store, source, assets.codec_config, weight_storage_type);
+        load_scalar_decoder_weights(*weights.store, source, config, weight_storage_type);
     weights.store->upload();
     return weights;
 }
 
-HeartCodecWeightsRuntime::HeartCodecWeightsRuntime(
-    std::shared_ptr<const HeartMuLaAssets> assets,
-    core::ExecutionContext & execution_context,
-    size_t weight_context_bytes,
-    size_t flow_estimator_graph_arena_bytes,
-    size_t conditioning_graph_arena_bytes,
-    size_t scalar_decoder_graph_arena_bytes,
-    assets::TensorStorageType weight_storage_type)
-    : assets_(std::move(assets)),
-      execution_context_(&execution_context),
-      flow_estimator_graph_arena_bytes_(flow_estimator_graph_arena_bytes),
-      conditioning_graph_arena_bytes_(conditioning_graph_arena_bytes),
-      scalar_decoder_graph_arena_bytes_(scalar_decoder_graph_arena_bytes) {
-    if (assets_ == nullptr) {
-        throw std::runtime_error("HeartCodec weights runtime requires assets");
+HeartCodecRuntime::HeartCodecRuntime(
+    std::shared_ptr<const assets::TensorSource> source,
+    core::ExecutionContext & execution,
+    HeartCodecConfig config,
+    HeartCodecRuntimeOptions options)
+    : config_(std::move(config)), execution_(execution), options_(options) {
+    if (source == nullptr) {
+        throw std::runtime_error("HeartCodec runtime requires a tensor source");
     }
-    if (execution_context_ == nullptr || execution_context_->backend() == nullptr) {
+    if (execution_.backend() == nullptr) {
         throw std::runtime_error("HeartCodec weights runtime requires initialized execution context");
     }
-    if (execution_context_->config().threads <= 0) {
+    if (execution_.config().threads <= 0) {
         throw std::runtime_error("HeartCodec weights runtime requires positive thread count");
     }
     weights_ = std::make_shared<HeartCodecWeights>(
         load_heartcodec_weights(
-            *assets_,
-            execution_context_->backend(),
-            execution_context_->backend_type(),
-            weight_context_bytes,
-            weight_storage_type));
-    assets_->codec_weights->release_storage();
+            *source,
+            config_,
+            execution_.backend(),
+            execution_.backend_type(),
+            options_.weight_context_bytes,
+            options_.weight_storage_type));
+    source->release_storage();
 }
 
-HeartCodecWeightsRuntime::~HeartCodecWeightsRuntime() {
+HeartCodecRuntime::~HeartCodecRuntime() {
     scalar_decoder_graph_.reset();
     conditioning_graph_.reset();
     flow_estimator_graph_.reset();
     weights_.reset();
 }
 
-const HeartMuLaAssets & HeartCodecWeightsRuntime::assets() const noexcept {
-    return *assets_;
+const HeartCodecConfig & HeartCodecRuntime::config() const noexcept {
+    return config_;
 }
 
-const HeartCodecWeights & HeartCodecWeightsRuntime::weights() const noexcept {
+const HeartCodecWeights & HeartCodecRuntime::weights() const noexcept {
     return *weights_;
 }
 
-ggml_backend_t HeartCodecWeightsRuntime::backend() const noexcept {
-    return execution_context_->backend();
+ggml_backend_t HeartCodecRuntime::backend() const noexcept {
+    return execution_.backend();
 }
 
-core::BackendType HeartCodecWeightsRuntime::backend_type() const noexcept {
-    return execution_context_->backend_type();
+core::BackendType HeartCodecRuntime::backend_type() const noexcept {
+    return execution_.backend_type();
 }
 
-int HeartCodecWeightsRuntime::device() const noexcept {
-    return execution_context_->config().device;
+int HeartCodecRuntime::device() const noexcept {
+    return execution_.config().device;
 }
 
-int HeartCodecWeightsRuntime::threads() const noexcept {
-    return std::max(1, execution_context_->config().threads);
+int HeartCodecRuntime::threads() const noexcept {
+    return std::max(1, execution_.config().threads);
 }
 
-size_t HeartCodecWeightsRuntime::flow_estimator_graph_arena_bytes() const noexcept {
-    return flow_estimator_graph_arena_bytes_;
+size_t HeartCodecRuntime::flow_estimator_graph_arena_bytes() const noexcept {
+    return options_.flow_estimator_graph_arena_bytes;
 }
 
-size_t HeartCodecWeightsRuntime::conditioning_graph_arena_bytes() const noexcept {
-    return conditioning_graph_arena_bytes_;
+size_t HeartCodecRuntime::conditioning_graph_arena_bytes() const noexcept {
+    return options_.conditioning_graph_arena_bytes;
 }
 
-size_t HeartCodecWeightsRuntime::scalar_decoder_graph_arena_bytes() const noexcept {
-    return scalar_decoder_graph_arena_bytes_;
+size_t HeartCodecRuntime::scalar_decoder_graph_arena_bytes() const noexcept {
+    return options_.scalar_decoder_graph_arena_bytes;
 }
 
-HeartCodecFlowEstimate HeartCodecWeightsRuntime::estimate_flow(
+HeartCodecFlowEstimate HeartCodecRuntime::estimate_flow(
     const std::vector<float> & hidden_states,
     int64_t batch_size,
     int64_t frames,
@@ -1328,8 +1349,9 @@ HeartCodecFlowEstimate HeartCodecWeightsRuntime::estimate_flow(
     if (batch_size <= 0 || frames <= 0) {
         throw std::runtime_error("HeartCodec flow estimator request shape is invalid");
     }
-    if (scalar_decoder_graph_ != nullptr) {
-        scalar_decoder_graph_->release_workspace();
+    if (scalar_decoder_graph_) scalar_decoder_graph_->release_workspace();
+    if (conditioning_graph_ != nullptr) {
+        conditioning_graph_->release_workspace();
     }
     if (flow_estimator_graph_ == nullptr || !flow_estimator_graph_->matches(*this, batch_size, frames)) {
         flow_estimator_graph_ = std::make_unique<HeartCodecFlowEstimatorGraph>(*this, batch_size, frames);
@@ -1337,45 +1359,61 @@ HeartCodecFlowEstimate HeartCodecWeightsRuntime::estimate_flow(
     return flow_estimator_graph_->run(hidden_states, timesteps);
 }
 
-HeartCodecDecodedAudio HeartCodecWeightsRuntime::decode_scalar_latents(
+HeartCodecDecodedAudio HeartCodecRuntime::decode_scalar_latents(
     const std::vector<float> & latents,
     int64_t batch_size,
     int64_t frames) const {
-    if (batch_size <= 0 || frames <= 0) {
-        throw std::runtime_error("HeartCodec scalar decoder request shape is invalid");
+    const auto & config = this->config();
+    if (batch_size <= 0 || frames <= 0 ||
+        static_cast<int64_t>(latents.size()) != batch_size * config.latent_hidden_dim * frames) {
+        throw std::runtime_error("HeartCodec scalar decoder latent shape is invalid");
     }
-    if (flow_estimator_graph_ != nullptr) {
-        flow_estimator_graph_->release_workspace();
+    if (flow_estimator_graph_) flow_estimator_graph_->release_workspace();
+    if (conditioning_graph_) conditioning_graph_->release_workspace();
+    // Stereo channels have independent scalar histories. Reuse one complete
+    // segment graph rather than retaining both channels' convolution scratch.
+    if (!scalar_decoder_graph_ || !scalar_decoder_graph_->matches(*this, 1, frames)) {
+        scalar_decoder_graph_.reset();
+        scalar_decoder_graph_ = std::make_unique<HeartCodecScalarDecoderGraph>(*this, 1, frames);
     }
-    if (conditioning_graph_ != nullptr) {
-        conditioning_graph_->release_workspace();
+    HeartCodecDecodedAudio out;
+    out.batch_size = batch_size;
+    out.channels = config.num_bands;
+    const size_t channel_latents = static_cast<size_t>(config.latent_hidden_dim * frames);
+    for (int64_t batch = 0; batch < batch_size; ++batch) {
+        const auto begin = latents.begin() + static_cast<size_t>(batch) * channel_latents;
+        const std::vector<float> input(begin, begin + channel_latents);
+        auto decoded = scalar_decoder_graph_->run(input);
+        out.samples = decoded.samples;
+        out.values.insert(out.values.end(), decoded.values.begin(), decoded.values.end());
     }
-    if (scalar_decoder_graph_ == nullptr || !scalar_decoder_graph_->matches(*this, batch_size, frames)) {
-        scalar_decoder_graph_ = std::make_unique<HeartCodecScalarDecoderGraph>(*this, batch_size, frames);
-    }
-    return scalar_decoder_graph_->run(latents);
+    return out;
 }
 
-HeartCodecConditioning HeartCodecWeightsRuntime::build_conditioning(
+HeartCodecConditioning HeartCodecRuntime::build_conditioning(
     const std::vector<int32_t> & codes,
     int64_t batch_size,
     int64_t code_frames) const {
     if (batch_size <= 0 || code_frames <= 0) {
         throw std::runtime_error("HeartCodec conditioning request shape is invalid");
     }
-    if (scalar_decoder_graph_ != nullptr) {
-        scalar_decoder_graph_->release_workspace();
-    }
+    if (scalar_decoder_graph_) scalar_decoder_graph_->release_workspace();
     if (conditioning_graph_ == nullptr || !conditioning_graph_->matches(*this, batch_size, code_frames)) {
         conditioning_graph_ = std::make_unique<HeartCodecConditioningGraph>(*this, batch_size, code_frames);
     }
     return conditioning_graph_->run(codes);
 }
 
-void HeartCodecWeightsRuntime::clear_graph_cache() const {
+void HeartCodecRuntime::clear_graph_cache() const {
     flow_estimator_graph_.reset();
     conditioning_graph_.reset();
     scalar_decoder_graph_.reset();
+}
+
+void HeartCodecRuntime::release_graph_workspaces() const {
+    if (flow_estimator_graph_) flow_estimator_graph_->release_workspace();
+    if (conditioning_graph_) conditioning_graph_->release_workspace();
+    if (scalar_decoder_graph_) scalar_decoder_graph_->release_workspace();
 }
 
 namespace {
@@ -1490,14 +1528,14 @@ std::vector<float> make_flow_input(
 }
 
 std::vector<float> solve_euler(
-    const HeartCodecWeightsRuntime & runtime,
+    const HeartCodecRuntime & runtime,
     std::vector<float> x,
     const std::vector<float> & incontext_x,
     int64_t incontext_length,
     const std::vector<float> & mu,
     int64_t num_steps,
     float guidance_scale) {
-    const auto & config = runtime.assets().codec_config;
+    const auto & config = runtime.config();
     const int64_t batch = 1;
     const int64_t frames = static_cast<int64_t>(mu.size()) / config.dim;
     const int64_t latent_dim = config.out_channels;
@@ -1547,7 +1585,7 @@ std::vector<float> solve_euler(
 }
 
 std::vector<float> run_flow_chunk(
-    const HeartCodecWeightsRuntime & runtime,
+    const HeartCodecRuntime & runtime,
     const std::vector<int32_t> & codes_bqt,
     int64_t code_frames,
     int64_t latent_length,
@@ -1559,7 +1597,7 @@ std::vector<float> run_flow_chunk(
     uint64_t & randn_philox_offset,
     uint64_t randn_call_offset_blocks,
     const engine::sampling::TorchCudaSamplingPolicy & sampling_policy) {
-    const auto & config = runtime.assets().codec_config;
+    const auto & config = runtime.config();
     auto conditioning = runtime.build_conditioning(codes_bqt, 1, code_frames);
     if (conditioning.frames <= 0 || conditioning.channels != config.dim) {
         throw std::runtime_error("HeartCodec conditioning output shape mismatch");
@@ -1657,32 +1695,32 @@ std::vector<float> planar_stereo_to_interleaved(
 
 }  // namespace
 
-HeartCodecDecodedAudio HeartCodecWeightsRuntime::detokenize_codes(
+HeartCodecDecodedAudio HeartCodecRuntime::detokenize_codes(
     const std::vector<int32_t> & codes,
     int64_t frames,
     int64_t codebooks,
-    const HeartMuLaGenerationOptions & options,
+    const HeartCodecDecodeOptions & options,
     uint64_t seed,
     uint64_t randn_philox_offset,
     uint64_t randn_call_offset_blocks) const {
-    const auto & config = assets().codec_config;
+    const auto & config = this->config();
     if (codebooks != config.num_quantizers) {
         throw std::runtime_error("HeartCodec detokenize codebook count mismatch");
     }
-    if (!(options.codec_duration > 0.0F) || options.num_inference_steps <= 0 || !(options.codec_guidance_scale > 0.0F)) {
+    if (!(options.chunk_duration_seconds > 0.0F) || options.num_inference_steps <= 0 || !(options.guidance_scale > 0.0F)) {
         throw std::runtime_error("HeartCodec detokenize options are invalid");
     }
     const auto sampling_policy = engine::sampling::resolve_torch_cuda_sampling_policy(
         backend_type(),
         device(),
-        "heartmula.codec.cuda_sampling_policy",
+        "heartcodec.cuda_sampling_policy",
         "HeartCodec",
         engine::sampling::TorchCudaSamplingPolicyFailureMode::StrictCuda);
     const int64_t original_frames = frames;
     auto working_codes = frame_major_to_bqt_codes(codes, frames, codebooks);
     const int64_t first_latent_length = 0;
     const int64_t first_latent_codes_length = 0;
-    const int64_t min_code_samples = static_cast<int64_t>(options.codec_duration * 12.5F);
+    const int64_t min_code_samples = static_cast<int64_t>(options.chunk_duration_seconds * 12.5F);
     const int64_t hop_code_samples = (min_code_samples / 93) * 80;
     const int64_t ovlp_code_samples = min_code_samples - hop_code_samples;
     const int64_t ovlp_frames = ovlp_code_samples * 2;
@@ -1703,7 +1741,7 @@ HeartCodecDecodedAudio HeartCodecWeightsRuntime::detokenize_codes(
         working_codes = repeat_codes_to_length(working_codes, codebooks, frames, padded_frames);
         frames = padded_frames;
     }
-    const int64_t latent_length = static_cast<int64_t>(options.codec_duration * 25.0F);
+    const int64_t latent_length = static_cast<int64_t>(options.chunk_duration_seconds * 25.0F);
     std::vector<std::vector<float>> latent_list;
     for (int64_t sinx = 0; sinx < frames - hop_code_samples + 1; sinx += hop_code_samples) {
         const auto chunk_codes = slice_codes_bqt(working_codes, codebooks, frames, sinx, min_code_samples);
@@ -1728,7 +1766,7 @@ HeartCodecDecodedAudio HeartCodecWeightsRuntime::detokenize_codes(
             incontext_length,
             true_latent,
             options.num_inference_steps,
-            options.codec_guidance_scale,
+            options.guidance_scale,
             seed,
             randn_philox_offset,
             randn_call_offset_blocks,
@@ -1743,7 +1781,7 @@ HeartCodecDecodedAudio HeartCodecWeightsRuntime::detokenize_codes(
         first.erase(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(first_latent_length * config.out_channels));
     }
 
-    const int64_t audio_chunk_samples = static_cast<int64_t>(options.codec_duration * static_cast<float>(config.sample_rate));
+    const int64_t audio_chunk_samples = static_cast<int64_t>(options.chunk_duration_seconds * static_cast<float>(config.sample_rate));
     const int64_t audio_hop_samples = (audio_chunk_samples / 93) * 80;
     const int64_t audio_ovlp_samples = audio_chunk_samples - audio_hop_samples;
     std::vector<float> output;
@@ -1812,4 +1850,4 @@ HeartCodecDecodedAudio HeartCodecWeightsRuntime::detokenize_codes(
     return out;
 }
 
-}  // namespace engine::models::heartmula
+}  // namespace engine::codecs
