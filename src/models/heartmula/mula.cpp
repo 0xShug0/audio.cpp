@@ -12,6 +12,7 @@
 #include "engine/framework/runtime/kv_cache.h"
 
 #include "engine/framework/core/constant_tensor_cache.h"
+#include "engine/framework/debug/profiler.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -204,59 +205,6 @@ core::TensorValue attention_from_heads(
     return matmul.build(ctx, attn, v_heads);
 }
 
-core::TensorValue cache_view(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & cache,
-    int64_t start,
-    int64_t steps,
-    int64_t heads,
-    int64_t dim) {
-    if (start < 0 || steps <= 0 || start + steps > cache.shape.dims[1]) {
-        throw std::runtime_error("HeartMuLa cache view range is invalid");
-    }
-    return core::wrap_tensor(
-        ggml_view_4d(
-            ctx.ggml,
-            cache.tensor,
-            dim,
-            heads,
-            steps,
-            1,
-            cache.tensor->nb[1],
-            cache.tensor->nb[2],
-            cache.tensor->nb[3],
-            static_cast<size_t>(start) * cache.tensor->nb[2]),
-        core::TensorShape::from_dims({1, steps, heads, dim}),
-        GGML_TYPE_F32);
-}
-
-core::TensorValue cache_heads_view(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & cache) {
-    core::validate_rank_between(cache, 4, 4, "cache");
-    if (cache.type != GGML_TYPE_F32) {
-        throw std::runtime_error("HeartMuLa cache heads view requires f32 cache");
-    }
-    const int64_t steps = cache.shape.dims[1];
-    const int64_t heads = cache.shape.dims[2];
-    const int64_t dim = cache.shape.dims[3];
-    auto * view = ggml_view_4d(
-        ctx.ggml,
-        cache.tensor,
-        dim,
-        steps,
-        heads,
-        1,
-        cache.tensor->nb[2],
-        cache.tensor->nb[1],
-        cache.tensor->nb[3],
-        0);
-    return core::wrap_tensor(
-        view,
-        core::TensorShape::from_dims({1, heads, steps, dim}),
-        GGML_TYPE_F32);
-}
-
 core::TensorValue flash_attention_from_grouped_heads(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & q_heads,
@@ -309,76 +257,7 @@ core::TensorValue apply_scaled_llama3_rope(
         input.type);
 }
 
-HeartMuLaTransformerLayerOutputs build_heartmula_transformer_layer_static_cache_tail(
-    core::ModuleBuildContext & ctx,
-    ggml_cgraph * graph,
-    const core::TensorValue & input,
-    const core::TensorValue & positions,
-    const HeartMuLaTransformerLayerWeights & weights,
-    const HeartMuLaTransformerConfig & config,
-    const core::TensorValue & rope_factors,
-    core::ConstantTensorCache & constants,
-    const core::TensorValue & cache_key,
-    const core::TensorValue & cache_value,
-    const core::TensorValue & attention_mask) {
-    const int64_t dim = require_head_dim(config);
-    const int64_t scratch_slot = cache_key.shape.dims[1] - 1;
-    const modules::LinearModule q_proj(binding::linear_config(config.embed_dim, config.num_heads * dim, false));
-    const modules::LinearModule k_proj(binding::linear_config(config.embed_dim, config.num_kv_heads * dim, false));
-    const modules::LinearModule v_proj(binding::linear_config(config.embed_dim, config.num_kv_heads * dim, false));
-    const modules::LinearModule output_proj(binding::linear_config(config.num_heads * dim, config.embed_dim, false));
-    const modules::RMSNormModule hidden_norm({config.embed_dim, config.norm_eps, true, false});
-    const modules::AddModule add;
-
-    auto attn_in = hidden_norm.build(ctx, input, binding::norm_data(constants, weights.sa_norm));
-    auto q = q_proj.build(ctx, attn_in, binding::linear_data(constants, weights.q_proj));
-    auto k = k_proj.build(ctx, attn_in, binding::linear_data(constants, weights.k_proj));
-    auto v = v_proj.build(ctx, attn_in, binding::linear_data(constants, weights.v_proj));
-    q = apply_scaled_llama3_rope(ctx, reshape_heads(ctx, q, config.num_heads, dim), positions, config, rope_factors);
-    k = apply_scaled_llama3_rope(ctx, reshape_heads(ctx, k, config.num_kv_heads, dim), positions, config, rope_factors);
-    v = reshape_heads(ctx, v, config.num_kv_heads, dim);
-
-    const int64_t batch = input.shape.dims[0];
-    auto flat_k = core::reshape_tensor(ctx, k, core::TensorShape::from_dims({1, 1, batch * config.num_kv_heads, dim}));
-    auto flat_v = core::reshape_tensor(ctx, v, core::TensorShape::from_dims({1, 1, batch * config.num_kv_heads, dim}));
-    auto key_tail = cache_view(ctx, cache_key, scratch_slot, 1, batch * config.num_kv_heads, dim);
-    auto value_tail = cache_view(ctx, cache_value, scratch_slot, 1, batch * config.num_kv_heads, dim);
-    ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, flat_k.tensor, key_tail.tensor));
-    ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, flat_v.tensor, value_tail.tensor));
-    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    q_heads = core::reshape_tensor(
-        ctx,
-        core::ensure_backend_addressable_layout(ctx, q_heads),
-        core::TensorShape::from_dims({1, batch * config.num_heads, input.shape.dims[1], dim}));
-    q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
-    auto k_heads = cache_heads_view(ctx, cache_key);
-    auto v_heads = cache_heads_view(ctx, cache_value);
-    auto context = flash_attention_from_grouped_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    context = core::reshape_tensor(
-        ctx,
-        core::ensure_backend_addressable_layout(ctx, context),
-        core::TensorShape::from_dims({batch, config.num_heads, input.shape.dims[1], dim}));
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
-    context = core::ensure_backend_addressable_layout(ctx, context);
-    context = core::reshape_tensor(
-        ctx,
-        context,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.num_heads * dim}));
-    auto x = add.build(ctx, input, output_proj.build(ctx, context, binding::linear_data(constants, weights.output_proj)));
-
-    auto ff_in = hidden_norm.build(ctx, x, binding::norm_data(constants, weights.mlp_norm));
-    auto gate = modules::LinearModule(binding::linear_config(config.embed_dim, config.intermediate_dim, false))
-                    .build(ctx, ff_in, binding::linear_data(constants, weights.w1));
-    gate = modules::SiluModule{}.build(ctx, gate);
-    auto up = modules::LinearModule(binding::linear_config(config.embed_dim, config.intermediate_dim, false))
-                  .build(ctx, ff_in, binding::linear_data(constants, weights.w3));
-    auto gated = modules::MulModule{}.build(ctx, gate, up);
-    auto ff = modules::LinearModule(binding::linear_config(config.intermediate_dim, config.embed_dim, false))
-                  .build(ctx, gated, binding::linear_data(constants, weights.w2));
-    return {add.build(ctx, x, ff), flat_k, flat_v};
-}
-
-core::TensorValue build_heartmula_transformer_layer_set_rows_tail(
+core::TensorValue build_heartmula_cached_transformer_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
@@ -389,7 +268,8 @@ core::TensorValue build_heartmula_transformer_layer_set_rows_tail(
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & cache_slot,
-    const core::TensorValue & attention_mask) {
+    const core::TensorValue & attention_mask,
+    bool use_flash_attention = false) {
     const int64_t dim = require_head_dim(config);
     const int64_t kv_repeats = config.num_heads / config.num_kv_heads;
     const modules::LinearModule q_proj(binding::linear_config(config.embed_dim, config.num_heads * dim, false));
@@ -426,13 +306,16 @@ core::TensorValue build_heartmula_transformer_layer_set_rows_tail(
         core::TensorShape::from_dims({1, batch * config.num_heads, input.shape.dims[1], dim}));
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, updated_cache_key.shape.rank}).build(ctx, updated_cache_key);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, updated_cache_value.shape.rank}).build(ctx, updated_cache_value);
-    auto context = attention_from_heads(
-        ctx,
-        q_heads,
-        repeat_kv_heads(ctx, k_heads, kv_repeats),
-        repeat_kv_heads(ctx, v_heads, kv_repeats),
-        dim,
-        attention_mask);
+    core::TensorValue context;
+    if (use_flash_attention) {
+        q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
+        context = flash_attention_from_grouped_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
+        context = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, context);
+    } else {
+        context = attention_from_heads(ctx, q_heads,
+            repeat_kv_heads(ctx, k_heads, kv_repeats),
+            repeat_kv_heads(ctx, v_heads, kv_repeats), dim, attention_mask);
+    }
     context = core::reshape_tensor(
         ctx,
         core::ensure_backend_addressable_layout(ctx, context),
@@ -663,6 +546,11 @@ public:
         }
         constants.finish_graph();
         constants.ensure_uploaded();
+        for (auto * input : {input_, positions_}) ggml_set_input(input);
+        // These inputs are uploaded only when the workspace is bound.
+        for (auto * input : {positions_}) {
+            if (input != nullptr) ggml_set_output(input);
+        }
         allocate_workspace();
         layer_step_elems_ = batch_size_ * config.num_kv_heads * head_dim;
     }
@@ -673,9 +561,18 @@ public:
 
     void release_workspace() {
         if (gallocr_ != nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
             ggml_gallocr_free(gallocr_);
             gallocr_ = nullptr;
+            engine::debug::timing_log_scalar("heartmula.backbone_prefill.graph_buffer_mb", 0.0);
+            // Only graph-local tensors are detached; session weights/constants
+            // live in separate contexts and keep their backend storage.
+            for (auto * tensor = ggml_get_first_tensor(ctx_.get()); tensor;
+                 tensor = ggml_get_next_tensor(ctx_.get(), tensor)) {
+                tensor->data = nullptr;
+                tensor->buffer = nullptr;
+                tensor->extra = nullptr;
+            }
         }
     }
 
@@ -754,6 +651,8 @@ private:
             }
             throw std::runtime_error("failed to allocate HeartMuLa backbone prefill graph");
         }
+        engine::debug::timing_log_scalar("heartmula.backbone_prefill.graph_buffer_mb",
+            static_cast<double>(ggml_gallocr_get_buffer_size(gallocr_, 0)) / (1024.0 * 1024.0));
         std::vector<int32_t> positions_values(static_cast<size_t>(steps_), 0);
         for (int64_t i = 0; i < steps_; ++i) {
             positions_values[static_cast<size_t>(i)] = static_cast<int32_t>(i);
@@ -805,10 +704,12 @@ public:
         input_ = x.tensor;
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
-        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_ + 1, 1, 1, 1);
+        cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
+        auto cache_slot = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
+        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, 1);
         auto attention_mask = core::wrap_tensor(
             attention_mask_,
-            core::TensorShape::from_dims({1, 1, 1, cache_steps_ + 1}),
+            core::TensorShape::from_dims({1, 1, 1, cache_steps_}),
             GGML_TYPE_F16);
 
         std::vector<core::TensorValue> cache_keys;
@@ -822,14 +723,13 @@ public:
             cache_keys.push_back(core::make_tensor(
                 ctx,
                 GGML_TYPE_F32,
-                core::TensorShape::from_dims({1, cache_steps_ + 1, batch_size_ * config.num_kv_heads, head_dim})));
+                core::TensorShape::from_dims({1, cache_steps_, batch_size_ * config.num_kv_heads, head_dim})));
             cache_values.push_back(core::make_tensor(
                 ctx,
                 GGML_TYPE_F32,
-                core::TensorShape::from_dims({1, cache_steps_ + 1, batch_size_ * config.num_kv_heads, head_dim})));
-            auto layer_out = build_heartmula_transformer_layer_static_cache_tail(
+                core::TensorShape::from_dims({1, cache_steps_, batch_size_ * config.num_kv_heads, head_dim})));
+            x = build_heartmula_cached_transformer_layer(
                 ctx,
-                graph_,
                 x,
                 positions,
                 layer,
@@ -838,17 +738,24 @@ public:
                 constants,
                 cache_keys.back(),
                 cache_values.back(),
-                attention_mask);
-            x = layer_out.output;
-            key_sources_.push_back(ggml_view_1d(ctx_.get(), layer_out.key.tensor, batch_size_ * config.num_kv_heads * head_dim, 0));
-            value_sources_.push_back(ggml_view_1d(ctx_.get(), layer_out.value.tensor, batch_size_ * config.num_kv_heads * head_dim, 0));
+                cache_slot,
+                attention_mask,
+                true);
         }
+        for (size_t layer = 0; layer < cache_keys.size(); ++layer) {
+            ggml_set_input(cache_keys[layer].tensor);
+            ggml_set_output(cache_keys[layer].tensor);
+            ggml_set_input(cache_values[layer].tensor);
+            ggml_set_output(cache_values[layer].tensor);
+        }
+        runtime::TransformerKVCacheOptions cache_options;
+        cache_options.direct_import = true;
         step_cache_ = runtime::TransformerKVCache(
-            cache_steps_ + 1,
+            cache_steps_,
             batch_size_ * config.num_kv_heads * head_dim,
             std::move(cache_keys),
-            std::move(cache_values));
-        build_transfer_views(batch_size_ * config.num_kv_heads * head_dim);
+            std::move(cache_values),
+            cache_options);
         x = modules::RMSNormModule({config.embed_dim, config.norm_eps, true, false})
                 .build(ctx, x, binding::norm_data(constants, weights.backbone.norm));
         hidden_output_ = x.tensor;
@@ -856,13 +763,15 @@ public:
                           binding::linear_config(config.embed_dim, runtime_->assets().mula_config.audio_vocab_size, false))
                           .build(ctx, x, binding::linear_data(constants, weights.codebook0_head));
         logits_output_ = logits.tensor;
+        ggml_set_output(hidden_output_);
+        for (auto * input : {input_, positions_, cache_slot_, attention_mask_}) ggml_set_input(input);
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);
         constants.finish_graph();
         constants.ensure_uploaded();
         allocate_workspace();
         attention_mask_buffer_.assign(
-            static_cast<size_t>(cache_steps_ + 1),
+            static_cast<size_t>(cache_steps_),
             ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
     }
 
@@ -871,10 +780,19 @@ public:
     }
 
     void release_workspace() {
-        if (buffer_ != nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
-            ggml_backend_buffer_free(buffer_);
-            buffer_ = nullptr;
+        if (gallocr_ != nullptr) {
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+            engine::debug::timing_log_scalar("heartmula.backbone_step.graph_buffer_mb", 0.0);
+            // Only graph-local tensors are detached; session weights/constants
+            // live in separate contexts and keep their backend storage.
+            for (auto * tensor = ggml_get_first_tensor(ctx_.get()); tensor;
+                 tensor = ggml_get_next_tensor(ctx_.get(), tensor)) {
+                tensor->data = nullptr;
+                tensor->buffer = nullptr;
+                tensor->extra = nullptr;
+            }
         }
     }
 
@@ -911,15 +829,15 @@ public:
         ggml_backend_tensor_set(input_, embedding.data(), 0, embedding.size() * sizeof(float));
         const int32_t position = static_cast<int32_t>(step_cache_.current_end());
         ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
-        const int64_t cache_slot = step_cache_.valid_steps();
+        const int32_t cache_slot = static_cast<int32_t>(step_cache_.valid_steps());
+        ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(cache_slot));
         std::fill(
             attention_mask_buffer_.begin(),
             attention_mask_buffer_.end(),
             ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
-        for (int64_t i = 0; i < step_cache_.valid_steps(); ++i) {
+        for (int64_t i = 0; i <= step_cache_.valid_steps(); ++i) {
             attention_mask_buffer_[static_cast<size_t>(i)] = ggml_fp32_to_fp16(0.0F);
         }
-        attention_mask_buffer_[static_cast<size_t>(cache_steps_)] = ggml_fp32_to_fp16(0.0F);
         ggml_backend_tensor_set(
             attention_mask_,
             attention_mask_buffer_.data(),
@@ -930,11 +848,6 @@ public:
         ggml_backend_synchronize(runtime_->backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("HeartMuLa backbone cached step graph compute failed");
-        }
-        const size_t dst_slot = static_cast<size_t>(cache_slot);
-        for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
-            ggml_backend_tensor_copy(key_sources_[layer], key_destinations_[dst_slot][layer]);
-            ggml_backend_tensor_copy(value_sources_[layer], value_destinations_[dst_slot][layer]);
         }
         HeartMuLaBackboneResult out;
         out.logits.vocab_size = runtime_->assets().mula_config.audio_vocab_size;
@@ -948,31 +861,24 @@ public:
     }
 
 private:
-    void build_transfer_views(int64_t step_elems) {
-        key_destinations_.assign(static_cast<size_t>(cache_steps_), {});
-        value_destinations_.assign(static_cast<size_t>(cache_steps_), {});
-        for (int64_t slot = 0; slot < cache_steps_; ++slot) {
-            const size_t byte_offset = static_cast<size_t>(slot * step_elems) * sizeof(float);
-            auto & key_slot = key_destinations_[static_cast<size_t>(slot)];
-            auto & value_slot = value_destinations_[static_cast<size_t>(slot)];
-            key_slot.reserve(key_sources_.size());
-            value_slot.reserve(value_sources_.size());
-            for (size_t layer = 0; layer < key_sources_.size(); ++layer) {
-                key_slot.push_back(ggml_view_1d(ctx_.get(), step_cache_.key_tensor(layer).tensor, step_elems, byte_offset));
-                value_slot.push_back(ggml_view_1d(ctx_.get(), step_cache_.value_tensor(layer).tensor, step_elems, byte_offset));
-            }
-        }
-    }
-
     void allocate_workspace() {
-        if (buffer_ != nullptr) {
+        if (gallocr_ != nullptr) {
             return;
         }
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
-        if (buffer_ == nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
+        if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
             throw std::runtime_error("failed to allocate HeartMuLa backbone cached step graph");
         }
+        engine::debug::timing_log_scalar("heartmula.backbone_step.graph_buffer_mb",
+            static_cast<double>(ggml_gallocr_get_buffer_size(gallocr_, 0)) / (1024.0 * 1024.0));
+        const auto & config = runtime_->assets().mula_config.backbone;
+        engine::debug::timing_log_scalar("heartmula.backbone_step.kv_cache_mb",
+            static_cast<double>(2 * config.num_layers * cache_steps_ * batch_size_ *
+                config.num_kv_heads * require_head_dim(config) * sizeof(float)) / (1024.0 * 1024.0));
     }
 
     const HeartMuLaWeightsRuntime * runtime_ = nullptr;
@@ -981,17 +887,14 @@ private:
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * positions_ = nullptr;
+    ggml_tensor * cache_slot_ = nullptr;
     ggml_tensor * attention_mask_ = nullptr;
     ggml_tensor * hidden_output_ = nullptr;
     ggml_tensor * logits_output_ = nullptr;
-    std::vector<ggml_tensor *> key_sources_;
-    std::vector<ggml_tensor *> value_sources_;
-    std::vector<std::vector<ggml_tensor *>> key_destinations_;
-    std::vector<std::vector<ggml_tensor *>> value_destinations_;
     std::vector<ggml_fp16_t> attention_mask_buffer_;
     runtime::TransformerKVCache step_cache_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
 };
 
 class HeartMuLaDecoderPrefillGraph {
@@ -1070,6 +973,11 @@ public:
         }
         constants.finish_graph();
         constants.ensure_uploaded();
+        for (auto * input : {input_, positions_, codebook_index_}) ggml_set_input(input);
+        // These inputs are uploaded only when the workspace is bound.
+        for (auto * input : {positions_}) {
+            if (input != nullptr) ggml_set_output(input);
+        }
         allocate_workspace();
         layer_step_elems_ = batch_size_ * config.num_kv_heads * head_dim;
     }
@@ -1080,9 +988,18 @@ public:
 
     void release_workspace() {
         if (gallocr_ != nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
             ggml_gallocr_free(gallocr_);
             gallocr_ = nullptr;
+            engine::debug::timing_log_scalar("heartmula.decoder_prefill.graph_buffer_mb", 0.0);
+            // Only graph-local tensors are detached; session weights/constants
+            // live in separate contexts and keep their backend storage.
+            for (auto * tensor = ggml_get_first_tensor(ctx_.get()); tensor;
+                 tensor = ggml_get_next_tensor(ctx_.get(), tensor)) {
+                tensor->data = nullptr;
+                tensor->buffer = nullptr;
+                tensor->extra = nullptr;
+            }
         }
     }
 
@@ -1167,6 +1084,8 @@ private:
             }
             throw std::runtime_error("failed to allocate HeartMuLa decoder prefill graph");
         }
+        engine::debug::timing_log_scalar("heartmula.decoder_prefill.graph_buffer_mb",
+            static_cast<double>(ggml_gallocr_get_buffer_size(gallocr_, 0)) / (1024.0 * 1024.0));
         std::vector<int32_t> positions_values(static_cast<size_t>(steps_), 0);
         for (int64_t i = 0; i < steps_; ++i) {
             positions_values[static_cast<size_t>(i)] = static_cast<int32_t>(i);
@@ -1247,7 +1166,7 @@ public:
                 ctx,
                 GGML_TYPE_F32,
                 core::TensorShape::from_dims({1, cache_steps_, batch_size_ * config.num_kv_heads, head_dim})));
-            x = build_heartmula_transformer_layer_set_rows_tail(
+            x = build_heartmula_cached_transformer_layer(
                 ctx,
                 x,
                 positions,
@@ -1260,6 +1179,12 @@ public:
                 cache_slot,
                 attention_mask);
         }
+        for (size_t layer = 0; layer < cache_keys.size(); ++layer) {
+            ggml_set_input(cache_keys[layer].tensor);
+            ggml_set_output(cache_keys[layer].tensor);
+            ggml_set_input(cache_values[layer].tensor);
+            ggml_set_output(cache_values[layer].tensor);
+        }
         step_cache_ = runtime::TransformerKVCache(
             cache_steps_,
             batch_size_ * config.num_kv_heads * head_dim,
@@ -1270,6 +1195,8 @@ public:
         hidden_output_ = x.tensor;
         auto logits = codebook_audio_logits(ctx, x, weights.audio_head, codebook_index, runtime_->assets().mula_config);
         logits_output_ = logits.tensor;
+        ggml_set_output(hidden_output_);
+        for (auto * input : {input_, positions_, cache_slot_, codebook_index_, attention_mask_}) ggml_set_input(input);
         ggml_set_output(logits_output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
         ggml_build_forward_expand(graph_, logits_output_);
@@ -1286,10 +1213,19 @@ public:
     }
 
     void release_workspace() {
-        if (buffer_ != nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
-            ggml_backend_buffer_free(buffer_);
-            buffer_ = nullptr;
+        if (gallocr_ != nullptr) {
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+            engine::debug::timing_log_scalar("heartmula.decoder_step.graph_buffer_mb", 0.0);
+            // Only graph-local tensors are detached; session weights/constants
+            // live in separate contexts and keep their backend storage.
+            for (auto * tensor = ggml_get_first_tensor(ctx_.get()); tensor;
+                 tensor = ggml_get_next_tensor(ctx_.get(), tensor)) {
+                tensor->data = nullptr;
+                tensor->buffer = nullptr;
+                tensor->extra = nullptr;
+            }
         }
     }
 
@@ -1362,14 +1298,23 @@ public:
 
 private:
     void allocate_workspace() {
-        if (buffer_ != nullptr) {
+        if (gallocr_ != nullptr) {
             return;
         }
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
-        if (buffer_ == nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
+        if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
             throw std::runtime_error("failed to allocate HeartMuLa decoder cached step graph");
         }
+        engine::debug::timing_log_scalar("heartmula.decoder_step.graph_buffer_mb",
+            static_cast<double>(ggml_gallocr_get_buffer_size(gallocr_, 0)) / (1024.0 * 1024.0));
+        const auto & config = runtime_->assets().mula_config.decoder;
+        engine::debug::timing_log_scalar("heartmula.decoder_step.kv_cache_mb",
+            static_cast<double>(2 * config.num_layers * cache_steps_ * batch_size_ *
+                config.num_kv_heads * require_head_dim(config) * sizeof(float)) / (1024.0 * 1024.0));
     }
 
     const HeartMuLaWeightsRuntime * runtime_ = nullptr;
@@ -1386,7 +1331,7 @@ private:
     std::vector<ggml_fp16_t> attention_mask_buffer_;
     runtime::TransformerKVCache step_cache_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
 };
 
 class HeartMuLaFrameEmbeddingGraph {
@@ -1557,12 +1502,21 @@ public:
         }
 
         output_ = core::ensure_backend_addressable_layout(ctx, merged).tensor;
+        for (auto * input : {audio_token_ids_, text_token_ids_, audio_mask_, text_cond_mask_,
+                             text_uncond_mask_, zero_text_ids_, muq_embed_, muq_cond_mask_,
+                             muq_uncond_mask_, muq_row_, zero_muq_ids_}) {
+            if (input != nullptr) ggml_set_input(input);
+        }
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
         ggml_build_forward_expand(graph_, output_);
         constants.finish_graph();
         constants.ensure_uploaded();
         zero_i32_buffer_.assign(static_cast<size_t>(std::max(batch_size_, batch_size_ * steps_)), 0);
+        // These inputs are uploaded only when the workspace is bound.
+        for (auto * input : {zero_text_ids_, zero_muq_ids_}) {
+            if (input != nullptr) ggml_set_output(input);
+        }
         allocate_workspace();
     }
 
@@ -1571,10 +1525,19 @@ public:
     }
 
     void release_workspace() {
-        if (buffer_ != nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
-            ggml_backend_buffer_free(buffer_);
-            buffer_ = nullptr;
+        if (gallocr_ != nullptr) {
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
+            engine::debug::timing_log_scalar((apply_muq_ ? "heartmula.embedding_prompt.graph_buffer_mb" : "heartmula.embedding_frame.graph_buffer_mb"), 0.0);
+            // Only graph-local tensors are detached; session weights/constants
+            // live in separate contexts and keep their backend storage.
+            for (auto * tensor = ggml_get_first_tensor(ctx_.get()); tensor;
+                 tensor = ggml_get_next_tensor(ctx_.get(), tensor)) {
+                tensor->data = nullptr;
+                tensor->buffer = nullptr;
+                tensor->extra = nullptr;
+            }
         }
     }
 
@@ -1634,14 +1597,19 @@ public:
 
 private:
     void allocate_workspace() {
-        if (buffer_ != nullptr) {
+        if (gallocr_ != nullptr) {
             return;
         }
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
-        if (buffer_ == nullptr) {
-            engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend()));
+        if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) ||
+            !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
+            engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
+            ggml_gallocr_free(gallocr_);
+            gallocr_ = nullptr;
             throw std::runtime_error("failed to allocate HeartMuLa frame embedding graph");
         }
+        engine::debug::timing_log_scalar((apply_muq_ ? "heartmula.embedding_prompt.graph_buffer_mb" : "heartmula.embedding_frame.graph_buffer_mb"),
+            static_cast<double>(ggml_gallocr_get_buffer_size(gallocr_, 0)) / (1024.0 * 1024.0));
         ggml_backend_tensor_set(
             zero_text_ids_,
             zero_i32_buffer_.data(),
@@ -1675,7 +1643,7 @@ private:
     ggml_tensor * output_ = nullptr;
     std::vector<int32_t> zero_i32_buffer_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
 };
 
 HeartMuLaWeights load_heartmula_weights(
@@ -1908,7 +1876,9 @@ HeartMuLaBackbonePrefillOutput HeartMuLaWeightsRuntime::backbone_prefill_embeddi
         !backbone_prefill_graph_->matches(*this, batch_size, steps)) {
         backbone_prefill_graph_ = std::make_unique<HeartMuLaBackbonePrefillGraph>(*this, batch_size, steps);
     }
-    return backbone_prefill_graph_->run(embeddings);
+    auto output = backbone_prefill_graph_->run(embeddings);
+    backbone_prefill_graph_->release_workspace();
+    return output;
 }
 
 void HeartMuLaWeightsRuntime::reset_backbone_cached_state(
@@ -1945,7 +1915,7 @@ HeartMuLaBackboneResult HeartMuLaWeightsRuntime::backbone_cached_step(
         throw std::runtime_error("HeartMuLa backbone cached step capacity exceeds model context length");
     }
     const int64_t prompt_steps = state.prefill_steps_;
-    const int64_t old_generated_capacity = backbone_cached_step_graph_ == nullptr
+    const int64_t old_generated_capacity = !state.graph_has_state_
         ? 0
         : std::max<int64_t>(1, backbone_cached_step_graph_->cache_steps() - prompt_steps);
     const int64_t required_generated_capacity = std::max<int64_t>(1, required_capacity - prompt_steps);
@@ -1956,23 +1926,28 @@ HeartMuLaBackboneResult HeartMuLaWeightsRuntime::backbone_cached_step(
             required_generated_capacity,
             old_generated_capacity > 0 ? old_generated_capacity * 2 : kInitialBackboneGeneratedCacheFrames));
     const int64_t graph_capacity = prompt_steps + next_generated_capacity;
-    if (backbone_cached_step_graph_ != nullptr && state.graph_has_state_ &&
-        !backbone_cached_step_graph_->can_run(*this, batch_size, required_capacity)) {
-        state.pending_state_ = backbone_cached_step_graph_->export_state();
-        state.graph_has_state_ = false;
-    }
     if (backbone_cached_step_graph_ == nullptr ||
         !backbone_cached_step_graph_->can_run(*this, batch_size, required_capacity)) {
+        const auto start = std::chrono::steady_clock::now();
+        if (state.graph_has_state_) {
+            state.pending_state_ = backbone_cached_step_graph_->export_state();
+            state.graph_has_state_ = false;
+        }
         backbone_cached_step_graph_.reset();
         backbone_cached_step_graph_ = std::make_unique<HeartMuLaBackboneCachedStepGraph>(
             *this,
             batch_size,
             graph_capacity);
+        engine::debug::timing_log_scalar("heartmula.backbone_step.cache_growth_ms",
+            engine::debug::elapsed_ms(start));
     }
     if (!state.graph_has_state_) {
+        const auto start = std::chrono::steady_clock::now();
         backbone_cached_step_graph_->import_state(state.pending_state_);
         state.pending_state_ = {};
         state.graph_has_state_ = true;
+        engine::debug::timing_log_scalar("heartmula.backbone_step.cache_import_ms",
+            engine::debug::elapsed_ms(start));
     }
     return backbone_cached_step_graph_->run_step(embedding);
 }
@@ -2091,7 +2066,9 @@ HeartMuLaMergedEmbeddings HeartMuLaWeightsRuntime::merge_frame_embeddings(
             inputs.steps,
             inputs.apply_muq);
     }
-    return graph->run(inputs);
+    auto output = graph->run(inputs);
+    if (inputs.apply_muq) graph->release_workspace();
+    return output;
 }
 
 void HeartMuLaWeightsRuntime::release_graph_workspaces() const {

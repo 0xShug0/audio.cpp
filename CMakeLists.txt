@@ -671,6 +671,7 @@ add_library(engine_core OBJECT
     src/framework/modules/speaker_encoders/ecapa_tdnn_runtime.cpp
     src/framework/modules/speaker_encoders/titanet_runtime.cpp
     src/framework/codecs/fsq_audio_codec_runtime.cpp
+    src/framework/codecs/heartcodec_runtime.cpp
     src/framework/codecs/fish_dac_codec_runtime.cpp
     src/framework/codecs/mel_latent_vae44k_runtime.cpp
     src/framework/codecs/mimi_codec_runtime.cpp
@@ -1897,7 +1898,6 @@ audiocpp_add_model(sense_asr
 audiocpp_add_model(heartmula
     SOURCES
         src/models/heartmula/assets.cpp
-        src/models/heartmula/codec.cpp
         src/models/heartmula/generator.cpp
         src/models/heartmula/mula.cpp
         src/models/heartmula/session.cpp
@@ -3644,6 +3644,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         # Reuse GGML's CPU-reference operator harness for the opt-in backend.
         add_executable(test-backend-ops external/ggml/tests/test-backend-ops.cpp)
         target_link_libraries(test-backend-ops PRIVATE ggml Threads::Threads)
+    endif()
+
+    if (ENGINE_BUILD_MODEL_TESTS AND heartmula IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(heartmula_codec_lifecycle tests/heartmula/codec_lifecycle.cpp)
+        target_link_libraries(heartmula_codec_lifecycle PRIVATE engine_runtime ggml)
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS AND magenta_realtime_2 IN_LIST AUDIOCPP_LINKED_MODELS)

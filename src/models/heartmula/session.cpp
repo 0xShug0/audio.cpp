@@ -226,36 +226,39 @@ HeartMuLaSession::HeartMuLaSession(
                   engine::assets::TensorStorageType::Q8_0,
               })),
       codec_(
-          assets_,
+          assets_->codec_weights,
           execution_context(),
-          runtime::parse_size_mb_option(
-              RuntimeSessionBase::options().options,
-              {"heartmula.codec_weight_context_mb"},
-              codec_weight_context_bytes_),
-          runtime::parse_size_mb_option(
-              RuntimeSessionBase::options().options,
-              {"heartmula.flow_estimator_graph_arena_mb"},
-              codec_flow_estimator_graph_arena_bytes_),
-          runtime::parse_size_mb_option(
-              RuntimeSessionBase::options().options,
-              {"heartmula.conditioning_graph_arena_mb"},
-              codec_conditioning_graph_arena_bytes_),
-          runtime::parse_size_mb_option(
-              RuntimeSessionBase::options().options,
-              {"heartmula.scalar_decoder_graph_arena_mb"},
-              codec_scalar_decoder_graph_arena_bytes_),
-          runtime::parse_tensor_storage_option(
-              RuntimeSessionBase::options().options,
-              "heartmula.codec_weight_type",
-              "heartmula.weight_type",
-              codec_weight_storage_type_,
-              {
-                  engine::assets::TensorStorageType::Native,
-                  engine::assets::TensorStorageType::F32,
-                  engine::assets::TensorStorageType::F16,
-                  engine::assets::TensorStorageType::BF16,
-                  engine::assets::TensorStorageType::Q8_0,
-              })) {
+          assets_->codec_config,
+          {
+              runtime::parse_size_mb_option(
+                  RuntimeSessionBase::options().options,
+                  {"heartmula.codec_weight_context_mb"},
+                  codec_weight_context_bytes_),
+              runtime::parse_size_mb_option(
+                  RuntimeSessionBase::options().options,
+                  {"heartmula.flow_estimator_graph_arena_mb"},
+                  codec_flow_estimator_graph_arena_bytes_),
+              runtime::parse_size_mb_option(
+                  RuntimeSessionBase::options().options,
+                  {"heartmula.conditioning_graph_arena_mb"},
+                  codec_conditioning_graph_arena_bytes_),
+              runtime::parse_size_mb_option(
+                  RuntimeSessionBase::options().options,
+                  {"heartmula.scalar_decoder_graph_arena_mb"},
+                  codec_scalar_decoder_graph_arena_bytes_),
+              runtime::parse_tensor_storage_option(
+                  RuntimeSessionBase::options().options,
+                  "heartmula.codec_weight_type",
+                  "heartmula.weight_type",
+                  codec_weight_storage_type_,
+                  {
+                      engine::assets::TensorStorageType::Native,
+                      engine::assets::TensorStorageType::F32,
+                      engine::assets::TensorStorageType::F16,
+                      engine::assets::TensorStorageType::BF16,
+                      engine::assets::TensorStorageType::Q8_0,
+                  }),
+          }) {
     if (const auto mem_saver = runtime::find_option(RuntimeSessionBase::options().options, {"heartmula.mem_saver"})) {
         mem_saver_ = runtime::parse_bool_option(*mem_saver, "heartmula.mem_saver");
     }
@@ -347,7 +350,8 @@ runtime::TaskResult HeartMuLaSession::run(const runtime::TaskRequest & request) 
                 frames.codes,
                 frames.frames,
                 frames.codebooks,
-                chunk_request.options,
+                {chunk_request.options.codec_duration, chunk_request.options.num_inference_steps,
+                 chunk_request.options.codec_guidance_scale},
                 chunk_seed,
                 frames.codec_randn_philox_offset,
                 frames.codec_randn_call_offset_blocks);
@@ -365,6 +369,8 @@ runtime::TaskResult HeartMuLaSession::run(const runtime::TaskRequest & request) 
                 });
             if (mem_saver_) {
                 codec_.clear_graph_cache();
+            } else {
+                codec_.release_graph_workspaces();
             }
         }
 
@@ -395,7 +401,8 @@ runtime::TaskResult HeartMuLaSession::run(const runtime::TaskRequest & request) 
         frames.codes,
         frames.frames,
         frames.codebooks,
-        heartmula_request.options,
+        {heartmula_request.options.codec_duration, heartmula_request.options.num_inference_steps,
+         heartmula_request.options.codec_guidance_scale},
         seed,
         frames.codec_randn_philox_offset,
         frames.codec_randn_call_offset_blocks);
@@ -406,6 +413,8 @@ runtime::TaskResult HeartMuLaSession::run(const runtime::TaskRequest & request) 
         engine::debug::timing_log_scalar(
             "heartmula.codec_release.runtime_graphs_ms",
             engine::debug::elapsed_ms(release_start, Clock::now()));
+    } else {
+        codec_.release_graph_workspaces();
     }
 
     runtime::TaskResult result;
