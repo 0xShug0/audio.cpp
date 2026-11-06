@@ -11,7 +11,7 @@ wav.writeUInt32LE(16000, 24); wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2,
 wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40);
 const audio = wav.toString('base64');
 const rows = [
-  { id: 'asr', family: 'owsm_ctc', task: 'asr', mode: 'offline', path: '/fixture/asr.gguf' },
+  { id: 'asr', family: 'owsm', task: 'asr', mode: 'offline', path: '/fixture/owsm-v4-base-102m-q8_0.gguf' },
   { id: 'chat', family: 'lfm3_audio', task: 's2s', mode: 'streaming', path: '/fixture/lfm3.gguf' },
   { id: 'voice', family: 'lfm3_audio', task: 'tts', mode: 'streaming', path: '/fixture/lfm3.gguf' },
   { id: 'avatar', family: 'soulx_flashhead', task: 'gen', mode: 'streaming', path: '/fixture/soulx.gguf' }
@@ -20,6 +20,7 @@ const calls = []; let failAvatar = false;
 const managed = process.env.UI_MANAGED_CASE === '1';
 const registered = new Map(managed ? [] : rows.map(row => [row.id, row]));
 const loads = [];
+let portraitUploads = 0;
 const chatId = managed ? 'voice-chat-conversation' : 'chat';
 const voiceId = managed ? 'voice-chat-voice' : 'voice';
 const avatarId = managed ? 'voice-chat-avatar' : 'avatar';
@@ -36,11 +37,16 @@ try {
     if (u.pathname === '/v1/models/unload') { registered.delete(route.request().postDataJSON().id); return route.fulfill({ json: {} }); }
     if (u.pathname === '/v1/ui/path-status') return route.fulfill({ json: { exists: true, file: true, directory: false } });
     if (u.pathname === '/v1/ui/models/package-sizes') return route.fulfill({ json: { state: 'complete', data: [
-      ['owsm_ctc_v4_1b_q8_0', 'owsm_ctc', '/fixture/asr.gguf'],
+      ['owsm_v4_base_102m_q8_0', 'owsm', '/fixture/owsm-v4-base-102m-q8_0.gguf'],
       ['lfm3_audio_2b_q8_0', 'lfm3_audio', '/fixture/lfm3.gguf'],
       ['soulx_flashhead_lite_q8_0', 'soulx_flashhead', '/fixture/soulx.gguf']
     ].map(([id, family, model_path]) => ({ id, installed: managed, size_bytes: 100, state: 'ok', load_target: { family, model_path, load_options: {}, session_options: {} } })) } });
-    if (u.pathname === '/v1/ui/upload') return route.fulfill({ json: { path: '/fixture/upload.wav' } });
+    if (u.pathname === '/v1/ui/upload') {
+      if (route.request().headers()['content-type'] === 'audio/wav') {
+        assert.equal(route.request().postDataBuffer().readUInt32LE(24), 16000, 'question remains 16 kHz');
+      } else ++portraitUploads;
+      return route.fulfill({ json: { path: '/fixture/upload.wav' } });
+    }
     if (u.pathname === '/v1/tasks/run') { calls.push(route.request().postDataJSON()); return route.fulfill({ json: { text: 'What should I learn today?' } }); }
     if (u.pathname === '/v1/tasks/stream') {
       const body = route.request().postDataJSON(); calls.push(body);
@@ -65,6 +71,13 @@ try {
     };
   });
   await page.addInitScript(() => {
+    window.__playbackLeads = [];
+    const nativeStart = AudioBufferSourceNode.prototype.start;
+    AudioBufferSourceNode.prototype.start = function(when = 0, ...args) {
+      if (this.context.sampleRate === 24000 && this.buffer)
+        window.__playbackLeads.push({ lead: when - this.context.currentTime, baseLatency: this.context.baseLatency });
+      return nativeStart.call(this, when, ...args);
+    };
     const nativeFetch = window.fetch;
     window.fetch = async (input, init) => {
       const url = new URL(typeof input === 'string' ? input : input.url, location.href);
@@ -107,7 +120,7 @@ try {
   assert.ok(controls.every(box => Math.abs(box.y - controls[0].y) < 1 && Math.abs(box.height - controls[0].height) < 1), 'setup controls must align');
   const send = () => page.getByLabel('Send a recording', { exact: true }).setInputFiles({ name: 'question.wav', mimeType: 'audio/wav', buffer: wav });
   await send();
-  await page.locator('.portrait-stage.speaking').waitFor();
+  await page.locator('.portrait-stage.speaking').waitFor().catch(async error => { console.error(await page.locator('.voice-chat').innerText()); console.error(errors); throw error; });
   assert.equal(await page.evaluate(() => window.__ttsComplete), false, 'playback must start before conversation finishes');
   assert.equal(await page.locator('.messages article').last().locator('p').textContent(), 'Try learning ', 'reply text is still incomplete during playback');
   await page.getByRole('status').filter({ hasText: 'Your turn' }).waitFor({ timeout: 10000 }).catch(async error => { console.error(await page.locator('.voice-chat').innerText()); console.error(errors); throw error; });
@@ -121,16 +134,22 @@ try {
   await send();
   await page.getByRole('status').filter({ hasText: 'Your turn' }).waitFor();
   assert.equal(calls.filter(c => c.recipe === 'voice-chat-avatar')[1].request.artifacts.length, 2);
+  assert.equal(portraitUploads, 1, 'unchanged portrait uploaded only once across turns');
+  const lead = await page.evaluate(() => window.__playbackLeads[0]);
+  assert(lead.lead <= lead.baseLatency + .001, 'playback lead follows the audio device, not a fixed delay');
   if (managed) {
     assert.equal(loads.length, 4, 'prepared sessions must be reused across turns');
     assert.ok(loads.every(model => model.id.startsWith('voice-chat-')));
-    assert.ok(loads.filter(model => model.family !== 'owsm_ctc').every(model => model.mode === 'streaming'));
+    assert.ok(loads.filter(model => model.family !== 'owsm').every(model => model.mode === 'streaming'));
   }
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   assert.equal(await page.locator('.messages article').count(), 0);
+  await page.getByLabel('Portrait', { exact: true }).setInputFiles({ name: 'portrait-new.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="#876"/></svg>') });
   failAvatar = true; await send();
   await page.getByRole('alert').filter({ hasText: 'Avatar test failure' }).waitFor();
+  assert.equal(portraitUploads, 2, 'changing the portrait invalidates its upload');
   await send(); await page.getByRole('status').filter({ hasText: 'Your turn' }).waitFor();
+  assert.equal(portraitUploads, 3, 'retry after an error refreshes the uploaded portrait');
   assert.equal(calls.filter(c => c.recipe === 'voice-chat-avatar').at(-1).request.artifacts.length, 0);
   await send(); await page.locator('.portrait-stage.speaking').waitFor();
   await page.getByRole('button', { name: 'Stop', exact: true }).click();

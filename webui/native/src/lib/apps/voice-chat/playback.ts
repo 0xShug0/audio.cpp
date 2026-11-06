@@ -71,7 +71,7 @@ export class AvatarPlayback {
         if (chunk.offset === chunk.samples.length) this.audio.shift();
       }
       this.buffered -= count; this.scheduled += count;
-      const start = Math.max(this.context.currentTime + .06, this.nextStart);
+      const start = Math.max(this.context.currentTime + this.context.baseLatency, this.nextStart);
       const end = start + count / this.rate;
       const source = this.context.createBufferSource();
       source.buffer = buffer; source.connect(this.context.destination);
