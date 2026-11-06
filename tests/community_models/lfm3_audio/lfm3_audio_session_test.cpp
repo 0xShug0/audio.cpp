@@ -144,7 +144,8 @@ std::string text_of(const runtime::TaskResult & result) {
 }
 
 // Returns the events' audio and text, and the finish_stream result.
-std::pair<runtime::TaskResult, runtime::TaskResult> stream(runtime::IStreamingVoiceTaskSession & session, const runtime::TaskRequest & request) {
+std::pair<runtime::TaskResult, runtime::TaskResult> stream(runtime::IStreamingVoiceTaskSession & session, const runtime::TaskRequest & request,
+                                                          bool separate_text = false) {
     session.start_stream(request);
     if (request.audio_input.has_value()) {
         const auto & audio = *request.audio_input;
@@ -157,6 +158,8 @@ std::pair<runtime::TaskResult, runtime::TaskResult> stream(runtime::IStreamingVo
     events.audio_output = runtime::AudioBuffer{24000, 1, {}};
     events.text_output = runtime::Transcript{"", ""};
     while (auto event = session.next_stream_event()) {
+        if (separate_text && event->partial_text)
+            require(!event->audio_output, "S2S text must not wait for a speech frame");
         if (event->audio_output) runtime::append_audio_buffer(*events.audio_output, *event->audio_output);
         if (event->partial_text) events.text_output->text += event->partial_text->text;
     }
@@ -341,7 +344,7 @@ void test_s2s(const Fixture & f) {
     require(steps.size() <= 12, "reply within max_tokens");
     require_eq(artifact.meta.at("ended"), std::string(offline->reached_max_tokens() ? "false" : "true"), "ended matches the cut");
 
-    const auto [events, result] = stream(*streaming, request);
+    const auto [events, result] = stream(*streaming, request, true);
     require_eq(text_of(events), text_of(reply), "S2S streaming text == offline");
     require_eq(text_of(result), text_of(reply), "finish_stream text");
     require_eq(result.output_artifacts.size(), size_t{1}, "streaming reply artifact");
