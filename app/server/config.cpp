@@ -243,6 +243,12 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
     config.ui_enabled = engine::io::json::optional_bool(root, "ui", config.ui_enabled);
     config.ui_requested = engine::io::json::optional_bool(root, "ui", false);
     config.ui_management = engine::io::json::optional_bool(root, "ui_management", config.ui_management);
+    if (const auto * value = root.find("models_root")) {
+        if (!value->is_string() || value->as_string().empty()) {
+            throw std::runtime_error("server models_root must be a non-empty string");
+        }
+        config.models_root = resolve_path(base, value->as_string());
+    }
     config.backend = parse_server_backend(engine::io::json::optional_string(root, "backend", "cuda"));
     config.backend_impl = engine::io::json::optional_string(root, "backend_impl", "");
     config.device = engine::io::json::optional_i32(root, "device", config.device);

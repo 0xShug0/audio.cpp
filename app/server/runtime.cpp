@@ -139,7 +139,8 @@ ServerState::ServerState(
         const auto binary_directory = ui_resource_anchor.empty()
             ? request_base_
             : std::filesystem::absolute(ui_resource_anchor).lexically_normal();
-        default_models_root_ = (binary_directory / "models").lexically_normal();
+        default_models_root_ = std::filesystem::absolute(
+            config_.models_root.value_or(binary_directory / "models")).lexically_normal();
         models_root_ = default_models_root_;
         request_base_ = binary_directory;
         std::filesystem::create_directories(models_root_);

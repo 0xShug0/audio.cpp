@@ -57,6 +57,36 @@ std::filesystem::path write_config(
     return path;
 }
 
+void test_models_root() {
+    const auto root = make_temp_root();
+    const auto omitted = write_config(root, "omitted.json", R"({"ui_management":true,"models":[]})");
+    require(!minitts::server::load_server_config(omitted).models_root.has_value(),
+            "omitted models_root keeps the executable-local default");
+
+    const auto relative = write_config(
+        root, "relative.json", R"({"ui_management":true,"models_root":"shared models","models":[]})");
+    require(minitts::server::load_server_config(relative).models_root == root / "shared models",
+            "relative models_root is resolved against the config directory");
+
+    const auto absolute = write_config(root, "absolute.json",
+        "{\"ui_management\":true,\"models\":[],\"models_root\":" +
+        engine::io::json::stringify_string((root / "absolute models").generic_string()) + "}");
+    require(minitts::server::load_server_config(absolute).models_root == root / "absolute models",
+            "absolute models_root is preserved");
+
+    for (const auto * value : {"null", "true", "[]", "42", "\"\""}) {
+        const auto invalid = write_config(root, "invalid.json",
+            std::string("{\"ui_management\":true,\"models\":[],\"models_root\":") + value + "}");
+        bool rejected = false;
+        try {
+            (void) minitts::server::load_server_config(invalid);
+        } catch (const std::runtime_error & error) {
+            rejected = std::string(error.what()).find("models_root") != std::string::npos;
+        }
+        require(rejected, "invalid models_root must be rejected");
+    }
+}
+
 void test_inline_default_and_named_presets() {
     const auto root = make_temp_root();
     const auto config_path = write_config(
@@ -1177,6 +1207,7 @@ int main() {
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();
         test_ui_configuration();
+        test_models_root();
         test_configured_model_fields_are_inherited();
         test_empty_models_require_ui_management();
         test_request_timeout_is_clamped_to_policy();

@@ -79,6 +79,7 @@ struct ServerConfig {
     // than on by default.
     bool ui_requested = false;
     bool ui_management = false;
+    std::optional<std::filesystem::path> models_root;
     engine::core::BackendType backend = engine::core::BackendType::Cuda;
     std::string backend_impl;
     int device = 0;
