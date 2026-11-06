@@ -1908,6 +1908,24 @@ audiocpp_add_model(heartmula
         engine::models::heartmula::make_heartmula_loader
 )
 
+audiocpp_add_model(mulacover
+    SOURCES
+        src/models/mulacover/ar.cpp
+        src/models/mulacover/assets.cpp
+        src/models/mulacover/chord.cpp
+        src/models/mulacover/conditioning.cpp
+        src/models/mulacover/frontend.cpp
+        src/models/mulacover/prompt.cpp
+        src/models/mulacover/session.cpp
+        src/models/mulacover/style_encoder.cpp
+        src/models/mulacover/symbolic.cpp
+        src/models/mulacover/transcriber.cpp
+    INCLUDES
+        engine/models/mulacover/session.h
+    LOADERS
+        engine::models::mulacover::make_mulacover_loader
+)
+
 audiocpp_add_model(higgs_audio_stt
     SOURCES
         src/models/higgs_audio_stt/assets.cpp
@@ -3668,6 +3686,15 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     if (ENGINE_BUILD_MODEL_TESTS AND heartmula IN_LIST AUDIOCPP_LINKED_MODELS)
         add_executable(heartmula_codec_lifecycle tests/heartmula/codec_lifecycle.cpp)
         target_link_libraries(heartmula_codec_lifecycle PRIVATE engine_runtime ggml)
+    endif()
+
+    if (ENGINE_BUILD_MODEL_TESTS AND mulacover IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(mulacover_components tests/mulacover/components.cpp)
+        target_link_libraries(mulacover_components PRIVATE engine_runtime ggml)
+        add_executable(mulacover_waveform tests/mulacover/waveform.cpp)
+        target_link_libraries(mulacover_waveform PRIVATE engine_runtime ggml)
+        add_executable(mulacover_codec tests/mulacover/codec.cpp)
+        target_link_libraries(mulacover_codec PRIVATE engine_runtime ggml)
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS AND magenta_realtime_2 IN_LIST AUDIOCPP_LINKED_MODELS)

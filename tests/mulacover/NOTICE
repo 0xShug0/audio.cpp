@@ -1,0 +1,11 @@
+MuLaCover
+Reference implementation: https://github.com/HeartMuLa/MuLaCover
+MuLa Labs / HeartMuLa contributors. Reference code is Apache-2.0.
+Model checkpoints and generated outputs have separate noncommercial terms;
+see LICENSE.model and the upstream model repository.
+
+The native reference-audio transcription paths follow YourMT3 (Apache-2.0)
+and Music X Lab ChordNet (MIT). Their notices are retained with the model.
+The native CQT and tempo frontend follows librosa (ISC). YourMT3's rotary
+embedding dependency is MIT licensed. Their notices are retained in
+LICENSE.librosa and LICENSE.rotary-embedding.

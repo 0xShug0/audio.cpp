@@ -1,0 +1,64 @@
+MuLaCover Model Weight and Output Terms
+
+Copyright (c) 2026 MuLa Labs. All rights reserved except as expressly granted
+below.
+
+1. Scope
+
+These terms apply to all MuLaCover checkpoint weights distributed by MuLa
+Labs, including the MuLaCover-oss model weights and any fine-tuned, converted,
+quantized, merged, or otherwise modified versions derived from those weights
+(collectively, the "Model Weights"). They do not replace the licenses that
+apply to MuLaCover source code or third-party components.
+
+2. Model Weight License
+
+The Model Weights are licensed under the Creative Commons
+Attribution-NonCommercial 4.0 International license (CC BY-NC 4.0):
+
+https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+You may copy, share, and adapt the Model Weights only for noncommercial
+purposes and only in compliance with CC BY-NC 4.0, including its attribution
+requirements. Attribute the Model Weights as "MuLaCover by MuLa Labs" and
+include a link to the official MuLaCover repository:
+
+https://github.com/HeartMuLa/MuLaCover
+
+3. Generated Output Restriction
+
+In addition to the Model Weight License, and as a condition of accessing or
+using the Model Weights, you may use outputs generated with the Model Weights
+only for noncommercial purposes. "Outputs" include generated or transformed
+audio, music, MIDI, tokens, latent representations, and other material produced
+through use of the Model Weights.
+
+Without a separate written commercial license from MuLa Labs, you may not sell,
+license for a fee, monetize, commercially distribute, commercially publish, use
+in advertising, use in a paid product or service, or otherwise exploit Outputs
+for commercial advantage or monetary compensation.
+
+These output terms are separate terms governing use of Outputs and access to
+the Model Weights. They do not modify the text of CC BY-NC 4.0. They apply only
+to the extent MuLa Labs has rights or contractual authority to impose them and
+do not limit rights that cannot lawfully be restricted.
+
+4. Commercial Licensing
+
+Commercial use of the Model Weights or Outputs requires a separate written
+license from MuLa Labs. Contact MuLa Labs through the official repository for
+commercial licensing inquiries.
+
+5. Third-Party Rights and User Responsibility
+
+These terms grant no rights in third-party source recordings, compositions,
+lyrics, performances, datasets, trademarks, or other material. You are solely
+responsible for obtaining all permissions required for your inputs and Outputs
+and for complying with applicable law. Third-party components remain subject
+to their respective licenses and notices.
+
+6. Disclaimer
+
+TO THE EXTENT PERMITTED BY LAW, THE MODEL WEIGHTS AND OUTPUTS ARE PROVIDED
+"AS IS", WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND. MULA LABS WILL NOT BE
+LIABLE FOR CLAIMS, DAMAGES, OR OTHER LIABILITY ARISING FROM THEIR USE.

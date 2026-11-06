@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <deque>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <tuple>
@@ -131,6 +133,132 @@ void append_midi_track(std::vector<std::byte> & file, const std::vector<std::byt
 }
 
 }  // namespace
+
+MidiTickSequence read_standard_midi_file(const std::vector<std::byte> & bytes) {
+    size_t position = 0;
+    size_t limit = bytes.size();
+    const auto fail = [&]() {
+        throw std::invalid_argument("Malformed or unsupported Standard MIDI File");
+    };
+    const auto read_byte = [&]() -> uint8_t {
+        if (position >= limit) fail();
+        return std::to_integer<uint8_t>(bytes[position++]);
+    };
+    const auto read_be = [&](int count) {
+        uint32_t value = 0;
+        for (int i = 0; i < count; ++i) value = (value << 8) | read_byte();
+        return value;
+    };
+    const auto read_vlq = [&]() -> uint32_t {
+        uint32_t value = 0;
+        for (int i = 0; i < 4; ++i) {
+            const auto byte = read_byte();
+            value = (value << 7) | (byte & 0x7f);
+            if (!(byte & 0x80)) return value;
+        }
+        throw std::invalid_argument("Invalid MIDI variable-length quantity");
+    };
+    if (read_be(4) != 0x4d546864) fail();  // MThd
+    const auto header_length = read_be(4);
+    if (header_length < 6 || header_length > limit - position) fail();
+    const auto header_end = position + header_length;
+    const auto format = read_be(2);
+    const auto track_count = read_be(2);
+    const auto ppq = read_be(2);
+    if (format > 1 || track_count == 0 || (format == 0 && track_count != 1) ||
+        ppq == 0 || (ppq & 0x8000)) fail();
+    position = header_end;
+
+    MidiTickSequence sequence;
+    sequence.ticks_per_beat = static_cast<int>(ppq);
+    for (uint32_t track = 0; track < track_count; ++track) {
+        if (read_be(4) != 0x4d54726b) fail();  // MTrk
+        const auto track_length = read_be(4);
+        if (track_length > limit - position) fail();
+        limit = position + track_length;
+        uint64_t tick = 0;
+        uint8_t running_status = 0;
+        std::map<int, std::deque<uint64_t>> active;
+        while (position < limit) {
+            const auto delta = read_vlq();
+            if (tick > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - delta) {
+                fail();
+            }
+            tick += delta;
+            auto status = read_byte();
+            if (status < 0x80) {
+                if (running_status < 0x80 || running_status >= 0xf0) fail();
+                --position;
+                status = running_status;
+            } else if (status != 0xff) {
+                running_status = status;
+            }
+            if (status == 0xff) {
+                const auto type = read_byte();
+                if (type >= 0x80) fail();
+                const auto length = read_vlq();
+                if (length > limit - position) fail();
+                // Fixed-width meta events must have their complete payload.
+                int expected_length = -1;
+                switch (type) {
+                    case 0x00: expected_length = 2; break;
+                    case 0x20: case 0x21: expected_length = 1; break;
+                    case 0x2f: expected_length = 0; break;
+                    case 0x51: expected_length = 3; break;
+                    case 0x54: expected_length = 5; break;
+                    case 0x58: expected_length = 4; break;
+                    case 0x59: expected_length = 2; break;
+                }
+                if (expected_length >= 0 && length != static_cast<uint32_t>(expected_length)) fail();
+                if ((type == 0x20 && std::to_integer<uint8_t>(bytes[position]) > 15) ||
+                    (type == 0x21 && std::to_integer<uint8_t>(bytes[position]) > 127)) fail();
+                if (type == 0x59) {
+                    const auto key = std::to_integer<uint8_t>(bytes[position]);
+                    if ((key > 7 && key < 249) || std::to_integer<uint8_t>(bytes[position + 1]) > 1) fail();
+                }
+                if (type == 0x51) {
+                    if (read_be(3) == 0) fail();
+                } else {
+                    position += length;
+                }
+                continue;
+            }
+            if (status == 0xf0 || status == 0xf7) {
+                const auto length = read_vlq();
+                if (length > limit - position) fail();
+                // F7 escape payloads may contain arbitrary MIDI status bytes.
+                position += length;
+                continue;
+            }
+            if (status >= 0xf0) fail();
+            const auto kind = status >> 4;
+            const auto channel = status & 0x0f;
+            const auto data1 = read_byte();
+            const auto data2 = (kind == 0xc || kind == 0xd) ? 0 : read_byte();
+            if (data1 >= 0x80 || data2 >= 0x80) fail();
+            if (kind != 0x8 && kind != 0x9) continue;
+            auto & pending = active[channel * 128 + data1];
+            if (kind == 0x9 && data2 > 0) {
+                pending.push_back(tick);
+            } else {
+                if (pending.empty()) {
+                    throw std::invalid_argument("Unmatched note-off in MIDI track " + std::to_string(track));
+                }
+                const auto onset = pending.front();
+                pending.pop_front();
+                sequence.notes.push_back({static_cast<int64_t>(onset), static_cast<int64_t>(tick), channel, data1});
+            }
+        }
+        for (const auto & entry : active) {
+            if (!entry.second.empty()) {
+                throw std::invalid_argument("Unterminated note in MIDI track " + std::to_string(track));
+            }
+        }
+        limit = bytes.size();
+    }
+    return sequence;
+}
+
 
 std::vector<MidiNote> clean_midi_notes(std::vector<MidiNote> notes) {
     for (auto & note : notes) {
