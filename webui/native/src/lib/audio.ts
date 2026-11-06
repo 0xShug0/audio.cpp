@@ -69,19 +69,11 @@ export async function browserDecodeToWav(file: File, targetSampleRate?: number):
   if (!targetSampleRate && (file.type === 'audio/wav' || file.name.toLowerCase().endsWith('.wav'))) {
     return file;
   }
-  const context = new AudioContext();
+  // decodeAudioData resamples to the context rate; avoid a second resampling graph.
+  const context = new AudioContext(targetSampleRate ? { sampleRate: targetSampleRate } : undefined);
   try {
     const decoded = await context.decodeAudioData(await file.arrayBuffer());
-    if (!targetSampleRate || decoded.sampleRate === targetSampleRate) {
-      return encodePcm16Wav(decoded);
-    }
-    const frames = Math.max(1, Math.ceil(decoded.duration * targetSampleRate));
-    const offline = new OfflineAudioContext(decoded.numberOfChannels, frames, targetSampleRate);
-    const source = offline.createBufferSource();
-    source.buffer = decoded;
-    source.connect(offline.destination);
-    source.start();
-    return encodePcm16Wav(await offline.startRendering());
+    return encodePcm16Wav(decoded);
   } finally {
     await context.close();
   }

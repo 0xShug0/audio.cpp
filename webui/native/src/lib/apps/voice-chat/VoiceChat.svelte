@@ -22,6 +22,7 @@
   let settingsOpen = true;
   let portrait: File | null = null;
   let portraitUrl = '';
+  let uploadedPortrait: { file: File; path: string } | null = null;
   let root: HTMLElement;
   let canvas: HTMLCanvasElement;
   let videoVisible = false;
@@ -72,6 +73,7 @@
     if (!file) return;
     if (portraitUrl) URL.revokeObjectURL(portraitUrl);
     videoVisible = false; portrait = file; portraitUrl = URL.createObjectURL(file);
+    uploadedPortrait = null;
   }
 
   function resetChat() {
@@ -147,10 +149,15 @@
     try {
       audioContext ||= new AudioContext({ sampleRate: 24000, latencyHint: 'interactive' }); await audioContext.resume();
       status = 'Listening to your message…';
-      const wav = await browserDecodeToWav(file, 16000);
-      const audio = await uploadWav(wav, signal);
+      const selectedPortrait = portrait!;
+      const [audio, image] = await Promise.all([
+        browserDecodeToWav(file, 16000).then(wav => uploadWav(wav, signal)),
+        uploadedPortrait?.file === selectedPortrait
+          ? Promise.resolve(uploadedPortrait.path)
+          : uploadFile(selectedPortrait, signal)
+      ]);
       signal.throwIfAborted();
-      const image = await uploadFile(portrait!, signal);
+      uploadedPortrait = { file: selectedPortrait, path: image };
       let transcript = '';
       const recognitionOptions = { ...recognition.request.options };
       if (['owsm', 'owsm_ctc'].includes(recognition.model.family)) recognitionOptions.language = 'auto';
@@ -200,6 +207,7 @@
       if (!signal.aborted) status = 'Your turn';
     } catch (e) {
       aborter.abort(); workflow.clear(); playback?.stop();
+      uploadedPortrait = null;
       messages[user + 1].failed = true; messages = [...messages];
       status = signal.aborted && (e as Error)?.name === 'AbortError' ? 'Stopped' : 'Could not finish this reply';
       if ((e as Error)?.name !== 'AbortError') error = e instanceof Error ? e.message : String(e);
