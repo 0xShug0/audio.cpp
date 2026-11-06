@@ -87,5 +87,7 @@ cmake --build build --parallel --target omnivoice_batch_test
   single-request path untouched.
 - `--timing-log <file>` writes the engine `[TIMING]` lines (generator
   compute, readback, scoring, decode) of every call.
-- `--session-option` and `--request-option` pass options through, e.g.
-  `--session-option omnivoice.packed_cfg=false`.
+- `--session-option` and `--request-option` pass options through. The
+  earlier code path is `--session-option omnivoice.packed_cfg=false
+  --session-option omnivoice.device_scoring=false --session-option
+  omnivoice.packed_projections=false`.
