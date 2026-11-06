@@ -1206,22 +1206,17 @@ public:
             core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows * target_frame_capacity_}));
         target_indices_ = target_indices.tensor;
         ggml_set_input(target_indices_);
-        // One buffer holds every row's mask, conditional rows first; packed
-        // graphs view it as one [1, 1, tokens, tokens] mask per row.
+        // Unpacked graphs use one [rows, 1, capacity, capacity] mask. Packed
+        // graphs give every attention segment its own [rows, 1, tokens, tokens]
+        // mask input, so each mask starts at an offset the backend allocator
+        // aligned: views into one shared buffer start at arbitrary offsets,
+        // which backends such as Vulkan reject.
         const ggml_type mask_type = f16_attention ? GGML_TYPE_F16 : GGML_TYPE_F32;
-        const int64_t mask_values = static_cast<int64_t>(host_.attention_offset(rows));
-        auto attention_mask = packed_cfg_
-            ? core::make_tensor(input_ctx, mask_type, core::TensorShape::from_dims({mask_values}))
-            : core::make_tensor(
-                  input_ctx,
-                  mask_type,
-                  core::TensorShape::from_dims({rows, 1, total_tokens_capacity_, total_tokens_capacity_}));
-        attention_mask_ = attention_mask.tensor;
-        ggml_set_input(attention_mask_);
-        // Consecutive rows of equal length share one attention segment.
+        segment_masks_.clear();
         std::vector<AttentionSegment> segments;
+        core::TensorValue attention_mask;
         if (packed_cfg_) {
-            const size_t element = ggml_type_size(mask_type);
+            // Consecutive rows of equal length share one attention segment.
             for (int64_t first = 0; first < rows;) {
                 const int64_t tokens = host_.row_tokens(first);
                 int64_t end = first + 1;
@@ -1229,26 +1224,24 @@ public:
                     ++end;
                 }
                 const int64_t segment_rows = end - first;
-                const size_t mask_stride = static_cast<size_t>(tokens * tokens) * element;
-                auto * view = ggml_view_4d(
-                    ctx.ggml,
-                    attention_mask_,
-                    tokens,
-                    tokens,
-                    1,
-                    segment_rows,
-                    static_cast<size_t>(tokens) * element,
-                    mask_stride,
-                    mask_stride,
-                    host_.attention_offset(first) * element);
-                segments.push_back({
-                    static_cast<int64_t>(host_.row_offset(first)),
-                    segment_rows,
-                    tokens,
-                    core::wrap_tensor(view, core::TensorShape::from_dims({segment_rows, 1, tokens, tokens}), mask_type),
+                auto mask = core::make_tensor(
+                    input_ctx, mask_type, core::TensorShape::from_dims({segment_rows, 1, tokens, tokens}));
+                ggml_set_input(mask.tensor);
+                segment_masks_.push_back({
+                    mask.tensor,
+                    host_.attention_offset(first),
+                    host_.attention_offset(end) - host_.attention_offset(first),
                 });
+                segments.push_back({static_cast<int64_t>(host_.row_offset(first)), segment_rows, tokens, mask});
                 first = end;
             }
+        } else {
+            attention_mask = core::make_tensor(
+                input_ctx,
+                mask_type,
+                core::TensorShape::from_dims({rows, 1, total_tokens_capacity_, total_tokens_capacity_}));
+            attention_mask_ = attention_mask.tensor;
+            ggml_set_input(attention_mask_);
         }
         auto guidance_scales =
             core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_capacity_}));
@@ -1339,18 +1332,24 @@ public:
         if (host_.take_layout_dirty()) {
             ggml_backend_tensor_set(audio_mask_, host_.audio_mask.data(), 0, host_.audio_mask.size() * sizeof(float));
             ggml_backend_tensor_set(text_mask_, host_.text_mask.data(), 0, host_.text_mask.size() * sizeof(float));
-            if (perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention) {
-                ggml_backend_tensor_set(
-                    attention_mask_,
-                    host_.attention_f16.data(),
-                    0,
-                    host_.attention_f16.size() * sizeof(ggml_fp16_t));
+            const bool f16_mask = perf_mode_ == OmniVoiceGeneratorPerfMode::FlashAttention;
+            const auto upload_mask = [&](ggml_tensor * tensor, size_t first_value, size_t values) {
+                if (f16_mask) {
+                    ggml_backend_tensor_set(
+                        tensor, host_.attention_f16.data() + first_value, 0, values * sizeof(ggml_fp16_t));
+                } else {
+                    ggml_backend_tensor_set(tensor, host_.attention_f32.data() + first_value, 0, values * sizeof(float));
+                }
+            };
+            if (packed_cfg_) {
+                for (const auto & mask : segment_masks_) {
+                    upload_mask(mask.tensor, mask.first_value, mask.values);
+                }
             } else {
-                ggml_backend_tensor_set(
+                upload_mask(
                     attention_mask_,
-                    host_.attention_f32.data(),
                     0,
-                    host_.attention_f32.size() * sizeof(float));
+                    f16_mask ? host_.attention_f16.size() : host_.attention_f32.size());
             }
             ggml_backend_tensor_set(
                 target_indices_,
@@ -1461,6 +1460,7 @@ private:
         index_ramp_ = nullptr;
         guidance_scales_ = nullptr;
         attention_mask_ = nullptr;
+        segment_masks_.clear();
         target_indices_ = nullptr;
         positions_ = nullptr;
         audio_mask_ = nullptr;
@@ -1491,7 +1491,16 @@ private:
     ggml_tensor * text_mask_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * target_indices_ = nullptr;
+    // Unpacked layout only; the packed layout uses segment_masks_.
     ggml_tensor * attention_mask_ = nullptr;
+    // One mask input per attention segment of the packed layout, with the
+    // range of host mask values it receives.
+    struct SegmentMask {
+        ggml_tensor * tensor = nullptr;
+        size_t first_value = 0;
+        size_t values = 0;
+    };
+    std::vector<SegmentMask> segment_masks_;
     ggml_tensor * guidance_scales_ = nullptr;
     ggml_tensor * logits_ = nullptr;
     ggml_tensor * mask_bias_ = nullptr;
