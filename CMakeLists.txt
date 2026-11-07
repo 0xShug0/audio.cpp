@@ -1173,6 +1173,7 @@ audiocpp_add_model(sanotts
         src/community_models/sanotts/piper_runtime.cpp
         src/community_models/sanotts/runtime.cpp
         src/community_models/sanotts/session.cpp
+        src/community_models/sanotts/word_timestamps.cpp
     INCLUDES
         engine/community_models/sanotts/session.h
     LOADERS
@@ -3802,6 +3803,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(sanotts_neon_decoder_test tests/unittests/test_sanotts_neon_decoder.cpp)
         target_include_directories(sanotts_neon_decoder_test PRIVATE tests/unittests src/community_models/sanotts)
         add_test(NAME sanotts_neon_decoder_test COMMAND sanotts_neon_decoder_test)
+    endif()
+    if (ENGINE_BUILD_MODEL_TESTS AND sanotts IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(sanotts_word_timestamps_test tests/unittests/test_sanotts_word_timestamps.cpp)
+        target_sources(sanotts_word_timestamps_test PRIVATE src/community_models/sanotts/word_timestamps.cpp)
+        target_include_directories(sanotts_word_timestamps_test PRIVATE tests/unittests src/community_models/sanotts)
+        add_test(NAME sanotts_word_timestamps_test COMMAND sanotts_word_timestamps_test)
     endif()
     if (ENGINE_BUILD_MODEL_TESTS AND open_wake_word IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(open_wake_word_runtime_test tests/open_wake_word/test_runtime_parity.cpp)
