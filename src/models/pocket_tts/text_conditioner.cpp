@@ -123,7 +123,8 @@ std::string strip_ascii_whitespace(std::string text) {
 std::string prepare_pocket_tts_text(
     std::string text,
     bool pad_with_spaces_for_short_inputs,
-    bool remove_semicolons) {
+    bool remove_semicolons,
+    bool capitalize_first_letter = true) {
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) {
         text.erase(text.begin());
     }
@@ -149,9 +150,11 @@ std::string prepare_pocket_tts_text(
     if (remove_semicolons) {
         std::replace(text.begin(), text.end(), ';', ',');
     }
-    const CodePoint first = decode_utf8_at(text, 0);
-    if (const uint32_t upper = latin_uppercase(first.value); upper != 0) {
-        text.replace(0, first.length, encode_utf8(upper));
+    if (capitalize_first_letter) {
+        const CodePoint first = decode_utf8_at(text, 0);
+        if (const uint32_t upper = latin_uppercase(first.value); upper != 0) {
+            text.replace(0, first.length, encode_utf8(upper));
+        }
     }
     size_t last_start = text.size() - 1;
     while (last_start > 0 && (static_cast<unsigned char>(text[last_start]) & 0xC0) == 0x80) {
@@ -304,7 +307,8 @@ TextConditioningResult TextConditioner::prepare(
         result.prepared_text = prepare_pocket_tts_text(
             text,
             manifest.model_config.pad_with_spaces_for_short_inputs,
-            manifest.model_config.remove_semicolons);
+            manifest.model_config.remove_semicolons,
+            manifest.model_config.capitalize_first_letter);
         if (manifest.tokenizer_pieces.empty()) {
             throw std::runtime_error("PocketTTS tokenizer pieces are not loaded");
         }
@@ -332,7 +336,8 @@ std::vector<std::string> TextConditioner::split_into_sentence_chunks(
     const std::string prepared = strip_ascii_whitespace(prepare_pocket_tts_text(
         text,
         manifest.model_config.pad_with_spaces_for_short_inputs,
-        manifest.model_config.remove_semicolons));
+        manifest.model_config.remove_semicolons,
+        manifest.model_config.capitalize_first_letter));
     const std::vector<int32_t> tokens = tokenizers::tokenize_sentencepiece(pieces, prepared);
     const std::vector<TextSegment> sentences = segments_from_boundaries(
         pieces,

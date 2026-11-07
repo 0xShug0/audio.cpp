@@ -37,6 +37,8 @@ struct PocketTTSModelConfig {
     int64_t mimi_encoder_upsample_stride = 16;
     bool pad_with_spaces_for_short_inputs = false;
     bool remove_semicolons = false;
+    // upstream `capitalize_first_letter` (false for models that read IPA or other lowercase input)
+    bool capitalize_first_letter = true;
     bool insert_bos_before_voice = false;
     std::optional<int> model_recommended_frames_after_eos = std::nullopt;
     // Added to the word-count guess (3 or 1) for the default frames_after_eos, which counts
