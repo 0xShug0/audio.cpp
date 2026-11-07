@@ -573,7 +573,8 @@ SanoTtsNativeRuntime::~SanoTtsNativeRuntime() = default;
 
 runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
     const std::vector<int32_t> & token_ids,
-    const SanoTtsGenerationOptions & options) {
+    const SanoTtsGenerationOptions & options,
+    std::vector<int64_t> * token_frames_out) {
     const auto & config = state_->assets->config;
     const auto token_count = static_cast<int64_t>(token_ids.size());
     if (token_count <= 0) {
@@ -621,6 +622,9 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
         frames);
     if (frames < 2) {
         throw std::runtime_error("sanoTTS duration predictor produced too few frames");
+    }
+    if (token_frames_out != nullptr) {
+        *token_frames_out = durations;
     }
     engine::debug::timing_log_scalar(
         "sanotts.duration_ms",

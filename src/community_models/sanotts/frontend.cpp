@@ -991,6 +991,15 @@ std::vector<std::string> SanoTtsFrontend::split_text(
     return chunks;
 }
 
+std::string SanoTtsFrontend::symbol_for_id(int32_t id) {
+    for (const auto & [symbol, symbol_id] : vocabulary()) {
+        if (symbol_id == id) {
+            return symbol;
+        }
+    }
+    return {};
+}
+
 double SanoTtsFrontend::boundary_pause_seconds(const std::string & chunk) {
     for (auto it = chunk.rbegin(); it != chunk.rend(); ++it) {
         if (std::isspace(static_cast<unsigned char>(*it)) != 0) {
