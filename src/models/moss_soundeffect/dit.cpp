@@ -92,7 +92,8 @@ TensorValue build_projection(core::ModuleBuildContext & ctx, TensorValue input,
         }
         // Quantized kernels require F32 activations. Vulkan also uses a rounded
         // F32 payload and its existing lowering policy to avoid F16 reformatting.
-        if (ggml_is_quantized(weights.weight.type) || ctx.backend_type == core::BackendType::Vulkan) {
+        if (ggml_is_quantized(weights.weight.type) || ctx.backend_type == core::BackendType::Vulkan ||
+            ctx.backend_type == core::BackendType::Metal) {
             input = modules::Bf16RoundModule().build(ctx, input);
             config.vulkan_f32_activation_lowering = ctx.backend_type == core::BackendType::Vulkan;
         } else if (ctx.backend_type != core::BackendType::Cuda && input.type != GGML_TYPE_BF16) {
