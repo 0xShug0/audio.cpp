@@ -1439,6 +1439,21 @@ audiocpp_add_model(neutts
         engine::models::neutts::make_neutts_loader
 )
 
+audiocpp_add_model(moss_soundeffect
+    SOURCES
+        src/models/moss_soundeffect/assets.cpp
+        src/models/moss_soundeffect/dit.cpp
+        src/models/moss_soundeffect/vae.cpp
+        src/models/moss_soundeffect/text_encoder.cpp
+        src/models/moss_soundeffect/session.cpp
+    INCLUDES
+        engine/models/moss_soundeffect/session.h
+    LOADERS
+        engine::models::moss_soundeffect::make_moss_soundeffect_loader
+    OBJECT_LIBRARIES
+        utf8proc_vendor
+)
+
 audiocpp_add_model(echo_tts
     SOURCES
         src/community_models/echo_tts/session.cpp
@@ -3696,6 +3711,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         # Reuse GGML's CPU-reference operator harness for the opt-in backend.
         add_executable(test-backend-ops external/ggml/tests/test-backend-ops.cpp)
         target_link_libraries(test-backend-ops PRIVATE ggml Threads::Threads)
+    endif()
+
+    if (ENGINE_BUILD_MODEL_TESTS AND moss_soundeffect IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(moss_soundeffect_parity tests/moss_soundeffect/validate_reference.cpp)
+        target_link_libraries(moss_soundeffect_parity PRIVATE engine_runtime ggml)
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS AND heartmula IN_LIST AUDIOCPP_LINKED_MODELS)

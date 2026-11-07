@@ -465,8 +465,11 @@ core::TensorValue GeluModule::build(core::ModuleBuildContext & ctx, const core::
     switch (config_.approximation) {
         case GeluApproximation::ExactErf:
             return build_unary(ctx, input, ggml_gelu_erf);
-        case GeluApproximation::Tanh:
-            return build_unary(ctx, input, ggml_gelu);
+        case GeluApproximation::Tanh: {
+            auto result = build_unary(ctx, input, ggml_gelu);
+            result.type = result.tensor->type;
+            return result;
+        }
         case GeluApproximation::Quick:
             return build_unary(ctx, input, ggml_gelu_quick);
         default:
