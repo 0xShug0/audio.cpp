@@ -282,7 +282,7 @@ runtime::AudioBuffer VaeRuntime::decode(const std::vector<float> & latents, size
             } else if (ggml_backend_graph_compute_async(p.execution.backend(), g.graph) != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("MOSS DAC tile graph execution failed");
             }
-            const auto count = std::min(static_cast<size_t>(tile.output_count), output_samples - tile.output_first);
+            const auto count = std::min(static_cast<size_t>(tile.output_count), output_samples - static_cast<size_t>(tile.output_first));
             ggml_backend_tensor_get_async(p.execution.backend(), g.output,
                 audio.samples.data() + tile.output_first, 0, count * sizeof(float));
         }
