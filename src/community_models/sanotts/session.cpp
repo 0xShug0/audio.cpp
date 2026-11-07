@@ -4,6 +4,8 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
+#include "word_timestamps.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -119,102 +121,15 @@ bool request_return_timestamps(const runtime::TaskRequest & request) {
     return false;
 }
 
-// Marks that end a spoken word. Apostrophes and hyphens stay inside a word
-// ("don't", "well-known"), so they neither split nor end one.
-const std::string kWordEndMarks[] = {
-    "!", "\"", "(", ")", ",", ".", ":", ";", "?", "—", "“", "”"};
-
-bool is_word_end_mark(const std::string & symbol) {
-    return std::find(std::begin(kWordEndMarks), std::end(kWordEndMarks), symbol) !=
-        std::end(kWordEndMarks);
-}
-
-// The spoken words of the chunk text: runs between whitespace and word-end
-// marks. Labels come from here, never from the phoneme symbols.
-std::vector<std::string> text_words(const std::string & text) {
-    std::vector<std::string> words;
-    std::string current;
-    const auto flush = [&] {
-        if (!current.empty()) {
-            words.push_back(current);
-            current.clear();
-        }
-    };
-    size_t i = 0;
-    while (i < text.size()) {
-        if (std::isspace(static_cast<unsigned char>(text[i])) != 0) {
-            flush();
-            ++i;
-            continue;
-        }
-        const std::string * mark = nullptr;
-        for (const auto & candidate : kWordEndMarks) {
-            if (text.compare(i, candidate.size(), candidate) == 0) {
-                mark = &candidate;
-                break;
-            }
-        }
-        if (mark != nullptr) {
-            flush();
-            i += mark->size();
-            continue;
-        }
-        current += text[i];
-        ++i;
-    }
-    flush();
-    return words;
-}
-
-struct FrameRange {
-    int64_t start = 0;
-    int64_t end = 0;
-};
-
-// Frame ranges of the phoneme groups: a group is a run of phonemes between
-// spaces or word-end marks. Token t covers frames [sum(d[<t]), sum(d[<=t])).
-std::vector<FrameRange> phoneme_word_ranges(
-    const std::vector<int32_t> & token_ids,
-    const std::vector<int64_t> & token_frames) {
-    std::vector<FrameRange> ranges;
-    FrameRange current;
-    bool open = false;
-    int64_t frame = 0;
-    const size_t count = std::min(token_ids.size(), token_frames.size());
-    for (size_t index = 0; index < count; ++index) {
-        const int64_t start = frame;
-        frame += token_frames[index];
-        const std::string symbol = SanoTtsFrontend::symbol_for_id(token_ids[index]);
-        if (symbol.empty() || symbol == " " || is_word_end_mark(symbol)) {
-            if (open) {
-                ranges.push_back(current);
-                open = false;
-            }
-            continue;
-        }
-        if (symbol == "'" || symbol == "-") {
-            continue;
-        }
-        if (!open) {
-            current.start = start;
-            open = true;
-        }
-        current.end = frame;
-    }
-    if (open) {
-        ranges.push_back(current);
-    }
-    return ranges;
-}
-
-// Word spans for one chunk. Words and phoneme groups pair up by index. If the
-// counts disagree, the chunk gets one span labeled with its whole text instead
-// of words attached to the wrong audio.
+// Word spans for one chunk (see word_timestamps.h). Token t covers frames
+// [sum(d[<t]), sum(d[<=t])); the iSTFT output drops hop/2 samples at the
+// front, so a frame boundary f sits at f*hop - hop/2.
 void append_word_timestamps(
     std::vector<runtime::WordTimestamp> & out,
     const std::string & text,
     const std::vector<int32_t> & token_ids,
     const std::vector<int64_t> & token_frames,
+    const word_timestamps::WordPhonemizer & phonemize_word,
     int64_t hop_length,
     int64_t offset_samples,
     int64_t chunk_samples) {
@@ -223,33 +138,19 @@ void append_word_timestamps(
             frame * hop_length - hop_length / 2, 0, chunk_samples);
         return offset_samples + local;
     };
-    const auto push = [&](const FrameRange & range, const std::string & label) {
+    const auto groups = word_timestamps::phoneme_word_ranges(
+        token_ids,
+        token_frames,
+        [](int32_t id) { return SanoTtsFrontend::symbol_for_id(id); });
+    for (const auto & labeled : word_timestamps::label_ranges(
+             groups, word_timestamps::text_words(text), phonemize_word)) {
         runtime::WordTimestamp stamp;
-        stamp.span.start_sample = to_sample(range.start);
-        stamp.span.end_sample = to_sample(range.end);
-        stamp.word = label;
+        stamp.span.start_sample = to_sample(labeled.frames.start);
+        stamp.span.end_sample = to_sample(labeled.frames.end);
+        stamp.word = labeled.label;
         stamp.confidence = 1.0F;
         out.push_back(std::move(stamp));
-    };
-    const auto ranges = phoneme_word_ranges(token_ids, token_frames);
-    const auto words = text_words(text);
-    if (ranges.empty()) {
-        return;
     }
-    if (ranges.size() == words.size()) {
-        for (size_t i = 0; i < words.size(); ++i) {
-            push(ranges[i], words[i]);
-        }
-        return;
-    }
-    std::string joined;
-    for (const auto & word : words) {
-        if (!joined.empty()) {
-            joined += ' ';
-        }
-        joined += word;
-    }
-    push({ranges.front().start, ranges.back().end}, joined);
 }
 
 void append_pause(runtime::AudioBuffer & output, double seconds) {
@@ -350,6 +251,27 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
     std::vector<runtime::WordTimestamp> words;
     runtime::AudioBuffer merged;
     uint64_t rendered_chunks = 0;
+    // Pronounces one word on its own, for aligning word labels when the
+    // phoneme groups do not line up with the words. Empty when unavailable.
+    const word_timestamps::WordPhonemizer phonemize_word =
+        [&](const std::string & word) -> std::string {
+        if (frontend_ == nullptr) {
+            return {};
+        }
+        try {
+            const auto encoded = frontend_->encode(word);
+            std::string phonemes;
+            for (const auto id : encoded.token_ids) {
+                const std::string symbol = SanoTtsFrontend::symbol_for_id(id);
+                if (word_timestamps::is_phoneme_symbol(symbol)) {
+                    phonemes += symbol;
+                }
+            }
+            return phonemes;
+        } catch (const std::exception &) {
+            return {};
+        }
+    };
     // Renders one chunk, bisecting at whitespace when it phonemizes past the
     // duration model's token limit -- the codepoint budget cannot see phoneme
     // counts, so a dense 280-codepoint chunk can exceed 207 tokens.
@@ -407,6 +329,7 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
                         chunk,
                         encoded.token_ids,
                         token_frames,
+                        phonemize_word,
                         assets_->config.hop_length,
                         static_cast<int64_t>(merged.samples.size()),
                         static_cast<int64_t>(audio.samples.size()));
