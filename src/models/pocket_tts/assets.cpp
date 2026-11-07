@@ -16,6 +16,7 @@ struct PocketTTSDescriptor {
     float default_temperature = 0.7F;
     bool pad_with_spaces_for_short_inputs = false;
     bool remove_semicolons = false;
+    bool capitalize_first_letter = true;
     bool insert_bos_before_voice = false;
     std::optional<int> model_recommended_frames_after_eos;
     int sample_rate = 24000;
@@ -48,6 +49,7 @@ PocketTTSDescriptor descriptor_from_yaml(const io::yaml::FlattenedDocument & par
     descriptor.pad_with_spaces_for_short_inputs =
         io::yaml::optional_bool(parsed, "pad_with_spaces_for_short_inputs", false);
     descriptor.remove_semicolons = io::yaml::optional_bool(parsed, "remove_semicolons", false);
+    descriptor.capitalize_first_letter = io::yaml::optional_bool(parsed, "capitalize_first_letter", true);
     descriptor.insert_bos_before_voice = io::yaml::optional_bool(parsed, "flow_lm.insert_bos_before_voice", false);
     descriptor.model_recommended_frames_after_eos = io::yaml::optional_int(parsed, "model_recommended_frames_after_eos");
     descriptor.sample_rate = io::yaml::require_int(parsed, "mimi.sample_rate");
@@ -131,6 +133,7 @@ PocketTTSModelConfig make_model_config(const PocketTTSDescriptor & descriptor) {
     config.mimi_encoder_upsample_stride = descriptor.mimi_encoder_upsample_stride;
     config.pad_with_spaces_for_short_inputs = descriptor.pad_with_spaces_for_short_inputs;
     config.remove_semicolons = descriptor.remove_semicolons;
+    config.capitalize_first_letter = descriptor.capitalize_first_letter;
     config.insert_bos_before_voice = descriptor.insert_bos_before_voice;
     config.model_recommended_frames_after_eos = descriptor.model_recommended_frames_after_eos;
     return config;
