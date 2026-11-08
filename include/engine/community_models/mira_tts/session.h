@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/community_models/mira_tts/assets.h"
+#include <chrono>
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/model.h"
@@ -90,6 +91,7 @@ private:
     std::optional<MiraGenerationOptions> streaming_generation_;
     runtime::StreamEventCallback stream_sink_;
     size_t streaming_chunk_index_ = 0;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
     bool streaming_started_ = false;
 };
 

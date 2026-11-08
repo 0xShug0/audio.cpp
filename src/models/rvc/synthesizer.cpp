@@ -54,12 +54,6 @@ struct RvcGraphInput {
     std::vector<float> values;
 };
 
-struct RvcTraceTensor {
-    std::string name;
-    TensorValue tensor;
-    std::vector<int64_t> dims;
-};
-
 constexpr int64_t kInterChannels = 192;
 constexpr int64_t kHiddenChannels = 192;
 constexpr int64_t kFilterChannels = 768;
@@ -427,46 +421,17 @@ TensorValue build_text_encoder_stats(
     const TensorValue & features_btd,
     const TensorValue & pitch_i32,
     const RvcSynthesizerWeights & weights,
-    std::vector<RvcGraphInput> & graph_inputs,
-    std::vector<RvcTraceTensor> & trace_tensors) {
+    std::vector<RvcGraphInput> & graph_inputs) {
     auto x = engine::modules::LinearModule({features_btd.shape.dims[2], kHiddenChannels, true, GGML_PREC_F32})
                  .build(ctx, features_btd, linear_weights(weights, "enc_p.emb_phone"));
-    const bool trace_enabled = engine::debug::trace_log_enabled();
-    if (trace_enabled) {
-        trace_tensors.push_back({
-            "rvc.synth.phone_pre_bct",
-            contiguous(ctx, transpose_btc_bct(ctx, x)),
-            {1, kHiddenChannels, features_btd.shape.dims[1]}});
-    }
     if (weights.has_f0) {
         auto pitch = engine::modules::EmbeddingModule({256, kHiddenChannels})
                          .build(ctx, pitch_i32, require_tensor(weights, "enc_p.emb_pitch.weight"));
-        if (trace_enabled) {
-            trace_tensors.push_back({
-                "rvc.synth.pitch_pre_bct",
-                contiguous(ctx, transpose_btc_bct(ctx, pitch)),
-                {1, kHiddenChannels, features_btd.shape.dims[1]}});
-        }
         x = engine::modules::AddModule{}.build(ctx, x, pitch);
-        if (trace_enabled) {
-            trace_tensors.push_back({
-                "rvc.synth.sum_pre_bct",
-                contiguous(ctx, transpose_btc_bct(ctx, x)),
-                {1, kHiddenChannels, features_btd.shape.dims[1]}});
-        }
     }
     x = mul_scalar(ctx, x, static_cast<float>(std::sqrt(static_cast<double>(kHiddenChannels))));
-    if (trace_enabled) {
-        trace_tensors.push_back({
-            "rvc.synth.scaled_pre_bct",
-            contiguous(ctx, transpose_btc_bct(ctx, x)),
-            {1, kHiddenChannels, features_btd.shape.dims[1]}});
-    }
     x = leaky_relu(ctx, x);
     x = transpose_btc_bct(ctx, x);
-    if (trace_enabled) {
-        trace_tensors.push_back({"rvc.synth.text_embedding_bct", contiguous(ctx, x), {1, kHiddenChannels, x.shape.dims[2]}});
-    }
     for (int64_t layer = 0; layer < kTextLayers; ++layer) {
         auto y = rvc_self_attention(ctx, x, weights, layer, graph_inputs);
         x = rvc_layer_norm_bct(
@@ -478,12 +443,6 @@ TensorValue build_text_encoder_stats(
             ctx,
             engine::modules::AddModule{}.build(ctx, x, y),
             gamma_beta_weights(weights, "enc_p.encoder.norm_layers_2." + std::to_string(layer)));
-        if (trace_enabled && (layer == 0 || layer == kTextLayers - 1)) {
-            trace_tensors.push_back({
-                "rvc.synth.text_layer_" + std::to_string(layer),
-                contiguous(ctx, x),
-                {1, kHiddenChannels, x.shape.dims[2]}});
-        }
     }
     auto x_btc = transpose_btc_bct(ctx, x);
     auto proj_weight = engine::core::reshape_tensor(
@@ -717,7 +676,6 @@ struct RvcSynthesizer::State {
     mutable ggml_gallocr_t gallocr = nullptr;
     mutable ggml_cgraph * graph = nullptr;
     mutable std::vector<RvcGraphInput> graph_inputs;
-    mutable std::vector<RvcTraceTensor> trace_tensors;
     mutable TensorValue features;
     mutable TensorValue pitch;
     mutable TensorValue noise;
@@ -796,7 +754,6 @@ RvcSynthesizerOutput RvcSynthesizer::infer(const RvcSynthesizerInput & input) co
     }
     if (rebuild_graph) {
         state_->graph_inputs.clear();
-        state_->trace_tensors.clear();
         state_->frames = input.frames;
         state_->feature_dim = input.feature_dim;
         state_->speaker_id = input.speaker_id;
@@ -833,8 +790,7 @@ RvcSynthesizerOutput RvcSynthesizer::infer(const RvcSynthesizerInput & input) co
             state_->features,
             state_->pitch,
             *state_->weights,
-            state_->graph_inputs,
-            state_->trace_tensors);
+            state_->graph_inputs);
         stats = contiguous(ctx, stats);
         state_->m = contiguous(ctx, engine::modules::SliceModule({1, 0, kInterChannels}).build(ctx, stats));
         state_->logs = contiguous(ctx, engine::modules::SliceModule({1, kInterChannels, kInterChannels}).build(ctx, stats));
@@ -846,20 +802,6 @@ RvcSynthesizerOutput RvcSynthesizer::infer(const RvcSynthesizerInput & input) co
         state_->z = build_flow_reverse(ctx, state_->z_p, g, *state_->weights);
         state_->output = build_generator(ctx, state_->z, g, state_->sine, *state_->weights);
         state_->graph = ggml_new_graph_custom(state_->graph_ctx, 524288, false);
-        if (engine::debug::trace_log_enabled()) {
-            for (const auto & item : state_->trace_tensors) {
-                ggml_set_output(item.tensor.tensor);
-                ggml_build_forward_expand(state_->graph, item.tensor.tensor);
-            }
-            ggml_set_output(state_->m.tensor);
-            ggml_set_output(state_->logs.tensor);
-            ggml_set_output(state_->z_p.tensor);
-            ggml_set_output(state_->z.tensor);
-            ggml_build_forward_expand(state_->graph, state_->m.tensor);
-            ggml_build_forward_expand(state_->graph, state_->logs.tensor);
-            ggml_build_forward_expand(state_->graph, state_->z_p.tensor);
-            ggml_build_forward_expand(state_->graph, state_->z.tensor);
-        }
         ggml_set_output(state_->output.tensor);
         ggml_build_forward_expand(state_->graph, state_->output.tensor);
         state_->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(state_->weights->execution_context->backend()));
@@ -884,30 +826,6 @@ RvcSynthesizerOutput RvcSynthesizer::infer(const RvcSynthesizerInput & input) co
     }
     if (engine::core::compute_backend_graph(state_->weights->execution_context->backend(), state_->graph) != GGML_STATUS_SUCCESS) {
         throw std::runtime_error("ggml_backend_graph_compute failed for RVC synthesizer");
-    }
-    if (engine::debug::trace_log_enabled()) {
-        for (const auto & item : state_->trace_tensors) {
-            engine::debug::trace_log_f32(
-                item.name,
-                item.dims,
-                engine::core::read_tensor_f32(item.tensor.tensor));
-        }
-        engine::debug::trace_log_f32(
-            "rvc.synth.m",
-            {1, kInterChannels, input.frames},
-            engine::core::read_tensor_f32(state_->m.tensor));
-        engine::debug::trace_log_f32(
-            "rvc.synth.logs",
-            {1, kInterChannels, input.frames},
-            engine::core::read_tensor_f32(state_->logs.tensor));
-        engine::debug::trace_log_f32(
-            "rvc.synth.z_p",
-            {1, kInterChannels, input.frames},
-            engine::core::read_tensor_f32(state_->z_p.tensor));
-        engine::debug::trace_log_f32(
-            "rvc.synth.z",
-            {1, kInterChannels, input.frames},
-            engine::core::read_tensor_f32(state_->z.tensor));
     }
     auto audio = engine::core::read_tensor_f32(state_->output.tensor);
     RvcSynthesizerOutput out;

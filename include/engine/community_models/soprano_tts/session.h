@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/model_spec/metadata.h"
+#include <chrono>
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/community_models/soprano_tts/assets.h"
@@ -56,6 +57,7 @@ private:
     std::vector<SopranoRequest> streaming_requests_;
     size_t streaming_index_ = 0;
     std::vector<runtime::AudioBuffer> streaming_chunks_;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
     bool streaming_started_ = false;
     runtime::StreamEventCallback stream_sink_;
 

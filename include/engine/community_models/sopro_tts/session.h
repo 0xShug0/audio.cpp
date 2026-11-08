@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/community_models/sopro_tts/assets.h"
+#include <chrono>
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/model.h"
@@ -101,6 +102,7 @@ private:
     runtime::CacheSlots<VoiceKey, std::shared_ptr<SoproVoice>> voice_cache_;
 
     std::unique_ptr<SoproSynthesisState> stream_state_;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
     std::vector<runtime::AudioBuffer> stream_chunks_;
 };
 

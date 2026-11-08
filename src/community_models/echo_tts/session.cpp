@@ -1,5 +1,7 @@
 #include "engine/community_models/echo_tts/session.h"
 
+#include "engine/framework/debug/profiler.h"
+
 #include "engine/community_models/echo_tts/dit.h"
 #include "engine/community_models/echo_tts/latent_post.h"
 #include "engine/community_models/echo_tts/tokenizer.h"
@@ -677,6 +679,7 @@ runtime::AudioBuffer EchoTtsSession::synthesize_chunk(
 }
 
 runtime::TaskResult EchoTtsSession::run(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
     require_prepared("Echo-TTS run");
     require_supported_request_options(request.options, *contract_);
 
@@ -723,6 +726,7 @@ runtime::TaskResult EchoTtsSession::run(const runtime::TaskRequest & request) {
     // than clipped at the WAV writer.
     engine::audio::normalize_peak_to_unit_range_and_clamp_in_place(output.samples);
     result.audio_output = std::move(output);
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
 }
 

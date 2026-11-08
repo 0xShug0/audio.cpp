@@ -585,7 +585,7 @@ runtime::TaskResult KrokoASRSession::run(
     engine::debug::trace_log_scalar(
         "kroko_asr.encoder_frames", encoder_frames);
     engine::debug::timing_log_scalar(
-        "kroko_asr.session_ms",
+        "session.wall_ms",
         engine::debug::elapsed_ms(start, Clock::now()));
     return result;
 }
@@ -924,9 +924,6 @@ void KrokoASRSession::complete_stream(runtime::TaskResult & result) {
     process_streaming_audio(true);
     result.text_output->language = streaming_language_;
     result.speech_segments = endpoint_segments_;
-    engine::debug::timing_log_scalar(
-        "kroko_asr.session_ms",
-        stream_wall_ms());
     engine::debug::trace_log_scalar(
         "kroko_asr.streaming.encoder_chunks",
         streaming_encoder_chunks_);

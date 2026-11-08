@@ -604,6 +604,7 @@ runtime::StreamingPolicy Audio8TtsSession::streaming_policy() const {
 }
 
 void Audio8TtsSession::start_stream(const runtime::TaskRequest & request) {
+    stream_wall_start_ = std::chrono::steady_clock::now();
     require_prepared("Audio8 TTS streaming");
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Audio8 TTS start_stream requires a streaming session");
@@ -646,6 +647,7 @@ runtime::TaskResult Audio8TtsSession::finish_stream() {
     runtime::TaskResult task_result;
     task_result.audio_output = std::move(stream_merged_audio_);
     reset();
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     return task_result;
 }
 
