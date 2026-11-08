@@ -130,6 +130,7 @@ public:
         std::vector<modules::TransformerEncoderBlockWeights> transformer_layers;
         modules::NormWeights out_norm;
         modules::LinearWeights out_eos;
+        std::optional<modules::LinearWeights> z_projection;
         modules::TimedConditionedFlowMLPWeights flow_net;
     };
 
@@ -152,6 +153,7 @@ public:
         }
         weights_.out_norm = weights.flow.out_norm;
         weights_.out_eos = weights.flow.out_eos;
+        weights_.z_projection = weights.flow.z_projection;
         weights_.flow_net = make_flow_net_weights(weights, config);
         const auto & bos = weights.host.bos_emb;
         if (static_cast<int64_t>(bos.size()) != config.latent_size) {
@@ -363,14 +365,18 @@ public:
             ctx,
             condition_last,
             core::TensorShape::from_dims({condition.shape.dims[0], condition.shape.dims[2]}));
-        auto eos = modules::LinearModule({config_.hidden_size, 1, true}).build(
+        if (weights.z_projection.has_value()) {
+            condition_ = modules::LinearModule(modules::LinearConfig{config_.hidden_size, config_.condition_size, weights.z_projection->bias.has_value()})
+                .build(ctx, condition_, *weights.z_projection);
+        }
+        auto eos = modules::LinearModule({config_.condition_size, 1, true}).build(
             ctx,
             condition_,
             weights.out_eos);
         flow_ = modules::TimedConditionedFlowMLPModule({
             config_.latent_size,
             config_.flow_hidden_size,
-            config_.hidden_size,
+            config_.condition_size,
             config_.latent_size,
             config_.flow_depth,
             config_.flow_eps,

@@ -22,6 +22,7 @@ struct PocketTTSModelConfig {
     int64_t flow_layers = 6;
     int64_t flow_depth = 6;
     int64_t flow_dim = 1024;
+    int64_t flow_condition_dim = 1024;
     int64_t flow_heads = 16;
     int64_t flow_hidden_size = 512;
     int64_t flow_intermediate_size = 4096;

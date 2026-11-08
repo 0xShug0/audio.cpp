@@ -66,18 +66,19 @@ TextConditionerConfig make_text_config(const PocketTTSAssets & manifest) {
 }
 
 FlowLMConfig make_flow_config(const PocketTTSAssets & manifest) {
-    return FlowLMConfig{
-        manifest.model_config.flow_dim,
-        manifest.model_config.flow_heads,
-        manifest.model_config.flow_intermediate_size,
-        manifest.model_config.latent_dim,
-        manifest.model_config.flow_hidden_size,
-        manifest.model_config.flow_layers,
-        1.0e-5F,
-        1.0e-6F,
-        manifest.model_config.flow_depth,
-        manifest.model_config.time_embedding_plain_rms,
-    };
+    FlowLMConfig cfg;
+    cfg.hidden_size = manifest.model_config.flow_dim;
+    cfg.num_heads = manifest.model_config.flow_heads;
+    cfg.intermediate_size = manifest.model_config.flow_intermediate_size;
+    cfg.latent_size = manifest.model_config.latent_dim;
+    cfg.flow_hidden_size = manifest.model_config.flow_hidden_size;
+    cfg.layers = manifest.model_config.flow_layers;
+    cfg.norm_eps = 1.0e-5F;
+    cfg.flow_eps = 1.0e-6F;
+    cfg.flow_depth = manifest.model_config.flow_depth;
+    cfg.condition_size = manifest.model_config.flow_condition_dim;
+    cfg.time_embedding_plain_rms = manifest.model_config.time_embedding_plain_rms;
+    return cfg;
 }
 
 MimiDecoderConfig make_decoder_config(const PocketTTSAssets & manifest) {

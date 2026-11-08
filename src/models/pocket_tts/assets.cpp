@@ -26,6 +26,7 @@ struct PocketTTSDescriptor {
     // transformer depth: the *_24l models have 24 transformer layers but a 6-block flow net.
     int flow_depth = 6;
     int flow_dim = 1024;
+    int flow_condition_dim = 1024;
     int flow_heads = 16;
     int flow_hidden_size = 512;
     int flow_intermediate_size = 4096;
@@ -57,6 +58,7 @@ PocketTTSDescriptor descriptor_from_yaml(const io::yaml::FlattenedDocument & par
     descriptor.flow_layers = io::yaml::require_int(parsed, "flow_lm.transformer.num_layers");
     descriptor.flow_depth = io::yaml::optional_int(parsed, "flow_lm.flow.depth").value_or(descriptor.flow_depth);
     descriptor.flow_dim = io::yaml::require_int(parsed, "flow_lm.transformer.d_model");
+    descriptor.flow_condition_dim = io::yaml::optional_int(parsed, "flow_lm.z_dim").value_or(descriptor.flow_dim);
     descriptor.flow_heads = io::yaml::require_int(parsed, "flow_lm.transformer.num_heads");
     descriptor.flow_hidden_size = io::yaml::require_int(parsed, "flow_lm.flow.dim");
     descriptor.flow_intermediate_size =
@@ -117,6 +119,7 @@ PocketTTSModelConfig make_model_config(const PocketTTSDescriptor & descriptor) {
     config.flow_layers = descriptor.flow_layers;
     config.flow_depth = descriptor.flow_depth;
     config.flow_dim = descriptor.flow_dim;
+    config.flow_condition_dim = descriptor.flow_condition_dim;
     config.flow_heads = descriptor.flow_heads;
     config.flow_hidden_size = descriptor.flow_hidden_size;
     config.flow_intermediate_size = descriptor.flow_intermediate_size;
