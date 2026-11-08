@@ -8,6 +8,8 @@
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/moe_module.h"
+#include "engine/framework/modules/staged_moe_runtime.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
@@ -460,16 +462,13 @@ Drama3MoeInputs build_moe_inputs(
     auto * shared_output = ggml_mul(ctx.ggml, shared.tensor, shared_scale);
     const int64_t steps = ggml_nelements(x.tensor) / config.hidden_size;
     auto * hidden = ggml_reshape_2d(ctx.ggml, x.tensor, config.hidden_size, steps);
-    auto * router_logits = ggml_mul_mat(ctx.ggml, weights.router.tensor, hidden);
-    auto * probabilities = ggml_soft_max(ctx.ggml, router_logits);
-    auto * expert_ids = ggml_argsort_top_k(ctx.ggml, probabilities, config.experts_per_token);
-    // Preserve the offload prefill's unfused routing arithmetic.
-    if (weights.disk_store && !ggml_is_contiguous(expert_ids)) expert_ids = ggml_cont(ctx.ggml, expert_ids);
-    const int64_t experts = weights.router.tensor->ne[1];  // per layer (adaptive pruning)
-    auto * selected = ggml_get_rows(ctx.ggml, ggml_reshape_3d(ctx.ggml, probabilities, 1, experts, steps), expert_ids);
-    selected = ggml_reshape_2d(ctx.ggml, selected, config.experts_per_token, steps);
-    selected = ggml_div(ctx.ggml, selected, ggml_sum_rows(ctx.ggml, selected));
-    return {ggml_reshape_2d(ctx.ggml, shared_output, config.hidden_size, steps), expert_ids, selected};
+    modules::MoeRoutingConfig routing_config;
+    routing_config.experts = weights.router.tensor->ne[1]; // per-layer adaptive pruning
+    routing_config.selected = config.experts_per_token;
+    // Preserve offload's original unfused routing arithmetic.
+    routing_config.contiguous_ids = weights.disk_store != nullptr;
+    auto routing = modules::MoeModule::build_routing(ctx, hidden, weights.router.tensor, nullptr, routing_config);
+    return {ggml_reshape_2d(ctx.ggml, shared_output, config.hidden_size, steps), routing.ids, routing.weights};
 }
 
 core::TensorValue mlp(
@@ -482,18 +481,12 @@ core::TensorValue mlp(
     if (routing_graph && !weights.disk_store) ggml_build_forward_expand(routing_graph, inputs.scales);
     const int64_t steps = ggml_nelements(x.tensor) / config.hidden_size;
     auto * hidden = ggml_reshape_2d(ctx.ggml, x.tensor, config.hidden_size, steps);
-    auto * expert_ids = inputs.ids;
-    if (weights.disk_store) expert_ids = weights.disk_store->route(ctx, expert_ids, weights.disk_group);
-    auto * expanded_hidden = ggml_reshape_3d(ctx.ggml, hidden, config.hidden_size, 1, steps);
-    auto * expert_gate = ggml_mul_mat_id(ctx.ggml, weights.expert_gate.tensor, expanded_hidden, expert_ids);
-    auto * expert_up = ggml_mul_mat_id(ctx.ggml, weights.expert_up.tensor, expanded_hidden, expert_ids);
-    auto * expert_activated = routing_graph ? ggml_swiglu_split(ctx.ggml, expert_gate, expert_up)
-                                          : ggml_mul(ctx.ggml, ggml_silu(ctx.ggml, expert_gate), expert_up);
-    auto * expert_output = ggml_mul_mat_id(ctx.ggml, weights.expert_down.tensor, expert_activated, expert_ids);
-    auto * routing_scale = ggml_reshape_3d(ctx.ggml, inputs.scales, 1, config.experts_per_token, steps);
-    expert_output = ggml_mul(ctx.ggml, expert_output, routing_scale);
-    expert_output = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, expert_output, 1, 0, 2, 3));
-    expert_output = ggml_reshape_2d(ctx.ggml, ggml_sum_rows(ctx.ggml, expert_output), config.hidden_size, steps);
+    auto * bank_ids = weights.disk_store ? weights.disk_store->route(ctx, inputs.ids, weights.disk_group) : nullptr;
+    modules::MoeExpertConfig expert_config;
+    expert_config.fused_swiglu = routing_graph != nullptr;
+    const modules::MoeModule moe(expert_config);
+    auto * expert_output = moe.build(ctx, hidden, {inputs.ids, inputs.scales},
+        {weights.expert_up.tensor, weights.expert_gate.tensor, weights.expert_down.tensor}, bank_ids);
     auto * output = ggml_add(ctx.ggml, expert_output, inputs.shared);
     return round_activation(ctx, core::wrap_tensor(ggml_reshape_3d(ctx.ggml, output, config.hidden_size, steps, 1), x.shape), config);
 }
@@ -1271,27 +1264,24 @@ public:
         hidden_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
         residual_ = ggml_new_tensor_3d(persistent, GGML_TYPE_F32, h, steps, 1);
         shared_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
-        scales_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, k, steps);
-        ids_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, k, steps);
-        const auto rows = expert_rows * config.expert_cache_size;
-        expert_output_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, k * steps + rows);
-        source_rows_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, rows);
-        target_rows_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, rows);
-        expert_slot_ids_ = ggml_new_tensor_2d(persistent, GGML_TYPE_I32, 1, rows);
+        modules::StagedMoeConfig staged_config;
+        staged_config.hidden_size = h;
+        staged_config.tokens = steps;
+        staged_config.selected = k;
+        staged_config.experts = config.experts;
+        staged_config.cache_slots = config.expert_cache_size;
+        staged_config.rows_per_expert = {32};
+        staged_config.scatter_index_type = GGML_TYPE_I32;
+        workspace_ = std::make_shared<core::GraphWorkspace>(execution.backend());
+        staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, std::move(staged_config), workspace_);
         positions_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, steps);
         mask_ = ggml_new_tensor_4d(persistent, GGML_TYPE_F16, steps, steps, 1, 1);
-        for (auto * tensor : {x_, hidden_, residual_, shared_, scales_, ids_, expert_output_, source_rows_,
-                              target_rows_, expert_slot_ids_, positions_, mask_})
+        for (auto * tensor : {x_, hidden_, residual_, shared_, positions_, mask_})
             ggml_set_input(tensor);
         buffer_.reset(ggml_backend_alloc_ctx_tensors(persistent, execution.backend()));
         if (!buffer_)
             throw std::runtime_error("cannot allocate Drama 3 offload prefill inputs");
-        // Padded expert lanes must never read uninitialized values.
         ggml_backend_buffer_clear(buffer_.get(), 0);
-        std::vector<int32_t> slot_ids(static_cast<size_t>(rows));
-        for (int64_t slot = 0; slot < config.expert_cache_size; ++slot)
-            std::fill_n(slot_ids.begin() + slot * expert_rows, expert_rows, static_cast<int32_t>(slot));
-        ggml_backend_tensor_set(expert_slot_ids_, slot_ids.data(), 0, slot_ids.size() * sizeof(int32_t));
         std::vector<int32_t> positions(static_cast<size_t>(steps));
         std::vector<ggml_fp16_t> mask(static_cast<size_t>(steps * steps));
         for (int64_t row = 0; row < steps; ++row) {
@@ -1305,18 +1295,8 @@ public:
         core::ModuleBuildContext ctx{context_.get(), "drama3_backbone.offload_prefill", execution.backend_type()};
         const auto shape = core::TensorShape::from_dims({1, steps, h});
         auto x = core::wrap_tensor(x_, shape);
-        auto * largest = static_cast<ggml_cgraph *>(nullptr);
-        size_t max_bytes = 0;
-        allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
-        if (!allocator_)
-            throw std::runtime_error("cannot allocate Drama 3 offload prefill planner");
         auto add_graph = [&](ggml_cgraph * graph) {
-            size_t bytes = 0;
-            ggml_gallocr_reserve_n_size(allocator_.get(), graph, nullptr, nullptr, &bytes);
-            if (!largest || bytes > max_bytes) {
-                largest = graph;
-                max_bytes = bytes;
-            }
+            workspace_->add(graph);
             graphs_.push_back(graph);
         };
         size_t full = 0, linear = 0;
@@ -1353,12 +1333,10 @@ public:
                                   .build(ctx, residual, layer.post_norm);
             normalized = round_activation(ctx, normalized, config);
             const auto moe = build_moe_inputs(ctx, normalized, layer, config);
+            staged_moe_->build_inputs(ctx, graph, normalized.tensor, {moe.ids, moe.scales});
             for (const auto & copy : std::vector<std::pair<ggml_tensor *, ggml_tensor *>>{
                      {residual.tensor, residual_},
-                     {normalized.tensor, hidden_},
-                     {moe.shared, shared_},
-                     {moe.scales, scales_},
-                     {ggml_cast(ctx.ggml, moe.ids, GGML_TYPE_F32), ids_}}) {
+                     {moe.shared, shared_}}) {
                 auto * destination = ggml_reshape_2d(ctx.ggml, copy.second, copy.second->ne[0], steps);
                 auto * source = ggml_reshape_2d(ctx.ggml, copy.first, copy.first->ne[0], steps);
                 ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, source, destination));
@@ -1370,32 +1348,13 @@ public:
             else
                 ++linear;
 
-            {
-                const int64_t block_rows = expert_rows;
-                const int64_t rows = block_rows * config.expert_cache_size;
-                graph = ggml_new_graph_custom(ctx.ggml, small_nodes, false);
-                auto * source_rows = ggml_view_1d(ctx.ggml, source_rows_, rows, 0);
-                auto * target_rows = ggml_view_1d(ctx.ggml, target_rows_, rows, 0);
-                auto * input = ggml_reshape_3d(ctx.ggml, ggml_get_rows(ctx.ggml, hidden_, source_rows), h, 1, rows);
-                // Preserve the resident indexed-MoE arithmetic. Generic batched
-                // GEMMs select different quantized activation paths on CUDA.
-                auto * gate = ggml_mul_mat_id(ctx.ggml, layer.expert_gate.tensor, input, expert_slot_ids_);
-                auto * up = ggml_mul_mat_id(ctx.ggml, layer.expert_up.tensor, input, expert_slot_ids_);
-                auto * activated = ggml_mul(ctx.ggml, ggml_silu(ctx.ggml, gate), up);
-                auto * output = ggml_mul_mat_id(ctx.ggml, layer.expert_down.tensor, activated, expert_slot_ids_);
-                ggml_build_forward_expand(
-                    graph,
-                    ggml_set_rows(ctx.ggml, expert_output_, ggml_reshape_2d(ctx.ggml, output, h, rows), target_rows));
-                add_graph(graph);
-                expert_graphs_.push_back(graph);
-            }
+            staged_moe_->add_layer(modules::MoeModule{},
+                {layer.expert_up.tensor, layer.expert_gate.tensor, layer.expert_down.tensor},
+                *layer.disk_store, layer.disk_group);
         }
+
         finish_ = ggml_new_graph_custom(ctx.ggml, small_nodes, false);
-        auto * experts =
-            ggml_view_3d(ctx.ggml, expert_output_, h, k, steps, h * sizeof(float), h * k * sizeof(float), 0);
-        auto * scaled = ggml_mul(ctx.ggml, experts, ggml_reshape_3d(ctx.ggml, scales_, 1, k, steps));
-        auto * reduced = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, scaled, 1, 0, 2, 3));
-        reduced = ggml_reshape_2d(ctx.ggml, ggml_sum_rows(ctx.ggml, reduced), h, steps);
+        auto * reduced = modules::MoeModule::combine(ctx, staged_moe_->output(), staged_moe_->routing_weights());
         auto combined =
             core::wrap_tensor(ggml_reshape_3d(ctx.ggml, ggml_add(ctx.ggml, reduced, shared_), h, steps, 1), shape);
         combined = round_activation(ctx, combined, config);
@@ -1409,15 +1368,9 @@ public:
         normalized = round_activation(ctx, normalized, config);
         ggml_build_forward_expand(final_, ggml_cpy(ctx.ggml, normalized.tensor, hidden_));
         add_graph(final_);
-        // All phases execute serially and share one activation workspace. Plan
-        // the largest first so cached graph addresses never move afterward.
-        if (!ggml_gallocr_reserve(allocator_.get(), largest))
-            throw std::runtime_error("cannot reserve Drama 3 offload prefill workspace");
-        for (auto * graph : graphs_) {
-            if (!ggml_gallocr_reserve(allocator_.get(), graph) || !ggml_gallocr_alloc_graph(allocator_.get(), graph))
-                throw std::runtime_error("cannot allocate Drama 3 offload prefill graph");
+        staged_moe_->prepare();
+        for (auto * graph : graphs_)
             core::prepare_host_graph_plan(execution_, graph, plans_[graph]);
-        }
     }
 
     ~Drama3OffloadPrefillGraph() {
@@ -1430,10 +1383,6 @@ public:
     Drama3BackboneDecoderForwardResult run(const std::vector<float> & embeddings, int64_t steps) {
         ggml_backend_tensor_set(x_, embeddings.data(), 0, embeddings.size() * sizeof(float));
         const auto k = config_.experts_per_token;
-        std::vector<float> ids(static_cast<size_t>(steps * k));
-        std::vector<std::vector<int32_t>> by_expert(static_cast<size_t>(config_.experts));
-        const auto rows = expert_rows * config_.expert_cache_size;
-        std::vector<int32_t> source(static_cast<size_t>(rows)), target(static_cast<size_t>(rows));
         double attention_ms = 0, expert_ms = 0;
         uint64_t expert_work_rows = 0;
         for (size_t layer = 0; layer < weights_.layers.size(); ++layer) {
@@ -1441,49 +1390,7 @@ public:
             compute(attention_graphs_[layer]);
             attention_ms += debug::elapsed_ms(started);
             started = std::chrono::steady_clock::now();
-            ggml_backend_tensor_get(ids_, ids.data(), 0, ids.size() * sizeof(float));
-            for (auto & rows : by_expert)
-                rows.clear();
-            for (size_t pair = 0; pair < ids.size(); ++pair)
-                by_expert.at(static_cast<size_t>(ids[pair])).push_back(static_cast<int32_t>(pair));
-            std::vector<int32_t> experts;
-            for (int32_t expert = 0; expert < config_.experts; ++expert)
-                if (!by_expert[expert].empty())
-                    experts.push_back(expert);
-            // Similar row counts share a block, avoiding sparse experts being
-            // padded to the busiest expert's row count in an unrelated group.
-            std::stable_sort(experts.begin(), experts.end(), [&](int32_t left, int32_t right) {
-                return by_expert[left].size() > by_expert[right].size();
-            });
-            const auto & weights = weights_.layers[layer];
-            for (size_t start = 0; start < experts.size(); start += static_cast<size_t>(config_.expert_cache_size)) {
-                const auto end = std::min(experts.size(), start + static_cast<size_t>(config_.expert_cache_size));
-                const std::vector<int32_t> group(experts.begin() + start, experts.begin() + end);
-                const auto mapped = weights.disk_store->stage(weights.disk_group, group);
-                size_t maximum = 0;
-                for (const auto expert : group)
-                    maximum = std::max(maximum, by_expert[expert].size());
-                for (size_t begin = 0; begin < maximum;) {
-                    const size_t block_rows = expert_rows;
-                    const size_t work_rows = block_rows * config_.expert_cache_size;
-                    std::fill_n(source.begin(), work_rows, 0);
-                    for (size_t row = 0; row < work_rows; ++row)
-                        target[row] = static_cast<int32_t>(steps_ * k + row);
-                    for (size_t e = 0; e < group.size(); ++e) {
-                        const auto & pairs = by_expert[group[e]];
-                        for (size_t row = begin; row < std::min(pairs.size(), begin + block_rows); ++row) {
-                            const auto slot_row = static_cast<size_t>(mapped[e]) * block_rows + row - begin;
-                            source[slot_row] = static_cast<int32_t>(pairs[row] / k);
-                            target[slot_row] = pairs[row];
-                        }
-                    }
-                    ggml_backend_tensor_set(source_rows_, source.data(), 0, work_rows * sizeof(int32_t));
-                    ggml_backend_tensor_set(target_rows_, target.data(), 0, work_rows * sizeof(int32_t));
-                    compute(expert_graphs_[layer]);
-                    expert_work_rows += work_rows;
-                    begin += block_rows;
-                }
-            }
+            expert_work_rows += staged_moe_->run(layer);
             compute(finish_);
             expert_ms += debug::elapsed_ms(started);
         }
@@ -1505,7 +1412,6 @@ private:
             GGML_STATUS_SUCCESS)
             throw std::runtime_error("Drama 3 offload prefill graph compute failed");
     }
-    static constexpr size_t expert_rows = 32;
     core::ExecutionContext & execution_;
     const Drama3BackboneWeights & weights_;
     Drama3BackboneDecoderConfig config_;
@@ -1514,22 +1420,16 @@ private:
     std::unique_ptr<ggml_context, GgmlContextDeleter> inputs_;
     std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, decltype(&ggml_backend_buffer_free)> buffer_{
         nullptr, ggml_backend_buffer_free};
-    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> allocator_;
+    std::shared_ptr<core::GraphWorkspace> workspace_;
     std::vector<ggml_cgraph *> graphs_;
     std::vector<ggml_cgraph *> attention_graphs_;
-    std::vector<ggml_cgraph *> expert_graphs_;
+    std::unique_ptr<modules::StagedMoeRuntime> staged_moe_;
     ggml_cgraph * finish_ = nullptr;
     ggml_cgraph * final_ = nullptr;
     ggml_tensor * x_ = nullptr;
     ggml_tensor * hidden_ = nullptr;
     ggml_tensor * residual_ = nullptr;
     ggml_tensor * shared_ = nullptr;
-    ggml_tensor * scales_ = nullptr;
-    ggml_tensor * ids_ = nullptr;
-    ggml_tensor * expert_output_ = nullptr;
-    ggml_tensor * source_rows_ = nullptr;
-    ggml_tensor * target_rows_ = nullptr;
-    ggml_tensor * expert_slot_ids_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * mask_ = nullptr;
     std::map<ggml_cgraph *, core::HostGraphPlan> plans_;

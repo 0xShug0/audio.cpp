@@ -521,6 +521,7 @@ add_library(engine_core OBJECT
     src/framework/core/attention_fallback.cpp
     src/framework/core/deferred_tensor_writer.cpp
     src/framework/core/disk_expert_weight_store.cpp
+    src/framework/core/graph_workspace.cpp
     src/framework/core/execution_context.cpp
     src/framework/core/host_memory.cpp
     src/framework/core/load_progress.cpp
@@ -606,6 +607,8 @@ add_library(engine_core OBJECT
     src/framework/modules/streaming_conv_modules.cpp
     src/framework/modules/attention/positional_encoding.cpp
     src/framework/modules/feed_forward_modules.cpp
+    src/framework/modules/moe_module.cpp
+    src/framework/modules/staged_moe_runtime.cpp
     src/framework/modules/attention/self_attention.cpp
     src/framework/modules/attention/longformer_attention.cpp
     src/framework/modules/attention/longformer_attention_gpu.cpp
@@ -4304,6 +4307,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(snake_beta_test tests/unittests/test_snake_beta.cpp)
         add_test(NAME snake_beta_test COMMAND snake_beta_test --log)
+
+        add_engine_unittest(moe_module_test tests/unittests/test_moe_module.cpp)
+        add_test(NAME moe_module_test COMMAND moe_module_test --log)
 
         add_engine_unittest(disk_expert_weight_store_test tests/unittests/test_disk_expert_weight_store.cpp)
         if (ENGINE_ENABLE_OPENMP)
