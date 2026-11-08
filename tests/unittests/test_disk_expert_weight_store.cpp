@@ -233,8 +233,48 @@ int main(int argc, char ** argv) {
             if (!rejected) throw std::runtime_error("invalid routing IDs were not rejected");
             if (!pin_experts && read_threads == 1) {
                 namespace modules = engine::modules;
-                // More assignments than cache slots and more rows than one
-                // execution bucket: exercises eviction, scatter order and reuse.
+                // A diagonal expert bank gives an independent host oracle for
+                // routing/staging without sharing the implementation under test.
+                // Dense arbitrary-weight storage/projection checks run above.
+                const auto staged_input = directory.path / "staged.safetensors";
+                const auto staged_gguf = directory.path / "staged.gguf";
+                std::vector<engine::io::SafeTensorWriteEntry> staged_entries;
+                for (size_t p = 0; p < names.size(); ++p) {
+                    std::vector<float> values(12 * 256 * 256, 0.0F);
+                    for (size_t e = 0; e < 12; ++e) for (size_t row = 0; row < 256; ++row)
+                        values[(e * 256 + row) * 256 + row] = float((1 + e) * (1 + (row + p) % 2)) / 32.0F;
+                    std::vector<unsigned char> bytes(values.size() * sizeof(float));
+                    std::memcpy(bytes.data(), values.data(), bytes.size());
+                    staged_entries.push_back({names[p], "F32", {12, 256, 256}, std::move(bytes)});
+                }
+                engine::io::write_safetensors_file(staged_input, staged_entries);
+                assets::convert_tensor_sources_to_gguf({{staged_input, ""}}, staged_gguf, assets::TensorStorageType::F32,
+                    true, false, {}, {}, std::nullopt, options);
+                core::DiskExpertWeightStore staged_store(staged_gguf, false, 1);
+                const auto staged_group = staged_store.add_group(names, execution.backend(), 4);
+                auto staged_source = assets::open_tensor_source(staged_gguf);
+                core::BackendWeightStore oracle_store(execution.backend(), execution.backend_type(), "test.oracle", 1024 * 1024);
+                std::vector<core::TensorValue> oracle_weights;
+                for (const auto & name : names) oracle_weights.push_back(oracle_store.load_tensor(*staged_source, name,
+                    assets::TensorStorageType::Native, {12, 256, 256}));
+                oracle_store.upload();
+                std::vector<std::vector<float>> diagonal(3, std::vector<float>(12 * 256));
+                for (size_t p = 0; p < oracle_weights.size(); ++p) {
+                    auto * tensor = oracle_weights[p].tensor;
+                    std::vector<std::byte> bytes(ggml_nbytes(tensor));
+                    ggml_backend_tensor_get(tensor, bytes.data(), 0, bytes.size());
+                    std::vector<float> values(12 * 256 * 256);
+                    if (tensor->type == GGML_TYPE_F32) std::memcpy(values.data(), bytes.data(), bytes.size());
+                    else ggml_get_type_traits(tensor->type)->to_float(bytes.data(), values.data(), static_cast<int64_t>(values.size()));
+                    for (size_t e = 0; e < 12; ++e) for (size_t row = 0; row < 256; ++row) {
+                        diagonal[p][e * 256 + row] = values[(e * 256 + row) * 256 + row];
+                        for (size_t col = 0; col < 256; ++col)
+                            if (col != row && values[(e * 256 + row) * 256 + col] != 0.0F)
+                                throw std::runtime_error("staged expert oracle requires diagonal native weights");
+                    }
+                }
+                // Includes every variable row bucket, cache eviction, multiple
+                // 32-row blocks and partial tails; repeat after changing routes.
                 for (bool relu : {false, true}) for (int tokens : {1, 7, 19, 37, 73}) {
                     modules::StagedMoeConfig staged_config;
                     staged_config.hidden_size = 256;
@@ -248,49 +288,21 @@ int main(int argc, char ** argv) {
                     modules::StagedMoeRuntime staged(execution, staged_config, workspace);
                     modules::MoeModule module({relu ? modules::MoeActivation::ReluSquared : modules::MoeActivation::SwiGlu});
                     const auto staged_layer = staged.add_layer(module,
-                        {disk.tensor(group, 1).tensor, relu ? nullptr : disk.tensor(group, 0).tensor, disk.tensor(group, 2).tensor}, disk, group);
+                        {staged_store.tensor(staged_group, 1).tensor, relu ? nullptr : staged_store.tensor(staged_group, 0).tensor,
+                         staged_store.tensor(staged_group, 2).tensor}, staged_store, staged_group);
                     std::unique_ptr<ggml_context, ContextDeleter> test_inputs(ggml_init({1024 * 1024, nullptr, true}));
                     std::unique_ptr<ggml_context, ContextDeleter> test_context(ggml_init({4 * 1024 * 1024, nullptr, true}));
                     auto * hidden = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_F32, 256, tokens);
                     auto * logical = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_I32, 2, tokens);
                     auto * mixing = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_F32, 2, tokens);
-                    const auto rows = staged_config.cache_slots * staged_config.rows_per_expert.back();
-                    const auto legacy_group = disk.add_group(names, execution.backend(), staged_config.cache_slots);
-                    auto * legacy_output = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_F32, 256, 2 * tokens + rows);
-                    auto * legacy_source = ggml_new_tensor_1d(test_inputs.get(), GGML_TYPE_I32, rows);
-                    auto * legacy_target = ggml_new_tensor_1d(test_inputs.get(), staged_config.scatter_index_type, rows);
-                    auto * legacy_slots = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_I32, 1, rows);
-                    for (auto * tensor : {hidden, logical, mixing, legacy_output, legacy_source, legacy_target, legacy_slots})
-                        ggml_set_input(tensor);
+                    for (auto * tensor : {hidden, logical, mixing}) ggml_set_input(tensor);
                     std::unique_ptr<ggml_backend_buffer, BufferDeleter> test_buffer(ggml_backend_alloc_ctx_tensors(test_inputs.get(), execution.backend()));
                     core::ModuleBuildContext test_ctx{test_context.get(), "test.staged_moe", execution.backend_type()};
                     test_ctx.elide_identity_reshapes = relu;
                     auto * route_graph = ggml_new_graph_custom(test_ctx.ggml, 128, false);
                     staged.build_inputs(test_ctx, route_graph, hidden, {logical, mixing});
-                    // Replay the legacy staged layout. A resident reference can
-                    // select different kernels for small/quantized geometries.
-                    std::vector<ggml_cgraph *> legacy_graphs;
-                    for (auto count : staged_config.rows_per_expert) {
-                        auto * graph = ggml_new_graph_custom(test_ctx.ggml, 128, false);
-                        const auto n = staged_config.cache_slots * count;
-                        auto * source_rows = ggml_view_1d(test_ctx.ggml, legacy_source, n, 0);
-                        auto * target_rows = ggml_view_1d(test_ctx.ggml, legacy_target, n, 0);
-                        auto * slot_ids = ggml_view_2d(test_ctx.ggml, legacy_slots, 1, n, legacy_slots->nb[1], 0);
-                        auto * input_rows = ggml_reshape_3d(test_ctx.ggml, ggml_get_rows(test_ctx.ggml, hidden, source_rows), 256, 1, n);
-                        auto * output = module.build_experts(test_ctx, input_rows, slot_ids,
-                            {disk.tensor(legacy_group, 1).tensor, relu ? nullptr : disk.tensor(legacy_group, 0).tensor,
-                             disk.tensor(legacy_group, 2).tensor});
-                        ggml_build_forward_expand(graph, ggml_set_rows(test_ctx.ggml, legacy_output,
-                            ggml_reshape_2d(test_ctx.ggml, output, 256, n), target_rows));
-                        workspace->add(graph);
-                        legacy_graphs.push_back(graph);
-                    }
                     auto * finish_graph = ggml_new_graph_custom(test_ctx.ggml, 128, false);
                     auto * result = modules::MoeModule::combine(test_ctx, staged.output(), staged.routing_weights());
-                    auto * legacy_lanes = ggml_view_3d(test_ctx.ggml, legacy_output, 256, 2, tokens,
-                        256 * sizeof(float), 512 * sizeof(float), 0);
-                    auto * reference = modules::MoeModule::combine(test_ctx, legacy_lanes, mixing);
-                    for (auto * tensor : {result, reference}) { ggml_set_output(tensor); ggml_build_forward_expand(finish_graph, tensor); }
                     ggml_build_forward_expand(finish_graph, ggml_cpy(test_ctx.ggml, result, staged.hidden_input()));
                     workspace->add(route_graph);
                     workspace->add(finish_graph);
@@ -298,9 +310,6 @@ int main(int argc, char ** argv) {
                     core::HostGraphPlan route_plan, finish_plan;
                     core::prepare_host_graph_plan(execution, route_graph, route_plan);
                     core::prepare_host_graph_plan(execution, finish_graph, finish_plan);
-                    std::vector<core::HostGraphPlan> legacy_plans(legacy_graphs.size());
-                    for (size_t i = 0; i < legacy_graphs.size(); ++i)
-                        core::prepare_host_graph_plan(execution, legacy_graphs[i], legacy_plans[i]);
                     std::vector<float> hidden_values(256 * tokens), mixing_values(2 * tokens);
                     std::vector<int32_t> routes(2 * tokens);
                     for (size_t i = 0; i < hidden_values.size(); ++i) hidden_values[i] = .1F * std::sin(float(i) * .017F);
@@ -318,67 +327,31 @@ int main(int argc, char ** argv) {
                         if (core::compute_graph(execution, route_graph, route_plan, "test.staged_moe.inputs") != GGML_STATUS_SUCCESS)
                             throw std::runtime_error("staged MoE input execution failed");
                         staged.run(staged_layer);
-                        std::vector<std::vector<int32_t>> assignments(12);
-                        for (size_t i = 0; i < routes.size(); ++i) assignments[routes[i]].push_back(static_cast<int32_t>(i));
-                        std::vector<int32_t> experts;
-                        for (int e = 0; e < 12; ++e) if (!assignments[e].empty()) experts.push_back(e);
-                        std::stable_sort(experts.begin(), experts.end(), [&](int a, int b) {
-                            return assignments[a].size() > assignments[b].size();
-                        });
-                        std::vector<int32_t> source_rows(rows), slots(rows), targets32(rows);
-                        std::vector<int64_t> targets(rows);
-                        for (size_t first = 0; first < experts.size(); first += staged_config.cache_slots) {
-                            const std::vector<int32_t> batch(experts.begin() + first,
-                                experts.begin() + std::min(experts.size(), first + static_cast<size_t>(staged_config.cache_slots)));
-                            const auto mapped = disk.stage(legacy_group, batch);
-                            size_t maximum = 0;
-                            for (auto e : batch) maximum = std::max(maximum, assignments[e].size());
-                            for (size_t begin = 0; begin < maximum; begin += staged_config.rows_per_expert.back()) {
-                                size_t bucket = 0;
-                                if (relu) {
-                                    size_t count = 1;
-                                    while (count < std::min(maximum - begin, size_t{32})) { count *= 2; ++bucket; }
-                                }
-                                const auto count = static_cast<size_t>(staged_config.rows_per_expert[bucket]);
-                                const auto n = static_cast<size_t>(count * staged_config.cache_slots);
-                                std::fill_n(source_rows.begin(), n, 0);
-                                for (size_t row = 0; row < n; ++row) {
-                                    targets[row] = 2 * tokens + static_cast<int64_t>(row);
-                                    slots[row] = static_cast<int32_t>(row / count);
-                                }
-                                for (size_t e = 0; e < batch.size(); ++e) {
-                                    const auto & pairs = assignments[batch[e]];
-                                    for (size_t row = begin; row < std::min(pairs.size(), begin + count); ++row) {
-                                        const auto target = mapped[e] * count + row - begin;
-                                        source_rows[target] = pairs[row] / 2;
-                                        targets[target] = pairs[row];
-                                    }
-                                }
-                                ggml_backend_tensor_set(legacy_source, source_rows.data(), 0, n * sizeof(int32_t));
-                                if (relu) ggml_backend_tensor_set(legacy_target, targets.data(), 0, n * sizeof(int64_t));
-                                else {
-                                    std::copy_n(targets.begin(), n, targets32.begin());
-                                    ggml_backend_tensor_set(legacy_target, targets32.data(), 0, n * sizeof(int32_t));
-                                }
-                                ggml_backend_tensor_set(legacy_slots, slots.data(), 0, n * sizeof(int32_t));
-                                if (core::compute_graph(execution, legacy_graphs[bucket], legacy_plans[bucket], "test.staged_moe.legacy") != GGML_STATUS_SUCCESS)
-                                    throw std::runtime_error("legacy staged reference execution failed");
-                            }
-                        }
                         if (core::compute_graph(execution, finish_graph, finish_plan, "test.staged_moe.finish") != GGML_STATUS_SUCCESS)
                             throw std::runtime_error("staged MoE output execution failed");
-                        const auto actual = core::read_tensor_f32(staged.hidden_input()), expected = core::read_tensor_f32(reference);
-                        float maximum = 0;
+                        const auto actual = core::read_tensor_f32(staged.hidden_input());
+                        double maximum = 0;
                         for (size_t i = 0; i < actual.size(); ++i) {
                             if (!std::isfinite(actual[i])) throw std::runtime_error("staged MoE produced nonfinite output");
-                            maximum = std::max(maximum, std::abs(actual[i] - expected[i]));
+                            const size_t token = i / 256, channel = i % 256;
+                            double expected = 0;
+                            for (size_t lane = 0; lane < 2; ++lane) {
+                                const size_t expert = static_cast<size_t>(routes[2 * token + lane]);
+                                const size_t index = expert * 256 + channel;
+                                const double up = double(hidden_values[i]) * diagonal[1][index];
+                                const double gate = double(hidden_values[i]) * diagonal[0][index];
+                                const double activated = relu ? std::max(up, 0.0) * std::max(up, 0.0) : gate / (1.0 + std::exp(-gate)) * up;
+                                expected += activated * diagonal[2][index] * mixing_values[2 * token + lane];
+                            }
+                            maximum = std::max(maximum, std::abs(double(actual[i]) - expected));
                         }
-                        if (maximum > 1e-4F || core::read_tensor_i32(logical) != routes || workspace_bytes != staged.workspace_bytes())
+                        if (maximum > 1e-4 || core::read_tensor_i32(logical) != routes || workspace_bytes != staged.workspace_bytes())
                             throw std::runtime_error("staged MoE changed assignments, expert output or allocation: " + std::to_string(maximum));
+                        std::cout << "staged type=" << expected_type << " relu=" << relu << " tokens=" << tokens
+                                  << " request=" << request << " max_abs=" << maximum << '\n';
                     }
                     core::release_backend_graph_resources(execution.backend(), route_graph, true);
                     core::release_backend_graph_resources(execution.backend(), finish_graph, true);
-                    for (auto * graph : legacy_graphs) core::release_backend_graph_resources(execution.backend(), graph, true);
                 }
             }
             source->release_storage();
