@@ -1,6 +1,50 @@
 {
   "cases": [
     {
+      "id": "moss_soundeffect_requests",
+      "coverage": "English and Chinese sound effects, changing durations/prompts/seeds and repeated-request determinism",
+      "family": "moss_soundeffect",
+      "model": "models/audio.cpp-gguf/MOSS-SoundEffect-v2-GGUF/moss-soundeffect-v2-q8_0.gguf",
+      "task": "gen",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "rain",
+          "text": "Steady rain pattering on a wooden roof, with distant thunder.",
+          "seed": 42,
+          "options": {
+            "duration_sec": 10
+          }
+        },
+        {
+          "id": "fire",
+          "text": "A crackling campfire with occasional sharp pops in a quiet forest.",
+          "seed": 2026,
+          "options": {
+            "duration_sec": 8
+          }
+        },
+        {
+          "id": "birds",
+          "text": "清晨的森林里，鸟儿鸣叫，微风轻轻吹过树叶。",
+          "seed": 1234,
+          "options": {
+            "duration_sec": 6
+          }
+        },
+        {
+          "id": "rain_repeat",
+          "text": "Steady rain pattering on a wooden roof, with distant thunder.",
+          "seed": 42,
+          "options": {
+            "duration_sec": 10
+          }
+        }
+      ]
+    },
+    {
       "id": "plapre_conditioning",
       "coverage": "Danish voices, reference conditioning, speaker-only cloning, chunking, growing decode capacity and repeated requests",
       "family": "plapre",
