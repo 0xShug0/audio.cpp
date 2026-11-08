@@ -93,10 +93,10 @@ AUDIOCPP_API const char * audiocpp_status_string(audiocpp_status status);
 
 typedef enum audiocpp_log_level {
     AUDIOCPP_LOG_LEVEL_NONE  = 0,
-    AUDIOCPP_LOG_LEVEL_INFO  = 1,
-    AUDIOCPP_LOG_LEVEL_WARN  = 2,
-    AUDIOCPP_LOG_LEVEL_ERROR = 3,
-    AUDIOCPP_LOG_LEVEL_DEBUG = 4,
+    AUDIOCPP_LOG_LEVEL_DEBUG = 1,
+    AUDIOCPP_LOG_LEVEL_INFO  = 2,
+    AUDIOCPP_LOG_LEVEL_WARN  = 3,
+    AUDIOCPP_LOG_LEVEL_ERROR = 4,
     AUDIOCPP_LOG_LEVEL_CONT  = 5
 } audiocpp_log_level;
 

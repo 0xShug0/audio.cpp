@@ -25,10 +25,14 @@ enum class LogLevel {
 
 std::string_view to_string(LogLevel level) noexcept;
 
+using LogCallback = void (*)(LogLevel level, const char * text, void * user_data);
+
 void configure_logging(const LoggingConfig & config);
 void reset_logging();
+void set_log_callback(LogCallback callback, void * user_data);
 bool log_enabled();
 void log_message(std::string_view line);
+void log_message(LogLevel level, std::string_view line);
 void log_message(LogLevel level, std::string_view category, std::string_view message);
 bool trace_log_enabled();
 bool timing_log_enabled();

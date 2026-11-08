@@ -18,6 +18,7 @@
 
 #include "engine/framework/runtime/task_vocabulary.h"
 
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/runtime/errors.h"
@@ -66,6 +67,30 @@ struct LogCallbackState {
 std::mutex g_log_mutex;
 LogCallbackState g_log_state;
 
+audiocpp_log_level ggml_to_audiocpp_log_level(enum ggml_log_level level) {
+    switch (level) {
+    case GGML_LOG_LEVEL_DEBUG: return AUDIOCPP_LOG_LEVEL_DEBUG;
+    case GGML_LOG_LEVEL_INFO:  return AUDIOCPP_LOG_LEVEL_INFO;
+    case GGML_LOG_LEVEL_WARN:  return AUDIOCPP_LOG_LEVEL_WARN;
+    case GGML_LOG_LEVEL_ERROR: return AUDIOCPP_LOG_LEVEL_ERROR;
+    case GGML_LOG_LEVEL_CONT:  return AUDIOCPP_LOG_LEVEL_CONT;
+    case GGML_LOG_LEVEL_NONE:
+    default:
+        return AUDIOCPP_LOG_LEVEL_NONE;
+    }
+}
+
+audiocpp_log_level engine_to_audiocpp_log_level(engine::debug::LogLevel level) {
+    switch (level) {
+    case engine::debug::LogLevel::Debug:   return AUDIOCPP_LOG_LEVEL_DEBUG;
+    case engine::debug::LogLevel::Info:    return AUDIOCPP_LOG_LEVEL_INFO;
+    case engine::debug::LogLevel::Warning: return AUDIOCPP_LOG_LEVEL_WARN;
+    case engine::debug::LogLevel::Error:   return AUDIOCPP_LOG_LEVEL_ERROR;
+    default:
+        return AUDIOCPP_LOG_LEVEL_NONE;
+    }
+}
+
 void ggml_log_adapter(enum ggml_log_level level, const char * text, void * /*user_data*/) {
     audiocpp_log_callback cb = nullptr;
     void * ud = nullptr;
@@ -75,7 +100,20 @@ void ggml_log_adapter(enum ggml_log_level level, const char * text, void * /*use
         ud = g_log_state.user_data;
     }
     if (cb) {
-        cb(static_cast<audiocpp_log_level>(level), text, ud);
+        cb(ggml_to_audiocpp_log_level(level), text, ud);
+    }
+}
+
+void engine_log_adapter(engine::debug::LogLevel level, const char * text, void * /*user_data*/) {
+    audiocpp_log_callback cb = nullptr;
+    void * ud = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_log_mutex);
+        cb = g_log_state.callback;
+        ud = g_log_state.user_data;
+    }
+    if (cb) {
+        cb(engine_to_audiocpp_log_level(level), text, ud);
     }
 }
 
@@ -363,8 +401,10 @@ void audiocpp_log_set(audiocpp_log_callback log_callback, void * user_data) {
     g_log_state.user_data = user_data;
     if (log_callback != nullptr) {
         ggml_log_set(ggml_log_adapter, nullptr);
+        engine::debug::set_log_callback(engine_log_adapter, nullptr);
     } else {
         ggml_log_set(nullptr, nullptr);
+        engine::debug::set_log_callback(nullptr, nullptr);
     }
 }
 

@@ -278,7 +278,7 @@ int main(int argc, char ** argv) {
             CHECK(g_log_callback_called > 0,
                   "log callback was not invoked during invalid GGUF load (count=%d)",
                   g_log_callback_called);
-            CHECK(g_log_last_level >= 0, "log callback received invalid log level");
+            CHECK(g_log_last_level == AUDIOCPP_LOG_LEVEL_ERROR, "expected AUDIOCPP_LOG_LEVEL_ERROR (%d), got %d", AUDIOCPP_LOG_LEVEL_ERROR, g_log_last_level);
 
             /* Restore default stderr logger */
             audiocpp_log_set(NULL, NULL);
