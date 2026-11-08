@@ -40,6 +40,7 @@
   "capabilities": {
     "asr": [
       "vad_chunking",
+      "word_timestamps",
       "partial_results"
     ]
   },
@@ -63,6 +64,13 @@
         "name": "keep_tags",
         "type": "bool",
         "description": "Keep <|event|>/<|emotion|>/<|language|> tags inline in the output text.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "description": "Return word timestamps (single characters for Chinese, Japanese and Thai) derived from CTC token emission frames, 60 ms resolution.",
         "required": false,
         "default": false
       },
