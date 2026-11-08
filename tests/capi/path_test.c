@@ -22,6 +22,17 @@
 #include <string.h>
 
 static int g_failures = 0;
+static int g_log_callback_called = 0;
+static int g_log_last_level = -1;
+
+static void test_log_callback(audiocpp_log_level level, const char * text, void * user_data) {
+    int * count = (int *)user_data;
+    if (count != NULL) {
+        (*count)++;
+    }
+    g_log_last_level = (int)level;
+    (void)text;
+}
 
 #define CHECK(cond, ...)                                         \
     do {                                                         \
@@ -221,6 +232,7 @@ int main(int argc, char ** argv) {
     audiocpp_options_free(NULL);
     audiocpp_event_free(NULL);
 
+
     if (!load_wav(audio_path, &clip)) return 1;
     printf("audio=%s frames=%zu rate=%d ch=%d\n",
            audio_path, clip.frames, clip.sample_rate, clip.channels);
@@ -242,6 +254,36 @@ int main(int argc, char ** argv) {
               "out-of-range family was not rejected");
         CHECK(audiocpp_registry_family(registry, 0, NULL) == AUDIOCPP_ERR_INVALID_ARGUMENT,
               "NULL out parameter was not rejected");
+    }
+
+    /* Logging callback verification: assert that backend logs are intercepted */
+    {
+        audiocpp_model * dummy_model = NULL;
+        const char * dummy_path = "test_corrupt.gguf";
+        FILE * f = fopen(dummy_path, "wb");
+        CHECK(f != NULL, "failed to create temporary dummy GGUF file");
+        if (f != NULL) {
+            const char dummy_data[16] = {'G', 'G', 'U', 'F', 0};
+            fwrite(dummy_data, 1, sizeof(dummy_data), f);
+            fclose(f);
+
+            g_log_callback_called = 0;
+            g_log_last_level = -1;
+            audiocpp_log_set(test_log_callback, &g_log_callback_called);
+
+            /* Loading an invalid GGUF causes GGML to log error messages */
+            CHECK(audiocpp_model_load(registry, dummy_path, NULL, NULL, &dummy_model) != AUDIOCPP_OK,
+                  "corrupt model load unexpectedly succeeded");
+            CHECK(dummy_model == NULL, "model pointer was not NULL after failed load");
+            CHECK(g_log_callback_called > 0,
+                  "log callback was not invoked during invalid GGUF load (count=%d)",
+                  g_log_callback_called);
+            CHECK(g_log_last_level == AUDIOCPP_LOG_LEVEL_ERROR, "expected AUDIOCPP_LOG_LEVEL_ERROR (%d), got %d", AUDIOCPP_LOG_LEVEL_ERROR, g_log_last_level);
+
+            /* Restore default stderr logger */
+            audiocpp_log_set(NULL, NULL);
+            remove(dummy_path);
+        }
     }
 
     /* An unknown family must be reported as such, not as a generic failure,

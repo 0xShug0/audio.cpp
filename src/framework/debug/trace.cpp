@@ -21,8 +21,11 @@ namespace engine::debug {
 namespace {
 
 struct LoggerState {
+    bool config_enabled = false;
     std::optional<std::string> file_path;
     std::unique_ptr<std::ofstream> file_stream;
+    LogCallback callback = nullptr;
+    void * user_data = nullptr;
 };
 
 LoggerState & logger_state() {
@@ -99,6 +102,7 @@ void configure_logging(const LoggingConfig & config) {
     std::lock_guard<std::mutex> lock(logger_mutex());
     auto & state = logger_state();
     logger_enabled_flag().store(false, std::memory_order_release);
+    state.config_enabled = config.enabled;
     if (state.file_path != config.file_path) {
         state.file_stream.reset();
     }
@@ -106,29 +110,65 @@ void configure_logging(const LoggingConfig & config) {
     if (config.enabled && state.file_path.has_value() && !state.file_path->empty()) {
         (void)logger_output_locked(state);
     }
-    logger_enabled_flag().store(config.enabled, std::memory_order_release);
+    const bool active = state.config_enabled || (state.callback != nullptr);
+    logger_enabled_flag().store(active, std::memory_order_release);
 }
 
 void reset_logging() {
-    configure_logging(LoggingConfig{});
+    std::lock_guard<std::mutex> lock(logger_mutex());
+    auto & state = logger_state();
+    state.config_enabled = false;
+    state.file_path.reset();
+    state.file_stream.reset();
+    state.callback = nullptr;
+    state.user_data = nullptr;
+    logger_enabled_flag().store(false, std::memory_order_release);
+}
+
+void set_log_callback(LogCallback callback, void * user_data) {
+    std::lock_guard<std::mutex> lock(logger_mutex());
+    auto & state = logger_state();
+    state.callback = callback;
+    state.user_data = user_data;
+    const bool active = state.config_enabled || (state.callback != nullptr);
+    logger_enabled_flag().store(active, std::memory_order_release);
 }
 
 bool log_enabled() {
     return logger_enabled_flag().load(std::memory_order_acquire);
 }
 
+void log_message(LogLevel level, std::string_view line) {
+    if (!log_enabled()) {
+        return;
+    }
+    LogCallback callback = nullptr;
+    void * user_data = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(logger_mutex());
+        if (!log_enabled()) {
+            return;
+        }
+        auto & state = logger_state();
+        if (state.config_enabled) {
+            auto & output = logger_output_locked(state);
+            output << line << "\n";
+            output.flush();
+        }
+        callback = state.callback;
+        user_data = state.user_data;
+    }
+    if (callback) {
+        std::string text(line);
+        if (!text.empty() && text.back() != '\n') {
+            text.push_back('\n');
+        }
+        callback(level, text.c_str(), user_data);
+    }
+}
+
 void log_message(std::string_view line) {
-    if (!log_enabled()) {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(logger_mutex());
-    if (!log_enabled()) {
-        return;
-    }
-    auto & state = logger_state();
-    auto & output = logger_output_locked(state);
-    output << line << "\n";
-    output.flush();
+    log_message(LogLevel::Debug, line);
 }
 
 void log_message(LogLevel level, std::string_view category, std::string_view message) {
@@ -141,7 +181,7 @@ void log_message(LogLevel level, std::string_view category, std::string_view mes
         out << "[" << category << "]";
     }
     out << " " << message;
-    log_message(out.str());
+    log_message(level, out.str());
 }
 
 bool trace_log_enabled() {
