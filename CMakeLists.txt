@@ -3983,6 +3983,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME granite5asr_ctc_timestamps_test COMMAND granite5asr_ctc_timestamps_test)
     endif()
 
+    if (sense_asr IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(sense_asr_word_timestamps_test tests/sense_asr/test_word_timestamps.cpp)
+        target_include_directories(sense_asr_word_timestamps_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME sense_asr_word_timestamps_test COMMAND sense_asr_word_timestamps_test)
+    endif()
+
     if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_VULKAN)
         add_executable(vulkan_ssm_mamba1_test tests/unittests/test_ssm_mamba1.cpp app/cli/args.cpp)
         target_link_libraries(vulkan_ssm_mamba1_test PRIVATE engine_runtime ggml)

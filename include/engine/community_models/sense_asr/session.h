@@ -78,6 +78,10 @@ private:
   runtime::AudioBuffer streaming_audio_;
   size_t streaming_audio_offset_values_ = 0;
   int64_t streaming_windows_processed_ = 0;
+  // Stream samples (per channel) handed to the transcriber so far, and the
+  // word timestamps found in them, in stream time.
+  int64_t streaming_frames_done_ = 0;
+  std::vector<runtime::WordTimestamp> streaming_words_;
 };
 
 } // namespace engine::community_models::sense_asr
