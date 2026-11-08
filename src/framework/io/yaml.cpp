@@ -295,7 +295,7 @@ bool optional_bool(const FlattenedDocument & document, const std::string & key, 
 
 std::optional<int> optional_int(const FlattenedDocument & document, const std::string & key) {
     const auto it = document.scalars.find(key);
-    if (it == document.scalars.end()) {
+    if (it == document.scalars.end() || it->second == "None" || it->second == "null" || it->second == "~" || it->second.empty()) {
         return std::nullopt;
     }
     return std::stoi(it->second);
@@ -303,7 +303,7 @@ std::optional<int> optional_int(const FlattenedDocument & document, const std::s
 
 std::optional<float> optional_float(const FlattenedDocument & document, const std::string & key) {
     const auto it = document.scalars.find(key);
-    if (it == document.scalars.end()) {
+    if (it == document.scalars.end() || it->second == "None" || it->second == "null" || it->second == "~" || it->second.empty()) {
         return std::nullopt;
     }
     return std::stof(it->second);
@@ -315,11 +315,11 @@ float optional_f32(const FlattenedDocument & document, const std::string & key, 
 }
 
 std::optional<float> optional_nullable_f32(const FlattenedDocument & document, const std::string & key) {
-    const auto it = document.scalars.find(key);
-    if (it == document.scalars.end() || it->second == "None" || it->second == "null") {
-        return std::nullopt;
-    }
-    return std::stof(it->second);
+    return optional_float(document, key);
+}
+
+std::optional<int> optional_nullable_int(const FlattenedDocument & document, const std::string & key) {
+    return optional_int(document, key);
 }
 
 std::vector<std::string> require_list_strings(const FlattenedDocument & document, const std::string & key) {
