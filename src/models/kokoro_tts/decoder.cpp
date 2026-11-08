@@ -376,7 +376,8 @@ ggml_tensor * build_decoder_conv1d_bct(
             cpu_detail::kokoro_im2col_rows<ConvWeightsT>, GGML_N_TASKS_MAX, const_cast<ConvWeightsT *>(&conv));
         ggml_tensor * weights = ggml_reshape_2d(ctx, conv.weight.tensor,
             conv.in_channels * conv.kernel, conv.out_channels);
-        ggml_tensor * y = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, columns, weights),
+        ggml_tensor * projected = ggml_mul_mat(ctx, weights, columns);
+        ggml_tensor * y = ggml_reshape_3d(ctx, ggml_cont(ctx, ggml_transpose(ctx, projected)),
             frames, conv.out_channels, 1);
         if (conv.use_bias) {
             y = ggml_add(ctx, y, ggml_reshape_3d(ctx, conv.bias->tensor, 1, conv.out_channels, 1));
