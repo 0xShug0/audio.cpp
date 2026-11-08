@@ -12,6 +12,7 @@ namespace engine::modules {
 enum class FeedForwardActivation {
     Gelu,
     Relu,
+    ReluSquared,
 };
 
 struct FeedForwardConfig {

@@ -4,6 +4,9 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/safetensors.h"
+#include "engine/framework/modules/moe_module.h"
+#include "engine/framework/modules/staged_moe_runtime.h"
+#include <ggml-alloc.h>
 
 #include <algorithm>
 #include <chrono>
@@ -228,6 +231,129 @@ int main(int argc, char ** argv) {
             try { ggml_backend_sched_graph_compute(scheduler.get(), graph); }
             catch (const std::runtime_error & e) { rejected = std::string(e.what()).find("routing ID out of range") != std::string::npos; }
             if (!rejected) throw std::runtime_error("invalid routing IDs were not rejected");
+            if (!pin_experts && read_threads == 1) {
+                namespace modules = engine::modules;
+                // A diagonal expert bank gives an independent host oracle for
+                // routing/staging without sharing the implementation under test.
+                // Dense arbitrary-weight storage/projection checks run above.
+                const auto staged_input = directory.path / "staged.safetensors";
+                const auto staged_gguf = directory.path / "staged.gguf";
+                std::vector<engine::io::SafeTensorWriteEntry> staged_entries;
+                for (size_t p = 0; p < names.size(); ++p) {
+                    std::vector<float> values(12 * 256 * 256, 0.0F);
+                    for (size_t e = 0; e < 12; ++e) for (size_t row = 0; row < 256; ++row)
+                        values[(e * 256 + row) * 256 + row] = float((1 + e) * (1 + (row + p) % 2)) / 32.0F;
+                    std::vector<unsigned char> bytes(values.size() * sizeof(float));
+                    std::memcpy(bytes.data(), values.data(), bytes.size());
+                    staged_entries.push_back({names[p], "F32", {12, 256, 256}, std::move(bytes)});
+                }
+                engine::io::write_safetensors_file(staged_input, staged_entries);
+                assets::convert_tensor_sources_to_gguf({{staged_input, ""}}, staged_gguf, assets::TensorStorageType::F32,
+                    true, false, {}, {}, std::nullopt, options);
+                core::DiskExpertWeightStore staged_store(staged_gguf, false, 1);
+                const auto staged_group = staged_store.add_group(names, execution.backend(), 4);
+                auto staged_source = assets::open_tensor_source(staged_gguf);
+                core::BackendWeightStore oracle_store(execution.backend(), execution.backend_type(), "test.oracle", 1024 * 1024);
+                std::vector<core::TensorValue> oracle_weights;
+                for (const auto & name : names) oracle_weights.push_back(oracle_store.load_tensor(*staged_source, name,
+                    assets::TensorStorageType::Native, {12, 256, 256}));
+                oracle_store.upload();
+                std::vector<std::vector<float>> diagonal(3, std::vector<float>(12 * 256));
+                for (size_t p = 0; p < oracle_weights.size(); ++p) {
+                    auto * tensor = oracle_weights[p].tensor;
+                    std::vector<std::byte> bytes(ggml_nbytes(tensor));
+                    ggml_backend_tensor_get(tensor, bytes.data(), 0, bytes.size());
+                    std::vector<float> values(12 * 256 * 256);
+                    if (tensor->type == GGML_TYPE_F32) std::memcpy(values.data(), bytes.data(), bytes.size());
+                    else ggml_get_type_traits(tensor->type)->to_float(bytes.data(), values.data(), static_cast<int64_t>(values.size()));
+                    for (size_t e = 0; e < 12; ++e) for (size_t row = 0; row < 256; ++row) {
+                        diagonal[p][e * 256 + row] = values[(e * 256 + row) * 256 + row];
+                        for (size_t col = 0; col < 256; ++col)
+                            if (col != row && values[(e * 256 + row) * 256 + col] != 0.0F)
+                                throw std::runtime_error("staged expert oracle requires diagonal native weights");
+                    }
+                }
+                // Includes every variable row bucket, cache eviction, multiple
+                // 32-row blocks and partial tails; repeat after changing routes.
+                for (bool relu : {false, true}) for (int tokens : {1, 7, 19, 37, 73}) {
+                    modules::StagedMoeConfig staged_config;
+                    staged_config.hidden_size = 256;
+                    staged_config.tokens = tokens;
+                    staged_config.selected = 2;
+                    staged_config.experts = 12;
+                    staged_config.cache_slots = 4;
+                    staged_config.rows_per_expert = relu ? std::vector<int64_t>{1, 2, 4, 8, 16, 32} : std::vector<int64_t>{32};
+                    staged_config.scatter_index_type = relu ? GGML_TYPE_I64 : GGML_TYPE_I32;
+                    auto workspace = std::make_shared<core::GraphWorkspace>(execution.backend());
+                    modules::StagedMoeRuntime staged(execution, staged_config, workspace);
+                    modules::MoeModule module({relu ? modules::MoeActivation::ReluSquared : modules::MoeActivation::SwiGlu});
+                    const auto staged_layer = staged.add_layer(module,
+                        {staged_store.tensor(staged_group, 1).tensor, relu ? nullptr : staged_store.tensor(staged_group, 0).tensor,
+                         staged_store.tensor(staged_group, 2).tensor}, staged_store, staged_group);
+                    std::unique_ptr<ggml_context, ContextDeleter> test_inputs(ggml_init({1024 * 1024, nullptr, true}));
+                    std::unique_ptr<ggml_context, ContextDeleter> test_context(ggml_init({4 * 1024 * 1024, nullptr, true}));
+                    auto * hidden = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_F32, 256, tokens);
+                    auto * logical = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_I32, 2, tokens);
+                    auto * mixing = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_F32, 2, tokens);
+                    for (auto * tensor : {hidden, logical, mixing}) ggml_set_input(tensor);
+                    std::unique_ptr<ggml_backend_buffer, BufferDeleter> test_buffer(ggml_backend_alloc_ctx_tensors(test_inputs.get(), execution.backend()));
+                    core::ModuleBuildContext test_ctx{test_context.get(), "test.staged_moe", execution.backend_type()};
+                    test_ctx.elide_identity_reshapes = relu;
+                    auto * route_graph = ggml_new_graph_custom(test_ctx.ggml, 128, false);
+                    staged.build_inputs(test_ctx, route_graph, hidden, {logical, mixing});
+                    auto * finish_graph = ggml_new_graph_custom(test_ctx.ggml, 128, false);
+                    auto * result = modules::MoeModule::combine(test_ctx, staged.output(), staged.routing_weights());
+                    ggml_build_forward_expand(finish_graph, ggml_cpy(test_ctx.ggml, result, staged.hidden_input()));
+                    workspace->add(route_graph);
+                    workspace->add(finish_graph);
+                    staged.prepare();
+                    core::HostGraphPlan route_plan, finish_plan;
+                    core::prepare_host_graph_plan(execution, route_graph, route_plan);
+                    core::prepare_host_graph_plan(execution, finish_graph, finish_plan);
+                    std::vector<float> hidden_values(256 * tokens), mixing_values(2 * tokens);
+                    std::vector<int32_t> routes(2 * tokens);
+                    for (size_t i = 0; i < hidden_values.size(); ++i) hidden_values[i] = .1F * std::sin(float(i) * .017F);
+                    for (size_t i = 0; i < mixing_values.size(); ++i) mixing_values[i] = i % 2 ? .7F : .3F;
+                    ggml_backend_tensor_set(hidden, hidden_values.data(), 0, hidden_values.size() * sizeof(float));
+                    ggml_backend_tensor_set(mixing, mixing_values.data(), 0, mixing_values.size() * sizeof(float));
+                    const auto workspace_bytes = staged.workspace_bytes();
+                    for (int request = 0; request < 4; ++request) {
+                        const bool concentrated = request == 2;
+                        for (int token = 0; token < tokens; ++token) {
+                            routes[2 * token] = concentrated ? 0 : request == 1 ? (token + 5) % 12 : token % 5;
+                            routes[2 * token + 1] = concentrated ? 1 : request == 1 ? (token + 6) % 12 : (token + 1) % 5;
+                        }
+                        ggml_backend_tensor_set(logical, routes.data(), 0, routes.size() * sizeof(int32_t));
+                        if (core::compute_graph(execution, route_graph, route_plan, "test.staged_moe.inputs") != GGML_STATUS_SUCCESS)
+                            throw std::runtime_error("staged MoE input execution failed");
+                        staged.run(staged_layer);
+                        if (core::compute_graph(execution, finish_graph, finish_plan, "test.staged_moe.finish") != GGML_STATUS_SUCCESS)
+                            throw std::runtime_error("staged MoE output execution failed");
+                        const auto actual = core::read_tensor_f32(staged.hidden_input());
+                        double maximum = 0;
+                        for (size_t i = 0; i < actual.size(); ++i) {
+                            if (!std::isfinite(actual[i])) throw std::runtime_error("staged MoE produced nonfinite output");
+                            const size_t token = i / 256, channel = i % 256;
+                            double expected = 0;
+                            for (size_t lane = 0; lane < 2; ++lane) {
+                                const size_t expert = static_cast<size_t>(routes[2 * token + lane]);
+                                const size_t index = expert * 256 + channel;
+                                const double up = double(hidden_values[i]) * diagonal[1][index];
+                                const double gate = double(hidden_values[i]) * diagonal[0][index];
+                                const double activated = relu ? std::max(up, 0.0) * std::max(up, 0.0) : gate / (1.0 + std::exp(-gate)) * up;
+                                expected += activated * diagonal[2][index] * mixing_values[2 * token + lane];
+                            }
+                            maximum = std::max(maximum, std::abs(double(actual[i]) - expected));
+                        }
+                        if (maximum > 1e-4 || core::read_tensor_i32(logical) != routes || workspace_bytes != staged.workspace_bytes())
+                            throw std::runtime_error("staged MoE changed assignments, expert output or allocation: " + std::to_string(maximum));
+                        std::cout << "staged type=" << expected_type << " relu=" << relu << " tokens=" << tokens
+                                  << " request=" << request << " max_abs=" << maximum << '\n';
+                    }
+                    core::release_backend_graph_resources(execution.backend(), route_graph, true);
+                    core::release_backend_graph_resources(execution.backend(), finish_graph, true);
+                }
+            }
             source->release_storage();
 #if !defined(_WIN32)
             // Windows prevents truncating a file while its mapping is open.

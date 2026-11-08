@@ -429,6 +429,10 @@ inline core::TensorValue build_feed_forward_impl(
     switch (config.activation) {
         case FeedForwardActivation::Gelu: hidden = gelu.build(ctx, hidden); break;
         case FeedForwardActivation::Relu: hidden = ReluModule().build(ctx, hidden); break;
+        case FeedForwardActivation::ReluSquared:
+            hidden = ReluModule().build(ctx, hidden);
+            hidden = core::wrap_tensor(ggml_sqr(ctx.ggml, hidden.tensor), hidden.shape, hidden.type);
+            break;
         default: throw std::runtime_error("Unsupported feed-forward activation");
     }
     return fc2.build(ctx, hidden, make_linear_weights(weights.fc2_weight, weights.fc2_bias));
