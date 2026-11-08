@@ -34,7 +34,8 @@ public:
     std::vector<std::vector<int32_t>> assignments;
 
     Impl(core::ExecutionContext & e, StagedMoeConfig c, std::shared_ptr<core::GraphWorkspace> shared_workspace)
-        : execution(e), config(std::move(c)), workspace(shared_workspace ? std::move(shared_workspace) : std::make_shared<core::GraphWorkspace>(e.backend())) {
+        : execution(e), config(std::move(c)), workspace(std::move(shared_workspace)) {
+        if (!workspace) throw std::invalid_argument("staged MoE requires a caller-owned graph workspace");
         if (config.hidden_size <= 0 || config.tokens <= 0 || config.selected <= 0 || config.experts < config.selected ||
             config.cache_slots <= 0 || config.cache_slots > config.experts || config.rows_per_expert.empty() ||
             (config.scatter_index_type != GGML_TYPE_I32 && config.scatter_index_type != GGML_TYPE_I64))
@@ -127,7 +128,6 @@ size_t StagedMoeRuntime::add_layer(const MoeModule & module, const MoeExpertWeig
 void StagedMoeRuntime::prepare() {
     auto & s = *impl_;
     if (s.prepared || s.layers.empty()) throw std::logic_error("staged MoE preparation requires unprepared layers");
-    s.workspace->prepare();
     for (auto & entry : s.layers) for (auto * graph : entry.graphs)
         core::prepare_host_graph_plan(s.execution, graph, s.plans[graph]);
     s.prepared = true;

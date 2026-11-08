@@ -27,7 +27,7 @@ struct StagedMoeConfig {
 class StagedMoeRuntime {
 public:
     StagedMoeRuntime(core::ExecutionContext & execution, StagedMoeConfig config,
-        std::shared_ptr<core::GraphWorkspace> workspace = {});
+        std::shared_ptr<core::GraphWorkspace> workspace);
     ~StagedMoeRuntime();
     StagedMoeRuntime(const StagedMoeRuntime &) = delete;
     StagedMoeRuntime & operator=(const StagedMoeRuntime &) = delete;
@@ -35,8 +35,8 @@ public:
     // Bindings are borrowed and must outlive this runtime.
     size_t add_layer(const MoeModule & module, const MoeExpertWeights & weights,
         core::DiskExpertWeightStore & store, size_t group);
-    // Register all backbone and expert graphs before this call. Graph construction
-    // and activation-buffer allocation finish here; run() may allocate host temporaries.
+    // The caller prepares the shared workspace after registering every graph.
+    // This prepares execution plans only; run() may allocate host temporaries.
     void prepare();
     void build_inputs(core::ModuleBuildContext & ctx, ggml_cgraph * graph,
         ggml_tensor * hidden, const MoeRouting & routing) const;

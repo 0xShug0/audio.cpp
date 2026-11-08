@@ -1368,6 +1368,7 @@ public:
         normalized = round_activation(ctx, normalized, config);
         ggml_build_forward_expand(final_, ggml_cpy(ctx.ggml, normalized.tensor, hidden_));
         add_graph(final_);
+        workspace_->prepare();
         staged_moe_->prepare();
         for (auto * graph : graphs_)
             core::prepare_host_graph_plan(execution_, graph, plans_[graph]);

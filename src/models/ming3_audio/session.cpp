@@ -133,6 +133,8 @@ private:
         stage = std::chrono::steady_clock::now();
         thinker_->reset();
         auto logits = thinker_->prefill(ids, audio, assets_->config.audio.token_id);
+        const auto prefill_ms = debug::elapsed_ms(stage);
+        const auto decode_start = std::chrono::steady_clock::now();
         std::vector<int32_t> tokens;
         for (int64_t i = 0; i < max_tokens; ++i) {
             const auto token = static_cast<int32_t>(std::max_element(logits.begin(), logits.end()) - logits.begin());
@@ -140,9 +142,12 @@ private:
             tokens.push_back(token);
             if (i + 1 < max_tokens) logits = thinker_->step(token);
         }
+        const auto decode_ms = debug::elapsed_ms(decode_start);
         debug::trace_log_scalar("ming3_audio.thinker.generated_tokens", tokens.size());
         debug::trace_log_scalar("ming3_audio.thinker.hit_token_limit", tokens.size() == static_cast<size_t>(max_tokens));
         debug::timing_log_scalar("ming3_audio.decoder_ms", debug::elapsed_ms(stage));
+        debug::timing_log_scalar("ming3_audio.thinker.prefill_ms", prefill_ms);
+        debug::timing_log_scalar("ming3_audio.thinker.decode_ms", decode_ms);
         auto text = frontend_->decode(tokens);
         if (thinker_options_.disk_experts && task_.task == runtime::VoiceTaskKind::SpeechToSpeech) thinker_->release_workspace();
         return text;

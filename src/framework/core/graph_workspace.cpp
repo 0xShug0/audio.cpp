@@ -31,6 +31,11 @@ void GraphWorkspace::prepare() {
     prepared_ = true;
 }
 
+void GraphWorkspace::reset() {
+    graphs_.clear();
+    prepared_ = false;
+}
+
 size_t GraphWorkspace::bytes() const { return ggml_gallocr_get_buffer_size(allocator_.get(), 0); }
 
 } // namespace engine::core
