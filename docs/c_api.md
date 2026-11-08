@@ -96,6 +96,11 @@ the only reason the field carries information:
 if ((audiocpp_abi_version() & 0xffff) < 0x0200) {
     /* fall back, or refuse, rather than resolving a symbol that is not there */
 }
+
+/* audiocpp_log_set arrived in 0.3. */
+if ((audiocpp_abi_version() & 0xffff) < 0x0300) {
+    /* fall back when log interception is not available */
+}
 ```
 
 A C caller can also just resolve the symbol and test for NULL, which is exact
@@ -259,7 +264,27 @@ nm -D --defined-only build/bin/libaudiocpp.so | awk '$2=="T"{print $3}' | grep -
 nm -gU build/bin/libaudiocpp.dylib | awk '{print $NF}' | grep -cv '^_audiocpp_'
 # PE
 dumpbin /EXPORTS build\bin\Release\audiocpp.dll
-# all three: 0 non-matching, 69 total
+# all three: 0 non-matching, 70 total
+```
+
+## Logging
+
+By default, backend and compute libraries write log messages directly to `stderr`.
+Callers embedding `libaudiocpp` in host applications with custom log sinks or
+severity filters can intercept or silence these messages using `audiocpp_log_set()`:
+
+```c
+static void my_log_callback(audiocpp_log_level level, const char * text, void * user_data) {
+    if (level == AUDIOCPP_LOG_LEVEL_ERROR) {
+        fprintf(stderr, "[audiocpp ERROR] %s", text);
+    }
+}
+
+/* Intercept backend logs */
+audiocpp_log_set(my_log_callback, NULL);
+
+/* Restore default stderr behavior */
+audiocpp_log_set(NULL, NULL);
 ```
 
 ## Notes
