@@ -515,6 +515,7 @@ private:
         ggml_set_output(logits_);
         ggml_build_forward_expand(final_, logits_);
         add(final_);
+        workspace_->prepare();
         staged_moe_->prepare();
         for (auto * graph : offload_graphs_)
             core::prepare_host_graph_plan(execution_, graph, offload_plans_[graph]);

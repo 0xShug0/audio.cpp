@@ -20,6 +20,9 @@ public:
     // Register every graph before preparing; allocation addresses remain fixed
     // afterward. Graphs must stay alive through this call.
     void prepare();
+    // Start a new graph plan without dropping allocation capacity. The caller
+    // must release the previous graphs and their backend resources first.
+    void reset();
     size_t bytes() const;
 private:
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, decltype(&ggml_gallocr_free)> allocator_;

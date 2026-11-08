@@ -275,7 +275,9 @@ int main(int argc, char ** argv) {
                 }
                 // Includes every variable row bucket, cache eviction, multiple
                 // 32-row blocks and partial tails; repeat after changing routes.
+                auto workspace = std::make_shared<core::GraphWorkspace>(execution.backend());
                 for (bool relu : {false, true}) for (int tokens : {1, 7, 19, 37, 73}) {
+                    workspace->reset();
                     modules::StagedMoeConfig staged_config;
                     staged_config.hidden_size = 256;
                     staged_config.tokens = tokens;
@@ -284,7 +286,6 @@ int main(int argc, char ** argv) {
                     staged_config.cache_slots = 4;
                     staged_config.rows_per_expert = relu ? std::vector<int64_t>{1, 2, 4, 8, 16, 32} : std::vector<int64_t>{32};
                     staged_config.scatter_index_type = relu ? GGML_TYPE_I64 : GGML_TYPE_I32;
-                    auto workspace = std::make_shared<core::GraphWorkspace>(execution.backend());
                     modules::StagedMoeRuntime staged(execution, staged_config, workspace);
                     modules::MoeModule module({relu ? modules::MoeActivation::ReluSquared : modules::MoeActivation::SwiGlu});
                     const auto staged_layer = staged.add_layer(module,
@@ -306,7 +307,29 @@ int main(int argc, char ** argv) {
                     ggml_build_forward_expand(finish_graph, ggml_cpy(test_ctx.ggml, result, staged.hidden_input()));
                     workspace->add(route_graph);
                     workspace->add(finish_graph);
+                    auto tail_config = staged_config;
+                    tail_config.tokens = std::max<int64_t>(1, tokens - 1);
+                    modules::StagedMoeRuntime tail(execution, tail_config, workspace);
+                    const auto tail_layer = tail.add_layer(module,
+                        {staged_store.tensor(staged_group, 1).tensor, relu ? nullptr : staged_store.tensor(staged_group, 0).tensor,
+                         staged_store.tensor(staged_group, 2).tensor}, staged_store, staged_group);
+                    auto * tail_route = ggml_new_graph_custom(test_ctx.ggml, 128, false);
+                    tail.build_inputs(test_ctx, tail_route,
+                        ggml_view_2d(test_ctx.ggml, hidden, 256, tail_config.tokens, hidden->nb[1], 0),
+                        {ggml_view_2d(test_ctx.ggml, logical, 2, tail_config.tokens, logical->nb[1], 0),
+                         ggml_view_2d(test_ctx.ggml, mixing, 2, tail_config.tokens, mixing->nb[1], 0)});
+                    auto * tail_finish = ggml_new_graph_custom(test_ctx.ggml, 128, false);
+                    ggml_build_forward_expand(tail_finish, ggml_cpy(test_ctx.ggml,
+                        modules::MoeModule::combine(test_ctx, tail.output(), tail.routing_weights()), tail.hidden_input()));
+                    workspace->add(tail_route);
+                    workspace->add(tail_finish);
+                    // Both graph owners register before the single shared allocation.
+                    workspace->prepare();
                     staged.prepare();
+                    tail.prepare();
+                    core::HostGraphPlan tail_route_plan, tail_finish_plan;
+                    core::prepare_host_graph_plan(execution, tail_route, tail_route_plan);
+                    core::prepare_host_graph_plan(execution, tail_finish, tail_finish_plan);
                     core::HostGraphPlan route_plan, finish_plan;
                     core::prepare_host_graph_plan(execution, route_graph, route_plan);
                     core::prepare_host_graph_plan(execution, finish_graph, finish_plan);
@@ -329,8 +352,13 @@ int main(int argc, char ** argv) {
                         staged.run(staged_layer);
                         if (core::compute_graph(execution, finish_graph, finish_plan, "test.staged_moe.finish") != GGML_STATUS_SUCCESS)
                             throw std::runtime_error("staged MoE output execution failed");
-                        const auto actual = core::read_tensor_f32(staged.hidden_input());
+                        if (core::compute_graph(execution, tail_route, tail_route_plan, "test.staged_moe.tail_inputs") != GGML_STATUS_SUCCESS)
+                            throw std::runtime_error("staged MoE tail input execution failed");
+                        tail.run(tail_layer);
+                        if (core::compute_graph(execution, tail_finish, tail_finish_plan, "test.staged_moe.tail_finish") != GGML_STATUS_SUCCESS)
+                            throw std::runtime_error("staged MoE tail output execution failed");
                         double maximum = 0;
+                        for (const auto & actual : {core::read_tensor_f32(staged.hidden_input()), core::read_tensor_f32(tail.hidden_input())})
                         for (size_t i = 0; i < actual.size(); ++i) {
                             if (!std::isfinite(actual[i])) throw std::runtime_error("staged MoE produced nonfinite output");
                             const size_t token = i / 256, channel = i % 256;
@@ -352,6 +380,8 @@ int main(int argc, char ** argv) {
                     }
                     core::release_backend_graph_resources(execution.backend(), route_graph, true);
                     core::release_backend_graph_resources(execution.backend(), finish_graph, true);
+                    core::release_backend_graph_resources(execution.backend(), tail_route, true);
+                    core::release_backend_graph_resources(execution.backend(), tail_finish, true);
                 }
             }
             source->release_storage();
