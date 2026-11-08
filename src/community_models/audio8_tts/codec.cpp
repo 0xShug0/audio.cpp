@@ -74,15 +74,6 @@ struct GgmlGallocrDeleter {
     }
 };
 
-std::vector<int64_t> dims_vector(const core::TensorShape & shape) {
-    std::vector<int64_t> out;
-    out.reserve(shape.rank);
-    for (size_t i = 0; i < shape.rank; ++i) {
-        out.push_back(shape.dims[i]);
-    }
-    return out;
-}
-
 std::vector<float> prepare_codec_mono(
     const runtime::AudioBuffer & audio,
     int target_sample_rate_hz) {
@@ -721,16 +712,13 @@ core::TensorValue build_encode_quantizer(
     core::ConstantTensorCache & constants,
     const core::TensorValue & encoder_latent,
     const FishCodecWeights & weights,
-    std::vector<ggml_tensor *> & code_outputs,
-    std::vector<std::pair<std::string, core::TensorValue>> & trace_outputs) {
+    std::vector<ggml_tensor *> & code_outputs) {
     auto x = encoder_latent;
     for (const auto & stage : weights.downsample) {
         x = causal_conv1d(ctx, x, stage.first, kCodecDim, kCodecDim, 2, 2, 1, true);
         x = build_convnext(ctx, x, stage.second, kCodecDim);
     }
-    trace_outputs.push_back({"audio8_tts.codec.after_downsample", x});
     x = build_window_transformer(ctx, constants, x, weights.pre_module, 128);
-    trace_outputs.push_back({"audio8_tts.codec.after_pre_module", x});
 
     auto cont_x = core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, x.type);
     auto residual = cont_x;
@@ -1147,13 +1135,8 @@ struct EncodeGraph {
         input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, sample_capacity_}));
         ggml_set_input(input_.tensor);
         auto encoded = build_encoder(ctx, constants_, input_, *weights_);
-        trace_outputs_.push_back({"audio8_tts.codec.encoder_latent", encoded});
-        build_encode_quantizer(ctx, constants_, encoded, *weights_, code_outputs_, trace_outputs_);
+        build_encode_quantizer(ctx, constants_, encoded, *weights_, code_outputs_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
-        for (const auto & trace_output : trace_outputs_) {
-            ggml_set_output(trace_output.second.tensor);
-            ggml_build_forward_expand(graph_, trace_output.second.tensor);
-        }
         for (ggml_tensor * code_output : code_outputs_) {
             ggml_build_forward_expand(graph_, code_output);
         }
@@ -1192,14 +1175,6 @@ struct EncodeGraph {
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Audio8 TTS codec encode graph compute failed");
         }
-        if (engine::debug::trace_log_enabled()) {
-            for (const auto & trace_output : trace_outputs_) {
-                engine::debug::trace_log_f32(
-                    trace_output.first,
-                    dims_vector(trace_output.second.shape),
-                    core::read_tensor_f32(trace_output.second.tensor));
-            }
-        }
         Audio8TtsCodes out;
         out.codebooks = static_cast<int64_t>(code_outputs_.size());
         out.frames = frames;
@@ -1228,7 +1203,6 @@ private:
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::TensorValue input_;
     std::vector<ggml_tensor *> code_outputs_;
-    std::vector<std::pair<std::string, core::TensorValue>> trace_outputs_;
     ggml_cgraph * graph_ = nullptr;
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
     core::ConstantTensorCache constants_;

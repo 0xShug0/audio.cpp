@@ -474,6 +474,7 @@ std::vector<float> SoproTTSSession::synthesize_segment(SoproSynthesisState & sta
 }
 
 runtime::TaskResult SoproTTSSession::run(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
     require_prepared("Sopro run");
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Sopro run requires an offline session");
@@ -497,6 +498,7 @@ runtime::TaskResult SoproTTSSession::run(const runtime::TaskRequest & request) {
         audio.samples.assign(
             static_cast<size_t>(assets_->config.semantic_encoder.token_samples_24k), 0.0F);
         result.audio_output = std::move(audio);
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
         return result;
     }
 
@@ -520,6 +522,7 @@ runtime::TaskResult SoproTTSSession::run(const runtime::TaskRequest & request) {
     audio_ops::fade_edges(out, sample_rate, false, true, audio_ops::kFinalFadeSeconds);
     audio.samples = std::move(out);
     result.audio_output = std::move(audio);
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
 }
 
@@ -536,6 +539,7 @@ runtime::StreamingPolicy SoproTTSSession::streaming_policy() const {
 }
 
 void SoproTTSSession::start_stream(const runtime::TaskRequest & request) {
+    stream_wall_start_ = std::chrono::steady_clock::now();
     require_prepared("Sopro start_stream");
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Sopro start_stream requires a streaming session");
@@ -742,6 +746,7 @@ runtime::TaskResult SoproTTSSession::finish_stream() {
     runtime::TaskResult result;
     result.audio_output = std::move(merged);
     reset();
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     return result;
 }
 

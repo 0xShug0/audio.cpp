@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/model_spec/metadata.h"
+#include <chrono>
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/framework/runtime/session_base.h"
@@ -89,6 +90,7 @@ private:
     std::optional<std::string> stream_language_;
     runtime::AudioBuffer stream_merged_audio_;
     size_t stream_chunk_index_ = 0;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
     bool stream_started_ = false;
     bool stream_has_reference_ = false;
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/model_spec/metadata.h"
+#include <chrono>
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/moonshine_asr/runtime.h"
@@ -59,6 +60,7 @@ private:
     runtime::StreamEventCallback stream_event_sink_;
     runtime::AudioBuffer streaming_audio_;
     runtime::TaskRequest streaming_request_;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
     bool stream_started_ = false;
 };
 

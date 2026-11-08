@@ -252,6 +252,7 @@ const std::vector<int32_t> & MiraTTSOfflineSession::context_codes(
 
 runtime::TaskResult MiraTTSOfflineSession::run(
     const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
     require_prepared("MiraTTS run");
     runtime::validate_spec_backed_request_options(
         request.options, *contract_, "MiraTTS");
@@ -265,6 +266,7 @@ runtime::TaskResult MiraTTSOfflineSession::run(
     runtime::TaskResult result;
     result.audio_output = synthesize_text(
         request.text_input->text, codes, generation_options(request));
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
 }
 
@@ -311,6 +313,7 @@ runtime::StreamingPolicy MiraTTSOfflineSession::streaming_policy() const {
 
 void MiraTTSOfflineSession::start_stream(
     const runtime::TaskRequest & request) {
+    stream_wall_start_ = std::chrono::steady_clock::now();
     require_prepared("MiraTTS streaming");
     runtime::validate_spec_backed_request_options(
         request.options, *contract_, "MiraTTS");
@@ -376,6 +379,7 @@ runtime::TaskResult MiraTTSOfflineSession::finish_stream() {
     }
     result.audio_output = std::move(merged);
     reset();
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     return result;
 }
 

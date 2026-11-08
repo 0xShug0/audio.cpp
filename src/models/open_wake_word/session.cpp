@@ -1,4 +1,6 @@
 #include "engine/models/open_wake_word/session.h"
+
+#include "engine/framework/debug/profiler.h"
 #ifdef ENGINE_HAVE_NEON
 #include "engine/framework/neon/execution.h"
 #endif
@@ -59,6 +61,7 @@ public:
         mark_prepared();
     }
     runtime::TaskResult run(const runtime::TaskRequest &request) override {
+        const auto wall_start = std::chrono::steady_clock::now();
         require_prepared("OpenWakeWord run");
         configure(request.options, request.option_arrays);
         if (!request.audio_input || request.audio_input->sample_rate != 16000 || request.audio_input->channels != 1) {
@@ -67,12 +70,15 @@ public:
         reset();
         observe(runtime_.push(request.audio_input->samples));
         observe(runtime_.finish());
-        return result();
+        auto output = result();
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
+        return output;
     }
     runtime::StreamingPolicy streaming_policy() const override {
         return {runtime::StreamingInputKind::AudioChunks, runtime::StreamingOutputKind::PullEvents, 1280, 0.0};
     }
     void start_stream(const runtime::TaskRequest &request) override {
+        stream_wall_start_ = std::chrono::steady_clock::now();
         require_prepared("OpenWakeWord stream");
         configure(request.options, request.option_arrays);
         reset();
@@ -112,7 +118,9 @@ public:
         }
         observe(runtime_.finish());
         streaming_ = false;
-        return result();
+        auto output = result();
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
+        return output;
     }
     runtime::TaskResult finalize() override {
         return finish_stream();
@@ -153,6 +161,7 @@ private:
     std::vector<runtime::SpeechSegment> detections_;
     int64_t received_ = 0;
     float threshold_ = 0.5F;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
     bool active_ = false, streaming_ = false;
 };
 } // namespace

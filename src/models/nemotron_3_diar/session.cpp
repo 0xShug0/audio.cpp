@@ -1,5 +1,7 @@
 #include "engine/models/nemotron_3_diar/session.h"
 
+#include "engine/framework/debug/profiler.h"
+
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/runtime/options.h"
@@ -389,6 +391,7 @@ std::vector<runtime::TaskResult> Session::run_batch(
 void Session::run_batch(
     const std::vector<runtime::TaskRequest> & requests,
     const runtime::IBatchedOfflineVoiceTaskSession::ResultCallback & on_result) {
+    const auto wall_start = std::chrono::steady_clock::now();
     require_prepared("Nemotron 3 diarization run_batch()");
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Nemotron 3 diarization run_batch() requires offline mode");
@@ -498,6 +501,7 @@ void Session::run_batch(
             finish_row(row);
         }
     }
+    debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(wall_start));
 }
 
 runtime::StreamingPolicy Session::streaming_policy() const {
@@ -511,6 +515,7 @@ runtime::StreamingPolicy Session::streaming_policy() const {
 }
 
 void Session::start_stream(const runtime::TaskRequest & request) {
+    stream_wall_start_ = std::chrono::steady_clock::now();
     require_prepared("Nemotron 3 diarization start_stream()");
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Nemotron 3 diarization start_stream() requires streaming mode");
@@ -587,6 +592,7 @@ runtime::TaskResult Session::finalize() {
             stream_probabilities_, frames, speakers, latency_profile_, streaming_config_));
     }
     stream_started_ = false;
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     return result;
 }
 

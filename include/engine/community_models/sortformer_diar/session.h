@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/community_models/sortformer_diar/aosc_state.h"
+#include <chrono>
 #include "engine/community_models/sortformer_diar/encoder.h"
 #include "engine/community_models/sortformer_diar/frontend.h"
 #include "engine/community_models/sortformer_diar/stream_schedule.h"
@@ -89,6 +90,7 @@ private:
     std::vector<float> probabilities_;
     int64_t probability_frames_ = 0;
     size_t emitted_stream_turns_ = 0;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
     bool stream_started_ = false;
     bool finalized_ = false;
     size_t graph_arena_bytes_ = 1024ull * 1024ull * 1024ull;

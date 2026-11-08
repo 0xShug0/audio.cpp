@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/models/nemotron_3_diar/encoder.h"
+#include <chrono>
 #include "engine/models/nemotron_3_diar/frontend.h"
 #include "engine/models/nemotron_3_diar/streaming.h"
 #include "engine/framework/model_spec/metadata.h"
@@ -95,6 +96,7 @@ private:
     int64_t stream_samples_ = 0;
     std::set<std::tuple<int64_t, int64_t, std::string>> emitted_stream_turns_;
     runtime::StreamEventCallback stream_event_sink_;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
     bool stream_started_ = false;
     size_t graph_arena_bytes_ = 1024ull * 1024ull * 1024ull;
     size_t weight_context_bytes_ = 1024ull * 1024ull * 1024ull;

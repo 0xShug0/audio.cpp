@@ -169,8 +169,6 @@ public:
                 core::TensorShape::from_dims({frames, D}));
             x = modules::ResidualAddModule().build(build, x, linear(merged, prefix + ".proj_out", D, true));
         }
-        encoder_output_ = x.tensor;
-        ggml_set_output(encoder_output_);
         // The unnormalized Perceiver residuals exceed FP16 range. Preserve FP32
         // inputs through its projections and attention, not only accumulation.
         auto latents = parameter("gpt.perc.latents", core::TensorShape::from_dims({N, D}));
@@ -264,11 +262,6 @@ public:
         ggml_backend_tensor_get(output_, result.data(), 0, result.size() * sizeof(float));
         return result;
     }
-    std::vector<float> encoder_output() const {
-        std::vector<float> result(ggml_nelements(encoder_output_));
-        ggml_backend_tensor_get(encoder_output_, result.data(), 0, result.size() * sizeof(float));
-        return result;
-    }
 private:
     core::ExecutionContext & execution_;
     std::unique_ptr<ggml_context, decltype(&ggml_free)> context_owner_{nullptr, ggml_free};
@@ -278,7 +271,6 @@ private:
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t allocator_ = nullptr;
     ggml_tensor * input_ = nullptr;
-    ggml_tensor * encoder_output_ = nullptr;
     ggml_tensor * output_ = nullptr;
 };
 
@@ -654,7 +646,6 @@ bool XttSv2GptEngine::compute_conditioning(const float* ref_pcm, int ref_ns_in, 
             impl_->conditioning_graph = std::make_unique<ConditioningGraph>(*impl_->execution, impl_->tensors, hp, T);
         }
         auto pl = impl_->conditioning_graph->run(melT);
-        engine::debug::trace_log_f32("xtts_v2.conditioning.encoder", {T, hp.d_model}, impl_->conditioning_graph->encoder_output());
         engine::debug::trace_log_f32("xtts_v2.conditioning.latents", {hp.perceiver_n_latents, hp.d_model}, pl);
         chunk_latents[ci] = std::move(pl);
     }
