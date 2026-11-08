@@ -8,12 +8,13 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Word timestamps from SenseVoice's CTC token spans.
 namespace engine::community_models::sense_asr {
 
-inline const std::string kWordBoundary = "\xe2\x96\x81";
+inline constexpr std::string_view kWordBoundary = "\xe2\x96\x81";
 
 // The first code point of a UTF-8 string, or 0 when it is empty or invalid.
 inline uint32_t first_code_point(const std::string &text) {

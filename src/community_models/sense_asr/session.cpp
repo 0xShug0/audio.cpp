@@ -393,7 +393,6 @@ void SenseAsrSession::reset_stream_state() {
   streaming_audio_offset_values_ = 0;
   streaming_windows_processed_ = 0;
   streaming_frames_done_ = 0;
-  streaming_words_.clear();
 }
 
 void
@@ -710,19 +709,22 @@ SenseAsrSession::process_one_stream_chunk(const runtime::AudioBuffer &audio) {
   if (!item.text_output.has_value() || item.text_output->text.empty()) {
     return;
   }
-  shift_words(item.word_timestamps, offset);
-  streaming_words_.insert(streaming_words_.end(), item.word_timestamps.begin(),
-                          item.word_timestamps.end());
-  auto transcript = committed_transcript();
-  if (transcript.text.empty()) {
-    transcript.text = item.text_output->text;
+  // Windows are final once decoded, so only the new text and words are
+  // appended; the committed transcript is joined as before.
+  const auto &committed = committed_transcript();
+  runtime::Transcript segment;
+  if (committed.text.empty()) {
+    segment.text = item.text_output->text;
   } else {
-    append_chunk_text(transcript.text, item.text_output->text);
+    std::string joined = committed.text;
+    append_chunk_text(joined, item.text_output->text);
+    segment.text = joined.substr(committed.text.size());
   }
-  if (transcript.language.empty()) {
-    transcript.language = item.text_output->language;
+  if (committed.language.empty()) {
+    segment.language = item.text_output->language;
   }
-  publish_transcript(std::move(transcript), streaming_words_);
+  shift_words(item.word_timestamps, offset);
+  append_transcript(std::move(segment), std::move(item.word_timestamps));
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_sense_asr_loader() {
