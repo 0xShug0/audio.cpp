@@ -40,6 +40,8 @@ public:
     void prepare();
     void build_inputs(core::ModuleBuildContext & ctx, ggml_cgraph * graph,
         ggml_tensor * hidden, const MoeRouting & routing) const;
+    // May be reused by a final backbone graph after expert execution completes.
+    ggml_tensor * hidden_input() const;
     // Output lanes are restored to [hidden, selected position, token].
     ggml_tensor * output() const;
     ggml_tensor * routing_weights() const;

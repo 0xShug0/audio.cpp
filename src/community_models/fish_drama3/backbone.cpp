@@ -1261,7 +1261,6 @@ public:
         const auto h = config.hidden_size;
         const auto k = config.experts_per_token;
         x_ = ggml_new_tensor_3d(persistent, GGML_TYPE_F32, h, steps, 1);
-        hidden_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
         residual_ = ggml_new_tensor_3d(persistent, GGML_TYPE_F32, h, steps, 1);
         shared_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
         modules::StagedMoeConfig staged_config;
@@ -1274,9 +1273,10 @@ public:
         staged_config.scatter_index_type = GGML_TYPE_I32;
         workspace_ = std::make_shared<core::GraphWorkspace>(execution.backend());
         staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, std::move(staged_config), workspace_);
+        hidden_ = staged_moe_->hidden_input();
         positions_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, steps);
         mask_ = ggml_new_tensor_4d(persistent, GGML_TYPE_F16, steps, steps, 1, 1);
-        for (auto * tensor : {x_, hidden_, residual_, shared_, positions_, mask_})
+        for (auto * tensor : {x_, residual_, shared_, positions_, mask_})
             ggml_set_input(tensor);
         buffer_.reset(ggml_backend_alloc_ctx_tensors(persistent, execution.backend()));
         if (!buffer_)

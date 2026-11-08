@@ -235,10 +235,10 @@ int main(int argc, char ** argv) {
                 namespace modules = engine::modules;
                 // More assignments than cache slots and more rows than one
                 // execution bucket: exercises eviction, scatter order and reuse.
-                for (bool relu : {false, true}) {
+                for (bool relu : {false, true}) for (int tokens : {1, 7, 19, 37, 73}) {
                     modules::StagedMoeConfig staged_config;
                     staged_config.hidden_size = 256;
-                    staged_config.tokens = 73;
+                    staged_config.tokens = tokens;
                     staged_config.selected = 2;
                     staged_config.experts = 12;
                     staged_config.cache_slots = 4;
@@ -251,43 +251,123 @@ int main(int argc, char ** argv) {
                         {disk.tensor(group, 1).tensor, relu ? nullptr : disk.tensor(group, 0).tensor, disk.tensor(group, 2).tensor}, disk, group);
                     std::unique_ptr<ggml_context, ContextDeleter> test_inputs(ggml_init({1024 * 1024, nullptr, true}));
                     std::unique_ptr<ggml_context, ContextDeleter> test_context(ggml_init({4 * 1024 * 1024, nullptr, true}));
-                    auto * hidden = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_F32, 256, 73);
-                    auto * logical = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_I32, 2, 73);
-                    auto * mixing = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_F32, 2, 73);
-                    for (auto * tensor : {hidden, logical, mixing}) ggml_set_input(tensor);
+                    auto * hidden = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_F32, 256, tokens);
+                    auto * logical = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_I32, 2, tokens);
+                    auto * mixing = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_F32, 2, tokens);
+                    const auto rows = staged_config.cache_slots * staged_config.rows_per_expert.back();
+                    const auto legacy_group = disk.add_group(names, execution.backend(), staged_config.cache_slots);
+                    auto * legacy_output = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_F32, 256, 2 * tokens + rows);
+                    auto * legacy_source = ggml_new_tensor_1d(test_inputs.get(), GGML_TYPE_I32, rows);
+                    auto * legacy_target = ggml_new_tensor_1d(test_inputs.get(), staged_config.scatter_index_type, rows);
+                    auto * legacy_slots = ggml_new_tensor_2d(test_inputs.get(), GGML_TYPE_I32, 1, rows);
+                    for (auto * tensor : {hidden, logical, mixing, legacy_output, legacy_source, legacy_target, legacy_slots})
+                        ggml_set_input(tensor);
                     std::unique_ptr<ggml_backend_buffer, BufferDeleter> test_buffer(ggml_backend_alloc_ctx_tensors(test_inputs.get(), execution.backend()));
                     core::ModuleBuildContext test_ctx{test_context.get(), "test.staged_moe", execution.backend_type()};
+                    test_ctx.elide_identity_reshapes = relu;
                     auto * route_graph = ggml_new_graph_custom(test_ctx.ggml, 128, false);
                     staged.build_inputs(test_ctx, route_graph, hidden, {logical, mixing});
+                    // Replay the legacy staged layout. A resident reference can
+                    // select different kernels for small/quantized geometries.
+                    std::vector<ggml_cgraph *> legacy_graphs;
+                    for (auto count : staged_config.rows_per_expert) {
+                        auto * graph = ggml_new_graph_custom(test_ctx.ggml, 128, false);
+                        const auto n = staged_config.cache_slots * count;
+                        auto * source_rows = ggml_view_1d(test_ctx.ggml, legacy_source, n, 0);
+                        auto * target_rows = ggml_view_1d(test_ctx.ggml, legacy_target, n, 0);
+                        auto * slot_ids = ggml_view_2d(test_ctx.ggml, legacy_slots, 1, n, legacy_slots->nb[1], 0);
+                        auto * input_rows = ggml_reshape_3d(test_ctx.ggml, ggml_get_rows(test_ctx.ggml, hidden, source_rows), 256, 1, n);
+                        auto * output = module.build_experts(test_ctx, input_rows, slot_ids,
+                            {disk.tensor(legacy_group, 1).tensor, relu ? nullptr : disk.tensor(legacy_group, 0).tensor,
+                             disk.tensor(legacy_group, 2).tensor});
+                        ggml_build_forward_expand(graph, ggml_set_rows(test_ctx.ggml, legacy_output,
+                            ggml_reshape_2d(test_ctx.ggml, output, 256, n), target_rows));
+                        workspace->add(graph);
+                        legacy_graphs.push_back(graph);
+                    }
                     auto * finish_graph = ggml_new_graph_custom(test_ctx.ggml, 128, false);
                     auto * result = modules::MoeModule::combine(test_ctx, staged.output(), staged.routing_weights());
-                    auto * reference = module.build(test_ctx, hidden, {logical, mixing}, {full[1].tensor, relu ? nullptr : full[0].tensor, full[2].tensor});
+                    auto * legacy_lanes = ggml_view_3d(test_ctx.ggml, legacy_output, 256, 2, tokens,
+                        256 * sizeof(float), 512 * sizeof(float), 0);
+                    auto * reference = modules::MoeModule::combine(test_ctx, legacy_lanes, mixing);
                     for (auto * tensor : {result, reference}) { ggml_set_output(tensor); ggml_build_forward_expand(finish_graph, tensor); }
+                    ggml_build_forward_expand(finish_graph, ggml_cpy(test_ctx.ggml, result, staged.hidden_input()));
                     workspace->add(route_graph);
                     workspace->add(finish_graph);
                     staged.prepare();
                     core::HostGraphPlan route_plan, finish_plan;
                     core::prepare_host_graph_plan(execution, route_graph, route_plan);
                     core::prepare_host_graph_plan(execution, finish_graph, finish_plan);
-                    std::vector<float> hidden_values(256 * 73), mixing_values(2 * 73);
-                    std::vector<int32_t> routes(2 * 73);
+                    std::vector<core::HostGraphPlan> legacy_plans(legacy_graphs.size());
+                    for (size_t i = 0; i < legacy_graphs.size(); ++i)
+                        core::prepare_host_graph_plan(execution, legacy_graphs[i], legacy_plans[i]);
+                    std::vector<float> hidden_values(256 * tokens), mixing_values(2 * tokens);
+                    std::vector<int32_t> routes(2 * tokens);
                     for (size_t i = 0; i < hidden_values.size(); ++i) hidden_values[i] = .1F * std::sin(float(i) * .017F);
                     for (size_t i = 0; i < mixing_values.size(); ++i) mixing_values[i] = i % 2 ? .7F : .3F;
                     ggml_backend_tensor_set(hidden, hidden_values.data(), 0, hidden_values.size() * sizeof(float));
                     ggml_backend_tensor_set(mixing, mixing_values.data(), 0, mixing_values.size() * sizeof(float));
                     const auto workspace_bytes = staged.workspace_bytes();
                     for (int request = 0; request < 4; ++request) {
-                        for (int token = 0; token < 73; ++token) {
-                            routes[2 * token] = request == 1 ? (token + 5) % 12 : token % 5;
-                            routes[2 * token + 1] = request == 1 ? (token + 6) % 12 : (token + 1) % 5;
+                        const bool concentrated = request == 2;
+                        for (int token = 0; token < tokens; ++token) {
+                            routes[2 * token] = concentrated ? 0 : request == 1 ? (token + 5) % 12 : token % 5;
+                            routes[2 * token + 1] = concentrated ? 1 : request == 1 ? (token + 6) % 12 : (token + 1) % 5;
                         }
                         ggml_backend_tensor_set(logical, routes.data(), 0, routes.size() * sizeof(int32_t));
                         if (core::compute_graph(execution, route_graph, route_plan, "test.staged_moe.inputs") != GGML_STATUS_SUCCESS)
                             throw std::runtime_error("staged MoE input execution failed");
                         staged.run(staged_layer);
+                        std::vector<std::vector<int32_t>> assignments(12);
+                        for (size_t i = 0; i < routes.size(); ++i) assignments[routes[i]].push_back(static_cast<int32_t>(i));
+                        std::vector<int32_t> experts;
+                        for (int e = 0; e < 12; ++e) if (!assignments[e].empty()) experts.push_back(e);
+                        std::stable_sort(experts.begin(), experts.end(), [&](int a, int b) {
+                            return assignments[a].size() > assignments[b].size();
+                        });
+                        std::vector<int32_t> source_rows(rows), slots(rows), targets32(rows);
+                        std::vector<int64_t> targets(rows);
+                        for (size_t first = 0; first < experts.size(); first += staged_config.cache_slots) {
+                            const std::vector<int32_t> batch(experts.begin() + first,
+                                experts.begin() + std::min(experts.size(), first + static_cast<size_t>(staged_config.cache_slots)));
+                            const auto mapped = disk.stage(legacy_group, batch);
+                            size_t maximum = 0;
+                            for (auto e : batch) maximum = std::max(maximum, assignments[e].size());
+                            for (size_t begin = 0; begin < maximum; begin += staged_config.rows_per_expert.back()) {
+                                size_t bucket = 0;
+                                if (relu) {
+                                    size_t count = 1;
+                                    while (count < std::min(maximum - begin, size_t{32})) { count *= 2; ++bucket; }
+                                }
+                                const auto count = static_cast<size_t>(staged_config.rows_per_expert[bucket]);
+                                const auto n = static_cast<size_t>(count * staged_config.cache_slots);
+                                std::fill_n(source_rows.begin(), n, 0);
+                                for (size_t row = 0; row < n; ++row) {
+                                    targets[row] = 2 * tokens + static_cast<int64_t>(row);
+                                    slots[row] = static_cast<int32_t>(row / count);
+                                }
+                                for (size_t e = 0; e < batch.size(); ++e) {
+                                    const auto & pairs = assignments[batch[e]];
+                                    for (size_t row = begin; row < std::min(pairs.size(), begin + count); ++row) {
+                                        const auto target = mapped[e] * count + row - begin;
+                                        source_rows[target] = pairs[row] / 2;
+                                        targets[target] = pairs[row];
+                                    }
+                                }
+                                ggml_backend_tensor_set(legacy_source, source_rows.data(), 0, n * sizeof(int32_t));
+                                if (relu) ggml_backend_tensor_set(legacy_target, targets.data(), 0, n * sizeof(int64_t));
+                                else {
+                                    std::copy_n(targets.begin(), n, targets32.begin());
+                                    ggml_backend_tensor_set(legacy_target, targets32.data(), 0, n * sizeof(int32_t));
+                                }
+                                ggml_backend_tensor_set(legacy_slots, slots.data(), 0, n * sizeof(int32_t));
+                                if (core::compute_graph(execution, legacy_graphs[bucket], legacy_plans[bucket], "test.staged_moe.legacy") != GGML_STATUS_SUCCESS)
+                                    throw std::runtime_error("legacy staged reference execution failed");
+                            }
+                        }
                         if (core::compute_graph(execution, finish_graph, finish_plan, "test.staged_moe.finish") != GGML_STATUS_SUCCESS)
                             throw std::runtime_error("staged MoE output execution failed");
-                        const auto actual = core::read_tensor_f32(result), expected = core::read_tensor_f32(reference);
+                        const auto actual = core::read_tensor_f32(staged.hidden_input()), expected = core::read_tensor_f32(reference);
                         float maximum = 0;
                         for (size_t i = 0; i < actual.size(); ++i) {
                             if (!std::isfinite(actual[i])) throw std::runtime_error("staged MoE produced nonfinite output");
@@ -298,6 +378,7 @@ int main(int argc, char ** argv) {
                     }
                     core::release_backend_graph_resources(execution.backend(), route_graph, true);
                     core::release_backend_graph_resources(execution.backend(), finish_graph, true);
+                    for (auto * graph : legacy_graphs) core::release_backend_graph_resources(execution.backend(), graph, true);
                 }
             }
             source->release_storage();
