@@ -81,7 +81,7 @@ int g_ggml_sycl_disable_graph = 0;
 int g_ggml_sycl_disable_dnn = 0;
 int g_ggml_sycl_fa_onednn = 1;
 int g_ggml_sycl_fa_onednn_max_kv = 0;
-int g_ggml_sycl_weight_f16_cache = 1;
+int g_ggml_sycl_weight_f16_cache = 0;
 int g_ggml_sycl_graph_eviction_timeout = 10;
 int g_ggml_sycl_prioritize_dmmv = 0;
 int g_ggml_sycl_use_async_mem_op = 0;
@@ -313,7 +313,7 @@ static void ggml_check_sycl() try {
         g_ggml_sycl_disable_dnn = get_sycl_env("GGML_SYCL_DISABLE_DNN", 0);
         g_ggml_sycl_fa_onednn = get_sycl_env("GGML_SYCL_FA_ONEDNN", 1);
         g_ggml_sycl_fa_onednn_max_kv = get_sycl_env("GGML_SYCL_FA_ONEDNN_MAX_KV", 0);
-        g_ggml_sycl_weight_f16_cache = get_sycl_env("GGML_SYCL_WEIGHT_F16_CACHE", 1);
+        g_ggml_sycl_weight_f16_cache = get_sycl_env("GGML_SYCL_WEIGHT_F16_CACHE", 0);
         g_ggml_sycl_graph_eviction_timeout = get_sycl_env("GGML_SYCL_GRAPH_EVICTION_TIMEOUT", 10);
         g_ggml_sycl_prioritize_dmmv = get_sycl_env("GGML_SYCL_PRIORITIZE_DMMV", 0);
 #ifdef GGML_SYCL_SUPPORT_LEVEL_ZERO
@@ -481,7 +481,7 @@ catch (sycl::exception const &exc) {
 // sycl buffer
 
 // Device memory held by F16 weight expansions, per device.
-static size_t g_ggml_sycl_f16_weight_bytes[GGML_SYCL_MAX_DEVICES] = {};
+static std::atomic<size_t> g_ggml_sycl_f16_weight_bytes[GGML_SYCL_MAX_DEVICES] = {};
 
 struct ggml_backend_sycl_buffer_context {
     int device;
@@ -2373,6 +2373,13 @@ static const sycl::half * ggml_sycl_cached_f16_weight(const ggml_tensor * src0, 
     if (!g_ggml_sycl_weight_f16_cache || src0->buffer == nullptr || !ggml_backend_buffer_is_sycl(src0->buffer)) {
         return nullptr;
     }
+#ifdef GGML_SYCL_GRAPH
+    // A recorded graph outlives uploads to the weight, which free the expansion, and a conversion
+    // recorded into it would run again on every replay. Graphs convert into pool memory instead.
+    if (stream->ext_oneapi_get_state() == sycl_ex::queue_state::recording) {
+        return nullptr;
+    }
+#endif
     auto * buffer_ctx = static_cast<ggml_backend_sycl_buffer_context *>(src0->buffer->context);
     const auto * extra = static_cast<const ggml_tensor_extra_gpu *>(src0->extra);
     const auto key = std::make_tuple(static_cast<const void *>(src0_dd_i), ne, static_cast<int>(src0->type),
@@ -2381,12 +2388,6 @@ static const sycl::half * ggml_sycl_cached_f16_weight(const ggml_tensor * src0, 
     if (it != buffer_ctx->f16_weights.end()) {
         return it->second;
     }
-#ifdef GGML_SYCL_GRAPH
-    // A conversion recorded into a graph would run again on every replay.
-    if (stream->ext_oneapi_get_state() == sycl_ex::queue_state::recording) {
-        return nullptr;
-    }
-#endif
     // An expansion is twice the size of the weight it comes from, so this is only done where
     // the memory is plentiful: it must not be what runs a smaller GPU out of memory.
     const size_t bytes = ne * sizeof(sycl::half);
@@ -4818,6 +4819,7 @@ static void ggml_backend_sycl_set_tensor_async(ggml_backend_t backend,
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
 
     GGML_ASSERT(buf->buft == ggml_backend_sycl_buffer_type(sycl_ctx->device) && "unsupported buffer type");
+    static_cast<ggml_backend_sycl_buffer_context *>(buf->context)->clear_f16_weights();
     const queue_ptr stream = sycl_ctx->stream(sycl_ctx->device, 0);
     SYCL_CHECK(CHECK_TRY_ERROR(
         (stream)->memcpy((char *)tensor->data + offset, data, size)));
@@ -4860,6 +4862,7 @@ static bool ggml_backend_sycl_cpy_tensor_async(ggml_backend_t backend,
     GGML_SYCL_DEBUG("%s", debug_get_tensor_str(" src", src).c_str());
     GGML_SYCL_DEBUG(" is_cpy_supported=%d\n", is_cpy_supported);
     if (is_cpy_supported) {
+        static_cast<ggml_backend_sycl_buffer_context *>(dst->buffer->context)->clear_f16_weights();
         /*
         DPCT1009:215: SYCL uses exceptions to report errors and does not use the
         error codes. The original code was commented out and a warning string
