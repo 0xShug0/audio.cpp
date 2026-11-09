@@ -268,7 +268,10 @@ void ggml_sycl_flash_attn_ext_onednn(ggml_backend_sycl_context & ctx, ggml_tenso
     sycl::half * outf_ptr = outf_pool.get();
 
     // compile once per (device, shape, mask presence, KV strides), reuse across layers and calls.
-    static std::unordered_map<std::string, sdpa_partition> cache;
+    if (!ctx.sdpa_partitions) {
+        ctx.sdpa_partitions = std::make_shared<std::unordered_map<std::string, sdpa_partition>>();
+    }
+    auto & cache = *static_cast<std::unordered_map<std::string, sdpa_partition> *>(ctx.sdpa_partitions.get());
     char keyb[256];
     snprintf(keyb, sizeof(keyb), "%d:%d:%lld:%lld:%lld:%lld:%lld:%lld:%lld:%lld:%lld:%lld:%lld", ctx.device,
              mask != nullptr ? 1 : 0, (long long) H, (long long) Hkv, (long long) q, (long long) seq, (long long) d,

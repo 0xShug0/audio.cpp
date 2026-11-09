@@ -511,6 +511,11 @@ struct ggml_backend_sycl_context {
     }
 #endif
 
+#if GGML_SYCL_DNNL
+    // Compiled oneDNN SDPA partitions. Owned here so that separate sessions never share the map.
+    std::shared_ptr<void> sdpa_partitions;
+#endif
+
     ggml_sycl_pool & host_pool(int device) {
         if (host_pools[device] == nullptr) {
             host_pools[device] = new_pool_for_host(stream(device, 0), device);
