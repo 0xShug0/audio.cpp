@@ -68,6 +68,7 @@ extern int g_ggml_sycl_enable_flash_attention;
 extern int g_ggml_sycl_disable_dnn;
 extern int g_ggml_sycl_fa_onednn;
 extern int g_ggml_sycl_fa_onednn_max_kv;
+extern int g_ggml_sycl_weight_f16_cache;
 extern int g_ggml_sycl_graph_eviction_timeout;
 
 

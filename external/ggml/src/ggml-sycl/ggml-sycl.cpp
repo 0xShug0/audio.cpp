@@ -23,6 +23,8 @@
 #include <stdio.h>
 #include <vector>
 #include <cmath>
+#include <map>
+#include <tuple>
 #include <iostream>
 #include <fstream>
 #include <stdio.h>
@@ -79,6 +81,7 @@ int g_ggml_sycl_disable_graph = 0;
 int g_ggml_sycl_disable_dnn = 0;
 int g_ggml_sycl_fa_onednn = 1;
 int g_ggml_sycl_fa_onednn_max_kv = 0;
+int g_ggml_sycl_weight_f16_cache = 1;
 int g_ggml_sycl_graph_eviction_timeout = 10;
 int g_ggml_sycl_prioritize_dmmv = 0;
 int g_ggml_sycl_use_async_mem_op = 0;
@@ -310,6 +313,7 @@ static void ggml_check_sycl() try {
         g_ggml_sycl_disable_dnn = get_sycl_env("GGML_SYCL_DISABLE_DNN", 0);
         g_ggml_sycl_fa_onednn = get_sycl_env("GGML_SYCL_FA_ONEDNN", 1);
         g_ggml_sycl_fa_onednn_max_kv = get_sycl_env("GGML_SYCL_FA_ONEDNN_MAX_KV", 0);
+        g_ggml_sycl_weight_f16_cache = get_sycl_env("GGML_SYCL_WEIGHT_F16_CACHE", 1);
         g_ggml_sycl_graph_eviction_timeout = get_sycl_env("GGML_SYCL_GRAPH_EVICTION_TIMEOUT", 10);
         g_ggml_sycl_prioritize_dmmv = get_sycl_env("GGML_SYCL_PRIORITIZE_DMMV", 0);
 #ifdef GGML_SYCL_SUPPORT_LEVEL_ZERO
@@ -386,6 +390,7 @@ static void ggml_check_sycl() try {
         GGML_LOG_INFO("  GGML_SYCL_DISABLE_DNN: %d\n", g_ggml_sycl_disable_dnn);
         GGML_LOG_INFO("  GGML_SYCL_FA_ONEDNN: %d\n", g_ggml_sycl_fa_onednn);
         GGML_LOG_INFO("  GGML_SYCL_FA_ONEDNN_MAX_KV: %d\n", g_ggml_sycl_fa_onednn_max_kv);
+        GGML_LOG_INFO("  GGML_SYCL_WEIGHT_F16_CACHE: %d\n", g_ggml_sycl_weight_f16_cache);
 #else
         GGML_LOG_INFO("  GGML_SYCL_DISABLE_DNN: DNN disabled by compile flag\n");
 #endif
@@ -475,6 +480,9 @@ catch (sycl::exception const &exc) {
 
 // sycl buffer
 
+// Device memory held by F16 weight expansions, per device.
+static size_t g_ggml_sycl_f16_weight_bytes[GGML_SYCL_MAX_DEVICES] = {};
+
 struct ggml_backend_sycl_buffer_context {
     int device;
     void * dev_ptr = nullptr;
@@ -482,6 +490,21 @@ struct ggml_backend_sycl_buffer_context {
     std::string name;
     optimize_feature opt_feature;
     std::vector<ggml_tensor_extra_gpu *> tensor_extras;
+    // F16 expansions of quantized weights in this buffer. Repeated GEMMs on a weight reuse them
+    // instead of dequantizing every time. Key: first converted byte, element count, type, reordered.
+    std::map<std::tuple<const void *, size_t, int, bool>, sycl::half *> f16_weights;
+
+    void clear_f16_weights() {
+        if (f16_weights.empty()) {
+            return;
+        }
+        SYCL_CHECK(CHECK_TRY_ERROR(stream->wait_and_throw()));
+        for (const auto & entry : f16_weights) {
+            ggml_sycl_free_device(entry.second, *stream);
+            g_ggml_sycl_f16_weight_bytes[device] -= std::get<1>(entry.first) * sizeof(sycl::half);
+        }
+        f16_weights.clear();
+    }
 
     ggml_backend_sycl_buffer_context(int device, void * dev_ptr, queue_ptr stream) :
         device(device), dev_ptr(dev_ptr), stream(stream) {
@@ -491,6 +514,7 @@ struct ggml_backend_sycl_buffer_context {
         }
 
     ~ggml_backend_sycl_buffer_context() {
+        clear_f16_weights();
         if (dev_ptr != nullptr) {
             ggml_sycl_set_device(device);
             SYCL_CHECK(CHECK_TRY_ERROR(ggml_sycl_free_device(dev_ptr, *stream)));
@@ -584,6 +608,7 @@ static void ggml_backend_sycl_buffer_set_tensor(ggml_backend_buffer_t buffer,
     GGML_SYCL_DEBUG("%s", debug_get_tensor_str(": tensor", tensor).c_str());
     GGML_SYCL_DEBUG(" size=%zu offset=%zu\n", size, offset);
     ggml_backend_sycl_buffer_context * ctx = ( ggml_backend_sycl_buffer_context *)buffer->context;
+    ctx->clear_f16_weights();
     ggml_sycl_set_device(ctx->device);
     auto stream = &(dpct::dev_mgr::instance().get_device(ctx->device).default_queue());
     SYCL_CHECK(CHECK_TRY_ERROR(dpct::dev_mgr::instance().get_device(ctx->device).queues_wait_and_throw()));
@@ -681,6 +706,7 @@ ggml_backend_sycl_buffer_cpy_tensor(ggml_backend_buffer_t buffer,
     if (is_cpy_supported) {
         ggml_backend_sycl_buffer_context * src_ctx = (ggml_backend_sycl_buffer_context *)src->buffer->context;
         ggml_backend_sycl_buffer_context * dst_ctx = (ggml_backend_sycl_buffer_context *)dst->buffer->context;
+        dst_ctx->clear_f16_weights();
 
         ggml_sycl_set_device(src_ctx->device);
         /*
@@ -737,6 +763,7 @@ static void ggml_backend_sycl_buffer_clear(ggml_backend_buffer_t buffer,
                                            uint8_t value) try {
     GGML_SYCL_DEBUG("[SYCL] call %s: size=%zu\n", __func__, buffer->size);
     ggml_backend_sycl_buffer_context * ctx = (ggml_backend_sycl_buffer_context *) buffer->context;
+    ctx->clear_f16_weights();
 
     ggml_sycl_set_device(ctx->device);
     queue_ptr stream = ctx->stream;
@@ -765,6 +792,7 @@ static void ggml_backend_sycl_buffer_memset_tensor(ggml_backend_buffer_t buffer,
     GGML_SYCL_DEBUG("%s", debug_get_tensor_str(": tensor", tensor).c_str());
     GGML_SYCL_DEBUG(" size=%zu offset=%zu value=%u\n", size, offset, value);
     ggml_backend_sycl_buffer_context * ctx = (ggml_backend_sycl_buffer_context *) buffer->context;
+    ctx->clear_f16_weights();
     SYCL_CHECK(ggml_sycl_set_device(ctx->device));
     auto stream = &(dpct::dev_mgr::instance().get_device(ctx->device).default_queue());
     if (size == 0) {
@@ -787,6 +815,7 @@ static void ggml_backend_sycl_buffer_reset(ggml_backend_buffer_t buffer) {
     ggml_backend_sycl_buffer_context * ctx = (ggml_backend_sycl_buffer_context *) buffer->context;
 
     if (ctx != nullptr) {
+        ctx->clear_f16_weights();
         for (ggml_tensor_extra_gpu * extra : ctx->tensor_extras) {
             release_extra_gpu(extra);
         }
@@ -2337,6 +2366,46 @@ catch (sycl::exception const &exc) {
   std::exit(1);
 }
 
+// Returns the F16 expansion of a quantized weight, converting it on first use. Returns nullptr
+// when the conversion cannot be kept, in which case the caller converts into pool memory.
+static const sycl::half * ggml_sycl_cached_f16_weight(const ggml_tensor * src0, const char * src0_dd_i, const size_t ne,
+                                                      const to_fp16_sycl_t to_fp16_sycl, const queue_ptr & stream) {
+    if (!g_ggml_sycl_weight_f16_cache || src0->buffer == nullptr || !ggml_backend_buffer_is_sycl(src0->buffer)) {
+        return nullptr;
+    }
+    auto * buffer_ctx = static_cast<ggml_backend_sycl_buffer_context *>(src0->buffer->context);
+    const auto * extra = static_cast<const ggml_tensor_extra_gpu *>(src0->extra);
+    const auto key = std::make_tuple(static_cast<const void *>(src0_dd_i), ne, static_cast<int>(src0->type),
+                                     extra != nullptr && extra->optimized_feature.reorder);
+    const auto it = buffer_ctx->f16_weights.find(key);
+    if (it != buffer_ctx->f16_weights.end()) {
+        return it->second;
+    }
+#ifdef GGML_SYCL_GRAPH
+    // A conversion recorded into a graph would run again on every replay.
+    if (stream->ext_oneapi_get_state() == sycl_ex::queue_state::recording) {
+        return nullptr;
+    }
+#endif
+    // An expansion is twice the size of the weight it comes from, so this is only done where
+    // the memory is plentiful: it must not be what runs a smaller GPU out of memory.
+    const size_t bytes = ne * sizeof(sycl::half);
+    const size_t device_memory =
+        dpct::dev_mgr::instance().get_device(buffer_ctx->device).get_info<sycl::info::device::global_mem_size>();
+    const size_t min_device_memory = 20ull * 1024ull * 1024ull * 1024ull;
+    if (device_memory < min_device_memory || g_ggml_sycl_f16_weight_bytes[buffer_ctx->device] + bytes > device_memory / 3) {
+        return nullptr;
+    }
+    auto * converted = static_cast<sycl::half *>(ggml_sycl_malloc_device(bytes, *stream));
+    if (converted == nullptr) {
+        return nullptr;
+    }
+    to_fp16_sycl(src0_dd_i, converted, ne, stream);
+    buffer_ctx->f16_weights.emplace(key, converted);
+    g_ggml_sycl_f16_weight_bytes[buffer_ctx->device] += bytes;
+    return converted;
+}
+
 inline void ggml_sycl_op_mul_mat_sycl(
     ggml_backend_sycl_context & ctx,
     const ggml_tensor *src0, const ggml_tensor *src1, ggml_tensor *dst,
@@ -2397,18 +2466,23 @@ inline void ggml_sycl_op_mul_mat_sycl(
     if ((src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) && use_fp16 && ggml_is_contiguous(src0) &&
         row_diff == src0->ne[1] && dst->op_params[0] == GGML_PREC_DEFAULT) {
         ggml_sycl_pool_alloc<sycl::half> src0_as_f16(ctx.pool());
+        const sycl::half * src0_converted = nullptr;
         if (src0->type != GGML_TYPE_F16) {
             scope_op_debug_print scope_dbg_print(__func__, "/to_fp16_sycl", dst, /*num_src=*/2,
                                                  " : converting src0 to fp16");
             const to_fp16_sycl_t to_fp16_sycl = ggml_get_to_fp16_sycl(src0->type, dst);
             GGML_ASSERT(to_fp16_sycl != nullptr);
             size_t ne = row_diff*ne00;
-            src0_as_f16.alloc(ne);
-            to_fp16_sycl(src0_dd_i, src0_as_f16.get(), ne, stream);
+            src0_converted = ggml_sycl_cached_f16_weight(src0, src0_dd_i, ne, to_fp16_sycl, stream);
+            if (src0_converted == nullptr) {
+                src0_as_f16.alloc(ne);
+                to_fp16_sycl(src0_dd_i, src0_as_f16.get(), ne, stream);
+                src0_converted = src0_as_f16.get();
+            }
         }
         const sycl::half *src0_ptr = src0->type == GGML_TYPE_F16
                                          ? (const sycl::half *)src0_dd_i
-                                         : src0_as_f16.get();
+                                         : src0_converted;
 
         ggml_sycl_pool_alloc<sycl::half> src1_as_f16(ctx.pool());
         if (src1->type != GGML_TYPE_F16) {
