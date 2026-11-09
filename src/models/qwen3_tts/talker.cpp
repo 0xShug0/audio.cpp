@@ -235,7 +235,8 @@ modules::CausalDecoderConfig make_qwen3_decoder_config(
     int64_t logits_size,
     Qwen3TTSPerfMode perf_mode,
     bool packed_projections = false,
-    bool optimized_kv_cache_write = false) {
+    bool optimized_kv_cache_write = false,
+    bool bf16_activations = false) {
     modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.num_attention_heads;
@@ -247,6 +248,19 @@ modules::CausalDecoderConfig make_qwen3_decoder_config(
     out.stack.rope_theta = config.rope_theta;
     out.stack.attention_precision = GGML_PREC_F32;
     out.stack.use_qk_norm = true;
+    if (bf16_activations) {
+        auto & cast = out.stack.activation_cast;
+        cast.enabled = true;
+        cast.fused_round = true;
+        cast.after_input_norm = cast.after_qkv_projection = cast.after_qk_norm = true;
+        cast.after_rope = cast.after_static_cache_update = cast.after_attention = true;
+        cast.after_attention_output = cast.after_residual = cast.after_ffn_norm = true;
+        cast.after_mlp_projection = cast.after_mlp_silu = cast.after_mlp_mul = cast.after_output = true;
+        cast.norm_intermediate_type = GGML_TYPE_BF16;
+        cast.rope_intermediate_type = GGML_TYPE_BF16;
+        out.lm_head_input_type = GGML_TYPE_F32;
+    }
+
     out.stack.qkv_layout = packed_projections
         ? modules::DecoderQKVLayout::PackedQKV
         : modules::DecoderQKVLayout::Separate;
@@ -343,9 +357,10 @@ class Qwen3TalkerTextProjectionGraph {
 public:
     Qwen3TalkerTextProjectionGraph(ggml_backend_t backend, int threads,
                                   const Qwen3TalkerWeights & weights,
-                                  const Qwen3TTSTalkerConfig & config)
+                                  const Qwen3TTSTalkerConfig & config, bool bf16_activations)
         : backend_(backend), threads_(threads), weights_(weights), config_(config),
-          constants_(backend, threads, "qwen3_tts.text_projection", 4ull * 1024 * 1024) {}
+          constants_(backend, threads, "qwen3_tts.text_projection", 4ull * 1024 * 1024),
+          bf16_activations_(bf16_activations) {}
 
     std::vector<float> run(const std::vector<float> & input, int64_t rows) {
         if (input.size() != static_cast<size_t>(rows * config_.text_hidden_size) || rows <= 0) {
@@ -359,13 +374,17 @@ public:
             auto x = core::make_tensor(ctx, GGML_TYPE_F32,
                 core::TensorShape::from_dims({capacity_, config_.text_hidden_size}));
             input_ = x.tensor;
+            if (bf16_activations_) x = modules::Bf16RoundModule().build(ctx, x);
             x = modules::LinearModule({config_.text_hidden_size, config_.text_hidden_size, true}).build(
                 ctx, x, binding::linear_data(constants_, weights_.text_projection_fc1.weight,
                                             weights_.text_projection_fc1.bias));
+            if (bf16_activations_) x = modules::Bf16RoundModule().build(ctx, x);
             x = modules::SiluModule().build(ctx, x);
+            if (bf16_activations_) x = modules::Bf16RoundModule().build(ctx, x);
             x = modules::LinearModule({config_.text_hidden_size, config_.hidden_size, true}).build(
                 ctx, x, binding::linear_data(constants_, weights_.text_projection_fc2.weight,
                                             weights_.text_projection_fc2.bias));
+            if (bf16_activations_) x = modules::Bf16RoundModule().build(ctx, x);
             output_ = x.tensor;
             ggml_set_input(input_);
             ggml_set_output(output_);
@@ -410,6 +429,7 @@ private:
     ggml_cgraph * graph_ = nullptr;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * output_ = nullptr;
+    bool bf16_activations_ = false;
     static constexpr int64_t capacity_ = 32;
 };
 
@@ -967,7 +987,7 @@ public:
         int64_t kv_cache_alignment,
         bool packed_projections,
         ggml_type kv_cache_type,
-        bool optimized_kv_cache_write)
+        bool optimized_kv_cache_write, bool bf16_activations)
         : assets_(std::move(assets)),
           threads_(backend_config.threads),
           graph_arena_bytes_(graph_arena_bytes),
@@ -975,7 +995,8 @@ public:
           packed_projections_(packed_projections),
           kv_cache_alignment_(kv_cache_alignment),
           kv_cache_type_(kv_cache_type),
-          optimized_kv_cache_write_(optimized_kv_cache_write) {
+          optimized_kv_cache_write_(optimized_kv_cache_write),
+          bf16_activations_(bf16_activations) {
         if (assets_ == nullptr) {
             throw std::runtime_error("Qwen3 talker weights runtime requires assets");
         }
@@ -1069,6 +1090,8 @@ public:
         return kv_cache_type_;
     }
 
+    bool bf16_activations() const noexcept { return bf16_activations_; }
+
     bool optimized_kv_cache_write() const noexcept {
         return optimized_kv_cache_write_;
     }
@@ -1083,6 +1106,7 @@ private:
     int64_t kv_cache_alignment_ = 1;
     ggml_type kv_cache_type_ = GGML_TYPE_F32;
     bool optimized_kv_cache_write_ = false;
+    bool bf16_activations_ = false;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     engine::sampling::TorchCudaSamplingPolicy sampling_policy_;
@@ -1111,6 +1135,7 @@ public:
         ctx.elide_identity_reshapes = true;
         auto x = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, prompt_capacity_, config.hidden_size}));
         input_ = x.tensor;
+        if (weights_->bf16_activations()) x = modules::Bf16RoundModule().build(ctx, x);
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_capacity_);
         auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_capacity_}), GGML_TYPE_I32);
         auto & constants = weights_->talker_constants();
@@ -1123,7 +1148,7 @@ public:
                 core::TensorShape::from_dims({1, 1, prompt_capacity_, prompt_capacity_}),
                 GGML_TYPE_F16);
         }
-        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode(), weights_->packed_projections()))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode(), weights_->packed_projections(), false, weights_->bf16_activations()))
                                .build(
                                    ctx,
                                    x,
@@ -1140,8 +1165,10 @@ public:
             values_.push_back(weights_->kv_cache_type() == GGML_TYPE_F32 ? layer.value->tensor
                 : ggml_cast(ctx.ggml, layer.value->tensor, weights_->kv_cache_type()));
         }
-        hidden_output_ = decoder_out.hidden.tensor;
-        logits_output_ = decoder_out.logits.tensor;
+        hidden_output_ = (weights_->bf16_activations()
+            ? modules::Bf16RoundModule().build(ctx, decoder_out.hidden) : decoder_out.hidden).tensor;
+        logits_output_ = (weights_->bf16_activations()
+            ? modules::Bf16RoundModule().build(ctx, decoder_out.logits) : decoder_out.logits).tensor;
         ggml_set_input(input_);
         ggml_set_input(positions_);
         ggml_set_output(positions_);
@@ -1154,6 +1181,7 @@ public:
         ggml_set_output(logits_output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, logits_output_);
+        if (weights_->bf16_activations()) ggml_build_forward_expand(graph_, hidden_output_);
         // Retain every layer's K/V for the cached-step graph's prefix import.
         for (size_t layer = 0; layer < keys_.size(); ++layer) {
             for (auto * output : {keys_[layer], values_[layer]}) {
@@ -1269,6 +1297,7 @@ public:
         ctx.elide_identity_reshapes = true;
         auto x = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.hidden_size}));
         input_ = x.tensor;
+        if (weights_->bf16_activations()) x = modules::Bf16RoundModule().build(ctx, x);
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
         auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
         const auto index_type = weights_->optimized_kv_cache_write() ? GGML_TYPE_I64 : GGML_TYPE_I32;
@@ -1284,7 +1313,7 @@ public:
         constants.begin_graph();
         auto decoder_config = make_qwen3_decoder_config(
             config, config.vocab_size, weights_->perf_mode(), weights_->packed_projections(),
-            weights_->optimized_kv_cache_write());
+            weights_->optimized_kv_cache_write(), weights_->bf16_activations());
         decoder_config.static_cache_type = weights_->kv_cache_type();
         auto decoder_out = modules::CausalDecoderModule(decoder_config)
                                .build_static_cache_tail(
@@ -1297,8 +1326,10 @@ public:
                                    attention_mask_value,
                                    cache_slot_value);
         step_cache_ = std::move(decoder_out.cache);
-        hidden_output_ = decoder_out.hidden.tensor;
-        logits_output_ = decoder_out.logits.tensor;
+        hidden_output_ = (weights_->bf16_activations()
+            ? modules::Bf16RoundModule().build(ctx, decoder_out.hidden) : decoder_out.hidden).tensor;
+        logits_output_ = (weights_->bf16_activations()
+            ? modules::Bf16RoundModule().build(ctx, decoder_out.logits) : decoder_out.logits).tensor;
         for (auto * input : {input_, positions_, cache_slot_, attention_mask_}) ggml_set_input(input);
         ggml_set_output(hidden_output_);
         if (hidden_output_->view_src != nullptr) ggml_set_output(hidden_output_->view_src);
@@ -1311,6 +1342,7 @@ public:
         }
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);
+        if (weights_->bf16_activations()) ggml_build_forward_expand(graph_, hidden_output_);
         constants.finish_graph();
         constants.ensure_uploaded();
         graph_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->backend())));
@@ -1689,6 +1721,7 @@ private:
         auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 2, root_config.talker.hidden_size}));
         prefill_input_ = input.tensor;
         auto x = project_code_predictor_input(ctx, input, tensor_weights, root_config, constants);
+        if (weights_->bf16_activations()) x = modules::Bf16RoundModule().build(ctx, x);
         prefill_positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 2);
         auto positions_value = core::wrap_tensor(prefill_positions_, core::TensorShape::from_dims({2}), GGML_TYPE_I32);
         const int64_t head_dim = attention_head_dim(config);
@@ -1701,7 +1734,7 @@ private:
                 core::TensorShape::from_dims({1, 1, 2, 2}),
                 GGML_TYPE_F16);
         }
-        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode(), weights_->packed_projections()))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen3_decoder_config(config, config.vocab_size, weights_->perf_mode(), weights_->packed_projections(), false, weights_->bf16_activations()))
                                .build(
                                    ctx,
                                    x,
@@ -1723,7 +1756,8 @@ private:
             ggml_build_forward_expand(prefill_graph_, ggml_cpy(ctx.ggml, layer.key->tensor, key_dest.tensor));
             ggml_build_forward_expand(prefill_graph_, ggml_cpy(ctx.ggml, layer.value->tensor, value_dest.tensor));
         }
-        prefill_logits_ = decoder_out.logits.tensor;
+        prefill_logits_ = (weights_->bf16_activations()
+            ? modules::Bf16RoundModule().build(ctx, decoder_out.logits) : decoder_out.logits).tensor;
         ggml_set_output(prefill_logits_);
         ggml_build_forward_expand(prefill_graph_, prefill_logits_);
     }
@@ -1739,6 +1773,7 @@ private:
         auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, root_config.talker.hidden_size}));
         step.input = input.tensor;
         auto x = project_code_predictor_input(ctx, input, tensor_weights, root_config, constants);
+        if (weights_->bf16_activations()) x = modules::Bf16RoundModule().build(ctx, x);
         step.position = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
         auto position_value = core::wrap_tensor(step.position, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
         const auto index_type = weights_->optimized_kv_cache_write() ? GGML_TYPE_I64 : GGML_TYPE_I32;
@@ -1753,7 +1788,7 @@ private:
         const auto & step_head = tensor_weights.code_predictor.lm_heads.at(static_cast<size_t>(group));
         const auto decoder_config = make_qwen3_decoder_config(
             config, config.vocab_size, weights_->perf_mode(), weights_->packed_projections(),
-            weights_->optimized_kv_cache_write());
+            weights_->optimized_kv_cache_write(), weights_->bf16_activations());
         const modules::DecoderLayerModule layer_module(
             modules::decoder_layer_config_from_stack(decoder_config.stack));
         for (size_t layer_index = 0; layer_index < tensor_weights.code_predictor.layers.size(); ++layer_index) {
@@ -1769,12 +1804,16 @@ private:
                 attention_mask_value);
             x = layer_out.output;
         }
-        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
+        x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false,
+                                   false, false, weights_->bf16_activations()
+                                       ? std::optional<ggml_type>{GGML_TYPE_BF16} : std::nullopt})
                 .build(ctx, x, binding::norm_data(constants, tensor_weights.code_predictor.norm));
+        if (weights_->bf16_activations()) x = modules::Bf16RoundModule().build(ctx, x);
         auto logits = modules::LinearModule(
                           binding::linear_config(config.hidden_size, config.vocab_size, false))
                           .build(ctx, x, binding::linear_data(constants, step_head));
-        step.logits = logits.tensor;
+        step.logits = (weights_->bf16_activations()
+            ? modules::Bf16RoundModule().build(ctx, logits) : logits).tensor;
         ggml_set_output(step.logits);
         ggml_build_forward_expand(step.graph, step.logits);
         return step;
@@ -1887,7 +1926,8 @@ public:
             !talker_prefill_equal(*cached_prompt_prefill_, request)) {
             if (!text_projection_) {
                 text_projection_ = std::make_unique<Qwen3TalkerTextProjectionGraph>(
-                    weights_->backend(), weights_->threads(), weights_->weights(), weights_->assets().config.talker);
+                    weights_->backend(), weights_->threads(), weights_->weights(), weights_->assets().config.talker,
+                    weights_->bf16_activations());
             }
             cached_prompt_state_ = build_prompt_state(
                 request, weights_->assets().config, weights_->weights(), text_projection_.get());
@@ -2131,7 +2171,7 @@ std::shared_ptr<const Qwen3TalkerWeightsRuntime> Qwen3Talker::create_weights_run
     int64_t kv_cache_alignment,
     bool packed_projections,
     ggml_type kv_cache_type,
-    bool optimized_kv_cache_write) const {
+    bool optimized_kv_cache_write, bool bf16_activations) const {
     return std::make_shared<Qwen3TalkerWeightsRuntime>(
         std::move(assets),
         backend_config,
@@ -2143,7 +2183,7 @@ std::shared_ptr<const Qwen3TalkerWeightsRuntime> Qwen3Talker::create_weights_run
         kv_cache_alignment,
         packed_projections,
         kv_cache_type,
-        optimized_kv_cache_write);
+        optimized_kv_cache_write, bf16_activations);
 }
 
 std::shared_ptr<Qwen3TalkerStepRuntime> Qwen3Talker::create_step_runtime(

@@ -230,6 +230,14 @@
         "default": "mixed"
       },
       {
+        "name": "activation_type",
+        "type": "enum",
+        "description": "Talker and code-predictor activation rounding: f32 preserves the default path; bf16 rounds at reference BF16 operation boundaries, including text projection. Independent of weight storage and perf_mode; changes generated audio and does not guarantee identical PyTorch tokens.",
+        "values": ["f32", "bf16"],
+        "required": false,
+        "default": "f32"
+      },
+      {
         "name": "packed_projections",
         "type": "bool",
         "description": "Pack QKV and gate/up projections in the talker and code predictor without changing weight dtype; default false, true with cuda_perf. Explicit values override the preset.",

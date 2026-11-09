@@ -356,6 +356,12 @@ Qwen3TTSSession::Qwen3TTSSession(
       voice_prompt_context_(voice_prompt_backend_config(options)),
       voice_prompt_cache_(voice_prompt_cache_slots_from_options(options)) {
     const auto perf = perf_settings_from_options(options);
+    const auto activation_type = runtime::find_option(options.options,
+        {"qwen3_tts.activation_type"}).value_or("f32");
+    if (activation_type != "f32" && activation_type != "bf16")
+        throw std::runtime_error("qwen3_tts.activation_type must be f32 or bf16");
+    debug::trace_log_scalar("qwen3_tts.activation_type", activation_type);
+
     conv_weight_storage_type_ = perf.conv_weight_type;
     const bool flash_attention = perf.attention && core::resolve_flash_attention(
         execution_context().backend(), assets_->config.talker.head_dim, *perf.attention);
@@ -438,6 +444,7 @@ Qwen3TTSSession::Qwen3TTSSession(
             key != "qwen3_tts.exec_plan" &&
             key != "qwen3_tts.perf_mode" &&
             key != "qwen3_tts.attention" &&
+            key != "qwen3_tts.activation_type" &&
             key != "qwen3_tts.packed_projections" &&
             key != "qwen3_tts.kv_cache_write" &&
             key != "qwen3_tts.talker_kv_cache_alignment" &&
@@ -461,7 +468,7 @@ Qwen3TTSSession::Qwen3TTSSession(
         perf.kv_cache_alignment,
         perf.packed_projections,
         perf.kv_cache_type,
-        perf.optimized_kv_cache_write);
+        perf.optimized_kv_cache_write, activation_type == "bf16");
     talker_step_ = talker_.create_step_runtime(
         talker_weights_,
         assets_->config.talker.max_position_embeddings,
