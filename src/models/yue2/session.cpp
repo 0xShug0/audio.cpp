@@ -54,6 +54,10 @@ struct PerfSettings {
     int64_t kv_cache_alignment = 1;
     bool mem_saver = true;
     int64_t vae_tile_frames = 0;
+    int64_t nar_window_frames = 0;
+    int64_t nar_overlap_frames = 0;
+    bool nar_prefix_cache = false;
+    bool compact_kv = false;
 };
 
 struct PerfPreset {
@@ -61,13 +65,19 @@ struct PerfPreset {
     PerfSettings defaults;
 };
 
-constexpr std::array<PerfPreset, 2> kPerfPresets{{
+constexpr std::array<PerfPreset, 3> kPerfPresets{{
     {"off", {}},
     {"cuda_perf", {true, 256, false, 512}},
+    {"sycl_perf", {true, 256, false, 0, 1024, 64, true, true}},
 }};
 
-PerfSettings perf_settings_from_options(const runtime::SessionOptions & options, int64_t model_vae_tile_frames) {
-    const auto name = runtime::find_option(options.options, {"yue2.perf_mode"}).value_or("off");
+PerfSettings perf_settings_from_options(
+    const runtime::SessionOptions & options,
+    int64_t model_vae_tile_frames,
+    core::BackendType backend) {
+    // SYCL has no earlier generation path to preserve, so it starts from its tuned preset.
+    const auto name = runtime::find_option(options.options, {"yue2.perf_mode"})
+        .value_or(backend == core::BackendType::Sycl ? "sycl_perf" : "off");
     const auto preset = std::find_if(kPerfPresets.begin(), kPerfPresets.end(),
         [&](const auto & entry) { return entry.name == name; });
     if (preset == kPerfPresets.end()) {
@@ -87,10 +97,28 @@ PerfSettings perf_settings_from_options(const runtime::SessionOptions & options,
     }
     settings.vae_tile_frames = runtime::parse_positive_i64_option(
         options.options, {"yue2.vae_tile_frames"}, settings.vae_tile_frames);
+    settings.nar_window_frames = runtime::parse_i64_option(options.options, {"yue2.nar_window_frames"})
+        .value_or(settings.nar_window_frames);
+    settings.nar_overlap_frames = runtime::parse_i64_option(options.options, {"yue2.nar_overlap_frames"})
+        .value_or(settings.nar_overlap_frames);
+    if (settings.nar_window_frames < 0 || settings.nar_overlap_frames < 0 ||
+        (settings.nar_window_frames > 0 && settings.nar_overlap_frames >= settings.nar_window_frames)) {
+        throw std::runtime_error("yue2.nar_overlap_frames must be nonnegative and smaller than yue2.nar_window_frames");
+    }
+    if (const auto value = runtime::find_option(options.options, {"yue2.nar_prefix_cache"})) {
+        settings.nar_prefix_cache = runtime::parse_bool_option(*value, "yue2.nar_prefix_cache");
+    }
+    if (const auto value = runtime::find_option(options.options, {"yue2.compact_kv"})) {
+        settings.compact_kv = runtime::parse_bool_option(*value, "yue2.compact_kv");
+    }
     debug::trace_log_scalar("yue2.perf_mode", name);
     debug::trace_log_scalar("yue2.packed_projections", settings.packed_projections);
     debug::trace_log_scalar("yue2.kv_cache_alignment", settings.kv_cache_alignment);
     debug::trace_log_scalar("yue2.mem_saver", settings.mem_saver);
+    debug::trace_log_scalar("yue2.nar_window_frames", settings.nar_window_frames);
+    debug::trace_log_scalar("yue2.nar_overlap_frames", settings.nar_overlap_frames);
+    debug::trace_log_scalar("yue2.nar_prefix_cache", settings.nar_prefix_cache);
+    debug::trace_log_scalar("yue2.compact_kv", settings.compact_kv);
     debug::trace_log_scalar("yue2.vae_tile_frames",
         settings.vae_tile_frames > 0 ? settings.vae_tile_frames : model_vae_tile_frames);
     return settings;
@@ -269,11 +297,15 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"yue2.vae_graph_arena_mb", "int", "VAE decode graph arena size in MiB.", false, "32", "1"},
         {"yue2.attention", "auto|flash|eager", "NAR acoustic-flow attention lowering; auto uses flash except on CUDA sm70 (no kernel) and Intel Vulkan (eager measured faster).", false, "auto"},
         {"yue2.attention_tile_rows", "int", "Query rows per tile in eager NAR attention; nonpositive values choose automatic tiling to keep each score matrix under 3 GiB.", false, "0", std::nullopt},
-        {"yue2.perf_mode", "off|cuda_perf", "Performance preset; cuda_perf packs AR projections, aligns KV capacity to 256 tokens, retains stages and caps VAE tiles at 512 frames. Explicit controls override the preset.", false, "off"},
+        {"yue2.perf_mode", "off|cuda_perf|sycl_perf", "Performance preset; cuda_perf packs AR projections, aligns KV capacity to 256 tokens, retains stages and caps VAE tiles at 512 frames. sycl_perf does the same without the VAE cap and also windows NAR, caches the NAR prefix and keeps the AR KV compact. Explicit controls override the preset. Default: sycl_perf on SYCL, otherwise off."},
         {"yue2.packed_projections", "bool", "Pack AR QKV and gate/up projections without changing weight dtype. Default false, true with cuda_perf. Explicit values override the preset."},
         {"yue2.kv_cache_alignment", "int", "AR KV capacity alignment in tokens; values above 1 also use cached CUDA CFG attention windows of this size. Default 1, or 256 with cuda_perf; may use more memory and change numerics. Explicit values override the preset.", false, std::nullopt, "1"},
         {"yue2.mem_saver", "bool", "Release AR/NAR runtimes and VAE graphs after generation. Default true, false with cuda_perf. Disabling retains stages and can substantially increase peak VRAM."},
         {"yue2.vae_tile_frames", "int", "Latent core frames per VAE tile; defaults to model configuration, capped at 512 with cuda_perf. Explicit values override the cap. The halo is unchanged.", false, std::nullopt, "1"},
+        {"yue2.nar_window_frames", "int", "Longest NAR chunk in frames; attention cost grows with the square of the chunk length. Zero uses the largest chunk the context allows. Default 0, or 1024 with sycl_perf.", false, std::nullopt, "0"},
+        {"yue2.nar_overlap_frames", "int", "Frames consecutive NAR windows share and crossfade in latent space. Must be below yue2.nar_window_frames. Default 0, or 64 with sycl_perf.", false, std::nullopt, "0"},
+        {"yue2.nar_prefix_cache", "bool", "Compute the AR state of the prompt once and reuse it for every NAR chunk. Default false, true with sycl_perf."},
+        {"yue2.compact_kv", "bool", "Size the AR KV for the expected stage length (1024 ABC tokens, 1792 or 4096 semantic tokens) and refill as needed, instead of 5120 tokens. Default false, true with sycl_perf."},
         {"yue2.weight_type", "native|f32|f16|bf16|q8_0|q4_0|q4_k", "Shared weight storage type. Default: native.", false, "native"},
     };
     return out;
@@ -291,7 +323,8 @@ Yue2Session::Yue2Session(
     if (task_.task != runtime::VoiceTaskKind::AudioGeneration || task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Yue2 supports only offline gen/music");
     }
-    const auto perf = perf_settings_from_options(options, assets_->config.vae.decode_core_frames);
+    const auto perf = perf_settings_from_options(
+        options, assets_->config.vae.decode_core_frames, execution_context().backend_type());
     pipeline_ = std::make_unique<Yue2PipelineRuntime>(
         execution_context(),
         assets_,
@@ -308,7 +341,11 @@ Yue2Session::Yue2Session(
         perf.mem_saver,
         perf.packed_projections,
         perf.kv_cache_alignment,
-        perf.vae_tile_frames);
+        perf.vae_tile_frames,
+        perf.nar_window_frames,
+        perf.nar_overlap_frames,
+        perf.nar_prefix_cache,
+        perf.compact_kv);
 }
 
 Yue2Session::~Yue2Session() = default;

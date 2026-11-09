@@ -42,7 +42,11 @@ public:
         bool mem_saver = true,
         bool packed_projections = false,
         int64_t kv_cache_alignment = 1,
-        int64_t vae_tile_frames = 0);
+        int64_t vae_tile_frames = 0,
+        int64_t nar_window_frames = 0,
+        int64_t nar_overlap_frames = 0,
+        bool nar_prefix_cache = false,
+        bool compact_kv = false);
     ~Yue2PipelineRuntime();
 
     Yue2Plan plan(const Yue2Request & request);

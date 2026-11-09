@@ -77,20 +77,24 @@ The component paths are relative to `--model`; absolute paths are rejected.
 
 ## Performance Controls
 
-Defaults preserve the existing generation path. To enable the performance preset:
+Defaults preserve the existing generation path, except on SYCL, which starts from `sycl_perf`. To enable a performance preset:
 
 ```bash
 --session-option yue2.perf_mode=cuda_perf
 ```
 
-| Session option | Default (`off`) | `cuda_perf` |
-|---|---|---|
-| `yue2.packed_projections` | `false` | `true` |
-| `yue2.kv_cache_alignment` | `1` | `256` |
-| `yue2.mem_saver` | `true` | `false` |
-| `yue2.vae_weight_type` | Shared `weight_type`, otherwise `native` | Unchanged |
-| `yue2.vae_tile_frames` | Model configuration (normally `1024`) | Model configuration capped at `512` |
-| `yue2.attention` | `auto` | `auto` (unchanged) |
+| Session option | Default (`off`) | `cuda_perf` | `sycl_perf` |
+|---|---|---|---|
+| `yue2.packed_projections` | `false` | `true` | `true` |
+| `yue2.kv_cache_alignment` | `1` | `256` | `256` |
+| `yue2.mem_saver` | `true` | `false` | `false` |
+| `yue2.vae_weight_type` | Shared `weight_type`, otherwise `native` | Unchanged | Unchanged |
+| `yue2.vae_tile_frames` | Model configuration (normally `1024`) | Model configuration capped at `512` | Model configuration |
+| `yue2.attention` | `auto` | `auto` (unchanged) | `auto` (unchanged) |
+| `yue2.nar_window_frames` | `0` | `0` | `1024` |
+| `yue2.nar_overlap_frames` | `0` | `0` | `64` |
+| `yue2.nar_prefix_cache` | `false` | `false` | `true` |
+| `yue2.compact_kv` | `false` | `false` | `true` |
 
 Packing combines AR QKV and gate/up projections without changing their weight
 dtype. KV alignment pads AR cache capacity without changing the refill boundary.
@@ -110,7 +114,21 @@ preset settings but release stages between requests:
 
 `vae_tile_frames` is the latent core length; the model's halo is unchanged.
 `attention` controls NAR attention only; AR already uses flash attention.
-The `cuda_perf` preset is tuned for CUDA but is not backend-gated.
+The `cuda_perf` preset is tuned for CUDA but is not backend-gated, and neither are the `sycl_perf` controls.
+
+NAR attention cost grows with the square of the chunk length. `nar_window_frames`
+caps the chunk length, so a song is rendered as several short chunks.
+Consecutive chunks solve the same slice of the global noise over
+`nar_overlap_frames` frames and are crossfaded linearly in latent space. Windowing
+changes the output, because each chunk no longer attends to the frames of the others.
+`nar_prefix_cache` computes the AR state of the prompt once instead of once per
+chunk and reuses it unrounded, so the state of each chunk is computed from the same
+values as without the cache. `compact_kv` starts with a smaller AR KV capacity
+(1024 ABC tokens; 1792 semantic tokens, or 4096 once the prompt reaches 3000
+tokens) because decode attention scans the whole capacity. A song that outgrows it
+refills, so the capacity and the refill points change numerics.
+
+On SYCL (`--backend sycl`, see [docs/build/sycl.md](../build/sycl.md)), AR KV storage is F16 as on CUDA, HIP and Vulkan, and `perf_mode` defaults to `sycl_perf`; pass `yue2.perf_mode=off` to run without it. The cached CFG attention windows that `kv_cache_alignment` enables remain CUDA-only.
 
 ## AR and NAR LoRA
 
@@ -411,11 +429,15 @@ checkpoint does not override them.
 | `yue2.vae_graph_arena_mb` | MiB integer >= 1 | `32` | VAE decode graph arena size. |
 | `yue2.attention` | `auto`, `flash`, `eager` | `auto` | NAR acoustic-flow attention kernel. `auto` uses flash, except on Volta/Turing CUDA GPUs (missing MMA kernels) and Intel Vulkan GPUs (eager measured 2.2x faster) where it uses eager; explicit `flash` / `eager` override the probe. The AR decode path always uses flash. |
 | `yue2.attention_tile_rows` | integer | `0` | Query rows per tile in eager NAR attention. Nonpositive values select automatic tiling to keep each tile's score matrix under 3 GiB. A song whose scores already fit runs as one tile. Positive values set the query-row budget per tile. Ignored by the flash kernel. |
-| `yue2.perf_mode` | `off`, `cuda_perf` | `off` | Performance preset; see Performance Controls. Explicit controls override preset values. |
-| `yue2.packed_projections` | boolean | `false`; `true` with `cuda_perf` | Pack AR QKV and gate/up projections without changing weight dtype. |
-| `yue2.kv_cache_alignment` | integer >= 1 | `1`; `256` with `cuda_perf` | Align AR KV capacity; values above 1 also use cached CUDA CFG attention windows of this size. May use more memory and change numerics. |
-| `yue2.mem_saver` | boolean | `true`; `false` with `cuda_perf` | Release AR/NAR runtimes and VAE graphs after generation. |
+| `yue2.perf_mode` | `off`, `cuda_perf`, `sycl_perf` | `sycl_perf` on SYCL, otherwise `off` | Performance preset; see Performance Controls. Explicit controls override preset values. |
+| `yue2.packed_projections` | boolean | `false`; `true` with `cuda_perf` or `sycl_perf` | Pack AR QKV and gate/up projections without changing weight dtype. |
+| `yue2.kv_cache_alignment` | integer >= 1 | `1`; `256` with `cuda_perf` or `sycl_perf` | Align AR KV capacity; values above 1 also use cached CUDA CFG attention windows of this size. May use more memory and change numerics. |
+| `yue2.mem_saver` | boolean | `true`; `false` with `cuda_perf` or `sycl_perf` | Release AR/NAR runtimes and VAE graphs after generation. |
 | `yue2.vae_tile_frames` | integer >= 1 | Model configuration; capped at `512` with `cuda_perf` | VAE latent core frames per tile, with unchanged halo. Explicit values override the preset cap. |
+| `yue2.nar_window_frames` | integer >= 0 | `0`; `1024` with `sycl_perf` | Longest NAR chunk in frames. `0` uses the largest chunk the context allows. |
+| `yue2.nar_overlap_frames` | integer >= 0 | `0`; `64` with `sycl_perf` | Frames consecutive NAR windows share and crossfade in latent space. Must be below `yue2.nar_window_frames`. |
+| `yue2.nar_prefix_cache` | boolean | `false`; `true` with `sycl_perf` | Compute the AR state of the prompt once and reuse it for every NAR chunk. |
+| `yue2.compact_kv` | boolean | `false`; `true` with `sycl_perf` | Size the AR KV for the expected stage length and refill as needed. |
 
 ## Parity Probes
 

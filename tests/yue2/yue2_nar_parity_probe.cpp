@@ -220,7 +220,7 @@ int main(int argc, char ** argv) {
                   << " ode_steps=" << ode_steps << " context=" << context << " seed=" << seed << "\n";
         const auto latents = nar.synthesize(
             prefix, codec,
-            [&ar](const std::vector<int32_t> & tokens) { return ar.prefill_device_state(tokens); },
+            [&ar](const std::vector<int32_t> & tokens, size_t shared_prefix) { return ar.prefill_device_state(tokens, shared_prefix); },
             noise, static_cast<uint64_t>(seed), ode_steps, context);
         if (latents.size() != latents_ref.size()) {
             throw std::runtime_error("latent count does not match the reference");

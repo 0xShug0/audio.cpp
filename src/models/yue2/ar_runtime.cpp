@@ -185,7 +185,7 @@ engine::modules::CausalDecoderRuntimeConfig make_runtime_config(
     out.decoder.stack.runtime.static_cache.set_rows_mode =
         engine::modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
-        backend_type == core::BackendType::Vulkan) {
+        backend_type == core::BackendType::Vulkan || backend_type == core::BackendType::Sycl) {
         out.decoder.static_cache_type = GGML_TYPE_F16;
     }
     out.decoder.logits_size = logits_size > 0 ? logits_size : config.vocab_size;
@@ -485,11 +485,15 @@ struct Yue2ARRuntime::Impl {
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         bool packed_projections,
-        int64_t kv_cache_alignment)
+        int64_t kv_cache_alignment,
+        bool nar_prefix_cache,
+        bool compact_kv)
         : execution(execution),
           assets(std::move(assets)),
           weight_type(weight_type),
-          decode_cache_alignment(kv_cache_alignment) {
+          decode_cache_alignment(kv_cache_alignment),
+          nar_prefix_cache(nar_prefix_cache),
+          compact_kv(compact_kv) {
         if (!this->assets) {
             throw std::runtime_error("Yue2 AR runtime requires assets");
         }
@@ -528,9 +532,19 @@ struct Yue2ARRuntime::Impl {
     }
 
     struct PrefixStateGraph {
-        PrefixStateGraph(Impl & owner, int64_t steps)
+        // With `past` the graph continues from an already computed prefix and
+        // returns the K/V of the whole sequence. `raw_state` keeps the K/V in
+        // F32 without BF16 rounding, so that the result can be used as a later
+        // graph's `past` and the sequence attends to the same values it would
+        // have seen in one pass.
+        PrefixStateGraph(
+            Impl & owner,
+            int64_t steps,
+            const Yue2ARDevicePrefixState * past = nullptr,
+            bool raw_state = false)
             : owner(&owner),
-              steps(steps) {
+              steps(steps),
+              prefix_steps(past != nullptr ? past->current_end : 0) {
             const auto & config = owner.assets->config.model;
             ggml_init_params params{owner.runtime_config.prefill_graph_arena_bytes, nullptr, true};
             ctx.reset(ggml_init(params));
@@ -547,15 +561,26 @@ struct Yue2ARRuntime::Impl {
             const auto build_start = Clock::now();
             input = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, steps);
             positions = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, steps);
-            attention_mask = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F16, steps, steps, 1, 1);
+            const int64_t kv_steps = prefix_steps + steps;
+            attention_mask = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F16, kv_steps, steps, 1, 1);
             auto ids = core::wrap_tensor(input, core::TensorShape::from_dims({steps}), GGML_TYPE_I32);
             auto pos = core::wrap_tensor(positions, core::TensorShape::from_dims({steps}), GGML_TYPE_I32);
-            auto mask = core::wrap_tensor(attention_mask, core::TensorShape::from_dims({1, 1, steps, steps}), GGML_TYPE_F16);
+            auto mask = core::wrap_tensor(attention_mask, core::TensorShape::from_dims({1, 1, steps, kv_steps}), GGML_TYPE_F16);
             auto x = engine::modules::EmbeddingModule({config.vocab_size, config.hidden_size})
                          .build(build, ids, owner.runtime_weights.token_embedding);
             x = core::reshape_tensor(build, x, core::TensorShape::from_dims({1, steps, config.hidden_size}));
-            auto stack = engine::modules::DecoderStackModule(owner.runtime_config.decoder.stack)
-                             .build(build, x, pos, owner.runtime_weights.stack, std::nullopt, mask);
+            auto stack_config = owner.runtime_config.decoder.stack;
+            std::optional<engine::modules::DecoderStackState> past_stack;
+            if (past != nullptr) {
+                stack_config.runtime.attention.prefix_mode = engine::modules::DecoderPrefixAttentionMode::FlashWithPrefix;
+                stack_config.runtime.attention.prefix_state_returns_full_kv = true;
+                past_stack.emplace();
+                for (size_t layer = 0; layer < past->keys.size(); ++layer) {
+                    past_stack->layers.push_back({past->keys[layer], past->values[layer]});
+                }
+            }
+            auto stack = engine::modules::DecoderStackModule(stack_config)
+                             .build(build, x, pos, owner.runtime_weights.stack, past_stack, mask);
             keys.reserve(stack.state.layers.size());
             values.reserve(stack.state.layers.size());
             key_values.reserve(stack.state.layers.size());
@@ -564,7 +589,7 @@ struct Yue2ARRuntime::Impl {
                 if (!layer.key.has_value() || !layer.value.has_value()) {
                     throw std::runtime_error("Yue2 AR prefix-state graph did not return K/V state");
                 }
-                const bool skip_bf16_round = owner.execution.backend_type() == core::BackendType::Metal;
+                const bool skip_bf16_round = raw_state || owner.execution.backend_type() == core::BackendType::Metal;
                 auto key_value = core::wrap_tensor(
                     skip_bf16_round ? layer.key->tensor : ggml_round_bf16(ctx.get(), layer.key->tensor),
                     layer.key->shape,
@@ -573,16 +598,19 @@ struct Yue2ARRuntime::Impl {
                     skip_bf16_round ? layer.value->tensor : ggml_round_bf16(ctx.get(), layer.value->tensor),
                     layer.value->shape,
                     GGML_TYPE_F32);
-                key_value = core::wrap_tensor(
-                    ggml_cast(ctx.get(), key_value.tensor, GGML_TYPE_F16),
-                    key_value.shape,
-                    GGML_TYPE_F16);
-                value_value = core::wrap_tensor(
-                    ggml_cast(ctx.get(), value_value.tensor, GGML_TYPE_F16),
-                    value_value.shape,
-                    GGML_TYPE_F16);
-                key_values.push_back(core::make_tensor(state_build, GGML_TYPE_F16, layer.key->shape));
-                value_values.push_back(core::make_tensor(state_build, GGML_TYPE_F16, layer.value->shape));
+                const ggml_type state_type = raw_state ? GGML_TYPE_F32 : GGML_TYPE_F16;
+                if (!raw_state) {
+                    key_value = core::wrap_tensor(
+                        ggml_cast(ctx.get(), key_value.tensor, GGML_TYPE_F16),
+                        key_value.shape,
+                        GGML_TYPE_F16);
+                    value_value = core::wrap_tensor(
+                        ggml_cast(ctx.get(), value_value.tensor, GGML_TYPE_F16),
+                        value_value.shape,
+                        GGML_TYPE_F16);
+                }
+                key_values.push_back(core::make_tensor(state_build, state_type, layer.key->shape));
+                value_values.push_back(core::make_tensor(state_build, state_type, layer.value->shape));
                 auto * key = ggml_cpy(ctx.get(), key_value.tensor, key_values.back().tensor);
                 auto * value = ggml_cpy(ctx.get(), value_value.tensor, value_values.back().tensor);
                 ggml_set_output(key);
@@ -607,7 +635,20 @@ struct Yue2ARRuntime::Impl {
                 throw std::runtime_error("failed to allocate Yue2 AR prefix-state graph");
             }
             position_values = engine::modules::decoder_position_ids(steps);
-            mask_values = engine::modules::causal_prefill_mask_values(1, steps);
+            for (auto & position : position_values) {
+                position += static_cast<int32_t>(prefix_steps);
+            }
+            if (past == nullptr) {
+                mask_values = engine::modules::causal_prefill_mask_values(1, steps);
+            } else {
+                // Every query sees the whole prefix and the tail up to itself.
+                mask_values.assign(static_cast<size_t>(steps * kv_steps), ggml_fp32_to_fp16(0.0F));
+                for (int64_t query = 0; query < steps; ++query) {
+                    for (int64_t key = prefix_steps + query + 1; key < kv_steps; ++key) {
+                        mask_values[static_cast<size_t>(query * kv_steps + key)] = ggml_fp32_to_fp16(-INFINITY);
+                    }
+                }
+            }
             ggml_backend_tensor_set(positions, position_values.data(), 0, position_values.size() * sizeof(int32_t));
             ggml_backend_tensor_set(attention_mask, mask_values.data(), 0, mask_values.size() * sizeof(ggml_fp16_t));
             engine::debug::timing_log_scalar("yue2.ar.prefix_state.graph.build_ms", engine::debug::elapsed_ms(build_start));
@@ -624,14 +665,14 @@ struct Yue2ARRuntime::Impl {
             }
         }
 
-        bool matches(int64_t s) const noexcept {
-            return steps == s;
+        bool matches(int64_t s, int64_t prefix = 0) const noexcept {
+            return steps == s && prefix_steps == prefix;
         }
 
         runtime::TransformerKVState run(const std::vector<int32_t> & tokens) {
             compute(tokens);
             runtime::TransformerKVState out;
-            out.current_end = steps;
+            out.current_end = steps + prefix_steps;
             out.layers.resize(keys.size());
             for (size_t layer = 0; layer < keys.size(); ++layer) {
                 auto & state = out.layers[layer];
@@ -647,7 +688,7 @@ struct Yue2ARRuntime::Impl {
         Yue2ARDevicePrefixState run_device(const std::vector<int32_t> & tokens) {
             compute(tokens);
             Yue2ARDevicePrefixState out;
-            out.current_end = steps;
+            out.current_end = steps + prefix_steps;
             out.keys = key_values;
             out.values = value_values;
             return out;
@@ -669,6 +710,7 @@ struct Yue2ARRuntime::Impl {
 
         Impl * owner = nullptr;
         int64_t steps = 0;
+        int64_t prefix_steps = 0;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
         std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx;
         ggml_cgraph * graph = nullptr;
@@ -702,8 +744,16 @@ struct Yue2ARRuntime::Impl {
         auto & active_runtime = compact_semantic ? semantic_runtime : (compact_abc ? abc_runtime : runtime);
         const auto total_start = Clock::now();
         engine::debug::timing_log_scalar("yue2.ar.generate.prefix_tokens", prefix.size());
-        auto cache_steps_for = [this](int64_t prefix_tokens, int64_t remaining_tokens) {
-            const int64_t required = prefix_tokens + std::min<int64_t>(remaining_tokens, kArDecodeChunkTokens);
+        // Decode attention scans the whole KV capacity, so a smaller capacity is
+        // faster per token at the price of an occasional refill.
+        auto decode_chunk_tokens = [this, compact_abc](int64_t prefix_tokens) -> int64_t {
+            if (!compact_kv) {
+                return kArDecodeChunkTokens;
+            }
+            return compact_abc ? 1024 : (prefix_tokens >= 3000 ? 4096 : 1792);
+        };
+        auto cache_steps_for = [this, decode_chunk_tokens](int64_t prefix_tokens, int64_t remaining_tokens) {
+            const int64_t required = prefix_tokens + std::min<int64_t>(remaining_tokens, decode_chunk_tokens(prefix_tokens));
             // Aligned masked capacity enables the existing vector Flash Attention path.
             return ((required + decode_cache_alignment - 1) / decode_cache_alignment) * decode_cache_alignment;
         };
@@ -719,7 +769,9 @@ struct Yue2ARRuntime::Impl {
         }
         const auto & start_prefix = forced.empty() ? prefix : forced_prefix;
         int64_t refill_at = static_cast<int64_t>(start_prefix.size()) +
-            std::min<int64_t>(window.max_tokens - static_cast<int64_t>(emitted.size()), kArDecodeChunkTokens);
+            std::min<int64_t>(
+                window.max_tokens - static_cast<int64_t>(emitted.size()),
+                decode_chunk_tokens(static_cast<int64_t>(start_prefix.size())));
         const auto prefill_start = Clock::now();
         auto prefill = active_runtime->prefill_tokens_into_decode_cache(
             start_prefix,
@@ -765,7 +817,7 @@ struct Yue2ARRuntime::Impl {
                 const auto refill_prefill_start = Clock::now();
                 const int64_t remaining = window.max_tokens - static_cast<int64_t>(emitted.size());
                 refill_at = static_cast<int64_t>(refill_prefix.size()) +
-                    std::min<int64_t>(remaining, kArDecodeChunkTokens);
+                    std::min<int64_t>(remaining, decode_chunk_tokens(static_cast<int64_t>(refill_prefix.size())));
                 auto refill = active_runtime->prefill_tokens_into_decode_cache(
                     refill_prefix,
                     cache_steps_for(static_cast<int64_t>(refill_prefix.size()), remaining));
@@ -905,7 +957,26 @@ struct Yue2ARRuntime::Impl {
         return state;
     }
 
-    Yue2ARDevicePrefixState prefill_device_state(const std::vector<int32_t> & tokens) {
+    Yue2ARDevicePrefixState prefill_device_state(const std::vector<int32_t> & tokens, size_t shared_prefix) {
+        if (nar_prefix_cache && shared_prefix > 0 && shared_prefix < tokens.size()) {
+            std::vector<int32_t> head(tokens.begin(), tokens.begin() + static_cast<std::ptrdiff_t>(shared_prefix));
+            if (head != cached_prefix_tokens) {
+                // The tail graph reads the cached state, so it has to go first.
+                prefix_state_graph.reset();
+                cached_prefix_graph.reset();
+                cached_prefix_graph = std::make_unique<PrefixStateGraph>(
+                    *this, static_cast<int64_t>(shared_prefix), nullptr, true);
+                cached_prefix = cached_prefix_graph->run_device(head);
+                cached_prefix_tokens = std::move(head);
+            }
+            const auto tail_steps = static_cast<int64_t>(tokens.size() - shared_prefix);
+            if (!prefix_state_graph || !prefix_state_graph->matches(tail_steps, cached_prefix.current_end)) {
+                prefix_state_graph.reset();
+                prefix_state_graph = std::make_unique<PrefixStateGraph>(*this, tail_steps, &cached_prefix);
+            }
+            return prefix_state_graph->run_device(
+                std::vector<int32_t>(tokens.begin() + static_cast<std::ptrdiff_t>(shared_prefix), tokens.end()));
+        }
         const int64_t steps = static_cast<int64_t>(tokens.size());
         if (!prefix_state_graph || !prefix_state_graph->matches(steps)) {
             prefix_state_graph.reset();
@@ -1000,6 +1071,8 @@ struct Yue2ARRuntime::Impl {
     std::unique_ptr<ggml_context, GgmlContextDeleter> generation_view_ctx;
     assets::TensorStorageType weight_type;
     int64_t decode_cache_alignment = 1;
+    bool nar_prefix_cache = false;
+    bool compact_kv = false;
     engine::modules::CausalDecoderRuntimeConfig runtime_config;
     engine::modules::CausalDecoderRuntimeConfig abc_runtime_config;
     engine::modules::CausalDecoderRuntimeConfig semantic_runtime_config;
@@ -1012,6 +1085,11 @@ struct Yue2ARRuntime::Impl {
     std::unique_ptr<engine::modules::CausalDecoderRuntime> abc_negative_runtime;
     std::unique_ptr<engine::modules::CausalDecoderRuntime> semantic_runtime;
     std::unique_ptr<engine::modules::CausalDecoderRuntime> semantic_negative_runtime;
+    // Declared before prefix_state_graph, which reads the cached state and so
+    // must be destroyed first.
+    std::vector<int32_t> cached_prefix_tokens;
+    std::unique_ptr<PrefixStateGraph> cached_prefix_graph;
+    Yue2ARDevicePrefixState cached_prefix;
     std::unique_ptr<PrefixStateGraph> prefix_state_graph;
 };
 
@@ -1023,7 +1101,9 @@ Yue2ARRuntime::Yue2ARRuntime(
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes,
     bool packed_projections,
-    int64_t kv_cache_alignment)
+    int64_t kv_cache_alignment,
+    bool nar_prefix_cache,
+    bool compact_kv)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
@@ -1032,7 +1112,9 @@ Yue2ARRuntime::Yue2ARRuntime(
           prefill_graph_arena_bytes,
           decode_graph_arena_bytes,
           packed_projections,
-          kv_cache_alignment)) {}
+          kv_cache_alignment,
+          nar_prefix_cache,
+          compact_kv)) {}
 
 Yue2ARRuntime::~Yue2ARRuntime() = default;
 
@@ -1058,12 +1140,15 @@ runtime::TransformerKVState Yue2ARRuntime::prefill_state(const std::vector<int32
     return impl_->prefill_state(tokens);
 }
 
-Yue2ARDevicePrefixState Yue2ARRuntime::prefill_device_state(const std::vector<int32_t> & tokens) {
-    return impl_->prefill_device_state(tokens);
+Yue2ARDevicePrefixState Yue2ARRuntime::prefill_device_state(const std::vector<int32_t> & tokens, size_t shared_prefix) {
+    return impl_->prefill_device_state(tokens, shared_prefix);
 }
 
 void Yue2ARRuntime::release_runtime_graphs() {
     impl_->prefix_state_graph.reset();
+    impl_->cached_prefix = {};
+    impl_->cached_prefix_graph.reset();
+    impl_->cached_prefix_tokens.clear();
     if (impl_->runtime) {
         impl_->runtime->release_runtime_graphs();
     }
