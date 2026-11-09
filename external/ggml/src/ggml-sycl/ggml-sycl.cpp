@@ -5503,6 +5503,12 @@ static bool ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, const g
                 if (src0_type == GGML_TYPE_F32 && src1_type == GGML_TYPE_IQ4_NL) {
                     return true;
                 }
+                if ((src0_type == GGML_TYPE_BF16 && (src1_type == GGML_TYPE_F32 || src1_type == GGML_TYPE_F16)) ||
+                    (src0_type == GGML_TYPE_I32 && src1_type == GGML_TYPE_F32) ||
+                    (src0_type == GGML_TYPE_I32 && src1_type == GGML_TYPE_I32) ||
+                    (src0_type == GGML_TYPE_I16 && src1_type == GGML_TYPE_I16)) {
+                    return true;
+                }
                 if(src0_type == GGML_TYPE_Q8_0 && src1_type == GGML_TYPE_Q8_0) {
                     return true;
                 }
