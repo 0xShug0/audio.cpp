@@ -4451,6 +4451,9 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
         case GGML_OP_CONV_TRANSPOSE_1D:
             ggml_sycl_op_conv_transpose_1d(ctx, dst);
             break;
+        case GGML_OP_CONV_2D_DW:
+            ggml_sycl_op_conv_2d_dw(ctx, dst);
+            break;
         case GGML_OP_REPEAT:
             ggml_sycl_repeat(ctx, dst);
             break;
@@ -5336,6 +5339,9 @@ static bool ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, const g
                 }
                 return false;
             }
+        case GGML_OP_CONV_2D_DW:
+            return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 &&
+                   (ggml_is_contiguous(op->src[1]) || ggml_is_contiguous_channels(op->src[1]));
         case GGML_OP_UNARY:
             switch (ggml_get_unary_op(op)) {
                 case GGML_UNARY_OP_SGN:
