@@ -43,6 +43,7 @@ const char * backend_label(BackendType type) {
         case BackendType::Vulkan:        return "vulkan";
         case BackendType::Metal:         return "metal";
         case BackendType::WebGPU:        return "webgpu";
+        case BackendType::Sycl:          return "sycl";
         case BackendType::BestAvailable: return "best";
     }
     return "unknown";
@@ -69,6 +70,9 @@ std::optional<BackendType> backend_type_for_reg_name(const char * reg_name) {
     }
     if (std::strcmp(reg_name, "WebGPU") == 0) {
         return BackendType::WebGPU;
+    }
+    if (std::strcmp(reg_name, "SYCL") == 0) {
+        return BackendType::Sycl;
     }
     return std::nullopt;
 }
@@ -176,6 +180,7 @@ void test_unregistered_backends_are_rejected() {
              BackendType::Vulkan,
              BackendType::Metal,
              BackendType::WebGPU,
+             BackendType::Sycl,
          }) {
         bool registered = false;
         for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
@@ -225,7 +230,7 @@ void test_text_listing_format_is_stable() {
         }
     }
     expected = "available_devices=" + std::to_string(count) + "\n" + expected +
-        "select with: --backend <cuda|hip|vulkan|metal|webgpu|cpu> --device <index>\n";
+        "select with: --backend <cuda|hip|vulkan|metal|webgpu|sycl|cpu> --device <index>\n";
 
     std::ostringstream text;
     engine::core::print_backend_devices(text);
@@ -233,7 +238,7 @@ void test_text_listing_format_is_stable() {
 }
 
 std::optional<BackendType> backend_type_for_option(const std::string & option) {
-    for (const BackendType type : {BackendType::Cpu, BackendType::Cuda, BackendType::Hip, BackendType::Vulkan, BackendType::Metal, BackendType::WebGPU}) {
+    for (const BackendType type : {BackendType::Cpu, BackendType::Cuda, BackendType::Hip, BackendType::Vulkan, BackendType::Metal, BackendType::WebGPU, BackendType::Sycl}) {
         if (option == backend_label(type)) {
             return type;
         }
@@ -260,6 +265,9 @@ std::string expected_backend_option(const std::string & registry) {
     }
     if (registry == "WebGPU") {
         return "webgpu";
+    }
+    if (registry == "SYCL") {
+        return "sycl";
     }
     return {};
 }
