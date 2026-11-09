@@ -2370,6 +2370,7 @@
       installJobs = { ...installJobs, ...incoming };
       let refreshInventory = false;
       for (const entry of catalog) {
+        let newlyCompleted = false;
         const completedJobs = entryInstallJobs(entry, installJobs).filter((job) => job.state === 'complete');
         for (const job of completedJobs) {
           const known = packageSizes[job.id];
@@ -2382,10 +2383,10 @@
               [job.id]: job.finished_at_ms
             };
             refreshInventory = true;
+            newlyCompleted = true;
           }
         }
-        const complete = completedJobs.length > 0;
-        if (complete && entry.id === selectedId) await inspectPath();
+        if (newlyCompleted && entry.id === selectedId) await inspectPath();
       }
       if (refreshInventory) {
         packageSizeState = 'idle';
