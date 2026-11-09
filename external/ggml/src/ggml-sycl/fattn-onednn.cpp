@@ -39,9 +39,10 @@ bool ggml_sycl_flash_attn_ext_onednn_supported(int device, const ggml_tensor * d
     if (sinks != nullptr) {
         return false;
     }
-    // The mask node is left out of the SDPA graph when there is no mask. With one, it must be a
-    // single [q, seq] plane of F16 values.
-    if (mask != nullptr && (mask->type != GGML_TYPE_F16 || mask->ne[2] != 1 || mask->ne[3] != 1)) {
+    // The mask node is left out of the SDPA graph when there is no mask. With one, it is bound as a
+    // dense [q, seq] plane of F16 values, so its rows must be exactly the active KV length.
+    if (mask != nullptr && (mask->type != GGML_TYPE_F16 || mask->ne[0] != K->ne[1] || mask->ne[1] != Q->ne[1] ||
+                            mask->ne[2] != 1 || mask->ne[3] != 1 || !ggml_is_contiguous(mask))) {
         return false;
     }
     float max_bias = 0.0f, logit_softcap = 0.0f;
