@@ -3439,6 +3439,58 @@ struct test_rms_norm_back : public test_case {
 };
 
 // GGML_OP_RMS_NORM + GGML_OP_MUL + GGML_OP_ADD
+// Per-channel RMS weighting used by decoder blocks. Keep the weight leaf
+// before RMS_NORM, so graph adjacency matches the production fusion pattern.
+struct test_rms_norm_mul_vector : public test_case {
+    const std::array<int64_t, 4> ne;
+    const bool strided;
+    const int protect; // 1: explicitly requested norm output; 2: another consumer
+    ggml_tensor * protected_norm = nullptr;
+    ggml_tensor * weighted_output = nullptr;
+
+    test_rms_norm_mul_vector(std::array<int64_t, 4> ne, bool strided = false, int protect = 0)
+        : ne(ne), strided(strided), protect(protect) {}
+
+    std::string op_desc(ggml_tensor *) override { return "RMS_NORM_MUL_VECTOR"; }
+    std::string vars() override { return VARS_TO_STR3(ne, strided, protect); }
+    bool run_whole_graph() override { return true; }
+    std::vector<ggml_tensor *> fusion_test_nodes() override {
+        return protect == 1 ? std::vector<ggml_tensor *>{protected_norm, weighted_output}
+                            : std::vector<ggml_tensor *>{weighted_output};
+    }
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * a = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne.data());
+        ggml_tensor * weight = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, ne[0]);
+        if (strided) {
+            weight = ggml_view_1d(ctx, weight, ne[0] / 2, 0);
+        }
+        // Make the weight available before the candidate pair is visited.
+        a = ggml_add(ctx, a, weight);
+        if (strided) {
+            a = ggml_view_4d(ctx, a, ne[0] / 2, ne[1], ne[2], ne[3], a->nb[1], a->nb[2], a->nb[3], 0);
+        }
+        ggml_tensor * norm = ggml_rms_norm(ctx, a, 1e-6f);
+        if (protect == 1) {
+            ggml_set_output(norm);
+            protected_norm = norm;
+        }
+        ggml_tensor * out = ggml_mul(ctx, norm, weight);
+        if (protect == 2) {
+            out = ggml_add(ctx, out, norm);
+        }
+        ggml_set_name(out, "weighted_norm");
+        weighted_output = out;
+        return out;
+    }
+
+    void initialize_tensors(ggml_context * ctx) override {
+        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t; t = ggml_get_next_tensor(ctx, t)) {
+            init_tensor_uniform(t, -10.f, 10.f);
+        }
+    }
+};
+
 struct test_rms_norm_mul_add : public test_case {
     const ggml_type type;
     const std::array<int64_t, 4> ne;
@@ -8254,6 +8306,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_rms_norm_mul_add(GGML_TYPE_F32, {33, 65536, 2, 2}, 1e-6f, false));
     test_cases.emplace_back(new test_rms_norm_mul_add(GGML_TYPE_F32, {16, 21846, 1, 1}, 1e-6f, true));
 
+    for (int64_t width : {64, 1025, 2048}) {
+        for (int64_t rows : {1, 31}) {
+            for (int protect : {0, 1, 2}) {
+                test_cases.emplace_back(new test_rms_norm_mul_vector({width, rows, 1, 1}, false, protect));
+            }
+        }
+    }
+    test_cases.emplace_back(new test_rms_norm_mul_vector({4096, 5, 3, 2}, true));
+
     // in-place tests
     test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {64, 5, 4, 3}, false, 1e-6f, true));
 
@@ -9458,6 +9519,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     test_cases.emplace_back(new test_argsort(GGML_TYPE_F32, {65000,  16, 1, 1}));
     test_cases.emplace_back(new test_argsort(GGML_TYPE_F32, {200000, 1,  1, 1}));
     test_cases.emplace_back(new test_argsort(GGML_TYPE_F32, {200000, 16, 1, 1}));
+
+    // Independent perf cases using upsampling layer shapes from the Drama 3 audio codec decoder.
+    test_cases.emplace_back(new test_conv_transpose_1d({16,   1536, 1, 1}, {16, 768, 1536, 1}, 8, 0, 1));
+    test_cases.emplace_back(new test_conv_transpose_1d({128,  768,  1, 1}, {16, 384, 768,  1}, 8, 0, 1));
+    test_cases.emplace_back(new test_conv_transpose_1d({1024, 384,  1, 1}, {8,  192, 384,  1}, 4, 0, 1));
+    test_cases.emplace_back(new test_conv_transpose_1d({4096, 192,  1, 1}, {4,  96,  192,  1}, 2, 0, 1));
 
     test_cases.emplace_back(new test_top_k(GGML_TYPE_F32, {2, 1, 1, 1}, 1));
     for (auto k : {1, 10, 40, 400}) {

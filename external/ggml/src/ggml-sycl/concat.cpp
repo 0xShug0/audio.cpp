@@ -174,8 +174,8 @@ void concat_impl_sycl(ggml_backend_sycl_context & ctx, ggml_tensor *dst) {
             const size_t size0 = ggml_nbytes(src0);
             const size_t size1 = ggml_nbytes(src1);
 
-            SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d, src0_d, size0).wait()));
-            SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d + size0 / type_size, src1_d, size1).wait()));
+            SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d, src0_d, size0)));
+            SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d + size0 / type_size, src1_d, size1)));
         }
     } else {
         concat_T_sycl_non_cont<T>(stream, (const char *) src0->data, (const char *) src1->data, (char *) dst->data,
@@ -192,6 +192,14 @@ void ggml_sycl_op_concat(ggml_backend_sycl_context & ctx, ggml_tensor *dst) {
     case GGML_TYPE_F32:
         concat_impl_sycl<float>(ctx, dst);
         break;
+    case GGML_TYPE_F16:
+        concat_impl_sycl<sycl::half>(ctx, dst);
+        break;
+#ifdef GGML_SYCL_HAS_BF16
+    case GGML_TYPE_BF16:
+        concat_impl_sycl<sycl::ext::oneapi::bfloat16>(ctx, dst);
+        break;
+#endif
     case GGML_TYPE_I32:
         concat_impl_sycl<int32_t>(ctx, dst);
         break;
