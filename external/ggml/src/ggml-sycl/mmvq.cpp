@@ -679,8 +679,9 @@ static void mul_mat_vec_q5_1_q8_1_sycl(const void *vx, const void *vy,
     }
 }
 
-static void reorder_mul_mat_vec_q8_0_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols,
-                                                    const int nrows, dpct::queue_ptr stream) {
+template <typename vec_dot_t>
+static void reorder_mul_mat_vec_q8_0_q8_1_impl(const void * vx, const void * vy, float * dst, const int ncols,
+                                               const int nrows, dpct::queue_ptr stream) {
     GGML_ASSERT(ncols % QK8_0 == 0);
     // Round up to a whole number of subgroup-sized workgroups; out-of-range rows are skipped inside the kernel.
     constexpr size_t num_subgroups = WARP_SIZE;
@@ -692,10 +693,18 @@ static void reorder_mul_mat_vec_q8_0_q8_1_sycl(const void * vx, const void * vy,
     stream->submit([&](sycl::handler & cgh) {
         cgh.parallel_for(sycl::nd_range<3>(global_size, workgroup_size),
                          [=](sycl::nd_item<3> nd_item) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                             mul_mat_vec_q_reorder<reorder_vec_dot_q_sycl<GGML_TYPE_Q8_0>>(vx, vy, dst, ncols, nrows,
-                                                                                           nd_item);
+                             mul_mat_vec_q_reorder<vec_dot_t>(vx, vy, dst, ncols, nrows, nd_item);
                          });
     });
+}
+
+static void reorder_mul_mat_vec_q8_0_q8_1_sycl(const void * vx, const void * vy, float * dst, const int ncols,
+                                               const int nrows, dpct::queue_ptr stream) {
+    if (ggml_sycl_info().devices[ggml_sycl_get_device()].opt_feature.hw_dp4a) {
+        reorder_mul_mat_vec_q8_0_q8_1_impl<reorder_vec_dot_q8_0_hw_dp4a>(vx, vy, dst, ncols, nrows, stream);
+    } else {
+        reorder_mul_mat_vec_q8_0_q8_1_impl<reorder_vec_dot_q_sycl<GGML_TYPE_Q8_0>>(vx, vy, dst, ncols, nrows, stream);
+    }
 }
 
 static void mul_mat_vec_q8_0_q8_1_sycl(const void *vx, const void *vy,

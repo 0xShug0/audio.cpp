@@ -76,6 +76,36 @@ int g_ggml_sycl_enable_level_zero = 0;
 int g_ggml_sycl_enable_flash_attention = 1;
 
 
+// The vISA dp4a instruction exists from Gen12 on. Unknown architectures keep the software path.
+static bool ggml_sycl_arch_has_dp4a(gpu_arch arch) {
+    switch (arch) {
+        case gpu_arch::intel_gpu_tgllp:
+        case gpu_arch::intel_gpu_rkl:
+        case gpu_arch::intel_gpu_adl_s:
+        case gpu_arch::intel_gpu_adl_p:
+        case gpu_arch::intel_gpu_adl_n:
+        case gpu_arch::intel_gpu_dg1:
+        case gpu_arch::intel_gpu_acm_g10:
+        case gpu_arch::intel_gpu_acm_g11:
+        case gpu_arch::intel_gpu_acm_g12:
+        case gpu_arch::intel_gpu_pvc:
+        case gpu_arch::intel_gpu_pvc_vg:
+        case gpu_arch::intel_gpu_mtl_u:
+        case gpu_arch::intel_gpu_mtl_h:
+        case gpu_arch::intel_gpu_arl_h:
+        case gpu_arch::intel_gpu_bmg_g21:
+        case gpu_arch::intel_gpu_bmg_g31:
+        case gpu_arch::intel_gpu_lnl_m:
+        case gpu_arch::intel_gpu_ptl_h:
+        case gpu_arch::intel_gpu_ptl_u:
+        case gpu_arch::intel_gpu_wcl:
+            return true;
+        default:
+            return false;
+    }
+}
+
+
 static ggml_sycl_device_info ggml_sycl_init() {
     ggml_sycl_device_info info = {};
 
@@ -115,6 +145,7 @@ static ggml_sycl_device_info ggml_sycl_init() {
         info.max_work_group_sizes[i] = prop.get_max_work_group_size();
         info.devices[i].max_wg_per_cu = info.max_work_group_sizes[i] / prop.get_max_compute_units();
         info.devices[i].hw_info = get_device_hw_info(&device);
+        info.devices[i].opt_feature.hw_dp4a = ggml_sycl_arch_has_dp4a(info.devices[i].hw_info.arch);
 
     }
 

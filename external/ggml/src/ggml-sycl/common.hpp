@@ -212,6 +212,7 @@ inline dpct::err0 ggml_sycl_set_device(const int device) try {
 //////////////////////
 struct optimize_feature {
     bool reorder=false;
+    bool hw_dp4a=false;               // the device executes the vISA dp4a instruction
 };
 
 struct sycl_device_info {
