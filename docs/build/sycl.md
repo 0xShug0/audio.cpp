@@ -27,3 +27,7 @@ Load the oneAPI environment in the shell that runs the binary, then pass `--back
 ## Known issues
 
 - With the oneAPI compiler, `kaldi_fbank_sparse_test` and `mel_spectrogram_frontend_test` fail on CPU value checks. They fail the same way on an unmodified tree built with `icx`, independent of `ENGINE_ENABLE_SYCL`.
+
+## Validated models
+
+Which models have been checked on SYCL, their measurements, and the ones that do not work yet are in the [SYCL validation report](../reports/sycl_validation.md).
