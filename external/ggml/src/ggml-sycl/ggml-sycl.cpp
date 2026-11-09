@@ -4733,6 +4733,30 @@ catch (sycl::exception const &exc) {
   std::exit(1);
 }
 
+static bool ggml_sycl_can_fuse_rms_mul(const ggml_cgraph * graph, int i) {
+    static const ggml_op ops[] = {GGML_OP_RMS_NORM, GGML_OP_MUL};
+    if (!ggml_can_fuse(graph, i, ops, 2)) {
+        return false;
+    }
+    const ggml_tensor * norm = graph->nodes[i];
+    const ggml_tensor * mul = graph->nodes[i + 1];
+    const ggml_tensor * input = norm->src[0];
+    const ggml_tensor * weight = mul->src[1];
+    if (mul->src[0] != norm || input->type != GGML_TYPE_F32 || norm->type != GGML_TYPE_F32 ||
+            weight->type != GGML_TYPE_F32 || mul->type != GGML_TYPE_F32 ||
+            input->nb[0] != sizeof(float) || !ggml_is_contiguous(weight) || !ggml_is_contiguous(mul) ||
+            weight->ne[0] != input->ne[0] || ggml_nrows(weight) != 1 || mul->view_src) {
+        return false;
+    }
+    // the allocator can reuse a source buffer after the norm node, so skip the fusion if dst overlaps a source
+    const auto disjoint = [](const ggml_tensor * a, const ggml_tensor * b) {
+        const uintptr_t ap = reinterpret_cast<uintptr_t>(a->data);
+        const uintptr_t bp = reinterpret_cast<uintptr_t>(b->data);
+        return ap + ggml_nbytes(a) <= bp || bp + ggml_nbytes(b) <= ap;
+    };
+    return disjoint(input, mul) && disjoint(weight, mul);
+}
+
 static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * sycl_ctx, ggml_cgraph * cgraph) {
     ggml_sycl_set_main_device(sycl_ctx->device);
 
@@ -4752,6 +4776,11 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
             }
         }
 #endif
+        if (node->op == GGML_OP_RMS_NORM && ggml_sycl_can_fuse_rms_mul(cgraph, i)) {
+            ggml_sycl_op_rms_norm_mul(*sycl_ctx, node, cgraph->nodes[i + 1]);
+            i++;
+            continue;
+        }
         bool ok = ggml_sycl_compute_forward(*sycl_ctx, node);
         if (!ok) {
             GGML_LOG_ERROR("%s: error: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
