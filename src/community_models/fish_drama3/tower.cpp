@@ -1,6 +1,7 @@
 #include "engine/community_models/fish_drama3/tower.h"
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/core/backend_weight_store.h"
 
 #include <ggml-alloc.h>
@@ -43,8 +44,9 @@ struct LayerWeights {
 };
 
 struct LayerGraph {
-    std::unique_ptr<ggml_context, ContextDeleter> context;
-    ggml_gallocr_t allocator = nullptr;
+    LayerGraph(core::ExecutionContext & execution, size_t bytes, size_t nodes)
+        : prepared(execution, {"drama3_tower", bytes, nodes}), graph(prepared.graph()) {}
+    core::PreparedGraph prepared;
     ggml_cgraph * graph = nullptr;
     ggml_tensor * hidden = nullptr;
     ggml_tensor * codes = nullptr;
@@ -57,12 +59,6 @@ struct LayerGraph {
     ggml_tensor * uniforms = nullptr;
     ggml_tensor * sampling = nullptr;
     std::vector<ggml_tensor *> book_codes;
-    ggml_backend_t backend = nullptr;
-
-    ~LayerGraph() {
-        if (graph && backend) core::release_backend_graph_resources(backend, graph, true);
-        if (allocator) ggml_gallocr_free(allocator);
-    }
 };
 
 ggml_tensor * gemma_norm(ggml_context * context, ggml_tensor * input,
@@ -242,9 +238,7 @@ public:
             }
             ggml_backend_tensor_set(graph->book_codes[book], codes.data(), 0, codes.size() * sizeof(int32_t));
         }
-        if (core::compute_backend_graph(execution_.backend(), graph->graph, nullptr, "drama3.tower.prefill") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Drama 3 tower prefill computation failed");
-        }
+        graph->prepared.compute();
         // Prefill only populates the layer caches. The last backbone row, not
         // this hidden output, seeds generation. Keep all intermediates on GPU.
         ggml_backend_synchronize(execution_.backend());
@@ -291,9 +285,7 @@ public:
             }
         }
         ggml_backend_tensor_set(graph->attention_mask, attention_mask.data(), 0, attention_mask.size() * sizeof(ggml_fp16_t));
-        if (core::compute_backend_graph(execution_.backend(), graph->graph, nullptr, "drama3.tower") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Drama 3 tower computation failed");
-        }
+        graph->prepared.compute();
         Drama3TowerOutput result;
         result.hidden = core::read_tensor_f32(graph->output);
         if (graph->logits) result.logits = core::read_tensor_f32(graph->logits);
@@ -326,8 +318,7 @@ public:
             ggml_backend_tensor_set_async(execution_.backend(), graph.sampling, parameters.data(), 0, sizeof(parameters));
             ggml_backend_tensor_set_async(execution_.backend(), graph.uniforms, uniforms.data(), 0, sizeof(uniforms));
         }
-        if (core::compute_backend_graph(execution_.backend(), graph.graph, nullptr, "drama3.tower.frame") != GGML_STATUS_SUCCESS)
-            throw std::runtime_error("Drama 3 tower frame computation failed");
+        graph.prepared.compute();
         const auto codes = core::read_tensor_f32(graph.output);
         Drama3Frame result{};
         result[0] = config_.semantic_begin + semantic_code;
@@ -340,12 +331,8 @@ public:
 
 private:
     std::unique_ptr<LayerGraph> build_frame_graph(bool greedy) {
-        auto result = std::make_unique<LayerGraph>();
-        result->backend = execution_.backend();
-        ggml_init_params params{8 * 1024 * 1024, nullptr, true};
-        result->context.reset(ggml_init(params));
-        auto * ctx = result->context.get();
-        result->graph = ggml_new_graph_custom(ctx, 8192, false);
+        auto result = std::make_unique<LayerGraph>(execution_, 8 * 1024 * 1024, 8192);
+        auto * ctx = result->prepared.build_context().ggml;
         const auto input = [&](ggml_type type, int64_t width) {
             auto * value = ggml_new_tensor_1d(ctx, type, width);
             ggml_set_input(value);
@@ -399,9 +386,7 @@ private:
         result->output = output;
         ggml_set_output(output);
         ggml_build_forward_expand(result->graph, output);
-        result->allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
-        if (!result->allocator || !ggml_gallocr_alloc_graph(result->allocator, result->graph))
-            throw std::runtime_error("failed to allocate Drama 3 tower frame graph");
+        result->prepared.allocate();
         return result;
     }
 
@@ -423,7 +408,7 @@ private:
             return prefill_graphs_.front().graph.get();
         }
         auto first = build_prefill_graph(steps);
-        const size_t estimate = ggml_gallocr_get_buffer_size(first->allocator, 0);
+        const size_t estimate = first->prepared.workspace_bytes();
         if (estimate > prefill_cache_budget_) {
             if (uncached_prefill_shapes_.size() >= 32) uncached_prefill_shapes_.erase(uncached_prefill_shapes_.begin());
             uncached_prefill_shapes_.insert(steps);
@@ -490,12 +475,8 @@ private:
     }
 
     std::unique_ptr<LayerGraph> build_prefill_graph(int64_t steps) {
-        auto result = std::make_unique<LayerGraph>();
-        result->backend = execution_.backend();
-        ggml_init_params params{8 * 1024 * 1024, nullptr, true};
-        result->context.reset(ggml_init(params));
-        auto * ctx = result->context.get();
-        result->graph = ggml_new_graph_custom(ctx, 8192, false);
+        auto result = std::make_unique<LayerGraph>(execution_, 8 * 1024 * 1024, 8192);
+        auto * ctx = result->prepared.build_context().ggml;
         const auto input = [&](ggml_type type, int64_t columns, int64_t rows) {
             auto * tensor = ggml_new_tensor_2d(ctx, type, columns, rows);
             ggml_set_input(tensor);
@@ -517,22 +498,15 @@ private:
         result->output = hidden;
         ggml_set_output(hidden);
         ggml_build_forward_expand(result->graph, hidden);
-        result->allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
-        if (!result->allocator || !ggml_gallocr_alloc_graph(result->allocator, result->graph)) {
-            throw std::runtime_error("failed to allocate Drama 3 tower prefill graph");
-        }
+        result->prepared.allocate();
         return result;
     }
 
     std::unique_ptr<LayerGraph> build_graph(int64_t layer, int64_t steps) {
         const auto & c = config_;
         const auto & w = layers_[layer];
-        auto result = std::make_unique<LayerGraph>();
-        result->backend = execution_.backend();
-        ggml_init_params params{4 * 1024 * 1024, nullptr, true};
-        result->context.reset(ggml_init(params));
-        auto * ctx = result->context.get();
-        result->graph = ggml_new_graph_custom(ctx, 4096, false);
+        auto result = std::make_unique<LayerGraph>(execution_, 4 * 1024 * 1024, 4096);
+        auto * ctx = result->prepared.build_context().ggml;
         const auto input = [&](ggml_type type, int64_t columns, int64_t rows) {
             auto * tensor = ggml_new_tensor_2d(ctx, type, columns, rows);
             ggml_set_input(tensor);
@@ -556,10 +530,7 @@ private:
             ggml_set_output(result->logits);
             ggml_build_forward_expand(result->graph, result->logits);
         }
-        result->allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
-        if (!result->allocator || !ggml_gallocr_alloc_graph(result->allocator, result->graph)) {
-            throw std::runtime_error("failed to allocate Drama 3 tower graph");
-        }
+        result->prepared.allocate();
         return result;
     }
 

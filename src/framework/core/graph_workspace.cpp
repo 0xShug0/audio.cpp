@@ -1,17 +1,47 @@
 #include "engine/framework/core/graph_workspace.h"
+#include "engine/framework/core/prepared_graph.h"
+#include <algorithm>
 #include <stdexcept>
 
 namespace engine::core {
 
 GraphWorkspace::GraphWorkspace(ggml_backend_t backend)
-    : allocator_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend)), ggml_gallocr_free) {
+    : backend_(backend), allocator_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend)), ggml_gallocr_free) {
     if (!allocator_) throw std::runtime_error("cannot create graph activation workspace");
 }
-GraphWorkspace::~GraphWorkspace() = default;
+GraphWorkspace::~GraphWorkspace() { reset(); }
 
 void GraphWorkspace::add(ggml_cgraph * graph) {
     if (prepared_) throw std::logic_error("cannot register graphs after workspace preparation");
     graphs_.push_back(graph);
+}
+
+void GraphWorkspace::add(PreparedGraph & graph) {
+    if (graph.graph_count() == 0 || !graph.graph() || graph.workspace_ || graph.scheduler_ || graph.allocated() || graph.allocation_started_ ||
+        graph.execution().backend() != backend_)
+        throw std::logic_error("shared graph workspace requires an unallocated, unregistered graph on its backend");
+    if (prepared_) throw std::logic_error("cannot register graphs after workspace preparation");
+    if (graph.persistent_context_ && !graph.persistent_buffer_)
+        throw std::logic_error("persistent tensors must be allocated before graph registration");
+    graph.validate_graphs();
+    // Reserve both lists before registration so allocation failure cannot leave
+    // half of a graph set registered.
+    prepared_graphs_.reserve(prepared_graphs_.size() + 1);
+    graphs_.reserve(graphs_.size() + graph.graph_count());
+    for (size_t id = 0; id < graph.graph_count(); ++id) {
+        if (graph.allocation_graph(id) == id) graphs_.push_back(graph.graph(id));
+    }
+    prepared_graphs_.push_back(&graph);
+    graph.workspace_ = this;
+}
+
+void GraphWorkspace::forget(PreparedGraph & graph) {
+    for (size_t id = 0; id < graph.graph_count(); ++id) {
+        if (graph.allocation_graph(id) == id)
+            graphs_.erase(std::remove(graphs_.begin(), graphs_.end(), graph.graph(id)), graphs_.end());
+    }
+    prepared_graphs_.erase(std::remove(prepared_graphs_.begin(), prepared_graphs_.end(), &graph), prepared_graphs_.end());
+    graph.workspace_ = nullptr;
 }
 
 void GraphWorkspace::prepare() {
@@ -28,11 +58,18 @@ void GraphWorkspace::prepare() {
         if (!ggml_gallocr_reserve(allocator_.get(), graph) || !ggml_gallocr_alloc_graph(allocator_.get(), graph))
             throw std::runtime_error("cannot allocate graph activation workspace");
     }
+    for (auto * graph : prepared_graphs_) graph->prepare_shared_allocation();
     prepared_ = true;
 }
 
 void GraphWorkspace::reset() {
+    if (!prepared_graphs_.empty()) ggml_backend_synchronize(backend_);
+    for (auto * graph : prepared_graphs_) {
+        graph->release_graphs();
+        graph->workspace_ = nullptr;
+    }
     graphs_.clear();
+    prepared_graphs_.clear();
     prepared_ = false;
 }
 

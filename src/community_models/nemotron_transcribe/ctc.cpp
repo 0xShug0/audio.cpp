@@ -1,3 +1,4 @@
+#include "engine/framework/core/prepared_graph.h"
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 // Adapted for audio.cpp from NVIDIA/NeMo-Speech.cpp, revision 66d50d91b75a406becd95fbaf39d2c9c13e95d7c.
@@ -113,9 +114,8 @@ Weights load_weights(core::BackendWeightStore & store, const assets::TensorSourc
 // All graphs use the framework backend, host plan, and CUDA capture cleanup. The
 // shape caches are model-local and retain only one shape of each graph kind.
 struct Graph {
-    core::ExecutionContext & execution;
-    std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free};
-    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator{nullptr, ggml_gallocr_free};
+    core::PreparedGraph prepared;
+    ggml_context * context;
     ggml_cgraph * graph = nullptr;
     ggml_tensor * input = nullptr;
     ggml_tensor * positions = nullptr;
@@ -123,23 +123,14 @@ struct Graph {
     ggml_tensor * output = nullptr;
     ggml_tensor * maximum = nullptr;
     ggml_tensor * logsumexp = nullptr;
-    core::HostGraphPlan plan;
     int frames = 0;
     int columns = 0;
     int kept = 0;
 
-    explicit Graph(core::ExecutionContext & execution_in, size_t nodes = 4096)
-        : execution(execution_in) {
-        context.reset(ggml_init({nodes * ggml_tensor_overhead() +
-            ggml_graph_overhead_custom(nodes, false), nullptr, true}));
-        if (!context) throw std::runtime_error("Nemotron CTC graph context allocation failed");
-        graph = ggml_new_graph_custom(context.get(), nodes, false);
-    }
-
-    ~Graph() {
-        plan.reset();
-        core::release_backend_graph_resources(execution.backend(), graph, true);
-    }
+    explicit Graph(core::ExecutionContext & execution, size_t nodes = 4096)
+        : prepared(execution, {"nemotron.ctc", nodes * ggml_tensor_overhead() +
+            ggml_graph_overhead_custom(nodes, false), nodes}), context(prepared.build_context().ggml),
+          graph(prepared.graph()) {}
 
     void allocate() {
         ggml_set_input(input);
@@ -155,19 +146,12 @@ struct Graph {
             ggml_set_output(maximum);
             ggml_build_forward_expand(graph, maximum);
         }
-        core::validate_backend_graph_supported(execution.backend(), graph, "nemotron.ctc");
-        allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
-        if (!allocator || !ggml_gallocr_alloc_graph(allocator.get(), graph)) {
-            throw std::runtime_error("Nemotron CTC graph allocation failed");
-        }
-        core::prepare_host_graph_plan(execution, graph, plan);
+        prepared.allocate();
     }
 
     void run(const float * rows, size_t count) {
         ggml_backend_tensor_set(input, rows, 0, count * sizeof(float));
-        if (core::compute_graph(execution, graph, plan, "nemotron.ctc") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Nemotron CTC graph execution failed");
-        }
+        prepared.compute();
     }
 };
 
@@ -184,7 +168,7 @@ std::unique_ptr<Graph> bridge_graph(core::ExecutionContext & execution, const We
     auto g = std::make_unique<Graph>(execution, std::max<size_t>(4096, 512 + size_t(c.layers) * 192 + chunks * 32));
     g->frames = encoder_frames;
     g->kept = kept;
-    auto * ctx = g->context.get();
+    auto * ctx = g->context;
     core::ModuleBuildContext build{ctx, "nemotron.ctc.bridge", execution.backend_type()};
     const int T = ctc_frames(encoder_frames, c.upsampling), D = c.dimension;
     g->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, D, encoder_frames);
@@ -241,7 +225,7 @@ std::unique_ptr<Graph> projection_graph(core::ExecutionContext & execution, cons
     auto g = std::make_unique<Graph>(execution);
     g->frames = frames;
     g->columns = columns;
-    auto * ctx = g->context.get();
+    auto * ctx = g->context;
     g->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, c.dimension, frames);
     g->ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, columns);
     auto * selected = ggml_get_rows(ctx, weights.classifier.weight.tensor, g->ids);

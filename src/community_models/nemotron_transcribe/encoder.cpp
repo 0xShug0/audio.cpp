@@ -1,3 +1,4 @@
+#include "engine/framework/core/prepared_graph.h"
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 // PEE architecture and host Sortformer cache update adapted from NVIDIA's
@@ -73,47 +74,25 @@ ExpertWeights load_expert(core::BackendWeightStore & store, const assets::Tensor
 
 // One reusable graph per stage. No backend allocations survive encoder teardown.
 struct Graph {
-    ggml_backend_t backend = nullptr;
-    ggml_context * context = nullptr;
-    ggml_cgraph * graph = nullptr;
-    ggml_gallocr_t allocator = nullptr;
-    ggml_backend_graph_plan_t plan = nullptr;
+    core::PreparedGraph prepared;
+    ggml_context * context;
+    ggml_cgraph * graph;
     ggml_tensor * input = nullptr;
     ggml_tensor * output = nullptr;
     int64_t frames = 0;
 
-    explicit Graph(const core::ExecutionContext & execution) : backend(execution.backend()) {
-        const size_t bytes = ggml_tensor_overhead() * kGraphNodes * 2 + ggml_graph_overhead_custom(kGraphNodes, false);
-        context = ggml_init({bytes, nullptr, true});
-        if (context == nullptr) throw std::runtime_error("Nemotron Transcribe graph context allocation failed");
-    }
-    ~Graph() {
-        if (plan != nullptr) core::free_backend_graph_plan(backend, plan);
-        if (graph != nullptr) core::release_backend_graph_resources(backend, graph, true);
-        if (allocator != nullptr) ggml_gallocr_free(allocator);
-        if (context != nullptr) ggml_free(context);
-    }
-    void allocate(const core::ExecutionContext & execution, const std::vector<ggml_tensor *> & outputs) {
-        graph = ggml_new_graph_custom(context, kGraphNodes, false);
+    explicit Graph(const core::ExecutionContext & execution)
+        : prepared(execution, {"nemotron_transcribe.encoder",
+            ggml_tensor_overhead() * kGraphNodes * 2 + ggml_graph_overhead_custom(kGraphNodes, false), kGraphNodes}),
+          context(prepared.build_context().ggml), graph(prepared.graph()) {}
+    void allocate(const std::vector<ggml_tensor *> & outputs) {
         for (auto * tensor : outputs) {
             ggml_set_output(tensor);
             ggml_build_forward_expand(graph, tensor);
         }
-        core::validate_backend_graph_supported(backend, graph, "Nemotron Transcribe encoder");
-        allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-        if (!ggml_gallocr_alloc_graph(allocator, graph)) {
-            throw std::runtime_error("Nemotron Transcribe graph tensor allocation failed");
-        }
-        if (execution.uses_host_graph_plan()) {
-            plan = core::create_backend_graph_plan_if_host(backend, graph);
-            if (plan == nullptr) throw std::runtime_error("Nemotron Transcribe CPU graph plan failed");
-        }
+        prepared.allocate();
     }
-    void run() {
-        if (core::compute_backend_graph(backend, graph, plan, "Nemotron Transcribe encoder") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Nemotron Transcribe graph execution failed");
-        }
-    }
+    void run() { prepared.compute(); }
 };
 
 void upload(ggml_tensor * tensor, const std::vector<float> & values) {
@@ -346,7 +325,7 @@ struct ParallelExpertEncoder::Impl {
                 config.diar.hidden_size, false, GGML_PREC_F32}).build(build,
                 core::wrap_tensor(graph->input, core::TensorShape::from_dims({frames,
                     config.diar.feature_size * config.diar.subsampling_factor})), diar.pre_encode).tensor;
-            graph->allocate(execution, {graph->output});
+            graph->allocate({graph->output});
             pre_graph = std::move(graph);
         }
         upload(pre_graph->input, stacked);

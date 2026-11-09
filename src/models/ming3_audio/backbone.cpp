@@ -1,3 +1,4 @@
+#include "engine/framework/core/prepared_graph.h"
 #include "engine/models/ming3_audio/backbone.h"
 
 #include "engine/framework/core/execution_context.h"
@@ -334,32 +335,13 @@ core::TensorValue build_thinker_mlp(core::ModuleBuildContext & ctx, const core::
 
 struct Thinker::Impl {
     struct Graph {
-        explicit Graph(ggml_backend_t backend) : backend(backend) {}
-        ~Graph() {
-            if (scheduler) {
-                if (cleanup_graph) {
-                    for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
-                        ggml_graph_set_n_nodes(cleanup_graph, 0);
-                        ggml_graph_add_node(cleanup_graph, ggml_graph_node(graph, i));
-                        core::release_backend_graph_resources(backend, cleanup_graph, true);
-                    }
-                }
-                ggml_backend_sched_free(scheduler);
-            }
-            core::release_backend_graph_resources(backend, graph, true);
-            plan.reset();
-            if (allocator) ggml_gallocr_free(allocator);
-            if (cleanup_context) ggml_free(cleanup_context);
-            if (context) ggml_free(context);
-        }
-        ggml_backend_t backend;
-        ggml_context * context = nullptr;
-        ggml_gallocr_t allocator = nullptr;
-        ggml_backend_sched_t scheduler = nullptr;
-        ggml_context * cleanup_context = nullptr;
-        ggml_cgraph * cleanup_graph = nullptr;
-        ggml_cgraph * graph = nullptr;
-        core::HostGraphPlan plan;
+        explicit Graph(core::ExecutionContext & execution)
+            : prepared(execution, {"ming3_audio.thinker", ggml_tensor_overhead() * 32768 +
+                ggml_graph_overhead_custom(32768, false), 32768}),
+              context(prepared.build_context().ggml), graph(prepared.graph()) {}
+        core::PreparedGraph prepared;
+        ggml_context * context;
+        ggml_cgraph * graph;
         core::TensorValue ids;
         core::TensorValue audio;
         core::TensorValue audio_indices;
@@ -386,10 +368,9 @@ struct Thinker::Impl {
             constexpr size_t nodes = 1024, small_nodes = 128;
             const auto large_bytes = ggml_graph_overhead_custom(nodes, false) + nodes * ggml_tensor_overhead();
             const auto small_bytes = ggml_graph_overhead_custom(small_nodes, false) + small_nodes * ggml_tensor_overhead();
-            context_.reset(ggml_init({static_cast<size_t>(config.layers) * large_bytes +
-                3 * small_bytes, nullptr, true}));
-            inputs_.reset(ggml_init({64 * ggml_tensor_overhead(), nullptr, true}));
-            if (!context_ || !inputs_) throw std::runtime_error("Ming3 Audio failed to allocate offload prefill metadata");
+            prepared_ = std::make_unique<core::PreparedGraph>(execution, core::PreparedGraphConfig{
+                "ming3_audio.offload_prefill", static_cast<size_t>(config.layers) * large_bytes + 3 * small_bytes,
+                small_nodes, 64 * ggml_tensor_overhead()});
             const auto h = config.hidden_size;
             modules::StagedMoeConfig staged_config;
             staged_config.hidden_size = h;
@@ -400,7 +381,7 @@ struct Thinker::Impl {
             staged_config.rows_per_expert = {32};
             staged_config.scatter_index_type = GGML_TYPE_I32;
             staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, staged_config, workspace_);
-            auto * persistent = inputs_.get();
+            auto * persistent = prepared_->persistent_build_context().ggml;
             ids_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, steps);
             audio_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
             audio_indices_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, steps);
@@ -413,18 +394,12 @@ struct Thinker::Impl {
             shared_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
             for (auto * tensor : {ids_, audio_, audio_indices_, positions_, mask_, residual_, shared_})
                 ggml_set_input(tensor);
-            buffer_.reset(ggml_backend_alloc_ctx_tensors(persistent, execution.backend()));
-            if (!buffer_) throw std::runtime_error("Ming3 Audio failed to allocate offload prefill inputs");
-            ggml_backend_buffer_clear(buffer_.get(), 0);
-            core::ModuleBuildContext ctx{context_.get(), "ming3_audio.offload_prefill", execution.backend_type()};
-            auto add_graph = [&](ggml_cgraph * graph) {
-                core::validate_backend_graph_supported(execution.backend(), graph, "ming3_audio.offload_prefill");
-                workspace_->add(graph);
-                graphs_.push_back(graph);
-            };
+            prepared_->allocate_persistent();
+            prepared_->clear_persistent();
+            auto & ctx = prepared_->build_context();
             const auto shape = core::TensorShape::from_dims({1, steps, h});
             auto x = core::wrap_tensor(x_, shape);
-            initial_ = ggml_new_graph_custom(ctx.ggml, small_nodes, false);
+            initial_ = 0;
             auto * embeddings = ggml_get_rows(ctx.ggml, weights.embedding.tensor, ids_);
             // Non-audio positions write to distinct discarded rows, keeping one graph for every text/audio layout.
             auto * padded = ggml_pad(ctx.ggml, embeddings, 0, static_cast<int>(steps), 0, 0);
@@ -432,14 +407,14 @@ struct Thinker::Impl {
             auto embedded = core::wrap_tensor(ggml_reshape_3d(ctx.ggml,
                 ggml_view_2d(ctx.ggml, replaced, h, steps, replaced->nb[1], 0), h, steps, 1), shape);
             embedded = modules::Bf16RoundModule{}.build(ctx, embedded);
-            ggml_build_forward_expand(initial_, ggml_cpy(ctx.ggml, embedded.tensor, x_));
-            add_graph(initial_);
+            ggml_build_forward_expand(prepared_->graph(initial_), ggml_cpy(ctx.ggml, embedded.tensor, x_));
             modules::NormConfig norm{h, config.rms_norm_eps, true, false};
             norm.normalized_round_type = GGML_TYPE_BF16;
             for (int64_t layer = 0; layer < config.layers; ++layer) {
                 const auto & w = weights.layers[layer];
                 const auto & state = states[layer];
-                auto * graph = ggml_new_graph_custom(ctx.ggml, nodes, false);
+                const auto id = prepared_->add_graph("layer_" + std::to_string(layer), nodes);
+                auto * graph = prepared_->graph(id);
                 auto normalized = modules::Bf16RoundModule{}.build(ctx,
                     modules::RMSNormModule(norm).build(ctx, x, w.input_norm));
                 core::TensorValue attention;
@@ -473,37 +448,29 @@ struct Thinker::Impl {
                             ggml_reshape_2d(ctx.ggml, copy.second, copy.second->ne[0], steps)));
                     staged_moe_->build_inputs(ctx, graph, normalized.tensor, {routing.ids, routing.scales});
                 }
-                add_graph(graph);
-                attention_graphs_.push_back(graph);
+                attention_graphs_.push_back(id);
                 if (routed) staged_layers_.push_back(staged_moe_->add_layer(thinker_experts,
                     {w.expert_up.tensor, w.expert_gate.tensor, w.expert_down.tensor}, *w.disk_store, w.disk_group));
             }
-            finish_ = ggml_new_graph_custom(ctx.ggml, small_nodes, false);
+            finish_ = prepared_->add_graph("finish", small_nodes);
             auto * reduced = modules::MoeModule::combine(ctx, staged_moe_->output(), staged_moe_->routing_weights());
             auto routed = modules::Bf16RoundModule{}.build(ctx, core::wrap_tensor(reduced, shape));
             auto combined = modules::Bf16RoundModule{}.build(ctx, modules::AddModule{}.build(
                 ctx, routed, core::wrap_tensor(ggml_reshape_3d(ctx.ggml, shared_, h, steps, 1), shape)));
             combined = modules::Bf16RoundModule{}.build(ctx,
                 modules::AddModule{}.build(ctx, core::wrap_tensor(residual_, shape), combined));
-            ggml_build_forward_expand(finish_, ggml_cpy(ctx.ggml, combined.tensor, x_));
-            add_graph(finish_);
-            final_ = ggml_new_graph_custom(ctx.ggml, small_nodes, false);
+            ggml_build_forward_expand(prepared_->graph(finish_), ggml_cpy(ctx.ggml, combined.tensor, x_));
+            final_ = prepared_->add_graph("final", small_nodes);
             auto last = modules::SliceModule({1, steps - 1, 1}).build(ctx, x);
             last = modules::Bf16RoundModule{}.build(ctx, modules::RMSNormModule(norm).build(ctx, last, weights.norm));
             logits_ = ggml_round_bf16(ctx.ggml, ggml_mul_mat(ctx.ggml, weights.head.tensor, last.tensor));
             ggml_set_output(logits_);
-            ggml_build_forward_expand(final_, logits_);
-            add_graph(final_);
+            ggml_build_forward_expand(prepared_->graph(final_), logits_);
+            workspace_->add(*prepared_);
         }
 
         void prepare() {
             staged_moe_->prepare();
-            for (auto * graph : graphs_)
-                core::prepare_host_graph_plan(execution_, graph, plans_[graph]);
-        }
-
-        ~OffloadPrefill() {
-            for (auto * graph : graphs_) core::release_backend_graph_resources(execution_.backend(), graph, true);
         }
 
         int64_t steps() const { return steps_; }
@@ -530,34 +497,27 @@ struct Thinker::Impl {
             ggml_backend_tensor_set(audio_indices_, targets.data(), 0, targets.size() * sizeof(int32_t));
             ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
             ggml_backend_tensor_set(mask_, mask.data(), 0, mask.size() * sizeof(float));
-            compute(initial_);
+            prepared_->compute(initial_);
             for (int64_t layer = 0; layer < config_.layers; ++layer) {
-                compute(attention_graphs_[layer]);
+                prepared_->compute(attention_graphs_[layer]);
                 if (layer < config_.dense_layers) continue;
                 staged_moe_->run(staged_layers_[static_cast<size_t>(layer - config_.dense_layers)]);
-                compute(finish_);
+                prepared_->compute(finish_);
             }
-            compute(final_);
+            prepared_->compute(final_);
             return core::read_tensor_f32(logits_);
         }
 
     private:
-        void compute(ggml_cgraph * graph) {
-            if (core::compute_graph(execution_, graph, plans_.at(graph), "ming3_audio.offload_prefill") != GGML_STATUS_SUCCESS)
-                throw std::runtime_error("Ming3 Audio offload prefill execution failed");
-        }
         core::ExecutionContext & execution_;
         ThinkerConfig config_;
         int64_t steps_, capacity_;
-        std::unique_ptr<ggml_context, decltype(&ggml_free)> context_{nullptr, ggml_free}, inputs_{nullptr, ggml_free};
-        std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, decltype(&ggml_backend_buffer_free)>
-            buffer_{nullptr, ggml_backend_buffer_free};
         std::shared_ptr<core::GraphWorkspace> workspace_;
         std::unique_ptr<modules::StagedMoeRuntime> staged_moe_;
+        std::unique_ptr<core::PreparedGraph> prepared_;
         std::vector<size_t> staged_layers_;
-        std::vector<ggml_cgraph *> graphs_, attention_graphs_;
-        std::map<ggml_cgraph *, core::HostGraphPlan> plans_;
-        ggml_cgraph * initial_ = nullptr, * finish_ = nullptr, * final_ = nullptr;
+        std::vector<core::PreparedGraph::GraphId> attention_graphs_;
+        core::PreparedGraph::GraphId initial_ = 0, finish_ = 0, final_ = 0;
         ggml_tensor * ids_ = nullptr, * audio_ = nullptr, * audio_indices_ = nullptr, * positions_ = nullptr, * mask_ = nullptr;
         ggml_tensor * x_ = nullptr, * residual_ = nullptr, * shared_ = nullptr, * logits_ = nullptr;
     };
@@ -684,15 +644,10 @@ struct Thinker::Impl {
 
     std::unique_ptr<Graph> build(int64_t steps, int64_t audio_steps, int64_t attention_steps) {
         const auto & c = config;
-        auto result = std::make_unique<Graph>(execution.backend());
-        constexpr size_t nodes = 32768;
-        const size_t arena = ggml_tensor_overhead() * nodes + ggml_graph_overhead_custom(nodes, false);
-        result->context = ggml_init({arena, nullptr, true});
-        if (!result->context) throw std::runtime_error("Ming3 Audio failed to allocate Thinker graph metadata");
+        auto result = std::make_unique<Graph>(execution);
         result->steps = steps;
         result->audio_steps = audio_steps;
         core::ModuleBuildContext ctx{result->context, "ming3_audio.thinker", execution.backend_type()};
-        result->graph = ggml_new_graph_custom(ctx.ggml, nodes, false);
         result->ids = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
         result->positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
         result->mask = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, attention_steps}));
@@ -742,36 +697,18 @@ struct Thinker::Impl {
         ggml_set_output(result->logits);
         ggml_build_forward_expand(result->graph, result->logits);
         if (weights.disk_store) {
-            result->cleanup_context = ggml_init({ggml_graph_overhead_custom(1, false) + 1024, nullptr, true});
-            if (!result->cleanup_context) throw std::runtime_error("Ming3 Audio failed to allocate capture cleanup metadata");
-            result->cleanup_graph = ggml_new_graph_custom(result->cleanup_context, 1, false);
-            ggml_backend_t backends[] = {execution.backend(), routing_execution->backend()};
-            result->scheduler = ggml_backend_sched_new(backends, nullptr, 2, nodes, false, false);
-            if (!result->scheduler) throw std::runtime_error("Ming3 Audio failed to allocate expert scheduler");
-            ggml_backend_sched_set_eval_callback(result->scheduler, core::DiskExpertWeightStore::evaluate, weights.disk_store.get());
-            auto * compute_graph = ggml_new_graph_custom(ctx.ggml, nodes, false);
+            auto * scheduler = result->prepared.create_scheduler({execution.backend(), routing_execution->backend()});
+            ggml_backend_sched_set_eval_callback(scheduler, core::DiskExpertWeightStore::evaluate, weights.disk_store.get());
             for (int i = 0; i < ggml_graph_n_nodes(result->graph); ++i) {
                 auto * node = ggml_graph_node(result->graph, i);
                 const bool routing = core::DiskExpertWeightStore::evaluate(node, true, weights.disk_store.get());
-                ggml_backend_sched_set_tensor_backend(result->scheduler, node,
+                ggml_backend_sched_set_tensor_backend(scheduler, node,
                     routing ? routing_execution->backend() : execution.backend());
-                if (!routing) ggml_graph_add_node(compute_graph, node);
             }
-            core::validate_backend_graph_supported(execution.backend(), compute_graph, "ming3_audio.thinker");
-            if (!ggml_backend_sched_alloc_graph(result->scheduler, result->graph)) {
-                throw std::runtime_error("Ming3 Audio failed to allocate offload graph");
-            }
-        } else {
-            core::validate_backend_graph_supported(execution.backend(), result->graph, "ming3_audio.thinker");
-            result->allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend()));
-            if (!result->allocator || !ggml_gallocr_alloc_graph(result->allocator, result->graph)) {
-                throw std::runtime_error("Ming3 Audio failed to allocate Thinker graph");
-            }
-            core::prepare_host_graph_plan(execution, result->graph, result->plan);
         }
+        result->prepared.allocate();
         debug::timing_log_scalar("ming3_audio.thinker.graph_buffer_mb",
-            (result->scheduler ? ggml_backend_sched_get_buffer_size(result->scheduler, execution.backend())
-                : ggml_gallocr_get_buffer_size(result->allocator, 0)) / (1024.0 * 1024.0));
+            result->prepared.workspace_bytes() / (1024.0 * 1024.0));
         debug::timing_log_context_reservation("ming3_audio.thinker.graph", result->context);
         return result;
     }
@@ -835,11 +772,7 @@ struct Thinker::Impl {
             core::write_tensor_f32(cached->audio, rounded);
             core::write_tensor_i32(cached->audio_indices, indices);
         }
-        const auto status = cached->scheduler ? ggml_backend_sched_graph_compute(cached->scheduler, cached->graph)
-            : core::compute_graph(execution, cached->graph, cached->plan, "ming3_audio.thinker");
-        if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Ming3 Audio Thinker graph execution failed");
-        }
+        cached->prepared.compute();
         valid_steps += steps;
         return core::read_tensor_f32(cached->logits);
     }

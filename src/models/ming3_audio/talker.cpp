@@ -1,3 +1,4 @@
+#include "engine/framework/core/prepared_graph.h"
 #include "engine/models/ming3_audio/talker.h"
 
 #include "engine/framework/core/attention_fallback.h"
@@ -107,18 +108,6 @@ struct Talker::Impl {
         decoder = std::make_unique<modules::CausalDecoderRuntime>(execution, runtime, std::move(weights));
     }
 
-    ~Impl() { release_prompt(); }
-
-    void release_prompt() {
-        core::release_backend_graph_resources(execution.backend(), graph, true);
-        plan.reset();
-        if (allocator) ggml_gallocr_free(allocator);
-        if (context) ggml_free(context);
-        graph = nullptr;
-        allocator = nullptr;
-        context = nullptr;
-    }
-
     std::vector<float> prepare_inputs(const TalkerPrompt & prompt, const std::vector<float> & speaker,
                                       const std::vector<float> & reference_latents) {
         const int64_t steps = prompt.ids.size();
@@ -126,17 +115,17 @@ struct Talker::Impl {
         if (steps == 0 || (!speaker.empty() && (speaker.size() != 192 || prompt.speaker_position < 0))) {
             throw std::runtime_error("Ming3 Audio Talker requires prompt tokens and a valid speaker conditioning slot");
         }
-        if (!graph || steps != prompt_steps || has_speaker != !speaker.empty()) {
-            release_prompt();
-            context = ggml_init({1024 * 1024, nullptr, true});
-            core::ModuleBuildContext ctx{context, "ming3_audio.talker.prompt", execution.backend_type()};
+        if (!prepared || steps != prompt_steps || has_speaker != !speaker.empty()) {
+            prepared.reset();
+            auto candidate = std::make_unique<core::PreparedGraph>(execution,
+                core::PreparedGraphConfig{"ming3_audio.talker.prompt", 1024 * 1024, 128});
+            auto & ctx = candidate->build_context();
             prompt_ids = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
             ggml_set_input(prompt_ids.tensor);
             auto value = modules::EmbeddingModule({config.vocabulary_size, hidden}).build(ctx, prompt_ids, embedding);
             prompt_output = core::wrap_tensor(ggml_cast(ctx.ggml, value.tensor, GGML_TYPE_F32), value.shape);
             ggml_set_output(prompt_output.tensor);
-            graph = ggml_new_graph_custom(context, 128, false);
-            ggml_build_forward_expand(graph, prompt_output.tensor);
+            ggml_build_forward_expand(candidate->graph(), prompt_output.tensor);
             if (!speaker.empty()) {
                 speaker_input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 192}));
                 ggml_set_input(speaker_input.tensor);
@@ -144,19 +133,16 @@ struct Talker::Impl {
                 speaker_output = modules::Bf16RoundModule{}.build(ctx,
                     modules::LinearModule({192, hidden, true}).build(ctx, rounded, speaker_projection));
                 ggml_set_output(speaker_output.tensor);
-                ggml_build_forward_expand(graph, speaker_output.tensor);
+                ggml_build_forward_expand(candidate->graph(), speaker_output.tensor);
             }
-            allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend()));
-            if (!allocator || !ggml_gallocr_alloc_graph(allocator, graph)) throw std::runtime_error("Ming3 Audio Talker prompt allocation failed");
-            core::prepare_host_graph_plan(execution, graph, plan);
+            candidate->allocate();
+            prepared = std::move(candidate);
             prompt_steps = steps;
             has_speaker = !speaker.empty();
         }
         core::write_tensor_i32(prompt_ids, prompt.ids);
         if (!speaker.empty()) core::write_tensor_f32(speaker_input, speaker);
-        if (core::compute_graph(execution, graph, plan, "ming3_audio.talker.prompt") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Ming3 Audio Talker prompt execution failed");
-        }
+        prepared->compute();
         auto embeddings = core::read_tensor_f32(prompt_output.tensor);
         core::round_f32_to_bf16_in_place(embeddings);
         if (!speaker.empty()) {
@@ -216,10 +202,7 @@ struct Talker::Impl {
     std::unique_ptr<modules::CausalDecoderRuntime> decoder;
     core::TensorValue embedding, prompt_ids, prompt_output, speaker_input, speaker_output;
     modules::LinearWeights speaker_projection;
-    ggml_context * context = nullptr;
-    ggml_cgraph * graph = nullptr;
-    ggml_gallocr_t allocator = nullptr;
-    core::HostGraphPlan plan;
+    std::unique_ptr<core::PreparedGraph> prepared;
     int64_t prompt_steps = 0;
     bool has_speaker = false;
 };
