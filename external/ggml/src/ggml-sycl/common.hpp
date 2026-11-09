@@ -61,6 +61,9 @@ extern int g_ggml_sycl_debug;
 extern int g_ggml_sycl_disable_optimize;
 extern int g_ggml_sycl_prioritize_dmmv;
 extern int g_ggml_sycl_enable_flash_attention;
+extern int g_ggml_sycl_disable_dnn;
+extern int g_ggml_sycl_fa_onednn;
+extern int g_ggml_sycl_fa_onednn_max_kv;
 
 
 #if defined(__clang__) && __has_builtin(__builtin_expect)
@@ -213,6 +216,7 @@ inline dpct::err0 ggml_sycl_set_device(const int device) try {
 struct optimize_feature {
     bool reorder=false;
     bool hw_dp4a=false;               // the device executes the vISA dp4a instruction
+    bool onednn_optimized_gemm=false; // oneDNN has a non-reference matmul for the device
 };
 
 struct sycl_device_info {
