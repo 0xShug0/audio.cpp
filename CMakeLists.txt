@@ -3954,6 +3954,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME yue2_attention_layout_test COMMAND yue2_attention_layout_test)
         add_engine_unittest(yue2_nar_conditioning_test tests/yue2/nar_conditioning_test.cpp)
         add_test(NAME yue2_nar_conditioning_test COMMAND yue2_nar_conditioning_test)
+        add_engine_unittest(yue2_nar_windowing_test tests/yue2/nar_windowing_test.cpp)
+        add_test(NAME yue2_nar_windowing_test COMMAND yue2_nar_windowing_test)
     endif()
 
     # Registered here rather than in the extended block below so it runs in the

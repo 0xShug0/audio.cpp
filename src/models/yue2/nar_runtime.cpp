@@ -1,6 +1,7 @@
 #include "engine/models/yue2/nar_runtime.h"
 #include "attention_layout.h"
 #include "nar_conditioning.h"
+#include "nar_windowing.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
@@ -166,18 +167,6 @@ std::shared_ptr<const Yue2NARWeights> load_nar_weights(
         true);
     weights->store->upload();
     return weights;
-}
-
-std::vector<std::pair<int64_t, int64_t>> chunk_ranges(int64_t frames, int64_t prefix_tokens, int64_t context) {
-    const int64_t chunk = std::min((context - prefix_tokens - 3) / 2, context);
-    if (frames < 1 || chunk < 1) {
-        throw std::runtime_error("Yue2 NAR chunk leaves no acoustic context");
-    }
-    std::vector<std::pair<int64_t, int64_t>> out;
-    for (int64_t begin = 0; begin < frames; begin += chunk) {
-        out.push_back({begin, std::min(begin + chunk, frames)});
-    }
-    return out;
 }
 
 std::vector<float> timestep_features(float shifted_t, int64_t rows) {
@@ -469,12 +458,16 @@ struct Yue2NARRuntime::Impl {
         size_t weight_context_bytes,
         size_t graph_arena_bytes,
         bool allow_flash_attention,
-        int64_t attention_tile_rows)
+        int64_t attention_tile_rows,
+        int64_t window_frames,
+        int64_t overlap_frames)
         : execution(execution),
           assets(std::move(assets)),
           graph_arena_bytes(graph_arena_bytes),
           allow_flash_attention(allow_flash_attention),
-          attention_tile_rows(attention_tile_rows) {
+          attention_tile_rows(attention_tile_rows),
+          window_frames(window_frames),
+          overlap_frames(overlap_frames) {
         if (!this->assets) {
             throw std::runtime_error("Yue2 NAR runtime requires assets");
         }
@@ -725,14 +718,19 @@ struct Yue2NARRuntime::Impl {
     std::vector<float> synthesize(
         const std::vector<int32_t> & prefix,
         const std::vector<int32_t> & codec,
-        const std::function<Yue2ARDevicePrefixState(const std::vector<int32_t> &)> & prefill_state,
+        const Yue2NARPrefillState & prefill_state,
         const std::vector<float> & noise,
         uint64_t seed,
         int64_t ode_steps,
         int64_t context) {
         const auto total_start = Clock::now();
         const auto & config = assets->config.model;
-        const auto ranges = chunk_ranges(static_cast<int64_t>(codec.size()), static_cast<int64_t>(prefix.size()), context);
+        const auto ranges = detail::nar_chunk_ranges(
+            static_cast<int64_t>(codec.size()),
+            static_cast<int64_t>(prefix.size()),
+            context,
+            window_frames,
+            overlap_frames);
         engine::debug::timing_log_scalar("yue2.nar.synthesize.codec_tokens", codec.size());
         engine::debug::timing_log_scalar("yue2.nar.synthesize.chunks", ranges.size());
         engine::debug::timing_log_scalar("yue2.nar.synthesize.context", context);
@@ -749,8 +747,8 @@ struct Yue2NARRuntime::Impl {
             }
             full_noise = noise;
         }
-        std::vector<float> out;
-        out.reserve(full_noise.size());
+        std::vector<float> out(full_noise.size(), 0.0F);
+        int64_t rendered_end = 0;
         double prefill_ms = 0.0;
         double solve_ms = 0.0;
         for (const auto & [begin, end] : ranges) {
@@ -767,12 +765,13 @@ struct Yue2NARRuntime::Impl {
                       full_noise.begin() + static_cast<std::ptrdiff_t>(end_elem),
                       noise.begin());
             const auto prefill_start = Clock::now();
-            auto ar_state = prefill_state(ar_tokens);
+            auto ar_state = prefill_state(ar_tokens, prefix.size());
             prefill_ms += engine::debug::elapsed_ms(prefill_start);
             const auto solve_start = Clock::now();
             auto chunk = solve_chunk(ar_state, noise, ode_steps);
             solve_ms += engine::debug::elapsed_ms(solve_start);
-            out.insert(out.end(), chunk.begin(), chunk.end());
+            detail::blend_nar_chunk(out, chunk, begin, end, rendered_end, config.latent_dim);
+            rendered_end = end;
         }
         engine::debug::timing_log_scalar("yue2.nar.synthesize.prefill_state_ms", prefill_ms);
         engine::debug::timing_log_scalar("yue2.nar.synthesize.solve_chunks_ms", solve_ms);
@@ -785,6 +784,8 @@ struct Yue2NARRuntime::Impl {
     size_t graph_arena_bytes = 0;
     bool allow_flash_attention = true;
     int64_t attention_tile_rows = 0;
+    int64_t window_frames = 0;
+    int64_t overlap_frames = 0;
     std::shared_ptr<const Yue2NARWeights> weights;
     std::unique_ptr<Graph> graph;
 };
@@ -796,7 +797,9 @@ Yue2NARRuntime::Yue2NARRuntime(
     size_t weight_context_bytes,
     size_t graph_arena_bytes,
     bool allow_flash_attention,
-    int64_t attention_tile_rows)
+    int64_t attention_tile_rows,
+    int64_t window_frames,
+    int64_t overlap_frames)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
@@ -804,14 +807,16 @@ Yue2NARRuntime::Yue2NARRuntime(
           weight_context_bytes,
           graph_arena_bytes,
           allow_flash_attention,
-          attention_tile_rows)) {}
+          attention_tile_rows,
+          window_frames,
+          overlap_frames)) {}
 
 Yue2NARRuntime::~Yue2NARRuntime() = default;
 
 std::vector<float> Yue2NARRuntime::synthesize(
     const std::vector<int32_t> & prefix,
     const std::vector<int32_t> & codec,
-    const std::function<Yue2ARDevicePrefixState(const std::vector<int32_t> &)> & prefill_state,
+    const Yue2NARPrefillState & prefill_state,
     const std::vector<float> & noise,
     uint64_t seed,
     int64_t ode_steps,
