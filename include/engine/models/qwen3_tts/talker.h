@@ -80,7 +80,8 @@ public:
         int64_t kv_cache_alignment = 1,
         bool packed_projections = false,
         ggml_type kv_cache_type = GGML_TYPE_F32,
-        bool optimized_kv_cache_write = false) const;
+        bool optimized_kv_cache_write = false,
+        bool bf16_activations = false) const;
 
     std::shared_ptr<Qwen3TalkerStepRuntime> create_step_runtime(
         std::shared_ptr<const Qwen3TalkerWeightsRuntime> weights,
