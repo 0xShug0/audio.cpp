@@ -696,8 +696,9 @@ struct Thinker::Impl {
         result->logits = ggml_round_bf16(ctx.ggml, ggml_mul_mat(ctx.ggml, weights.head.tensor, x.tensor));
         ggml_set_output(result->logits);
         ggml_build_forward_expand(result->graph, result->logits);
+        ggml_backend_sched_t scheduler = nullptr;
         if (weights.disk_store) {
-            auto * scheduler = result->prepared.create_scheduler({execution.backend(), routing_execution->backend()});
+            scheduler = result->prepared.create_scheduler({execution.backend(), routing_execution->backend()});
             ggml_backend_sched_set_eval_callback(scheduler, core::DiskExpertWeightStore::evaluate, weights.disk_store.get());
             for (int i = 0; i < ggml_graph_n_nodes(result->graph); ++i) {
                 auto * node = ggml_graph_node(result->graph, i);
@@ -708,7 +709,8 @@ struct Thinker::Impl {
         }
         result->prepared.allocate();
         debug::timing_log_scalar("ming3_audio.thinker.graph_buffer_mb",
-            result->prepared.workspace_bytes() / (1024.0 * 1024.0));
+            (scheduler ? ggml_backend_sched_get_buffer_size(scheduler, execution.backend())
+                       : result->prepared.workspace_bytes()) / (1024.0 * 1024.0));
         debug::timing_log_context_reservation("ming3_audio.thinker.graph", result->context);
         return result;
     }
