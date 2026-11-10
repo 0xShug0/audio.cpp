@@ -257,6 +257,7 @@ core::TensorValue TimestepEmbeddingModule::build(
     auto hidden = LinearModule({config_.frequency_embedding_size, config_.hidden_size, true}).build(ctx, embedding, weights.fc1);
     hidden = SiluModule().build(ctx, hidden);
     hidden = LinearModule({config_.hidden_size, config_.hidden_size, true}).build(ctx, hidden, weights.fc2);
+    if (config_.norm == TimestepEmbeddingNorm::None) return hidden;
     if (!weights.rms_weight.has_value()) {
         throw std::runtime_error("TimestepEmbeddingWeights.rms_weight is required");
     }

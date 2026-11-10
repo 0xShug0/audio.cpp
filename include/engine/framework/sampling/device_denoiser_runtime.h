@@ -69,6 +69,26 @@ public:
         const core::TensorValue & guidance) const;
 };
 
+// Shared APG math. Axes use logical rank-three dimensions and exclude batch.
+class FlowSamplerApgGraphModule {
+public:
+    explicit FlowSamplerApgGraphModule(std::vector<int> axes = {1, 2});
+    core::TensorValue build(core::ModuleBuildContext & ctx,
+        const core::TensorValue & positive, const core::TensorValue & negative,
+        const core::TensorValue & reference, const core::TensorValue & guidance,
+        const core::TensorValue & strength, const core::TensorValue & mask = {}) const;
+private:
+    std::vector<int> axes_;
+};
+
+class FlowSamplerPingPongGraphModule {
+public:
+    core::TensorValue build(core::ModuleBuildContext & ctx,
+        const core::TensorValue & latent, const core::TensorValue & velocity,
+        const core::TensorValue & noise, const core::TensorValue & time,
+        const core::TensorValue & next_time) const;
+};
+
 class FlowSamplerEulerGraphModule {
 public:
     explicit FlowSamplerEulerGraphModule(FlowSamplerEulerGraphConfig config = {});

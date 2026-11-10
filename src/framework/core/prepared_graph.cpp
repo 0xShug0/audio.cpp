@@ -154,6 +154,8 @@ void PreparedGraph::release_graphs() {
         entry->graph = nullptr;
     }
     if (owned_workspace_) owned_workspace_->reset();
+    scratch_tensors_.clear();
+    releasable_ = false;
     allocation_started_ = false;
     allocated_ = false;
 }
@@ -184,6 +186,46 @@ void PreparedGraph::release() {
     persistent_buffer_.reset();
     persistent_context_.reset();
     persistent_build_context_ = {};
+}
+
+void PreparedGraph::allocate_releasable() {
+    if (!context_ || workspace_ || scheduler_ || allocation_started_)
+        throw std::logic_error(config_.label + " releasable allocation requires an unallocated, owned graph set");
+    scratch_tensors_.clear();
+    for (auto * tensor = ggml_get_first_tensor(context_.get()); tensor; tensor = ggml_get_next_tensor(context_.get(), tensor)) {
+        if (!tensor->view_src && !tensor->data) scratch_tensors_.push_back(tensor);
+    }
+    allocate();
+    releasable_ = true;
+}
+
+void PreparedGraph::release_buffers() {
+    if (workspace_ || scheduler_ || !releasable_ || !allocated_)
+        throw std::logic_error(config_.label + " buffer release requires an allocated releasable graph set");
+    synchronize();
+    for (auto & entry : graphs_) {
+        entry->plan.reset();
+        release_backend_graph_resources(execution_.backend(), entry->graph, true);
+    }
+    std::unordered_set<ggml_backend_buffer_t> buffers;
+    if (persistent_buffer_) buffers.insert(persistent_buffer_.get());
+    for (const auto * tensor : scratch_tensors_) if (tensor->buffer) buffers.insert(tensor->buffer);
+    for (auto * context : {context_.get(), persistent_context_.get()}) {
+        if (!context) continue;
+        for (auto * tensor = ggml_get_first_tensor(context); tensor; tensor = ggml_get_next_tensor(context, tensor)) {
+            if (buffers.count(tensor->buffer)) {
+                tensor->data = nullptr;
+                tensor->buffer = nullptr;
+                tensor->extra = nullptr;
+            }
+        }
+    }
+    owned_workspace_.reset();
+    persistent_buffer_.reset();
+    scratch_tensors_.clear();
+    releasable_ = false;
+    allocation_started_ = false;
+    allocated_ = false;
 }
 
 void PreparedGraph::allocate() {

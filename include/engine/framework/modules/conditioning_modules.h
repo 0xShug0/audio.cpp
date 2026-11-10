@@ -80,6 +80,7 @@ enum class TimestepEmbeddingNorm {
     VarianceRms,
     // x * w / sqrt(mean(x^2) + eps), the plain uncentered RMS norm.
     Rms,
+    None,
 };
 
 struct ConditionedFlowMLPConfig {

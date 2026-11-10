@@ -2,6 +2,7 @@
 #include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/structural_modules.h"
 #include "test_assert.h"
 #include "ggml-backend-impl.h"
 
@@ -185,6 +186,74 @@ void check_owned_graph(core::ExecutionContext & execution) {
         require(core::read_tensor_f32(result.tensor) == expected, "rebuilt graph used stale data or captures");
         graph.reset();
     }
+}
+
+void check_buffer_release(core::ExecutionContext & execution) {
+    constexpr int64_t width = 32768;
+    core::PreparedGraph parameters(execution, {"test.release.parameters", 65536, 32, 65536});
+    const auto weights = core::make_tensor(parameters.persistent_build_context(), GGML_TYPE_F32,
+        core::TensorShape::from_dims({width}));
+    parameters.allocate_persistent();
+    core::write_tensor_f32(weights, std::vector<float>(width, 7));
+    const auto * weight_address = weights.tensor->data;
+    core::PreparedGraph owner(execution, {"test.release.buffers", 1024 * 1024, 1024, 65536});
+    const auto input = core::make_tensor(owner.persistent_build_context(), GGML_TYPE_F32,
+        core::TensorShape::from_dims({width}));
+    const auto saved = core::make_tensor(owner.persistent_build_context(), GGML_TYPE_F32, input.shape);
+    auto & ctx = owner.build_context();
+    const auto foreign_view = modules::SliceModule({0, 0, width}).build(ctx, weights);
+    const auto output = modules::AddModule().build(ctx,
+        modules::ScaleBiasModule({3.f, -2.f}).build(ctx, input), foreign_view);
+    ggml_set_output(output.tensor);
+    ggml_build_forward_expand(owner.graph(), ggml_cpy(ctx.ggml, output.tensor, saved.tensor));
+    const auto small_id = owner.add_graph("small");
+    const auto small = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({17}));
+    ggml_set_input(small.tensor);
+    const auto small_output = modules::ScaleBiasModule({2.f, 1.f}).build(ctx, small);
+    ggml_set_output(small_output.tensor);
+    ggml_build_forward_expand(owner.graph(small_id), small_output.tensor);
+    auto * metadata = ctx.ggml;
+    auto * allocation_graph = owner.graph();
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        owner.allocate_persistent();
+        owner.allocate_releasable();
+        for (int request = 0; request < 6; ++request) {
+            const float value = static_cast<float>(cycle * 9 + request);
+            core::write_tensor_f32(input, std::vector<float>(width, value));
+            owner.compute();
+            require(core::read_tensor_f32(saved.tensor) == std::vector<float>(width, 3 * value + 5),
+                "buffer reallocation used stale persistent data or external parameters");
+            core::write_tensor_f32(small, std::vector<float>(17, -value));
+            owner.compute(small_id);
+            require(core::read_tensor_f32(small_output.tensor) == std::vector<float>(17, 1 - 2 * value),
+                "buffer reallocation used stale scratch or graph captures");
+        }
+        {
+            ResetSyncCheck sync(owner);
+            owner.release_buffers();
+            require(sync.calls == 1 && sync.storage_alive, "buffer release did not drain execution before freeing storage");
+        }
+        require(!owner.allocated() && !owner.has_host_plan() && owner.workspace_bytes() == 0 && owner.persistent_bytes() == 0,
+            "buffer release retained allocations or plans");
+        require(owner.graph_count() == 2 && owner.graph() == allocation_graph && owner.build_context().ggml == metadata,
+            "buffer release rebuilt the graph metadata");
+        require(!input.tensor->data && !saved.tensor->data && !small.tensor->data && !output.tensor->data,
+            "released tensor handles retained freed pointers");
+        require(weights.tensor->data == weight_address && foreign_view.tensor->data == weight_address &&
+            core::read_tensor_f32(weights.tensor) == std::vector<float>(width, 7),
+            "buffer release modified externally owned parameter storage");
+        bool rejected = false;
+        try { owner.compute(); } catch (const std::runtime_error &) { rejected = true; }
+        require(rejected, "execution with released buffers was accepted");
+    }
+    owner.reset();
+    owner.allocate_persistent();
+    const auto ordinary = core::make_tensor(owner.build_context(), GGML_TYPE_F32, core::TensorShape::from_dims({17}));
+    ggml_build_forward_expand(owner.graph(), ordinary.tensor);
+    owner.allocate();
+    bool rejected = false;
+    try { owner.release_buffers(); } catch (const std::logic_error &) { rejected = true; }
+    require(rejected, "ordinary allocations were silently made releasable");
 }
 
 void check_workspace(core::ExecutionContext & execution) {
@@ -1027,6 +1096,7 @@ int main(int argc, char ** argv) {
         core::ExecutionContext execution({type, 0, 8});
         for (int lifetime = 0; lifetime < 2; ++lifetime) {
             check_owned_graph(execution);
+            check_buffer_release(execution);
             check_workspace(execution);
             check_workspace_sizes(execution);
             check_graph_set(execution);

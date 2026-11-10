@@ -1,7 +1,9 @@
 #include "engine/framework/sampling/flow_sampler_runtime.h"
+#include "engine/framework/core/backend.h"
 
 #include <algorithm>
 #include <cstddef>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -125,7 +127,7 @@ FlowSamplerUpdateRuntime::~FlowSamplerUpdateRuntime() = default;
 class FlowSamplerEulerUpdate final : public FlowSamplerUpdateRuntime {
 public:
     void update_latent(const FlowSamplerUpdateInput & input) override {
-        const float dt = input.state.schedule.t_next - input.state.schedule.t;
+        const float dt = input.state.step_size.value_or(input.state.schedule.t_next - input.state.schedule.t);
         if (input.prediction.size() != input.latent.size()) {
             throw std::runtime_error("FlowSampler Euler update prediction shape mismatch");
         }
@@ -296,6 +298,23 @@ make_flow_sampler_single_branch_denoiser(FlowSamplerSingleBranchDenoiserConfig c
     return std::make_unique<SingleBranchFlowSamplerDenoiser>(std::move(config));
 }
 
+std::vector<float> flow_sampler_evaluation_times(
+    const std::vector<FlowSamplerScheduleStep> & schedule, FlowSamplerUpdateRule rule, std::optional<float> step_size) {
+    std::vector<float> times;
+    for (const auto & step : schedule) {
+        const float dt = step_size.value_or(step.t_next - step.t);
+        times.push_back(step.t);
+        if (rule == FlowSamplerUpdateRule::Midpoint || rule == FlowSamplerUpdateRule::Rk4)
+            times.push_back(step.t + .5f * dt);
+        if (rule == FlowSamplerUpdateRule::Rk4) {
+            times.push_back(times.back()); times.push_back(step.t + dt);
+        }
+        if (rule == FlowSamplerUpdateRule::Custom)
+            throw std::invalid_argument("Custom solvers define their own evaluation schedule");
+    }
+    return times;
+}
+
 class FlowSamplerRuntime::Impl {
 public:
     Impl(
@@ -316,6 +335,8 @@ public:
         if (default_euler_updater && config_.update_rule == FlowSamplerUpdateRule::Custom) {
             throw std::runtime_error(config_.label + " custom update rule requires explicit latent update runtime");
         }
+        if (!default_euler_updater && config_.update_rule != FlowSamplerUpdateRule::Custom && config_.update_rule != FlowSamplerUpdateRule::Euler)
+            throw std::invalid_argument(config_.label + " multi-stage solver cannot use an external update runtime");
         latent_ = config_.initial_latent;
         preserved_latent_ = config_.initial_latent;
         cache_states_.reserve(config_.caches.size());
@@ -344,13 +365,20 @@ public:
         preserved_latent_ = initial_latent;
         for (int64_t i = 0; i < static_cast<int64_t>(config_.schedule.size()); ++i) {
             auto state = make_step_state(i);
-            ensure_graph(state);
-            auto output = denoiser_->run_sampler_denoiser({state, latent_});
-            validate_denoiser_output(state, output);
-            const auto combined = combine_predictions(output.predictions);
-            apply_update(state, combined);
-            preserve_prefix();
-            apply_cache_updates(output.cache_updates);
+            if (config_.update_rule == FlowSamplerUpdateRule::Midpoint || config_.update_rule == FlowSamplerUpdateRule::Rk4) {
+                integrate_stages(state);
+                if (config_.state_precision == FlowSamplerStatePrecision::Bf16) core::round_f32_to_bf16_in_place(latent_);
+                preserve_prefix(latent_);
+            } else {
+                ensure_graph(state);
+                auto output = denoiser_->run_sampler_denoiser({state, latent_});
+                validate_denoiser_output(state, output);
+                const auto combined = combine_predictions(output.predictions);
+                apply_update(state, combined);
+                if (config_.state_precision == FlowSamplerStatePrecision::Bf16) core::round_f32_to_bf16_in_place(latent_);
+                preserve_prefix(latent_);
+                apply_cache_updates(output.cache_updates);
+            }
         }
         if (config_.release_graph_after_sequence) {
             release_runtime_graphs();
@@ -413,6 +441,13 @@ private:
         if (config_.schedule.empty()) {
             throw std::runtime_error(config_.label + " requires non-empty schedule");
         }
+        if (config_.step_size) {
+            if (!std::isfinite(*config_.step_size) || *config_.step_size == 0)
+                throw std::invalid_argument(config_.label + " fixed step must be finite and nonzero");
+            for (const auto & step : config_.schedule)
+                if ((step.t_next - step.t) * *config_.step_size <= 0)
+                    throw std::invalid_argument(config_.label + " fixed step direction disagrees with schedule");
+        }
         if (config_.branches.empty()) {
             throw std::runtime_error(config_.label + " requires at least one branch");
         }
@@ -473,6 +508,7 @@ private:
     FlowSamplerStepState make_step_state(int64_t sequence_index) const {
         FlowSamplerStepState state;
         state.sequence_index = sequence_index;
+        state.step_size = config_.step_size;
         state.schedule = config_.schedule[static_cast<size_t>(sequence_index)];
         state.branches = config_.branches;
         state.caches = cache_states_;
@@ -549,6 +585,36 @@ private:
         throw std::runtime_error(config_.label + " unsupported guidance mode");
     }
 
+    void integrate_stages(const FlowSamplerStepState & state) {
+        const auto evaluate = [&](const std::vector<float> & latent, float time) {
+            auto evaluation = state;
+            evaluation.schedule.t = time; evaluation.caches = cache_states_;
+            ensure_graph(evaluation);
+            auto output = denoiser_->run_sampler_denoiser({evaluation, latent});
+            validate_denoiser_output(evaluation, output);
+            apply_cache_updates(output.cache_updates);
+            return combine_predictions(output.predictions);
+        };
+        const float dt = state.step_size.value_or(state.schedule.t_next - state.schedule.t);
+        const auto first = evaluate(latent_, state.schedule.t);
+        auto intermediate = latent_;
+        for (size_t j = 0; j < latent_.size(); ++j) intermediate[j] += .5f * dt * first[j];
+        preserve_prefix(intermediate);
+        const auto second = evaluate(intermediate, state.schedule.t + .5f * dt);
+        if (config_.update_rule == FlowSamplerUpdateRule::Midpoint) {
+            for (size_t j = 0; j < latent_.size(); ++j) latent_[j] += dt * second[j];
+            return;
+        }
+        for (size_t j = 0; j < latent_.size(); ++j) intermediate[j] = latent_[j] + .5f * dt * second[j];
+        preserve_prefix(intermediate);
+        const auto third = evaluate(intermediate, state.schedule.t + .5f * dt);
+        for (size_t j = 0; j < latent_.size(); ++j) intermediate[j] = latent_[j] + dt * third[j];
+        preserve_prefix(intermediate);
+        const auto fourth = evaluate(intermediate, state.schedule.t + dt);
+        for (size_t j = 0; j < latent_.size(); ++j)
+            latent_[j] += (dt / 6.f) * (first[j] + 2.f * second[j] + 2.f * third[j] + fourth[j]);
+    }
+
     void apply_update(
         const FlowSamplerStepState & state,
         const std::vector<float> & prediction) {
@@ -562,13 +628,13 @@ private:
         updater_->update_latent({state, prediction, latent_});
     }
 
-    void preserve_prefix() {
+    void preserve_prefix(std::vector<float> & latent) {
         if (config_.prefix.preserve_mask.empty()) {
             return;
         }
-        for (size_t i = 0; i < latent_.size(); ++i) {
+        for (size_t i = 0; i < latent.size(); ++i) {
             if (config_.prefix.preserve_mask[i] != 0.0F) {
-                latent_[i] = preserved_latent_[i];
+                latent[i] = preserved_latent_[i];
             }
         }
     }
