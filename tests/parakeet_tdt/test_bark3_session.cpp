@@ -1,5 +1,5 @@
 #include "engine/community_models/parakeet_tdt/bark3.h"
-#include "engine/community_models/parakeet_tdt/implementation.h"
+#include "engine/community_models/parakeet_tdt/routing.h"
 #include "test_assert.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/runtime/errors.h"

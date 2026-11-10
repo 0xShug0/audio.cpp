@@ -1,13 +1,11 @@
-#include "engine/community_models/parakeet_tdt/implementation.h"
+#include "engine/community_models/parakeet_tdt/routing.h"
 #include "engine/community_models/parakeet_tdt/bark3.h"
 #include "engine/community_models/parakeet_tdt/kda_predictor.h"
 #include "engine/community_models/parakeet_tdt/phonon_streaming.h"
 #include "engine/community_models/parakeet_tdt/session.h"
 #include "engine/framework/runtime/spec_backed_model.h"
+#include "engine/framework/runtime/model_routing.h"
 
-#include <algorithm>
-#include <array>
-#include <stdexcept>
 #include <utility>
 
 namespace engine::community_models::parakeet_tdt {
@@ -49,49 +47,44 @@ const ParakeetImplementation kParakeetImplementation{
     load_lstm_predictor, default_encoder_options};
 
 const ParakeetImplementation kPhononImplementation = [] {
-    auto implementation = kParakeetImplementation;
-    implementation.streaming = create_session<PhononStreamingSession>;
-    implementation.hotwords = true;
-    return implementation;
+    auto impl = kParakeetImplementation;
+    impl.streaming = create_session<PhononStreamingSession>;
+    impl.hotwords = true;
+    return impl;
 }();
 
 const ParakeetImplementation kBarkImplementation = [] {
-    auto implementation = kParakeetImplementation;
-    implementation.offline = create_bark_offline;
-    implementation.streaming = create_bark_streaming;
-    implementation.encoder_graph_options = bark3_encoder_graph_options;
-    implementation.window_frontend = create_bark_frontend;
-    implementation.input_prefix_samples = kBark3InputPrefixSamples;
-    implementation.hotwords = true;
-    implementation.hotword_name = "Bark";
-    implementation.invalid_request_errors = true;
-    implementation.window_timestamps = remove_bark3_prefix_timestamps;
-    return implementation;
+    auto impl = kParakeetImplementation;
+    impl.offline = create_bark_offline;
+    impl.streaming = create_bark_streaming;
+    impl.encoder_graph_options = bark3_encoder_graph_options;
+    impl.window_frontend = create_bark_frontend;
+    impl.input_prefix_samples = kBark3InputPrefixSamples;
+    impl.hotwords = true;
+    impl.hotword_name = "Bark";
+    impl.invalid_request_errors = true;
+    impl.window_timestamps = remove_bark3_prefix_timestamps;
+    return impl;
 }();
 
 const ParakeetImplementation kHaasImplementation = [] {
-    auto implementation = kParakeetImplementation;
-    implementation.load_predictor = load_kda_predictor;
-    return implementation;
+    auto impl = kParakeetImplementation;
+    impl.load_predictor = load_kda_predictor;
+    return impl;
 }();
 
+// Implementation registrations
+const runtime::ModelRouteEntry<std::string_view, ParakeetImplementation> entries[] = {
+    {"parakeet_tdt", &kParakeetImplementation},
+    {"phonon2_asr", &kPhononImplementation},
+    {"underdog_bark3", &kBarkImplementation},
+    {"haas_asr", &kHaasImplementation},
+};
+const runtime::ModelRouteTable<std::string_view, ParakeetImplementation> table(
+    "Parakeet implementation family", entries);
+
 const ParakeetImplementation & implementation_for_family(std::string_view family) {
-    struct Registration {
-        std::string_view family;
-        const ParakeetImplementation * implementation;
-    };
-    static constexpr std::array<Registration, 4> registrations{{
-        {"parakeet_tdt", &kParakeetImplementation},
-        {"phonon2_asr", &kPhononImplementation},
-        {"underdog_bark3", &kBarkImplementation},
-        {"haas_asr", &kHaasImplementation},
-    }};
-    const auto found = std::find_if(registrations.begin(), registrations.end(),
-        [family](const auto & entry) { return entry.family == family; });
-    if (found == registrations.end()) {
-        throw std::runtime_error("unregistered Parakeet implementation family: " + std::string(family));
-    }
-    return *found->implementation;
+    return table.require(family);
 }
 
 namespace {
@@ -104,9 +97,9 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_family_loader(std::string famil
     };
     config.create_session = [](const runtime::TaskSpec & task, const runtime::SessionOptions & options,
         std::shared_ptr<const ParakeetTDTAssets> assets, std::shared_ptr<const model_spec::ModelContract> contract) {
-        const auto & implementation = *assets->implementation;
+        const auto & impl = *assets->impl;
         const auto factory = task.mode == runtime::RunMode::Streaming
-            ? implementation.streaming : implementation.offline;
+            ? impl.streaming : impl.offline;
         return factory(task, options, std::move(assets), std::move(contract));
     };
     return runtime::make_spec_backed_voice_loader(std::move(config));

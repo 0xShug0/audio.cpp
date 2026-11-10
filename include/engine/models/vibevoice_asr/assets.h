@@ -11,6 +11,8 @@
 
 namespace engine::models::vibevoice_asr {
 
+struct VibeVoiceASRImplementation;
+
 struct VibeVoiceTokenizerConfig {
     int64_t channels = 1;
     bool causal = true;
@@ -96,7 +98,8 @@ struct VibeVoiceProcessorConfig {
 
 struct VibeVoiceASRAssets {
     assets::ResourceBundle resources;
-    std::string family = "vibevoice_asr";
+    const std::string & family() const;
+    const VibeVoiceASRImplementation * impl = nullptr;
     VibeVoiceConfig config;
     VibeVoiceProcessorConfig processor;
     std::shared_ptr<const assets::TensorSource> model_weights;

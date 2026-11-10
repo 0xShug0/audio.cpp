@@ -1140,7 +1140,7 @@ audiocpp_add_model(maya1
 
 audiocpp_add_model(parakeet_tdt
     SOURCES
-        src/community_models/parakeet_tdt/implementation.cpp
+        src/community_models/parakeet_tdt/routing.cpp
         src/community_models/parakeet_tdt/predictor.cpp
         src/community_models/parakeet_tdt/assets.cpp
         src/community_models/parakeet_tdt/bark3.cpp
@@ -3804,6 +3804,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         endif()
     endif()
 
+    add_engine_unittest(model_routing_test tests/unittests/test_model_routing.cpp)
+    add_test(NAME model_routing_test COMMAND model_routing_test
+        --log ${CMAKE_CURRENT_BINARY_DIR}/model_routing_test.log)
     add_engine_unittest(ctc_host_decoder_test tests/unittests/test_ctc_host_decoder.cpp)
     add_test(NAME ctc_host_decoder_test COMMAND ctc_host_decoder_test)
     add_engine_unittest(device_denoiser_runtime_test tests/unittests/test_device_denoiser_runtime.cpp)

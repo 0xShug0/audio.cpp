@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/models/pocket_tts/routing.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/tokenizers/sentencepiece.h"
@@ -69,7 +70,10 @@ struct PocketTTSAssets {
     PocketTTSModelConfig model_config;
     std::vector<tokenizers::SentencePiecePiece> tokenizer_pieces;
     std::string language;
-    std::string family = "pocket_tts";
+    // Selected once by the asset loader; model and sessions reuse this descriptor.
+    const PocketTTSImplementation * impl = nullptr;
+
+    std::string family() const { return std::string(impl->family); }
     // Voice used when a request selects none.
     std::optional<std::filesystem::path> default_voice_path;
 };

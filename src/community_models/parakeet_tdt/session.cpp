@@ -1,5 +1,5 @@
 #include "engine/community_models/parakeet_tdt/session.h"
-#include "engine/community_models/parakeet_tdt/implementation.h"
+#include "engine/community_models/parakeet_tdt/routing.h"
 
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/runtime/errors.h"
@@ -296,7 +296,7 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
     if (const auto value = runtime::find_option(request.options, {"keep_language_tags"})) {
         opts.keep_language_tags = runtime::parse_bool_option(*value, "keep_language_tags");
     }
-    const auto & implementation = *assets_->implementation;
+    const auto & implementation = *assets_->impl;
     const bool native_hotwords = implementation.hotwords;
     std::optional<std::string> hotwords;
     if (const auto it = request.options.find("hotwords"); it != request.options.end())
@@ -324,7 +324,7 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
     }
     return opts;
 } catch (const std::runtime_error & error) {
-    if (assets_->implementation->invalid_request_errors)
+    if (assets_->impl->invalid_request_errors)
         throw runtime::InvalidRequestError(error.what());
     throw;
 }
@@ -681,7 +681,7 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
     for (const auto& span : spans) {
         auto window = engine::audio::slice_audio_buffer(audio, span);
         const auto original_window_samples = static_cast<int64_t>(window.samples.size());
-        const auto prefix_samples = assets_->implementation->input_prefix_samples;
+        const auto prefix_samples = assets_->impl->input_prefix_samples;
         if (prefix_samples > 0) {
             // Each VAD span is decoded independently. Supply the publisher's
             // prefix to each span, even when VAD removed the recording prefix.
@@ -705,8 +705,8 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
             break;
         }
         auto decoded = decoder_->decode(encoded, item_decode_options);
-        if (assets_->implementation->window_timestamps)
-            assets_->implementation->window_timestamps(decoded.word_timestamps, original_window_samples);
+        if (assets_->impl->window_timestamps)
+            assets_->impl->window_timestamps(decoded.word_timestamps, original_window_samples);
         token_count += static_cast<int64_t>(decoded.token_ids.size());
         if (!decoded.text.empty()) {
             if (!text.empty()) {
@@ -755,8 +755,8 @@ ParakeetTDTStreamingSession::ParakeetTDTStreamingSession(
           std::move(options),
           std::move(assets),
           std::move(contract)) {
-    if (assets_->implementation->window_frontend) {
-        window_frontend_ = assets_->implementation->window_frontend(assets_);
+    if (assets_->impl->window_frontend) {
+        window_frontend_ = assets_->impl->window_frontend(assets_);
     }
     const int sample_rate = assets_->config.frontend.sample_rate;
     center_samples_ = seconds_to_samples(

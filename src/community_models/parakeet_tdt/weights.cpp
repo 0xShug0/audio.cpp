@@ -1,5 +1,5 @@
 #include "engine/community_models/parakeet_tdt/weights.h"
-#include "engine/community_models/parakeet_tdt/implementation.h"
+#include "engine/community_models/parakeet_tdt/routing.h"
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/weight_binding.h"
@@ -195,7 +195,7 @@ ParakeetTDTDecoderWeights load_decoder_weights(
     ParakeetTDTDecoderWeights w;
     const int64_t H = config.decoder_hidden_size;
     w.embedding = store.load_tensor(source, "decoder.embedding.weight", st, {config.vocab_size, H});
-    w.predictor = assets.implementation->load_predictor(store, assets, st);
+    w.predictor = assets.impl->load_predictor(store, assets, st);
     w.decoder_projector = load_linear(store, source, "decoder.decoder_projector", st, H, H, true);
     w.joint_enc = load_linear(store, source, "encoder_projector", st, H, config.encoder.hidden_size, true);
     const int64_t jout = config.vocab_size + static_cast<int64_t>(config.durations.size());

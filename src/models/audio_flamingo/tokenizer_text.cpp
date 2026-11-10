@@ -29,7 +29,7 @@ struct AudioFlamingoTextTokenizer::Impl {
             throw std::runtime_error("Audio Flamingo chat template requires a static system message");
         }
         system_prompt = chat_template.substr(start + system_start.size(), end - start - system_start.size());
-        if (assets->config.variant == AudioFlamingoVariant::Next) {
+        if (assets->config.impl->frame_audio_tokens) {
             const auto bos = tokenizer.find_token_id("<|sound_bos|>");
             const auto eos = tokenizer.find_token_id("<|sound_eos|>");
             if (!bos || !eos || *bos != assets->config.text_decoder.audio_bos_token_id ||
@@ -66,7 +66,7 @@ AudioFlamingoPrompt AudioFlamingoTextTokenizer::build_prompt(const std::string &
     expanded += impl_->system_prompt;
     expanded += "<|im_end|>\n";
     expanded += "<|im_start|>user\n";
-    if (impl_->assets->config.variant == AudioFlamingoVariant::Next) {
+    if (impl_->assets->config.impl->frame_audio_tokens) {
         expanded += "<|sound_bos|>";
     }
     if (temporal_grounding) {
@@ -81,7 +81,7 @@ AudioFlamingoPrompt AudioFlamingoTextTokenizer::build_prompt(const std::string &
     } else {
         for (int64_t i = 0; i < audio_token_count; ++i) expanded += "<sound>";
     }
-    if (impl_->assets->config.variant == AudioFlamingoVariant::Next) {
+    if (impl_->assets->config.impl->frame_audio_tokens) {
         expanded += "<|sound_eos|>";
     }
     expanded += prompt;

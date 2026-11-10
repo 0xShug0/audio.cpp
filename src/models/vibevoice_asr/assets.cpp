@@ -1,4 +1,5 @@
 #include "engine/models/vibevoice_asr/assets.h"
+#include "engine/models/vibevoice_asr/routing.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
@@ -258,15 +259,20 @@ void validate_weight_anchors(const VibeVoiceASRAssets & assets) {
 
 }  // namespace
 
+const std::string & VibeVoiceASRAssets::family() const {
+    return impl->family;
+}
+
 std::shared_ptr<const VibeVoiceASRAssets> load_vibevoice_asr_assets(
     const std::filesystem::path & model_path,
     const std::string & family) {
+    const auto & impl = require_vibevoice_asr_implementation(family);
     auto resources = engine::model_spec::load_resource_bundle(
         model_path,
-        engine::model_spec::default_spec_path(family));
+        engine::model_spec::default_spec_path(impl.family));
     VibeVoiceASRAssets assets;
     assets.resources = std::move(resources);
-    assets.family = family;
+    assets.impl = &impl;
     assets.config = parse_config(assets.resources);
     assets.processor = parse_processor_config(assets.resources);
     assets.model_weights = assets.resources.open_tensor_source("model_weights");

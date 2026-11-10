@@ -1,5 +1,5 @@
 #include "engine/community_models/parakeet_tdt/assets.h"
-#include "engine/community_models/parakeet_tdt/implementation.h"
+#include "engine/community_models/parakeet_tdt/routing.h"
 #include "engine/community_models/parakeet_tdt/session.h"
 #include "engine/community_models/parakeet_tdt/word_timestamps.h"
 #include "engine/framework/io/safetensors.h"
@@ -52,18 +52,18 @@ void test_config(const std::filesystem::path & root) {
     auto phonon = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
     engine::test::require_eq(phonon->config.variant, std::string("phonon2"), "explicit Phonon variant");
     using namespace engine::community_models::parakeet_tdt;
-    engine::test::require(phonon->implementation == &kParakeetImplementation,
+    engine::test::require(phonon->impl == &kParakeetImplementation,
                          "variant metadata does not select an implementation");
     auto explicit_phonon = load_parakeet_assets(root, "phonon2_asr");
-    engine::test::require(explicit_phonon->implementation == &kPhononImplementation,
+    engine::test::require(explicit_phonon->impl == &kPhononImplementation,
                          "Phonon family selects its registered implementation");
     engine::test::require_eq(phonon->config.word_timestamp_mode, std::string("default"), "variant does not override timestamp policy");
     write(root / "config.json", config("", ",\"variant\":\"underdog_bark3_pro\""));
     auto bark = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
-    engine::test::require(bark->implementation == &kParakeetImplementation,
+    engine::test::require(bark->impl == &kParakeetImplementation,
                          "Bark variant metadata does not override the family");
     auto explicit_bark = load_parakeet_assets(root, "underdog_bark3");
-    engine::test::require(explicit_bark->implementation == &kBarkImplementation,
+    engine::test::require(explicit_bark->impl == &kBarkImplementation,
                          "Bark family selects its registered implementation");
     engine::test::require_eq(bark->config.variant, std::string("underdog_bark3_pro"), "explicit Bark variant");
     engine::test::require_eq(bark->config.word_timestamp_mode, std::string("default"), "Bark retains standard TDT timing policy");

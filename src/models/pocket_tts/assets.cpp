@@ -156,6 +156,7 @@ PocketTTSAssets load_assets_from_resources(
     const auto tensor_source = resources.open_tensor_source("weights");
 
     PocketTTSAssets manifest;
+    manifest.impl = &implementation_for_family("pocket_tts");
     manifest.resources = std::move(resources);
     manifest.model_weights = tensor_source;
     manifest.voice_asset_root = tensor_source->source_path().parent_path();

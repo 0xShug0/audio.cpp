@@ -1,4 +1,5 @@
 #include "engine/models/irodori_tts/rf_dit.h"
+#include "engine/framework/runtime/model_routing.h"
 #include "engine/models/irodori_tts/schedule.h"
 #include "mf_dit.h"
 
@@ -792,7 +793,7 @@ load_irodori_rf_dit_weights(const IrodoriTTSAssets &assets, ggml_backend_t backe
       binding::linear_from_source(*weights.store, source, "in_proj",
                                   weight_storage_type, config.model_dim,
                                   config.patched_latent_dim(), true);
-  if (config.flow_parameterization == "meanflow") {
+  if (config.impl->interval_conditioning) {
     weights.delta_cond = std::array<modules::LinearWeights, 3>{
         binding::linear_from_source(*weights.store, source, "delta_cond_module.0",
                                     weight_storage_type, config.model_dim,
@@ -994,7 +995,7 @@ std::vector<int32_t> positions(int64_t count) {
 
 } // namespace
 
-class IrodoriRfSampler::Impl {
+class IrodoriRfSamplerState {
   class ContextGraph;
   class ModulationGraph;
   class StepGraph;
@@ -1095,7 +1096,7 @@ public:
     int64_t patched_dim = 0;
   };
 
-  Impl(std::shared_ptr<const IrodoriTTSAssets> assets,
+  IrodoriRfSamplerState(std::shared_ptr<const IrodoriTTSAssets> assets,
        core::ExecutionContext &execution_context, size_t graph_arena_bytes,
        size_t weight_context_bytes,
        assets::TensorStorageType weight_storage_type, bool mem_saver)
@@ -1521,9 +1522,12 @@ public:
   IrodoriRfSampleResult sample(
       const IrodoriRfSampleRequest &request,
       IrodoriRfSampleTiming *timing) {
-    if (assets_->config.flow_parameterization == "meanflow") {
-      return sample_meanflow(request, timing);
-    }
+    return (this->*assets_->config.impl->sample)(request, timing);
+  }
+
+  IrodoriRfSampleResult sample_rf(
+      const IrodoriRfSampleRequest &request,
+      IrodoriRfSampleTiming *timing) {
     if (request.conditions == nullptr || request.text_mask == nullptr) {
       throw std::runtime_error("Irodori-TTS RF sample requires conditions");
     }
@@ -1748,7 +1752,7 @@ public:
 private:
   class ContextGraph {
   public:
-    ContextGraph(IrodoriRfSampler::Impl &owner, int64_t speaker_tokens,
+    ContextGraph(IrodoriRfSamplerState &owner, int64_t speaker_tokens,
                  int64_t caption_tokens, int64_t batch,
                  size_t graph_arena_bytes)
         : owner_(&owner), speaker_tokens_(speaker_tokens),
@@ -1850,7 +1854,7 @@ private:
     }
 
   private:
-    IrodoriRfSampler::Impl *owner_ = nullptr;
+    IrodoriRfSamplerState *owner_ = nullptr;
     int64_t speaker_tokens_ = 0;
     int64_t caption_tokens_ = 0;
     int64_t batch_ = 0;
@@ -1865,7 +1869,7 @@ private:
 
   class ModulationGraph {
   public:
-    ModulationGraph(IrodoriRfSampler::Impl &owner, int64_t steps,
+    ModulationGraph(IrodoriRfSamplerState &owner, int64_t steps,
                     size_t graph_arena_bytes)
         : owner_(&owner), steps_(steps) {
       const auto &config = owner.assets_->config;
@@ -1881,7 +1885,7 @@ private:
       timesteps_ = core::make_tensor(build_ctx, GGML_TYPE_F32,
                                      core::TensorShape::from_dims({steps_}));
       ggml_set_input(timesteps_.tensor);
-      if (config.flow_parameterization == "meanflow") {
+      if (config.impl->interval_conditioning) {
         intervals_ = core::make_tensor(build_ctx, GGML_TYPE_F32,
                                        core::TensorShape::from_dims({steps_}));
         ggml_set_input(intervals_->tensor);
@@ -1949,7 +1953,7 @@ private:
     }
 
   private:
-    IrodoriRfSampler::Impl *owner_ = nullptr;
+    IrodoriRfSamplerState *owner_ = nullptr;
     int64_t steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::TensorValue timesteps_;
@@ -1961,7 +1965,7 @@ private:
 
   class StepGraph {
   public:
-    StepGraph(IrodoriRfSampler::Impl &owner, int64_t latent_steps,
+    StepGraph(IrodoriRfSamplerState &owner, int64_t latent_steps,
               int64_t speaker_tokens, int64_t caption_tokens, int64_t batch,
               int64_t modulation_steps, bool text_cfg_enabled,
               bool speaker_cfg_enabled, bool caption_cfg_enabled,
@@ -2269,7 +2273,7 @@ private:
     }
 
   private:
-    IrodoriRfSampler::Impl *owner_ = nullptr;
+    IrodoriRfSamplerState *owner_ = nullptr;
     const std::vector<IrodoriLayerContextKV> *context_kv_ = nullptr;
     int64_t latent_steps_ = 0;
     int64_t speaker_tokens_ = 0;
@@ -2318,12 +2322,45 @@ private:
   std::unique_ptr<StepGraph> cfg_graph_;
 };
 
+
+// Implementation registrations. Each row selects both properties and execution.
+const IrodoriFlowImplementation kIrodoriRfImplementation = [] {
+  IrodoriFlowImplementation impl{};
+  impl.interval_conditioning = false;
+  impl.validate_rf_guidance = true;
+  impl.default_inference_steps = 40;
+  impl.sample_log = "irodori_tts.sample_rf";
+  impl.sample = &IrodoriRfSamplerState::sample_rf;
+  return impl;
+}();
+const IrodoriFlowImplementation kIrodoriMfImplementation = [] {
+  IrodoriFlowImplementation impl{};
+  impl.interval_conditioning = true;
+  impl.validate_rf_guidance = false;
+  impl.default_inference_steps = 4;
+  impl.sample_log = "irodori_tts.sample_meanflow";
+  impl.sample = &IrodoriRfSamplerState::sample_meanflow;
+  return impl;
+}();
+namespace {
+const runtime::ModelRouteEntry<std::string, IrodoriFlowImplementation> kImplementations[] = {
+    {"rf_velocity", &kIrodoriRfImplementation},
+    {"meanflow", &kIrodoriMfImplementation},
+};
+const runtime::ModelRouteTable<std::string, IrodoriFlowImplementation>
+    kImplementationTable("Irodori-TTS flow_parameterization", kImplementations);
+} // namespace
+
+const IrodoriFlowImplementation & require_irodori_flow_implementation(const std::string & parameterization) {
+  return kImplementationTable.require(parameterization);
+}
+
 IrodoriRfSampler::IrodoriRfSampler(
     std::shared_ptr<const IrodoriTTSAssets> assets,
     core::ExecutionContext &execution_context, size_t graph_arena_bytes,
     size_t weight_context_bytes, assets::TensorStorageType weight_storage_type,
     bool mem_saver)
-    : impl_(std::make_unique<Impl>(std::move(assets), execution_context,
+    : impl_(std::make_unique<IrodoriRfSamplerState>(std::move(assets), execution_context,
                                    graph_arena_bytes, weight_context_bytes,
                                    weight_storage_type, mem_saver)) {}
 

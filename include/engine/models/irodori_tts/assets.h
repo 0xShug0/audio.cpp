@@ -11,8 +11,26 @@
 
 namespace engine::models::irodori_tts {
 
+class IrodoriRfSamplerState;
+struct IrodoriRfSampleRequest;
+struct IrodoriRfSampleResult;
+struct IrodoriRfSampleTiming;
+
+struct IrodoriFlowImplementation {
+    bool interval_conditioning;
+    bool validate_rf_guidance;
+    int64_t default_inference_steps;
+    const char *sample_log;
+    IrodoriRfSampleResult (IrodoriRfSamplerState::*sample)(
+        const IrodoriRfSampleRequest &, IrodoriRfSampleTiming *);
+};
+
+extern const IrodoriFlowImplementation kIrodoriRfImplementation;
+extern const IrodoriFlowImplementation kIrodoriMfImplementation;
+const IrodoriFlowImplementation & require_irodori_flow_implementation(const std::string & parameterization);
+
 struct IrodoriModelConfig {
-    std::string flow_parameterization = "rf_velocity";
+    const IrodoriFlowImplementation *impl = &kIrodoriRfImplementation;
     int64_t latent_dim = 32;
     int64_t latent_patch_size = 1;
     int64_t model_dim = 1280;
