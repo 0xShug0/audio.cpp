@@ -2,10 +2,13 @@
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/constant_tensor_cache.h"
+#include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/sampling/device_denoiser_runtime.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/conditioning_modules.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
@@ -15,8 +18,6 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
-
-#include <ggml-alloc.h>
 
 #include <algorithm>
 #include <array>
@@ -32,6 +33,8 @@ namespace engine::models::moss_soundeffect {
 namespace {
 using core::TensorShape;
 using core::TensorValue;
+constexpr size_t kGraphMetadataBytes = 64 * 1024 * 1024;
+constexpr size_t kGraphNodes = 32768;
 
 struct AttentionWeights {
     modules::LinearWeights q, k, v, o;
@@ -55,8 +58,12 @@ struct BlockWeights {
 // without dequantization; bias values retain F32 storage after BF16 rounding.
 modules::LinearWeights load_autocast_projection(
     core::BackendWeightStore & store, const assets::TensorSource & source,
-    assets::TensorStorageType storage, int64_t in_features,
+    core::BackendType backend, assets::TensorStorageType storage, int64_t in_features,
     const std::vector<modules::PackedLinearSource> & sources) {
+    // Keep Vulkan's BF16 autocast operands in their native representation;
+    // the generic single-tensor loader otherwise lowers native BF16 to F16.
+    if (backend == core::BackendType::Vulkan && storage == assets::TensorStorageType::Native)
+        storage = assets::resolve_tensor_storage_type(source, sources.front().weight, storage);
     modules::LinearWeights weights;
     if (sources.size() == 1) {
         weights.weight = store.load_tensor(source, sources.front().weight, storage,
@@ -84,16 +91,13 @@ TensorValue build_projection(core::ModuleBuildContext & ctx, TensorValue input,
     modules::LinearConfig config{weights.weight.shape.dims[1], weights.weight.shape.dims[0], true};
     if (autocast) {
         if (!ggml_is_quantized(weights.weight.type) && weights.weight.type != GGML_TYPE_BF16) {
-            if (ctx.backend_type == core::BackendType::Vulkan)
-                weights.weight = modules::Bf16RoundModule().build(ctx, weights.weight);
-            else
-                weights.weight = core::wrap_tensor(ggml_cast(ctx.ggml, weights.weight.tensor, GGML_TYPE_BF16),
-                                                   weights.weight.shape, GGML_TYPE_BF16);
+            weights.weight = core::wrap_tensor(ggml_cast(ctx.ggml, weights.weight.tensor, GGML_TYPE_BF16),
+                                               weights.weight.shape, GGML_TYPE_BF16);
         }
-        // Quantized kernels require F32 activations. Vulkan also uses a rounded
-        // F32 payload and its existing lowering policy to avoid F16 reformatting.
-        if (ggml_is_quantized(weights.weight.type) || ctx.backend_type == core::BackendType::Vulkan ||
-            ctx.backend_type == core::BackendType::Metal) {
+        // Quantized and Metal kernels consume rounded F32 activations.
+        // Vulkan can consume BF16 directly, selecting its existing matrix cores
+        // when available without narrowing the BF16 exponent range to F16.
+        if (ggml_is_quantized(weights.weight.type) || ctx.backend_type == core::BackendType::Metal) {
             input = modules::Bf16RoundModule().build(ctx, input);
             config.vulkan_f32_activation_lowering = ctx.backend_type == core::BackendType::Vulkan;
         } else if (ctx.backend_type != core::BackendType::Cuda && input.type != GGML_TYPE_BF16) {
@@ -104,49 +108,6 @@ TensorValue build_projection(core::ModuleBuildContext & ctx, TensorValue input,
     auto result = modules::LinearModule(config).build(ctx, input, weights);
     return result;
 }
-
-// Graph metadata, allocator and backend captures have the same session lifetime.
-// Keep this owner outside graph construction so partial construction also releases captures.
-struct CachedGraph {
-    core::ExecutionContext & execution;
-    std::string label;
-    std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free};
-    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator{nullptr, ggml_gallocr_free};
-    core::ModuleBuildContext ctx;
-    ggml_cgraph * graph = nullptr;
-    core::HostGraphPlan plan;
-
-    CachedGraph(core::ExecutionContext & execution, std::string label)
-        : execution(execution), label(std::move(label)) {
-        context.reset(ggml_init({64 * 1024 * 1024, nullptr, true}));
-        if (!context) throw std::runtime_error("Cannot allocate " + this->label + " graph metadata");
-        ctx = {context.get(), this->label.c_str(), execution.backend_type()};
-        ctx.elide_identity_reshapes = true;
-        graph = ggml_new_graph_custom(context.get(), 32768, false);
-    }
-
-    ~CachedGraph() {
-        plan.reset();
-        if (graph) core::release_backend_graph_resources(execution.backend(), graph, true);
-    }
-
-    void allocate() {
-        core::validate_backend_graph_supported(execution.backend(), graph, label.c_str());
-        allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
-        if (!allocator || !ggml_gallocr_alloc_graph(allocator.get(), graph))
-            throw std::runtime_error("Cannot allocate " + label + " graph");
-        core::prepare_host_graph_plan(execution, graph, plan);
-        debug::timing_log_scalar(label + ".buffer_mb",
-                                ggml_gallocr_get_buffer_size(allocator.get(), 0) / (1024.0 * 1024.0));
-    }
-
-    void compute() {
-        const auto started = std::chrono::steady_clock::now();
-        if (core::compute_graph(execution, graph, plan, label.c_str()) != GGML_STATUS_SUCCESS)
-            throw std::runtime_error(label + " graph execution failed");
-        debug::timing_log_scalar(label + ".graph.compute_ms", debug::elapsed_ms(started));
-    }
-};
 
 // Q/K/V enter in token-major layout; SDPA consumes head-major and returns token-major.
 TensorValue build_attention(core::ModuleBuildContext & ctx, TensorValue q, TensorValue k,
@@ -193,11 +154,12 @@ struct DitRuntime::Impl {
     // Neither denoiser traverses conditioning producers.
     std::vector<std::pair<TensorValue, TensorValue>> cross_kv;
     TensorValue rope_positions;
+    modules::DeviceDenoiserOptimizations runtime_optimizations;
     struct DenoiserState {
-        std::unique_ptr<CachedGraph> graph;
-        TensorValue latent_input, time_input, branch_input, output, step_input, guidance_input;
+        std::unique_ptr<modules::DeviceDenoiserRuntime> runtime;
+        TensorValue latent_input, time_input, branch_input, step_input, guidance_input;
     };
-    std::unique_ptr<CachedGraph> condition_graph;
+    std::unique_ptr<core::PreparedGraph> condition_graph;
     std::array<std::unique_ptr<DenoiserState>, 2> denoisers;
     TensorValue text_input;
     int64_t frames = 0;
@@ -205,11 +167,12 @@ struct DitRuntime::Impl {
     modules::ScaledDotProductAttentionLowering attention;
 
     Impl(core::ExecutionContext & execution, std::shared_ptr<const Assets> assets,
-         assets::TensorStorageType storage_type, core::AttentionPreference preference)
+         assets::TensorStorageType storage_type, core::AttentionPreference preference, bool optimize)
         : execution(execution), assets(std::move(assets)),
           store(execution.backend(), execution.backend_type(), "moss_soundeffect.dit.weights", 4 * 1024 * 1024),
           constants(execution.backend(), execution.config().threads, "moss_soundeffect.dit.cache", 1024 * 1024) {
         const auto started = std::chrono::steady_clock::now();
+        runtime_optimizations = {optimize, optimize, optimize};
         if (!this->assets || !this->assets->dit_weights)
             throw std::runtime_error("MOSS SoundEffect DiT requires assets and DiT weights");
         const auto & a = *this->assets;
@@ -233,14 +196,14 @@ struct DitRuntime::Impl {
         auto patch_bias = source.require_f32("patch_embedding.bias", {c.dim});
         core::round_f32_to_bf16_in_place(patch_bias);
         patch.bias = store.make_f32(TensorShape::from_dims({c.dim}), std::move(patch_bias));
-        text_in = load_autocast_projection(store, source, storage_type, c.text_dim,
+        text_in = load_autocast_projection(store, source, execution.backend_type(), storage_type, c.text_dim,
             {{"text_embedding.0.weight", "text_embedding.0.bias", c.dim}});
-        text_out = load_autocast_projection(store, source, storage_type, c.dim,
+        text_out = load_autocast_projection(store, source, execution.backend_type(), storage_type, c.dim,
             {{"text_embedding.2.weight", "text_embedding.2.bias", c.dim}});
         time_in = modules::binding::linear_from_source(store, source, "time_embedding.0", assets::TensorStorageType::F32, c.dim, c.freq_dim, true);
         time_out = modules::binding::linear_from_source(store, source, "time_embedding.2", assets::TensorStorageType::F32, c.dim, c.dim, true);
         time_projection = modules::binding::linear_from_source(store, source, "time_projection.1", assets::TensorStorageType::F32, 6 * c.dim, c.dim, true);
-        head = load_autocast_projection(store, source, storage_type, c.dim,
+        head = load_autocast_projection(store, source, execution.backend_type(), storage_type, c.dim,
             {{"head.head.weight", "head.head.bias", c.patch_size * c.latent_dim}});
         head_modulation = store.load_f32_tensor(source, "head.modulation", {1, 2, c.dim});
         blocks.resize(static_cast<size_t>(c.layers));
@@ -248,12 +211,12 @@ struct DitRuntime::Impl {
             const auto prefix = "blocks." + std::to_string(i);
             auto & b = blocks[static_cast<size_t>(i)];
             const auto self = prefix + ".self_attn";
-            b.self.qkv = load_autocast_projection(store, source, storage_type, c.dim, {
+            b.self.qkv = load_autocast_projection(store, source, execution.backend_type(), storage_type, c.dim, {
                 {self + ".q.weight", self + ".q.bias", c.dim},
                 {self + ".k.weight", self + ".k.bias", c.dim},
                 {self + ".v.weight", self + ".v.bias", c.dim},
             });
-            b.self.o = load_autocast_projection(store, source, storage_type, c.dim,
+            b.self.o = load_autocast_projection(store, source, execution.backend_type(), storage_type, c.dim,
                 {{self + ".o.weight", self + ".o.bias", c.dim}});
             b.self.norm_q = modules::binding::norm_weight_from_source(store, source, self + ".norm_q", c.dim);
             b.self.norm_k = modules::binding::norm_weight_from_source(store, source, self + ".norm_k", c.dim);
@@ -283,15 +246,15 @@ struct DitRuntime::Impl {
                     folded.data(), folded.size() * sizeof(ggml_bf16_t)),
                     store.make_f32(TensorShape::from_dims({c.dim}), std::move(bias))};
             } else {
-                b.cross.q = load_autocast_projection(store, source, storage_type, c.dim,
+                b.cross.q = load_autocast_projection(store, source, execution.backend_type(), storage_type, c.dim,
                     {{cross + ".q.weight", cross + ".q.bias", c.dim}});
                 b.norm3 = modules::binding::norm_from_source(store, source, prefix + ".norm3", c.dim);
             }
-            b.cross.k = load_autocast_projection(store, source, storage_type, c.dim,
+            b.cross.k = load_autocast_projection(store, source, execution.backend_type(), storage_type, c.dim,
                 {{cross + ".k.weight", cross + ".k.bias", c.dim}});
-            b.cross.v = load_autocast_projection(store, source, storage_type, c.dim,
+            b.cross.v = load_autocast_projection(store, source, execution.backend_type(), storage_type, c.dim,
                 {{cross + ".v.weight", cross + ".v.bias", c.dim}});
-            b.cross.o = load_autocast_projection(store, source, storage_type, c.dim,
+            b.cross.o = load_autocast_projection(store, source, execution.backend_type(), storage_type, c.dim,
                 {{cross + ".o.weight", cross + ".o.bias", c.dim}});
             b.cross.norm_q = modules::binding::norm_weight_from_source(store, source, cross + ".norm_q", c.dim);
             b.cross.norm_k = modules::binding::norm_weight_from_source(store, source, cross + ".norm_k", c.dim);
@@ -300,9 +263,9 @@ struct DitRuntime::Impl {
                 execution.backend_type() == core::BackendType::Cuda &&
                 assets::resolve_tensor_storage_type(source, prefix + ".ffn.0.weight", storage_type) == assets::TensorStorageType::BF16)
                 ffn_storage = assets::TensorStorageType::F16;
-            const auto fc1 = load_autocast_projection(store, source, ffn_storage, c.dim,
+            const auto fc1 = load_autocast_projection(store, source, execution.backend_type(), ffn_storage, c.dim,
                 {{prefix + ".ffn.0.weight", prefix + ".ffn.0.bias", c.ffn_dim}});
-            const auto fc2 = load_autocast_projection(store, source, ffn_storage, c.ffn_dim,
+            const auto fc2 = load_autocast_projection(store, source, execution.backend_type(), ffn_storage, c.ffn_dim,
                 {{prefix + ".ffn.2.weight", prefix + ".ffn.2.bias", c.dim}});
             b.ffn = {fc1.weight, fc1.bias, fc2.weight, fc2.bias};
             b.modulation = store.load_f32_tensor(source, prefix + ".modulation", {1, 6, c.dim});
@@ -330,9 +293,11 @@ struct DitRuntime::Impl {
 
     void build_condition_graph() {
         const auto & c = assets->dit;
-        condition_graph = std::make_unique<CachedGraph>(execution, "moss_soundeffect.dit.condition");
+        condition_graph = std::make_unique<core::PreparedGraph>(execution,
+            core::PreparedGraphConfig{"moss_soundeffect.dit.condition", kGraphMetadataBytes, kGraphNodes});
         auto & g = *condition_graph;
-        auto & ctx = g.ctx;
+        auto & ctx = g.build_context();
+        ctx.elide_identity_reshapes = true;
         // Batching here only combines independent text rows, never the denoising branches.
         text_input = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({2, assets->text_length, c.text_dim}));
         ggml_set_name(text_input.tensor, "moss_soundeffect.dit.context");
@@ -353,8 +318,8 @@ struct DitRuntime::Impl {
             }
             k = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, k), cross_kv[i].first.shape);
             v = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, v), cross_kv[i].second.shape);
-            ggml_build_forward_expand(g.graph, ggml_cpy(ctx.ggml, k.tensor, cross_kv[i].first.tensor));
-            ggml_build_forward_expand(g.graph, ggml_cpy(ctx.ggml, v.tensor, cross_kv[i].second.tensor));
+            ggml_build_forward_expand(g.graph(), ggml_cpy(ctx.ggml, k.tensor, cross_kv[i].first.tensor));
+            ggml_build_forward_expand(g.graph(), ggml_cpy(ctx.ggml, v.tensor, cross_kv[i].second.tensor));
         }
         g.allocate();
     }
@@ -365,12 +330,12 @@ struct DitRuntime::Impl {
         auto & latent_input = state->latent_input;
         auto & time_input = state->time_input;
         auto & branch_input = state->branch_input;
-        auto & output = state->output;
         const auto & c = assets->dit;
         const auto steps = frames / c.patch_size, hd = c.dim / c.heads;
-        state->graph = std::make_unique<CachedGraph>(execution, "moss_soundeffect.dit");
-        auto & g = *state->graph;
-        auto & ctx = g.ctx;
+        state->runtime = std::make_unique<modules::DeviceDenoiserRuntime>(execution,
+            core::PreparedGraphConfig{"moss_soundeffect.dit", kGraphMetadataBytes, kGraphNodes},
+            [&](core::ModuleBuildContext & ctx) -> modules::DeviceDenoiserGraph {
+        ctx.elide_identity_reshapes = true;
         latent_input = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, c.latent_dim, frames}));
         time_input = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, c.freq_dim}));
         if (batch == 1) {
@@ -401,6 +366,8 @@ struct DitRuntime::Impl {
         t_mod = build_projection(ctx, t_mod, time_projection, false);
         t_mod = core::reshape_tensor(ctx, t_mod, TensorShape::from_dims({1, 6, c.dim}));
         const modules::LayerNormModule plain_norm({c.dim, c.eps, false, false});
+        const modules::AdaptiveLayerNormModule adaptive_norm(
+            {c.dim, c.eps, modules::AdaptiveLayerNormMode::LayerAffine});
         const modules::LayerNormModule affine_norm({c.dim, c.eps, true, true});
         const modules::RMSNormModule qk_norm({c.dim, c.eps, true, false, true});
         const modules::RoPEModule rope({hd, GGML_ROPE_TYPE_NORMAL, 10000.0F});
@@ -412,17 +379,13 @@ struct DitRuntime::Impl {
             const auto modulation = modules::AddModule().build(ctx, b.modulation, t_mod);
             // Slices are [1,1,D], broadcasting across tokens and both CFG branches.
             const auto shift_sa = modules::SliceModule({1, 0, 1}).build(ctx, modulation);
-            auto scale_sa = modules::ScaleBiasModule({1, 1}).build(ctx,
-                core::ensure_backend_addressable_layout(ctx, modules::SliceModule({1, 1, 1}).build(ctx, modulation)));
+            const auto scale_sa = modules::SliceModule({1, 1, 1}).build(ctx, modulation);
             const auto gate_sa = modules::SliceModule({1, 2, 1}).build(ctx, modulation);
             const auto shift_ff = modules::SliceModule({1, 3, 1}).build(ctx, modulation);
-            auto scale_ff = modules::ScaleBiasModule({1, 1}).build(ctx,
-                core::ensure_backend_addressable_layout(ctx, modules::SliceModule({1, 4, 1}).build(ctx, modulation)));
+            const auto scale_ff = modules::SliceModule({1, 4, 1}).build(ctx, modulation);
             const auto gate_ff = modules::SliceModule({1, 5, 1}).build(ctx, modulation);
             // Time modulation and LayerNorm remain F32; projections autocast to BF16.
-            auto y = plain_norm.build(ctx, x, {});
-            y = modules::MulModule(true).build(ctx, y, scale_sa);
-            y = modules::AddModule(false, true).build(ctx, y, shift_sa);
+            auto y = adaptive_norm.build(ctx, x, {shift_sa, scale_sa});
             // Wan normalizes the entire D-wide projection before head splitting.
             const auto qkv = build_projection(ctx, y, b.self.qkv, true);
             auto q = modules::SliceModule({2, 0, c.dim}).build(ctx, qkv);
@@ -456,9 +419,7 @@ struct DitRuntime::Impl {
             v = core::reshape_tensor(ctx, v, cache_shape);
             y = build_projection(ctx, build_attention(ctx, q, k, v, c, attention, head_major), b.cross.o, true);
             x = modules::AddModule().build(ctx, x, y);
-            y = plain_norm.build(ctx, x, {});
-            y = modules::MulModule(true).build(ctx, y, scale_ff);
-            y = modules::AddModule(false, true).build(ctx, y, shift_ff);
+            y = adaptive_norm.build(ctx, x, {shift_ff, scale_ff});
             // Keep the pointwise FFN in matrix layout until both projections
             // finish, so metadata-only batch reshapes do not split its chain.
             y = core::reshape_tensor(ctx, y, TensorShape::from_dims({batch * steps, c.dim}));
@@ -486,19 +447,14 @@ struct DitRuntime::Impl {
         const auto head_time = core::reshape_tensor(ctx, time, TensorShape::from_dims({1, 1, c.dim}));
         const auto modulation = modules::AddModule(false, true).build(ctx, head_modulation, head_time);
         const auto shift = modules::SliceModule({1, 0, 1}).build(ctx, modulation);
-        auto scale = modules::ScaleBiasModule({1, 1}).build(ctx,
-            core::ensure_backend_addressable_layout(ctx, modules::SliceModule({1, 1, 1}).build(ctx, modulation)));
-        x = plain_norm.build(ctx, x, {});
-        x = modules::MulModule(true).build(ctx, x, scale);
-        x = modules::AddModule(false, true).build(ctx, x, shift);
+        const auto scale = modules::SliceModule({1, 1, 1}).build(ctx, modulation);
+        x = adaptive_norm.build(ctx, x, {shift, scale});
         x = build_projection(ctx, x, head, true);
         // [B,S,p*C] -> [B,S*p,C] -> [B,C,S*p], preserving (patch,channel) order.
         x = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, x),
                                 TensorShape::from_dims({batch, frames, c.latent_dim}));
         x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
-        output = core::ensure_backend_addressable_layout(ctx, x);
-        ggml_set_output(output.tensor);
-        ggml_build_forward_expand(g.graph, output.tensor);
+        const auto output = core::ensure_backend_addressable_layout(ctx, x);
         // Euler state remains in the persistent input buffer between submissions.
         state->step_input = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1}));
         ggml_set_input(state->step_input.tensor);
@@ -508,17 +464,14 @@ struct DitRuntime::Impl {
             ggml_set_input(state->guidance_input.tensor);
             const auto positive = modules::SliceModule({0, 0, 1}).build(ctx, output);
             const auto negative = modules::SliceModule({0, 1, 1}).build(ctx, output);
-            const auto difference = core::wrap_tensor(ggml_sub(ctx.ggml, positive.tensor, negative.tensor),
-                                                      positive.shape, GGML_TYPE_F32);
-            velocity = modules::AddModule().build(ctx, negative,
-                modules::MulModule(true).build(ctx, difference, state->guidance_input));
+            velocity = modules::FlowSamplerCfgGraphModule().build(ctx, positive, negative, state->guidance_input);
         }
-        auto delta = modules::MulModule(true).build(ctx, velocity, state->step_input);
-        if (batch == 1) delta = modules::Bf16RoundModule().build(ctx, delta);
-        auto updated = modules::AddModule().build(ctx, latent_input, delta);
-        if (batch == 1) updated = modules::Bf16RoundModule().build(ctx, updated);
-        ggml_build_forward_expand(g.graph, ggml_cpy(ctx.ggml, updated.tensor, latent_input.tensor));
-        g.allocate();
+        const auto rounding = batch == 1 ? modules::FlowSamplerGraphRounding::Bf16
+                                         : modules::FlowSamplerGraphRounding::FullPrecision;
+        const auto updated = modules::FlowSamplerEulerGraphModule({rounding, rounding})
+            .build(ctx, latent_input, velocity, state->step_input);
+        return {latent_input, output, updated};
+        }, runtime_optimizations);
         denoisers[batch - 1] = std::move(state);
         debug::timing_log_scalar("moss_soundeffect.dit.build_ms", debug::elapsed_ms(started));
     }
@@ -547,19 +500,15 @@ struct DitRuntime::Impl {
             core::write_tensor_i32(state.branch_input, &branch, 1);
         }
         debug::timing_log_scalar("moss_soundeffect.dit.input_upload_ms", debug::elapsed_ms(upload_started));
-        state.graph->compute();
-        const auto read_started = std::chrono::steady_clock::now();
-        std::vector<float> result;
-        core::read_tensor_float_into(state.output.tensor, result);
-        debug::timing_log_scalar("moss_soundeffect.dit.output_read_ms", debug::elapsed_ms(read_started));
+        auto result = state.runtime->predict();
         debug::timing_log_scalar("moss_soundeffect.dit.wall_ms", debug::elapsed_ms(started));
         return result;
     }
 };
 
 DitRuntime::DitRuntime(core::ExecutionContext & execution, std::shared_ptr<const Assets> assets,
-                       assets::TensorStorageType storage_type, core::AttentionPreference preference)
-    : impl_(std::make_unique<Impl>(execution, std::move(assets), storage_type, preference)) {}
+                       assets::TensorStorageType storage_type, core::AttentionPreference preference, bool optimize)
+    : impl_(std::make_unique<Impl>(execution, std::move(assets), storage_type, preference, optimize)) {}
 
 DitRuntime::~DitRuntime() = default;
 
@@ -592,7 +541,6 @@ std::vector<float> DitRuntime::sample(const std::vector<float> & noise, int step
     const int batch = guidance == 1.0F ? 1 : 2;
     if (!s.denoisers[batch - 1]) s.build_denoiser_graph(batch);
     auto & state = *s.denoisers[batch - 1];
-    core::write_tensor_f32(state.latent_input, noise);
     if (batch == 2) core::write_tensor_f32(state.guidance_input, std::vector<float>{guidance});
     if (batch == 1) {
         const int32_t branch = 0;
@@ -616,28 +564,13 @@ std::vector<float> DitRuntime::sample(const std::vector<float> & noise, int step
         }
         deltas[static_cast<size_t>(step)] = next - sigma;
     }
-    const auto started = std::chrono::steady_clock::now();
-    try {
-        for (int step = 0; step < steps; ++step) {
-            ggml_backend_tensor_set_async(s.execution.backend(), state.time_input.tensor,
-                times.data() + static_cast<size_t>(step) * width, 0, width * sizeof(float));
-            ggml_backend_tensor_set_async(s.execution.backend(), state.step_input.tensor,
-                deltas.data() + step, 0, sizeof(float));
-            if (state.graph->plan.active()) {
-                state.graph->compute();
-            } else if (ggml_backend_graph_compute_async(s.execution.backend(), state.graph->graph) != GGML_STATUS_SUCCESS) {
-                throw std::runtime_error("MOSS SoundEffect sampling graph execution failed");
-            }
-        }
-        ggml_backend_synchronize(s.execution.backend());
-    } catch (...) {
-        ggml_backend_synchronize(s.execution.backend());
-        throw;
-    }
-    debug::timing_log_scalar("moss_soundeffect.dit.sequence.compute_ms", debug::elapsed_ms(started));
-    std::vector<float> latent;
-    core::read_tensor_float_into(state.latent_input.tensor, latent);
-    return latent;
+    modules::FlowSamplerGraphSequence sequence;
+    sequence.steps = static_cast<size_t>(steps);
+    sequence.step_bindings = {
+        {state.time_input, 0, width * sizeof(float), times.data(), times.size() * sizeof(float)},
+        {state.step_input, 0, sizeof(float), deltas.data(), deltas.size() * sizeof(float)},
+    };
+    return state.runtime->sample(noise, sequence);
 }
 
 std::vector<float> DitRuntime::predict_cfg(const std::vector<float> & latents, float timestep) {

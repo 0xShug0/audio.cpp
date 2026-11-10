@@ -61,6 +61,7 @@ number generators, so equal seeds do not imply identical starting noise.
 
 | Option | Default | Meaning |
 |---|---|---|
+| `moss_soundeffect.fused_epilogues` | `true` | Enable the denoiser runtime's normalization-affine, bias-activation and gated-residual fusions. Set `false` to use ordinary kernels. |
 | `moss_soundeffect.attention` | `auto` | DiT attention: `auto`, `flash`, or `eager`. Eager retains F32 attention arithmetic and uses more workspace. |
 | `moss_soundeffect.weight_type` | `native` | Storage override for text-encoder and DiT weights. The DAC decoder retains its packaged precision. |
 
@@ -71,6 +72,13 @@ On CUDA with native weight storage, BF16 DiT packages use the existing FP16 proj
 intermediates; attention remains standard flash attention, and modulation and
 residual arithmetic remain F32. The text encoder and DAC retain their packaged
 precision. Explicit weight-storage overrides retain their requested type.
+
+With native BF16 packages, Vulkan retains BF16 projection operands and uses
+GGML's existing BF16 matrix kernels with F32 accumulation. Matrix-core support
+requires both a compatible GPU and a shader compiler that supports the relevant
+extensions. Use a recent Vulkan SDK's `glslc` when configuring the build; older
+shader compilers can leave these projections on substantially slower scalar
+kernels even when the GPU supports matrix cores.
 
 Prompts use Unicode width, quote, HTML, whitespace, and NFC normalization.
 Malformed UTF-8 is rejected; Python’s repair of legacy-encoding mojibake is not implemented.

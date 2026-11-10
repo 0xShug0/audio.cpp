@@ -31,6 +31,8 @@ public:
         attention_ = core::parse_attention_preference(
             runtime::find_option(options.options, {"moss_soundeffect.attention"}).value_or("auto"),
             "moss_soundeffect.attention");
+        const auto fused = runtime::find_option(options.options, {"moss_soundeffect.fused_epilogues"});
+        fused_epilogues_ = !fused || runtime::parse_bool_option(*fused, "moss_soundeffect.fused_epilogues");
         storage_ = assets::parse_tensor_storage_type(
             runtime::find_option(options.options, {"moss_soundeffect.weight_type"}).value_or("native"));
     }
@@ -43,7 +45,7 @@ public:
         if (!text_) {
             auto & execution = execution_context();
             auto text = std::make_unique<TextEncoderRuntime>(execution, assets_, storage_);
-            auto dit = std::make_unique<DitRuntime>(execution, assets_, storage_, attention_);
+            auto dit = std::make_unique<DitRuntime>(execution, assets_, storage_, attention_, fused_epilogues_);
             auto vae = std::make_unique<VaeRuntime>(execution, assets_);
             text_ = std::move(text);
             dit_ = std::move(dit);
@@ -107,6 +109,7 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const Assets> assets_;
     std::shared_ptr<const model_spec::ModelContract> contract_;
+    bool fused_epilogues_ = true;
     core::AttentionPreference attention_ = core::AttentionPreference::Auto;
     assets::TensorStorageType storage_ = assets::TensorStorageType::Native;
     std::unique_ptr<TextEncoderRuntime> text_;
