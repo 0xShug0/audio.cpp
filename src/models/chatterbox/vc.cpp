@@ -93,8 +93,7 @@ ChatterboxVoiceConversionOutputs ChatterboxVCComponent::convert(
     const runtime::AudioBuffer & source_audio,
     const runtime::AudioBuffer & target_voice,
     const ChatterboxVoiceConversionConfig & config) const {
-    validate_config(config);
-    validate_audio(source_audio, "source");
+    validate(source_audio, config);
     const auto target_ref_start = std::chrono::steady_clock::now();
     const auto target_ref = prepare_target(target_voice);
     const double target_ref_ms = engine::debug::elapsed_ms(target_ref_start);
@@ -102,6 +101,13 @@ ChatterboxVoiceConversionOutputs ChatterboxVCComponent::convert(
     outputs.target_ref_ms = target_ref_ms;
     engine::debug::timing_log_scalar("chatterbox.vc.target_ref_ms", target_ref_ms);
     return outputs;
+}
+
+void ChatterboxVCComponent::validate(
+    const runtime::AudioBuffer & source_audio,
+    const ChatterboxVoiceConversionConfig & config) const {
+    validate_config(config);
+    validate_audio(source_audio, "source");
 }
 
 EmbedReferenceOutputs ChatterboxVCComponent::prepare_target(const runtime::AudioBuffer & target_voice) const {
@@ -117,8 +123,7 @@ ChatterboxVoiceConversionOutputs ChatterboxVCComponent::convert(
     const runtime::AudioBuffer & source_audio,
     const EmbedReferenceOutputs & target_ref,
     const ChatterboxVoiceConversionConfig & config) const {
-    validate_config(config);
-    validate_audio(source_audio, "source");
+    validate(source_audio, config);
 
     ChatterboxVoiceConversionOutputs outputs;
     const auto source_16k = normalize_chatterbox_vc_audio_mono(source_audio, 16000);

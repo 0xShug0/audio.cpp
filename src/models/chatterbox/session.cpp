@@ -495,6 +495,7 @@ runtime::TaskResult ChatterboxSession::run_voice_conversion(const runtime::TaskR
     }
 
     const auto config = make_voice_conversion_config(request.options);
+    vc_component_->validate(source_audio, config);
     ChatterboxVoiceConversionOutputs outputs;
     if (const auto * target_ref = vc_reference_cache_.find(target_voice)) {
         engine::debug::trace_log_scalar("chatterbox.vc.reference_cache_hit", 1);
