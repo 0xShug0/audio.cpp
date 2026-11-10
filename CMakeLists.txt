@@ -534,6 +534,7 @@ add_library(engine_core OBJECT
     src/framework/core/deferred_tensor_writer.cpp
     src/framework/core/disk_expert_weight_store.cpp
     src/framework/core/graph_workspace.cpp
+    src/framework/core/prepared_graph.cpp
     src/framework/core/execution_context.cpp
     src/framework/core/host_memory.cpp
     src/framework/core/load_progress.cpp
@@ -3802,6 +3803,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
     add_engine_unittest(ctc_host_decoder_test tests/unittests/test_ctc_host_decoder.cpp)
     add_test(NAME ctc_host_decoder_test COMMAND ctc_host_decoder_test)
+    add_engine_unittest(prepared_graph_test tests/unittests/test_prepared_graph.cpp)
+    target_include_directories(prepared_graph_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/external/ggml/src)
+    add_test(NAME prepared_graph_test COMMAND prepared_graph_test
+        --log ${CMAKE_CURRENT_BINARY_DIR}/prepared_graph_test.log)
     add_engine_unittest(rope_transformer_encoder_test tests/unittests/test_rope_transformer_encoder.cpp)
     add_test(NAME rope_transformer_encoder_test COMMAND rope_transformer_encoder_test)
     add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
@@ -4669,6 +4674,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         if(fish_drama3 IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(fish_drama3_backbone_allocation_test tests/community_models/fish_drama3/backbone_allocation_test.cpp)
+            target_include_directories(fish_drama3_backbone_allocation_test PRIVATE external/ggml/src)
             add_test(NAME fish_drama3_backbone_allocation_test COMMAND fish_drama3_backbone_allocation_test)
             add_engine_unittest(fish_drama3_codec_source_test tests/community_models/fish_drama3/codec_source_test.cpp)
             add_test(NAME fish_drama3_codec_source_test COMMAND fish_drama3_codec_source_test)

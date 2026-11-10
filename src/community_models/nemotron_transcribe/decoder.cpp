@@ -2,6 +2,7 @@
 #include "engine/community_models/nemotron_transcribe/repetition_guard.h"
 
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/core/disk_expert_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/kv_cache.h"
@@ -34,15 +35,11 @@ constexpr size_t kWeightArenaBytes = 4 * 1024 * 1024;
 struct ContextDeleter {
     void operator()(ggml_context * value) const { ggml_free(value); }
 };
-struct AllocatorDeleter {
-    void operator()(ggml_gallocr_t value) const { ggml_gallocr_free(value); }
-};
 struct BufferDeleter {
     void operator()(ggml_backend_buffer_t value) const { ggml_backend_buffer_free(value); }
 };
 using Context = std::unique_ptr<ggml_context, ContextDeleter>;
 using Buffer = std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, BufferDeleter>;
-using Allocator = std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, AllocatorDeleter>;
 
 double elapsed_ms(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -313,7 +310,9 @@ class DecoderGraph {
 public:
     DecoderGraph(const DecoderConfig & c, const Weights & w, DecoderState & state,
         core::ExecutionContext & execution, int64_t steps, bool prompt)
-        : execution_(execution), state_(state), steps_(steps), prompt_(prompt), hidden_size_(c.hidden_size), weights_(w) {
+        : execution_(execution), state_(state), steps_(steps), prompt_(prompt), hidden_size_(c.hidden_size), weights_(w),
+          prepared_(execution, {"nemotron_transcribe.decoder", kGraphArenaBytes, kGraphNodes,
+              w.disk_store ? 64 * ggml_tensor_overhead() : 0}) {
         routing_config_.experts = c.experts;
         routing_config_.selected = c.experts_per_token;
         routing_config_.scoring = modules::MoeScoring::Sigmoid;
@@ -325,15 +324,9 @@ public:
         shared_config_.intermediate_size = c.shared_expert_width;
         shared_config_.use_bias = false;
         shared_config_.activation = modules::FeedForwardActivation::ReluSquared;
-        context_.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
-        if (!context_) throw std::runtime_error("Nemotron-H graph context allocation failed");
-        auto * g = context_.get();
-        graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
-        if (w.disk_store) {
-            offload_inputs_.reset(ggml_init({64 * ggml_tensor_overhead(), nullptr, true}));
-            if (!offload_inputs_) throw std::runtime_error("Nemotron-H offload input context allocation failed");
-        }
-        auto * inputs = w.disk_store ? offload_inputs_.get() : g;
+        auto * g = prepared_.build_context().ggml;
+        graph_ = prepared_.graph();
+        auto * inputs = w.disk_store ? prepared_.persistent_build_context().ggml : g;
         ids_ = ggml_new_tensor_1d(inputs, GGML_TYPE_I32, steps);
         ggml_set_input(ids_);
         if (c.block_pattern.find('M') != std::string::npos) {
@@ -366,7 +359,10 @@ public:
             build_offload(c, w, cur);
             return;
         }
-        if (prompt) prefill_body_ = ggml_new_graph_custom(g, kGraphNodes, false);
+        if (prompt) {
+            body_id_ = prepared_.add_entry_point("body", 0);
+            prefill_body_ = prepared_.graph(body_id_);
+        }
         core::ModuleBuildContext ctx{g, "nemotron_transcribe.decoder", execution.backend_type()};
         ctx.elide_identity_reshapes = true;
         for (size_t i = 0; i < c.block_pattern.size(); ++i) {
@@ -390,23 +386,7 @@ public:
         logits_ = ggml_mul_mat(g, w.output, cur);
         ggml_set_output(logits_);
         ggml_build_forward_expand(graph_, logits_);
-        core::validate_backend_graph_supported(execution.backend(), graph_, "Nemotron-H decoder");
-        allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
-        if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_.get(), graph_)) {
-            throw std::runtime_error("Nemotron-H decoder graph allocation failed");
-        }
-        core::prepare_host_graph_plan(execution_, graph_, plan_);
-        if (prefill_body_ && ggml_graph_n_nodes(prefill_body_) > 0)
-            core::prepare_host_graph_plan(execution_, prefill_body_, body_plan_);
-    }
-
-    ~DecoderGraph() {
-        plan_.reset();
-        body_plan_.reset();
-        if (prefill_body_) core::release_backend_graph_resources(execution_.backend(), prefill_body_, true);
-        if (offload_graphs_.empty()) core::release_backend_graph_resources(execution_.backend(), graph_, true);
-        for (auto & entry : offload_plans_) entry.second.reset();
-        for (auto * graph : offload_graphs_) core::release_backend_graph_resources(execution_.backend(), graph, true);
+        prepared_.allocate();
     }
 
     int64_t steps() const { return steps_; }
@@ -463,27 +443,21 @@ private:
         for (int64_t count = 1; count <= expert_rows; count *= 2) staged_config.rows_per_expert.push_back(count);
         workspace_ = std::make_shared<core::GraphWorkspace>(execution_.backend());
         staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution_, std::move(staged_config), workspace_);
-        auto * persistent = offload_inputs_.get();
+        auto * persistent = prepared_.persistent_build_context().ggml;
         x_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps_);
         shared_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps_);
         for (auto * tensor : {x_, shared_}) ggml_set_input(tensor);
-        offload_buffer_.reset(ggml_backend_alloc_ctx_tensors(persistent, execution_.backend()));
-        if (!offload_buffer_) throw std::runtime_error("Nemotron-H offload input allocation failed");
-        ggml_backend_buffer_clear(offload_buffer_.get(), 0);
+        prepared_.allocate_persistent();
+        prepared_.clear_persistent();
 
-        auto * g = context_.get();
+        auto * g = prepared_.build_context().ggml;
         core::ModuleBuildContext ctx{g, "nemotron_transcribe.offload", execution_.backend_type()};
         ctx.elide_identity_reshapes = true;
-        const auto add = [&](ggml_cgraph * graph) {
-            core::validate_backend_graph_supported(execution_.backend(), graph, "Nemotron-H offload");
-            workspace_->add(graph);
-            offload_graphs_.push_back(graph);
-        };
         ggml_build_forward_expand(graph_, ggml_cpy(g, embeddings, x_));
-        add(graph_);
         for (size_t i = 0; i < c.block_pattern.size(); ++i) {
             const auto & layer = weights.layers[i];
-            auto * graph = ggml_new_graph_custom(g, 128, false);
+            const auto id = prepared_.add_graph("layer_" + std::to_string(i), 128);
+            auto * graph = prepared_.graph(id);
             auto * normalized = rms_norm(g, x_, layer.norm, c.rms_norm_eps);
             if (c.block_pattern[i] == 'E') {
                 const auto routing = modules::MoeModule::build_routing(ctx, normalized, layer.router, layer.router_bias, routing_config_);
@@ -497,45 +471,37 @@ private:
                     : build_attention(g, normalized, layer, c, state_, i, slots_, mask_, steps_);
                 ggml_build_forward_expand(graph, ggml_cpy(g, ggml_add(g, output, x_), x_));
             }
-            layer_graphs_.push_back(graph);
-            add(graph);
+            layer_graphs_.push_back(id);
             if (c.block_pattern[i] == 'E') {
                 staged_layers_.push_back(staged_moe_->add_layer(moe_,
                     {layer.experts_up, nullptr, layer.experts_down}, *weights.disk_store, weights.disk_groups[i]));
             } else staged_layers_.push_back(-1);
         }
 
-        finish_ = ggml_new_graph_custom(g, 64, false);
+        finish_ = prepared_.add_graph("finish", 64);
         auto * routed = modules::MoeModule::combine(ctx, staged_moe_->output(), staged_moe_->routing_weights());
-        ggml_build_forward_expand(finish_, ggml_cpy(g, ggml_add(g, ggml_add(g, routed, shared_), x_), x_));
-        add(finish_);
-        final_ = ggml_new_graph_custom(g, 64, false);
+        ggml_build_forward_expand(prepared_.graph(finish_), ggml_cpy(g, ggml_add(g, ggml_add(g, routed, shared_), x_), x_));
+        final_ = prepared_.add_graph("final", 64);
         auto * last = ggml_view_2d(g, x_, h, 1, x_->nb[1], (steps_ - 1) * x_->nb[1]);
         logits_ = ggml_mul_mat(g, weights.output, rms_norm(g, last, weights.final_norm, c.rms_norm_eps));
         ggml_set_output(logits_);
-        ggml_build_forward_expand(final_, logits_);
-        add(final_);
+        ggml_build_forward_expand(prepared_.graph(final_), logits_);
+        workspace_->add(prepared_);
         workspace_->prepare();
         staged_moe_->prepare();
-        for (auto * graph : offload_graphs_)
-            core::prepare_host_graph_plan(execution_, graph, offload_plans_[graph]);
         debug::timing_log_scalar("nemotron_transcribe.decoder.offload_workspace_mb",
             workspace_->bytes() / (1024.0 * 1024.0));
     }
 
     void run_offload() {
-        const auto compute = [&](ggml_cgraph * graph) {
-            if (core::compute_graph(execution_, graph, offload_plans_.at(graph), "nemotron_transcribe.decoder.offload") != GGML_STATUS_SUCCESS)
-                throw std::runtime_error("Nemotron-H offload graph execution failed");
-        };
-        compute(graph_);
+        prepared_.compute();
         for (size_t layer = 0; layer < layer_graphs_.size(); ++layer) {
-            compute(layer_graphs_[layer]);
+            prepared_.compute(layer_graphs_[layer]);
             if (staged_layers_[layer] < 0) continue;
             staged_moe_->run(static_cast<size_t>(staged_layers_[layer]));
-            compute(finish_);
+            prepared_.compute(finish_);
         }
-        compute(final_);
+        prepared_.compute(final_);
     }
 
     void run(const int32_t * ids, bool output_logits = true) {
@@ -557,15 +523,11 @@ private:
             ggml_backend_tensor_set(slots_, slots_scratch_.data(), 0, slots_scratch_.size() * sizeof(int64_t));
             ggml_backend_tensor_set(mask_, mask_scratch_.data(), 0, mask_scratch_.size() * sizeof(ggml_fp16_t));
         }
-        if (!offload_graphs_.empty()) {
+        if (!layer_graphs_.empty()) {
             run_offload();
         } else {
             auto * graph = output_logits ? graph_ : prefill_body_;
-            auto & plan = output_logits ? plan_ : body_plan_;
-            if (ggml_graph_n_nodes(graph) > 0 &&
-                core::compute_graph(execution_, graph, plan, "nemotron_transcribe.decoder") != GGML_STATUS_SUCCESS) {
-                throw std::runtime_error("Nemotron-H decoder graph execution failed");
-            }
+            if (ggml_graph_n_nodes(graph) > 0) prepared_.compute(output_logits ? 0 : body_id_);
         }
         state_.advance(steps_);
     }
@@ -578,9 +540,6 @@ private:
     int64_t steps_;
     bool prompt_;
     int64_t hidden_size_;
-    Context context_;
-    Allocator allocator_;
-    core::HostGraphPlan plan_;
     ggml_cgraph * graph_ = nullptr;
     ggml_tensor * ids_ = nullptr;
     ggml_tensor * sequence_id_ = nullptr;
@@ -590,22 +549,20 @@ private:
     ggml_tensor * text_mask_ = nullptr;
     ggml_tensor * logits_ = nullptr;
     const Weights & weights_;
-    Context offload_inputs_;
-    Buffer offload_buffer_;
-    std::vector<ggml_cgraph *> offload_graphs_, layer_graphs_;
+    std::vector<core::PreparedGraph::GraphId> layer_graphs_;
     std::shared_ptr<core::GraphWorkspace> workspace_;
     std::unique_ptr<modules::StagedMoeRuntime> staged_moe_;
     std::vector<int64_t> staged_layers_;
-    std::map<ggml_cgraph *, core::HostGraphPlan> offload_plans_;
-    ggml_cgraph * finish_ = nullptr, * final_ = nullptr;
+    core::PreparedGraph::GraphId finish_ = 0, final_ = 0;
     ggml_tensor * x_ = nullptr, * shared_ = nullptr;
     int64_t slots_count_ = 0;
     std::vector<ggml_fp16_t> mask_scratch_;
     std::vector<int64_t> slots_scratch_;
     std::vector<float> audio_scratch_;
     std::vector<float> text_mask_scratch_;
-    core::HostGraphPlan body_plan_;
     ggml_cgraph * prefill_body_ = nullptr;
+    core::PreparedGraph::GraphId body_id_ = 0;
+    core::PreparedGraph prepared_;
 };
 
 }  // namespace

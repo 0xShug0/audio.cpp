@@ -1,3 +1,4 @@
+#include "engine/framework/core/prepared_graph.h"
 #include "engine/models/ming3_audio/audio_encoder.h"
 
 #include "engine/framework/core/backend_weight_store.h"
@@ -55,25 +56,12 @@ struct AudioEncoder::Impl {
         store.upload();
     }
 
-    ~Impl() { release_graph(); }
-
-    void release_graph() {
-        core::release_backend_graph_resources(execution.backend(), graph, true);
-        plan.reset();
-        if (allocator) ggml_gallocr_free(allocator);
-        if (context) ggml_free(context);
-        allocator = nullptr;
-        context = nullptr;
-        graph = nullptr;
-    }
-
     void build(int64_t frames) {
-        release_graph();
         constexpr size_t nodes = 16384;
-        context = ggml_init({ggml_tensor_overhead() * nodes + ggml_graph_overhead_custom(nodes, false), nullptr, true});
-        if (!context) throw std::runtime_error("Ming3 Audio failed to allocate encoder graph metadata");
-        core::ModuleBuildContext ctx{context, "ming3_audio.encoder", execution.backend_type()};
-        graph = ggml_new_graph_custom(context, nodes, false);
+        prepared.reset();
+        auto candidate = std::make_unique<core::PreparedGraph>(execution, core::PreparedGraphConfig{
+            "ming3_audio.encoder", ggml_tensor_overhead() * nodes + ggml_graph_overhead_custom(nodes, false), nodes});
+        auto & ctx = candidate->build_context();
         input = core::make_tensor(ctx, GGML_TYPE_F32,
             core::TensorShape::from_dims({1, config.encoder.n_mels, frames}));
         ggml_set_input(input.tensor);
@@ -93,14 +81,12 @@ struct AudioEncoder::Impl {
         if (config.normalize_embeddings) x = core::wrap_tensor(ggml_l2_norm(ctx.ggml, x.tensor, 1e-12f), x.shape);
         output = core::ensure_backend_addressable_layout(ctx, x);
         ggml_set_output(output.tensor);
-        ggml_build_forward_expand(graph, output.tensor);
-        core::validate_backend_graph_supported(execution.backend(), graph, "ming3_audio.encoder");
-        allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend()));
-        if (!allocator || !ggml_gallocr_alloc_graph(allocator, graph)) throw std::runtime_error("Ming3 Audio encoder allocation failed");
-        core::prepare_host_graph_plan(execution, graph, plan);
+        ggml_build_forward_expand(candidate->graph(), output.tensor);
+        candidate->allocate();
+        prepared = std::move(candidate);
         graph_frames = frames;
         debug::timing_log_scalar("ming3_audio.encoder.graph_buffer_mb",
-            ggml_gallocr_get_buffer_size(allocator, 0) / (1024.0 * 1024.0));
+            prepared->workspace_bytes() / (1024.0 * 1024.0));
     }
 
     std::vector<float> encode(const std::vector<float> & mel, int64_t frames) {
@@ -109,7 +95,7 @@ struct AudioEncoder::Impl {
             throw std::runtime_error("Ming3 Audio log-mel must contain [frames, mel_bins]");
         }
         const auto padded_frames = std::min(frames, config.chunk_frames);
-        if (!graph || graph_frames != padded_frames) build(padded_frames);
+        if (!prepared || graph_frames != padded_frames) build(padded_frames);
         std::vector<float> result;
         for (int64_t offset = 0; offset < frames; offset += config.chunk_frames) {
             const auto count = std::min(config.chunk_frames, frames - offset);
@@ -119,9 +105,7 @@ struct AudioEncoder::Impl {
             }
             core::round_f32_to_bf16_in_place(chunk);
             core::write_tensor_f32(input, chunk);
-            if (core::compute_graph(execution, graph, plan, "ming3_audio.encoder") != GGML_STATUS_SUCCESS) {
-                throw std::runtime_error("Ming3 Audio encoder execution failed");
-            }
+            prepared->compute();
             const auto encoded = core::read_tensor_f32(output.tensor);
             int64_t valid = (count + 1) / 2;
             for (size_t i = 0; i < projector.size(); ++i) {
@@ -141,10 +125,7 @@ struct AudioEncoder::Impl {
     modules::WhisperEmbeddingWeights weights;
     std::vector<modules::Conv1dWeights> projector;
     modules::LinearWeights projection;
-    ggml_context * context = nullptr;
-    ggml_gallocr_t allocator = nullptr;
-    ggml_cgraph * graph = nullptr;
-    core::HostGraphPlan plan;
+    std::unique_ptr<core::PreparedGraph> prepared;
     core::TensorValue input;
     core::TensorValue output;
     int64_t graph_frames = 0;
