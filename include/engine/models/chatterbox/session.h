@@ -27,6 +27,10 @@ struct ChatterboxConditionalsCacheKey {
     std::string language;
 };
 
+struct ChatterboxAudioBufferEqual {
+    bool operator()(const runtime::AudioBuffer & lhs, const runtime::AudioBuffer & rhs) const;
+};
+
 struct ChatterboxConditionalsCacheKeyEqual {
     bool operator()(
         const ChatterboxConditionalsCacheKey & lhs,
@@ -68,6 +72,10 @@ private:
         ChatterboxConditionalsOutputs,
         ChatterboxConditionalsCacheKeyEqual> conditionals_cache_;
     std::optional<ChatterboxConditionalsOutputs> cached_conditionals_;
+    runtime::CacheSlots<
+        runtime::AudioBuffer,
+        EmbedReferenceOutputs,
+        ChatterboxAudioBufferEqual> vc_reference_cache_;
     double cached_prompt_prep_ms_ = 0.0;
 };
 
