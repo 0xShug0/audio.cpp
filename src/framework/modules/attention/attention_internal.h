@@ -421,11 +421,30 @@ inline core::TensorValue build_feed_forward_impl(
     const core::TensorValue & input,
     const FeedForwardConfig & config,
     const FeedForwardWeights & weights) {
-    const LinearModule fc1({config.hidden_size, config.intermediate_size, config.use_bias, config.projection_precision});
+    const bool autocast = config.precision_policy == FeedForwardPrecisionPolicy::Bf16Autocast;
+    const bool native_f16 = autocast && config.projection_precision == GGML_PREC_DEFAULT &&
+        ctx.backend_type == core::BackendType::Cuda &&
+        weights.fc1_weight.type == GGML_TYPE_F16 && weights.fc2_weight.type == GGML_TYPE_F16;
+    const auto project = [&](core::TensorValue value, LinearWeights parameters, int64_t in, int64_t out) {
+        LinearConfig linear{in, out, config.use_bias, config.projection_precision};
+        if (native_f16) {
+            if (value.type != GGML_TYPE_F16)
+                value = core::wrap_tensor(ggml_cast(ctx.ggml, value.tensor, GGML_TYPE_F16), value.shape, GGML_TYPE_F16);
+            linear.cuda_f16_output = true;
+        } else if (autocast) {
+            if (!ggml_is_quantized(parameters.weight.type) && parameters.weight.type != GGML_TYPE_BF16)
+                parameters.weight = core::wrap_tensor(ggml_cast(ctx.ggml, parameters.weight.tensor, GGML_TYPE_BF16), parameters.weight.shape, GGML_TYPE_BF16);
+            if (ggml_is_quantized(parameters.weight.type) || ctx.backend_type == core::BackendType::Metal) {
+                value = Bf16RoundModule().build(ctx, value);
+                linear.vulkan_f32_activation_lowering = ctx.backend_type == core::BackendType::Vulkan;
+            } else if (ctx.backend_type != core::BackendType::Cuda && value.type != GGML_TYPE_BF16) {
+                value = core::wrap_tensor(ggml_cast(ctx.ggml, value.tensor, GGML_TYPE_BF16), value.shape, GGML_TYPE_BF16);
+            }
+        }
+        return LinearModule(linear).build(ctx, value, parameters);
+    };
     const GeluModule gelu({config.gelu_approximation});
-    const LinearModule fc2({config.intermediate_size, config.hidden_size, config.use_bias, config.projection_precision});
-
-    auto hidden = fc1.build(ctx, input, make_linear_weights(weights.fc1_weight, weights.fc1_bias));
+    auto hidden = project(input, make_linear_weights(weights.fc1_weight, weights.fc1_bias), config.hidden_size, config.intermediate_size);
     switch (config.activation) {
         case FeedForwardActivation::Gelu: hidden = gelu.build(ctx, hidden); break;
         case FeedForwardActivation::Relu: hidden = ReluModule().build(ctx, hidden); break;
@@ -435,14 +454,17 @@ inline core::TensorValue build_feed_forward_impl(
             break;
         default: throw std::runtime_error("Unsupported feed-forward activation");
     }
-    return fc2.build(ctx, hidden, make_linear_weights(weights.fc2_weight, weights.fc2_bias));
+    auto output = project(hidden, make_linear_weights(weights.fc2_weight, weights.fc2_bias), config.intermediate_size, config.hidden_size);
+    if (native_f16) output = core::wrap_tensor(ggml_cast(ctx.ggml, output.tensor, GGML_TYPE_F32), output.shape, GGML_TYPE_F32);
+    return output;
 }
 
 inline GatedFeedForwardWeights require_gated_feed_forward_weights(
     const GatedFeedForwardWeights & weights,
     bool use_bias) {
-    if (use_bias &&
-        (!weights.gate_proj.bias.has_value() || !weights.up_proj.bias.has_value() || !weights.down_proj.bias.has_value())) {
+    if (use_bias && (!weights.down_proj.bias.has_value() ||
+        (weights.up_gate_proj.weight.valid() ? !weights.up_gate_proj.bias.has_value()
+            : (!weights.gate_proj.bias.has_value() || !weights.up_proj.bias.has_value())))) {
         throw std::runtime_error("GatedFeedForward biases are required when use_bias is true");
     }
     return weights;
@@ -453,16 +475,26 @@ inline core::TensorValue build_gated_feed_forward_impl(
     const core::TensorValue & input,
     const GatedFeedForwardConfig & config,
     const GatedFeedForwardWeights & weights) {
-    auto gate = build_linear_projection_impl(
-        ctx,
-        input,
-        weights.gate_proj,
-        config.hidden_size,
-        config.intermediate_size,
-        config.use_bias,
-        config.projection_precision,
-        config.use_weight_type_projection_precision,
-        config.use_fast_cuda_projection);
+    core::TensorValue gate, up;
+    if (weights.up_gate_proj.weight.valid()) {
+        const auto packed = build_linear_projection_impl(ctx, input, weights.up_gate_proj,
+            config.hidden_size, 2 * config.intermediate_size, config.use_bias,
+            config.projection_precision, config.use_weight_type_projection_precision, config.use_fast_cuda_projection);
+        const int axis = static_cast<int>(input.shape.rank) - 1;
+        up = SliceModule({axis, 0, config.intermediate_size}).build(ctx, packed);
+        gate = SliceModule({axis, config.intermediate_size, config.intermediate_size}).build(ctx, packed);
+    } else {
+        gate = build_linear_projection_impl(
+            ctx,
+            input,
+            weights.gate_proj,
+            config.hidden_size,
+            config.intermediate_size,
+            config.use_bias,
+            config.projection_precision,
+            config.use_weight_type_projection_precision,
+            config.use_fast_cuda_projection);
+    }
     switch (config.activation) {
         case GatedFeedForwardActivation::Gelu:
             gate = GeluModule({config.gelu_approximation}).build(ctx, gate);
@@ -471,16 +503,18 @@ inline core::TensorValue build_gated_feed_forward_impl(
             gate = SiluModule{}.build(ctx, gate);
             break;
     }
-    auto up = build_linear_projection_impl(
-        ctx,
-        input,
-        weights.up_proj,
-        config.hidden_size,
-        config.intermediate_size,
-        config.use_bias,
-        config.projection_precision,
-        config.use_weight_type_projection_precision,
-        config.use_fast_cuda_projection);
+    if (!weights.up_gate_proj.weight.valid()) {
+        up = build_linear_projection_impl(
+            ctx,
+            input,
+            weights.up_proj,
+            config.hidden_size,
+            config.intermediate_size,
+            config.use_bias,
+            config.projection_precision,
+            config.use_weight_type_projection_precision,
+            config.use_fast_cuda_projection);
+    }
     auto hidden = MulModule{}.build(ctx, gate, up);
     return build_linear_projection_impl(
         ctx,

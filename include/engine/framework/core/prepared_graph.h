@@ -65,6 +65,14 @@ public:
     // reserves shared scratch. Structure/addresses stay fixed until reset().
     // Persistent tensors must already be allocated before preparing the graphs.
     void allocate();
+    // Opt-in allocation that can later discard device buffers while retaining
+    // graph metadata. External tensor storage is never owned or released here.
+    void allocate_releasable();
+    // Drains execution and releases plans, captures, scratch and persistent
+    // buffers. Graph IDs and tensor headers survive, but tensor data is invalid.
+    // Reallocate persistent storage, initialize it, then allocate_releasable()
+    // before executing again. Shared workspaces and schedulers are unsupported.
+    void release_buffers();
     // Optional single-graph scheduler execution. The returned handle is borrowed:
     // configure placement/evaluation with GGML's APIs before allocate(). Backend
     // handles (primary first, CPU last) and callback data must outlive this owner. A scheduler
@@ -103,6 +111,8 @@ private:
     ggml_cgraph * cleanup_graph_ = nullptr;
     bool allocation_started_ = false;
     bool allocated_ = false;
+    bool releasable_ = false;
+    std::vector<ggml_tensor *> scratch_tensors_;
 };
 
 }  // namespace engine::core

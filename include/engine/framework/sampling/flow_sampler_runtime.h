@@ -68,6 +68,8 @@ enum class FlowSamplerPredictionType {
 enum class FlowSamplerUpdateRule {
     Euler,
     Custom,
+    Midpoint,
+    Rk4,
 };
 
 enum class FlowSamplerGuidanceMode {
@@ -100,6 +102,13 @@ struct FlowSamplerGraphKey {
     }
 };
 
+enum class FlowSamplerStatePrecision { F32, Bf16 };
+
+// Evaluation times, in execution order, including intermediate solver stages.
+std::vector<float> flow_sampler_evaluation_times(
+    const std::vector<FlowSamplerScheduleStep> & schedule, FlowSamplerUpdateRule rule,
+    std::optional<float> step_size = std::nullopt);
+
 struct FlowSamplerRuntimeConfig {
     std::string label = "flow_sampler";
     std::vector<int64_t> latent_shape;
@@ -113,6 +122,9 @@ struct FlowSamplerRuntimeConfig {
     FlowSamplerPrefixPolicy prefix;
     bool release_graph_after_sequence = false;
     bool require_complete_graph_key = true;
+    FlowSamplerStatePrecision state_precision = FlowSamplerStatePrecision::F32;
+    // Signed fixed integration step; omitted uses each schedule interval.
+    std::optional<float> step_size = std::nullopt;
 };
 
 struct FlowSamplerStepState {
@@ -121,6 +133,7 @@ struct FlowSamplerStepState {
     std::vector<FlowSamplerBranchSpec> branches;
     std::vector<FlowSamplerCacheState> caches;
     FlowSamplerGraphKey graph_key;
+    std::optional<float> step_size = std::nullopt;
 };
 
 struct FlowSamplerSequenceState {

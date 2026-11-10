@@ -15,6 +15,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/models/cosyvoice3/rknn_flow.h"
+#include "engine/framework/modules/transformers/dit_runtime.h"
 
 #include <ggml-alloc.h>
 #include <ggml.h>
@@ -83,14 +84,6 @@ struct GraphMemory {
     }
 };
 
-std::vector<int32_t> position_ids(int64_t steps) {
-    std::vector<int32_t> out(static_cast<size_t>(steps));
-    for (int64_t i = 0; i < steps; ++i) {
-        out[static_cast<size_t>(i)] = static_cast<int32_t>(i);
-    }
-    return out;
-}
-
 std::vector<float> cosine_time_schedule(int64_t steps) {
     if (steps <= 0) {
         throw std::runtime_error("CosyVoice3 num_inference_steps must be positive");
@@ -103,152 +96,15 @@ std::vector<float> cosine_time_schedule(int64_t steps) {
     return out;
 }
 
-std::vector<float> timestep_embedding(float timestep) {
-    const int64_t half = kTimeEmbeddingSize / 2;
-    const float step = std::log(10000.0F) / static_cast<float>(half - 1);
-    std::vector<float> out(static_cast<size_t>(kTimeEmbeddingSize));
-    for (int64_t i = 0; i < half; ++i) {
-        const float freq = std::exp(static_cast<float>(i) * -step);
-        const float arg = 1000.0F * timestep * freq;
-        out[static_cast<size_t>(i)] = std::sin(arg);
-        out[static_cast<size_t>(half + i)] = std::cos(arg);
-    }
-    return out;
-}
-
-core::TensorValue repeat_like(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & value,
-    const core::TensorValue & like) {
-    return modules::RepeatModule({like.shape}).build(ctx, value);
-}
-
-core::TensorValue mul_broadcast(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & x,
-    const core::TensorValue & scale) {
-    return modules::MulModule().build(ctx, x, repeat_like(ctx, scale, x));
-}
-
-core::TensorValue modulate(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & x,
-    const core::TensorValue & shift,
-    const core::TensorValue & scale) {
-    auto one_plus = core::wrap_tensor(
-        ggml_scale_bias(ctx.ggml, repeat_like(ctx, scale, x).tensor, 1.0F, 1.0F),
-        x.shape,
-        GGML_TYPE_F32);
-    auto shifted = modules::AddModule().build(ctx, modules::MulModule().build(ctx, x, one_plus), repeat_like(ctx, shift, x));
-    return shifted;
-}
-
-core::TensorValue mish(core::ModuleBuildContext & ctx, const core::TensorValue & x) {
-    auto input = core::ensure_backend_addressable_layout(ctx, x);
-    auto softplus = core::wrap_tensor(ggml_softplus(ctx.ggml, input.tensor), input.shape, GGML_TYPE_F32);
-    auto t = core::wrap_tensor(ggml_tanh(ctx.ggml, softplus.tensor), input.shape, GGML_TYPE_F32);
-    return modules::MulModule().build(ctx, input, t);
-}
-
-core::TensorValue grouped_conv1d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const modules::Conv1dWeights & weights,
-    int64_t groups) {
-    const int64_t channels = input.shape.dims[1];
-    const int64_t out_channels = weights.weight.shape.dims[0];
-    const int64_t kernel = weights.weight.shape.dims[2];
-    if (groups <= 0 || channels % groups != 0 || out_channels % groups != 0) {
-        throw std::runtime_error("CosyVoice3 grouped Conv1d channel/group mismatch");
-    }
-    const int64_t channels_per_group = channels / groups;
-    const int64_t out_channels_per_group = out_channels / groups;
-    core::TensorValue output;
-    const auto input_contiguous = core::ensure_backend_addressable_layout(ctx, input);
-    for (int64_t group = 0; group < groups; ++group) {
-        auto input_group = modules::SliceModule({1, group * channels_per_group, channels_per_group}).build(ctx, input_contiguous);
-        auto weight_group = modules::SliceModule({0, group * out_channels_per_group, out_channels_per_group}).build(ctx, weights.weight);
-        modules::Conv1dWeights group_weights{weight_group, std::nullopt};
-        if (weights.bias.has_value()) {
-            group_weights.bias =
-                modules::SliceModule({0, group * out_channels_per_group, out_channels_per_group}).build(ctx, *weights.bias);
-        }
-        auto group_out = modules::Conv1dModule({
-            channels_per_group,
-            out_channels_per_group,
-            kernel,
-            1,
-            0,
-            1,
-            weights.bias.has_value()}).build(ctx, input_group, group_weights);
-        output = output.valid() ? modules::ConcatModule({1}).build(ctx, output, group_out) : group_out;
-    }
-    return output;
-}
-
-struct CosyDiTBlockWeights {
-    modules::LinearWeights attn_norm;
-    modules::ProjectedGroupedSelfAttentionWeights attention;
-    modules::NormWeights ff_norm;
-    modules::FeedForwardWeights ff;
-};
-
 struct CosyDiTFlowWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
     modules::LinearWeights speaker_projection;
     modules::Conv1dWeights pre_lookahead_conv1;
     modules::Conv1dWeights pre_lookahead_conv2;
-    modules::LinearWeights input_projection;
-    modules::Conv1dWeights conv_pos_1;
-    modules::Conv1dWeights conv_pos_2;
-    modules::LinearWeights time_fc1;
-    modules::LinearWeights time_fc2;
-    std::vector<CosyDiTBlockWeights> blocks;
-    modules::LinearWeights final_norm;
-    modules::LinearWeights output_projection;
     core::TensorValue rand_noise;
     std::vector<float> rand_noise_host;
 };
-
-modules::ProjectedGroupedSelfAttentionWeights load_attention(
-    core::BackendWeightStore & store,
-    const engine::assets::TensorSource & source,
-    const std::string & prefix,
-    int64_t hidden,
-    engine::assets::TensorStorageType storage_type) {
-    modules::ProjectedGroupedSelfAttentionWeights out;
-    out.q_proj = binding::linear_from_source(store, source, prefix + ".to_q", storage_type, hidden, hidden, true);
-    out.k_proj = binding::linear_from_source(store, source, prefix + ".to_k", storage_type, hidden, hidden, true);
-    out.v_proj = binding::linear_from_source(store, source, prefix + ".to_v", storage_type, hidden, hidden, true);
-    out.o_proj = binding::linear_from_source(store, source, prefix + ".to_out.0", storage_type, hidden, hidden, true);
-    return out;
-}
-
-CosyDiTBlockWeights load_block(
-    core::BackendWeightStore & store,
-    const engine::assets::TensorSource & source,
-    const std::string & prefix,
-    const CosyVoice3Config & config,
-    engine::assets::TensorStorageType storage_type) {
-    CosyDiTBlockWeights out;
-    out.attn_norm = binding::linear_from_source(
-        store, source, prefix + ".attn_norm.linear", storage_type, 6 * config.flow_hidden_size, config.flow_hidden_size, true);
-    out.attention = load_attention(store, source, prefix + ".attn", config.flow_hidden_size, storage_type);
-    out.ff.fc1_weight = store.load_tensor(
-        source,
-        prefix + ".ff.ff.0.0.weight",
-        storage_type,
-        {config.flow_hidden_size * config.flow_ff_mult, config.flow_hidden_size});
-    out.ff.fc1_bias = store.load_f32_tensor(source, prefix + ".ff.ff.0.0.bias", {config.flow_hidden_size * config.flow_ff_mult});
-    out.ff.fc2_weight = store.load_tensor(
-        source,
-        prefix + ".ff.ff.2.weight",
-        storage_type,
-        {config.flow_hidden_size, config.flow_hidden_size * config.flow_ff_mult});
-    out.ff.fc2_bias = store.load_f32_tensor(source, prefix + ".ff.ff.2.bias", {config.flow_hidden_size});
-    return out;
-}
 
 std::shared_ptr<CosyDiTFlowWeights> load_flow_weights(
     const CosyVoice3Assets & assets,
@@ -270,125 +126,50 @@ std::shared_ptr<CosyDiTFlowWeights> load_flow_weights(
         *weights->store, source, "pre_lookahead_layer.conv1", storage_type, c.flow_hidden_size, c.flow_mel_channels, c.pre_lookahead_len + 1, true);
     weights->pre_lookahead_conv2 = binding::conv1d_from_source(
         *weights->store, source, "pre_lookahead_layer.conv2", storage_type, c.flow_mel_channels, c.flow_hidden_size, 3, true);
-    // The ggml DiT weights are loaded in both paths, deliberately: the RKNN ladder covers a fixed
-    // set of lengths, and an utterance longer than the largest engine runs the ggml graph, so the
-    // copy is not spare memory. Skipping it would trade a fallback that works for one that throws
-    // `weight is invalid` the first time the ladder runs out.
-    weights->input_projection = binding::linear_from_source(
-        *weights->store, source, "decoder.estimator.input_embed.proj", storage_type, c.flow_hidden_size, 320, true);
-    weights->conv_pos_1.weight = weights->store->load_tensor(
-        source,
-        "decoder.estimator.input_embed.conv_pos_embed.conv1.0.weight",
-        storage_type,
-        {c.flow_hidden_size, c.flow_hidden_size / kConvPosGroups, kConvPosKernel});
-    weights->conv_pos_1.bias = weights->store->load_f32_tensor(
-        source,
-        "decoder.estimator.input_embed.conv_pos_embed.conv1.0.bias",
-        {c.flow_hidden_size});
-    weights->conv_pos_2.weight = weights->store->load_tensor(
-        source,
-        "decoder.estimator.input_embed.conv_pos_embed.conv2.0.weight",
-        storage_type,
-        {c.flow_hidden_size, c.flow_hidden_size / kConvPosGroups, kConvPosKernel});
-    weights->conv_pos_2.bias = weights->store->load_f32_tensor(
-        source,
-        "decoder.estimator.input_embed.conv_pos_embed.conv2.0.bias",
-        {c.flow_hidden_size});
-    weights->time_fc1 = binding::linear_from_source(
-        *weights->store, source, "decoder.estimator.time_embed.time_mlp.0", storage_type, c.flow_hidden_size, kTimeEmbeddingSize, true);
-    weights->time_fc2 = binding::linear_from_source(
-        *weights->store, source, "decoder.estimator.time_embed.time_mlp.2", storage_type, c.flow_hidden_size, c.flow_hidden_size, true);
-    weights->blocks.reserve(static_cast<size_t>(c.flow_layers));
-    for (int64_t layer = 0; layer < c.flow_layers; ++layer) {
-        weights->blocks.push_back(load_block(
-            *weights->store,
-            source,
-            "decoder.estimator.transformer_blocks." + std::to_string(layer),
-            c,
-            storage_type));
-    }
-    weights->final_norm = binding::linear_from_source(
-        *weights->store, source, "decoder.estimator.norm_out.linear", storage_type, 2 * c.flow_hidden_size, c.flow_hidden_size, true);
-    weights->output_projection = binding::linear_from_source(
-        *weights->store, source, "decoder.estimator.proj_out", storage_type, c.flow_mel_channels, c.flow_hidden_size, true);
     weights->rand_noise = weights->store->load_tensor(source, "decoder.rand_noise", engine::assets::TensorStorageType::F32, {1, c.flow_mel_channels, 50 * 300});
     weights->rand_noise_host = source.require_f32("decoder.rand_noise", {1, c.flow_mel_channels, 50 * 300});
     weights->store->upload();
     return weights;
 }
 
-modules::ProjectedGroupedSelfAttentionConfig attention_config(const CosyVoice3Config & config) {
-    modules::ProjectedGroupedSelfAttentionConfig out;
-    out.hidden_size = config.flow_hidden_size;
-    out.attention_heads = config.flow_heads;
-    out.kv_heads = config.flow_heads;
-    out.head_dim = config.flow_head_dim;
-    out.use_bias = true;
-    out.use_rope = true;
-    out.apply_rope_to_projected_prefix = true;
-    out.rope_type = GGML_ROPE_TYPE_NORMAL;
-    out.rope_theta = 10000.0F;
-    out.local_rope_theta = 10000.0F;
-    out.causality = modules::AttentionCausality::NonCausal;
-    out.lowering = modules::GroupedQueryAttentionLowering::FlashGroupedViewKV;
-    out.attention_precision = GGML_PREC_F32;
+modules::DitRuntimeConfig dit_config(const CosyVoice3Config & c, assets::TensorStorageType storage,
+    size_t graph_bytes, size_t weight_bytes) {
+    modules::DitRuntimeConfig out;
+    out.label = "cosyvoice3.flow.dit";
+    out.weight_type = storage; out.weight_metadata_bytes = weight_bytes;
+    out.graph_metadata_bytes = graph_bytes; out.graph_nodes = 200000;
+    out.time_features = modules::DitTimeFeatures::SinCos;
+    out.time_frequency_denominator = kTimeEmbeddingSize / 2 - 1; out.time_scale = 1000.f;
+    auto & m = out.model;
+    m.input_channels = 4 * c.flow_mel_channels; m.output_channels = c.flow_mel_channels;
+    m.hidden_size = c.flow_hidden_size; m.intermediate_size = c.flow_hidden_size * c.flow_ff_mult;
+    m.layers = c.flow_layers; m.time_features = kTimeEmbeddingSize;
+    m.modulation = modules::DitModulation::PerLayer;
+    m.position_kernel = kConvPosKernel; m.position_groups = kConvPosGroups;
+    m.self_attention = {c.flow_heads, c.flow_heads, c.flow_head_dim, modules::DitQKNorm::None, 1e-6f,
+        {c.flow_head_dim, GGML_ROPE_TYPE_NORMAL, 10000.f}};
     return out;
 }
 
-core::TensorValue causal_conv_pos_embed(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const CosyDiTFlowWeights & weights) {
-    auto x = modules::TransposeModule({{0, 2, 1, 3}, input.shape.rank}).build(ctx, input);
-    x = core::wrap_tensor(
-        ggml_pad_ext(ctx.ggml, x.tensor, kConvPosKernel - 1, 0, 0, 0, 0, 0, 0, 0),
-        core::TensorShape::from_dims({x.shape.dims[0], x.shape.dims[1], x.shape.dims[2] + kConvPosKernel - 1}),
-        GGML_TYPE_F32);
-    x = grouped_conv1d(ctx, x, weights.conv_pos_1, kConvPosGroups);
-    x = mish(ctx, x);
-    x = core::wrap_tensor(
-        ggml_pad_ext(ctx.ggml, x.tensor, kConvPosKernel - 1, 0, 0, 0, 0, 0, 0, 0),
-        core::TensorShape::from_dims({x.shape.dims[0], x.shape.dims[1], x.shape.dims[2] + kConvPosKernel - 1}),
-        GGML_TYPE_F32);
-    x = grouped_conv1d(ctx, x, weights.conv_pos_2, kConvPosGroups);
-    x = mish(ctx, x);
-    x = modules::TransposeModule({{0, 2, 1, 3}, x.shape.rank}).build(ctx, x);
-    return x;
-}
-
-core::TensorValue dit_block(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & time,
-    const core::TensorValue & positions,
-    const CosyDiTBlockWeights & weights,
-    const CosyVoice3Config & config,
-    int64_t layer) {
-    auto ada = modules::SiluModule().build(ctx, time);
-    ada = modules::LinearModule({config.flow_hidden_size, 6 * config.flow_hidden_size, true}).build(ctx, ada, weights.attn_norm);
-    auto shift_msa = modules::SliceModule({2, 0 * config.flow_hidden_size, config.flow_hidden_size}).build(ctx, ada);
-    auto scale_msa = modules::SliceModule({2, 1 * config.flow_hidden_size, config.flow_hidden_size}).build(ctx, ada);
-    auto gate_msa = modules::SliceModule({2, 2 * config.flow_hidden_size, config.flow_hidden_size}).build(ctx, ada);
-    auto shift_mlp = modules::SliceModule({2, 3 * config.flow_hidden_size, config.flow_hidden_size}).build(ctx, ada);
-    auto scale_mlp = modules::SliceModule({2, 4 * config.flow_hidden_size, config.flow_hidden_size}).build(ctx, ada);
-    auto gate_mlp = modules::SliceModule({2, 5 * config.flow_hidden_size, config.flow_hidden_size}).build(ctx, ada);
-
-    auto x = modules::LayerNormModule({config.flow_hidden_size, 1.0e-6F, false, false}).build(ctx, input, {});
-    x = modulate(ctx, x, shift_msa, scale_msa);
-    x = modules::ProjectedGroupedSelfAttentionModule(attention_config(config)).build(ctx, x, positions, weights.attention, layer);
-    x = mul_broadcast(ctx, x, gate_msa);
-    auto out = modules::AddModule().build(ctx, input, x);
-
-    x = modules::LayerNormModule({config.flow_hidden_size, 1.0e-6F, false, false}).build(ctx, out, {});
-    x = modulate(ctx, x, shift_mlp, scale_mlp);
-    x = modules::FeedForwardModule({
-        config.flow_hidden_size,
-        config.flow_hidden_size * config.flow_ff_mult,
-        true,
-        modules::GeluApproximation::Tanh,
-    }).build(ctx, x, weights.ff);
-    x = mul_broadcast(ctx, x, gate_mlp);
-    return modules::AddModule().build(ctx, out, x);
+modules::DitWeightNames dit_weight_names() {
+    modules::DitWeightNames w;
+    w.input = {"decoder.estimator.input_embed.proj.weight", "decoder.estimator.input_embed.proj.bias"};
+    w.output = {"decoder.estimator.proj_out.weight", "decoder.estimator.proj_out.bias"};
+    w.time_embedding = {{"decoder.estimator.time_embed.time_mlp.0.weight", "decoder.estimator.time_embed.time_mlp.0.bias"},
+        {"decoder.estimator.time_embed.time_mlp.2.weight", "decoder.estimator.time_embed.time_mlp.2.bias"}};
+    w.position_convolutions = {{"decoder.estimator.input_embed.conv_pos_embed.conv1.0.weight", "decoder.estimator.input_embed.conv_pos_embed.conv1.0.bias"},
+        {"decoder.estimator.input_embed.conv_pos_embed.conv2.0.weight", "decoder.estimator.input_embed.conv_pos_embed.conv2.0.bias"}};
+    w.layer.modulation = {"decoder.estimator.transformer_blocks.{layer}.attn_norm.linear.weight", "decoder.estimator.transformer_blocks.{layer}.attn_norm.linear.bias"};
+    w.layer.self_attention = {
+        {"decoder.estimator.transformer_blocks.{layer}.attn.to_q.weight", "decoder.estimator.transformer_blocks.{layer}.attn.to_q.bias"},
+        {"decoder.estimator.transformer_blocks.{layer}.attn.to_k.weight", "decoder.estimator.transformer_blocks.{layer}.attn.to_k.bias"},
+        {"decoder.estimator.transformer_blocks.{layer}.attn.to_v.weight", "decoder.estimator.transformer_blocks.{layer}.attn.to_v.bias"},
+        {"decoder.estimator.transformer_blocks.{layer}.attn.to_out.0.weight", "decoder.estimator.transformer_blocks.{layer}.attn.to_out.0.bias"}, {}, {}, {}, {}};
+    w.layer.feed_forward_in = {"decoder.estimator.transformer_blocks.{layer}.ff.ff.0.0.weight", "decoder.estimator.transformer_blocks.{layer}.ff.ff.0.0.bias"};
+    w.layer.feed_forward_out = {"decoder.estimator.transformer_blocks.{layer}.ff.ff.2.weight", "decoder.estimator.transformer_blocks.{layer}.ff.ff.2.bias"};
+    w.final_modulation = {"decoder.estimator.norm_out.linear.weight", "decoder.estimator.norm_out.linear.bias"};
+    w.final_shift_plane = 1; w.final_scale_plane = 0;
+    return w;
 }
 
 class ConditionGraph {
@@ -498,171 +279,6 @@ private:
     core::TensorValue output_;
 };
 
-class DiTGraph {
-public:
-    DiTGraph(
-        core::ExecutionContext & execution,
-        std::shared_ptr<const CosyDiTFlowWeights> weights,
-        CosyVoice3Config config,
-        size_t graph_arena_bytes)
-        : execution_(execution),
-          weights_(std::move(weights)),
-          config_(config),
-          graph_arena_bytes_(graph_arena_bytes) {}
-
-    ~DiTGraph() {
-        mem_.reset(execution_.backend());
-    }
-
-    std::vector<float> run(
-        const std::vector<float> & x,
-        const std::vector<float> & mu,
-        const std::vector<float> & cond,
-        const std::vector<float> & speaker,
-        float t,
-        int64_t frames) {
-        if (frames <= 0) {
-            throw std::runtime_error("CosyVoice3 DiT frames must be positive");
-        }
-        const int64_t batch = 2;
-        const int64_t channels = config_.flow_mel_channels;
-        if (static_cast<int64_t>(x.size()) != batch * channels * frames ||
-            static_cast<int64_t>(mu.size()) != batch * channels * frames ||
-            static_cast<int64_t>(cond.size()) != batch * channels * frames ||
-            static_cast<int64_t>(speaker.size()) != batch * channels) {
-            throw std::runtime_error("CosyVoice3 DiT input size mismatch");
-        }
-        // The graph takes the timestep embedding, not the timestep: the sinusoidal expansion is
-        // host-side here and inside the graph in the RKNN engine. Both backends get `t`.
-        const auto temb = timestep_embedding(t);
-        std::vector<float> time_embedding(static_cast<size_t>(batch) * kTimeEmbeddingSize);
-        std::copy(temb.begin(), temb.end(), time_embedding.begin());
-        std::copy(temb.begin(), temb.end(), time_embedding.begin() + kTimeEmbeddingSize);
-        ensure(frames);
-        ggml_backend_tensor_set(x_, x.data(), 0, x.size() * sizeof(float));
-        ggml_backend_tensor_set(mu_, mu.data(), 0, mu.size() * sizeof(float));
-        ggml_backend_tensor_set(cond_, cond.data(), 0, cond.size() * sizeof(float));
-        ggml_backend_tensor_set(spks_, speaker.data(), 0, speaker.size() * sizeof(float));
-        ggml_backend_tensor_set(time_, time_embedding.data(), 0, time_embedding.size() * sizeof(float));
-        if (core::compute_backend_graph(execution_.backend(), mem_.graph, nullptr, "cosyvoice3.flow.dit") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("CosyVoice3 DiT graph compute failed");
-        }
-        return core::read_tensor_f32(output_.tensor);
-    }
-
-    void release_graph() {
-        mem_.reset(execution_.backend());
-        frames_ = 0;
-        x_ = nullptr;
-        mu_ = nullptr;
-        cond_ = nullptr;
-        spks_ = nullptr;
-        time_ = nullptr;
-        positions_ = nullptr;
-        output_ = {};
-    }
-
-private:
-    void ensure(int64_t frames) {
-        if (mem_.graph != nullptr && frames_ == frames) {
-            return;
-        }
-        mem_.reset(execution_.backend());
-        constexpr int64_t batch = 2;
-        const int64_t channels = config_.flow_mel_channels;
-        ggml_init_params params{graph_arena_bytes_, nullptr, true};
-        mem_.ctx.reset(ggml_init(params));
-        ggml_init_params input_params{32ull * 1024ull * 1024ull, nullptr, true};
-        mem_.input_ctx.reset(ggml_init(input_params));
-        core::ModuleBuildContext ctx{mem_.ctx.get(), "cosyvoice3.flow.dit", execution_.backend_type()};
-        core::ModuleBuildContext input_ctx{mem_.input_ctx.get(), "cosyvoice3.flow.dit.inputs", execution_.backend_type()};
-
-        auto x = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, channels, frames}));
-        x_ = x.tensor;
-        ggml_set_input(x_);
-        auto mu = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, channels, frames}));
-        mu_ = mu.tensor;
-        ggml_set_input(mu_);
-        auto cond = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, channels, frames}));
-        cond_ = cond.tensor;
-        ggml_set_input(cond_);
-        auto spks = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, channels}));
-        spks_ = spks.tensor;
-        ggml_set_input(spks_);
-        auto time = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, kTimeEmbeddingSize}));
-        time_ = time.tensor;
-        ggml_set_input(time_);
-        auto positions = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({frames}));
-        positions_ = positions.tensor;
-
-        x = modules::TransposeModule({{0, 2, 1, 3}, x.shape.rank}).build(ctx, x);
-        mu = modules::TransposeModule({{0, 2, 1, 3}, mu.shape.rank}).build(ctx, mu);
-        cond = modules::TransposeModule({{0, 2, 1, 3}, cond.shape.rank}).build(ctx, cond);
-        x = core::ensure_backend_addressable_layout(ctx, x);
-        mu = core::ensure_backend_addressable_layout(ctx, mu);
-        cond = core::ensure_backend_addressable_layout(ctx, cond);
-        auto spks_btf = core::reshape_tensor(ctx, spks, core::TensorShape::from_dims({batch, 1, channels}));
-        spks_btf = modules::RepeatModule({core::TensorShape::from_dims({batch, frames, channels})}).build(ctx, spks_btf);
-        spks_btf = core::ensure_backend_addressable_layout(ctx, spks_btf);
-        auto input = modules::ConcatModule({2}).build(ctx, x, cond);
-        input = modules::ConcatModule({2}).build(ctx, input, mu);
-        input = modules::ConcatModule({2}).build(ctx, input, spks_btf);
-        input = core::ensure_backend_addressable_layout(ctx, input);
-        input = modules::LinearModule({320, config_.flow_hidden_size, true}).build(ctx, input, weights_->input_projection);
-        input = core::ensure_backend_addressable_layout(ctx, input);
-        auto pos = causal_conv_pos_embed(ctx, input, *weights_);
-        pos = core::ensure_backend_addressable_layout(ctx, pos);
-        input = modules::AddModule().build(ctx, input, pos);
-        input = core::ensure_backend_addressable_layout(ctx, input);
-
-        time = modules::LinearModule({kTimeEmbeddingSize, config_.flow_hidden_size, true}).build(ctx, time, weights_->time_fc1);
-        time = modules::SiluModule().build(ctx, time);
-        time = modules::LinearModule({config_.flow_hidden_size, config_.flow_hidden_size, true}).build(ctx, time, weights_->time_fc2);
-        time = core::reshape_tensor(ctx, time, core::TensorShape::from_dims({batch, 1, config_.flow_hidden_size}));
-
-        for (size_t layer = 0; layer < weights_->blocks.size(); ++layer) {
-            input = dit_block(ctx, input, time, positions, weights_->blocks[layer], config_, static_cast<int64_t>(layer));
-        }
-        auto norm_mod = modules::SiluModule().build(ctx, time);
-        norm_mod = modules::LinearModule({config_.flow_hidden_size, 2 * config_.flow_hidden_size, true}).build(ctx, norm_mod, weights_->final_norm);
-        auto scale = modules::SliceModule({2, 0, config_.flow_hidden_size}).build(ctx, norm_mod);
-        auto shift = modules::SliceModule({2, config_.flow_hidden_size, config_.flow_hidden_size}).build(ctx, norm_mod);
-        input = modules::LayerNormModule({config_.flow_hidden_size, 1.0e-6F, false, false}).build(ctx, input, {});
-        input = modulate(ctx, input, shift, scale);
-        input = modules::LinearModule({config_.flow_hidden_size, channels, true}).build(ctx, input, weights_->output_projection);
-        input = modules::TransposeModule({{0, 2, 1, 3}, input.shape.rank}).build(ctx, input);
-        output_ = core::ensure_backend_addressable_layout(ctx, input);
-        ggml_set_output(output_.tensor);
-        mem_.graph = ggml_new_graph_custom(mem_.ctx.get(), 200000, false);
-        ggml_build_forward_expand(mem_.graph, output_.tensor);
-        mem_.input_buffer = ggml_backend_alloc_ctx_tensors(mem_.input_ctx.get(), execution_.backend());
-        mem_.gallocr.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend())));
-        if (mem_.input_buffer == nullptr || mem_.gallocr == nullptr ||
-            !ggml_gallocr_reserve(mem_.gallocr.get(), mem_.graph) ||
-            !ggml_gallocr_alloc_graph(mem_.gallocr.get(), mem_.graph)) {
-            mem_.reset(execution_.backend());
-            throw std::runtime_error("failed to allocate CosyVoice3 DiT graph");
-        }
-        const auto pos_ids = position_ids(frames);
-        ggml_backend_tensor_set(positions_, pos_ids.data(), 0, pos_ids.size() * sizeof(int32_t));
-        frames_ = frames;
-    }
-
-    core::ExecutionContext & execution_;
-    std::shared_ptr<const CosyDiTFlowWeights> weights_;
-    CosyVoice3Config config_;
-    size_t graph_arena_bytes_ = 0;
-    GraphMemory mem_;
-    int64_t frames_ = 0;
-    ggml_tensor * x_ = nullptr;
-    ggml_tensor * mu_ = nullptr;
-    ggml_tensor * cond_ = nullptr;
-    ggml_tensor * spks_ = nullptr;
-    ggml_tensor * time_ = nullptr;
-    ggml_tensor * positions_ = nullptr;
-    core::TensorValue output_;
-};
-
 std::vector<float> normalize_and_project_speaker(
     const CosyVoice3Config & config,
     const CosyDiTFlowWeights & weights,
@@ -748,7 +364,7 @@ public:
               weight_context_bytes,
               storage_type)),
           condition_(execution_, weights_, assets_->config, graph_arena_bytes),
-          dit_(execution_, weights_, assets_->config, graph_arena_bytes),
+          dit_(execution_, *assets_->flow_weights, dit_config(assets_->config, storage_type, graph_arena_bytes, weight_context_bytes), dit_weight_names()),
           graph_arena_bytes_(graph_arena_bytes) {
         if (assets_ == nullptr) {
             throw std::runtime_error("CosyVoice3 flow runtime requires assets");
@@ -810,27 +426,40 @@ public:
         std::vector<float> spks(static_cast<size_t>(2 * c.flow_mel_channels), 0.0F);
         std::copy(speaker_cond.begin(), speaker_cond.end(), spks.begin());
 
-        const auto schedule = cosine_time_schedule(request.num_inference_steps);
-        // The NPU ladder covers a fixed range of lengths; past its largest engine the ggml graph
-        // is the only backend that has a shape for the utterance, so the fallback is per call.
         const bool on_npu = rknn_ != nullptr && total_frames <= rknn_->max_frames();
-        if (rknn_ != nullptr && !on_npu) {
-            debug::timing_log_scalar(
-                "cosyvoice3.flow.dit.rknn.fallback_frames", static_cast<int64_t>(total_frames));
-        }
+        if (rknn_ != nullptr && !on_npu) debug::timing_log_scalar(
+            "cosyvoice3.flow.dit.rknn.fallback_frames", static_cast<int64_t>(total_frames));
         const auto dit_start = std::chrono::steady_clock::now();
-        for (int64_t step = 1; step < static_cast<int64_t>(schedule.size()); ++step) {
-            const float t = schedule[static_cast<size_t>(step - 1)];
-            const float dt = schedule[static_cast<size_t>(step)] - t;
-            auto pred = on_npu
-                ? rknn_->run(x_batched.data(), mu.data(), cond.data(), spks.data(), t, total_frames)
-                : dit_.run(x_batched, mu, cond, spks, t, total_frames);
-            const size_t branch = static_cast<size_t>(c.flow_mel_channels * total_frames);
-            for (size_t i = 0; i < branch; ++i) {
-                const float guided = (1.0F + kInferenceCfgRate) * pred[i] - kInferenceCfgRate * pred[branch + i];
-                x_batched[i] += dt * guided;
+        if (on_npu) {
+            const auto schedule = cosine_time_schedule(request.num_inference_steps);
+            for (size_t step = 1; step < schedule.size(); ++step) {
+                const float t = schedule[step - 1], dt = schedule[step] - t;
+                const auto pred = rknn_->run(x_batched.data(), mu.data(), cond.data(), spks.data(), t, total_frames);
+                const auto branch = static_cast<size_t>(c.flow_mel_channels * total_frames);
+                for (size_t i = 0; i < branch; ++i) x_batched[i] += dt * ((1.f + kInferenceCfgRate) * pred[i] - kInferenceCfgRate * pred[branch + i]);
+                std::copy_n(x_batched.begin(), branch, x_batched.begin() + static_cast<std::ptrdiff_t>(branch));
             }
-            std::copy(x_batched.begin(), x_batched.begin() + static_cast<std::ptrdiff_t>(branch), x_batched.begin() + static_cast<std::ptrdiff_t>(branch));
+        } else {
+            modules::DitConditioning conditioning;
+            conditioning.frames = total_frames; conditioning.branches = 2;
+            conditioning.frame_channels = {c.flow_mel_channels, c.flow_mel_channels};
+            conditioning.frame_features.resize(2);
+            for (size_t n = 0; n < 2; ++n) {
+                const auto & values = n == 0 ? cond : mu;
+                auto & feature = conditioning.frame_features[n];
+                feature.resize(values.size());
+                for (int64_t b = 0; b < 2; ++b)
+                    for (int64_t t = 0; t < total_frames; ++t)
+                        for (int64_t ch = 0; ch < c.flow_mel_channels; ++ch)
+                            feature[static_cast<size_t>((b * total_frames + t) * c.flow_mel_channels + ch)] = values[static_cast<size_t>((b * c.flow_mel_channels + ch) * total_frames + t)];
+            }
+            conditioning.vector_channels = {c.flow_mel_channels}; conditioning.vector_features = {spks};
+            dit_.prepare_conditioning(std::move(conditioning));
+            modules::DitSamplingRequest sampling;
+            sampling.noise = x; sampling.steps = request.num_inference_steps;
+            sampling.schedule_type = modules::DitSchedule::Cosine;
+            sampling.guidance = 1.f + kInferenceCfgRate;
+            x_batched = dit_.sample(sampling);
         }
         engine::debug::timing_log_scalar("cosyvoice3.flow.dit_ms", engine::debug::elapsed_ms(dit_start));
 
@@ -851,7 +480,7 @@ public:
 
     void release_graphs() {
         condition_.release_graph();
-        dit_.release_graph();
+        dit_.release_graphs();
     }
 
 private:
@@ -859,7 +488,7 @@ private:
     core::ExecutionContext & execution_;
     std::shared_ptr<CosyDiTFlowWeights> weights_;
     ConditionGraph condition_;
-    DiTGraph dit_;
+    modules::DitRuntime dit_;
     std::unique_ptr<CosyVoice3RknnFlow> rknn_;
     size_t graph_arena_bytes_ = 0;
 };

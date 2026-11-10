@@ -1050,6 +1050,8 @@ void test_timestep_embedding_norm_opt_in() {
     auto legacy = modules::TimestepEmbeddingModule(config).build(runner.ctx, timestep, weights);
     config.norm = modules::TimestepEmbeddingNorm::Rms;
     auto rms = modules::TimestepEmbeddingModule(config).build(runner.ctx, timestep, weights);
+    config.norm = modules::TimestepEmbeddingNorm::None;
+    auto plain = modules::TimestepEmbeddingModule(config).build(runner.ctx, timestep, weights);
     runner.allocate_tensors();
     const float t = 0.7f;
     const std::vector<float> freq_values{1.0f, 0.25f};
@@ -1075,6 +1077,7 @@ void test_timestep_embedding_norm_opt_in() {
         expected_legacy.push_back(x[i] * alpha_values[i] / std::sqrt(variance + 1e-5f));
         expected_rms.push_back(x[i] * alpha_values[i] / std::sqrt(mean_square + 1e-5f));
     }
+    require_allclose(runner.run_f32(plain), x, 1e-6f, "unnormalized time embedding");
     require_allclose(runner.run_f32(legacy), expected_legacy, 1e-4f, "legacy variance RMS time embedding");
     require_allclose(runner.run_f32(rms), expected_rms, 1e-5f, "opt-in plain RMS time embedding");
 }
@@ -1098,6 +1101,56 @@ void test_feed_forward_activation_opt_in() {
     for (float v : data) expected.push_back(0.5f * v * (1.0f + std::erf(v / std::sqrt(2.0f))));
     require_allclose(runner.run_f32(legacy), expected, 1e-6f, "legacy GELU");
     require_allclose(runner.run_f32(relu), {0,0,1,2}, 1e-6f, "opt-in ReLU");
+}
+
+void test_feed_forward_precision_and_packing() {
+    using namespace engine;
+    using core::TensorShape;
+    {
+        ModuleRunner runner;
+        const auto input = runner.make_f32(TensorShape::from_dims({2, 4}));
+        const auto identity = runner.make_f32(TensorShape::from_dims({4, 4}));
+        modules::FeedForwardConfig config{4, 4, false, modules::GeluApproximation::Tanh};
+        require(config.precision_policy == modules::FeedForwardPrecisionPolicy::Native, "default FFN precision remains native");
+        config.precision_policy = modules::FeedForwardPrecisionPolicy::Bf16Autocast;
+        const auto output = modules::FeedForwardModule(config).build(runner.ctx, input,
+            {identity, std::nullopt, identity, std::nullopt});
+        runner.allocate_tensors();
+        const std::vector<float> values{-.731f, .239f, 1.417f, -2.137f, .617f, -.331f, 2.117f, -1.217f};
+        core::write_tensor_f32(input, values);
+        core::write_tensor_f32(identity, {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
+        auto expected = values;
+        core::round_f32_to_bf16_in_place(expected);
+        for (auto & x : expected) x = .5f * x * (1.f + std::tanh(.7978845608028654f * x * (1.f + .044715f * x * x)));
+        core::round_f32_to_bf16_in_place(expected);
+        require_allclose(runner.run_f32(output), expected, 1e-5f, "autocast FFN rounding boundaries");
+    }
+    for (const bool bias : {false, true}) {
+        ModuleRunner runner;
+        const auto input = runner.make_f32(TensorShape::from_dims({2, 3, 4}));
+        const auto up = runner.make_f32(TensorShape::from_dims({6, 4}));
+        const auto gate = runner.make_f32(TensorShape::from_dims({6, 4}));
+        const auto down = runner.make_f32(TensorShape::from_dims({4, 6}));
+        const auto up_bias = runner.make_f32(TensorShape::from_dims({6}));
+        const auto gate_bias = runner.make_f32(TensorShape::from_dims({6}));
+        const auto down_bias = runner.make_f32(TensorShape::from_dims({4}));
+        const auto packed = modules::ConcatModule({0}).build(runner.ctx, up, gate);
+        const auto packed_bias = modules::ConcatModule({0}).build(runner.ctx, up_bias, gate_bias);
+        modules::GatedFeedForwardConfig config{4, 6, bias, modules::GatedFeedForwardActivation::Silu};
+        const modules::GatedFeedForwardWeights separate{{gate, gate_bias}, {up, up_bias}, {down, down_bias}};
+        const auto reference = modules::GatedFeedForwardModule(config).build(runner.ctx, input, separate);
+        const auto output = modules::GatedFeedForwardModule(config).build(runner.ctx, input,
+            {{}, {}, {down, down_bias}, {packed, packed_bias}});
+        runner.allocate_tensors();
+        core::write_tensor_f32(input, make_patterned_f32(24, .27f, .6f));
+        core::write_tensor_f32(up, make_patterned_f32(24, .4f, .3f));
+        core::write_tensor_f32(gate, make_patterned_f32(24, -.7f, .5f));
+        core::write_tensor_f32(down, make_patterned_f32(24, .1f, .4f));
+        core::write_tensor_f32(up_bias, make_patterned_f32(6, .2f, .3f));
+        core::write_tensor_f32(gate_bias, make_patterned_f32(6, -.3f, .4f));
+        core::write_tensor_f32(down_bias, make_patterned_f32(4, .6f, .2f));
+        require_allclose(runner.run_f32(output), runner.run_f32(reference), 1e-6f, "packed up/gate matches separate FFN");
+    }
 }
 
 void test_cached_decoder_block_matches_composition(bool flash_cross) {
@@ -1386,6 +1439,7 @@ int main(int argc, char ** argv) {
         test_depthwise_subsampling_stage_masks();
         test_batch_norm_eval_binding();
         test_feed_forward_activation_opt_in();
+        test_feed_forward_precision_and_packing();
         test_timestep_embedding_norm_opt_in();
         test_cached_decoder_block_matches_composition(false);
         test_cached_decoder_block_matches_composition(true);

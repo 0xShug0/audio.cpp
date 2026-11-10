@@ -4,6 +4,7 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <limits>
@@ -126,6 +127,62 @@ core::TensorValue FlowSamplerCfgGraphModule::build(core::ModuleBuildContext & ct
     return AddModule().build(ctx, negative, MulModule(true).build(ctx, difference, guidance));
 }
 
+FlowSamplerApgGraphModule::FlowSamplerApgGraphModule(std::vector<int> axes) : axes_(std::move(axes)) {
+    if (axes_.empty()) throw std::invalid_argument("APG requires reduction axes");
+    for (size_t i = 0; i < axes_.size(); ++i)
+        if ((axes_[i] != 1 && axes_[i] != 2) || std::find(axes_.begin(), axes_.begin() + i, axes_[i]) != axes_.begin() + i)
+            throw std::invalid_argument("APG axes must be distinct non-batch axes");
+    // Axes describe a reduction set, not a floating-point operation order.
+    // Reduce contiguous inner dimensions first to avoid a full-tensor transpose.
+    std::sort(axes_.rbegin(), axes_.rend());
+}
+
+core::TensorValue FlowSamplerApgGraphModule::build(core::ModuleBuildContext & ctx,
+    const core::TensorValue & positive, const core::TensorValue & negative,
+    const core::TensorValue & reference, const core::TensorValue & guidance,
+    const core::TensorValue & strength, const core::TensorValue & mask) const {
+    validate_f32(positive); validate_f32(negative); validate_f32(reference);
+    validate_scalar(guidance); validate_scalar(strength);
+    core::validate_rank_between(positive, 3, 3, "APG prediction");
+    core::validate_shape(negative, positive.shape, "APG negative prediction");
+    core::validate_shape(reference, positive.shape, "APG reference");
+    const auto reduce = [&](core::TensorValue value) {
+        for (const auto axis : axes_) value = ReduceSumModule({axis}).build(ctx, value);
+        value = core::wrap_tensor(ggml_cont(ctx.ggml, value.tensor), value.shape);
+        return value;
+    };
+    const auto difference = core::wrap_tensor(ggml_sub(ctx.ggml, positive.tensor, negative.tensor), positive.shape);
+    const auto direction = mask.valid() ? MulModule(true).build(ctx, reference, mask) : reference;
+    const auto squared = reduce(MulModule().build(ctx, direction, direction));
+    const auto denominator = ScaleBiasModule({1, 1e-16f}).build(ctx, squared);
+    const auto dot = reduce(MulModule().build(ctx, difference, direction));
+    const auto ratio = core::wrap_tensor(ggml_div(ctx.ggml, dot.tensor, denominator.tensor), dot.shape);
+    const auto parallel = MulModule(true).build(ctx, direction, ratio);
+    auto orthogonal = core::wrap_tensor(ggml_sub(ctx.ggml, difference.tensor, parallel.tensor), positive.shape);
+    if (mask.valid()) orthogonal = MulModule(true).build(ctx, orthogonal, mask);
+    const auto complement = ScaleBiasModule({-1, 1}).build(ctx, strength);
+    const auto update = AddModule().build(ctx, MulModule(true).build(ctx, orthogonal, strength),
+        MulModule(true).build(ctx, difference, complement));
+    const auto extra = ScaleBiasModule({1, -1}).build(ctx, guidance);
+    return AddModule().build(ctx, positive, MulModule(true).build(ctx, update, extra));
+}
+
+core::TensorValue FlowSamplerPingPongGraphModule::build(core::ModuleBuildContext & ctx,
+    const core::TensorValue & latent, const core::TensorValue & velocity,
+    const core::TensorValue & noise, const core::TensorValue & time,
+    const core::TensorValue & next_time) const {
+    validate_f32(latent); validate_f32(velocity); validate_f32(noise); validate_f32(time); validate_f32(next_time);
+    core::validate_shape(velocity, latent.shape, "ping-pong velocity");
+    core::validate_shape(noise, latent.shape, "ping-pong noise");
+    core::validate_shape(time, core::TensorShape::from_dims({latent.shape.dims[0], 1, 1}), "ping-pong time");
+    core::validate_shape(next_time, time.shape, "ping-pong next time");
+    const auto scaled = MulModule(true).build(ctx, velocity, time);
+    const auto denoised = core::wrap_tensor(ggml_sub(ctx.ggml, latent.tensor, scaled.tensor), latent.shape);
+    return AddModule().build(ctx,
+        MulModule(true).build(ctx, denoised, ScaleBiasModule({-1, 1}).build(ctx, next_time)),
+        MulModule(true).build(ctx, noise, next_time));
+}
+
 FlowSamplerEulerGraphModule::FlowSamplerEulerGraphModule(FlowSamplerEulerGraphConfig config)
     : config_(config) {}
 
@@ -134,7 +191,9 @@ core::TensorValue FlowSamplerEulerGraphModule::build(core::ModuleBuildContext & 
     const core::TensorValue & dt) const {
     validate_f32(latent);
     validate_f32(velocity);
-    validate_scalar(dt);
+    validate_f32(dt);
+    if (ggml_nelements(dt.tensor) != 1)
+        core::validate_shape(dt, core::TensorShape::from_dims({latent.shape.dims[0], 1, 1}), "Euler step");
     core::validate_shape(velocity, latent.shape, "velocity");
     auto delta = MulModule(true).build(ctx, velocity, dt);
     if (config_.delta_rounding == FlowSamplerGraphRounding::Bf16)
