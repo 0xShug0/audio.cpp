@@ -1,5 +1,6 @@
 #include "../../app/cli/args.h"
 #include "../../app/cli/request.h"
+#include "../../app/common/base64.h"
 
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/errors.h"
@@ -9,6 +10,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -489,6 +491,99 @@ void test_non_negative_int_flag_values() {
     }
 }
 
+// A 16-bit mono WAV of these samples, as a caller would send it.
+std::string wav_bytes(const std::vector<int16_t> & samples, uint32_t sample_rate) {
+    std::string wav;
+    const auto put = [&wav](uint32_t value, int bytes) {
+        for (int i = 0; i < bytes; ++i) {
+            wav.push_back(static_cast<char>((value >> (8 * i)) & 0xFF));
+        }
+    };
+    const auto data_bytes = static_cast<uint32_t>(samples.size() * sizeof(int16_t));
+    wav += "RIFF";
+    put(36 + data_bytes, 4);
+    wav += "WAVEfmt ";
+    put(16, 4);
+    put(1, 2);
+    put(1, 2);
+    put(sample_rate, 4);
+    put(sample_rate * 2, 4);
+    put(2, 2);
+    put(16, 2);
+    wav += "data";
+    put(data_bytes, 4);
+    for (const int16_t sample : samples) {
+        put(static_cast<uint16_t>(sample), 2);
+    }
+    return wav;
+}
+
+engine::runtime::TaskRequest request_with_voice_ref(const std::string & voice_ref, const std::filesystem::path & base_dir) {
+    return minitts::cli::build_request_from_json(
+        engine::io::json::parse("{\"text\":\"hi\",\"voice_ref\":" + voice_ref + "}"), base_dir);
+}
+
+void require_voice_ref_rejected(const std::string & voice_ref, const std::string & message) {
+    try {
+        (void) request_with_voice_ref(voice_ref, std::filesystem::temp_directory_path());
+    } catch (const engine::runtime::InvalidRequestError & error) {
+        engine::test::require(
+            std::string(error.what()).find(message) != std::string::npos,
+            "voice_ref " + voice_ref.substr(0, 60) + " failed with '" + error.what() + "', expected '" + message + "'");
+        return;
+    }
+    throw std::runtime_error("voice_ref was accepted: " + voice_ref.substr(0, 60));
+}
+
+void test_request_json_voice_ref() {
+    const auto dir = std::filesystem::temp_directory_path() /
+        ("audiocpp-request-voice-ref-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    struct RemoveDir {
+        std::filesystem::path path;
+        ~RemoveDir() {
+            std::error_code ignored;
+            std::filesystem::remove_all(path, ignored);
+        }
+    } remove_dir{dir};
+    std::filesystem::create_directories(dir / "voices");
+    const std::string wav = wav_bytes({0, 16384, -16384, 32767}, 16000);
+    std::ofstream(dir / "voices" / "ref.wav", std::ios::binary) << wav;
+
+    const auto require_voice = [](const engine::runtime::TaskRequest & request, const std::string & label) {
+        engine::test::require(
+            request.voice.has_value() && request.voice->speaker.has_value() && request.voice->speaker->audio.has_value(),
+            label + " sets the speaker audio");
+        const auto & audio = *request.voice->speaker->audio;
+        engine::test::require_eq(audio.sample_rate, 16000, label + " sample rate");
+        engine::test::require_eq(audio.samples.size(), size_t{4}, label + " sample count");
+        engine::test::require(audio.samples[1] > 0.49F && audio.samples[1] < 0.51F, label + " sample value");
+    };
+
+    // A path string, a path object and an inline WAV give the same voice;
+    // paths are relative to the request file.
+    require_voice(request_with_voice_ref("\"voices/ref.wav\"", dir), "path string");
+    require_voice(request_with_voice_ref("{\"type\":\"path\",\"path\":\"voices/ref.wav\"}", dir), "path object");
+    const std::vector<uint8_t> wav_data(wav.begin(), wav.end());
+    require_voice(
+        request_with_voice_ref("{\"type\":\"base64\",\"data\":\"" + minitts::app::base64_encode(wav_data) + "\"}", dir),
+        "inline base64");
+    require_voice(
+        request_with_voice_ref(
+            "{\"type\":\"base64\",\"data\":\"data:audio/wav;base64," + minitts::app::base64_encode(wav_data) + "\"}", dir),
+        "inline data URI");
+    engine::test::require(!request_with_voice_ref("null", dir).voice.has_value(), "null voice_ref");
+
+    require_voice_ref_rejected("42", "voice_ref must be a path string or an object");
+    require_voice_ref_rejected("{\"type\":\"url\",\"data\":\"x\"}", "voice_ref type must be");
+    require_voice_ref_rejected("{\"data\":\"UklGRg==\"}", "voice_ref type must be");
+    require_voice_ref_rejected("{\"type\":\"path\"}", "needs a path string");
+    require_voice_ref_rejected("{\"type\":\"base64\"}", "needs a data string");
+    require_voice_ref_rejected("{\"type\":\"base64\",\"data\":\"@@@@\"}", "not valid base64");
+    require_voice_ref_rejected("{\"type\":\"base64\",\"data\":\"\"}", "empty payload");
+    require_voice_ref_rejected(
+        "{\"type\":\"base64\",\"data\":\"" + std::string(size_t{8} * 1024 * 1024, 'A') + "\"}", "5 MiB limit");
+}
+
 }  // namespace
 
 int main() {
@@ -501,6 +596,7 @@ int main() {
     test_normalized_request_option_aliases();
     test_out_format_selects_wav_sample_format();
     test_request_json_artifacts();
+    test_request_json_voice_ref();
     test_component_exec_plans();
     test_non_negative_int_flag_values();
     std::cout << "cli_request_options_test passed\n";
