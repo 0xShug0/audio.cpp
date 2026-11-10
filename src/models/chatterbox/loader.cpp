@@ -55,6 +55,7 @@ runtime::ModelCliInterface cli(const ChatterboxAssets &) {
         {"chatterbox.t3_weight_type", "native|f32|f16|bf16|q8_0", "T3 weight storage; inherits weight_type.", false},
         {"chatterbox.multilingual_t3", "v2|v3", "Multilingual T3 checkpoint for non-English TTS; default v2.", false, "v2"},
         {"chatterbox.conditionals_cache_slots", "int", "Prepared voice-condition cache slots; default 1, set 0 to disable.", false, "1", "0"},
+        {"chatterbox.vc_reference_cache_slots", "int", "Prepared voice-conversion target cache slots; default 1, set 0 to disable.", false, "1", "0"},
         {"chatterbox.mem_saver", "bool", "Free non-conditional runtime graphs after each request chunk; default false.", false, "false"},
         {"chatterbox.encoder_condition_samples", "int", "Maximum reference samples for the T3 tokenizer; the voice encoder still consumes the full 16 kHz reference. Default: 96000.", false, "96000"},
         {"chatterbox.decoder_condition_samples", "int", "S3Gen reference sample limit at 24 kHz.", false, "240000"},

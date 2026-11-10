@@ -177,6 +177,14 @@
         "default": 1
       },
       {
+        "name": "vc_reference_cache_slots",
+        "type": "int",
+        "description": "Cached voice-conversion target references; zero disables reuse.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
         "name": "mem_saver",
         "type": "bool",
         "description": "Release staged runtime components.",

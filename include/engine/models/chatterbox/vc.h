@@ -46,6 +46,20 @@ public:
         const runtime::AudioBuffer & target_voice,
         const ChatterboxVoiceConversionConfig & config = {}) const;
 
+    // Rejects invalid settings or source audio, before any target is prepared.
+    void validate(
+        const runtime::AudioBuffer & source_audio,
+        const ChatterboxVoiceConversionConfig & config) const;
+
+    // The target speaker's prepared reference, reusable for every
+    // conversion into that voice.
+    EmbedReferenceOutputs prepare_target(const runtime::AudioBuffer & target_voice) const;
+
+    ChatterboxVoiceConversionOutputs convert(
+        const runtime::AudioBuffer & source_audio,
+        const EmbedReferenceOutputs & target_ref,
+        const ChatterboxVoiceConversionConfig & config = {}) const;
+
 private:
     engine::models::chatterbox::S3TokenizerComponent tokenizer_;
     engine::models::chatterbox::CAMPPlusEncoderComponent speaker_encoder_;
