@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/framework/core/prepared_graph.h"
-#include "engine/framework/core/graph_workspace.h"
 
 #include <cstddef>
 #include <functional>
@@ -22,8 +21,8 @@ struct FlowSamplerGraphStepBinding {
 struct FlowSamplerGraphSequence {
     size_t steps = 0;
     std::vector<FlowSamplerGraphStepBinding> step_bindings;
-    // Optional graph index per submission. Empty selects the first graph.
-    std::vector<size_t> graph_indices;
+    // Optional graph ID per submission. Empty selects graph zero.
+    std::vector<core::PreparedGraph::GraphId> graph_indices;
 };
 
 // Borrows a session-owned graph whose update writes back into latent. Serial
@@ -37,7 +36,6 @@ struct FlowSamplerGraphSequence {
 class DeviceFlowSamplerRuntime {
 public:
     DeviceFlowSamplerRuntime(core::PreparedGraph & graph, core::TensorValue latent);
-    DeviceFlowSamplerRuntime(std::vector<core::PreparedGraph *> graphs, core::TensorValue latent);
 
     // Caller keeps all source spans immutable and alive until run() returns or
     // throws: completion/error draining synchronizes before releasing the borrow.
@@ -48,7 +46,7 @@ public:
         const FlowSamplerGraphSequence & sequence);
 
 private:
-    std::vector<core::PreparedGraph *> graphs_;
+    core::PreparedGraph & graph_;
     core::TensorValue latent_;
 };
 
@@ -108,16 +106,14 @@ struct DeviceDenoiserOptimizations {
 class DeviceDenoiserRuntime {
 public:
     using Builder = std::function<DeviceDenoiserGraph(core::ModuleBuildContext &)>;
-    struct Phase {
-        core::PreparedGraphConfig config;
-        Builder builder;
-    };
 
     DeviceDenoiserRuntime(core::ExecutionContext & execution,
         core::PreparedGraphConfig config, const Builder & builder,
         DeviceDenoiserOptimizations optimizations = {});
+    // One metadata capacity covers all phases; graph_nodes is the per-graph capacity.
     DeviceDenoiserRuntime(core::ExecutionContext & execution,
-        const std::vector<Phase> & phases, DeviceDenoiserOptimizations optimizations = {});
+        core::PreparedGraphConfig config, const std::vector<Builder> & phases,
+        DeviceDenoiserOptimizations optimizations = {});
     ~DeviceDenoiserRuntime();
 
     std::vector<float> predict(size_t phase = 0);
@@ -125,9 +121,7 @@ public:
         const FlowSamplerGraphSequence & sequence);
 
 private:
-    // Graph captures must be released before their shared allocation.
-    core::GraphWorkspace workspace_;
-    std::vector<std::unique_ptr<core::PreparedGraph>> graphs_;
+    core::PreparedGraph graph_;
     std::vector<DeviceDenoiserGraph> tensors_;
     std::unique_ptr<DeviceFlowSamplerRuntime> sampler_;
     ggml_backend_set_graph_fusions_t set_fusions_ = nullptr;

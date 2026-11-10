@@ -20,7 +20,6 @@
 #include "engine/framework/modules/weight_binding.h"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -151,16 +150,17 @@ struct DitRuntime::Impl {
     std::vector<BlockWeights> blocks;
     // Persistent [2, text_length * dim] leaves: positive then negative.
     // Flash caches use F16 head-major rows; explicit attention keeps F32 token-major.
-    // Neither denoiser traverses conditioning producers.
+    // The denoiser does not traverse conditioning producers.
     std::vector<std::pair<TensorValue, TensorValue>> cross_kv;
     TensorValue rope_positions;
     modules::DeviceDenoiserOptimizations runtime_optimizations;
     struct DenoiserState {
+        int64_t batch = 0;
         std::unique_ptr<modules::DeviceDenoiserRuntime> runtime;
         TensorValue latent_input, time_input, branch_input, step_input, guidance_input;
     };
     std::unique_ptr<core::PreparedGraph> condition_graph;
-    std::array<std::unique_ptr<DenoiserState>, 2> denoisers;
+    std::unique_ptr<DenoiserState> denoiser;
     TensorValue text_input;
     int64_t frames = 0;
     bool prepared = false;
@@ -326,7 +326,9 @@ struct DitRuntime::Impl {
 
     void build_denoiser_graph(int64_t batch) {
         const auto started = std::chrono::steady_clock::now();
+        denoiser.reset();
         auto state = std::make_unique<DenoiserState>();
+        state->batch = batch;
         auto & latent_input = state->latent_input;
         auto & time_input = state->time_input;
         auto & branch_input = state->branch_input;
@@ -472,7 +474,7 @@ struct DitRuntime::Impl {
             .build(ctx, latent_input, velocity, state->step_input);
         return {latent_input, output, updated};
         }, runtime_optimizations);
-        denoisers[batch - 1] = std::move(state);
+        denoiser = std::move(state);
         debug::timing_log_scalar("moss_soundeffect.dit.build_ms", debug::elapsed_ms(started));
     }
 
@@ -481,8 +483,8 @@ struct DitRuntime::Impl {
         if (!prepared) throw std::runtime_error("MOSS SoundEffect DiT requires prepare_context before predict");
         if (latents.size() != static_cast<size_t>(assets->dit.latent_dim * frames))
             throw std::runtime_error("MOSS SoundEffect DiT latent shape mismatch");
-        if (!denoisers[batch - 1]) build_denoiser_graph(batch);
-        auto & state = *denoisers[batch - 1];
+        if (!denoiser || denoiser->batch != batch) build_denoiser_graph(batch);
+        auto & state = *denoiser;
         const auto half = assets->dit.freq_dim / 2;
         std::vector<float> time(static_cast<size_t>(2 * half));
         for (int64_t i = 0; i < half; ++i) {
@@ -539,8 +541,8 @@ std::vector<float> DitRuntime::sample(const std::vector<float> & noise, int step
         noise.size() != static_cast<size_t>(s.assets->dit.latent_dim * s.frames))
         throw std::runtime_error("Invalid MOSS SoundEffect sampling inputs");
     const int batch = guidance == 1.0F ? 1 : 2;
-    if (!s.denoisers[batch - 1]) s.build_denoiser_graph(batch);
-    auto & state = *s.denoisers[batch - 1];
+    if (!s.denoiser || s.denoiser->batch != batch) s.build_denoiser_graph(batch);
+    auto & state = *s.denoiser;
     if (batch == 2) core::write_tensor_f32(state.guidance_input, std::vector<float>{guidance});
     if (batch == 1) {
         const int32_t branch = 0;

@@ -1,4 +1,5 @@
 #include "engine/framework/sampling/device_denoiser_runtime.h"
+#include "engine/framework/core/graph_workspace.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/conditioning_modules.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -463,14 +464,13 @@ void check_denoiser_phases(core::ExecutionContext & execution) {
     try { shared.allocate(); }
     catch (const std::runtime_error &) { rejected = true; }
     if (!rejected) throw std::runtime_error("Shared graph accepted a second allocation");
-    std::vector<modules::DeviceDenoiserRuntime::Phase> phases;
+    std::vector<modules::DeviceDenoiserRuntime::Builder> phases;
     for (int phase = 0; phase < 2; ++phase) {
-        phases.push_back({{"test.denoiser_phase_" + std::to_string(phase), 64 * 1024, 32},
-            [&, phase](core::ModuleBuildContext & build) -> modules::DeviceDenoiserGraph {
-                const auto velocity = core::wrap_tensor(ggml_scale(build.ggml, latent.tensor,
-                    phase == 0 ? 0.5F : -0.25F), latent.shape, GGML_TYPE_F32);
-                return {latent, velocity, modules::FlowSamplerEulerGraphModule().build(build, latent, velocity, dt)};
-            }});
+        phases.push_back([&, phase](core::ModuleBuildContext & build) -> modules::DeviceDenoiserGraph {
+            const auto velocity = core::wrap_tensor(ggml_scale(build.ggml, latent.tensor,
+                phase == 0 ? 0.5F : -0.25F), latent.shape, GGML_TYPE_F32);
+            return {latent, velocity, modules::FlowSamplerEulerGraphModule().build(build, latent, velocity, dt)};
+        });
     }
     {
         core::TensorValue unallocated;
@@ -479,15 +479,14 @@ void check_denoiser_phases(core::ExecutionContext & execution) {
                 core::TensorShape::from_dims({17}));
             return {unallocated, unallocated, unallocated};
         };
-        const std::vector<modules::DeviceDenoiserRuntime::Phase> unsafe_phases{
-            {{"test.unsafe_phase_0", 64 * 1024, 32}, unsafe},
-            {{"test.unsafe_phase_1", 64 * 1024, 32}, unsafe}};
+        const std::vector<modules::DeviceDenoiserRuntime::Builder> unsafe_phases{
+            unsafe, unsafe};
         rejected = false;
-        try { modules::DeviceDenoiserRuntime invalid(execution, unsafe_phases); }
+        try { modules::DeviceDenoiserRuntime invalid(execution, {"test.unsafe_phases", 128 * 1024, 32}, unsafe_phases); }
         catch (const std::runtime_error &) { rejected = true; }
         if (!rejected) throw std::runtime_error("Multiphase state was allocated in shared scratch");
     }
-    modules::DeviceDenoiserRuntime runtime(execution, phases);
+    modules::DeviceDenoiserRuntime runtime(execution, {"test.denoiser_phases", 128 * 1024, 32}, phases);
     const std::vector<float> initial(17, 0.5F);
     const std::vector<float> steps{0.25F, 0.5F, -0.25F, 0.125F, -0.5F};
     modules::FlowSamplerGraphSequence sequence;

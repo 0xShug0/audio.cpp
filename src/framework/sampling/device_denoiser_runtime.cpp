@@ -37,30 +37,20 @@ void validate_upload(const core::TensorValue & target, size_t offset, size_t byt
 }  // namespace
 
 DeviceFlowSamplerRuntime::DeviceFlowSamplerRuntime(core::PreparedGraph & graph, core::TensorValue latent)
-    : DeviceFlowSamplerRuntime(std::vector<core::PreparedGraph *>{&graph}, latent) {}
-
-DeviceFlowSamplerRuntime::DeviceFlowSamplerRuntime(std::vector<core::PreparedGraph *> graphs,
-    core::TensorValue latent) : graphs_(std::move(graphs)), latent_(latent) {
+    : graph_(graph), latent_(latent) {
     validate_f32(latent_);
-    if (graphs_.empty() || !graphs_.front())
-        throw std::runtime_error("Flow sampler requires at least one graph");
-    const auto backend = graphs_.front()->execution().backend();
-    for (const auto * graph : graphs_)
-        if (!graph || graph->execution().backend() != backend)
-            throw std::runtime_error("Flow sampler graphs must share one execution backend");
 }
 
 std::vector<float> DeviceFlowSamplerRuntime::run(
     const std::vector<float> & initial_latent, const FlowSamplerGraphSequence & sequence) {
-    for (const auto * graph : graphs_)
-        if (!graph->allocated()) throw std::runtime_error("Flow sampler graph is not allocated");
+    if (!graph_.allocated()) throw std::runtime_error("Flow sampler graph is not allocated");
     if (sequence.steps == 0)
         throw std::runtime_error("Flow sampler requires a positive step count");
     if (!sequence.graph_indices.empty()) {
         if (sequence.graph_indices.size() != sequence.steps)
             throw std::runtime_error("Flow sampler graph schedule size mismatch");
         for (size_t index : sequence.graph_indices)
-            if (index >= graphs_.size()) throw std::runtime_error("Flow sampler graph index out of range");
+            if (index >= graph_.graph_count()) throw std::runtime_error("Flow sampler graph index out of range");
     }
     validate_upload(latent_, 0, ggml_nbytes(latent_.tensor));
     if (initial_latent.size() != static_cast<size_t>(ggml_nelements(latent_.tensor)))
@@ -97,7 +87,7 @@ std::vector<float> DeviceFlowSamplerRuntime::run(
         }
     }
 
-    const auto backend = graphs_.front()->execution().backend();
+    const auto backend = graph_.execution().backend();
     core::write_tensor_f32(latent_, initial_latent);
     try {
         const auto started = std::chrono::steady_clock::now();
@@ -106,15 +96,15 @@ std::vector<float> DeviceFlowSamplerRuntime::run(
                 ggml_backend_tensor_set_async(backend, binding.target.tensor,
                     static_cast<const std::byte *>(binding.data) + step * binding.bytes_per_step,
                     binding.offset_bytes, binding.bytes_per_step);
-            auto & graph = *graphs_[sequence.graph_indices.empty() ? 0 : sequence.graph_indices[step]];
-            if (graph.has_host_plan()) {
-                graph.compute();
-            } else if (ggml_backend_graph_compute_async(backend, graph.graph()) != GGML_STATUS_SUCCESS) {
-                throw std::runtime_error(graph.label() + " sampling graph execution failed");
+            const auto id = sequence.graph_indices.empty() ? 0 : sequence.graph_indices[step];
+            if (graph_.has_host_plan(id)) {
+                graph_.compute(id);
+            } else if (ggml_backend_graph_compute_async(backend, graph_.graph(id)) != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error(graph_.label() + " sampling graph execution failed");
             }
         }
         ggml_backend_synchronize(backend);
-        debug::timing_log_scalar(graphs_.front()->label() + ".sequence.compute_ms", debug::elapsed_ms(started));
+        debug::timing_log_scalar(graph_.label() + ".sequence.compute_ms", debug::elapsed_ms(started));
     } catch (...) {
         ggml_backend_synchronize(backend);
         throw;
@@ -157,11 +147,12 @@ core::TensorValue FlowSamplerEulerGraphModule::build(core::ModuleBuildContext & 
 
 DeviceDenoiserRuntime::DeviceDenoiserRuntime(core::ExecutionContext & execution,
     core::PreparedGraphConfig config, const Builder & builder, DeviceDenoiserOptimizations optimizations)
-    : DeviceDenoiserRuntime(execution, std::vector<Phase>{{std::move(config), builder}}, optimizations) {}
+    : DeviceDenoiserRuntime(execution, std::move(config), std::vector<Builder>{builder}, optimizations) {}
 
 DeviceDenoiserRuntime::DeviceDenoiserRuntime(core::ExecutionContext & execution,
-    const std::vector<Phase> & phases, DeviceDenoiserOptimizations optimizations)
-    : workspace_(execution.backend()) {
+    core::PreparedGraphConfig config, const std::vector<Builder> & phases,
+    DeviceDenoiserOptimizations optimizations)
+    : graph_(execution, std::move(config)) {
     if (phases.empty()) throw std::runtime_error("Device denoiser requires at least one phase");
     const auto device = ggml_backend_get_device(execution.backend());
     if (device) {
@@ -174,14 +165,10 @@ DeviceDenoiserRuntime::DeviceDenoiserRuntime(core::ExecutionContext & execution,
     if (optimizations.bias_activation) mask |= GGML_BACKEND_GRAPH_FUSION_BIAS_ACTIVATION;
     if (optimizations.gated_residual) mask |= GGML_BACKEND_GRAPH_FUSION_GATED_RESIDUAL;
     try {
-        graphs_.reserve(phases.size());
         tensors_.reserve(phases.size());
-        std::vector<core::PreparedGraph *> graph_refs;
-        graph_refs.reserve(phases.size());
-        for (const auto & phase : phases) {
-            graphs_.push_back(std::make_unique<core::PreparedGraph>(execution, phase.config));
-            auto & graph = *graphs_.back();
-            tensors_.push_back(phase.builder(graph.build_context()));
+        for (size_t phase = 0; phase < phases.size(); ++phase) {
+            const auto id = phase == 0 ? 0 : graph_.add_graph(std::to_string(phase));
+            tensors_.push_back(phases[phase](graph_.build_context()));
             const auto & tensors = tensors_.back();
             if (!tensors.latent.tensor || !tensors.prediction.tensor || !tensors.updated_latent.tensor)
                 throw std::runtime_error("Device denoiser requires latent, prediction and updated latent tensors");
@@ -194,37 +181,33 @@ DeviceDenoiserRuntime::DeviceDenoiserRuntime(core::ExecutionContext & execution,
             if (tensors.latent.tensor != tensors_.front().latent.tensor)
                 throw std::runtime_error("Device denoiser phases must share one persistent latent tensor");
             ggml_set_output(tensors.prediction.tensor);
-            ggml_build_forward_expand(graph.graph(), tensors.prediction.tensor);
-            ggml_build_forward_expand(graph.graph(), ggml_cpy(graph.build_context().ggml,
+            ggml_build_forward_expand(graph_.graph(id), tensors.prediction.tensor);
+            ggml_build_forward_expand(graph_.graph(id), ggml_cpy(graph_.build_context().ggml,
                 tensors.updated_latent.tensor, tensors.latent.tensor));
-            if (set_fusions_) set_fusions_(execution.backend(), graph.graph(), mask);
-            workspace_.add(graph);
-            graph_refs.push_back(&graph);
+            if (set_fusions_) set_fusions_(execution.backend(), graph_.graph(id), mask);
         }
-        workspace_.prepare();
-        debug::timing_log_scalar(phases.front().config.label + ".buffer_mb",
-            workspace_.bytes() / (1024.0 * 1024.0));
-        sampler_ = std::make_unique<DeviceFlowSamplerRuntime>(std::move(graph_refs), tensors_.front().latent);
+        graph_.allocate();
+        sampler_ = std::make_unique<DeviceFlowSamplerRuntime>(graph_, tensors_.front().latent);
     } catch (...) {
         if (set_fusions_)
-            for (const auto & graph : graphs_) set_fusions_(execution.backend(), graph->graph(), 0);
+            for (size_t id = 0; id < graph_.graph_count(); ++id)
+                set_fusions_(execution.backend(), graph_.graph(id), 0);
         throw;
     }
 }
 
 DeviceDenoiserRuntime::~DeviceDenoiserRuntime() {
     if (set_fusions_)
-        for (const auto & graph : graphs_)
-            set_fusions_(graph->execution().backend(), graph->graph(), 0);
+        for (size_t id = 0; id < graph_.graph_count(); ++id)
+            set_fusions_(graph_.execution().backend(), graph_.graph(id), 0);
 }
 
 std::vector<float> DeviceDenoiserRuntime::predict(size_t phase) {
-    auto & graph = *graphs_.at(phase);
-    graph.compute();
+    graph_.compute(phase);
     const auto started = std::chrono::steady_clock::now();
     std::vector<float> result;
     core::read_tensor_float_into(tensors_.at(phase).prediction.tensor, result);
-    debug::timing_log_scalar(graph.label() + ".output_read_ms", debug::elapsed_ms(started));
+    debug::timing_log_scalar(graph_.label() + ".output_read_ms", debug::elapsed_ms(started));
     return result;
 }
 
