@@ -769,7 +769,7 @@ std::vector<int64_t> PocketTTSSession::prepared_generation_capacities() const {
 }
 
 std::string PocketTTSSession::family() const {
-    return manifest_->family;
+    return manifest_->family();
 }
 
 runtime::VoiceTaskKind PocketTTSSession::task_kind() const {
@@ -782,7 +782,7 @@ runtime::RunMode PocketTTSSession::run_mode() const {
 
 void PocketTTSSession::validate_request_options(const std::unordered_map<std::string, std::string> & options) const {
     if (request_contract_) {
-        runtime::validate_spec_backed_request_options(options, *request_contract_, manifest_->family);
+        runtime::validate_spec_backed_request_options(options, *request_contract_, manifest_->family());
     }
 }
 

@@ -55,7 +55,7 @@ struct ParakeetConfig {
 };
 
 struct ParakeetTDTAssets {
-    const ParakeetImplementation * implementation = nullptr;
+    const ParakeetImplementation * impl = nullptr;
     assets::ResourceBundle resources;
     ParakeetConfig config;
     std::shared_ptr<const assets::TensorSource> source;

@@ -1,4 +1,5 @@
 #include "engine/models/roformer/runtime.h"
+#include "engine/models/roformer/routing.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/dsp.h"
@@ -112,7 +113,7 @@ MelBandWeights load_mel_band_weights(
     const auto & config = assets.config;
     if (config.num_stems != 1) {
         throw std::runtime_error(
-            config.family + " native runtime currently supports only single-stem checkpoints");
+            config.family() + " native runtime currently supports only single-stem checkpoints");
     }
     const auto & source = *assets.tensor_source;
 
@@ -120,7 +121,7 @@ MelBandWeights load_mel_band_weights(
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        config.family + ".weights",
+        config.family() + ".weights",
         768ull * 1024ull * 1024ull);
 
     weights.band_split.reserve(static_cast<size_t>(config.band_input_dims.size()));
@@ -156,7 +157,7 @@ MelBandWeights load_mel_band_weights(
                 TransformerLayerWeights block;
                 block.attention.norm = weights.store->load_f32_tensor(source, attn_prefix + ".norm.gamma", {config.dim});
                 const bool pack_qkv_gates = backend_type == core::BackendType::Cuda &&
-                    config.family == kBsRoformerFamily && config.fused_qkv &&
+                    config.impl->cuda_packed_qkv_gates && config.fused_qkv &&
                     (storage_type != assets_ns::TensorStorageType::Native ||
                         source.require_metadata(attn_prefix + ".to_qkv.weight").dtype ==
                         source.require_metadata(attn_prefix + ".to_gates.weight").dtype);
@@ -231,7 +232,7 @@ MelBandWeights load_mel_band_weights(
     // Pack the original weight bytes so one batched matmul can replace the
     // independent per-band matmul launches without requantizing the model.
     bool batch_mask_first = backend_type == core::BackendType::Cuda &&
-        config.family == kBsRoformerFamily && config.mask_estimator_linear_layers == 2;
+        config.impl->cuda_batched_mask && config.mask_estimator_linear_layers == 2;
     if (batch_mask_first && storage_type == assets_ns::TensorStorageType::Native) {
         // Mixed-precision GGUFs can choose a different dtype per tensor. Keep
         // their existing per-band path unless each packed group is uniform.
@@ -458,14 +459,14 @@ core::TensorValue build_attention(
     const modules::LinearModule out_proj(binding::linear_config(config.heads * config.dim_head, config.dim, false));
 
     auto x = build_reference_rms_norm(ctx, input, config.dim, weights.norm,
-        ctx.backend_type == core::BackendType::Cuda && config.family == kBsRoformerFamily);
+        ctx.backend_type == core::BackendType::Cuda && config.impl->cuda_strided_norm_and_residual);
     core::TensorValue q;
     core::TensorValue k;
     core::TensorValue v;
     core::TensorValue qk;
     core::TensorValue gates;
     const bool packed_qk_rope = ctx.backend_type == core::BackendType::Cuda &&
-        config.family == kBsRoformerFamily && config.fused_qkv;
+        config.impl->cuda_packed_qk_rope && config.fused_qkv;
     if (config.fused_qkv) {
         const int64_t inner = config.heads * config.dim_head;
         const modules::LinearModule qkv_proj(
@@ -555,7 +556,7 @@ core::TensorValue build_transformer_branch(
     auto x = input;
     for (const auto & layer : weights.layers) {
         auto attention = build_attention(ctx, x, positions, layer.attention, config);
-        if (ctx.backend_type == core::BackendType::Cuda && config.family == kBsRoformerFamily &&
+        if (ctx.backend_type == core::BackendType::Cuda && config.impl->cuda_strided_norm_and_residual &&
             !ggml_is_contiguous(x.tensor)) {
             // The CUDA add kernel reads the permuted residual directly. The
             // generic Add module would first materialize another full copy.
@@ -581,7 +582,7 @@ core::TensorValue axial_branch_input(
     }
     const auto shape = core::TensorShape::from_dims(
         {input.shape.dims[1], input.shape.dims[2], input.shape.dims[3]});
-    if (ctx.backend_type == core::BackendType::Cuda && config.family == kBsRoformerFamily) {
+    if (ctx.backend_type == core::BackendType::Cuda && config.impl->cuda_strided_norm_and_residual) {
         // Remove only the singleton dimension; preserve the time/band strides.
         // CUDA RMSNorm materializes its normalized output in the required order,
         // and the residual add also accepts this view without a preceding copy.
@@ -605,7 +606,7 @@ core::TensorValue build_band_split(
         auto band_input = modules::SliceModule({2, offset, dim_in}).build(ctx, input);
         // CUDA RMSNorm can also read a band's rows directly from the spectrum.
         band_input = build_reference_rms_norm(ctx, band_input, dim_in, weights.band_split[band].norm,
-            ctx.backend_type == core::BackendType::Cuda && config.family == kBsRoformerFamily);
+            ctx.backend_type == core::BackendType::Cuda && config.impl->cuda_strided_norm_and_residual);
         band_input = modules::LinearModule(binding::linear_config(dim_in, config.dim, true))
                          .build(ctx, band_input, binding::linear_data(ctx, weights.band_split[band].proj.weight, weights.band_split[band].proj.bias));
         band_input = core::reshape_tensor(
@@ -838,7 +839,7 @@ public:
         : FixedShapeGraph(
               execution_context.backend(),
               std::max(1, execution_context.config().threads),
-              assets != nullptr ? assets->config.family : std::string("roformer")) {
+              assets != nullptr ? assets->config.family() : std::string("roformer")) {
         if (assets == nullptr) {
             throw std::runtime_error("RoFormer graph requires assets");
         }
@@ -850,9 +851,9 @@ public:
         constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             compute_threads_,
-            config.family + ".constants",
+            config.family() + ".constants",
             4ull * 1024ull * 1024ull);
-        auto build_ctx = make_build_context(execution_context, config.family.c_str());
+        auto build_ctx = make_build_context(execution_context, config.family().c_str());
         constants_->begin_graph();
         input_shape_ = core::TensorShape::from_dims({1, config.chunk_frames, config.total_band_input_dim});
         output_shape_ = core::TensorShape::from_dims({1, config.chunk_frames, config.total_band_input_dim});
@@ -905,10 +906,10 @@ public:
         constants_->ensure_uploaded();
         finalize_graph(131072);
         engine::debug::timing_log_scalar(
-            config.family + ".graph.build_ms",
+            config.family() + ".graph.build_ms",
             engine::debug::elapsed_ms(build_start));
         engine::debug::timing_log_scalar(
-            config.family + ".graph.rebuilt",
+            config.family() + ".graph.rebuilt",
             true);
     }
 
@@ -1207,7 +1208,7 @@ PreparedChunk prepare_runtime_chunk(
     const std::vector<float> & chunk_planar,
     const RoformerArchitectureConfig & config,
     size_t fft_threads) {
-    const std::string log_prefix = config.family + ".";
+    const std::string log_prefix = config.family() + ".";
     const engine::audio::STFTConfig stft_config{
         config.n_fft,
         config.hop_length,
@@ -1243,7 +1244,7 @@ const std::vector<float> & run_runtime_graph(
     const auto graph_start = Clock::now();
     const auto & masks = graph.run(features);
     engine::debug::timing_log_scalar(
-        config.family + ".graph.total_ms",
+        config.family() + ".graph.total_ms",
         engine::debug::elapsed_ms(graph_start));
     return masks;
 }
@@ -1254,7 +1255,7 @@ void finish_runtime_chunk(
     const RoformerArchitectureConfig & config,
     size_t fft_threads,
     std::vector<float> & output_planar) {
-    const std::string log_prefix = config.family + ".";
+    const std::string log_prefix = config.family() + ".";
     const engine::audio::STFTConfig stft_config{config.n_fft, config.hop_length, config.win_length,
         true, engine::audio::STFTPadMode::Reflect, engine::audio::STFTFamily::Kokoro};
     const auto & window = engine::audio::get_cached_stft_window(stft_config);

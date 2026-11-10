@@ -140,10 +140,7 @@ IrodoriGenerationOptions
 generation_options_from_request(const runtime::TaskRequest &request,
                                 const IrodoriModelConfig &config) {
   IrodoriGenerationOptions options;
-  const bool meanflow = config.flow_parameterization == "meanflow";
-  if (meanflow) {
-    options.num_inference_steps = 4;
-  }
+  options.num_inference_steps = config.impl->default_inference_steps;
   if (const auto value = runtime::find_option(request.options, {"language"})) {
     if (*value != "ja") {
       throw std::runtime_error("Irodori-TTS language must be ja");
@@ -168,7 +165,7 @@ generation_options_from_request(const runtime::TaskRequest &request,
     throw runtime::InvalidRequestError(error.what());
   }
   // Validate before expensive conditioning/codec work, including older GGUF contracts.
-  if (!meanflow) {
+  if (config.impl->validate_rf_guidance) {
     make_irodori_rf_schedule(options.num_inference_steps, options.t_schedule_mode,
                              options.sway_coeff);
   }
@@ -1029,9 +1026,7 @@ IrodoriTTSSession::synthesize(const runtime::TaskRequest &request, bool streamin
                           engine::text::text_chunk_mode_name(text_chunk_mode));
   debug::trace_log_scalar("irodori_tts.text_chunk_count",
                           static_cast<int64_t>(chunk_requests.size()));
-  const std::string sample_log = assets_->config.flow_parameterization == "meanflow"
-                                     ? "irodori_tts.sample_meanflow"
-                                     : "irodori_tts.sample_rf";
+  const std::string sample_log = assets_->config.impl->sample_log;
   debug::trace_log_scalar(sample_log + ".context_graph_rebuilds",
                            rf_sampler_->context_graph_rebuilds() -
                                rf_context_graph_rebuilds_before);
@@ -1125,12 +1120,12 @@ IrodoriTTSSession::make_request(const runtime::TaskRequest &request) const {
   out.generation.guidance_mode =
       lower_ascii(trim_ascii(out.generation.guidance_mode));
   const std::string mode = out.generation.guidance_mode;
-  if (assets_->config.flow_parameterization != "meanflow" &&
+  if (assets_->config.impl->validate_rf_guidance &&
       mode != "independent" && mode != "joint" && mode != "alternating") {
     throw std::runtime_error(
         "Irodori-TTS guidance_mode must be independent, joint, or alternating");
   }
-  if (assets_->config.flow_parameterization != "meanflow" &&
+  if (assets_->config.impl->validate_rf_guidance &&
       out.generation.guidance_min_t > out.generation.guidance_max_t) {
     throw std::runtime_error(
         "Irodori-TTS guidance_min_t must be <= guidance_max_t");

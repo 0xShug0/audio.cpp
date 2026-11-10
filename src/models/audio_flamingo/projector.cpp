@@ -260,7 +260,7 @@ public:
         if (batch_ <= 0 || tokens_ <= 0) {
             throw std::runtime_error("Audio Flamingo projector graph shape is invalid");
         }
-        use_rote_ = config.variant == AudioFlamingoVariant::Next;
+        use_rote_ = config.impl->use_rote;
         rot_dim_ = use_rote_ ? rotary_axis_dim(config) * 2 : 0;
         ggml_init_params params{graph_arena_bytes, nullptr, true};
         ctx_.reset(ggml_init(params));
@@ -435,7 +435,7 @@ AudioFlamingoAudioProjectorOutput AudioFlamingoAudioProjectorRuntime::project(
         debug::trace_log_scalar("audio_flamingo.audio_projector.batch", encoded.batch);
         debug::trace_log_scalar("audio_flamingo.audio_projector.tokens", encoded.tokens);
         debug::trace_log_scalar("audio_flamingo.audio_projector.rot_dim",
-            assets_->config.variant == AudioFlamingoVariant::Next ? rotary_axis_dim(assets_->config) * 2 : 0);
+            assets_->config.impl->use_rote ? rotary_axis_dim(assets_->config) * 2 : 0);
     }
     return graph_->run(encoded, features, prompt);
 }

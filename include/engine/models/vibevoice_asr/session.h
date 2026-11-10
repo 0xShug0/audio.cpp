@@ -4,6 +4,7 @@
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/vibevoice_asr/assets.h"
+#include "engine/models/vibevoice_asr/routing.h"
 #include "engine/models/vibevoice_asr/frontend.h"
 #include "engine/models/vibevoice_asr/postprocess.h"
 #include "engine/models/vibevoice_asr/speech_encoder.h"
@@ -48,6 +49,8 @@ public:
     runtime::TaskResult finalize() override;
 
 private:
+    friend struct VibeVoiceASRImplementation;
+    runtime::TaskResult run_offline_request(const runtime::TaskRequest & request);
     struct AudioChunkPlan {
         runtime::TimeSpan source_span;
         runtime::TimeSpan keep_span;
@@ -57,7 +60,7 @@ private:
     std::vector<AudioChunkPlan> audio_chunk_plan(const runtime::TaskRequest & request);
     runtime::IOfflineVoiceTaskSession & vad_session();
     runtime::TaskResult run_single(const VibeVoiceASRRequest & request);
-    runtime::TaskResult run_streaming_model(const VibeVoiceASRRequest & request);
+    runtime::TaskResult run_streaming_model(const runtime::TaskRequest & request);
     runtime::StreamEvent process_streaming_model_normalized_chunk(
         const VibeVoiceASRRequest & request,
         const runtime::AudioBuffer & audio,

@@ -39,10 +39,10 @@ IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) 
     const auto root = resources.parse_json("model_config");
 
     IrodoriModelConfig config;
-    config.flow_parameterization = json::optional_string(
-        root, "flow_parameterization", config.flow_parameterization);
-    if (config.flow_parameterization != "rf_velocity" &&
-        config.flow_parameterization != "meanflow") {
+    const auto parameterization = json::optional_string(root, "flow_parameterization", "rf_velocity");
+    try {
+        config.impl = &require_irodori_flow_implementation(parameterization);
+    } catch (const std::invalid_argument &) {
         throw std::runtime_error("Irodori-TTS flow_parameterization must be rf_velocity or meanflow");
     }
     config.latent_dim = json::optional_i64(root, "latent_dim", config.latent_dim);
@@ -236,7 +236,7 @@ IrodoriModelConfig parse_config(const assets::ResourceBundle & resources) {
 }
 
 void validate_model_weights(const IrodoriModelConfig & config, const assets::TensorSource & source) {
-    if (config.flow_parameterization == "meanflow") {
+    if (config.impl->interval_conditioning) {
         assets::require_tensor_shape(source, "delta_cond_module.0.weight",
                                      {config.model_dim, config.timestep_embed_dim});
         assets::require_tensor_shape(source, "delta_cond_module.2.weight",

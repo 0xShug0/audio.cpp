@@ -1,5 +1,5 @@
 #include "engine/community_models/parakeet_tdt/assets.h"
-#include "engine/community_models/parakeet_tdt/implementation.h"
+#include "engine/community_models/parakeet_tdt/routing.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
@@ -150,7 +150,7 @@ std::shared_ptr<const ParakeetTDTAssets> load_parakeet_assets(
     assets->resources = std::move(resources);
     assets->source = assets->resources.open_tensor_source("weights");
     assets->config = parse_config(assets->resources);
-    assets->implementation = &implementation_for_family(family);
+    assets->impl = &implementation_for_family(family);
     const auto & tokenizer_json = assets->resources.require_file("tokenizer_json");
     assets->tokenizer = engine::tokenizers::load_huggingface_tokenizer_json(tokenizer_json);
     assets->special_token_ids =

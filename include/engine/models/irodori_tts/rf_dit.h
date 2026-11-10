@@ -49,8 +49,7 @@ public:
   int64_t step_graph_rebuilds() const noexcept;
 
 private:
-  class Impl;
-  std::unique_ptr<Impl> impl_;
+  std::unique_ptr<IrodoriRfSamplerState> impl_;
 };
 
 } // namespace engine::models::irodori_tts
