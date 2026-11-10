@@ -580,6 +580,11 @@ void test_request_json_voice_ref() {
     require_voice_ref_rejected("{\"type\":\"base64\"}", "needs a data string");
     require_voice_ref_rejected("{\"type\":\"base64\",\"data\":\"@@@@\"}", "not valid base64");
     require_voice_ref_rejected("{\"type\":\"base64\",\"data\":\"\"}", "empty payload");
+    const std::string not_wav = "plain text, not a WAV file";
+    require_voice_ref_rejected(
+        "{\"type\":\"base64\",\"data\":\"" +
+            minitts::app::base64_encode(std::vector<uint8_t>(not_wav.begin(), not_wav.end())) + "\"}",
+        "not a readable WAV");
     require_voice_ref_rejected(
         "{\"type\":\"base64\",\"data\":\"" + std::string(size_t{8} * 1024 * 1024, 'A') + "\"}", "5 MiB limit");
 }
