@@ -455,7 +455,7 @@ path, `{"type": "path", "path": "..."}`, or `{"type": "base64", "data": "..."}`
 with a Base64-encoded WAV or `data:audio/wav;base64,...` URI of at most 5 MiB.
 The inline form lets a client send a reference voice, for example the target
 speaker of a voice conversion, without the server having to store it on disk.
-An invalid `voice_ref` returns HTTP 400. CLI request files and the batch and
+A malformed `voice_ref`, or inline data that is not a readable WAV, returns HTTP 400. CLI request files and the batch and
 stream endpoints share this request format, so they accept it too.
 
 A result's artifacts (opaque payloads such as speaker embeddings or acoustic

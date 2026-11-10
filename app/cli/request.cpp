@@ -380,7 +380,11 @@ engine::runtime::AudioBuffer read_voice_ref(
     if (bytes.size() > kMaxVoiceRefBytes) {
         throw InvalidRequestError("voice_ref base64 data exceeds the 5 MiB limit");
     }
-    return read_audio_buffer(std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+    try {
+        return read_audio_buffer(std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+    } catch (const std::runtime_error & error) {
+        throw InvalidRequestError(std::string("voice_ref base64 data is not a readable WAV (") + error.what() + ")");
+    }
 }
 
 }  // namespace
