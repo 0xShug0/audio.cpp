@@ -436,7 +436,8 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
     // disable spirv-opt for coopmat shaders for https://github.com/ggml-org/llama.cpp/issues/10734
     // disable spirv-opt for bf16 shaders for https://github.com/ggml-org/llama.cpp/issues/15344
     // disable spirv-opt for rope shaders for https://github.com/ggml-org/llama.cpp/issues/16860
-    if (!coopmat && name.find("bf16") == std::string::npos && name.find("rope") == std::string::npos) {
+    if (!coopmat && (name.find("bf16") == std::string::npos || basename(in_path) == "pointwise_epilogue.comp") &&
+        name.find("rope") == std::string::npos) {
         cmd.push_back("-O");
     }
 
@@ -893,6 +894,10 @@ void process_shaders() {
     string_to_spv("mul_mat_vec_p021_f16_f32",              "mul_mat_vec_p021.comp", {{"A_TYPE", "float16_t"}, {"A_TYPEV4", "f16vec4"}, {"B_TYPE", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}});
     string_to_spv("mul_mat_vec_nc_f16_f32", "mul_mat_vec_nc.comp", {{"A_TYPE", "float16_t"}, {"A_TYPEV4", "f16vec4"}, {"B_TYPE", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}});
 
+    string_to_spv("pointwise_epilogue_f32", "pointwise_epilogue.comp", {{"A_TYPE", "float"}, {"D_TYPE", "float"}, {"AFFINE_NORM", "0"}});
+    string_to_spv("norm_epilogue_f32", "pointwise_epilogue.comp", {{"A_TYPE", "float"}, {"D_TYPE", "float"}, {"AFFINE_NORM", "1"}});
+    string_to_spv("pointwise_epilogue_bf16", "pointwise_epilogue.comp", {{"A_TYPE", "float"}, {"D_TYPE", "uint16_t"}, {"DATA_D_BF16", "1"}, {"AFFINE_NORM", "0"}});
+    string_to_spv("norm_epilogue_bf16", "pointwise_epilogue.comp", {{"A_TYPE", "float"}, {"D_TYPE", "uint16_t"}, {"DATA_D_BF16", "1"}, {"AFFINE_NORM", "1"}});
     // Norms
     string_to_spv("norm_f32", "norm.comp", merge_maps(base_dict, {{"A_TYPE", "float"}, {"D_TYPE", "float"}}));
     string_to_spv("group_norm_f32", "group_norm.comp", merge_maps(base_dict, {{"A_TYPE", "float"}, {"D_TYPE", "float"}}));

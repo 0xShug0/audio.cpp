@@ -8175,9 +8175,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
     for (ggml_type type_src : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16}) {
-        test_cases.emplace_back(new test_cpy(type_src, GGML_TYPE_BF16, {5, 3, 2, 1}));
-        test_cases.emplace_back(new test_cpy(type_src, GGML_TYPE_BF16, {5, 3, 2, 1}, {0, 2, 1, 3}, {1, 0, 2, 3}));
-        test_cases.emplace_back(new test_cpy(type_src, GGML_TYPE_BF16, {1, 1, 1, 1}));
+        for (ggml_type type_dst : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16}) {
+            test_cases.emplace_back(new test_cpy(type_src, type_dst, {5, 3, 2, 1}));
+            test_cases.emplace_back(new test_cpy(type_src, type_dst, {5, 3, 2, 1}, {0, 2, 1, 3}, {1, 0, 2, 3}));
+            test_cases.emplace_back(new test_cpy(type_src, type_dst, {1, 1, 1, 1}));
+        }
     }
     test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_I32, {256, 2, 3, 4}));
     test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_I32, {256, 2, 3, 4}, {1, 0, 2, 3}));

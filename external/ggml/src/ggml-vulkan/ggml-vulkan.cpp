@@ -77,6 +77,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
 #endif
 
 #include "ggml-impl.h"
+#include "ggml-pointwise-fusion.h"
 #include "ggml-backend-impl.h"
 
 #include "ggml-vulkan-shaders.hpp"
@@ -799,6 +800,10 @@ struct vk_device_struct {
     vk_pipeline pipeline_exp[2];
     vk_pipeline pipeline_elu[2];
     vk_pipeline pipeline_gelu[2];
+    std::atomic<bool> pointwise_requested {false};
+    std::atomic<bool> pointwise_bf16_requested {false};
+    vk_pipeline pipeline_pointwise_epilogue, pipeline_norm_epilogue;
+    vk_pipeline pipeline_pointwise_epilogue_bf16, pipeline_norm_epilogue_bf16;
     vk_pipeline pipeline_gelu_erf[2];
     vk_pipeline pipeline_gelu_quick[2];
     vk_pipeline pipeline_silu[2];
@@ -1944,8 +1949,19 @@ class vk_perf_logger {
     uint32_t print_count {};
 };
 
+using vk_pointwise_match = ggml_pointwise_match;
+struct vk_pointwise_push_constants {
+    uint32_t shape[4], bne[4], bnb[4], gne[4], gnb[4];
+    uint32_t xo, bo, go, ro, yo, n, flags, mode;
+    float eps, factor, offset;
+};
+static_assert(sizeof(vk_pointwise_push_constants) == 124, "pointwise push constant layout");
+
 struct ggml_backend_vk_context {
     std::string name;
+    std::unordered_map<const ggml_cgraph *, uint32_t> pointwise_graphs;
+    uint32_t pointwise_fusion = 0;
+    vk_pointwise_match pointwise;
 
     vk_device device;
 
@@ -4607,6 +4623,22 @@ static void ggml_vk_load_shaders(vk_device& device) {
     }
     ggml_vk_create_pipeline(device, device->pipeline_mul_mat_vec_nc_f16_f32, "mul_mat_vec_nc_f16_f32", mul_mat_vec_nc_f16_f32_len, mul_mat_vec_nc_f16_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_nc_push_constants), {1, 1, 1}, {}, 1);
 
+    if (device->pointwise_bf16_requested) {
+        ggml_vk_create_pipeline(device, device->pipeline_pointwise_epilogue_bf16, "pointwise_epilogue_bf16",
+            pointwise_epilogue_bf16_len, pointwise_epilogue_bf16_data, "main", 5,
+            sizeof(vk_pointwise_push_constants), {512, 1, 1}, {}, 1);
+        ggml_vk_create_pipeline(device, device->pipeline_norm_epilogue_bf16, "norm_epilogue_bf16",
+            norm_epilogue_bf16_len, norm_epilogue_bf16_data, "main", 5,
+            sizeof(vk_pointwise_push_constants), {1, 1, 1}, {}, 1);
+    }
+    if (device->pointwise_requested) {
+        ggml_vk_create_pipeline(device, device->pipeline_pointwise_epilogue, "pointwise_epilogue_f32",
+            pointwise_epilogue_f32_len, pointwise_epilogue_f32_data, "main", 5,
+            sizeof(vk_pointwise_push_constants), {512, 1, 1}, {}, 1);
+        ggml_vk_create_pipeline(device, device->pipeline_norm_epilogue, "norm_epilogue_f32",
+            norm_epilogue_f32_len, norm_epilogue_f32_data, "main", 5,
+            sizeof(vk_pointwise_push_constants), {1, 1, 1}, {}, 1);
+    }
     ggml_vk_create_pipeline(device, device->pipeline_norm_f32, "norm_f32", norm_f32_len, norm_f32_data, "main", 2, sizeof(vk_op_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_group_norm_f32, "group_norm_f32", group_norm_f32_len, group_norm_f32_data, "main", 2, sizeof(vk_op_push_constants), {1, 1, 1}, {}, 1);
 
@@ -13380,6 +13412,49 @@ static void ggml_vk_compute_forward(ggml_backend_vk_context* ctx, ggml_cgraph * 
 
 // Returns true if node has enqueued work into the queue, false otherwise
 // If submit is true the current all operations queued so far are being submitted to Vulkan to overlap cmdlist creation and GPU execution.
+static void ggml_vk_pointwise_epilogue(ggml_backend_vk_context * ctx, vk_context & subctx) {
+    const auto & m = ctx->pointwise;
+    vk_pointwise_push_constants pc{};
+    for (int j = 0; j < 4; ++j) {
+        pc.shape[j] = static_cast<uint32_t>(m.x->ne[j]);
+        pc.bne[j] = m.bias ? static_cast<uint32_t>(m.bias->ne[j]) : 1;
+        pc.bnb[j] = m.bias ? static_cast<uint32_t>(m.bias->nb[j] / sizeof(float)) : 0;
+        pc.gne[j] = m.gate ? static_cast<uint32_t>(m.gate->ne[j]) : 1;
+        pc.gnb[j] = m.gate ? static_cast<uint32_t>(m.gate->nb[j] / sizeof(float)) : 0;
+    }
+    pc.n = static_cast<uint32_t>(ggml_nelements(m.x));
+    pc.flags = (m.round_bf16 ? 1u : 0u) | (m.bias ? 2u : 0u) | (m.residual ? 4u : 0u) |
+        (m.scale_transform ? 8u : 0u);
+    pc.mode = static_cast<uint32_t>(m.activation);
+    pc.eps = m.eps; pc.factor = m.factor; pc.offset = m.offset;
+    const ggml_tensor * tensors[] = {m.x, m.bias ? m.bias : m.x, m.gate ? m.gate : m.x,
+        m.residual ? m.residual : m.x, m.dst};
+    vk_buffer buffers[5];
+    size_t offsets[5];
+    uint32_t * extra[] = {&pc.xo, &pc.bo, &pc.go, &pc.ro, &pc.yo};
+    const size_t alignment = ctx->device->properties.limits.minStorageBufferOffsetAlignment;
+    for (int j = 0; j < 5; ++j) {
+        const auto * tensor = tensors[j];
+        const auto * buffer = static_cast<ggml_backend_vk_buffer_context *>(tensor->buffer->context);
+        buffers[j] = buffer->dev_buffer;
+        const size_t offset = vk_tensor_offset(tensor) + tensor->view_offs;
+        offsets[j] = offset / alignment * alignment;
+        *extra[j] = static_cast<uint32_t>((offset - offsets[j]) / ggml_type_size(tensor->type));
+    }
+    auto & pipeline = m.dst->type == GGML_TYPE_BF16
+        ? (m.kind == 2 ? ctx->device->pipeline_norm_epilogue_bf16 : ctx->device->pipeline_pointwise_epilogue_bf16)
+        : (m.kind == 2 ? ctx->device->pipeline_norm_epilogue : ctx->device->pipeline_pointwise_epilogue);
+    if (!pipeline) ggml_vk_load_shaders(ctx->device);
+    ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
+    const std::array<uint32_t, 3> elements = m.kind == 2
+        ? std::array<uint32_t, 3>{static_cast<uint32_t>(ggml_nrows(m.x)), 1, 1}
+        : std::array<uint32_t, 3>{pc.n, 1, 1};
+    ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, {
+        ggml_vk_subbuffer(ctx, buffers[0], offsets[0]), ggml_vk_subbuffer(ctx, buffers[1], offsets[1]),
+        ggml_vk_subbuffer(ctx, buffers[2], offsets[2]), ggml_vk_subbuffer(ctx, buffers[3], offsets[3]),
+        ggml_vk_subbuffer(ctx, buffers[4], offsets[4])}, pc, elements);
+}
+
 static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, int node_idx, ggml_tensor *node_begin, int node_idx_begin, bool last_node, bool almost_ready, bool submit){
     ggml_tensor * node = cgraph->nodes[node_idx];
     if (ggml_is_empty(node) || ggml_op_is_empty(node->op) || !node->buffer) {
@@ -13517,7 +13592,9 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
         }
     }
 
-    switch (node->op) {
+    if (ctx->pointwise_fusion && ctx->pointwise.count > 1 && ctx->num_additional_fused_ops) {
+        ggml_vk_pointwise_epilogue(ctx, compute_ctx);
+    } else switch (node->op) {
     case GGML_OP_REPEAT:
         ggml_vk_repeat(ctx, compute_ctx, src0, node);
 
@@ -14919,6 +14996,79 @@ static bool ggml_vk_tensors_overlap(const ggml_tensor * a, const ggml_tensor * b
     return false;
 }
 
+static vk_pointwise_match ggml_vk_match_pointwise(ggml_backend_vk_context * ctx,
+        const ggml_cgraph * graph, int start) {
+    const auto compatible = [&](const vk_pointwise_match & m) {
+        if (!m.count || !ggml_is_contiguous(m.x) || !ggml_is_contiguous(m.dst) ||
+            !ggml_are_same_shape(m.x, m.logical) || m.x->ne[0] != m.dst->ne[0] ||
+            ggml_nelements(m.x) != ggml_nelements(m.dst) || ggml_nelements(m.x) > UINT32_MAX) return false;
+        const auto groups = m.kind == 2 ? ggml_nrows(m.x) : (ggml_nelements(m.x) + 511) / 512;
+        if (groups > ctx->device->properties.limits.maxComputeWorkGroupCount[0]) return false;
+        for (int j = 0; j < m.count; ++j) {
+            const auto * node = graph->nodes[start + j];
+            if (node->type != GGML_TYPE_F32 && node != m.dst) return false;
+            // A terminal reshape is linear, but parameter broadcasts during the
+            // fused math must use one common indexing domain.
+            if ((node->op == GGML_OP_ADD || node->op == GGML_OP_MUL) &&
+                !ggml_are_same_shape(node, m.x)) return false;
+        }
+        for (auto * tensor : {m.x, m.bias, m.gate, m.residual, m.dst}) {
+            if (!tensor) continue;
+            const size_t element_size = ggml_type_size(tensor->type);
+            if ((tensor->type != GGML_TYPE_F32 && (tensor != m.dst || tensor->type != GGML_TYPE_BF16)) ||
+                !tensor->buffer || tensor->nb[0] != element_size) return false;
+            const auto * storage = static_cast<ggml_backend_vk_buffer_context *>(tensor->buffer->context);
+            const size_t offset = vk_tensor_offset(tensor) + tensor->view_offs;
+            const size_t alignment = ctx->device->properties.limits.minStorageBufferOffsetAlignment;
+            const size_t base = offset / alignment * alignment;
+            const uint64_t span = uint64_t(ggml_nbytes(tensor)) + offset - base;
+            if (span / element_size > uint64_t(UINT32_MAX) + 1 ||
+                span > ggml_vk_get_max_buffer_range(ctx, storage->dev_buffer, base)) return false;
+            for (int j = 0; j < 4; ++j)
+                if (tensor->ne[j] > UINT32_MAX || tensor->nb[j] % element_size ||
+                    tensor->nb[j] / element_size > UINT32_MAX) return false;
+        }
+        if (m.residual && (!ggml_is_contiguous(m.residual) || !ggml_are_same_shape(m.residual, m.x))) return false;
+        for (auto * parameter : {m.bias, m.gate})
+            if (parameter && (!ggml_can_repeat(parameter, m.x) || ggml_vk_tensors_overlap(parameter, m.dst, false))) return false;
+        if (ggml_vk_tensors_overlap(m.x, m.dst, true) ||
+            (m.residual && ggml_vk_tensors_overlap(m.residual, m.dst, true))) return false;
+        return true;
+    };
+    auto m = ggml_match_pointwise(graph, start, ctx->pointwise_fusion);
+    if (!compatible(m)) return {};
+    // Preserve the trailing cast boundary, but store directly in BF16 instead
+    // of writing and rereading its private F32 input.
+    if (m.count && m.count < 12) {
+        int end = start + m.count;
+        auto * value = m.dst;
+        while (end < graph->n_nodes && end - start < 11) {
+            auto * view = graph->nodes[end];
+            if ((view->op != GGML_OP_RESHAPE && view->op != GGML_OP_VIEW) ||
+                view->src[0] != value || view->view_offs != 0 || !ggml_is_contiguous(view) ||
+                view->ne[0] != value->ne[0] || ggml_nelements(view) != ggml_nelements(value)) break;
+            value = view;
+            ++end;
+        }
+        auto * cast = end < graph->n_nodes ? graph->nodes[end] : nullptr;
+        if (cast && cast->op == GGML_OP_CPY && cast->src[0] == value && cast->src[1] == cast &&
+            !cast->view_src && cast->type == GGML_TYPE_BF16 &&
+            ggml_is_contiguous(cast) && ggml_are_same_shape(cast, value)) {
+            ggml_op ops[12];
+            const int count = end - start + 1;
+            for (int j = 0; j < count; ++j) ops[j] = graph->nodes[start + j]->op;
+            const int output[] = {end};
+            if (ggml_can_fuse_subgraph(graph, start, count, ops, output, 1)) {
+                auto extended = m;
+                extended.dst = cast;
+                extended.count = count;
+                if (compatible(extended)) return extended;
+            }
+        }
+    }
+    return m;
+}
+
 static bool ggml_vk_can_fuse_rms_norm_mul_rope(ggml_backend_vk_context * ctx, const struct ggml_cgraph * cgraph,
                                                int node_idx) {
     GGML_UNUSED(ctx);
@@ -15020,6 +15170,13 @@ static int32_t find_first_set(uint32_t x) {
 static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
     VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
     ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
+    ctx->pointwise_fusion = 0;
+    ctx->pointwise = {};
+    if (!ctx->pointwise_graphs.empty()) {
+        const auto policy = ctx->pointwise_graphs.find(cgraph);
+        if (policy != ctx->pointwise_graphs.end()) ctx->pointwise_fusion = policy->second;
+    }
+
 
     if (vk_instance.debug_utils_support) {
         vk::DebugUtilsLabelEXT dul = {};
@@ -15120,8 +15277,13 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
         ctx->fused_topk_moe_scale = false;
         const char *fusion_string {};
         if (!ctx->device->disable_fusion) {
+            if (ctx->pointwise_fusion) ctx->pointwise = ggml_vk_match_pointwise(ctx, cgraph, i);
             uint32_t num_adds = ggml_vk_fuse_multi_add(ctx, cgraph, i);
-            if (num_adds) {
+            if (ctx->pointwise.count) {
+                ctx->num_additional_fused_ops = ctx->pointwise.count - 1;
+                fusion_string = "POINTWISE_EPILOGUE";
+                std::fill_n(op_srcs_fused_elementwise, ctx->pointwise.count, true);
+            } else if (num_adds) {
                 ctx->num_additional_fused_ops = num_adds - 1;
                 fusion_string = "MULTI_ADD";
                 std::fill_n(op_srcs_fused_elementwise, ctx->num_additional_fused_ops + 1, true);
@@ -16162,6 +16324,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                 if (src1_type == GGML_TYPE_F32) {
                     switch (src0_type) {
                     case GGML_TYPE_F16:
+                    case GGML_TYPE_BF16:
                     case GGML_TYPE_Q1_0:
                     case GGML_TYPE_Q4_0:
                     case GGML_TYPE_Q4_1:
@@ -16175,7 +16338,8 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                     }
                 }
 
-                if (src0_type == GGML_TYPE_F16 && src1_type == GGML_TYPE_F16) {
+                if ((src0_type == GGML_TYPE_F16 && (src1_type == GGML_TYPE_F16 || src1_type == GGML_TYPE_BF16)) ||
+                    (src0_type == GGML_TYPE_BF16 && src1_type == GGML_TYPE_F16)) {
                     return true;
                 }
 
@@ -16660,11 +16824,38 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
     return devices[device];
 }
 
+static uint32_t ggml_backend_vk_set_graph_fusions(ggml_backend_t backend, ggml_cgraph * graph, uint32_t mask) {
+    auto * ctx = static_cast<ggml_backend_vk_context *>(backend->context);
+    mask &= GGML_BACKEND_GRAPH_FUSION_NORM_AFFINE | GGML_BACKEND_GRAPH_FUSION_BIAS_ACTIVATION |
+        GGML_BACKEND_GRAPH_FUSION_GATED_RESIDUAL;
+    // These are shader resource requirements, independent of model dimensions.
+    const auto & limits = ctx->device->properties.limits;
+    if (limits.maxComputeWorkGroupInvocations < 512 || limits.maxComputeWorkGroupSize[0] < 512 ||
+        limits.maxPerStageDescriptorStorageBuffers < 5 || limits.maxDescriptorSetStorageBuffers < 5 ||
+        limits.maxPushConstantsSize < sizeof(vk_pointwise_push_constants)) mask = 0;
+    if (mask) {
+        if (ctx->pointwise_graphs.find(graph) == ctx->pointwise_graphs.end()) ggml_prepare_pointwise_chains(graph);
+        ctx->pointwise_graphs[graph] = mask;
+        ctx->device->pointwise_requested = true;
+        for (int i = 0; i < graph->n_nodes && !ctx->device->pointwise_bf16_requested; ++i) {
+            const auto * node = graph->nodes[i];
+            if (node->op == GGML_OP_CPY && node->type == GGML_TYPE_BF16)
+                ctx->device->pointwise_bf16_requested = true;
+        }
+    } else ctx->pointwise_graphs.erase(graph);
+    return mask;
+}
+static void * ggml_backend_vk_reg_get_proc_address(ggml_backend_reg_t, const char * name) {
+    if (strcmp(name, "ggml_backend_set_graph_fusions") == 0)
+        return reinterpret_cast<void *>(ggml_backend_vk_set_graph_fusions);
+    return nullptr;
+}
+
 static const struct ggml_backend_reg_i ggml_backend_vk_reg_i = {
     /* .get_name         = */ ggml_backend_vk_reg_get_name,
     /* .get_device_count = */ ggml_backend_vk_reg_get_device_count,
     /* .get_device       = */ ggml_backend_vk_reg_get_device,
-    /* .get_proc_address = */ NULL,
+    /* .get_proc_address = */ ggml_backend_vk_reg_get_proc_address,
 };
 
 ggml_backend_reg_t ggml_backend_vk_reg() {

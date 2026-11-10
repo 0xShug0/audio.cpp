@@ -88,6 +88,13 @@
         "required": false
       },
       {
+        "name": "fused_epilogues",
+        "type": "bool",
+        "default": true,
+        "required": false,
+        "description": "Enable denoiser normalization-affine, bias-activation and gated-residual fusion; false uses ordinary kernels."
+      },
+      {
         "name": "attention",
         "type": "enum",
         "values": [

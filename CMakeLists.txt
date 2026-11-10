@@ -645,6 +645,7 @@ add_library(engine_core OBJECT
     src/framework/modules/conditioning_modules.cpp
     src/framework/modules/conformer_modules.cpp
     src/framework/modules/ebranchformer_modules.cpp
+    src/framework/sampling/device_denoiser_runtime.cpp
     src/framework/sampling/flow_sampler_runtime.cpp
     src/framework/modules/predictor_modules.cpp
     src/framework/modules/positional_modules.cpp
@@ -3803,6 +3804,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
     add_engine_unittest(ctc_host_decoder_test tests/unittests/test_ctc_host_decoder.cpp)
     add_test(NAME ctc_host_decoder_test COMMAND ctc_host_decoder_test)
+    add_engine_unittest(device_denoiser_runtime_test tests/unittests/test_device_denoiser_runtime.cpp)
+    add_test(NAME device_denoiser_runtime_test COMMAND device_denoiser_runtime_test
+        --log ${CMAKE_CURRENT_BINARY_DIR}/device_denoiser_runtime_test.log)
     add_engine_unittest(prepared_graph_test tests/unittests/test_prepared_graph.cpp)
     target_include_directories(prepared_graph_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/external/ggml/src)
     add_test(NAME prepared_graph_test COMMAND prepared_graph_test

@@ -1390,6 +1390,11 @@ struct ggml_backend_cuda_context {
     int device;
     std::string name;
     cudaEvent_t copy_event = nullptr;
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    std::unordered_map<const ggml_cgraph *, uint32_t> graph_fusions;
+    uint32_t active_graph_fusions = 0;
+#endif
+
 #ifdef GGML_USE_HIP
     const ggml_hip_impl * impl = nullptr;
 #endif

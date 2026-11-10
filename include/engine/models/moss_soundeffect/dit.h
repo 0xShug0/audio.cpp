@@ -14,7 +14,8 @@ class DitRuntime {
 public:
     DitRuntime(core::ExecutionContext & execution, std::shared_ptr<const Assets> assets,
                assets::TensorStorageType storage_type,
-               core::AttentionPreference attention = core::AttentionPreference::Auto);
+               core::AttentionPreference attention = core::AttentionPreference::Auto,
+               bool optimized = true);
     ~DitRuntime();
 
     DitRuntime(const DitRuntime &) = delete;
