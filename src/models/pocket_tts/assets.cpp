@@ -58,7 +58,7 @@ PocketTTSDescriptor descriptor_from_yaml(const io::yaml::FlattenedDocument & par
     descriptor.flow_layers = io::yaml::require_int(parsed, "flow_lm.transformer.num_layers");
     descriptor.flow_depth = io::yaml::optional_int(parsed, "flow_lm.flow.depth").value_or(descriptor.flow_depth);
     descriptor.flow_dim = io::yaml::require_int(parsed, "flow_lm.transformer.d_model");
-    descriptor.flow_condition_dim = io::yaml::optional_int(parsed, "flow_lm.z_dim").value_or(descriptor.flow_dim);
+    descriptor.flow_condition_dim = io::yaml::optional_nullable_int(parsed, "flow_lm.z_dim").value_or(descriptor.flow_dim);
     descriptor.flow_heads = io::yaml::require_int(parsed, "flow_lm.transformer.num_heads");
     descriptor.flow_hidden_size = io::yaml::require_int(parsed, "flow_lm.flow.dim");
     descriptor.flow_intermediate_size =
