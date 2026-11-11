@@ -432,18 +432,30 @@ exact run at 398-408 dB, so the pad costs compute and nothing else. On the PC si
 fp16 engine against the fp32 reference sits at 61.0 dB output SNR with argmax agreement
 0.978-0.982, and the simulator step is 1.4 s warm.
 
-The board gate for this sidecar is the step run at `--guidance-scale 0.0`, and it is the mode
-the engine ships validated: 32 steps of the seq768 engine render the full baseline text to
+The board gate for this sidecar was originally the step run at `--guidance-scale 0.0`, the mode
+the full ladder ships validated: 32 steps of the seq768 engine render the full baseline text to
 whisper-clean audio (parity with the ggml path's own render of the same text, reference and
 seed), at 8.8 s/step against the ggml graph's 26.6 s at the same length (wall 293 s against
 883 s), with the 1.32 GiB seq256 and 1.35 GiB seq768 engines loading in 2.3-3.2 s and peak RSS
-4.9 GiB. The guidance-2.0 rollout is not usable on the NPU yet: the fp16 uncond branch sits at
-26.9 dB against the fp32 reference (the cond branch sits at 60.2 dB), and the diffusion
+4.9 GiB. The guidance-2.0 rollout is not usable on the full ladder: the fp16 uncond branch
+sits at 26.9 dB against the fp32 reference (the cond branch sits at 60.2 dB), and the diffusion
 decoding is knife-edged at that scale - the fp16 guidance term's noise, doubled by the CFG
 gain, moves enough per-frame argmaxes that the 32-step rollout leaves the speech basin. The
 same collapse is visible on the ggml path itself at a small perturbation: its `--guidance-scale
--1` render of the same request is noise, while its 0/1/2 renders are clean. Guidance on the NPU
-needs a numerically quieter uncond branch (the per-layer hybrid in the plan), not a re-tune.
+-1` render of the same request is noise, while its 0/1/2 renders are clean.
+
+The fix is the front-shard ladder, `prepare_omnivoice_rknn_generator.py --front-k 28`: the
+engine keeps the embeddings and all 28 backbone layers (the fp16 backbone is NOT the noise
+source - the step-0 hidden state it returns sits at 67 dB at every depth probed) and drops the
+final norm, the audio heads and the guidance combine into the engine; the sidecar then hands
+the hidden rows to a host tail graph (the same `build_guided_logits` the ggml path uses, in
+fp32), which returns the guided logits at ~84 dB - 16x under the knife-edge. The tail graph
+replaces the token inputs with one `hidden` input and runs the device-scoring path unchanged,
+so scoring stays where it was. On the same board gate at `--guidance-scale 2.0` the seq768
+front engine renders the baseline text whisper-clean at 8.3-8.5 s/step on the NPU plus about
+0.4 s/step of fp32 CPU tail (wall 286 s), i.e. the full engine's speed with live guidance.
+Front-shard requests run at batch 1 (the packed CFG-pair engine pass writes the host's batch-1
+row layout); batched requests fall back to the ggml graph.
 
 ## Verified
 
@@ -462,6 +474,13 @@ needs a numerically quieter uncond branch (the per-layer hybrid in the plan), no
   graph's own unconditional row reproduces its conditional logits to within 0.9 logit-rms
   (the engine's own cond-minus-uncond sits at 18.9), so the ggml path's guidance term is
   currently inert and its clean guidance-2.0 renders are conditional rollouts.
+- OmniVoice front-shard stage: the same probe-harness step-0 inputs through the front-28 shard
+  engine land the hidden state at 67 dB (uncond row included: the depth probe reads 67-70 dB at
+  k=7/14/21/28, so the backbone is not the noise source), and the fp32 host tail (final norm +
+  audio heads + guidance combine) returns the g=2.0 guided logits at 84.3 dB output SNR with
+  99.4% argmax agreement. On the board the seq768 front engine renders the same baseline
+  request whisper-clean at `--guidance-scale 2.0` (8.3-8.5 s/step NPU, ~0.4 s/step CPU tail,
+  wall 286 s), and the padded hidden rows gate the shard export at 392-400 dB padded-vs-exact.
 
 
 ## Component execution plans

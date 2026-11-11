@@ -42,6 +42,14 @@ struct OmniVoiceRknnStepInputs {
 // an input; it returns the guided conditional logits, the same tensor the ggml graph produces
 // after its guidance combine. All scoring (log_softmax, penalties, gumbel, top-k) stays in the
 // host loop, exactly where the ggml path's device_scoring=false branch reads it.
+//
+// A ladder compiled with the producer's `--front-k 28` (file names carry `front`) is the
+// FRONT-SHARD contract: five inputs (no guidance) and the raw post-layer hidden state
+// ``hidden [2,S,hidden_size]`` as output. The CFG tail - final RMS norm, audio heads, guided
+// combine - then runs on the host in fp32 (the front-shard forward graph in generator.cpp),
+// which is the measured fix for the fp16 heads' 26.9 dB uncond logits: the same 28-layer
+// backbone leaves the hidden state at 67 dB, so with an fp32 tail the guided logits return to
+// ~84 dB and guidance > 0 is usable on the NPU (PC simulator, real step-0 feed).
 class OmniVoiceRknnGenerator {
 public:
     // Registers the ladder without loading any of it: one engine holds the 0.6B-parameter
@@ -54,7 +62,8 @@ public:
         int64_t codebooks,
         int64_t vocab_size,
         int64_t head_dim,
-        float rope_theta);
+        float rope_theta,
+        int64_t hidden_size);
     ~OmniVoiceRknnGenerator();
 
     OmniVoiceRknnGenerator(const OmniVoiceRknnGenerator &) = delete;
@@ -65,15 +74,28 @@ public:
     int64_t max_tokens() const;
     int64_t engine_count() const;
 
+    // True when the registered ladder is the front-shard contract (name-detected at
+    // registration, attribute-validated at load); run() then writes hidden rows, not logits.
+    bool front_shard() const;
+
     // The smallest engine that covers `total_tokens`, without loading it: 0 when none does.
     int64_t bucket_for(int64_t total_tokens) const;
 
-    // One full diffusion step at a bucket from bucket_for(). Writes the guided conditional
-    // logits of the target block as [target_frames][codebooks][vocab_size] floats into
-    // `logits_out`, the layout the host scorer indexes. The engine's own output attribute
-    // layout (declared [1,codebooks,tokens,vocab] or the converter's NHWC relabel) is read
-    // at load, so the crop follows the engine, not the producer's file.
-    void run(int64_t bucket, const OmniVoiceRknnStepInputs & inputs, float * logits_out);
+    // One full diffusion step at a bucket from bucket_for(). Full ladder: writes the guided
+    // conditional logits of the target block as [target_frames][codebooks][vocab_size] floats
+    // into `logits_out`, the layout the host scorer indexes. Front-shard ladder: writes the
+    // raw hidden rows into `logits_out` in the packed host layout - the conditional row at
+    // ``[0, total_tokens)`` and the unconditional row right behind it at
+    // ``[total_tokens, total_tokens + target_frames)`` rows of `hidden_size` floats (pass
+    // `row_capacity` = this request's total_tokens, the row stride; the buffer past the
+    // written rows is untouched - the caller zero-pads it). The engine's own output attribute
+    // layout (declared [1,codebooks,tokens,vocab] or the converter's NHWC relabel) is read at
+    // load, so the crop follows the engine, not the producer's file.
+    void run(
+        int64_t bucket,
+        const OmniVoiceRknnStepInputs & inputs,
+        float * logits_out,
+        int64_t row_capacity = 0);
 
 private:
     struct Impl;

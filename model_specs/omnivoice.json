@@ -191,7 +191,12 @@
         "name": "audio_tokenizer_codebook_weight_type",
         "type": "enum",
         "description": "Storage type for the audio tokenizer codebooks, codebook score matrix, semantic feature projection, and fc2; default f32.",
-        "values": ["native", "f32", "f16", "bf16"],
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16"
+        ],
         "required": false,
         "default": "f32"
       },
@@ -410,6 +415,25 @@
       ],
       "strip_prefix": "rk3588/omnivoice",
       "description": "Pre-compiled RK3588 step-graph ladder (256 to 1024 token buckets) for the omnivoice RKNN generator (omnivoice.exec_plan, artifacts.main); installs beside the OmniVoice GGUF weights and is named by bare file name. Built by tools/rknn from the OmniVoice checkpoint; see docs/build/rockchip-npu.md.",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "wOvANAI/rknn-tts-engines",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "omnivoice_generator_front_rk3588",
+      "display_name": "OmniVoice NPU Generator Front-Shard Ladder (RK3588)",
+      "format": "rknn",
+      "precision": "f16",
+      "target_directory": "OmniVoice-GGUF",
+      "files": [
+        "rk3588/omnivoice/omnivoice_generator_front28_seq256_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_front28_seq768_fp16.rknn"
+      ],
+      "strip_prefix": "rk3588/omnivoice",
+      "description": "Pre-compiled RK3588 front-shard ladder: all 28 backbone layers on the NPU, the CFG tail (final norm, audio heads, guidance combine) stays fp32 on the host, so guidance > 0 is usable on the NPU (omnivoice.exec_plan, artifacts.main); installs beside the OmniVoice GGUF weights and is named by bare file name. Built by tools/rknn --front-k 28 from the OmniVoice checkpoint; see docs/build/rockchip-npu.md.",
       "download": {
         "kind": "huggingface_snapshot",
         "repo": "wOvANAI/rknn-tts-engines",

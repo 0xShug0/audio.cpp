@@ -38,6 +38,10 @@ const char * const kLabel = "OmniVoice generator RKNN";
 const char * const kInputNames[] = {
     "input_ids", "audio_mask", "attn_mask", "rope_cos", "rope_sin", "guidance"};
 constexpr uint32_t kInputCount = 6;
+// The front-shard export (the producer's --front-k): the same graph without the guidance input,
+// ending at the post-layer hidden state; its CFG tail (final norm, audio heads, guided combine)
+// runs on the host in fp32.
+constexpr uint32_t kFrontInputCount = 5;
 constexpr uint32_t kOutputCount = 1;
 constexpr uint32_t kInputIds = 0;
 constexpr uint32_t kInputAudioMask = 1;
@@ -81,6 +85,10 @@ struct OmniVoiceRknnGenerator::Impl {
         int64_t tokens = 0;      // the conditional-row length this engine covers
         int64_t codebooks = 0;
         int64_t vocab_size = 0;
+        // The front-shard contract (the producer's --front-k export, name-detected at
+        // registration from the `front` in the file name): 5 inputs, output hidden rows, the
+        // CFG tail on the host.
+        bool front_shard = false;
 #if defined(ENGINE_HAVE_RKNN)
         // What this engine will occupy once resident, read from the driver at registration; 0
         // means the driver could not say, and the file size is used for it.
@@ -100,15 +108,19 @@ struct OmniVoiceRknnGenerator::Impl {
         std::vector<float> rope_cos;     // [2][tokens][head_dim/2], arange positions
         std::vector<float> rope_sin;
         float guidance = 0.0F;
+        int64_t hidden_size = 0;   // front-shard output width (the transformer hidden size)
 
         void load(int64_t expected_codebooks, int64_t expected_vocab, int64_t head_dim,
-                  float rope_theta) {
+                  float rope_theta, int64_t expected_hidden) {
             const auto start = Clock::now();
             engine.load(path, kLabel);
-            if (engine.input_count() != kInputCount || engine.output_count() != kOutputCount) {
+            const uint32_t expected_inputs = front_shard ? kFrontInputCount : kInputCount;
+            if (engine.input_count() != expected_inputs || engine.output_count() != kOutputCount) {
                 throw std::runtime_error(
-                    std::string(kLabel) + ": expected the 6-input/1-output step-graph export, got " +
-                    std::to_string(engine.input_count()) + "/" + std::to_string(engine.output_count()));
+                    std::string(kLabel) + ": expected the " + std::to_string(expected_inputs) +
+                    "-input/1-output " + (front_shard ? "front-shard" : "step-graph") +
+                    " export, got " + std::to_string(engine.input_count()) + "/" +
+                    std::to_string(engine.output_count()));
             }
             codebooks = expected_codebooks;
             vocab_size = expected_vocab;
@@ -159,6 +171,50 @@ struct OmniVoiceRknnGenerator::Impl {
                 input_fmts[index] = static_cast<rknn_tensor_format>(attr.fmt);
             }
             const rknn_tensor_attr & out = engine.output_attr(0);
+            if (front_shard) {
+                // Front-shard output: the raw hidden state [2, tokens, hidden_size]. It is a
+                // 3-D (or NHWC-relabelled 3-D, which for a 3-D tensor is the same [2, tokens,
+                // hidden] order) fp32 tensor, one row per CFG side. The CFG tail runs on the
+                // host, so this engine has no vocab dimension.
+                if (out.n_dims != 3 || out.dims[0] != kCfgBatch || out.dims[1] != tokens ||
+                    out.dims[2] != expected_hidden ||
+                    out.n_elems != kCfgBatch * tokens * expected_hidden) {
+                    throw std::runtime_error(
+                        std::string(kLabel) + ": " + path + " is a front-shard engine whose output " +
+                        std::to_string(out.n_dims) + "D[" + std::to_string(out.dims[0]) + "," +
+                        std::to_string(out.dims[1]) + "," + std::to_string(out.dims[2]) +
+                        "] is not the expected [2," + std::to_string(tokens) + "," +
+                        std::to_string(expected_hidden) + "] hidden state");
+                }
+                hidden_size = expected_hidden;
+                ids.resize(static_cast<size_t>(kCfgBatch * codebooks * tokens));
+                audio_mask.resize(static_cast<size_t>(n_cfg));
+                attn_mask.resize(static_cast<size_t>(kCfgBatch * tokens * tokens));
+                guidance = 0.0F;
+                const int64_t half_h = head_dim / 2;
+                rope_cos.resize(static_cast<size_t>(n_cfg * half_h));
+                rope_sin.resize(static_cast<size_t>(n_cfg * half_h));
+                for (int64_t token = 0; token < tokens; ++token) {
+                    for (int64_t dim = 0; dim < half_h; ++dim) {
+                        const double angle = std::fmod(
+                            static_cast<double>(token) *
+                                std::pow(
+                                    static_cast<double>(rope_theta),
+                                    -2.0 * static_cast<double>(dim) / static_cast<double>(head_dim)),
+                            2.0 * 3.14159265358979323846);
+                        rope_cos[static_cast<size_t>(token * half_h + dim)] =
+                            static_cast<float>(std::cos(angle));
+                        rope_sin[static_cast<size_t>(token * half_h + dim)] =
+                            static_cast<float>(std::sin(angle));
+                    }
+                }
+                std::memcpy(rope_cos.data() + static_cast<size_t>(tokens * half_h), rope_cos.data(),
+                            static_cast<size_t>(tokens * half_h) * sizeof(float));
+                std::memcpy(rope_sin.data() + static_cast<size_t>(tokens * half_h), rope_sin.data(),
+                            static_cast<size_t>(tokens * half_h) * sizeof(float));
+                loaded = true;
+                return;
+            }
             if (out.n_elems != codebooks * tokens * vocab_size) {
                 throw std::runtime_error(
                     std::string(kLabel) + ": " + path + " returns " + std::to_string(out.n_elems) +
@@ -273,13 +329,15 @@ struct OmniVoiceRknnGenerator::Impl {
             }
             guidance = in.guidance;
 
-            std::vector<engine::rknn::Input> inputs(kInputCount);
+            std::vector<engine::rknn::Input> inputs(front_shard ? kFrontInputCount : kInputCount);
             inputs[kInputIds].buf = ids.data();
             inputs[kInputAudioMask].buf = audio_mask.data();
             inputs[kInputAttnMask].buf = attn_mask.data();
             inputs[kInputRopeCos].buf = rope_cos.data();
             inputs[kInputRopeSin].buf = rope_sin.data();
-            inputs[kInputGuidance].buf = &guidance;
+            if (!front_shard) {
+                inputs[kInputGuidance].buf = &guidance;
+            }
             for (uint32_t index = 0; index < inputs.size(); ++index) {
                 inputs[index].index = index;
                 inputs[index].size = input_sizes[index];
@@ -296,9 +354,24 @@ struct OmniVoiceRknnGenerator::Impl {
         // so the conditional target block is the tail of the REAL row,
         // [total_tokens - target, total_tokens) - not of the padded row. The engine output is
         // [codebooks][tokens][vocab], the caller wants [target][codebooks][vocab].
-        void crop(const OmniVoiceRknnStepInputs & in, float * out) const {
+        void crop(const OmniVoiceRknnStepInputs & in, float * out, int64_t row_capacity) const {
             const int64_t target = in.target_frames;
             const int64_t begin = in.total_tokens - target;
+            if (front_shard) {
+                // The hidden rows arrive packed on [0, total) and [0, target) and right-padded,
+                // in [row][tokens][hidden] order. The host tail graph runs packed too: the
+                // conditional row at [0, total) and the unconditional row right behind it at
+                // [row_capacity, row_capacity + target) rows (the caller passes this request's
+                // total_tokens as row_capacity and zero-pads the rest).
+                const int64_t h = hidden_size;
+                std::memcpy(out, last_output.data(),
+                            static_cast<size_t>(in.total_tokens) * h * sizeof(float));
+                std::memcpy(
+                    out + static_cast<size_t>(row_capacity) * h,
+                    last_output.data() + static_cast<size_t>(tokens) * h,
+                    static_cast<size_t>(target) * h * sizeof(float));
+                return;
+            }
             if (output_row_major_codebook) {
                 for (int64_t codebook = 0; codebook < codebooks; ++codebook) {
                     const float * from =
@@ -341,16 +414,20 @@ struct OmniVoiceRknnGenerator::Impl {
     int64_t vocab_size = 0;
     int64_t head_dim = 0;
     float rope_theta = 0.0F;
+    int64_t hidden_size = 0;
+    bool front_shard = false;
 #if defined(ENGINE_HAVE_RKNN)
     // Resident-set accounting for the ladder, in the driver's own units (see kAperturePinBudgetMiB).
     engine::rknn::ApertureBudget budget_{kAperturePinBudgetMiB};
 
     void register_ladder(const std::vector<std::string> & engine_paths, int64_t n_codebooks,
-                         int64_t vocab, int64_t n_head_dim, float n_rope_theta) {
+                         int64_t vocab, int64_t n_head_dim, float n_rope_theta,
+                         int64_t n_hidden_size) {
         codebooks = n_codebooks;
         vocab_size = vocab;
         head_dim = n_head_dim;
         rope_theta = n_rope_theta;
+        hidden_size = n_hidden_size;
         for (const auto & path : engine_paths) {
             if (path.empty()) {
                 continue;
@@ -369,6 +446,14 @@ struct OmniVoiceRknnGenerator::Impl {
             slot->tokens = tokens;
             slot->codebooks = n_codebooks;
             slot->vocab_size = vocab;
+            // Front-shard ladders carry `front<k>` between `generator` and `seq` in the producer's
+            // name (omnivoice_generator_front28_seq512_fp16.rknn); the whole ladder is one
+            // contract, and the first engine's name decides it (load() re-validates per engine).
+            if (slots.empty()) {
+                front_shard = std::filesystem::path(path).stem().string().find("front") !=
+                    std::string::npos;
+            }
+            slot->front_shard = front_shard;
             // Ask the driver what this engine will cost before deciding to keep it: a model-info-only
             // init parses the image without allocating the network, which is what makes the
             // per-engine table a measurement instead of a guess. If the driver cannot say, the fp16
@@ -420,7 +505,7 @@ struct OmniVoiceRknnGenerator::Impl {
                     }
                     budget_.clear();
                 }
-                slot.load(codebooks, vocab_size, head_dim, rope_theta);
+                slot.load(codebooks, vocab_size, head_dim, rope_theta, hidden_size);
                 if (cost_mib > 0) {
                     budget_.reserve(cost_mib);
                 }
@@ -440,16 +525,18 @@ OmniVoiceRknnGenerator::OmniVoiceRknnGenerator(
     int64_t codebooks,
     int64_t vocab_size,
     int64_t head_dim,
-    float rope_theta)
+    float rope_theta,
+    int64_t hidden_size)
     : impl_(std::make_unique<Impl>()) {
 #if defined(ENGINE_HAVE_RKNN)
-    impl_->register_ladder(engine_paths, codebooks, vocab_size, head_dim, rope_theta);
+    impl_->register_ladder(engine_paths, codebooks, vocab_size, head_dim, rope_theta, hidden_size);
 #else
     (void)engine_paths;
     (void)codebooks;
     (void)vocab_size;
     (void)head_dim;
     (void)rope_theta;
+    (void)hidden_size;
     throw std::runtime_error("OmniVoice generator RKNN: built without ENGINE_ENABLE_RKNN");
 #endif
 }
@@ -462,6 +549,10 @@ int64_t OmniVoiceRknnGenerator::max_tokens() const {
 
 int64_t OmniVoiceRknnGenerator::engine_count() const {
     return static_cast<int64_t>(impl_->slots.size());
+}
+
+bool OmniVoiceRknnGenerator::front_shard() const {
+    return impl_->front_shard;
 }
 
 int64_t OmniVoiceRknnGenerator::bucket_for(int64_t total_tokens) const {
@@ -477,7 +568,11 @@ int64_t OmniVoiceRknnGenerator::bucket_for(int64_t total_tokens) const {
     return 0;
 }
 
-void OmniVoiceRknnGenerator::run(int64_t bucket, const OmniVoiceRknnStepInputs & inputs, float * logits_out) {
+void OmniVoiceRknnGenerator::run(
+    int64_t bucket,
+    const OmniVoiceRknnStepInputs & inputs,
+    float * logits_out,
+    int64_t row_capacity) {
 #if defined(ENGINE_HAVE_RKNN)
     const auto start = Clock::now();
     // The batch shares one bucket (the way the shared graph shares one capacity), so the slot is
@@ -489,13 +584,14 @@ void OmniVoiceRknnGenerator::run(int64_t bucket, const OmniVoiceRknnStepInputs &
             ", the ladder picked " + std::to_string(slot.tokens));
     }
     slot.run(inputs);
-    slot.crop(inputs, logits_out);
+    slot.crop(inputs, logits_out, row_capacity);
     debug::timing_log_scalar("omnivoice.generator.rknn.step_ms", debug::elapsed_ms(start));
     debug::trace_log_scalar("omnivoice.generator.rknn.engine_tokens", slot.tokens);
 #else
     (void)bucket;
     (void)inputs;
     (void)logits_out;
+    (void)row_capacity;
     throw std::runtime_error("OmniVoice generator RKNN: built without ENGINE_HAVE_RKNN");
 #endif
 }

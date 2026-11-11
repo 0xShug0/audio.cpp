@@ -212,6 +212,37 @@ class Qwen3StepForward(torch.nn.Module):
         return [cond + g * (cond - uncond)]
 
 
+class Qwen3FrontShard(torch.nn.Module):
+    """The first ``k`` blocks of ``Qwen3StepForward``; output ``hidden [2,S,hidden]``.
+
+    The ``--front-k`` engine: the embedding mix and the RoPE doubling are the full module's, the
+    CFG tail (final RMS norm + audio heads + the guided combine) moves to the fp32 host. Measured
+    reason (PC simulator, real step-0 feed): the full graph's fp16 audio heads put the uncond
+    logits at 26.9 dB SNR, past the decoding knife-edge, while the 28-layer fp16 backbone leaves
+    the hidden state at 67 dB - the heads are the whole noise, not the backbone.
+    """
+
+    def __init__(self, full: Qwen3StepForward, k: int):
+        super().__init__()
+        self.full = full
+        self.k = k
+
+    def forward(self, input_ids: torch.Tensor, audio_mask: torch.Tensor,
+                attn_mask: torch.Tensor, rope_cos: torch.Tensor, rope_sin: torch.Tensor):
+        f = self.full
+        ids = input_ids.long()
+        m = audio_mask.unsqueeze(1).long()
+        text = f.embed(ids[:, 0, :])
+        audio = f.audio_embed((ids * m) + f.cb_offsets).sum(dim=1)
+        am = audio_mask.unsqueeze(-1).to(audio.dtype)
+        h = am * audio + (1.0 - am) * text
+        cos = torch.cat([rope_cos, rope_cos], dim=-1).to(h.dtype)
+        sin = torch.cat([rope_sin, rope_sin], dim=-1).to(h.dtype)
+        for layer in f.layers[:self.k]:
+            h = layer(h, cos, sin, attn_mask)
+        return h
+
+
 def load_generator(model_dir: Path) -> tuple[dict, dict]:
     sd = load_file(str(model_dir / "model.safetensors"))
     import json
@@ -230,8 +261,10 @@ def build_model(model_dir: Path, fuse: bool = False,
 
 def export_onnx(model_dir: Path, seq_len: int, guidance: float, out: Path,
                 sd_cfg: tuple[dict, dict] | None = None, verbose: bool = True,
-                dtype: torch.dtype = torch.float32) -> Path:
-    model = build_model(model_dir, sd_cfg=sd_cfg)
+                dtype: torch.dtype = torch.float32, front_k: int = 0) -> Path:
+    model: torch.nn.Module = build_model(model_dir, sd_cfg=sd_cfg)
+    if front_k:
+        model = Qwen3FrontShard(model, front_k)
     if dtype is not torch.float32:
         # fp16 weights for the RKNN stage: the 28-layer fp32 initializers (2.45 GB) make the
         # converter's constant-fold/fuse copies OOM-abort (measured: 8 layers peak 9.3 GB and
@@ -240,9 +273,10 @@ def export_onnx(model_dir: Path, seq_len: int, guidance: float, out: Path,
         # float arrays.
         model = model.half()
     rng = np.random.default_rng(7)
-    inputs = [torch.from_numpy(a) for a in make_inputs(
-        seq_len, max(1, seq_len // 2), max(1, seq_len // 2), 1025, rng, guidance,
-        model.head_dim, model.rope_theta)]
+    example = make_inputs(seq_len, max(1, seq_len // 2), max(1, seq_len // 2), 1025, rng,
+                          guidance, model.full.head_dim if front_k else model.head_dim,
+                          model.full.rope_theta if front_k else model.rope_theta)
+    inputs = [torch.from_numpy(a) for a in (example[:5] if front_k else example)]
     out.parent.mkdir(parents=True, exist_ok=True)
     if verbose:
         print(f"export {out} (seq_len {seq_len}, weights {str(dtype).replace('torch.','')})")
@@ -251,8 +285,8 @@ def export_onnx(model_dir: Path, seq_len: int, guidance: float, out: Path,
             model,
             tuple(inputs),
             str(out),
-            input_names=INPUT_NAMES,
-            output_names=["logits"],
+            input_names=INPUT_NAMES[:5] if front_k else INPUT_NAMES,
+            output_names=["hidden"] if front_k else ["logits"],
             opset_version=17,
             # Fold at export: with do_constant_folding=False the converter's own FoldConstant
             # pass dies at ~3161/3194 nodes on the full 28-layer graph (SIGABRT; 8 layers
@@ -317,11 +351,12 @@ def snr_db(reference: np.ndarray, other: np.ndarray) -> float:
 
 def crop_valid(outs: list[np.ndarray], c_len: int, u_len: int) -> list[np.ndarray]:
     """Crop a run's output to the cond target block ``[c_len-u_len, c_len)`` the host reads."""
-    return [o[:, :, c_len - u_len : c_len, :] for o in outs]
+    return [o[:, :, c_len - u_len : c_len, :] if o.ndim == 4 else o[:, c_len - u_len : c_len]
+            for o in outs]
 
 
 def check_padding(model_dir: Path, onnx_path: Path, seq_len: int, cases: list[tuple[int, int]],
-                  guidance: float, seed: int) -> None:
+                  guidance: float, seed: int, front_k: int = 0) -> None:
     """Padded run at ``seq_len`` vs exact run at ``c_len``: the padding gate (onnxruntime fp32).
 
     Compared on the cropped valid region only: the pad's outputs are placeholders by
@@ -344,18 +379,22 @@ def check_padding(model_dir: Path, onnx_path: Path, seq_len: int, cases: list[tu
         padded = pad_to(base, seq_len, hd, theta)
         # The exact run needs its own graph (RKNN graphs are fixed-shape; the ONNX too).
         exact_path = export_onnx(model_dir, c_len, guidance,
-                                 Path("/tmp") / f"ov_exact_seq{c_len}.onnx", sd_cfg, verbose=False)
+                                 Path("/tmp") / f"ov_exact_seq{c_len}.onnx", sd_cfg, verbose=False,
+                                 front_k=front_k)
         exact_sess = (
             sess
             if c_len == seq_len
             else ort.InferenceSession(str(exact_path), opts, providers=["CPUExecutionProvider"])
         )
-        out_p = crop_valid(sess.run(None, dict(zip(INPUT_NAMES, padded))), c_len, u_len)[0]
-        out_e = crop_valid(exact_sess.run(None, dict(zip(INPUT_NAMES, base))), c_len, u_len)[0]
+        feed_p = dict(zip(INPUT_NAMES, padded[:5] if front_k else padded))
+        feed_e = dict(zip(INPUT_NAMES, base[:5] if front_k else base))
+        out_p = crop_valid(sess.run(None, feed_p), c_len, u_len)[0]
+        out_e = crop_valid(exact_sess.run(None, feed_e), c_len, u_len)[0]
         tail = min(32, u_len)
+        tail_of = lambda o: o[:, :, -tail:] if o.ndim == 4 else o[:, -tail:]
         print(
             f"  c_len={c_len:4d} u_len={u_len:4d} pad={seq_len - c_len:4d} "
-            f"snr={snr_db(out_e, out_p):6.1f} dB tail_snr={snr_db(out_e[:, :, -tail:], out_p[:, :, -tail:]):6.1f} dB "
+            f"snr={snr_db(out_e, out_p):6.1f} dB tail_snr={snr_db(tail_of(out_e), tail_of(out_p)):6.1f} dB "
             f"max_abs={np.abs(out_e - out_p).max():.4f}"
         )
 
@@ -381,7 +420,7 @@ def pad_to(inputs: list[np.ndarray], seq_len: int, head_dim: int = 128,
 
 def verify_fp16(model_dir: Path, onnx_path: Path, rknn_onnx_path: Path, seq_len: int,
                 c_len: int, u_len: int, guidance: float, target: str, opt_level: int,
-                seed: int) -> None:
+                seed: int, front_k: int = 0) -> None:
     """The fp16 cost of the compiled graph, measured on the PC simulator.
 
     The fp32 ONNX is the reference; the engine is built from the fp16-weights export, which is
@@ -400,7 +439,8 @@ def verify_fp16(model_dir: Path, onnx_path: Path, rknn_onnx_path: Path, seq_len:
     rng = np.random.default_rng(seed)
     inputs = make_inputs(seq_len, c_len, u_len, 1025, rng, guidance,
                          lc["head_dim"], lc["rope_parameters"]["rope_theta"])
-    reference = sess.run(None, dict(zip(INPUT_NAMES, inputs)))[0]
+    feed = inputs[:5] if front_k else inputs
+    reference = sess.run(None, dict(zip(INPUT_NAMES, feed)))[0]
     del sess
 
     rknn = RKNN(verbose=False)
@@ -412,13 +452,19 @@ def verify_fp16(model_dir: Path, onnx_path: Path, rknn_onnx_path: Path, seq_len:
             raise SystemExit("build failed")
     if rknn.init_runtime() != 0:
         raise SystemExit("init_runtime (PC simulator) failed")
-    got = np.asarray(rknn.inference(inputs=inputs)[0])
+    # The 4-D attention mask's declared layout is converter-decided (the 28-layer shard graph
+    # comes out NHWC-flagged, and seq64 flags the full graph NHWC too, while the seq768 full
+    # graph stays NCHW), and the simulator default is 'nhwc'. Declare the fed layout as NCHW
+    # instead: the simulator relabels/transposes to each input's native layout, so the same
+    # raw feed works for every graph. C=1, so the relabel moves no data.
+    got = np.asarray(rknn.inference(inputs=feed, data_format='nchw')[0])
     rknn.release()
     got = got.reshape(reference.shape)
     tail = min(32, u_len)
+    tail_of = lambda o: o[:, :, -tail:] if o.ndim == 4 else o[:, -tail:]
     print(
         f"verify fp16 (seq {seq_len}, PC simulator): snr={snr_db(reference, got):6.1f} dB "
-        f"tail_snr={snr_db(reference[:, :, -tail:], got[:, :, -tail:]):6.1f} dB "
+        f"tail_snr={snr_db(tail_of(reference), tail_of(got)):6.1f} dB "
         f"max_abs={np.abs(reference - got).max():.4f} "
         f"argmax_match={float((reference.argmax(-1) == got.argmax(-1)).mean()):.4f}"
     )
@@ -448,40 +494,53 @@ def main() -> int:
     parser.add_argument("--verify-sim", action="store_true",
                         help="build the first --seq-len and run it on the PC simulator against "
                              "the fp32 ONNX; slow, the simulator runs the whole 28-layer step")
+    parser.add_argument("--front-k", type=int, default=0,
+                        help="export the front shard (embedding + the first k transformer "
+                             "blocks, output hidden [2,S,hidden], no guidance input) instead of "
+                             "the full step graph; the CFG tail (final norm + audio heads) then "
+                             "runs on the fp32 host")
     args = parser.parse_args()
     seq_lens = args.seq_len or [256, 384, 512, 768, 1024]
     sd_cfg = load_generator(args.model_dir)
+    lc = sd_cfg[1]["llm_config"]
+    if args.front_k and not 0 < args.front_k <= lc["num_hidden_layers"]:
+        raise SystemExit(f"--front-k must be in [1, {lc['num_hidden_layers']}]")
+    stem = (f"omnivoice_generator{'_front' + str(args.front_k) if args.front_k else ''}"
+            f"_seq")
 
     if args.verify_sim:
         seq_len = seq_lens[0]
-        onnx_path = args.output_dir / f"omnivoice_generator_seq{seq_len}.onnx"
-        rknn_onnx_path = args.output_dir / f"omnivoice_generator_seq{seq_len}_w16.onnx"
+        onnx_path = args.output_dir / f"{stem}{seq_len}.onnx"
+        rknn_onnx_path = args.output_dir / f"{stem}{seq_len}_w16.onnx"
         if not args.skip_export:
-            export_onnx(args.model_dir, seq_len, args.guidance, onnx_path, sd_cfg)
+            export_onnx(args.model_dir, seq_len, args.guidance, onnx_path, sd_cfg,
+                        front_k=args.front_k)
             export_onnx(args.model_dir, seq_len, args.guidance, rknn_onnx_path, sd_cfg,
-                        dtype=torch.float16)
+                        dtype=torch.float16, front_k=args.front_k)
         c_len = (args.check_c_len or [max(1, seq_len // 2)])[0]
         verify_fp16(args.model_dir, onnx_path, rknn_onnx_path, seq_len, c_len, c_len * 3 // 4,
-                    args.guidance, args.target, args.opt_level, args.seed)
+                    args.guidance, args.target, args.opt_level, args.seed, args.front_k)
         return 0
 
     for seq_len in seq_lens:
-        onnx_path = args.output_dir / f"omnivoice_generator_seq{seq_len}.onnx"
-        rknn_onnx_path = args.output_dir / f"omnivoice_generator_seq{seq_len}_w16.onnx"
+        onnx_path = args.output_dir / f"{stem}{seq_len}.onnx"
+        rknn_onnx_path = args.output_dir / f"{stem}{seq_len}_w16.onnx"
         if not args.skip_export:
-            export_onnx(args.model_dir, seq_len, args.guidance, onnx_path, sd_cfg)
+            export_onnx(args.model_dir, seq_len, args.guidance, onnx_path, sd_cfg,
+                        front_k=args.front_k)
             export_onnx(args.model_dir, seq_len, args.guidance, rknn_onnx_path, sd_cfg,
-                        dtype=torch.float16)
+                        dtype=torch.float16, front_k=args.front_k)
         if not args.skip_check:
             cases = args.check_c_len or [max(1, seq_len // 2), seq_len]
             check_padding(args.model_dir, onnx_path, seq_len,
-                          [(c, max(1, c * 3 // 4)) for c in cases], args.guidance, args.seed)
+                          [(c, max(1, c * 3 // 4)) for c in cases], args.guidance, args.seed,
+                          args.front_k)
         if args.skip_rknn:
             continue
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from rknn_build import build_engine, report_engine
 
-        out = args.output_dir / f"omnivoice_generator_seq{seq_len}_fp16.rknn"
+        out = args.output_dir / f"{stem}{seq_len}_fp16.rknn"
         build_engine(rknn_onnx_path, out, args.target, opt_level=args.opt_level,
                      gate_label=f"build {out.name}")
         report_engine(out, f"seq_len {seq_len}", args.target,
