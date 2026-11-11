@@ -487,8 +487,13 @@ row layout); batched requests fall back to the ggml graph.
   prompt tokens, so short rungs need a short reference; a request above a rung's capacity
   falls back whole to the ggml graph, `rknn.fallback_tokens` in the trace log), seq512 with
   a 40-char b.wav request, seq1024 with the 141-char baseline (775 tokens); per-step engine
-  time scales with the rung (1.5 s at seq256, 2.4 at 384, 3.4 at 512, 8.4 at 768) and the
-  resident aperture runs 1665 MiB at seq256 to 3644 MiB at seq1024 inside the 3900 budget.
+  time scales with the rung (1.5 s at seq256, 2.4 at 384, 3.4 at 512, 8.4 at 768, 12.2 at
+  1024) and the resident aperture runs 1665 MiB at seq256 to 3644 MiB at seq1024 inside the
+  3900 budget.
+  Streaming works on the shard unchanged (batch 1 per chunk): the baseline text at
+  `--text-chunk-size 60` over the short reference gives TTFB 85.7 s and wall 223.8 s on the
+  NPU path against 125.8 s / 338.0 s on the ggml twin, with whisper-identical transcriptions
+  across the two renders.
 
 
 ## Component execution plans
