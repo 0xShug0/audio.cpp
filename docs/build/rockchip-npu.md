@@ -470,10 +470,11 @@ row layout); batched requests fall back to the ggml graph.
 - OmniVoice board stage: the seq768 engine run through the sidecar reproduces the probe-harness
   engine run of the same step inputs byte for byte, sits at 60.2 dB (cond) / 26.9 dB (uncond)
   output SNR against the fp32 torch reference on identical step-0 inputs, and renders the
-  baseline voice-clone request clean at guidance 0. Measured on the same request, the ggml
-  graph's own unconditional row reproduces its conditional logits to within 0.9 logit-rms
-  (the engine's own cond-minus-uncond sits at 18.9), so the ggml path's guidance term is
-  currently inert and its clean guidance-2.0 renders are conditional rollouts.
+  baseline voice-clone request clean at guidance 0. Measured on the same request, the engine's
+  cond-minus-uncond guidance term sits at 18.9 dB SNR; the ggml path's own step-0 guidance term
+  (dumped cond/uncond slices, same text/reference/seed) reads -8.3 dB SNR with 0.2% argmax
+  agreement at both q8_0 and fp32 weight precision, i.e. the ggml guidance term is alive and
+  the fp16 engine's uncond branch is the outlier.
 - OmniVoice front-shard stage: the same probe-harness step-0 inputs through the front-28 shard
   engine land the hidden state at 67 dB (uncond row included: the depth probe reads 67-70 dB at
   k=7/14/21/28, so the backbone is not the noise source), and the fp32 host tail (final norm +
