@@ -270,6 +270,13 @@
         "description": "Load q/k/v and gate/up as one packed weight each: one GEMM per group and a fused SwiGLU; default true. false keeps separate projections.",
         "required": false,
         "default": true
+      },
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Component: generator. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. GGML keeps the session backend. RKNN requires artifacts.main, a comma-separated ladder of diffusion-LM step-graph engines compiled one per total-token length (tools/rknn/prepare_omnivoice_rknn_generator.py), and ENGINE_ENABLE_RKNN; omit backend. A request longer than the largest engine runs the CPU graph. Neither implementation takes params.",
+        "required": false,
+        "default": "{}"
       }
     ],
     "load": []
@@ -386,6 +393,28 @@
       "download": {
         "kind": "huggingface_snapshot",
         "repo": "mohammedaly22/VoiceTut-TTS-GGUF"
+      }
+    },
+    {
+      "id": "omnivoice_generator_rk3588",
+      "display_name": "OmniVoice NPU Generator Step-Graph Ladder (RK3588)",
+      "format": "rknn",
+      "precision": "f16",
+      "target_directory": "OmniVoice-GGUF",
+      "files": [
+        "rk3588/omnivoice/omnivoice_generator_seq256_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_seq384_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_seq512_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_seq768_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_seq1024_fp16.rknn"
+      ],
+      "strip_prefix": "rk3588/omnivoice",
+      "description": "Pre-compiled RK3588 step-graph ladder (256 to 1024 token buckets) for the omnivoice RKNN generator (omnivoice.exec_plan, artifacts.main); installs beside the OmniVoice GGUF weights and is named by bare file name. Built by tools/rknn from the OmniVoice checkpoint; see docs/build/rockchip-npu.md.",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "wOvANAI/rknn-tts-engines",
+        "revision": "main",
+        "gated": false
       }
     }
   ],

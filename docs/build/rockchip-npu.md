@@ -400,6 +400,51 @@ The exported graph is checked against the torch graph it was traced from, on the
 the runtime's walk, with the torch reference evaluated in the same sine form (124.6 dB), so the
 gate measures the export and not the approximation.
 
+### OmniVoice generator step graph
+
+`tools/rknn/prepare_omnivoice_rknn_generator.py` re-traces the whole diffusion-LM decoding step the
+GGUF weights describe — the 28-layer Qwen3 forward with the audio embedding blend, the RoPE ladder,
+the 8-head audio output projection and the packed classifier-free-guidance combine — at one fixed
+total-token length per engine, and compiles the ladder the session's `omnivoice.exec_plan`
+component `generator` selects. The seam is the step graph alone, in and out at the point of the
+ggml graph's own logits output: `input_ids [2,8,S]` (the packed CFG rows, text row doubling as
+codebook 0), `audio_mask [2,S]`, the additive `attn_mask [2,1,S,S]`, the RoPE tables
+`rope_cos [2,S,head_dim/2]` / `rope_sin` (the host computes the float64 angles mod 2*pi and the
+trig tables become inputs; the board's fp16 graph must never see raw positions, because fp16
+`Cos`/`Sin` of a ~1e3-rad argument quantizes the argument and renders noise - the qwen3 vocoder's
+`freqs_in` precedent), and `guidance [1]` in; guided conditional logits `[1,8,S,1025]` out,
+cropped by the sidecar to the conditional target block. All scoring (log_softmax, layer penalty,
+gumbel, top-k fill) stays in the host loop, where the ggml path's `device_scoring=false` branch
+already reads it.
+
+The converter recipe the graph needed is stricter than the other producers' (measured on this
+converter, 2.3.2): constant folding at torch-export time (`do_constant_folding=True`), because
+the converter's own `FoldConstant` SIGABRTs at fold ~3161/3194 of the full graph;
+`optimization_level=0`; fp16 weights (`model.half()`, RoPE tables cast at the table site); GQA by
+`torch.index_select` on the head axis, because `expand().reshape()` lowers to a
+Shape/ConstantOfShape/Expand ladder the converter refuses and a 5-D broadcast matmul dies in
+`swap_reshape_softmax`. The preflighted risky-op set (Pad/Exp/ConstantOfShape/Shape/Split) is
+empty for the graph this recipe produces.
+
+Padding is the ladder's contract, and it is measured: pad tokens attend to themselves only
+(diagonal-only rows in the additive mask), and a padded run of the fp32 graph reproduces the
+exact run at 398-408 dB, so the pad costs compute and nothing else. On the PC simulator the
+fp16 engine against the fp32 reference sits at 61.0 dB output SNR with argmax agreement
+0.978-0.982, and the simulator step is 1.4 s warm.
+
+The board gate for this sidecar is the step run at `--guidance-scale 0.0`, and it is the mode
+the engine ships validated: 32 steps of the seq768 engine render the full baseline text to
+whisper-clean audio (parity with the ggml path's own render of the same text, reference and
+seed), at 8.8 s/step against the ggml graph's 26.6 s at the same length (wall 293 s against
+883 s), with the 1.32 GiB seq256 and 1.35 GiB seq768 engines loading in 2.3-3.2 s and peak RSS
+4.9 GiB. The guidance-2.0 rollout is not usable on the NPU yet: the fp16 uncond branch sits at
+26.9 dB against the fp32 reference (the cond branch sits at 60.2 dB), and the diffusion
+decoding is knife-edged at that scale - the fp16 guidance term's noise, doubled by the CFG
+gain, moves enough per-frame argmaxes that the 32-step rollout leaves the speech basin. The
+same collapse is visible on the ggml path itself at a small perturbation: its `--guidance-scale
+-1` render of the same request is noise, while its 0/1/2 renders are clean. Guidance on the NPU
+needs a numerically quieter uncond branch (the per-layer hybrid in the plan), not a re-tune.
+
 ## Verified
 
 - Export stage: stepwise-vs-full-decode self-check 111.4 dB at B=64 and 103.7 dB at B=16,
@@ -410,6 +455,13 @@ gate measures the export and not the approximation.
   interior SNR against the runtime's own generator, a padded 128-frame window reproduces the same
   decoded unpadded at 135.1 dB, and the exported ONNX reproduces the torch graph it was traced
   from at 124.6 dB.
+- OmniVoice board stage: the seq768 engine run through the sidecar reproduces the probe-harness
+  engine run of the same step inputs byte for byte, sits at 60.2 dB (cond) / 26.9 dB (uncond)
+  output SNR against the fp32 torch reference on identical step-0 inputs, and renders the
+  baseline voice-clone request clean at guidance 0. Measured on the same request, the ggml
+  graph's own unconditional row reproduces its conditional logits to within 0.9 logit-rms
+  (the engine's own cond-minus-uncond sits at 18.9), so the ggml path's guidance term is
+  currently inert and its clean guidance-2.0 renders are conditional rollouts.
 
 
 ## Component execution plans
@@ -427,6 +479,7 @@ the configurable components:
 | sanoTTS `decoder` | `sanotts.exec_plan` | `default`, `ggml`, `neon` | None |
 | Inflect v2 `decoder` | `inflect_v2.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
 | CosyVoice3 `flow` | `cosyvoice3.exec_plan` | `ggml`, `rknn` | RKNN: required `main` (comma-separated ladder of per-length engines) |
+| OmniVoice `generator` | `omnivoice.exec_plan` | `ggml`, `rknn` | RKNN: required `main` (comma-separated ladder of per-length engines) |
 
 These options also work with older GGUFs whose embedded specs do not declare
 `exec_plan`; the model validates the plan without requiring a spec override.

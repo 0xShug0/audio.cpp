@@ -102,6 +102,9 @@ private:
     OmniVoiceTextTokenizer tokenizer_;
     OmniVoiceHiggsAudioV2TokenizerRuntime audio_tokenizer_;
     OmniVoicePromptBuilder prompt_builder_;
+    // Rockchip NPU ladder for the generator step (exec_plan component "generator"); empty
+    // when the plan is ggml. Declared before generator_, which consumes it.
+    std::vector<std::string> generator_rknn_engines_;
     OmniVoiceQwen3DiffusionRuntime generator_;
     OmniVoicePostprocessor postprocessor_;
     SessionDefaults session_defaults_;

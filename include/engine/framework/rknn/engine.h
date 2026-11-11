@@ -90,6 +90,10 @@ struct Input {
     uint32_t size = 0;
     rknn_tensor_type type = RKNN_TENSOR_FLOAT32;
     uint32_t pass_through = 0;
+    // Layout of the buffer. The runtime needs it declared for a 4-D input it normalizes: with
+    // UNDEFINED src layout `rknn_inputs_set` fails on such inputs with
+    // "Meet unsupported src layout for normalize: UNDEFINED, only support NHWC".
+    rknn_tensor_format fmt = RKNN_TENSOR_UNDEFINED;
 };
 
 // One compiled engine: a `rknn_context` plus its input/output counts.
