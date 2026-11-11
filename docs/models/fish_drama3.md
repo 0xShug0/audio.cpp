@@ -481,6 +481,31 @@ and `reached_limit` reports reaching this effective budget. A required prompt
 that leaves no generation room is still rejected. These rules apply to both
 offline and streaming generation.
 
+### Repetition and chunk size
+
+If speech repeats words or phrases near chunk boundaries, increasing
+`text_chunk_size` may help by keeping more of a sentence in one generation pass.
+Increase it gradually and check the audio and peak VRAM usage. Larger chunks
+can increase peak memory substantially, especially during offline decoding,
+which processes each chunk's generated audio codes together.
+
+Each chunk is limited by `max_tokens` and the context space remaining after the
+text, references and history. The default `max_tokens=1024` permits up to about
+48 seconds at roughly 21.5 acoustic frames per second; context limits can shorten
+this allowance. Increasing context can restore a shortened allowance up to
+`max_tokens`. Increasing `max_tokens` requires enough remaining context to use it.
+
+Chunk size and `max_tokens` are request options set with `--request-option`.
+Context capacity is set with `--session-option fish_drama3.context_length=N`
+when creating the session. Larger context capacity also increases memory use.
+
+Check `custom_schema_output.data.reached_limit` in task JSON or CLI output, or
+look for the runtime warning `generation budget reached; audio may be incomplete`.
+The flag indicates that at least one generated output chunk reached its effective
+budget. A `max_tokens reduced` log message identifies a context-limited budget.
+If passages are cut off, reduce chunk size or increase the limiting budget
+within available memory. Compare several seeds when checking repetition.
+
 ## Validation limits
 
 ### V1/V2 checkpoint comparison
