@@ -239,7 +239,7 @@ checkpoint or session setting, or leaves the optional value unset as described.
 | `previous_takes` | `string` | Model/session default | Continuation/edit history as a JSON array of {text, vq_codes or audio_path}; a string generates that earlier take first. |
 | `previous_takes_file` | `string` | Model/session default | JSON history file containing a take object or an ordered array of earlier takes. Avoids the Windows command-line length limit for VQ grids. |
 | `max_tokens` | `int` | `1024` | Maximum generated acoustic frames per text chunk (about 21.5 frames/second). Declared range: minimum 1. |
-| `text_chunk_size` | `int` | `128` | Maximum characters per long-form chunk. Declared range: minimum 1. |
+| `text_chunk_size` | `int` | `4000` | Maximum characters per long-form chunk. Declared range: minimum 1. |
 | `skip_empty_chunks` | `bool` | `false` | Log and skip chunks that emit EOS before producing audio. The request fails if all chunks are empty. |
 | `text_chunk_mode` | `word_budget`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode. |
 | `temperature` | `float` | `1.0` | Main and residual sampling temperature. Zero makes the initial draws greedy; semantic repeat redraws retain the fixed Drama 3 RAS settings. Declared range: minimum 0. |
@@ -462,8 +462,13 @@ synchronously and calls the event sink while audio is generated; `finalize()`
 returns the complete audio and the reusable take artifact. An application can
 invoke generation on its worker thread to keep its UI responsive.
 
-Long-form text uses the framework chunker, with `text_chunk_size=128` and
-`text_chunk_mode=tag_aware` by default. Each new chunk includes the first generated
+Long-form text uses the framework chunker, with `text_chunk_size=4000` and
+`text_chunk_mode=tag_aware` by default. The larger budget keeps more sentences in
+one generation pass. In selected V2 reproduction cases, ASR repetition screens
+flagged split inputs and cleared the same inputs when generated whole. Actual
+4,000-character passages have not been validated. The frame cap and context
+capacity still limit each chunk; reduce the chunk size for longer passages if
+needed. Each new chunk includes the first generated
 chunk as an anchor and the latest chunk as recent context, without duplicating
 the first chunk. If that prompt does not fit, automatic history is reduced to the first chunk only, then removed.
 References and caller-supplied history remain ordered and are never dropped.

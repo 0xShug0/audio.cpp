@@ -204,7 +204,7 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
     }
     const auto skip_empty = runtime::find_option(effective.options, {"skip_empty_chunks"});
     const bool skip_empty_chunks = skip_empty && runtime::parse_bool_option(*skip_empty, "skip_empty_chunks");
-    const int64_t chunk_size = runtime::parse_positive_i64_option(effective.options, {"text_chunk_size"}, 128);
+    const int64_t chunk_size = runtime::parse_positive_i64_option(effective.options, {"text_chunk_size"}, 4000);
     const auto mode = engine::text::parse_text_chunk_mode_override(effective.options).value_or(engine::text::TextChunkMode::TagAware);
     const auto chunks = runtime::chunk_text_request(effective, chunk_size, mode);
     runtime::TaskResult result;
