@@ -81,7 +81,7 @@
         "description": "Maximum characters per long-form chunk.",
         "required": false,
         "min": 1,
-        "default": 4000
+        "default": 128
       },
       {
         "name": "skip_empty_chunks",
