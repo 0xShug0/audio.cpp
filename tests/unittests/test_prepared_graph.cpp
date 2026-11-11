@@ -107,6 +107,261 @@ struct BufferFreeCheck {
 };
 BufferFreeCheck * BufferFreeCheck::active = nullptr;
 
+struct RegionStats {
+    int prepared = 0, computed = 0, reset = 0;
+    bool fail_prepare = false, fail_compute = false, storage_alive = true;
+    ggml_cgraph * view = nullptr;
+};
+
+class TestRegion final : public core::GraphRegionExecutor {
+public:
+    explicit TestRegion(RegionStats & stats) : stats_(stats) {}
+    void prepare(ggml_backend_t backend, ggml_cgraph * region) override {
+        require(backend && ggml_graph_n_nodes(region) == 2, "replacement received the wrong graph region");
+        require(!stats_.view || stats_.view == region, "buffer reuse rebuilt region metadata");
+        stats_.view = region;
+        first_ = ggml_graph_node(region, 0);
+        last_ = ggml_graph_node(region, 1);
+        input_ = first_->src[0];
+        require(input_->data && first_->data && last_->data, "region prepared before allocation");
+        ++stats_.prepared;
+        if (stats_.fail_prepare) throw std::runtime_error("injected region preparation failure");
+    }
+    ggml_status compute() override {
+        ++stats_.computed;
+        if (stats_.fail_compute) return GGML_STATUS_FAILED;
+        auto values = core::read_tensor_f32(input_);
+        for (auto & value : values) value *= 7;
+        ggml_backend_tensor_set(first_, values.data(), 0, values.size() * sizeof(float));
+        for (auto & value : values) value += 2;
+        ggml_backend_tensor_set(last_, values.data(), 0, values.size() * sizeof(float));
+        return GGML_STATUS_SUCCESS;
+    }
+    void reset() noexcept override {
+        stats_.storage_alive = stats_.storage_alive && input_ && input_->data && last_->data;
+        ++stats_.reset;
+        input_ = first_ = last_ = nullptr;
+    }
+private:
+    RegionStats & stats_;
+    ggml_tensor * input_ = nullptr, * first_ = nullptr, * last_ = nullptr;
+};
+
+// Inspect both native compute and host-plan creation: replacement nodes must
+// never execute, including execution before a later overwrite by the callback.
+struct RegionNativeCheck {
+    ggml_backend_t backend;
+    ggml_tensor * first, * last;
+    ggml_status (*compute)(ggml_backend_t, ggml_cgraph *);
+    ggml_backend_graph_plan_t (*plan)(ggml_backend_t, const ggml_cgraph *);
+    static RegionNativeCheck * active;
+    static void check(const ggml_cgraph * graph) {
+        auto * view = const_cast<ggml_cgraph *>(graph);
+        for (int i = 0; i < ggml_graph_n_nodes(view); ++i)
+            require(ggml_graph_node(view, i) != active->first && ggml_graph_node(view, i) != active->last,
+                "original replacement nodes reached native execution");
+    }
+    RegionNativeCheck(ggml_backend_t value, ggml_tensor * a, ggml_tensor * b)
+        : backend(value), first(a), last(b), compute(value->iface.graph_compute), plan(value->iface.graph_plan_create) {
+        require(!active, "nested region execution observer");
+        active = this;
+        backend->iface.graph_compute = [](ggml_backend_t value, ggml_cgraph * graph) {
+            check(graph);
+            return active->compute(value, graph);
+        };
+        if (plan) backend->iface.graph_plan_create = [](ggml_backend_t value, const ggml_cgraph * graph) {
+            check(graph);
+            return active->plan(value, graph);
+        };
+    }
+    ~RegionNativeCheck() {
+        backend->iface.graph_compute = compute;
+        backend->iface.graph_plan_create = plan;
+        active = nullptr;
+    }
+};
+RegionNativeCheck * RegionNativeCheck::active = nullptr;
+
+void check_regions(core::ExecutionContext & execution) {
+    for (int mode = 0; mode < 4; ++mode) {
+        RegionStats stats, body_stats;
+        std::unique_ptr<core::GraphWorkspace> workspace;
+        std::unique_ptr<core::ExecutionContext> host;
+        core::PreparedGraph owner(execution, {"prepared.region", 1024 * 1024, 128, 16 * ggml_tensor_overhead()});
+        auto & persistent = owner.persistent_build_context();
+        auto input = core::make_tensor(persistent, GGML_TYPE_F32, core::TensorShape::from_dims({1024}));
+        ggml_set_input(input.tensor);
+        owner.allocate_persistent();
+        auto & ctx = owner.build_context();
+        auto * prefix = ggml_scale_bias(ctx.ggml, input.tensor, 1, 1);
+        auto * first = ggml_scale(ctx.ggml, prefix, 3);
+        auto * last = ggml_scale_bias(ctx.ggml, first, 1, 1);
+        auto * output = ggml_scale(ctx.ggml, last, 5);
+        ggml_set_output(output);
+        ggml_build_forward_expand(owner.graph(), output);
+        owner.replace_region(0, first, last, std::make_unique<TestRegion>(stats));
+        core::PreparedGraph::GraphId body = 0;
+        if (mode == 3) {
+            ggml_set_output(prefix); // Body execution reuses the saved prefix.
+            body = owner.add_entry_point("body", 0);
+            for (auto * node : {first, last, output}) ggml_graph_add_node(owner.graph(body), node);
+            owner.replace_region(body, first, last, std::make_unique<TestRegion>(body_stats));
+        }
+        struct Eval { ggml_tensor * prefix, * output; int observed = 0; bool cancel = false; } eval{prefix, output};
+        if (mode == 1) {
+            std::vector<ggml_backend_t> backends{execution.backend()};
+            if (!core::is_host_backend(execution.backend())) {
+                host = std::make_unique<core::ExecutionContext>(core::BackendConfig{core::BackendType::Cpu, 0, 8});
+                backends.push_back(host->backend());
+            }
+            auto * scheduler = owner.create_scheduler(std::move(backends));
+            ggml_backend_sched_set_eval_callback(scheduler, [](ggml_tensor * tensor, bool ask, void * data) {
+                auto & state = *static_cast<Eval *>(data);
+                if (ask) return tensor == state.prefix || tensor == state.output;
+                ++state.observed;
+                return !state.cancel;
+            }, &eval);
+        }
+        RegionNativeCheck observer(execution.backend(), first, last);
+        if (mode == 0) owner.allocate_releasable();
+        else if (mode == 1) owner.allocate();
+        else if (mode == 2) {
+            workspace = std::make_unique<core::GraphWorkspace>(execution.backend());
+            workspace->add(owner);
+            workspace->prepare();
+        } else owner.allocate();
+        const auto bytes = owner.workspace_bytes();
+        for (int request = 0; request < 8; ++request) {
+            std::vector<float> values(1024), expected(1024);
+            for (size_t i = 0; i < values.size(); ++i) {
+                values[i] = float((i + request) % 61);
+                expected[i] = ((values[i] + 1) * 7 + 2) * 5;
+            }
+            core::write_tensor_f32(input, values);
+            owner.compute();
+            require(core::read_tensor_f32(output) == expected, "region boundary math or input reuse failed");
+            require(owner.workspace_bytes() == bytes && stats.prepared == 1, "region execution rebuilt allocations or plans");
+            if (body) {
+                owner.compute(body);
+                require(core::read_tensor_f32(output) == expected, "entry-point replacement used another allocation layout");
+            }
+        }
+        if (mode == 1) {
+            require(eval.observed == 16, "ordinary-node evaluation callbacks changed with replacement enabled");
+            eval.cancel = true;
+            owner.compute();
+            require(stats.computed == 8, "evaluation cancellation did not stop before the replacement");
+            eval.cancel = false;
+        }
+        stats.fail_compute = true;
+        bool failed = false;
+        try { owner.compute(); } catch (const std::runtime_error &) { failed = true; }
+        require(failed, "replacement compute failure was hidden");
+        stats.fail_compute = false;
+        owner.compute();
+        if (mode == 0) {
+            owner.release_buffers();
+            require(stats.reset == 1 && stats.storage_alive, "replacement released after tensor storage");
+            owner.allocate_persistent();
+            owner.allocate_releasable();
+            core::write_tensor_f32(input, std::vector<float>(1024, 4));
+            owner.compute();
+            require(core::read_tensor_f32(output) == std::vector<float>(1024, 185),
+                "replacement retained stale addresses after buffer reallocation");
+            require(stats.prepared == 2, "replacement was not reprepared after relocation");
+        }
+        if (workspace) workspace->reset();
+        owner.release();
+        require(stats.storage_alive && stats.reset == stats.prepared, "replacement lifecycle cleanup mismatch");
+        require(body_stats.storage_alive && body_stats.reset == body_stats.prepared, "entry-point replacement cleanup mismatch");
+    }
+}
+
+void check_region_contracts(core::ExecutionContext & execution) {
+    for (int variant = 0; variant < 6; ++variant) {
+        RegionStats stats, second_stats;
+        std::unique_ptr<core::ExecutionContext> host;
+        core::PreparedGraph owner(execution, {"prepared.region.invalid", 1024 * 1024, 128});
+        auto & ctx = owner.build_context();
+        auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({16}));
+        auto * first = ggml_scale(ctx.ggml, input.tensor, 3);
+        auto * last = ggml_scale(ctx.ggml, first, 2);
+        auto * result = last;
+        if (variant == 5) {
+            auto * second = ggml_scale(ctx.ggml, last, 3);
+            result = ggml_scale(ctx.ggml, second, 2);
+            owner.replace_region(0, second, result, std::make_unique<TestRegion>(second_stats));
+            std::vector<ggml_backend_t> backends{execution.backend()};
+            if (!core::is_host_backend(execution.backend())) {
+                host = std::make_unique<core::ExecutionContext>(core::BackendConfig{core::BackendType::Cpu, 0, 8});
+                backends.push_back(host->backend());
+            }
+            owner.create_scheduler(std::move(backends));
+        }
+        ggml_set_output(result);
+        ggml_build_forward_expand(owner.graph(), result);
+        owner.replace_region(0, variant == 0 ? last : variant == 1 ? input.tensor : first,
+            variant == 0 ? first : last, std::make_unique<TestRegion>(stats));
+        if (variant == 2) owner.replace_region(0, last, last, std::make_unique<TestRegion>(stats));
+        if (variant == 3) stats.fail_prepare = true;
+        bool failed = false;
+        try { owner.allocate(); } catch (const std::exception &) { failed = true; }
+        if (variant >= 4) {
+            require(!failed, "whole-graph replacement failed preparation");
+            core::write_tensor_f32(input, std::vector<float>(16, 1));
+            owner.compute();
+            require(core::read_tensor_f32(result) == std::vector<float>(16, variant == 4 ? 9 : 65), "whole-graph or adjacent replacements failed");
+        } else require(failed, "invalid region or failed preparation was accepted");
+        require(stats.prepared == (variant >= 3 ? 1 : 0), "region failed at the wrong lifecycle stage");
+        owner.reset();
+        require(stats.prepared == stats.reset && stats.storage_alive, "failed region preparation leaked resources");
+        require(second_stats.prepared == second_stats.reset && second_stats.storage_alive, "adjacent replacement cleanup mismatch");
+    }
+}
+
+void check_scheduler_region_contracts(core::ExecutionContext & execution) {
+    std::unique_ptr<core::ExecutionContext> host;
+    auto * cpu = execution.backend();
+    if (!core::is_host_backend(cpu)) {
+        host = std::make_unique<core::ExecutionContext>(core::BackendConfig{core::BackendType::Cpu, 0, 8});
+        cpu = host->backend();
+    }
+    const auto callback = [](ggml_backend_t, ggml_cgraph *, void *) { return GGML_STATUS_FAILED; };
+    for (int variant = 0; variant < (host ? 4 : 3); ++variant) {
+        core::PreparedGraph owner(execution, {"prepared.region.scheduler.invalid", 1024 * 1024, 128});
+        auto & ctx = owner.build_context();
+        auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({16}));
+        ggml_set_input(input.tensor);
+        auto * first = ggml_scale(ctx.ggml, input.tensor, 3);
+        auto * last = ggml_scale(ctx.ggml, first, 2);
+        ggml_set_output(last);
+        ggml_build_forward_expand(owner.graph(), last);
+        std::vector<ggml_backend_t> backends{execution.backend()};
+        if (host) backends.push_back(cpu);
+        auto * scheduler = owner.create_scheduler(std::move(backends));
+        ggml_backend_graph_region regions[]{{first, last, callback, nullptr}, {last, last, callback, nullptr}};
+        if (variant == 0) regions[0].first = input.tensor;
+        if (variant == 1) std::swap(regions[0].first, regions[0].last);
+        if (variant == 3) {
+            ggml_backend_sched_set_tensor_backend(scheduler, first, cpu);
+            ggml_backend_sched_set_tensor_backend(scheduler, last, execution.backend());
+        }
+        require(ggml_backend_sched_set_regions(scheduler, regions, variant == 2 ? 2 : 1), "valid descriptor registration failed");
+        bool failed = false;
+        try { owner.allocate(); } catch (const std::runtime_error & error) {
+            failed = std::string(error.what()).find("Cannot allocate") != std::string::npos;
+        }
+        require(failed, "scheduler accepted an absent, reversed, overlapping or cross-split region");
+        if (variant == 3) require(ggml_backend_sched_get_n_splits(scheduler) >= 2, "cross-split test did not place two backends");
+    }
+    std::unique_ptr<ggml_backend_sched, decltype(&ggml_backend_sched_free)> parallel(
+        ggml_backend_sched_new(&cpu, nullptr, 1, 128, true, false), ggml_backend_sched_free);
+    ggml_tensor boundary{};
+    const ggml_backend_graph_region region{&boundary, &boundary, callback, nullptr};
+    require(!ggml_backend_sched_set_regions(parallel.get(), &region, 1), "parallel scheduler accepted unsupported region replacement");
+    require(ggml_backend_sched_set_regions(parallel.get(), nullptr, 0), "disabling replacement rejected normal parallel scheduling");
+}
+
 void check_owned_graph(core::ExecutionContext & execution) {
     core::PreparedGraph completed(execution, {"test.completed_output", 64 * 1024, 32});
     const auto sink = core::make_tensor(completed.build_context(), GGML_TYPE_F32,
@@ -1106,6 +1361,9 @@ int main(int argc, char ** argv) {
             check_entry_points(execution);
             check_entry_point_contracts(execution);
             check_scheduler(execution);
+            check_regions(execution);
+            check_region_contracts(execution);
+            check_scheduler_region_contracts(execution);
         }
         debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(started));
         std::cout << "prepared_graph: PASS\n";

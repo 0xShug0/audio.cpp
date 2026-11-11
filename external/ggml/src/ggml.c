@@ -8087,6 +8087,15 @@ size_t ggml_graph_overhead(void) {
     return ggml_graph_overhead_custom(GGML_DEFAULT_GRAPH_SIZE, false);
 }
 
+struct ggml_cgraph * ggml_graph_slice(struct ggml_context * ctx, struct ggml_cgraph * graph, int begin, int end) {
+    GGML_ASSERT(begin >= 0 && begin <= end && end <= graph->n_nodes);
+    struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_GRAPH, sizeof(struct ggml_cgraph));
+    struct ggml_cgraph * view = (struct ggml_cgraph *) ((char *) ctx->mem_buffer + obj->offs);
+    *view = ggml_graph_view(graph, begin, end);
+    view->uid = ggml_graph_next_uid();
+    return view;
+}
+
 struct ggml_cgraph * ggml_new_graph_custom(struct ggml_context * ctx, size_t size, bool grads) {
     const size_t obj_size = ggml_graph_nbytes(size, grads);
     struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_GRAPH, obj_size);

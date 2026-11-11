@@ -3,6 +3,7 @@
 
 #include "engine/framework/debug/profiler.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 #include <unordered_map>
@@ -11,10 +12,26 @@
 namespace engine::core {
 
 struct PreparedGraph::GraphEntry {
+    struct Region {
+        ggml_tensor * first;
+        ggml_tensor * last;
+        std::unique_ptr<GraphRegionExecutor> executor;
+        bool active = false;
+        static ggml_status compute(ggml_backend_t, ggml_cgraph *, void * data) {
+            return static_cast<Region *>(data)->executor->compute();
+        }
+    };
+    struct Segment {
+        ggml_cgraph * graph;
+        Region * region;
+        HostGraphPlan plan;
+    };
     std::string label;
     ggml_cgraph * graph = nullptr;
     GraphId allocation_graph = 0;
     HostGraphPlan plan;
+    std::vector<std::unique_ptr<Region>> regions;
+    std::vector<std::unique_ptr<Segment>> segments;
 };
 
 PreparedGraph::PreparedGraph(const ExecutionContext & execution, PreparedGraphConfig config)
@@ -128,12 +145,77 @@ ggml_backend_sched_t PreparedGraph::create_scheduler(std::vector<ggml_backend_t>
     return scheduler_.get();
 }
 
+void PreparedGraph::replace_region(GraphId id, ggml_tensor * first, ggml_tensor * last,
+    std::unique_ptr<GraphRegionExecutor> executor) {
+    if (!context_ || workspace_ || allocation_started_)
+        throw std::logic_error(config_.label + " regions must be registered before preparation");
+    if (!first || !last || !executor) throw std::invalid_argument("Graph region requires boundaries and an executor");
+    if (!graphs_.at(id)->segments.empty()) throw std::logic_error("Reset the graph before changing prepared regions");
+    graphs_.at(id)->regions.push_back(std::make_unique<GraphEntry::Region>(
+        GraphEntry::Region{first, last, std::move(executor), false}));
+}
+
+void PreparedGraph::build_segments(GraphEntry & entry) {
+    if (!entry.segments.empty()) return; // Headers survive releasable-buffer cycles.
+    struct Range { int begin, end; GraphEntry::Region * region; };
+    std::vector<Range> ranges;
+    for (auto & region : entry.regions) {
+        int begin = -1, end = -1;
+        for (int node = 0; node < ggml_graph_n_nodes(entry.graph); ++node) {
+            auto * tensor = ggml_graph_node(entry.graph, node);
+            if (tensor == region->first) begin = node;
+            if (tensor == region->last) end = node + 1;
+        }
+        if (begin < 0 || end <= begin) throw std::invalid_argument(entry.label + " invalid graph region boundaries");
+        ranges.push_back({begin, end, region.get()});
+    }
+    std::sort(ranges.begin(), ranges.end(), [](const Range & a, const Range & b) { return a.begin < b.begin; });
+    int begin = 0;
+    entry.segments.clear();
+    entry.segments.reserve(2 * ranges.size() + 1);
+    for (const auto & range : ranges) {
+        if (range.begin < begin) throw std::invalid_argument(entry.label + " overlapping graph regions");
+        if (range.begin > begin)
+            entry.segments.push_back(std::make_unique<GraphEntry::Segment>(GraphEntry::Segment{
+                ggml_graph_slice(context_.get(), entry.graph, begin, range.begin), nullptr, {}}));
+        entry.segments.push_back(std::make_unique<GraphEntry::Segment>(GraphEntry::Segment{
+            ggml_graph_slice(context_.get(), entry.graph, range.begin, range.end), range.region, {}}));
+        begin = range.end;
+    }
+    if (begin < ggml_graph_n_nodes(entry.graph))
+        entry.segments.push_back(std::make_unique<GraphEntry::Segment>(GraphEntry::Segment{
+            ggml_graph_slice(context_.get(), entry.graph, begin, ggml_graph_n_nodes(entry.graph)), nullptr, {}}));
+}
+
+void PreparedGraph::prepare_segments(GraphEntry & entry) {
+    for (auto & segment : entry.segments) {
+        if (segment->region) {
+            auto * backend = scheduler_ ? ggml_backend_sched_get_tensor_backend(scheduler_.get(), segment->region->first)
+                : execution_.backend();
+            segment->region->active = true; // reset also cleans up a partially failed prepare().
+            segment->region->executor->prepare(backend, segment->graph);
+        } else if (!scheduler_) prepare_host_graph_plan(execution_, segment->graph, segment->plan);
+    }
+}
+
+void PreparedGraph::release_segments(GraphEntry & entry) {
+    for (auto & region : entry.regions) {
+        if (region->active) region->executor->reset();
+        region->active = false;
+    }
+    for (auto & segment : entry.segments) {
+        segment->plan.reset();
+        if (!scheduler_) release_backend_graph_resources(execution_.backend(), segment->graph, true);
+    }
+}
+
 void PreparedGraph::synchronize() {
     if (scheduler_) ggml_backend_sched_synchronize(scheduler_.get());
     else ggml_backend_synchronize(execution_.backend());
 }
 
 void PreparedGraph::release_graphs() {
+    for (auto & entry : graphs_) release_segments(*entry);
     // Scheduler split views borrow nodes from the allocation graph. Visit every
     // possible first-node key while metadata and split buffers are still alive.
     if (scheduler_) {
@@ -204,6 +286,7 @@ void PreparedGraph::release_buffers() {
         throw std::logic_error(config_.label + " buffer release requires an allocated releasable graph set");
     synchronize();
     for (auto & entry : graphs_) {
+        release_segments(*entry);
         entry->plan.reset();
         release_backend_graph_resources(execution_.backend(), entry->graph, true);
     }
@@ -234,6 +317,14 @@ void PreparedGraph::allocate() {
     if (persistent_context_ && !persistent_buffer_)
         throw std::logic_error(config_.label + " persistent tensors must be allocated before graph preparation");
     if (scheduler_) {
+        if (!graphs_.front()->regions.empty()) {
+            build_segments(*graphs_.front());
+            std::vector<ggml_backend_graph_region> regions;
+            for (const auto & region : graphs_.front()->regions)
+                regions.push_back({region->first, region->last, GraphEntry::Region::compute, region.get()});
+            if (!ggml_backend_sched_set_regions(scheduler_.get(), regions.data(), regions.size()))
+                throw std::runtime_error(config_.label + " cannot register scheduled regions");
+        }
         // Validate explicit placement hints. Unassigned nodes are placed by GGML,
         // which can choose another backend based on support and weight residency.
         for (int node = 0; node < ggml_graph_n_nodes(graph()); ++node) {
@@ -246,6 +337,7 @@ void PreparedGraph::allocate() {
         if (!ggml_backend_sched_alloc_graph(scheduler_.get(), graph()))
             throw std::runtime_error("Cannot allocate " + config_.label + " scheduled graph");
         allocated_ = true;
+        prepare_segments(*graphs_.front());
     } else {
         validate_graphs();
         allocation_started_ = true;
@@ -302,7 +394,13 @@ void PreparedGraph::validate_graphs() const {
 }
 
 void PreparedGraph::prepare_shared_allocation() {
-    for (auto & entry : graphs_) prepare_host_graph_plan(execution_, entry->graph, entry->plan);
+    for (auto & entry : graphs_) {
+        if (entry->regions.empty()) prepare_host_graph_plan(execution_, entry->graph, entry->plan);
+        else {
+            build_segments(*entry);
+            prepare_segments(*entry);
+        }
+    }
     allocation_started_ = true;
     allocated_ = true;
 }
@@ -310,6 +408,14 @@ void PreparedGraph::prepare_shared_allocation() {
 void PreparedGraph::compute(GraphId id) {
     if (!allocated_) throw std::runtime_error(config_.label + " graphs are not allocated");
     auto & entry = *graphs_.at(id);
+    if (!scheduler_ && !entry.regions.empty()) {
+        for (auto & segment : entry.segments) {
+            const auto status = segment->region ? segment->region->executor->compute()
+                : compute_graph(execution_, segment->graph, segment->plan, entry.label.c_str());
+            if (status != GGML_STATUS_SUCCESS) throw std::runtime_error(entry.label + " graph region execution failed");
+        }
+        return;
+    }
     const auto status = scheduler_ ? ggml_backend_sched_graph_compute(scheduler_.get(), entry.graph)
         : compute_graph(execution_, entry.graph, entry.plan, entry.label.c_str());
     if (status != GGML_STATUS_SUCCESS)

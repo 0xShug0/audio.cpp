@@ -12,6 +12,20 @@ namespace engine::core {
 
 class GraphWorkspace;
 
+// An explicitly substituted execution region, owned by its PreparedGraph.
+// prepare() sees the original allocated nodes and their assigned backend.
+// compute() must produce all externally consumed values and preserve the
+// original aliasing/side effects. It may enqueue work on the supplied backend;
+// host consumers must drain dependencies themselves. reset() drains/releases
+// executor-owned work and resources before graph storage is freed or relocated.
+class GraphRegionExecutor {
+public:
+    virtual ~GraphRegionExecutor() = default;
+    virtual void prepare(ggml_backend_t backend, ggml_cgraph * region) = 0;
+    virtual ggml_status compute() = 0;
+    virtual void reset() noexcept = 0;
+};
+
 struct PreparedGraphConfig {
     std::string label;
     size_t metadata_bytes = 0;
@@ -78,6 +92,12 @@ public:
     // handles (primary first, CPU last) and callback data must outlive this owner. A scheduler
     // owns its split allocations, so it cannot share a GraphWorkspace or entry points.
     ggml_backend_sched_t create_scheduler(std::vector<ggml_backend_t> backends);
+    // Replace an inclusive, disjoint node range before preparation. The full
+    // original graph still determines scratch layout/liveness. Entry points
+    // register their own replacements. Scheduled regions must fit one split.
+    // Without registration, the original preparation/execution path is used.
+    void replace_region(GraphId id, ggml_tensor * first, ggml_tensor * last,
+        std::unique_ptr<GraphRegionExecutor> executor);
     void compute(GraphId id = 0);
     // Drain work, release plans/captures and rebuild empty transient metadata.
     // Retains persistent state and owned scratch capacity. For an external
@@ -92,6 +112,9 @@ private:
     struct GraphEntry;
     void validate_graphs() const;
     void prepare_shared_allocation();
+    void build_segments(GraphEntry & entry);
+    void prepare_segments(GraphEntry & entry);
+    void release_segments(GraphEntry & entry);
     void release_graphs();
     void synchronize();
 

@@ -337,6 +337,18 @@ extern "C" {
     //
     typedef bool (*ggml_backend_sched_eval_callback)(struct ggml_tensor * t, bool ask, void * user_data);
 
+    // Explicit replacement of an inclusive node range. Allocation still uses the
+    // original graph. The callback must produce all externally consumed values
+    // and preserve side effects/aliasing. Prior work is queued on backend; a host
+    // consumer must synchronize as needed. Internal nodes are not eval-observed.
+    typedef enum ggml_status (*ggml_backend_region_callback)(ggml_backend_t backend, struct ggml_cgraph * region, void * user_data);
+    struct ggml_backend_graph_region {
+        struct ggml_tensor * first;
+        struct ggml_tensor * last;
+        ggml_backend_region_callback compute;
+        void * user_data;
+    };
+
     // Initialize a backend scheduler, backends with low index are given priority over backends with high index
     GGML_API ggml_backend_sched_t ggml_backend_sched_new(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload);
     GGML_API void                 ggml_backend_sched_free(ggml_backend_sched_t sched);
@@ -371,6 +383,12 @@ extern "C" {
     // This in effect deallocates all tensors that were previously allocated and leaves them with dangling pointers.
     // The correct way to use this API is to discard the deallocated tensors and create new ones.
     GGML_API void                 ggml_backend_sched_reset(ggml_backend_sched_t sched);
+
+    // Copy region descriptors before allocation (count zero disables replacement).
+    // Regions must be disjoint and wholly contained in one scheduler split.
+    // Rejects pipeline-parallel schedulers. Callback data must outlive the graph.
+    // Registration survives scheduler reset; reallocation rebuilds segment views.
+    GGML_API bool ggml_backend_sched_set_regions(ggml_backend_sched_t sched, const struct ggml_backend_graph_region * regions, size_t count);
 
     // Set a callback to be called for each resulting node during graph compute
     GGML_API void                 ggml_backend_sched_set_eval_callback(ggml_backend_sched_t sched, ggml_backend_sched_eval_callback callback, void * user_data);
