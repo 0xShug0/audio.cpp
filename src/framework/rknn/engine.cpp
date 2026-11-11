@@ -201,7 +201,7 @@ void Engine::run(const std::vector<Input> & inputs, std::vector<std::vector<floa
         driver_inputs[index].buf = const_cast<void *>(inputs[index].buf);
         driver_inputs[index].size = inputs[index].size;
         driver_inputs[index].type = inputs[index].type;
-        driver_inputs[index].fmt = RKNN_TENSOR_UNDEFINED;
+        driver_inputs[index].fmt = inputs[index].fmt;
         driver_inputs[index].pass_through = inputs[index].pass_through;
     }
     if (const int ret =

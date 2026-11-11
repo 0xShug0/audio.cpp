@@ -971,6 +971,7 @@ audiocpp_add_model(omnivoice
         src/models/omnivoice/audio_tokenizer.cpp
         src/models/omnivoice/prompt_builder.cpp
         src/models/omnivoice/generator.cpp
+        src/models/omnivoice/rknn_generator.cpp
         src/models/omnivoice/postprocess.cpp
         src/models/omnivoice/session.cpp
         src/models/omnivoice/loader.cpp

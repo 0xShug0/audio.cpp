@@ -1,9 +1,15 @@
 #include "engine/models/omnivoice/loader.h"
 
+#include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/rknn/engine_resources.h"
+#include "engine/models/omnivoice/rknn_generator.h"
 #include "engine/models/omnivoice/session.h"
 
+#include <algorithm>
+#include <filesystem>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 namespace engine::models::omnivoice {
@@ -65,6 +71,7 @@ runtime::ModelCliInterface cli(const OmniVoiceAssets &) {
         {"omnivoice.generator_decode_graph_arena_mb", "int", "Generator decode graph arena size in MiB; default 256.", false, "256", "1"},
         {"omnivoice.audio_tokenizer_weight_context_mb", "int", "Audio tokenizer weight context size in MiB; default 128.", false, "128", "1"},
         {"omnivoice.generator_weight_context_mb", "int", "Generator weight context size in MiB; default 256.", false, "256", "1"},
+        {"omnivoice.exec_plan", "json", "Component execution plans; {\"generator\":{\"impl\":\"rknn\",\"artifacts\":{\"main\":\"engine1.rknn,engine2.rknn\"}}} runs the diffusion-LM step on a ladder of Rockchip NPU engines compiled one per total-token length (tools/rknn/prepare_omnivoice_rknn_generator.py, built with ENGINE_ENABLE_RKNN); default {} keeps the ggml graph. A request longer than the largest engine runs the ggml graph.", false, "{}"},
     };
     return out;
 }
@@ -89,6 +96,44 @@ public:
 
     std::string advertised_instructions_policy() const override {
         return "soft_tags";
+    }
+
+    // The exec_plan's engine ladder is priced the way the cosyvoice3 flow ladder is: files
+    // priced by the driver (engine_resources), the resident set clamped to the aperture the
+    // sidecar itself enforces, and at least the single largest rung (one engine is always
+    // resident when the plan names the ladder at all).
+    runtime::ModelResourcePlan model_resources(
+        const std::filesystem::path & model_path,
+        const std::unordered_map<std::string, std::string> & session_options) const override {
+        const auto option = session_options.find("omnivoice.exec_plan");
+        if (option == session_options.end()) {
+            return runtime::ModelResourcePlan{};
+        }
+        std::vector<std::string> artifacts;
+        try {
+            const auto plan = engine::io::json::parse(option->second);
+            const auto * generator = plan.find("generator");
+            const auto * impl = generator ? generator->find("impl") : nullptr;
+            if (!impl || impl->as_string() != "rknn") {
+                return runtime::ModelResourcePlan{};
+            }
+            artifacts.push_back(engine::io::json::require_string(generator->require("artifacts"), "main"));
+        } catch (const std::runtime_error &) {
+            // Session loading reports invalid execution plans.
+            return runtime::ModelResourcePlan{};
+        }
+        auto resources = rknn::engine_resources(artifacts, model_path);
+        const auto budget_mib = aperture_budget_mib();
+        if (budget_mib > 0) {
+            size_t largest = 0;
+            for (const auto & engine_requirement : resources.engines) {
+                largest = std::max(largest, engine_requirement.resident_bytes);
+            }
+            const size_t budget_bytes = static_cast<size_t>(budget_mib) * (1024ull * 1024ull);
+            resources.resident_bytes =
+                std::max(largest, std::min(resources.resident_bytes, budget_bytes));
+        }
+        return resources;
     }
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {

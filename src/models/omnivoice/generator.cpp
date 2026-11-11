@@ -14,6 +14,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
+#include "engine/models/omnivoice/rknn_generator.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -28,8 +29,8 @@
 #include <optional>
 #include <random>
 #include <sstream>
-#include <string>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <tuple>
 #include <chrono>
@@ -1795,6 +1796,22 @@ void update_generated_tokens(
     }
 }
 
+// Snapshot of one request's packed inputs for one engine step. Rebuilt per step
+// because update_generated_tokens() rewrites the audio rows in place; the copy
+// itself is a few tens of KB.
+OmniVoiceRknnStepInputs rknn_step_inputs(const PackedInputs & packed, float guidance) {
+    OmniVoiceRknnStepInputs out;
+    out.total_tokens = packed.total_tokens();
+    out.audio_start = packed.style_tokens + packed.text_tokens;
+    out.target_frames = packed.target_frames;
+    out.conditional_ids = packed.conditional_audio_ids;
+    out.unconditional_ids = packed.unconditional_audio_ids;
+    out.conditional_text_ids = packed.conditional_text_ids;
+    out.unconditional_text_ids = packed.unconditional_text_ids;
+    out.guidance = guidance;
+    return out;
+}
+
 }  // namespace
 
 struct OmniVoiceQwen3DiffusionRuntime::Impl {
@@ -1802,6 +1819,10 @@ struct OmniVoiceQwen3DiffusionRuntime::Impl {
     size_t graph_arena_bytes = 0;
     std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime;
     std::unique_ptr<Qwen3DiffusionGraph> forward_graph;
+    // Rockchip NPU sidecar for the step graph; null on every host without ENGINE_ENABLE_RKNN
+    // and on deployments that did not declare the ladder. When set and a request fits the
+    // ladder, the step loop runs on it and no ggml step graph is built.
+    std::unique_ptr<OmniVoiceRknnGenerator> rknn;
     bool mem_saver = false;
     OmniVoiceGeneratorPerfMode perf_mode = OmniVoiceGeneratorPerfMode::Standard;
     bool packed_cfg = true;
@@ -1821,7 +1842,8 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
     OmniVoiceGeneratorPerfMode perf_mode,
     bool packed_cfg,
     bool device_scoring,
-    bool packed_projections)
+    bool packed_projections,
+    std::vector<std::string> rknn_engine_paths)
     : impl_(std::make_unique<Impl>()) {
     if (assets == nullptr) {
         throw std::runtime_error("OmniVoice generator requires assets");
@@ -1841,6 +1863,14 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
     impl_->perf_mode = perf_mode;
     impl_->packed_cfg = packed_cfg;
     impl_->device_scoring = device_scoring;
+    if (!rknn_engine_paths.empty()) {
+        impl_->rknn = std::make_unique<OmniVoiceRknnGenerator>(
+            std::move(rknn_engine_paths),
+            impl_->assets->config.num_audio_codebook,
+            impl_->assets->config.audio_vocab_size,
+            impl_->assets->config.llm.head_dim,
+            impl_->assets->config.llm.rope_theta);
+    }
 }
 
 OmniVoiceQwen3DiffusionRuntime::~OmniVoiceQwen3DiffusionRuntime() = default;
@@ -1978,44 +2008,67 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
     impl_->last_stats.rebuild_build_ms = 0.0;
     impl_->last_stats.rebuild_alloc_ms = 0.0;
     impl_->last_stats.rebuild_init_ms = 0.0;
-    std::vector<GraphItemShape> shapes(batch);
-    for (size_t item = 0; item < batch; ++item) {
-        shapes[item] = {inputs[item].total_tokens(), inputs[item].target_frames};
-    }
-    const bool needs_rebuild =
-        impl_->forward_graph == nullptr || !impl_->forward_graph->matches(*impl_->runtime, shapes);
-    if (needs_rebuild) {
-        const auto rebuild_start = Clock::now();
-        if (impl_->forward_graph == nullptr) {
-            if (impl_->mem_saver) {
-                impl_->forward_graph = std::make_unique<Qwen3DiffusionLayerwiseGraph>(
-                    impl_->runtime,
-                    impl_->graph_arena_bytes,
-                    shapes);
-            } else {
-                impl_->forward_graph = std::make_unique<Qwen3DiffusionForwardGraph>(
-                    impl_->runtime,
-                    impl_->graph_arena_bytes,
-                    shapes,
-                    impl_->perf_mode,
-                    impl_->packed_cfg,
-                    impl_->device_scoring);
-            }
-        } else {
-            impl_->forward_graph->rebuild(shapes);
+    // The RKNN ladder path: one bucket covers the whole batch, the way the shared graph does.
+    // If any request exceeds the largest rung the whole step loop falls back to the ggml graph,
+    // which the caller always keeps.
+    int64_t rknn_bucket = 0;
+    if (impl_->rknn != nullptr) {
+        int64_t max_total = 0;
+        for (const auto & input : inputs) {
+            max_total = std::max(max_total, input.total_tokens());
         }
-        const auto rebuild_end = Clock::now();
-        impl_->last_stats.graph_rebuilt = true;
-        impl_->last_stats.rebuild_ms = engine::debug::elapsed_ms(rebuild_start, rebuild_end);
-        impl_->last_stats.rebuild_clear_ms = impl_->forward_graph->rebuild_clear_ms();
-        impl_->last_stats.rebuild_build_ms = impl_->forward_graph->rebuild_build_ms();
-        impl_->last_stats.rebuild_alloc_ms = impl_->forward_graph->rebuild_alloc_ms();
-        impl_->last_stats.rebuild_init_ms = impl_->forward_graph->rebuild_init_ms();
+        rknn_bucket = impl_->rknn->bucket_for(max_total);
+        if (rknn_bucket <= 0) {
+            engine::debug::trace_log_scalar("omnivoice.generator.rknn.fallback_tokens", max_total);
+        }
     }
-    impl_->last_stats.batch_capacity = impl_->forward_graph->batch_capacity();
-    impl_->last_stats.total_token_capacity = impl_->forward_graph->total_token_capacity();
-    impl_->last_stats.target_frame_capacity = impl_->forward_graph->target_frame_capacity();
-    const int64_t frame_capacity = impl_->forward_graph->target_frame_capacity();
+    const bool use_rknn = rknn_bucket > 0;
+    if (use_rknn) {
+        impl_->last_stats.batch_capacity = static_cast<int64_t>(batch);
+        impl_->last_stats.total_token_capacity = rknn_bucket;
+        impl_->last_stats.target_frame_capacity = rknn_bucket;
+    } else {
+        std::vector<GraphItemShape> shapes(batch);
+        for (size_t item = 0; item < batch; ++item) {
+            shapes[item] = {inputs[item].total_tokens(), inputs[item].target_frames};
+        }
+        const bool needs_rebuild =
+            impl_->forward_graph == nullptr || !impl_->forward_graph->matches(*impl_->runtime, shapes);
+        if (needs_rebuild) {
+            const auto rebuild_start = Clock::now();
+            if (impl_->forward_graph == nullptr) {
+                if (impl_->mem_saver) {
+                    impl_->forward_graph = std::make_unique<Qwen3DiffusionLayerwiseGraph>(
+                        impl_->runtime,
+                        impl_->graph_arena_bytes,
+                        shapes);
+                } else {
+                    impl_->forward_graph = std::make_unique<Qwen3DiffusionForwardGraph>(
+                        impl_->runtime,
+                        impl_->graph_arena_bytes,
+                        shapes,
+                        impl_->perf_mode,
+                        impl_->packed_cfg,
+                        impl_->device_scoring);
+                }
+            } else {
+                impl_->forward_graph->rebuild(shapes);
+            }
+            const auto rebuild_end = Clock::now();
+            impl_->last_stats.graph_rebuilt = true;
+            impl_->last_stats.rebuild_ms = engine::debug::elapsed_ms(rebuild_start, rebuild_end);
+            impl_->last_stats.rebuild_clear_ms = impl_->forward_graph->rebuild_clear_ms();
+            impl_->last_stats.rebuild_build_ms = impl_->forward_graph->rebuild_build_ms();
+            impl_->last_stats.rebuild_alloc_ms = impl_->forward_graph->rebuild_alloc_ms();
+            impl_->last_stats.rebuild_init_ms = impl_->forward_graph->rebuild_init_ms();
+        }
+        impl_->last_stats.batch_capacity = impl_->forward_graph->batch_capacity();
+        impl_->last_stats.total_token_capacity = impl_->forward_graph->total_token_capacity();
+        impl_->last_stats.target_frame_capacity = impl_->forward_graph->target_frame_capacity();
+    }
+    const int64_t frame_capacity = use_rknn
+        ? rknn_bucket
+        : impl_->forward_graph->target_frame_capacity();
     const size_t item_logits_stride = static_cast<size_t>(frame_capacity * codebooks * vocab_size);
 
     double upload_ms = 0.0;
@@ -2023,9 +2076,14 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
     double readback_ms = 0.0;
     double scoring_ms = 0.0;
     double update_ms = 0.0;
-    const auto prepare_upload_start = Clock::now();
-    impl_->forward_graph->prepare_request(inputs, guidance_scales);
-    upload_ms += engine::debug::elapsed_ms(prepare_upload_start, Clock::now());
+    std::vector<float> rknn_logits;
+    if (use_rknn) {
+        rknn_logits.assign(batch * item_logits_stride, 0.0F);
+    } else {
+        const auto prepare_upload_start = Clock::now();
+        impl_->forward_graph->prepare_request(inputs, guidance_scales);
+        upload_ms += engine::debug::elapsed_ms(prepare_upload_start, Clock::now());
+    }
 
     struct Candidate {
         float score = -std::numeric_limits<float>::infinity();
@@ -2064,12 +2122,31 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
                 any_sampled = any_sampled || options[item].class_temperature != 0.0F;
             }
         }
-        const bool device_scores = any_greedy && impl_->forward_graph->computes_best_tokens();
-        const auto outputs = impl_->forward_graph->compute(
-            any_sampled || (any_greedy && !device_scores),
-            device_scores,
-            compute_ms,
-            readback_ms);
+        const bool device_scores = !use_rknn && any_greedy &&
+            impl_->forward_graph->computes_best_tokens();
+        GraphStepOutputs outputs;
+        if (use_rknn) {
+            // The engine is a batch-2 (CFG pair) graph per request, so a batched step runs
+            // one engine pass per active request; served traffic is batch 1.
+            const auto rknn_start = Clock::now();
+            for (size_t item = 0; item < batch; ++item) {
+                if (fill_counts[item] <= 0) {
+                    continue;
+                }
+                impl_->rknn->run(
+                    rknn_bucket,
+                    rknn_step_inputs(inputs[item], guidance_scales[item]),
+                    rknn_logits.data() + item * item_logits_stride);
+            }
+            compute_ms += engine::debug::elapsed_ms(rknn_start, Clock::now());
+            outputs.logits = &rknn_logits;
+        } else {
+            outputs = impl_->forward_graph->compute(
+                any_sampled || (any_greedy && !device_scores),
+                device_scores,
+                compute_ms,
+                readback_ms);
+        }
         const auto scoring_start = Clock::now();
 
         // Greedy-class requests: score every active slot of every request in
@@ -2244,7 +2321,9 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
                 state.active_indices.end());
         }
         const auto upload_start = Clock::now();
-        impl_->forward_graph->update_generated_target_tokens(inputs);
+        if (!use_rknn) {
+            impl_->forward_graph->update_generated_target_tokens(inputs);
+        }
         const auto upload_end = Clock::now();
         upload_ms += engine::debug::elapsed_ms(upload_start, upload_end);
         update_ms += engine::debug::elapsed_ms(update_start, upload_end);

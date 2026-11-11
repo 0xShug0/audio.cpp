@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <string>
 #include <vector>
 
 namespace engine::models::omnivoice {
@@ -45,7 +46,8 @@ public:
         OmniVoiceGeneratorPerfMode perf_mode,
         bool packed_cfg = true,
         bool device_scoring = true,
-        bool packed_projections = true);
+        bool packed_projections = true,
+        std::vector<std::string> rknn_engine_paths = {});
     ~OmniVoiceQwen3DiffusionRuntime();
 
     // One request, drawing from the runtime RNG (see seed_rng()).
