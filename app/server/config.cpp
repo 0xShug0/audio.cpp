@@ -251,6 +251,11 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
     }
     config.backend = parse_server_backend(engine::io::json::optional_string(root, "backend", "cuda"));
     config.backend_impl = engine::io::json::optional_string(root, "backend_impl", "");
+    if (const auto * value = root.find("moe_cpu_share")) {
+        if (!value->is_number() || !std::isfinite(value->as_number()) || value->as_number() < 0 || value->as_number() > 1)
+            throw std::runtime_error("moe_cpu_share must be a number between zero and one");
+        config.moe_cpu_share = static_cast<float>(value->as_number());
+    }
     config.device = engine::io::json::optional_i32(root, "device", config.device);
     config.threads = engine::io::json::optional_i32(root, "threads", config.threads);
     config.lazy_load = engine::io::json::optional_bool(root, "lazy_load", config.lazy_load);

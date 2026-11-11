@@ -3,6 +3,7 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/binary.h"
+#include "engine/framework/core/prepared_graph.h"
 
 #include <ggml-alloc.h>
 #include <gguf.h>
@@ -13,6 +14,7 @@
 #include <map>
 #include <stdexcept>
 #include <unordered_set>
+#include <unordered_map>
 #include <utility>
 
 #if defined(__APPLE__) && !defined(_OPENMP)
@@ -21,8 +23,15 @@
 
 namespace engine::core {
 
+namespace {
+struct ExpertRoutes {
+    std::unordered_map<ggml_tensor *, DiskExpertWeightStore::Route> bindings;
+};
+}
+
 class DiskExpertWeightStore::Impl {
 public:
+    struct BufferDeleter { void operator()(ggml_backend_buffer_t buffer) const { ggml_backend_buffer_free(buffer); } };
     struct ContextDeleter { void operator()(ggml_context * ctx) const { ggml_free(ctx); } };
     struct HeaderDeleter { void operator()(gguf_context * ctx) const { gguf_free(ctx); } };
     struct Projection {
@@ -40,7 +49,11 @@ public:
         std::vector<ggml_tensor *> tensors;
         std::vector<int32_t> expert_ids;
         std::vector<uint64_t> last_used;
+        std::unique_ptr<ggml_context, ContextDeleter> host_context;
+        std::vector<ggml_tensor *> host_tensors;
+        std::vector<std::unique_ptr<ggml_backend_buffer, BufferDeleter>> host_views;
         ~Group() {
+            host_views.clear();
             if (buffer) ggml_backend_buffer_free(buffer);
             if (host_buffer) ggml_backend_buffer_free(host_buffer);
         }
@@ -53,8 +66,8 @@ public:
         std::byte * data() { return buffer ? static_cast<std::byte *>(ggml_backend_buffer_get_base(buffer)) : bytes.data(); }
     };
 
-    Impl(const std::filesystem::path & path, bool pin, size_t threads)
-        : file(path, std::ios::binary), pin_experts(pin), read_threads(threads) {
+    Impl(DiskExpertWeightStore & owner, const std::filesystem::path & path, bool pin, size_t threads)
+        : owner(owner), file(path, std::ios::binary), pin_experts(pin), read_threads(threads) {
         if (read_threads < 1 || read_threads > 64)
             throw std::invalid_argument("disk expert read_threads must be between 1 and 64");
 #if !defined(_OPENMP) && !defined(__APPLE__)
@@ -204,6 +217,7 @@ public:
         return ids;
     }
 
+    DiskExpertWeightStore & owner;
     std::ifstream file;
     io::BinaryBlob mapped_file;
     bool pin_experts;
@@ -213,11 +227,12 @@ public:
     std::map<std::string, size_t> routes;
     std::map<ggml_backend_t, std::unique_ptr<Staging>> host_staging;
     uint64_t clock = 0;
+    uint64_t cache_epoch = 0;
     Statistics stats;
 };
 
 DiskExpertWeightStore::DiskExpertWeightStore(const std::filesystem::path & path, bool pin_experts, size_t read_threads)
-    : impl_(std::make_unique<Impl>(path, pin_experts, read_threads)) {}
+    : impl_(std::make_unique<Impl>(*this, path, pin_experts, read_threads)) {}
 DiskExpertWeightStore::~DiskExpertWeightStore() {
     debug::timing_log_scalar("disk_experts.bytes_read", impl_->stats.bytes_read);
     debug::timing_log_scalar("disk_experts.expert_loads", impl_->stats.expert_loads);
@@ -310,13 +325,66 @@ TensorValue DiskExpertWeightStore::tensor(size_t group, size_t projection) const
     return wrap_tensor(tensor, TensorShape::from_dims({tensor->ne[2], tensor->ne[1], tensor->ne[0]}), tensor->type);
 }
 
+TensorValue DiskExpertWeightStore::host_tensor(size_t index, const ggml_tensor * device_tensor) {
+    auto & group = *impl_->groups.at(index);
+    const auto found = std::find(group.tensors.begin(), group.tensors.end(), device_tensor);
+    if (found == group.tensors.end()) throw std::invalid_argument("expert tensor does not belong to this cache group");
+    if (!group.host_context) {
+        std::unique_ptr<ggml_context, Impl::ContextDeleter> context(
+            ggml_init({group.projections.size() * ggml_tensor_overhead() + 1024, nullptr, true}));
+        if (!context) throw std::runtime_error("cannot allocate host expert tensor metadata");
+        std::vector<ggml_tensor *> tensors;
+        std::vector<std::unique_ptr<ggml_backend_buffer, Impl::BufferDeleter>> views;
+        tensors.reserve(group.projections.size());
+        views.reserve(group.projections.size());
+        for (const auto & projection : group.projections) {
+            auto * tensor = ggml_new_tensor_3d(context.get(), projection.type,
+                projection.input, projection.output, projection.experts);
+            const auto * data = projection.host_data ? projection.host_data : impl_->mapped_file.data() + projection.offset;
+            std::unique_ptr<ggml_backend_buffer, Impl::BufferDeleter> buffer(
+                ggml_backend_cpu_buffer_from_ptr(const_cast<std::byte *>(data), ggml_nbytes(tensor)));
+            if (!buffer) throw std::runtime_error("cannot wrap native host expert weights");
+            ggml_backend_buffer_set_usage(buffer.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+            if (ggml_backend_tensor_alloc(buffer.get(), tensor, const_cast<std::byte *>(data)) != GGML_STATUS_SUCCESS)
+                throw std::runtime_error("cannot bind native host expert weights");
+            ggml_set_param(tensor);
+            tensors.push_back(tensor);
+            views.push_back(std::move(buffer));
+        }
+        group.host_tensors = std::move(tensors);
+        group.host_views = std::move(views);
+        group.host_context = std::move(context);
+    }
+    auto * tensor = group.host_tensors.at(static_cast<size_t>(found - group.tensors.begin()));
+    return wrap_tensor(tensor, TensorShape::from_dims({tensor->ne[2], tensor->ne[1], tensor->ne[0]}), tensor->type);
+}
+
+const std::vector<int32_t> & DiskExpertWeightStore::cached_experts(size_t group) const {
+    return impl_->groups.at(group)->expert_ids;
+}
+
+uint64_t DiskExpertWeightStore::cache_epoch() const {
+    return impl_->cache_epoch;
+}
+
 ggml_tensor * DiskExpertWeightStore::route(ModuleBuildContext & ctx, ggml_tensor * ids, size_t group) const {
     if (ids->type != GGML_TYPE_I32) throw std::runtime_error("disk expert routing requires I32 IDs");
     if (group >= impl_->groups.size()) throw std::out_of_range("disk expert group not found");
     auto * routed = ggml_dup(ctx.ggml, ids);
     ggml_set_name(routed, ("disk_experts.route." + std::to_string(group)).c_str());
     ggml_set_output(routed);
+    if (auto * owner = ctx.region_owner)
+        owner->region_state<ExpertRoutes>()->bindings.emplace(routed, Route{&impl_->owner, group});
     return routed;
+}
+
+std::optional<DiskExpertWeightStore::Route> DiskExpertWeightStore::find_route(ModuleBuildContext & ctx, ggml_tensor * ids) {
+    auto * owner = ctx.region_owner;
+    if (!owner) return std::nullopt;
+    const auto routes = owner->region_state<ExpertRoutes>();
+    const auto found = routes->bindings.find(ids);
+    if (found == routes->bindings.end()) return std::nullopt;
+    return found->second;
 }
 
 std::vector<int32_t> DiskExpertWeightStore::stage(size_t group, const std::vector<int32_t> & expert_ids) {
@@ -324,6 +392,7 @@ std::vector<int32_t> DiskExpertWeightStore::stage(size_t group, const std::vecto
 }
 
 void DiskExpertWeightStore::invalidate_cache() {
+    ++impl_->cache_epoch;
     for (auto & group : impl_->groups) {
         std::fill(group->expert_ids.begin(), group->expert_ids.end(), -1);
         std::fill(group->last_used.begin(), group->last_used.end(), 0);

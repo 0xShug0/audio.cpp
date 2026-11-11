@@ -23,6 +23,7 @@ void GraphWorkspace::add(PreparedGraph & graph) {
     if (prepared_) throw std::logic_error("cannot register graphs after workspace preparation");
     if (graph.persistent_context_ && !graph.persistent_buffer_)
         throw std::logic_error("persistent tensors must be allocated before graph registration");
+    graph.bind_regions();
     graph.validate_graphs();
     // Reserve both lists before registration so allocation failure cannot leave
     // half of a graph set registered.

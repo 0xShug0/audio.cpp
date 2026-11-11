@@ -337,14 +337,18 @@ extern "C" {
     //
     typedef bool (*ggml_backend_sched_eval_callback)(struct ggml_tensor * t, bool ask, void * user_data);
 
-    // Explicit replacement of an inclusive node range. Allocation still uses the
-    // original graph. The callback must produce all externally consumed values
-    // and preserve side effects/aliasing. Prior work is queued on backend; a host
-    // consumer must synchronize as needed. Internal nodes are not eval-observed.
+    // Explicit replacement of exact, ordered, contiguous graph nodes. Allocation
+    // keeps the full graph. Only declared outputs may escape the region. Backend
+    // optimization cannot move work across a replacement boundary. Deferred eval
+    // tensors are inputs handled by the replacement instead of the eval callback.
     typedef enum ggml_status (*ggml_backend_region_callback)(ggml_backend_t backend, struct ggml_cgraph * region, void * user_data);
     struct ggml_backend_graph_region {
-        struct ggml_tensor * first;
-        struct ggml_tensor * last;
+        struct ggml_tensor * const * nodes;
+        size_t n_nodes;
+        struct ggml_tensor * const * outputs;
+        size_t n_outputs;
+        struct ggml_tensor * const * deferred_eval;
+        size_t n_deferred_eval;
         ggml_backend_region_callback compute;
         void * user_data;
     };

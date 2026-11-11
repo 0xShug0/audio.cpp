@@ -13,8 +13,7 @@ namespace engine::core {
 
 struct PreparedGraph::GraphEntry {
     struct Region {
-        ggml_tensor * first;
-        ggml_tensor * last;
+        GraphRegion definition;
         std::unique_ptr<GraphRegionExecutor> executor;
         bool active = false;
         static ggml_status compute(ggml_backend_t, ggml_cgraph *, void * data) {
@@ -145,36 +144,112 @@ ggml_backend_sched_t PreparedGraph::create_scheduler(std::vector<ggml_backend_t>
     return scheduler_.get();
 }
 
-void PreparedGraph::replace_region(GraphId id, ggml_tensor * first, ggml_tensor * last,
+void PreparedGraph::replace_region(GraphId id, GraphRegion definition,
     std::unique_ptr<GraphRegionExecutor> executor) {
     if (!context_ || workspace_ || allocation_started_)
         throw std::logic_error(config_.label + " regions must be registered before preparation");
-    if (!first || !last || !executor) throw std::invalid_argument("Graph region requires boundaries and an executor");
+    if (definition.nodes.empty() || definition.outputs.empty() || !executor)
+        throw std::invalid_argument("Graph region requires exact nodes, outputs and an executor");
     if (!graphs_.at(id)->segments.empty()) throw std::logic_error("Reset the graph before changing prepared regions");
     graphs_.at(id)->regions.push_back(std::make_unique<GraphEntry::Region>(
-        GraphEntry::Region{first, last, std::move(executor), false}));
+        GraphEntry::Region{std::move(definition), std::move(executor), false}));
+}
+
+void PreparedGraph::record_region(GraphRegion definition,
+    std::function<std::unique_ptr<GraphRegionExecutor>()> factory) {
+    if (!context_ || workspace_ || allocation_started_ || regions_bound_)
+        throw std::logic_error(config_.label + " regions must be recorded during graph construction");
+    if (definition.nodes.empty() || definition.outputs.empty() || !factory)
+        throw std::invalid_argument("Recorded region requires exact nodes, outputs and a factory");
+    recorded_regions_.push_back({std::move(definition), std::move(factory)});
+}
+
+void PreparedGraph::bind_regions() {
+    if (regions_bound_ || recorded_regions_.empty()) return;
+    for (const auto & recorded : recorded_regions_) {
+        const auto & definition = recorded.definition;
+        const std::unordered_set<ggml_tensor *> members(definition.nodes.begin(), definition.nodes.end());
+        bool bound = false;
+        for (size_t id = 0; id < graphs_.size(); ++id) {
+            size_t found = 0;
+            for (int n = 0; n < ggml_graph_n_nodes(graph(id)); ++n)
+                found += members.count(ggml_graph_node(graph(id), n));
+            if (!found) continue;
+            if (found != definition.nodes.size())
+                throw std::invalid_argument(graphs_[id]->label + " contains only part of a recorded region");
+            replace_region(id, definition, recorded.factory());
+            bound = true;
+        }
+        if (!bound) throw std::invalid_argument(config_.label + " recorded region is absent");
+    }
+    regions_bound_ = true;
 }
 
 void PreparedGraph::build_segments(GraphEntry & entry) {
-    if (!entry.segments.empty()) return; // Headers survive releasable-buffer cycles.
+    if (!entry.segments.empty()) return;
     struct Range { int begin, end; GraphEntry::Region * region; };
     std::vector<Range> ranges;
+    std::unordered_map<ggml_tensor *, GraphEntry::Region *> owners;
+    std::unordered_set<ggml_tensor *> outputs;
     for (auto & region : entry.regions) {
-        int begin = -1, end = -1;
-        for (int node = 0; node < ggml_graph_n_nodes(entry.graph); ++node) {
-            auto * tensor = ggml_graph_node(entry.graph, node);
-            if (tensor == region->first) begin = node;
-            if (tensor == region->last) end = node + 1;
+        const auto expected = region->definition.nodes;
+        int begin = -1;
+        for (int n = 0; n < ggml_graph_n_nodes(entry.graph); ++n)
+            if (ggml_graph_node(entry.graph, n) == expected.front()) { begin = n; break; }
+        if (begin < 0) throw std::invalid_argument(entry.label + " region nodes are absent");
+        std::unordered_set<ggml_tensor *> operands;
+        for (auto * node : expected) {
+            if (!node) throw std::invalid_argument(entry.label + " null region node");
+            for (auto * source : node->src) if (source) operands.insert(source);
         }
-        if (begin < 0 || end <= begin) throw std::invalid_argument(entry.label + " invalid graph region boundaries");
+        std::vector<ggml_tensor *> nodes;
+        int end = begin;
+        for (auto * node : expected) {
+            while (end < ggml_graph_n_nodes(entry.graph) && ggml_graph_node(entry.graph, end) != node) {
+                auto * marker = ggml_graph_node(entry.graph, end);
+                // GGML places PARAM leaves in its node list on their first use.
+                // These already allocated operands perform no work; retain their
+                // markers, but never absorb an unrelated computational node.
+                if (marker->op != GGML_OP_NONE || !operands.count(marker))
+                    throw std::invalid_argument(entry.label + " region contains an undeclared operation " + marker->name);
+                nodes.push_back(marker);
+                ++end;
+            }
+            if (end == ggml_graph_n_nodes(entry.graph))
+                throw std::invalid_argument(entry.label + " region nodes are absent or out of order");
+            nodes.push_back(node);
+            ++end;
+        }
+        for (auto * node : nodes)
+            if (!owners.emplace(node, region.get()).second)
+                throw std::invalid_argument(entry.label + " graph regions overlap");
+        region->definition.nodes = std::move(nodes);
+        const auto & sealed = region->definition.nodes;
+        for (auto * output : region->definition.outputs) {
+            if (!output || std::find(sealed.begin(), sealed.end(), output) == sealed.end())
+                throw std::invalid_argument(entry.label + " region output is not a member");
+            outputs.insert(output);
+        }
         ranges.push_back({begin, end, region.get()});
+    }
+    // An executor must not silently discard an intermediate used by another
+    // graph operation, a graph output or an entry point's external consumer.
+    for (int n = 0; n < ggml_graph_n_nodes(entry.graph); ++n) {
+        auto * node = ggml_graph_node(entry.graph, n);
+        const auto owner = owners.find(node);
+        if (node->op != GGML_OP_NONE && owner != owners.end() && (node->flags & GGML_TENSOR_FLAG_OUTPUT) && !outputs.count(node))
+            throw std::invalid_argument(entry.label + " region has an undeclared graph output");
+        for (auto * source : node->src) {
+            const auto producer = owners.find(source);
+            if (producer != owners.end() && source->op != GGML_OP_NONE && (owner == owners.end() || owner->second != producer->second) &&
+                !outputs.count(source))
+                throw std::invalid_argument(entry.label + " region has an undeclared escaping value");
+        }
     }
     std::sort(ranges.begin(), ranges.end(), [](const Range & a, const Range & b) { return a.begin < b.begin; });
     int begin = 0;
-    entry.segments.clear();
     entry.segments.reserve(2 * ranges.size() + 1);
     for (const auto & range : ranges) {
-        if (range.begin < begin) throw std::invalid_argument(entry.label + " overlapping graph regions");
         if (range.begin > begin)
             entry.segments.push_back(std::make_unique<GraphEntry::Segment>(GraphEntry::Segment{
                 ggml_graph_slice(context_.get(), entry.graph, begin, range.begin), nullptr, {}}));
@@ -190,7 +265,7 @@ void PreparedGraph::build_segments(GraphEntry & entry) {
 void PreparedGraph::prepare_segments(GraphEntry & entry) {
     for (auto & segment : entry.segments) {
         if (segment->region) {
-            auto * backend = scheduler_ ? ggml_backend_sched_get_tensor_backend(scheduler_.get(), segment->region->first)
+            auto * backend = scheduler_ ? ggml_backend_sched_get_tensor_backend(scheduler_.get(), segment->region->definition.nodes.front())
                 : execution_.backend();
             segment->region->active = true; // reset also cleans up a partially failed prepare().
             segment->region->executor->prepare(backend, segment->graph);
@@ -246,7 +321,11 @@ void PreparedGraph::reset() {
     if (workspace_) throw std::logic_error(config_.label + " is still registered with a workspace; reset the workspace first");
     if (!graphs_.empty()) synchronize();
     release_graphs();
+    build_context_ = {};
     graphs_.clear();
+    recorded_regions_.clear();
+    region_states_.reset();
+    regions_bound_ = false;
     if (context_) ggml_reset(context_.get());
     else context_.reset(ggml_init({config_.metadata_bytes, nullptr, true}));
     if (!context_) throw std::runtime_error("Cannot allocate " + config_.label + " graph metadata");
@@ -255,6 +334,9 @@ void PreparedGraph::reset() {
     entry->label = config_.label;
     entry->graph = ggml_new_graph_custom(context_.get(), config_.graph_nodes, false);
     graphs_.push_back(std::move(entry));
+    if (execution_.config().moe_cpu_share > 0 && !is_host_backend(execution_.backend())) {
+        build_context_.region_owner = this;
+    }
 }
 
 void PreparedGraph::release() {
@@ -262,6 +344,9 @@ void PreparedGraph::release() {
     if (!graphs_.empty() || persistent_buffer_) synchronize();
     release_graphs();
     decltype(graphs_){}.swap(graphs_);
+    recorded_regions_.clear();
+    region_states_.reset();
+    regions_bound_ = false;
     owned_workspace_.reset();
     context_.reset();
     build_context_ = {};
@@ -316,12 +401,16 @@ void PreparedGraph::allocate() {
         throw std::runtime_error(config_.label + " allocation requires unallocated, unregistered graphs; reset before rebuilding");
     if (persistent_context_ && !persistent_buffer_)
         throw std::logic_error(config_.label + " persistent tensors must be allocated before graph preparation");
+    bind_regions();
     if (scheduler_) {
         if (!graphs_.front()->regions.empty()) {
             build_segments(*graphs_.front());
             std::vector<ggml_backend_graph_region> regions;
             for (const auto & region : graphs_.front()->regions)
-                regions.push_back({region->first, region->last, GraphEntry::Region::compute, region.get()});
+                regions.push_back({region->definition.nodes.data(), region->definition.nodes.size(),
+                    region->definition.outputs.data(), region->definition.outputs.size(),
+                    region->definition.deferred_eval.data(), region->definition.deferred_eval.size(),
+                    GraphEntry::Region::compute, region.get()});
             if (!ggml_backend_sched_set_regions(scheduler_.get(), regions.data(), regions.size()))
                 throw std::runtime_error(config_.label + " cannot register scheduled regions");
         }

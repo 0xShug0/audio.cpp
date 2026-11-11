@@ -82,6 +82,7 @@ struct ServerConfig {
     std::optional<std::filesystem::path> models_root;
     engine::core::BackendType backend = engine::core::BackendType::Cuda;
     std::string backend_impl;
+    float moe_cpu_share = 0;
     int device = 0;
     int threads = 1;
     bool lazy_load = false;

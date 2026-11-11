@@ -21,6 +21,8 @@
 #include <string.h>
 #include <algorithm>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 
 #ifdef __APPLE__
 #include <sys/types.h>
@@ -801,15 +803,25 @@ struct ggml_backend_sched_split {
     struct ggml_cgraph graph;
 };
 
-struct ggml_backend_sched_segment {
-    struct ggml_cgraph graph;
+struct ggml_backend_sched_region {
+    std::vector<ggml_tensor *> nodes;
+    std::vector<ggml_tensor *> outputs;
     ggml_backend_region_callback compute;
     void * user_data;
 };
 
+struct ggml_backend_sched_segment {
+    struct ggml_cgraph graph;
+    const ggml_backend_sched_region * region;
+};
+
 struct ggml_backend_sched_regions {
-    std::vector<ggml_backend_graph_region> regions;
+    std::vector<ggml_backend_sched_region> regions;
     std::vector<std::vector<ggml_backend_sched_segment>> splits;
+    std::unordered_set<ggml_tensor *> deferred_eval;
+    ggml_backend_sched_eval_callback original_eval = nullptr;
+    void * original_eval_data = nullptr;
+    bool valid = false;
 };
 
 struct ggml_backend_sched {
@@ -868,6 +880,89 @@ struct ggml_backend_sched {
     int debug_graph_size;
     int debug_prev_graph_size;
 };
+
+// Used only by explicitly registered regions; ordinary evaluation callbacks
+// are left untouched and pay no per-node hybrid lookup.
+static bool ggml_backend_sched_region_eval(ggml_tensor * tensor, bool ask, void * data) {
+    auto * regions = static_cast<ggml_backend_sched_regions *>(data);
+    if (regions->deferred_eval.count(tensor)) return false;
+    return regions->original_eval(tensor, ask, regions->original_eval_data);
+}
+
+static bool ggml_backend_sched_prepare_regions(ggml_backend_sched_t sched, ggml_cgraph * graph) {
+    auto & state = *sched->regions;
+    state.valid = false;
+    std::unordered_map<ggml_tensor *, int> positions;
+    for (int n = 0; n < graph->n_nodes; ++n) positions.emplace(graph->nodes[n], n);
+    std::unordered_map<ggml_tensor *, const ggml_backend_sched_region *> owners;
+    std::unordered_set<ggml_tensor *> outputs;
+    struct range { int begin, end; const ggml_backend_sched_region * region; };
+    std::vector<range> ranges;
+    for (const auto & region : state.regions) {
+        const auto first = positions.find(region.nodes.front());
+        if (first == positions.end() || region.nodes.size() > static_cast<size_t>(graph->n_nodes - first->second)) {
+            GGML_LOG_ERROR("%s: region nodes are absent\n", __func__);
+            return false;
+        }
+        const int begin = first->second;
+        for (size_t n = 0; n < region.nodes.size(); ++n) {
+            if (graph->nodes[begin + static_cast<int>(n)] != region.nodes[n] ||
+                !owners.emplace(region.nodes[n], &region).second) {
+                GGML_LOG_ERROR("%s: region nodes must be exact, ordered, contiguous and disjoint\n", __func__);
+                return false;
+            }
+        }
+        for (auto * output : region.outputs) {
+            const auto member = owners.find(output);
+            if (member == owners.end() || member->second != &region) {
+                GGML_LOG_ERROR("%s: region output is not a member\n", __func__);
+                return false;
+            }
+            outputs.insert(output);
+        }
+        ranges.push_back({begin, begin + static_cast<int>(region.nodes.size()), &region});
+    }
+    for (int n = 0; n < graph->n_nodes; ++n) {
+        auto * node = graph->nodes[n];
+        const auto consumer = owners.find(node);
+        if (node->op != GGML_OP_NONE && consumer != owners.end() && (node->flags & GGML_TENSOR_FLAG_OUTPUT) && !outputs.count(node)) {
+            GGML_LOG_ERROR("%s: undeclared region graph output\n", __func__);
+            return false;
+        }
+        for (auto * source : node->src) {
+            const auto producer = owners.find(source);
+            if (producer != owners.end() && source->op != GGML_OP_NONE && (consumer == owners.end() || consumer->second != producer->second) &&
+                !outputs.count(source)) {
+                GGML_LOG_ERROR("%s: undeclared value escapes a region\n", __func__);
+                return false;
+            }
+        }
+    }
+    std::sort(ranges.begin(), ranges.end(), [](const range & a, const range & b) { return a.begin < b.begin; });
+    auto & segments = state.splits;
+    segments.clear();
+    segments.resize(sched->n_splits);
+    size_t next = 0;
+    for (int i = 0; i < sched->n_splits; ++i) {
+        const auto & split = sched->splits[i];
+        int begin = split.i_start;
+        while (next < ranges.size() && ranges[next].begin < split.i_end) {
+            const auto & r = ranges[next++];
+            if (r.begin < split.i_start || r.end > split.i_end) {
+                GGML_LOG_ERROR("%s: graph region crosses a scheduler split\n", __func__);
+                return false;
+            }
+            if (begin < r.begin) segments[i].push_back({ggml_graph_view(graph, begin, r.begin), nullptr});
+            segments[i].push_back({ggml_graph_view(graph, r.begin, r.end), r.region});
+            begin = r.end;
+        }
+        if (begin < split.i_end) segments[i].push_back({ggml_graph_view(graph, begin, split.i_end), nullptr});
+    }
+    if (next != ranges.size()) return false;
+    for (auto & split : segments) for (auto & segment : split) segment.graph.uid = ggml_graph_next_uid();
+    state.valid = true;
+    return true;
+}
 
 #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
 #define tensor_backend_id(tensor) sched->hv_tensor_backend_ids[hash_id(tensor)]
@@ -1053,7 +1148,8 @@ static void ggml_backend_sched_set_if_supported(ggml_backend_sched_t sched, stru
 }
 
 // assigns backends to ops and splits the graph into subgraphs that can be computed on the same backend
-void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
+template<bool WithRegions>
+static void ggml_backend_sched_split_graph_impl(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
     // reset splits
     sched->n_splits = 0;
     sched->n_graph_inputs = 0;
@@ -1450,13 +1546,24 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
 
     struct ggml_cgraph * graph_copy = &sched->graph;
 
+    if constexpr (WithRegions) ggml_backend_sched_prepare_regions(sched, graph);
+
     for (int i = 0; i < sched->n_splits; i++) {
         struct ggml_backend_sched_split * split = &sched->splits[i];
         split->graph = ggml_graph_view(graph, split->i_start, split->i_end);
 
         // Optimize this split of the graph. This needs to happen before we make graph_copy,
         // so they are in sync.
-        ggml_backend_graph_optimize(sched->backends[split->backend_id], &split->graph);
+        if constexpr (!WithRegions) {
+            ggml_backend_graph_optimize(sched->backends[split->backend_id], &split->graph);
+        } else if (sched->regions->valid) {
+            // Replacement nodes are opaque optimization barriers. Ordinary
+            // segments still use the backend optimizer and the original graph
+            // remains the allocator's source of truth.
+            for (auto & segment : sched->regions->splits[i]) {
+                if (!segment.region) ggml_backend_graph_optimize(sched->backends[split->backend_id], &segment.graph);
+            }
+        }
 
         // add inputs to the graph copy so that they are allocated by ggml-alloc at the start of the split
         for (int j = 0; j < split->n_inputs; j++) {
@@ -1526,6 +1633,13 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
     for (int i = 0; i < sched->n_splits; ++i) {
         sched->splits[i].graph.uid = ggml_graph_next_uid();
     }
+}
+
+// Select once, outside the split/node loops. Ordinary scheduling instantiates
+// the original optimizer and execution path without region processing.
+void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
+    if (sched->regions) ggml_backend_sched_split_graph_impl<true>(sched, graph);
+    else ggml_backend_sched_split_graph_impl<false>(sched, graph);
 }
 
 static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
@@ -1626,6 +1740,7 @@ static enum ggml_status ggml_backend_sched_compute_segment(
     return GGML_STATUS_SUCCESS;
 }
 
+template<bool WithRegions>
 static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t sched) {
     GGML_ASSERT(sched);
     struct ggml_backend_sched_split * splits = sched->splits;
@@ -1763,10 +1878,10 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         }
 
         bool cancelled = false;
-        if (sched->regions) {
+        if constexpr (WithRegions) {
             for (auto & segment : sched->regions->splits[split_id]) {
-                const auto ec = segment.compute
-                    ? segment.compute(split_backend, &segment.graph, segment.user_data)
+                const auto ec = segment.region
+                    ? segment.region->compute(split_backend, &segment.graph, segment.region->user_data)
                     : ggml_backend_sched_compute_segment(sched, split_backend, &segment.graph, cancelled);
                 if (ec != GGML_STATUS_SUCCESS) return ec;
                 if (cancelled) break;
@@ -1905,6 +2020,7 @@ void ggml_backend_sched_reserve_size(ggml_backend_sched_t sched, struct ggml_cgr
 
     ggml_backend_sched_split_graph(sched, measure_graph);
 
+    GGML_ASSERT(!sched->regions || sched->regions->valid);
     ggml_gallocr_reserve_n_size(sched->galloc, &sched->graph, sched->node_backend_ids, sched->leaf_backend_ids, sizes);
 }
 
@@ -1916,6 +2032,7 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
 
     ggml_backend_sched_split_graph(sched, measure_graph);
 
+    if (sched->regions && !sched->regions->valid) return false;
     if (!ggml_gallocr_reserve_n(sched->galloc, &sched->graph, sched->node_backend_ids, sched->leaf_backend_ids)) {
         return false;
     }
@@ -1928,63 +2045,42 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
 bool ggml_backend_sched_set_regions(ggml_backend_sched_t sched, const struct ggml_backend_graph_region * regions, size_t count) {
     if (sched->is_alloc || (count && (!regions || sched->n_copies != 1))) return false;
     for (size_t i = 0; i < count; ++i) {
-        if (!regions[i].first || !regions[i].last || !regions[i].compute) return false;
+        const auto & region = regions[i];
+        if (!region.nodes || !region.n_nodes || !region.outputs || !region.n_outputs || !region.compute ||
+            (region.n_deferred_eval && !region.deferred_eval)) return false;
     }
     if (!count) {
+        if (sched->regions) {
+            sched->callback_eval = sched->regions->original_eval;
+            sched->callback_eval_user_data = sched->regions->original_eval_data;
+        }
         delete sched->regions;
         sched->regions = nullptr;
     } else {
-        if (!sched->regions) sched->regions = new ggml_backend_sched_regions;
-        sched->regions->regions.assign(regions, regions + count);
-        sched->regions->splits.clear();
+        if (!sched->regions) {
+            sched->regions = new ggml_backend_sched_regions;
+            sched->regions->original_eval = sched->callback_eval;
+            sched->regions->original_eval_data = sched->callback_eval_user_data;
+        }
+        auto & state = *sched->regions;
+        state.regions.clear();
+        state.splits.clear();
+        state.deferred_eval.clear();
+        state.valid = false;
+        for (size_t i = 0; i < count; ++i) {
+            const auto & region = regions[i];
+            state.regions.push_back({{region.nodes, region.nodes + region.n_nodes},
+                {region.outputs, region.outputs + region.n_outputs}, region.compute, region.user_data});
+            for (size_t n = 0; n < region.n_deferred_eval; ++n) state.deferred_eval.insert(region.deferred_eval[n]);
+        }
+        if (state.original_eval) {
+            sched->callback_eval = ggml_backend_sched_region_eval;
+            sched->callback_eval_user_data = &state;
+        }
     }
     return true;
 }
 
-static bool ggml_backend_sched_prepare_regions(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
-    struct range { int begin, end; const ggml_backend_graph_region * region; };
-    std::vector<range> ranges;
-    for (const auto & region : sched->regions->regions) {
-        int begin = -1, end = -1;
-        for (int n = 0; n < graph->n_nodes; ++n) {
-            if (graph->nodes[n] == region.first) begin = n;
-            if (graph->nodes[n] == region.last) end = n + 1;
-        }
-        if (begin < 0 || end <= begin) {
-            GGML_LOG_ERROR("%s: region boundaries must form an ordered node range\n", __func__);
-            return false;
-        }
-        ranges.push_back({begin, end, &region});
-    }
-    std::sort(ranges.begin(), ranges.end(), [](const range & a, const range & b) { return a.begin < b.begin; });
-    for (size_t i = 1; i < ranges.size(); ++i) {
-        if (ranges[i].begin < ranges[i - 1].end) {
-            GGML_LOG_ERROR("%s: overlapping graph regions\n", __func__);
-            return false;
-        }
-    }
-    auto & segments = sched->regions->splits;
-    segments.clear();
-    segments.resize(sched->n_splits);
-    size_t next = 0;
-    for (int i = 0; i < sched->n_splits; ++i) {
-        auto & split = sched->splits[i];
-        int begin = split.i_start;
-        while (next < ranges.size() && ranges[next].begin < split.i_end) {
-            const auto & r = ranges[next++];
-            if (r.begin < split.i_start || r.end > split.i_end) {
-                GGML_LOG_ERROR("%s: graph region crosses a scheduler split\n", __func__);
-                return false;
-            }
-            if (begin < r.begin) segments[i].push_back({ggml_graph_view(graph, begin, r.begin), nullptr, nullptr});
-            segments[i].push_back({ggml_graph_view(graph, r.begin, r.end), r.region->compute, r.region->user_data});
-            begin = r.end;
-        }
-        if (begin < split.i_end) segments[i].push_back({ggml_graph_view(graph, begin, split.i_end), nullptr, nullptr});
-    }
-    for (auto & split : segments) for (auto & segment : split) segment.graph.uid = ggml_graph_next_uid();
-    return next == ranges.size();
-}
 
 bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
     GGML_ASSERT(sched);
@@ -1996,7 +2092,7 @@ bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgra
 
     ggml_backend_sched_split_graph(sched, graph);
 
-    if (sched->regions && !ggml_backend_sched_prepare_regions(sched, graph)) return false;
+    if (sched->regions && !sched->regions->valid) return false;
     if (!ggml_backend_sched_alloc_splits(sched)) {
         return false;
     }
@@ -2024,7 +2120,8 @@ enum ggml_status ggml_backend_sched_graph_compute_async(ggml_backend_sched_t sch
         }
     }
 
-    return ggml_backend_sched_compute_splits(sched);
+    return sched->regions ? ggml_backend_sched_compute_splits<true>(sched)
+                          : ggml_backend_sched_compute_splits<false>(sched);
 }
 
 void ggml_backend_sched_synchronize(ggml_backend_sched_t sched) {
@@ -2042,8 +2139,15 @@ void ggml_backend_sched_synchronize(ggml_backend_sched_t sched) {
 
 void ggml_backend_sched_set_eval_callback(ggml_backend_sched_t sched, ggml_backend_sched_eval_callback callback, void * user_data) {
     GGML_ASSERT(sched);
-    sched->callback_eval = callback;
-    sched->callback_eval_user_data = user_data;
+    if (sched->regions) {
+        sched->regions->original_eval = callback;
+        sched->regions->original_eval_data = user_data;
+        sched->callback_eval = callback ? ggml_backend_sched_region_eval : nullptr;
+        sched->callback_eval_user_data = callback ? sched->regions : nullptr;
+    } else {
+        sched->callback_eval = callback;
+        sched->callback_eval_user_data = user_data;
+    }
 }
 
 int ggml_backend_sched_get_n_splits(ggml_backend_sched_t sched) {
