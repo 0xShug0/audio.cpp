@@ -220,7 +220,10 @@ unconditional logits at 26.9 dB SNR (past the decoding knife-edge, so guidance r
 while the same fp16 backbone leaves the hidden state at 67 dB and the fp32 tail returns the
 guided logits to ~84 dB. It costs about 0.4 s/step of CPU tail time on top of the ~8.4 s/step
 NPU pass, is validated at guidance 2.0 (board gate whisper-clean, same reference and seed), and
-runs at batch 1 only (a batched shard request falls back to the CPU graph).
+runs at batch 1 only (a batched shard request falls back to the CPU graph). Length accounting
+includes the reference audio: a 14 s reference alone costs about 393 prompt tokens, so the
+short rungs (seq256/384) only engage with a short reference clip; anything above a rung's
+capacity runs the CPU graph.
 
 ## Native Batching
 

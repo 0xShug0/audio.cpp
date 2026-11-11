@@ -482,6 +482,13 @@ row layout); batched requests fall back to the ggml graph.
   99.4% argmax agreement. On the board the seq768 front engine renders the same baseline
   request whisper-clean at `--guidance-scale 2.0` (8.3-8.5 s/step NPU, ~0.4 s/step CPU tail,
   wall 286 s), and the padded hidden rows gate the shard export at 392-400 dB padded-vs-exact.
+  All five shipped rungs are board-validated at guidance 2.0 on the NPU path (seed 7):
+  seq256/384 with the 5.95 s a.wav reference (the 14 s b.wav reference alone costs ~393
+  prompt tokens, so short rungs need a short reference; a request above a rung's capacity
+  falls back whole to the ggml graph, `rknn.fallback_tokens` in the trace log), seq512 with
+  a 40-char b.wav request, seq1024 with the 141-char baseline (775 tokens); per-step engine
+  time scales with the rung (1.5 s at seq256, 2.4 at 384, 3.4 at 512, 8.4 at 768) and the
+  resident aperture runs 1665 MiB at seq256 to 3644 MiB at seq1024 inside the 3900 budget.
 
 
 ## Component execution plans
