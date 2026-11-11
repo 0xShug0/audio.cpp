@@ -2453,6 +2453,18 @@ audiocpp_add_model(niagara_asr
         engine::models::niagara_asr::make_niagara_asr_loader
 )
 
+audiocpp_add_model(edda_asr
+    SOURCES
+        src/community_models/edda_asr/assets.cpp
+        src/community_models/edda_asr/weights.cpp
+        src/community_models/edda_asr/runtime.cpp
+        src/community_models/edda_asr/session.cpp
+    INCLUDES
+        engine/community_models/edda_asr/model.h
+    LOADERS
+        engine::community_models::edda_asr::make_edda_asr_loader
+)
+
 audiocpp_add_model(whistle_asr
     SOURCES
         src/community_models/whistle_asr/assets.cpp
