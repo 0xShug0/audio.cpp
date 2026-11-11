@@ -463,12 +463,7 @@ returns the complete audio and the reusable take artifact. An application can
 invoke generation on its worker thread to keep its UI responsive.
 
 Long-form text uses the framework chunker, with `text_chunk_size=4000` and
-`text_chunk_mode=tag_aware` by default. The larger budget keeps more sentences in
-one generation pass. In selected V2 reproduction cases, ASR repetition screens
-flagged split inputs and cleared the same inputs when generated whole. Actual
-4,000-character passages have not been validated. The frame cap and context
-capacity still limit each chunk; reduce the chunk size for longer passages if
-needed. Each new chunk includes the first generated
+`text_chunk_mode=tag_aware` by default. Each new chunk includes the first generated
 chunk as an anchor and the latest chunk as recent context, without duplicating
 the first chunk. If that prompt does not fit, automatic history is reduced to the first chunk only, then removed.
 References and caller-supplied history remain ordered and are never dropped.
