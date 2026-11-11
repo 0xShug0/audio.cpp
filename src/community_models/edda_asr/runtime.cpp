@@ -705,7 +705,7 @@ DecodeResult EddaRuntime::transcribe(const std::vector<float> & samples, const s
         throw std::runtime_error("Edda invalid decoder prompt or token limit");
     }
     const bool speculative = options.speculative && weights_.drafter.has_value();
-    const int64_t block = std::clamp<int64_t>(options.block, 2, s.block);
+    const int64_t block = speculative ? std::clamp<int64_t>(options.block, 2, s.block) : 1;
     DecodeResult result;
     const auto clock = std::chrono::steady_clock::now;
     auto started = clock();

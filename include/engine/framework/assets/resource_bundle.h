@@ -59,6 +59,7 @@ public:
     void set_model_directory(std::filesystem::path path);
     [[nodiscard]] const std::filesystem::path & model_directory() const noexcept;
     [[nodiscard]] bool has_file(std::string_view id) const noexcept;
+    [[nodiscard]] bool has_tensor_source(std::string_view id) const noexcept;
     [[nodiscard]] const std::filesystem::path * find_file(std::string_view id) const noexcept;
     [[nodiscard]] const std::filesystem::path & require_file(std::string_view id) const;
     [[nodiscard]] std::vector<ResourceFile> files() const;

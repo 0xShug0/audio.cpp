@@ -1,6 +1,7 @@
 #include "engine/community_models/edda_asr/model.h"
 #include "engine/framework/model_spec/package.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -32,14 +33,27 @@ std::optional<DrafterConfig> load_drafter_config(const EddaAssets & assets) {
     if (!assets.resources.has_file("drafter_config")) {
         return std::nullopt;
     }
+    // A missing drafter.safetensors, or a GGUF converted without one, means plain greedy decoding.
+    // A drafter that is present but unreadable or incomplete is an error, not a silent fallback.
+    if (!assets.resources.has_tensor_source("drafter")) {
+        return std::nullopt;
+    }
+    // A GGUF packs the drafter as the "drafter/" namespace of its main file.
+    if (assets.source->source_path().extension() == ".gguf") {
+        const auto tensors = assets.source->tensors();
+        if (std::none_of(tensors.begin(), tensors.end(),
+                [](const auto & tensor) { return tensor.name.rfind("drafter/", 0) == 0; })) {
+            return std::nullopt;
+        }
+    }
     std::shared_ptr<const assets::TensorSource> source;
     try {
         source = assets.resources.open_tensor_source("drafter");
-    } catch (const std::exception &) {
-        return std::nullopt;
+    } catch (const std::exception & error) {
+        throw std::runtime_error(std::string("Edda could not read the drafter weights: ") + error.what());
     }
-    if (!source || !source->has_tensor("fc.weight")) {
-        return std::nullopt;
+    if (!source->has_tensor("fc.weight")) {
+        throw std::runtime_error("Edda drafter weights are incomplete: " + source->source_path().string());
     }
     const auto json = assets.resources.parse_json("drafter_config");
     DrafterConfig config;

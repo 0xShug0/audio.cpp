@@ -96,6 +96,10 @@ bool ResourceBundle::has_file(std::string_view id) const noexcept {
     return files_.find(std::string(id)) != files_.end();
 }
 
+bool ResourceBundle::has_tensor_source(std::string_view id) const noexcept {
+    return tensor_resources_.find(std::string(id)) != tensor_resources_.end() || has_file(id);
+}
+
 const std::filesystem::path * ResourceBundle::find_file(std::string_view id) const noexcept {
     const auto it = files_.find(std::string(id));
     if (it == files_.end()) {
