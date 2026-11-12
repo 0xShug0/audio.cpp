@@ -33,6 +33,8 @@ struct OobleckAudioVaeRuntimeOptions {
     size_t graph_arena_bytes = 512ull * 1024ull * 1024ull;
     size_t weight_context_bytes = 1400ull * 1024ull * 1024ull;
     assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
+    // Release the opposite phase's buffers, retaining its graph for reuse.
+    bool release_inactive_buffers = false;
 };
 
 class OobleckAudioVaeRuntime {

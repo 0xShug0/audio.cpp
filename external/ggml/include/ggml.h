@@ -654,6 +654,8 @@ extern "C" {
         GGML_UNARY_OP_TRUNC,
         GGML_UNARY_OP_ROUND_BF16,
 
+        GGML_UNARY_OP_RSQRT,
+
         GGML_UNARY_OP_COUNT,
     };
 

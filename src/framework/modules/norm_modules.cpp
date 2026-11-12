@@ -1,5 +1,6 @@
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/structural_modules.h"
 #include "tensor_layout_utils.h"
 
 #include <cmath>
@@ -187,6 +188,37 @@ void validate_norm_config(const NormConfig & config) {
     }
 }
 
+core::TensorValue build_vectorized_rms_norm(
+    core::ModuleBuildContext & ctx, const core::TensorValue & input, float eps) {
+    constexpr int64_t lanes = 32, vector_width = 4;
+    const int64_t width = input.shape.last_dim();
+    const int64_t rows = ggml_nelements(input.tensor) / width;
+    const int64_t groups = (width + lanes * vector_width - 1) / (lanes * vector_width);
+    auto value = tensor_layout::ensure_contiguous_layout_if_needed(ctx, ensure_f32(ctx, input));
+    value = core::reshape_tensor(ctx, value, core::TensorShape::from_dims({rows, width}));
+    const auto square = MulModule().build(ctx, value, value);
+    auto packed = core::wrap_tensor(ggml_pad(ctx.ggml, square.tensor,
+        groups * lanes * vector_width - width, 0, 0, 0),
+        core::TensorShape::from_dims({rows, groups * lanes * vector_width}), GGML_TYPE_F32);
+    packed = core::reshape_tensor(ctx, packed,
+        core::TensorShape::from_dims({rows, groups, lanes, vector_width}));
+    auto accumulators = SliceModule({1, 0, 1}).build(ctx, packed);
+    for (int64_t group = 1; group < groups; ++group)
+        accumulators = AddModule().build(ctx, accumulators, SliceModule({1, group, 1}).build(ctx, packed));
+    auto reduced = SliceModule({3, 0, 1}).build(ctx, accumulators);
+    for (int64_t lane = 1; lane < vector_width; ++lane)
+        reduced = AddModule().build(ctx, reduced, SliceModule({3, lane, 1}).build(ctx, accumulators));
+    reduced = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, reduced),
+        core::TensorShape::from_dims({rows, lanes}));
+    auto mean = ReduceSumModule({-1}).build(ctx, reduced);
+    mean = ScaleBiasModule({1.0f / static_cast<float>(width), 0.0f}).build(ctx, mean);
+    mean = ScaleBiasModule({1.0f, eps}).build(ctx, mean);
+    const auto inverse = core::wrap_tensor(ggml_unary(ctx.ggml, mean.tensor, GGML_UNARY_OP_RSQRT),
+        mean.shape, GGML_TYPE_F32);
+    value = MulModule(true).build(ctx, value, inverse);
+    return core::reshape_tensor(ctx, value, input.shape);
+}
+
 template <typename NormFn>
 core::TensorValue build_norm(
     core::ModuleBuildContext & ctx,
@@ -294,7 +326,8 @@ const core::ModuleSchema & LayerNormModule::static_schema() noexcept {
     return kLayerNormSchema;
 }
 
-RMSNormModule::RMSNormModule(NormConfig config) : config_(config) {
+RMSNormModule::RMSNormModule(NormConfig config, RMSNormLowering lowering)
+    : config_(config), lowering_(lowering) {
     validate_norm_config(config_);
 }
 
@@ -310,6 +343,11 @@ core::TensorValue RMSNormModule::build(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const NormWeights & weights) const {
+    if (lowering_ == RMSNormLowering::Vectorized) {
+        return build_norm(ctx, input, config_, weights, [&](ggml_context *, ggml_tensor * value, float eps) {
+            return build_vectorized_rms_norm(ctx, core::wrap_tensor(value, input.shape, value->type), eps).tensor;
+        });
+    }
     return build_norm(ctx, input, config_, weights, ggml_rms_norm);
 }
 
@@ -317,7 +355,8 @@ const core::ModuleSchema & RMSNormModule::static_schema() noexcept {
     return kRmsNormSchema;
 }
 
-GemmaRMSNormModule::GemmaRMSNormModule(NormConfig config) : config_(config) {
+GemmaRMSNormModule::GemmaRMSNormModule(NormConfig config, RMSNormLowering lowering)
+    : config_(config), lowering_(lowering) {
     validate_norm_config(config_);
     if (!config_.use_weight || config_.use_bias) {
         throw std::runtime_error("GemmaRMSNormConfig requires use_weight=true and use_bias=false");
@@ -347,10 +386,10 @@ core::TensorValue GemmaRMSNormModule::build(
     core::validate_shape(*weights.weight, core::TensorShape::from_dims({config_.hidden_size}), "weight");
 
     const auto input_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, input);
-    auto normalized = core::wrap_tensor(
-        ggml_rms_norm(ctx.ggml, input_contiguous.tensor, config_.eps),
-        input.shape,
-        GGML_TYPE_F32);
+    auto normalized = lowering_ == RMSNormLowering::Vectorized
+        ? build_vectorized_rms_norm(ctx, input_contiguous, config_.eps)
+        : core::wrap_tensor(ggml_rms_norm(ctx.ggml, input_contiguous.tensor, config_.eps),
+            input.shape, GGML_TYPE_F32);
     const auto one_plus_weight = core::wrap_tensor(
         ggml_scale_bias(ctx.ggml, ensure_f32(ctx, *weights.weight).tensor, 1.0F, 1.0F),
         weights.weight->shape,

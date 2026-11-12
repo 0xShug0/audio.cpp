@@ -44,9 +44,14 @@ private:
     NormConfig config_;
 };
 
+enum class RMSNormLowering {
+    Default,
+    Vectorized,
+};
+
 class RMSNormModule {
 public:
-    explicit RMSNormModule(NormConfig config);
+    explicit RMSNormModule(NormConfig config, RMSNormLowering lowering = RMSNormLowering::Default);
 
     const core::ModuleSchema & schema() const noexcept;
     const NormConfig & config() const noexcept;
@@ -60,11 +65,12 @@ public:
 
 private:
     NormConfig config_;
+    RMSNormLowering lowering_;
 };
 
 class GemmaRMSNormModule {
 public:
-    explicit GemmaRMSNormModule(NormConfig config);
+    explicit GemmaRMSNormModule(NormConfig config, RMSNormLowering lowering = RMSNormLowering::Default);
 
     const core::ModuleSchema & schema() const noexcept;
     const NormConfig & config() const noexcept;
@@ -78,6 +84,7 @@ public:
 
 private:
     NormConfig config_;
+    RMSNormLowering lowering_;
 };
 
 struct GroupNormConfig {

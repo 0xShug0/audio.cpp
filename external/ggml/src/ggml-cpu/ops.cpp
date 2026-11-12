@@ -10131,6 +10131,10 @@ void ggml_compute_forward_unary(
             {
                 ggml_compute_forward_hardsigmoid(params, dst);
             } break;
+        case GGML_UNARY_OP_RSQRT:
+            {
+                ggml_compute_forward_rsqrt(params, dst);
+            } break;
         case GGML_UNARY_OP_EXP:
             {
                 ggml_compute_forward_exp(params, dst);
