@@ -4,7 +4,9 @@
 
 namespace engine::modules {
 
-enum class MoeScoring { Softmax, Sigmoid };
+// SelectedSoftmax ranks the raw router logits (+ selection bias) and weighs the
+// selected experts by the softmax of their logits (top-k first, then softmax).
+enum class MoeScoring { Softmax, Sigmoid, SelectedSoftmax };
 enum class MoeNormalization { None, Divide, Clamp, AddEpsilon };
 enum class MoeActivation { SwiGlu, ReluSquared };
 

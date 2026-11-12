@@ -24,7 +24,10 @@ MoeRouting MoeModule::build_routing(core::ModuleBuildContext & ctx, ggml_tensor 
     const auto tokens = input->ne[1];
     auto * logits = ggml_mul_mat(g, router, input);
     if (c.precision != GGML_PREC_DEFAULT) ggml_mul_mat_set_prec(logits, c.precision);
-    auto * scores = c.scoring == MoeScoring::Softmax ? ggml_soft_max(g, logits) : ggml_sigmoid(g, logits);
+    // SelectedSoftmax ranks the raw logits; its weights are the softmax of the selected logits below.
+    auto * scores = c.scoring == MoeScoring::Softmax ? ggml_soft_max(g, logits)
+        : c.scoring == MoeScoring::Sigmoid           ? ggml_sigmoid(g, logits)
+                                                     : logits;
     auto * selection = selection_bias ? ggml_add(g, scores, selection_bias) : scores;
     if (c.groups > 1) {
         const auto per_group = c.experts / c.groups;
@@ -42,6 +45,7 @@ MoeRouting MoeModule::build_routing(core::ModuleBuildContext & ctx, ggml_tensor 
     if (c.contiguous_ids && !ggml_is_contiguous(ids)) ids = ggml_cont(g, ids);
     auto * weights = ggml_get_rows(g, ggml_reshape_3d(g, scores, 1, c.experts, tokens), ids);
     weights = ggml_reshape_2d(g, weights, c.selected, tokens);
+    if (c.scoring == MoeScoring::SelectedSoftmax) weights = ggml_soft_max(g, weights);
     if (c.normalization != MoeNormalization::None) {
         auto * denominator = ggml_sum_rows(g, weights);
         if (c.normalization == MoeNormalization::Clamp)
