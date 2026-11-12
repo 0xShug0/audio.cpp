@@ -2,19 +2,23 @@
 //   zonos3_parity backbone <backbone.gguf> <oracle_dir> [--disk-experts]
 //   zonos3_parity speaker <spk-encoder.gguf> <voice.wav> <oracle_dir>
 //   zonos3_parity decoder <zac-keep2.gguf> <oracle_dir>
+//   zonos3_parity reference <gguf_dir> <voice.wav> <oracle_dir>
 #include "engine/community_models/zonos3/assets.h"
 #include "engine/community_models/zonos3/backbone.h"
 #include "engine/community_models/zonos3/codec_decoder.h"
 #include "engine/community_models/zonos3/npy.h"
 #include "engine/community_models/zonos3/prompt.h"
+#include "engine/community_models/zonos3/reference_encoder.h"
 #include "engine/community_models/zonos3/speaker_encoder.h"
 #include "engine/community_models/zonos3/tokenizer.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/trace.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -242,6 +246,41 @@ int decoder(const fs::path & model, const fs::path & oracle) {
     return pass ? 0 : 1;
 }
 
+// Raw-reference codes of <voice.wav> against zac-encoder-cli's ref_codes.npy: same frame count, codebook-0
+// agreement >= 0.95 and all-codebook agreement >= 0.90. zac-encoder-cli decodes the WAV with ffmpeg to f32 mono at
+// 44.1 kHz; for a 16-bit mono 44.1 kHz WAV that equals read_wav_f32's sample / 32768 exactly.
+int reference(const fs::path & gguf_dir, const fs::path & voice, const fs::path & oracle) {
+    auto wav = engine::audio::read_wav_f32(voice);
+    if (wav.sample_rate != 44100) throw std::runtime_error("reference parity needs a 44.1 kHz WAV");
+    auto mono = wav.channels == 1 ? std::move(wav.samples)
+                                  : engine::audio::mixdown_interleaved_to_mono_average(wav.samples, wav.channels);
+    const auto expected = zonos3::read_f32_npy(oracle / "ref_codes.npy");
+    if (expected.shape.size() != 2 || expected.shape[1] != 10) throw std::runtime_error("ref_codes.npy must be [T, 10]");
+    const auto start = std::chrono::steady_clock::now();
+    engine::core::ExecutionContext execution(cpu_backend());
+    const zonos3::Zonos3ReferenceEncoder encoder(engine::assets::open_tensor_source(gguf_dir / "zac-encoder.gguf"),
+                                                 engine::assets::open_tensor_source(gguf_dir / "ssl-teacher.gguf"), execution);
+    const auto codes = encoder.encode(mono);
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    const size_t frames = codes.size() / 10;
+    size_t cb0 = 0;
+    size_t all = 0;
+    const bool same_frames = frames == static_cast<size_t>(expected.shape[0]);
+    if (same_frames) {
+        for (size_t i = 0; i < codes.size(); ++i) {
+            const bool match = static_cast<float>(codes[i]) == expected.data[i];
+            all += match;
+            cb0 += match && i % 10 == 0;
+        }
+    }
+    const double cb0_rate = same_frames ? static_cast<double>(cb0) / static_cast<double>(frames) : 0.0;
+    const double all_rate = same_frames ? static_cast<double>(all) / static_cast<double>(codes.size()) : 0.0;
+    const bool pass = same_frames && cb0_rate >= 0.95 && all_rate >= 0.90;
+    std::printf("zonos3 reference parity: %s cb0=%.4f all=%.4f frames=%zu oracle_frames=%lld seconds=%.1f\n",
+                pass ? "PASS" : "FAIL", cb0_rate, all_rate, frames, static_cast<long long>(expected.shape[0]), seconds);
+    return pass ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -259,9 +298,11 @@ int main(int argc, char ** argv) {
         }
         if (args.size() == 4 && args[0] == "speaker") return speaker(args[1], args[2], args[3]);
         if (args.size() == 3 && args[0] == "decoder") return decoder(args[1], args[2]);
+        if (args.size() == 4 && args[0] == "reference") return reference(args[1], args[2], args[3]);
         std::cerr << "usage: zonos3_parity [--log] backbone <backbone.gguf> <oracle_dir> [--disk-experts]\n"
                      "       zonos3_parity [--log] speaker <spk-encoder.gguf> <voice.wav> <oracle_dir>\n"
-                     "       zonos3_parity [--log] decoder <zac-keep2.gguf> <oracle_dir>\n";
+                     "       zonos3_parity [--log] decoder <zac-keep2.gguf> <oracle_dir>\n"
+                     "       zonos3_parity [--log] reference <gguf_dir> <voice.wav> <oracle_dir>\n";
         return 2;
     } catch (const std::exception & error) {
         std::cerr << "zonos3_parity: " << error.what() << "\n";

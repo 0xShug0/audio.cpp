@@ -1823,8 +1823,11 @@ audiocpp_add_model(zonos3
         src/community_models/zonos3/generator.cpp
         src/community_models/zonos3/npy.cpp
         src/community_models/zonos3/prompt.cpp
+        src/community_models/zonos3/reference_encoder.cpp
+        src/community_models/zonos3/resample.cpp
         src/community_models/zonos3/sampler.cpp
         src/community_models/zonos3/speaker_encoder.cpp
+        src/community_models/zonos3/ssl_teacher.cpp
         src/community_models/zonos3/textnorm.cpp
         src/community_models/zonos3/tokenizer.cpp
 )
@@ -4795,6 +4798,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 set_tests_properties(zonos3_parity_backbone zonos3_parity_backbone_disk zonos3_parity_speaker
                     zonos3_parity_decoder PROPERTIES
                     PASS_REGULAR_EXPRESSION "PASS"
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+                add_test(NAME zonos3_parity_reference COMMAND zonos3_parity reference
+                    "${AUDIOCPP_ZONOS3_MODEL_DIR}" "${AUDIOCPP_ZONOS3_PARITY_DIR}/voice.wav" "${AUDIOCPP_ZONOS3_PARITY_DIR}")
+                set_tests_properties(zonos3_parity_reference PROPERTIES
+                    PASS_REGULAR_EXPRESSION "PASS"
+                    TIMEOUT 3600
                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
             endif()
         endif()
