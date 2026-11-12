@@ -1821,15 +1821,21 @@ audiocpp_add_model(zonos3
         src/community_models/zonos3/backbone.cpp
         src/community_models/zonos3/codec_decoder.cpp
         src/community_models/zonos3/generator.cpp
+        src/community_models/zonos3/loader.cpp
         src/community_models/zonos3/npy.cpp
         src/community_models/zonos3/prompt.cpp
         src/community_models/zonos3/reference_encoder.cpp
         src/community_models/zonos3/resample.cpp
         src/community_models/zonos3/sampler.cpp
+        src/community_models/zonos3/session.cpp
         src/community_models/zonos3/speaker_encoder.cpp
         src/community_models/zonos3/ssl_teacher.cpp
         src/community_models/zonos3/textnorm.cpp
         src/community_models/zonos3/tokenizer.cpp
+    INCLUDES
+        engine/community_models/zonos3/loader.h
+    LOADERS
+        engine::models::zonos3::make_zonos3_loader
 )
 
 audiocpp_add_model(audio8_tts
