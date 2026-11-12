@@ -1818,7 +1818,11 @@ audiocpp_add_model(fish_drama3
 audiocpp_add_model(zonos3
     SOURCES
         src/community_models/zonos3/assets.cpp
+        src/community_models/zonos3/backbone.cpp
+        src/community_models/zonos3/generator.cpp
         src/community_models/zonos3/npy.cpp
+        src/community_models/zonos3/prompt.cpp
+        src/community_models/zonos3/sampler.cpp
         src/community_models/zonos3/textnorm.cpp
         src/community_models/zonos3/tokenizer.cpp
 )
@@ -4771,6 +4775,21 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             add_test(NAME fish_drama3_backbone_allocation_test COMMAND fish_drama3_backbone_allocation_test)
             add_engine_unittest(fish_drama3_codec_source_test tests/community_models/fish_drama3/codec_source_test.cpp)
             add_test(NAME fish_drama3_codec_source_test COMMAND fish_drama3_codec_source_test)
+        endif()
+
+        if(zonos3 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(zonos3_parity tests/community_models/zonos3/parity.cpp)
+            set(AUDIOCPP_ZONOS3_MODEL_DIR "" CACHE PATH "ZONOS3-Mini GGUF directory for the zonos3 parity tests")
+            set(AUDIOCPP_ZONOS3_PARITY_DIR "" CACHE PATH "ZONOS3 oracle directory (tests/community_models/zonos3/make_oracle.sh)")
+            if(AUDIOCPP_ZONOS3_MODEL_DIR AND AUDIOCPP_ZONOS3_PARITY_DIR)
+                add_test(NAME zonos3_parity_backbone COMMAND zonos3_parity backbone
+                    "${AUDIOCPP_ZONOS3_MODEL_DIR}/backbone-ptq.gguf" "${AUDIOCPP_ZONOS3_PARITY_DIR}")
+                add_test(NAME zonos3_parity_backbone_disk COMMAND zonos3_parity backbone
+                    "${AUDIOCPP_ZONOS3_MODEL_DIR}/backbone-ptq.gguf" "${AUDIOCPP_ZONOS3_PARITY_DIR}" --disk-experts)
+                set_tests_properties(zonos3_parity_backbone zonos3_parity_backbone_disk PROPERTIES
+                    PASS_REGULAR_EXPRESSION "PASS"
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+            endif()
         endif()
 
         if(kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
