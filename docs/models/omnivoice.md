@@ -211,6 +211,20 @@ the driver for its whole residency at init, so one rung is resident at a time
 398-401 dB padded-vs-exact on the fp32 graph), and the step costs about `S^2` in attention, so
 the bucket ladder is a time trade.
 
+A ladder built with the producer's `--front-k 28` (`omnivoice_generator_front28_seq*.rknn`) is
+the front-shard contract: the engine runs the embeddings and all 28 backbone layers on the NPU
+and returns the raw hidden state, and the CFG tail - final RMS norm, the 8 audio heads, the
+guidance combine - runs on the host in fp32. This is the mode that makes
+`--guidance-scale > 0` usable on the NPU: the full ladder's in-graph fp16 heads put the
+unconditional logits at 26.9 dB SNR (past the decoding knife-edge, so guidance renders noise),
+while the same fp16 backbone leaves the hidden state at 67 dB and the fp32 tail returns the
+guided logits to ~84 dB. It costs about 0.4 s/step of CPU tail time on top of the ~8.4 s/step
+NPU pass, is validated at guidance 2.0 (board gate whisper-clean, same reference and seed), and
+runs at batch 1 only (a batched shard request falls back to the CPU graph). Length accounting
+includes the reference audio: a 14 s reference alone costs about 393 prompt tokens, so the
+short rungs (seq256/384) only engage with a short reference clip; anything above a rung's
+capacity runs the CPU graph.
+
 ## Native Batching
 
 Offline OmniVoice sessions implement native batching

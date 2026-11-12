@@ -74,7 +74,8 @@ void test_fake_engine(const std::filesystem::path & dir) {
     // carries the producer's name.
     const std::string fake_flow = (dir / "flow_estimator_seq900.rknn").string();
     const std::string fake_generator = (dir / "omnivoice_generator_seq512_fp16.rknn").string();
-    for (const std::string & path : {fake, fake_flow, fake_generator}) {
+    const std::string fake_front = (dir / "omnivoice_generator_front28_seq512_fp16.rknn").string();
+    for (const std::string & path : {fake, fake_flow, fake_generator, fake_front}) {
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
         out << "RKNN" << "not a compiled image";
     }
@@ -127,7 +128,7 @@ void test_fake_engine(const std::filesystem::path & dir) {
     require_driver_refusal(
         [&] {
             engine::models::omnivoice::OmniVoiceRknnGenerator generator(
-                {fake_generator}, 8, 1025, 128, 1000000.0F);
+                {fake_generator}, 8, 1025, 128, 1000000.0F, 1024);
             engine::models::omnivoice::OmniVoiceRknnStepInputs step;
             step.total_tokens = 64;
             step.audio_start = 32;
@@ -142,6 +143,29 @@ void test_fake_engine(const std::filesystem::path & dir) {
             step.unconditional_text_ids.assign(64, 1024);
             std::vector<float> logits(static_cast<size_t>(32 * 8 * 1025), 0.0F);
             generator.run(512, step, logits.data());
+        },
+        "OmniVoice generator RKNN");
+    // The front-shard contract (name-detected `front28`) refuses the same way, and the
+    // contract detection must be visible before any load.
+    require_driver_refusal(
+        [&] {
+            engine::models::omnivoice::OmniVoiceRknnGenerator generator(
+                {fake_front}, 8, 1025, 128, 1000000.0F, 1024);
+            require(generator.front_shard(), "the front-k file name selects the front-shard contract");
+            engine::models::omnivoice::OmniVoiceRknnStepInputs step;
+            step.total_tokens = 64;
+            step.audio_start = 32;
+            step.target_frames = 32;
+            for (auto & row : step.conditional_ids) {
+                row.assign(64, 1024);
+            }
+            for (auto & row : step.unconditional_ids) {
+                row.assign(64, 1024);
+            }
+            step.conditional_text_ids.assign(64, 1);
+            step.unconditional_text_ids.assign(64, 1024);
+            std::vector<float> hidden(static_cast<size_t>(2 * 512 * 1024), 0.0F);
+            generator.run(512, step, hidden.data(), 512);
         },
         "OmniVoice generator RKNN");
 #endif
