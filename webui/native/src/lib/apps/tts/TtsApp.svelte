@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { randomUUID } from '$lib/uuid.js';
   import { onDestroy, onMount, tick } from 'svelte';
   import {
     FileText,
@@ -721,7 +722,7 @@
         }
         const chunk = project.chunks.find((c) => c.id === job.id)!;
         const take: Take = {
-          id: crypto.randomUUID(),
+          id: randomUUID(),
           text: job.text,
           configuration: job.configuration!,
           reference: reference || undefined,

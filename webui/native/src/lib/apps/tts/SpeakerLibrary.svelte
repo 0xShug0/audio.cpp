@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { randomUUID } from '$lib/uuid.js';
   import { onMount } from 'svelte';
   import { Plus, Search, Pencil, Copy, Trash2, UserRound } from '@lucide/svelte';
   import { listVoices, type SavedVoice } from '$lib/library';
@@ -45,7 +46,7 @@
       const base = `${selected.name} copy`;
       let name = base;
       for (let n = 2; items.some((speaker) => speaker.name === name); n++) name = `${base} ${n}`;
-      await save({ ...structuredClone(selected), id: crypto.randomUUID(), name });
+      await save({ ...structuredClone(selected), id: randomUUID(), name });
     } catch (e) { error = `Could not duplicate speaker: ${String(e)}`; }
     finally { busy = false; }
   }

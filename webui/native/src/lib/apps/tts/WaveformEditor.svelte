@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { randomUUID } from '$lib/uuid.js';
   import { onMount, onDestroy, tick } from 'svelte';
   import { Play, Plus, ZoomIn, ZoomOut, Undo2, Redo2 } from '@lucide/svelte';
   import { encodePcm16Wav } from '$lib/audio';
@@ -71,7 +72,7 @@
     const next=structuredClone(silences),frame=Math.round(cursor*original.sampleRate);
     const segment=segments.find(s=>frame>=s.start && frame<s.start+s.frames) || segments[segments.length-1];
     if(segment.sourceFrame===null){next.find(e=>e.id===segment.silenceId)!.seconds+=increment;}
-    else {const at=(segment.sourceFrame+Math.min(segment.frames,Math.max(0,frame-segment.start)))/original.sampleRate;next.push({id:crypto.randomUUID(),at,seconds:increment});}
+    else {const at=(segment.sourceFrame+Math.min(segment.frames,Math.max(0,frame-segment.start)))/original.sampleRate;next.push({id:randomUUID(),at,seconds:increment});}
     commit({silences:next,removed},[...(take.editing?.undo || []),structuredClone({silences,removed})],[]);
   }
   function removeSelected(){cursor=regions.find(e=>e.id===selectedSilence)!.start;commit({silences:silences.filter(e=>e.id!==selectedSilence),removed},[...(take.editing?.undo || []),structuredClone({silences,removed})],[]);}
