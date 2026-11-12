@@ -858,6 +858,17 @@ vendor single-core matmul is the only legal NPU matmul path, and the compiled-gr
 are the shipped form. int8 through the vendor matmul measures at parity with that open library's
 int8, so int8 buys no hidden speed there, only the usual quantization risk.
 
+That ceiling was then priced end to end: one full OmniVoice layer (QKV/O/MLP GEMMs on the matmul
+API at fp16->fp32, RoPE/softmax/SiLU/residuals on the CPU in fp32, M=1536 CFG-packed, the 64
+attention tiles as 32+32 small GEMMs) runs its NPU side in 137 ms, stage outputs matching the fp32
+torch reference at fp16-GEMM noise (q_rope 36 dB, layer output 21 dB). x28 = 3.9 s/step NPU-only,
+before host cost: NATIVE layout is tiled, not row-major (A `[K1,M,subK]`, B `[N1,K1,subN,subK]`,
+C perf, the official demo's packers), and naive scalar packing plus C unpacking triples the layer
+wall. A tuned port (prepacked weights, vectorized packing, fp16 C for the big-N GEMMs) lands near
+5-6 s/step - about 1.5x over the compiled 8.4 s engine, with the O and down projections (0.32/0.22
+TFLOP/s at K>=2048 single-core) eating 1.8 s of the floor alone. The 2.5x stays locked to the
+AGPL library; the vendor zero-op path is a real but modest lever.
+
 ## The IOVA ceiling, i.e. how big an engine can be
 
 An engine is mapped into the NPU's I/O address space, and on RK3588 that space is a 32-bit arena. A
