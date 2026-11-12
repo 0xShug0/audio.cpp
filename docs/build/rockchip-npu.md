@@ -510,9 +510,10 @@ row layout); batched requests fall back to the ggml graph.
   graph (a 1290-token render runs 976 s on ggml, against 286 s for the 775-token request that
   still fits the shard, so the crossover costs speed, not quality).
 - OmniVoice int8 probe (negative): the seq768 front engine rebuilt with `do_quantization=True`
-  (w8a8, `layer` method, calibration on three real step-0 feeds) returns hidden SNR
-  2.0/-0.1/1.3 dB at 21-69% step-0 argmax agreement against the fp32 reference, where the fp16
-  engine measures 67 dB and 99.4% on the same feeds, so per-tensor int8 kills the shard.
+  (w8a8, `layer` and `channel` methods, calibration on three real step-0 feeds) returns hidden
+  SNR 2.0/-0.1/1.3 dB (channel: 2.2/-0.0/1.5, the same death) at 21-69% step-0 argmax
+  agreement against the fp32 reference, where the fp16 engine measures 67 dB and 99.4% on the
+  same feeds, so per-tensor and per-channel int8 both kill the shard.
   `w8a16` is refused by the 2.3.2 converter on rk3588, and `auto_hybrid` needs expand-batch,
   which the batch-2 CFG-pair graph does not support. The literature remedy for int8 on
   transformer activations is a randomized Hadamard transform (QuaRot, cf. the rk-llama.cpp
