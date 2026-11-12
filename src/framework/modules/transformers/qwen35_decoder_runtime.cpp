@@ -354,8 +354,8 @@ core::TensorValue full_attention(
     v = round_activation(ctx, v, config);
     k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
     v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, q, weights.q_norm);
+    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, k, weights.k_norm);
     q = round_activation(ctx, q, config);
     k = round_activation(ctx, k, config);
     q = apply_partial_rope(ctx, q, positions, config);
@@ -411,8 +411,8 @@ core::TensorValue full_attention_prefill_cached(
     v = round_activation(ctx, v, config);
     k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
     v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, q, weights.q_norm);
+    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, k, weights.k_norm);
     q = round_activation(ctx, q, config);
     k = round_activation(ctx, k, config);
     q = apply_partial_rope(ctx, q, positions, config);
@@ -473,8 +473,8 @@ core::TensorValue full_attention_cached(
     v = round_activation(ctx, v, config);
     k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
     v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
+    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, q, weights.q_norm);
+    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, k, weights.k_norm);
     q = round_activation(ctx, q, config);
     k = round_activation(ctx, k, config);
     q = apply_partial_rope(ctx, q, positions, config);
@@ -631,7 +631,7 @@ LinearAttentionCachedOutput linear_attention_prefill(
     auto z = modules::LinearModule({config.hidden_size, value_dim, false}).build(ctx, input, weights.in_proj_z);
     z = round_activation(ctx, z, config);
     z = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, z), core::TensorShape::from_dims({steps, value_dim}));
-    current_delta = modules::RMSNormModule({config.linear_value_head_dim, config.rms_norm_eps, true, false}).build(
+    current_delta = modules::RMSNormModule({config.linear_value_head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(
         ctx,
         core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, current_delta), core::TensorShape::from_dims({steps * config.linear_num_value_heads, config.linear_value_head_dim})),
         weights.norm);
@@ -728,7 +728,7 @@ LinearAttentionCachedOutput linear_attention_cached(
     auto z = modules::LinearModule({config.hidden_size, value_dim, false}).build(ctx, input, weights.in_proj_z);
     z = round_activation(ctx, z, config);
     z = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, z), core::TensorShape::from_dims({1, value_dim}));
-    current_delta = modules::RMSNormModule({config.linear_value_head_dim, config.rms_norm_eps, true, false}).build(
+    current_delta = modules::RMSNormModule({config.linear_value_head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(
         ctx,
         core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, current_delta), core::TensorShape::from_dims({config.linear_num_value_heads, config.linear_value_head_dim})),
         weights.norm);
@@ -820,7 +820,7 @@ private:
         state_inputs_.clear();
         for (const auto & layer : weights_->layers) {
             auto residual = x;
-            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, layer.input_norm);
             h = round_activation(ctx, h, config_);
             if (layer.full_attention) {
                 h = full_attention(ctx, h, positions, attention_mask, *layer.full, config_);
@@ -840,13 +840,13 @@ private:
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
             residual = x;
-            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
+            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
             h = mlp(ctx, h, layer, config_);
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
         }
-        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
+        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, weights_->final_norm);
         x = round_activation(ctx, x, config_);
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
@@ -1077,7 +1077,7 @@ public:
         const int64_t conv_dim = key_dim * 2 + value_dim;
         for (const auto & layer : weights_->layers) {
             auto residual = x;
-            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, layer.input_norm);
             h = round_activation(ctx, h, config_);
             if (layer.full_attention) {
                 auto key_cache = core::make_tensor(
@@ -1110,13 +1110,13 @@ public:
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
             residual = x;
-            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
+            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
             h = mlp(ctx, h, layer, config_);
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
         }
-        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
+        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, weights_->final_norm);
         x = round_activation(ctx, x, config_);
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
@@ -1245,7 +1245,7 @@ private:
         int64_t linear_index = 0;
         for (const auto & layer : weights_->layers) {
             auto residual = x;
-            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.input_norm);
+            auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, layer.input_norm);
             h = round_activation(ctx, h, config_);
             if (layer.full_attention) {
                 if (full_index >= full_count) {
@@ -1291,7 +1291,7 @@ private:
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
             residual = x;
-            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, layer.post_norm);
+            h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
             h = mlp(ctx, h, layer, config_);
             x = modules::AddModule{}.build(ctx, residual, h);
@@ -1300,7 +1300,7 @@ private:
         if (full_index != full_count || linear_index != linear_count) {
             throw std::runtime_error("Qwen3.5 decoder prefill cache/state count mismatch");
         }
-        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}).build(ctx, x, weights_->final_norm);
+        x = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, weights_->final_norm);
         x = round_activation(ctx, x, config_);
         prefill_output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(prefill_output_);
@@ -1364,10 +1364,19 @@ public:
         assets::TensorStorageType storage_type)
         : config_(std::move(config)),
           weights_(load_qwen35_weights(*source, config_, execution, weight_context_bytes, storage_type)),
+          execution_(execution),
+          graph_arena_bytes_(graph_arena_bytes),
           token_embedding_(execution, weights_, config_, graph_arena_bytes),
           forward_(execution, weights_, config_, graph_arena_bytes),
-          lm_head_(execution, weights_, config_, graph_arena_bytes),
-          decode_graph_(execution, weights_, config_, config_.decode_cache_steps, graph_arena_bytes) {}
+          lm_head_(execution, weights_, config_, graph_arena_bytes) {
+        if (config_.decode_cache_steps <= 0) {
+            throw std::runtime_error("Qwen3.5 decoder cached decode requires positive cache length");
+        }
+        if (!config_.lazy_decode_cache) {
+            decode_graph_ = std::make_unique<Qwen35CachedDecodeGraph>(
+                execution_, weights_, config_, config_.decode_cache_steps, graph_arena_bytes_);
+        }
+    }
 
     std::vector<float> token_embedding(const std::vector<int32_t> & token_ids) {
         return token_embedding_.run(token_ids);
@@ -1384,27 +1393,33 @@ public:
     std::unique_ptr<Qwen35DecoderRuntime::DecodeSession> create_decode_session(int64_t cache_steps);
 
     Qwen35CachedDecodeGraph & decode_graph(int64_t cache_steps) {
-        if (cache_steps > decode_graph_.cache_steps()) {
+        if (cache_steps > config_.decode_cache_steps) {
             throw std::runtime_error("Qwen3.5 decoder decode cache capacity exceeded");
         }
-        decode_graph_.reset();
-        return decode_graph_;
+        if (!decode_graph_) {
+            decode_graph_ = std::make_unique<Qwen35CachedDecodeGraph>(
+                execution_, weights_, config_, config_.decode_cache_steps, graph_arena_bytes_);
+        }
+        decode_graph_->reset();
+        return *decode_graph_;
     }
 
     void release_graphs() {
         token_embedding_.release_graph();
         forward_.release_graph();
         lm_head_.release_graph();
-        decode_graph_.reset();
+        if (decode_graph_) decode_graph_->reset();
     }
 
 private:
     Qwen35DecoderConfig config_;
     std::shared_ptr<Qwen35Weights> weights_;
+    core::ExecutionContext & execution_;
+    size_t graph_arena_bytes_;
     TokenEmbeddingGraph token_embedding_;
     BackboneForwardGraph forward_;
     LmHeadGraph lm_head_;
-    Qwen35CachedDecodeGraph decode_graph_;
+    std::unique_ptr<Qwen35CachedDecodeGraph> decode_graph_;
 };
 
 class Qwen35DecodeSession final : public Qwen35DecoderRuntime::DecodeSession {

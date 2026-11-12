@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/modules/norm_modules.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -33,6 +34,9 @@ struct Qwen35DecoderConfig {
     bool tie_word_embeddings = false;
     bool round_bf16_activations = false;
     int64_t decode_cache_steps = 2048;
+    // Allocate cached-decode state on first use instead of construction.
+    bool lazy_decode_cache = false;
+    RMSNormLowering rms_norm_lowering = RMSNormLowering::Default;
 };
 
 struct Qwen35DecoderForwardResult {

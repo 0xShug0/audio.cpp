@@ -1993,6 +1993,10 @@ struct test_unary : public test_case {
         float min = -150.f;
         float max =  150.f;
 
+        if (op == GGML_UNARY_OP_RSQRT) {
+            min = 1.0e-4f;
+        }
+
         // Keep FP16 exp/expm1 inputs in-range so all backends stay finite instead of
         // disagreeing on whether overflow saturates to max-F16 or produces +inf.
         if (type == GGML_TYPE_F16 && (op == GGML_UNARY_OP_EXP || op == GGML_UNARY_OP_EXPM1)) {
