@@ -337,11 +337,8 @@ struct Thinker::Impl {
     struct Graph {
         explicit Graph(core::ExecutionContext & execution)
             : prepared(execution, {"ming3_audio.thinker", ggml_tensor_overhead() * 32768 +
-                ggml_graph_overhead_custom(32768, false), 32768}),
-              context(prepared.build_context().ggml), graph(prepared.graph()) {}
+                ggml_graph_overhead_custom(32768, false), 32768}) {}
         core::PreparedGraph prepared;
-        ggml_context * context;
-        ggml_cgraph * graph;
         core::TensorValue ids;
         core::TensorValue audio;
         core::TensorValue audio_indices;
@@ -647,7 +644,9 @@ struct Thinker::Impl {
         auto result = std::make_unique<Graph>(execution);
         result->steps = steps;
         result->audio_steps = audio_steps;
-        core::ModuleBuildContext ctx{result->context, "ming3_audio.thinker", execution.backend_type()};
+        auto ctx = result->prepared.build_context();
+        ctx.module_instance_name = "ming3_audio.thinker";
+        auto * graph = result->prepared.graph();
         result->ids = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
         result->positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
         result->mask = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, steps, attention_steps}));
@@ -679,9 +678,9 @@ struct Thinker::Impl {
                 const auto kda = build_kda(ctx, normalized, state.tails, state.recurrent, w.kda, c);
                 output = kda.hidden;
                 for (size_t i = 0; i < state.tails.size(); ++i) {
-                    ggml_build_forward_expand(result->graph, ggml_cpy(ctx.ggml, kda.conv_tails[i].tensor, state.tails[i].tensor));
+                    ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, kda.conv_tails[i].tensor, state.tails[i].tensor));
                 }
-                ggml_build_forward_expand(result->graph, ggml_cpy(ctx.ggml, kda.recurrent_state.tensor, state.recurrent.tensor));
+                ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, kda.recurrent_state.tensor, state.recurrent.tensor));
             }
             x = modules::Bf16RoundModule{}.build(ctx, modules::AddModule{}.build(ctx, x, output));
             normalized = modules::Bf16RoundModule{}.build(ctx,
@@ -695,13 +694,13 @@ struct Thinker::Impl {
         x = modules::Bf16RoundModule{}.build(ctx, modules::RMSNormModule(norm_config).build(ctx, x, weights.norm));
         result->logits = ggml_round_bf16(ctx.ggml, ggml_mul_mat(ctx.ggml, weights.head.tensor, x.tensor));
         ggml_set_output(result->logits);
-        ggml_build_forward_expand(result->graph, result->logits);
+        ggml_build_forward_expand(graph, result->logits);
         ggml_backend_sched_t scheduler = nullptr;
         if (weights.disk_store) {
             scheduler = result->prepared.create_scheduler({execution.backend(), routing_execution->backend()});
             ggml_backend_sched_set_eval_callback(scheduler, core::DiskExpertWeightStore::evaluate, weights.disk_store.get());
-            for (int i = 0; i < ggml_graph_n_nodes(result->graph); ++i) {
-                auto * node = ggml_graph_node(result->graph, i);
+            for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+                auto * node = ggml_graph_node(graph, i);
                 const bool routing = core::DiskExpertWeightStore::evaluate(node, true, weights.disk_store.get());
                 ggml_backend_sched_set_tensor_backend(scheduler, node,
                     routing ? routing_execution->backend() : execution.backend());
@@ -711,7 +710,7 @@ struct Thinker::Impl {
         debug::timing_log_scalar("ming3_audio.thinker.graph_buffer_mb",
             (scheduler ? ggml_backend_sched_get_buffer_size(scheduler, execution.backend())
                        : result->prepared.workspace_bytes()) / (1024.0 * 1024.0));
-        debug::timing_log_context_reservation("ming3_audio.thinker.graph", result->context);
+        debug::timing_log_context_reservation("ming3_audio.thinker.graph", ctx.ggml);
         return result;
     }
 

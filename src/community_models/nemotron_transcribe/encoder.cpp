@@ -75,20 +75,17 @@ ExpertWeights load_expert(core::BackendWeightStore & store, const assets::Tensor
 // One reusable graph per stage. No backend allocations survive encoder teardown.
 struct Graph {
     core::PreparedGraph prepared;
-    ggml_context * context;
-    ggml_cgraph * graph;
     ggml_tensor * input = nullptr;
     ggml_tensor * output = nullptr;
     int64_t frames = 0;
 
     explicit Graph(const core::ExecutionContext & execution)
         : prepared(execution, {"nemotron_transcribe.encoder",
-            ggml_tensor_overhead() * kGraphNodes * 2 + ggml_graph_overhead_custom(kGraphNodes, false), kGraphNodes}),
-          context(prepared.build_context().ggml), graph(prepared.graph()) {}
+            ggml_tensor_overhead() * kGraphNodes * 2 + ggml_graph_overhead_custom(kGraphNodes, false), kGraphNodes}) {}
     void allocate(const std::vector<ggml_tensor *> & outputs) {
         for (auto * tensor : outputs) {
             ggml_set_output(tensor);
-            ggml_build_forward_expand(graph, tensor);
+            ggml_build_forward_expand(prepared.graph(), tensor);
         }
         prepared.allocate();
     }
@@ -317,10 +314,11 @@ struct ParallelExpertEncoder::Impl {
             pre_graph.reset();
             auto graph = std::make_unique<Graph>(execution);
             graph->frames = frames;
-            graph->input = ggml_new_tensor_2d(graph->context, GGML_TYPE_F32,
+            auto build = graph->prepared.build_context();
+            build.module_instance_name = "nemotron_transcribe.pre_encode";
+            graph->input = ggml_new_tensor_2d(build.ggml, GGML_TYPE_F32,
                 config.diar.feature_size * config.diar.subsampling_factor, frames);
             ggml_set_input(graph->input);
-            core::ModuleBuildContext build{graph->context, "nemotron_transcribe.pre_encode", execution.backend_type()};
             graph->output = modules::LinearModule({config.diar.feature_size * config.diar.subsampling_factor,
                 config.diar.hidden_size, false, GGML_PREC_F32}).build(build,
                 core::wrap_tensor(graph->input, core::TensorShape::from_dims({frames,
