@@ -433,9 +433,7 @@
         "rk3588/omnivoice/omnivoice_generator_front28_seq384_fp16.rknn",
         "rk3588/omnivoice/omnivoice_generator_front28_seq512_fp16.rknn",
         "rk3588/omnivoice/omnivoice_generator_front28_seq768_fp16.rknn",
-        "rk3588/omnivoice/omnivoice_generator_front28_seq1024_fp16.rknn",
-        "rk3588/omnivoice/omnivoice_generator_front28_seq1536_fp16.rknn",
-        "rk3588/omnivoice/omnivoice_generator_front28_seq2048_fp16.rknn"
+        "rk3588/omnivoice/omnivoice_generator_front28_seq1024_fp16.rknn"
       ],
       "strip_prefix": "rk3588/omnivoice",
       "description": "Pre-compiled RK3588 front-shard ladder: all 28 backbone layers on the NPU, the CFG tail (final norm, audio heads, guidance combine) stays fp32 on the host, so guidance > 0 is usable on the NPU (omnivoice.exec_plan, artifacts.main); installs beside the OmniVoice GGUF weights and is named by bare file name. Built by tools/rknn --front-k 28 from the OmniVoice checkpoint; see docs/build/rockchip-npu.md.",
