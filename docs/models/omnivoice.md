@@ -255,6 +255,8 @@ than sequential `run()` there.
 
 The two `weight_type` options quantize SafeTensors weights at load time, which is not the same as loading a prebuilt Q8 GGUF package. On CUDA, `omnivoice.generator_weight_type=f16` measured 1.26x faster than `native`, while runtime `omnivoice.audio_tokenizer_weight_type=q8_0` produced unusable audio without being faster. See the [OmniVoice weight-type benchmark](../reports/omnivoice_weight_type_benchmark.md).
 
+For throughput on an RTX 4090 with several instances and batch sizes, in f16 and bf16, compared with the Python OmniVoice package (with and without FlashInfer), see the [OmniVoice concurrency benchmark](../reports/omnivoice_concurrency_benchmark.md).
+
 ## VoiceTut-TTS (Egyptian Arabic)
 
 [VoiceTut-TTS](https://huggingface.co/mohammedaly22/VoiceTut-TTS) is an
