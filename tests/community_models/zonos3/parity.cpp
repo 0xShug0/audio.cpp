@@ -1,10 +1,14 @@
 // ZONOS3 parity against the native ZONOS3 runtime's outputs (tests/community_models/zonos3/make_oracle.sh).
 //   zonos3_parity backbone <backbone.gguf> <oracle_dir> [--disk-experts]
+//   zonos3_parity speaker <spk-encoder.gguf> <voice.wav> <oracle_dir>
 #include "engine/community_models/zonos3/assets.h"
 #include "engine/community_models/zonos3/backbone.h"
 #include "engine/community_models/zonos3/npy.h"
 #include "engine/community_models/zonos3/prompt.h"
+#include "engine/community_models/zonos3/speaker_encoder.h"
 #include "engine/community_models/zonos3/tokenizer.h"
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/trace.h"
 
@@ -157,6 +161,22 @@ int backbone(const fs::path & model, const fs::path & oracle, bool disk_experts)
     return pass ? 0 : 1;
 }
 
+// The oracle (spk-encoder-cli --audio) decodes the WAV to 44.1 kHz mono floats, as read_wav_f32 does for a
+// 44.1 kHz mono 16-bit WAV. Requires cosine(ours, spk.npy) >= 0.999.
+int speaker(const fs::path & model, const fs::path & wav_path, const fs::path & oracle) {
+    const auto wav = engine::audio::read_wav_f32(wav_path);
+    if (wav.sample_rate != 44100 || wav.channels != 1) throw std::runtime_error("voice.wav must be 44.1 kHz mono");
+    const auto reference = zonos3::read_f32_npy(oracle / "spk.npy");
+    if (reference.data.size() != 192) throw std::runtime_error("spk.npy must hold 192 floats");
+    engine::core::ExecutionContext execution(cpu_backend());
+    const zonos3::Zonos3SpeakerEncoder encoder(engine::assets::open_tensor_source(model), execution);
+    const auto ours = encoder.embed(wav.samples);
+    const double cos = cosine(ours.data(), reference.data.data(), ours.size());
+    const bool pass = cos >= 0.999;
+    std::printf("zonos3 speaker parity: %s cos=%.6f\n", pass ? "PASS" : "FAIL", cos);
+    return pass ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -172,7 +192,9 @@ int main(int argc, char ** argv) {
             if (args.size() > 4 || (args.size() == 4 && !disk)) throw std::runtime_error("unknown backbone option");
             return backbone(args[1], args[2], disk);
         }
-        std::cerr << "usage: zonos3_parity [--log] backbone <backbone.gguf> <oracle_dir> [--disk-experts]\n";
+        if (args.size() == 4 && args[0] == "speaker") return speaker(args[1], args[2], args[3]);
+        std::cerr << "usage: zonos3_parity [--log] backbone <backbone.gguf> <oracle_dir> [--disk-experts]\n"
+                     "       zonos3_parity [--log] speaker <spk-encoder.gguf> <voice.wav> <oracle_dir>\n";
         return 2;
     } catch (const std::exception & error) {
         std::cerr << "zonos3_parity: " << error.what() << "\n";
