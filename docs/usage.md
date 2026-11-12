@@ -228,9 +228,12 @@ option. Availability depends on the build and device; see [HIP](build/HIP.md).
 ### Experimental hybrid MoE execution
 
 `--moe-cpu-share 0.5` lets eligible GPU sessions compute half of subsequent
-expert-cache misses on CPU. This is a global execution option, including CLI
-recipes and workflows, not a model session option. The server accepts the same
-flag or a top-level `"moe_cpu_share": 0.5` in its configuration.
+expert-cache misses on CPU. It is a common model session option, equivalent to
+`--session-option moe_cpu_share=0.5`. Recipes select a role explicitly with
+`--session-option <role>.moe_cpu_share=0.5`; workflows can set it in a step's
+`session_options`. In server configuration, set
+`"moe_cpu_share": 0.5` inside the selected model's `session_options` object.
+It is not a top-level server setting or a backend option.
 
 Enable the model's existing disk-backed expert option first. Shared `MoeModule`
 and `StagedMoeRuntime` paths participate through the session-owned build context.

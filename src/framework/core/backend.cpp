@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -363,8 +362,6 @@ void print_backend_devices_json(std::ostream & out, const std::vector<BackendDev
 }
 
 ggml_backend_t init_backend(const BackendConfig & config) {
-    if (!std::isfinite(config.moe_cpu_share) || config.moe_cpu_share < 0 || config.moe_cpu_share > 1)
-        throw std::invalid_argument("moe_cpu_share must be between zero and one");
     ensure_backends_loaded();
     switch (config.type) {
         case BackendType::Cpu: {

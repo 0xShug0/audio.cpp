@@ -22,8 +22,6 @@ struct BackendConfig {
     int threads = 1;
     // Empty selects the backend's default implementation.
     std::string impl = {};
-    // Global execution policy for native disk-backed MoE experts; zero is off.
-    float moe_cpu_share = 0;
 };
 
 struct BackendMemorySnapshot {

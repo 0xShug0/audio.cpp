@@ -176,7 +176,7 @@ public:
     Impl(const core::ExecutionContext & e, StagedMoeConfig c, std::shared_ptr<core::GraphWorkspace> shared_workspace)
         : execution(e), config(std::move(c)), workspace(std::move(shared_workspace)) {
         if (!workspace) throw std::invalid_argument("staged MoE requires a caller-owned graph workspace");
-        cpu_share = core::is_host_backend(execution.backend()) ? 0 : execution.config().moe_cpu_share;
+        cpu_share = core::is_host_backend(execution.backend()) ? 0 : execution.moe_cpu_share();
         if (config.input_size == 0) config.input_size = config.hidden_size;
         if (config.hidden_size <= 0 || config.input_size <= 0 || config.tokens <= 0 || config.selected <= 0 || config.experts < config.selected ||
             config.cache_slots <= 0 || config.cache_slots > config.experts || config.rows_per_expert.empty() ||

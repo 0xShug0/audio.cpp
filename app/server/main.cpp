@@ -11,7 +11,6 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
-#include "engine/framework/runtime/options.h"
 
 #include <csignal>
 #include <filesystem>
@@ -107,7 +106,6 @@ void print_help() {
         << "  --port <port>                    server listening port; default 8080\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal|webgpu|sycl  default cuda (rocm is an alias for hip)\n"
         << "  --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
-        << "  --moe-cpu-share <0..1>             global CPU share of disk-expert cache misses; default 0\n"
         << "  --list-devices                   list available backend devices and exit; add --json\n"
         << "                                   for PCI ids and free/total memory as JSON\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
@@ -270,11 +268,6 @@ int main(int argc, char ** argv) {
         }
         if (const auto impl = arg_value(argc, argv, "--backend-impl")) {
             config.backend_impl = *impl;
-        }
-        if (const auto share = arg_value(argc, argv, "--moe-cpu-share")) {
-            config.moe_cpu_share = engine::runtime::parse_finite_float_option({{"moe_cpu_share", *share}}, {"moe_cpu_share"}).value();
-            if (config.moe_cpu_share < 0 || config.moe_cpu_share > 1)
-                throw std::runtime_error("--moe-cpu-share must be between zero and one");
         }
         if (const auto device = arg_value(argc, argv, "--device")) {
             config.device = std::stoi(*device);

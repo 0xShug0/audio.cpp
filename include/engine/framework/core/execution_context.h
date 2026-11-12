@@ -6,7 +6,7 @@ namespace engine::core {
 
 class ExecutionContext {
 public:
-    explicit ExecutionContext(const BackendConfig & config);
+    explicit ExecutionContext(const BackendConfig & config, float moe_cpu_share = 0);
     ~ExecutionContext();
 
     ExecutionContext(const ExecutionContext &) = delete;
@@ -17,11 +17,14 @@ public:
     ggml_backend_t backend() const noexcept;
     const BackendConfig & config() const noexcept;
     BackendType backend_type() const noexcept;
+    // Model session policy, separate from backend selection and configuration.
+    float moe_cpu_share() const noexcept { return moe_cpu_share_; }
     bool uses_host_graph_plan() const noexcept;
     BackendMemorySnapshot memory_snapshot() const;
 
 private:
     BackendConfig config_;
+    float moe_cpu_share_ = 0;
     ggml_backend_t backend_ = nullptr;
 };
 

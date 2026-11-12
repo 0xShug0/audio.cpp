@@ -129,7 +129,7 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
         reference.allocate();
         std::unique_ptr<core::PreparedGraph> host_reference;
         ggml_tensor * host_hidden = nullptr, * host_ids = nullptr, * host_lanes = nullptr;
-        if (quantized && execution.config().moe_cpu_share > 0) {
+        if (quantized && execution.moe_cpu_share() > 0) {
             host_reference = std::make_unique<core::PreparedGraph>(host,
                 core::PreparedGraphConfig{"test.moe.auto.cpu_reference", 4 * 1024 * 1024, 256, 16 * ggml_tensor_overhead()});
             auto * persistent = host_reference->persistent_build_context().ggml;
@@ -176,7 +176,7 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
                 ggml_backend_tensor_set(host_ids, ids.data(), 0, ids.size() * sizeof(int32_t));
                 host_reference->compute();
                 const auto cpu = core::read_tensor_f32(host_lanes), gpu = core::read_tensor_f32(gpu_lanes);
-                const float share = execution.config().moe_cpu_share;
+                const float share = execution.moe_cpu_share();
                 // This fixture has assignment counts 4:2, 7:2, 5:1, 6:1.
                 // At half share the cold misses send {7,6} to CPU, then {6},
                 // then none as the remaining misses become GPU hits. At full
@@ -204,7 +204,7 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
                 maximum = std::max(maximum, std::abs(actual[i] - baseline[i]));
             }
             const auto gpu_loads = store.statistics().expert_loads - before;
-            const auto wanted = execution.config().moe_cpu_share == 0 ? 4 : execution.config().moe_cpu_share == 1 ? 0 : 2;
+            const auto wanted = execution.moe_cpu_share() == 0 ? 4 : execution.moe_cpu_share() == 1 ? 0 : 2;
             if (maximum > 1e-4F || (request < 4 && gpu_loads != static_cast<uint64_t>(wanted)) ||
                 (request >= 6 && gpu_loads != 0))
                 throw std::runtime_error("automatic hybrid changed expert math or uploaded CPU misses: " + std::to_string(maximum) + " request=" + std::to_string(request) + " loads=" + std::to_string(gpu_loads));
@@ -225,7 +225,7 @@ void automatic_hybrid_lifecycle(engine::core::ExecutionContext & execution, engi
     const std::vector<engine::core::TensorValue> & weights) {
     namespace core = engine::core;
     namespace modules = engine::modules;
-    const float share = execution.config().moe_cpu_share;
+    const float share = execution.moe_cpu_share();
     if (share != 0.5F && share != 1) return;
     constexpr size_t h = 256, tokens = 3, selected = 2, rows = tokens * selected;
     const std::vector<std::string> names{store.tensor(first_group, 0).tensor->name,
@@ -559,8 +559,8 @@ void dense_hybrid_oracle(engine::core::ExecutionContext & execution, engine::cor
                 throw std::runtime_error("dense hybrid MoE disagrees with independent expert math: " + std::to_string(maximum));
             std::cout << "dense hybrid relu=" << relu << " rounded=" << rounded << " request=" << request << " max_abs=" << maximum << '\n';
         }
-        if ((execution.config().moe_cpu_share > 0 && runtime.statistics().cpu_assignments == 0) ||
-            (execution.config().moe_cpu_share < 1 && runtime.statistics().gpu_assignments == 0 && execution.config().moe_cpu_share > 0))
+        if ((execution.moe_cpu_share() > 0 && runtime.statistics().cpu_assignments == 0) ||
+            (execution.moe_cpu_share() < 1 && runtime.statistics().gpu_assignments == 0 && execution.moe_cpu_share() > 0))
             throw std::runtime_error("dense hybrid test did not execute both placements");
     }
 }
@@ -577,14 +577,14 @@ int main(int argc, char ** argv) {
         if (argc > 1 && std::string(argv[1]) == "cuda") config.type = core::BackendType::Cuda;
         if (argc > 1 && std::string(argv[1]) == "vulkan") config.type = core::BackendType::Vulkan;
         if (argc > 1 && std::string(argv[1]) == "metal") config.type = core::BackendType::Metal;
+        float moe_cpu_share = 0;
         for (int i = 1; i + 1 < argc; ++i)
-            if (std::string(argv[i]) == "--moe-cpu-share") config.moe_cpu_share = std::stof(argv[i + 1]);
-        core::ExecutionContext execution(config);
+            if (std::string(argv[i]) == "--moe-cpu-share") moe_cpu_share = std::stof(argv[i + 1]);
+        core::ExecutionContext execution(config, moe_cpu_share);
         std::unique_ptr<core::ExecutionContext> host;
         if (config.type != core::BackendType::Cpu) {
             auto host_config = config;
             host_config.type = core::BackendType::Cpu;
-            host_config.moe_cpu_share = 0;
             host = std::make_unique<core::ExecutionContext>(host_config);
         }
         FixtureDirectory directory;
@@ -815,7 +815,7 @@ int main(int argc, char ** argv) {
                 if (host) automatic_hybrid_graph(execution, *host, disk, group, full);
                 if (host && type == assets::TensorStorageType::Q4_K)
                     automatic_hybrid_lifecycle(execution, *host, disk, group, full);
-                if (host && execution.config().moe_cpu_share == 0.5F && type == assets::TensorStorageType::Q4_K) native_hybrid_lanes(execution, *host, disk, group, full);
+                if (host && execution.moe_cpu_share() == 0.5F && type == assets::TensorStorageType::Q4_K) native_hybrid_lanes(execution, *host, disk, group, full);
                 namespace modules = engine::modules;
                 // A diagonal expert bank gives an independent host oracle for
                 // routing/staging without sharing the implementation under test.
@@ -860,7 +860,7 @@ int main(int argc, char ** argv) {
                 // Includes every variable row bucket, cache eviction, multiple
                 // 32-row blocks and partial tails; repeat after changing routes.
                 auto workspace = std::make_shared<core::GraphWorkspace>(execution.backend());
-                const auto shares = std::vector<float>{execution.config().moe_cpu_share};
+                const auto shares = std::vector<float>{execution.moe_cpu_share()};
                 for (auto share : shares) for (bool relu : {false, true}) for (int tokens : {1, 7, 19, 37, 73}) {
                     workspace->reset();
                     staged_store.stage(staged_group, {8, 9, 10, 11});

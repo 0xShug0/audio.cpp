@@ -3,6 +3,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/runtime/session_base.h"
 #include "test_assert.h"
 #include "test_allocation_failure.h"
 #include "ggml-backend-impl.h"
@@ -21,14 +22,39 @@ using engine::test::require;
 
 namespace {
 
+void check_session_moe_option() {
+    struct Session : engine::runtime::RuntimeSessionBase {
+        using RuntimeSessionBase::RuntimeSessionBase;
+        using RuntimeSessionBase::execution_context;
+    };
+    engine::runtime::SessionOptions options;
+    options.backend.type = core::BackendType::Cpu;
+    options.backend.threads = 8;
+    Session ordinary(options);
+    require(ordinary.execution_context().moe_cpu_share() == 0, "omitted session option must disable hybrid execution");
+    options.options["moe_cpu_share"] = "0.5";
+    Session enabled(options);
+    require(enabled.execution_context().moe_cpu_share() == 0.5F, "session option did not reach execution context");
+    require(ordinary.execution_context().moe_cpu_share() == 0, "session option leaked across sessions");
+    core::ExecutionContext moved(std::move(enabled.execution_context()));
+    require(moved.moe_cpu_share() == 0.5F, "move lost session execution policy");
+    for (const char * value : {"-0.1", "1.1", "nan", "typo"}) {
+        options.options["moe_cpu_share"] = value;
+        bool rejected = false;
+        try { Session invalid(options); } catch (const std::exception & error) {
+            rejected = std::string(error.what()).find("moe_cpu_share") != std::string::npos;
+        }
+        require(rejected, "invalid session CPU share was accepted");
+    }
+}
+
 // Exercise explicit recorder publication in CPU-only CI. Only device classification is
 // substituted; no graph computation is performed on this borrowed device.
 void check_owner_allocation_failures() {
     core::BackendConfig backend;
     backend.type = core::BackendType::Cpu;
     backend.threads = 8;
-    backend.moe_cpu_share = 0.5F;
-    core::ExecutionContext execution(backend);
+    core::ExecutionContext execution(backend, 0.5F);
     auto * handle = execution.backend();
     auto * original = handle->device;
     ggml_backend_device device = *original;
@@ -44,7 +70,6 @@ void check_owner_allocation_failures() {
     // recorder, including after reset and release/reprepare.
     {
         auto ordinary_config = backend;
-        ordinary_config.moe_cpu_share = 0;
         core::ExecutionContext ordinary(ordinary_config);
         auto * ordinary_handle = ordinary.backend();
         RestoreDevice restore_ordinary{ordinary_handle, ordinary_handle->device};
@@ -1637,6 +1662,7 @@ int main(int argc, char ** argv) {
             else if (backend != "cpu") throw std::runtime_error("Unsupported test backend: " + backend);
         }
         core::ExecutionContext execution({type, 0, 8});
+        check_session_moe_option();
         check_owner_allocation_failures();
         for (int lifetime = 0; lifetime < 2; ++lifetime) {
             check_owned_graph(execution);

@@ -65,7 +65,6 @@ void print_task_list_help() {
         << "    --mode offline|streaming  default offline\n"
         << "    --device <n>\n"
         << "    --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
-        << "    --moe-cpu-share <0..1>             global CPU share of disk-expert cache misses; default 0\n"
         << "    --list-devices  List available backend devices and exit; --json adds PCI ids and memory\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
         << "    --registry-config <path>\n"
@@ -81,6 +80,7 @@ void print_task_list_help() {
         << "    --metrics  Print compact wall time, audio duration, and RTF summary after offline generation\n"
         << "    --load-option key=value\n"
         << "    --session-option key=value\n"
+        << "    --moe-cpu-share <0..1>             session CPU share of disk-expert cache misses; default 0\n"
         << "    --request-option key=value\n"
         << "  Batch:\n"
         << "    --request-sequence <json>  Run JSON requests in one offline session\n"
@@ -786,10 +786,11 @@ int audiocpp_cli_main(int argc, char ** argv) {
             return 0;
         }
 
-        float moe_cpu_share = 0;
+        auto common_session_options = collect_key_value_args(argc, argv, "--session-option");
         if (const auto value = find_arg(argc, argv, "--moe-cpu-share")) {
-            moe_cpu_share = engine::runtime::parse_finite_float_option({{"moe_cpu_share", *value}}, {"moe_cpu_share"}).value();
+            const auto moe_cpu_share = engine::runtime::parse_finite_float_option({{"moe_cpu_share", *value}}, {"moe_cpu_share"}).value();
             if (moe_cpu_share < 0 || moe_cpu_share > 1) throw std::runtime_error("--moe-cpu-share must be between zero and one");
+            common_session_options["moe_cpu_share"] = *value;
         }
         const auto model_arg = find_arg(argc, argv, "--model");
         const auto pipeline_arg = find_arg(argc, argv, "--pipeline");
@@ -810,7 +811,6 @@ int audiocpp_cli_main(int argc, char ** argv) {
             engine::core::BackendConfig backend;
             backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
             backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
-            backend.moe_cpu_share = moe_cpu_share;
             backend.device = parse_int_arg(argc, argv, "--device", 0);
             backend.threads = threads;
             minitts::app::run_json_workflow(
@@ -821,7 +821,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
                     backend,
                     optional_path_arg(argc, argv, "--out"),
                     collect_key_value_args(argc, argv, "--load-option"),
-                    collect_key_value_args(argc, argv, "--session-option"),
+                    common_session_options,
                     workflow_inputs,
                     optional_path_arg(argc, argv, "--model-spec-override"),
                     audio_converter,
@@ -829,6 +829,8 @@ int audiocpp_cli_main(int argc, char ** argv) {
             return 0;
         }
         if (recipe_arg.has_value()) {
+            if (find_arg(argc, argv, "--moe-cpu-share"))
+                throw std::runtime_error("recipes require --session-option <role>.moe_cpu_share=<0..1>");
             const int threads = parse_int_arg(argc, argv, "--threads", 4);
             if (threads <= 0) {
                 throw std::runtime_error("--threads must be positive");
@@ -842,11 +844,10 @@ int audiocpp_cli_main(int argc, char ** argv) {
             }
             recipe_options.model_families = collect_key_value_args(argc, argv, "--recipe-family");
             recipe_options.load_options = collect_key_value_args(argc, argv, "--load-option");
-            recipe_options.session_options = collect_key_value_args(argc, argv, "--session-option");
+            recipe_options.session_options = common_session_options;
             recipe_options.model_spec_override = optional_path_arg(argc, argv, "--model-spec-override");
             recipe_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
             recipe_options.backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
-            recipe_options.backend.moe_cpu_share = moe_cpu_share;
             recipe_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
             recipe_options.backend.threads = threads;
 
@@ -937,7 +938,6 @@ int audiocpp_cli_main(int argc, char ** argv) {
         engine::runtime::SessionOptions session_options;
         session_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
         session_options.backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
-        session_options.backend.moe_cpu_share = moe_cpu_share;
         session_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
         const int threads = parse_int_arg(argc, argv, "--threads", 4);
         if (threads <= 0) {
@@ -947,7 +947,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
 #ifdef _OPENMP
         omp_set_num_threads(threads);
 #endif
-        session_options.options = collect_key_value_args(argc, argv, "--session-option");
+        session_options.options = common_session_options;
         // Parsed before the model loads so a bad value fails fast.
         const auto wav_options = wav_write_options_from_cli(argc, argv);
         auto model = registry.load(load_request);
