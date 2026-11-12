@@ -494,6 +494,15 @@ row layout); batched requests fall back to the ggml graph.
   `--text-chunk-size 60` over the short reference gives TTFB 85.7 s and wall 223.8 s on the
   NPU path against 125.8 s / 338.0 s on the ggml twin, with whisper-identical transcriptions
   across the two renders.
+- OmniVoice deep-rung probe (negative): seq1536 compiles and runs clean in the PC simulator
+  (55.8 dB hidden SNR, 100% step-0 argmax) and completes 32 board steps at rc=0, but the
+  render is non-speech (whisper tags it music) - the NPU's fp16 attention accumulation
+  collapses at spans the simulator's fp32 accumulation survives. seq2048 cannot execute on
+  this board at all: `rknn_run` task submission fails on driver 0.9.8 (8377 tasks), and
+  preloading the parked 2.5.0 userspace to work around it panics the kernel (the board
+  net-rebooted). The shipped ladder therefore caps at seq1024; longer requests take the ggml
+  graph (a 1290-token render runs 976 s on ggml, against 286 s for the 775-token request that
+  still fits the shard, so the crossover costs speed, not quality).
 
 
 ## Component execution plans
