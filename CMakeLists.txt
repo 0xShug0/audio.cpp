@@ -3829,6 +3829,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     add_test(NAME dit_runtime_test COMMAND dit_runtime_test
         --log ${CMAKE_CURRENT_BINARY_DIR}/dit_runtime_test.log)
     add_engine_unittest(prepared_graph_test tests/unittests/test_prepared_graph.cpp)
+    target_sources(prepared_graph_test PRIVATE tests/unittests/test_allocation_failure.cpp)
     target_include_directories(prepared_graph_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/external/ggml/src)
     add_test(NAME prepared_graph_test COMMAND prepared_graph_test
         --log ${CMAKE_CURRENT_BINARY_DIR}/prepared_graph_test.log)
@@ -4386,6 +4387,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME moe_module_test COMMAND moe_module_test --log)
 
         add_engine_unittest(disk_expert_weight_store_test tests/unittests/test_disk_expert_weight_store.cpp)
+        target_sources(disk_expert_weight_store_test PRIVATE tests/unittests/test_allocation_failure.cpp)
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(disk_expert_weight_store_test PRIVATE OpenMP::OpenMP_CXX)
         endif()

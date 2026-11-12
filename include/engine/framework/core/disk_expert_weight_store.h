@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,10 @@ namespace engine::core {
 // Dense weights remain in BackendWeightStore.
 class DiskExpertWeightStore {
 public:
+    struct Route {
+        DiskExpertWeightStore * store;
+        size_t group;
+    };
     struct Statistics {
         uint64_t bytes_read = 0;
         uint64_t expert_loads = 0;
@@ -37,11 +42,19 @@ public:
     size_t add_group(const std::vector<std::string> & tensor_names,
                      ggml_backend_t backend, int64_t cache_slots);
     TensorValue tensor(size_t group, size_t projection) const;
+    // Borrow native host weights without copying or expanding the expert bank.
+    // The returned tensor and its mapped/pinned storage live with this store.
+    TensorValue host_tensor(size_t group, const ggml_tensor * device_tensor);
+    // Residency inspection does not change eviction order or choose execution.
+    const std::vector<int32_t> & cached_experts(size_t group) const;
+    uint64_t cache_epoch() const;
     // Stage one bounded group and return cache-slot IDs in the caller's order.
     std::vector<int32_t> stage(size_t group, const std::vector<int32_t> & expert_ids);
     // Invalidate placement at an independent request boundary, retaining all allocations and statistics.
     void invalidate_cache();
     ggml_tensor * route(ModuleBuildContext & ctx, ggml_tensor * expert_ids, size_t group) const;
+    // Graph-local binding; no tensor-name or model-family inference.
+    static std::optional<Route> find_route(ModuleBuildContext & ctx, ggml_tensor * bank_ids);
 
     // Install on a scheduler before computing graphs containing route() nodes.
     // The scheduler synchronizes the routing result before this callback reads

@@ -3154,6 +3154,9 @@ extern "C" {
     // graph allocation in a context
     GGML_API struct ggml_cgraph * ggml_new_graph       (struct ggml_context * ctx); // size = GGML_DEFAULT_GRAPH_SIZE, grads = false
     GGML_API struct ggml_cgraph * ggml_new_graph_custom(struct ggml_context * ctx, size_t size, bool grads);
+    // Execution-only node slice. Borrows the source graph's node array and tensor
+    // storage; do not expand or allocate the slice. The source must outlive it.
+    GGML_API struct ggml_cgraph * ggml_graph_slice(struct ggml_context * ctx, struct ggml_cgraph * graph, int begin, int end);
     GGML_API struct ggml_cgraph * ggml_graph_dup       (struct ggml_context * ctx, struct ggml_cgraph * cgraph, bool force_grads);
     GGML_API void                 ggml_graph_cpy       (struct ggml_cgraph * src, struct ggml_cgraph * dst);
     GGML_API void                 ggml_graph_reset     (struct ggml_cgraph * cgraph); // set regular grads + optimizer momenta to 0, set loss grad to 1

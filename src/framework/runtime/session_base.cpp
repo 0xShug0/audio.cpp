@@ -1,10 +1,11 @@
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/options.h"
 
 namespace engine::runtime {
 
 RuntimeSessionBase::RuntimeSessionBase(const SessionOptions & options)
     : options_(options),
-      execution_context_(options.backend),
+      execution_context_(options.backend, parse_finite_float_option(options.options, {"moe_cpu_share"}).value_or(0)),
       graph_executor_(execution_context_) {}
 
 engine::core::ExecutionContext & RuntimeSessionBase::execution_context() noexcept {

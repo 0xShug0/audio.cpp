@@ -20,6 +20,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--device` | integer | `0` | Backend device index. |
 | `--list-devices` | flag | off | List available backend devices and exit; combine with `--backend`/`--device` to select one. Add `--json` for [machine-readable output](#listing-devices) with PCI ids and memory. |
 | `--threads` | integer | `4` | Backend/OpenMP worker threads. |
+| `--moe-cpu-share` | number, `0`–`1` | `0` | Global CPU share of disk-backed MoE expert-cache misses. |
 | `--log` | flag | off | Print progress and timing logs to stdout. |
 | `--log-file` | path | not set | Stream progress and timing logs to a file. |
 | `--metrics` | flag | off | Print compact offline wall time, audio duration, RTF, realtime speed, sample rate, and channel metrics. |
@@ -223,3 +224,32 @@ If a CUDA or HIP device cannot give the process a context, for example a GPU in 
 for example `--backend hip --backend-impl gfx1151_v1`. Omission or `default` keeps the
 existing implementation. This is backend configuration, not a model session
 option. Availability depends on the build and device; see [HIP](build/HIP.md).
+
+### Experimental hybrid MoE execution
+
+`--moe-cpu-share 0.5` lets eligible GPU sessions compute half of subsequent
+expert-cache misses on CPU. It is a common model session option, equivalent to
+`--session-option moe_cpu_share=0.5`. Recipes select a role explicitly with
+`--session-option <role>.moe_cpu_share=0.5`; workflows can set it in a step's
+`session_options`. In server configuration, set
+`"moe_cpu_share": 0.5` inside the selected model's `session_options` object.
+It is not a top-level server setting or a backend option.
+
+Enable the model's existing disk-backed expert option first. Shared `MoeModule`
+and `StagedMoeRuntime` paths participate through the session-owned build context.
+Graph builders composing a new `ModuleBuildContext` must copy
+`PreparedGraph::build_context()` to retain its explicit region recorder; raw
+GGML contexts are not discovered through a global registry. Resident
+expert banks and CPU-only execution keep their ordinary paths. The cache fills
+first, hits execute on GPU before new uploads, and the fractional share carries
+per prepared expert binding until cache invalidation.
+Native host weights are borrowed without expanding the complete bank to F32;
+CPU threads follow `--threads` or the server's `threads` setting.
+
+Zero, the default, preserves ordinary execution. Computing experts on CPU can
+cost more than uploading them, so measure the target workload. Native quantized
+CPU/GPU arithmetic differs and can change generated tokens and speech quality.
+This is not a parity-preserving option: short Drama3 requests can omit speech.
+Validate task outputs before enabling it in a pipeline.
+Automatic region execution currently requires F32 activations and a region
+contained in one scheduler split; incompatible registered regions fail explicitly.
