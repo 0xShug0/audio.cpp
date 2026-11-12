@@ -846,6 +846,18 @@ NPU-to-CPU one (the two Kokoro sine engines differ by 28.2 dB from each other). 
 here: the per-core fp16 difference itself, which would need the same engine run with a
 single-core mask and the outputs compared.
 
+The zero-op `rknn_matmul_api` in the same library is single-core per matmul, and that is the
+ceiling on any plan to lift GEMMs out of the compiled graph. `rknn_matmul_set_core_mask` rejects
+`RKNN_NPU_CORE_0_1_2` (`Not support core mask: 7, fallback to single core auto mode`), so one matmul
+runs on one core. Measured on this board (30 loops, native layouts, the OmniVoice front-shard
+seq768 shapes at M=1536): fp16 `FLOAT16_TO_FLOAT16` 0.22-0.67 TFLOP/s, int8 `INT8_TO_INT32`
+0.89-1.73 TOPS. A register-level open library that splits a single matmul over all three cores
+reaches 1.6-1.9 TFLOP/s fp16 on the same shapes (about 2.5x), which is where the compiled graph's
+headroom actually is; that library is AGPL-3.0-only and its author declined to dual-license, so the
+vendor single-core matmul is the only legal NPU matmul path, and the compiled-graph engines above
+are the shipped form. int8 through the vendor matmul measures at parity with that open library's
+int8, so int8 buys no hidden speed there, only the usual quantization risk.
+
 ## The IOVA ceiling, i.e. how big an engine can be
 
 An engine is mapped into the NPU's I/O address space, and on RK3588 that space is a 32-bit arena. A
