@@ -71,7 +71,7 @@
     ],
     "session": [
       {"name": "encoder_backend", "type": "enum", "description": "Backend for the speaker encoder, ZAC encoder and SSL teacher: cpu, or the session backend (same).", "values": ["cpu", "same"], "required": false, "default": "cpu"},
-      {"name": "keep_reference_encoder", "type": "bool", "description": "Keep the 5.6 GB raw-reference encoder resident between requests instead of releasing it after each encode.", "required": false, "default": false},
+      {"name": "keep_reference_encoder", "type": "bool", "description": "Keep the raw-reference encoder (ZAC encoder + w2v-BERT teacher, about 3.4 GiB peak RSS while encoding) loaded between requests instead of releasing it after each encode.", "required": false, "default": false},
       {"name": "voice_cache_slots", "type": "int", "description": "LRU slots for computed speaker embeddings and reference codes per reference clip; 0 disables caching.", "required": false, "min": 0, "default": 4},
       {"name": "stream_chunk_frames", "type": "int", "description": "Maximum 15 Hz frames per streamed decoder chunk.", "required": false, "min": 1, "max": 64, "default": 16},
       {"name": "disk_experts", "type": "bool", "description": "Keep the routed expert banks in the GGUF/host memory and stage the selected experts through a bounded per-layer cache on the compute backend.", "required": false, "default": false},
