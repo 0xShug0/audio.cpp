@@ -494,6 +494,11 @@ row layout); batched requests fall back to the ggml graph.
   `--text-chunk-size 60` over the short reference gives TTFB 85.7 s and wall 223.8 s on the
   NPU path against 125.8 s / 338.0 s on the ggml twin, with whisper-identical transcriptions
   across the two renders.
+  The step count is a measured speed lever, not a shipped default: the seq768 control request
+  at guidance 2.0 runs wall 464.5 s at the default 32 steps, 344.1 s at
+  `--request-option num_inference_steps=24` (-26%, whisper-identical) and 254.5 s at 16
+  (-45%, whisper drifts one word, `голова` -> `глава`, the sentence is intact); the engine is
+  linear in the count (~11.25 s/step at this rung), so every dropped step is 11 s on the wall.
 - OmniVoice deep-rung probe (negative): seq1536 compiles and runs clean in the PC simulator
   (55.8 dB hidden SNR, 100% step-0 argmax) and completes 32 board steps at rc=0, but the
   render is non-speech (whisper tags it music) - the NPU's fp16 attention accumulation
