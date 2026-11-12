@@ -2111,12 +2111,17 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
         for (size_t item = 0; item < batch; ++item) {
             shapes[item] = {inputs[item].total_tokens(), inputs[item].target_frames};
         }
-        const bool needs_rebuild = impl_->forward_graph == nullptr ||
-            impl_->forward_graph->is_front_shard() != rknn_shard ||
+        const bool type_changes = impl_->forward_graph != nullptr &&
+            impl_->forward_graph->is_front_shard() != rknn_shard;
+        const bool needs_rebuild = impl_->forward_graph == nullptr || type_changes ||
             !impl_->forward_graph->matches(*impl_->runtime, shapes);
         if (needs_rebuild) {
             const auto rebuild_start = Clock::now();
-            if (impl_->forward_graph == nullptr) {
+            if (impl_->forward_graph == nullptr || type_changes) {
+                // The graph type is baked into its structure (a front-shard tail takes hidden
+                // rows, a full graph takes token ids), so a shard/full switch on a reused session
+                // must construct a fresh graph; rebuild() keeps the type.
+                impl_->forward_graph.reset();
                 if (impl_->mem_saver && !rknn_shard) {
                     impl_->forward_graph = std::make_unique<Qwen3DiffusionLayerwiseGraph>(
                         impl_->runtime,
