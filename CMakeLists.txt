@@ -1819,6 +1819,7 @@ audiocpp_add_model(zonos3
     SOURCES
         src/community_models/zonos3/assets.cpp
         src/community_models/zonos3/backbone.cpp
+        src/community_models/zonos3/codec_decoder.cpp
         src/community_models/zonos3/generator.cpp
         src/community_models/zonos3/npy.cpp
         src/community_models/zonos3/prompt.cpp
@@ -4789,7 +4790,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                     "${AUDIOCPP_ZONOS3_MODEL_DIR}/backbone-ptq.gguf" "${AUDIOCPP_ZONOS3_PARITY_DIR}" --disk-experts)
                 add_test(NAME zonos3_parity_speaker COMMAND zonos3_parity speaker
                     "${AUDIOCPP_ZONOS3_MODEL_DIR}/spk-encoder.gguf" "${AUDIOCPP_ZONOS3_PARITY_DIR}/voice.wav" "${AUDIOCPP_ZONOS3_PARITY_DIR}")
-                set_tests_properties(zonos3_parity_backbone zonos3_parity_backbone_disk zonos3_parity_speaker PROPERTIES
+                add_test(NAME zonos3_parity_decoder COMMAND zonos3_parity decoder
+                    "${AUDIOCPP_ZONOS3_MODEL_DIR}/zac-keep2.gguf" "${AUDIOCPP_ZONOS3_PARITY_DIR}")
+                set_tests_properties(zonos3_parity_backbone zonos3_parity_backbone_disk zonos3_parity_speaker
+                    zonos3_parity_decoder PROPERTIES
                     PASS_REGULAR_EXPRESSION "PASS"
                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
             endif()
