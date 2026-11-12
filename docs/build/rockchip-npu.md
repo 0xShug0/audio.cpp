@@ -518,7 +518,15 @@ row layout); batched requests fall back to the ggml graph.
   which the batch-2 CFG-pair graph does not support. The literature remedy for int8 on
   transformer activations is a randomized Hadamard transform (QuaRot, cf. the rk-llama.cpp
   `W8A8_HADAMARD` pipeline at KL 0.003), which has to be exported into the ONNX graph, not
-  asked of the converter.
+  asked of the converter. That experiment ran: a randomized 1024 Hadamard folded into the
+  export (embeddings/QKV/gate/up by `H`, o/down by `Hᵀ`, norm weights absorbed, a final
+  de-rotation matmul keeps the shard contract; the graph is neutral - 116 dB vs fp32, and an
+  fp16 control build of the rotated graph measures 57-60 dB at argmax 1.0). The w8a8 rebuild
+  of the rotated graph measures 2.1/-0.6 dB - bit for bit the unrotated death. The residual
+  stream was not the binding outlier: per-tensor scales here are set by the unrotated MLP
+  mid (`silu(g)*u`, 3072-wide SwiGLU tails) and by QK^T/P inside attention, and full QuaRot
+  additionally keeps attention in fp16 - per-op dtype the converter cannot express. int8 is
+  closed for this family on the converter path.
 
 
 ## Component execution plans
