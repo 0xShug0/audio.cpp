@@ -518,7 +518,15 @@ row layout); batched requests fall back to the ggml graph.
   which the batch-2 CFG-pair graph does not support. The literature remedy for int8 on
   transformer activations is a randomized Hadamard transform (QuaRot, cf. the rk-llama.cpp
   `W8A8_HADAMARD` pipeline at KL 0.003), which has to be exported into the ONNX graph, not
-  asked of the converter.
+  asked of the converter. That experiment ran: a randomized 1024 Hadamard folded into the
+  export (embeddings/QKV/gate/up by `H`, o/down by `Hᵀ`, norm weights absorbed, a final
+  de-rotation matmul keeps the shard contract; the graph is neutral - 116 dB vs fp32, and an
+  fp16 control build of the rotated graph measures 57-60 dB at argmax 1.0). The w8a8 rebuild
+  of the rotated graph measures 2.1/-0.6 dB - bit for bit the unrotated death. The residual
+  stream was not the binding outlier: per-tensor scales here are set by the unrotated MLP
+  mid (`silu(g)*u`, 3072-wide SwiGLU tails) and by QK^T/P inside attention, and full QuaRot
+  additionally keeps attention in fp16 - per-op dtype the converter cannot express. int8 is
+  closed for this family on the converter path.
 
 
 ## Component execution plans
@@ -857,6 +865,17 @@ headroom actually is; that library is AGPL-3.0-only and its author declined to d
 vendor single-core matmul is the only legal NPU matmul path, and the compiled-graph engines above
 are the shipped form. int8 through the vendor matmul measures at parity with that open library's
 int8, so int8 buys no hidden speed there, only the usual quantization risk.
+
+That ceiling was then priced end to end: one full OmniVoice layer (QKV/O/MLP GEMMs on the matmul
+API at fp16->fp32, RoPE/softmax/SiLU/residuals on the CPU in fp32, M=1536 CFG-packed, the 64
+attention tiles as 32+32 small GEMMs) runs its NPU side in 137 ms, stage outputs matching the fp32
+torch reference at fp16-GEMM noise (q_rope 36 dB, layer output 21 dB). x28 = 3.9 s/step NPU-only,
+before host cost: NATIVE layout is tiled, not row-major (A `[K1,M,subK]`, B `[N1,K1,subN,subK]`,
+C perf, the official demo's packers), and naive scalar packing plus C unpacking triples the layer
+wall. A tuned port (prepacked weights, vectorized packing, fp16 C for the big-N GEMMs) lands near
+5-6 s/step - about 1.5x over the compiled 8.4 s engine, with the O and down projections (0.32/0.22
+TFLOP/s at K>=2048 single-core) eating 1.8 s of the floor alone. The 2.5x stays locked to the
+AGPL library; the vendor zero-op path is a real but modest lever.
 
 ## The IOVA ceiling, i.e. how big an engine can be
 
