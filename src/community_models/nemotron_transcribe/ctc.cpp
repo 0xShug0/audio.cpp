@@ -115,8 +115,6 @@ Weights load_weights(core::BackendWeightStore & store, const assets::TensorSourc
 // shape caches are model-local and retain only one shape of each graph kind.
 struct Graph {
     core::PreparedGraph prepared;
-    ggml_context * context;
-    ggml_cgraph * graph = nullptr;
     ggml_tensor * input = nullptr;
     ggml_tensor * positions = nullptr;
     ggml_tensor * ids = nullptr;
@@ -129,22 +127,21 @@ struct Graph {
 
     explicit Graph(core::ExecutionContext & execution, size_t nodes = 4096)
         : prepared(execution, {"nemotron.ctc", nodes * ggml_tensor_overhead() +
-            ggml_graph_overhead_custom(nodes, false), nodes}), context(prepared.build_context().ggml),
-          graph(prepared.graph()) {}
+            ggml_graph_overhead_custom(nodes, false), nodes}) {}
 
     void allocate() {
         ggml_set_input(input);
         if (positions) ggml_set_input(positions);
         if (ids) ggml_set_input(ids);
         ggml_set_output(output);
-        ggml_build_forward_expand(graph, output);
+        ggml_build_forward_expand(prepared.graph(), output);
         if (logsumexp) {
             ggml_set_output(logsumexp);
-            ggml_build_forward_expand(graph, logsumexp);
+            ggml_build_forward_expand(prepared.graph(), logsumexp);
         }
         if (maximum) {
             ggml_set_output(maximum);
-            ggml_build_forward_expand(graph, maximum);
+            ggml_build_forward_expand(prepared.graph(), maximum);
         }
         prepared.allocate();
     }
@@ -168,8 +165,9 @@ std::unique_ptr<Graph> bridge_graph(core::ExecutionContext & execution, const We
     auto g = std::make_unique<Graph>(execution, std::max<size_t>(4096, 512 + size_t(c.layers) * 192 + chunks * 32));
     g->frames = encoder_frames;
     g->kept = kept;
-    auto * ctx = g->context;
-    core::ModuleBuildContext build{ctx, "nemotron.ctc.bridge", execution.backend_type()};
+    auto * ctx = g->prepared.build_context().ggml;
+    auto build = g->prepared.build_context();
+    build.module_instance_name = "nemotron.ctc.bridge";
     const int T = ctc_frames(encoder_frames, c.upsampling), D = c.dimension;
     g->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, D, encoder_frames);
     g->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, T);
@@ -225,7 +223,7 @@ std::unique_ptr<Graph> projection_graph(core::ExecutionContext & execution, cons
     auto g = std::make_unique<Graph>(execution);
     g->frames = frames;
     g->columns = columns;
-    auto * ctx = g->context;
+    auto * ctx = g->prepared.build_context().ggml;
     g->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, c.dimension, frames);
     g->ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, columns);
     auto * selected = ggml_get_rows(ctx, weights.classifier.weight.tensor, g->ids);

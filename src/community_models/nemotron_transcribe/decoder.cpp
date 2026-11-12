@@ -363,7 +363,8 @@ public:
             body_id_ = prepared_.add_entry_point("body", 0);
             prefill_body_ = prepared_.graph(body_id_);
         }
-        core::ModuleBuildContext ctx{g, "nemotron_transcribe.decoder", execution.backend_type()};
+        auto ctx = prepared_.build_context();
+        ctx.module_instance_name = "nemotron_transcribe.decoder";
         ctx.elide_identity_reshapes = true;
         for (size_t i = 0; i < c.block_pattern.size(); ++i) {
             const auto & layer = w.layers[i];
@@ -451,7 +452,8 @@ private:
         prepared_.clear_persistent();
 
         auto * g = prepared_.build_context().ggml;
-        core::ModuleBuildContext ctx{g, "nemotron_transcribe.offload", execution_.backend_type()};
+        auto ctx = prepared_.build_context();
+        ctx.module_instance_name = "nemotron_transcribe.offload";
         ctx.elide_identity_reshapes = true;
         ggml_build_forward_expand(graph_, ggml_cpy(g, embeddings, x_));
         for (size_t i = 0; i < c.block_pattern.size(); ++i) {
