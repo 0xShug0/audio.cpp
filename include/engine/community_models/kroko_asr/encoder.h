@@ -14,10 +14,9 @@ struct KrokoSubsampledChunk {
     int64_t channels = 0;
 };
 
-// Native implementation of the exported streaming Conv2dSubsampling
-// boundary.  Keeping this model-specific avoids changing the shared
-// ZipEnhancer implementation while the complete Zipformer2 runtime is
-// validated.
+// Session-owned Conv2dSubsampling/ConvNeXt graphs. Streaming packages retain
+// their convolution history; offline packages use symmetric full-sequence
+// convolution and reuse the prepared graph while the input shape is unchanged.
 class KrokoEncoderRuntime {
 public:
     KrokoEncoderRuntime(

@@ -130,7 +130,7 @@ ZipformerRelativeAttentionOutputs ZipformerRelativeAttentionModule::build(
     const core::TensorValue & padding_mask,
     const ZipformerRelativeAttentionWeights & weights) const {
     const int64_t seq = input.shape.dims[0];
-    const int64_t left_context = cached_key.shape.dims[0];
+    const int64_t left_context = cached_key.valid() ? cached_key.shape.dims[0] : 0;
     const int64_t source_frames = left_context + seq;
     const int64_t query_channels =
         config_.num_heads * config_.query_head_dim;
@@ -149,10 +149,10 @@ ZipformerRelativeAttentionOutputs ZipformerRelativeAttentionModule::build(
     auto current_key =
         SliceModule({2, query_channels, query_channels})
             .build(ctx, projected);
-    auto all_keys = ConcatModule({0}).build(ctx, cached_key, current_key);
+    auto all_keys = cached_key.valid() ? ConcatModule({0}).build(ctx, cached_key, current_key) : current_key;
 
     ZipformerRelativeAttentionOutputs result;
-    result.key_state =
+    if (cached_key.valid()) result.key_state =
         SliceModule({0, seq, left_context}).build(ctx, all_keys);
 
     const auto position =
@@ -260,10 +260,12 @@ ZipformerStatefulOutputs ZipformerNonlinearAttentionModule::build(
         value,
         TanhModule().build(ctx, gate_input));
     const int64_t seq = value.shape.dims[0];
-    const int64_t left_context = cached_value.shape.dims[0];
-    value = ConcatModule({0}).build(ctx, cached_value, value);
-    auto new_state =
-        SliceModule({0, seq, left_context}).build(ctx, value);
+    const int64_t left_context = cached_value.valid() ? cached_value.shape.dims[0] : 0;
+    core::TensorValue new_state;
+    if (cached_value.valid()) {
+        value = ConcatModule({0}).build(ctx, cached_value, value);
+        new_state = SliceModule({0, seq, left_context}).build(ctx, value);
+    }
     auto joined = transpose(ctx, value, {1, 0, 2, 3});
     joined = MatMulModule().build(ctx, attention, joined);
     joined = transpose(ctx, joined, {1, 0, 2, 3});

@@ -37,6 +37,7 @@ class ZipformerRelativeAttentionModule {
 public:
     explicit ZipformerRelativeAttentionModule(ZipformerRelativeAttentionConfig config);
 
+    // An empty cached_key selects full-sequence attention; key_state is then empty.
     ZipformerRelativeAttentionOutputs build(
         core::ModuleBuildContext & ctx,
         ZipformerConstantFactory & constant_factory,
@@ -61,6 +62,7 @@ struct ZipformerStatefulOutputs {
 
 class ZipformerNonlinearAttentionModule {
 public:
+    // An empty cached_value selects full-sequence attention without persistent state.
     ZipformerStatefulOutputs build(
         core::ModuleBuildContext & ctx,
         const core::TensorValue & input,

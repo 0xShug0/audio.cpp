@@ -19,7 +19,7 @@ joiner, greedy decoder, and modified beam decoder run without ONNX Runtime.
 | Output | Transcript and word timestamps |
 | Decoding | Greedy search; modified beam search; blank penalty; inline hotwords |
 | Endpointing | Optional three-rule automatic segmentation |
-| Package variants | 64-L and 128-L streaming packages |
+| Package variants | 64-L and 128-L streaming packages; XL English offline |
 | Native layouts | Converted safetensors and standalone GGUF |
 
 Each Kroko package recognizes one language. Select a package whose language
@@ -92,6 +92,33 @@ The converter supports both public chunk layouts (`141/128` feature frames for
 folded Zipformer/downsampling constants and both exported forms of chunk-edge
 scales, ignores k2 disambiguation symbols beyond the joiner vocabulary, and
 writes semantic audio.cpp tensor names.
+
+## XL English offline package
+
+The public [Kroko-ASR-XL-EN-Offline](https://huggingface.co/Banafo/Kroko-ASR-XL-EN-Offline)
+checkpoint uses the same `kroko_asr` family. Its non-causal encoder processes
+an entire utterance with full attention and symmetric convolutions. This
+package supports offline transcription only; the older streaming packages
+retain their stateful streaming path.
+
+Convert the directory containing `encoder.onnx`, `decoder.onnx`, `joiner.onnx`
+and `tokens.txt` to a standalone GGUF:
+
+```bash
+python tools/community_models/convert_kroko_offline_gguf.py \
+  /path/to/Kroko-ASR-XL-EN-Offline \
+  /path/to/kroko-asr-xl-en-offline-f16.gguf --type f16
+
+build/debug/bin/audiocpp_cli --task asr --family kroko_asr \
+  --model /path/to/kroko-asr-xl-en-offline-f16.gguf \
+  --backend cuda --threads 8 --audio speech.wav --language en --log
+```
+
+The converter also supports `--type f32` and `--type q8_0`. It embeds the
+configuration, token table and supplied license using the existing package
+contract. Follow the source checkpoint's license, including its attribution
+requirements, when distributing or deploying the model. The source license
+requires the attribution “Speech recognition by Kroko.”
 
 ## CLI
 

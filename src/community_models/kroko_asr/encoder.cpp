@@ -209,8 +209,9 @@ public:
         const std::unordered_map<std::string, Param> & params,
         float norm_scale,
         int64_t input_frames,
-        int64_t subsampled_frames)
+        int64_t subsampled_frames, bool streaming = true)
         : backend_(backend),
+          streaming_(streaming),
           input_frames_(input_frames),
           subsampled_frames_(subsampled_frames) {
         if (input_frames_ <= 0 || subsampled_frames_ <= kEmbedCacheFrames) {
@@ -284,10 +285,9 @@ public:
                      kEmbedCacheFrames})
                     .build(build, output));
         new_cache_ = new_cache.tensor;
-        auto padded = modules::ConcatModule({2}).build(
-            build, cache, output);
+        auto padded = streaming ? modules::ConcatModule({2}).build(build, cache, output) : output;
         output = modules::DepthwiseConv2dModule(
-            {128, 7, 7, 1, 1, 0, 3, 1, 1, true})
+            {128, 7, 7, 1, 1, streaming ? 0 : 3, 3, 1, 1, true})
                      .build(
                          build,
                          padded,
@@ -339,12 +339,12 @@ public:
             build, output, params, norm_scale);
         output_ = output.tensor;
         ggml_set_output(output_);
-        ggml_set_output(new_cache_);
+        if (streaming) ggml_set_output(new_cache_);
 
         graph_ = ggml_new_graph_custom(
             context_.get(), kGraphNodes, false);
         ggml_build_forward_expand(graph_, output_);
-        ggml_build_forward_expand(graph_, new_cache_);
+        if (streaming) ggml_build_forward_expand(graph_, new_cache_);
         allocator_ = ggml_gallocr_new(
             ggml_backend_get_default_buffer_type(backend_));
         if (allocator_ == nullptr ||
@@ -380,7 +380,7 @@ public:
             features.data(),
             0,
             features.size() * sizeof(float));
-        ggml_backend_tensor_set_async(
+        if (streaming_) ggml_backend_tensor_set_async(
             backend_,
             cache_,
             cache_values_.data(),
@@ -409,7 +409,7 @@ public:
             result.values.data(),
             0,
             result.values.size() * sizeof(float));
-        ggml_backend_tensor_get_async(
+        if (streaming_) ggml_backend_tensor_get_async(
             backend_,
             new_cache_,
             cache_values_.data(),
@@ -438,6 +438,7 @@ private:
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t allocator_ = nullptr;
     ggml_backend_graph_plan_t plan_ = nullptr;
+    bool streaming_ = true;
     int64_t input_frames_ = 0;
     int64_t subsampled_frames_ = 0;
 };
@@ -449,6 +450,9 @@ struct KrokoEncoderRuntime::Impl {
     std::shared_ptr<core::BackendWeightStore> weights;
     std::unordered_map<std::string, Param> params;
     std::unique_ptr<SubsamplingGraph> graph;
+    core::ExecutionContext * execution = nullptr;
+    float norm_scale = 1;
+    int64_t input_frames = 0;
 };
 
 KrokoEncoderRuntime::KrokoEncoderRuntime(
@@ -460,6 +464,7 @@ KrokoEncoderRuntime::KrokoEncoderRuntime(
             "Kroko encoder requires tensor assets");
     }
     impl_->assets = std::move(assets);
+    impl_->execution = &execution_context;
     impl_->weights =
         std::make_shared<core::BackendWeightStore>(
             execution_context.backend(),
@@ -510,7 +515,8 @@ KrokoEncoderRuntime::KrokoEncoderRuntime(
     impl_->weights->upload();
     const auto log_scale = source.require_f32(
         "encoder.encoder_embed.out_norm.log_scale", {1});
-    impl_->graph = std::make_unique<SubsamplingGraph>(
+    impl_->norm_scale = std::exp(log_scale.front());
+    if (impl_->assets->config.streaming) impl_->graph = std::make_unique<SubsamplingGraph>(
         execution_context.backend(),
         execution_context.backend_type(),
         impl_->params,
@@ -524,9 +530,15 @@ KrokoEncoderRuntime::~KrokoEncoderRuntime() = default;
 KrokoSubsampledChunk
 KrokoEncoderRuntime::encode_subsampled_chunk(
     const std::vector<float> & features) const {
-    if (impl_ == nullptr || impl_->graph == nullptr) {
-        throw std::runtime_error(
-            "Kroko encoder is not initialized");
+    if (!impl_->assets->config.streaming) {
+        const auto frames = static_cast<int64_t>(features.size() / kFeatureDim);
+        if (!impl_->graph || impl_->input_frames != frames) {
+            impl_->graph.reset();
+            impl_->graph = std::make_unique<SubsamplingGraph>(impl_->execution->backend(),
+                impl_->execution->backend_type(), impl_->params, impl_->norm_scale,
+                frames, (frames - 7) / 2, false);
+            impl_->input_frames = frames;
+        }
     }
     const auto start = std::chrono::steady_clock::now();
     auto result = impl_->graph->run(features);
@@ -537,11 +549,7 @@ KrokoEncoderRuntime::encode_subsampled_chunk(
 }
 
 void KrokoEncoderRuntime::reset() {
-    if (impl_ == nullptr || impl_->graph == nullptr) {
-        throw std::runtime_error(
-            "Kroko encoder is not initialized");
-    }
-    impl_->graph->reset();
+    if (impl_->graph) impl_->graph->reset();
 }
 
 }  // namespace engine::models::kroko_asr
