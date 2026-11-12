@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { randomUUID } from '$lib/uuid.js';
   import { onMount } from 'svelte';
   import { Users, Upload, Search, Save, Trash2, Download, FileText, Mic } from '@lucide/svelte';
   import { listVoices, saveVoice, deleteVoice, exportVoiceLibrary, importVoiceLibrary, type SavedVoice } from '$lib/library';
@@ -38,7 +39,7 @@
     busy = true; error = '';
     try {
       const audio = await browserDecodeToWav(file);
-      draft = { id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, ''), transcript: '', audio, createdAt: Date.now() };
+      draft = { id: randomUUID(), name: file.name.replace(/\.[^.]+$/, ''), transcript: '', audio, createdAt: Date.now() };
       original = undefined;
     } catch (e) { error = `Cannot import ${file.name}: ${String(e)}`; }
     finally { busy = false; input.value = ''; }
