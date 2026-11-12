@@ -498,11 +498,21 @@ row layout); batched requests fall back to the ggml graph.
   (55.8 dB hidden SNR, 100% step-0 argmax) and completes 32 board steps at rc=0, but the
   render is non-speech (whisper tags it music) - the NPU's fp16 attention accumulation
   collapses at spans the simulator's fp32 accumulation survives. seq2048 cannot execute on
-  this board at all: `rknn_run` task submission fails on driver 0.9.8 (8377 tasks), and
-  preloading the parked 2.5.0 userspace to work around it panics the kernel (the board
-  net-rebooted). The shipped ladder therefore caps at seq1024; longer requests take the ggml
+  this board at all: the slot reports a 4116 MiB resident aperture, i.e. the engine's own
+  mapping crosses the ~4 GB IOVA ceiling below (`failed to allocate IOVA: -12` in the kernel
+  log), `rknn_run` task submission fails on driver 0.9.8 (8377 tasks), and preloading the
+  parked 2.5.0 userspace to work around it panics the kernel (the board net-rebooted). The shipped ladder therefore caps at seq1024; longer requests take the ggml
   graph (a 1290-token render runs 976 s on ggml, against 286 s for the 775-token request that
   still fits the shard, so the crossover costs speed, not quality).
+- OmniVoice int8 probe (negative): the seq768 front engine rebuilt with `do_quantization=True`
+  (w8a8, `layer` method, calibration on three real step-0 feeds) returns hidden SNR
+  2.0/-0.1/1.3 dB at 21-69% step-0 argmax agreement against the fp32 reference, where the fp16
+  engine measures 67 dB and 99.4% on the same feeds, so per-tensor int8 kills the shard.
+  `w8a16` is refused by the 2.3.2 converter on rk3588, and `auto_hybrid` needs expand-batch,
+  which the batch-2 CFG-pair graph does not support. The literature remedy for int8 on
+  transformer activations is a randomized Hadamard transform (QuaRot, cf. the rk-llama.cpp
+  `W8A8_HADAMARD` pipeline at KL 0.003), which has to be exported into the ONNX graph, not
+  asked of the converter.
 
 
 ## Component execution plans
@@ -797,8 +807,9 @@ this is a measured lever, not a shipped default.
 multi-core and the runtime core mask decides. `RKNN_NPU_CORE_AUTO` lets the driver pick, and it
 picks one core for every one of these engines: `/sys/kernel/debug/rknpu/load` stays at
 `Core0: 55%, Core1: 0%, Core2: 0%` for the whole `qwen3_tts` vocoder run and at `Core0: 100%` for
-the smaller ones. All three sidecars therefore ask for `RKNN_NPU_CORE_0_1_2` explicitly and fall
-back to `AUTO` if the driver rejects it (single-core SoCs do). What the mask buys is per engine:
+the smaller ones. All three sidecars therefore ask for `RKNN_NPU_CORE_0_1_2` explicitly (the shared
+`Engine::load`, so the OmniVoice generator inherits the same mask) and fall back to `AUTO` if the
+driver rejects it (single-core SoCs do). What the mask buys is per engine:
 `piper_tts` and `kokoro_tts` get real spread (kokoro Core0 95%, Core1 18%, Core2 19%), and the
 `qwen3_tts` vocoder gets spread too (41/15/16) for 1.8% on the stage (21766 → 21383 ms for 300
 Russian characters, same binary with both masks, greedy). The reason the extra cores buy almost
