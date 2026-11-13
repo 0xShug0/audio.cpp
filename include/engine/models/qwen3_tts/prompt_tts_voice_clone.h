@@ -2,7 +2,7 @@
 
 #include "engine/models/qwen3_tts/speaker_encoder.h"
 #include "engine/models/qwen3_tts/talker.h"
-#include "engine/models/qwen3_tts/tokenizer_speech_encoder.h"
+#include "engine/framework/codecs/qwen3_audio_tokenizer_runtime.h"
 #include "engine/models/qwen3_tts/tokenizer_text.h"
 #include "engine/models/qwen3_tts/types.h"
 
@@ -21,7 +21,7 @@ class Qwen3TTSVoiceClonePromptBuilder {
 public:
     Qwen3TTSVoiceClonePromptBuilder(
         const Qwen3TextTokenizer & tokenizer,
-        const Qwen3SpeechTokenizerEncoderRuntime & speech_encoder,
+        const codecs::Qwen3SpeechTokenizerEncoderRuntime & speech_encoder,
         const Qwen3TTSEcapaTdnnEncoderRuntime & speaker_encoder,
         int64_t text_token_limit);
 
@@ -30,7 +30,7 @@ public:
 
 private:
     const Qwen3TextTokenizer & tokenizer_;
-    const Qwen3SpeechTokenizerEncoderRuntime & speech_encoder_;
+    const codecs::Qwen3SpeechTokenizerEncoderRuntime & speech_encoder_;
     const Qwen3TTSEcapaTdnnEncoderRuntime & speaker_encoder_;
     int64_t text_token_limit_ = 0;
 };

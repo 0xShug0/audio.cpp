@@ -698,6 +698,8 @@ add_library(engine_core OBJECT
     src/framework/codecs/neural_audio.cpp
     src/framework/codecs/oobleck_audio_vae_runtime.cpp
     src/framework/codecs/redae_codec_runtime.cpp
+    src/framework/codecs/qwen3_audio_tokenizer_encoder.cpp
+    src/framework/codecs/qwen3_audio_tokenizer_decoder.cpp
     src/framework/codecs/snac_decoder_runtime.cpp
     src/framework/codecs/ming_audio_vae_runtime.cpp
     src/framework/codecs/s3gen_runtime.cpp
@@ -2173,8 +2175,6 @@ audiocpp_add_model(qwen3_tts
     SOURCES
         src/models/qwen3_tts/assets.cpp
         src/models/qwen3_tts/tokenizer_text.cpp
-        src/models/qwen3_tts/tokenizer_speech_encoder.cpp
-        src/models/qwen3_tts/tokenizer_speech_decoder.cpp
         src/models/qwen3_tts/rknn_speech_decoder.cpp
         src/models/qwen3_tts/speaker_encoder.cpp
         src/models/qwen3_tts/talker.cpp
