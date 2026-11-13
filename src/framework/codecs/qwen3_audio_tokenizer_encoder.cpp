@@ -1,4 +1,4 @@
-#include "engine/models/qwen3_tts/tokenizer_speech_encoder.h"
+#include "engine/framework/codecs/qwen3_audio_tokenizer_runtime.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/conversion.h"
@@ -34,14 +34,12 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::qwen3_tts {
+namespace engine::codecs {
 
 namespace {
 
 using Clock = std::chrono::steady_clock;
 namespace binding = modules::binding;
-
-}  // namespace
 
 constexpr int64_t kSampleRate = 24000;
 constexpr int64_t kDownsampleRate = 1920;
@@ -96,6 +94,8 @@ struct CodebookWeights {
     std::vector<float> embedding_sum;
 };
 
+}  // namespace
+
 struct Qwen3SpeechTokenizerEncoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     std::vector<ConvWeights> encoder_convs;
@@ -107,6 +107,8 @@ struct Qwen3SpeechTokenizerEncoderWeights {
     std::vector<CodebookWeights> semantic_codebooks;
     std::vector<CodebookWeights> acoustic_codebooks;
 };
+
+namespace {
 
 int64_t ceil_div(int64_t value, int64_t divisor) {
     return (value + divisor - 1) / divisor;
@@ -213,7 +215,7 @@ core::TensorValue mimi_self_attention(
     const core::TensorValue & positions,
     const TransformerLayerWeights & weights,
     core::ConstantTensorCache & constants,
-    Qwen3TTSPerfMode perf_mode,
+    bool flash_attention,
     const std::optional<core::TensorValue> & attention_mask) {
     constexpr int64_t kHeads = 8;
     constexpr int64_t kHeadDim = 64;
@@ -231,7 +233,7 @@ core::TensorValue mimi_self_attention(
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     auto context = modules::ScaledDotProductAttentionModule({
         kHeadDim,
-        perf_mode == Qwen3TTSPerfMode::FlashAttention
+        flash_attention
             ? modules::ScaledDotProductAttentionLowering::Flash
             : modules::ScaledDotProductAttentionLowering::Explicit,
         GGML_PREC_F32,
@@ -249,13 +251,13 @@ core::TensorValue transformer_block(
     const core::TensorValue & positions,
     const TransformerLayerWeights & weights,
     core::ConstantTensorCache & constants,
-    Qwen3TTSPerfMode perf_mode,
+    bool flash_attention,
     const std::optional<core::TensorValue> & attention_mask) {
     const modules::LayerNormModule norm({kHiddenSize, 1.0e-5F, true, true});
     auto x = norm.build(ctx, input, binding::norm_data(constants, weights.norm1_weight, weights.norm1_bias));
     auto attn_out = modules::LayerScaleModule{}.build(
         ctx,
-        mimi_self_attention(ctx, x, positions, weights, constants, perf_mode, attention_mask),
+        mimi_self_attention(ctx, x, positions, weights, constants, flash_attention, attention_mask),
         binding::layer_scale_data(constants, weights.scale1));
     x = modules::AddModule{}.build(ctx, input, attn_out);
     auto y = norm.build(ctx, x, binding::norm_data(constants, weights.norm2_weight, weights.norm2_bias));
@@ -351,12 +353,11 @@ std::vector<int32_t> quantize_projected(
 }
 
 std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
-    const Qwen3TTSAssets & assets,
+    const assets::TensorSource & source,
     ggml_backend_t backend,
     core::BackendType backend_type,
     assets::TensorStorageType linear_weight_storage_type,
     assets::TensorStorageType conv_weight_storage_type) {
-    const auto & source = *assets.speech_tokenizer_weights;
     auto weights = std::make_shared<Qwen3SpeechTokenizerEncoderWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
@@ -492,6 +493,8 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
     return weights;
 }
 
+}  // namespace
+
 class Qwen3SpeechTokenizerEncoderGraph {
 public:
     Qwen3SpeechTokenizerEncoderGraph(
@@ -500,13 +503,13 @@ public:
         core::ExecutionContext & execution_context,
         core::ConstantTensorCache & constants,
         size_t graph_arena_bytes,
-        Qwen3TTSPerfMode perf_mode)
+        bool flash_attention)
         : weights_(std::move(weights)),
           sample_capacity_(sample_capacity),
           frames_(ceil_div(sample_capacity, kDownsampleRate)),
           backend_(execution_context.backend()),
           compute_threads_(std::max(1, execution_context.config().threads)),
-          perf_mode_(perf_mode) {
+          flash_attention_(flash_attention) {
         if (weights_ == nullptr) {
             throw std::runtime_error("Qwen3 speech tokenizer graph requires weights");
         }
@@ -551,7 +554,7 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, transformer_frames_);
         auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({transformer_frames_}), GGML_TYPE_I32);
         std::optional<core::TensorValue> attention_mask = std::nullopt;
-        if (perf_mode_ == Qwen3TTSPerfMode::FlashAttention) {
+        if (flash_attention_) {
             attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, transformer_frames_, transformer_frames_, 1, 1);
             attention_mask = core::wrap_tensor(
                 attention_mask_,
@@ -559,7 +562,7 @@ public:
                 GGML_TYPE_F16);
         }
         for (const auto & layer : weights_->transformer_layers) {
-            seq = transformer_block(build_ctx, seq, positions_value, layer, constants, perf_mode_, attention_mask);
+            seq = transformer_block(build_ctx, seq, positions_value, layer, constants, flash_attention_, attention_mask);
         }
         x = modules::TransposeModule({{0, 2, 1, 3}, seq.shape.rank}).build(build_ctx, seq);
         x = core::ensure_backend_addressable_layout(build_ctx, x);
@@ -641,26 +644,25 @@ private:
     ggml_cgraph * graph_ = nullptr;
     ggml_backend_t backend_ = nullptr;
     int compute_threads_ = 1;
-    Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
+    bool flash_attention_ = false;
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
 Qwen3SpeechTokenizerEncoderRuntime::Qwen3SpeechTokenizerEncoderRuntime(
-    std::shared_ptr<const Qwen3TTSAssets> assets,
+    std::shared_ptr<const assets::TensorSource> source,
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
     assets::TensorStorageType linear_weight_storage_type,
     assets::TensorStorageType conv_weight_storage_type,
-    Qwen3TTSPerfMode perf_mode)
-    : assets_(std::move(assets)),
-      execution_context_(&execution_context),
+    bool flash_attention)
+    : execution_context_(&execution_context),
       graph_arena_bytes_(graph_arena_bytes),
-      perf_mode_(perf_mode) {
-    if (assets_ == nullptr) {
-        throw std::runtime_error("Qwen3 speech tokenizer encoder requires assets");
+      flash_attention_(flash_attention) {
+    if (source == nullptr) {
+        throw std::runtime_error("Qwen3 speech tokenizer encoder requires a tensor source");
     }
     weights_ = load_weights(
-        *assets_,
+        *source,
         execution_context_->backend(),
         execution_context_->backend_type(),
         linear_weight_storage_type,
@@ -699,7 +701,7 @@ Qwen3SpeechCodes Qwen3SpeechTokenizerEncoderRuntime::encode(const runtime::Audio
             *execution_context_,
             *constants_,
             graph_arena_bytes_,
-            perf_mode_);
+            flash_attention_);
         debug::timing_log_scalar(
             "qwen3_tts.speech_tokenizer_encoder.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
@@ -714,4 +716,4 @@ Qwen3SpeechCodes Qwen3SpeechTokenizerEncoderRuntime::encode(const runtime::Audio
     return out;
 }
 
-}  // namespace engine::models::qwen3_tts
+}  // namespace engine::codecs

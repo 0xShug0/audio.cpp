@@ -8,8 +8,8 @@
 #include "engine/models/qwen3_tts/prompt_tts_voice_clone.h"
 #include "engine/models/qwen3_tts/speaker_encoder.h"
 #include "engine/models/qwen3_tts/talker.h"
-#include "engine/models/qwen3_tts/tokenizer_speech_decoder.h"
-#include "engine/models/qwen3_tts/tokenizer_speech_encoder.h"
+#include "engine/framework/codecs/qwen3_audio_tokenizer_runtime.h"
+#include "engine/models/qwen3_tts/rknn_speech_decoder.h"
 #include "engine/models/qwen3_tts/tokenizer_text.h"
 
 #include <cstddef>
@@ -59,6 +59,8 @@ private:
 
     Qwen3TTSRequest make_request(const runtime::TaskRequest & request) const;
     runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);
+    runtime::AudioBuffer decode_speech(const Qwen3SpeechCodes & codes,
+        const Qwen3SpeechCodes * reference_codes = nullptr) const;
     runtime::AudioBuffer generate_audio(
         const Qwen3TalkerPrefill & prefill,
         const Qwen3TTSGenerationOptions & options,
@@ -87,7 +89,8 @@ private:
     engine::assets::TensorStorageType speech_encoder_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType speech_decoder_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::F32;
-    Qwen3SpeechTokenizerDecoderRknn rknn_decoder_;
+    std::unique_ptr<RknnSpeechDecoder> rknn_decoder_;
+    int64_t speech_decoder_code_groups_ = 0;
     bool mem_saver_ = false;
     // Voice the concatenated codes of all text chunks in one decode pass; false voices each chunk.
     bool stitch_decode_ = false;
@@ -96,8 +99,8 @@ private:
     std::shared_ptr<const Qwen3TalkerWeightsRuntime> talker_weights_;
     std::shared_ptr<Qwen3TalkerStepRuntime> talker_step_;
     core::ExecutionContext voice_prompt_context_;
-    std::unique_ptr<Qwen3SpeechTokenizerDecoderRuntime> speech_decoder_;
-    std::unique_ptr<Qwen3SpeechTokenizerEncoderRuntime> speech_encoder_;
+    std::unique_ptr<codecs::Qwen3SpeechTokenizerDecoderRuntime> speech_decoder_;
+    std::unique_ptr<codecs::Qwen3SpeechTokenizerEncoderRuntime> speech_encoder_;
     std::unique_ptr<Qwen3TTSEcapaTdnnEncoderRuntime> speaker_encoder_;
     runtime::CacheSlots<VoicePromptCacheKey, VoicePromptCacheEntry, VoicePromptCacheKeyEqual> voice_prompt_cache_;
     std::optional<VoicePromptCacheEntry> uncached_voice_prompt_;
