@@ -124,7 +124,7 @@ Status labels:
 | `moss_transcribe_diarize` | Done | --- | Pass | --- | Pass |
 | `moss_tts_local` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `moss_tts_nano` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
-| `mossformer2` | Done | --- | Pass (F32) | --- | --- |
+| `mossformer2` | Done | --- | Pass (F32/F16) | --- | --- |
 | `muscriptor` | Done | Pass | Pass | --- | --- |
 | `nemotron_3_diar` | Done | --- | Pass | --- | --- |
 | `nemotron_asr` | Done | Pass | --- | Pass | Pass (minor filler drift) |

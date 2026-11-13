@@ -774,7 +774,10 @@ audiocpp_add_model(sam_audio
 audiocpp_add_model(mossformer2
     SOURCES
         src/models/mossformer2/assets.cpp
+        src/models/mossformer2/routing.cpp
         src/models/mossformer2/runtime.cpp
+        src/models/mossformer2/restoration.cpp
+        src/models/mossformer2/vocoder.cpp
         src/models/mossformer2/session.cpp
     INCLUDES
         engine/models/mossformer2/session.h
@@ -3773,6 +3776,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(magenta_validation PRIVATE engine_runtime ggml)
         add_executable(magenta_greedy_parity tests/magenta_realtime_2/greedy_parity.cpp)
         target_link_libraries(magenta_greedy_parity PRIVATE engine_runtime ggml)
+    endif()
+
+    if (ENGINE_BUILD_MODEL_TESTS AND mossformer2 IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(mossformer2_validation tests/mossformer2/validation.cpp)
+        target_link_libraries(mossformer2_validation PRIVATE engine_runtime ggml)
     endif()
 
     if (whistle_asr IN_LIST AUDIOCPP_LINKED_MODELS)
