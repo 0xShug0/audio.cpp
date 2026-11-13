@@ -1851,10 +1851,16 @@ audiocpp_add_model(zonos2
         src/community_models/zonos2/backbone.cpp
         src/community_models/zonos2/codec_decoder.cpp
         src/community_models/zonos2/generator.cpp
+        src/community_models/zonos2/loader.cpp
         src/community_models/zonos2/npy.cpp
         src/community_models/zonos2/prompt.cpp
         src/community_models/zonos2/sampler.cpp
+        src/community_models/zonos2/session.cpp
         src/community_models/zonos2/speaker_encoder.cpp
+    INCLUDES
+        engine/community_models/zonos2/loader.h
+    LOADERS
+        engine::models::zonos2::make_zonos2_loader
 )
 
 audiocpp_add_model(audio8_tts
