@@ -15,7 +15,7 @@
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
 | Ming 3.0 Audio Tiny | `ming3_audio` | `s2s` spoken responses (also `asr`, `tts`, `clon`) | [Ming Audio](models/ming3_audio.md#spoken-response) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
-| MossFormer2 | `mossformer2` | `sep` | [MossFormer2](models/mossformer2.md) |
+| MossFormer2 | `mossformer2` | `sep` speech separation, `s2s` enhancement/super-resolution | [MossFormer2](models/mossformer2.md) |
 | MuScriptor | `muscriptor` | audio to MIDI/events | [MuScriptor](#muscriptor) |
 | PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
 | Real-time RE-USE | `realtime_reuse` | Offline / streaming `s2s` speech restoration | [Real-time RE-USE](models/realtime_reuse.md) |

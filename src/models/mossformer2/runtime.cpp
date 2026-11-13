@@ -1,4 +1,5 @@
 #include "engine/models/mossformer2/runtime.h"
+#include "engine/models/mossformer2/routing.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -36,19 +37,25 @@ constexpr size_t kWeightContextBytes = 4 * 1024 * 1024;
 class MossFormer2Graph {
 public:
     MossFormer2Graph(core::ExecutionContext & execution, const MossFormer2Config & c,
-        const TensorMap & weights, int64_t samples)
-        : backend_(execution.backend()), weights_(weights) {
+        const MossFormer2Implementation & impl, const TensorMap & weights, int64_t samples)
+        : backend_(execution.backend()), weights_(weights), dilated_fsmn_(impl.dilated_fsmn) {
         const size_t nodes = 1024 + 512 * static_cast<size_t>(c.layers) + 64 * static_cast<size_t>(c.speakers);
         context_.reset(ggml_init({nodes * ggml_tensor_overhead() + ggml_graph_overhead_custom(nodes, false), nullptr, true}));
         if (!context_) throw std::runtime_error("MossFormer2 graph context allocation failed");
         ctx_ = {context_.get(), "mossformer2", execution.backend_type()};
-        auto input = core::make_tensor(ctx_, GGML_TYPE_F32, TensorShape::from_dims({1, 1, samples}));
+        const bool separation = impl.task == runtime::VoiceTaskKind::SourceSeparation;
+        auto input = core::make_tensor(ctx_, GGML_TYPE_F32,
+            TensorShape::from_dims({1, separation ? 1 : c.channels, samples}));
         input_ = input.tensor;
         ggml_set_input(input_);
-        auto encoded = modules::Conv1dModule({1, c.channels, c.kernel, c.kernel / 2, 0, 1, false})
-            .build(ctx_, input, {weights_.at("enc.conv1d.weight"), std::nullopt});
-        encoded = modules::ReluModule().build(ctx_, encoded);
+        auto encoded = input;
+        if (separation) {
+            encoded = modules::Conv1dModule({1, c.channels, c.kernel, c.kernel / 2, 0, 1, false})
+                .build(ctx_, input, {weights_.at("enc.conv1d.weight"), std::nullopt});
+            encoded = modules::ReluModule().build(ctx_, encoded);
+        }
         frames_ = encoded.shape.dims[2];
+        output_elements_ = separation ? samples : frames_ * c.output_features;
         auto x = modules::GroupNormModule({c.channels, 1, 1e-8f}).build(ctx_, encoded,
             {weights_.at("mask_net.norm.weight"), weights_.at("mask_net.norm.bias")});
         x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx_, x);
@@ -83,12 +90,19 @@ public:
         x = modules::PReluModule({1})
             .build(ctx_, x, weights_.at("mask_net.prelu.weight"));
         x = linear(x, "mask_net.conv1d_out");
-        for (int speaker = 0; speaker < c.speakers; ++speaker) {
+        for (int speaker = 0; speaker < (separation ? c.speakers : 1); ++speaker) {
             auto mask = modules::SliceModule({1, speaker * c.hidden, c.hidden}).build(ctx_, x);
             auto value = modules::TanhModule().build(ctx_, linear(mask, "mask_net.output.0"));
             auto gate = modules::SigmoidModule().build(ctx_, linear(mask, "mask_net.output_gate.0"));
             mask = linear(modules::MulModule().build(ctx_, value, gate), "mask_net.conv1_decoder");
             mask = modules::ReluModule().build(ctx_, mask);
+            if (!separation) {
+                mask = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, mask);
+                auto output = core::ensure_backend_addressable_layout(ctx_, mask);
+                outputs_.push_back(output.tensor);
+                ggml_set_output(output.tensor);
+                continue;
+            }
             mask = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, mask);
             mask = core::reshape_tensor(ctx_, core::ensure_backend_addressable_layout(ctx_, mask), encoded.shape);
             auto separated = modules::MulModule().build(ctx_, encoded, mask);
@@ -101,7 +115,7 @@ public:
         }
         graph_ = ggml_new_graph_custom(ctx_.ggml, nodes, false);
         for (auto output : outputs_) ggml_build_forward_expand(graph_, output);
-        if (execution.backend_type() == core::BackendType::Cpu) {
+        if (separation && execution.backend_type() == core::BackendType::Cpu) {
             auto options = runtime::graph_optimization_options_for_backend(runtime::GraphOptimizationBackend::Cpu);
             // Keep view lifetimes visible to the graph allocator.
             options.elide_metadata_only_ops = false;
@@ -145,7 +159,7 @@ public:
         if (core::compute_backend_graph(backend_, graph_, host_plan_.plan) != GGML_STATUS_SUCCESS) throw std::runtime_error("MossFormer2 graph execution failed");
         std::vector<std::vector<float>> result;
         for (auto output : outputs_) {
-            result.emplace_back(input.size(), 0.0f);
+            result.emplace_back(static_cast<size_t>(output_elements_), 0.0f);
             ggml_backend_tensor_get(output, result.back().data(), 0, ggml_nbytes(output));
         }
         return result;
@@ -277,7 +291,13 @@ private:
         dense = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, dense);
         dense = core::reshape_tensor(ctx_, core::ensure_backend_addressable_layout(ctx_, dense), TensorShape::from_dims({1, channels, frames_}));
         auto skip = dense;
-        for (int depth = 0; depth < 2; ++depth) {
+        if (!dilated_fsmn_) {
+            auto weight = weights_.at(p + ".conv1.weight");
+            weight = core::reshape_tensor(ctx_, weight, TensorShape::from_dims({channels, 1, 39}));
+            dense = modules::DepthwiseConv1dModule({channels, 39, 1, 19, 1, false})
+                .build(ctx_, skip, {weight, std::nullopt});
+            dense = modules::AddModule().build(ctx_, skip, dense);
+        } else for (int depth = 0; depth < 2; ++depth) {
             const auto base = p + ".conv.";
             auto weight = weights_.at(base + "conv" + std::to_string(depth + 1) + ".weight");
             if (depth == 0) {
@@ -322,6 +342,7 @@ private:
 
     ggml_backend_t backend_;
     const TensorMap & weights_;
+    bool dilated_fsmn_ = false;
     std::unique_ptr<ggml_context, decltype(&ggml_free)> context_{nullptr, ggml_free};
     core::ModuleBuildContext ctx_;
     std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator_{nullptr, ggml_gallocr_free};
@@ -333,6 +354,7 @@ private:
     ggml_tensor * sin_ = nullptr;
     std::vector<ggml_tensor *> outputs_;
     int64_t frames_ = 0;
+    int64_t output_elements_ = 0;
 };
 }  // namespace
 
@@ -347,6 +369,7 @@ public:
         rotary_ = source.require_f32(std::string(kBackbonePrefix) + "layers.0.rotary_pos_emb.freqs", {kRotaryPairs});
         size_t bytes = 0;
         for (const auto & tensor : source.tensors()) {
+            if (tensor.name.rfind("vocoder.", 0) == 0) continue;
             if (tensor.name.find("rotary_pos_emb") != std::string::npos || tensor.name.find("mask_net.pos_enc.") == 0) continue;
             auto value = store_.load_tensor(source, tensor.name, assets::TensorStorageType::Native, tensor.shape);
             bytes += ggml_nbytes(value.tensor);
@@ -358,19 +381,25 @@ public:
         debug::timing_log_scalar("mossformer2.weights_bytes", bytes);
     }
 
-    std::vector<std::vector<float>> separate(const std::vector<float> & input) {
-        if (!graph_ || samples_ != input.size()) {
+    std::vector<std::vector<float>> run(const std::vector<float> & input, size_t frames) {
+        if (!graph_ || samples_ != frames) {
             graph_.reset();
             const auto started = std::chrono::steady_clock::now();
-            graph_ = std::make_unique<MossFormer2Graph>(execution_, assets_->config, weights_, input.size());
+            graph_ = std::make_unique<MossFormer2Graph>(execution_, assets_->config, *assets_->impl, weights_, frames);
             graph_->set_positions(frequencies_, position_scale_, rotary_);
-            samples_ = input.size();
+            samples_ = frames;
             debug::timing_log_scalar("mossformer2.graph.build_ms", debug::elapsed_ms(started));
         }
         const auto started = std::chrono::steady_clock::now();
         auto result = graph_->run(input);
         debug::timing_log_scalar("mossformer2.graph.compute_ms", debug::elapsed_ms(started));
         return result;
+    }
+
+    std::vector<float> process_features(const std::vector<float> & input, int64_t frames) {
+        if (frames <= 0 || input.size() != static_cast<size_t>(frames) * assets_->config.channels)
+            throw std::runtime_error("MossFormer2 feature shape mismatch");
+        return run(input, static_cast<size_t>(frames)).front();
     }
 
 private:
@@ -388,6 +417,9 @@ MossFormer2GatedFSMNRuntime::MossFormer2GatedFSMNRuntime(std::shared_ptr<const M
     core::ExecutionContext & execution) : impl_(std::make_unique<Impl>(std::move(assets), execution)) {}
 MossFormer2GatedFSMNRuntime::~MossFormer2GatedFSMNRuntime() = default;
 std::vector<std::vector<float>> MossFormer2GatedFSMNRuntime::separate(const std::vector<float> & input) {
-    return impl_->separate(input);
+    return impl_->run(input, input.size());
+}
+std::vector<float> MossFormer2GatedFSMNRuntime::process_features(const std::vector<float> & input, int64_t frames) {
+    return impl_->process_features(input, frames);
 }
 }  // namespace engine::models::mossformer2
