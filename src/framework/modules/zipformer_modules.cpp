@@ -129,8 +129,21 @@ ZipformerRelativeAttentionOutputs ZipformerRelativeAttentionModule::build(
     const core::TensorValue & cached_key,
     const core::TensorValue & padding_mask,
     const ZipformerRelativeAttentionWeights & weights) const {
+    if (config_.impl == ZipformerAttentionImpl::Default) {
+        return build_default(ctx, constant_factory, input, cached_key, padding_mask, weights);
+    }
+    return build_batched(ctx, constant_factory, input, cached_key, padding_mask, weights);
+}
+
+ZipformerRelativeAttentionOutputs ZipformerRelativeAttentionModule::build_batched(
+    core::ModuleBuildContext & ctx,
+    ZipformerConstantFactory & constant_factory,
+    const core::TensorValue & input,
+    const core::TensorValue & cached_key,
+    const core::TensorValue & padding_mask,
+    const ZipformerRelativeAttentionWeights & weights) const {
     const int64_t seq = input.shape.dims[0];
-    const int64_t left_context = cached_key.shape.dims[0];
+    const int64_t left_context = cached_key.valid() ? cached_key.shape.dims[0] : 0;
     const int64_t source_frames = left_context + seq;
     const int64_t query_channels =
         config_.num_heads * config_.query_head_dim;
@@ -149,10 +162,133 @@ ZipformerRelativeAttentionOutputs ZipformerRelativeAttentionModule::build(
     auto current_key =
         SliceModule({2, query_channels, query_channels})
             .build(ctx, projected);
-    auto all_keys = ConcatModule({0}).build(ctx, cached_key, current_key);
+    auto all_keys = cached_key.valid() ? ConcatModule({0}).build(ctx, cached_key, current_key) : current_key;
 
     ZipformerRelativeAttentionOutputs result;
-    result.key_state =
+    if (cached_key.valid()) result.key_state =
+        SliceModule({0, seq, left_context}).build(ctx, all_keys);
+
+    const auto position =
+        compact_relative_position(
+            seq,
+            left_context,
+            config_.position_dim);
+    const int64_t position_frames = left_context + 2 * seq - 1;
+    // Project each distinct relative offset once, rather than expanding a
+    // separate [query, key] coefficient table for every positional dimension.
+    std::vector<float> projected_position(static_cast<size_t>(
+        config_.num_heads * position_frames * config_.position_head_dim), 0.0F);
+    for (int64_t head = 0; head < config_.num_heads; ++head) {
+        for (int64_t relative = 0; relative < position_frames; ++relative) {
+            for (int64_t dim = 0; dim < config_.position_head_dim; ++dim) {
+                const int64_t output_row = head * config_.position_head_dim + dim;
+                double value = 0.0;
+                for (int64_t p = 0; p < config_.position_dim; ++p) {
+                    value += static_cast<double>(position[static_cast<size_t>(relative * config_.position_dim + p)]) *
+                             static_cast<double>(weights.linear_pos_weight[static_cast<size_t>(output_row * config_.position_dim + p)]);
+                }
+                const int64_t index = ctx.backend_type == core::BackendType::Cpu
+                    ? (head * config_.position_head_dim + dim) * position_frames + relative
+                    : (head * position_frames + relative) * config_.position_head_dim + dim;
+                projected_position[static_cast<size_t>(index)] = static_cast<float>(value);
+            }
+        }
+    }
+    auto relative = constant_factory(
+        ctx.backend_type == core::BackendType::Cpu
+            ? core::TensorShape::from_dims({config_.num_heads, config_.position_head_dim, position_frames})
+            : core::TensorShape::from_dims({config_.num_heads, position_frames, config_.position_head_dim}),
+        std::move(projected_position));
+    auto query = SliceModule({2, 0, query_channels}).build(ctx, projected);
+    query = core::reshape_tensor(ctx, contiguous(ctx, query),
+        core::TensorShape::from_dims({seq, config_.num_heads, config_.query_head_dim}));
+    query = TransposeModule({{1, 0, 2, 3}, 3}).build(ctx, query);
+    auto key = core::reshape_tensor(ctx, contiguous(ctx, all_keys),
+        core::TensorShape::from_dims({source_frames, config_.num_heads, config_.query_head_dim}));
+    if (ctx.backend_type == core::BackendType::Cpu && source_frames % 4 != 0) {
+        key = TransposeModule({{1, 0, 2, 3}, 3}).build(ctx, key);
+        // CPU GEMM output tiles require four rows. Discard padded scores
+        // before adding relative positions and applying softmax.
+        key = PaddingModule({((source_frames + 3) / 4) * 4}).build(ctx, key);
+        key = TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, key);
+    } else {
+        key = TransposeModule({{1, 2, 0, 3}, 3}).build(ctx, key);
+    }
+    auto scores = MatMulModule().build(ctx,
+        ctx.backend_type == core::BackendType::Cpu ? contiguous(ctx, query) : query, key);
+    if (key.shape.last_dim() != source_frames) {
+        scores = SliceModule({2, 0, source_frames}).build(ctx, scores);
+    }
+
+    auto position_query = SliceModule({2, 2 * query_channels, position_channels}).build(ctx, projected);
+    position_query = core::reshape_tensor(ctx, contiguous(ctx, position_query),
+        core::TensorShape::from_dims({seq, config_.num_heads, config_.position_head_dim}));
+    position_query = TransposeModule({{1, 0, 2, 3}, 3}).build(ctx, position_query);
+    core::TensorValue position_scores;
+    if (ctx.backend_type == core::BackendType::Cpu) {
+        position_scores = core::wrap_tensor(
+            ggml_out_prod(ctx.ggml, relative.tensor, ggml_transpose(ctx.ggml, position_query.tensor)),
+            core::TensorShape::from_dims({config_.num_heads, seq, position_frames}), GGML_TYPE_F32);
+    } else {
+        relative = TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, relative);
+        position_scores = MatMulModule().build(ctx, position_query, relative);
+    }
+    // Relative position k - q is stored at seq - 1 - q + k. View only
+    // those entries, avoiding a padded full relative-shift matrix and copies.
+    position_scores = core::wrap_tensor(
+        ggml_view_3d(ctx.ggml, position_scores.tensor, source_frames, seq, config_.num_heads,
+            position_scores.tensor->nb[1] - position_scores.tensor->nb[0],
+            position_scores.tensor->nb[2],
+            static_cast<size_t>(seq - 1) * position_scores.tensor->nb[0]),
+        scores.shape, GGML_TYPE_F32);
+    scores = core::wrap_tensor(ggml_add(ctx.ggml, scores.tensor, position_scores.tensor),
+        scores.shape, GGML_TYPE_F32);
+    if (padding_mask.valid()) {
+        scores = AddModule().build(ctx, scores, RepeatModule({scores.shape}).build(ctx, padding_mask));
+    }
+    auto attention_weights = SoftmaxModule().build(ctx, scores);
+    result.batched_weights = attention_weights;
+    result.weights.reserve(static_cast<size_t>(config_.num_heads));
+    for (int64_t head = 0; head < config_.num_heads; ++head) {
+        result.weights.push_back(SliceModule({0, head, 1}).build(ctx, attention_weights));
+    }
+    return result;
+}
+
+ZipformerRelativeAttentionOutputs ZipformerRelativeAttentionModule::build_default(
+    core::ModuleBuildContext & ctx,
+    ZipformerConstantFactory & constant_factory,
+    const core::TensorValue & input,
+    const core::TensorValue & cached_key,
+    const core::TensorValue & supplied_padding_mask,
+    const ZipformerRelativeAttentionWeights & weights) const {
+    const int64_t seq = input.shape.dims[0];
+    const int64_t left_context = cached_key.valid() ? cached_key.shape.dims[0] : 0;
+    const int64_t source_frames = left_context + seq;
+    const auto padding_mask = supplied_padding_mask.valid() ? supplied_padding_mask : constant_factory(
+        core::TensorShape::from_dims({1, seq, source_frames}),
+        std::vector<float>(static_cast<size_t>(seq * source_frames), 0.0F));
+    const int64_t query_channels =
+        config_.num_heads * config_.query_head_dim;
+    const int64_t position_channels =
+        config_.num_heads * config_.position_head_dim;
+    const size_t expected_position_values =
+        static_cast<size_t>(
+            position_channels * config_.position_dim);
+    if (weights.linear_pos_weight.size() != expected_position_values) {
+        throw std::runtime_error(
+            "Zipformer relative position weight size mismatch");
+    }
+
+    auto projected =
+        linear(ctx, input, weights.in_proj, "Zipformer relative attention in_proj");
+    auto current_key =
+        SliceModule({2, query_channels, query_channels})
+            .build(ctx, projected);
+    auto all_keys = cached_key.valid() ? ConcatModule({0}).build(ctx, cached_key, current_key) : current_key;
+
+    ZipformerRelativeAttentionOutputs result;
+    if (cached_key.valid()) result.key_state =
         SliceModule({0, seq, left_context}).build(ctx, all_keys);
 
     const auto position =
@@ -260,10 +396,12 @@ ZipformerStatefulOutputs ZipformerNonlinearAttentionModule::build(
         value,
         TanhModule().build(ctx, gate_input));
     const int64_t seq = value.shape.dims[0];
-    const int64_t left_context = cached_value.shape.dims[0];
-    value = ConcatModule({0}).build(ctx, cached_value, value);
-    auto new_state =
-        SliceModule({0, seq, left_context}).build(ctx, value);
+    const int64_t left_context = cached_value.valid() ? cached_value.shape.dims[0] : 0;
+    core::TensorValue new_state;
+    if (cached_value.valid()) {
+        value = ConcatModule({0}).build(ctx, cached_value, value);
+        new_state = SliceModule({0, seq, left_context}).build(ctx, value);
+    }
     auto joined = transpose(ctx, value, {1, 0, 2, 3});
     joined = MatMulModule().build(ctx, attention, joined);
     joined = transpose(ctx, joined, {1, 0, 2, 3});

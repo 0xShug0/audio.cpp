@@ -32,6 +32,8 @@ std::shared_ptr<const KrokoASRAssets> require_assets(
     return assets;
 }
 
+
+
 std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
     std::shared_ptr<const engine::model_spec::ModelContract> contract) {
     if (contract == nullptr) {
@@ -241,13 +243,13 @@ KrokoASRSession::KrokoASRSession(
           assets_->tokens,
           static_cast<int32_t>(assets_->config.blank_id),
           static_cast<int32_t>(assets_->config.unk_id)),
-      decoder_(assets_),
+      decoder_(assets_, execution_context().config().threads),
       subsampling_(assets_, execution_context()),
       zipformer_(assets_, execution_context()),
       chunk_scratch_(
           static_cast<size_t>(
-              assets_->config.chunk_size *
-              assets_->config.feature_dim),
+              assets_->config.streaming ? assets_->config.chunk_size *
+              assets_->config.feature_dim : 0),
           0.0F) {
     if (task_.task != runtime::VoiceTaskKind::Asr ||
         (task_.mode != runtime::RunMode::Offline &&
@@ -255,6 +257,8 @@ KrokoASRSession::KrokoASRSession(
         throw std::runtime_error(
             "Kroko ASR supports offline and streaming ASR sessions");
     }
+    if (!assets_->config.streaming && task_.mode == runtime::RunMode::Streaming)
+        throw std::runtime_error("This Kroko package supports offline ASR only");
     for (const auto & [key, value] : options.options) {
         (void)value;
         if (key.rfind("kroko_asr.", 0) == 0 &&
@@ -527,8 +531,8 @@ runtime::TaskResult KrokoASRSession::run(
     subsampling_.reset();
     zipformer_.reset();
     const auto start = Clock::now();
-    const auto padded_audio =
-        with_tail_padding(*request.audio_input);
+    const auto padded_audio = assets_->config.streaming
+        ? with_tail_padding(*request.audio_input) : *request.audio_input;
     const auto features =
         compute_kroko_fbank(padded_audio);
     if (features.frames <= 0) {
@@ -539,8 +543,14 @@ runtime::TaskResult KrokoASRSession::run(
     const int64_t chunk_shift = assets_->config.chunk_shift;
     const int64_t dimension = assets_->config.feature_dim;
     int64_t encoder_frames = 0;
+    if (!assets_->config.streaming) {
+        const auto embedded = subsampling_.encode_subsampled_chunk(features.values);
+        const auto encoded = zipformer_.encode_chunk(embedded.values);
+        decoder_.append(encoded.values, encoded.frames, encoded.channels);
+        encoder_frames = encoded.frames;
+    }
     for (int64_t offset = 0;
-         offset < features.frames;
+         assets_->config.streaming && offset < features.frames;
          offset += chunk_shift) {
         std::fill(
             chunk_scratch_.begin(),

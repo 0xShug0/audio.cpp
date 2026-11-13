@@ -155,6 +155,7 @@ def dequantized_matmul_weights(
 
 def recover_zipformer_constants(
     model: onnx.ModelProto,
+    *, streaming: bool = True,
 ) -> dict[str, np.ndarray]:
     """Give semantic names to parameters folded by the ONNX exporter.
 
@@ -170,7 +171,7 @@ def recover_zipformer_constants(
     for node in model.graph.node:
         if (
             node.op_type == "Mul"
-            and node.name.startswith("/downsample")
+            and (node.name.startswith("/downsample") or "/downsample/" in node.name or "/downsample_output/" in node.name)
             and len(node.input) >= 2
             and node.input[1] in initializers
         ):
@@ -233,7 +234,8 @@ def recover_zipformer_constants(
             initializers[candidates[1]].astype(np.float32)
         )
         chunk_scales += 1
-    if chunk_scales != len(LAYER_PREFIXES) * 2:
+    expected_scales = len(LAYER_PREFIXES) * 2 if streaming else 0
+    if chunk_scales != expected_scales:
         raise ValueError(
             "expected two chunkwise convolution scales per Zipformer layer; "
             f"recovered {chunk_scales}"
@@ -246,6 +248,7 @@ def convert_graph(
     namespace: str,
     *,
     linear_pos_prefixes: Iterable[str] = (),
+    streaming: bool = True,
 ) -> dict[str, np.ndarray]:
     model = onnx.load(path, load_external_data=True)
     initializers = tensor_map(model)
@@ -253,7 +256,7 @@ def convert_graph(
         model, linear_pos_prefixes=linear_pos_prefixes
     )
     if namespace == "encoder":
-        recovered.update(recover_zipformer_constants(model))
+        recovered.update(recover_zipformer_constants(model, streaming=streaming))
     producers = {
         output_name: node
         for node in model.graph.node

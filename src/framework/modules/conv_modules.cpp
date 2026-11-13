@@ -828,7 +828,10 @@ core::TensorValue Conv2dModule::build(core::ModuleBuildContext & ctx,
     core::validate_last_dim(input, config_.in_channels, "input");
     auto canonical = TransposeModule({{0, 3, 1, 2}, 4}).build(ctx, input);
     canonical = core::ensure_backend_addressable_layout(ctx, canonical);
-    if (ctx.backend_type != core::BackendType::Metal || config_.cuda_cudnn || config_.metal_per_tap || config_.implicit_gemm) {
+    const bool native_layout = ctx.backend_type == core::BackendType::Metal ||
+        (config_.impl == Conv2dImpl::ChannelFast && ctx.backend_type == core::BackendType::Cpu &&
+         input.type == GGML_TYPE_F32 && weights.weight.type == GGML_TYPE_F32);
+    if (!native_layout || config_.cuda_cudnn || config_.metal_per_tap || config_.implicit_gemm) {
         auto output = build(ctx, canonical, weights);
         output = TransposeModule({{0, 2, 3, 1}, 4}).build(ctx, output);
         return core::ensure_backend_addressable_layout(ctx, output);
@@ -841,7 +844,7 @@ core::TensorValue Conv2dModule::build(core::ModuleBuildContext & ctx,
     }
     const auto x = ensure_f32(ctx, canonical);
     const auto w = regular_conv_weight(ctx, weights.weight, "Conv2dModule");
-    // Metal: emit channel-fast output directly instead of materializing BCHW.
+    // Emit channel-fast output directly instead of materializing BCHW.
     auto * columns = ggml_im2col(ctx.ggml, w.tensor, x.tensor,
         config_.stride_width, config_.stride_height, config_.padding_width, config_.padding_height,
         config_.dilation_width, config_.dilation_height, true, w.type);
@@ -1258,7 +1261,10 @@ core::TensorValue DepthwiseConv2dModule::build(core::ModuleBuildContext & ctx,
     if (!ctx.ggml) throw std::runtime_error("ModuleBuildContext.ggml is null");
     core::validate_rank_between(input, 4, 4, "input");
     core::validate_last_dim(input, config_.channels, "input");
-    if (ctx.backend_type != core::BackendType::Metal) {
+    const bool native_channels_last = ctx.backend_type == core::BackendType::Metal ||
+        (config_.impl == Conv2dImpl::ChannelFast && ctx.backend_type == core::BackendType::Cpu &&
+         input.type == GGML_TYPE_F32 && weights.weight.type == GGML_TYPE_F32);
+    if (!native_channels_last) {
         auto canonical = TransposeModule({{0, 3, 1, 2}, 4}).build(ctx, input);
         auto output = build(ctx, core::ensure_backend_addressable_layout(ctx, canonical), weights);
         output = TransposeModule({{0, 2, 3, 1}, 4}).build(ctx, output);
@@ -1272,7 +1278,7 @@ core::TensorValue DepthwiseConv2dModule::build(core::ModuleBuildContext & ctx,
     }
     const auto x = ensure_f32(ctx, core::ensure_backend_addressable_layout(ctx, input));
     auto * w = depthwise_conv2d_weight(ctx, weights.weight).tensor;
-    // Metal's channel-fast dispatch requires matching kernel-tap strides.
+    // Channel-fast dispatch requires matching kernel-tap strides.
     w = ggml_permute(ctx.ggml, ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, w, 2, 3, 1, 0)), 3, 2, 0, 1);
     auto * output = ggml_conv_2d_dw_direct(ctx.ggml, w, ggml_permute(ctx.ggml, x.tensor, 2, 0, 1, 3),
         config_.stride_width, config_.stride_height, config_.padding_width, config_.padding_height,

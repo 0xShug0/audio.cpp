@@ -29,7 +29,7 @@ struct KrokoDecoderOptions {
 
 class KrokoTransducerDecoder {
 public:
-    explicit KrokoTransducerDecoder(std::shared_ptr<const KrokoASRAssets> assets);
+    explicit KrokoTransducerDecoder(std::shared_ptr<const KrokoASRAssets> assets, int threads = 1);
     ~KrokoTransducerDecoder();
 
     void configure(KrokoDecoderOptions options);
@@ -67,10 +67,6 @@ private:
     std::shared_ptr<const KrokoASRAssets> assets_;
     std::vector<float> embedding_;
     std::vector<float> conv_;
-    std::vector<float> decoder_projection_;
-    std::vector<float> decoder_bias_;
-    std::vector<float> joiner_projection_;
-    std::vector<float> joiner_bias_;
     mutable std::vector<float> joiner_scores_;
     std::array<int32_t, 2> context_{};
     std::array<float, 512> decoder_output_{};
