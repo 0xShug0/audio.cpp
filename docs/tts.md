@@ -56,6 +56,7 @@ For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
 | VoxCPM2 | `voxcpm2` | `tts`, `clon`, `vdes` | [VoxCPM2](#voxcpm2) |
 | Voxtral 4B TTS | `voxtral_tts` | `tts` | [Voxtral TTS](models/voxtral_tts.md) |
 | XTTS v2 | `xtts_v2` | `tts` | [XTTS v2](community_models/xtts_v2.md) |
+| ZONOS2 | `zonos2` | `tts`, `clon` | [ZONOS2](models/zonos2.md) |
 | ZONOS3-Mini | `zonos3` | `tts`, `clon` | [ZONOS3-Mini](models/zonos3.md) |
 
 This page covers speech TTS-style families. MiniMax-H3 appears here for prompt-driven dialogue audio, but it uses the generation route (`--task gen`) rather than the normal speech route (`--task tts`). Detailed route manuals live under `docs/models/` or `docs/models/` when a model needs more space.
