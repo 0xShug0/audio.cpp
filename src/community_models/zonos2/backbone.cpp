@@ -6,6 +6,7 @@
 #include "engine/framework/core/graph_workspace.h"
 #include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/moe_module.h"
@@ -347,6 +348,8 @@ private:
         ggml_tensor * emb = nullptr;
         for (int c = 0; c <= hp_.n_codebooks; ++c) {
             auto * ids = ggml_view_1d(g, in.ids, rows, static_cast<size_t>(c) * in.ids->nb[1]);
+            ids = core::ensure_backend_addressable_layout(
+                ctx, core::wrap_tensor(ids, core::TensorShape::from_dims({rows}), GGML_TYPE_I32)).tensor;
             const auto & table = c < hp_.n_codebooks ? audio_embd_[static_cast<size_t>(c)] : text_embd_;
             auto * e = ggml_get_rows(g, table.tensor, ids);
             emb = emb ? ggml_add(g, emb, e) : e;
@@ -372,7 +375,7 @@ private:
         const int nkv = hp_.n_head_kv;
         const int N = rows;
         const float scale = 1.0f / std::sqrt(static_cast<float>(hd));
-        auto * gate = ggml_sigmoid(g, linear(ctx, x, w.attn_gate));
+        auto * gate = modules::SigmoidModule().build(ctx, matrix(linear(ctx, x, w.attn_gate))).tensor;
         auto * q = ggml_reshape_3d(g, linear(ctx, x, w.wq), hd, nh, N);
         auto * k = ggml_reshape_3d(g, linear(ctx, x, w.wk), hd, nkv, N);
         auto * v = ggml_reshape_3d(g, linear(ctx, x, w.wv), hd, nkv, N);

@@ -228,6 +228,11 @@ build is configured with
 | `zonos2_parity_decoder` | SNR 59.1 dB against `dac-cli` after 16-bit quantization, same length; 40-frame windows with 24 context frames identical to one pass |
 | `zonos2_parity_speaker` | Embedding cosine 1.000000 against `spk-encoder-cli` |
 
+CUDA and Vulkan smoke runs on an NVIDIA RTX 4090 complete TTS and voice cloning
+with the Q8_0 package and a five-second reference WAV. The speaker encoder runs
+on the selected backend with `--session-option zonos2.encoder_backend=same`.
+Vulkan cloning was verified with a Vulkan-only build (see Known limitations).
+
 With greedy decoding and no repetition penalty, the generated codes equal
 `zonos2-cli --greedy` frame for frame over 2,000 frames, and the audio differs
 by at most 3 LSB of 16-bit PCM.
@@ -275,7 +280,10 @@ footprint of 10.1 GB.
 - The Q8_0 backbone needs about 9 GB. On a 16 GB machine that is already under
   memory pressure, generation slows down several times; `zonos2.disk_experts`
   lowers the footprint to about 5 GB at a large speed cost.
-- CUDA and Vulkan have not been tested.
+- On the tested NVIDIA 550.144.03 driver stack, a build with both CUDA and
+  Vulkan enabled can segfault in a `[vkps] Update` thread during CLI shutdown
+  after Vulkan cloning. A Vulkan-only build exits cleanly; configure it with
+  `-DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=ON`.
 
 ## License
 
