@@ -63,8 +63,7 @@ std::vector<double> zero_phase_butterworth(const std::vector<float> & input, dou
     return {x.begin() + edge, x.end() - edge};
 }
 
-std::vector<float> substitute_low_band(const std::vector<float> & input, const std::vector<float> & generated,
-                                      size_t threads) {
+double estimate_bandwidth(const std::vector<float> & input, size_t threads) {
     auto padded = input;
     padded.resize((padded.size() + 127) / 128 * 128, 0.0F);
     const audio::STFTConfig config{256, 128, 256, true, audio::STFTPadMode::Constant};
@@ -80,14 +79,18 @@ std::vector<float> substitute_low_band(const std::vector<float> & input, const s
         }
     }
     const double total = std::accumulate(energy.begin(), energy.end(), 0.0);
-    if (total == 0) throw std::runtime_error("MossFormer2 SR cannot estimate the bandwidth of silent input");
+    if (total == 0) return 0;
     double cumulative = 0;
     size_t bin = 0;
     for (; bin < energy.size(); ++bin) {
         cumulative += energy[bin];
         if (cumulative / total >= 0.9996) break;
     }
-    const auto cutoff = static_cast<double>(bin) * 48000.0 / 256.0;
+    return static_cast<double>(bin) * 48000.0 / 256.0;
+}
+
+std::vector<float> substitute_low_band(const std::vector<float> & input, const std::vector<float> & generated,
+                                      double cutoff) {
     const auto low = zero_phase_butterworth(input, cutoff, false);
     const auto high = zero_phase_butterworth(generated, cutoff, true);
     std::vector<float> result(std::min(low.size(), high.size()));
@@ -133,8 +136,8 @@ public:
         const auto & c = assets->config;
         if (input.size() < static_cast<size_t>(c.fft_length))
             throw std::runtime_error("MossFormer2 SE input is shorter than its analysis window");
-        const auto frames = 1 + (input.size() - c.fft_length) / c.hop_length;
-        std::vector<float> framed(frames * c.fft_length), scaled(input.size());
+        const auto frames = 1 + (input.size() - c.fft_length + c.hop_length - 1) / c.hop_length;
+        std::vector<float> framed(frames * c.fft_length), scaled(c.fft_length + (frames - 1) * c.hop_length, 0);
         for (size_t i = 0; i < input.size(); ++i) scaled[i] = input[i] * 32768.0F;
         std::normal_distribution<float> noise;
         for (size_t t = 0; t < frames; ++t)
@@ -175,7 +178,7 @@ public:
             {sizeof(std::complex<float>), static_cast<std::ptrdiff_t>(frames * sizeof(std::complex<float>))},
             {static_cast<std::ptrdiff_t>(c.fft_length * sizeof(float)), sizeof(float)}, 1, complex.data(), inverse.data(),
             1.0F / c.fft_length, execution.config().threads);
-        std::vector<float> result(input.size(), 0), weights(input.size(), 0), chunk(c.fft_length);
+        std::vector<float> result(scaled.size(), 0), weights(scaled.size(), 0), chunk(c.fft_length);
         for (size_t t = 0; t < frames; ++t) {
             for (int i = 0; i < c.fft_length; ++i) chunk[i] = inverse[t * c.fft_length + i] / window[i];
             audio::AudioChunkSpan span;
@@ -186,6 +189,7 @@ public:
         }
         audio::normalize_overlap_added_planar(result, weights, 1, result.size(), audio::AudioChunkCounterMode::SharedAcrossLanes);
         for (auto & value : result) value /= 32768.0F;
+        result.resize(input.size());
         return result;
     }
 
@@ -211,6 +215,9 @@ MossFormer2RestorationRuntime::~MossFormer2RestorationRuntime() = default;
 std::vector<float> MossFormer2RestorationRuntime::restore(const std::vector<float> & input, int64_t window, int64_t overlap) {
     auto & p = *impl_;
     const bool se = !p.assets->impl->use_vocoder;
+    const double cutoff = se ? 0 : estimate_bandwidth(input, p.execution.config().threads);
+    // No missing band exists for silence or input extending to Nyquist.
+    if (!se && (cutoff == 0 || cutoff >= 24000)) return input;
     const auto run = [&](const std::vector<float> & x) { return se ? p.enhance(x) : p.super_resolve(x); };
     std::vector<float> result;
     if (window == 0 || input.size() <= static_cast<size_t>(window)) {
@@ -227,13 +234,14 @@ std::vector<float> MossFormer2RestorationRuntime::restore(const std::vector<floa
         for (int64_t offset = 0; offset + window <= padded; offset += hop) {
             const auto chunk = run({samples.begin() + offset, samples.begin() + offset + window});
             const auto first = offset == 0 ? 0 : discard;
-            const auto last = std::min<int64_t>(window - discard, chunk.size());
+            const bool final_window = offset + window + hop > padded;
+            const auto last = std::min<int64_t>(window - (final_window ? 0 : discard), chunk.size());
             if (last <= first) throw std::runtime_error("MossFormer2 restoration chunk is too short for its overlap");
             std::copy(chunk.begin() + first, chunk.begin() + last, result.begin() + offset + first);
         }
         if (se) result.resize(input.size());
     }
-    return se ? result : substitute_low_band(input, result, p.execution.config().threads);
+    return se ? result : substitute_low_band(input, result, cutoff);
 }
 
 }  // namespace engine::models::mossformer2

@@ -41,6 +41,8 @@ SE predicts a spectral mask from Kaldi filterbanks and their first/second-order
 deltas. SR uses a mel-feature MossFormer2 network and a Snake-activated vocoder,
 then preserves the input's low-frequency band as in ClearVoice. SR can trim less
 than one vocoder hop (256 samples) from whole-file output.
+Silent inputs and inputs whose estimated bandwidth reaches Nyquist pass through
+unchanged, without running SR inference.
 
 ### Common Options
 
@@ -67,8 +69,8 @@ frontend; repeated outputs can differ slightly.
 
 ## Long Recordings
 
-The SS default path uses two-second windows with 0.5-second overlap (a 1.5-second hop) and trims window
-edges as in ClearVoice. A session reuses its graph for repeated windows; changing
+The SS default path uses two-second windows with 0.5-second overlap (a 1.5-second hop) and trims
+shared edges between windows, preserving the final window's tail. A session reuses its graph for repeated windows; changing
 the window size replaces that graph rather than retaining multiple graph sizes.
 SE/SR use the same session-owned graph reuse pattern with their own analysis
 frontends. Their default long-recording window is four seconds with one-second

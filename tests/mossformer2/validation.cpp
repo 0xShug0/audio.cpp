@@ -63,7 +63,13 @@ int main(int argc, char ** argv) {
                     if (!std::isfinite(sample)) throw std::runtime_error("Non-finite model output");
                     energy += double(sample) * sample;
                 }
-                if (energy == 0) throw std::runtime_error("Silent model output");
+                const bool expect_input = json::optional_bool(item, "expect_input_equal", false);
+                if (expect_input && (buffer.sample_rate != input.sample_rate || buffer.channels != input.channels ||
+                                     buffer.samples != input.samples))
+                    throw std::runtime_error("Expected unchanged input audio");
+                if (energy == 0 && !expect_input) throw std::runtime_error("Silent model output");
+                if (json::optional_bool(item, "require_signal_at_end", false) && buffer.samples.back() == 0)
+                    throw std::runtime_error("Model output lost the final signal sample");
                 duration = static_cast<double>(buffer.samples.size()) / buffer.sample_rate;
                 const auto key = input_path.string() + json::stringify(item.find("options") ? *item.find("options") : json::Value::make_object({})) + track.id;
                 const auto found = previous.find(key);
@@ -77,7 +83,7 @@ int main(int argc, char ** argv) {
                         dot += double(found->second[i]) * buffer.samples[i];
                         previous_energy += double(found->second[i]) * found->second[i];
                     }
-                    if (dot / std::sqrt(previous_energy * energy) < 0.99999)
+                    if (previous_energy == 0 || energy == 0 || dot / std::sqrt(previous_energy * energy) < 0.99999)
                         throw std::runtime_error("Repeated request waveform similarity regressed");
                 }
                 previous[key] = buffer.samples;

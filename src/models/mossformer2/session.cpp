@@ -76,8 +76,9 @@ public:
                     std::copy_n(input.begin() + offset, window, chunk.begin());
                     auto separated = runtime_->separate(chunk);
                     const int64_t first = offset == 0 ? 0 : discard;
+                    const int64_t trailing_discard = offset + window + stride > padded ? 0 : discard;
                     for (int speaker = 0; speaker < assets_->config.speakers; ++speaker) {
-                        std::copy(separated[speaker].begin() + first, separated[speaker].end() - discard,
+                        std::copy(separated[speaker].begin() + first, separated[speaker].end() - trailing_discard,
                             outputs[speaker].begin() + offset + first);
                     }
                 }

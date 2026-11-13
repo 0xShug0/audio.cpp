@@ -53,3 +53,25 @@ dither; the random streams differ, so waveform cosine is the comparison rather
 than byte identity. Remove precision overrides for performance measurements,
 match thread counts, run sequentially, and exclude the first warmup request.
 CPU and Vulkan use the same C++ runner with their backend name.
+
+## Restoration boundary regressions
+
+For SE, include a 22-second recording with default chunking and a 900 ms
+recording with `audio_chunk_duration_sec=0.5` and
+`audio_chunk_overlap_sec=0.1`. Both inputs must contain signal through their
+final sample. Set `"require_signal_at_end": true` on each case to reject a
+zero-filled output tail.
+
+Apply the same check to both SS output tracks: use a 3.5-second input with
+default chunking, plus the 900 ms custom-chunk case above, for F32 and F16.
+Also compare single-window, whole-file and zero-overlap outputs against the
+pre-fix outputs; these unaffected paths must remain unchanged. Disable
+`normalize_output` when comparing the unchanged prefix of a corrected chunked
+output, since restoring the tail also changes whole-recording RMS normalization.
+
+For SR, include silence and a signal whose estimated bandwidth reaches Nyquist
+(for example, alternating positive/negative samples at 48 kHz). Set
+`"expect_input_equal": true` to require exact pass-through, including length;
+only such explicitly marked cases permit silent output. Run ordinary narrowband
+speech before and after these cases to verify session reuse and unchanged
+restoration of non-boundary inputs.
