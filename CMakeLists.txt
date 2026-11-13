@@ -4539,6 +4539,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(depthwise_conv1d_lowering_test tests/unittests/test_depthwise_conv1d_lowering.cpp)
         add_test(NAME depthwise_conv1d_lowering_test COMMAND depthwise_conv1d_lowering_test)
 
+        add_engine_unittest(conv2d_modules_test tests/unittests/test_conv2d_modules.cpp)
+        add_test(NAME conv2d_modules_test COMMAND conv2d_modules_test)
+
         add_engine_unittest(conv_lowering_matrix_test tests/unittests/test_conv_lowering_matrix.cpp)
         if (ENGINE_ENABLE_CUDA AND GGML_CUDA_CUDNN_CONV3D)
             add_engine_unittest(cuda_cudnn_conv3d_test tests/unittests/test_cuda_cudnn_conv3d.cpp)
