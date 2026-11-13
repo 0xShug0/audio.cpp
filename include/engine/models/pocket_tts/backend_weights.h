@@ -44,6 +44,7 @@ struct PocketTTSBackendFlowWeights {
     modules::TimedConditionedFlowMLPWeights flow_net;
     modules::NormWeights out_norm;
     modules::LinearWeights out_eos;
+    std::optional<modules::LinearWeights> z_projection;
     core::TensorValue speaker_proj_weight;
 };
 

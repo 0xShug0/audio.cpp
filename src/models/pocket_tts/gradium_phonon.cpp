@@ -176,6 +176,7 @@ PocketTTSModelConfig model_config_from_json(const json::Value & config) {
     out.frame_rate = json::require_f32(mimi, "frame_rate");
     out.mimi_frame_rate = out.frame_rate;
     out.flow_dim = json::require_i64(flow, "d_model");
+    out.flow_condition_dim = out.flow_dim;
     out.flow_heads = json::require_i64(flow, "num_heads");
     out.flow_layers = json::require_i64(flow, "num_layers");
     out.flow_intermediate_size = json::require_i64(flow, "dim_feedforward");

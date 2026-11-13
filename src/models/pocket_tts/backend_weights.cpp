@@ -147,6 +147,13 @@ PocketTTSBackendFlowWeights load_backend_flow_weights(
     weights.flow_net = load_backend_flow_net_weights(store, source, config.flow_depth, storage_type);
     weights.out_norm = binding::norm_from_named_source(store, source, "flow_lm.out_norm.weight", "flow_lm.out_norm.bias");
     weights.out_eos = binding::linear_from_named_source(store, source, "flow_lm.out_eos.weight", "flow_lm.out_eos.bias", storage_type);
+    if (source.has_tensor("flow_lm.z_proj.weight")) {
+        weights.z_projection = modules::LinearWeights{
+            binding::tensor_from_named_source(store, source, "flow_lm.z_proj.weight", storage_type),
+            source.has_tensor("flow_lm.z_proj.bias")
+                ? std::optional(binding::tensor_from_named_source(store, source, "flow_lm.z_proj.bias", storage_type))
+                : std::nullopt};
+    }
     if (has_mimi_encoder) {
         weights.speaker_proj_weight =
             binding::tensor_from_named_source(store, source, "flow_lm.speaker_proj_weight", storage_type);

@@ -24,7 +24,8 @@ struct FlowLMConfig {
     int64_t layers = 6;
     float norm_eps = 1.0e-5F;
     float flow_eps = 1.0e-6F;
-    int64_t flow_depth = 6;  // flow-net residual blocks, see PocketTTSModelConfig::flow_depth
+    int64_t flow_depth = 6;
+    int64_t condition_size = 1024;  // flow-net residual blocks, see PocketTTSModelConfig::flow_depth
     bool time_embedding_plain_rms = false;
 };
 

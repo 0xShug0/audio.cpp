@@ -29,6 +29,7 @@ std::optional<int> optional_int(const FlattenedDocument & document, const std::s
 std::optional<float> optional_float(const FlattenedDocument & document, const std::string & key);
 float optional_f32(const FlattenedDocument & document, const std::string & key, float default_value);
 std::optional<float> optional_nullable_f32(const FlattenedDocument & document, const std::string & key);
+std::optional<int> optional_nullable_int(const FlattenedDocument & document, const std::string & key);
 std::vector<std::string> require_list_strings(const FlattenedDocument & document, const std::string & key);
 std::vector<int> require_list_int(const FlattenedDocument & document, const std::string & key);
 std::vector<int64_t> require_list_i64(const FlattenedDocument & document, const std::string & key);
