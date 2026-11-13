@@ -1854,6 +1854,7 @@ audiocpp_add_model(zonos2
         src/community_models/zonos2/npy.cpp
         src/community_models/zonos2/prompt.cpp
         src/community_models/zonos2/sampler.cpp
+        src/community_models/zonos2/speaker_encoder.cpp
 )
 
 audiocpp_add_model(audio8_tts
@@ -4550,7 +4551,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
                 add_test(NAME zonos2_parity_decoder COMMAND zonos2_parity decoder
                     "${AUDIOCPP_ZONOS2_MODEL_DIR}/dac.gguf" "${AUDIOCPP_ZONOS2_PARITY_DIR}")
-                set_tests_properties(zonos2_parity_decoder PROPERTIES
+                add_test(NAME zonos2_parity_speaker COMMAND zonos2_parity speaker
+                    "${AUDIOCPP_ZONOS2_MODEL_DIR}/spk-encoder.gguf" "${AUDIOCPP_ZONOS2_PARITY_DIR}")
+                set_tests_properties(zonos2_parity_decoder zonos2_parity_speaker PROPERTIES
                     PASS_REGULAR_EXPRESSION "PASS"
                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
             endif()

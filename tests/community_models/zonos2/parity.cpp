@@ -2,11 +2,13 @@
 //   zonos2_parity backbone <zonos2-*.gguf> <oracle_dir> [--disk-experts]
 //   zonos2_parity backbone_speaker <zonos2-*.gguf> <oracle_dir>
 //   zonos2_parity decoder <dac.gguf> <oracle_dir>
+//   zonos2_parity speaker <spk-encoder.gguf> <oracle_dir>
 #include "engine/community_models/zonos2/assets.h"
 #include "engine/community_models/zonos2/backbone.h"
 #include "engine/community_models/zonos2/codec_decoder.h"
 #include "engine/community_models/zonos2/npy.h"
 #include "engine/community_models/zonos2/prompt.h"
+#include "engine/community_models/zonos2/speaker_encoder.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/core/execution_context.h"
@@ -241,6 +243,24 @@ int decoder(const fs::path & model, const fs::path & oracle) {
     return pass ? 0 : 1;
 }
 
+// ECAPA: the exact 24 kHz samples spk-encoder-cli encoded (voice24k.f32, raw little-endian f32) against spk.npy;
+// cosine >= 0.9999.
+int speaker(const fs::path & model, const fs::path & oracle) {
+    std::ifstream in(oracle / "voice24k.f32", std::ios::binary | std::ios::ate);
+    if (!in) throw std::runtime_error("cannot open voice24k.f32");
+    std::vector<float> samples(static_cast<size_t>(in.tellg()) / sizeof(float));
+    in.seekg(0);
+    in.read(reinterpret_cast<char *>(samples.data()), static_cast<std::streamsize>(samples.size() * sizeof(float)));
+    const auto reference = zonos2::read_speaker_embedding_npy(oracle / "spk.npy");
+    engine::core::ExecutionContext execution(cpu_backend());
+    const zonos2::Zonos2SpeakerEncoder encoder(engine::assets::open_tensor_source(model), execution);
+    const auto ours = encoder.embed(samples);
+    const double cos = ours.size() == reference.size() ? cosine(ours.data(), reference.data(), ours.size()) : 0.0;
+    const bool pass = cos >= 0.9999;
+    std::printf("zonos2 speaker parity: %s cos=%.6f\n", pass ? "PASS" : "FAIL", cos);
+    return pass ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -258,10 +278,12 @@ int main(int argc, char ** argv) {
         }
         if (args.size() == 3 && args[0] == "backbone_speaker") return backbone(args[1], args[2], true, false);
         if (args.size() == 3 && args[0] == "decoder") return decoder(args[1], args[2]);
+        if (args.size() == 3 && args[0] == "speaker") return speaker(args[1], args[2]);
         std::fprintf(stderr,
                      "usage: zonos2_parity [--log] backbone <zonos2-*.gguf> <oracle_dir> [--disk-experts]\n"
                      "       zonos2_parity [--log] backbone_speaker <zonos2-*.gguf> <oracle_dir>\n"
-                     "       zonos2_parity [--log] decoder <dac.gguf> <oracle_dir>\n");
+                     "       zonos2_parity [--log] decoder <dac.gguf> <oracle_dir>\n"
+                     "       zonos2_parity [--log] speaker <spk-encoder.gguf> <oracle_dir>\n");
         return 2;
     } catch (const std::exception & error) {
         std::fprintf(stderr, "zonos2_parity: %s\n", error.what());
