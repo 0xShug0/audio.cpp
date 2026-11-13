@@ -6,6 +6,7 @@
 #include "engine/framework/core/graph_workspace.h"
 #include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/moe_module.h"
@@ -507,6 +508,8 @@ private:
         ggml_tensor * emb = nullptr;
         for (int c = 0; c <= hp_.n_codebooks; ++c) {
             auto * ids = ggml_view_1d(g, in.ids, rows, static_cast<size_t>(c) * in.ids->nb[1]);
+            ids = core::ensure_backend_addressable_layout(
+                ctx, core::wrap_tensor(ids, core::TensorShape::from_dims({rows}), GGML_TYPE_I32)).tensor;
             const auto & table = c < hp_.n_codebooks ? audio_embd_[static_cast<size_t>(c)] : text_embd_;
             auto * e = ggml_get_rows(g, table.tensor, ids);
             emb = emb ? ggml_add(g, emb, e) : e;
@@ -517,6 +520,8 @@ private:
             auto * table = ggml_concat(g, in.zero, speaker.tensor, 1);
             for (int i = 0; i < hp_.n_cond; ++i) {
                 auto * bucket = ggml_view_1d(g, in.buckets, 1, static_cast<size_t>(i) * sizeof(int32_t));
+                bucket = core::ensure_backend_addressable_layout(
+                    ctx, core::wrap_tensor(bucket, core::TensorShape::from_dims({1}), GGML_TYPE_I32)).tensor;
                 table = ggml_concat(g, table, ggml_get_rows(g, cond_embd_[static_cast<size_t>(i)].tensor, bucket), 1);
             }
             emb = ggml_add(g, ggml_mul(g, emb, in.keep), ggml_get_rows(g, table, in.sel));
@@ -533,7 +538,7 @@ private:
         const int T = shape.rows_per_slot;
         const int B = shape.slots;
         const int N = shape.rows();
-        auto * gate = ggml_sigmoid(g, linear(ctx, x, w.attn_gate));
+        auto * gate = modules::SigmoidModule().build(ctx, matrix(linear(ctx, x, w.attn_gate))).tensor;
         auto * q = ggml_reshape_3d(g, linear(ctx, x, w.wq), hd, nh, N);
         auto * k = ggml_reshape_3d(g, linear(ctx, x, w.wk), hd, nkv, N);
         auto * v = ggml_reshape_3d(g, linear(ctx, x, w.wv), hd, nkv, N);
@@ -584,7 +589,9 @@ private:
             ? ggml_view_3d(g, mixed, 1, 3 * I, B, mixed->nb[0], mixed->nb[1], 0)
             : ggml_reshape_3d(g, ggml_cont(g, ggml_transpose(g, rows(0, 3 * I))), T, 3 * I, 1);
         auto * window = ggml_concat(g, history, time_major, 0);  // [R + T, 3I, B]
-        auto * conv = ggml_silu(g, ggml_ssm_conv(g, window, w.gdn_conv.tensor));
+        auto * conv = ggml_ssm_conv(g, window, w.gdn_conv.tensor);
+        conv = modules::SiluModule().build(
+            ctx, core::wrap_tensor(conv, core::TensorShape::from_dims({B, T, 3 * I}))).tensor;
         conv = ggml_reshape_2d(g, conv, 3 * I, N);
         auto heads = [&](int first) {
             return ggml_view_4d(g, conv, S, H, T, B, static_cast<size_t>(S) * conv->nb[0], conv->nb[1],
@@ -599,7 +606,7 @@ private:
         auto * v = heads(2 * I);
         auto * decay = ggml_neg(g, ggml_mul(g, ggml_softplus(g, ggml_add(g, rows(4 * I, H), w.gdn_dt.tensor)),
                                             ggml_exp(g, w.gdn_a_log.tensor)));
-        auto * beta = ggml_sigmoid(g, rows(4 * I + H, H));
+        auto * beta = modules::SigmoidModule().build(ctx, matrix(rows(4 * I + H, H))).tensor;
         decay = ggml_reshape_4d(g, decay, 1, H, T, B);
         beta = ggml_reshape_4d(g, beta, 1, H, T, B);
         auto * packed = ggml_gated_delta_net(g, q, k, v, decay, beta, state);  // [I, N + S*B]
@@ -612,7 +619,9 @@ private:
         auto * z = ggml_view_3d(g, mixed, S, H, N, static_cast<size_t>(S) * mixed->nb[0], mixed->nb[1],
                                 static_cast<size_t>(3 * I) * mixed->nb[0]);
         auto * normed = ggml_mul(g, ggml_rms_norm(g, ggml_reshape_3d(g, output, S, H, N), 1e-5f), w.gdn_norm.tensor);
-        auto * gated = ggml_mul(g, normed, ggml_silu(g, z));
+        auto * activated_z = modules::SiluModule().build(
+            ctx, core::wrap_tensor(z, core::TensorShape::from_dims({N, H, S}))).tensor;
+        auto * gated = ggml_mul(g, normed, activated_z);
         return linear(ctx, ggml_reshape_2d(g, gated, I, N), w.wo);
     }
 

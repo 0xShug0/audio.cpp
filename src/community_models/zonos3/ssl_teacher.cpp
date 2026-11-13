@@ -7,6 +7,7 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/streaming_conv_modules.h"
 
 #include <ggml-backend.h>
 
@@ -411,10 +412,15 @@ private:
             auto rows = [&](ggml_tensor * t, int start, int count) {
                 return ggml_cont(g, ggml_view_2d(g, t, count, t->ne[1], t->nb[1], static_cast<size_t>(start) * t->nb[0]));
             };
-            conv = bf16(ctx, ggml_mul(g, rows(conv, 0, D), ggml_sigmoid(g, rows(conv, D, D))));
-            // Causal depthwise k31: left pad 30 on the time axis.
-            auto * padded = ggml_cont(g, ggml_pad_ext(g, ggml_cont(g, ggml_transpose(g, conv)), kConvKernel - 1, 0, 0, 0, 0, 0, 0, 0));
-            conv = ggml_reshape_2d(g, ggml_ssm_conv(g, ggml_reshape_3d(g, padded, T + kConvKernel - 1, D, 1), w.dw.tensor), D, T);
+            auto * gate = modules::SigmoidModule().build(ctx, tv(rows(conv, D, D))).tensor;
+            conv = bf16(ctx, ggml_mul(g, rows(conv, 0, D), gate));
+            // Causal depthwise k31: left pad 30 on the contiguous time axis.
+            auto * padded = ggml_pad_ext(g, ggml_cont(g, ggml_transpose(g, conv)), kConvKernel - 1, 0, 0, 0, 0, 0, 0, 0);
+            const auto input = core::wrap_tensor(padded, core::TensorShape::from_dims({1, D, T + kConvKernel - 1}));
+            const auto kernel = core::reshape_tensor(ctx, w.dw, core::TensorShape::from_dims({D, 1, kConvKernel}));
+            conv = modules::DepthwiseConv1dModule({D, kConvKernel, 1, 0, 1, false})
+                       .build(ctx, input, {kernel, std::nullopt}).tensor;
+            conv = ggml_cont(g, ggml_transpose(g, ggml_reshape_2d(g, conv, T, D)));
             conv = layer_norm(ctx, bf16(ctx, conv), w.dw_ln_w, w.dw_ln_b);
             conv = linear(ctx, modules::SiluModule().build(ctx, tv(conv)).tensor, w.pw2, std::nullopt);
             x = residual(ggml_add(g, x, conv));

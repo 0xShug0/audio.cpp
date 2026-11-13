@@ -251,6 +251,11 @@ a reference voice. `zonos3_parity` compares each component against that output.
 The tests are registered with CTest when the build is configured with
 `-DAUDIOCPP_ZONOS3_MODEL_DIR=<gguf dir> -DAUDIOCPP_ZONOS3_PARITY_DIR=<oracle dir>`:
 
+CUDA and Vulkan smoke runs on an NVIDIA RTX 4090 complete TTS and raw-reference
+cloning from a five-second WAV, including speaker CFG and explicit condition
+buckets. To run the reference encoders on the selected backend instead of the
+default CPU, pass `--session-option zonos3.encoder_backend=same`.
+
 | Test | Result (CPU) |
 |---|---|
 | `zonos3_parity_backbone` | 100 teacher-forced steps: minimum logit cosine 1.000000, argmax agreement 100% |
@@ -295,9 +300,7 @@ Streaming output equals offline output exactly.
   a 10-second clip it used about 1,740 CPU-seconds, the same as ZONOS3's own
   encoder; one run took 226 s of wall time on an 8-thread Apple M3. Peak
   RSS was about 3.4 GiB. The encoder is released after each encode unless
-  `zonos3.keep_reference_encoder` is set. It has only been validated on the
-  CPU.
-- CUDA and Vulkan have not been tested.
+  `zonos3.keep_reference_encoder` is set.
 
 ## License
 

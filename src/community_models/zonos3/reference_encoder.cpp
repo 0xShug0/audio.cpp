@@ -455,8 +455,9 @@ private:
         ggml_tensor * columns = x;
         if (c.kernel > 1 || stride != 1) {
             const int left = static_cast<int>((c.kernel - 1) * dilation + 1 - stride);
-            auto * padded = ggml_pad_ext(g, x, 0, 0, left, 0, 0, 0, 0, 0);
-            auto * input = ggml_cont(g, ggml_transpose(g, padded));  // [T + left, IC]
+            // Keep time contiguous: CUDA padding dispatches the other axes through grid Y/Z.
+            auto * input = ggml_cont(g, ggml_transpose(g, x));  // [T, IC]
+            input = ggml_pad_ext(g, input, left, 0, 0, 0, 0, 0, 0, 0);  // [T + left, IC]
             auto * kernel = ggml_reshape_3d(g, c.weight.tensor, c.kernel, c.in, c.out);  // im2col reads its shape
             // F32 im2col keeps the already-rounded BF16 inputs exact; the GEMM narrows them to BF16.
             auto * windows = ggml_im2col(g, kernel, input, stride, 0, 0, 0, dilation, 0, false, GGML_TYPE_F32);
@@ -493,7 +494,9 @@ private:
         const int64_t T = x->ne[1];
         const auto & dw = weight(p + ".dw.weight");  // ggml [C, K]
         const int K = static_cast<int>(dw.tensor->ne[1]);
-        auto * xf = ggml_pad_ext(g, round(ctx, x), 0, 0, K - 1, 0, 0, 0, 0, 0);
+        auto * xf = ggml_cont(g, ggml_transpose(g, round(ctx, x)));
+        xf = ggml_pad_ext(g, xf, K - 1, 0, 0, 0, 0, 0, 0, 0);
+        xf = ggml_cont(g, ggml_transpose(g, xf));  // [C, T + K - 1]
         ggml_tensor * h = nullptr;
         for (int k = 0; k < K; ++k) {
             auto * term = ggml_mul(g, ggml_view_2d(g, xf, C, T, xf->nb[1], static_cast<size_t>(k) * xf->nb[1]),
