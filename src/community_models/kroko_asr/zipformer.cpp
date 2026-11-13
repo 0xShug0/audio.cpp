@@ -111,7 +111,8 @@ core::TensorValue scale(
     core::ModuleBuildContext & context,
     const core::TensorValue & input,
     float value) {
-    const auto source = contiguous(context, input);
+    // Normalize singleton strides too: ggml_scale requires padded-1D layout.
+    const auto source = core::reshape_tensor(context, contiguous(context, input), input.shape);
     return core::wrap_tensor(
         ggml_scale(context.ggml, source.tensor, value),
         input.shape,
@@ -309,6 +310,7 @@ modules::ZipformerStatefulOutputs offline_convolution(
             .build(context, value, weights);
         value = modules::TransposeModule({{2, 0, 1, 3}, 3}).build(context, value);
     }
+    value = core::reshape_tensor(context, contiguous(context, value), input.shape);
     value = modules::SwooshRModule().build(context, value);
     return {linear(context, value, params, prefix + ".out_proj"), {}};
 }

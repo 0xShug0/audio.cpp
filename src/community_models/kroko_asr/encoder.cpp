@@ -72,7 +72,8 @@ public:
           input_frames_(input_frames),
           subsampled_frames_(subsampled_frames),
           prepared_(execution, {"kroko_asr.subsampling", kGraphContextBytes, kGraphNodes}) {
-        if (input_frames_ <= 0 || subsampled_frames_ <= kEmbedCacheFrames) {
+        if (input_frames_ <= 0 || subsampled_frames_ <= 0 ||
+            (streaming && subsampled_frames_ <= kEmbedCacheFrames)) {
             throw std::runtime_error(
                 "Kroko subsampling graph dimensions are invalid");
         }
@@ -122,26 +123,29 @@ public:
         const auto bypass =
             modules::SliceModule({2, 0, subsampled_frames_})
                 .build(build, output);
-        auto cache = core::make_tensor(
-            build,
-            GGML_TYPE_F32,
-            core::TensorShape::from_dims(
-                {1,
-                 kEmbedChannels,
-                 kEmbedCacheFrames,
-                 kEmbedFrequency}));
-        cache_ = cache.tensor;
-        ggml_set_input(cache_);
-        auto new_cache =
-            core::ensure_backend_addressable_layout(
+        auto padded = output;
+        if (streaming) {
+            auto cache = core::make_tensor(
                 build,
-                modules::SliceModule(
-                    {2,
-                     subsampled_frames_ - kEmbedCacheFrames,
-                     kEmbedCacheFrames})
-                    .build(build, output));
-        new_cache_ = new_cache.tensor;
-        auto padded = streaming ? modules::ConcatModule({2}).build(build, cache, output) : output;
+                GGML_TYPE_F32,
+                core::TensorShape::from_dims(
+                    {1,
+                     kEmbedChannels,
+                     kEmbedCacheFrames,
+                     kEmbedFrequency}));
+            cache_ = cache.tensor;
+            ggml_set_input(cache_);
+            auto new_cache =
+                core::ensure_backend_addressable_layout(
+                    build,
+                    modules::SliceModule(
+                        {2,
+                         subsampled_frames_ - kEmbedCacheFrames,
+                         kEmbedCacheFrames})
+                        .build(build, output));
+            new_cache_ = new_cache.tensor;
+            padded = modules::ConcatModule({2}).build(build, cache, output);
+        }
         modules::DepthwiseConv2dConfig depthwise_config{
             128, 7, 7, 1, 1, streaming ? 0 : 3, 3, 1, 1, true};
         depthwise_config.impl = modules::Conv2dImpl::ChannelFast;
