@@ -1,6 +1,9 @@
 #include "engine/community_models/kroko_asr/decoder.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/modules/linear_module.h"
 
 #include <algorithm>
 #include <array>
@@ -212,6 +215,19 @@ bool same_tokens(
 }  // namespace
 
 struct KrokoTransducerDecoder::Impl {
+    explicit Impl(int threads)
+        : execution({core::BackendType::Cpu, 0, threads}),
+          weights(execution.backend(), core::BackendType::Cpu, "Kroko decoder weights", 1024 * 1024),
+          graphs(execution, {"kroko_asr.decoder", 1024 * 1024, 64}) {}
+
+    core::ExecutionContext execution;
+    core::BackendWeightStore weights;
+    core::PreparedGraph graphs;
+    core::PreparedGraph::GraphId joiner_graph = 0;
+    core::TensorValue predictor_input;
+    core::TensorValue predictor_output;
+    core::TensorValue joiner_input;
+    core::TensorValue joiner_output;
     std::vector<BeamHypothesis> hypotheses;
     std::unique_ptr<HotwordGraph> hotword_graph;
     std::unordered_map<uint64_t, std::array<float, 512>>
@@ -219,9 +235,9 @@ struct KrokoTransducerDecoder::Impl {
 };
 
 KrokoTransducerDecoder::KrokoTransducerDecoder(
-    std::shared_ptr<const KrokoASRAssets> assets)
+    std::shared_ptr<const KrokoASRAssets> assets, int threads)
     : assets_(std::move(assets)),
-      impl_(std::make_unique<Impl>()) {
+      impl_(std::make_unique<Impl>(threads)) {
     if (assets_ == nullptr) {
         throw std::runtime_error(
             "Kroko transducer decoder requires assets");
@@ -234,18 +250,26 @@ KrokoTransducerDecoder::KrokoTransducerDecoder(
     conv_ = source.require_f32(
         "decoder.decoder.conv.weight",
         {kHidden, kInputsPerGroup, 2});
-    decoder_projection_ = source.require_f32(
-        "decoder.decoder_proj.weight",
-        {kHidden, kHidden});
-    decoder_bias_ = source.require_f32(
-        "decoder.decoder_proj.bias",
-        {kHidden});
-    joiner_projection_ = source.require_f32(
-        "joiner.output_linear.weight",
-        {vocab, kHidden});
-    joiner_bias_ = source.require_f32(
-        "joiner.output_linear.bias",
-        {vocab});
+    auto & build = impl_->graphs.build_context();
+    impl_->predictor_input = core::make_tensor(build, GGML_TYPE_F32, core::TensorShape::from_dims({1, kHidden}));
+    ggml_set_input(impl_->predictor_input.tensor);
+    impl_->predictor_output = modules::LinearModule({kHidden, kHidden, true}).build(
+        build, impl_->predictor_input,
+        {impl_->weights.load_f32_tensor(source, "decoder.decoder_proj.weight", {kHidden, kHidden}),
+         impl_->weights.load_f32_tensor(source, "decoder.decoder_proj.bias", {kHidden})});
+    ggml_set_output(impl_->predictor_output.tensor);
+    ggml_build_forward_expand(impl_->graphs.graph(), impl_->predictor_output.tensor);
+    impl_->joiner_graph = impl_->graphs.add_graph("joiner");
+    impl_->joiner_input = core::make_tensor(build, GGML_TYPE_F32, core::TensorShape::from_dims({1, kHidden}));
+    ggml_set_input(impl_->joiner_input.tensor);
+    impl_->joiner_output = modules::LinearModule({kHidden, vocab, true}).build(
+        build, impl_->joiner_input,
+        {impl_->weights.load_f32_tensor(source, "joiner.output_linear.weight", {vocab, kHidden}),
+         impl_->weights.load_f32_tensor(source, "joiner.output_linear.bias", {vocab})});
+    ggml_set_output(impl_->joiner_output.tensor);
+    ggml_build_forward_expand(impl_->graphs.graph(impl_->joiner_graph), impl_->joiner_output.tensor);
+    impl_->weights.upload();
+    impl_->graphs.allocate();
     joiner_scores_.resize(static_cast<size_t>(vocab));
     reset();
 }
@@ -331,20 +355,9 @@ KrokoTransducerDecoder::predictor(
     }
 
     std::array<float, kHidden> result{};
-    for (int64_t output = 0; output < kHidden; ++output) {
-        double value =
-            decoder_bias_[static_cast<size_t>(output)];
-        const float * weight =
-            decoder_projection_.data() + output * kHidden;
-        for (int64_t input = 0; input < kHidden; ++input) {
-            value +=
-                static_cast<double>(weight[input]) *
-                static_cast<double>(
-                    convolved[static_cast<size_t>(input)]);
-        }
-        result[static_cast<size_t>(output)] =
-            static_cast<float>(value);
-    }
+    ggml_backend_tensor_set(impl_->predictor_input.tensor, convolved.data(), 0, sizeof(convolved));
+    impl_->graphs.compute();
+    ggml_backend_tensor_get(impl_->predictor_output.tensor, result.data(), 0, sizeof(result));
     return result;
 }
 
@@ -361,21 +374,9 @@ void KrokoTransducerDecoder::join_scores(
                 encoder_frame[hidden] +
                 decoder_output[static_cast<size_t>(hidden)]);
     }
-#pragma omp parallel for schedule(static) if (vocab >= 256)
-    for (int64_t token = 0; token < vocab; ++token) {
-        double value =
-            joiner_bias_[static_cast<size_t>(token)];
-        const float * weight =
-            joiner_projection_.data() + token * kHidden;
-        for (int64_t hidden = 0; hidden < kHidden; ++hidden) {
-            value +=
-                static_cast<double>(weight[hidden]) *
-                static_cast<double>(
-                    activated[static_cast<size_t>(hidden)]);
-        }
-        scores[static_cast<size_t>(token)] =
-            static_cast<float>(value);
-    }
+    ggml_backend_tensor_set(impl_->joiner_input.tensor, activated.data(), 0, sizeof(activated));
+    impl_->graphs.compute(impl_->joiner_graph);
+    ggml_backend_tensor_get(impl_->joiner_output.tensor, scores.data(), 0, scores.size() * sizeof(float));
 }
 
 void KrokoTransducerDecoder::reset(int64_t frame_offset) {

@@ -4363,6 +4363,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(backend_device_resolution_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME backend_device_resolution_test COMMAND backend_device_resolution_test)
 
+        add_engine_unittest(zipformer_modules_test tests/unittests/test_zipformer_modules.cpp)
+        add_test(NAME zipformer_modules_test COMMAND zipformer_modules_test)
+
         add_engine_unittest(attention_fallback_test tests/unittests/test_attention_fallback.cpp)
         target_include_directories(attention_fallback_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME attention_fallback_test COMMAND attention_fallback_test)

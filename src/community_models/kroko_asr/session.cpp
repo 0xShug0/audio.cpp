@@ -32,6 +32,8 @@ std::shared_ptr<const KrokoASRAssets> require_assets(
     return assets;
 }
 
+
+
 std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
     std::shared_ptr<const engine::model_spec::ModelContract> contract) {
     if (contract == nullptr) {
@@ -241,7 +243,7 @@ KrokoASRSession::KrokoASRSession(
           assets_->tokens,
           static_cast<int32_t>(assets_->config.blank_id),
           static_cast<int32_t>(assets_->config.unk_id)),
-      decoder_(assets_),
+      decoder_(assets_, execution_context().config().threads),
       subsampling_(assets_, execution_context()),
       zipformer_(assets_, execution_context()),
       chunk_scratch_(
