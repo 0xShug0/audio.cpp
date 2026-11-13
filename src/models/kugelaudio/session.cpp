@@ -2,13 +2,16 @@
 
 #include "engine/models/kugelaudio/assets.h"
 #include "engine/models/kugelaudio/generator.h"
+#include "engine/models/kugelaudio/reference_encoder.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 
 #include <chrono>
+#include <cmath>
 
 namespace engine::models::kugelaudio {
 namespace {
@@ -22,9 +25,11 @@ public:
             std::shared_ptr<const model_spec::ModelContract> contract)
         : RuntimeSessionBase(options), task_(task), assets_(std::move(assets)), contract_(std::move(contract)) {
         runtime::validate_spec_backed_session_options(options, *contract_, "kugelaudio", "KugelAudio");
-        if (task.task != runtime::VoiceTaskKind::Tts) {
-            throw std::runtime_error("KugelAudio supports TTS with preset voices, not voice cloning");
+        if (task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::VoiceCloning) {
+            throw std::runtime_error("KugelAudio supports TTS and reference-audio voice cloning");
         }
+        reference_encoder_path_ = runtime::find_option(options.options,
+            {"kugelaudio.reference_encoder_path", "reference_encoder_path"}).value_or("");
         const auto storage = assets::parse_tensor_storage_type(
             runtime::find_option(options.options, {"kugelaudio.weight_type", "weight_type"}).value_or("native"));
         generator_ = std::make_unique<Generator>(*assets_->weights,
@@ -33,11 +38,16 @@ public:
     }
 
     std::string family() const override { return "kugelaudio"; }
-    runtime::VoiceTaskKind task_kind() const override { return runtime::VoiceTaskKind::Tts; }
+    runtime::VoiceTaskKind task_kind() const override { return task_.task; }
     runtime::RunMode run_mode() const override { return task_.mode; }
 
     void prepare(const runtime::SessionPreparationRequest & request) override {
         runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "KugelAudio");
+        // Assign preparation state only after reference validation/encoding has
+        // succeeded. A failed request cannot publish a half-prepared voice.
+        if (request.voice && request.voice->speaker && request.voice->speaker->audio)
+            (void)reference_features(*request.voice->speaker->audio);
+        prepared_voice_ = request.voice;
         mark_prepared();
     }
 
@@ -49,6 +59,41 @@ public:
     }
 
 private:
+    const VoiceFeatures & reference_features(const runtime::AudioBuffer & audio) {
+        auto waveform = prepare_reference_audio(audio);
+        if (cached_reference_ && cached_reference_->waveform == waveform) {
+            debug::trace_log_scalar("kugelaudio.reference_cache_hit", 1);
+            return cached_reference_->features;
+        }
+        const auto config = parse_reference_encoder_config(
+            assets_->resources.parse_json("config").require("acoustic_tokenizer_config"));
+        auto source = assets_->weights;
+        if (!reference_encoder_path_.empty()) source = assets::open_tensor_source(reference_encoder_path_);
+        if (source->has_tensor("reference_encoder/model.acoustic_tokenizer.encoder.downsample_layers.0.0.conv.conv.weight"))
+            source = assets::make_prefixed_tensor_source(source, "reference_encoder/");
+        if (!source->has_tensor("model.acoustic_tokenizer.encoder.downsample_layers.0.0.conv.conv.weight"))
+            throw std::runtime_error("This KugelAudio package omits the reference encoder. Supply "
+                "kugelaudio.reference_encoder_path or convert with --include-reference-encoder");
+        const auto begin = std::chrono::steady_clock::now();
+        PreparedReference next;
+        next.waveform = std::move(waveform);
+        {
+            // Only a completed voice feature vector is retained. Encoder graphs
+            // and GPU weights are released before the autoregressive generation.
+            ReferenceEncoder encoder(*source, execution_context(), config);
+            next.features.mean = encoder.encode(next.waveform);
+            next.features.std = config.fixed_std;
+        }
+        if (source != assets_->weights) source->release_storage();
+        if (next.features.mean.empty() || next.features.mean.size() % config.latent_size)
+            throw std::runtime_error("KugelAudio reference encoder returned invalid voice features");
+        debug::timing_log_scalar("kugelaudio.reference_encode_ms", debug::elapsed_ms(begin));
+        debug::trace_log_scalar("kugelaudio.reference_frames", int64_t(next.features.mean.size() / config.latent_size));
+        debug::trace_log_scalar("kugelaudio.reference_cache_hit", 0);
+        cached_reference_ = std::move(next);
+        return cached_reference_->features;
+    }
+
     runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override {
         return synthesize(request, true);
     }
@@ -63,17 +108,22 @@ private:
             throw std::runtime_error("KugelAudio requires non-empty text");
         }
         auto voice_id = runtime::find_option(request.options, {"voice_id"}).value_or("default");
-        if (request.voice && request.voice->speaker) {
-            if (request.voice->speaker->audio) {
-                throw std::runtime_error("KugelAudio does not support reference-audio voice cloning");
-            }
-            if (request.voice->speaker->cached_voice_id) {
-                voice_id = *request.voice->speaker->cached_voice_id;
+        const auto & condition = request.voice ? request.voice : prepared_voice_;
+        const runtime::AudioBuffer * reference = nullptr;
+        if (condition && condition->speaker) {
+            if (condition->speaker->audio) reference = &*condition->speaker->audio;
+            if (condition->speaker->cached_voice_id) {
+                voice_id = *condition->speaker->cached_voice_id;
             }
         }
-        const auto voice = assets_->voices.find(voice_id);
-        if (voice == assets_->voices.end()) {
-            throw std::runtime_error("unknown KugelAudio voice_id: " + voice_id);
+        if (task_.task == runtime::VoiceTaskKind::VoiceCloning && !reference)
+            throw runtime::InvalidRequestError("KugelAudio voice cloning requires speaker reference audio");
+        const VoiceFeatures * voice = nullptr;
+        if (reference) voice = &reference_features(*reference);
+        else {
+            const auto preset = assets_->voices.find(voice_id);
+            if (preset == assets_->voices.end()) throw std::runtime_error("unknown KugelAudio voice_id: " + voice_id);
+            voice = &preset->second;
         }
         GenerationOptions options;
         options.max_tokens = runtime::parse_i64_option(request.options, {"max_tokens"}).value_or(2048);
@@ -91,7 +141,7 @@ private:
         const auto chunk_size = text::parse_text_chunk_size_override(request.options).value_or(300);
         const auto chunk_mode = text::parse_text_chunk_mode_override(request.options).value_or(text::TextChunkMode::Default);
         const auto chunks = runtime::chunk_text_request(request, chunk_size, chunk_mode);
-        debug::trace_log_scalar("kugelaudio.voice_id", voice_id);
+        debug::trace_log_scalar("kugelaudio.voice_id", reference ? "reference_audio" : voice_id);
         debug::trace_log_scalar("kugelaudio.seed", options.seed);
         debug::trace_log_scalar("kugelaudio.num_inference_steps", options.steps);
         debug::trace_log_scalar("kugelaudio.guidance_scale", options.guidance_scale);
@@ -108,7 +158,7 @@ private:
             };
         }
         for (const auto & chunk : chunks) {
-            auto samples = generator_->generate(chunk.text_input->text, voice->second, options, on_audio);
+            auto samples = generator_->generate(chunk.text_input->text, *voice, options, on_audio);
             audio.samples.insert(audio.samples.end(), samples.begin(), samples.end());
             ++options.seed;
         }
@@ -122,6 +172,13 @@ private:
     std::shared_ptr<const ModelAssets> assets_;
     std::shared_ptr<const model_spec::ModelContract> contract_;
     std::unique_ptr<Generator> generator_;
+    struct PreparedReference {
+        std::vector<float> waveform;
+        VoiceFeatures features;
+    };
+    std::optional<PreparedReference> cached_reference_;
+    std::optional<runtime::VoiceCondition> prepared_voice_;
+    std::string reference_encoder_path_;
 };
 
 }  // namespace

@@ -2,11 +2,12 @@
   "schema_version": 1,
   "family": "kugelaudio",
   "display_name": "KugelAudio-0-Open",
-  "description": "KugelAudio text-to-speech with bundled preset voices and incremental audio output.",
+  "description": "KugelAudio text-to-speech with preset voices, optional acoustic-encoder reference-audio cloning, and incremental output.",
   "category": "tts",
   "status": "experimental",
   "tasks": [
-    "tts"
+    "tts",
+    "clone"
   ],
   "modes": [
     "offline",
@@ -45,6 +46,9 @@
   "capabilities": {
     "tts": [
       "long_form"
+    ],
+    "clone": [
+      "speaker_reference"
     ]
   },
   "options": {
@@ -154,6 +158,12 @@
         "description": "Weight storage type; native preserves packaged tensor types.",
         "default": "native",
         "required": false
+      },
+      {
+        "name": "reference_encoder_path",
+        "type": "string",
+        "description": "Optional local GGUF or safetensors acoustic-encoder weights. Required for reference-audio cloning when the main GGUF omits its encoder. Preset voices do not use this file.",
+        "required": false
       }
     ],
     "load": []
@@ -217,7 +227,8 @@
     "tags": [
       "TTS",
       "Stream",
-      "GGUF"
+      "GGUF",
+      "Clone"
     ],
     "docs": [
       "docs/models/kugelaudio.md",
@@ -238,6 +249,12 @@
       },
       "tensors": {
         "model_weights": "weights:"
+      },
+      "optional_tensors": {
+        "reference_encoder_weights": {
+          "source": "weights:",
+          "prefix": "reference_encoder"
+        }
       }
     }
   ]

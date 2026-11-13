@@ -1121,6 +1121,7 @@ audiocpp_add_model(kugelaudio
         src/models/kugelaudio/codec.cpp
         src/models/kugelaudio/diffusion.cpp
         src/models/kugelaudio/generator.cpp
+        src/models/kugelaudio/reference_encoder.cpp
         src/models/kugelaudio/scheduler.cpp
         src/models/kugelaudio/session.cpp
     INCLUDES
@@ -4024,6 +4025,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     # full parakeet_tdt model library.
     if (ENGINE_BUILD_MODEL_TESTS AND parakeet_tdt IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(phonon_features_probe tests/parakeet_tdt/phonon_features_probe.cpp)
+    endif()
+
+    if (kugelaudio IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(kugelaudio_reference_encoder_probe tests/kugelaudio/reference_encoder_probe.cpp)
+        add_engine_unittest(kugelaudio_cloning_session_probe tests/kugelaudio/cloning_session_probe.cpp)
+        add_engine_unittest(kugelaudio_reference_audio_test tests/kugelaudio/test_reference_audio.cpp)
+        target_include_directories(kugelaudio_reference_audio_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME kugelaudio_reference_audio_test COMMAND kugelaudio_reference_audio_test)
     endif()
 
     if (granite5asr IN_LIST AUDIOCPP_LINKED_MODELS)
