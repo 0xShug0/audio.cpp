@@ -191,9 +191,9 @@ int main() {
             NemotronHDecoderRuntime dequantized(source, execution, padded, assets::TensorStorageType::F32);
             const auto quant_result = quantized.generate({1, 2}, audio, 1, {3}, options);
             DecoderOptions offload;
-            offload.disk_experts = true;
-            offload.expert_cache_size = padded.experts_per_token;
-            offload.disk_expert_read_threads = 1;
+            offload.moe.residency = core::MoeExpertResidency::Staged;
+            offload.moe.cache_slots = padded.experts_per_token;
+            offload.moe.read_threads = 1;
             NemotronHDecoderRuntime cached(source, execution, padded, assets::TensorStorageType::Native, offload);
             const auto cached_result = cached.generate({1, 2}, audio, 1, {3}, options);
             require(cached_result.token_ids == quant_result.token_ids &&
@@ -221,6 +221,9 @@ int main() {
                 NemotronHDecoderRuntime wrong(mismatch.expert_row_alignment == 1 ? padded_source : unpadded_source,
                     execution, mismatch);
             } catch (const std::runtime_error &) { rejected = true; }
+            catch (const std::invalid_argument & error) {
+                rejected = std::string(error.what()) == "MoE expert bank shape mismatch: blk.0.ffn_up_exps.weight";
+            }
             require(rejected, "padding metadata/config mismatch must fail closed");
         }
         for (auto alignment : {0, 32, 257}) {

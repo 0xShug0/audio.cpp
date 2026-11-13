@@ -130,26 +130,20 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     debug::trace_log_scalar("fish_drama3.fused_moe", backbone_config.fused_moe);
     debug::trace_log_scalar("fish_drama3.kv_cache_type", std::string_view(backbone_config.kv_cache_type == GGML_TYPE_F16 ? "f16" : "f32"));
     debug::trace_log_scalar("fish_drama3.kv_cache_alignment", backbone_config.kv_cache_alignment);
-    backbone_config.cpu_expert_layers = runtime::parse_i64_option(options.options, {"fish_drama3.cpu_expert_layers"}).value_or(4);
-    if (const auto value = runtime::find_option(options.options, {"fish_drama3.disk_experts"}))
-        backbone_config.disk_experts = runtime::parse_bool_option(*value, "fish_drama3.disk_experts");
-    if (const auto value = runtime::find_option(options.options, {"fish_drama3.pin_experts"}))
-        backbone_config.pin_experts = runtime::parse_bool_option(*value, "fish_drama3.pin_experts");
-    if (backbone_config.pin_experts && !backbone_config.disk_experts)
+    auto moe_defaults = backbone_config.moe;
+    moe_defaults.cpu_layers = {0, 1, 2, 3};
+    backbone_config.moe = core::resolve_moe_execution_policy(options.options, "fish_drama3",
+        std::move(moe_defaults), static_cast<size_t>(backbone_config.layers));
+    if (backbone_config.moe.pin_host_weights &&
+        backbone_config.moe.residency != core::MoeExpertResidency::Staged)
         throw std::runtime_error("fish_drama3.pin_experts requires fish_drama3.disk_experts=true");
-    backbone_config.expert_cache_size = runtime::parse_positive_i64_option(
-        options.options, {"fish_drama3.expert_cache_size"}, 32);
-    backbone_config.disk_expert_read_threads = runtime::parse_positive_i64_option(
-        options.options, {"fish_drama3.disk_expert_read_threads"}, 1);
-    if (backbone_config.disk_expert_read_threads > 64)
-        throw std::runtime_error("Drama 3 disk_expert_read_threads must be between 1 and 64");
     const auto backbone_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.backbone_prefill_cache_mb"}).value_or(256);
     if (backbone_prefill_cache_mb < 0 || backbone_prefill_cache_mb > 4096) throw std::runtime_error("Drama 3 backbone_prefill_cache_mb must be between 0 and 4096");
     backbone_config.prefill_cache_bytes = static_cast<size_t>(backbone_prefill_cache_mb) * 1024u * 1024u;
     backbone_config.profile_prefill_cache = profile_first_audio_;
     backbone_ = std::make_unique<Drama3BackboneDecoderRuntime>(assets_->model_weights, backbone_config, execution,
         64 * 1024 * 1024, 8 * 1024 * 1024, assets::TensorStorageType::Native);
-    disk_experts_ = backbone_config.disk_experts;
+    disk_experts_ = backbone_config.moe.residency == core::MoeExpertResidency::Staged;
     decoder_ = backbone_->create_decode_session(cache_steps_);
     const auto tower_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.tower_prefill_cache_mb"}).value_or(256);
     if (tower_prefill_cache_mb < 0 || tower_prefill_cache_mb > 4096) throw std::runtime_error("Drama 3 tower_prefill_cache_mb must be between 0 and 4096");

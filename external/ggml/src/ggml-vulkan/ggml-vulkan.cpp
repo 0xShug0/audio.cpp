@@ -14291,9 +14291,10 @@ static ggml_backend_buffer_t ggml_backend_vk_buffer_type_alloc_buffer(ggml_backe
         return nullptr;
     }
 
-    ggml_backend_vk_buffer_context * bufctx = new ggml_backend_vk_buffer_context(ctx->device, std::move(dev_buffer), ctx->name);
-
-    return ggml_backend_buffer_init(buft, ggml_backend_vk_buffer_interface, bufctx, size);
+    auto bufctx = std::make_unique<ggml_backend_vk_buffer_context>(ctx->device, std::move(dev_buffer), ctx->name);
+    auto buffer = ggml_backend_buffer_init(buft, ggml_backend_vk_buffer_interface, bufctx.get(), size);
+    bufctx.release();
+    return buffer;
 }
 
 static size_t ggml_backend_vk_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
@@ -14354,10 +14355,12 @@ static ggml_backend_buffer_t ggml_backend_vk_host_buffer_type_alloc_buffer(ggml_
         return ggml_backend_buft_alloc_buffer(ggml_backend_cpu_buffer_type(), size);
     }
 
-    ggml_backend_buffer_t buffer = ggml_backend_cpu_buffer_from_ptr(ptr, size);
+    const auto free_host = [](void * data) { ggml_vk_host_free(vk_instance.devices[0], data); };
+    std::unique_ptr<void, decltype(free_host)> allocation(ptr, free_host);
+    ggml_backend_buffer_t buffer = ggml_backend_cpu_buffer_from_ptr(allocation.get(), size);
     buffer->buft = buft;
     buffer->iface.free_buffer = ggml_backend_vk_host_buffer_free_buffer;
-
+    allocation.release();
     return buffer;
 
     UNUSED(buft);

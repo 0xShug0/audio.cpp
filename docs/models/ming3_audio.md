@@ -109,12 +109,32 @@ speaks its answer. `prompt` overrides the Thinker instruction; `voice_id` or
 
 ## Session Options (use with `--session-option`)
 
+Shared MoE controls apply to ASR and speech-to-speech sessions, which use the
+Thinker. TTS and voice-cloning sessions use only the Talker and accept explicit
+`moe_cpu_share=0` as disabled. They reject positive CPU shares and other shared
+`moe_*` controls. Existing family-prefixed
+expert controls remain accepted but inactive for those Talker-only tasks.
+
+MoE defaults: resident banks, pinning on (off on Metal), eight cache slots,
+one read thread, zero CPU MoE layers; CPU share is zero.
+Use the [shared MoE controls](../usage.md#shared-moe-session-controls) via CLI
+flags, `--session-option`, or the server model's `session_options`.
+Legacy `ming3_audio.disk_experts`, `.pin_experts`, `.expert_cache_size`,
+and `.disk_expert_read_threads` aliases remain accepted.
+For CPU-layer placement, use the shared `moe_cpu_expert_layers` key.
+Supplying both a canonical key and its alias is an error, even with equal values.
+CPU counts select the first N MoE ordinals, skipping dense-only backbone layers.
+CPU-selected layers override `moe_cpu_share` and retain bounded CPU caches in
+staged mode. Pinning is accepted but inactive without staging.
+
 | Option | Type / values | Default | Description |
 |---|---|---|---|
-| `ming3_audio.disk_experts` | `bool` | `false` | Keep Thinker expert weights outside GPU memory and stage routed experts into a bounded GPU cache; computation stays on the selected backend. |
-| `ming3_audio.pin_experts` | `bool` | `true` | With disk_experts, retain expert payloads in pinned host RAM instead of reading them from the GGUF on each cache miss. Defaults to false on Metal, which uses ordinary host staging. |
-| `ming3_audio.expert_cache_size` | `int` | `8` | With disk_experts, number of GPU-resident expert slots per routed Thinker layer. Declared range: minimum 8, maximum 128. |
-| `ming3_audio.disk_expert_read_threads` | `int` | `1` | Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 use OpenMP or Apple dispatch. Declared range: minimum 1, maximum 64. |
+| `moe_disk_experts` | `bool` | `false` | Keep Thinker expert weights outside GPU memory and stage routed experts into a bounded cache on the selected backend or CPU, according to layer placement. |
+| `moe_pin_experts` | `bool` | `true` | With disk_experts, retain expert payloads in pinned host RAM instead of reading them from the GGUF on each cache miss. Defaults to false on Metal, which uses ordinary host staging. |
+| `moe_expert_cache_size` | `int` | `8` | With disk_experts, number of cached expert slots per routed Thinker layer. Declared range: minimum 8, maximum 128. |
+| `moe_disk_expert_read_threads` | `int` | `1` | Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 use OpenMP or Apple dispatch. Declared range: minimum 1, maximum 64. |
+| `moe_cpu_expert_layers` | `int` | `0` | First N routed MoE layers on CPU; dense-only layers do not count. |
+| `moe_cpu_share` | `float` | `0` | CPU share of eligible staged GPU misses, 0–1; requires `moe_disk_experts=true`. CPU-selected layers take precedence. |
 | `ming3_audio.reference_cache` | `bool` | `true` | Reuse speaker features and seeded acoustic conditioning for the most recent reference waveform. |
 
 ## Usage Notes
@@ -124,15 +144,15 @@ Use `--request-option name=value`, or the server request's `options` map.
 Session option `ming3_audio.reference_cache=true` caches prepared conditioning
 for the most recent reference waveform. There are no model-specific load options.
 
-`--session-option ming3_audio.disk_experts=true` keeps Thinker expert weights in
-host memory and stages selected experts into a bounded GPU cache. Inference
-still runs on the selected GPU. `ming3_audio.pin_experts=true` retains expert
-payloads in pinned RAM; set it to `false` for range reads from the GGUF instead.
+`--session-option moe_disk_experts=true` keeps Thinker expert weights in
+host memory and stages selected experts into bounded backend or CPU caches.
+CPU placement is controlled separately by `moe_cpu_expert_layers`.
+`moe_pin_experts=true` retains expert payloads in pinned RAM; set it to `false` for range reads from the GGUF instead.
 It defaults to `false` on Metal, which uses ordinary host staging.
-`ming3_audio.expert_cache_size` selects 8 to 128 slots per layer (default 8).
-`ming3_audio.disk_expert_read_threads` selects 1 to 64 host workers for copying
+`moe_expert_cache_size` selects 8 to 128 slots per layer (default 8).
+`moe_disk_expert_read_threads` selects 1 to 64 host workers for copying
 selected GGUF experts into staging. The default is 1 (serial); try 4 using
-OpenMP or Apple dispatch. This applies only with `disk_experts=true` and `pin_experts=false`.
+OpenMP or Apple dispatch. This applies only with `moe_disk_experts=true` and `moe_pin_experts=false`.
 The host reader is backend-independent; Metal performance has not been validated.
 Spoken-response sessions release Thinker workspaces before allocating the speech
 stage in this mode. The offloaded Thinker allocates its KV cache in growing

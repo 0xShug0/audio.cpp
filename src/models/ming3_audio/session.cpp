@@ -41,26 +41,20 @@ public:
                      std::shared_ptr<const model_spec::ModelContract> contract)
         : RuntimeSessionBase(options), task_(task), assets_(std::move(assets)), contract_(std::move(contract)) {
         auto validation_options = options;
-        // Published standalone contracts predate the reader-count control.
-        if (!contract_->session_option_keys.count("ming3_audio.disk_expert_read_threads"))
-            validation_options.options.erase("ming3_audio.disk_expert_read_threads");
+        // These legacy controls are resolved and validated by the framework policy,
+        // including for published contracts that predate their introduction.
+        validation_options.options.erase("ming3_audio.disk_expert_read_threads");
+        validation_options.options.erase("ming3_audio.cpu_expert_layers");
         runtime::validate_spec_backed_session_options(validation_options, *contract_, "ming3_audio", "Ming3 Audio");
         if (task.mode != runtime::RunMode::Offline) throw std::runtime_error("Ming3 Audio supports offline sessions");
-        thinker_options_.disk_experts = runtime::parse_bool_option(runtime::find_option(options.options,
-            {"ming3_audio.disk_experts"}).value_or("false"), "ming3_audio.disk_experts");
+        auto defaults = thinker_options_.moe;
         // Metal stages experts through ordinary host memory; pinned host buffers are unavailable.
-        thinker_options_.pin_experts = runtime::parse_bool_option(runtime::find_option(options.options,
-            {"ming3_audio.pin_experts"}).value_or(execution_context().backend_type() == core::BackendType::Metal
-                ? "false" : "true"), "ming3_audio.pin_experts");
-        thinker_options_.expert_cache_size = runtime::parse_positive_i64_option(options.options,
-            {"ming3_audio.expert_cache_size"}, 8);
-        thinker_options_.disk_expert_read_threads = runtime::parse_positive_i64_option(options.options,
-            {"ming3_audio.disk_expert_read_threads"}, 1);
-        if (thinker_options_.disk_expert_read_threads > 64)
-            throw std::runtime_error("Ming3 Audio disk_expert_read_threads must be between 1 and 64");
+        defaults.pin_host_weights = execution_context().backend_type() != core::BackendType::Metal;
+        thinker_options_.moe = core::resolve_moe_execution_policy(options.options, "ming3_audio", std::move(defaults),
+            static_cast<size_t>(assets_->config.thinker.layers - assets_->config.thinker.dense_layers));
         if (task.task == runtime::VoiceTaskKind::Asr || task.task == runtime::VoiceTaskKind::SpeechToSpeech) {
             frontend_ = std::make_unique<Frontend>(assets_);
-            if (!thinker_options_.disk_experts) encoder_ = std::make_unique<AudioEncoder>(execution_context(), assets_->thinker_weights,
+            if (thinker_options_.moe.residency != core::MoeExpertResidency::Staged) encoder_ = std::make_unique<AudioEncoder>(execution_context(), assets_->thinker_weights,
                 assets_->config.audio, assets_->config.thinker.hidden_size);
             thinker_ = std::make_unique<Thinker>(execution_context(), assets_->thinker_weights,
                 assets_->config.thinker, 256, thinker_options_);
@@ -69,7 +63,7 @@ public:
             if (task.task != runtime::VoiceTaskKind::SpeechToSpeech && task.task != runtime::VoiceTaskKind::Tts &&
                 task.task != runtime::VoiceTaskKind::VoiceCloning) throw std::runtime_error("Ming3 Audio task is not supported");
             talker_frontend_ = std::make_unique<TalkerFrontend>(*assets_);
-            if (!thinker_options_.disk_experts || task.task != runtime::VoiceTaskKind::SpeechToSpeech) {
+            if (thinker_options_.moe.residency != core::MoeExpertResidency::Staged || task.task != runtime::VoiceTaskKind::SpeechToSpeech) {
                 talker_ = std::make_unique<Talker>(execution_context(), assets_->talker_weights, assets_->talker);
                 decoder_ = std::make_unique<modules::MingAudioDecoder>(assets_->vae_weights, assets_->talker.codec, execution_context());
             }
@@ -81,9 +75,13 @@ public:
     std::string family() const override { return "ming3_audio"; }
     runtime::VoiceTaskKind task_kind() const override { return task_.task; }
     runtime::RunMode run_mode() const override { return task_.mode; }
-    void prepare(const runtime::SessionPreparationRequest &) override { mark_prepared(); }
+    void prepare(const runtime::SessionPreparationRequest &) override {
+        const auto execution = acquire_moe_execution();
+        mark_prepared();
+    }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
+        const auto execution = acquire_moe_execution();
         require_prepared("Ming3 Audio run");
         runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "Ming3 Audio");
         const auto start = std::chrono::steady_clock::now();
@@ -104,7 +102,7 @@ public:
 private:
     std::string transcribe(const runtime::TaskRequest & request) {
         if (!request.audio_input) throw std::runtime_error("Ming3 Audio requires input audio");
-        if (thinker_options_.disk_experts && task_.task == runtime::VoiceTaskKind::SpeechToSpeech) {
+        if (thinker_options_.moe.residency == core::MoeExpertResidency::Staged && task_.task == runtime::VoiceTaskKind::SpeechToSpeech) {
             decoder_.reset();
             talker_.reset();
             reference_encoder_.reset();
@@ -121,7 +119,7 @@ private:
             {"enable_thinking"}).value_or("false"), "enable_thinking");
         const auto ids = frontend_->prompt(prompt, features.frames, system, thinking);
         debug::timing_log_scalar("ming3_audio.frontend_ms", debug::elapsed_ms(stage));
-        thinker_->reserve(thinker_options_.disk_experts
+        thinker_->reserve(thinker_options_.moe.residency == core::MoeExpertResidency::Staged
             ? runtime::bucketed_cache_steps(ids.size(), max_tokens)
             : ids.size() + max_tokens);
         if (!encoder_) encoder_ = std::make_unique<AudioEncoder>(execution_context(), assets_->thinker_weights,
@@ -129,7 +127,7 @@ private:
         stage = std::chrono::steady_clock::now();
         const auto audio = encoder_->encode(features.log_mel, features.frames);
         debug::timing_log_scalar("ming3_audio.encoder_ms", debug::elapsed_ms(stage));
-        if (thinker_options_.disk_experts) encoder_.reset();
+        if (thinker_options_.moe.residency == core::MoeExpertResidency::Staged) encoder_.reset();
         stage = std::chrono::steady_clock::now();
         thinker_->reset();
         auto logits = thinker_->prefill(ids, audio, assets_->config.audio.token_id);
@@ -149,7 +147,7 @@ private:
         debug::timing_log_scalar("ming3_audio.thinker.prefill_ms", prefill_ms);
         debug::timing_log_scalar("ming3_audio.thinker.decode_ms", decode_ms);
         auto text = frontend_->decode(tokens);
-        if (thinker_options_.disk_experts && task_.task == runtime::VoiceTaskKind::SpeechToSpeech) thinker_->release_workspace();
+        if (thinker_options_.moe.residency == core::MoeExpertResidency::Staged && task_.task == runtime::VoiceTaskKind::SpeechToSpeech) thinker_->release_workspace();
         return text;
     }
 

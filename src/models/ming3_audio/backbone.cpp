@@ -30,13 +30,8 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
     : store(execution.backend(), execution.backend_type(), "ming3_audio.thinker.weights", 4 * 1024 * 1024) {
     namespace binding = modules::binding;
     const auto native = assets::TensorStorageType::Native;
-    if (options.disk_experts) {
-        if (options.expert_cache_size < c.experts_per_token || options.expert_cache_size > c.experts) {
-            throw std::runtime_error("Ming3 Audio expert_cache_size must cover top-k and not exceed the expert count");
-        }
-        disk_store = std::make_unique<core::DiskExpertWeightStore>(source.source_path(), options.pin_experts,
-            static_cast<size_t>(options.disk_expert_read_threads));
-    }
+    experts = std::make_unique<core::MoeResources>(execution, source, store, options.moe,
+        "ming3_audio.thinker.cpu_experts", 4 * 1024 * 1024);
     embedding = store.load_tensor(source, "model.word_embeddings.weight", native, {c.vocabulary_size, c.hidden_size});
     head = store.load_tensor(source, "lm_head.weight", native, {c.vocabulary_size, c.hidden_size});
     norm = binding::norm_weight_from_source(store, source, "model.norm", c.hidden_size);
@@ -98,27 +93,25 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
             // The official BF16 loader casts this buffer before the F32 router uses it.
             core::round_f32_to_bf16_in_place(bias);
             w.router_bias = store.make_f32(core::TensorShape::from_dims({c.experts}), std::move(bias));
-            if (disk_store) {
-                w.disk_store = disk_store.get();
-                w.disk_group = disk_store->add_group({"thinker/" + prefix + ".mlp.experts.gate_proj.weight",
-                    "thinker/" + prefix + ".mlp.experts.up_proj.weight", "thinker/" + prefix + ".mlp.experts.down_proj.weight"},
-                    execution.backend(), options.expert_cache_size);
-                w.expert_gate = disk_store->tensor(w.disk_group, 0);
-                w.expert_up = disk_store->tensor(w.disk_group, 1);
-                w.expert_down = disk_store->tensor(w.disk_group, 2);
-            } else {
-                w.expert_gate = store.load_tensor(source, prefix + ".mlp.experts.gate_proj.weight", native,
-                    {c.experts, c.expert_intermediate_size, c.hidden_size});
-                w.expert_up = store.load_tensor(source, prefix + ".mlp.experts.up_proj.weight", native,
-                    {c.experts, c.expert_intermediate_size, c.hidden_size});
-                w.expert_down = store.load_tensor(source, prefix + ".mlp.experts.down_proj.weight", native,
-                    {c.experts, c.hidden_size, c.expert_intermediate_size});
-            }
+            const auto & bank = experts->bind_layer(static_cast<size_t>(layer - c.dense_layers),
+                static_cast<size_t>(layer), {
+                    {prefix + ".mlp.experts.gate_proj.weight", "thinker/" + prefix + ".mlp.experts.gate_proj.weight",
+                        {c.experts, c.expert_intermediate_size, c.hidden_size}, native},
+                    {prefix + ".mlp.experts.up_proj.weight", "thinker/" + prefix + ".mlp.experts.up_proj.weight",
+                        {c.experts, c.expert_intermediate_size, c.hidden_size}, native},
+                    {prefix + ".mlp.experts.down_proj.weight", "thinker/" + prefix + ".mlp.experts.down_proj.weight",
+                        {c.experts, c.hidden_size, c.expert_intermediate_size}, native}}, c.experts_per_token);
+            w.disk_store = bank.disk_store;
+            w.disk_group = bank.disk_group;
+            w.expert_gate = bank.weights[0];
+            w.expert_up = bank.weights[1];
+            w.expert_down = bank.weights[2];
         }
         layers.push_back(std::move(w));
     }
     store.upload();
-    if (disk_store) {
+    experts->finalize_weights();
+    if (const auto * disk_store = experts->disk_store()) {
         const auto stats = disk_store->statistics();
         debug::timing_log_scalar("ming3_audio.thinker.expert_cache_mb", stats.buffer_bytes / (1024.0 * 1024.0));
         debug::timing_log_scalar("ming3_audio.thinker.host_experts_mb", stats.host_buffer_bytes / (1024.0 * 1024.0));
@@ -377,7 +370,8 @@ struct Thinker::Impl {
             staged_config.cache_slots = weights.layers.at(config.dense_layers).expert_gate.tensor->ne[2];
             staged_config.rows_per_expert = {32};
             staged_config.scatter_index_type = GGML_TYPE_I32;
-            staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, staged_config, workspace_);
+            staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, staged_config, workspace_,
+                weights.experts->cpu_execution());
             auto * persistent = prepared_->persistent_build_context().ggml;
             ids_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, steps);
             audio_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
@@ -528,7 +522,9 @@ struct Thinker::Impl {
             const auto remaining = steps % chunk;
             if (remaining > 1)
                 tail = std::make_unique<OffloadPrefill>(execution, weights, config, states, remaining, capacity, workspace);
-            // Reserve against both graph sets: a shorter tail can need more scratch.
+            // Backbone graphs always occupy this primary workspace, even when
+            // every expert bank is CPU-staged. Reserve both chunk shapes here;
+            // staged_moe_->prepare() allocates the separate CPU expert workspace.
             workspace->prepare();
             full->prepare();
             if (tail) tail->prepare();
@@ -539,19 +535,14 @@ struct Thinker::Impl {
 
     Impl(core::ExecutionContext & execution, std::shared_ptr<const assets::TensorSource> source,
          ThinkerConfig config, int64_t initial_capacity, ThinkerOptions options)
-        : execution(execution), source(std::move(source)), config(config), options(options),
+        : execution(execution), source(std::move(source)), config(config),
           weights(execution, *this->source, config, options), state_context(nullptr, ggml_free) {
-        if (weights.disk_store) {
-            core::BackendConfig host;
-            host.threads = execution.config().threads;
-            routing_execution = std::make_unique<core::ExecutionContext>(host);
-        }
         reserve(initial_capacity);
     }
 
     void reserve(int64_t requested, bool preserve = false) {
         if (execution.backend_type() == core::BackendType::Cuda) requested = ((requested + 255) / 256) * 256;
-        if (requested == capacity || (!options.disk_experts && requested < capacity)) return;
+        if (requested == capacity || (weights.experts->policy().residency != core::MoeExpertResidency::Staged && requested < capacity)) return;
         const auto previous_steps = valid_steps;
         auto previous_context = std::move(state_context);
         auto previous_states = std::move(states);
@@ -635,7 +626,7 @@ struct Thinker::Impl {
 
     void reset() {
         if (state_buffer) ggml_backend_buffer_clear(state_buffer, 0);
-        if (weights.disk_store) weights.disk_store->invalidate_cache();
+        if (weights.experts->disk_store()) weights.experts->disk_store()->invalidate_cache();
         valid_steps = 0;
     }
 
@@ -695,13 +686,12 @@ struct Thinker::Impl {
         result->logits = ggml_round_bf16(ctx.ggml, ggml_mul_mat(ctx.ggml, weights.head.tensor, x.tensor));
         ggml_set_output(result->logits);
         ggml_build_forward_expand(graph, result->logits);
-        ggml_backend_sched_t scheduler = nullptr;
-        if (weights.disk_store) {
-            scheduler = result->prepared.create_scheduler({execution.backend(), routing_execution->backend()});
-            ggml_backend_sched_set_eval_callback(scheduler, core::DiskExpertWeightStore::evaluate, weights.disk_store.get());
+        auto * scheduler = weights.experts->configure_scheduler(result->prepared);
+        if (weights.experts->disk_store() && !weights.experts->has_cpu_layers()) {
+            auto * routing_execution = weights.experts->cpu_execution();
             for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
                 auto * node = ggml_graph_node(graph, i);
-                const bool routing = core::DiskExpertWeightStore::evaluate(node, true, weights.disk_store.get());
+                const bool routing = core::DiskExpertWeightStore::evaluate(node, true, weights.experts->disk_store());
                 ggml_backend_sched_set_tensor_backend(scheduler, node,
                     routing ? routing_execution->backend() : execution.backend());
             }
@@ -715,7 +705,7 @@ struct Thinker::Impl {
     }
 
     void prepare_prefill(int64_t steps) {
-        if (!weights.disk_store || steps <= 1) return;
+        if (!weights.experts->disk_store() || steps <= 1) return;
         if (valid_steps + steps > capacity) reserve(std::max(capacity * 2, valid_steps + steps), true);
         const auto chunk = std::min<int64_t>(256, capacity);
         const auto remaining = steps % chunk;
@@ -729,7 +719,7 @@ struct Thinker::Impl {
 
     std::vector<float> run(const std::vector<int32_t> & ids, const std::vector<float> & audio, int32_t audio_id) {
         const auto steps = static_cast<int64_t>(ids.size());
-        if (steps > 0 && options.disk_experts && valid_steps + steps > capacity) {
+        if (steps > 0 && weights.experts->policy().residency == core::MoeExpertResidency::Staged && valid_steps + steps > capacity) {
             reserve(std::max(capacity * 2, valid_steps + steps), true);
         }
         if (steps <= 0 || valid_steps + steps > capacity) throw std::runtime_error("Ming3 Audio Thinker context capacity exceeded");
@@ -741,7 +731,7 @@ struct Thinker::Impl {
         if (audio.size() != indices.size() * static_cast<size_t>(config.hidden_size)) {
             throw std::runtime_error("Ming3 Audio placeholder count differs from projected audio length");
         }
-        if (weights.disk_store && steps > 1) {
+        if (weights.experts->disk_store() && steps > 1) {
             auto * graph = offload_plan && offload_plan->full->steps() == steps ? offload_plan->full.get()
                 : offload_plan && offload_plan->tail && offload_plan->tail->steps() == steps ? offload_plan->tail.get() : nullptr;
             if (!graph) throw std::logic_error("Ming3 Audio prefill shape was not prepared");
@@ -781,10 +771,8 @@ struct Thinker::Impl {
     core::ExecutionContext & execution;
     std::shared_ptr<const assets::TensorSource> source;
     ThinkerConfig config;
-    ThinkerOptions options;
     int64_t capacity = 0;
     ThinkerWeights weights;
-    std::unique_ptr<core::ExecutionContext> routing_execution;
     std::unique_ptr<ggml_context, decltype(&ggml_free)> state_context;
     ggml_backend_buffer_t state_buffer = nullptr;
     std::vector<State> states;

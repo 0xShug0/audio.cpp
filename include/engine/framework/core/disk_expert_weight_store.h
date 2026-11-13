@@ -12,6 +12,8 @@
 
 namespace engine::core {
 
+class ExecutionContext;
+
 // Session-owned, bounded native-format expert cache. GGUF expert payloads are
 // read by range only after routing, or explicitly pinned in host RAM at load.
 // Dense weights remain in BackendWeightStore.
@@ -32,16 +34,24 @@ public:
         double stage_ms = 0;
     };
 
+    // Borrow the pinned host-bank allocation provider; null uses each group's backend.
+    // The provider must remain valid while groups are added.
     explicit DiskExpertWeightStore(const std::filesystem::path & gguf_path, bool pin_experts = false,
-                                   size_t read_threads = 1);
+                                   size_t read_threads = 1, ExecutionContext * cpu_execution = nullptr,
+                                   ggml_backend_t host_buffer_backend = nullptr);
     ~DiskExpertWeightStore();
     DiskExpertWeightStore(const DiskExpertWeightStore &) = delete;
     DiskExpertWeightStore & operator=(const DiskExpertWeightStore &) = delete;
+
+    // Borrowed CPU execution context; its owner must outlive staged runtimes and this store.
+    ExecutionContext * cpu_execution() const noexcept;
 
     // Projections in a group share an expert axis and are evicted together.
     size_t add_group(const std::vector<std::string> & tensor_names,
                      ggml_backend_t backend, int64_t cache_slots);
     TensorValue tensor(size_t group, size_t projection) const;
+    // Borrow the backend owning this bounded cache.
+    ggml_backend_t group_backend(size_t group) const;
     // Borrow native host weights without copying or expanding the expert bank.
     // The returned tensor and its mapped/pinned storage live with this store.
     TensorValue host_tensor(size_t group, const ggml_tensor * device_tensor);

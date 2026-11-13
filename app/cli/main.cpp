@@ -81,6 +81,11 @@ void print_task_list_help() {
         << "    --load-option key=value\n"
         << "    --session-option key=value\n"
         << "    --moe-cpu-share <0..1>             session CPU share of disk-expert cache misses; default 0\n"
+        << "    --moe-disk-experts <bool>         stage expert weights through bounded caches\n"
+        << "    --moe-pin-experts <bool>          pin staged expert banks in host RAM\n"
+        << "    --moe-expert-cache-size <int>     expert slots per routed layer\n"
+        << "    --moe-disk-expert-read-threads <int>  host expert read workers\n"
+        << "    --moe-cpu-expert-layers <int>     first N MoE layers execute on CPU\n"
         << "    --request-option key=value\n"
         << "  Batch:\n"
         << "    --request-sequence <json>  Run JSON requests in one offline session\n"
@@ -792,6 +797,19 @@ int audiocpp_cli_main(int argc, char ** argv) {
             if (moe_cpu_share < 0 || moe_cpu_share > 1) throw std::runtime_error("--moe-cpu-share must be between zero and one");
             common_session_options["moe_cpu_share"] = *value;
         }
+        for (const auto & entry : {
+                 std::make_pair("--moe-disk-experts", "moe_disk_experts"),
+                 std::make_pair("--moe-pin-experts", "moe_pin_experts"),
+                 std::make_pair("--moe-expert-cache-size", "moe_expert_cache_size"),
+                 std::make_pair("--moe-disk-expert-read-threads", "moe_disk_expert_read_threads"),
+                 std::make_pair("--moe-cpu-expert-layers", "moe_cpu_expert_layers")}) {
+            if (const auto value = find_arg(argc, argv, entry.first)) {
+                if (common_session_options.count(entry.second))
+                    throw std::invalid_argument(std::string("duplicate shared MoE session option: ") + entry.second);
+                common_session_options[entry.second] = *value;
+            }
+        }
+
         const auto model_arg = find_arg(argc, argv, "--model");
         const auto pipeline_arg = find_arg(argc, argv, "--pipeline");
         const auto recipe_arg = find_arg(argc, argv, "--recipe");
@@ -829,8 +847,10 @@ int audiocpp_cli_main(int argc, char ** argv) {
             return 0;
         }
         if (recipe_arg.has_value()) {
-            if (find_arg(argc, argv, "--moe-cpu-share"))
-                throw std::runtime_error("recipes require --session-option <role>.moe_cpu_share=<0..1>");
+            for (const auto & option : common_session_options) {
+                if (option.first.compare(0, 4, "moe_") == 0)
+                    throw std::runtime_error("recipes require role-scoped MoE options: --session-option <role>." + option.first + "=<value>");
+            }
             const int threads = parse_int_arg(argc, argv, "--threads", 4);
             if (threads <= 0) {
                 throw std::runtime_error("--threads must be positive");

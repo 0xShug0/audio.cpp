@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/core/moe_resources.h"
+
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 
@@ -45,11 +47,7 @@ struct Drama3BackboneDecoderConfig {
     ggml_type kv_cache_type = GGML_TYPE_F16;
     int64_t kv_cache_alignment = 1;
     int64_t decode_cache_steps = 2048;
-    int64_t cpu_expert_layers = 0;
-    bool disk_experts = false;
-    bool pin_experts = false;
-    int64_t expert_cache_size = 32;
-    int64_t disk_expert_read_threads = 1;
+    core::MoeExecutionPolicy moe{core::MoeExpertResidency::Backend, false, 32, 1, {}, 0};
     size_t prefill_cache_bytes = 256u * 1024u * 1024u;
     bool profile_prefill_cache = false;
 };

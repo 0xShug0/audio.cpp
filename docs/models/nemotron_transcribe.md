@@ -175,12 +175,26 @@ checkpoint or session setting, or leaves the optional value unset as described.
 
 ## Session Options (use with `--session-option`)
 
+MoE defaults: resident banks, pinning off, eight cache slots, four read threads,
+zero CPU MoE layers; CPU share is zero.
+Use the [shared MoE controls](../usage.md#shared-moe-session-controls) via CLI
+flags, `--session-option`, or the server model's `session_options`.
+Legacy `nemotron_transcribe.disk_experts`, `.pin_experts`, `.expert_cache_size`,
+and `.disk_expert_read_threads` aliases remain accepted.
+For CPU-layer placement, use the shared `moe_cpu_expert_layers` key.
+Supplying both a canonical key and its alias is an error, even with equal values.
+CPU counts select the first N MoE ordinals, skipping dense-only backbone layers.
+CPU-selected layers override `moe_cpu_share` and retain bounded CPU caches in
+staged mode. Pinning is accepted but inactive without staging.
+
 | Option | Type / values | Default | Description |
 |---|---|---|---|
-| `nemotron_transcribe.disk_experts` | `bool` | `false` | Keep routed expert weights in the GGUF/host memory and stage selected experts through a bounded backend cache. Dense weights and all expert computation remain on the selected backend. |
-| `nemotron_transcribe.pin_experts` | `bool` | `false` | With disk_experts, retain complete native expert banks in pinned host RAM for direct uploads. Requires pinned host-buffer support. |
-| `nemotron_transcribe.expert_cache_size` | `int` | `8` | Resident expert slots per routed layer with disk_experts. Must cover the model's experts per token and cannot exceed its expert count. Declared range: minimum 1. |
-| `nemotron_transcribe.disk_expert_read_threads` | `int` | `4` | Host workers for staging GGUF expert ranges when disk_experts is true and pin_experts is false. Parallel reads require OpenMP or Apple dispatch. Declared range: minimum 1, maximum 64. |
+| `moe_disk_experts` | `bool` | `false` | Keep routed expert weights in the GGUF/host memory and stage selected experts through a bounded backend cache. Dense weights stay on the selected backend; CPU expert placement is independent. |
+| `moe_pin_experts` | `bool` | `false` | With disk_experts, retain complete native expert banks in pinned host RAM for direct uploads. Requires pinned host-buffer support. |
+| `moe_expert_cache_size` | `int` | `8` | Resident expert slots per routed layer with disk_experts. Must cover the model's experts per token and cannot exceed its expert count. Declared range: minimum 1. |
+| `moe_disk_expert_read_threads` | `int` | `4` | Host workers for staging GGUF expert ranges when disk_experts is true and pin_experts is false. Parallel reads require OpenMP or Apple dispatch. Declared range: minimum 1, maximum 64. |
+| `moe_cpu_expert_layers` | `int` | `0` | First N routed MoE layers on CPU; dense-only layers do not count. |
+| `moe_cpu_share` | `float` | `0` | CPU share of eligible staged GPU misses, 0–1; requires `moe_disk_experts=true`. CPU-selected layers take precedence. |
 | `nemotron_transcribe.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Native preserves mixed packaged tensor types. Changing this may greatly increase model memory. |
 | `nemotron_transcribe.max_context` | `int` | `73728` | Combined text, audio and output context, bounded by backbone positions. Matches native SALM serving default. Declared range: minimum 1. |
 | `nemotron_transcribe.prefill_batch_size` | `int` | `64` | Text/audio rows per decoder prefill graph. Declared range: minimum 1, maximum 2048. |
@@ -329,18 +343,19 @@ In PowerShell, set the executable with
 
 ## CPU weight offload
 
-`nemotron_transcribe.disk_experts=true` keeps routed expert banks in their native
+`moe_disk_experts=true` keeps routed expert banks in their native
 GGUF format in host memory and uploads selected experts into a bounded cache.
-Expert arithmetic, dense decoder layers and the speech encoder still run on
-the selected backend. Offload is disabled by default and requires
+Dense decoder layers and the speech encoder remain on the selected backend;
+`moe_cpu_expert_layers` selects CPU expert execution independently.
+Offload is disabled by default and requires
 `nemotron_transcribe.weight_type=native`.
 
 ```sh
 build/debug/bin/audiocpp_cli --task asr --family nemotron_transcribe \
   --model models/nemotron-transcribe-30b-a4b-experts-Q4_K_S.gguf \
   --backend cuda --audio recording.wav --log \
-  --session-option nemotron_transcribe.disk_experts=true \
-  --session-option nemotron_transcribe.expert_cache_size=8 \
+  --session-option moe_disk_experts=true \
+  --session-option moe_expert_cache_size=8 \
   --session-option nemotron_transcribe.prefill_batch_size=1024
 ```
 
@@ -351,10 +366,10 @@ experts per token and cannot exceed the checkpoint's expert count. The existing
 `prefill_batch_size` control also applies to offload: larger batches amortize
 expert transfers, use more activation memory and can change numerical rounding.
 
-`nemotron_transcribe.pin_experts=true` optionally retains complete expert banks
+`moe_pin_experts=true` optionally retains complete expert banks
 in pinned host RAM for direct uploads. This consumes host memory approximately
 equal to the native expert payload and requires backend pinned-buffer support.
-With pinning disabled, `disk_expert_read_threads` controls host staging copies
+With pinning disabled, `moe_disk_expert_read_threads` controls host staging copies
 (default four); parallel staging requires OpenMP or Apple dispatch. Set it to
 one in builds without either facility.
 

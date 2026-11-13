@@ -225,6 +225,65 @@ for example `--backend hip --backend-impl gfx1151_v1`. Omission or `default` kee
 existing implementation. This is backend configuration, not a model session
 option. Availability depends on the build and device; see [HIP](build/HIP.md).
 
+### Shared MoE session controls
+
+Drama 3, Ming3 Audio (Thinker), and Nemotron Transcribe (decoder) accept these
+canonical session options. Each CLI flag is equivalent to
+`--session-option <key>=<value>`; boolean flags take `true` or `false`.
+Explicit `moe_cpu_share=0` remains accepted as disabled on sessions without MoE
+resources; positive shares require a supported MoE execution path.
+
+| Session key | CLI flag | Meaning |
+|---|---|---|
+| `moe_disk_experts` | `--moe-disk-experts` | Stage native expert banks through bounded caches instead of keeping full banks resident. |
+| `moe_pin_experts` | `--moe-pin-experts` | Retain complete staged expert banks in pinned host RAM; requires backend support. |
+| `moe_expert_cache_size` | `--moe-expert-cache-size` | Slots per staged layer; at least top-k and at most the expert count. |
+| `moe_disk_expert_read_threads` | `--moe-disk-expert-read-threads` | Host staging readers, 1–64; parallel reads require OpenMP or Apple dispatch. |
+| `moe_cpu_expert_layers` | `--moe-cpu-expert-layers` | First N routed MoE layers execute on CPU. |
+| `moe_cpu_share` | `--moe-cpu-share` | Fractional share of eligible staged GPU cache misses assigned to CPU, 0–1. |
+
+| Model | Disk | Pin | Cache slots | Read threads | CPU layers | CPU share |
+|---|---|---|---|---|---|---|
+| [Drama 3](models/fish_drama3.md) | false | false | 32 | 1 | 4 | 0 |
+| [Ming3 Audio](models/ming3_audio.md) | false | true (false on Metal) | 8 | 1 | 0 | 0 |
+| [Nemotron Transcribe](models/nemotron_transcribe.md) | false | false | 8 | 4 | 0 | 0 |
+
+The CPU-layer count selects MoE ordinals `0..N-1`, not backbone indices;
+dense-only layers do not count. CPU-selected layers take precedence over
+`moe_cpu_share`. They retain full CPU banks in resident mode and bounded CPU
+caches in staged mode; selecting CPU does not implicitly pin full banks.
+Positive `moe_cpu_share` requires `moe_disk_experts=true`.
+Ming3 Audio and Nemotron accept pinning as inactive in resident mode. Drama 3
+rejects `pin=true` without staging for both `moe_pin_experts` and
+`fish_drama3.pin_experts`, preserving alias equivalence.
+
+Legacy aliases are `<family>.disk_experts`, `<family>.pin_experts`,
+`<family>.expert_cache_size`, and `<family>.disk_expert_read_threads`, where
+family is `fish_drama3`, `ming3_audio`, or `nemotron_transcribe`.
+`fish_drama3.cpu_expert_layers` is also a legacy alias. For Ming3 Audio
+and Nemotron, use the shared `moe_cpu_expert_layers` key.
+Supplying a canonical key and its prefixed alias is an error, even if their
+values agree. Use only one spelling per control.
+
+For recipes, scope every MoE option to its model role, for example
+`--session-option <role>.moe_disk_experts=true`. Unscoped `moe_*` options and
+their convenience CLI flags are rejected for recipes. In mixed workflows, use
+each MoE step's `session_options`: workflow-wide session options are inherited
+by all model steps, including models that reject MoE controls. Setting an
+inherited control to `false` does not remove it.
+
+For example, add `--moe-disk-experts true --moe-cpu-expert-layers 2` to a CLI
+command. In server configuration, put the same controls inside the selected
+model's `session_options`, not at the top level or in request options:
+
+```json
+"session_options": {
+  "moe_disk_experts": true,
+  "moe_cpu_expert_layers": 2,
+  "moe_expert_cache_size": 8
+}
+```
+
 ### Experimental hybrid MoE execution
 
 `--moe-cpu-share 0.5` lets eligible GPU sessions compute half of subsequent
@@ -235,7 +294,7 @@ expert-cache misses on CPU. It is a common model session option, equivalent to
 `"moe_cpu_share": 0.5` inside the selected model's `session_options` object.
 It is not a top-level server setting or a backend option.
 
-Enable the model's existing disk-backed expert option first. Shared `MoeModule`
+Enable `moe_disk_experts=true` first. Shared `MoeModule`
 and `StagedMoeRuntime` paths participate through the session-owned build context.
 Graph builders composing a new `ModuleBuildContext` must copy
 `PreparedGraph::build_context()` to retain its explicit region recorder; raw

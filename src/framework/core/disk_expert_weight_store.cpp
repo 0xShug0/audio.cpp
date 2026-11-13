@@ -66,8 +66,10 @@ public:
         std::byte * data() { return buffer ? static_cast<std::byte *>(ggml_backend_buffer_get_base(buffer)) : bytes.data(); }
     };
 
-    Impl(DiskExpertWeightStore & owner, const std::filesystem::path & path, bool pin, size_t threads)
-        : owner(owner), file(path, std::ios::binary), pin_experts(pin), read_threads(threads) {
+    Impl(DiskExpertWeightStore & owner, const std::filesystem::path & path, bool pin, size_t threads,
+        ExecutionContext * cpu_execution, ggml_backend_t host_buffer_backend)
+        : owner(owner), file(path, std::ios::binary), pin_experts(pin), read_threads(threads),
+          cpu_execution(cpu_execution), host_buffer_backend(host_buffer_backend) {
         if (read_threads < 1 || read_threads > 64)
             throw std::invalid_argument("disk expert read_threads must be between 1 and 64");
 #if !defined(_OPENMP) && !defined(__APPLE__)
@@ -222,6 +224,8 @@ public:
     io::BinaryBlob mapped_file;
     bool pin_experts;
     size_t read_threads;
+    ExecutionContext * cpu_execution;
+    ggml_backend_t host_buffer_backend;
     std::map<std::string, Projection> projections;
     std::vector<std::unique_ptr<Group>> groups;
     std::map<std::string, size_t> routes;
@@ -231,8 +235,11 @@ public:
     Statistics stats;
 };
 
-DiskExpertWeightStore::DiskExpertWeightStore(const std::filesystem::path & path, bool pin_experts, size_t read_threads)
-    : impl_(std::make_unique<Impl>(*this, path, pin_experts, read_threads)) {}
+DiskExpertWeightStore::DiskExpertWeightStore(const std::filesystem::path & path, bool pin_experts, size_t read_threads,
+    ExecutionContext * cpu_execution, ggml_backend_t host_buffer_backend)
+    : impl_(std::make_unique<Impl>(*this, path, pin_experts, read_threads, cpu_execution, host_buffer_backend)) {}
+
+ExecutionContext * DiskExpertWeightStore::cpu_execution() const noexcept { return impl_->cpu_execution; }
 DiskExpertWeightStore::~DiskExpertWeightStore() {
     debug::timing_log_scalar("disk_experts.bytes_read", impl_->stats.bytes_read);
     debug::timing_log_scalar("disk_experts.expert_loads", impl_->stats.expert_loads);
@@ -269,15 +276,19 @@ size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, 
     ggml_backend_buffer_clear(group->buffer, 0);
     group->expert_ids.assign(static_cast<size_t>(slots), -1);
     group->last_used.assign(static_cast<size_t>(slots), 0);
+    auto stats = impl_->stats;
+    std::unique_ptr<Impl::Staging> replacement_staging;
+    const auto staging = impl_->host_staging.find(backend);
     if (impl_->pin_experts) {
-        const auto host_type = ggml_backend_dev_host_buffer_type(ggml_backend_get_device(backend));
+        const auto provider = impl_->host_buffer_backend ? impl_->host_buffer_backend : backend;
+        const auto host_type = ggml_backend_dev_host_buffer_type(ggml_backend_get_device(provider));
         if (!host_type) throw std::runtime_error("pinned experts require a backend with pinned host buffers");
         size_t host_bytes = 0;
         for (const auto & projection : group->projections) host_bytes += projection.expert_bytes * projection.experts;
         group->host_buffer = ggml_backend_buft_alloc_buffer(host_type, host_bytes);
         if (!group->host_buffer || ggml_backend_buffer_get_type(group->host_buffer) != host_type)
             throw std::runtime_error("cannot allocate pinned host expert banks");
-        if (impl_->stats.host_buffer_bytes == 0)
+        if (stats.host_buffer_bytes == 0)
             debug::trace_log_scalar("disk_experts.host_buffer_type", ggml_backend_buft_name(host_type));
         auto * data = static_cast<std::byte *>(ggml_backend_buffer_get_base(group->host_buffer));
         const auto started = std::chrono::steady_clock::now();
@@ -286,16 +297,15 @@ size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, 
             std::memcpy(data, impl_->mapped_file.data() + projection.offset, bytes);
             projection.host_data = data;
             data += bytes;
-            impl_->stats.bytes_read += bytes;
+            stats.bytes_read += bytes;
             impl_->mapped_file.discard_range(projection.offset, bytes);
         }
-        impl_->stats.read_ms += debug::elapsed_ms(started);
-        impl_->stats.host_buffer_bytes += ggml_backend_buffer_get_size(group->host_buffer);
+        stats.read_ms += debug::elapsed_ms(started);
+        stats.host_buffer_bytes += ggml_backend_buffer_get_size(group->host_buffer);
     } else {
         size_t staging_bytes = 0;
         for (const auto & projection : group->projections) staging_bytes += projection.expert_bytes * slots;
-        auto & staging = impl_->host_staging[backend];
-        if (!staging || staging->capacity < staging_bytes) {
+        if (staging == impl_->host_staging.end() || staging->second->capacity < staging_bytes) {
             auto buffer = std::make_unique<Impl::Staging>();
             const auto host_type = ggml_backend_dev_host_buffer_type(ggml_backend_get_device(backend));
             if (host_type) {
@@ -307,17 +317,36 @@ size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, 
                 buffer->bytes.resize(staging_bytes);
             }
             buffer->capacity = staging_bytes;
-            staging = std::move(buffer);
+            replacement_staging = std::move(buffer);
             debug::trace_log_scalar("disk_experts.staging_backend", ggml_backend_name(backend));
             debug::trace_log_scalar("disk_experts.staging_type", host_type ? ggml_backend_buft_name(host_type) : "host");
             debug::timing_log_scalar("disk_experts.staging_mb", double(staging_bytes) / (1024 * 1024));
         }
     }
-    impl_->stats.buffer_bytes += ggml_backend_buffer_get_size(group->buffer);
+    stats.buffer_bytes += ggml_backend_buffer_get_size(group->buffer);
     const auto index = impl_->groups.size();
+    // Allocate publication nodes and vector capacity before changing live state.
+    // The default map allocators match, so node insertion allocates nothing;
+    // string/pointer comparison and the reserved unique_ptr moves cannot throw.
+    decltype(impl_->routes) prepared_routes;
+    prepared_routes.emplace("disk_experts.route." + std::to_string(index), index);
+    decltype(impl_->host_staging) prepared_staging;
+    if (replacement_staging && staging == impl_->host_staging.end())
+        prepared_staging.emplace(backend, std::move(replacement_staging));
+    impl_->groups.reserve(index + 1);
+
+    impl_->routes.insert(prepared_routes.extract(prepared_routes.begin()));
+    if (!prepared_staging.empty())
+        impl_->host_staging.insert(prepared_staging.extract(prepared_staging.begin()));
+    else if (replacement_staging)
+        staging->second = std::move(replacement_staging);
     impl_->groups.push_back(std::move(group));
-    impl_->routes.emplace("disk_experts.route." + std::to_string(index), index);
+    impl_->stats = stats;
     return index;
+}
+
+ggml_backend_t DiskExpertWeightStore::group_backend(size_t group) const {
+    return impl_->groups.at(group)->backend;
 }
 
 TensorValue DiskExpertWeightStore::tensor(size_t group, size_t projection) const {

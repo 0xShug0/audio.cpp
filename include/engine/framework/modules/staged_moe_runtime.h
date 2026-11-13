@@ -50,17 +50,22 @@ public:
         uint64_t gpu_assignments = 0;
         double cpu_ms = 0;
     };
+    // Hybrid and staged CPU execution borrow a host context that must outlive this runtime.
     StagedMoeRuntime(const core::ExecutionContext & execution, StagedMoeConfig config,
-        std::shared_ptr<core::GraphWorkspace> workspace);
+        std::shared_ptr<core::GraphWorkspace> workspace, core::ExecutionContext * cpu_execution = nullptr);
     ~StagedMoeRuntime();
     StagedMoeRuntime(const StagedMoeRuntime &) = delete;
     StagedMoeRuntime & operator=(const StagedMoeRuntime &) = delete;
 
-    // Bindings are borrowed and must outlive this runtime.
+    // Bindings are borrowed and must outlive this runtime. CPU-bound caches on
+    // a different backend execute synchronously on the borrowed CPU context;
+    // whole-layer CPU placement takes precedence over hybrid sharing.
     size_t add_layer(const MoeModule & module, const MoeExpertWeights & weights,
         core::DiskExpertWeightStore & store, size_t group);
-    // The caller prepares the shared workspace after registering every graph.
-    // This prepares execution plans only; run() may allocate host temporaries.
+    // The caller prepares the primary workspace after registering every GPU graph.
+    // CPU-only layers register no primary graphs; do not prepare an empty workspace.
+    // Prepares execution plans and the separately owned CPU graph workspace;
+    // run() may allocate host routing/cache temporaries.
     void prepare();
     void build_inputs(core::ModuleBuildContext & ctx, ggml_cgraph * graph,
         ggml_tensor * hidden, const MoeRouting & routing) const;
