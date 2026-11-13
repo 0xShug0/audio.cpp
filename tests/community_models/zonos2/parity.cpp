@@ -1,10 +1,14 @@
 // ZONOS2 parity against Zyphra/zonos2.cpp's outputs (tests/community_models/zonos2/make_oracle.sh).
 //   zonos2_parity backbone <zonos2-*.gguf> <oracle_dir> [--disk-experts]
 //   zonos2_parity backbone_speaker <zonos2-*.gguf> <oracle_dir>
+//   zonos2_parity decoder <dac.gguf> <oracle_dir>
 #include "engine/community_models/zonos2/assets.h"
 #include "engine/community_models/zonos2/backbone.h"
+#include "engine/community_models/zonos2/codec_decoder.h"
 #include "engine/community_models/zonos2/npy.h"
 #include "engine/community_models/zonos2/prompt.h"
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/trace.h"
 
@@ -183,6 +187,60 @@ int backbone(const fs::path & model, const fs::path & oracle, bool speaker, bool
     return pass ? 0 : 1;
 }
 
+// DAC: the oracle's raw delayed codes (tts.npy, eos in tts.npy.eos.npy) un-sheared over [0, E) and decoded in one
+// pass, against dac-cli's 16-bit WAV (equal length, SNR >= 40 dB after the same int16 quantization). Seam: the same
+// frames in 40-frame tiles with up to 24 context frames on each side, clamped at both ends as the streaming session
+// does, match the single pass within 1e-5.
+int decoder(const fs::path & model, const fs::path & oracle) {
+    constexpr int kCodebooks = 9;
+    constexpr int kBlock = 40;
+    constexpr int kContext = 24;
+    const auto codes = zonos2::read_f32_npy(oracle / "tts.npy");
+    const auto eos = zonos2::read_f32_npy(oracle / "tts.npy.eos.npy");
+    const auto wav = engine::audio::read_wav_f32(oracle / "tts_audio.wav");
+    if (codes.shape.size() != 2 || codes.shape[1] != kCodebooks) throw std::runtime_error("tts.npy must be [rows, 9]");
+    if (eos.data.size() != 1) throw std::runtime_error("tts.npy.eos.npy must hold one value");
+    if (wav.sample_rate != 44100 || wav.channels != 1) throw std::runtime_error("tts_audio.wav must be 44.1 kHz mono");
+    const int rows = static_cast<int>(codes.shape[0]);
+    const int eos_frame = static_cast<int>(std::lrint(eos.data[0]));
+    const int frames = eos_frame >= 0 && eos_frame < rows ? eos_frame : rows;
+    std::vector<int32_t> raw(codes.data.size());
+    for (size_t i = 0; i < raw.size(); ++i) raw[i] = static_cast<int32_t>(std::lrint(codes.data[i]));
+    engine::core::ExecutionContext execution(cpu_backend());
+    zonos2::Zonos2CodecDecoder codec(engine::assets::open_tensor_source(model), execution);
+    const auto all = zonos2::zonos2_undelay(raw.data(), rows, 0, frames);
+    const auto single = codec.decode(all.data(), frames, 0, 0);
+    std::vector<float> tiled;
+    for (int lo = 0; lo < frames; lo += kBlock) {
+        const int hi = std::min(frames, lo + kBlock);
+        const int a = std::max(0, lo - kContext);
+        const int b = std::min(frames, hi + kContext);
+        const auto window = zonos2::zonos2_undelay(raw.data(), rows, a, b);
+        const auto part = codec.decode(window.data(), b - a, lo - a, b - hi);
+        tiled.insert(tiled.end(), part.begin(), part.end());
+    }
+    double seam_max = tiled.size() == single.size() ? 0.0 : 1.0;
+    for (size_t i = 0; i < std::min(tiled.size(), single.size()); ++i) {
+        seam_max = std::max(seam_max, static_cast<double>(std::fabs(single[i] - tiled[i])));
+    }
+    double signal = 0.0, noise = 0.0;
+    const size_t n = std::min(single.size(), wav.samples.size());
+    for (size_t i = 0; i < n; ++i) {
+        // dac_wav_bytes: lrintf(clamp(v, -1, 1) * 32767); read_wav_f32: / 32768.
+        const double ours = static_cast<double>(std::lrint(std::clamp(single[i], -1.0f, 1.0f) * 32767.0f)) / 32768.0;
+        const double r = wav.samples[i];
+        signal += r * r;
+        noise += (ours - r) * (ours - r);
+    }
+    const double snr = 10.0 * std::log10(signal / std::max(noise, 1e-30));
+    const bool same_length = single.size() == wav.samples.size() &&
+                             single.size() == static_cast<size_t>(frames) * static_cast<size_t>(codec.samples_per_frame());
+    const bool pass = same_length && snr >= 40.0 && seam_max <= 1e-5;
+    std::printf("zonos2 decoder parity: %s snr=%.2f seam_max=%.3g samples=%zu oracle_samples=%zu frames=%d\n",
+                pass ? "PASS" : "FAIL", snr, seam_max, single.size(), wav.samples.size(), frames);
+    return pass ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -199,9 +257,11 @@ int main(int argc, char ** argv) {
             return backbone(args[1], args[2], false, disk);
         }
         if (args.size() == 3 && args[0] == "backbone_speaker") return backbone(args[1], args[2], true, false);
+        if (args.size() == 3 && args[0] == "decoder") return decoder(args[1], args[2]);
         std::fprintf(stderr,
                      "usage: zonos2_parity [--log] backbone <zonos2-*.gguf> <oracle_dir> [--disk-experts]\n"
-                     "       zonos2_parity [--log] backbone_speaker <zonos2-*.gguf> <oracle_dir>\n");
+                     "       zonos2_parity [--log] backbone_speaker <zonos2-*.gguf> <oracle_dir>\n"
+                     "       zonos2_parity [--log] decoder <dac.gguf> <oracle_dir>\n");
         return 2;
     } catch (const std::exception & error) {
         std::fprintf(stderr, "zonos2_parity: %s\n", error.what());
