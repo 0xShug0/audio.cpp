@@ -486,6 +486,9 @@ public:
                 ctx,
                 core::TensorShape::from_dims({1, 1, 1, seg_frames}),
                 correction_values);
+            // Keep graph constants allocated and exclude them from scratch reuse.
+            ggml_set_input(correction.tensor);
+            ggml_set_output(correction.tensor);
             auto ratio = core::wrap_tensor(ggml_mul(ctx.ggml, pooled.tensor, correction.tensor), pooled.shape, GGML_TYPE_F32);
             auto expanded_padded = core::wrap_tensor(
                 ggml_interpolate(
@@ -534,6 +537,8 @@ public:
                     ctx,
                     core::TensorShape::from_dims({1, 1, 1}),
                     std::vector<float>{static_cast<float>(time_steps) / static_cast<float>(time_steps - 1)});
+                ggml_set_input(correction.tensor);
+                ggml_set_output(correction.tensor);
                 var = core::wrap_tensor(ggml_mul(ctx.ggml, var.tensor, correction.tensor), var.shape, GGML_TYPE_F32);
             }
             if (weights.config.stats_variance_floor > 0.0F) {
