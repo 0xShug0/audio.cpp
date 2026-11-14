@@ -7,3 +7,5 @@ Audio coverage extensions add native F32 NORM and REPEAT plus the existing audio
 Further audio coverage preserves arbitrary leading strides in existing F32 copies, adds scalar floating-point copies/conversions, F32 FILL and a multidimensional strided RMSNorm route. NONE nodes require no dispatch. Existing tuned normalization and copy routes retain priority.
 
 General floating-point matmul covers strided/grouped batches not handled by existing tuned dense routes. Added native strided F32 binary arithmetic, scaled masked softmax without ALiBi/sinks, and 1D/2D IM2COL. Unsupported mathematical features remain explicitly rejected.
+
+Further coverage includes I32-to-floating copies, F32 SET slices and general-axis floating concatenation using the existing strided conversion kernel, plus native causal masking. Fusion matching rejects consumers whose external side inputs have not yet been computed. These changes remain confined to HRX.

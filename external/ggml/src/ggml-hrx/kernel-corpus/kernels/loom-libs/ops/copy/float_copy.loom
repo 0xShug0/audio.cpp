@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Scalar floating-point conversion and arbitrary four-dimensional layouts.
+// Scalar integer-to-floating and floating-point conversion and arbitrary four-dimensional layouts.
 amdgpu.target<gfx11-generic> @ggml_float_copy_target {subgroup_size = 64}
 config.decl @ggml.float_copy.source_type : %value: index where [range(%value, 0, 30)]
 config.decl @ggml.float_copy.target_type : %value: index where [range(%value, 0, 30)]
@@ -36,6 +36,8 @@ kernel.def target(@ggml_float_copy_target) export("ggml_float_copy") @ggml_float
   %offset = index.constant 0 : offset
   %source_type = config.get @ggml.float_copy.source_type : index
   %target_type = config.get @ggml.float_copy.target_type : index
+  %i32_type = index.constant 26 : index
+  %source_i32 = index.cmp eq, %source_type, %i32_type : index
   %source_f32 = index.cmp eq, %source_type, %zero : index
   %source_f16 = index.cmp eq, %source_type, %one : index
   %target_f32 = index.cmp eq, %target_type, %zero : index
@@ -107,7 +109,13 @@ kernel.def target(@ggml_float_copy_target) export("ggml_float_copy") @ggml_float
         }
       }
     } else {
-      %value = scf.if %source_f32 -> (f32) {
+      %value = scf.if %source_i32 -> (f32) {
+        %ivi32 = buffer.view %input[%offset] : buffer -> view<[%input_span]xi32>
+        %vi32 = view.load %ivi32[%src_idx] : view<[%input_span]xi32> -> i32
+        %pi32 = scalar.sitofp %vi32 : i32 to f32
+        scf.yield %pi32 : f32
+      } else {
+      %float_value = scf.if %source_f32 -> (f32) {
         %iv32 = buffer.view %input[%offset] : buffer -> view<[%input_span]xf32>
         %v32 = view.load %iv32[%src_idx] : view<[%input_span]xf32> -> f32
         scf.yield %v32 : f32
@@ -124,6 +132,8 @@ kernel.def target(@ggml_float_copy_target) export("ggml_float_copy") @ggml_float
           scf.yield %pbf : f32
         }
         scf.yield %promoted : f32
+      }
+        scf.yield %float_value : f32
       }
       scf.if %target_f32 {
         %ov32 = buffer.view %output[%offset] : buffer -> view<[%output_span]xf32>

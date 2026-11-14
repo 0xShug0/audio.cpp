@@ -23,6 +23,29 @@ static bool valid_root_op(ggml_op op) {
     return op >= 0 && static_cast<size_t>(op) < kOpCount;
 }
 
+// Fusion must not pull a consumer ahead of an uncomputed side input.
+static bool match_inputs_available(const DispatchMatchContext & context, const DispatchMatch & match) {
+    const auto available = [&](const auto & self, ValueId value) -> bool {
+        const GraphNode * producer = context.graph.index().producer(value);
+        if (producer == nullptr) return true;
+        size_t index = 0;
+        if (!context.graph.index().node_index(producer, index)) return false;
+        if (context.covered_nodes[index] ||
+            std::find(match.covered_nodes.begin(), match.covered_nodes.end(), index) != match.covered_nodes.end()) return true;
+        if (producer->op == GGML_OP_VIEW || producer->op == GGML_OP_RESHAPE ||
+            producer->op == GGML_OP_PERMUTE || producer->op == GGML_OP_TRANSPOSE) {
+            return !producer->inputs.empty() && self(self, producer->inputs[0]);
+        }
+        return false;
+    };
+    for (size_t index : match.covered_nodes) {
+        for (ValueId input : context.graph.nodes()[index].inputs) {
+            if (!available(available, input)) return false;
+        }
+    }
+    return true;
+}
+
 static void sort_registrations(std::vector<DispatchRegistration> & registrations) {
     std::stable_sort(
         registrations.begin(), registrations.end(),
@@ -70,7 +93,8 @@ bool DispatchRegistry::match(const DispatchMatchContext & context,
         registrations_by_root_[static_cast<size_t>(context.root_node->op)].ordered;
     for (const DispatchRegistration & registration : registrations) {
         DispatchMatch candidate;
-        if (registration.matcher != nullptr && registration.matcher(context, candidate)) {
+        if (registration.matcher != nullptr && registration.matcher(context, candidate) &&
+            match_inputs_available(context, candidate)) {
             if (diagnostics != nullptr) {
                 diagnostics->attempts.push_back({
                     registration.name != nullptr ? registration.name : "",

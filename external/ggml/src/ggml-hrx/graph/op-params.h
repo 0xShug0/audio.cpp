@@ -46,6 +46,14 @@ struct Im2ColParams {
     std::array<int32_t, 7> values{};
 };
 
+struct SetParams {
+    std::array<int32_t, 5> values{};
+};
+
+struct DiagMaskParams {
+    int32_t past = 0;
+};
+
 struct FillParams {
     float value = 0.0f;
 };
@@ -133,6 +141,8 @@ using OpParams = std::variant<
     GluParams,
     ScaleParams,
     FillParams,
+    SetParams,
+    DiagMaskParams,
     Im2ColParams,
     BinaryParams,
     UnaryParams,

@@ -676,6 +676,9 @@
     },
     {
       "path": "motifs/matmul/tiled_pair_postprocess_f32.loom"
+    },
+    {
+      "path": "ops/elementwise/diag_mask_f32.loom"
     }
   ],
   "exports": [
@@ -9974,6 +9977,41 @@
         "motifs/bf16_f16.loom",
         "motifs/f32_f16.loom"
       ]
+    },
+    {
+      "name": "ggml_diag_mask_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_diag_mask_f32",
+      "source": "ops/elementwise/diag_mask_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/elementwise/diag_mask_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
     }
   ],
   "link_modules": [

@@ -228,16 +228,7 @@ static bool match_repeat_f32_dispatch(const DispatchMatchContext & context, Disp
     return true;
 }
 
-static bool match_float_copy_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
-    const auto * source = context.graph.values().find(context.root_node->inputs[0]);
-    const auto * output = context.graph.values().find(context.root_node->output);
-    if (source == nullptr || output == nullptr || source->element_count != output->element_count ||
-        (source->type != GGML_TYPE_F32 && source->type != GGML_TYPE_F16 && source->type != GGML_TYPE_BF16) ||
-        (output->type != GGML_TYPE_F32 && output->type != GGML_TYPE_F16 && output->type != GGML_TYPE_BF16)) {
-        return false;
-    }
-    if (source->storage == output->storage && source->storage_offset < output->storage_offset + output->byte_count &&
-        output->storage_offset < source->storage_offset + source->byte_count) return false;
+static Dispatch float_copy_dispatch(const Value * source, const Value * output) {
     Dispatch dispatch;
     dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_float_copy"));
     dispatch.kernel.integer_parameters.emplace("element_count", source->element_count);
@@ -247,7 +238,7 @@ static bool match_float_copy_dispatch(const DispatchMatchContext & context, Disp
     dispatch.kernel.compile_parameters.emplace("ggml.float_copy.target_type", std::to_string(output->type));
     for (int i = 0; i < GGML_MAX_DIMS; ++i) {
         const size_t src_size = ggml_type_size(source->type), dst_size = ggml_type_size(output->type);
-        if (source->nb[i] % src_size || output->nb[i] % dst_size) return false;
+
         dispatch.kernel.compile_parameters.emplace("ggml.float_copy.src_stride" + std::to_string(i), std::to_string(source->nb[i] / src_size));
         dispatch.kernel.compile_parameters.emplace("ggml.float_copy.dst_stride" + std::to_string(i), std::to_string(output->nb[i] / dst_size));
         if (i < 3) {
@@ -257,12 +248,103 @@ static bool match_float_copy_dispatch(const DispatchMatchContext & context, Disp
     }
     dispatch.bindings.push_back({source->storage_root, source->storage_offset, source->byte_count});
     dispatch.bindings.push_back({output->storage_root, output->storage_offset, output->byte_count});
+    return dispatch;
+}
+
+static bool match_float_copy_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * source = context.graph.values().find(context.root_node->inputs[0]);
+    const auto * output = context.graph.values().find(context.root_node->output);
+    if (source == nullptr || output == nullptr || source->element_count != output->element_count ||
+        (source->type != GGML_TYPE_F32 && source->type != GGML_TYPE_F16 && source->type != GGML_TYPE_BF16 && source->type != GGML_TYPE_I32) ||
+        (output->type != GGML_TYPE_F32 && output->type != GGML_TYPE_F16 && output->type != GGML_TYPE_BF16)) {
+        return false;
+    }
+    if (source->storage == output->storage && source->storage_offset < output->storage_offset + output->byte_count &&
+        output->storage_offset < source->storage_offset + source->byte_count) return false;
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (source->nb[i] % ggml_type_size(source->type) || output->nb[i] % ggml_type_size(output->type)) return false;
+    }
+    Dispatch dispatch = float_copy_dispatch(source, output);
     match.covered_nodes.push_back(context.root_index);
     match.dispatches.push_back(std::move(dispatch));
     return true;
 }
 
+static bool match_set_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    const auto * params = op_params_as<SetParams>(node->params);
+    if (params == nullptr || node->inputs.size() != 2) return false;
+    const auto * base = context.graph.values().find(node->inputs[0]);
+    const auto * source = context.graph.values().find(node->inputs[1]);
+    const auto * output = context.graph.values().find(node->output);
+    if (base == nullptr || source == nullptr || output == nullptr ||
+        base->type != GGML_TYPE_F32 || source->type != GGML_TYPE_F32 || output->type != GGML_TYPE_F32 ||
+        !base->contiguous || !output->contiguous || base->element_count != output->element_count) return false;
+    const auto & p = params->values;
+    for (int i = 0; i < 4; ++i) if (p[i] < 0 || p[i] % sizeof(float)) return false;
+    for (size_t stride : source->nb) if (stride % sizeof(float)) return false;
+    if (source->storage == output->storage && source->storage_offset < output->storage_offset + output->byte_count &&
+        output->storage_offset < source->storage_offset + source->byte_count) return false;
+    const bool same_base = base->storage == output->storage && base->storage_offset == output->storage_offset;
+    if (!same_base) {
+        if (base->storage == output->storage && base->storage_offset < output->storage_offset + output->byte_count &&
+            output->storage_offset < base->storage_offset + base->byte_count) return false;
+        match.dispatches.push_back(float_copy_dispatch(base, output));
+    }
+    Value target = *output;
+    target.element_count = source->element_count;
+    target.ne = source->ne;
+    target.nb[0] = sizeof(float);
+    for (int i = 1; i < GGML_MAX_DIMS; ++i) target.nb[i] = static_cast<size_t>(p[i - 1]);
+    size_t extent = sizeof(float);
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) extent += static_cast<size_t>(target.ne[i] - 1) * target.nb[i];
+    if (static_cast<size_t>(p[3]) > output->byte_count || extent > output->byte_count - p[3]) return false;
+    target.byte_count = extent;
+    target.storage_offset += p[3];
+    match.dispatches.push_back(float_copy_dispatch(source, &target));
+    match.covered_nodes.push_back(context.root_index);
+    return true;
+}
+
+static bool match_concat_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    if (node->inputs.size() != 2) return false;
+    const auto * left = context.graph.values().find(node->inputs[0]);
+    const auto * right = context.graph.values().find(node->inputs[1]);
+    const auto * output = context.graph.values().find(node->output);
+    if (left == nullptr || right == nullptr || output == nullptr || !output->contiguous ||
+        left->type != output->type || right->type != output->type ||
+        (output->type != GGML_TYPE_F32 && output->type != GGML_TYPE_F16 && output->type != GGML_TYPE_BF16)) return false;
+    int axis = -1;
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (left->ne[i] == right->ne[i] && left->ne[i] == output->ne[i]) continue;
+        if (axis != -1 || output->ne[i] != left->ne[i] + right->ne[i]) return false;
+        axis = i;
+    }
+    if (axis == -1) return false;
+    size_t offset = 0;
+    for (const Value * source : {left, right}) {
+        if (source->storage == output->storage && source->storage_offset < output->storage_offset + output->byte_count &&
+            output->storage_offset < source->storage_offset + source->byte_count) return false;
+        for (size_t stride : source->nb) if (stride % ggml_type_size(source->type)) return false;
+        Value target = *output;
+        target.ne = source->ne;
+        target.element_count = source->element_count;
+        target.storage_offset += offset;
+        target.byte_count = ggml_type_size(output->type);
+        for (int i = 0; i < GGML_MAX_DIMS; ++i) target.byte_count += static_cast<size_t>(target.ne[i] - 1) * target.nb[i];
+        match.dispatches.push_back(float_copy_dispatch(source, &target));
+        offset += static_cast<size_t>(source->ne[axis]) * output->nb[axis];
+    }
+    match.covered_nodes.push_back(context.root_index);
+    return true;
+}
+
 void register_copy_dispatch(DispatchRegistryBuilder & registry) {
+    registry.add({"common.concat_strided", GGML_OP_CONCAT, DispatchMatchKind::SingleOp, -10,
+                  DispatchSource::Common, match_concat_dispatch});
+    registry.add({"common.set_f32", GGML_OP_SET, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_set_dispatch});
     for (const auto op : {GGML_OP_CPY, GGML_OP_CONT}) {
         registry.add({"common.float_copy", op, DispatchMatchKind::SingleOp, -10,
                       DispatchSource::Common, match_float_copy_dispatch});

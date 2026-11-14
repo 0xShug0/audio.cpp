@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: MIT
+amdgpu.target<gfx11-generic> @ggml_diag_mask_target {subgroup_size = 64}
+config.decl @ggml.diag_mask.width : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.diag_mask.rows : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.diag_mask.past : %value: index where [range(%value, 0, 1073741824)]
+kernel.def target(@ggml_diag_mask_target) export("ggml_diag_mask_f32") @ggml_diag_mask_f32(%element_count: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %element_count, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%element_count: index, %input: buffer, %output: buffer) {
+  %count = index.assume %element_count [range(%element_count, 1, 1073741824)] : index
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %threads = index.constant 256 : index
+  %base = index.mul %group, %threads : index
+  %linear = index.add %base, %thread : index
+  %valid = index.cmp ult, %linear, %count : index
+  %offset = index.constant 0 : offset
+  %width = config.get @ggml.diag_mask.width : index
+  %rows = config.get @ggml.diag_mask.rows : index
+  %past = config.get @ggml.diag_mask.past : index
+  %negative_infinity = scalar.constant -inf : f32
+  scf.if %valid {
+    %idx = index.assume %linear [lt(%linear, %count)] : index
+    %col = index.rem %linear, %width : index
+    %row0 = index.div %linear, %width : index
+    %row = index.rem %row0, %rows : index
+    %limit = index.add %row, %past : index
+    %masked = index.cmp ugt, %col, %limit : index
+    %iv = buffer.view %input[%offset] : buffer -> view<[%count]xf32>
+    %ov = buffer.view %output[%offset] : buffer -> view<[%count]xf32>
+    %value = view.load %iv[%idx] : view<[%count]xf32> -> f32
+    %result = scf.if %masked -> (f32) {
+      scf.yield %negative_infinity : f32
+    } else {
+      scf.yield %value : f32
+    }
+    view.store %result, %ov[%idx] : f32, view<[%count]xf32>
+  }
+  kernel.return
+}

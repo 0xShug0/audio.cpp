@@ -295,6 +295,13 @@ OpParams import_op_params(const ggml_tensor & tensor) {
             for (int i = 0; i < 7; ++i) params.values[i] = ggml_get_op_params_i32(&tensor, i);
             return params;
         }
+        case GGML_OP_SET: {
+            SetParams params;
+            for (int i = 0; i < 5; ++i) params.values[i] = ggml_get_op_params_i32(&tensor, i);
+            return params;
+        }
+        case GGML_OP_DIAG_MASK_INF:
+            return DiagMaskParams{ggml_get_op_params_i32(&tensor, 0)};
         case GGML_OP_FILL:
             return FillParams{ggml_get_op_params_f32(&tensor, 0)};
         case GGML_OP_SCALE:
@@ -345,6 +352,16 @@ bool op_params_equivalent(ggml_op op, const OpParams & lhs, const OpParams & rhs
             const auto * a = op_params_as<Im2ColParams>(lhs);
             const auto * b = op_params_as<Im2ColParams>(rhs);
             return a != nullptr && b != nullptr && a->values == b->values;
+        }
+        case GGML_OP_SET: {
+            const auto * a = op_params_as<SetParams>(lhs);
+            const auto * b = op_params_as<SetParams>(rhs);
+            return a != nullptr && b != nullptr && a->values == b->values;
+        }
+        case GGML_OP_DIAG_MASK_INF: {
+            const auto * a = op_params_as<DiagMaskParams>(lhs);
+            const auto * b = op_params_as<DiagMaskParams>(rhs);
+            return a != nullptr && b != nullptr && a->past == b->past;
         }
         case GGML_OP_FILL: {
             const auto * a = op_params_as<FillParams>(lhs);

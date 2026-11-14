@@ -150,7 +150,30 @@ static bool match_fill_f32_dispatch(const DispatchMatchContext & context, Dispat
     return true;
 }
 
+static bool match_diag_mask_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    const auto * params = op_params_as<DiagMaskParams>(node->params);
+    if (params == nullptr || params->past < 0 || node->inputs.empty()) return false;
+    const auto * input = context.graph.values().find(node->inputs[0]);
+    const auto * output = context.graph.values().find(node->output);
+    if (input == nullptr || output == nullptr || input->type != GGML_TYPE_F32 || output->type != GGML_TYPE_F32 ||
+        !input->contiguous || !output->contiguous) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_diag_mask_f32"));
+    dispatch.kernel.integer_parameters.emplace("element_count", output->element_count);
+    dispatch.kernel.compile_parameters.emplace("ggml.diag_mask.width", std::to_string(output->ne[0]));
+    dispatch.kernel.compile_parameters.emplace("ggml.diag_mask.rows", std::to_string(output->ne[1]));
+    dispatch.kernel.compile_parameters.emplace("ggml.diag_mask.past", std::to_string(params->past));
+    dispatch.bindings.push_back({input->storage_root, input->storage_offset, input->byte_count});
+    dispatch.bindings.push_back({output->storage_root, output->storage_offset, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 void register_unary_dispatch(DispatchRegistryBuilder & registry) {
+    registry.add({"common.diag_mask_f32", GGML_OP_DIAG_MASK_INF, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_diag_mask_dispatch});
     registry.add({"common.fill_f32", GGML_OP_FILL, DispatchMatchKind::SingleOp, 0,
                   DispatchSource::Common, match_fill_f32_dispatch});
     registry.add({
