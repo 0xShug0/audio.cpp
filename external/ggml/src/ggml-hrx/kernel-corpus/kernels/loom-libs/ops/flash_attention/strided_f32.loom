@@ -1,0 +1,199 @@
+// SPDX-License-Identifier: MIT
+// Online F32 attention with strided Q/K/V and grouped-query heads.
+amdgpu.target<gfx11-generic> @ggml_attention_f32_target {subgroup_size = 32}
+config.decl @ggml.attention_f32.d : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.dv : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.nq : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.nk : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.hq : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.ratioh : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.ratiob : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.tiles : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.mask_type : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.mask_h : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.mask_b : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.qs0 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.qs1 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.qs2 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.qs3 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.ks0 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.ks1 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.ks2 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.ks3 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.vs0 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.vs1 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.vs2 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.vs3 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.ms0 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.ms1 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.ms2 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.ms3 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.scale : f32
+kernel.def target(@ggml_attention_f32_target) export("ggml_attention_f32") @ggml_attention_f32(%rows: index, %qspan: index, %kspan: index, %vspan: index, %mspan: index, %ospan: index) {
+  %one = index.constant 1 : index
+  %four = index.constant 4 : index
+  %three = index.constant 3 : index
+  %threads = index.constant 128 : index
+  %rounded = index.add %rows, %three : index
+  %groups = index.div %rounded, %four : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%rows: index, %qspan: index, %kspan: index, %vspan: index, %mspan: index, %ospan: index, %query: buffer, %key: buffer, %value: buffer, %mask: buffer, %output: buffer) {
+  %rows_bound = index.assume %rows [range(%rows, 1, 1073741824)] : index
+  %qspan_bound = index.assume %qspan [range(%qspan, 1, 1073741824)] : index
+  %kspan_bound = index.assume %kspan [range(%kspan, 1, 1073741824)] : index
+  %vspan_bound = index.assume %vspan [range(%vspan, 1, 1073741824)] : index
+  %mspan_bound = index.assume %mspan [range(%mspan, 1, 1073741824)] : index
+  %ospan_bound = index.assume %ospan [range(%ospan, 1, 1073741824)] : index
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %two = index.constant 2 : index
+  %four = index.constant 4 : index
+  %step = index.constant 32 : index
+  %offset = index.constant 0 : offset
+  %zero_f = scalar.constant 0.0 : f32
+  %negative_inf = scalar.constant -inf : f32
+  %group = kernel.workgroup.id<x> : index
+  %subgroup = kernel.subgroup.id : index
+  %lane = kernel.subgroup.lane.id : index
+  %base = index.mul %group, %four : index
+  %row0 = index.add %base, %subgroup : index
+  %valid = index.cmp ult, %row0, %rows_bound : index
+  %row = scf.select %valid, %row0, %zero : index
+  %d = config.get @ggml.attention_f32.d : index
+  %dv = config.get @ggml.attention_f32.dv : index
+  %nq = config.get @ggml.attention_f32.nq : index
+  %nk = config.get @ggml.attention_f32.nk : index
+  %hq = config.get @ggml.attention_f32.hq : index
+  %ratioh = config.get @ggml.attention_f32.ratioh : index
+  %ratiob = config.get @ggml.attention_f32.ratiob : index
+  %tiles = config.get @ggml.attention_f32.tiles : index
+  %mask_type = config.get @ggml.attention_f32.mask_type : index
+  %mask_h = config.get @ggml.attention_f32.mask_h : index
+  %mask_b = config.get @ggml.attention_f32.mask_b : index
+  %qs0 = config.get @ggml.attention_f32.qs0 : index
+  %qs1 = config.get @ggml.attention_f32.qs1 : index
+  %qs2 = config.get @ggml.attention_f32.qs2 : index
+  %qs3 = config.get @ggml.attention_f32.qs3 : index
+  %ks0 = config.get @ggml.attention_f32.ks0 : index
+  %ks1 = config.get @ggml.attention_f32.ks1 : index
+  %ks2 = config.get @ggml.attention_f32.ks2 : index
+  %ks3 = config.get @ggml.attention_f32.ks3 : index
+  %vs0 = config.get @ggml.attention_f32.vs0 : index
+  %vs1 = config.get @ggml.attention_f32.vs1 : index
+  %vs2 = config.get @ggml.attention_f32.vs2 : index
+  %vs3 = config.get @ggml.attention_f32.vs3 : index
+  %ms0 = config.get @ggml.attention_f32.ms0 : index
+  %ms1 = config.get @ggml.attention_f32.ms1 : index
+  %ms2 = config.get @ggml.attention_f32.ms2 : index
+  %ms3 = config.get @ggml.attention_f32.ms3 : index
+  %scale = config.get @ggml.attention_f32.scale : f32
+  %tile = index.rem %row, %tiles : index
+  %row1 = index.div %row, %tiles : index
+  %head = index.rem %row1, %hq : index
+  %row2 = index.div %row1, %hq : index
+  %token = index.rem %row2, %nq : index
+  %batch = index.div %row2, %nq : index
+  %kvhead = index.div %head, %ratioh : index
+  %kvbatch = index.div %batch, %ratiob : index
+  %dim0 = index.mul %tile, %step : index
+  %dim = index.add %dim0, %lane : index
+  %dim_valid = index.cmp ult, %dim, %dv : index
+  %safe_dim = scf.select %dim_valid, %dim, %zero : index
+  %qh = index.mul %head, %qs2 : index
+  %qb = index.mul %batch, %qs3 : index
+  %qhb = index.add %qh, %qb : index
+  %qt = index.mul %token, %qs1 : index
+  %qbase = index.add %qhb, %qt : index
+  %kh = index.mul %kvhead, %ks2 : index
+  %kb = index.mul %kvbatch, %ks3 : index
+  %khb = index.add %kh, %kb : index
+  %kbase = index.add %khb, %zero : index
+  %vh = index.mul %kvhead, %vs2 : index
+  %vb = index.mul %kvbatch, %vs3 : index
+  %vhb = index.add %vh, %vb : index
+  %vbase = index.add %vhb, %zero : index
+  %mh = index.rem %head, %mask_h : index
+  %mb = index.rem %batch, %mask_b : index
+  %mh_offset = index.mul %mh, %ms2 : index
+  %mb_offset = index.mul %mb, %ms3 : index
+  %mt_offset = index.mul %token, %ms1 : index
+  %mhb = index.add %mh_offset, %mb_offset : index
+  %mbase = index.add %mhb, %mt_offset : index
+  %has_mask = index.cmp ne, %mask_type, %zero : index
+  %mask_f16 = index.cmp eq, %mask_type, %two : index
+  %qview = buffer.view %query[%offset] : buffer -> view<[%qspan_bound]xf32>
+  %kview = buffer.view %key[%offset] : buffer -> view<[%kspan_bound]xf32>
+  %vview = buffer.view %value[%offset] : buffer -> view<[%vspan_bound]xf32>
+  %oview = buffer.view %output[%offset] : buffer -> view<[%ospan_bound]xf32>
+  %last_max, %denom, %result = scf.for %key_token = [%zero to %nk step %one](%maximum = %negative_inf : f32, %sum = %zero_f : f32, %acc = %zero_f : f32) -> (f32, f32, f32) {
+    %kt_offset = index.mul %key_token, %ks1 : index
+    %key_base = index.add %kbase, %kt_offset : index
+    %partial = scf.for %channel = [%lane to %d step %step](%dot_acc = %zero_f : f32) -> (f32) {
+      %qc_offset = index.mul %channel, %qs0 : index
+      %kc_offset = index.mul %channel, %ks0 : index
+      %qi0 = index.add %qbase, %qc_offset : index
+      %ki0 = index.add %key_base, %kc_offset : index
+      %qi = index.assume %qi0 [lt(%qi0, %qspan_bound)] : index
+      %ki = index.assume %ki0 [lt(%ki0, %kspan_bound)] : index
+      %qval = view.load %qview[%qi] : view<[%qspan_bound]xf32> -> f32
+      %kval = view.load %kview[%ki] : view<[%kspan_bound]xf32> -> f32
+      %product = scalar.mulf %qval, %kval : f32
+      %dot_next = scalar.addf %dot_acc, %product : f32
+      scf.yield %dot_next : f32
+    }
+    %dot = kernel.subgroup.reduce<addf> %partial : f32
+    %scaled = scalar.mulf %dot, %scale : f32
+    %mask_value = scf.if %has_mask -> (f32) {
+      %mc_offset = index.mul %key_token, %ms0 : index
+      %mi0 = index.add %mbase, %mc_offset : index
+      %mi = index.assume %mi0 [lt(%mi0, %mspan_bound)] : index
+      %mv = scf.if %mask_f16 -> (f32) {
+        %m16 = buffer.view %mask[%offset] : buffer -> view<[%mspan_bound]xf16>
+        %mv16 = view.load %m16[%mi] : view<[%mspan_bound]xf16> -> f16
+        %mv32 = scalar.extf %mv16 : f16 to f32
+        scf.yield %mv32 : f32
+      } else {
+        %m32 = buffer.view %mask[%offset] : buffer -> view<[%mspan_bound]xf32>
+        %mv32b = view.load %m32[%mi] : view<[%mspan_bound]xf32> -> f32
+        scf.yield %mv32b : f32
+      }
+      scf.yield %mv : f32
+    } else {
+      scf.yield %zero_f : f32
+    }
+    %score = scalar.addf %scaled, %mask_value : f32
+    %usable = scalar.cmpf ogt, %score, %negative_inf : f32
+    %next_max, %next_sum, %next_acc = scf.if %usable -> (f32, f32, f32) {
+      %new_max = scalar.maxnumf %maximum, %score : f32
+      %old_delta = scalar.subf %maximum, %new_max : f32
+      %new_delta = scalar.subf %score, %new_max : f32
+      %alpha = scalar.expf<afn> %old_delta : f32
+      %beta = scalar.expf<afn> %new_delta : f32
+      %weighted_sum = scalar.mulf %sum, %alpha : f32
+      %new_sum = scalar.addf %weighted_sum, %beta : f32
+      %vt_offset = index.mul %key_token, %vs1 : index
+      %vc_offset = index.mul %safe_dim, %vs0 : index
+      %vi_base = index.add %vbase, %vt_offset : index
+      %vi0 = index.add %vi_base, %vc_offset : index
+      %vi = index.assume %vi0 [lt(%vi0, %vspan_bound)] : index
+      %vval = view.load %vview[%vi] : view<[%vspan_bound]xf32> -> f32
+      %weighted_acc = scalar.mulf %acc, %alpha : f32
+      %weighted_value = scalar.mulf %vval, %beta : f32
+      %new_acc = scalar.addf %weighted_acc, %weighted_value : f32
+      scf.yield %new_max, %new_sum, %new_acc : f32, f32, f32
+    } else {
+      scf.yield %maximum, %sum, %acc : f32, f32, f32
+    }
+    scf.yield %next_max, %next_sum, %next_acc : f32, f32, f32
+  }
+  scf.if %valid {
+  scf.if %dim_valid {
+    %out_row = index.mul %row1, %dv : index
+    %oi0 = index.add %out_row, %dim : index
+    %oi = index.assume %oi0 [lt(%oi0, %ospan_bound)] : index
+    %normalized = scalar.divf %result, %denom : f32
+    view.store %normalized, %oview[%oi] : f32, view<[%ospan_bound]xf32>
+  }
+  }
+  kernel.return
+}

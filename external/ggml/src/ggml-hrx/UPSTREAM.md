@@ -9,3 +9,5 @@ Further audio coverage preserves arbitrary leading strides in existing F32 copie
 General floating-point matmul covers strided/grouped batches not handled by existing tuned dense routes. Added native strided F32 binary arithmetic, scaled masked softmax without ALiBi/sinks, and 1D/2D IM2COL. Unsupported mathematical features remain explicitly rejected.
 
 Further coverage includes I32-to-floating copies, F32 SET slices and general-axis floating concatenation using the existing strided conversion kernel, plus native causal masking. Fusion matching rejects consumers whose external side inputs have not yet been computed. These changes remain confined to HRX.
+
+Native F32 online attention retains strided/grouped-query layouts without converting K/V precision; the tuned F16 attention paths retain priority. Added F32 SUM_ROWS and ARGMAX, and I32 indices in standalone SET_ROWS while preserving the I64-only fused routes.

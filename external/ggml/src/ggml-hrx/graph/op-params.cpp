@@ -26,7 +26,8 @@ static bool flash_attn_ext_params_equivalent(const OpParams & lhs, const OpParam
     const FlashAttnExtParams * rhs_params = op_params_as<FlashAttnExtParams>(rhs);
     return lhs_params != nullptr && rhs_params != nullptr && nearly_equal(lhs_params->scale, rhs_params->scale) &&
            nearly_equal(lhs_params->max_bias, rhs_params->max_bias) &&
-           nearly_equal(lhs_params->logit_softcap, rhs_params->logit_softcap) && lhs_params->prec == rhs_params->prec;
+           nearly_equal(lhs_params->logit_softcap, rhs_params->logit_softcap) && lhs_params->prec == rhs_params->prec &&
+           lhs_params->has_mask == rhs_params->has_mask && lhs_params->has_sinks == rhs_params->has_sinks;
 }
 
 static bool soft_max_params_equivalent(const OpParams & lhs, const OpParams & rhs) {
@@ -280,6 +281,8 @@ OpParams import_op_params(const ggml_tensor & tensor) {
                 ggml_get_op_params_f32(&tensor, 1),
                 ggml_get_op_params_f32(&tensor, 2),
                 ggml_flash_attn_ext_get_prec(&tensor),
+                tensor.src[3] != nullptr,
+                tensor.src[4] != nullptr,
             };
         case GGML_OP_ARGSORT:
             return ArgsortParams{ static_cast<ggml_sort_order>(ggml_get_op_params_i32(&tensor, 0)) };

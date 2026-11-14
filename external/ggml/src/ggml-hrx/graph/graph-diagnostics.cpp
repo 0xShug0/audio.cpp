@@ -119,6 +119,8 @@ json op_params_json(const OpParams & params) {
                     { "max_bias",      value.max_bias               },
                     { "logit_softcap", value.logit_softcap          },
                     { "prec",          static_cast<int>(value.prec) },
+                    { "has_mask", value.has_mask },
+                    { "has_sinks", value.has_sinks },
                 };
             } else if constexpr (std::is_same_v<T, SoftMaxParams>) {
                 return {
@@ -199,6 +201,8 @@ OpParams parse_op_params(const json & item) {
             item.value("max_bias", 0.0f),
             item.value("logit_softcap", 0.0f),
             static_cast<ggml_prec>(item.value("prec", static_cast<int>(GGML_PREC_DEFAULT))),
+            item.value("has_mask", false),
+            item.value("has_sinks", false),
         };
     }
     if (kind == "soft_max") {

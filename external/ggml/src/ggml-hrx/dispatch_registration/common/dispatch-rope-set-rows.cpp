@@ -395,7 +395,7 @@ static RopeMatch match_rope_f32(const Graph & graph, const GraphNode * node, Sta
     return match;
 }
 
-static SetRowsMatch match_set_rows_2d(const Graph & graph, const GraphNode * node, Status * status = nullptr) {
+static SetRowsMatch match_set_rows_2d(const Graph & graph, const GraphNode * node, Status * status = nullptr, bool allow_i32 = false) {
     SetRowsMatch match;
     if (node == nullptr || node->op != GGML_OP_SET_ROWS || node->inputs.size() != 3) {
         log_set_rows_reject(status, "root is not a supported SET_ROWS arity", nullptr, nullptr, nullptr, nullptr);
@@ -407,7 +407,7 @@ static SetRowsMatch match_set_rows_2d(const Graph & graph, const GraphNode * nod
     const Value * cache   = graph_value(graph, node->inputs[2]);
     const Value * output  = graph_value(graph, node->output);
     if (rows == nullptr || indices == nullptr || cache == nullptr || output == nullptr || !indices->contiguous ||
-        !cache->contiguous || indices->type != GGML_TYPE_I64 || output->type != cache->type ||
+        !cache->contiguous || (indices->type != GGML_TYPE_I64 && !(allow_i32 && indices->type == GGML_TYPE_I32)) || output->type != cache->type ||
         !same_shape(*cache, *output) || !graph.values().same_storage(cache->id, output->id)) {
         log_set_rows_reject(status, "input/output shape or storage is unsupported", rows, indices, cache, output);
         return {};
@@ -567,6 +567,7 @@ static Dispatch make_set_rows_dispatch(const SetRowsMatch & match) {
     dispatch.kernel.integer_parameters.emplace("cache_row_count", match.cache_row_count);
     dispatch.kernel.integer_parameters.emplace("hidden_size", match.hidden_size);
     add_set_rows_compile_parameters(dispatch, match);
+    dispatch.kernel.compile_parameters.emplace("ggml.set_rows.index_bits", match.indices->type == GGML_TYPE_I32 ? "32" : "64");
     dispatch.bindings.push_back({ match.rows->storage_root, match.rows->storage_offset, match.rows_span_bytes });
     dispatch.bindings.push_back({ match.indices->id, 0, match.indices->byte_count });
     dispatch.bindings.push_back({ match.output->id, 0, match.output->byte_count });
@@ -843,7 +844,7 @@ static bool match_rope_f32_dispatch(const DispatchMatchContext & context, Dispat
 }
 
 static bool match_set_rows_dispatch(const DispatchMatchContext & context, DispatchMatch & dispatch_match) {
-    const SetRowsMatch match = match_set_rows_2d(context.graph, context.root_node, &dispatch_match.status);
+    const SetRowsMatch match = match_set_rows_2d(context.graph, context.root_node, &dispatch_match.status, true);
     if (!match.matched()) {
         return false;
     }

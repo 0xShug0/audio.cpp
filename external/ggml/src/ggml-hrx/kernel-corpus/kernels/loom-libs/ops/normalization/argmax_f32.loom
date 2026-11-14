@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MIT
+// Match CPU argmax, including last-index tie selection.
+amdgpu.target<gfx11-generic> @ggml_argmax_target {subgroup_size = 64}
+config.decl @ggml.argmax.width : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.argmax.stride : %value: index where [range(%value, 1, 1073741824)]
+kernel.def target(@ggml_argmax_target) export("ggml_argmax_f32") @ggml_argmax_f32(%rows: index, %input_span: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %rows, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%rows: index, %input_span: index, %input: buffer, %output: buffer) {
+  %count = index.assume %rows [range(%rows, 1, 1073741824)] : index
+  %span = index.assume %input_span [range(%input_span, 1, 1073741824)] : index
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %offset = index.constant 0 : offset
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %threads = index.constant 256 : index
+  %base = index.mul %group, %threads : index
+  %row = index.add %base, %thread : index
+  %valid = index.cmp ult, %row, %count : index
+  %width = config.get @ggml.argmax.width : index
+  %stride = config.get @ggml.argmax.stride : index
+  %negative_inf = scalar.constant -inf : f32
+  scf.if %valid {
+    %row_base = index.mul %row, %stride : index
+    %iv = buffer.view %input[%offset] : buffer -> view<[%span]xf32>
+    %maximum, %winner = scf.for %col = [%zero to %width step %one](%best = %negative_inf : f32, %best_idx = %zero : index) -> (f32, index) {
+      %idx0 = index.add %row_base, %col : index
+      %idx = index.assume %idx0 [lt(%idx0, %span)] : index
+      %value = view.load %iv[%idx] : view<[%span]xf32> -> f32
+      %keep = scalar.cmpf ogt, %best, %value : f32
+      %new_best = scf.select %keep, %best, %value : f32
+      %equal = scalar.cmpf oeq, %new_best, %value : f32
+      %new_idx = scf.select %equal, %col, %best_idx : index
+      scf.yield %new_best, %new_idx : f32, index
+    }
+    %winner_i32 = index.cast %winner : index to i32
+    %oi = index.assume %row [lt(%row, %count)] : index
+    %ov = buffer.view %output[%offset] : buffer -> view<[%count]xi32>
+    view.store %winner_i32, %ov[%oi] : i32, view<[%count]xi32>
+  }
+  kernel.return
+}

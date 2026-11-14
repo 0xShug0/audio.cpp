@@ -171,7 +171,58 @@ static bool match_diag_mask_dispatch(const DispatchMatchContext & context, Dispa
     return true;
 }
 
+static bool match_sum_rows_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    if (node->inputs.size() != 1) return false;
+    const auto * input = context.graph.values().find(node->inputs[0]);
+    const auto * output = context.graph.values().find(node->output);
+    if (input == nullptr || output == nullptr || input->type != GGML_TYPE_F32 ||
+        output->type != GGML_TYPE_F32 || !output->contiguous) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_sum_rows_f32"));
+    dispatch.kernel.integer_parameters.emplace("rows", output->element_count);
+    dispatch.kernel.integer_parameters.emplace("input_span", input->byte_count / sizeof(float));
+    auto & config = dispatch.kernel.compile_parameters;
+    config.emplace("ggml.sum_rows.width", std::to_string(input->ne[0]));
+    config.emplace("ggml.sum_rows.ne1", std::to_string(input->ne[1]));
+    config.emplace("ggml.sum_rows.ne2", std::to_string(input->ne[2]));
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (input->nb[i] % sizeof(float)) return false;
+        config.emplace("ggml.sum_rows.s" + std::to_string(i), std::to_string(input->nb[i] / sizeof(float)));
+    }
+    dispatch.bindings.push_back({input->storage_root, input->storage_offset, input->byte_count});
+    dispatch.bindings.push_back({output->storage_root, output->storage_offset, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
+static bool match_argmax_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    if (node->inputs.size() != 1) return false;
+    const auto * input = context.graph.values().find(node->inputs[0]);
+    const auto * output = context.graph.values().find(node->output);
+    if (input == nullptr || output == nullptr || input->type != GGML_TYPE_F32 || output->type != GGML_TYPE_I32 ||
+        input->nb[0] != sizeof(float) || input->nb[1] % sizeof(float) ||
+        input->ne[2] != 1 || input->ne[3] != 1 || !output->contiguous) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_argmax_f32"));
+    dispatch.kernel.integer_parameters.emplace("rows", output->element_count);
+    dispatch.kernel.integer_parameters.emplace("input_span", input->byte_count / sizeof(float));
+    dispatch.kernel.compile_parameters.emplace("ggml.argmax.width", std::to_string(input->ne[0]));
+    dispatch.kernel.compile_parameters.emplace("ggml.argmax.stride", std::to_string(input->nb[1] / sizeof(float)));
+    dispatch.bindings.push_back({input->storage_root, input->storage_offset, input->byte_count});
+    dispatch.bindings.push_back({output->storage_root, output->storage_offset, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 void register_unary_dispatch(DispatchRegistryBuilder & registry) {
+    registry.add({"common.argmax_f32", GGML_OP_ARGMAX, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_argmax_dispatch});
+    registry.add({"common.sum_rows_f32", GGML_OP_SUM_ROWS, DispatchMatchKind::SingleOp, -100,
+                  DispatchSource::Common, match_sum_rows_dispatch});
     registry.add({"common.diag_mask_f32", GGML_OP_DIAG_MASK_INF, DispatchMatchKind::SingleOp, 0,
                   DispatchSource::Common, match_diag_mask_dispatch});
     registry.add({"common.fill_f32", GGML_OP_FILL, DispatchMatchKind::SingleOp, 0,

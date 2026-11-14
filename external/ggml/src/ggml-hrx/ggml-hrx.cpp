@@ -1036,6 +1036,18 @@ static bool device_supports_op(ggml_backend_dev_t device, const ggml_tensor * op
         return op->src[1] != nullptr && (op->type == GGML_TYPE_F32 || op->type == GGML_TYPE_F16) &&
                (op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16);
     }
+    if (op->op == GGML_OP_FLASH_ATTN_EXT && op->src[1] != nullptr && op->src[1]->type == GGML_TYPE_F32) {
+        return op->src[0] != nullptr && op->src[2] != nullptr && op->src[4] == nullptr &&
+               op->src[0]->type == GGML_TYPE_F32 && op->src[2]->type == GGML_TYPE_F32 &&
+               ggml_get_op_params_f32(op, 1) == 0.0f && ggml_get_op_params_f32(op, 2) == 0.0f;
+    }
+    if (op->op == GGML_OP_SUM_ROWS) {
+        return op->src[0] != nullptr && op->type == GGML_TYPE_F32 && op->src[0]->type == GGML_TYPE_F32;
+    }
+    if (op->op == GGML_OP_ARGMAX) {
+        return op->src[0] != nullptr && op->src[0]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_I32 &&
+               op->src[0]->ne[2] == 1 && op->src[0]->ne[3] == 1;
+    }
     if (op->op == GGML_OP_SOFT_MAX) {
         return op->src[0] != nullptr && op->src[2] == nullptr && ggml_get_op_params_f32(op, 1) <= 0.0f &&
                op->type == GGML_TYPE_F32 && op->src[0]->type == GGML_TYPE_F32;

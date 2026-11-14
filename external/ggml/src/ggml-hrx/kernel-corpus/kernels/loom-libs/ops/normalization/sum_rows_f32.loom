@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: MIT
+amdgpu.target<gfx11-generic> @ggml_sum_rows_target {subgroup_size = 32}
+config.decl @ggml.sum_rows.width : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.sum_rows.ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.sum_rows.ne2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.sum_rows.s0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.sum_rows.s1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.sum_rows.s2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.sum_rows.s3 : %value: index where [range(%value, 1, 1073741824)]
+kernel.def target(@ggml_sum_rows_target) export("ggml_sum_rows_f32") @ggml_sum_rows_f32(%rows: index, %input_span: index) {
+  %one = index.constant 1 : index
+  %four = index.constant 4 : index
+  %three = index.constant 3 : index
+  %threads = index.constant 128 : index
+  %rounded = index.add %rows, %three : index
+  %groups = index.div %rounded, %four : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%rows: index, %input_span: index, %input: buffer, %output: buffer) {
+  %count = index.assume %rows [range(%rows, 1, 1073741824)] : index
+  %span = index.assume %input_span [range(%input_span, 1, 1073741824)] : index
+  %zero = index.constant 0 : index
+  %four = index.constant 4 : index
+  %step = index.constant 32 : index
+  %offset = index.constant 0 : offset
+  %zero_f = scalar.constant 0.0 : f32
+  %group = kernel.workgroup.id<x> : index
+  %subgroup = kernel.subgroup.id : index
+  %lane = kernel.subgroup.lane.id : index
+  %base = index.mul %group, %four : index
+  %row = index.add %base, %subgroup : index
+  %valid = index.cmp ult, %row, %count : index
+  %width = config.get @ggml.sum_rows.width : index
+  %ne1 = config.get @ggml.sum_rows.ne1 : index
+  %ne2 = config.get @ggml.sum_rows.ne2 : index
+  %s0 = config.get @ggml.sum_rows.s0 : index
+  %s1 = config.get @ggml.sum_rows.s1 : index
+  %s2 = config.get @ggml.sum_rows.s2 : index
+  %s3 = config.get @ggml.sum_rows.s3 : index
+  scf.if %valid {
+    %i1 = index.rem %row, %ne1 : index
+    %q1 = index.div %row, %ne1 : index
+    %i2 = index.rem %q1, %ne2 : index
+    %i3 = index.div %q1, %ne2 : index
+    %b1 = index.mul %i1, %s1 : index
+    %b2 = index.mul %i2, %s2 : index
+    %b3 = index.mul %i3, %s3 : index
+    %b12 = index.add %b1, %b2 : index
+    %input_base = index.add %b12, %b3 : index
+    %iv = buffer.view %input[%offset] : buffer -> view<[%span]xf32>
+    %partial = scf.for %col = [%lane to %width step %step](%acc = %zero_f : f32) -> (f32) {
+      %dc = index.mul %col, %s0 : index
+      %idx0 = index.add %input_base, %dc : index
+      %idx = index.assume %idx0 [lt(%idx0, %span)] : index
+      %value = view.load %iv[%idx] : view<[%span]xf32> -> f32
+      %next = scalar.addf %acc, %value : f32
+      scf.yield %next : f32
+    }
+    %sum = kernel.subgroup.reduce<addf> %partial : f32
+    %leader = index.cmp eq, %lane, %zero : index
+    scf.if %leader {
+      %oi = index.assume %row [lt(%row, %count)] : index
+      %ov = buffer.view %output[%offset] : buffer -> view<[%count]xf32>
+      view.store %sum, %ov[%oi] : f32, view<[%count]xf32>
+    }
+  }
+  kernel.return
+}

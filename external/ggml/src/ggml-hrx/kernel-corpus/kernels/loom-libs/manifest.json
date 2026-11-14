@@ -679,6 +679,15 @@
     },
     {
       "path": "ops/elementwise/diag_mask_f32.loom"
+    },
+    {
+      "path": "ops/flash_attention/strided_f32.loom"
+    },
+    {
+      "path": "ops/normalization/sum_rows_f32.loom"
+    },
+    {
+      "path": "ops/normalization/argmax_f32.loom"
     }
   ],
   "exports": [
@@ -10008,6 +10017,173 @@
         "mode": "direct",
         "primary_sources": [
           "ops/elementwise/diag_mask_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_attention_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_attention_f32",
+      "source": "ops/flash_attention/strided_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "rows",
+          "type": "index"
+        },
+        {
+          "name": "qspan",
+          "type": "index"
+        },
+        {
+          "name": "kspan",
+          "type": "index"
+        },
+        {
+          "name": "vspan",
+          "type": "index"
+        },
+        {
+          "name": "mspan",
+          "type": "index"
+        },
+        {
+          "name": "ospan",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "rows",
+          "type": "index"
+        },
+        {
+          "name": "qspan",
+          "type": "index"
+        },
+        {
+          "name": "kspan",
+          "type": "index"
+        },
+        {
+          "name": "vspan",
+          "type": "index"
+        },
+        {
+          "name": "mspan",
+          "type": "index"
+        },
+        {
+          "name": "ospan",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "query",
+        "key",
+        "value",
+        "mask",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "read",
+        "read",
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/flash_attention/strided_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_sum_rows_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_sum_rows_f32",
+      "source": "ops/normalization/sum_rows_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "rows",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "rows",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/normalization/sum_rows_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_argmax_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_argmax_f32",
+      "source": "ops/normalization/argmax_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "rows",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "rows",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/normalization/argmax_f32.loom"
         ],
         "library_sources": []
       },

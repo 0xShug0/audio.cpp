@@ -19,6 +19,8 @@ config.decl @ggml.set_rows.input_format : %value: index where [range(%value, 16,
 
 config.decl @ggml.set_rows.output_format : %value: index where [range(%value, 16, 32)]
 
+config.decl @ggml.set_rows.index_bits : %value: index where [range(%value, 32, 64)]
+
 config.decl @ggml.set_rows.input_stride : %value: index where [range(%value, 4, 1048576)]
 
 template.def<@ggml.set_rows.load_f32_vector4> device @ggml_set_rows_load_f32_vector4(%input_format: index, %token: index, %channel: index, %token_count: index, %input_stride: index, %rows: buffer) -> (vector<4xf32>) {
@@ -73,7 +75,29 @@ template.def<@ggml.set_rows.body> device @ggml_set_rows_body(%token_count: index
   %packet = scf.select %valid_packet, %packet0, %c0 : index
   %channel = index.mul %packet, %c4 : index
   %rows_noalias, %indices_noalias, %cache_noalias = buffer.assume.noalias %rows, %indices, %cache : buffer, buffer, buffer
-  %valid_row, %cache_row = template.apply<@ggml.rows.cache_publish.safe_i64_row>(%token, %bounded_token_count, %bounded_cache_row_count, %indices_noalias) : (index, index, index, buffer) -> (i1, index)
+  %index_bits = config.get @ggml.set_rows.index_bits : index
+  %c32_index = index.constant 32 : index
+  %index_i32 = index.cmp eq, %index_bits, %c32_index : index
+  %valid_row, %cache_row = scf.if %index_i32 -> (i1, index) {
+    %index_offset = index.constant 0 : offset
+    %indices32 = buffer.view %indices_noalias[%index_offset] : buffer -> view<[%bounded_token_count]xi32>
+    %raw_index = view.load %indices32[%token] : view<[%bounded_token_count]xi32> -> i32
+    %zero_i32 = scalar.constant 0 : i32
+    %max_i32 = scalar.constant 1048575 : i32
+    %nonnegative = scalar.cmpi sge, %raw_index, %zero_i32 : i32
+    %in_range = scalar.cmpi sle, %raw_index, %max_i32 : i32
+    %valid_index32 = scalar.andi %nonnegative, %in_range : i1
+    %safe0 = scf.select %valid_index32, %raw_index, %zero_i32 : i32
+    %safe = scalar.assume %safe0 [range(%safe0, 0, 1048575)] : i32
+    %row32 = index.cast %safe : i32 to index
+    %within_cache = index.cmp ult, %row32, %bounded_cache_row_count : index
+    %valid32 = scalar.andi %valid_index32, %within_cache : i1
+    %safe_row32 = scf.select %within_cache, %row32, %c0 : index
+    scf.yield %valid32, %safe_row32 : i1, index
+  } else {
+    %valid64, %row64 = template.apply<@ggml.rows.cache_publish.safe_i64_row>(%token, %bounded_token_count, %bounded_cache_row_count, %indices_noalias) : (index, index, index, buffer) -> (i1, index)
+    scf.yield %valid64, %row64 : i1, index
+  }
   %publish = scalar.andi %publish0, %valid_row : i1
   %values = template.apply<@ggml.set_rows.load_f32_vector4>(%input_format, %token, %channel, %bounded_token_count, %input_stride, %rows_noalias) : (index, index, index, index, index, buffer) -> (vector<4xf32>)
   template.apply<@ggml.rows.cache_publish.f32_vector4>(%output_format, %publish, %cache_row, %channel, %bounded_cache_row_count, %bounded_hidden_size, %values, %cache_noalias) : (index, i1, index, index, index, index, vector<4xf32>, buffer)

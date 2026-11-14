@@ -8,6 +8,8 @@
 
 #include <cmath>
 #include <cstdint>
+#include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -105,7 +107,7 @@ static bool has_flash_attention_params(const GraphNode & node) {
     if (params == nullptr) {
         return false;
     }
-    return nearly_equal(params->max_bias, 0.0f) && nearly_equal(params->logit_softcap, 0.0f) &&
+    return !params->has_sinks && nearly_equal(params->max_bias, 0.0f) && nearly_equal(params->logit_softcap, 0.0f) &&
            (params->prec == GGML_PREC_DEFAULT || params->prec == GGML_PREC_F32);
 }
 
@@ -676,9 +678,64 @@ static bool match_flash_attention_decode_split_next_q8_dispatch(const DispatchMa
     return true;
 }
 
+static bool match_strided_attention_f32(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    if (!has_flash_attention_params(*node)) return false;
+    const auto * params = op_params_as<FlashAttnExtParams>(node->params);
+    if (node->inputs.size() != (params->has_mask ? 4u : 3u)) return false;
+    const auto * q = graph_value(context.graph, node->inputs[0]);
+    const auto * k = graph_value(context.graph, node->inputs[1]);
+    const auto * v = graph_value(context.graph, node->inputs[2]);
+    const auto * mask = node->inputs.size() == 4 ? graph_value(context.graph, node->inputs[3]) : nullptr;
+    const auto * out = graph_value(context.graph, node->output);
+    if (q == nullptr || k == nullptr || v == nullptr || out == nullptr ||
+        q->type != GGML_TYPE_F32 || k->type != GGML_TYPE_F32 || v->type != GGML_TYPE_F32 ||
+        out->type != GGML_TYPE_F32 || !out->contiguous || q->ne[0] != k->ne[0] ||
+        k->ne[1] != v->ne[1] || k->ne[2] != v->ne[2] || k->ne[3] != v->ne[3] ||
+        q->ne[2] % k->ne[2] || q->ne[3] % k->ne[3]) return false;
+    if (mask != nullptr && ((mask->type != GGML_TYPE_F16 && mask->type != GGML_TYPE_F32) ||
+        mask->ne[0] < k->ne[1] || mask->ne[1] < q->ne[1] ||
+        q->ne[2] % mask->ne[2] || q->ne[3] % mask->ne[3])) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_attention_f32"));
+    const int64_t tiles = (v->ne[0] + 31) / 32;
+    dispatch.kernel.integer_parameters.emplace("rows", tiles * q->ne[1] * q->ne[2] * q->ne[3]);
+    for (const auto & item : {std::pair<const char *, const Value *>{"qspan", q}, {"kspan", k}, {"vspan", v},
+                             {"mspan", mask != nullptr ? mask : q}, {"ospan", out}}) {
+        dispatch.kernel.integer_parameters.emplace(item.first, item.second->byte_count / ggml_type_size(item.second->type));
+    }
+    auto & config = dispatch.kernel.compile_parameters;
+    const std::pair<const char *, int64_t> values[] = {
+        {"d", q->ne[0]}, {"dv", v->ne[0]}, {"nq", q->ne[1]}, {"nk", k->ne[1]}, {"hq", q->ne[2]},
+        {"ratioh", q->ne[2] / k->ne[2]}, {"ratiob", q->ne[3] / k->ne[3]}, {"tiles", tiles},
+        {"mask_type", mask == nullptr ? 0 : mask->type == GGML_TYPE_F16 ? 2 : 1},
+        {"mask_h", mask != nullptr ? mask->ne[2] : 1}, {"mask_b", mask != nullptr ? mask->ne[3] : 1},
+    };
+    for (const auto & item : values) config.emplace(std::string("ggml.attention_f32.") + item.first, std::to_string(item.second));
+    for (const auto & item : {std::pair<const char *, const Value *>{"q", q}, {"k", k}, {"v", v}, {"m", mask}}) {
+        for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+            if (item.second != nullptr && item.second->nb[i] % ggml_type_size(item.second->type)) return false;
+            config.emplace(std::string("ggml.attention_f32.") + item.first + "s" + std::to_string(i),
+                           std::to_string(item.second != nullptr ? item.second->nb[i] / ggml_type_size(item.second->type) : 1));
+        }
+    }
+    std::ostringstream scale;
+    scale << std::setprecision(std::numeric_limits<float>::max_digits10) << op_params_as<FlashAttnExtParams>(node->params)->scale;
+    config.emplace("ggml.attention_f32.scale", scale.str());
+    for (const Value * value : {q, k, v, mask != nullptr ? mask : q}) {
+        dispatch.bindings.push_back({value->storage_root, value->storage_offset, value->byte_count});
+    }
+    dispatch.bindings.push_back({out->storage_root, out->storage_offset, out->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 }  // namespace
 
 void register_flash_attention_dispatches(DispatchRegistryBuilder & registry) {
+    registry.add({"common.attention_strided_f32", GGML_OP_FLASH_ATTN_EXT, DispatchMatchKind::SingleOp, -100,
+                  DispatchSource::Common, match_strided_attention_f32});
     registry.add({
         "common.flash_attention_f32_f16_gate",
         GGML_OP_FLASH_ATTN_EXT,
