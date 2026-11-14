@@ -80,14 +80,14 @@ int main(int argc, char ** argv) {
         engine::assets::convert_tensor_sources_to_gguf({{norm_safe, ""}}, norm_gguf,
             engine::assets::TensorStorageType::F32, true, false, {}, {}, std::nullopt);
         auto norm_source = engine::assets::open_tensor_source(norm_gguf);
-        auto weights = std::make_shared<drama::Drama3BackboneWeights>();
-        weights->final_norm.weight = engine::core::wrap_tensor(
-            norm, engine::core::TensorShape::from_dims({16}), GGML_TYPE_F32);
         drama::Drama3BackboneDecoderConfig config;
         config.hidden_size = 16;
         config.layers = 0;
         config.linear_key_head_dim = config.linear_value_head_dim = 4;
         config.linear_num_key_heads = config.linear_num_value_heads = 1;
+        auto weights = std::make_shared<drama::Drama3BackboneWeights>(config);
+        weights->final_norm.weight = engine::core::wrap_tensor(
+            norm, engine::core::TensorShape::from_dims({16}), GGML_TYPE_F32);
 
         int failures = 0, head_recoveries = 0;
         {
@@ -315,12 +315,12 @@ int main(int argc, char ** argv) {
                 ggml_init({1024 * 1024, nullptr, true}));
             engine::core::ModuleBuildContext routing_ctx{routing_context.get(), "routing_layout", test_backend.type};
             auto * input = ggml_new_tensor_3d(routing_ctx.ggml, GGML_TYPE_F32, c.hidden_size, steps, 1);
-            const auto routed = drama::build_moe_inputs(routing_ctx,
-                engine::core::wrap_tensor(input, engine::core::TensorShape::from_dims({1, steps, c.hidden_size})),
-                disk->layers.front(), c);
-            if (!ggml_is_contiguous(routed.ids))
+            const auto & layer = disk->layers.front();
+            const auto routed = engine::modules::MoeFeedForwardModule(layer.ffn_config).build_inputs(routing_ctx,
+                ggml_reshape_2d(routing_ctx.ggml, input, c.hidden_size, steps), layer.ffn);
+            if (!ggml_is_contiguous(routed.routing.ids))
                 throw std::runtime_error("Drama 3 offload routing IDs must remain compact");
-            if (steps == 1 && routed.ids->op == GGML_OP_CONT)
+            if (steps == 1 && routed.routing.ids->op == GGML_OP_CONT)
                 throw std::runtime_error("single-token routing must not copy already compact IDs");
         }
         drama::Drama3BackboneCachedDecodeGraph reference(prefill_execution, resident, c, 1024, 8 * 1024 * 1024);

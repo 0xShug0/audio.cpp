@@ -1,3 +1,4 @@
+#include "engine/framework/modules/gated_delta_net_module.h"
 #include "engine/community_models/zonos3/backbone.h"
 
 #include "engine/framework/core/backend.h"
@@ -10,6 +11,7 @@
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/moe_module.h"
+#include "engine/framework/modules/moe_feed_forward_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/staged_moe_runtime.h"
@@ -39,7 +41,8 @@ struct LayerWeights {
     TensorValue wq, wk, wv, wo, attn_temp, attn_gate;           // global attention
     TensorValue gdn_in, gdn_conv, gdn_norm, gdn_a_log, gdn_dt;  // gated DeltaNet
     TensorValue ffn_up, ffn_gate, ffn_down;                     // dense SwiGLU
-    TensorValue up_exps, gate_exps, down_exps, latent_down, latent_up, router, router_norm, neg_router_bias;
+    modules::MoeFeedForwardConfig ffn_config;
+    modules::MoeFeedForwardWeights ffn;
     size_t disk_group = 0;
     int state_index = -1;  // index into the KV caches (global layers) or GDN states
 };
@@ -235,11 +238,6 @@ private:
         int count_ = 0;
     };
 
-    struct MoeInputs {
-        modules::MoeRouting routing;
-        ggml_tensor * latent = nullptr;  // [latent, rows]
-    };
-
     int queries() const { return 2 * hp_.n_layer + 1; }
     static TensorValue matrix(ggml_tensor * x) { return core::wrap_tensor(x, core::TensorShape::from_dims({x->ne[1], x->ne[0]})); }
 
@@ -424,17 +422,25 @@ private:
                 const auto & experts_layer = resources_->bind_layer(static_cast<size_t>(layer - 1),
                     static_cast<size_t>(layer), bindings, w.top_k);
                 w.disk_group = experts_layer.disk_group;
-                w.up_exps = experts_layer.weights[0];
-                w.gate_exps = experts_layer.weights[1];
-                w.down_exps = experts_layer.weights[2];
-                w.latent_down = matmul(p + "ffn_latent_down.weight", {latent, D});
-                w.latent_up = matmul(p + "ffn_latent_up.weight", {D, latent});
-                w.router = matmul(p + "router.weight", {experts, D});
-                w.router_norm = f32(p + "router_norm.weight", {D});
+                w.ffn.experts.up = experts_layer.weights[0].tensor;
+                w.ffn.experts.gate = experts_layer.weights[1].tensor;
+                w.ffn.experts.down = experts_layer.weights[2].tensor;
+                w.ffn.latent_down.weight = matmul(p + "ffn_latent_down.weight", {latent, D});
+                w.ffn.latent_up.weight = matmul(p + "ffn_latent_up.weight", {D, latent});
+                w.ffn.router = matmul(p + "router.weight", {experts, D});
+                w.ffn.router_norm.weight = f32(p + "router_norm.weight", {D});
                 consumed_.insert(p + "router_bias");
                 auto bias = source.require_f32(p + "router_bias", {experts});
                 for (auto & value : bias) value = -value;  // routing ranks logits - router_bias
-                w.neg_router_bias = store_->make_f32(core::TensorShape::from_dims({experts}), std::move(bias));
+                w.ffn.selection_bias = store_->make_f32(core::TensorShape::from_dims({experts}), std::move(bias));
+                w.ffn_config.routing.experts = experts;
+                w.ffn_config.routing.selected = w.top_k;
+                w.ffn_config.routing.scoring = modules::MoeScoring::SelectedSoftmax;
+                w.ffn_config.routing.normalization = modules::MoeNormalization::None;
+                w.ffn_config.routing.precision = GGML_PREC_F32;
+                w.ffn_config.routing.contiguous_ids = disk_store_ != nullptr;
+                w.ffn_config.router_norm = modules::NormConfig{D, hp_.rms_eps, true, false};
+                w.ffn_config.projection_precision = GGML_PREC_F32;
                 latent_ = static_cast<int>(latent);
             }
             layers_.push_back(std::move(w));
@@ -576,53 +582,32 @@ private:
         const int R = hp_.gdn_conv_kernel - 1;
         const int T = shape.rows_per_slot;
         const int B = shape.slots;
-        const int N = shape.rows();
-        auto * mixed = linear(ctx, x, w.gdn_in);  // [q k v | z | a | b] x N
-        auto rows = [&](int first, int count) {
-            return ggml_view_2d(g, mixed, count, N, mixed->nb[1], static_cast<size_t>(first) * mixed->nb[0]);
-        };
         auto * hs = gdn_history_[static_cast<size_t>(w.state_index)];
         auto * ss = gdn_states_[static_cast<size_t>(w.state_index)];
         auto * history = ggml_view_3d(g, hs, R, 3 * I, B, hs->nb[1], hs->nb[2], static_cast<size_t>(shape.first_slot) * hs->nb[2]);
         auto * state = ggml_view_3d(g, ss, ss->ne[0], 1, B, ss->nb[1], ss->nb[2], static_cast<size_t>(shape.first_slot) * ss->nb[2]);
-        auto * time_major = T == 1
-            ? ggml_view_3d(g, mixed, 1, 3 * I, B, mixed->nb[0], mixed->nb[1], 0)
-            : ggml_reshape_3d(g, ggml_cont(g, ggml_transpose(g, rows(0, 3 * I))), T, 3 * I, 1);
-        auto * window = ggml_concat(g, history, time_major, 0);  // [R + T, 3I, B]
-        auto * conv = ggml_ssm_conv(g, window, w.gdn_conv.tensor);
-        conv = modules::SiluModule().build(
-            ctx, core::wrap_tensor(conv, core::TensorShape::from_dims({B, T, 3 * I}))).tensor;
-        conv = ggml_reshape_2d(g, conv, 3 * I, N);
-        auto heads = [&](int first) {
-            return ggml_view_4d(g, conv, S, H, T, B, static_cast<size_t>(S) * conv->nb[0], conv->nb[1],
-                                static_cast<size_t>(T) * conv->nb[1], static_cast<size_t>(first) * conv->nb[0]);
-        };
-        // FLA's q / sqrt(sum q^2 + eps), unlike ggml_l2_norm's max(norm, eps).
-        auto l2 = [&](ggml_tensor * t) {
-            return ggml_scale(g, ggml_rms_norm(g, t, 1e-6f / static_cast<float>(S)), 1.0f / std::sqrt(static_cast<float>(S)));
-        };
-        auto * q = l2(heads(0));
-        auto * k = l2(heads(I));
-        auto * v = heads(2 * I);
-        auto * decay = ggml_neg(g, ggml_mul(g, ggml_softplus(g, ggml_add(g, rows(4 * I, H), w.gdn_dt.tensor)),
-                                            ggml_exp(g, w.gdn_a_log.tensor)));
-        auto * beta = modules::SigmoidModule().build(ctx, matrix(rows(4 * I + H, H))).tensor;
-        decay = ggml_reshape_4d(g, decay, 1, H, T, B);
-        beta = ggml_reshape_4d(g, beta, 1, H, T, B);
-        auto * packed = ggml_gated_delta_net(g, q, k, v, decay, beta, state);  // [I, N + S*B]
-        auto * output = ggml_view_2d(g, packed, I, N, static_cast<size_t>(I) * sizeof(float), 0);
-        auto * next_state = ggml_view_1d(g, packed, ggml_nelements(state), static_cast<size_t>(I) * N * sizeof(float));
-        auto * next_history = ggml_cont(g, ggml_view_3d(g, window, R, 3 * I, B, window->nb[1], window->nb[2],
-                                                        static_cast<size_t>(T) * window->nb[0]));
-        ggml_build_forward_expand(graph, ggml_cpy(g, next_state, state));
-        ggml_build_forward_expand(graph, ggml_cpy(g, next_history, history));
-        auto * z = ggml_view_3d(g, mixed, S, H, N, static_cast<size_t>(S) * mixed->nb[0], mixed->nb[1],
-                                static_cast<size_t>(3 * I) * mixed->nb[0]);
-        auto * normed = ggml_mul(g, ggml_rms_norm(g, ggml_reshape_3d(g, output, S, H, N), 1e-5f), w.gdn_norm.tensor);
-        auto * activated_z = modules::SiluModule().build(
-            ctx, core::wrap_tensor(z, core::TensorShape::from_dims({N, H, S}))).tensor;
-        auto * gated = ggml_mul(g, normed, activated_z);
-        return linear(ctx, ggml_reshape_2d(g, gated, I, N), w.wo);
+        modules::GatedDeltaNetConfig config;
+        config.hidden_size = hp_.n_embd;
+        config.key_head_dim = config.value_head_dim = S;
+        config.key_heads = config.value_heads = H;
+        config.conv_kernel = hp_.gdn_conv_kernel;
+        config.norm_epsilon = 1e-5F;
+        config.qk_norm = modules::GatedDeltaNetQkNorm::SumSquares;
+        config.projection_precision = GGML_PREC_F32;
+        modules::GatedDeltaNetWeights weights;
+        weights.in_proj = {w.gdn_in, std::nullopt};
+        weights.conv_weight = w.gdn_conv;
+        weights.dt_bias = w.gdn_dt;
+        weights.a_log = w.gdn_a_log;
+        weights.norm.weight = w.gdn_norm;
+        weights.out_proj = {w.wo, std::nullopt};
+        const auto output = modules::GatedDeltaNetModule(config).build(ctx,
+            core::wrap_tensor(ggml_reshape_3d(g, x, hp_.n_embd, T, B), core::TensorShape::from_dims({B, T, hp_.n_embd})),
+            core::wrap_tensor(state, core::TensorShape::from_dims({B, 1, ss->ne[0]})), weights,
+            core::wrap_tensor(history, core::TensorShape::from_dims({B, 3 * I, R})));
+        ggml_build_forward_expand(graph, ggml_cpy(g, output.next_recurrent_state.tensor, state));
+        ggml_build_forward_expand(graph, ggml_cpy(g, output.next_conv_tail.tensor, history));
+        return ggml_reshape_2d(g, output.output.tensor, hp_.n_embd, shape.rows());
     }
 
     ggml_tensor * dense_ffn(core::ModuleBuildContext & ctx, const LayerWeights & w, ggml_tensor * x) const {
@@ -637,29 +622,11 @@ private:
             .tensor;
     }
 
-    // Weighted RMSNorm -> router; experts rank logits - router_bias and weigh the softmax of their raw logits. The
-    // experts read the latent projection of the FFN input, not the router norm.
-    MoeInputs build_moe_inputs(core::ModuleBuildContext & ctx, ggml_tensor * x, const LayerWeights & w) const {
-        auto * normed = rms_weighted(ctx, x, w.router_norm, hp_.rms_eps);
-        modules::MoeRoutingConfig config;
-        config.experts = w.router.tensor->ne[1];
-        config.selected = w.top_k;
-        config.scoring = modules::MoeScoring::SelectedSoftmax;
-        config.normalization = modules::MoeNormalization::None;
-        config.precision = GGML_PREC_F32;
-        config.contiguous_ids = disk_store_ != nullptr;
-        MoeInputs out;
-        out.routing = modules::MoeModule::build_routing(ctx, normed, w.router.tensor, w.neg_router_bias.tensor, config);
-        out.latent = linear(ctx, x, w.latent_down);
-        return out;
-    }
-
     ggml_tensor * moe(core::ModuleBuildContext & ctx, ggml_tensor * x, const LayerWeights & w) const {
-        const auto inputs = build_moe_inputs(ctx, x, w);
+        const modules::MoeFeedForwardModule ffn(w.ffn_config);
+        const auto inputs = ffn.build_inputs(ctx, x, w.ffn);
         auto * bank_ids = disk_store_ ? disk_store_->route(ctx, inputs.routing.ids, w.disk_group) : nullptr;
-        auto * y = modules::MoeModule({modules::MoeActivation::SwiGlu}).build(
-            ctx, inputs.latent, inputs.routing, {w.up_exps.tensor, w.gate_exps.tensor, w.down_exps.tensor}, bank_ids);
-        return linear(ctx, y, w.latent_up);
+        return ffn.build_output(ctx, inputs, w.ffn, bank_ids);
     }
 
     // output_norm, the 10 x 4098 head and the logit softcap over the head rows.
@@ -802,14 +769,14 @@ private:
                 out->staged_layers.push_back(-1);
                 continue;
             }
-            const auto inputs = build_moe_inputs(ctx, input, w);
-            out->staged->build_inputs(ctx, graph, inputs.latent, inputs.routing);
+            const auto inputs = modules::MoeFeedForwardModule(w.ffn_config).build_inputs(ctx, input, w.ffn);
+            out->staged->build_inputs(ctx, graph, inputs.experts, inputs.routing);
             out->staged_layers.push_back(static_cast<int64_t>(out->staged->add_layer(
                 modules::MoeModule({modules::MoeActivation::SwiGlu}),
-                {w.up_exps.tensor, w.gate_exps.tensor, w.down_exps.tensor}, *disk_store_, w.disk_group)));
+                w.ffn.experts, *disk_store_, w.disk_group)));
             const auto finish = out->prepared->add_graph("finish_" + std::to_string(layer), nodes);
             auto * combined = modules::MoeModule::combine(ctx, out->staged->output(), out->staged->routing_weights());
-            append(out->prepared->graph(finish), linear(ctx, combined, w.latent_up), 2 * layer + 2);
+            append(out->prepared->graph(finish), modules::MoeFeedForwardModule(w.ffn_config).finish(ctx, combined, nullptr, w.ffn), 2 * layer + 2);
             out->finish_graphs.push_back(finish);
         }
         out->final_graph = out->prepared->add_graph("final", nodes);

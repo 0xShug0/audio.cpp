@@ -621,7 +621,9 @@ add_library(engine_core OBJECT
     src/framework/modules/recurrent_modules.cpp
     src/framework/modules/streaming_conv_modules.cpp
     src/framework/modules/attention/positional_encoding.cpp
+    src/framework/modules/gated_delta_net_module.cpp
     src/framework/modules/feed_forward_modules.cpp
+    src/framework/modules/moe_feed_forward_module.cpp
     src/framework/modules/moe_module.cpp
     src/framework/modules/staged_moe_runtime.cpp
     src/framework/modules/attention/self_attention.cpp
@@ -4527,6 +4529,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(snake_beta_test tests/unittests/test_snake_beta.cpp)
         add_test(NAME snake_beta_test COMMAND snake_beta_test --log)
 
+        add_engine_unittest(moe_feed_forward_module_test tests/unittests/test_moe_feed_forward_module.cpp)
+        add_test(NAME moe_feed_forward_module_test COMMAND moe_feed_forward_module_test --log)
+        add_engine_unittest(gated_delta_net_module_test tests/unittests/test_gated_delta_net_module.cpp)
+        add_test(NAME gated_delta_net_module_test COMMAND gated_delta_net_module_test --log)
         add_engine_unittest(moe_module_test tests/unittests/test_moe_module.cpp)
         add_test(NAME moe_module_test COMMAND moe_module_test --log)
 
