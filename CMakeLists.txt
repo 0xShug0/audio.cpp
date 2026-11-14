@@ -1845,6 +1845,24 @@ audiocpp_add_model(zonos3
         engine::models::zonos3::make_zonos3_loader
 )
 
+audiocpp_add_model(zonos2
+    SOURCES
+        src/community_models/zonos2/assets.cpp
+        src/community_models/zonos2/backbone.cpp
+        src/community_models/zonos2/codec_decoder.cpp
+        src/community_models/zonos2/generator.cpp
+        src/community_models/zonos2/loader.cpp
+        src/community_models/zonos2/npy.cpp
+        src/community_models/zonos2/prompt.cpp
+        src/community_models/zonos2/sampler.cpp
+        src/community_models/zonos2/session.cpp
+        src/community_models/zonos2/speaker_encoder.cpp
+    INCLUDES
+        engine/community_models/zonos2/loader.h
+    LOADERS
+        engine::models::zonos2::make_zonos2_loader
+)
+
 audiocpp_add_model(audio8_tts
     SOURCES
         src/community_models/audio8_tts/ar.cpp
@@ -4512,6 +4530,38 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 add_test(NAME zonos3_tokenizer_test COMMAND zonos3_tokenizer_test
                     "${AUDIOCPP_ZONOS3_BACKBONE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/community_models/zonos3/tokenizer_vectors.json")
+            endif()
+        endif()
+
+        if (zonos2 IN_LIST AUDIOCPP_LINKED_MODELS)
+            set(AUDIOCPP_ZONOS2_MODEL_DIR "" CACHE PATH "ZONOS2 GGUF directory for the zonos2 parity tests")
+            set(AUDIOCPP_ZONOS2_PARITY_DIR "" CACHE PATH "ZONOS2 oracle directory (tests/community_models/zonos2/make_oracle.sh)")
+            add_engine_unittest(zonos2_prompt_test tests/community_models/zonos2/prompt_test.cpp)
+            if(AUDIOCPP_ZONOS2_PARITY_DIR)
+                add_test(NAME zonos2_prompt_test COMMAND zonos2_prompt_test "${AUDIOCPP_ZONOS2_PARITY_DIR}")
+            else()
+                add_test(NAME zonos2_prompt_test COMMAND zonos2_prompt_test)
+            endif()
+            add_engine_unittest(zonos2_parity tests/community_models/zonos2/parity.cpp)
+            if(AUDIOCPP_ZONOS2_MODEL_DIR AND AUDIOCPP_ZONOS2_PARITY_DIR)
+                add_test(NAME zonos2_parity_backbone COMMAND zonos2_parity backbone
+                    "${AUDIOCPP_ZONOS2_MODEL_DIR}/zonos2-q8_0.gguf" "${AUDIOCPP_ZONOS2_PARITY_DIR}")
+                add_test(NAME zonos2_parity_backbone_speaker COMMAND zonos2_parity backbone_speaker
+                    "${AUDIOCPP_ZONOS2_MODEL_DIR}/zonos2-q8_0.gguf" "${AUDIOCPP_ZONOS2_PARITY_DIR}")
+                add_test(NAME zonos2_parity_backbone_disk COMMAND zonos2_parity backbone
+                    "${AUDIOCPP_ZONOS2_MODEL_DIR}/zonos2-q8_0.gguf" "${AUDIOCPP_ZONOS2_PARITY_DIR}" --disk-experts)
+                set_tests_properties(zonos2_parity_backbone zonos2_parity_backbone_speaker zonos2_parity_backbone_disk
+                    PROPERTIES
+                    PASS_REGULAR_EXPRESSION "PASS"
+                    TIMEOUT 1800
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+                add_test(NAME zonos2_parity_decoder COMMAND zonos2_parity decoder
+                    "${AUDIOCPP_ZONOS2_MODEL_DIR}/dac.gguf" "${AUDIOCPP_ZONOS2_PARITY_DIR}")
+                add_test(NAME zonos2_parity_speaker COMMAND zonos2_parity speaker
+                    "${AUDIOCPP_ZONOS2_MODEL_DIR}/spk-encoder.gguf" "${AUDIOCPP_ZONOS2_PARITY_DIR}")
+                set_tests_properties(zonos2_parity_decoder zonos2_parity_speaker PROPERTIES
+                    PASS_REGULAR_EXPRESSION "PASS"
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
             endif()
         endif()
 

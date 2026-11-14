@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "family": "zonos2",
+  "display_name": "ZONOS2",
+  "description": "Zyphra ZONOS2: a 28-layer GQA/MoE TTS backbone (16 experts, EDA router) over 9 delayed 1024-entry DAC codebooks, decoded by the 44.1 kHz Descript Audio Codec, with ECAPA speaker-embedding cloning.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en",
+    "fr",
+    "de",
+    "es",
+    "it",
+    "pt",
+    "ja",
+    "zh",
+    "ko"
+  ],
+  "capabilities": {
+    "tts": [
+      "long_form"
+    ],
+    "clone": [
+      "speaker_reference",
+      "long_form"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream",
+      "cpu",
+      "metal"
+    ]
+  },
+  "options": {
+    "request": [
+      {"name": "seed", "type": "int", "description": "Sampler seed; random when omitted. Long-form chunk i uses seed + i.", "required": false, "min": 0, "max": 4294967295},
+      {"name": "max_tokens", "type": "int", "description": "Generated frames per text chunk (86.13 frames/s), including the 10-frame end-of-speech drain.", "required": false, "min": 1, "default": 2000},
+      {"name": "temperature", "type": "float", "description": "Sampling temperature; 0 decodes greedily.", "required": false, "min": 0, "default": 1.15},
+      {"name": "top_k", "type": "int", "description": "Top-k candidates per codebook (ties at the threshold are kept).", "required": false, "min": 1, "default": 106},
+      {"name": "top_p", "type": "float", "description": "Nucleus probability per codebook; 0 disables it.", "required": false, "min": 0, "max": 1, "default": 0.0},
+      {"name": "min_p", "type": "float", "description": "Drops candidates below min_p times the most likely one.", "required": false, "min": 0, "max": 1, "default": 0.18},
+      {"name": "repetition_penalty", "type": "float", "description": "Penalty on codes seen in the repetition window, applied once per distinct code.", "required": false, "min": 1, "default": 1.2},
+      {"name": "repetition_window", "type": "int", "description": "Generated frames of per-codebook history the repetition penalty looks at; 0 disables it.", "required": false, "min": 0, "default": 50},
+      {"name": "repetition_codebooks", "type": "int", "description": "Leading codebooks the repetition penalty applies to; -1 applies it to all nine.", "required": false, "min": -1, "max": 9, "default": 8},
+      {"name": "speaker_embedding_file", "type": "path", "description": "float32 .npy speaker embedding with shape [2048] or [1,2048], as written by encode_reference_only.", "required": false},
+      {"name": "encode_reference_only", "type": "bool", "description": "Return the --voice-ref speaker embedding as an .npy artifact without generating speech.", "required": false, "default": false},
+      {"name": "clean_speaker_background", "type": "bool", "description": "Mark the reference as clean instead of noisy (a prompt marker row; cloning only).", "required": false, "default": false},
+      {"name": "accurate_mode", "type": "bool", "description": "Add the accurate-mode marker row (on) or leave it out for expressive delivery (off); cloning only.", "required": false, "default": true},
+      {"name": "speaking_rate_bucket", "type": "int", "description": "Adds a speaking-rate conditioning row with this bucket; omitted = no rate row.", "required": false, "min": 0, "max": 7},
+      {"name": "quality_buckets", "type": "string", "description": "Comma list of feature:bucket quality rows over lufs (0-11), estimated_snr (0-11), max_pause (0-11), estimated_bandlimit_hz (0-7), leading_silence_s (0-7) and trailing_silence_s (0-7); none disables every quality row.", "required": false, "default": "trailing_silence_s:3"},
+      {"name": "fade_out_ms", "type": "float", "description": "Cosine fade over the last N milliseconds of the output.", "required": false, "min": 0, "max": 2000, "default": 0.0},
+      {"name": "text_chunk_size", "type": "int", "description": "Maximum Unicode code points per long-form text chunk.", "required": false, "min": 1, "default": 300},
+      {"name": "text_chunk_mode", "type": "enum", "description": "Text chunking policy for long-form input.", "preset": "text_chunk_mode_full", "required": false, "default": "word_budget"}
+    ],
+    "session": [
+      {"name": "encoder_backend", "type": "enum", "description": "Backend for the speaker encoder: cpu, or the session backend (same).", "values": ["cpu", "same"], "required": false, "default": "cpu"},
+      {"name": "voice_cache_slots", "type": "int", "description": "LRU slots for computed speaker embeddings per reference clip; 0 disables caching.", "required": false, "min": 0, "default": 4},
+      {"name": "stream_chunk_frames", "type": "int", "description": "Maximum frames per streamed decoder chunk.", "required": false, "min": 1, "max": 256, "default": 40},
+      {"name": "stream_context_frames", "type": "int", "description": "DAC context frames on each side of a streamed chunk; 16 or more is seam-free.", "required": false, "min": 16, "max": 64, "default": 24},
+      {"name": "disk_experts", "type": "bool", "description": "Keep the routed expert banks in the GGUF/host memory and stage the selected experts through a bounded per-layer cache on the compute backend.", "required": false, "default": false},
+      {"name": "pin_experts", "type": "bool", "description": "With disk_experts, hold the full expert banks in pinned host memory for direct uploads.", "required": false, "default": false},
+      {"name": "expert_cache_size", "type": "int", "description": "Expert slots per MoE layer with disk_experts; at least twice the largest routed top-k.", "required": false, "min": 4, "max": 16, "default": 8},
+      {"name": "disk_expert_read_threads", "type": "int", "description": "Host workers copying selected experts with disk_experts and without pin_experts.", "required": false, "min": 1, "max": 64, "default": 1}
+    ],
+    "load": []
+  },
+  "ui": {
+    "recommended_package": "zonos2_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/models/zonos2.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "Zyphra/ZONOS2-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "zonos2_q8_0",
+      "display_name": "ZONOS2 Q8_0",
+      "description": "F16 spine + Q8_0 experts backbone, DAC 44.1 kHz decoder, ECAPA speaker encoder (8.8 GB).",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "ZONOS2-GGUF",
+      "files": [
+        "zonos2-q8_0.gguf",
+        "dac.gguf",
+        "spk-encoder.gguf"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {},
+      "tensors": {
+        "backbone": {"source": "weights:"},
+        "decoder": "model:dac.gguf",
+        "speaker_encoder": "model:spk-encoder.gguf"
+      }
+    }
+  ],
+  "dependencies": []
+}
