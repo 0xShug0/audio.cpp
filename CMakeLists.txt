@@ -3411,11 +3411,21 @@ if (AUDIOCPP_BUILD_C_API)
         target_include_directories(audiocpp_static PUBLIC
             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         )
+        target_compile_definitions(audiocpp_static PRIVATE
+            AUDIOCPP_VERSION_STRING="${AUDIOCPP_VERSION}"
+        )
         set_target_properties(audiocpp_static PROPERTIES
             ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-            OUTPUT_NAME audiocpp
             POSITION_INDEPENDENT_CODE ON
         )
+        if (WIN32)
+            # The shared target's MSVC import library also lands in bin/ as
+            # audiocpp.lib; give the static archive its own name so the two
+            # never collide.
+            set_target_properties(audiocpp_static PROPERTIES OUTPUT_NAME audiocpp_static)
+        else()
+            set_target_properties(audiocpp_static PROPERTIES OUTPUT_NAME audiocpp)
+        endif()
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(audiocpp_static PRIVATE OpenMP::OpenMP_CXX)
         endif()
