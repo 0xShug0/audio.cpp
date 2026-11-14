@@ -15,24 +15,21 @@ Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio 
 
 > [!TIP]
 >
-> **v0.9.4 highlights**
+> **v0.9.5 highlights**
 >
-> **Experimental HIP kernels:** Select `--backend hip --backend-impl gfx1151_v1` to try alternative AMD kernels. On the tested Strix Halo GPU, Q8 generation time fell by **76.7%** for Irodori-TTS Small MF, **30.9%** for Qwen3-TTS 1.7B VoiceDesign, and **14.0%** for BreezeTTS2 versus default HIP. Despite its name, `gfx1151_v1` can also run on RDNA1/2, as well as RDNA3/4; available fast paths vary by architecture. Gains vary by model and hardware; the implementation is opt-in. See the [HIP guide](docs/build/HIP.md#optional-gfx1151_v1-implementation). Contributions are welcome: test other AMD GPUs, report model performance and correctness, or help improve the kernels. Thanks to AMD DevLab for providing hardware access!
+> **New models and variants:** Generate speech with [Zonos2](docs/models/zonos2.md) and [Zonos3-Mini](docs/models/zonos3.md), sound effects with [MOSS-SoundEffect v2](docs/models/moss_soundeffect.md), and cover songs with [MuLaCover](docs/models/mulacover.md). Speech recognition gains [Kroko XL](docs/models/kroko_asr.md) and Danish [Edda ASR](docs/models/edda_asr.md). [MossFormer2](docs/models/mossformer2.md) now supports speech enhancement and super-resolution alongside separation. Audio8 TTS defaults to the [Realistic 0.6B](docs/models/audio8_tts.md) package, and KugelAudio gains reference-audio voice cloning.
 >
-> **Metal optimizations:** New SSM scan, convolution, and dataflow optimizations reduce RE-USE processing time by **56.5%** on M4 Pro. Parakeet’s channel-contiguous subsampling and matrix projections reduce end-to-end processing time by **12.1–13.9%**, with unchanged transcripts.
+> **Shared execution improvements:** Reusable DiT and device-denoising runtimes keep sampling on the backend, with explicitly enabled CUDA/Vulkan pointwise fusions. MoE models share expert storage and offloading, including experimental hybrid CPU/GPU expert execution. HeartMuLa memory improvements and OmniVoice native batching further improve existing model paths.
 >
-> **Browser inference with WASM + WebGPU:** Run supported models locally in the browser. On RTX 5090 in Chrome, measured throughput reaches **23.3×** real time for Supertonic 3, **13.9×** for Kokoro, **94.3×** for SenseVoice ASR, and **25.0×** for warmed LFM3-Audio ASR. See the [tested models, settings, and performance table](docs/reports/webgpu_browser_validation.md).
+> **Intel GPU support:** The new SYCL backend runs validated speech and music models on Intel GPUs. Support varies by model; see the [validation and performance report](docs/reports/sycl_validation.md) for working models and known limitations.
 >
-> **Experimental streaming avatar voice chat:** Talk to **LFM3-Audio** through the WebUI while **SoulX-FlashHead** animates your chosen portrait. Responses stream as text, speech, and synchronized head animation, with voice selection, adjustable speaking speed, and a customizable personality.
->
-> <p align="center"><img src="assets/figure/voice_chat_demo.png" alt="audio.cpp Voice Chat with a speaking dog avatar and LFM3-Audio’s response" width="480"></p>
->
+
 
 audio.cpp is built for real end-to-end execution rather than one-off model demos. Its optimized, reusable building blocks support speech generation and recognition, separation, alignment, and multi-model workflows. Shared components make new models easier to integrate and let improvements benefit multiple model families while keeping inference efficient, maintainable, and portable.
 
 ## Features
 
-⭐ **143 audio model families and 250+ variants.** Run TTS, ASR, music generation, voice cloning, conversion, separation, and more locally through a shared CLI and server API.
+⭐ **148 audio model families and 250+ variants.** Run TTS, ASR, music generation, voice cloning, conversion, separation, and more locally through a shared CLI and server API.
 
 ⭐ **Built-in WebUI.** Generate and clone voices in Studio, compare models in Arena, manage models and voice libraries, and assemble narration with reusable speakers and passage editing in the TTS app.
 
@@ -53,7 +50,9 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
-> **2026-11-04 — Release v0.9.4:** **WebGPU support brings audio inference to the browser with WASM**, and the WebUI gains **streaming voice chat with animated SoulX avatars**, cross-language dubbing, and voice-library export, import, and sorting. New models include **Nemotron 3.5 Transcribe** with CPU offload below 7 GB VRAM, **LFM3-Audio, LFM D1-Omni, PocketTTS Small, SoulX-FlashHead, Real-time RE-USE, Magenta RealTime 2, Music Flamingo, Haas, and Underdog Bark 3**, plus Irodori-TTS v4 Large. Experimental AMD kernel selection, new performance controls, and backend fixes improve speed, memory use, and compatibility. This release brings together community model ports, backend optimizations, and fixes shaped by real deployment reports.
+> **v0.9.5:** New Zonos2/3, Kroko XL, Edda ASR, MOSS-SoundEffect v2, and MuLaCover models; MossFormer2 enhancement and super-resolution; SYCL backend support; shared DiT and MoE execution; and WebUI, model-management, and memory improvements. Thanks to everyone contributing model ports, optimizations, fixes, and validation!
+
+**2026-11-04 — Release v0.9.4:** **WebGPU support brings audio inference to the browser with WASM**, and the WebUI gains **streaming voice chat with animated SoulX avatars**, cross-language dubbing, and voice-library export, import, and sorting. New models include **Nemotron 3.5 Transcribe** with CPU offload below 7 GB VRAM, **LFM3-Audio, LFM D1-Omni, PocketTTS Small, SoulX-FlashHead, Real-time RE-USE, Magenta RealTime 2, Music Flamingo, Haas, and Underdog Bark 3**, plus Irodori-TTS v4 Large. Experimental AMD kernel selection, new performance controls, and backend fixes improve speed, memory use, and compatibility. This release brings together community model ports, backend optimizations, and fixes shaped by real deployment reports.
 
 **2026-10-26 — Release v0.9.3:** New speech models including Drama3, Ming 3.0 TTS/Audio Tiny, XTTS v2, Plapre 3, Gradium Phonon, and Earshot VAD, plus experimental LatentSync lip sync. Highlights include **LoRA across 11 models**, a **TTS workspace**, voice-cloning and dubbing recipes, `perf_mode` presets, lower memory use, and expanded HIP, ARM NEON, and Rockchip NPU support. Thanks to our contributors!
 
@@ -78,7 +77,7 @@ Core and community models are grouped by task and listed alphabetically within e
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
-| **audio8_tts** (C)<br>[@jasonchen31](https://github.com/jasonchen31) | TTS, Clone | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es | [Audio8 TTS Preview 0.6B](docs/models/audio8_tts.md) | GGUF Q8, Stream |
+| **audio8_tts** (C)<br>[@jasonchen31](https://github.com/jasonchen31) | TTS, Clone | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es | [Audio8 TTS Realistic / Preview 0.6B](docs/models/audio8_tts.md) | GGUF BF16/Q8, Stream |
 | **auk** (C) | TTS, audio editing | auto | [AuK Base and AuK-Flash](docs/models/auk.md) | GGUF F32/F16/Q8 |
 | **breeze_tts** | TTS, Clone, Design, Ctrl | zh, en | [BreezeTTS 2](docs/models/breeze_tts.md) | GGUF BF16/Q8/Q4_0, Stream |
 | **chatterbox** | TTS, Clone, VC | ar, da, de, el, en, es, fi, fr, hi, it, ko, ms, nl, no, pl, pt, sv, sw, tr | [Chatterbox 0.5B](docs/tts.md#chatterbox) | GGUF 16/Q8 |
