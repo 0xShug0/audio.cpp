@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: MIT
+amdgpu.target<gfx11-generic> @ggml_repeat_target {subgroup_size = 64}
+config.decl @ggml.repeat.ne0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.ne2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.src_ne0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.src_ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.src_ne2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.src_ne3 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.stride0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.stride1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.stride2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.stride3 : %value: index where [range(%value, 1, 1073741824)]
+kernel.def target(@ggml_repeat_target) export("ggml_repeat_f32") @ggml_repeat_f32(%element_count: index, %source_span: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %element_count, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%element_count: index, %source_span: index, %input: buffer, %output: buffer) {
+  %count = index.assume %element_count [range(%element_count, 1, 1073741824)] : index
+  %span = index.assume %source_span [range(%source_span, 1, 1073741824)] : index
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %threads = index.constant 256 : index
+  %offset = index.constant 0 : offset
+  %base = index.mul %group, %threads : index
+  %linear = index.add %base, %thread : index
+  %valid = index.cmp ult, %linear, %count : index
+  %iv = buffer.view %input[%offset] : buffer -> view<[%span]xf32>
+  %ov = buffer.view %output[%offset] : buffer -> view<[%count]xf32>
+  %ne0 = config.get @ggml.repeat.ne0 : index
+  %ne1 = config.get @ggml.repeat.ne1 : index
+  %ne2 = config.get @ggml.repeat.ne2 : index
+  %src_ne0 = config.get @ggml.repeat.src_ne0 : index
+  %src_ne1 = config.get @ggml.repeat.src_ne1 : index
+  %src_ne2 = config.get @ggml.repeat.src_ne2 : index
+  %src_ne3 = config.get @ggml.repeat.src_ne3 : index
+  %stride0 = config.get @ggml.repeat.stride0 : index
+  %stride1 = config.get @ggml.repeat.stride1 : index
+  %stride2 = config.get @ggml.repeat.stride2 : index
+  %stride3 = config.get @ggml.repeat.stride3 : index
+  scf.if %valid {
+    %i0 = index.rem %linear, %ne0 : index
+    %q0 = index.div %linear, %ne0 : index
+    %i1 = index.rem %q0, %ne1 : index
+    %q1 = index.div %q0, %ne1 : index
+    %i2 = index.rem %q1, %ne2 : index
+    %i3 = index.div %q1, %ne2 : index
+    %r0 = index.rem %i0, %src_ne0 : index
+    %b0 = index.mul %r0, %stride0 : index
+    %r1 = index.rem %i1, %src_ne1 : index
+    %b1 = index.mul %r1, %stride1 : index
+    %r2 = index.rem %i2, %src_ne2 : index
+    %b2 = index.mul %r2, %stride2 : index
+    %r3 = index.rem %i3, %src_ne3 : index
+    %b3 = index.mul %r3, %stride3 : index
+    %b01 = index.add %b0, %b1 : index
+    %b23 = index.add %b2, %b3 : index
+    %src0 = index.add %b01, %b23 : index
+    %src = index.assume %src0 [lt(%src0, %span)] : index
+    %dst = index.assume %linear [lt(%linear, %count)] : index
+    %value = view.load %iv[%src] : view<[%span]xf32> -> f32
+    view.store %value, %ov[%dst] : f32, view<[%count]xf32>
+  }
+  kernel.return
+}

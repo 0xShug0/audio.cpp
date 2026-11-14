@@ -3,6 +3,12 @@
   "upstream_revision": "local",
   "files": [
     {
+      "path": "ops/copy/repeat_f32.loom"
+    },
+    {
+      "path": "ops/normalization/norm_f32.loom"
+    },
+    {
       "path": "ops/matmul/vector_codebook_f32_f32.loom"
     },
     {
@@ -655,6 +661,92 @@
     }
   ],
   "exports": [
+    {
+      "name": "ggml_repeat_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_repeat_f32",
+      "source": "ops/copy/repeat_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "source_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "source_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/copy/repeat_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_norm_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_norm_f32",
+      "source": "ops/normalization/norm_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "rows",
+          "type": "index"
+        },
+        {
+          "name": "span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "rows",
+          "type": "index"
+        },
+        {
+          "name": "span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/normalization/norm_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
     {
       "name": "ggml_mul_mat_vector_iq2_s_f32_f32",
       "family": "loom_libs",

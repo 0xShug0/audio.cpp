@@ -141,6 +141,9 @@ uint32_t binary_kind_config_value(BinaryKind kind) {
 
 static bool unary_kind_from_ggml_unary_op(ggml_unary_op op, UnaryKind & kind) {
     switch (op) {
+        case GGML_UNARY_OP_ROUND_BF16:
+            kind = UnaryKind::RoundBf16;
+            return true;
         case GGML_UNARY_OP_ABS:
             kind = UnaryKind::Abs;
             return true;
@@ -256,6 +259,7 @@ OpParams import_op_params(const ggml_tensor & tensor) {
     }
 
     switch (tensor.op) {
+        case GGML_OP_NORM:
         case GGML_OP_RMS_NORM:
         case GGML_OP_L2_NORM:
             return RmsNormParams{ ggml_get_op_params_f32(&tensor, 0) };
@@ -310,6 +314,7 @@ OpParams import_op_params(const ggml_tensor & tensor) {
 
 bool op_params_equivalent(ggml_op op, const OpParams & lhs, const OpParams & rhs) {
     switch (op) {
+        case GGML_OP_NORM:
         case GGML_OP_RMS_NORM:
         case GGML_OP_L2_NORM:
             return rms_norm_params_equivalent(lhs, rhs);

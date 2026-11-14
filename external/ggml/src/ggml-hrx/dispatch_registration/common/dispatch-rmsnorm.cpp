@@ -1145,7 +1145,42 @@ bool common_match_rmsnorm_gate_dispatch(const DispatchMatchContext & context, Di
     return match_rmsnorm_gate_dispatch(context, match);
 }
 
+static bool match_norm_f32_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    if (node == nullptr || node->inputs.size() != 1) {
+        return false;
+    }
+    const auto * input = context.graph.values().find(node->inputs[0]);
+    const auto * output = context.graph.values().find(node->output);
+    const auto * params = op_params_as<RmsNormParams>(node->params);
+    if (input == nullptr || output == nullptr || params == nullptr || input->type != GGML_TYPE_F32 ||
+        output->type != GGML_TYPE_F32 || !output->contiguous || input->ne[0] <= 0 ||
+        input->element_count != output->element_count) {
+        return false;
+    }
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_norm_f32"));
+    dispatch.kernel.integer_parameters.emplace("rows", input->element_count / input->ne[0]);
+    dispatch.kernel.integer_parameters.emplace("span", input->byte_count / sizeof(float));
+    dispatch.kernel.compile_parameters.emplace("ggml.norm.ne1", std::to_string(input->ne[1]));
+    dispatch.kernel.compile_parameters.emplace("ggml.norm.ne2", std::to_string(input->ne[2]));
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (input->nb[i] % sizeof(float) != 0) return false;
+        dispatch.kernel.compile_parameters.emplace("ggml.norm.stride" + std::to_string(i),
+                                                   std::to_string(input->nb[i] / sizeof(float)));
+    }
+    dispatch.kernel.compile_parameters.emplace("ggml.norm.width", std::to_string(input->ne[0]));
+    dispatch.kernel.compile_parameters.emplace("ggml.norm.epsilon", to_config_value(params->eps));
+    dispatch.bindings.push_back({input->id, 0, input->byte_count});
+    dispatch.bindings.push_back({output->id, 0, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 void register_rmsnorm_dispatches(DispatchRegistryBuilder & registry) {
+    registry.add({"common.norm_f32", GGML_OP_NORM, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_norm_f32_dispatch});
     registry.add({
         "common.add_rmsnorm_binary_symmetric_i4_k32",
         GGML_OP_ADD,

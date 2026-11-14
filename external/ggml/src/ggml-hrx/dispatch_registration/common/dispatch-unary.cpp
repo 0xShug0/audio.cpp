@@ -88,7 +88,7 @@ static bool match_unary_f32_dispatch(const DispatchMatchContext & context, Dispa
     }
 
     const UnaryParams * params = op_params_as<UnaryParams>(node->params);
-    if (params == nullptr || !unary_kind_supported(params->op)) {
+    if (params == nullptr || (!unary_kind_supported(params->op) && params->op != UnaryKind::RoundBf16)) {
         return false;
     }
 

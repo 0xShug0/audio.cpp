@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: MIT
+// Each subgroup computes one row. Both reductions use centered variance,
+// matching ggml NORM rather than changing it to an RMS normalization.
+amdgpu.target<gfx11-generic> @ggml_norm_target {subgroup_size = 32}
+
+config.decl @ggml.norm.width : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.norm.epsilon : f32
+config.decl @ggml.norm.ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.norm.ne2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.norm.stride0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.norm.stride1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.norm.stride2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.norm.stride3 : %value: index where [range(%value, 1, 1073741824)]
+
+
+kernel.def target(@ggml_norm_target) export("ggml_norm_f32") @ggml_norm_f32(%rows: index, %span: index) {
+  %one = index.constant 1 : index
+  %four = index.constant 4 : index
+  %three = index.constant 3 : index
+  %threads = index.constant 128 : index
+  %rounded = index.add %rows, %three : index
+  %groups = index.div %rounded, %four : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%rows: index, %span: index, %input: buffer, %output: buffer) {
+  %row_count = index.assume %rows [range(%rows, 1, 1073741824)] : index
+  %width = config.get @ggml.norm.width : index
+  %epsilon = config.get @ggml.norm.epsilon : f32
+  %group = kernel.workgroup.id<x> : index
+  %subgroup = kernel.subgroup.id : index
+  %lane = kernel.subgroup.lane.id : index
+  %zero_i = index.constant 0 : index
+  %four = index.constant 4 : index
+  %step = index.constant 32 : index
+  %offset = index.constant 0 : offset
+  %zero = scalar.constant 0.0 : f32
+  %base = index.mul %group, %four : index
+  %row0 = index.add %base, %subgroup : index
+  %valid = index.cmp ult, %row0, %row_count : index
+  %safe_row = scf.select %valid, %row0, %zero_i : index
+  %row = index.assume %safe_row [lt(%safe_row, %row_count)] : index
+  %width_i = index.cast %width : index to i32
+  %width_f = scalar.sitofp %width_i : i32 to f32
+  %input_span = index.assume %span [range(%span, 1, 1073741824)] : index
+  %ne1 = config.get @ggml.norm.ne1 : index
+  %ne2 = config.get @ggml.norm.ne2 : index
+  %s0 = config.get @ggml.norm.stride0 : index
+  %s1 = config.get @ggml.norm.stride1 : index
+  %s2 = config.get @ggml.norm.stride2 : index
+  %s3 = config.get @ggml.norm.stride3 : index
+  %i1 = index.rem %row, %ne1 : index
+  %q1 = index.div %row, %ne1 : index
+  %i2 = index.rem %q1, %ne2 : index
+  %i3 = index.div %q1, %ne2 : index
+  %b1 = index.mul %i1, %s1 : index
+  %b2 = index.mul %i2, %s2 : index
+  %b3 = index.mul %i3, %s3 : index
+  %b12 = index.add %b1, %b2 : index
+  %row_offset = index.add %b12, %b3 : index
+  %iv = buffer.view %input[%offset] : buffer -> view<[%input_span]xf32>
+  %ov = buffer.view %output[%offset] : buffer -> view<[%row_count]x[%width]xf32>
+  %partial_sum = scf.for %channel = [%lane to %width step %step](%sum = %zero : f32) -> (f32) {
+    %col_offset = index.mul %channel, %s0 : index
+    %src0 = index.add %row_offset, %col_offset : index
+    %src = index.assume %src0 [lt(%src0, %input_span)] : index
+    %value = view.load %iv[%src] : view<[%input_span]xf32> -> f32
+    %next = scalar.addf %sum, %value : f32
+    scf.yield %next : f32
+  }
+  %sum = kernel.subgroup.reduce<addf> %partial_sum : f32
+  %mean = scalar.divf %sum, %width_f : f32
+  %partial_variance = scf.for %channel = [%lane to %width step %step](%sum = %zero : f32) -> (f32) {
+    %col_offset = index.mul %channel, %s0 : index
+    %src0 = index.add %row_offset, %col_offset : index
+    %src = index.assume %src0 [lt(%src0, %input_span)] : index
+    %value = view.load %iv[%src] : view<[%input_span]xf32> -> f32
+    %centered = scalar.subf %value, %mean : f32
+    %square = scalar.mulf %centered, %centered : f32
+    %next = scalar.addf %sum, %square : f32
+    scf.yield %next : f32
+  }
+  %squares = kernel.subgroup.reduce<addf> %partial_variance : f32
+  %variance = scalar.divf %squares, %width_f : f32
+  %biased = scalar.addf %variance, %epsilon : f32
+  %scale = scalar.rsqrtf %biased : f32
+  scf.if %valid {
+    scf.for %channel = [%lane to %width step %step] {
+      %col_offset = index.mul %channel, %s0 : index
+    %src0 = index.add %row_offset, %col_offset : index
+    %src = index.assume %src0 [lt(%src0, %input_span)] : index
+    %value = view.load %iv[%src] : view<[%input_span]xf32> -> f32
+      %centered = scalar.subf %value, %mean : f32
+      %normalized = scalar.mulf %centered, %scale : f32
+      view.store %normalized, %ov[%row, %channel] : f32, view<[%row_count]x[%width]xf32>
+    }
+  }
+  kernel.return
+}

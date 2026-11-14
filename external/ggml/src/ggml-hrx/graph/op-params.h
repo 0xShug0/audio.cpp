@@ -86,6 +86,7 @@ enum class UnaryKind : uint32_t {
     Sqrt        = 21,
     Log         = 22,
     Identity    = 23,
+    RoundBf16   = 24,
 
     // Parameterized or remaining exact-math unary routes need separate lowering work.
     SoftPlus = 100,

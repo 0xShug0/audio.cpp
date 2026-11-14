@@ -188,7 +188,12 @@ template.def<@ggml.unary_f32.apply> device priority(1) @ggml_unary_f32_apply(%op
 
   %op_identity = index.constant 23 : index
   %is_identity = index.cmp eq, %op, %op_identity : index
-  %result = scf.select %is_identity, %value, %log_selected : f32
+  %identity_selected = scf.select %is_identity, %value, %log_selected : f32
+  %op_round_bf16 = index.constant 24 : index
+  %bf16_value = scalar.fptrunc %value : f32 to bf16
+  %rounded_value = scalar.extf %bf16_value : bf16 to f32
+  %is_round_bf16 = index.cmp eq, %op, %op_round_bf16 : index
+  %result = scf.select %is_round_bf16, %rounded_value, %identity_selected : f32
   template.return %result : f32
 }
 
@@ -375,6 +380,11 @@ template.def<@ggml.unary_f32.apply_vector4> device priority(1) @ggml_unary_f32_a
 
   %op_identity = index.constant 23 : index
   %is_identity = index.cmp eq, %op, %op_identity : index
-  %result = scf.select %is_identity, %values, %log_selected : vector<4xf32>
+  %identity_selected = scf.select %is_identity, %values, %log_selected : vector<4xf32>
+  %op_round_bf16 = index.constant 24 : index
+  %bf16_value = vector.fptrunc %values : vector<4xf32> to vector<4xbf16>
+  %rounded_value = vector.extf %bf16_value : vector<4xbf16> to vector<4xf32>
+  %is_round_bf16 = index.cmp eq, %op, %op_round_bf16 : index
+  %result = scf.select %is_round_bf16, %rounded_value, %identity_selected : vector<4xf32>
   template.return %result : vector<4xf32>
 }

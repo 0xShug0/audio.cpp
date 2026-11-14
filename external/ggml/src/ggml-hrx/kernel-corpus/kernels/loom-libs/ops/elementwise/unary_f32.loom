@@ -5,7 +5,7 @@ template.decl @ggml.unary_f32.apply(%arg0: index, %arg1: f32) -> (f32)
 
 amdgpu.target<gfx11-generic> @ggml_unary_f32_gfx11_wave64 {subgroup_size = 64}
 
-config.decl @ggml.unary_f32.op : %value: index where [range(%value, 0, 23)]
+config.decl @ggml.unary_f32.op : %value: index where [range(%value, 0, 24)]
 
 kernel.def target(@ggml_unary_f32_gfx11_wave64) export("ggml_unary_f32") @ggml_unary_f32(%element_count: index) {
   %one = index.constant 1 : index

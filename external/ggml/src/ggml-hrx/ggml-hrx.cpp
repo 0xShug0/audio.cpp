@@ -505,16 +505,14 @@ static void backend_synchronize(ggml_backend_t backend) {
     }
 }
 
-static const char * status_first_error(const ggml::hrx::Status & status) {
-    return status.errors().empty() ? "" : status.errors().front().c_str();
-}
-
 static enum ggml_status graph_compute(ggml_backend_t backend, ggml_cgraph * graph) {
     auto *                                context  = static_cast<ggml_backend_hrx_context *>(backend->context);
     const ggml::hrx::GraphExecutor        executor = ggml::hrx::GraphExecutor(*context);
     const ggml::hrx::GraphExecutionResult result   = executor.execute(*graph);
     if (!result.success()) {
-        GGML_LOG_ERROR("%s: %s\n", __func__, status_first_error(result.status));
+        for (const auto & message : result.status.errors()) {
+            GGML_LOG_ERROR("%s: %s\n", __func__, message.c_str());
+        }
     }
     return result.code;
 }
@@ -614,6 +612,8 @@ static bool eager_capability_declared(enum ggml_op op) {
         case GGML_OP_GATED_DELTA_NET:
         case GGML_OP_GET_ROWS:
         case GGML_OP_GLU:
+        case GGML_OP_REPEAT:
+        case GGML_OP_NORM:
         case GGML_OP_L2_NORM:
         case GGML_OP_MUL:
         case GGML_OP_MUL_MAT:
@@ -1027,6 +1027,14 @@ static bool device_supports_op(ggml_backend_dev_t device, const ggml_tensor * op
     }
     if (zero_output_elision_supported(op)) {
         return true;
+    }
+    if (op->op == GGML_OP_NORM || op->op == GGML_OP_REPEAT) {
+        return op->src[0] != nullptr && op->type == GGML_TYPE_F32 &&
+               op->src[0]->type == GGML_TYPE_F32 && ggml_is_contiguous(op);
+    }
+    if (op->op == GGML_OP_UNARY && ggml_get_unary_op(op) == GGML_UNARY_OP_ROUND_BF16) {
+        return op->src[0] != nullptr && op->type == GGML_TYPE_F32 &&
+               op->src[0]->type == GGML_TYPE_F32 && ggml_is_contiguous(op) && ggml_is_contiguous(op->src[0]);
     }
     const bool supported_binary = supported_binary_f32_tensor(op);
     if (supported_binary) {

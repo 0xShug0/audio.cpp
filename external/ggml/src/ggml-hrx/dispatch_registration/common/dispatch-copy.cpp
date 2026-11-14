@@ -201,7 +201,37 @@ static bool match_concat_dim0_f32_dispatch(const DispatchMatchContext & context,
 
 }  // namespace
 
+static bool match_repeat_f32_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    if (node == nullptr || node->inputs.size() != 1) return false;
+    const auto * source = context.graph.values().find(node->inputs[0]);
+    const auto * output = context.graph.values().find(node->output);
+    if (source == nullptr || output == nullptr || source->type != GGML_TYPE_F32 ||
+        output->type != GGML_TYPE_F32 || !packed_f32_layout(*output) || !f32_element_strides(*source)) {
+        return false;
+    }
+    size_t source_span = 0;
+    if (!strided_f32_storage_span_bytes(*source, source_span)) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_repeat_f32"));
+    dispatch.kernel.integer_parameters.emplace("element_count", output->element_count);
+    dispatch.kernel.integer_parameters.emplace("source_span", source_span / sizeof(float));
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (output->ne[i] % source->ne[i] != 0) return false;
+        dispatch.kernel.compile_parameters.emplace("ggml.repeat.src_ne" + std::to_string(i), std::to_string(source->ne[i]));
+        dispatch.kernel.compile_parameters.emplace("ggml.repeat.stride" + std::to_string(i), std::to_string(source->nb[i] / sizeof(float)));
+        if (i < 3) dispatch.kernel.compile_parameters.emplace("ggml.repeat.ne" + std::to_string(i), std::to_string(output->ne[i]));
+    }
+    dispatch.bindings.push_back({source->storage_root, source->storage_offset, source_span});
+    dispatch.bindings.push_back({output->id, 0, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 void register_copy_dispatch(DispatchRegistryBuilder & registry) {
+    registry.add({"common.repeat_f32", GGML_OP_REPEAT, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_repeat_f32_dispatch});
     registry.add({
         "common.copy_f32",
         GGML_OP_CPY,

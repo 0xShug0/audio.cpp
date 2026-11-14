@@ -300,6 +300,12 @@ target_link_libraries(ggml-hrx PRIVATE ggml-hrx-kernel-corpus hrx::hrx loomc::lo
 target_include_directories(ggml-hrx PRIVATE . "${CMAKE_CURRENT_BINARY_DIR}" ../../vendor)
 target_compile_definitions(ggml-hrx PRIVATE GGML_USE_HRX)
 
+option(GGML_HRX_BUILD_TESTS "Build the CPU-reference HRX operator test driver" OFF)
+if (GGML_HRX_BUILD_TESTS)
+    add_executable(test-hrx-ops ../../tests/test-backend-ops.cpp)
+    target_link_libraries(test-hrx-ops PRIVATE ggml Threads::Threads)
+endif()
+
 if (GGML_HRX_BUNDLE_RUNTIME_LIBS)
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/BundleRuntime.cmake")
     ggml_hrx_bundle_runtime(ggml-hrx)
