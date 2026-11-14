@@ -4,16 +4,20 @@
 #include "engine/framework/audio/fft.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
+#include "engine/framework/modules/streaming_conv_modules.h"
 
 #include <ggml-backend.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <complex>
 #include <limits>
 #include <set>
@@ -28,6 +32,7 @@ namespace detail {
 // One decode stream: device state (MOSS K/V rings, ConvNeXt histories) in its own context + buffer, plus the host
 // iSTFT / mixer / resampler holdback.
 struct Zonos3DecoderState {
+    std::array<double, 6> timing_ms{};  // graph/input preparation, compute, readback, waveform head, resample, flush
     uint64_t id = 0;  // decode graphs bind the device tensors of one stream
     std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free};
     std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> buffer{nullptr, ggml_backend_buffer_free};
@@ -153,10 +158,35 @@ public:
         st.id = ++next_stream_id_;
     }
 
-    // Drops the graphs bound to a closing stream's tensors.
-    void close(const State & st) {
-        graphs_.erase(std::remove_if(graphs_.begin(), graphs_.end(), [&](const auto & graph) { return graph->stream == st.id; }),
-                      graphs_.end());
+    std::unique_ptr<State> acquire() {
+        auto state = std::make_unique<State>();
+        if (idle_state_) {
+            state->id = idle_state_->id;
+            state->context = std::move(idle_state_->context);
+            state->buffer = std::move(idle_state_->buffer);
+            state->keys = std::move(idle_state_->keys);
+            state->values = std::move(idle_state_->values);
+            state->history = std::move(idle_state_->history);
+            idle_state_.reset();
+            ggml_backend_buffer_clear(state->buffer.get(), 0);
+        } else {
+            open(*state);
+        }
+        return state;
+    }
+
+    void close(std::unique_ptr<State> state) {
+        const std::array<const char *, 6> keys{"zonos3.codec.prepare_ms", "zonos3.codec.compute_ms",
+            "zonos3.codec.readback_ms", "zonos3.codec.head_ms", "zonos3.codec.resample_ms", "zonos3.codec.flush_ms"};
+        for (size_t i = 0; i < keys.size(); ++i) debug::timing_log_scalar(keys[i], state->timing_ms[i]);
+        // Keep one idle device state and its graph bindings for the next request.
+        // Other live streams continue to own independent state.
+        if (idle_state_) {
+            const auto id = idle_state_->id;
+            graphs_.erase(std::remove_if(graphs_.begin(), graphs_.end(),
+                [id](const auto & graph) { return graph->stream == id; }), graphs_.end());
+        }
+        idle_state_ = std::move(state);
     }
 
     std::vector<float> decode(State & st, const int32_t * frames, int n) {
@@ -177,18 +207,22 @@ public:
             st.frames_done += count;
             st.rs_buf.insert(st.rs_buf.end(), internal.begin(), internal.end());
             st.rs_in += static_cast<int64_t>(internal.size());
+            const auto resample_started = std::chrono::steady_clock::now();
             resample(st, false, audio);
+            st.timing_ms[4] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - resample_started).count();
         }
         return audio;
     }
 
     std::vector<float> flush(State & st) {
+        const auto flush_started = std::chrono::steady_clock::now();
         std::vector<float> internal;
         head_flush(st, internal);
         st.rs_buf.insert(st.rs_buf.end(), internal.begin(), internal.end());
         st.rs_in += static_cast<int64_t>(internal.size());
         std::vector<float> audio;
         resample(st, true, audio);
+        st.timing_ms[5] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - flush_started).count();
         return audio;
     }
 
@@ -291,17 +325,8 @@ private:
         };
         auto convnext = [&](const std::string & p, int64_t channels) {
             ConvNextWeights w;
-            // Depthwise taps are stored [K, C] (ggml ne); keep each tap's channels contiguous: [C, K] -> logical {K, C}.
-            const auto taps = source.require_metadata(p + ".dw.weight").shape;
-            if (taps.size() != 2 || taps[0] != channels || taps[1] != kConvKernel) reject("tensor '" + p + ".dw.weight' shape");
-            const auto stored = host(p + ".dw.weight", {channels, kConvKernel});  // [C][K]
-            std::vector<float> repacked(stored.size());
-            for (int64_t c = 0; c < channels; ++c) {
-                for (int64_t k = 0; k < kConvKernel; ++k) {
-                    repacked[static_cast<size_t>(c + channels * k)] = stored[static_cast<size_t>(k + kConvKernel * c)];
-                }
-            }
-            w.dw = store_->make_f32(core::TensorShape::from_dims({kConvKernel, channels}), std::move(repacked));
+            w.dw = store_->make_f32(core::TensorShape::from_dims({channels, 1, kConvKernel}),
+                                   host(p + ".dw.weight", {channels, kConvKernel}));
             w.dw_bias = plain(p + ".dw.bias", {channels});
             w.norm_weight = plain(p + ".norm.weight", {channels});
             w.norm_bias = plain(p + ".norm.bias", {channels});
@@ -359,6 +384,22 @@ private:
         }
         mixer_ = host("head.mixer.weight", {2, fir_kernel_});                            // [2][K]
         rs_kernel_ = host("resample.kernel", {rs_new_, 2 * rs_width_ + rs_orig_});      // [new][2W + orig]
+        const int kernel_size = 2 * rs_width_ + rs_orig_;
+        const int grouped_taps = kernel_size / 8 * 8;
+        rs_support_.reserve(static_cast<size_t>(rs_new_));
+        for (int phase = 0; phase < rs_new_; ++phase) {
+            const auto * row = rs_kernel_.data() + static_cast<size_t>(phase) * kernel_size;
+            int begin = 0;
+            int end = kernel_size;
+            while (begin < end && row[begin] == 0.0f) ++begin;
+            while (end > begin && row[end - 1] == 0.0f) --end;
+            // Keep each nonzero tap in its original accumulator lane. The
+            // scalar tail below is still evaluated in its original order.
+            rs_support_.emplace_back(std::min(begin / 8 * 8, grouped_taps),
+                                     std::min((end + 7) / 8 * 8, grouped_taps));
+        }
+        rs_window_.resize(static_cast<size_t>(kernel_size));
+        rs_output_.resize(static_cast<size_t>(rs_new_));
         for (const auto & tensor : source.tensors()) {
             if (!consumed_.count(tensor.name)) reject("unmapped tensor '" + tensor.name + "'");
         }
@@ -414,12 +455,15 @@ private:
         auto * xf = ggml_concat(g, history, x, 1);  // [C, K - 1 + T]
         ggml_build_forward_expand(graph, ggml_cpy(g, ggml_view_2d(g, xf, C, kConvKernel - 1, xf->nb[1],
                                                                   static_cast<size_t>(T) * xf->nb[1]), history));
-        ggml_tensor * h = nullptr;
-        for (int k = 0; k < kConvKernel; ++k) {
-            auto * term = ggml_mul(g, ggml_view_2d(g, xf, C, T, xf->nb[1], static_cast<size_t>(k) * xf->nb[1]),
-                                   ggml_view_1d(g, w.dw.tensor, C, static_cast<size_t>(k) * w.dw.tensor->nb[1]));
-            h = h ? ggml_add(g, h, term) : term;
-        }
+        modules::DepthwiseConv1dConfig config;
+        config.channels = C;
+        config.kernel_size = kConvKernel;
+        config.use_bias = false;
+        auto * h = modules::DepthwiseConv1dModule(config).build_time_major(ctx,
+            core::wrap_tensor(ggml_reshape_3d(g, xf, C, T + kConvKernel - 1, 1),
+                              core::TensorShape::from_dims({1, T + kConvKernel - 1, C})),
+            {w.dw, std::nullopt}).tensor;
+        h = ggml_reshape_2d(g, h, C, T);
         h = ggml_add(g, h, w.dw_bias.tensor);
         h = layer_norm(ctx, h, w.norm_weight, w.norm_bias, convnext_eps_);
         h = gelu(ctx, linear(ctx, h, w.pw1, &w.pw1_bias));
@@ -457,10 +501,13 @@ private:
         auto * keys = ggml_set_rows(g, key_ring, k, in.slots);                                // [hd, cap, nh]
         auto * values = ggml_set_rows(g, value_ring, v, in.slots);
         auto * qp = ggml_cont(g, ggml_permute(g, q, 0, 2, 1, 3));                             // [hd, T, nh]
-        auto * scores = ggml_soft_max_ext(g, ggml_mul_mat(g, keys, qp), in.mask, 1.0f / std::sqrt(static_cast<float>(hd)), 0.0f);
-        auto * vt = ggml_cont(g, ggml_permute(g, values, 1, 0, 2, 3));                        // [cap, hd, nh]
-        auto * o = ggml_mul_mat(g, vt, scores);                                               // [hd, T, nh]
-        o = ggml_reshape_2d(g, ggml_cont(g, ggml_permute(g, o, 0, 2, 1, 3)), d, T);
+        const auto query_shape = core::TensorShape::from_dims({1, nh, T, hd});
+        const auto cache_shape = core::TensorShape::from_dims({1, nh, key_ring->ne[1], hd});
+        const auto context = modules::ScaledDotProductAttentionModule({hd}).build(ctx,
+            core::wrap_tensor(qp, query_shape), core::wrap_tensor(keys, cache_shape),
+            core::wrap_tensor(values, cache_shape),
+            core::wrap_tensor(in.mask, core::TensorShape::from_dims({T, key_ring->ne[1]}), GGML_TYPE_F16));
+        auto * o = ggml_reshape_2d(g, ggml_cont(g, context.tensor), d, T);
         x = ggml_add(g, x, ggml_mul(g, linear(ctx, o, w.wo), w.attn_scale.tensor));
         h = layer_norm(ctx, x, w.norm2_weight, w.norm2_bias, ln_eps_);
         h = linear(ctx, gelu(ctx, linear(ctx, h, w.ffn1)), w.ffn2);
@@ -560,6 +607,7 @@ private:
 
     // Frames [frames_done, frames_done + n) through the graph, then the host iSTFT/mixer (zac.cpp:1216-1366).
     void decode_chunk(State & st, const int32_t * frames, int n, std::vector<float> & internal) {
+        const auto prepare_started = std::chrono::steady_clock::now();
         auto & graph = graph_for(st, n);
         std::vector<int32_t> column(static_cast<size_t>(n));
         for (int c = 0; c < n_codebooks_; ++c) {
@@ -597,13 +645,20 @@ private:
             }
             ggml_backend_tensor_set(si.mask, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
         }
+        const auto compute_started = std::chrono::steady_clock::now();
+        st.timing_ms[0] += std::chrono::duration<double, std::milli>(compute_started - prepare_started).count();
         graph.prepared->compute();
+        const auto readback_started = std::chrono::steady_clock::now();
+        st.timing_ms[1] += std::chrono::duration<double, std::milli>(readback_started - compute_started).count();
         const int64_t columns = static_cast<int64_t>(n) * (internal_hop_ / head_hop_);
         for (size_t i = 0; i < 2; ++i) {
             spec_[i].resize(static_cast<size_t>(n_fft_[i] + 2) * static_cast<size_t>(columns));
             ggml_backend_tensor_get(graph.spec[i], spec_[i].data(), 0, spec_[i].size() * sizeof(float));
         }
+        const auto head_started = std::chrono::steady_clock::now();
+        st.timing_ms[2] += std::chrono::duration<double, std::milli>(head_started - readback_started).count();
         head_push(st, columns, internal);
+        st.timing_ms[3] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - head_started).count();
     }
 
     // ---- host iSTFT + FIR mixer (zac.cpp:960-1078) ----
@@ -664,6 +719,9 @@ private:
             const int bins = n / 2 + 1;
             spectrum_.resize(static_cast<size_t>(columns) * static_cast<size_t>(bins));
             frames_.resize(static_cast<size_t>(columns) * static_cast<size_t>(n));
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(execution_.config().threads)
+#endif
             for (int64_t c = 0; c < columns; ++c) {
                 const float * logmag = spec_[i].data() + static_cast<size_t>(c) * static_cast<size_t>(n + 2);
                 const float * phase = logmag + bins;
@@ -678,7 +736,7 @@ private:
             irfft_[i]->inverse({static_cast<size_t>(columns), static_cast<size_t>(n)},
                                {static_cast<std::ptrdiff_t>(bins * sizeof(std::complex<float>)), sizeof(std::complex<float>)},
                                {static_cast<std::ptrdiff_t>(n * sizeof(float)), sizeof(float)}, 1, spectrum_.data(),
-                               frames_.data(), 1.0f / static_cast<float>(n), 1);
+                               frames_.data(), 1.0f / static_cast<float>(n), static_cast<size_t>(execution_.config().threads));
             const float * win = window_[i].data();
             for (int64_t c = 0; c < columns; ++c) {
                 const int64_t t = st.head_frames + c;
@@ -720,14 +778,14 @@ private:
     // ---- 44160 -> 44100 resampler (zac.cpp:1368-1402) ----
     // out[b*new + i] = sum_k K[i][k] * x[b*orig + k - width], x = 0 outside [0, rs_in). Without `flush` block b waits
     // for its last input; `flush` zero-extends and truncates the total to ceil(new * rs_in / orig).
-    void resample(State & st, bool flush, std::vector<float> & audio) const {
+    void resample(State & st, bool flush, std::vector<float> & audio) {
         const int O = rs_orig_;
         const int N = rs_new_;
         const int W = rs_width_;
         const int KL = 2 * W + O;
         const int64_t total = flush ? (static_cast<int64_t>(N) * st.rs_in + O - 1) / O : -1;
-        std::vector<float> window(static_cast<size_t>(KL));
-        std::vector<float> y(static_cast<size_t>(N));
+        auto & window = rs_window_;
+        auto & y = rs_output_;
         for (;; ++st.rs_next_block) {
             const int64_t b = st.rs_next_block;
             const int64_t x0 = b * O - W;
@@ -739,12 +797,12 @@ private:
             for (int i = 0; i < N; ++i) {
                 const float * row = rs_kernel_.data() + static_cast<size_t>(i) * static_cast<size_t>(KL);
                 std::array<float, 8> acc{};
-                int k = 0;
-                for (; k + 8 <= KL; k += 8) {
+                const auto support = rs_support_[static_cast<size_t>(i)];
+                for (int k = support.first; k < support.second; k += 8) {
                     for (int l = 0; l < 8; ++l) acc[static_cast<size_t>(l)] += row[k + l] * window[static_cast<size_t>(k + l)];
                 }
                 float sum = ((acc[0] + acc[1]) + (acc[2] + acc[3])) + ((acc[4] + acc[5]) + (acc[6] + acc[7]));
-                for (; k < KL; ++k) sum += row[k] * window[static_cast<size_t>(k)];
+                for (int k = KL / 8 * 8; k < KL; ++k) sum += row[k] * window[static_cast<size_t>(k)];
                 y[static_cast<size_t>(i)] = sum;
             }
             const int64_t emit = flush ? std::min<int64_t>(N, total - b * N) : N;
@@ -780,9 +838,12 @@ private:
     std::array<std::vector<float>, 2> window_;
     std::vector<float> mixer_;      // [2][fir_kernel]
     std::vector<float> rs_kernel_;  // [new][2 * width + orig]
+    std::vector<std::pair<int, int>> rs_support_;
+    std::vector<float> rs_window_, rs_output_;
     std::array<std::shared_ptr<audio::RealFFTPlan>, 2> irfft_;
 
     std::vector<int> caps_;  // K/V ring rows per stage
+    std::unique_ptr<State> idle_state_;
     uint64_t next_stream_id_ = 0;
 
     std::vector<std::unique_ptr<DecodeGraph>> graphs_;
@@ -804,11 +865,9 @@ int Zonos3CodecDecoder::samples_per_frame() const { return impl_->samples_per_fr
 float Zonos3CodecDecoder::headroom_db() const { return impl_->headroom_db(); }
 
 Zonos3DecoderStream::Zonos3DecoderStream(Zonos3CodecDecoder & decoder)
-    : decoder_(decoder), state_(std::make_unique<detail::Zonos3DecoderState>()) {
-    decoder_.impl_->open(*state_);
-}
+    : decoder_(decoder), state_(decoder_.impl_->acquire()) {}
 
-Zonos3DecoderStream::~Zonos3DecoderStream() { decoder_.impl_->close(*state_); }
+Zonos3DecoderStream::~Zonos3DecoderStream() { decoder_.impl_->close(std::move(state_)); }
 
 std::vector<float> Zonos3DecoderStream::decode(const int32_t * frames, int n) {
     return decoder_.impl_->decode(*state_, frames, n);

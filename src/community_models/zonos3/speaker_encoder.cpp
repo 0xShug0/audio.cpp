@@ -9,6 +9,7 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/runtime/errors.h"
 
 #include <ggml-backend.h>
@@ -117,7 +118,15 @@ public:
                     fbank.values[static_cast<size_t>(t) * kMels + static_cast<size_t>(b)] - fmean;
             }
         }
-        return run_network(x0, T);
+        if (!graph_ || frames_ != T) build_graph(T);
+        ggml_backend_tensor_set(input_, x0.data(), 0, x0.size() * sizeof(float));
+        graph_->compute();
+        std::vector<float> embedding(kEmbedding);
+        ggml_backend_tensor_get(output_, embedding.data(), 0, embedding.size() * sizeof(float));
+        for (float v : embedding) {
+            if (!std::isfinite(v)) throw std::runtime_error("zonos3: speaker encoder produced a non-finite embedding");
+        }
+        return embedding;
     }
 
 private:
@@ -307,10 +316,13 @@ private:
         }
     };
 
-    std::vector<float> run_network(const std::vector<float> & x0, int T) const {
-        core::PreparedGraph prepared(execution_, core::PreparedGraphConfig{
+    void build_graph(int T) const {
+        graph_.reset();
+        frames_ = 0;
+        auto owner = std::make_unique<core::PreparedGraph>(execution_, core::PreparedGraphConfig{
             "zonos3.speaker_encoder", ggml_graph_overhead_custom(kGraphNodes, false) + 2 * kGraphNodes * ggml_tensor_overhead(),
             kGraphNodes, 4 * ggml_tensor_overhead()});
+        auto & prepared = *owner;
         ggml_tensor * input = ggml_new_tensor_4d(prepared.persistent_build_context().ggml, GGML_TYPE_F32, T, kMels, 1, 1);
         prepared.allocate_persistent();
         auto & ctx = prepared.build_context();
@@ -340,30 +352,31 @@ private:
         ggml_tensor * att = g.linear(ggml_tanh(c, g.linear(fused, "pool.l1")), "pool.l2");  // [2560,T]
         ggml_tensor * alpha = ggml_soft_max(c, ggml_cont(c, ggml_transpose(c, att)));     // [T,2560]
         ggml_tensor * xt = ggml_cont(c, ggml_transpose(c, fused));                        // [T,2560]
-        ggml_tensor * mean = ggml_sum_rows(c, ggml_mul(c, alpha, xt));                    // [1,2560]
-        ggml_tensor * sq = ggml_sum_rows(c, ggml_mul(c, alpha, ggml_mul(c, xt, xt)));
-        ggml_tensor * var = ggml_sub(c, sq, ggml_mul(c, mean, mean));
-        ggml_tensor * stdv = ggml_sqrt(c, ggml_clamp(c, var, kPoolVarFloor, 3.0e38f));
+        const auto shape = core::TensorShape::from_dims({kFeat, T});
+        const auto statistics = modules::WeightedStatisticsModule({-1, kPoolVarFloor, 3.0e38f}).build(
+            ctx, core::wrap_tensor(xt, shape), core::wrap_tensor(alpha, shape));
+        auto * mean = statistics.mean.tensor;
+        auto * stdv = statistics.stddev.tensor;
         ggml_tensor * pooled = ggml_concat(c, ggml_reshape_2d(c, mean, kFeat, 1), ggml_reshape_2d(c, stdv, kFeat, 1), 0);
         ggml_tensor * pooled_bn = ggml_add(c, ggml_mul(c, pooled, W("bn.scale")), W("bn.shift"));
         ggml_tensor * emb = g.linear(pooled_bn, "linear", false);  // [192,1]
         ggml_set_output(emb);
         ggml_build_forward_expand(prepared.graph(), emb);
         prepared.allocate();
-        ggml_backend_tensor_set(input, x0.data(), 0, x0.size() * sizeof(float));
-        prepared.compute();
-        std::vector<float> embedding(kEmbedding);
-        ggml_backend_tensor_get(emb, embedding.data(), 0, embedding.size() * sizeof(float));
-        for (float v : embedding) {
-            if (!std::isfinite(v)) throw std::runtime_error("zonos3: speaker encoder produced a non-finite embedding");
-        }
-        return embedding;
+        input_ = input;
+        output_ = emb;
+        frames_ = T;
+        graph_ = std::move(owner);
     }
 
     std::shared_ptr<const assets::TensorSource> source_;
     core::ExecutionContext & execution_;
     std::unique_ptr<core::BackendWeightStore> store_;
     std::map<std::string, core::TensorValue> weights_;
+    mutable std::unique_ptr<core::PreparedGraph> graph_;
+    mutable ggml_tensor * input_ = nullptr;
+    mutable ggml_tensor * output_ = nullptr;
+    mutable int frames_ = 0;
 };
 
 Zonos3SpeakerEncoder::Zonos3SpeakerEncoder(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution)

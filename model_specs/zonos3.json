@@ -54,7 +54,7 @@
       {"name": "repetition_penalty", "type": "float", "description": "Penalty on codes seen in the repetition window.", "required": false, "min": 1, "default": 2.4},
       {"name": "repetition_window", "type": "int", "description": "Frames of per-codebook history the repetition penalty looks at.", "required": false, "min": 1, "default": 96},
       {"name": "repetition_codebooks", "type": "int", "description": "Leading codebooks the repetition penalty applies to; -1 applies it to all ten.", "required": false, "min": -1, "max": 10, "default": 6},
-      {"name": "cfg_scale", "type": "float", "description": "Speaker classifier-free guidance; 1 disables it. Needs a speaker source.", "required": false, "min": 0, "default": 1.0},
+      {"name": "guidance_scale", "type": "float", "description": "Speaker classifier-free guidance; 1 disables it. Needs a speaker source.", "required": false, "min": 0, "default": 1.0},
       {"name": "speaker_mode", "type": "enum", "description": "How --voice-ref audio conditions the prompt: embedding (MECT-B2 speaker embedding) or reference (ZAC reference codes; needs zac-encoder.gguf and ssl-teacher.gguf).", "values": ["embedding", "reference"], "required": false, "default": "embedding"},
       {"name": "speaker_embedding_file", "type": "path", "description": "float32 .npy speaker embedding with shape [192] or [1,192], as written by encode_reference_only.", "required": false},
       {"name": "reference_codes_file", "type": "path", "description": "Integer or float .npy reference codes with shape [T,10], values 0..4095; the first 900 frames are used.", "required": false},

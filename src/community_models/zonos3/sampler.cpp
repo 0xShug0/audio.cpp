@@ -26,7 +26,9 @@ Zonos3Sampler::Zonos3Sampler(const Zonos3SamplingOptions & options, int codebook
 }
 
 void Zonos3Sampler::accept(const std::vector<int32_t> & frame) {
-    for (int cb = 0; cb < codebooks_ && cb < static_cast<int>(frame.size()); ++cb) {
+    const int history_codebooks = options_.repetition_penalty == 1.0f ? 0
+        : (options_.repetition_codebooks < 0 ? codebooks_ : options_.repetition_codebooks);
+    for (int cb = 0; cb < history_codebooks && cb < codebooks_ && cb < static_cast<int>(frame.size()); ++cb) {
         auto & history = history_[static_cast<size_t>(cb)];
         history.push_back(frame[static_cast<size_t>(cb)]);
         while (static_cast<int>(history.size()) > options_.repetition_window) history.pop_front();
