@@ -943,6 +943,8 @@ Have a project using audio.cpp? Submit a PR or let me know, and I’ll be happy 
 
 For supported precisions, memory-saving options and performance presets, see each model’s usage guide and the [GGUF guide](docs/gguf.md).
 
+Historical measurements are preserved in the [initial-release performance report](docs/reports/initial_release_performance.md).
+
 ## Notes
 
 - The repo supports multiple backends, but backend and model coverage are model-dependent.
