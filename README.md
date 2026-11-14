@@ -940,6 +940,7 @@ Have a project using audio.cpp? Submit a PR or let me know, and I’ll be happy 
 - [OpenDub](https://github.com/estebanstifli/OpenDub) is an open-source desktop video dubbing studio for Windows, Linux, and macOS. It uses audio.cpp for dialogue separation, transcription, alignment, speaker diarization, and IndexTTS2.5 speech generation, with editable segments, voice and emotion references, synchronized playback, and video/audio export.
 - [pyVideoTrans](https://github.com/jianchang512/pyvideotrans): A one-stop video translation and dubbing tool that integrates audio.cpp as one of its built-in dubbing options.
 - [LocalText2Voice](https://github.com/estebanstifli/LocalText2Voice) is a free, open-source desktop app for long-form audiobooks, podcasts and narrated videos. Features include multi-voice scripts, voice cloning and design, emotion controls, segment editing and regeneration, optional Whisper verification, M4B/MP3 export, subtitles, music mixing, a Video Storyboard beta and MCP automation.
+- [Woogles-TV](https://github.com/jgbrwn/woogles-tv) is an open-source (AGPL) crossword board game for the living room: the board shows on a TV (Android TV, Chromecast or any browser) while each player's tiles stay private on their phone. It runs audio.cpp's server with Pocket TTS in Docker as an optional announcer voice, streaming moves, scores and word definitions to the TV with a choice of 15 voices.
 
 For supported precisions, memory-saving options and performance presets, see each model’s usage guide and the [GGUF guide](docs/gguf.md).
 
