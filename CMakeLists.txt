@@ -533,6 +533,7 @@ add_library(engine_core OBJECT
     src/framework/core/attention_fallback.cpp
     src/framework/core/deferred_tensor_writer.cpp
     src/framework/core/disk_expert_weight_store.cpp
+    src/framework/core/moe_resources.cpp
     src/framework/core/graph_workspace.cpp
     src/framework/core/prepared_graph.cpp
     src/framework/core/execution_context.cpp

@@ -2,7 +2,7 @@
 
 #include "engine/models/ming3_audio/assets.h"
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/core/disk_expert_weight_store.h"
+#include "engine/framework/core/moe_resources.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 
@@ -11,10 +11,7 @@
 namespace engine::models::ming3_audio {
 
 struct ThinkerOptions {
-    bool disk_experts = false;
-    bool pin_experts = true;
-    int64_t expert_cache_size = 8;
-    int64_t disk_expert_read_threads = 1;
+    core::MoeExecutionPolicy moe{core::MoeExpertResidency::Backend, true, 8, 1, {}, 0};
 };
 
 struct KdaWeights {
@@ -58,7 +55,7 @@ struct ThinkerWeights {
                    const ThinkerConfig & config, const ThinkerOptions & options = {});
 
     core::BackendWeightStore store;
-    std::unique_ptr<core::DiskExpertWeightStore> disk_store;
+    std::unique_ptr<core::MoeResources> experts;
     core::TensorValue embedding;
     core::TensorValue head;
     core::TensorValue group_identity;

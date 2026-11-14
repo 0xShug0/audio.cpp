@@ -99,7 +99,8 @@ int main(int argc, char ** argv) {
         if (capacity == 0) capacity = required_capacity;
         if (capacity < required_capacity) throw std::runtime_error("--capacity cannot hold the input and expected output");
         engine::models::ming3_audio::ThinkerOptions options;
-        options.disk_experts = disk_experts;
+        options.moe.residency = disk_experts ? engine::core::MoeExpertResidency::Staged
+                                           : engine::core::MoeExpertResidency::Backend;
         engine::models::ming3_audio::Thinker thinker(execution, source, config.thinker, capacity, options);
         engine::debug::trace_log_scalar("ming3_audio.test.capacity", capacity);
         engine::debug::trace_log_scalar("ming3_audio.test.disk_experts", disk_experts);

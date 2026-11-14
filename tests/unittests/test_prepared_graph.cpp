@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <future>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -26,16 +27,81 @@ void check_session_moe_option() {
     struct Session : engine::runtime::RuntimeSessionBase {
         using RuntimeSessionBase::RuntimeSessionBase;
         using RuntimeSessionBase::execution_context;
+        using RuntimeSessionBase::acquire_moe_execution;
+        using RuntimeSessionBase::mark_prepared;
+        using RuntimeSessionBase::require_prepared;
     };
     engine::runtime::SessionOptions options;
     options.backend.type = core::BackendType::Cpu;
     options.backend.threads = 8;
     Session ordinary(options);
     require(ordinary.execution_context().moe_cpu_share() == 0, "omitted session option must disable hybrid execution");
+    ordinary.mark_prepared();
+    for (const char * value : {"0", "0.0", "-0", "0e0"}) {
+        auto disabled_options = options;
+        disabled_options.options["moe_cpu_share"] = value;
+        Session disabled(disabled_options);
+        disabled.mark_prepared();
+        disabled.require_prepared("disabled MoE option regression test");
+        require(disabled.execution_context().moe_cpu_share() == 0 &&
+                !disabled.execution_context().has_moe_resources(),
+                "explicit zero must not require or create MoE resources");
+    }
+    for (const char * key : {"moe_disk_experts", "moe_pin_experts", "moe_expert_cache_size",
+             "moe_disk_expert_read_threads", "moe_cpu_expert_layers"}) {
+        auto unsupported_options = options;
+        unsupported_options.options[key] = "0";
+        Session unsupported(unsupported_options);
+        bool rejected = false;
+        try { unsupported.mark_prepared(); }
+        catch (const std::invalid_argument & error) {
+            rejected = std::string(error.what()).find("does not support shared MoE resources") != std::string::npos;
+        }
+        require(rejected, "session silently accepted MoE controls without resource integration");
+    }
     options.options["moe_cpu_share"] = "0.5";
     Session enabled(options);
+    bool active_rejected = false;
+    try { enabled.mark_prepared(); }
+    catch (const std::invalid_argument & error) {
+        active_rejected = std::string(error.what()).find("does not support shared MoE resources") != std::string::npos;
+    }
+    require(active_rejected, "unsupported active MoE CPU share was accepted");
     require(enabled.execution_context().moe_cpu_share() == 0.5F, "session option did not reach execution context");
     require(ordinary.execution_context().moe_cpu_share() == 0, "session option leaked across sessions");
+    Session independent(engine::runtime::SessionOptions{options});
+    for (bool registered : {false, true}) {
+        if (registered) {
+            ordinary.execution_context().register_moe_resources();
+            independent.execution_context().register_moe_resources();
+        }
+        std::promise<void> release;
+        std::promise<void> acquired;
+        auto release_signal = release.get_future();
+        auto active = std::async(std::launch::async, [&] {
+            auto lease = ordinary.acquire_moe_execution();
+            acquired.set_value();
+            release_signal.wait();
+        });
+        acquired.get_future().wait();
+        bool overlap_rejected = false;
+        try { auto lease = ordinary.acquire_moe_execution(); }
+        catch (const std::runtime_error & error) {
+            overlap_rejected = std::string(error.what()).find("overlapping requests") != std::string::npos;
+        }
+        bool independent_acquired = false;
+        try {
+            auto lease = independent.acquire_moe_execution();
+            independent_acquired = lease.owns_lock();
+        } catch (const std::runtime_error &) {
+            // Drain the first request before reporting a shared-lock defect.
+        }
+        release.set_value();
+        active.get();
+        require(overlap_rejected, "overlapping MoE session execution was accepted");
+        require(independent_acquired, "independent MoE sessions share a request lock");
+        require(ordinary.acquire_moe_execution().owns_lock(), "completed execution did not release session ownership");
+    }
     core::ExecutionContext moved(std::move(enabled.execution_context()));
     require(moved.moe_cpu_share() == 0.5F, "move lost session execution policy");
     for (const char * value : {"-0.1", "1.1", "nan", "typo"}) {

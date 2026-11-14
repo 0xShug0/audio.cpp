@@ -26,6 +26,7 @@ ExecutionContext::~ExecutionContext() {
 ExecutionContext::ExecutionContext(ExecutionContext && other) noexcept
     : config_(std::move(other.config_)),
       moe_cpu_share_(other.moe_cpu_share_),
+      moe_resources_registered_(other.moe_resources_registered_),
       backend_(other.backend_) {
     other.backend_ = nullptr;
 }
@@ -39,6 +40,7 @@ ExecutionContext & ExecutionContext::operator=(ExecutionContext && other) noexce
     }
     config_ = std::move(other.config_);
     moe_cpu_share_ = other.moe_cpu_share_;
+    moe_resources_registered_ = other.moe_resources_registered_;
     backend_ = other.backend_;
     other.backend_ = nullptr;
     return *this;

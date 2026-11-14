@@ -135,14 +135,9 @@ public:
         const auto storage = transcribe_weight_type(
             runtime::find_option(options.options, {"nemotron_transcribe.weight_type"}).value_or("native"));
         DecoderOptions decoder_options;
-        decoder_options.disk_experts = runtime::parse_bool_option(runtime::find_option(options.options,
-            {"nemotron_transcribe.disk_experts"}).value_or("false"), "nemotron_transcribe.disk_experts");
-        decoder_options.pin_experts = runtime::parse_bool_option(runtime::find_option(options.options,
-            {"nemotron_transcribe.pin_experts"}).value_or("false"), "nemotron_transcribe.pin_experts");
-        decoder_options.expert_cache_size = runtime::parse_positive_i64_option(options.options,
-            {"nemotron_transcribe.expert_cache_size"}, 8);
-        decoder_options.disk_expert_read_threads = bounded_option(options,
-            "nemotron_transcribe.disk_expert_read_threads", 4, 1, 64);
+        decoder_options.moe = core::resolve_moe_execution_policy(options.options, "nemotron_transcribe",
+            decoder_options.moe, static_cast<size_t>(std::count(decoder_config.block_pattern.begin(),
+                decoder_config.block_pattern.end(), 'E')));
         encoder_ = std::make_unique<ParallelExpertEncoder>(execution_context(), *assets_->encoder_weights, encoder_config, storage);
         decoder_ = std::make_unique<NemotronHDecoderRuntime>(assets_->decoder_weights, execution_context(), decoder_config, storage, decoder_options);
         assets_->decoder_weights->release_storage();
@@ -154,12 +149,14 @@ public:
     runtime::RunMode run_mode() const override { return task_.mode; }
 
     void prepare(const runtime::SessionPreparationRequest & request) override {
+        const auto execution = acquire_moe_execution();
         if (!request.audio || request.audio->sample_rate <= 0 || request.audio->channels <= 0)
             throw runtime::InvalidRequestError("Nemotron Transcribe requires a valid audio format");
         mark_prepared();
     }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
+        const auto execution = acquire_moe_execution();
         require_prepared("Nemotron Transcribe run");
         if (!request.audio_input) throw runtime::InvalidRequestError("Nemotron Transcribe requires audio");
         const auto & audio = *request.audio_input;
@@ -357,10 +354,11 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_nemotron_transcribe_loader() {
         const auto assets = load_transcribe_assets(path);
         const auto storage = transcribe_weight_type(
             runtime::find_option(options, {"nemotron_transcribe.weight_type"}).value_or("native"));
-        const bool offload = runtime::parse_bool_option(runtime::find_option(options,
-            {"nemotron_transcribe.disk_experts"}).value_or("false"), "nemotron_transcribe.disk_experts");
-        const auto slots = offload ? runtime::parse_positive_i64_option(options,
-            {"nemotron_transcribe.expert_cache_size"}, 8) : 0;
+        const auto policy = core::resolve_moe_execution_policy(options, "nemotron_transcribe",
+            DecoderOptions{}.moe, static_cast<size_t>(std::count(assets->decoder.block_pattern.begin(),
+                assets->decoder.block_pattern.end(), 'E')));
+        const bool offload = policy.residency == core::MoeExpertResidency::Staged;
+        const auto slots = offload ? policy.cache_slots : 0;
         runtime::ModelResourcePlan plan;
         // Report both files so the host does not price the compressed decoder
         // again. A storage override can expand it far beyond its file size.

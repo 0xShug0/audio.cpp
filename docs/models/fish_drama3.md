@@ -155,7 +155,7 @@ Offline decoding is unchanged.
   --model models\Drama-3-GGUF\drama-3-backbone-8bit-experts-Q2_K.gguf `
   --text 'A quick test of Drama Three on Windows.' `
   --max-tokens 500 --seed 123 --threads 8 `
-  --session-option fish_drama3.cpu_expert_layers=8 `
+  --session-option moe_cpu_expert_layers=8 `
   --session-option fish_drama3.context_length=2048 `
   --out speech.wav
 ```
@@ -249,6 +249,18 @@ checkpoint or session setting, or leaves the optional value unset as described.
 
 ## Session Options (use with `--session-option`)
 
+MoE defaults: resident banks, pinning off, 32 cache slots, one read thread,
+four CPU MoE layers; CPU share is zero.
+Use the [shared MoE controls](../usage.md#shared-moe-session-controls) via CLI
+flags, `--session-option`, or the server model's `session_options`.
+Legacy `fish_drama3.disk_experts`, `.pin_experts`, `.expert_cache_size`,
+`.disk_expert_read_threads`, and `.cpu_expert_layers` aliases remain accepted;
+supplying both a canonical key and its alias is an error, even with equal values.
+CPU counts select the first N MoE ordinals, skipping dense-only backbone layers.
+CPU-selected layers override `moe_cpu_share` and retain bounded CPU caches in
+staged mode. Both `moe_pin_experts=true` and `fish_drama3.pin_experts=true`
+are rejected without staging, preserving alias equivalence.
+
 | Option | Type / values | Default | Description |
 |---|---|---|---|
 | `fish_drama3.perf_mode` | `off`, `cuda_perf` | `off` | AR decode preset. cuda_perf enables fused MoE, 256-row attention buckets and device sampling. F16 KV storage, codec batching/overlap and prefill-cache defaults remain unchanged in both modes. Explicit session options override the preset. |
@@ -262,11 +274,12 @@ checkpoint or session setting, or leaves the optional value unset as described.
 | `fish_drama3.device_sampling` | `bool` | `false` | Enable tower decode and codebook sampling in one cached backend graph. Disabled by default; enabled by cuda_perf unless explicitly overridden. Uses F32 probabilities; sampled outputs may differ from the host sampler. |
 | `fish_drama3.profile_first_audio` | `bool` | `false` | Emit first-audio stage timings to stderr for performance diagnosis. Disabled by default. |
 | `fish_drama3.context_length` | `int` | `2048` | Cache capacity for prompt plus generated frames; includes references and history. Declared range: minimum 1. |
-| `fish_drama3.cpu_expert_layers` | `int` | `4` | Number of the 40 expert banks kept and evaluated on CPU; use 4 for a 24 GB profile or 24 for a 16 GB profile. Dense layers and the tower use the selected backend. Declared range: minimum 0, maximum 40. |
-| `fish_drama3.disk_experts` | `bool` | `false` | Read routed expert weights from GGUF on demand into a bounded cache instead of keeping full expert banks resident. Trades speed for memory; default false. |
-| `fish_drama3.pin_experts` | `bool` | `false` | Keep full expert banks in pinned host RAM for direct cache-miss uploads. Requires disk_experts and pinned host-buffer support; default false. |
-| `fish_drama3.expert_cache_size` | `int` | `32` | Resident expert slots per layer in disk_experts mode; 8 to 256. Larger caches trade memory for fewer disk reads; ignored in resident mode. Declared range: minimum 8, maximum 256. |
-| `fish_drama3.disk_expert_read_threads` | `int` | `1` | Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 use OpenMP or Apple dispatch. Declared range: minimum 1, maximum 64. |
+| `moe_cpu_expert_layers` | `int` | `4` | Number of the 40 expert banks kept and evaluated on CPU; use 4 for a 24 GB profile or 24 for a 16 GB profile. Dense layers and the tower use the selected backend. Declared range: minimum 0, maximum 40. |
+| `moe_cpu_share` | `float` | `0` | CPU share of eligible staged GPU misses, 0–1; requires `moe_disk_experts=true`. CPU-selected layers take precedence. |
+| `moe_disk_experts` | `bool` | `false` | Read routed expert weights from GGUF on demand into a bounded cache instead of keeping full expert banks resident. Trades speed for memory; default false. |
+| `moe_pin_experts` | `bool` | `false` | Keep full expert banks in pinned host RAM for direct cache-miss uploads. Requires staged mode and pinned host-buffer support. Both canonical and legacy spellings reject true without staging. |
+| `moe_expert_cache_size` | `int` | `32` | Resident expert slots per layer in disk_experts mode; 8 to 256. Larger caches trade memory for fewer disk reads; ignored in resident mode. Declared range: minimum 8, maximum 256. |
+| `moe_disk_expert_read_threads` | `int` | `1` | Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 use OpenMP or Apple dispatch. Declared range: minimum 1, maximum 64. |
 | `fish_drama3.codec_encoder_f32_accumulation` | `bool` | `false` | Use F32 accumulation for F16 reference-encoder GEMMs on Vulkan. Try this if voice cloning produces incomplete speech or reaches the token limit. Other backends and codec decoding are unchanged. |
 | `fish_drama3.codec_encoder_bf16_compute` | `bool` | `true` | Use BF16 reference-encoder arithmetic on CUDA with F16/BF16 codec weights; default true. Decoding is unchanged. |
 | `fish_drama3.codec_encoder_chunk_samples` | `int` | `0` | Reference-encoder convolution chunk size in samples at the codec sample rate. Use 0 for full encoding or a positive multiple of 512; default 0. Declared range: minimum 0. |
@@ -338,22 +351,22 @@ CPU PyTorch dependencies managed by uv and does not load weights onto a GPU.
 
 ## Disk-backed experts
 
-Set `fish_drama3.disk_experts=true` to keep the full routed expert banks in the
+Set `moe_disk_experts=true` to keep the full routed expert banks in the
 GGUF file and read only selected experts into a bounded native-format cache.
-`fish_drama3.expert_cache_size` sets resident slots per layer (8 to 256; default
+`moe_expert_cache_size` sets resident slots per layer (8 to 256; default
 32). Dense backbone, tower, and codec weights remain resident. The existing
-`cpu_expert_layers` setting still selects CPU execution for those layers, but
+`moe_cpu_expert_layers` setting still selects CPU execution for those layers, but
 their expert caches are bounded too. No GGUF conversion is required.
 
-`fish_drama3.disk_expert_read_threads` selects 1 to 64 host workers for copying
+`moe_disk_expert_read_threads` selects 1 to 64 host workers for copying
 selected experts from the memory-mapped GGUF into staging. The default is 1
 (serial); try 4 to enable parallel copies using OpenMP or Apple dispatch. This applies only
-with `disk_experts=true` and `pin_experts=false`. Backend uploads and inference
+with `moe_disk_experts=true` and `moe_pin_experts=false`. Backend uploads and inference
 are unchanged. The host reader is backend-independent; Apple builds do not
 require OpenMP for parallel reads.
 
 This is a memory/speed trade-off, not a faster MoE kernel. With
-`cpu_expert_layers=0`, prompt prefill groups tokens by expert within each layer,
+`moe_cpu_expert_layers=0`, prompt prefill groups tokens by expert within each layer,
 so one upload serves multiple tokens. Attention and shared/router projections
 retain the resident batched-prefill path; cached experts retain their vector
 projection path. Session-owned graphs share one activation workspace and are
@@ -366,16 +379,18 @@ Mixed CPU/backend expert execution retains token-wise prefill. Storage speed
 still matters, and resident mode remains the default. For the minimum cache:
 
 ```text
---session-option fish_drama3.disk_experts=true
---session-option fish_drama3.expert_cache_size=8
---session-option fish_drama3.cpu_expert_layers=0
+--session-option moe_disk_experts=true
+--session-option moe_expert_cache_size=8
+--session-option moe_cpu_expert_layers=0
 ```
 
 When sufficient host RAM is available, add
-`fish_drama3.pin_experts=true` and set `fish_drama3.cpu_expert_layers=0`.
-This loads full expert banks into pinned host memory once, then uploads cache
-misses directly without an intermediate host copy. Expert matmuls still run on
-the selected backend, and GPU cache size is unchanged. This option is off by
+`moe_pin_experts=true`. This loads full expert banks into pinned host memory
+once, then stages cache misses directly without an intermediate host copy.
+Expert matmuls retain their configured placement: CPU-selected layers use
+bounded CPU caches; the remaining layers use the selected backend. Set
+`moe_cpu_expert_layers=0` to run all expert layers on that backend. Cache slot
+counts are unchanged. This option is off by
 default and requires pinned host-buffer support; allocation failure is an error,
 not a fallback to a different memory policy.
 
@@ -407,7 +422,7 @@ Save the following as `drama3-server.json` in the repository root:
     "task": "tts",
     "mode": "streaming",
     "session_options": {
-      "fish_drama3.cpu_expert_layers": 8,
+      "moe_cpu_expert_layers": 8,
       "fish_drama3.context_length": 2048
     },
     "default_request_options": {"max_tokens": 500}

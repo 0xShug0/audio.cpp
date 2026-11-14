@@ -100,10 +100,8 @@ struct Drama3BackboneLayerWeights {
 };
 
 struct Drama3BackboneWeights {
-    std::shared_ptr<core::ExecutionContext> cpu_execution;
     std::shared_ptr<core::BackendWeightStore> store;
-    std::shared_ptr<core::BackendWeightStore> cpu_store;
-    std::unique_ptr<core::DiskExpertWeightStore> disk_store;
+    std::unique_ptr<core::MoeResources> experts;
     core::TensorValue token_embedding;
     std::vector<Drama3BackboneLayerWeights> layers;
     modules::NormWeights final_norm;
@@ -196,26 +194,9 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
         "drama3_backbone.weights",
         weight_context_bytes);
     const auto & c = config;
-    if (c.cpu_expert_layers < 0 || c.cpu_expert_layers > c.layers) {
-        throw std::runtime_error("Drama 3 cpu_expert_layers must be between zero and the layer count");
-    }
-    if ((c.cpu_expert_layers > 0 || c.disk_experts) && execution.backend_type() != core::BackendType::Cpu) {
-        core::BackendConfig host;
-        host.threads = execution.config().threads;
-        weights->cpu_execution = std::make_shared<core::ExecutionContext>(host);
-        if (!c.disk_experts) weights->cpu_store = std::make_shared<core::BackendWeightStore>(
-            weights->cpu_execution->backend(), core::BackendType::Cpu,
-            "drama3_backbone.host_experts", weight_context_bytes);
-    }
+    weights->experts = std::make_unique<core::MoeResources>(execution, source, *weights->store,
+        c.moe, "drama3_backbone.host_experts", weight_context_bytes);
     const std::string & root = c.weight_prefix;
-    if (c.disk_experts) {
-        if (storage_type != assets::TensorStorageType::Native)
-            throw std::runtime_error("Drama 3 disk experts require native GGUF weight types");
-        if (c.expert_cache_size < c.experts_per_token || c.expert_cache_size > c.experts)
-            throw std::runtime_error("Drama 3 expert_cache_size must cover top-k and not exceed the expert count");
-        weights->disk_store = std::make_unique<core::DiskExpertWeightStore>(source.source_path(), c.pin_experts,
-            static_cast<size_t>(c.disk_expert_read_threads));
-    }
     weights->token_embedding = weights->store->load_tensor(
         source,
         root + ".embed_tokens.weight",
@@ -244,22 +225,19 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
         const int64_t layer_experts = c.experts_per_layer.empty() ? c.experts : c.experts_per_layer[static_cast<size_t>(layer)];
         out.router = weights->store->load_tensor(source, prefix + ".mlp.gate.weight", storage_type, {layer_experts, c.hidden_size});
         out.shared_gate = weights->store->load_tensor(source, prefix + ".mlp.shared_expert_gate.weight", storage_type, {1, c.hidden_size});
-        if (weights->disk_store) {
-            out.disk_store = weights->disk_store.get();
-            const auto backend = weights->cpu_execution && layer < c.cpu_expert_layers
-                ? weights->cpu_execution->backend() : execution.backend();
-            const auto bank = "model_weights/" + prefix + ".mlp.experts.";
-            out.disk_group = out.disk_store->add_group({bank + "gate_proj.weight", bank + "up_proj.weight",
-                bank + "down_proj.weight"}, backend, c.expert_cache_size);
-            out.expert_gate = out.disk_store->tensor(out.disk_group, 0);
-            out.expert_up = out.disk_store->tensor(out.disk_group, 1);
-            out.expert_down = out.disk_store->tensor(out.disk_group, 2);
-        } else {
-            auto & expert_store = weights->cpu_store && layer < c.cpu_expert_layers ? *weights->cpu_store : *weights->store;
-            out.expert_gate = expert_store.load_tensor(source, prefix + ".mlp.experts.gate_proj.weight", storage_type, {layer_experts, c.intermediate_size, c.hidden_size});
-            out.expert_up = expert_store.load_tensor(source, prefix + ".mlp.experts.up_proj.weight", storage_type, {layer_experts, c.intermediate_size, c.hidden_size});
-            out.expert_down = expert_store.load_tensor(source, prefix + ".mlp.experts.down_proj.weight", storage_type, {layer_experts, c.hidden_size, c.intermediate_size});
-        }
+        const auto bank = prefix + ".mlp.experts.";
+        const auto & experts = weights->experts->bind_layer(static_cast<size_t>(layer), static_cast<size_t>(layer), {
+            {bank + "gate_proj.weight", "model_weights/" + bank + "gate_proj.weight",
+                {layer_experts, c.intermediate_size, c.hidden_size}, storage_type},
+            {bank + "up_proj.weight", "model_weights/" + bank + "up_proj.weight",
+                {layer_experts, c.intermediate_size, c.hidden_size}, storage_type},
+            {bank + "down_proj.weight", "model_weights/" + bank + "down_proj.weight",
+                {layer_experts, c.hidden_size, c.intermediate_size}, storage_type}}, c.experts_per_token);
+        out.disk_store = experts.disk_store;
+        out.disk_group = experts.disk_group;
+        out.expert_gate = experts.weights[0];
+        out.expert_up = experts.weights[1];
+        out.expert_down = experts.weights[2];
         weights->layers.push_back(std::move(out));
     }
     auto final_scale = source.require_f32(root + ".norm.weight", {c.hidden_size});
@@ -278,7 +256,7 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
             false);
     }
     weights->store->upload();
-    if (weights->cpu_store) weights->cpu_store->upload();
+    weights->experts->finalize_weights();
     return weights;
 }
 
@@ -826,14 +804,6 @@ LinearAttentionCachedOutput linear_attention_cached(
     return {std::move(output), std::move(next_tail), std::move(next_state)};
 }
 
-void configure_expert_scheduler(core::PreparedGraph & graph, const Drama3BackboneWeights & weights) {
-    if (!weights.cpu_execution && !weights.disk_store) return;
-    std::vector<ggml_backend_t> backends{graph.execution().backend()};
-    if (weights.cpu_execution) backends.push_back(weights.cpu_execution->backend());
-    auto * scheduler = graph.create_scheduler(std::move(backends));
-    if (weights.disk_store) ggml_backend_sched_set_eval_callback(
-        scheduler, core::DiskExpertWeightStore::evaluate, weights.disk_store.get());
-}
 
 class BackboneForwardGraph {
 public:
@@ -933,7 +903,7 @@ private:
         ggml_set_output(output_);
         ggml_build_forward_expand(candidate->graph(), output_);
         candidate->allocate_persistent();
-        configure_expert_scheduler(*candidate, *weights_);
+        weights_->experts->configure_scheduler(*candidate);
         candidate->allocate();
         const auto pos = position_ids(steps);
         ggml_backend_tensor_set(positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
@@ -1135,11 +1105,11 @@ public:
         staged_config.tokens = steps;
         staged_config.selected = k;
         staged_config.experts = config.experts;
-        staged_config.cache_slots = config.expert_cache_size;
+        staged_config.cache_slots = config.moe.cache_slots;
         staged_config.rows_per_expert = {32};
         staged_config.scatter_index_type = GGML_TYPE_I32;
         workspace_ = std::make_shared<core::GraphWorkspace>(execution.backend());
-        staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, std::move(staged_config), workspace_);
+        staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, std::move(staged_config), workspace_, weights.experts->cpu_execution());
         hidden_ = staged_moe_->hidden_input();
         positions_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, steps);
         mask_ = ggml_new_tensor_4d(persistent, GGML_TYPE_F16, steps, steps, 1, 1);
@@ -1352,7 +1322,7 @@ public:
         if (config_.kv_cache_alignment == 1) {
             graph_ = decode_prepared_->graph();
             build_decode(ctx, cache_steps_, graph_, output_);
-            configure_expert_scheduler(*decode_prepared_, *weights_);
+            weights_->experts->configure_scheduler(*decode_prepared_);
             decode_prepared_->allocate();
         }
         attention_mask_values_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
@@ -1420,7 +1390,7 @@ public:
 
     void reset(bool invalidate_experts = false) {
         valid_steps_ = 0;
-        if (invalidate_experts && weights_->disk_store) weights_->disk_store->invalidate_cache();
+        if (invalidate_experts && weights_->experts->disk_store()) weights_->experts->disk_store()->invalidate_cache();
         // Masked attention can still multiply a zero probability by a cached
         // value. Initialize KV as well as recurrent state to avoid NaNs from
         // uninitialized storage on the first request.
@@ -1442,9 +1412,9 @@ public:
         if (steps > cache_steps_) {
             throw std::runtime_error("Drama 3 backbone prefill exceeds cache length");
         }
-        if (weights_->disk_store) {
+        if (weights_->experts->disk_store()) {
             reset();
-            if (!weights_->cpu_execution || config_.cpu_expert_layers == 0) {
+            if (core::is_host_backend(execution_.backend()) || !weights_->experts->has_cpu_layers()) {
                 if (!offload_prefill_ || offload_prefill_->steps() != steps) {
                     offload_prefill_.reset();
                     offload_prefill_ = std::make_unique<Drama3OffloadPrefillGraph>(
@@ -1512,7 +1482,7 @@ public:
                 auto & ctx = bucket->prepared->build_context();
                 ctx.elide_identity_reshapes = execution_.backend_type() == core::BackendType::Cuda;
                 build_decode(ctx, steps, bucket->graph, bucket->output);
-                configure_expert_scheduler(*bucket->prepared, *weights_);
+                weights_->experts->configure_scheduler(*bucket->prepared);
                 bucket->prepared->allocate();
                 decode_buckets_.push_back(std::move(bucket));
                 found = std::prev(decode_buckets_.end());
@@ -1644,7 +1614,7 @@ private:
         ggml_set_output(prefill.output);
         ggml_build_forward_expand(prefill.graph, prefill.output);
         prefill.prepared->allocate_persistent();
-        configure_expert_scheduler(*prefill.prepared, *weights_);
+        weights_->experts->configure_scheduler(*prefill.prepared);
         prefill.prepared->allocate();
         const auto pos = position_ids(steps);
         ggml_backend_tensor_set(prefill.positions, pos.data(), 0, pos.size() * sizeof(int32_t));
@@ -1721,7 +1691,7 @@ public:
     }
 
     Drama3BackboneDecoderForwardResult forward_embeddings(const std::vector<float> & embeddings, int64_t steps) {
-        if (weights_->disk_store) return decode_graph_.prefill_embeddings(embeddings, steps);
+        if (weights_->experts->disk_store()) return decode_graph_.prefill_embeddings(embeddings, steps);
         return forward_.run(embeddings, steps);
     }
 

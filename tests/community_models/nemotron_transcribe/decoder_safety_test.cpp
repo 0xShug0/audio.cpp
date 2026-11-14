@@ -239,6 +239,16 @@ void invalid_config_is_rejected_before_tensor_access(core::ExecutionContext & ex
         catch (const std::runtime_error &) { rejected = true; }
         require(rejected && weights->accesses == 0, "unsafe dimensions must be rejected before tensor access");
     }
+    auto weights = std::make_shared<TestWeights>(c);
+    DecoderOptions options;
+    options.moe.residency = core::MoeExpertResidency::Staged;
+    options.moe.cache_slots = c.experts_per_token;
+    bool rejected = false;
+    try { NemotronHDecoderRuntime runtime(weights, execution, c, assets::TensorStorageType::Native, options); }
+    catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()) == "Nemotron-H expert cache must cover top-k and not exceed the expert count";
+    }
+    require(rejected && weights->accesses == 0, "staging without MoE layers must fail before tensor access");
 }
 
 }  // namespace
