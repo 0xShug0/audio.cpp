@@ -1,10 +1,12 @@
 # Audio8 TTS
 
-Audio8 TTS Preview 0.6B (Qwen backbone) and 0.1B (Falcon-H1 hybrid Mamba2+attention) are compact multilingual text-to-speech models with zero-shot voice cloning, ported natively into audio.cpp as the community family `audio8_tts`. They use a DualAR architecture derived from Fish Audio
+Audio8 TTS Realistic and Preview 0.6B (Qwen backbone) and 0.1B (Falcon-H1 hybrid Mamba2+attention) are compact multilingual text-to-speech models with zero-shot voice cloning, ported natively into audio.cpp as the community family `audio8_tts`. They use a DualAR architecture derived from Fish Audio
 S2 Pro: a slow semantic transformer generates speech semantics, a fast codebook transformer expands each semantic step into a full codec frame, and a neural codec renders 44.1 kHz audio. The native path executes all three
 stages directly on ggml with no Python dependency.
 
 ## Usage
+
+The default downloadable package is [Audio8 TTS Realistic 0.6B](https://huggingface.co/audio-cpp/Audio8-TTS-Realistic-0.6b-GGUF), available in Q8_0 and BF16. It uses the existing `audio8_tts` family; the Preview package remains available for existing installations.
 
 Build with the family enabled and run against a converted GGUF:
 
@@ -20,7 +22,7 @@ Plain synthesis:
 
 ```bash
 audiocpp_cli --task tts --family audio8_tts \
-  --model models/Audio8-TTS-Preview-0.6B-GGUF/audio8-tts-preview-0.6b-q8_0.gguf \
+  --model models/Audio8-TTS-Realistic-0.6B-GGUF/audio8-tts-realistic-0.6b-q8_0.gguf \
   --text "The quick brown fox jumps over the lazy dog." \
   --seed 42 --metrics \
   --out tts.wav
@@ -31,7 +33,7 @@ in it:
 
 ```bash
 audiocpp_cli --task clon --family audio8_tts \
-  --model models/Audio8-TTS-Preview-0.6B-GGUF/audio8-tts-preview-0.6b-q8_0.gguf \
+  --model models/Audio8-TTS-Realistic-0.6B-GGUF/audio8-tts-realistic-0.6b-q8_0.gguf \
   --voice-ref reference.wav \
   --reference-text "The exact words spoken in reference.wav." \
   --text "Hello from my cloned voice." \
@@ -56,7 +58,8 @@ Multiple ordered references can be conditioned through one request option:
 | Voice input | optional reference WAV plus its exact transcript (clone) |
 | Output | mono 44.1 kHz WAV |
 | Backbones | `0.6B`: Qwen `slow_backbone=qwen` (24L, dim 896, 14H/2KV, RoPE 1e6), `0.1B`: Falcon-H1 `slow_backbone=falcon_h1` (dim 512, `d_inner 768=32×24`, `d_state 64`, `d_conv 4`, `dt_rank 24`, `GQA 8/2`, RoPE 1e11) |
-| GGUF examples | `Audio8-TTS-Preview-0.6b-GGUF/audio8-tts-preview-0.6b-q8_0.gguf` (1.4G), `Audio8-TTS-Preview-0.1B-GGUF/audio8-tts-preview-0.1b-q8_0.gguf` (812M) |
+| Default GGUF | `Audio8-TTS-Realistic-0.6B-GGUF/audio8-tts-realistic-0.6b-q8_0.gguf` |
+| Preview GGUF examples | `Audio8-TTS-Preview-0.6b-GGUF/audio8-tts-preview-0.6b-q8_0.gguf` (1.4G), `Audio8-TTS-Preview-0.1B-GGUF/audio8-tts-preview-0.1b-q8_0.gguf` (812M) |
 
 “Model/session default” means no explicit override. The runtime uses the
 checkpoint or session setting, or leaves the optional value unset as described.

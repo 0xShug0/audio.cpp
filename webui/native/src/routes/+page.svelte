@@ -2136,9 +2136,9 @@
         if (!text.trim()) throw new StatusWarning('Enter text to generate.');
         const effectiveChunkBudget = Math.max(40, chunkBudget);
         if (selected.family === 'voxcpm2') options.text_chunk_size = effectiveChunkBudget;
-        // Ming anchors subsequent chunks to the first voice inside one request.
-        if (selected.family === 'ming3_tts' && longText) options.text_chunk_size = effectiveChunkBudget;
-        const chunks = longText && selected.task !== 'vdes' && !['moss_ttsd', 'ming3_tts'].includes(selected.family)
+        // Keep model-owned voice conditioning across chunks inside one request.
+        if (['ming3_tts', 'zonos2', 'zonos3'].includes(selected.family) && longText) options.text_chunk_size = effectiveChunkBudget;
+        const chunks = longText && selected.task !== 'vdes' && !['moss_ttsd', 'ming3_tts', 'zonos2', 'zonos3'].includes(selected.family)
           ? splitTtsChunks(text, effectiveChunkBudget)
           : [text];
         const audioChunks: Blob[] = [];
@@ -2907,7 +2907,7 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'realtime_reuse', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'sidon', 'hviske_asr_v6', 'voxtral_tts'].includes(selected.family)}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'realtime_reuse', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'sidon', 'hviske_asr_v6', 'voxtral_tts', 'zonos2', 'zonos3'].includes(selected.family)}
             <div>
               <label for="language">{tr('request.language')} {#if !asrLanguages[selected.family]}<span>{tr('request.autoLanguage')}</span>{/if}</label>
               {#if ['moss_ttsd', 'moss_voicegen'].includes(selected.family)}

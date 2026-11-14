@@ -61,6 +61,7 @@ const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.fam
 export const modelCapabilities = Object.fromEntries(Object.values(specModules).map(spec =>
   [spec.family, [...new Set(Object.values(spec.capabilities || {}).flat())]])) as Record<string, string[]>;
 const exposeAllGgufPackageFamilies = new Set([
+  'zonos2', 'zonos3',
   'haas_asr', 'lfm_d1_omni', 'nemotron_transcribe', 'phonon2_asr',
   'pocket_tts_small', 'realtime_reuse', 'underdog_bark3', 'lfm3_audio',
   'ming3_tts',
@@ -174,6 +175,7 @@ function exposedPackageRank(entry: PackageEntry, selectedId?: string): number {
 }
 
 function packageLabel(entry: PackageEntry): string {
+  if (entry.family === 'zonos3') return entry.display_name || entry.id;
   if (entry.family === 'pocket_tts_small') {
     return (entry.display_name || entry.id).replace('PocketTTS Small English ', '').replace(' GGUF', '');
   }
