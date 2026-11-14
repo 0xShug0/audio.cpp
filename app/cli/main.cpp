@@ -848,6 +848,11 @@ int audiocpp_cli_main(int argc, char ** argv) {
         }
         if (recipe_arg.has_value()) {
             for (const auto & option : common_session_options) {
+                // Preserve the previously accepted disabled global option;
+                // active MoE placement still needs an explicit recipe role.
+                if (option.first == "moe_cpu_share" &&
+                    engine::runtime::parse_finite_float_option(common_session_options, {"moe_cpu_share"}).value() == 0)
+                    continue;
                 if (option.first.compare(0, 4, "moe_") == 0)
                     throw std::runtime_error("recipes require role-scoped MoE options: --session-option <role>." + option.first + "=<value>");
             }
