@@ -875,7 +875,8 @@ The server exposes:
 More server examples are in [app/server/README.md](app/server/README.md).
 
 
-### Pipelines
+<details>
+<summary>Experimental pipelines</summary>
 
 Pipelines are an experimental JSON workflow feature for chaining multiple model and audio-processing steps behind one CLI command. A pipeline can define default inputs, let users override them with `--workflow-input key=value`, split long media into model-sized chunks, merge text or audio outputs back together, write intermediate artifacts under `--out-dir`, and copy the declared `final_audio` to `--out`.
 
@@ -904,8 +905,10 @@ build/bin/audiocpp_cli \
   --out build/out/speech_redub_pipeline.wav
 ```
 
+</details>
 
-## Tests
+<details>
+<summary>Tests</summary>
 
 The repository includes both framework-level parity validation and app-level end-to-end path checks. At a high level, the flow is:
 
@@ -918,6 +921,8 @@ The main harness under `tests/` is `tests/warmbench.py`. It is used for long-liv
 The main app-facing test tooling under `tools/` is `tools/audiocpp_cli/run_audiocpp_cli_path_tests.py`. It drives `audiocpp_cli` through cataloged offline and streaming cases, verifies expected outputs such as audio or JSON artifacts, and is useful for checking real user-facing request paths rather than just lower-level model components. Streaming coverage is model-specific and applies to models documented with streaming support.
 
 The Python-reference side of these tests usually requires more time-consuming setup than the C++ path because different models rely on different Python reference repos and dependency stacks. In practice, the framework-side tooling is fast to iterate on once models are installed, while Python parity runs often need extra environment preparation before they are ready.
+
+</details>
 
 ## Projects
 
