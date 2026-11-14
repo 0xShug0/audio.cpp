@@ -137,16 +137,15 @@ std::pair<double, double> compare_logits(const std::vector<float> & ours, const 
 
 // Resident: the oracle logits within cos >= 0.9999 and argmax agreement >= 0.99.
 // --disk-experts: the expert-cache path (8 slots, so prefill chunks stage several groups and evict) must be
-// bit-identical to the resident path with plain expert kernels, the kernels the expert cache runs; the oracle
-// numbers are reported (ZONOS3's CPU runtime uses repacked expert kernels, which round differently).
+// bit-identical to the resident path using the same framework expert kernels; oracle metrics are also reported.
 int backbone(const fs::path & model, const fs::path & oracle, bool disk_experts) {
     const auto assets = zonos3::load_zonos3_assets(model);
     const auto run = load_backbone_oracle(*assets, oracle);
     const size_t vocab = static_cast<size_t>(assets->hparams.audio_vocab);
     zonos3::Zonos3BackboneOptions options;
     if (disk_experts) {
-        options.disk_experts = true;
-        options.expert_cache_size = 8;
+        options.moe.residency = engine::core::MoeExpertResidency::Staged;
+        options.moe.cache_slots = 8;
     }
     const auto ours = teacher_forced_logits(assets, run, options);
     const auto [cos_min, rate] = compare_logits(ours, run.reference.data, vocab);

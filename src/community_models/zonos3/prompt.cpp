@@ -101,7 +101,7 @@ Zonos3Prompt build_zonos3_prompt(const Zonos3Hparams & hp, const Zonos3Tokenizer
 
 Zonos3Prompt build_zonos3_cfg_twin(const Zonos3Hparams & hp, const Zonos3Prompt & prompt) {
     if (prompt.speaker_rows <= 0) {
-        throw runtime::InvalidRequestError("zonos3 cfg_scale needs a speaker source");
+        throw runtime::InvalidRequestError("zonos3 guidance_scale needs a speaker source");
     }
     const size_t width = static_cast<size_t>(hp.n_codebooks) + 1;
     if (prompt.speaker_rows >= prompt.n_rows || prompt.ids.size() != static_cast<size_t>(prompt.n_rows) * width) {

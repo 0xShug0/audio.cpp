@@ -150,14 +150,10 @@ Zonos3Session::Zonos3Session(runtime::TaskSpec task, const runtime::SessionOptio
     }
     const auto & session = options.options;
     Zonos3BackboneOptions backbone;
-    backbone.disk_experts = runtime::parse_bool_option(
-        runtime::find_option(session, {"zonos3.disk_experts"}).value_or("false"), "zonos3.disk_experts");
-    backbone.pin_experts = runtime::parse_bool_option(
-        runtime::find_option(session, {"zonos3.pin_experts"}).value_or("false"), "zonos3.pin_experts");
-    backbone.expert_cache_size = runtime::parse_positive_i64_option(session, {"zonos3.expert_cache_size"}, 16);
-    backbone.disk_expert_read_threads = runtime::parse_positive_i64_option(session, {"zonos3.disk_expert_read_threads"}, 1);
-    if (backbone.expert_cache_size > 64 || backbone.disk_expert_read_threads > 64) {
-        throw std::runtime_error("zonos3.expert_cache_size and zonos3.disk_expert_read_threads must be at most 64");
+    backbone.moe = core::resolve_moe_execution_policy(session, "zonos3", backbone.moe,
+                                                     static_cast<size_t>(assets_->hparams.n_layer - 1));
+    if (backbone.moe.cache_slots > 64) {
+        throw std::runtime_error("zonos3.expert_cache_size must be at most 64");
     }
     keep_reference_encoder_ = runtime::parse_bool_option(
         runtime::find_option(session, {"zonos3.keep_reference_encoder"}).value_or("false"), "zonos3.keep_reference_encoder");
@@ -187,6 +183,7 @@ runtime::VoiceTaskKind Zonos3Session::task_kind() const { return task_.task; }
 runtime::RunMode Zonos3Session::run_mode() const { return task_.mode; }
 
 void Zonos3Session::prepare(const runtime::SessionPreparationRequest & request) {
+    const auto execution = acquire_moe_execution();
     runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "ZONOS3");
     defaults_ = {};
     defaults_.text_input = request.text;
@@ -234,6 +231,7 @@ Zonos3Voice Zonos3Session::encode_voice(const runtime::AudioBuffer & audio, bool
 }
 
 runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & request, bool streaming) {
+    const auto execution = acquire_moe_execution();
     require_prepared("ZONOS3 generation");
     runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "ZONOS3");
     const auto started = std::chrono::steady_clock::now();
@@ -260,7 +258,7 @@ runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & reque
     sampling.repetition_codebooks = int_option(options, "repetition_codebooks", 6, -1, 10);
     sampling.seed = client([&] { return runtime::parse_u32_option(options, {"seed"}); }).value_or(runtime::random_u32_seed());
     const int max_tokens = int_option(options, "max_tokens", 2000, 1);
-    const float cfg_scale = float_option(options, "cfg_scale", 1.0f, 0.0f);
+    const float guidance_scale = float_option(options, "guidance_scale", 1.0f, 0.0f);
     const auto speaker_mode = runtime::find_option(options, {"speaker_mode"}).value_or("embedding");
     if (speaker_mode != "embedding" && speaker_mode != "reference") {
         throw runtime::InvalidRequestError("zonos3 speaker_mode must be embedding or reference");
@@ -312,7 +310,7 @@ runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & reque
         result.output_artifacts.push_back(std::move(*voice_artifact));
         return result;
     }
-    if (cfg_scale != 1.0f && sources == 0) throw runtime::InvalidRequestError("zonos3 cfg_scale needs a speaker source");
+    if (guidance_scale != 1.0f && sources == 0) throw runtime::InvalidRequestError("zonos3 guidance_scale needs a speaker source");
 
     // Condition buckets: an explicit id wins, then a value bucketed by the checkpoint's edges, then unknown.
     std::vector<int32_t> buckets = hp.cond_bucket_counts;
@@ -350,6 +348,9 @@ runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & reque
         prompt_options.reference_codes = voice.codes.data();
         prompt_options.reference_frames = static_cast<int>(voice.codes.size() / kZonos3Codebooks);
     }
+    const bool anchor_voice = chunks.size() > 1 && voice.embedding.empty() && voice.codes.empty();
+    std::vector<int32_t> anchor_codes;
+    if (anchor_voice) anchor_codes.reserve(static_cast<size_t>(kZonos3ReferenceMaxFrames) * kZonos3Codebooks);
 
     const int spf = decoder_->samples_per_frame();
     const float gain = static_cast<float>(std::pow(10.0, -headroom_db / 20.0));
@@ -367,12 +368,13 @@ runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & reque
                                                std::to_string(hp.n_ctx_train) + "-position context");
         }
         std::optional<Zonos3Prompt> twin;
-        if (cfg_scale != 1.0f) twin = build_zonos3_cfg_twin(hp, prompt);
+        if (guidance_scale != 1.0f) twin = build_zonos3_cfg_twin(hp, prompt);
         auto chunk_sampling = sampling;
         chunk_sampling.seed += static_cast<uint32_t>(index);
 
         // The delayed stream (silence prefill rows + generated rows); frame f is complete once row f + 9 exists.
         std::vector<int32_t> stream = zonos3_prefill_codes(hp, prompt);
+        stream.reserve(stream.size() + static_cast<size_t>(max_tokens) * kZonos3Codebooks);
         int emitted = 0;
         size_t skip = static_cast<size_t>(prompt.prefill_frames) * static_cast<size_t>(spf);
         auto post = [&](std::vector<float> pcm) {
@@ -383,17 +385,12 @@ runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & reque
             if (limit) soft_limit(pcm);
             return pcm;
         };
-        auto frame_at = [&](int f) {
-            std::vector<int32_t> frame(kZonos3Codebooks);
-            for (int c = 0; c < kZonos3Codebooks; ++c) {
-                frame[static_cast<size_t>(c)] = std::min(stream[static_cast<size_t>(f + c) * kZonos3Codebooks + static_cast<size_t>(c)],
-                                                         static_cast<int32_t>(kZonos3CodebookSize - 1));
-            }
-            return frame;
-        };
         Zonos3DecoderStream decoder(*decoder_);
         runtime::StreamingAudioController<int32_t> controller;
         std::vector<int32_t> pending;  // offline: complete frames
+        if (!streaming) pending.reserve(stream.capacity());
+        std::vector<int32_t> frame(kZonos3Codebooks);
+        const bool capture_anchor = anchor_voice && index == 0;
         if (streaming) {
             controller.begin({runtime::StreamingAudioChunkPolicy::Grow, static_cast<size_t>(stream_chunk_frames_),
                               static_cast<size_t>(kZonos3Codebooks), 0, 0},
@@ -406,12 +403,20 @@ runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & reque
         }
         auto emit = [&](int end) {
             for (; emitted < end; ++emitted) {
-                const auto frame = frame_at(emitted);
+                for (int c = 0; c < kZonos3Codebooks; ++c) {
+                    frame[static_cast<size_t>(c)] = std::min(
+                        stream[static_cast<size_t>(emitted + c) * kZonos3Codebooks + static_cast<size_t>(c)],
+                        static_cast<int32_t>(kZonos3CodebookSize - 1));
+                }
+                if (capture_anchor && emitted >= prompt.prefill_frames &&
+                    anchor_codes.size() < static_cast<size_t>(kZonos3ReferenceMaxFrames) * kZonos3Codebooks) {
+                    anchor_codes.insert(anchor_codes.end(), frame.begin(), frame.end());
+                }
                 if (streaming) controller.push(frame);
                 else pending.insert(pending.end(), frame.begin(), frame.end());
             }
         };
-        const auto codes = generate_codes(hp, *backbone_, prompt, twin ? &*twin : nullptr, cfg_scale, max_tokens,
+        const auto codes = generate_codes(hp, *backbone_, prompt, twin ? &*twin : nullptr, guidance_scale, max_tokens,
             chunk_sampling, [&](const int32_t * row, int eos_frame) {
                 stream.insert(stream.end(), row, row + kZonos3Codebooks);
                 const int rows = static_cast<int>(stream.size() / kZonos3Codebooks);
@@ -423,6 +428,7 @@ runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & reque
         const int frames = std::max(0, std::min(codes.eos_frame >= 0 ? codes.eos_frame : rows, rows - (kZonos3Codebooks - 1)));
         emit(frames);
         reached_limit = reached_limit || codes.reached_limit;
+        const auto codec_started = std::chrono::steady_clock::now();
         runtime::AudioBuffer chunk_audio{kSampleRate, 1, {}};
         if (streaming) {
             chunk_audio = controller.finish();
@@ -431,7 +437,13 @@ runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & reque
             const auto tail = post(decoder.flush());
             chunk_audio.samples.insert(chunk_audio.samples.end(), tail.begin(), tail.end());
         }
+        engine::debug::timing_log_scalar("zonos3.audio_decode_finish_ms",
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - codec_started).count());
         if (frames <= prompt.prefill_frames || chunk_audio.samples.empty()) continue;
+        if (capture_anchor) {
+            prompt_options.reference_codes = anchor_codes.data();
+            prompt_options.reference_frames = static_cast<int>(anchor_codes.size() / kZonos3Codebooks);
+        }
         total_frames += frames - prompt.prefill_frames;
         ++produced_chunks;
         runtime::append_audio_buffer(merged, chunk_audio);

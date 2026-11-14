@@ -3,6 +3,7 @@
 #include "engine/community_models/zonos3/assets.h"
 #include "engine/community_models/zonos3/prompt.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/core/moe_resources.h"
 
 #include <array>
 #include <cstdint>
@@ -12,15 +13,8 @@
 namespace engine::models::zonos3 {
 
 struct Zonos3BackboneOptions {
-    // Keep the routed expert banks in the GGUF / host memory and stage the selected experts through a bounded
-    // per-layer cache on the compute backend (core::DiskExpertWeightStore + modules::StagedMoeRuntime).
-    bool disk_experts = false;
-    bool pin_experts = false;
-    int64_t expert_cache_size = 16;
-    int64_t disk_expert_read_threads = 1;
-    // Resident expert banks use the CPU backend's repacked kernels when it has them (as ZONOS3's runtime does).
-    // The expert cache cannot (repacked buffers take whole tensors only); false runs resident banks with the same
-    // plain kernels the expert cache uses.
+    core::MoeExecutionPolicy moe{core::MoeExpertResidency::Backend, false, 16, 1, {}, 0};
+    // Parity control: compare staged and resident experts with identical plain kernels.
     bool repack_experts = true;
 };
 

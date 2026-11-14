@@ -144,7 +144,7 @@ speaking rate. By default each is "unknown". `loudness` (LUFS), `fmax` (Hz) and
 checkpoint's bucket edges. `condition_buckets=a,b,c` sets the bucket ids
 directly; an id equal to the table's bucket count means unknown.
 
-`cfg_scale` above 1 applies classifier-free guidance on the speaker. Each step
+`guidance_scale` above 1 applies classifier-free guidance on the speaker. Each step
 then also runs a copy of the prompt without the speaker, which doubles the
 backbone work.
 
@@ -153,6 +153,9 @@ backbone work.
 Text longer than `text_chunk_size` code points (300 by default) is split with
 the framework chunker. Each chunk is generated with the same voice and
 conditions and seed `seed + i`, and the chunks are concatenated.
+When no voice reference is supplied, later chunks use acoustic codes from the
+first chunk as a speaker reference to keep the generated voice consistent.
+Explicit speaker embeddings and reference codes remain the reference for every chunk.
 
 ## Model
 
@@ -180,7 +183,7 @@ conditions and seed `seed + i`, and the chunks are concatenated.
 | `repetition_penalty` | `float` | `2.4` | Penalty on codes seen within the repetition window. |
 | `repetition_window` | `int` | `96` | Frames of per-codebook history the penalty looks at. |
 | `repetition_codebooks` | `int` | `6` | Leading codebooks the penalty applies to; `-1` applies it to all ten. |
-| `cfg_scale` | `float` | `1.0` | Speaker classifier-free guidance; `1` disables it. Needs a voice. |
+| `guidance_scale` | `float` | `1.0` | Speaker classifier-free guidance; `1` disables it. Needs a voice. |
 | `speaker_mode` | `embedding`, `reference` | `embedding` | How `--voice-ref` audio conditions the prompt. |
 | `speaker_embedding_file` | path | - | float32 `.npy` speaker embedding, shape `[192]` or `[1,192]`. |
 | `reference_codes_file` | path | - | `.npy` reference codes `[T,10]`, values 0..4095. |
@@ -203,10 +206,18 @@ conditions and seed `seed + i`, and the chunks are concatenated.
 | `zonos3.keep_reference_encoder` | `bool` | `false` | Keep the raw-reference encoder (about 3.4 GiB peak RSS while encoding) loaded between requests. |
 | `zonos3.voice_cache_slots` | `int` | `4` | Reference encodings kept per session; `0` disables the cache. |
 | `zonos3.stream_chunk_frames` | `int` 1..64 | `16` | Maximum frames per streamed decoder chunk. Chunks start at one frame and grow to this size. |
-| `zonos3.disk_experts` | `bool` | `false` | Use the expert cache (below). |
-| `zonos3.pin_experts` | `bool` | `false` | With `disk_experts`, hold the expert banks in pinned host memory. |
-| `zonos3.expert_cache_size` | `int` 4..64 | `16` | Expert slots per MoE layer with `disk_experts`. |
-| `zonos3.disk_expert_read_threads` | `int` 1..64 | `1` | Host threads copying selected experts when `pin_experts` is off. |
+| `moe_disk_experts` | `bool` | `false` | Use the expert cache (below). |
+| `moe_pin_experts` | `bool` | `false` | With `disk_experts`, hold the expert banks in pinned host memory. |
+| `moe_expert_cache_size` | `int` 4..64 | `16` | Expert slots per MoE layer with `disk_experts`. |
+| `moe_disk_expert_read_threads` | `int` 1..64 | `1` | Host threads copying selected experts when `pin_experts` is off. |
+| `moe_cpu_expert_layers` | `int` 0..routed layers | `0` | Place the first N routed expert layers on CPU. Dense backbone operations remain on the selected backend. |
+| `moe_cpu_share` | `float` 0..1 | `0` | With staged experts, share remaining cache misses with CPU after cache hits and vacant GPU slots are handled. |
+
+The four older `zonos3.disk_experts`, `zonos3.pin_experts`,
+`zonos3.expert_cache_size` and `zonos3.disk_expert_read_threads` spellings remain
+accepted aliases. Do not supply both spellings of the same setting. CPU layer
+placement uses routed-layer ordinals and takes precedence over fractional sharing.
+With staged experts, CPU-selected layers also retain bounded expert caches.
 
 ## Expert cache
 
@@ -215,10 +226,9 @@ memory-mapped GGUF. For each MoE layer, the experts a step selects are copied
 into a fixed number of slots (`expert_cache_size`) on the compute backend. This
 uses the framework's `DiskExpertWeightStore`, and prefill uses
 `StagedMoeRuntime`. Routing is unchanged. The parity test checks that the
-cache's logits are bit-identical to resident experts run with the same plain
-kernels. On the CPU the default resident path uses the backend's repacked
-kernels instead (see Known limitations), so sampled takes from the two modes
-can differ there.
+cache's logits are bit-identical to resident experts using the same plain
+expert kernels. Normal CPU-resident execution still uses packed kernels when
+available; see Known limitations for their rounding differences.
 
 The resident expert banks total only about 425 MB, so the cache is off by
 default. It is for setups where that memory matters more than speed.

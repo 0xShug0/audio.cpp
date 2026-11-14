@@ -121,12 +121,12 @@ public:
                 auto & graph = offload_graph(shape);
                 set_prefill_inputs(graph.inputs, shape, prompt, position);
                 graph.run();
-                read_logits(graph.logits, 1, logits);
+                if (position + rows == prompt.n_rows) read_logits(graph.logits, 1, logits);
             } else {
                 auto & graph = forward_graph(prefill_, shape);
                 set_prefill_inputs(graph.inputs, shape, prompt, position);
                 graph.prepared->compute();
-                read_logits(graph.logits, 1, logits);
+                if (position + rows == prompt.n_rows) read_logits(graph.logits, 1, logits);
             }
         }
         n_past_[static_cast<size_t>(slot)] = prompt.n_rows;
@@ -140,13 +140,13 @@ public:
         const GraphShape shape{1, slots, 0, false};
         auto & graph = forward_graph(decode_, shape);
         const int width = hp_.n_codebooks + 1;
-        std::vector<int32_t> ids(static_cast<size_t>(width * slots));
+        step_ids_.resize(static_cast<size_t>(width * slots));
         for (int c = 0; c < width; ++c) {
-            for (int b = 0; b < slots; ++b) ids[static_cast<size_t>(c * slots + b)] = rows[static_cast<size_t>(b)][c];
+            for (int b = 0; b < slots; ++b) step_ids_[static_cast<size_t>(c * slots + b)] = rows[static_cast<size_t>(b)][c];
         }
-        std::vector<int32_t> positions(static_cast<size_t>(slots));
-        for (int b = 0; b < slots; ++b) positions[static_cast<size_t>(b)] = n_past_[static_cast<size_t>(b)];
-        set_common_inputs(graph.inputs, shape, ids, positions);
+        step_positions_.resize(static_cast<size_t>(slots));
+        for (int b = 0; b < slots; ++b) step_positions_[static_cast<size_t>(b)] = n_past_[static_cast<size_t>(b)];
+        set_common_inputs(graph.inputs, shape, step_ids_, step_positions_);
         graph.prepared->compute();
         read_logits(graph.logits, slots, logits);
         for (int b = 0; b < slots; ++b) ++n_past_[static_cast<size_t>(b)];
@@ -164,12 +164,11 @@ private:
     // runs through StagedMoeRuntime between per-layer graphs. Full AttnRes sources cross graph boundaries through
     // persistent stacks.
     struct OffloadGraph {
-        Impl * model = nullptr;
         GraphShape shape;
         GraphInputs inputs;
         std::shared_ptr<core::GraphWorkspace> workspace;
-        std::unique_ptr<modules::StagedMoeRuntime> staged;
         std::unique_ptr<core::PreparedGraph> prepared;
+        std::unique_ptr<modules::StagedMoeRuntime> staged;
         std::vector<core::PreparedGraph::GraphId> layer_graphs, finish_graphs;
         std::vector<int64_t> staged_layers;
         core::PreparedGraph::GraphId final_graph = 0;
@@ -255,37 +254,6 @@ private:
         return modules::RMSNormModule({weight.shape.dims[0], eps, true, false}).build(ctx, matrix(x), {weight, std::nullopt}).tensor;
     }
 
-    // The first CPU extra buffer type (CPU_REPACK on ARM) whose kernels take this quantized weight: MUL_MAT for a
-    // matrix, MUL_MAT_ID for an expert bank. ggml's support probe reads the weight's buffer type.
-    ggml_backend_buffer_type_t extra_buffer_type(ggml_type type, const std::vector<int64_t> & shape) const {
-        if (extra_buffer_types_.empty() || (shape.size() != 2 && shape.size() != 3)) return nullptr;
-        if (shape.size() == 3 && !options_.repack_experts) return nullptr;
-        const int64_t ne0 = shape.back();
-        const int64_t ne1 = shape[shape.size() - 2];
-        if (ne0 % ggml_blck_size(type) != 0) return nullptr;
-        std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({8 * ggml_tensor_overhead(), nullptr, true}), ggml_free);
-        if (!ctx) throw std::runtime_error("zonos3: cannot allocate the weight buffer probe context");
-        auto * device = ggml_backend_get_device(execution_.backend());
-        for (auto * buffer_type : extra_buffer_types_) {
-            ggml_tensor * op = nullptr;
-            ggml_tensor * weight = nullptr;
-            if (shape.size() == 2) {
-                weight = ggml_new_tensor_2d(ctx.get(), type, ne0, ne1);
-                op = ggml_mul_mat(ctx.get(), weight, ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, ne0, 64));
-            } else {
-                weight = ggml_new_tensor_3d(ctx.get(), type, ne0, ne1, shape[0]);
-                auto * ids = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_I32, 2, 64);
-                op = ggml_mul_mat_id(ctx.get(), weight, ggml_new_tensor_3d(ctx.get(), GGML_TYPE_F32, ne0, 1, 64), ids);
-            }
-            weight->buffer = ggml_backend_buft_alloc_buffer(buffer_type, 0);
-            const bool supported = ggml_backend_dev_supports_op(device, op);
-            ggml_backend_buffer_free(weight->buffer);
-            weight->buffer = nullptr;
-            if (supported) return buffer_type;
-        }
-        return nullptr;
-    }
-
     core::BackendWeightStore & extra_store(ggml_backend_buffer_type_t buffer_type) {
         for (auto & entry : extra_stores_) {
             if (entry.first == buffer_type) return *entry.second;
@@ -302,14 +270,14 @@ private:
         const int H = hp_.gdn_heads;
         const int S = hp_.gdn_head_dim;
         const int I = H * S;
-        if (options_.pin_experts && !options_.disk_experts) {
+        if (options_.moe.pin_host_weights && options_.moe.residency != core::MoeExpertResidency::Staged) {
             throw std::runtime_error("zonos3.pin_experts requires zonos3.disk_experts=true");
         }
         int top_k = 0;
         int min_experts = std::numeric_limits<int>::max();
         for (int layer = 1; layer < hp_.n_layer; ++layer) {
             const int used = hp_.expert_used[static_cast<size_t>(layer)];
-            if (top_k != 0 && used != top_k && options_.disk_experts) {
+            if (top_k != 0 && used != top_k && (options_.moe.residency == core::MoeExpertResidency::Staged)) {
                 throw std::runtime_error("zonos3 disk_experts requires the same top-k in every MoE layer");
             }
             top_k = used;
@@ -317,22 +285,55 @@ private:
                 source.require_metadata("blk." + std::to_string(layer) + ".ffn_up_exps.weight").shape[0]));
         }
         top_k_ = top_k;
-        if (options_.disk_experts) {
-            if (options_.expert_cache_size < 2 * top_k || options_.expert_cache_size > min_experts) {
+        if (options_.moe.residency == core::MoeExpertResidency::Staged) {
+            if (options_.moe.cache_slots < 2 * top_k || options_.moe.cache_slots > min_experts) {
                 throw std::runtime_error("zonos3.expert_cache_size must be between " + std::to_string(2 * top_k) + " and " +
                                          std::to_string(min_experts));
             }
-            if (execution_.backend_type() != core::BackendType::Cpu) {
-                core::BackendConfig host;
-                host.threads = execution_.config().threads;
-                host_execution_ = std::make_unique<core::ExecutionContext>(host);
-            }
-            disk_store_ = std::make_unique<core::DiskExpertWeightStore>(
-                source.source_path(), options_.pin_experts, static_cast<size_t>(options_.disk_expert_read_threads));
         }
         store_ = std::make_unique<core::BackendWeightStore>(execution_.backend(), execution_.backend_type(),
                                                             "zonos3.backbone.weights", 16 * 1024 * 1024);
         extra_buffer_types_ = core::cpu_extra_buffer_types(execution_.backend());
+        core::BackendWeightStore * expert_weights = store_.get();
+        if (options_.moe.residency == core::MoeExpertResidency::Backend && options_.repack_experts) {
+            for (auto * buffer_type : extra_buffer_types_) {
+                bool supported = true;
+                for (int layer = 1; layer < hp_.n_layer && supported; ++layer) {
+                    for (const auto * projection : {"ffn_up_exps.weight", "ffn_gate_exps.weight", "ffn_down_exps.weight"}) {
+                        const auto & metadata = source.require_metadata("blk." + std::to_string(layer) + "." + projection);
+                        const auto type = assets::ggml_type_for_tensor_storage(assets::tensor_storage_type_for_dtype(metadata.dtype));
+                        // Expert banks need MUL_MAT_ID support; the framework's 2-D
+                        // matmul probe does not establish that for every CPU buffer type.
+                        std::unique_ptr<ggml_context, decltype(&ggml_free)> probe(
+                            ggml_init({7 * ggml_tensor_overhead(), nullptr, true}), ggml_free);
+                        if (!probe) throw std::runtime_error("zonos3: cannot allocate expert buffer probe metadata");
+                        auto * bank = ggml_new_tensor_3d(probe.get(), type, metadata.shape.at(2),
+                                                        metadata.shape.at(1), metadata.shape.at(0));
+                        std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> buffer(
+                            ggml_backend_buft_alloc_buffer(buffer_type, 0), ggml_backend_buffer_free);
+                        bank->buffer = buffer.get();
+                        for (const int rows : {1, kPrefillChunk}) {
+                            auto * input = ggml_new_tensor_3d(probe.get(), GGML_TYPE_F32, bank->ne[0], 1, rows);
+                            auto * ids = ggml_new_tensor_2d(probe.get(), GGML_TYPE_I32,
+                                                           hp_.expert_used[static_cast<size_t>(layer)], rows);
+                            if (!ggml_backend_dev_supports_op(ggml_backend_get_device(execution_.backend()),
+                                                               ggml_mul_mat_id(probe.get(), bank, input, ids))) {
+                                supported = false;
+                                break;
+                            }
+                        }
+                        if (!supported) break;
+                    }
+                }
+                if (supported) {
+                    expert_weights = &extra_store(buffer_type);
+                    break;
+                }
+            }
+        }
+        resources_ = std::make_unique<core::MoeResources>(execution_, source, *expert_weights, options_.moe,
+                                                        "zonos3.backbone.experts", 16 * 1024 * 1024);
+        disk_store_ = resources_->disk_store();
         auto native = [&](const std::string & name, std::vector<int64_t> shape) {
             consumed_.insert(name);
             return store_->load_tensor(source, name, assets::TensorStorageType::Native, shape);
@@ -349,11 +350,12 @@ private:
             const auto resolved = storage == assets::TensorStorageType::Native
                 ? assets::tensor_storage_type_for_dtype(source.require_metadata(name).dtype) : storage;
             const ggml_type type = assets::ggml_type_for_tensor_storage(resolved);
-            if (auto * buffer_type = ggml_is_quantized(type) ? extra_buffer_type(type, shape) : nullptr) {
-                auto & store = extra_store(buffer_type);
-                auto value = store.load_tensor(source, name, storage, shape);
-                ggml_set_name(value.tensor, name.c_str());
-                return value;
+            if (ggml_is_quantized(type)) {
+                for (auto * buffer_type : extra_buffer_types_) {
+                    if (!core::buffer_type_supports_matmul_weight(
+                            execution_.backend(), buffer_type, type, shape[1], shape[0])) continue;
+                    return extra_store(buffer_type).load_tensor(source, name, storage, shape);
+                }
             }
             return store_->load_tensor(source, name, storage, shape);
         };
@@ -413,21 +415,18 @@ private:
                 const int64_t latent = bank[2];
                 const std::vector<std::string> names{p + "ffn_up_exps.weight", p + "ffn_gate_exps.weight",
                                                      p + "ffn_down_exps.weight"};
-                if (disk_store_) {
-                    for (const auto & name : names) consumed_.insert(name);
-                    if (source.require_metadata(names[1]).shape != bank ||
-                        source.require_metadata(names[2]).shape != std::vector<int64_t>{experts, latent, hidden}) {
-                        throw std::runtime_error("zonos3: backbone GGUF: " + p + " expert banks have inconsistent shapes");
-                    }
-                    w.disk_group = disk_store_->add_group(names, execution_.backend(), options_.expert_cache_size);
-                    w.up_exps = disk_store_->tensor(w.disk_group, 0);
-                    w.gate_exps = disk_store_->tensor(w.disk_group, 1);
-                    w.down_exps = disk_store_->tensor(w.disk_group, 2);
-                } else {
-                    w.up_exps = matmul(names[0], {experts, hidden, latent});
-                    w.gate_exps = matmul(names[1], {experts, hidden, latent});
-                    w.down_exps = matmul(names[2], {experts, latent, hidden});
+                std::vector<core::MoeExpertTensorBinding> bindings;
+                const std::vector<std::vector<int64_t>> shapes{bank, bank, {experts, latent, hidden}};
+                for (size_t i = 0; i < names.size(); ++i) {
+                    consumed_.insert(names[i]);
+                    bindings.push_back({names[i], names[i], shapes[i], assets::TensorStorageType::Native});
                 }
+                const auto & experts_layer = resources_->bind_layer(static_cast<size_t>(layer - 1),
+                    static_cast<size_t>(layer), bindings, w.top_k);
+                w.disk_group = experts_layer.disk_group;
+                w.up_exps = experts_layer.weights[0];
+                w.gate_exps = experts_layer.weights[1];
+                w.down_exps = experts_layer.weights[2];
                 w.latent_down = matmul(p + "ffn_latent_down.weight", {latent, D});
                 w.latent_up = matmul(p + "ffn_latent_up.weight", {D, latent});
                 w.router = matmul(p + "router.weight", {experts, D});
@@ -449,6 +448,7 @@ private:
         }
         store_->upload();
         for (auto & extra : extra_stores_) extra.second->upload();
+        resources_->finalize_weights();
         assets_->backbone->release_storage();
         if (disk_store_) {
             const auto stats = disk_store_->statistics();
@@ -676,10 +676,7 @@ private:
     }
 
     void configure_expert_scheduler(core::PreparedGraph & prepared) {
-        std::vector<ggml_backend_t> backends{execution_.backend()};
-        if (host_execution_) backends.push_back(host_execution_->backend());
-        auto * scheduler = prepared.create_scheduler(std::move(backends));
-        ggml_backend_sched_set_eval_callback(scheduler, core::DiskExpertWeightStore::evaluate, disk_store_.get());
+        resources_->configure_scheduler(prepared);
     }
 
     ForwardGraph & forward_graph(std::vector<std::unique_ptr<ForwardGraph>> & cache, const GraphShape & shape) {
@@ -716,7 +713,7 @@ private:
         out->logits = head(ctx, bank.route(x, 2 * hp_.n_layer), N, shape.prefill ? 1 : shape.slots);
         ggml_set_output(out->logits);
         ggml_build_forward_expand(graph, out->logits);
-        if (disk_store_) configure_expert_scheduler(*out->prepared);
+        if (disk_store_ || resources_->has_cpu_layers()) configure_expert_scheduler(*out->prepared);
         out->prepared->allocate();
         cache.push_back(std::move(out));
         return *cache.back();
@@ -737,7 +734,6 @@ private:
 
     std::unique_ptr<OffloadGraph> build_offload(const GraphShape & shape) {
         auto out = std::make_unique<OffloadGraph>();
-        out->model = this;
         out->shape = shape;
         const int T = shape.rows_per_slot;
         const int Q = queries();
@@ -749,11 +745,11 @@ private:
         staged.tokens = T;
         staged.selected = top_k_;
         staged.experts = hp_.n_expert;
-        staged.cache_slots = options_.expert_cache_size;
+        staged.cache_slots = options_.moe.cache_slots;
         for (int64_t count = 1; count <= bucket; count *= 2) staged.rows_per_expert.push_back(count);
         staged.scatter_index_type = GGML_TYPE_I32;
         out->workspace = std::make_shared<core::GraphWorkspace>(execution_.backend());
-        out->staged = std::make_unique<modules::StagedMoeRuntime>(execution_, std::move(staged), out->workspace);
+        out->staged = std::make_unique<modules::StagedMoeRuntime>(execution_, std::move(staged), out->workspace, resources_->cpu_execution());
         const size_t nodes = 2048;
         const size_t graphs = static_cast<size_t>(2 * hp_.n_layer + 2);
         out->prepared = std::make_unique<core::PreparedGraph>(execution_, core::PreparedGraphConfig{
@@ -827,14 +823,16 @@ private:
     }
 
     void set_common_inputs(const GraphInputs & in, const GraphShape & shape, const std::vector<int32_t> & ids,
-                           const std::vector<int32_t> & positions) const {
+                           const std::vector<int32_t> & positions) {
         const int T = shape.rows_per_slot;
         const int N = shape.rows();
         const int nkv = hp_.n_head_kv;
         ggml_backend_tensor_set(in.ids, ids.data(), 0, ids.size() * sizeof(int32_t));
         ggml_backend_tensor_set(in.pos, positions.data(), 0, positions.size() * sizeof(int32_t));
-        std::vector<int32_t> kv_rows(static_cast<size_t>(nkv * N));
-        std::vector<ggml_fp16_t> mask(static_cast<size_t>(capacity_) * static_cast<size_t>(N));
+        kv_rows_host_.resize(static_cast<size_t>(nkv * N));
+        mask_host_.resize(static_cast<size_t>(capacity_) * static_cast<size_t>(N));
+        auto & kv_rows = kv_rows_host_;
+        auto & mask = mask_host_;
         const auto zero = ggml_fp32_to_fp16(0.0f);
         const auto blocked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
         for (int n = 0; n < N; ++n) {
@@ -849,7 +847,7 @@ private:
         ggml_backend_tensor_set(in.mask, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
     }
 
-    void set_prefill_inputs(const GraphInputs & in, const GraphShape & shape, const Zonos3Prompt & prompt, int position) const {
+    void set_prefill_inputs(const GraphInputs & in, const GraphShape & shape, const Zonos3Prompt & prompt, int position) {
         const int T = shape.rows_per_slot;
         const int width = hp_.n_codebooks + 1;
         std::vector<int32_t> ids(static_cast<size_t>(width * T));
@@ -891,11 +889,11 @@ private:
     const Zonos3Hparams & hp_;
     core::ExecutionContext & execution_;
     Zonos3BackboneOptions options_;
-    std::unique_ptr<core::ExecutionContext> host_execution_;
-    std::unique_ptr<core::DiskExpertWeightStore> disk_store_;
     std::unique_ptr<core::BackendWeightStore> store_;
     std::vector<ggml_backend_buffer_type_t> extra_buffer_types_;
     std::vector<std::pair<ggml_backend_buffer_type_t, std::unique_ptr<core::BackendWeightStore>>> extra_stores_;
+    std::unique_ptr<core::MoeResources> resources_;
+    core::DiskExpertWeightStore * disk_store_ = nullptr;
     std::set<std::string> consumed_;
     std::vector<TensorValue> audio_embd_, cond_embd_;
     TensorValue text_embd_, output_norm_, output_, attnres_q_, speaker_proj_, speaker_bias_;
@@ -908,6 +906,8 @@ private:
     int capacity_ = 0;
     int slots_ = 0;
     std::vector<int> n_past_ = std::vector<int>(2, 0);
+    std::vector<int32_t> step_ids_, step_positions_, kv_rows_host_;
+    std::vector<ggml_fp16_t> mask_host_;
     std::unique_ptr<ggml_context, decltype(&ggml_free)> state_context_{nullptr, ggml_free};
     std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> state_buffer_{nullptr, ggml_backend_buffer_free};
     std::vector<ggml_tensor *> keys_, values_, gdn_states_, gdn_history_;
