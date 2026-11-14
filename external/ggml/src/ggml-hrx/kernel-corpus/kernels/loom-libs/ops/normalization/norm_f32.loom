@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
-// Each subgroup computes one row. Both reductions use centered variance,
-// matching ggml NORM rather than changing it to an RMS normalization.
+// Each subgroup computes one row, preserving either centered NORM variance
+// or uncentered RMS_NORM according to the graph operation.
 amdgpu.target<gfx11-generic> @ggml_norm_target {subgroup_size = 32}
 
 config.decl @ggml.norm.width : %value: index where [range(%value, 1, 1073741824)]
 config.decl @ggml.norm.epsilon : f32
+config.decl @ggml.norm.center : %value: index where [range(%value, 0, 1)]
 config.decl @ggml.norm.ne1 : %value: index where [range(%value, 1, 1073741824)]
 config.decl @ggml.norm.ne2 : %value: index where [range(%value, 1, 1073741824)]
 config.decl @ggml.norm.stride0 : %value: index where [range(%value, 1, 1073741824)]
@@ -67,7 +68,14 @@ kernel.def target(@ggml_norm_target) export("ggml_norm_f32") @ggml_norm_f32(%row
     scf.yield %next : f32
   }
   %sum = kernel.subgroup.reduce<addf> %partial_sum : f32
-  %mean = scalar.divf %sum, %width_f : f32
+  %center = config.get @ggml.norm.center : index
+  %centered_norm = index.cmp ne, %center, %zero_i : index
+  %mean = scf.if %centered_norm -> (f32) {
+    %row_mean = scalar.divf %sum, %width_f : f32
+    scf.yield %row_mean : f32
+  } else {
+    scf.yield %zero : f32
+  }
   %partial_variance = scf.for %channel = [%lane to %width step %step](%sum = %zero : f32) -> (f32) {
     %col_offset = index.mul %channel, %s0 : index
     %src0 = index.add %row_offset, %col_offset : index

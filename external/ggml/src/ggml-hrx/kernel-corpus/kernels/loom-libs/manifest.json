@@ -3,6 +3,12 @@
   "upstream_revision": "local",
   "files": [
     {
+      "path": "ops/copy/float_copy.loom"
+    },
+    {
+      "path": "ops/elementwise/fill_f32.loom"
+    },
+    {
       "path": "ops/copy/repeat_f32.loom"
     },
     {
@@ -661,6 +667,90 @@
     }
   ],
   "exports": [
+    {
+      "name": "ggml_float_copy",
+      "family": "loom_libs",
+      "symbol": "ggml_float_copy",
+      "source": "ops/copy/float_copy.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "source_span",
+          "type": "index"
+        },
+        {
+          "name": "target_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "source_span",
+          "type": "index"
+        },
+        {
+          "name": "target_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/copy/float_copy.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_fill_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_fill_f32",
+      "source": "ops/elementwise/fill_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "output"
+      ],
+      "binding_access": [
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/elementwise/fill_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
     {
       "name": "ggml_repeat_f32",
       "family": "loom_libs",

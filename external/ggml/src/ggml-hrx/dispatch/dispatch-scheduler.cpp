@@ -135,7 +135,7 @@ static bool can_elide_zero_output_node(const Graph &             graph,
 }
 
 static bool can_elide_node(const Graph & graph, const GraphNode & node, const std::vector<bool> & covered_nodes) {
-    return can_elide_layout_alias_node(graph, node, covered_nodes) ||
+    return node.op == GGML_OP_NONE || can_elide_layout_alias_node(graph, node, covered_nodes) ||
            can_elide_zero_output_node(graph, node, covered_nodes);
 }
 

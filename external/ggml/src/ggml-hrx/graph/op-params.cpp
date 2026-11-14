@@ -3,6 +3,7 @@
 #include "ggml-impl.h"
 
 #include <cmath>
+#include <cstring>
 
 namespace ggml::hrx {
 namespace {
@@ -284,6 +285,8 @@ OpParams import_op_params(const ggml_tensor & tensor) {
             };
         case GGML_OP_GLU:
             return GluParams{ ggml_get_glu_op(&tensor), ggml_get_op_params_i32(&tensor, 1) != 0 };
+        case GGML_OP_FILL:
+            return FillParams{ggml_get_op_params_f32(&tensor, 0)};
         case GGML_OP_SCALE:
             return ScaleParams{
                 ggml_get_op_params_f32(&tensor, 0),
@@ -328,6 +331,11 @@ bool op_params_equivalent(ggml_op op, const OpParams & lhs, const OpParams & rhs
             return clamp_params_equivalent(lhs, rhs);
         case GGML_OP_GLU:
             return binary_params_equivalent(lhs, rhs) || glu_params_equivalent(lhs, rhs);
+        case GGML_OP_FILL: {
+            const auto * a = op_params_as<FillParams>(lhs);
+            const auto * b = op_params_as<FillParams>(rhs);
+            return a != nullptr && b != nullptr && std::memcmp(&a->value, &b->value, sizeof(float)) == 0;
+        }
         case GGML_OP_SCALE:
             return scale_params_equivalent(lhs, rhs);
         case GGML_OP_ADD:

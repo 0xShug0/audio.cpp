@@ -1,0 +1,145 @@
+// SPDX-License-Identifier: MIT
+// Scalar floating-point conversion and arbitrary four-dimensional layouts.
+amdgpu.target<gfx11-generic> @ggml_float_copy_target {subgroup_size = 64}
+config.decl @ggml.float_copy.source_type : %value: index where [range(%value, 0, 30)]
+config.decl @ggml.float_copy.target_type : %value: index where [range(%value, 0, 30)]
+config.decl @ggml.float_copy.src_ne0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.src_stride0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.src_ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.src_stride1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.src_ne2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.src_stride2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.src_stride3 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.dst_ne0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.dst_stride0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.dst_ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.dst_stride1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.dst_ne2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.dst_stride2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_copy.dst_stride3 : %value: index where [range(%value, 1, 1073741824)]
+kernel.def target(@ggml_float_copy_target) export("ggml_float_copy") @ggml_float_copy(%element_count: index, %source_span: index, %target_span: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %element_count, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%element_count: index, %source_span: index, %target_span: index, %input: buffer, %output: buffer) {
+  %count = index.assume %element_count [range(%element_count, 1, 1073741824)] : index
+  %input_span = index.assume %source_span [range(%source_span, 1, 1073741824)] : index
+  %output_span = index.assume %target_span [range(%target_span, 1, 1073741824)] : index
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %threads = index.constant 256 : index
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %offset = index.constant 0 : offset
+  %source_type = config.get @ggml.float_copy.source_type : index
+  %target_type = config.get @ggml.float_copy.target_type : index
+  %source_f32 = index.cmp eq, %source_type, %zero : index
+  %source_f16 = index.cmp eq, %source_type, %one : index
+  %target_f32 = index.cmp eq, %target_type, %zero : index
+  %target_f16 = index.cmp eq, %target_type, %one : index
+  %base = index.mul %group, %threads : index
+  %linear = index.add %base, %thread : index
+  %valid = index.cmp ult, %linear, %count : index
+  %src_ne0 = config.get @ggml.float_copy.src_ne0 : index
+  %src_stride0 = config.get @ggml.float_copy.src_stride0 : index
+  %src_ne1 = config.get @ggml.float_copy.src_ne1 : index
+  %src_stride1 = config.get @ggml.float_copy.src_stride1 : index
+  %src_ne2 = config.get @ggml.float_copy.src_ne2 : index
+  %src_stride2 = config.get @ggml.float_copy.src_stride2 : index
+  %src_stride3 = config.get @ggml.float_copy.src_stride3 : index
+  %dst_ne0 = config.get @ggml.float_copy.dst_ne0 : index
+  %dst_stride0 = config.get @ggml.float_copy.dst_stride0 : index
+  %dst_ne1 = config.get @ggml.float_copy.dst_ne1 : index
+  %dst_stride1 = config.get @ggml.float_copy.dst_stride1 : index
+  %dst_ne2 = config.get @ggml.float_copy.dst_ne2 : index
+  %dst_stride2 = config.get @ggml.float_copy.dst_stride2 : index
+  %dst_stride3 = config.get @ggml.float_copy.dst_stride3 : index
+  scf.if %valid {
+    %src_i0 = index.rem %linear, %src_ne0 : index
+    %src_q0 = index.div %linear, %src_ne0 : index
+    %src_i1 = index.rem %src_q0, %src_ne1 : index
+    %src_q1 = index.div %src_q0, %src_ne1 : index
+    %src_i2 = index.rem %src_q1, %src_ne2 : index
+    %src_i3 = index.div %src_q1, %src_ne2 : index
+    %src_b0 = index.mul %src_i0, %src_stride0 : index
+    %src_b1 = index.mul %src_i1, %src_stride1 : index
+    %src_b2 = index.mul %src_i2, %src_stride2 : index
+    %src_b3 = index.mul %src_i3, %src_stride3 : index
+    %src_b01 = index.add %src_b0, %src_b1 : index
+    %src_b23 = index.add %src_b2, %src_b3 : index
+    %src_idx0 = index.add %src_b01, %src_b23 : index
+    %src_idx = index.assume %src_idx0 [lt(%src_idx0, %input_span)] : index
+    %dst_i0 = index.rem %linear, %dst_ne0 : index
+    %dst_q0 = index.div %linear, %dst_ne0 : index
+    %dst_i1 = index.rem %dst_q0, %dst_ne1 : index
+    %dst_q1 = index.div %dst_q0, %dst_ne1 : index
+    %dst_i2 = index.rem %dst_q1, %dst_ne2 : index
+    %dst_i3 = index.div %dst_q1, %dst_ne2 : index
+    %dst_b0 = index.mul %dst_i0, %dst_stride0 : index
+    %dst_b1 = index.mul %dst_i1, %dst_stride1 : index
+    %dst_b2 = index.mul %dst_i2, %dst_stride2 : index
+    %dst_b3 = index.mul %dst_i3, %dst_stride3 : index
+    %dst_b01 = index.add %dst_b0, %dst_b1 : index
+    %dst_b23 = index.add %dst_b2, %dst_b3 : index
+    %dst_idx0 = index.add %dst_b01, %dst_b23 : index
+    %dst_idx = index.assume %dst_idx0 [lt(%dst_idx0, %output_span)] : index
+    %same_type = index.cmp eq, %source_type, %target_type : index
+    scf.if %same_type {
+      scf.if %source_f32 {
+      %raw_in_f32 = buffer.view %input[%offset] : buffer -> view<[%input_span]xf32>
+      %raw_out_f32 = buffer.view %output[%offset] : buffer -> view<[%output_span]xf32>
+      %raw_f32 = view.load %raw_in_f32[%src_idx] : view<[%input_span]xf32> -> f32
+      view.store %raw_f32, %raw_out_f32[%dst_idx] : f32, view<[%output_span]xf32>
+      } else {
+        scf.if %source_f16 {
+          %raw_in_f16 = buffer.view %input[%offset] : buffer -> view<[%input_span]xf16>
+          %raw_out_f16 = buffer.view %output[%offset] : buffer -> view<[%output_span]xf16>
+          %raw_f16 = view.load %raw_in_f16[%src_idx] : view<[%input_span]xf16> -> f16
+          view.store %raw_f16, %raw_out_f16[%dst_idx] : f16, view<[%output_span]xf16>
+        } else {
+          %raw_in_bf16 = buffer.view %input[%offset] : buffer -> view<[%input_span]xbf16>
+          %raw_out_bf16 = buffer.view %output[%offset] : buffer -> view<[%output_span]xbf16>
+          %raw_bf16 = view.load %raw_in_bf16[%src_idx] : view<[%input_span]xbf16> -> bf16
+          view.store %raw_bf16, %raw_out_bf16[%dst_idx] : bf16, view<[%output_span]xbf16>
+        }
+      }
+    } else {
+      %value = scf.if %source_f32 -> (f32) {
+        %iv32 = buffer.view %input[%offset] : buffer -> view<[%input_span]xf32>
+        %v32 = view.load %iv32[%src_idx] : view<[%input_span]xf32> -> f32
+        scf.yield %v32 : f32
+      } else {
+        %promoted = scf.if %source_f16 -> (f32) {
+          %iv16 = buffer.view %input[%offset] : buffer -> view<[%input_span]xf16>
+          %v16 = view.load %iv16[%src_idx] : view<[%input_span]xf16> -> f16
+          %p16 = scalar.extf %v16 : f16 to f32
+          scf.yield %p16 : f32
+        } else {
+          %ivbf = buffer.view %input[%offset] : buffer -> view<[%input_span]xbf16>
+          %vbf = view.load %ivbf[%src_idx] : view<[%input_span]xbf16> -> bf16
+          %pbf = scalar.extf %vbf : bf16 to f32
+          scf.yield %pbf : f32
+        }
+        scf.yield %promoted : f32
+      }
+      scf.if %target_f32 {
+        %ov32 = buffer.view %output[%offset] : buffer -> view<[%output_span]xf32>
+        view.store %value, %ov32[%dst_idx] : f32, view<[%output_span]xf32>
+      } else {
+        scf.if %target_f16 {
+          %ov16 = buffer.view %output[%offset] : buffer -> view<[%output_span]xf16>
+          %o16 = scalar.fptrunc %value : f32 to f16
+          view.store %o16, %ov16[%dst_idx] : f16, view<[%output_span]xf16>
+        } else {
+          %ovbf = buffer.view %output[%offset] : buffer -> view<[%output_span]xbf16>
+          %obf = scalar.fptrunc %value : f32 to bf16
+          view.store %obf, %ovbf[%dst_idx] : bf16, view<[%output_span]xbf16>
+        }
+      }
+    }
+  }
+  kernel.return
+}

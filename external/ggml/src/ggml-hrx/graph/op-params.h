@@ -40,6 +40,10 @@ struct GluParams {
     bool        swapped = false;
 };
 
+struct FillParams {
+    float value = 0.0f;
+};
+
 struct ScaleParams {
     float scale = 0.0f;
     float bias  = 0.0f;
@@ -122,6 +126,7 @@ using OpParams = std::variant<
     ClampParams,
     GluParams,
     ScaleParams,
+    FillParams,
     BinaryParams,
     UnaryParams,
     RopeParams>;

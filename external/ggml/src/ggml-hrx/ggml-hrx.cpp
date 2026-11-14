@@ -1028,6 +1028,11 @@ static bool device_supports_op(ggml_backend_dev_t device, const ggml_tensor * op
     if (zero_output_elision_supported(op)) {
         return true;
     }
+    if (op->op == GGML_OP_CPY || op->op == GGML_OP_CONT) {
+        const auto floating = [](ggml_type t) { return t == GGML_TYPE_F32 || t == GGML_TYPE_F16 || t == GGML_TYPE_BF16; };
+        return op->src[0] != nullptr && floating(op->type) && floating(op->src[0]->type);
+    }
+    if (op->op == GGML_OP_FILL) return op->type == GGML_TYPE_F32 && ggml_is_contiguous(op);
     if (op->op == GGML_OP_NORM || op->op == GGML_OP_REPEAT) {
         return op->src[0] != nullptr && op->type == GGML_TYPE_F32 &&
                op->src[0]->type == GGML_TYPE_F32 && ggml_is_contiguous(op);

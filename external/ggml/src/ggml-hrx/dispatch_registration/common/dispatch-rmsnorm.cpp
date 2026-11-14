@@ -1169,6 +1169,7 @@ static bool match_norm_f32_dispatch(const DispatchMatchContext & context, Dispat
         dispatch.kernel.compile_parameters.emplace("ggml.norm.stride" + std::to_string(i),
                                                    std::to_string(input->nb[i] / sizeof(float)));
     }
+    dispatch.kernel.compile_parameters.emplace("ggml.norm.center", node->op == GGML_OP_NORM ? "1" : "0");
     dispatch.kernel.compile_parameters.emplace("ggml.norm.width", std::to_string(input->ne[0]));
     dispatch.kernel.compile_parameters.emplace("ggml.norm.epsilon", to_config_value(params->eps));
     dispatch.bindings.push_back({input->id, 0, input->byte_count});
@@ -1179,6 +1180,8 @@ static bool match_norm_f32_dispatch(const DispatchMatchContext & context, Dispat
 }
 
 void register_rmsnorm_dispatches(DispatchRegistryBuilder & registry) {
+    registry.add({"common.rmsnorm_strided_f32", GGML_OP_RMS_NORM, DispatchMatchKind::SingleOp, -1,
+                  DispatchSource::Common, match_norm_f32_dispatch});
     registry.add({"common.norm_f32", GGML_OP_NORM, DispatchMatchKind::SingleOp, 0,
                   DispatchSource::Common, match_norm_f32_dispatch});
     registry.add({

@@ -74,9 +74,9 @@ static bool make_copy_f32_dispatch(const Value & source, const Value & output, D
         dispatch.kernel = make_kernel_specialization(kCopyF32Kernel);
         dispatch.kernel.workload_specialization = WorkloadSpecialization::Dynamic;
     } else {
-        if (!strided_f32_storage_span_bytes(source, source_span)) {
-            return false;
-        }
+        // ValueMap imports ggml_nbytes(), including every strided dimension.
+        // The row-oriented span helper requires nb[0] == sizeof(float), which
+        // is not the contract of a generic transpose/permute copy.
         const size_t source_span_elements = source_span / sizeof(float);
         if (source_span_elements > kMaximumCopyElements) {
             return false;
@@ -210,8 +210,7 @@ static bool match_repeat_f32_dispatch(const DispatchMatchContext & context, Disp
         output->type != GGML_TYPE_F32 || !packed_f32_layout(*output) || !f32_element_strides(*source)) {
         return false;
     }
-    size_t source_span = 0;
-    if (!strided_f32_storage_span_bytes(*source, source_span)) return false;
+    const size_t source_span = source->byte_count;
     Dispatch dispatch;
     dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_repeat_f32"));
     dispatch.kernel.integer_parameters.emplace("element_count", output->element_count);
@@ -229,7 +228,45 @@ static bool match_repeat_f32_dispatch(const DispatchMatchContext & context, Disp
     return true;
 }
 
+static bool match_float_copy_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * source = context.graph.values().find(context.root_node->inputs[0]);
+    const auto * output = context.graph.values().find(context.root_node->output);
+    if (source == nullptr || output == nullptr || source->element_count != output->element_count ||
+        (source->type != GGML_TYPE_F32 && source->type != GGML_TYPE_F16 && source->type != GGML_TYPE_BF16) ||
+        (output->type != GGML_TYPE_F32 && output->type != GGML_TYPE_F16 && output->type != GGML_TYPE_BF16)) {
+        return false;
+    }
+    if (source->storage == output->storage && source->storage_offset < output->storage_offset + output->byte_count &&
+        output->storage_offset < source->storage_offset + source->byte_count) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_float_copy"));
+    dispatch.kernel.integer_parameters.emplace("element_count", source->element_count);
+    dispatch.kernel.integer_parameters.emplace("source_span", source->byte_count / ggml_type_size(source->type));
+    dispatch.kernel.integer_parameters.emplace("target_span", output->byte_count / ggml_type_size(output->type));
+    dispatch.kernel.compile_parameters.emplace("ggml.float_copy.source_type", std::to_string(source->type));
+    dispatch.kernel.compile_parameters.emplace("ggml.float_copy.target_type", std::to_string(output->type));
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        const size_t src_size = ggml_type_size(source->type), dst_size = ggml_type_size(output->type);
+        if (source->nb[i] % src_size || output->nb[i] % dst_size) return false;
+        dispatch.kernel.compile_parameters.emplace("ggml.float_copy.src_stride" + std::to_string(i), std::to_string(source->nb[i] / src_size));
+        dispatch.kernel.compile_parameters.emplace("ggml.float_copy.dst_stride" + std::to_string(i), std::to_string(output->nb[i] / dst_size));
+        if (i < 3) {
+            dispatch.kernel.compile_parameters.emplace("ggml.float_copy.src_ne" + std::to_string(i), std::to_string(source->ne[i]));
+            dispatch.kernel.compile_parameters.emplace("ggml.float_copy.dst_ne" + std::to_string(i), std::to_string(output->ne[i]));
+        }
+    }
+    dispatch.bindings.push_back({source->storage_root, source->storage_offset, source->byte_count});
+    dispatch.bindings.push_back({output->storage_root, output->storage_offset, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 void register_copy_dispatch(DispatchRegistryBuilder & registry) {
+    for (const auto op : {GGML_OP_CPY, GGML_OP_CONT}) {
+        registry.add({"common.float_copy", op, DispatchMatchKind::SingleOp, -10,
+                      DispatchSource::Common, match_float_copy_dispatch});
+    }
     registry.add({"common.repeat_f32", GGML_OP_REPEAT, DispatchMatchKind::SingleOp, 0,
                   DispatchSource::Common, match_repeat_f32_dispatch});
     registry.add({

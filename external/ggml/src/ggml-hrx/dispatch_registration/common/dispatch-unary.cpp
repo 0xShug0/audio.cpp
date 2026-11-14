@@ -131,7 +131,27 @@ static void register_unary_dispatch_for(DispatchRegistryBuilder & registry, ggml
 
 }  // namespace
 
+static bool match_fill_f32_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * output = context.graph.values().find(context.root_node->output);
+    const auto * params = op_params_as<FillParams>(context.root_node->params);
+    if (output == nullptr || params == nullptr || output->type != GGML_TYPE_F32 || !output->contiguous) {
+        return false;
+    }
+    std::ostringstream value;
+    value << std::setprecision(std::numeric_limits<float>::max_digits10) << params->value;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_fill_f32"));
+    dispatch.kernel.integer_parameters.emplace("element_count", output->element_count);
+    dispatch.kernel.compile_parameters.emplace("ggml.fill.value", value.str());
+    dispatch.bindings.push_back({output->id, 0, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 void register_unary_dispatch(DispatchRegistryBuilder & registry) {
+    registry.add({"common.fill_f32", GGML_OP_FILL, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_fill_f32_dispatch});
     registry.add({
         "common.scale_bias_f32",
         GGML_OP_SCALE,

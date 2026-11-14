@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+amdgpu.target<gfx11-generic> @ggml_fill_target {subgroup_size = 64}
+config.decl @ggml.fill.value : f32
+kernel.def target(@ggml_fill_target) export("ggml_fill_f32") @ggml_fill_f32(%element_count: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %element_count, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%element_count: index, %output: buffer) {
+  %count = index.assume %element_count [range(%element_count, 1, 1073741824)] : index
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %threads = index.constant 256 : index
+  %offset = index.constant 0 : offset
+  %value = config.get @ggml.fill.value : f32
+  %base = index.mul %group, %threads : index
+  %linear = index.add %base, %thread : index
+  %valid = index.cmp ult, %linear, %count : index
+  %ov = buffer.view %output[%offset] : buffer -> view<[%count]xf32>
+  scf.if %valid {
+    %dst = index.assume %linear [lt(%linear, %count)] : index
+    view.store %value, %ov[%dst] : f32, view<[%count]xf32>
+  }
+  kernel.return
+}

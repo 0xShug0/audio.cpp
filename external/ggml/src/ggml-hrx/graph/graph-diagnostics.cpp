@@ -143,6 +143,8 @@ json op_params_json(const OpParams & params) {
                     { "op",      static_cast<int>(value.op)  },
                     { "swapped", value.swapped               }
                 };
+            } else if constexpr (std::is_same_v<T, FillParams>) {
+                return {{"kind", "fill"}, {"value", value.value}};
             } else if constexpr (std::is_same_v<T, ScaleParams>) {
                 return {
                     { "kind",  "scale"     },
@@ -207,6 +209,9 @@ OpParams parse_op_params(const json & item) {
     if (kind == "glu") {
         return GluParams{ static_cast<ggml_glu_op>(item.value("op", static_cast<int>(GGML_GLU_OP_REGLU))),
                           item.value("swapped", false) };
+    }
+    if (kind == "fill") {
+        return FillParams{item.value("value", 0.0f)};
     }
     if (kind == "scale") {
         return ScaleParams{ item.value("scale", 0.0f), item.value("bias", 0.0f) };
