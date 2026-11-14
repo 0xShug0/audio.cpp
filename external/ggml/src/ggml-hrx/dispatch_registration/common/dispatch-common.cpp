@@ -13,6 +13,8 @@
 #include "dispatch-rmsnorm.h"
 #include "dispatch-rope-set-rows.h"
 #include "dispatch-scale.h"
+#include "dispatch-im2col.h"
+#include "dispatch-softmax.h"
 #include "dispatch-unary.h"
 
 namespace ggml::hrx {
@@ -30,6 +32,8 @@ void register_common_dispatches(DispatchRegistryBuilder & registry) {
     register_mul_mat_dispatches(registry);
     register_rope_set_rows_dispatches(registry);
     register_scale_dispatch(registry);
+    register_im2col_dispatch(registry);
+    register_softmax_dispatch(registry);
     register_unary_dispatch(registry);
     register_rmsnorm_dispatches(registry);
 }

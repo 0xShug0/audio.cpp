@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: MIT
+// GGML 1D/2D image-to-column lowering; padding emits zero without input reads.
+amdgpu.target<gfx11-generic> @ggml_im2col_target {subgroup_size = 64}
+config.decl @ggml.im2col.columns : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.ow : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.oh : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.iw : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.ih : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.kw : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.kh : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.s0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.s1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.d0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.d1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.pad0 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.im2col.pad1 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.im2col.crop0 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.im2col.crop1 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.im2col.x_stride : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.y_stride : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.im2col.channel_stride : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.batch_stride : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.im2col.input_f16 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.im2col.output_f16 : %value: index where [range(%value, 0, 1073741824)]
+kernel.def target(@ggml_im2col_target) export("ggml_im2col") @ggml_im2col(%element_count: index, %input_span: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %element_count, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%element_count: index, %input_span: index, %input: buffer, %output: buffer) {
+  %count = index.assume %element_count [range(%element_count, 1, 1073741824)] : index
+  %span = index.assume %input_span [range(%input_span, 1, 1073741824)] : index
+  %offset = index.constant 0 : offset
+  %zero = index.constant 0 : index
+  %zero_f = scalar.constant 0.0 : f32
+  %threads = index.constant 256 : index
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %base = index.mul %group, %threads : index
+  %linear = index.add %base, %thread : index
+  %valid = index.cmp ult, %linear, %count : index
+  %columns = config.get @ggml.im2col.columns : index
+  %ow = config.get @ggml.im2col.ow : index
+  %oh = config.get @ggml.im2col.oh : index
+  %iw = config.get @ggml.im2col.iw : index
+  %ih = config.get @ggml.im2col.ih : index
+  %kw = config.get @ggml.im2col.kw : index
+  %kh = config.get @ggml.im2col.kh : index
+  %s0 = config.get @ggml.im2col.s0 : index
+  %s1 = config.get @ggml.im2col.s1 : index
+  %d0 = config.get @ggml.im2col.d0 : index
+  %d1 = config.get @ggml.im2col.d1 : index
+  %pad0 = config.get @ggml.im2col.pad0 : index
+  %pad1 = config.get @ggml.im2col.pad1 : index
+  %crop0 = config.get @ggml.im2col.crop0 : index
+  %crop1 = config.get @ggml.im2col.crop1 : index
+  %x_stride = config.get @ggml.im2col.x_stride : index
+  %y_stride = config.get @ggml.im2col.y_stride : index
+  %channel_stride = config.get @ggml.im2col.channel_stride : index
+  %batch_stride = config.get @ggml.im2col.batch_stride : index
+  %input_f16 = config.get @ggml.im2col.input_f16 : index
+  %output_f16 = config.get @ggml.im2col.output_f16 : index
+  %half_input = index.cmp ne, %input_f16, %zero : index
+  %half_output = index.cmp ne, %output_f16, %zero : index
+  scf.if %valid {
+    %kernel_col = index.rem %linear, %columns : index
+    %position = index.div %linear, %columns : index
+    %out_x = index.rem %position, %ow : index
+    %q = index.div %position, %ow : index
+    %out_y = index.rem %q, %oh : index
+    %batch = index.div %q, %oh : index
+    %kx = index.rem %kernel_col, %kw : index
+    %kq = index.div %kernel_col, %kw : index
+    %ky = index.rem %kq, %kh : index
+    %channel = index.div %kq, %kh : index
+    %xp = index.mul %out_x, %s0 : index
+    %xk = index.mul %kx, %d0 : index
+    %x0 = index.add %xp, %xk : index
+    %xc = index.add %x0, %crop0 : index
+    %x = index.sub %xc, %pad0 : index
+    %yp = index.mul %out_y, %s1 : index
+    %yk = index.mul %ky, %d1 : index
+    %y0 = index.add %yp, %yk : index
+    %yc = index.add %y0, %crop1 : index
+    %y = index.sub %yc, %pad1 : index
+    %valid_x = index.cmp ult, %x, %iw : index
+    %valid_y = index.cmp ult, %y, %ih : index
+    %inside = scalar.andi %valid_x, %valid_y : i1
+    %value = scf.if %inside -> (f32) {
+      %xb = index.mul %x, %x_stride : index
+      %yb = index.mul %y, %y_stride : index
+      %cb = index.mul %channel, %channel_stride : index
+      %nb = index.mul %batch, %batch_stride : index
+      %xy = index.add %xb, %yb : index
+      %cn = index.add %cb, %nb : index
+      %src0 = index.add %xy, %cn : index
+      %src = index.assume %src0 [lt(%src0, %span)] : index
+      %loaded = scf.if %half_input -> (f32) {
+        %iv16 = buffer.view %input[%offset] : buffer -> view<[%span]xf16>
+        %v16 = view.load %iv16[%src] : view<[%span]xf16> -> f16
+        %v32 = scalar.extf %v16 : f16 to f32
+        scf.yield %v32 : f32
+      } else {
+        %iv32 = buffer.view %input[%offset] : buffer -> view<[%span]xf32>
+        %v32 = view.load %iv32[%src] : view<[%span]xf32> -> f32
+        scf.yield %v32 : f32
+      }
+      scf.yield %loaded : f32
+    } else {
+      scf.yield %zero_f : f32
+    }
+    %dst = index.assume %linear [lt(%linear, %count)] : index
+    scf.if %half_output {
+      %ov16 = buffer.view %output[%offset] : buffer -> view<[%count]xf16>
+      %out16 = scalar.fptrunc %value : f32 to f16
+      view.store %out16, %ov16[%dst] : f16, view<[%count]xf16>
+    } else {
+      %ov32 = buffer.view %output[%offset] : buffer -> view<[%count]xf32>
+      view.store %value, %ov32[%dst] : f32, view<[%count]xf32>
+    }
+  }
+  kernel.return
+}

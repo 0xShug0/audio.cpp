@@ -1028,6 +1028,22 @@ static bool device_supports_op(ggml_backend_dev_t device, const ggml_tensor * op
     if (zero_output_elision_supported(op)) {
         return true;
     }
+    if (op->op == GGML_OP_SIN || op->op == GGML_OP_COS) {
+        return op->src[0] != nullptr && op->type == GGML_TYPE_F32 && op->src[0]->type == GGML_TYPE_F32 &&
+               ggml_is_contiguous(op) && ggml_is_contiguous(op->src[0]);
+    }
+    if (op->op == GGML_OP_IM2COL) {
+        return op->src[1] != nullptr && (op->type == GGML_TYPE_F32 || op->type == GGML_TYPE_F16) &&
+               (op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16);
+    }
+    if (op->op == GGML_OP_SOFT_MAX) {
+        return op->src[0] != nullptr && op->src[2] == nullptr && ggml_get_op_params_f32(op, 1) <= 0.0f &&
+               op->type == GGML_TYPE_F32 && op->src[0]->type == GGML_TYPE_F32;
+    }
+    if (op->op == GGML_OP_ADD || op->op == GGML_OP_SUB || op->op == GGML_OP_MUL || op->op == GGML_OP_DIV) {
+        return op->src[0] != nullptr && op->src[1] != nullptr && op->type == GGML_TYPE_F32 &&
+               op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 && ggml_is_contiguous(op);
+    }
     if (op->op == GGML_OP_CPY || op->op == GGML_OP_CONT) {
         const auto floating = [](ggml_type t) { return t == GGML_TYPE_F32 || t == GGML_TYPE_F16 || t == GGML_TYPE_BF16; };
         return op->src[0] != nullptr && floating(op->type) && floating(op->src[0]->type);

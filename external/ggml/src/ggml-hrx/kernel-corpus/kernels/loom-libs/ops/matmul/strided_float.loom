@@ -1,0 +1,132 @@
+// SPDX-License-Identifier: MIT
+// Generic floating-point ggml_mul_mat, including grouped batch broadcasting.
+amdgpu.target<gfx11-generic> @ggml_float_matmul_target {subgroup_size = 64}
+config.decl @ggml.float_matmul.k : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_matmul.m : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_matmul.n : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_matmul.batch2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_matmul.ratio2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_matmul.ratio3 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.float_matmul.weight_type : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.float_matmul.input_type : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.float_matmul.w_stride0 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.float_matmul.w_stride1 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.float_matmul.w_stride2 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.float_matmul.w_stride3 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.float_matmul.x_stride0 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.float_matmul.x_stride1 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.float_matmul.x_stride2 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.float_matmul.x_stride3 : %value: index where [range(%value, 0, 1073741824)]
+kernel.def target(@ggml_float_matmul_target) export("ggml_float_matmul") @ggml_float_matmul(%element_count: index, %weight_span: index, %input_span: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %element_count, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%element_count: index, %weight_span: index, %input_span: index, %weight: buffer, %input: buffer, %output: buffer) {
+  %count = index.assume %element_count [range(%element_count, 1, 1073741824)] : index
+  %wspan = index.assume %weight_span [range(%weight_span, 1, 1073741824)] : index
+  %xspan = index.assume %input_span [range(%input_span, 1, 1073741824)] : index
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %offset = index.constant 0 : offset
+  %zero_f = scalar.constant 0.0 : f32
+  %threads = index.constant 256 : index
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %base = index.mul %group, %threads : index
+  %linear = index.add %base, %thread : index
+  %valid = index.cmp ult, %linear, %count : index
+  %k = config.get @ggml.float_matmul.k : index
+  %m = config.get @ggml.float_matmul.m : index
+  %n = config.get @ggml.float_matmul.n : index
+  %batch2 = config.get @ggml.float_matmul.batch2 : index
+  %ratio2 = config.get @ggml.float_matmul.ratio2 : index
+  %ratio3 = config.get @ggml.float_matmul.ratio3 : index
+  %weight_type = config.get @ggml.float_matmul.weight_type : index
+  %input_type = config.get @ggml.float_matmul.input_type : index
+  %w_stride0 = config.get @ggml.float_matmul.w_stride0 : index
+  %w_stride1 = config.get @ggml.float_matmul.w_stride1 : index
+  %w_stride2 = config.get @ggml.float_matmul.w_stride2 : index
+  %w_stride3 = config.get @ggml.float_matmul.w_stride3 : index
+  %x_stride0 = config.get @ggml.float_matmul.x_stride0 : index
+  %x_stride1 = config.get @ggml.float_matmul.x_stride1 : index
+  %x_stride2 = config.get @ggml.float_matmul.x_stride2 : index
+  %x_stride3 = config.get @ggml.float_matmul.x_stride3 : index
+  %weight_f32 = index.cmp eq, %weight_type, %zero : index
+  %weight_f16 = index.cmp eq, %weight_type, %one : index
+  %input_f32 = index.cmp eq, %input_type, %zero : index
+  %input_f16 = index.cmp eq, %input_type, %one : index
+  %ov = buffer.view %output[%offset] : buffer -> view<[%count]xf32>
+  scf.if %valid {
+    %row = index.rem %linear, %m : index
+    %q0 = index.div %linear, %m : index
+    %col = index.rem %q0, %n : index
+    %q1 = index.div %q0, %n : index
+    %b2 = index.rem %q1, %batch2 : index
+    %b3 = index.div %q1, %batch2 : index
+    %wb2 = index.div %b2, %ratio2 : index
+    %wb3 = index.div %b3, %ratio3 : index
+    %wr = index.mul %row, %w_stride1 : index
+    %ww2 = index.mul %wb2, %w_stride2 : index
+    %ww3 = index.mul %wb3, %w_stride3 : index
+    %ww23 = index.add %ww2, %ww3 : index
+    %wbase = index.add %wr, %ww23 : index
+    %xc = index.mul %col, %x_stride1 : index
+    %xx2 = index.mul %b2, %x_stride2 : index
+    %xx3 = index.mul %b3, %x_stride3 : index
+    %xx23 = index.add %xx2, %xx3 : index
+    %xbase = index.add %xc, %xx23 : index
+    %sum = scf.for %inner = [%zero to %k step %one](%acc = %zero_f : f32) -> (f32) {
+      %wk = index.mul %inner, %w_stride0 : index
+      %xk = index.mul %inner, %x_stride0 : index
+      %wi0 = index.add %wbase, %wk : index
+      %xi0 = index.add %xbase, %xk : index
+      %wi = index.assume %wi0 [lt(%wi0, %wspan)] : index
+      %xi = index.assume %xi0 [lt(%xi0, %xspan)] : index
+      %w_value = scf.if %weight_f32 -> (f32) {
+        %w_v32 = buffer.view %weight[%offset] : buffer -> view<[%wspan]xf32>
+        %w_f32 = view.load %w_v32[%wi] : view<[%wspan]xf32> -> f32
+        scf.yield %w_f32 : f32
+      } else {
+        %w_promoted = scf.if %weight_f16 -> (f32) {
+          %w_v16 = buffer.view %weight[%offset] : buffer -> view<[%wspan]xf16>
+          %w_f16 = view.load %w_v16[%wi] : view<[%wspan]xf16> -> f16
+          %w_p16 = scalar.extf %w_f16 : f16 to f32
+          scf.yield %w_p16 : f32
+        } else {
+          %w_vbf = buffer.view %weight[%offset] : buffer -> view<[%wspan]xbf16>
+          %w_bf16 = view.load %w_vbf[%wi] : view<[%wspan]xbf16> -> bf16
+          %w_pbf = scalar.extf %w_bf16 : bf16 to f32
+          scf.yield %w_pbf : f32
+        }
+        scf.yield %w_promoted : f32
+      }
+      %x_value = scf.if %input_f32 -> (f32) {
+        %x_v32 = buffer.view %input[%offset] : buffer -> view<[%xspan]xf32>
+        %x_f32 = view.load %x_v32[%xi] : view<[%xspan]xf32> -> f32
+        scf.yield %x_f32 : f32
+      } else {
+        %x_promoted = scf.if %input_f16 -> (f32) {
+          %x_v16 = buffer.view %input[%offset] : buffer -> view<[%xspan]xf16>
+          %x_f16 = view.load %x_v16[%xi] : view<[%xspan]xf16> -> f16
+          %x_p16 = scalar.extf %x_f16 : f16 to f32
+          scf.yield %x_p16 : f32
+        } else {
+          %x_vbf = buffer.view %input[%offset] : buffer -> view<[%xspan]xbf16>
+          %x_bf16 = view.load %x_vbf[%xi] : view<[%xspan]xbf16> -> bf16
+          %x_pbf = scalar.extf %x_bf16 : bf16 to f32
+          scf.yield %x_pbf : f32
+        }
+        scf.yield %x_promoted : f32
+      }
+      %product = scalar.mulf %w_value, %x_value : f32
+      %next = scalar.addf %acc, %product : f32
+      scf.yield %next : f32
+    }
+    %dst = index.assume %linear [lt(%linear, %count)] : index
+    view.store %sum, %ov[%dst] : f32, view<[%count]xf32>
+  }
+  kernel.return
+}

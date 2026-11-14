@@ -123,6 +123,8 @@ json op_params_json(const OpParams & params) {
             } else if constexpr (std::is_same_v<T, SoftMaxParams>) {
                 return {
                     { "kind",     "soft_max"     },
+                    { "has_mask", value.has_mask },
+                    { "has_sinks", value.has_sinks },
                     { "scale",    value.scale    },
                     { "max_bias", value.max_bias }
                 };
@@ -143,6 +145,8 @@ json op_params_json(const OpParams & params) {
                     { "op",      static_cast<int>(value.op)  },
                     { "swapped", value.swapped               }
                 };
+            } else if constexpr (std::is_same_v<T, Im2ColParams>) {
+                return {{"kind", "im2col"}, {"values", value.values}};
             } else if constexpr (std::is_same_v<T, FillParams>) {
                 return {{"kind", "fill"}, {"value", value.value}};
             } else if constexpr (std::is_same_v<T, ScaleParams>) {
@@ -194,7 +198,8 @@ OpParams parse_op_params(const json & item) {
         };
     }
     if (kind == "soft_max") {
-        return SoftMaxParams{ item.value("scale", 0.0f), item.value("max_bias", 0.0f) };
+        return SoftMaxParams{ item.value("scale", 0.0f), item.value("max_bias", 0.0f),
+                              item.value("has_mask", false), item.value("has_sinks", false) };
     }
     if (kind == "argsort") {
         return ArgsortParams{ static_cast<ggml_sort_order>(
@@ -209,6 +214,9 @@ OpParams parse_op_params(const json & item) {
     if (kind == "glu") {
         return GluParams{ static_cast<ggml_glu_op>(item.value("op", static_cast<int>(GGML_GLU_OP_REGLU))),
                           item.value("swapped", false) };
+    }
+    if (kind == "im2col") {
+        return Im2ColParams{item.at("values").get<std::array<int32_t, 7>>()};
     }
     if (kind == "fill") {
         return FillParams{item.value("value", 0.0f)};

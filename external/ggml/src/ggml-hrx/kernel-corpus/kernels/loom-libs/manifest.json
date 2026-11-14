@@ -3,6 +3,18 @@
   "upstream_revision": "local",
   "files": [
     {
+      "path": "ops/convolution/im2col.loom"
+    },
+    {
+      "path": "ops/normalization/softmax_f32.loom"
+    },
+    {
+      "path": "ops/elementwise/strided_binary.loom"
+    },
+    {
+      "path": "ops/matmul/strided_float.loom"
+    },
+    {
       "path": "ops/copy/float_copy.loom"
     },
     {
@@ -667,6 +679,208 @@
     }
   ],
   "exports": [
+    {
+      "name": "ggml_im2col",
+      "family": "loom_libs",
+      "symbol": "ggml_im2col",
+      "source": "ops/convolution/im2col.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/convolution/im2col.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_softmax_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_softmax_f32",
+      "source": "ops/normalization/softmax_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "rows",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        },
+        {
+          "name": "mask_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "rows",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        },
+        {
+          "name": "mask_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "mask",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/normalization/softmax_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_strided_binary",
+      "family": "loom_libs",
+      "symbol": "ggml_strided_binary",
+      "source": "ops/elementwise/strided_binary.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "a_span",
+          "type": "index"
+        },
+        {
+          "name": "b_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "a_span",
+          "type": "index"
+        },
+        {
+          "name": "b_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "a",
+        "b",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/elementwise/strided_binary.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_float_matmul",
+      "family": "loom_libs",
+      "symbol": "ggml_float_matmul",
+      "source": "ops/matmul/strided_float.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "weight_span",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "weight_span",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "weight",
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/matmul/strided_float.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
     {
       "name": "ggml_float_copy",
       "family": "loom_libs",

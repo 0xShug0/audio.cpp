@@ -1,0 +1,126 @@
+// SPDX-License-Identifier: MIT
+amdgpu.target<gfx11-generic> @ggml_strided_binary_target {subgroup_size = 64}
+config.decl @ggml.strided_binary.op : %value: index where [range(%value, 0, 3)]
+config.decl @ggml.strided_binary.a_ne0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.strided_binary.a_stride0 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.strided_binary.a_ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.strided_binary.a_stride1 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.strided_binary.a_ne2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.strided_binary.a_stride2 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.strided_binary.a_ne3 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.strided_binary.a_stride3 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.strided_binary.b_ne0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.strided_binary.b_stride0 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.strided_binary.b_ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.strided_binary.b_stride1 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.strided_binary.b_ne2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.strided_binary.b_stride2 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.strided_binary.b_ne3 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.strided_binary.b_stride3 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.strided_binary.ne0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.strided_binary.ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.strided_binary.ne2 : %value: index where [range(%value, 1, 1073741824)]
+kernel.def target(@ggml_strided_binary_target) export("ggml_strided_binary") @ggml_strided_binary(%element_count: index, %a_span: index, %b_span: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %element_count, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%element_count: index, %a_span: index, %b_span: index, %a: buffer, %b: buffer, %output: buffer) {
+  %count = index.assume %element_count [range(%element_count, 1, 1073741824)] : index
+  %aspan = index.assume %a_span [range(%a_span, 1, 1073741824)] : index
+  %bspan = index.assume %b_span [range(%b_span, 1, 1073741824)] : index
+  %offset = index.constant 0 : offset
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %two = index.constant 2 : index
+  %op = config.get @ggml.strided_binary.op : index
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %threads = index.constant 256 : index
+  %base = index.mul %group, %threads : index
+  %linear = index.add %base, %thread : index
+  %valid = index.cmp ult, %linear, %count : index
+  %av = buffer.view %a[%offset] : buffer -> view<[%aspan]xf32>
+  %bv = buffer.view %b[%offset] : buffer -> view<[%bspan]xf32>
+  %ov = buffer.view %output[%offset] : buffer -> view<[%count]xf32>
+  %a_ne0 = config.get @ggml.strided_binary.a_ne0 : index
+  %a_stride0 = config.get @ggml.strided_binary.a_stride0 : index
+  %a_ne1 = config.get @ggml.strided_binary.a_ne1 : index
+  %a_stride1 = config.get @ggml.strided_binary.a_stride1 : index
+  %a_ne2 = config.get @ggml.strided_binary.a_ne2 : index
+  %a_stride2 = config.get @ggml.strided_binary.a_stride2 : index
+  %a_ne3 = config.get @ggml.strided_binary.a_ne3 : index
+  %a_stride3 = config.get @ggml.strided_binary.a_stride3 : index
+  %b_ne0 = config.get @ggml.strided_binary.b_ne0 : index
+  %b_stride0 = config.get @ggml.strided_binary.b_stride0 : index
+  %b_ne1 = config.get @ggml.strided_binary.b_ne1 : index
+  %b_stride1 = config.get @ggml.strided_binary.b_stride1 : index
+  %b_ne2 = config.get @ggml.strided_binary.b_ne2 : index
+  %b_stride2 = config.get @ggml.strided_binary.b_stride2 : index
+  %b_ne3 = config.get @ggml.strided_binary.b_ne3 : index
+  %b_stride3 = config.get @ggml.strided_binary.b_stride3 : index
+  %ne0 = config.get @ggml.strided_binary.ne0 : index
+  %ne1 = config.get @ggml.strided_binary.ne1 : index
+  %ne2 = config.get @ggml.strided_binary.ne2 : index
+  scf.if %valid {
+    %i0 = index.rem %linear, %ne0 : index
+    %q0 = index.div %linear, %ne0 : index
+    %i1 = index.rem %q0, %ne1 : index
+    %q1 = index.div %q0, %ne1 : index
+    %i2 = index.rem %q1, %ne2 : index
+    %i3 = index.div %q1, %ne2 : index
+    %a_r0 = index.rem %i0, %a_ne0 : index
+    %a_b0 = index.mul %a_r0, %a_stride0 : index
+    %a_r1 = index.rem %i1, %a_ne1 : index
+    %a_b1 = index.mul %a_r1, %a_stride1 : index
+    %a_r2 = index.rem %i2, %a_ne2 : index
+    %a_b2 = index.mul %a_r2, %a_stride2 : index
+    %a_r3 = index.rem %i3, %a_ne3 : index
+    %a_b3 = index.mul %a_r3, %a_stride3 : index
+    %a_b01 = index.add %a_b0, %a_b1 : index
+    %a_b23 = index.add %a_b2, %a_b3 : index
+    %a_idx0 = index.add %a_b01, %a_b23 : index
+    %a_idx = index.assume %a_idx0 [lt(%a_idx0, %aspan)] : index
+    %a_value = view.load %av[%a_idx] : view<[%aspan]xf32> -> f32
+    %b_r0 = index.rem %i0, %b_ne0 : index
+    %b_b0 = index.mul %b_r0, %b_stride0 : index
+    %b_r1 = index.rem %i1, %b_ne1 : index
+    %b_b1 = index.mul %b_r1, %b_stride1 : index
+    %b_r2 = index.rem %i2, %b_ne2 : index
+    %b_b2 = index.mul %b_r2, %b_stride2 : index
+    %b_r3 = index.rem %i3, %b_ne3 : index
+    %b_b3 = index.mul %b_r3, %b_stride3 : index
+    %b_b01 = index.add %b_b0, %b_b1 : index
+    %b_b23 = index.add %b_b2, %b_b3 : index
+    %b_idx0 = index.add %b_b01, %b_b23 : index
+    %b_idx = index.assume %b_idx0 [lt(%b_idx0, %bspan)] : index
+    %b_value = view.load %bv[%b_idx] : view<[%bspan]xf32> -> f32
+    %is_add = index.cmp eq, %op, %zero : index
+    %is_sub = index.cmp eq, %op, %one : index
+    %is_mul = index.cmp eq, %op, %two : index
+    %result = scf.if %is_add -> (f32) {
+      %sum = scalar.addf %a_value, %b_value : f32
+      scf.yield %sum : f32
+    } else {
+      %remaining = scf.if %is_sub -> (f32) {
+        %difference = scalar.subf %a_value, %b_value : f32
+        scf.yield %difference : f32
+      } else {
+        %product_or_quotient = scf.if %is_mul -> (f32) {
+          %product = scalar.mulf %a_value, %b_value : f32
+          scf.yield %product : f32
+        } else {
+          %quotient = scalar.divf %a_value, %b_value : f32
+          scf.yield %quotient : f32
+        }
+        scf.yield %product_or_quotient : f32
+      }
+      scf.yield %remaining : f32
+    }
+    %dst = index.assume %linear [lt(%linear, %count)] : index
+    view.store %result, %ov[%dst] : f32, view<[%count]xf32>
+  }
+  kernel.return
+}

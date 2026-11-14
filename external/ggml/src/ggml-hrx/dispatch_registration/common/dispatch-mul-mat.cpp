@@ -2089,7 +2089,47 @@ static bool match_decode_mul_mat_add_dispatch(const DispatchMatchContext & conte
     return build_decode_mul_mat_add_dispatch(match, context, dispatch_match);
 }
 
+static bool match_strided_float_matmul(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    if (node == nullptr || node->inputs.size() != 2) return false;
+    const auto * weight = context.graph.values().find(node->inputs[0]);
+    const auto * input = context.graph.values().find(node->inputs[1]);
+    const auto * output = context.graph.values().find(node->output);
+    const auto floating = [](ggml_type t) { return t == GGML_TYPE_F32 || t == GGML_TYPE_F16 || t == GGML_TYPE_BF16; };
+    if (weight == nullptr || input == nullptr || output == nullptr || !floating(weight->type) || !floating(input->type) ||
+        output->type != GGML_TYPE_F32 || !output->contiguous || weight->ne[0] != input->ne[0] ||
+        input->ne[2] % weight->ne[2] || input->ne[3] % weight->ne[3]) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_float_matmul"));
+    auto & config = dispatch.kernel.compile_parameters;
+    config.emplace("ggml.float_matmul.k", std::to_string(weight->ne[0]));
+    config.emplace("ggml.float_matmul.m", std::to_string(weight->ne[1]));
+    config.emplace("ggml.float_matmul.n", std::to_string(input->ne[1]));
+    config.emplace("ggml.float_matmul.batch2", std::to_string(input->ne[2]));
+    config.emplace("ggml.float_matmul.ratio2", std::to_string(input->ne[2] / weight->ne[2]));
+    config.emplace("ggml.float_matmul.ratio3", std::to_string(input->ne[3] / weight->ne[3]));
+    config.emplace("ggml.float_matmul.weight_type", std::to_string(weight->type));
+    config.emplace("ggml.float_matmul.input_type", std::to_string(input->type));
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        const size_t ws = ggml_type_size(weight->type), xs = ggml_type_size(input->type);
+        if (weight->nb[i] % ws || input->nb[i] % xs) return false;
+        config.emplace("ggml.float_matmul.w_stride" + std::to_string(i), std::to_string(weight->nb[i] / ws));
+        config.emplace("ggml.float_matmul.x_stride" + std::to_string(i), std::to_string(input->nb[i] / xs));
+    }
+    dispatch.kernel.integer_parameters.emplace("element_count", output->element_count);
+    dispatch.kernel.integer_parameters.emplace("weight_span", weight->byte_count / ggml_type_size(weight->type));
+    dispatch.kernel.integer_parameters.emplace("input_span", input->byte_count / ggml_type_size(input->type));
+    dispatch.bindings.push_back({weight->storage_root, weight->storage_offset, weight->byte_count});
+    dispatch.bindings.push_back({input->storage_root, input->storage_offset, input->byte_count});
+    dispatch.bindings.push_back({output->id, 0, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 void register_mul_mat_dispatches(DispatchRegistryBuilder & registry) {
+    registry.add({"common.strided_float_matmul", GGML_OP_MUL_MAT, DispatchMatchKind::SingleOp, -100,
+                  DispatchSource::Common, match_strided_float_matmul});
     registry.add_activation_consumer({
         "common.mul_mat.input.f16_row.factored_tiled",
         GGML_OP_MUL_MAT,

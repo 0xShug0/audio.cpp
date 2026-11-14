@@ -369,7 +369,43 @@ static void register_binary_dispatch_for(DispatchRegistryBuilder & registry, ggm
 
 }  // namespace
 
+static bool match_strided_binary(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    const auto * params = op_params_as<BinaryParams>(node->params);
+    if (node->inputs.size() != 2 || params == nullptr || static_cast<uint32_t>(params->op) > 3) return false;
+    const auto * a = context.graph.values().find(node->inputs[0]);
+    const auto * b = context.graph.values().find(node->inputs[1]);
+    const auto * output = context.graph.values().find(node->output);
+    if (a == nullptr || b == nullptr || output == nullptr || a->type != GGML_TYPE_F32 || b->type != GGML_TYPE_F32 ||
+        output->type != GGML_TYPE_F32 || !output->contiguous) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_strided_binary"));
+    dispatch.kernel.integer_parameters.emplace("element_count", output->element_count);
+    dispatch.kernel.integer_parameters.emplace("a_span", a->byte_count / sizeof(float));
+    dispatch.kernel.integer_parameters.emplace("b_span", b->byte_count / sizeof(float));
+    dispatch.kernel.compile_parameters.emplace("ggml.strided_binary.op", std::to_string(static_cast<uint32_t>(params->op)));
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (a->nb[i] % sizeof(float) || b->nb[i] % sizeof(float) || output->ne[i] % a->ne[i] || output->ne[i] % b->ne[i]) return false;
+        for (const auto & side : {std::pair<const char *, const Value *>{"a", a}, {"b", b}}) {
+            const std::string prefix = std::string("ggml.strided_binary.") + side.first;
+            dispatch.kernel.compile_parameters.emplace(prefix + "_ne" + std::to_string(i), std::to_string(side.second->ne[i]));
+            dispatch.kernel.compile_parameters.emplace(prefix + "_stride" + std::to_string(i), std::to_string(side.second->nb[i] / sizeof(float)));
+        }
+        if (i < 3) dispatch.kernel.compile_parameters.emplace("ggml.strided_binary.ne" + std::to_string(i), std::to_string(output->ne[i]));
+    }
+    dispatch.bindings.push_back({a->storage_root, a->storage_offset, a->byte_count});
+    dispatch.bindings.push_back({b->storage_root, b->storage_offset, b->byte_count});
+    dispatch.bindings.push_back({output->id, 0, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 void register_binary_dispatch(DispatchRegistryBuilder & registry) {
+    for (const auto op : {GGML_OP_ADD, GGML_OP_SUB, GGML_OP_MUL, GGML_OP_DIV}) {
+        registry.add({"common.strided_binary", op, DispatchMatchKind::SingleOp, -100,
+                      DispatchSource::Common, match_strided_binary});
+    }
     registry.add({
         "common.binary_swiglu_symmetric_i4_k32",
         GGML_OP_GLU,

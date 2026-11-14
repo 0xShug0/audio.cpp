@@ -33,7 +33,8 @@ static bool soft_max_params_equivalent(const OpParams & lhs, const OpParams & rh
     const SoftMaxParams * lhs_params = op_params_as<SoftMaxParams>(lhs);
     const SoftMaxParams * rhs_params = op_params_as<SoftMaxParams>(rhs);
     return lhs_params != nullptr && rhs_params != nullptr && nearly_equal(lhs_params->scale, rhs_params->scale) &&
-           nearly_equal(lhs_params->max_bias, rhs_params->max_bias);
+           nearly_equal(lhs_params->max_bias, rhs_params->max_bias) &&
+           lhs_params->has_mask == rhs_params->has_mask && lhs_params->has_sinks == rhs_params->has_sinks;
 }
 
 static bool argsort_params_equivalent(const OpParams & lhs, const OpParams & rhs) {
@@ -245,6 +246,8 @@ bool unary_kind_supported(UnaryKind kind) {
 }
 
 uint32_t unary_kind_config_value(UnaryKind kind) {
+    if (kind == UnaryKind::Sin) return 25;
+    if (kind == UnaryKind::Cos) return 26;
     return static_cast<uint32_t>(kind);
 }
 
@@ -268,6 +271,8 @@ OpParams import_op_params(const ggml_tensor & tensor) {
             return SoftMaxParams{
                 ggml_get_op_params_f32(&tensor, 0),
                 ggml_get_op_params_f32(&tensor, 1),
+                tensor.src[1] != nullptr,
+                tensor.src[2] != nullptr,
             };
         case GGML_OP_FLASH_ATTN_EXT:
             return FlashAttnExtParams{
@@ -285,6 +290,11 @@ OpParams import_op_params(const ggml_tensor & tensor) {
             };
         case GGML_OP_GLU:
             return GluParams{ ggml_get_glu_op(&tensor), ggml_get_op_params_i32(&tensor, 1) != 0 };
+        case GGML_OP_IM2COL: {
+            Im2ColParams params;
+            for (int i = 0; i < 7; ++i) params.values[i] = ggml_get_op_params_i32(&tensor, i);
+            return params;
+        }
         case GGML_OP_FILL:
             return FillParams{ggml_get_op_params_f32(&tensor, 0)};
         case GGML_OP_SCALE:
@@ -331,6 +341,11 @@ bool op_params_equivalent(ggml_op op, const OpParams & lhs, const OpParams & rhs
             return clamp_params_equivalent(lhs, rhs);
         case GGML_OP_GLU:
             return binary_params_equivalent(lhs, rhs) || glu_params_equivalent(lhs, rhs);
+        case GGML_OP_IM2COL: {
+            const auto * a = op_params_as<Im2ColParams>(lhs);
+            const auto * b = op_params_as<Im2ColParams>(rhs);
+            return a != nullptr && b != nullptr && a->values == b->values;
+        }
         case GGML_OP_FILL: {
             const auto * a = op_params_as<FillParams>(lhs);
             const auto * b = op_params_as<FillParams>(rhs);

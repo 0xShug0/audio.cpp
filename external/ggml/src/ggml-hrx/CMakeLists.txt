@@ -232,6 +232,10 @@ ggml_add_backend_library(ggml-hrx
     dispatch_registration/common/dispatch-rope-utils.h
     dispatch_registration/common/dispatch-rmsnorm.cpp
     dispatch_registration/common/dispatch-rmsnorm.h
+    dispatch_registration/common/dispatch-softmax.cpp
+    dispatch_registration/common/dispatch-softmax.h
+    dispatch_registration/common/dispatch-im2col.cpp
+    dispatch_registration/common/dispatch-im2col.h
     dispatch_registration/common/dispatch-scale.cpp
     dispatch_registration/common/dispatch-scale.h
     dispatch_registration/common/dispatch-unary.cpp

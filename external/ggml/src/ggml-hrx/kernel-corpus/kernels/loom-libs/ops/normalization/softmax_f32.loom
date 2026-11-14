@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: MIT
+// Stable scaled softmax with optional F32/F16 mask and row-stride preservation.
+amdgpu.target<gfx11-generic> @ggml_softmax_target {subgroup_size = 32}
+config.decl @ggml.softmax.scale : f32
+config.decl @ggml.softmax.mask_type : %value: index where [range(%value, 0, 2)]
+config.decl @ggml.softmax.width : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.ne2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.mask_ne2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.mask_ne3 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.stride1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.stride2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.stride3 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.mask_stride1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.mask_stride2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.mask_stride3 : %value: index where [range(%value, 1, 1073741824)]
+kernel.def target(@ggml_softmax_target) export("ggml_softmax_f32") @ggml_softmax_f32(%rows: index, %input_span: index, %mask_span: index) {
+  %one = index.constant 1 : index
+  %four = index.constant 4 : index
+  %three = index.constant 3 : index
+  %threads = index.constant 128 : index
+  %rounded = index.add %rows, %three : index
+  %groups = index.div %rounded, %four : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%rows: index, %input_span: index, %mask_span: index, %input: buffer, %mask: buffer, %output: buffer) {
+  %row_count = index.assume %rows [range(%rows, 1, 1073741824)] : index
+  %ispan = index.assume %input_span [range(%input_span, 1, 1073741824)] : index
+  %mspan = index.assume %mask_span [range(%mask_span, 1, 1073741824)] : index
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %two = index.constant 2 : index
+  %four = index.constant 4 : index
+  %step = index.constant 32 : index
+  %offset = index.constant 0 : offset
+  %zero_f = scalar.constant 0.0 : f32
+  %negative_infinity = scalar.constant -inf : f32
+  %group = kernel.workgroup.id<x> : index
+  %subgroup = kernel.subgroup.id : index
+  %lane = kernel.subgroup.lane.id : index
+  %base = index.mul %group, %four : index
+  %row0 = index.add %base, %subgroup : index
+  %valid = index.cmp ult, %row0, %row_count : index
+  %safe_row = scf.select %valid, %row0, %zero : index
+  %row = index.assume %safe_row [lt(%safe_row, %row_count)] : index
+  %width = config.get @ggml.softmax.width : index
+  %ne1 = config.get @ggml.softmax.ne1 : index
+  %ne2 = config.get @ggml.softmax.ne2 : index
+  %mask_ne2 = config.get @ggml.softmax.mask_ne2 : index
+  %mask_ne3 = config.get @ggml.softmax.mask_ne3 : index
+  %stride1 = config.get @ggml.softmax.stride1 : index
+  %stride2 = config.get @ggml.softmax.stride2 : index
+  %stride3 = config.get @ggml.softmax.stride3 : index
+  %mask_stride1 = config.get @ggml.softmax.mask_stride1 : index
+  %mask_stride2 = config.get @ggml.softmax.mask_stride2 : index
+  %mask_stride3 = config.get @ggml.softmax.mask_stride3 : index
+  %scale = config.get @ggml.softmax.scale : f32
+  %mask_type = config.get @ggml.softmax.mask_type : index
+  %has_mask = index.cmp ne, %mask_type, %zero : index
+  %mask_f16 = index.cmp eq, %mask_type, %two : index
+  %i1 = index.rem %row, %ne1 : index
+  %q1 = index.div %row, %ne1 : index
+  %i2 = index.rem %q1, %ne2 : index
+  %i3 = index.div %q1, %ne2 : index
+  %b1 = index.mul %i1, %stride1 : index
+  %b2 = index.mul %i2, %stride2 : index
+  %b3 = index.mul %i3, %stride3 : index
+  %b12 = index.add %b1, %b2 : index
+  %input_base = index.add %b12, %b3 : index
+  %mi2 = index.rem %i2, %mask_ne2 : index
+  %mi3 = index.rem %i3, %mask_ne3 : index
+  %mb1 = index.mul %i1, %mask_stride1 : index
+  %mb2 = index.mul %mi2, %mask_stride2 : index
+  %mb3 = index.mul %mi3, %mask_stride3 : index
+  %mb12 = index.add %mb1, %mb2 : index
+  %mask_base = index.add %mb12, %mb3 : index
+  %iv = buffer.view %input[%offset] : buffer -> view<[%ispan]xf32>
+  %ov = buffer.view %output[%offset] : buffer -> view<[%row_count]x[%width]xf32>
+  %partial_max = scf.for %col = [%lane to %width step %step](%maximum = %negative_infinity : f32) -> (f32) {
+    %ii0 = index.add %input_base, %col : index
+    %ii = index.assume %ii0 [lt(%ii0, %ispan)] : index
+    %x = view.load %iv[%ii] : view<[%ispan]xf32> -> f32
+    %scaled = scalar.mulf %x, %scale : f32
+    %mask_value = scf.if %has_mask -> (f32) {
+      %mi0 = index.add %mask_base, %col : index
+      %mi = index.assume %mi0 [lt(%mi0, %mspan)] : index
+      %mv = scf.if %mask_f16 -> (f32) {
+        %m16 = buffer.view %mask[%offset] : buffer -> view<[%mspan]xf16>
+        %v16 = view.load %m16[%mi] : view<[%mspan]xf16> -> f16
+        %v32 = scalar.extf %v16 : f16 to f32
+        scf.yield %v32 : f32
+      } else {
+        %m32 = buffer.view %mask[%offset] : buffer -> view<[%mspan]xf32>
+        %v32 = view.load %m32[%mi] : view<[%mspan]xf32> -> f32
+        scf.yield %v32 : f32
+      }
+      scf.yield %mv : f32
+    } else {
+      scf.yield %zero_f : f32
+    }
+    %score = scalar.addf %scaled, %mask_value : f32
+    %next = scalar.maxnumf %maximum, %score : f32
+    scf.yield %next : f32
+  }
+  %maximum = kernel.subgroup.reduce<maxnumf> %partial_max : f32
+  %partial_sum = scf.for %col = [%lane to %width step %step](%sum = %zero_f : f32) -> (f32) {
+    %ii0 = index.add %input_base, %col : index
+    %ii = index.assume %ii0 [lt(%ii0, %ispan)] : index
+    %x = view.load %iv[%ii] : view<[%ispan]xf32> -> f32
+    %scaled = scalar.mulf %x, %scale : f32
+    %mask_value = scf.if %has_mask -> (f32) {
+      %mi0 = index.add %mask_base, %col : index
+      %mi = index.assume %mi0 [lt(%mi0, %mspan)] : index
+      %mv = scf.if %mask_f16 -> (f32) {
+        %m16 = buffer.view %mask[%offset] : buffer -> view<[%mspan]xf16>
+        %v16 = view.load %m16[%mi] : view<[%mspan]xf16> -> f16
+        %v32 = scalar.extf %v16 : f16 to f32
+        scf.yield %v32 : f32
+      } else {
+        %m32 = buffer.view %mask[%offset] : buffer -> view<[%mspan]xf32>
+        %v32 = view.load %m32[%mi] : view<[%mspan]xf32> -> f32
+        scf.yield %v32 : f32
+      }
+      scf.yield %mv : f32
+    } else {
+      scf.yield %zero_f : f32
+    }
+    %score = scalar.addf %scaled, %mask_value : f32
+    %shifted = scalar.subf %score, %maximum : f32
+    %probability = scalar.expf<afn> %shifted : f32
+    %next = scalar.addf %sum, %probability : f32
+    scf.yield %next : f32
+  }
+  %sum = kernel.subgroup.reduce<addf> %partial_sum : f32
+  scf.if %valid {
+    scf.for %col = [%lane to %width step %step] {
+      %ii0 = index.add %input_base, %col : index
+      %ii = index.assume %ii0 [lt(%ii0, %ispan)] : index
+      %x = view.load %iv[%ii] : view<[%ispan]xf32> -> f32
+      %scaled = scalar.mulf %x, %scale : f32
+      %mask_value = scf.if %has_mask -> (f32) {
+        %mi0 = index.add %mask_base, %col : index
+        %mi = index.assume %mi0 [lt(%mi0, %mspan)] : index
+        %mv = scf.if %mask_f16 -> (f32) {
+          %m16 = buffer.view %mask[%offset] : buffer -> view<[%mspan]xf16>
+          %v16 = view.load %m16[%mi] : view<[%mspan]xf16> -> f16
+          %v32 = scalar.extf %v16 : f16 to f32
+          scf.yield %v32 : f32
+        } else {
+          %m32 = buffer.view %mask[%offset] : buffer -> view<[%mspan]xf32>
+          %v32 = view.load %m32[%mi] : view<[%mspan]xf32> -> f32
+          scf.yield %v32 : f32
+        }
+        scf.yield %mv : f32
+      } else {
+        scf.yield %zero_f : f32
+      }
+      %score = scalar.addf %scaled, %mask_value : f32
+      %shifted = scalar.subf %score, %maximum : f32
+      %probability = scalar.expf<afn> %shifted : f32
+      %normalized = scalar.divf %probability, %sum : f32
+      view.store %normalized, %ov[%row, %col] : f32, view<[%row_count]x[%width]xf32>
+    }
+  }
+  kernel.return
+}

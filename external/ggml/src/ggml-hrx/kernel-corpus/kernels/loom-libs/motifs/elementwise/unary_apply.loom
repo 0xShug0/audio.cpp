@@ -193,7 +193,15 @@ template.def<@ggml.unary_f32.apply> device priority(1) @ggml_unary_f32_apply(%op
   %bf16_value = scalar.fptrunc %value : f32 to bf16
   %rounded_value = scalar.extf %bf16_value : bf16 to f32
   %is_round_bf16 = index.cmp eq, %op, %op_round_bf16 : index
-  %result = scf.select %is_round_bf16, %rounded_value, %identity_selected : f32
+  %bf16_selected = scf.select %is_round_bf16, %rounded_value, %identity_selected : f32
+  %op_sin = index.constant 25 : index
+  %op_cos = index.constant 26 : index
+  %sin_value = scalar.sinf<afn> %value : f32
+  %cos_value = scalar.cosf<afn> %value : f32
+  %is_sin = index.cmp eq, %op, %op_sin : index
+  %is_cos = index.cmp eq, %op, %op_cos : index
+  %sin_selected = scf.select %is_sin, %sin_value, %bf16_selected : f32
+  %result = scf.select %is_cos, %cos_value, %sin_selected : f32
   template.return %result : f32
 }
 
@@ -385,6 +393,14 @@ template.def<@ggml.unary_f32.apply_vector4> device priority(1) @ggml_unary_f32_a
   %bf16_value = vector.fptrunc %values : vector<4xf32> to vector<4xbf16>
   %rounded_value = vector.extf %bf16_value : vector<4xbf16> to vector<4xf32>
   %is_round_bf16 = index.cmp eq, %op, %op_round_bf16 : index
-  %result = scf.select %is_round_bf16, %rounded_value, %identity_selected : vector<4xf32>
+  %bf16_selected = scf.select %is_round_bf16, %rounded_value, %identity_selected : vector<4xf32>
+  %op_sin = index.constant 25 : index
+  %op_cos = index.constant 26 : index
+  %sin_value = vector.sinf<afn> %values : vector<4xf32>
+  %cos_value = vector.cosf<afn> %values : vector<4xf32>
+  %is_sin = index.cmp eq, %op, %op_sin : index
+  %is_cos = index.cmp eq, %op, %op_cos : index
+  %sin_selected = scf.select %is_sin, %sin_value, %bf16_selected : vector<4xf32>
+  %result = scf.select %is_cos, %cos_value, %sin_selected : vector<4xf32>
   template.return %result : vector<4xf32>
 }

@@ -24,6 +24,8 @@ struct FlashAttnExtParams {
 struct SoftMaxParams {
     float scale    = 0.0f;
     float max_bias = 0.0f;
+    bool has_mask = false;
+    bool has_sinks = false;
 };
 
 struct ArgsortParams {
@@ -38,6 +40,10 @@ struct ClampParams {
 struct GluParams {
     ggml_glu_op op = GGML_GLU_OP_REGLU;
     bool        swapped = false;
+};
+
+struct Im2ColParams {
+    std::array<int32_t, 7> values{};
 };
 
 struct FillParams {
@@ -127,6 +133,7 @@ using OpParams = std::variant<
     GluParams,
     ScaleParams,
     FillParams,
+    Im2ColParams,
     BinaryParams,
     UnaryParams,
     RopeParams>;
