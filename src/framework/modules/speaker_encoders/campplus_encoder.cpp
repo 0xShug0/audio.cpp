@@ -486,6 +486,9 @@ public:
                 ctx,
                 core::TensorShape::from_dims({1, 1, 1, seg_frames}),
                 correction_values);
+            // Keep graph constants allocated and exclude them from scratch reuse.
+            ggml_set_input(correction.tensor);
+            ggml_set_output(correction.tensor);
             auto ratio = core::wrap_tensor(ggml_mul(ctx.ggml, pooled.tensor, correction.tensor), pooled.shape, GGML_TYPE_F32);
             auto expanded_padded = core::wrap_tensor(
                 ggml_interpolate(
@@ -534,6 +537,8 @@ public:
                     ctx,
                     core::TensorShape::from_dims({1, 1, 1}),
                     std::vector<float>{static_cast<float>(time_steps) / static_cast<float>(time_steps - 1)});
+                ggml_set_input(correction.tensor);
+                ggml_set_output(correction.tensor);
                 var = core::wrap_tensor(ggml_mul(ctx.ggml, var.tensor, correction.tensor), var.shape, GGML_TYPE_F32);
             }
             if (weights.config.stats_variance_floor > 0.0F) {
@@ -639,10 +644,6 @@ public:
 
     std::vector<float> run(const std::vector<float> & input) {
         std::lock_guard<std::mutex> lock(run_mutex_);
-        // The graph's constant tensors are not graph inputs, so the
-        // allocator may hand their memory to intermediate results during a
-        // compute; write them again before every run, not only the first.
-        writer_.flush();
         core::write_tensor_f32(input_tensor_, input);
         if (engine::core::compute_backend_graph(execution_context_.backend(), graph_) != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ggml_backend_graph_compute failed for CAMPPlus graph");
