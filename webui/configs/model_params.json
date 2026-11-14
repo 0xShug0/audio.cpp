@@ -177,6 +177,9 @@
     {"name":"audio_chunk_overlap_sec","type":"number","label":"Chunk overlap (s)","default":0.5,"minimum":0,"step":0.1},
     {"name":"normalize_output","type":"bool","label":"Normalize output","default":true}
   ],
+  "mulacover": [
+    {"name":"tags","type":"text","label":"Style tags"}
+  ],
   "sherpa_kws": [
     {"name":"keywords","type":"text","label":"Keyword tokens (one phrase per line)","lines":3,"placeholder":"Leave empty to use embedded keywords"},
     {"name":"max_active_paths","type":"number","label":"Active decoding paths","default":4,"minimum":1,"step":1},
