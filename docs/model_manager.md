@@ -1,340 +1,242 @@
 # Model Manager
 
-`tools/model_manager_v2.py` downloads supported model packages into the
-framework's expected `models/` layout. It reads package metadata from
-`model_specs/*.json`, which is the current source of truth for default download
-links.
+Use the **Models** tab in the WebUI or a command-line manager to download model
+packages. Packages describe the files, precision, download source and install
+layout in `model_specs/*.json`. Installing a package does not load it for inference.
 
-The same package surface is also available through the reusable native C++
-`audiocpp_package_manager` library. Two native frontends use that library:
+## Choose a manager
 
-- `audiocpp_server` exposes asynchronous management endpoints for the embedded
-  WebUI.
-- `audiocpp_model_manager` provides direct headless/CLI and Docker access
-  without starting a server.
+| Interface | Requirements | Package selection | Install directory |
+|---|---|---|---|
+| WebUI **Models** tab | Server built with native model management; launch with `--ui-management` | Choose a model and one of its published packages | Models folder shown in the UI |
+| `audiocpp_model_manager` | Native manager executable | Exact package ID from `list` | `--models-root`, default `models` relative to the working directory |
+| `tools/model_manager_v2.py` | Python 3 and the source checkout; no third-party Python packages required | Exact package ID, or family with optional format/precision filters | `--models-root`, default `models` relative to the working directory |
 
-The Python v2 manager remains a supported alternative for existing scripted
-workflows while the native command surface matures.
+The native CLI and WebUI share the C++ package manager. Normal browser downloads
+and native CLI downloads do not invoke Python. The Python v2 tool is a separate
+supported downloader using the same specs; its command names and flags differ.
 
-## Opt-in Native Network Backend
+## WebUI downloads
 
-Native model management is disabled by default so ordinary CLI and server
-builds do not configure, fetch, compile, or link an HTTP/TLS dependency. Enable
-it explicitly to build the reusable library, standalone manager, and server
-download/install endpoints:
+Start a native-manager-enabled server:
 
 ```bash
-cmake -S . -B build -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON
-cmake --build build --target audiocpp_model_manager audiocpp_server
+audiocpp_server --ui --ui-management --backend cuda --models-root /path/to/models
 ```
 
-With build helper scripts, use the native-manager flag:
+Open `http://127.0.0.1:8080`, select **Models**, and choose the model and package
+you want to install. Use the same models folder when installing from a CLI.
+Without an explicit `--models-root` or server configuration, the server defaults
+to `models/` beside its executable, which can differ from the CLI's working-directory
+`models/`. The Models page can change the folder during the server session.
 
-```bash
-./scripts/build_linux.sh --backend cuda --native-model-manager --target audiocpp_server
-```
+Downloads run in the background. The UI supports progress, stopping downloads,
+cleaning partial downloads, checking for updates and deleting installed packages.
+An installed model can then be selected in Studio or Arena where supported.
 
-```powershell
-.\scripts\build_windows.ps1 -NativeModelManager -Target audiocpp_server
-```
+If management is unavailable, use a build with
+`AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON`; see [building the native manager](#building-the-native-manager).
+A server without that feature can still serve its embedded UI and run models
+from its configuration. See the [WebUI guide](../webui/README.md).
 
-Run the managed WebUI with:
+## Native CLI
 
-```bash
-audiocpp_server --ui --ui-management --backend cuda
-```
-
-The enabled native library, server, and standalone manager share one vendored
-`cpp-httplib` transport on Windows, Linux, and macOS. HTTPS is enabled with a
-pinned BoringSSL release that is fetched at configure time and linked
-statically. The resulting executables do not require libcurl, a system OpenSSL
-development package, or separate TLS DLLs at runtime.
-
-Offline and sandboxed builds may provide the same verified source archive with
-`-DAUDIOCPP_BORINGSSL_ARCHIVE=/path/to/boringssl.tar.gz`. The Nix package does
-this through a fixed-output derivation, so its CMake phase never accesses the
-network.
-
-With build helper scripts, use `--boringssl-archive <path>` on Linux/macOS or
-`-BoringSslArchive <path>` on Windows.
-
-Packagers that prefer their distribution's OpenSSL can select it explicitly:
-
-```bash
-cmake -S . -B build \
-  -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON \
-  -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON
-```
-
-With build helper scripts, use `--system-openssl` on Linux/macOS or
-`-SystemOpenSsl` on Windows.
-
-When using system OpenSSL on machines with multiple OpenSSL installations, make
-sure CMake resolves the distribution OpenSSL that will also be available where
-the binary runs. Bundled BoringSSL is the simpler portable choice for normal
-local builds and release images.
-
-## Native Standalone Manager
-
-The native executable embeds the active `model_specs/*.json` catalog. An
-external `model_specs/` below `--repository-root` is an optional development
-override, not a deployment requirement.
+These commands assume the binaries are on `PATH`; source builds place them in
+`build/debug/bin/` (or the build directory you selected).
 
 ```bash
 audiocpp_model_manager list
-audiocpp_model_manager list --remote
-audiocpp_model_manager info qwen3_asr_0_6b_q8_0 --remote
-audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-dir models
-audiocpp_model_manager clean qwen3_asr_0_6b_q8_0 --models-dir models
-audiocpp_model_manager remove qwen3_asr_0_6b_q8_0 --models-dir models
+audiocpp_model_manager info qwen3_asr_0_6b_q8_0 --models-root models
+audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-root models
 ```
 
-`list` and `info` return machine-readable JSON. Native installation uses the
-same downloader, staging, size validation, atomic publication, shared-sidecar,
-and version metadata logic as the server/WebUI.
+Use the **exact package ID**, not a family name. The native CLI has no
+`--precision` or `--format` selector: select the corresponding package ID instead.
+`list` and `info` print JSON. By default they inspect local presence only;
+`--remote` also requests file sizes and update metadata from the provider:
 
-For a container image, no server process is required:
+```bash
+audiocpp_model_manager info qwen3_asr_0_6b_q8_0 --models-root models --remote
+```
+
+| Command | Behavior |
+|---|---|
+| `list [--remote]` | List packages and local presence, optionally querying remote metadata |
+| `info PACKAGE [--remote]` | Show the inventory entry for one exact package ID |
+| `install PACKAGE [--overwrite]` | Download the package; `--overwrite` replaces its existing files |
+| `clean PACKAGE` | Remove staging directories associated with the package's target directory |
+| `remove PACKAGE` | Remove an installed package's managed files, retaining sidecars needed by another installed package |
+
+All commands accept `--models-root PATH` and `--repository-root PATH`.
+`--models-dir` remains accepted as a compatibility alias for `--models-root`.
+The native manager embeds the catalog. If `--repository-root` (default: the
+working directory) contains JSON files in `model_specs/`, those files
+**replace the embedded catalog**. This is a development override; the deployed
+binary does not require the repository checkout.
+
+`install` reports progress on stderr and its completion message on stdout.
+`clean` removes interrupted staging data, not the installed model. Stop active
+downloads before cleaning their staging directories.
+
+For a container image with the native executable installed:
 
 ```dockerfile
-RUN audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-dir /models
+RUN audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-root /models
 ```
 
-```text
-                     +-- audiocpp_server -> REST API / native WebUI
-model_specs/*.json -> audiocpp_package_manager
-                     +-- audiocpp_model_manager -> CLI / Docker / scripts
+## Python CLI
+
+Run from the source checkout, or provide the script's full path. Its specs are
+read from the checkout, independently of the working directory.
+
+```bash
+python3 tools/model_manager_v2.py list
+python3 tools/model_manager_v2.py info qwen3_asr_0_6b_q8_0
+python3 tools/model_manager_v2.py install qwen3_asr_0_6b_q8_0 --models-root models
 ```
 
-When a family has a ready-to-use GGUF package, the default install should be that
-GGUF package. The old safetensors/converter catalog is still available as
-`tools/model_manager_deprecated.py`, but it is a legacy path for models that have
-not migrated to spec-backed packages.
+A family selects its declared default package when unambiguous. Filters apply
+only to family selection; use the precision spelling reported by `list`:
 
-## GGUF Downloads
+```bash
+python3 tools/model_manager_v2.py info qwen3_asr --format gguf --precision q8_0
+python3 tools/model_manager_v2.py install qwen3_asr --format gguf --precision q8_0 --models-root models --dry-run
+```
 
-Ready-to-use GGUF packages are published here:
+If several matching packages have no unique default, selection fails and lists
+the package IDs to choose from. An exact package ID cannot be combined with
+`--format` or `--precision`.
 
-- Core released models: [audio-cpp/audio.cpp-gguf](https://huggingface.co/audio-cpp/audio.cpp-gguf)
-- Fun-ASR-Nano: [FunAudioLLM/Fun-ASR-Nano-2512-GGUF](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-2512-GGUF)
-- Community OuteTTS package: [mirek190/audio.cpp](https://huggingface.co/mirek190/audio.cpp/tree/main/Text%20to%20audio%20(TTS))
+| Command | Behavior |
+|---|---|
+| `list [--json]` | List package IDs, families, formats, precisions and defaults |
+| `info PACKAGE_OR_FAMILY [--json]` | Show source, required files and target directory |
+| `install PACKAGE_OR_FAMILY` | Download the selected snapshot package |
+| `installed --models-root PATH` | Report local file presence for every package as JSON, without network access |
+| `sizes [PACKAGE_ID ...] --models-root PATH` | Query remote sizes and compare local/remote version metadata; output is JSON |
+| `uninstall PACKAGE_OR_FAMILY --models-root PATH` | Remove that package's files, preserving shared sidecars and sibling precisions |
+| `clean-partial PACKAGE_OR_FAMILY --models-root PATH` | Remove staging directories associated with its target directory |
 
-For support status and tested precision coverage, see the [GGUF guide](gguf.md).
-For measured 16-bit vs Q8 speed and peak-VRAM results, see the
-[Q8 performance report](reports/gguf_q8_performance.md).
+`install` supports `--overwrite`, `--dry-run` (show the plan without downloading)
+and `--check` (check remote file metadata without downloading weights).
+The global `--specs-dir PATH` override must precede the subcommand.
+Python v2 downloads published snapshot files; it does **not** convert checkpoints.
 
-## Download Sources
+### ModelScope override
 
-Both the native package manager and `tools/model_manager_v2.py` download from
-Hugging Face (`kind: "huggingface_snapshot"`) or ModelScope
-(`kind: "modelscope_snapshot"`); see
-[maintainers/model_specs.md](maintainers/model_specs.md) for the spec fields.
-The native endpoints can be overridden for mirrors or tests with
-`AUDIOCPP_HF_BASE_URL` (default `https://huggingface.co`) and
-`AUDIOCPP_MS_BASE_URL` (default `https://www.modelscope.cn`). The Python tool
-uses the standard `HF_ENDPOINT` for Hugging Face and the same
-`AUDIOCPP_MS_BASE_URL` for ModelScope.
-
-Authentication is provider-scoped: Hugging Face requests may carry
-`HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`, while ModelScope requests only carry
-`AUDIOCPP_MS_TOKEN` (optional, for access-restricted ModelScope repos). The
-Hugging Face token is never sent to a ModelScope endpoint, and vice versa.
-
-### Hugging Face Xet Transfers
-
-Most large files on Hugging Face are stored with
-[Xet](https://huggingface.co/docs/xet/index). For those files the native
-manager uses the Xet download protocol directly instead of streaming the
-`/resolve` redirect over a single connection:
-
-1. The metadata request that already reads file size and revision (redirects
-   not followed) also reads `X-Xet-Hash` and the commit-pinned `xet-auth` link.
-2. A read-scoped CAS token is requested from the Hub
-   (`/api/models/{repo}/xet-read-token/{revision}`).
-3. The file's reconstruction (`/v2/reconstructions/{hash}`) is fetched in
-   10 GB batches. It lists the compressed xorb byte ranges that make up the
-   file, each with a short-lived signed URL.
-4. Those ranges are downloaded in parallel, decoded as they stream in (LZ4
-   frames, optionally byte-grouped), and written straight to their offsets in
-   the usual staging file. Memory stays bounded; whole ranges are never
-   buffered.
-
-The installed result goes through the same staging, size check, atomic
-publication, and manifest logic as the HTTP route. When the Hub reports the
-file's SHA-256 (`X-Linked-ETag`), the reconstructed file is also verified
-against it. The hash runs on a background thread while the transfer is in
-progress, so it adds little time.
-
-Files without Xet metadata, ModelScope packages, and any Xet failure before
-publication (no token, no v2 endpoint, an unexpected response) fall back to
-the regular HTTP download. The progress message then says
-`(Xet unavailable: …; using HTTP)`. A complete reconstruction that fails size
-or SHA-256 verification is reported as an error instead of being retried.
-
-Credentials stay scoped. The Hugging Face token is sent only to the Hub, the
-CAS token only to the CAS endpoint the Hub returned, and the signed xorb URLs
-receive no credentials. Redirects are not followed for any Xet request.
-
-Environment controls:
-
-| Variable | Default | Effect |
-|---|---|---|
-| `AUDIOCPP_HF_XET` | enabled | `0` disables Xet and always uses HTTP |
-| `AUDIOCPP_HF_XET_CONCURRENCY` | `16` | Parallel xorb range requests per file (1-256) |
-| `AUDIOCPP_HF_XET_VERIFY` | enabled | `0` skips the SHA-256 check (size and per-term length checks remain) |
-
-Xet support is download-only and needs no extra system dependency. LZ4 is
-vendored under `external/lz4` and SHA-256 comes from the TLS library already
-linked for HTTPS.
-
-### Python Source Override
-
-The Python v2 manager can redirect any package to ModelScope on demand,
-without editing `model_specs/*.json`:
+Both managers can install packages whose specs declare a ModelScope source.
+Only Python v2 also offers a per-command source override, for `install` and `sizes`:
 
 ```bash
 python3 tools/model_manager_v2.py install qwen3_tts --source modelscope --source-repo HereIsMark/audio.cpp-gguf
 ```
 
-`--source modelscope` is accepted by `install` and `sizes`. `--source-repo`
-names the ModelScope repo (`namespace/name`); when omitted, the spec's own
-repo name is reused on ModelScope. Passing `--source-repo` without
-`--source modelscope` is rejected. Revision translation: a spec revision that
-is unset or `main` becomes ModelScope's default branch `master`; any other
-explicit revision passes through unchanged.
+The mirror must provide the files declared by the selected package. Omitting
+`--source-repo` reuses the spec's repository name. An unset or `main` revision
+maps to ModelScope's `master`; other revisions are retained. `--source-repo`
+requires `--source modelscope`. Use the same source for later version checks,
+because providers use different file identifiers.
 
-Note that manifest etags are source-specific (Hugging Face etag vs ModelScope
-sha256), so cross-source freshness checks can spuriously report that an
-installed package has an update. Query with the same `--source` that was used
-to install.
+## Packages, paths and updates
 
-## Dependencies
+A **family** identifies an inference implementation, such as `qwen3_asr`. A
+**package ID** identifies a downloadable set of files, such as
+`qwen3_asr_0_6b_q8_0`. A package can contain one GGUF or several components;
+installing it downloads all files declared by that package. Sibling precisions
+can coexist in a shared target directory.
 
-The native manager needs no Python runtime. The default bundled-TLS build needs
-network access at CMake configure time to fetch the pinned BoringSSL source
-archive, unless `AUDIOCPP_BORINGSSL_ARCHIVE` points at a local copy. Runtime
-model installation needs network access to the package source, usually Hugging
-Face.
+The install location is the models root plus the spec's `target_directory` and
+its declared file paths, with `strip_prefix` removed where specified. This
+location is not necessarily a single file named after the family. Use the model's
+[usage guide](../README.md#supported-models) for the correct inference path and
+`--family`; the installer does not choose a runtime family for an ambiguous folder.
 
-The Python v2 manager needs:
+Completed installs write `.audiocpp-package-<id>.json` beside the package files.
+It records the source revision and per-file metadata used for freshness checks.
+File presence alone is not an integrity check. Manually copied or older packages
+can remain usable while showing **Version unknown**. Reinstall with `--overwrite`
+to refresh the manifest; installing without it can simply report **Already installed**.
+Update status compares available per-file identifiers, not just the repository's
+latest commit.
 
-- Python 3
-- Network access to the upstream model source
+Both managers download into staging directories before publishing files. An
+interrupted process can leave staging data; use `clean` (native) or
+`clean-partial` (Python) after stopping the download. Staging cleanup is grouped
+by target directory, so it can include sibling precisions. Neither command
+uninstalls completed weights. Publication is per file when merging into an
+existing package directory; do not assume a whole multi-file replacement is
+one atomic transaction.
 
-Legacy converter installs through `tools/model_manager_deprecated.py` may also
-need `torch`, `safetensors`, `PyYAML`, or model-specific conversion inputs.
+For model repositories, start with [audio-cpp on Hugging Face](https://huggingface.co/audio-cpp)
+and the individual model guides, which also link community-hosted packages.
+Explicit package IDs let you install the available precision variants through
+either manager. See the [GGUF guide](gguf.md) for format support and the
+[Q8 report](reports/gguf_q8_performance.md) for measured precision trade-offs.
 
-## Native Commands
+## Authentication and mirrors
 
-`audiocpp_model_manager` supports the same package ids as the managed WebUI:
+Both managers read Hugging Face credentials from `HF_TOKEN`, then
+`HUGGING_FACE_HUB_TOKEN`, then `~/.cache/huggingface/token` (on Windows, beneath
+the user's profile directory). Accept any gated model's terms on Hugging Face
+before installing it. ModelScope uses `AUDIOCPP_MS_TOKEN` when required.
+Provider credentials are kept separate.
 
-- `list` shows the available package ids
-- `list --remote` includes remote availability and package-size metadata where
-  available
-- `info <package>` shows one package's install status and metadata
-- `info <package> --remote` also checks the remote package source
-- `install <package>` downloads one package into a models root
-- `clean <package>` removes incomplete staging data for one package
-- `remove <package>` removes the files managed by one installed package
+| Setting | Native manager | Python v2 |
+|---|---|---|
+| Hugging Face endpoint | `AUDIOCPP_HF_BASE_URL` | `HF_ENDPOINT` |
+| ModelScope endpoint | `AUDIOCPP_MS_BASE_URL` | `AUDIOCPP_MS_BASE_URL` |
+| Default endpoints | `https://huggingface.co`, `https://www.modelscope.cn` | Same |
 
-Use `--models-dir PATH` to select the installation root. Use
-`--repository-root PATH` only when developing against an external
-`model_specs/` override; normal deployed binaries use the embedded catalog.
+Endpoint overrides change the host, not the package's file list or repository.
+Configure credentials and mirrors in the environment of the CLI or server
+process, not just in the browser.
 
-## Python v2 Commands
+### Native Xet transfers
 
-- `list` shows the available package ids
-- `list --json` prints a machine-readable package catalog
-- `info` shows the target layout, required files, and install source for one package
-- `info <package> --json` prints machine-readable package details
-- `install` downloads or converts one package into a models root
-- `installed --json` reports package-file presence without network access
-- `sizes --json` reports remote sizes plus local/remote revision status
-- `uninstall` removes only files declared by one package precision
-- `clean-partial` removes abandoned staging directories left by an interrupted process
+The native downloader uses Hugging Face's Xet transport for eligible files,
+with parallel range downloads and SHA-256 verification when the Hub supplies a
+hash. It needs no additional installed dependency. Before publication, supported
+Xet transport failures can fall back to HTTP and are reported in progress;
+a completed reconstruction that fails size or hash checks is an error.
+Python v2 uses HTTP, not the native Xet implementation.
 
-The runtime loader catalog is also available from:
+| Native setting | Default | Effect |
+|---|---|---|
+| `AUDIOCPP_HF_XET` | enabled | `0` selects HTTP instead |
+| `AUDIOCPP_HF_XET_CONCURRENCY` | `16` | Parallel Xet range requests per file, 1–256 |
+| `AUDIOCPP_HF_XET_VERIFY` | enabled | `0` disables optional SHA-256 verification; size checks remain |
 
-```bash
-audiocpp_cli --list-loaders --json
-```
+## Building the native manager
 
-## Quick Start
-
-List installable packages:
-
-```bash
-python3 tools/model_manager_v2.py list
-```
-
-Inspect one package:
-
-```bash
-python3 tools/model_manager_v2.py info qwen3_tts
-```
-
-Install into the default `models/` directory:
-
-```bash
-python3 tools/model_manager_v2.py install qwen3_tts
-```
-
-Install into a custom models root:
+Native management is opt-in. It adds the standalone executable and server
+package-management endpoints; ordinary builds without it do not fetch or link
+its HTTP/TLS dependency.
 
 ```bash
-python3 tools/model_manager_v2.py install vevo2 --models-root /path/to/models
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON
+cmake --build build/debug --parallel --target audiocpp_model_manager audiocpp_server
 ```
 
-Overwrite an existing install:
+Build helpers expose `--native-model-manager` on Linux/macOS and
+`-NativeModelManager` on Windows; see [build instructions](../README.md#build-yourself).
 
-```bash
-python3 tools/model_manager_v2.py install pocket_tts --overwrite
-```
+The default HTTPS backend fetches a pinned BoringSSL archive at configure time
+and links it statically. It needs no system OpenSSL development package,
+libcurl, or separate TLS DLLs at runtime. For offline configuration, provide
+`-DAUDIOCPP_BORINGSSL_ARCHIVE=/path/to/boringssl.tar.gz`. Packagers can instead
+select `-DAUDIOCPP_USE_SYSTEM_OPENSSL=ON` and provide OpenSSL development files
+and the required runtime libraries. Helpers also accept `--boringssl-archive`
+and `--system-openssl` (Windows: `-BoringSslArchive`, `-SystemOpenSsl`).
 
-Successful installs write a small `.audiocpp-package-<id>.json` manifest beside
-the package files. It records the resolved Hugging Face commit and enables the
-native WebUI to report whether the local package is current. Packages installed
-before this metadata existed remain usable and show `Version unknown` until they
-are reinstalled once.
+## Legacy conversion
 
-Clean staging directories left by a process or machine interruption:
+`tools/model_manager_deprecated.py` is a separate legacy download/conversion
+catalog. It is not used for normal managed WebUI downloads, and its package IDs
+need not match the current spec-backed catalog. Use it only when a model's guide
+requires that conversion path. Dependencies can include PyTorch, safetensors,
+PyYAML and model-specific inputs.
 
-```bash
-python3 tools/model_manager_v2.py clean-partial pocket_tts --models-root models
-```
-
-The native WebUI can stop an active download cooperatively. Its worker checks a
-cancellation marker between download chunks and deletes its staging directory
-before reporting the job as cancelled.
-
-Package variants may declare an identical sidecar at the same destination. The
-manager downloads that file once, reuses it when installing a sibling precision,
-and keeps it until the last package that declares it is removed. PocketTTS uses
-this for the public `alba` preset shared by its English Q8 and BF16 packages.
-
-Install a converter-style package that needs a source file:
-
-```bash
-python3 tools/model_manager_deprecated.py info voxcpm2_audiovae
-python3 tools/model_manager_deprecated.py install voxcpm2_audiovae --source-file models/VoxCPM2/audiovae.pth --models-root models --overwrite
-```
-
-Kroko Community defaults to the ready-to-use GGUF package:
-
-```bash
-python3 tools/model_manager_v2.py install kroko_asr_community_q8_0 --models-root models --overwrite
-```
-
-The original Kroko `.data` conversion workflow remains documented in the
-community model guide for users who want to build from the upstream source
-package themselves.
-
-## Package Notes
-
-For shared audio.cpp GGUF packages, the v2 model manager installs the default GGUF.
-That is usually `q8_0`; FP32-only packages such as Inflect Micro v2 use
-original dtype instead. Other precision variants can be downloaded directly from
-[audio-cpp/audio.cpp-gguf](https://huggingface.co/audio-cpp/audio.cpp-gguf).
-
-Use `python3 tools/model_manager_v2.py list --json` for the current package
-ids and defaults. The legacy loader/catalog sync notes are maintained only for
-the deprecated catalog path.
+The server retains a legacy API branch for direct callers that supply conversion
+fields such as `source_directory`, `source_file`, `output_file` or `variant`. That
+branch invokes the deprecated Python helper and requires a source checkout or
+portable bundle containing it; the normal WebUI does not send those fields.

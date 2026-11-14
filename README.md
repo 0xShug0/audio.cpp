@@ -71,184 +71,175 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 
 Model weights keep the license of their original release, which is separate from audio.cpp's own license. [docs/model_licenses.md](docs/model_licenses.md) lists that license per family, and whether it allows commercial use.
 
+**(C) marks a community model;** contributor credits appear below its family name.
+Core and community models are grouped by task and listed alphabetically within each group.
+
 ### Speech Generation And Conversation
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
-| **breeze_tts** | TTS, Clone, Design, Ctrl | zh, en | BreezeTTS 2 instruction-conditioned TTS and prompt-audio voice cloning | GGUF BF16/Q8/Q4_0, Stream |
-| **chatterbox** | TTS, Clone, VC| ar, da, de, el, en, es, fi, fr, hi, it, ko, ms, nl, no, pl, pt, sv, sw, tr | Chatterbox with 0.5B backbone | GGUF 16/Q8 |
-| **confucius4_tts** | TTS, Clone | zh, en, ja, ko, de, fr, es, id, it, th, pt, ru, ms, vi | Confucius4-TTS multilingual voice cloning | GGUF F32, Stream |
-| **cosyvoice3** | TTS, Clone | zh, en, ja, ko, de, es, fr, it, ru, yue | Fun-CosyVoice3 zero-shot, cross-lingual, and instruction-conditioned TTS | GGUF F32/Q8, LoRA |
-| **dots_tts** | TTS, Clone, Edit, Ctrl | multilingual | DotTTS SOAR<br>DotTTS MeanFlow<br>DotTTS Edit | GGUF 16/Q8, Stream |
-| **dramabox** | TTS, Clone | en | DramaBox expressive TTS and voice cloning | GGUF Q8 |
-| **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | Fish Audio S2 Pro | GGUF 16/Q8, Stream, LoRA |
-| **firered_audio** | ASR, TTS, Clone, Design, Ctrl | zh, en | FireRedAudio multimodal speech/audio model with ASR, understanding, cloning, design, and edit paths | GGUF original/Q8 |
-| **fireredtts3** | TTS, Clone, Design, Ctrl | 24 langs + 21 zh dialects | FireRedTTS3 Base<br>FireRedTTS3 Instruct/Voicedesign | GGUF original/Q8 |
-| **gradium_phonon** | TTS | en | Gradium Phonon 31m English | GGUF Q8, Safetensors, Stream |
-| **higgs_audio_tts** | TTS, Clone, Ctrl | auto | Higgs Audio v3 TTS 4B | GGUF 16/Q8, Stream |
-| **index_tts2** | TTS, Clone, Ctrl | zh, en, ja, es, ar | IndexTTS-2<br>IndexTTS-2.5 | GGUF 16/Q8 |
-| **kokoro_tts** | TTS | en-us, en-gb, es, fr, hi, it, ja, pt-br, zh | Kokoro 82M, 54 preset voices | Safetensors, local GGUF BF16/Q8, Stream |
-| **kugelaudio** | TTS, Clone | European multilingual | KugelAudio-0-Open, presets and optional reference encoder | GGUF BF16 / Q8_0 / Q4_K, Stream |
-| **irodori_tts** | TTS, Clone, Design, Ctrl | ja | Irodori-TTS-v4.1-Small (RF and MF)<br>Irodori-TTS-v4.1-Anime<br>Irodori-TTS-500M-v3<br>Irodori-TTS-600M-v3-VoiceDesign | GGUF 16/Q8 |
-| **magpie_tts** | TTS | ar-AE, ar-MSA, ar-SA, de, en, es, fr, hi, it, ko, pt-BR, vi, zh | NVIDIA MagpieTTS Multilingual 357M (v2607) with baked speaker prompts and NanoCodec decode | GGUF original/Q8 |
-| **maya1** | TTS, Design, Ctrl | en | Maya1 expressive TTS with natural-language voice design, inline emotion tags, and SNAC decoding | GGUF original/Q8 |
-| **ming3_tts** | TTS, Clone, Design, Ctrl | zh, en, ja, ko, de, fr, es | Ming 3.0 TTS 0.5B | GGUF BF16/Q8, Stream |
-| **miotts** | TTS, Clone | en, ja | MioTTS-1.7B | GGUF 16/Q8 |
-| **moss_tts_local** | TTS, Clone, Ctrl | auto, optional language hint | MOSS-TTS-Local-Transformer-v1.5 | GGUF 16/Q8 |
-| **moss_tts_nano** | TTS, Clone | auto | MOSS-TTS-Nano-100M | GGUF 16/Q8, Stream |
-| **neutts** | TTS, Ctrl | en | NeuTTS 2E with built-in speaker prompts and emotion control | GGUF original precision, Stream |
-| **omnivoice** | TTS, Clone, Design, Ctrl | 646+ langs | OmniVoice, Qwen3-0.6B based<br>VoiceTut-TTS (Egyptian Arabic fine-tune) | GGUF 16/Q8, Stream |
-| **personaplex** | Dialogue, S2S | en | PersonaPlex 7B v1 speech-to-speech conversational model with packaged voice/persona prompts | GGUF Q4/Q8, Stream |
-| **plapre** | TTS, Clone, Ctrl, Edit | da | Plapre 3, five preset voices | GGUF F32/BF16, Stream |
-| **pocket_tts** | TTS, Clone | en, fr, de, it, pt, es | PocketTTS-100M English/French/German/Italian/Portuguese/Spanish | GGUF 16/Q8, Stream |
-| **pocket_tts_small** | TTS, Clone | en | PocketTTS Small 18M/7M/2M, base and ReFL | GGUF F32, Stream |
-| **qwen3_tts** | TTS, Clone, Design, Ctrl | zh, en, fr, de, it, ja, ko, pt, ru, es | Qwen3-TTS-12Hz-0.6B-Base<br>Qwen3-TTS-12Hz-1.7B-Base<br>Qwen3-TTS-12Hz-1.7B-CustomVoice<br>Qwen3-TTS-12Hz-1.7B-VoiceDesign | GGUF 16/Q8, Stream, LoRA |
-| **supertonic** | TTS | en, ko, ja, ar, bg, cs, da, de, el, es, et, fi, fr, hi, hr, hu, id, it, lt, lv, nl, pl, pt, ro, ru, sk, sl, sv, tr, uk, vi, na | Supertonic 3 | GGUF F32, Stream |
-| **vibevoice** | TTS, Dialogue | en, zh | VibeVoice-1.5B<br>VibeVoice-7B | GGUF 16/Q8, Stream, LoRA |
-| **voxcpm2** | TTS, Clone, Design, Ctrl | ar, da, de, el, en, es, fi, fr, he, hi, id, it, ja, km, ko, lo, ms, my, nl, no, pl, pt, ru, sv, sw, th, tl, tr, vi, zh | VoxCPM2-2B, 48 kHz<br>VocalRender-Pro (score-conditioned singing) | GGUF 16/Q8, Stream, LoRA |
-| **voxtral_tts** | TTS | en, fr, es, de, it, pt, nl, ar, hi | Voxtral-4B-TTS-2603, 20 embedded preset voices | GGUF BF16/Q8, Stream |
+| **audio8_tts** (C)<br>[@jasonchen31](https://github.com/jasonchen31) | TTS, Clone | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es | [Audio8 TTS Preview 0.6B](docs/models/audio8_tts.md) | GGUF Q8, Stream |
+| **auk** (C) | TTS, audio editing | auto | [AuK Base and AuK-Flash](docs/models/auk.md) | GGUF F32/F16/Q8 |
+| **breeze_tts** | TTS, Clone, Design, Ctrl | zh, en | [BreezeTTS 2](docs/models/breeze_tts.md) | GGUF BF16/Q8/Q4_0, Stream |
+| **chatterbox** | TTS, Clone, VC | ar, da, de, el, en, es, fi, fr, hi, it, ko, ms, nl, no, pl, pt, sv, sw, tr | [Chatterbox 0.5B](docs/tts.md#chatterbox) | GGUF 16/Q8 |
+| **chatterbox_turbo** (C)<br>[@pannagaps](https://github.com/pannagaps) | TTS (testing) | en | [Chatterbox Turbo](docs/models/chatterbox_turbo.md) | GGUF 16/Q8 |
+| **confucius4_tts** | TTS, Clone | zh, en, ja, ko, de, fr, es, id, it, th, pt, ru, ms, vi | [Confucius4-TTS](docs/tts.md#confucius4-tts) | GGUF F32, Stream |
+| **cosyvoice3** | TTS, Clone | zh, en, ja, ko, de, es, fr, it, ru, yue | [Fun-CosyVoice3](docs/models/cosyvoice3.md) | GGUF F32/Q8, LoRA |
+| **dots_tts** | TTS, Clone, Edit, Ctrl | multilingual | [DotTTS SOAR](docs/models/dots_tts.md)<br>DotTTS MeanFlow<br>DotTTS Edit | GGUF 16/Q8, Stream |
+| **dramabox** | TTS, Clone | en | [DramaBox](docs/tts.md#dramabox) | GGUF Q8 |
+| **echo_tts** (C)<br>[@5uck1ess](https://github.com/5uck1ess) | TTS, Clone | en | [Echo-TTS](docs/models/echo_tts.md) | GGUF 16/Q8 |
+| **f5_tts** (C)<br>[@tareko](https://github.com/tareko) | TTS, Clone | en, ar (Habibi) | [F5-TTS / Habibi](docs/models/f5_tts.md) | GGUF, LoRA |
+| **firered_audio** | ASR, TTS, Clone, Design, Ctrl | zh, en | [FireRedAudio](docs/models/firered_audio.md) | GGUF original/Q8 |
+| **fireredtts3** | TTS, Clone, Design, Ctrl | 24 langs + 21 zh dialects | [FireRedTTS3 Base](docs/models/fireredtts3.md)<br>FireRedTTS3 Instruct/Voicedesign | GGUF original/Q8 |
+| **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | [Fish Audio S2 Pro](docs/models/fish_audio.md) | GGUF 16/Q8, Stream, LoRA |
+| **fish_drama3** (C)<br>[@JarodMica](https://github.com/JarodMica) (base)<br>[@Th-Underscore](https://github.com/Th-Underscore) (small) | TTS, Clone, Ctrl, Edit | auto | [Drama 3 / Drama3-small](docs/models/fish_drama3.md) | Mixed Q2_K/Q3_K/Q4_K GGUF, IQ3_XXS (small), Stream |
+| **glm_tts** (C)<br>Mirek [@mirek190](https://github.com/mirek190) | TTS, Clone | zh, en | [GLM-TTS](docs/models/glm_tts.md) | GGUF |
+| **gradium_phonon** | TTS | en | [Gradium Phonon 31M](docs/models/gradium_phonon.md) | GGUF Q8, Safetensors, Stream |
+| **higgs_audio_tts** | TTS, Clone, Ctrl | auto | [Higgs Audio v3 TTS 4B](docs/models/higgs_audio_tts.md) | GGUF 16/Q8, Stream |
+| **index_tts2** | TTS, Clone, Ctrl | zh, en, ja, es, ar | [IndexTTS-2](docs/models/index_tts2.md)<br>IndexTTS-2.5 | GGUF 16/Q8 |
+| **inflect_v2** (C)<br>Jan [@JanWerder](https://github.com/JanWerder) | TTS | en | [Inflect Micro v2 and Nano v2](docs/models/inflect_v2.md) | GGUF FP32 |
+| **irodori_tts** | TTS, Clone, Design, Ctrl | ja | [Irodori-TTS-v4.1-Small (RF and MF)](docs/models/irodori_tts.md)<br>Irodori-TTS-v4.1-Anime<br>Irodori-TTS-500M-v3<br>Irodori-TTS-600M-v3-VoiceDesign | GGUF 16/Q8 |
+| **kitten_tts** (C)<br>Community | TTS | en | [KittenTTS Mini 0.8](docs/models/kitten_tts.md) | GGUF FP32 |
+| **kitten_tts2** (C)<br>[@dignome](https://github.com/dignome) | TTS, Clone | en, ar, zh, fr, de, hi, it, pt, ru, es, nl, id, ja, ko, pl, tr | [Kitten TTS 2](docs/models/kitten_tts2.md) | GGUF Q8/Q4 |
+| **kokoro_tts** | TTS | en-us, en-gb, es, fr, hi, it, ja, pt-br, zh | [Kokoro 82M](docs/models/kokoro_tts.md) | Safetensors, local GGUF BF16/Q8, Stream |
+| **kugelaudio** | TTS, Clone | European multilingual | [KugelAudio-0-Open](docs/models/kugelaudio.md) | GGUF BF16 / Q8_0 / Q4_K, Stream |
+| **lfm2_audio** (C)<br>[@ykhrustalev](https://github.com/ykhrustalev) / Liquid AI | ASR, TTS, S2S · Conversation | en, ja | [LFM2.5-Audio](docs/models/lfm2_audio.md) | GGUF F32/16/Q8/Q4, Stream |
+| **lfm3_audio** (C)<br>Community | ASR, TTS, S2S · Conversation | en, ar, da, de, el, es, fi, fr, he, it, ja, ko, nl, pl, pt, sv, tr, zh | [LFM3-Audio](docs/models/lfm3_audio.md) | GGUF BF16/16/Q8/Q4, Safetensors, Stream, experimental |
+| **magpie_tts** | TTS | ar-AE, ar-MSA, ar-SA, de, en, es, fr, hi, it, ko, pt-BR, vi, zh | [MagpieTTS Multilingual 357M (v2607)](docs/models/magpie_tts.md) | GGUF original/Q8 |
+| **maya1** | TTS, Design, Ctrl | en | [Maya1](docs/models/maya1.md) | GGUF original/Q8 |
+| **ming3_tts** | TTS, Clone, Design, Ctrl | zh, en, ja, ko, de, fr, es | [Ming 3.0 TTS 0.5B](docs/models/ming3_tts.md) | GGUF BF16/Q8, Stream |
+| **miotts** | TTS, Clone | en, ja | [MioTTS-1.7B](docs/models/miotts.md) | GGUF 16/Q8 |
+| **mira_tts** (C)<br>Mirek [@mirek190](https://github.com/mirek190) | TTS, Clone | en | [MiraTTS](docs/models/mira_tts.md) | Local conversion |
+| **moss_tts_local**<br>[@justinjohn0306](https://github.com/justinjohn0306) | TTS, Clone, Ctrl | auto, optional language hint | [MOSS-TTS-Local-Transformer-v1.5](docs/models/moss_tts_local.md) | GGUF 16/Q8 |
+| **moss_tts_nano** | TTS, Clone | auto | [MOSS-TTS-Nano-100M](docs/models/moss_tts_nano.md) | GGUF 16/Q8, Stream |
+| **moss_tts_v15** (C)<br>Chris [@christopherthompson81](https://github.com/christopherthompson81) | TTS, Clone | en, zh | [MOSS-TTS-v1.5](docs/models/moss_tts_v15.md) | GGUF |
+| **moss_ttsd** (C)<br>Chris [@christopherthompson81](https://github.com/christopherthompson81) | TTS, Clone, Dialogue | en, zh | [MOSS-TTSD](docs/models/moss_ttsd.md) | GGUF BF16/Q8/Q4 |
+| **moss_voicegen** (C)<br>Joost [@jrohde](https://github.com/jrohde) | Voice Design | en, zh | [MOSS-VoiceGenerator](docs/models/moss_voicegen.md) | GGUF |
+| **neutts** | TTS, Ctrl | en | [NeuTTS 2E](docs/models/neutts.md) | GGUF original precision, Stream |
+| **omnivoice** | TTS, Clone, Design, Ctrl | 646+ langs | [OmniVoice](docs/models/omnivoice.md)<br>VoiceTut-TTS (Egyptian Arabic) | GGUF 16/Q8, Stream |
+| **outetts** (C)<br>Mirek [@mirek190](https://github.com/mirek190) | TTS, Clone | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | [OuteTTS 1.0 1B](docs/models/outetts.md) | GGUF, LoRA |
+| **personaplex** | Dialogue, S2S · Conversation | en | [PersonaPlex 7B v1](docs/models/personaplex.md) | GGUF Q4/Q8, Stream |
+| **piper_tts** (C)<br>Community | TTS | en | [Piper TTS](docs/models/piper_tts.md) | GGUF FP32 |
+| **plapre** | TTS, Clone, Ctrl, Edit | da | [Plapre 3](docs/models/plapre.md) | GGUF F32/BF16, Stream |
+| **pocket_tts** | TTS, Clone | en, fr, de, it, pt, es | [PocketTTS 100M](docs/tts.md#pockettts) | GGUF 16/Q8, Stream |
+| **pocket_tts_small** | TTS, Clone | en | [PocketTTS Small 18M / 7M / 2M](docs/models/pocket_tts_small.md)<br>Base / ReFL | GGUF F32, Stream |
+| **qwen3_tts** | TTS, Clone, Design, Ctrl | zh, en, fr, de, it, ja, ko, pt, ru, es | [Qwen3-TTS 0.6B Base](docs/models/qwen3_tts.md)<br>1.7B Base / CustomVoice / VoiceDesign | GGUF 16/Q8, Stream, LoRA |
+| **sanotts** (C)<br>Ashish [@voidash](https://github.com/voidash) | TTS | en, vi, id, cs, de, es, fr, it, pt, ro, ru, tr, ne, hi | [sanoTTS voice family](docs/models/sanotts.md) | GGUF FP32 |
+| **soprano_tts** (C)<br>[@drzsdrtfg](https://github.com/drzsdrtfg) | TTS | en | [Soprano 1.1 80M](docs/models/soprano_tts.md) | GGUF Q8, Stream |
+| **sopro_tts** (C)<br>[@Brioch](https://github.com/Brioch)<br>[@samuel-vitorino](https://github.com/samuel-vitorino) | TTS, Clone | en, pt, fr, de | [Sopro V2 Turbo (2.2.0)](docs/models/sopro_tts.md) | Safetensors, GGUF F16, Stream |
+| **supertonic** | TTS | en, ko, ja, ar, bg, cs, da, de, el, es, et, fi, fr, hi, hr, hu, id, it, lt, lv, nl, pl, pt, ro, ru, sk, sl, sv, tr, uk, vi, na | [Supertonic 3](docs/tts.md#supertonic) | GGUF F32, Stream |
+| **vibevoice** | TTS, Dialogue | en, zh | [VibeVoice-1.5B](docs/tts.md#vibevoice)<br>VibeVoice-7B | GGUF 16/Q8, Stream, LoRA |
+| **vieneu_v3_turbo** (C)<br>Bảo [@pnnbao97](https://github.com/pnnbao97)<br>[@phuocnguyen90](https://github.com/phuocnguyen90) | TTS, Clone | vi, en | [VieNeu-TTS v3 Turbo](docs/models/vieneu_v3_turbo.md) | GGUF |
+| **voxcpm1** (C)<br>[@jasonchen31](https://github.com/jasonchen31) | TTS, Clone | zh, en, ja, ko | [VoxCPM1](docs/models/voxcpm1.md) | GGUF Q8, Stream, LoRA |
+| **voxcpm2** | TTS, Clone, Design, Ctrl | ar, da, de, el, en, es, fi, fr, he, hi, id, it, ja, km, ko, lo, ms, my, nl, no, pl, pt, ru, sv, sw, th, tl, tr, vi, zh | [VoxCPM2-2B](docs/tts.md#voxcpm2)<br>VocalRender-Pro | GGUF 16/Q8, Stream, LoRA |
+| **voxtral_tts** | TTS | en, fr, es, de, it, pt, nl, ar, hi | [Voxtral-4B-TTS-2603](docs/models/voxtral_tts.md) | GGUF BF16/Q8, Stream |
+| **xtts_v2** (C)<br>[@whoreson](https://github.com/whoreson) | TTS, Clone | en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja, hi | [Coqui XTTS v2](docs/community_models/xtts_v2.md) | GGUF original/Q8_0/Q4_K_M |
+| **zipvoice** (C)<br>Community | TTS, Clone | zh, en | [ZipVoice](docs/models/zipvoice.md) | GGUF F32, Stream |
+| **zonos2** (C)<br>[@Ryu1845](https://github.com/Ryu1845) | TTS, Clone | en, fr, de, es, it, pt, ja, zh, ko | [ZONOS2](docs/models/zonos2.md) | GGUF Q8_0, Stream |
+| **zonos3** (C)<br>[@Ryu1845](https://github.com/Ryu1845) | TTS, Clone | en, fr, de, es, it, pt, ja, zh, ko | [ZONOS3-Mini](docs/models/zonos3.md) | GGUF Q4_0/Q8_0, Stream |
 
 ### Speech Recognition And Analysis
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
-| **ast_audioset** | Classify | language agnostic | MIT AST AudioSet, 527 classes | GGUF F32 |
-| **ced** | Classify | language agnostic | CED Tiny<br>CED Mini<br>CED Small<br>CED Base<br>527 AudioSet classes | GGUF F32 |
-| **audio_flamingo** | ASR, Audio understanding | en | Audio Flamingo 3<br>Audio Flamingo Next<br>Music Flamingo 2601<br>SpotSound (LoRA temporal grounding) | GGUF BF16/Q8/Q4, LoRA |
-| **canary_asr** | ASR, Translate | en, de, es, fr | Canary 180M Flash | GGUF F32/Q8 |
-| **citrinet_asr** | ASR | en | Citrinet-256 | GGUF Q8 |
-| **cohere_asr** | ASR | en, fr, de, es, it, pt, nl, pl, el, ar, ja, zh, vi, ko | Cohere Transcribe 03-2026 | GGUF BF16/Q8/Q4_0 |
-| **crisperwhisper** | ASR, Align | 99 language codes | CrisperWhisper 2.0 Large | GGUF BF16/Q8, Stream |
-| **gigaam_asr** | ASR | ru, kk, ky, uz, en | GigaAM v3 CTC<br>GigaAM v3 RNN-T<br>GigaAM v3 E2E CTC<br>GigaAM v3 E2E RNN-T<br>GigaAM Multilingual CTC<br>GigaAM Multilingual Large CTC | GGUF F16/F32 |
-| **fun_asr_nano** | ASR | auto, zh, en, ja | Fun-ASR-Nano-2512 | GGUF 16/Q8 |
-| **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT | GGUF 16/Q8, Stream |
-| **hviske_asr** | ASR | da | Hviske v5.3 | GGUF Q8 |
-| **hviske_asr_v6** | ASR | da | Hviske v6 | GGUF BF16 / Q8 |
-| **index_echo** | ASR, Translate | zh → en, es, ja | Index-Echo-S2TT 2B<br>Index-Echo-S2TT 9B | GGUF original/Q8_0/Q4_K |
-| **lfm_d1_omni** | Classify | multilingual | [d1-Omni-2B](docs/models/lfm_d1_omni.md) calibrated audio decisions with named yes/no, choice, score, and numeric-estimate questions | GGUF Q8_0/F16/BF16 |
-| **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | Bundled |
-| **micro_wake_word** | Wake | model dependent | microWakeWord MixedNet TFLite models converted to GGUF | GGUF F32, Stream |
-| **ming3_audio** | ASR, Understanding, TTS, Clone, S2S | zh, en | Ming 3.0 Audio Tiny | GGUF BF16/Q8_0/Q4_K |
-| **open_wake_word** | Wake | en | OpenWakeWord Alexa | GGUF F32, Stream |
-| **firered_vad** | VAD | lang agnostic | FireRed VAD / Stream-VAD | GGUF F32/F16/Q8, Stream |
-| **pulsevad** | VAD | lang agnostic | PulseVAD 2.1K Student / 81K Teacher | GGUF F32 |
-| **moonshine_asr** | ASR | en | Moonshine Streaming Tiny/Small/Medium | GGUF Q8, Stream |
-| **moss_transcribe_diarize** | ASR | auto, 50+ languages | MOSS-Transcribe-Diarize with speaker labels and timestamps | GGUF BF16/Q8/Q4_K, Stream |
-| **nemotron_3_diar** | Diar | multilingual | NVIDIA Nemotron 3 Diarization with eight-speaker arrival-order diarization | GGUF BF16, Batch, Stream |
-| **nemotron_asr** | ASR | 100+ ASR prompt codes incl. auto | Nemotron 3.5 ASR Streaming 0.6B | GGUF 16/Q8, Stream |
-| **niagara_asr** | ASR | en | Niagara 19M Batch English<br>Niagara 38M Batch English | GGUF F32 |
-| **owsm** | ASR, Translate | 151 language codes | OWSM v4 Base 102M<br>OWSM v4 Small 370M<br>OWSM v4 Medium 1B | GGUF F32 / Q8_0 / Q4_K (Small, Medium) |
-| **owsm_ctc** | ASR, Translate | 151 language codes | OWSM-CTC v4 1B | GGUF F32 / Q8_0 |
-| **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | Qwen3-ASR-0.6B<br>Qwen3-ASR-1.7B-hf<br>QwenCleo-ASR (Egyptian Arabic fine-tune) | GGUF 16/Q8, Stream, LoRA |
-| **qwen3_forced_aligner** | Align | zh, yue, en, de, es, fr, it, pt, ru, ko, ja | Qwen3-ForcedAligner-0.6B | GGUF 16/Q8 |
-| **samsone** | Audio understanding | en | SAMSONE 99M<br>SAMSONE 134M<br>SAMSONE 356M | GGUF BF16/Q8 |
-| **silero_vad** | VAD | lang agnostic | Silero VAD | Bundled, Stream |
-| **sherpa_kws** | Wake | model dependent | sherpa-onnx streaming Zipformer keyword spotting | GGUF F32, Stream |
-| **smart_turn** | Turn detection | auto | Smart Turn v3.2 | GGUF F32 |
-| **sortformer_diar** | Diar | en | Sortformer-4spk-v1 | - |
-| **vibevoice_asr** | ASR | auto | VibeVoice ASR | GGUF 16/Q8 |
-| **vibevoice_asr_streaming** | ASR | en, zh, es, pt, de, ja, ko, fr, ru, it | VibeVoice ASR Streaming 7B/1.5B with persistent decoder state and speaker turns | GGUF BF16/Q8/Q4, Stream |
-| **voxtral_realtime** | ASR | auto | Voxtral-Mini-4B-Realtime-2602 | GGUF 16/Q8/Q4, Stream |
+| **ast_audioset** | Classify | language agnostic | [AST AudioSet](docs/models/ast_audioset.md) | GGUF F32 |
+| **audio8_asr** (C)<br>[@gqf2008](https://github.com/gqf2008) | ASR | en, zh, yue, ja, ko, fr, de | [Audio8-ASR-0.1B](docs/models/audio8_asr.md) (local conversion) | GGUF Q8, Safetensors |
+| **audio_flamingo** | ASR, Audio understanding | en | [Audio Flamingo 3 / Next](docs/models/audio_flamingo.md)<br>Music Flamingo 2601<br>SpotSound | GGUF BF16/Q8/Q4, LoRA |
+| **canary_asr** | ASR, Translate | en, de, es, fr | [Canary 180M Flash](docs/models/canary_asr.md) | GGUF F32/Q8 |
+| **ced** | Classify | language agnostic | [CED Tiny / Mini / Small / Base](docs/models/ced.md) | GGUF F32 |
+| **citrinet_asr** | ASR | en | [Citrinet-256](docs/asr.md#citrinet-asr) | GGUF Q8 |
+| **cohere_asr** | ASR | en, fr, de, es, it, pt, nl, pl, el, ar, ja, zh, vi, ko | [Cohere Transcribe 03-2026](docs/models/cohere_asr.md) | GGUF BF16/Q8/Q4_0 |
+| **confucius4_r2t2** (C)<br>[@davidxifeng](https://github.com/davidxifeng) | ASR | 30 languages | [Confucius4-R2T2](docs/models/r2t2.md) | Safetensors, GGUF F16/Q8/Q4, Stream |
+| **crisperwhisper** | ASR, Align | 99 language codes | [CrisperWhisper 2.0 Large](docs/models/crisperwhisper.md) | GGUF BF16/Q8, Stream |
+| **earshot_vad** (C)<br>[@Etherll](https://github.com/Etherll) | VAD | lang agnostic | [Earshot VAD](docs/models/earshot_vad.md) | Bundled, Stream |
+| **edda_asr** (C)<br>Lars Karlslund [@lkarlslund](https://github.com/lkarlslund) | ASR | da | [Edda v0.2 large](docs/models/edda_asr.md) | Safetensors, GGUF 16/Q8, Stream |
+| **firered_vad** | VAD | lang agnostic | [FireRed VAD / Stream-VAD](docs/models/firered_vad.md) | GGUF F32/F16/Q8, Stream |
+| **fun_asr_nano**<br>[@LauraGPT](https://github.com/LauraGPT) (FunASR team) | ASR | auto, zh, en, ja | [Fun-ASR-Nano-2512](docs/models/fun_asr_nano.md) | GGUF 16/Q8 |
+| **gigaam_asr** | ASR | ru, kk, ky, uz, en | [GigaAM v3 CTC](docs/models/gigaam_asr.md)<br>GigaAM v3 RNN-T<br>GigaAM v3 E2E CTC<br>GigaAM v3 E2E RNN-T<br>GigaAM Multilingual CTC<br>GigaAM Multilingual Large CTC | GGUF F16/F32 |
+| **granite5asr** (C)<br>[@ampersandru](https://github.com/ampersandru) | ASR | en, fr, de, es, pt, it, ja | [IBM Granite Speech 5.0 470M TurboCTC](docs/models/granite5asr.md) | GGUF Q8 |
+| **haas_asr** (C)<br>Third Intelligence | ASR | ja | [Haas-ja-v1.0](docs/models/haas.md) | GGUF F16/Q8, Stream |
+| **higgs_audio_stt** | ASR | en | [Higgs Audio v3 STT](docs/models/higgs_audio_stt.md) | GGUF 16/Q8, Stream |
+| **hviske_asr** | ASR | da | [Hviske v5.3](docs/asr.md#hviske-asr) | GGUF Q8 |
+| **hviske_asr_v6** | ASR | da | [Hviske v6](docs/models/hviske_asr_v6.md) | GGUF BF16 / Q8 |
+| **index_echo** | ASR, Translate | zh → en, es, ja | [Index-Echo-S2TT 2B](docs/models/index_echo.md)<br>Index-Echo-S2TT 9B | GGUF original/Q8_0/Q4_K |
+| **kroko_asr** (C)<br>Mirek [@mirek190](https://github.com/mirek190) | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | [Kroko Community ASR](docs/models/kroko_asr.md) | Safetensors, GGUF Q8 |
+| **lfm_d1_omni** | Classify | multilingual | [d1-Omni-2B](docs/models/lfm_d1_omni.md) | GGUF Q8_0/F16/BF16 |
+| **marblenet_vad** | VAD | lang agnostic | [MarbleNet VAD](docs/speech_analysis.md#marblenet-vad) | Bundled |
+| **micro_wake_word** | Wake | model dependent | [microWakeWord MixedNet](docs/models/micro_wake_word.md) | GGUF F32, Stream |
+| **ming3_audio** | ASR, Understanding, TTS, Clone<br>S2S · Conversation | zh, en | [Ming 3.0 Audio Tiny](docs/models/ming3_audio.md) | GGUF BF16/Q8_0/Q4_K |
+| **mms_forced_aligner** (C)<br>[@LysanderdeJong](https://github.com/LysanderdeJong) | Align | nl (nld), en (eng); pre-romanized Latin | [MMS-300M-1130 Forced Aligner](docs/models/mms_forced_aligner.md) | Safetensors, GGUF 16/Q8 |
+| **moonshine_asr** | ASR | en | [Moonshine Streaming Tiny/Small/Medium](docs/models/moonshine_asr.md) | GGUF Q8, Stream |
+| **moss_transcribe_diarize** | ASR | auto, 50+ languages | [MOSS-Transcribe-Diarize](docs/models/moss_transcribe_diarize.md) | GGUF BF16/Q8/Q4_K, Stream |
+| **nemotron_3_diar** | Diar | multilingual | [Nemotron 3 Diarization](docs/models/nemotron_3_diar.md) | GGUF BF16, Batch, Stream |
+| **nemotron_asr** | ASR | 100+ ASR prompt codes incl. auto | [Nemotron 3.5 ASR Streaming 0.6B](docs/asr.md#nemotron-asr) | GGUF 16/Q8, Stream |
+| **nemotron_transcribe** (C)<br>[@JarodMica](https://github.com/JarodMica) | ASR, translation, audio Q&A | auto | [NVIDIA Nemotron 3.5 Transcribe 30B-A4B](docs/models/nemotron_transcribe.md) | [IQ4_NL / Q4_K / Q3_K / Q2_K experts](https://huggingface.co/Jmica/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) |
+| **niagara_asr** | ASR | en | [Niagara 19M Batch English](docs/asr.md#niagara-asr)<br>Niagara 38M Batch English | GGUF F32 |
+| **open_wake_word** | Wake | en | [OpenWakeWord Alexa](docs/models/open_wake_word.md) | GGUF F32, Stream |
+| **owsm** | ASR, Translate | 151 language codes | [OWSM v4 Base 102M](docs/models/owsm.md)<br>OWSM v4 Small 370M<br>OWSM v4 Medium 1B | GGUF F32 / Q8_0 / Q4_K (Small, Medium) |
+| **owsm_ctc** | ASR, Translate | 151 language codes | [OWSM-CTC v4 1B](docs/models/owsm_ctc.md) | GGUF F32 / Q8_0 |
+| **parakeet_tdt** (C)<br>[@dleiferives](https://github.com/dleiferives) | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | [Parakeet-TDT 0.6B v3 / Orukeet r3](docs/models/parakeet_tdt.md) | GGUF F32/16/Q8, Stream |
+| **phonon2_asr** (C)<br>Mirek [@mirek190](https://github.com/mirek190) | ASR | en | [Phonon-2](docs/models/phonon2_asr.md) | GGUF F32/16/BF16/Q8, Stream |
+| **pulsevad** | VAD | lang agnostic | [PulseVAD 2.1K Student / 81K Teacher](docs/models/pulsevad.md) | GGUF F32 |
+| **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | [Qwen3-ASR 0.6B / 1.7B](docs/models/qwen3_asr.md)<br>QwenCleo-ASR (Egyptian Arabic) | GGUF 16/Q8, Stream, LoRA |
+| **qwen3_forced_aligner** | Align | zh, yue, en, de, es, fr, it, pt, ru, ko, ja | [Qwen3-ForcedAligner-0.6B](docs/models/qwen3_forced_aligner.md) | GGUF 16/Q8 |
+| **samsone** | Audio understanding | en | [SAMSONE 99M](docs/models/samsone.md)<br>SAMSONE 134M<br>SAMSONE 356M | GGUF BF16/Q8 |
+| **sense_asr** (C)<br>Jason Chen [@jasonchen31](https://github.com/jasonchen31)<br>[@LauraGPT](https://github.com/LauraGPT) / FunASR | ASR | auto, zh, en, yue, ja, ko, pt, ru, es, it, fr, de, nl, pl, tr, ar, hi, vi, th, id, ms, fa, nospeech | [SenseVoice-Small](docs/models/sense_asr.md) | GGUF Q8, Stream |
+| **sherpa_kws** | Wake | model dependent | [sherpa-onnx Zipformer](docs/models/sherpa_kws.md) | GGUF F32, Stream |
+| **silero_vad** | VAD | lang agnostic | [Silero VAD](docs/speech_analysis.md#silero-vad) | Bundled, Stream |
+| **smart_turn** | Turn detection | auto | [Smart Turn v3.2](docs/models/smart_turn.md) | GGUF F32 |
+| **sortformer_diar** | Diar | en | [Sortformer-4spk-v1](docs/speech_analysis.md#sortformer-diarization) | - |
+| **sortformer_diar_v2** (C)<br>[@LysanderdeJong](https://github.com/LysanderdeJong) | Diar | multilingual | [Sortformer v2.1](docs/models/sortformer_diar_v2.md) (local conversion) | GGUF F32/mixed F16, Stream |
+| **underdog_bark3** (C)<br>Mirek [@mirek190](https://github.com/mirek190) | ASR | en | [Underdog Bark 3 Standard/Plus/Pro](docs/models/underdog_bark3.md) | GGUF F32/16/BF16/Q8, Stream |
+| **vibeasr** (C)<br>[@XsquirrelC](https://github.com/XsquirrelC) / VibeASR | ASR | en | [VibeASR](docs/models/vibeasr.md) (CPU only) | GGUF I8_S + I2_S |
+| **vibevoice_asr** | ASR | auto | [VibeVoice ASR](docs/models/vibevoice_asr.md) | GGUF 16/Q8 |
+| **vibevoice_asr_streaming** | ASR | en, zh, es, pt, de, ja, ko, fr, ru, it | [VibeVoice ASR Streaming 7B / 1.5B](docs/models/vibevoice_asr.md#vibevoice-asr-streaming-7b) | GGUF BF16/Q8/Q4, Stream |
+| **voxtral_realtime** | ASR | auto | [Voxtral-Mini-4B-Realtime-2602](docs/models/voxtral_realtime.md) | GGUF 16/Q8/Q4, Stream |
+| **whistle_asr** (C)<br>[@bumpyclock](https://github.com/bumpyclock) | ASR | en, de, fr, es, it, nl, pl | [Whistle ASR](docs/models/whistle_asr.md) | GGUF F32, Safetensors F32 |
 
 ### Audio Conversion And Processing
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
-| **apollo** | S2S | lang agnostic | Apollo music restoration | GGUF F32 |
-| **audiosr** | S2S | lang agnostic | AudioSR Basic audio super-resolution package | GGUF F32 |
-| **bs_roformer** | Sep | lang agnostic | BS-RoFormer vocal separation checkpoints | GGUF Q8 |
-| **builtin_audio_utils** | S2S | lang agnostic | RNNoise<br>DeepFilterNet2<br>ZipEnhancer<br>GTCRN Streaming<br>GTCRN DNS3<br>GTCRN VCTK<br>FlashSR | Safetensors |
-| **controlfoley** | SFX | auto | ControlFoley 44 kHz multimodal Foley generation from text, video, and reference audio conditioning | GGUF F32/Q8 |
-| **htdemucs** | Sep | lang agnostic | HTDemucs<br>HTDemucs_ft<br>HTDemucs_6stems | GGUF 16/Q8 |
-| **meanvc2** | VC | lang agnostic | MeanVC2 120 ms/40 ms zero-shot voice conversion | GGUF F32/Q4, Stream |
-| **mel_band_roformer** | Sep | lang agnostic | Mel-Band RoFormer MLX vocal separation variants | GGUF 16/Q8 |
-| **miocodec** | Codec, VC | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz | GGUF 16/Q8 |
-| **mossformer2** | Sep, S2S | lang agnostic | MossFormer2 SS 16K two-speaker separation<br>MossFormer2 SE 48K speech enhancement<br>MossFormer2 SR 48K speech super-resolution | GGUF F32/F16 |
-| **muscriptor** | MIDI | music | [MuScriptor Small/Medium/Large](docs/models/muscriptor.md) audio-to-symbolic transcription | GGUF F32, Stream |
-| **rvc** | VC | lang agnostic | RVC F16 GGUF with packaged v1/v2 voices and optional retrieval blending | GGUF 16 |
-| **sam_audio** | S2S | lang agnostic | SAM Audio Small<br>SAM Audio Base<br>SAM Audio Large | GGUF F32/BF16/Q8 |
-| **seed_vc** | VC | lang agnostic | SeedVC XLS-R + HiFT<br>SeedVC Whisper-small + BigVGAN | GGUF 16/Q8 |
-| **sheetsage2** | MIDI | music | SheetSage2 audio-to-ABC score transcription | GGUF orig |
-| **sidon** | S2S | lang agnostic | Sidon v0.1 single-speaker speech restoration | GGUF F32 |
-| **tf_gridnet** | Sep | lang agnostic | TF-GridNet WSJ0-2mix two-speaker separation | GGUF F32 |
-| **tone_color_vc** | VC | lang agnostic | Tone Color VC | GGUF F32/F16 |
-| **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
+| **apollo** | S2S · Music restoration | lang agnostic | [Apollo](docs/models/apollo.md) | GGUF F32 |
+| **audiosr** | S2S · Super-resolution | lang agnostic | [AudioSR Basic](docs/models/audiosr.md) | GGUF F32 |
+| **bs_roformer**<br>[@mirek190](https://github.com/mirek190) | Sep | lang agnostic | [BS-RoFormer](docs/audio_tools.md#bs-roformer) | GGUF Q8 |
+| **builtin_audio_utils** | S2S · Denoising / Enhancement | lang agnostic | [RNNoise](docs/audio_tools.md#built-in-audio-utilities)<br>DeepFilterNet2<br>ZipEnhancer<br>GTCRN Streaming<br>GTCRN DNS3<br>GTCRN VCTK<br>FlashSR | Safetensors |
+| **controlfoley** | SFX | auto | [ControlFoley](docs/models/controlfoley.md) | GGUF F32/Q8 |
+| **htdemucs** | Sep | lang agnostic | [HTDemucs](docs/audio_tools.md#htdemucs)<br>HTDemucs_ft<br>HTDemucs_6stems | GGUF 16/Q8 |
+| **meanvc2** | VC | lang agnostic | [MeanVC2 120 ms / 40 ms](docs/models/meanvc2.md) | GGUF F32/Q4, Stream |
+| **mel_band_roformer** | Sep | lang agnostic | [Mel-Band RoFormer](docs/audio_tools.md#mel-band-roformer) | GGUF 16/Q8 |
+| **miocodec** | Codec, VC | lang agnostic | [MioCodec v2](docs/audio_tools.md#miocodec) | GGUF 16/Q8 |
+| **mossformer2** | Sep, S2S · Enhancement / Super-resolution | lang agnostic | [MossFormer2 SS 16K / SE 48K / SR 48K](docs/models/mossformer2.md) | GGUF F32/F16 |
+| **muscriptor** | MIDI | music | [MuScriptor Small/Medium/Large](docs/models/muscriptor.md) | GGUF F32, Stream |
+| **realtime_reuse** (C) | S2S · Speech enhancement | lang agnostic | [Real-time RE-USE](docs/models/realtime_reuse.md) | GGUF F32, Stream |
+| **reuse** (C) | S2S · Speech restoration | lang agnostic | [RE-USE](docs/models/reuse.md) | GGUF F32/F16/Q8_0 |
+| **rvc** | VC | lang agnostic | [RVC v1 / v2](docs/audio_tools.md#rvc) | GGUF 16 |
+| **sam_audio** | S2S · Sound separation | lang agnostic | [SAM Audio Small](docs/models/sam_audio.md)<br>SAM Audio Base<br>SAM Audio Large | GGUF F32/BF16/Q8 |
+| **seed_vc** | VC | lang agnostic | [SeedVC XLS-R + HiFT](docs/models/seed_vc.md)<br>SeedVC Whisper-small + BigVGAN | GGUF 16/Q8 |
+| **sheetsage2** | MIDI | music | [SheetSage2](docs/audio_tools.md#sheetsage2) | GGUF orig |
+| **sidon** | S2S · Speech restoration | lang agnostic | [Sidon v0.1](docs/models/sidon.md) | GGUF F32 |
+| **tf_gridnet** | Sep | lang agnostic | [TF-GridNet WSJ0-2mix](docs/models/tf_gridnet.md) | GGUF F32 |
+| **tone_color_vc** | VC | lang agnostic | [Tone Color VC](docs/models/tone_color_vc.md) | GGUF F32/F16 |
+| **universr** | S2S · Super-resolution | lang agnostic | [UniverSR Audio / Speech](docs/models/universr.md) | GGUF F32 |
 
 ### Music, Media, And Editing
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
-| **ace_step** | Music, Edit | 50+ langs | ACE-Step 1.5 Turbo<br>ACE-Step 1.5 Base<br>ACE-Step 1.5 XL Turbo<br>ACE-Step 1.5 XL SFT | GGUF 16, LoRA |
-| **heartmula** | Music | zh, en, ja, ko, es | HeartMuLa-oss-3B with HeartCodec-oss | GGUF 16/Q8 |
-| **magenta_realtime_2** | Music | music | Magenta RealTime 2 Small (230M)<br>Magenta RealTime 2 Base (2.4B) | GGUF F16/Q8_0, Stream |
-| **midashenglm_gen** | Music, SFX | auto | MiDashengLM-Gen structured-prompt generation for speech, music, sound effects, and ambience | GGUF F32/Q8 |
-| **minimax_h3** | Video, Music, TTS/Dialogue | auto | MiniMax-H3 Q4_K with optional INT8 ConvRot DiT | GGUF Q4/INT8 |
-| **minimax_music3** | Music | auto | MiniMax Music 3 text-to-music generation with lyrics conditioning | GGUF Q4/Q8 |
-| **moss_soundeffect** | SFX | en, zh | [MOSS-SoundEffect v2](docs/models/moss_soundeffect.md) text-conditioned sound effects | GGUF BF16/Q8 |
-| **mulacover** | Music | multilingual | [MuLaCover](docs/models/mulacover.md) cover-song generation from reference audio or melody/chord MIDI, with new lyrics and style | GGUF 16/Q8 |
-| **soulx_flashhead** | Audio-to-video | lang agnostic | [SoulX-FlashHead Lite](docs/models/soulx_flashhead.md) audio-driven portrait video generation | GGUF Q8/BF16, Stream |
-| **stable_audio** | Music, SFX, Edit | en | Stable Audio 3 Small Music<br>Stable Audio 3 Small SFX<br>Stable Audio 3 Medium | GGUF 16/Q8 |
-| **vevo2** | TTS, Music, VC, Edit | en, zh | Vevo2 with Qwen2.5-0.5B AR model | GGUF 16 |
-| **yue2** | Music | en | YuE2-3B lyrics-conditioned song generation with optional ABC score planning and conditioning | GGUF BF16/Q8/Q4, LoRA |
-
-Some model families in the supported table started as outside contributions before being promoted into the core release surface. Thanks to Mirek [@mirek190](https://github.com/mirek190) for BS-RoFormer, [@justinjohn0306](https://github.com/justinjohn0306) for MOSS-TTS-Local, and [@LauraGPT](https://github.com/LauraGPT) from the official FunASR team for Fun-ASR-Nano.
-
-## Community Models
-
-Community model ports live under `community_models` to make the ownership boundary clear while keeping them available through the normal audio.cpp CLI and server paths. Some community-contributed models graduate into the core model tree when they become part of the main release surface. Huge thanks to the contributors who bring these models in, test them, and keep pushing the framework into new territory. See [CONTRIBUTING.md](CONTRIBUTING.md#new-model-prs) for community-model expectations.
-
-| Family | Task | Lang | Runtime | Contributor | What They Added |
-|---|---|---|---|---|---|
-| **audio8_asr** | ASR | en, zh, yue, ja, ko, fr, de | GGUF Q8, Safetensors | [@gqf2008](https://github.com/gqf2008) | [Audio8-ASR-0.1B](docs/models/audio8_asr.md) compact multilingual autoregressive ASR reusing the Qwen3-ASR encoder with an MLP-tower adapter and an 8-layer Qwen2-style decoder (CC-BY-NC, local conversion only) |
-| **audio8_tts** | TTS, Clone | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es | GGUF Q8, Stream | [@jasonchen31](https://github.com/jasonchen31) | [Audio8 TTS Preview 0.6B](docs/models/audio8_tts.md) DualAR multilingual TTS and zero-shot voice cloning with a Qwen backbone and neural codec |
-| **auk** | TTS, audio editing | auto | GGUF F32/F16/Q8 | [@0xShug0](https://github.com/0xShug0) | [AuK Base and AuK-Flash](docs/models/auk.md) instruction-guided speech generation and editing with separate generator, Qwen conditioner, and VAE components |
-| **chatterbox_turbo** | TTS (testing) | en | GGUF 16/Q8 | [@pannagaps](https://github.com/pannagaps) | [Chatterbox Turbo](docs/models/chatterbox_turbo.md) distilled 350M GPT2 T3 backbone + 2-step meanflow S3Gen decoder; built-in voice |
-| **confucius4_r2t2** | ASR | 30 languages | Safetensors, GGUF F16/Q8/Q4, Stream | [@davidxifeng](https://github.com/davidxifeng) | [Confucius4-R2T2](docs/models/r2t2.md) streaming ASR with context and hotword prompts |
-| **earshot_vad** | VAD | lang agnostic | Bundled, Stream | [@Etherll](https://github.com/Etherll) | [Earshot VAD](docs/models/earshot_vad.md) native C++ port with offline and streaming speech detection |
-| **echo_tts** | TTS, Clone | en | GGUF 16/Q8 | [@5uck1ess](https://github.com/5uck1ess) | [Echo-TTS](docs/models/echo_tts.md) 44.1 kHz zero-shot voice cloning with EchoDiT latents and Fish S1-DAC decoding |
-| **edda_asr** | ASR | da | Safetensors, GGUF 16/Q8, Stream | Lars Karlslund [@lkarlslund](https://github.com/lkarlslund) | [Edda v0.2 large](docs/models/edda_asr.md) Danish Whisper-large-v3 with lossless DFlash2 speculative decoding from the edda-v0.2-large-hurtig drafter |
-| **f5_tts** | TTS, Clone | en, ar (Habibi) | GGUF, LoRA | [@tareko](https://github.com/tareko) | [F5-TTS](docs/models/f5_tts.md) flow-matching DiT synthesis and voice cloning, with Habibi Arabic aliases `habibi`/`habibi_tts` |
-| **fish_drama3** | TTS, Clone, Ctrl, Edit | auto | Mixed Q2_K/Q3_K/Q4_K GGUF, IQ3_XXS (small), Stream | [@JarodMica](https://github.com/JarodMica) (base), [@Th-Underscore](https://github.com/Th-Underscore) (small) | Experimental Fish Audio Drama 3 port and Drama3-small variant support |
-| **glm_tts** | TTS, Clone | zh, en | GGUF | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](docs/models/glm_tts.md) zero-shot synthesis and voice cloning support |
-| **granite5asr** | ASR | en, fr, de, es, pt, it, ja | GGUF Q8 | [@ampersandru](https://github.com/ampersandru) | [IBM Granite Speech 5.0 470M TurboCTC](docs/models/granite5asr.md) ultra-fast Conformer-CTC ASR with Shaw relative positional embeddings and ByteLevel BPE |
-| **haas_asr** | ASR | ja | GGUF F16/Q8, Stream | Third Intelligence | [Haas-ja-v1.0](docs/models/haas.md), sharing Parakeet’s encoder and TDT decoder with a KDA predictor |
-| **inflect_v2** | TTS | en | GGUF FP32 | Jan [@JanWerder](https://github.com/JanWerder) | [Inflect Micro v2 and Nano v2](docs/models/inflect_v2.md) native offline synthesis |
-| **kitten_tts** | TTS | en | GGUF FP32 | Community | [KittenTTS Mini 0.8](docs/models/kitten_tts.md) native 80M-parameter synthesis with eight built-in voices and the shared eSpeak-ng frontend |
-| **kitten_tts2** | TTS, Clone | en, ar, zh, fr, de, hi, it, pt, ru, es, nl, id, ja, ko, pl, tr | GGUF Q8/Q4 | [@dignome](https://github.com/dignome) | [Kitten TTS 2](docs/models/kitten_tts2.md) native Qwen3/S3 synthesis, multilingual presets, and reference-audio cloning; [ready-to-run GGUF](https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/main/KittenTTS2-GGUF) |
-| **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Safetensors, GGUF Q8 | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](docs/models/kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |
-| **latentsync** | Video lip sync | lang agnostic | GGUF F32/F16/Q8, experimental | [@0xShug0](https://github.com/0xShug0) | [LatentSync 1.6](docs/models/latentsync.md) audio-conditioned lip synchronization with optional DeepCache and reduced-memory execution modes |
-| **lfm2_audio** | ASR, TTS, S2S | en, ja | GGUF F32/16/Q8/Q4, Stream | [@ykhrustalev](https://github.com/ykhrustalev) / Liquid AI | [LFM2.5-Audio](docs/models/lfm2_audio.md) English and Japanese transcription, speech and spoken chat from Liquid AI's published GGUFs: LFM2 hybrid short-conv/attention backbone with a FastConformer encoder for audio input, and a depthformer and LFM2 detokenizer for 24 kHz speech in four built-in English voices; spoken questions get replies of interleaved text and speech; offline or streamed frame by frame |
-| **lfm3_audio** | ASR, TTS, S2S | en, ar, da, de, el, es, fi, fr, he, it, ja, ko, nl, pl, pt, sv, tr, zh | GGUF BF16/16/Q8/Q4, Safetensors, Stream, experimental | Community | [LFM3-Audio](docs/models/lfm3_audio.md) transcription, spoken-question chat (with optional thinking), speech in 38 built-in voices across 19 languages and spoken chat from Liquid AI's published LFM3-Audio-2B GGUFs: LFM2 encoder for audio input, LFM3 hybrid short-conv/attention backbone, a bidirectional MaskGIT depth decoder (12 codebooks, 12.5 Hz) and the LiquidCodec decoder for 24 kHz speech; spoken questions get replies of interleaved text and speech, with client-held multi-turn history; TTS and S2S offline or streamed frame by frame |
-| **liveavatar** | Audio-to-video | auto | GGUF NVFP4 | [@0xShug0](https://github.com/0xShug0) | [LiveAvatar](docs/models/liveavatar.md) audio-to-video avatar generation with Wan2.2 S2V and an optional low-VRAM denoiser path |
-| **minimax_h3** | Video, Music, TTS/Dialogue | auto | GGUF Q4/INT8 | [@0xShug0](https://github.com/0xShug0) | [MiniMax-H3](docs/models/minimax_h3.md) text-to-audio/video generation with Q4_K and optional INT8 ConvRot DiT |
-| **minimax_music3** | Music | auto | GGUF Q4/Q8 | [@0xShug0](https://github.com/0xShug0), [@JoeMattie](https://github.com/JoeMattie) | [MiniMax Music 3](docs/models/minimax_music3.md) text-to-music generation with lyrics conditioning |
-| **mira_tts** | TTS, Clone | en | Local conversion | Mirek [@mirek190](https://github.com/mirek190) | [MiraTTS](docs/models/mira_tts.md) experimental native Qwen2 + ECAPA/Perceiver zero-shot voice cloning with progressive segment streaming (CC-BY-NC-SA-4.0 weights) |
-| **mms_forced_aligner** | Align | nl (nld), en (eng); pre-romanized Latin | Safetensors, GGUF 16/Q8 | [@LysanderdeJong](https://github.com/LysanderdeJong) | [MMS-300M-1130 Forced Aligner](docs/models/mms_forced_aligner.md) word-timestamp alignment from a wav2vec2 CTC checkpoint (safetensors or local GGUF) |
-| **nemotron_transcribe** | ASR, translation, audio Q&A | auto | [IQ4_NL / Q4_K / Q3_K / Q2_K experts](https://huggingface.co/Jmica/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | [@JarodMica](https://github.com/JarodMica) | [NVIDIA Nemotron 3.5 Transcribe 30B-A4B](docs/models/nemotron_transcribe.md) experimental offline speech language model with CTC word timestamps and speaker labels |
-| **moss_tts_v15** | TTS, Clone | en, zh | GGUF | Chris [@christopherthompson81](https://github.com/christopherthompson81) | [MOSS-TTS-v1.5](docs/models/moss_tts_v15.md) 8B delay-pattern zero-shot voice cloning; voice-attribute instructions are followed only loosely, see the limitation note |
-| **moss_ttsd** | TTS, Clone, Dialogue | en, zh | GGUF BF16/Q8/Q4 | Chris [@christopherthompson81](https://github.com/christopherthompson81) | [MOSS-TTSD](docs/models/moss_ttsd.md) 8B dialogue TTS with speaker-tagged conversations and per-speaker voice cloning |
-| **moss_voicegen** | Voice Design | en, zh | GGUF | Joost [@jrohde](https://github.com/jrohde) | [MOSS-VoiceGenerator](docs/models/moss_voicegen.md) speech in a voice designed from a written instruction |
-| **outetts** | TTS, Clone | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | GGUF, LoRA | Mirek [@mirek190](https://github.com/mirek190) | Llama-OuteTTS-1.0-1B TTS and voice cloning support |
-| **parakeet_tdt** | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | GGUF F32/16/Q8, Stream | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](docs/models/parakeet_tdt.md) offline, long-form, and buffered-streaming ASR support, plus Orukeet r3 weights |
-| **phonon2_asr** | ASR | en | GGUF F32/16/BF16/Q8, Stream | Mirek [@mirek190](https://github.com/mirek190) | [Phonon-2](docs/models/phonon2_asr.md), native hotwords and phrase-based streaming on the shared Parakeet implementation |
-| **piper_tts** | TTS | en | GGUF FP32 | Community | [Piper TTS](docs/models/piper_tts.md) native VITS synthesis for the Lessac medium voice with the shared eSpeak-ng frontend |
-| **realtime_reuse** | S2S | lang agnostic | GGUF F32, Stream | [@0xShug0](https://github.com/0xShug0) | [Real-time RE-USE](docs/models/realtime_reuse.md) causal speech restoration with 30 exit-layer/lookahead configurations |
-| **reuse** | S2S | lang agnostic | GGUF F32/F16/Q8_0 | [@0xShug0](https://github.com/0xShug0) | RE-USE speech restoration |
-| **sanotts** | TTS | en, vi, id, cs, de, es, fr, it, pt, ro, ru, tr, ne, hi | GGUF FP32 | Ashish [@voidash](https://github.com/voidash) | [sanoTTS voice family](docs/models/sanotts.md) eighteen voices from 294k to 2.27M parameters, native offline synthesis |
-| **sense_asr** | ASR | auto, zh, en, yue, ja, ko, pt, ru, es, it, fr, de, nl, pl, tr, ar, hi, vi, th, id, ms, fa, nospeech | GGUF Q8, Stream | Jason Chen [@jasonchen31](https://github.com/jasonchen31), [@LauraGPT](https://github.com/LauraGPT) / FunASR | [SenseVoice-Small](docs/models/sense_asr.md) offline/streaming SAN-M + CTC transcription with event/emotion/language tags, ITN and word timestamps |
-| **soprano_tts** | TTS | en | GGUF Q8, Stream | [@drzsdrtfg](https://github.com/drzsdrtfg) | [Soprano-1.1-80M](https://huggingface.co/WalkingCat/Soprano-1.1-80M-GGUF) ultra-lightweight TTS with Qwen3 LM + Vocos decoder |
-| **sopro_tts** | TTS, Clone | en, pt, fr, de | Safetensors, GGUF F16, Stream | [@Brioch](https://github.com/Brioch), [@samuel-vitorino](https://github.com/samuel-vitorino) (model author) | [Sopro V2 Turbo](docs/models/sopro_tts.md) updated for Sopro 2.2.0: 120M zero-shot voice cloning, chunked streaming, and optional voice caching |
-| **sortformer_diar_v2** | Diar | multilingual | GGUF F32/mixed F16, Stream | [@LysanderdeJong](https://github.com/LysanderdeJong) | [NVIDIA Sortformer v2.1](docs/models/sortformer_diar_v2.md) four-speaker streaming diarization; local conversion only pending redistribution approval |
-| **underdog_bark3** | ASR | en | GGUF F32/16/BF16/Q8, Stream | Mirek [@mirek190](https://github.com/mirek190) | [Underdog Bark 3 Standard/Plus/Pro](docs/models/underdog_bark3.md), sharing the Parakeet implementation |
-| **vibeasr** | ASR | en | GGUF I8_S + I2_S | [@XsquirrelC](https://github.com/XsquirrelC) / VibeASR | [VibeASR](docs/models/vibeasr.md) fully quantized port of [VibeASR.cpp](https://github.com/microsoft/VibeASR.cpp): VibeVoice acoustic/semantic tokenizers on INT8 weights and INT8 activations, feeding a ternary BitNet Qwen2 decoder. Offline, CPU only |
-| **vieneu_v3_turbo** | TTS, Clone | vi, en | GGUF | Bảo [@pnnbao97](https://github.com/pnnbao97) (model author); first port by Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS v3 Turbo](docs/models/vieneu_v3_turbo.md) 48 kHz Vietnamese/English TTS and voice cloning (formerly `vietneu_tts`) |
-| **voxcpm1** | TTS, Clone | zh, en, ja, ko | GGUF Q8, Stream, LoRA | [@jasonchen31](https://github.com/jasonchen31) | [VoxCPM1](docs/models/voxcpm1.md) tokenizer-free 0.5B TTS with 16 kHz output, streaming, and continuation-mode voice cloning |
-| **whistle_asr** | ASR | en, de, fr, es, it, nl, pl | GGUF F32, Safetensors F32 | [@bumpyclock](https://github.com/bumpyclock) | [Whistle ASR](docs/models/whistle_asr.md) experimental offline transcription with a GGML encoder on CPU, Metal, CUDA, or Vulkan and a host decoder; 16 kHz mono, at most 30 seconds |
-| **xtts_v2** | TTS, Clone | en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja, hi | GGUF original/Q8_0/Q4_K_M | [@whoreson](https://github.com/whoreson) | [Coqui XTTS v2](docs/community_models/xtts_v2.md) multilingual speech generation with a reference voice and cached speaker conditioning |
-| **zipvoice** | TTS, Clone | zh, en | GGUF F32, Stream | Community | [ZipVoice](docs/models/zipvoice.md) k2-fsa TTSZipformer flow-matching zero-shot voice cloning with Vocos vocoder; jieba + pypinyin Chinese frontend; chunk streaming |
-| **zonos2** | TTS, Clone | en, fr, de, es, it, pt, ja, zh, ko | GGUF Q8_0, Stream | [@Ryu1845](https://github.com/Ryu1845) | [ZONOS2](docs/models/zonos2.md) Zyphra's 7.6B GQA/MoE TTS with an EDA expert router, 9 delayed DAC codebooks and the 44.1 kHz Descript Audio Codec; ECAPA speaker-embedding cloning and an optional expert cache |
-| **zonos3** | TTS, Clone | en, fr, de, es, it, pt, ja, zh, ko | GGUF Q4_0/Q8_0, Stream | [@Ryu1845](https://github.com/Ryu1845) | [ZONOS3-Mini](docs/models/zonos3.md) Zyphra's GDN/attention latent-MoE TTS with Full AttnRes, 10×4096 delayed codebooks and a 44.1 kHz MR-iSTFT decoder; speaker-embedding and raw-reference cloning, condition buckets and speaker CFG |
-
+| **ace_step** | Music, Edit | 50+ langs | [ACE-Step 1.5 Turbo](docs/models/ace_step.md)<br>ACE-Step 1.5 Base<br>ACE-Step 1.5 XL Turbo<br>ACE-Step 1.5 XL SFT | GGUF 16, LoRA |
+| **heartmula** | Music | zh, en, ja, ko, es | [HeartMuLa-oss-3B](docs/music_generation.md#heartmula) | GGUF 16/Q8 |
+| **latentsync** (C) | Video lip sync | lang agnostic | [LatentSync 1.6](docs/models/latentsync.md) | GGUF F32/F16/Q8, experimental |
+| **liveavatar** (C) | Audio-to-video | auto | [LiveAvatar](docs/models/liveavatar.md) | GGUF NVFP4 |
+| **magenta_realtime_2** | Music | music | [Magenta RealTime 2 Small / Base](docs/models/magenta_realtime_2.md) | GGUF F16/Q8_0, Stream |
+| **midashenglm_gen** | Music, SFX | auto | [MiDashengLM-Gen](docs/models/midashenglm_gen.md) | GGUF F32/Q8 |
+| **minimax_h3** (C) | Video, Music, TTS/Dialogue | auto | [MiniMax-H3](docs/models/minimax_h3.md) | GGUF Q4/INT8 |
+| **minimax_music3** (C)<br>[@0xShug0](https://github.com/0xShug0)<br>[@JoeMattie](https://github.com/JoeMattie) | Music | auto | [MiniMax Music 3](docs/models/minimax_music3.md) | GGUF Q4/Q8 |
+| **moss_soundeffect** | SFX | en, zh | [MOSS-SoundEffect v2](docs/models/moss_soundeffect.md) | GGUF BF16/Q8 |
+| **mulacover** | Music | multilingual | [MuLaCover](docs/models/mulacover.md) | GGUF 16/Q8 |
+| **soulx_flashhead** | Audio-to-video | lang agnostic | [SoulX-FlashHead Lite](docs/models/soulx_flashhead.md) | GGUF Q8/BF16, Stream |
+| **stable_audio** | Music, SFX, Edit | en | [Stable Audio 3 Small Music](docs/models/stable_audio.md)<br>Stable Audio 3 Small SFX<br>Stable Audio 3 Medium | GGUF 16/Q8 |
+| **vevo2** | TTS, Music, VC, Edit | en, zh | [Vevo2](docs/models/vevo2.md) | GGUF 16 |
+| **yue2** | Music | en | [YuE2-3B](docs/models/yue2.md) | GGUF BF16/Q8/Q4, LoRA |
 
 ## Prebuilt Binaries
 
@@ -297,11 +288,11 @@ instead; in that mode the UI only offers models declared by the config unless ma
 For Docker UI downloads, mount a writable models directory at `/app/models` and
 use `--ui-management`. See [docker.md](docs/docker.md#native-webui).
 
-The native UI also exposes background model download/preparation, long-text split-and-merge synthesis, a
-browser-local saved voice library, microphone recording, and near-live ASR input. Some model preparation jobs invoke
-the repository's Python model manager because those packages require Hugging Face download or checkpoint conversion;
-model inference and the embedded UI remain Python-free. See [webui/README.md](webui/README.md) for launch commands,
-model notes, and frontend development instructions.
+The native UI also provides background model downloads, long-text split-and-merge synthesis,
+a browser-local saved voice library, microphone recording, and near-live ASR input. Normal managed
+browser downloads use the native C++ package manager and require no Python. Legacy checkpoint
+conversion remains available separately through the deprecated Python manager. See
+[webui/README.md](webui/README.md) for launch commands and frontend instructions.
 
 
 ## Docker
@@ -311,27 +302,28 @@ available images, build commands and working Docker examples.
 
 ## Model Manager and GGUF Downloads
 
-Use `tools/model_manager_v2.py` for normal model downloads. It reads
-`model_specs/*.json` and installs the default package for each family, preferring
-ready-to-use GGUF packages when they are available.
+Download packages from the WebUI's **Models** tab or use a command-line manager.
+`model_specs/*.json` declares each package's source, precision and complete file set.
 
-Native builds configured with `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` also
-provide `audiocpp_model_manager`, a standalone headless
-frontend over the same reusable C++ package-management library used by the
-server and embedded WebUI. It supports list, info, install, clean, and remove
-without starting `audiocpp_server`; this is the preferred native path for CLI,
-Docker, remote provisioning, and other scripted environments. The Python v2
-manager remains available as an alternative during migration. The native path
-uses bundled TLS by default and does not require libcurl.
+Native builds with `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` provide
+`audiocpp_model_manager`, which shares the C++ downloader used by the managed WebUI
+and requires no Python. Select an exact package ID from `list`:
 
 ```bash
 audiocpp_model_manager list
-audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-dir models
+audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-root models
 ```
 
-The old safetensors/converter catalog has been renamed to
-`tools/model_manager_deprecated.py`. Use it only for legacy model layouts that
-have not moved to spec-backed GGUF packages yet.
+From the source checkout, Python 3 users can alternatively run:
+
+```bash
+python3 tools/model_manager_v2.py install qwen3_asr_0_6b_q8_0 --models-root models
+```
+
+Python v2 also supports family defaults and precision filters. Check the install
+root: CLI `models` is relative to the working directory, while the server's default
+is beside its executable. Use the same explicit folder to share downloads.
+The separate `tools/model_manager_deprecated.py` is only for legacy conversions.
 
 GGUF downloads:
 
@@ -344,6 +336,11 @@ package notes.
 
 
 ## Build yourself
+
+The commands below enable deployment builds so CLI/server binaries include the
+model-spec catalog for standalone loading and legacy GGUF contracts. This avoids
+depending on the working directory to locate those specs. It does not rewrite
+metadata already embedded in a GGUF.
 
 | OS | Requirements |
 |---|---|
@@ -360,13 +357,13 @@ Composite builds let you compile only the model families you need. `full` is the
 The helper scripts expose this as `--model-set` and `--models` on Linux/macOS, and `-ModelSet` and `-Models` on Windows:
 
 ```bash
-scripts/build_linux.sh --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
 ```
 
 Direct CMake builds use the same underlying variables:
 
 ```bash
-cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=qwen3_tts,pocket_tts,qwen3_asr
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=qwen3_tts,pocket_tts,qwen3_asr -DAUDIOCPP_DEPLOYMENT_BUILD=ON
 cmake --build build/debug --target audiocpp_cli -j 8
 ```
 
@@ -379,10 +376,10 @@ cmake --build build/debug --target audiocpp_cli -j 8
 Use the Linux helper script for CPU, CUDA, Vulkan, or HIP builds:
 
 ```bash
-scripts/build_linux.sh --backend cuda --target audiocpp_cli --target audiocpp_server
-scripts/build_linux.sh --backend vulkan --target audiocpp_cli --target audiocpp_server
-scripts/build_linux.sh --backend hip --target audiocpp_cli --target audiocpp_server
-scripts/build_linux.sh --backend cpu --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cuda --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend vulkan --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend hip --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cpu --target audiocpp_cli --target audiocpp_server
 ```
 
 The script writes to aligned build directories such as `build/linux-cuda-release`, `build/linux-vulkan-release`, `build/linux-hip-release`, and `build/linux-cpu-release`.
@@ -393,8 +390,8 @@ GPUs, slower to build). For a faster build targeting only the local GPU, pass
 portable list) or an explicit arch list:
 
 ```bash
-scripts/build_linux.sh --backend cuda --cuda-arch native --target audiocpp_cli --target audiocpp_server
-scripts/build_linux.sh --backend cuda --cuda-arch "86;89" --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cuda --cuda-arch native --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cuda --cuda-arch "86;89" --target audiocpp_cli --target audiocpp_server
 ```
 
 Nothing caches compiler output by default. `--ccache` wires ccache up as the
@@ -403,33 +400,27 @@ makes a rebuild roughly 14x faster. A `CMAKE_<LANG>_COMPILER_LAUNCHER` already
 set in the environment is left alone.
 
 ```bash
-scripts/build_linux.sh --backend cuda --cuda-arch native --ccache --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend cuda --cuda-arch native --ccache --target audiocpp_cli
 ```
 
 Composite examples:
 
 ```bash
-scripts/build_linux.sh --backend cuda --model-set full --target audiocpp_cli
-scripts/build_linux.sh --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
-scripts/build_linux.sh --backend cpu --model-set core --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend cuda --model-set full --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend cpu --model-set core --target audiocpp_cli
 ```
 
 For portable CPU kernels on machines where native ISA flags are not suitable:
 
 ```bash
-scripts/build_linux.sh --backend cuda --native-cpu OFF --target audiocpp_cli --target audiocpp_server
-```
-
-For deployment builds with compiled package specs:
-
-```bash
-scripts/build_linux.sh --backend cuda --deployment-build --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cuda --native-cpu OFF --target audiocpp_cli --target audiocpp_server
 ```
 
 For native WebUI model downloads, enable the native model manager:
 
 ```bash
-scripts/build_linux.sh --backend cuda --native-model-manager --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cuda --native-model-manager --target audiocpp_server
 ```
 
 For direct CMake commands, see [docs/build/linux.md](docs/build/linux.md).
@@ -445,35 +436,29 @@ For the opt-in Rockchip NPU (RKNN) decoder path, see
 Use the Windows PowerShell build script:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1 -DeploymentBuild
 ```
 
 Common presets:
 
 ```powershell
-.\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_cli
-.\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli
-.\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
-.\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
-.\scripts\build_windows.ps1 -Preset windows-cuda-release -ModelSet custom -Models "qwen3_tts,pocket_tts,qwen3_asr" -Target audiocpp_cli
+.\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_cli -DeploymentBuild
+.\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli -DeploymentBuild
+.\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild
+.\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16 -DeploymentBuild
+.\scripts\build_windows.ps1 -Preset windows-cuda-release -ModelSet custom -Models "qwen3_tts,pocket_tts,qwen3_asr" -Target audiocpp_cli -DeploymentBuild
 ```
 
 From `cmd.exe`, use the wrapper:
 
 ```bat
-scripts\build_windows.cmd
-```
-
-For deployment builds with compiled package specs:
-
-```powershell
-.\scripts\build_windows.ps1 -DeploymentBuild -Target audiocpp_cli
+scripts\build_windows.cmd -DeploymentBuild
 ```
 
 For native WebUI model downloads, enable the native model manager:
 
 ```powershell
-.\scripts\build_windows.ps1 -NativeModelManager -Target audiocpp_server
+.\scripts\build_windows.ps1 -NativeModelManager -Target audiocpp_server -DeploymentBuild
 ```
 
 For requirements, CPU profiles, CUDA packaging, and release zips, see [docs/build/windows.md](docs/build/windows.md).
@@ -491,7 +476,7 @@ For requirements, CPU profiles, CUDA packaging, and release zips, see [docs/buil
 Apple builds enable Metal by default. To build a CPU-only binary, disable Metal explicitly:
 
 ```bash
-cmake -S . -B build/macos-cpu-release \
+cmake -S . -B build/macos-cpu-release -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
   -DCMAKE_BUILD_TYPE=Release \
   -DENGINE_ENABLE_CUDA=OFF \
   -DENGINE_ENABLE_VULKAN=OFF \
@@ -514,7 +499,7 @@ build/macos-cpu-release/bin/audiocpp_cli --list-devices
 On macOS, use the Metal helper script to build against ggml's Metal backend:
 
 ```bash
-scripts/build_metal.sh --target audiocpp_cli
+scripts/build_metal.sh --deployment-build --target audiocpp_cli
 ```
 
 The script configures `build/macos-metal-release` by default, enables `ENGINE_ENABLE_METAL=ON`, disables CUDA and Vulkan, embeds the Metal shader library, and builds static libraries plus the requested target.
@@ -522,13 +507,12 @@ The script configures `build/macos-metal-release` by default, enables `ENGINE_EN
 Useful variants:
 
 ```bash
-scripts/build_metal.sh --target audiocpp_server
-scripts/build_metal.sh --build-type Release --archs arm64 --target audiocpp_cli
-scripts/build_metal.sh --model-set custom --models qwen3_tts,pocket_tts --target audiocpp_cli
-scripts/build_metal.sh --with-tests --target audio_dsp_test
-scripts/build_metal.sh --openmp auto --target audiocpp_cli
-scripts/build_metal.sh --native-cpu OFF --target audiocpp_cli
-scripts/build_metal.sh --deployment-build --target audiocpp_cli
+scripts/build_metal.sh --deployment-build --target audiocpp_server
+scripts/build_metal.sh --deployment-build --build-type Release --archs arm64 --target audiocpp_cli
+scripts/build_metal.sh --deployment-build --model-set custom --models qwen3_tts,pocket_tts --target audiocpp_cli
+scripts/build_metal.sh --deployment-build --with-tests --target audio_dsp_test
+scripts/build_metal.sh --deployment-build --openmp auto --target audiocpp_cli
+scripts/build_metal.sh --deployment-build --native-cpu OFF --target audiocpp_cli
 ```
 
 The built CLI is written to:
@@ -548,14 +532,14 @@ On Linux and Windows, HIP builds compile ggml's CUDA backend sources as HIP code
 Linux (the helper script auto-detects ROCm via `ROCM_PATH`/`HIP_PATH`/hipconfig and local GPU targets via `amdgpu-arch`, falling back to `rocminfo`; pass `--gpu-targets` to build for other architectures, or when no AMD GPU is visible, e.g. in a VM or container):
 
 ```bash
-scripts/build_linux.sh --backend hip --target audiocpp_cli --target audiocpp_server
-scripts/build_linux.sh --backend hip --gpu-targets "gfx1100;gfx1103" --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend hip --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend hip --gpu-targets "gfx1100;gfx1103" --target audiocpp_cli
 ```
 
 Direct CMake:
 
 ```bash
-cmake -S . -B build_hip \
+cmake -S . -B build_hip -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
   -DENGINE_ENABLE_HIP=ON \
   -DGPU_TARGETS=gfx1151 \
   -DCMAKE_C_COMPILER="$(hipconfig -l)/clang" \
@@ -567,7 +551,7 @@ cmake --build build_hip -j$(nproc)
 Windows (the helper script auto-detects ROCm, GPU targets, cmake, and ninja):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build_windows_hip.ps1
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_hip.ps1 -DeploymentBuild
 ```
 
 Run with `--backend hip` (`rocm` is accepted as an alias). For GPU target selection, hipBLASLt GEMM notes, iGPU tuning, and known limitations, see [docs/build/HIP.md](docs/build/HIP.md).
@@ -581,7 +565,7 @@ Run with `--backend hip` (`rocm` is accepted as an alias). For GPU target select
 Native WebGPU builds use Dawn. Enable the backend explicitly and point CMake to the directory containing `DawnConfig.cmake`:
 
 ```bash
-cmake -S . -B build/debug \
+cmake -S . -B build/debug -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
   -DCMAKE_BUILD_TYPE=Debug \
   -DENGINE_ENABLE_WEBGPU=ON \
   -DDawn_DIR=/path/to/dawn/lib/cmake/Dawn
@@ -602,7 +586,7 @@ SYCL builds use the Intel oneAPI DPC++ compiler. Load the oneAPI environment, th
 
 ```bash
 source /opt/intel/oneapi/setvars.sh
-cmake -S . -B build/sycl -G Ninja \
+cmake -S . -B build/sycl -G Ninja -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx \
   -DENGINE_ENABLE_SYCL=ON
@@ -636,7 +620,7 @@ git -c 'url.https://github.com/.insteadOf=git@github.com:' submodule update --in
 For example, build a server with audio decoding and MP3 encoding adapters:
 
 ```bash
-cmake -S . -B build/debug \
+cmake -S . -B build/debug -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
   -DCMAKE_BUILD_TYPE=Debug \
   -DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON \
   -DAUDIOCPP_SERVER_FRONTENDS_DIR=external/audio.cpp-server-frontends \
@@ -883,7 +867,8 @@ The server exposes:
 More server examples are in [app/server/README.md](app/server/README.md).
 
 
-### Pipelines
+<details>
+<summary>Experimental pipelines</summary>
 
 Pipelines are an experimental JSON workflow feature for chaining multiple model and audio-processing steps behind one CLI command. A pipeline can define default inputs, let users override them with `--workflow-input key=value`, split long media into model-sized chunks, merge text or audio outputs back together, write intermediate artifacts under `--out-dir`, and copy the declared `final_audio` to `--out`.
 
@@ -912,8 +897,10 @@ build/bin/audiocpp_cli \
   --out build/out/speech_redub_pipeline.wav
 ```
 
+</details>
 
-## Tests
+<details>
+<summary>Tests</summary>
 
 The repository includes both framework-level parity validation and app-level end-to-end path checks. At a high level, the flow is:
 
@@ -926,6 +913,8 @@ The main harness under `tests/` is `tests/warmbench.py`. It is used for long-liv
 The main app-facing test tooling under `tools/` is `tools/audiocpp_cli/run_audiocpp_cli_path_tests.py`. It drives `audiocpp_cli` through cataloged offline and streaming cases, verifies expected outputs such as audio or JSON artifacts, and is useful for checking real user-facing request paths rather than just lower-level model components. Streaming coverage is model-specific and applies to models documented with streaming support.
 
 The Python-reference side of these tests usually requires more time-consuming setup than the C++ path because different models rely on different Python reference repos and dependency stacks. In practice, the framework-side tooling is fast to iterate on once models are installed, while Python parity runs often need extra environment preparation before they are ready.
+
+</details>
 
 ## Projects
 
@@ -952,102 +941,9 @@ Have a project using audio.cpp? Submit a PR or let me know, and I’ll be happy 
 - [pyVideoTrans](https://github.com/jianchang512/pyvideotrans): A one-stop video translation and dubbing tool that integrates audio.cpp as one of its built-in dubbing options.
 - [LocalText2Voice](https://github.com/estebanstifli/LocalText2Voice) is a free, open-source desktop app for long-form audiobooks, podcasts and narrated videos. Features include multi-voice scripts, voice cloning and design, emotion controls, segment editing and regeneration, optional Whisper verification, M4B/MP3 export, subtitles, music mixing, a Video Storyboard beta and MCP automation.
 
-## Performance Metrics
+For supported precisions, memory-saving options and performance presets, see each model’s usage guide and the [GGUF guide](docs/gguf.md).
 
-> [!WARNING]
-> These Python-relative numbers were measured for the initial release. Several model paths have improved substantially since then, so the figures below should be read as the original release baseline rather than the latest peak performance.
-
-All performance metrics in this section were measured on Ubuntu with the CUDA backend on an NVIDIA GeForce RTX 5090. The Python-relative one-shot and long-lived-session comparisons come from direct framework/runtime API benchmark calls, not from `audiocpp_cli`; CLI path tests are separate and include app-layer request parsing, output writing, and other user-facing overhead.
-
-**Absolute RTF depends on the GPU and system setup, but the Python-relative speedups are real because audio.cpp and the matching Python reference paths were measured on the same CUDA setup.**
-
-audio.cpp already shows some genuinely exciting wins against the matching Python reference paths, especially on the TTS side, even when using the original model weights without quantization. The headline win is wall time: several TTS paths run **1.8x to up to 10x faster** than Python while cutting end-to-end latency by **45%-90%**.
-
-- In one-shot runs, several TTS-family models already land far ahead of Python:
-  - `vevo2`: **5.03x faster** with **80.11% less wall time**
-  - `pocket tts`: **3.68x faster** with **72.80% less wall time**
-  - `miotts`: **2.73x faster** with **63.39% less wall time**
-  - `moss_tts_local`: **2.33x faster** with **57.07% less wall time**
-  - `qwen3 tts`: **1.83x faster** with **45.34% less wall time**
-  - `vibevoice`: **1.40x faster** with **28.75% less wall time**
-- In long-lived-session runs, where the same loaded session serves multiple requests in sequence, the gains stay strong:
-  - `pocket tts`: **3.22x faster** with **68.91% less wall time**
-  - `qwen3 tts`: **2.74x faster** with **63.47% less wall time**
-  - `moss_tts_local`: **2.66x faster** with **62.35% less wall time**
-  - `miotts`: **2.28x faster** with **56.22% less wall time**
-  - `vibevoice`: **1.77x faster** with **43.55% less wall time**
-  - `vevo2`: **1.75x faster** with **42.72% less wall time**
-- In long-form runs on the shared 6,026-character, 1,028-word passage, the strongest Python-relative wins still show up clearly:
-  - `pocket tts`: **3.15x faster** with **68.23% less wall time**
-  - `qwen3 tts`: **3.06x faster** with **67.33% less wall time**
-  - `vibevoice`: **2.86x faster** with **65.07% less wall time**
-  - `vevo2`: **1.77x faster** with **43.51% less wall time**
-  - `chatterbox`: **1.58x faster** with **36.83% less wall time**
-- These long-lived-session numbers are especially important for real applications, because they reflect the common case where model load, cached state, and reusable runtime setup are amortized across many requests.
-- Bars below the 1.0x line are useful too: they spotlight exactly where more optimization work is still worth doing.
-
-<p align="center">
-  <img src="assets/figure/perf_one_shot_20260630.svg" alt="One-shot" width="720" />
-</p>
-
-<p align="center">
-  <img src="assets/figure/perf_long_lived_session_20260630.svg" alt="Long-lived session" width="720" />
-</p>
-
-The figures report `Python wall time / audio.cpp wall time`. The 1.0x line means equal wall time; bars above 1.0x mean audio.cpp is faster than Python, and bars below 1.0x mean it is slower.
-
-For TTS-family models, the measured one-shot RTF is:
-
-| model | audio len (s) | wall time (s) | RTF | x faster than real time |
-|---|---:|---:|---:|---:|
-| chatterbox | 9.72 | 2.45 | 0.252 | 3.97x |
-| miotts | 20.40 | 3.30 | 0.162 | 6.18x |
-| moss_tts_local | 9.60 | 0.97 | 0.101 | 9.91x |
-| omnivoice | 9.00 | 1.32 | 0.146 | 6.84x |
-| pocket tts | 8.08 | 0.26 | 0.032 | 31.09x |
-| qwen3 tts | 11.44 | 4.46 | 0.390 | 2.56x |
-| vevo2 | 8.66 | 2.47 | 0.285 | 3.51x |
-| vibevoice | 11.07 | 5.02 | 0.454 | 2.20x |
-| voxcpm2 | 5.60 | 3.09 | 0.551 | 1.81x |
-
-For long-form TTS tests, each run uses the same 6,026-character, 1,028-word input text (vibevoice uses 106,310 chars, 18,052 words, 4 speakers). Rows are CUDA unless marked CPU. The measured RTF is:
-
-| model | audio len (s) | wall time (s) | RTF | x faster than real time |
-|---|---:|---:|---:|---:|
-| chatterbox | 391.24 | 58.57 | 0.150 | 6.68x |
-| index tts2 | 422.12 | 139.95 | 0.332 | 3.02x |
-| miotts | 399.16 | 66.59 | 0.167 | 5.99x |
-| moss_tts_nano | 391.20 | 43.16 | 0.110 | 9.06x |
-| moss_tts_local | 375.44 | 73.84 | 0.197 | 5.08x |
-| omnivoice | 357.00 | 17.77 | 0.050 | 20.09x |
-| pocket tts | 353.12 | 7.30 | 0.021 | 48.40x |
-| qwen3 tts | 327.60 | 72.65 | 0.222 | 4.51x |
-| supertonic | 379.32 | 2.02 | 0.005 | 187.62x |
-| supertonic (CPU) | 379.40 | 61.40 | 0.162 | 6.18x |
-| vevo2 | 457.68 | 52.47 | 0.115 | 8.72x |
-| voxcpm2 | 315.84 | 72.70 | 0.230 | 4.34x |
-| vibevoice | 5615.73 | 1376.84 | 0.245 | 4.08x |
-
-## Runtime Memory Options
-
-Some models expose memory-saver session options such as `ace_step.mem_saver=true`, `dramabox.mem_saver=true`, `heartmula.mem_saver=true`, `stable_audio.mem_saver=true`, `omnivoice.mem_saver=true`, `voxcpm2.mem_saver=true`, and `echo_tts.mem_saver=true`. These options keep the default output path unchanged while reducing graph workspace VRAM or releasing staged graph/cache state after request phases; later requests may rebuild released graphs.
-
-## Precision/Quantization Support
-
-Many model sessions expose quantization through `--session-option <family>.weight_type=<mode>`, and some families also expose more specific knobs such as `...conv_weight_type`, `...talker_weight_type`, or `...speech_decoder_weight_type`. The exact supported modes are model-specific rather than global.
-
-audio.cpp also supports standalone GGUF packages. 
-
-In practice, lower precision and quantized modes should be treated as model- and route-specific optimizations rather than universally safe defaults.
-
-- **Safety.** Quantization may not be safe on every path even when a model parser accepts the option. For example, in our ACE-Step 1.5 checks, lower-precision runs could fail at runtime with `ACE-Step planner masked decode found no valid token` while higher-precision settings completed normally.
-
-- **Quality Drop.** Output quality can drop a lot. In our VeVo2 checks, non-`fp32` outputs showed noticeably weaker similarity to the `fp32` reference under the repo's existing waveform and log-mel comparison metrics, and even output length could shift.
-
-- **Performance Gain.** The performance gain may be minor relative to that quality risk. For example, `q8_0` was faster than the default setting by only around 3.8% on Qwen3-TTS and around 3.6% on VeVo2. Other models may benefit more, but the tradeoff should be validated per model and per route rather than assumed.
-
-- **Memory Benefit.** Lower precision and quantized weights can still be useful for reducing weight memory footprint and making larger models easier to fit within device limits. For example, in our Qwen3-TTS checks, switching from the default setting to `q8_0` reduced peak RAM by about 3.7% and peak VRAM by about 25.0%. That benefit is real, but it should be evaluated together with runtime stability, output quality, and end-to-end speed rather than assumed from precision alone.
-
+Historical measurements are preserved in the [initial-release performance report](docs/reports/initial_release_performance.md).
 
 ## Notes
 

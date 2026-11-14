@@ -289,7 +289,7 @@ Arabic) language id, so pass `--language arz`. Model and integration by
 Voice clone with Egyptian Arabic and English code-switching:
 
 ```bash
-audiocpp_model_manager install voicetut_tts_q8_0 --models-dir models
+audiocpp_model_manager install voicetut_tts_q8_0 --models-root models
 audiocpp_cli --task tts --family omnivoice --model models/VoiceTut-TTS-GGUF --backend cuda --language arz --text "عندي meeting بكرة الصبح، فهحاول أخلص الشغل بدري النهارده." --voice-ref speaker.wav --reference-text "<transcript of speaker.wav>" --out out.wav
 ```
 
