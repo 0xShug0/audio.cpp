@@ -403,7 +403,7 @@ def ensure_snapshot_package(package: PackageRecord) -> None:
         raise ManagerError(
             f"{package.id} uses download kind '{kind}'. model_manager_v2 only installs "
             "huggingface_snapshot and modelscope_snapshot packages; "
-            "use tools/model_manager.py for legacy composite or converter installs."
+            "use tools/model_manager_deprecated.py for legacy composite or converter installs."
         )
     if not package.download.get("repo"):
         raise ManagerError(f"{package.id} has no remote repo for download kind '{kind}'")

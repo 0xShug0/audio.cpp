@@ -116,7 +116,7 @@ Pass `--language Arabic`, as recommended by the model card; quantized packages
 are less reliable at automatic language detection.
 
 ```bash
-audiocpp_model_manager install qwencleo_asr_q8_0 --models-dir models
+audiocpp_model_manager install qwencleo_asr_q8_0 --models-root models
 audiocpp_cli --task asr --family qwen3_asr --model models/QwenCleo-ASR-GGUF --backend cuda --audio egyptian_16k.wav --language Arabic --text "" --text-out transcript.txt
 ```
 

@@ -297,11 +297,11 @@ instead; in that mode the UI only offers models declared by the config unless ma
 For Docker UI downloads, mount a writable models directory at `/app/models` and
 use `--ui-management`. See [docker.md](docs/docker.md#native-webui).
 
-The native UI also exposes background model download/preparation, long-text split-and-merge synthesis, a
-browser-local saved voice library, microphone recording, and near-live ASR input. Some model preparation jobs invoke
-the repository's Python model manager because those packages require Hugging Face download or checkpoint conversion;
-model inference and the embedded UI remain Python-free. See [webui/README.md](webui/README.md) for launch commands,
-model notes, and frontend development instructions.
+The native UI also provides background model downloads, long-text split-and-merge synthesis,
+a browser-local saved voice library, microphone recording, and near-live ASR input. Normal managed
+browser downloads use the native C++ package manager and require no Python. Legacy checkpoint
+conversion remains available separately through the deprecated Python manager. See
+[webui/README.md](webui/README.md) for launch commands and frontend instructions.
 
 
 ## Docker
@@ -311,27 +311,28 @@ available images, build commands and working Docker examples.
 
 ## Model Manager and GGUF Downloads
 
-Use `tools/model_manager_v2.py` for normal model downloads. It reads
-`model_specs/*.json` and installs the default package for each family, preferring
-ready-to-use GGUF packages when they are available.
+Download packages from the WebUI's **Models** tab or use a command-line manager.
+`model_specs/*.json` declares each package's source, precision and complete file set.
 
-Native builds configured with `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` also
-provide `audiocpp_model_manager`, a standalone headless
-frontend over the same reusable C++ package-management library used by the
-server and embedded WebUI. It supports list, info, install, clean, and remove
-without starting `audiocpp_server`; this is the preferred native path for CLI,
-Docker, remote provisioning, and other scripted environments. The Python v2
-manager remains available as an alternative during migration. The native path
-uses bundled TLS by default and does not require libcurl.
+Native builds with `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` provide
+`audiocpp_model_manager`, which shares the C++ downloader used by the managed WebUI
+and requires no Python. Select an exact package ID from `list`:
 
 ```bash
 audiocpp_model_manager list
-audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-dir models
+audiocpp_model_manager install qwen3_asr_0_6b_q8_0 --models-root models
 ```
 
-The old safetensors/converter catalog has been renamed to
-`tools/model_manager_deprecated.py`. Use it only for legacy model layouts that
-have not moved to spec-backed GGUF packages yet.
+From the source checkout, Python 3 users can alternatively run:
+
+```bash
+python3 tools/model_manager_v2.py install qwen3_asr_0_6b_q8_0 --models-root models
+```
+
+Python v2 also supports family defaults and precision filters. Check the install
+root: CLI `models` is relative to the working directory, while the server's default
+is beside its executable. Use the same explicit folder to share downloads.
+The separate `tools/model_manager_deprecated.py` is only for legacy conversions.
 
 GGUF downloads:
 
