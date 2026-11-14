@@ -337,6 +337,11 @@ package notes.
 
 ## Build yourself
 
+The commands below enable deployment builds so CLI/server binaries include the
+model-spec catalog for standalone loading and legacy GGUF contracts. This avoids
+depending on the working directory to locate those specs. It does not rewrite
+metadata already embedded in a GGUF.
+
 | OS | Requirements |
 |---|---|
 | Linux | GCC 13 or newer, CMake, plus the backend toolchain for the build you want: NVIDIA CUDA Toolkit for CUDA, Vulkan SDK for Vulkan, ROCm for HIP |
@@ -352,13 +357,13 @@ Composite builds let you compile only the model families you need. `full` is the
 The helper scripts expose this as `--model-set` and `--models` on Linux/macOS, and `-ModelSet` and `-Models` on Windows:
 
 ```bash
-scripts/build_linux.sh --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
 ```
 
 Direct CMake builds use the same underlying variables:
 
 ```bash
-cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=qwen3_tts,pocket_tts,qwen3_asr
+cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=qwen3_tts,pocket_tts,qwen3_asr -DAUDIOCPP_DEPLOYMENT_BUILD=ON
 cmake --build build/debug --target audiocpp_cli -j 8
 ```
 
@@ -371,10 +376,10 @@ cmake --build build/debug --target audiocpp_cli -j 8
 Use the Linux helper script for CPU, CUDA, Vulkan, or HIP builds:
 
 ```bash
-scripts/build_linux.sh --backend cuda --target audiocpp_cli --target audiocpp_server
-scripts/build_linux.sh --backend vulkan --target audiocpp_cli --target audiocpp_server
-scripts/build_linux.sh --backend hip --target audiocpp_cli --target audiocpp_server
-scripts/build_linux.sh --backend cpu --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cuda --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend vulkan --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend hip --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cpu --target audiocpp_cli --target audiocpp_server
 ```
 
 The script writes to aligned build directories such as `build/linux-cuda-release`, `build/linux-vulkan-release`, `build/linux-hip-release`, and `build/linux-cpu-release`.
@@ -385,8 +390,8 @@ GPUs, slower to build). For a faster build targeting only the local GPU, pass
 portable list) or an explicit arch list:
 
 ```bash
-scripts/build_linux.sh --backend cuda --cuda-arch native --target audiocpp_cli --target audiocpp_server
-scripts/build_linux.sh --backend cuda --cuda-arch "86;89" --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cuda --cuda-arch native --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cuda --cuda-arch "86;89" --target audiocpp_cli --target audiocpp_server
 ```
 
 Nothing caches compiler output by default. `--ccache` wires ccache up as the
@@ -395,33 +400,27 @@ makes a rebuild roughly 14x faster. A `CMAKE_<LANG>_COMPILER_LAUNCHER` already
 set in the environment is left alone.
 
 ```bash
-scripts/build_linux.sh --backend cuda --cuda-arch native --ccache --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend cuda --cuda-arch native --ccache --target audiocpp_cli
 ```
 
 Composite examples:
 
 ```bash
-scripts/build_linux.sh --backend cuda --model-set full --target audiocpp_cli
-scripts/build_linux.sh --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
-scripts/build_linux.sh --backend cpu --model-set core --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend cuda --model-set full --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend cuda --model-set custom --models qwen3_tts,pocket_tts,qwen3_asr --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend cpu --model-set core --target audiocpp_cli
 ```
 
 For portable CPU kernels on machines where native ISA flags are not suitable:
 
 ```bash
-scripts/build_linux.sh --backend cuda --native-cpu OFF --target audiocpp_cli --target audiocpp_server
-```
-
-For deployment builds with compiled package specs:
-
-```bash
-scripts/build_linux.sh --backend cuda --deployment-build --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cuda --native-cpu OFF --target audiocpp_cli --target audiocpp_server
 ```
 
 For native WebUI model downloads, enable the native model manager:
 
 ```bash
-scripts/build_linux.sh --backend cuda --native-model-manager --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend cuda --native-model-manager --target audiocpp_server
 ```
 
 For direct CMake commands, see [docs/build/linux.md](docs/build/linux.md).
@@ -437,35 +436,29 @@ For the opt-in Rockchip NPU (RKNN) decoder path, see
 Use the Windows PowerShell build script:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1 -DeploymentBuild
 ```
 
 Common presets:
 
 ```powershell
-.\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_cli
-.\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli
-.\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli
-.\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16
-.\scripts\build_windows.ps1 -Preset windows-cuda-release -ModelSet custom -Models "qwen3_tts,pocket_tts,qwen3_asr" -Target audiocpp_cli
+.\scripts\build_windows.ps1 -Preset windows-cuda-release -Target audiocpp_cli -DeploymentBuild
+.\scripts\build_windows.ps1 -Preset windows-vulkan-release -Target audiocpp_cli -DeploymentBuild
+.\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild
+.\scripts\build_windows.ps1 -Target audiocpp_server -Jobs 16 -DeploymentBuild
+.\scripts\build_windows.ps1 -Preset windows-cuda-release -ModelSet custom -Models "qwen3_tts,pocket_tts,qwen3_asr" -Target audiocpp_cli -DeploymentBuild
 ```
 
 From `cmd.exe`, use the wrapper:
 
 ```bat
-scripts\build_windows.cmd
-```
-
-For deployment builds with compiled package specs:
-
-```powershell
-.\scripts\build_windows.ps1 -DeploymentBuild -Target audiocpp_cli
+scripts\build_windows.cmd -DeploymentBuild
 ```
 
 For native WebUI model downloads, enable the native model manager:
 
 ```powershell
-.\scripts\build_windows.ps1 -NativeModelManager -Target audiocpp_server
+.\scripts\build_windows.ps1 -NativeModelManager -Target audiocpp_server -DeploymentBuild
 ```
 
 For requirements, CPU profiles, CUDA packaging, and release zips, see [docs/build/windows.md](docs/build/windows.md).
@@ -483,7 +476,7 @@ For requirements, CPU profiles, CUDA packaging, and release zips, see [docs/buil
 Apple builds enable Metal by default. To build a CPU-only binary, disable Metal explicitly:
 
 ```bash
-cmake -S . -B build/macos-cpu-release \
+cmake -S . -B build/macos-cpu-release -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
   -DCMAKE_BUILD_TYPE=Release \
   -DENGINE_ENABLE_CUDA=OFF \
   -DENGINE_ENABLE_VULKAN=OFF \
@@ -506,7 +499,7 @@ build/macos-cpu-release/bin/audiocpp_cli --list-devices
 On macOS, use the Metal helper script to build against ggml's Metal backend:
 
 ```bash
-scripts/build_metal.sh --target audiocpp_cli
+scripts/build_metal.sh --deployment-build --target audiocpp_cli
 ```
 
 The script configures `build/macos-metal-release` by default, enables `ENGINE_ENABLE_METAL=ON`, disables CUDA and Vulkan, embeds the Metal shader library, and builds static libraries plus the requested target.
@@ -514,13 +507,12 @@ The script configures `build/macos-metal-release` by default, enables `ENGINE_EN
 Useful variants:
 
 ```bash
-scripts/build_metal.sh --target audiocpp_server
-scripts/build_metal.sh --build-type Release --archs arm64 --target audiocpp_cli
-scripts/build_metal.sh --model-set custom --models qwen3_tts,pocket_tts --target audiocpp_cli
-scripts/build_metal.sh --with-tests --target audio_dsp_test
-scripts/build_metal.sh --openmp auto --target audiocpp_cli
-scripts/build_metal.sh --native-cpu OFF --target audiocpp_cli
-scripts/build_metal.sh --deployment-build --target audiocpp_cli
+scripts/build_metal.sh --deployment-build --target audiocpp_server
+scripts/build_metal.sh --deployment-build --build-type Release --archs arm64 --target audiocpp_cli
+scripts/build_metal.sh --deployment-build --model-set custom --models qwen3_tts,pocket_tts --target audiocpp_cli
+scripts/build_metal.sh --deployment-build --with-tests --target audio_dsp_test
+scripts/build_metal.sh --deployment-build --openmp auto --target audiocpp_cli
+scripts/build_metal.sh --deployment-build --native-cpu OFF --target audiocpp_cli
 ```
 
 The built CLI is written to:
@@ -540,14 +532,14 @@ On Linux and Windows, HIP builds compile ggml's CUDA backend sources as HIP code
 Linux (the helper script auto-detects ROCm via `ROCM_PATH`/`HIP_PATH`/hipconfig and local GPU targets via `amdgpu-arch`, falling back to `rocminfo`; pass `--gpu-targets` to build for other architectures, or when no AMD GPU is visible, e.g. in a VM or container):
 
 ```bash
-scripts/build_linux.sh --backend hip --target audiocpp_cli --target audiocpp_server
-scripts/build_linux.sh --backend hip --gpu-targets "gfx1100;gfx1103" --target audiocpp_cli
+scripts/build_linux.sh --deployment-build --backend hip --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --deployment-build --backend hip --gpu-targets "gfx1100;gfx1103" --target audiocpp_cli
 ```
 
 Direct CMake:
 
 ```bash
-cmake -S . -B build_hip \
+cmake -S . -B build_hip -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
   -DENGINE_ENABLE_HIP=ON \
   -DGPU_TARGETS=gfx1151 \
   -DCMAKE_C_COMPILER="$(hipconfig -l)/clang" \
@@ -559,7 +551,7 @@ cmake --build build_hip -j$(nproc)
 Windows (the helper script auto-detects ROCm, GPU targets, cmake, and ninja):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build_windows_hip.ps1
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_hip.ps1 -DeploymentBuild
 ```
 
 Run with `--backend hip` (`rocm` is accepted as an alias). For GPU target selection, hipBLASLt GEMM notes, iGPU tuning, and known limitations, see [docs/build/HIP.md](docs/build/HIP.md).
@@ -573,7 +565,7 @@ Run with `--backend hip` (`rocm` is accepted as an alias). For GPU target select
 Native WebGPU builds use Dawn. Enable the backend explicitly and point CMake to the directory containing `DawnConfig.cmake`:
 
 ```bash
-cmake -S . -B build/debug \
+cmake -S . -B build/debug -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
   -DCMAKE_BUILD_TYPE=Debug \
   -DENGINE_ENABLE_WEBGPU=ON \
   -DDawn_DIR=/path/to/dawn/lib/cmake/Dawn
@@ -594,7 +586,7 @@ SYCL builds use the Intel oneAPI DPC++ compiler. Load the oneAPI environment, th
 
 ```bash
 source /opt/intel/oneapi/setvars.sh
-cmake -S . -B build/sycl -G Ninja \
+cmake -S . -B build/sycl -G Ninja -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx \
   -DENGINE_ENABLE_SYCL=ON
@@ -628,7 +620,7 @@ git -c 'url.https://github.com/.insteadOf=git@github.com:' submodule update --in
 For example, build a server with audio decoding and MP3 encoding adapters:
 
 ```bash
-cmake -S . -B build/debug \
+cmake -S . -B build/debug -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
   -DCMAKE_BUILD_TYPE=Debug \
   -DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON \
   -DAUDIOCPP_SERVER_FRONTENDS_DIR=external/audio.cpp-server-frontends \
