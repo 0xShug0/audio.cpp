@@ -639,6 +639,10 @@ public:
 
     std::vector<float> run(const std::vector<float> & input) {
         std::lock_guard<std::mutex> lock(run_mutex_);
+        // The graph's constant tensors are not graph inputs, so the
+        // allocator may hand their memory to intermediate results during a
+        // compute; write them again before every run, not only the first.
+        writer_.flush();
         core::write_tensor_f32(input_tensor_, input);
         if (engine::core::compute_backend_graph(execution_context_.backend(), graph_) != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ggml_backend_graph_compute failed for CAMPPlus graph");
