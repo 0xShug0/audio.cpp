@@ -90,6 +90,12 @@ kernel.def target(@ggml_float_copy_target) export("ggml_float_copy") @ggml_float
     %dst_idx = index.assume %dst_idx0 [lt(%dst_idx0, %output_span)] : index
     %same_type = index.cmp eq, %source_type, %target_type : index
     scf.if %same_type {
+      scf.if %source_i32 {
+        %raw_in_i32 = buffer.view %input[%offset] : buffer -> view<[%input_span]xi32>
+        %raw_out_i32 = buffer.view %output[%offset] : buffer -> view<[%output_span]xi32>
+        %raw_i32 = view.load %raw_in_i32[%src_idx] : view<[%input_span]xi32> -> i32
+        view.store %raw_i32, %raw_out_i32[%dst_idx] : i32, view<[%output_span]xi32>
+      } else {
       scf.if %source_f32 {
       %raw_in_f32 = buffer.view %input[%offset] : buffer -> view<[%input_span]xf32>
       %raw_out_f32 = buffer.view %output[%offset] : buffer -> view<[%output_span]xf32>
@@ -107,6 +113,7 @@ kernel.def target(@ggml_float_copy_target) export("ggml_float_copy") @ggml_float
           %raw_bf16 = view.load %raw_in_bf16[%src_idx] : view<[%input_span]xbf16> -> bf16
           view.store %raw_bf16, %raw_out_bf16[%dst_idx] : bf16, view<[%output_span]xbf16>
         }
+      }
       }
     } else {
       %value = scf.if %source_i32 -> (f32) {

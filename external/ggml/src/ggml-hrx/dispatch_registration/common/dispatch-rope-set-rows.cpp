@@ -395,7 +395,7 @@ static RopeMatch match_rope_f32(const Graph & graph, const GraphNode * node, Sta
     return match;
 }
 
-static SetRowsMatch match_set_rows_2d(const Graph & graph, const GraphNode * node, Status * status = nullptr, bool allow_i32 = false) {
+static SetRowsMatch match_set_rows_2d(const Graph & graph, const GraphNode * node, Status * status = nullptr, bool standalone = false) {
     SetRowsMatch match;
     if (node == nullptr || node->op != GGML_OP_SET_ROWS || node->inputs.size() != 3) {
         log_set_rows_reject(status, "root is not a supported SET_ROWS arity", nullptr, nullptr, nullptr, nullptr);
@@ -407,8 +407,9 @@ static SetRowsMatch match_set_rows_2d(const Graph & graph, const GraphNode * nod
     const Value * cache   = graph_value(graph, node->inputs[2]);
     const Value * output  = graph_value(graph, node->output);
     if (rows == nullptr || indices == nullptr || cache == nullptr || output == nullptr || !indices->contiguous ||
-        !cache->contiguous || (indices->type != GGML_TYPE_I64 && !(allow_i32 && indices->type == GGML_TYPE_I32)) || output->type != cache->type ||
-        !same_shape(*cache, *output) || !graph.values().same_storage(cache->id, output->id)) {
+        !cache->contiguous || (indices->type != GGML_TYPE_I64 && !(standalone && indices->type == GGML_TYPE_I32)) || output->type != cache->type ||
+        (!same_shape(*cache, *output) && !(standalone && cache->contiguous && output->contiguous &&
+          cache->element_count == output->element_count)) || !graph.values().same_storage(cache->id, output->id)) {
         log_set_rows_reject(status, "input/output shape or storage is unsupported", rows, indices, cache, output);
         return {};
     }
@@ -426,11 +427,12 @@ static SetRowsMatch match_set_rows_2d(const Graph & graph, const GraphNode * nod
 
     const int64_t hidden_size     = rows->ne[0];
     const int64_t token_count     = rows->ne[1];
-    const int64_t cache_row_count = cache->ne[1];
+    const Value * cache_layout = standalone ? output : cache;
+    const int64_t cache_row_count = cache_layout->ne[1];
     int64_t       input_stride    = 0;
     size_t        rows_span_bytes = 0;
     if (!supported_set_rows_input_layout(*rows, hidden_size, token_count, input_stride, rows_span_bytes) ||
-        !is_1d_shape(*indices, token_count) || !is_2d_shape(*cache, hidden_size, cache_row_count) ||
+        !is_1d_shape(*indices, token_count) || !is_2d_shape(*cache_layout, hidden_size, cache_row_count) ||
         !supported_hidden_size(hidden_size) || !supported_token_count(token_count) ||
         !supported_cache_row_count(cache_row_count)) {
         log_set_rows_reject(status, "shape or rows layout is unsupported", rows, indices, cache, output);

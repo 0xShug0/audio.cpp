@@ -256,7 +256,8 @@ static bool match_float_copy_dispatch(const DispatchMatchContext & context, Disp
     const auto * output = context.graph.values().find(context.root_node->output);
     if (source == nullptr || output == nullptr || source->element_count != output->element_count ||
         (source->type != GGML_TYPE_F32 && source->type != GGML_TYPE_F16 && source->type != GGML_TYPE_BF16 && source->type != GGML_TYPE_I32) ||
-        (output->type != GGML_TYPE_F32 && output->type != GGML_TYPE_F16 && output->type != GGML_TYPE_BF16)) {
+        (output->type != GGML_TYPE_F32 && output->type != GGML_TYPE_F16 && output->type != GGML_TYPE_BF16 &&
+         !(source->type == GGML_TYPE_I32 && output->type == GGML_TYPE_I32))) {
         return false;
     }
     if (source->storage == output->storage && source->storage_offset < output->storage_offset + output->byte_count &&

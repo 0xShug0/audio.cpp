@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: MIT
+amdgpu.target<gfx11-generic> @ggml_gather_target {subgroup_size = 64}
+config.decl @ggml.gather.width : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.gather.indices_ne0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.gather.indices_ne1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.gather.bank_rows : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.gather.s0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.gather.s1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.gather.s2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.gather.s3 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.gather.is0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.gather.is1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.gather.is2 : %value: index where [range(%value, 1, 1073741824)]
+kernel.def target(@ggml_gather_target) export("ggml_get_rows_strided_f32") @ggml_get_rows_strided_f32(%element_count: index, %source_span: index, %index_span: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %element_count, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%element_count: index, %source_span: index, %index_span: index, %input: buffer, %indices: buffer, %output: buffer) {
+  %count = index.assume %element_count [range(%element_count, 1, 1073741824)] : index
+  %span = index.assume %source_span [range(%source_span, 1, 1073741824)] : index
+  %ispan = index.assume %index_span [range(%index_span, 1, 1073741824)] : index
+  %offset = index.constant 0 : offset
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %threads = index.constant 256 : index
+  %base = index.mul %group, %threads : index
+  %linear = index.add %base, %thread : index
+  %valid = index.cmp ult, %linear, %count : index
+  %width = config.get @ggml.gather.width : index
+  %indices_ne0 = config.get @ggml.gather.indices_ne0 : index
+  %indices_ne1 = config.get @ggml.gather.indices_ne1 : index
+  %bank_rows = config.get @ggml.gather.bank_rows : index
+  %s0 = config.get @ggml.gather.s0 : index
+  %s1 = config.get @ggml.gather.s1 : index
+  %s2 = config.get @ggml.gather.s2 : index
+  %s3 = config.get @ggml.gather.s3 : index
+  %is0 = config.get @ggml.gather.is0 : index
+  %is1 = config.get @ggml.gather.is1 : index
+  %is2 = config.get @ggml.gather.is2 : index
+  scf.if %valid {
+    %channel = index.rem %linear, %width : index
+    %row = index.div %linear, %width : index
+    %i0 = index.rem %row, %indices_ne0 : index
+    %q0 = index.div %row, %indices_ne0 : index
+    %i1 = index.rem %q0, %indices_ne1 : index
+    %i2 = index.div %q0, %indices_ne1 : index
+    %b0 = index.mul %i0, %is0 : index
+    %b1 = index.mul %i1, %is1 : index
+    %b2 = index.mul %i2, %is2 : index
+    %b01 = index.add %b0, %b1 : index
+    %ii0 = index.add %b01, %b2 : index
+    %ii = index.assume %ii0 [lt(%ii0, %ispan)] : index
+    %iv = buffer.view %indices[%offset] : buffer -> view<[%ispan]xi32>
+    %row_raw = view.load %iv[%ii] : view<[%ispan]xi32> -> i32
+    %row_nonnegative = scalar.assume %row_raw [range(%row_raw, 0, 1073741823)] : i32
+    %selected0 = index.cast %row_nonnegative : i32 to index
+    %selected = index.assume %selected0 [lt(%selected0, %bank_rows)] : index
+    %c0 = index.mul %channel, %s0 : index
+    %c1 = index.mul %selected, %s1 : index
+    %c2 = index.mul %i1, %s2 : index
+    %c3 = index.mul %i2, %s3 : index
+    %c01 = index.add %c0, %c1 : index
+    %c23 = index.add %c2, %c3 : index
+    %si0 = index.add %c01, %c23 : index
+    %si = index.assume %si0 [lt(%si0, %span)] : index
+    %sv = buffer.view %input[%offset] : buffer -> view<[%span]xf32>
+    %value = view.load %sv[%si] : view<[%span]xf32> -> f32
+    %oi = index.assume %linear [lt(%linear, %count)] : index
+    %ov = buffer.view %output[%offset] : buffer -> view<[%count]xf32>
+    view.store %value, %ov[%oi] : f32, view<[%count]xf32>
+  }
+  kernel.return
+}

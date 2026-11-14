@@ -688,6 +688,12 @@
     },
     {
       "path": "ops/normalization/argmax_f32.loom"
+    },
+    {
+      "path": "ops/elementwise/clamp_f32.loom"
+    },
+    {
+      "path": "ops/rows/get_rows_strided_f32.loom"
     }
   ],
   "exports": [
@@ -10184,6 +10190,94 @@
         "mode": "direct",
         "primary_sources": [
           "ops/normalization/argmax_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_clamp_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_clamp_f32",
+      "source": "ops/elementwise/clamp_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/elementwise/clamp_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_get_rows_strided_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_get_rows_strided_f32",
+      "source": "ops/rows/get_rows_strided_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "source_span",
+          "type": "index"
+        },
+        {
+          "name": "index_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "source_span",
+          "type": "index"
+        },
+        {
+          "name": "index_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "indices",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/rows/get_rows_strided_f32.loom"
         ],
         "library_sources": []
       },

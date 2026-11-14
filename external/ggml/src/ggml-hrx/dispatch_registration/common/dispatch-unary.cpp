@@ -218,7 +218,29 @@ static bool match_argmax_dispatch(const DispatchMatchContext & context, Dispatch
     return true;
 }
 
+static bool match_clamp_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    const auto * params = op_params_as<ClampParams>(node->params);
+    if (params == nullptr || node->inputs.size() != 1) return false;
+    const auto * input = graph_value(context.graph, node->inputs[0]);
+    const auto * output = graph_value(context.graph, node->output);
+    if (input == nullptr || output == nullptr || input->type != GGML_TYPE_F32 || output->type != GGML_TYPE_F32 ||
+        !input->contiguous || !output->contiguous || !same_shape(*input, *output) || !scale_storage_is_safe(*input, *output)) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_clamp_f32"));
+    dispatch.kernel.integer_parameters.emplace("element_count", output->element_count);
+    dispatch.kernel.compile_parameters.emplace("ggml.clamp.min", float_config_value(params->min));
+    dispatch.kernel.compile_parameters.emplace("ggml.clamp.max", float_config_value(params->max));
+    dispatch.bindings.push_back({input->storage_root, input->storage_offset, input->byte_count});
+    dispatch.bindings.push_back({output->storage_root, output->storage_offset, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 void register_unary_dispatch(DispatchRegistryBuilder & registry) {
+    registry.add({"common.clamp_f32", GGML_OP_CLAMP, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_clamp_dispatch});
     registry.add({"common.argmax_f32", GGML_OP_ARGMAX, DispatchMatchKind::SingleOp, 0,
                   DispatchSource::Common, match_argmax_dispatch});
     registry.add({"common.sum_rows_f32", GGML_OP_SUM_ROWS, DispatchMatchKind::SingleOp, -100,

@@ -471,7 +471,41 @@ static bool match_get_rows_rmsnorm_binary_dispatch(const DispatchMatchContext & 
 
 }  // namespace
 
+static bool match_strided_get_rows_f32(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    if (node->inputs.size() != 2) return false;
+    const auto * source = context.graph.values().find(node->inputs[0]);
+    const auto * indices = context.graph.values().find(node->inputs[1]);
+    const auto * output = context.graph.values().find(node->output);
+    if (source == nullptr || indices == nullptr || output == nullptr || source->type != GGML_TYPE_F32 ||
+        indices->type != GGML_TYPE_I32 || output->type != GGML_TYPE_F32 || !output->contiguous ||
+        source->ne[2] != indices->ne[1] || source->ne[3] != indices->ne[2]) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_get_rows_strided_f32"));
+    dispatch.kernel.integer_parameters.emplace("element_count", output->element_count);
+    dispatch.kernel.integer_parameters.emplace("source_span", source->byte_count / sizeof(float));
+    dispatch.kernel.integer_parameters.emplace("index_span", indices->byte_count / sizeof(int32_t));
+    auto & config = dispatch.kernel.compile_parameters;
+    config.emplace("ggml.gather.width", std::to_string(source->ne[0]));
+    config.emplace("ggml.gather.bank_rows", std::to_string(source->ne[1]));
+    config.emplace("ggml.gather.indices_ne0", std::to_string(indices->ne[0]));
+    config.emplace("ggml.gather.indices_ne1", std::to_string(indices->ne[1]));
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (source->nb[i] % sizeof(float) || indices->nb[i] % sizeof(int32_t)) return false;
+        config.emplace("ggml.gather.s" + std::to_string(i), std::to_string(source->nb[i] / sizeof(float)));
+        if (i < 3) config.emplace("ggml.gather.is" + std::to_string(i), std::to_string(indices->nb[i] / sizeof(int32_t)));
+    }
+    dispatch.bindings.push_back({source->storage_root, source->storage_offset, source->byte_count});
+    dispatch.bindings.push_back({indices->storage_root, indices->storage_offset, indices->byte_count});
+    dispatch.bindings.push_back({output->storage_root, output->storage_offset, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 void register_get_rows_dispatches(DispatchRegistryBuilder & registry) {
+    registry.add({"common.get_rows.strided_f32", GGML_OP_GET_ROWS, DispatchMatchKind::SingleOp, -100,
+                  DispatchSource::Common, match_strided_get_rows_f32});
     registry.add({
         "common.get_rows_scale.f32",
         GGML_OP_GET_ROWS,
