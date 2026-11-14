@@ -304,7 +304,8 @@ public:
         int64_t out_channels,
         int64_t kernel_size,
         int stride,
-        int dilation)
+        int dilation,
+        bool pre_elu = false)
         : backend_(backend),
           threads_(threads),
           in_channels_(in_channels),
@@ -312,7 +313,9 @@ public:
           out_channels_(out_channels),
           kernel_size_(kernel_size),
           stride_(stride),
-          dilation_(dilation) {
+          dilation_(dilation),
+          pre_elu_(pre_elu),
+          device_elu_(pre_elu && backend_type == core::BackendType::Cuda) {
         ggml_ctx_ = ggml_init({graph_context_bytes, nullptr, true});
         if (ggml_ctx_ == nullptr) {
             throw std::runtime_error("Failed to initialize conv1d runtime context");
@@ -323,6 +326,7 @@ public:
             ctx,
             GGML_TYPE_F32,
             core::TensorShape::from_dims({1, in_channels_, frames_}));
+        const auto conv_input = device_elu_ ? modules::EluModule().build(ctx, input_) : input_;
         output_ = modules::Conv1dModule({
             in_channels_,
             out_channels_,
@@ -331,7 +335,7 @@ public:
             0,
             dilation_,
             bias.has_value(),
-        }).build(ctx, input_, modules::Conv1dWeights{weight, bias});
+        }).build(ctx, conv_input, modules::Conv1dWeights{weight, bias});
 
         if (core::is_host_backend(backend_)) {
             params_buffer_ = ggml_backend_alloc_ctx_tensors(ggml_ctx_, backend_);
@@ -370,7 +374,11 @@ public:
         if (static_cast<int64_t>(input.size()) != in_channels_ * frames_) {
             throw std::runtime_error("Conv1dRuntime input size mismatch");
         }
-        core::write_tensor_f32(input_, input);
+        if (pre_elu_ && !device_elu_) {
+            core::write_tensor_f32(input_, elu(input));
+        } else {
+            core::write_tensor_f32(input_, input);
+        }
         engine::core::compute_backend_graph(backend_, graph_);
         return core::read_tensor_f32(output_.tensor);
     }
@@ -384,6 +392,8 @@ private:
     int64_t kernel_size_ = 0;
     int stride_ = 1;
     int dilation_ = 1;
+    bool pre_elu_ = false;
+    bool device_elu_ = false;
     ggml_context * ggml_ctx_ = nullptr;
     ggml_backend_buffer_t params_buffer_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
@@ -405,14 +415,17 @@ public:
         int64_t frames,
         int64_t out_channels,
         int64_t kernel_size,
-        int stride)
+        int stride,
+        bool pre_elu = false)
         : backend_(backend),
           threads_(threads),
           in_channels_(in_channels),
           frames_(frames),
           out_channels_(out_channels),
           kernel_size_(kernel_size),
-          stride_(stride) {
+          stride_(stride),
+          pre_elu_(pre_elu),
+          device_elu_(pre_elu && backend_type == core::BackendType::Cuda) {
         ggml_ctx_ = ggml_init({graph_context_bytes, nullptr, true});
         if (ggml_ctx_ == nullptr) {
             throw std::runtime_error("Failed to initialize convtranspose1d runtime context");
@@ -423,6 +436,7 @@ public:
             ctx,
             GGML_TYPE_F32,
             core::TensorShape::from_dims({1, in_channels_, frames_}));
+        const auto conv_input = device_elu_ ? modules::EluModule().build(ctx, input_) : input_;
         output_ = modules::ConvTranspose1dModule({
             in_channels_,
             out_channels_,
@@ -431,7 +445,7 @@ public:
             0,
             1,
             bias.has_value(),
-        }).build(ctx, input_, modules::ConvTranspose1dWeights{weight, bias});
+        }).build(ctx, conv_input, modules::ConvTranspose1dWeights{weight, bias});
 
         if (core::is_host_backend(backend_)) {
             params_buffer_ = ggml_backend_alloc_ctx_tensors(ggml_ctx_, backend_);
@@ -470,7 +484,11 @@ public:
         if (static_cast<int64_t>(input.size()) != in_channels_ * frames_) {
             throw std::runtime_error("ConvTranspose1dRuntime input size mismatch");
         }
-        core::write_tensor_f32(input_, input);
+        if (pre_elu_ && !device_elu_) {
+            core::write_tensor_f32(input_, elu(input));
+        } else {
+            core::write_tensor_f32(input_, input);
+        }
         engine::core::compute_backend_graph(backend_, graph_);
         return core::read_tensor_f32(output_.tensor);
     }
@@ -483,6 +501,8 @@ private:
     int64_t out_channels_ = 0;
     int64_t kernel_size_ = 0;
     int stride_ = 1;
+    bool pre_elu_ = false;
+    bool device_elu_ = false;
     ggml_context * ggml_ctx_ = nullptr;
     ggml_backend_buffer_t params_buffer_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
@@ -1361,7 +1381,8 @@ std::vector<float> MimiDecoder::decode(
                 hidden_channels,
                 3,
                 1,
-                1);
+                1,
+                true);
             resblock_conv1_frames[static_cast<size_t>(stage_index)] = conv1_needed_frames;
         }
         const int64_t conv2_needed_frames =
@@ -1379,13 +1400,13 @@ std::vector<float> MimiDecoder::decode(
                 channels,
                 1,
                 1,
-                1);
+                1,
+                true);
             resblock_conv2_frames[static_cast<size_t>(stage_index)] = conv2_needed_frames;
         }
-        auto x = elu(input_bct);
-        x = run_streaming_conv1d_step(
+        auto x = run_streaming_conv1d_step(
             *conv1_runtime,
-            x,
+            input_bct,
             channels,
             frames_bct,
             hidden_channels,
@@ -1394,7 +1415,6 @@ std::vector<float> MimiDecoder::decode(
             1,
             modules::StreamingPadMode::Constant,
             state_ref.stage_residual_convs[static_cast<size_t>(stage_index)][0]);
-        x = elu(x);
         x = run_streaming_conv1d_step(
             *conv2_runtime,
             x,
@@ -1532,8 +1552,6 @@ std::vector<float> MimiDecoder::decode(
                         modules::StreamingPadMode::Constant,
                         decoder_state.input_projection);
                 });
-
-                chunk = elu(chunk);
                 if (!stage0_upsample_runtime || stage0_runtime_frames != chunk_frames) {
                     stage0_upsample_runtime = std::make_unique<ConvTranspose1dRuntime>(
                         backend,
@@ -1546,7 +1564,8 @@ std::vector<float> MimiDecoder::decode(
                         chunk_frames,
                         (config_.base_filters * 4),
                         12,
-                        6);
+                        6,
+                        true);
                     stage0_runtime_frames = chunk_frames;
                 }
                 trace.stage0_ms += engine::debug::measure_ms([&]() {
@@ -1572,7 +1591,6 @@ std::vector<float> MimiDecoder::decode(
                 });
 
                 const int64_t stage1_frames = static_cast<int64_t>(chunk.size()) / (config_.base_filters * 4);
-                chunk = elu(chunk);
                 if (!stage1_upsample_runtime || stage1_runtime_frames != stage1_frames) {
                     stage1_upsample_runtime = std::make_unique<ConvTranspose1dRuntime>(
                         backend,
@@ -1585,7 +1603,8 @@ std::vector<float> MimiDecoder::decode(
                         stage1_frames,
                         (config_.base_filters * 2),
                         10,
-                        5);
+                        5,
+                        true);
                     stage1_runtime_frames = stage1_frames;
                 }
                 trace.stage1_ms += engine::debug::measure_ms([&]() {
@@ -1614,8 +1633,6 @@ std::vector<float> MimiDecoder::decode(
                 for (int64_t stage2_start = 0; stage2_start < stage2_source_frames; stage2_start += kStage2ChunkFrames) {
                     const int64_t stage2_frames = std::min<int64_t>(kStage2ChunkFrames, stage2_source_frames - stage2_start);
                     auto stage2_input = slice_bct(chunk, (config_.base_filters * 2), stage2_source_frames, stage2_start, stage2_frames);
-
-                    stage2_input = elu(stage2_input);
                     if (!stage2_upsample_runtime || stage2_runtime_frames != stage2_frames) {
                         stage2_upsample_runtime = std::make_unique<ConvTranspose1dRuntime>(
                             backend,
@@ -1628,7 +1645,8 @@ std::vector<float> MimiDecoder::decode(
                             stage2_frames,
                             config_.base_filters,
                             8,
-                            4);
+                            4,
+                            true);
                         stage2_runtime_frames = stage2_frames;
                     }
                     trace.stage2_ms += engine::debug::measure_ms([&]() {
@@ -1654,7 +1672,6 @@ std::vector<float> MimiDecoder::decode(
                     });
 
                     const int64_t output_frames = static_cast<int64_t>(stage2_input.size()) / config_.base_filters;
-                    stage2_input = elu(stage2_input);
                     const int64_t needed_output_frames = output_frames + decoder_state.output_projection.history_frames;
                     if (!output_projection_runtime || output_runtime_frames != needed_output_frames) {
                         output_projection_runtime = std::make_unique<Conv1dRuntime>(
@@ -1669,7 +1686,8 @@ std::vector<float> MimiDecoder::decode(
                             1,
                             3,
                             1,
-                            1);
+                            1,
+                            true);
                         output_runtime_frames = needed_output_frames;
                     }
                     std::vector<float> chunk_audio;
@@ -1832,7 +1850,8 @@ std::vector<float> MimiDecoder::decode_streaming(
                 hidden_channels,
                 3,
                 1,
-                1);
+                1,
+                true);
             resblock_conv1_frames[static_cast<size_t>(stage_index)] = conv1_needed_frames;
         }
         const int64_t conv2_needed_frames =
@@ -1850,13 +1869,13 @@ std::vector<float> MimiDecoder::decode_streaming(
                 channels,
                 1,
                 1,
-                1);
+                1,
+                true);
             resblock_conv2_frames[static_cast<size_t>(stage_index)] = conv2_needed_frames;
         }
-        auto x = elu(input_bct);
-        x = run_streaming_conv1d_step(
+        auto x = run_streaming_conv1d_step(
             *conv1_runtime,
-            x,
+            input_bct,
             channels,
             frames_bct,
             hidden_channels,
@@ -1865,7 +1884,6 @@ std::vector<float> MimiDecoder::decode_streaming(
             1,
             modules::StreamingPadMode::Constant,
             state_ref.stage_residual_convs[static_cast<size_t>(stage_index)][0]);
-        x = elu(x);
         x = run_streaming_conv1d_step(
             *conv2_runtime,
             x,
@@ -1969,8 +1987,6 @@ std::vector<float> MimiDecoder::decode_streaming(
         1,
         modules::StreamingPadMode::Constant,
         state.input_projection);
-
-    x = elu(x);
     if (!stage0_upsample_runtime || cache.stage0_upsample_frames != encoder_frames) {
         stage0_upsample_runtime = std::make_unique<ConvTranspose1dRuntime>(
             backend,
@@ -1983,7 +1999,8 @@ std::vector<float> MimiDecoder::decode_streaming(
             encoder_frames,
             (config_.base_filters * 4),
             12,
-            6);
+            6,
+            true);
         cache.stage0_upsample_frames = encoder_frames;
     }
     x = run_streaming_convtranspose1d_step(
@@ -2007,7 +2024,6 @@ std::vector<float> MimiDecoder::decode_streaming(
         decoder_weights.stage0_block);
 
     const int64_t stage1_frames = static_cast<int64_t>(x.size()) / (config_.base_filters * 4);
-    x = elu(x);
     if (!stage1_upsample_runtime || cache.stage1_upsample_frames != stage1_frames) {
         stage1_upsample_runtime = std::make_unique<ConvTranspose1dRuntime>(
             backend,
@@ -2020,7 +2036,8 @@ std::vector<float> MimiDecoder::decode_streaming(
             stage1_frames,
             (config_.base_filters * 2),
             10,
-            5);
+            5,
+            true);
         cache.stage1_upsample_frames = stage1_frames;
     }
     x = run_streaming_convtranspose1d_step(
@@ -2044,7 +2061,6 @@ std::vector<float> MimiDecoder::decode_streaming(
         decoder_weights.stage1_block);
 
     const int64_t stage2_frames = static_cast<int64_t>(x.size()) / (config_.base_filters * 2);
-    x = elu(x);
     if (!stage2_upsample_runtime || cache.stage2_upsample_frames != stage2_frames) {
         stage2_upsample_runtime = std::make_unique<ConvTranspose1dRuntime>(
             backend,
@@ -2057,7 +2073,8 @@ std::vector<float> MimiDecoder::decode_streaming(
             stage2_frames,
             config_.base_filters,
             8,
-            4);
+            4,
+            true);
         cache.stage2_upsample_frames = stage2_frames;
     }
     x = run_streaming_convtranspose1d_step(
@@ -2081,7 +2098,6 @@ std::vector<float> MimiDecoder::decode_streaming(
         decoder_weights.stage2_block);
 
     const int64_t output_frames = static_cast<int64_t>(x.size()) / config_.base_filters;
-    x = elu(x);
     const int64_t needed_output_frames = output_frames + state.output_projection.history_frames;
     if (!output_projection_runtime || cache.output_projection_frames != needed_output_frames) {
         output_projection_runtime = std::make_unique<Conv1dRuntime>(
@@ -2096,7 +2112,8 @@ std::vector<float> MimiDecoder::decode_streaming(
             1,
             3,
             1,
-            1);
+            1,
+            true);
         cache.output_projection_frames = needed_output_frames;
     }
     x = run_streaming_conv1d_step(

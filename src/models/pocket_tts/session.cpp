@@ -845,7 +845,6 @@ void PocketTTSSession::start_stream(const runtime::TaskRequest & request) {
     const auto voice_plan = resolve_voice_conditioning_plan(model_dir_, stream_request_);
     stream_voice_state_ = resolve_prepared_voice_state(voice_plan);
     stream_merged_audio_ = runtime::AudioBuffer{manifest_->model_config.sample_rate, 1, {}};
-    audio_decoder_.reset_streaming_state();
     stream_started_at_ = std::chrono::steady_clock::now();
     stream_started_ = true;
     trace_text_chunking("pocket_tts.streaming.", stream_request_, stream_text_chunks_.size());
@@ -952,6 +951,7 @@ bool PocketTTSSession::start_next_stream_text_chunk() {
         return false;
     }
     const auto & chunk = stream_text_chunks_[stream_text_chunk_index_++];
+    audio_decoder_.reset_streaming_state();
     const TextConditioningResult text_state = text_conditioner_.prepare(*manifest_, weights_->host, chunk);
     const AcousticGenerationConfig acoustic_config = resolve_acoustic_generation_config(
         *manifest_,
