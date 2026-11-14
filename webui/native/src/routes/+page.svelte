@@ -305,7 +305,7 @@
   }
 
   function setDuration(value: number) {
-    const minimum = selected?.family === 'ace_step' ? -1 : 1;
+    const minimum = selected?.family === 'moss_soundeffect' ? 0.1 : selected?.family === 'ace_step' ? -1 : 1;
     duration = Math.max(minimum, Number.isFinite(value) ? value : minimum);
     if (selected?.family === 'minimax_h3') {
       advancedValues = { ...advancedValues, num_frames: miniMaxFramesForDuration(duration) };
