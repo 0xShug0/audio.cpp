@@ -4124,8 +4124,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (kugelaudio IN_LIST AUDIOCPP_LINKED_MODELS)
-        add_engine_unittest(kugelaudio_reference_encoder_probe tests/kugelaudio/reference_encoder_probe.cpp)
-        add_engine_unittest(kugelaudio_cloning_session_probe tests/kugelaudio/cloning_session_probe.cpp)
+        if (ENGINE_BUILD_MODEL_TESTS)
+            add_engine_unittest(kugelaudio_reference_encoder_probe tests/kugelaudio/reference_encoder_probe.cpp)
+            add_engine_unittest(kugelaudio_cloning_session_probe tests/kugelaudio/cloning_session_probe.cpp)
+        endif()
         add_engine_unittest(kugelaudio_reference_audio_test tests/kugelaudio/test_reference_audio.cpp)
         target_include_directories(kugelaudio_reference_audio_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME kugelaudio_reference_audio_test COMMAND kugelaudio_reference_audio_test)
