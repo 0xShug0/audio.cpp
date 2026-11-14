@@ -18,7 +18,8 @@ namespace modules = engine::modules;
 
 void routing_and_experts(core::ExecutionContext & execution) {
     constexpr int h = 8, tokens = 3, experts = 8, width = 16, selected = 2;
-    for (const auto scoring : {modules::MoeScoring::Softmax, modules::MoeScoring::Sigmoid}) {
+    for (const auto scoring : {modules::MoeScoring::Softmax, modules::MoeScoring::Sigmoid,
+             modules::MoeScoring::SelectedSoftmax}) {
         for (const auto normalization : {modules::MoeNormalization::Divide, modules::MoeNormalization::Clamp,
                  modules::MoeNormalization::AddEpsilon}) {
             core::BackendWeightStore store(execution.backend(), execution.backend_type(), "test.moe", 1024 * 1024);
@@ -124,7 +125,9 @@ void routing_and_experts(core::ExecutionContext & execution) {
                 for (int e = 0; e < experts; ++e) {
                     float dot = 0;
                     for (int i = 0; i < h; ++i) dot += input[t * h + i] * router[e * h + i];
-                    scores[e] = scoring == modules::MoeScoring::Softmax ? std::exp(dot) : 1.0F / (1.0F + std::exp(-dot));
+                    scores[e] = scoring == modules::MoeScoring::Softmax ? std::exp(dot)
+                        : scoring == modules::MoeScoring::Sigmoid       ? 1.0F / (1.0F + std::exp(-dot))
+                                                                        : dot;
                     sum += scores[e];
                 }
                 if (scoring == modules::MoeScoring::Softmax) for (auto & score : scores) score /= sum;
@@ -141,12 +144,21 @@ void routing_and_experts(core::ExecutionContext & execution) {
                     order.erase(std::remove_if(order.begin(), order.end(), [&](int e) { return e / 4 != group; }), order.end());
                 }
                 std::sort(order.begin(), order.end(), [&](int a, int b) { return selection[a] > selection[b]; });
-                float denominator = scores[order[0]] + scores[order[1]];
+                // SelectedSoftmax weighs the selected experts by the softmax of their logits.
+                std::vector<float> routed{scores[order[0]], scores[order[1]]};
+                if (scoring == modules::MoeScoring::SelectedSoftmax) {
+                    const float top = std::max(routed[0], routed[1]);
+                    for (auto & value : routed) value = std::exp(value - top);
+                    const float total = routed[0] + routed[1];
+                    for (auto & value : routed) value /= total;
+                }
+                float denominator = routed[0] + routed[1];
                 if (normalization == modules::MoeNormalization::Clamp) denominator = std::max(denominator, config.denominator_epsilon);
                 if (normalization == modules::MoeNormalization::AddEpsilon) denominator += config.denominator_epsilon;
                 for (int k = 0; k < selected; ++k) {
-                    if (ids[t * selected + k] != order[k] || std::abs(weights[t * selected + k] - scores[order[k]] / denominator * config.scale) > 2e-6F)
-                        throw std::runtime_error("MoE routing differs from host mathematical reference: scoring=" + std::to_string(static_cast<int>(scoring)) + " normalization=" + std::to_string(static_cast<int>(normalization)) + " token=" + std::to_string(t) + " lane=" + std::to_string(k) + " actual_id=" + std::to_string(ids[t * selected + k]) + " expected_id=" + std::to_string(order[k]) + " actual_weight=" + std::to_string(weights[t * selected + k]) + " expected_weight=" + std::to_string(scores[order[k]] / denominator * config.scale));
+                    const float expected = routed[k] / denominator * config.scale;
+                    if (ids[t * selected + k] != order[k] || std::abs(weights[t * selected + k] - expected) > 2e-6F)
+                        throw std::runtime_error("MoE routing differs from host mathematical reference: scoring=" + std::to_string(static_cast<int>(scoring)) + " normalization=" + std::to_string(static_cast<int>(normalization)) + " token=" + std::to_string(t) + " lane=" + std::to_string(k) + " actual_id=" + std::to_string(ids[t * selected + k]) + " expected_id=" + std::to_string(order[k]) + " actual_weight=" + std::to_string(weights[t * selected + k]) + " expected_weight=" + std::to_string(expected));
                 }
             }
             for (const auto & pair : comparisons) {

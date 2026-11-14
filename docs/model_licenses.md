@@ -169,6 +169,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `whistle_asr` | [Cactus-Compute/whistle](https://huggingface.co/Cactus-Compute/whistle/tree/b358ddadd89b7a713b5aa131f23032d3cca1b251) | Apache-2.0 | Yes | Pinned release includes the tokenizer, mel filterbank, and Hadamard permutations; the converter embeds its LICENSE. Independent asset provenance remains unverified. No reference code is bundled; see [provenance](../tools/community_models/whistle_asr/PROVENANCE.md). | 2026-10-06 |
 | `yue2` | [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `zipvoice` | [k2-fsa/ZipVoice](https://huggingface.co/k2-fsa/ZipVoice) | Not stated | Unclear | The model card states no license; the [code](https://github.com/k2-fsa/ZipVoice) is Apache-2.0. | 2026-09-21 |
+| `zonos3` | [Zyphra/ZONOS3-Mini](https://huggingface.co/Zyphra/ZONOS3-Mini) | Apache-2.0 | Yes | Runtime code ported from [Zyphra/ZONOS3](https://github.com/Zyphra/ZONOS3) (MIT); optional zyphra-textnorm (MIT) is linked only with `AUDIOCPP_ZONOS3_TEXTNORM`. | 2026-11-12 |
 
 ## Adding or updating a row
 

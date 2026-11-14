@@ -1821,6 +1821,29 @@ audiocpp_add_model(fish_drama3
         utf8proc_vendor
 )
 
+audiocpp_add_model(zonos3
+    SOURCES
+        src/community_models/zonos3/assets.cpp
+        src/community_models/zonos3/backbone.cpp
+        src/community_models/zonos3/codec_decoder.cpp
+        src/community_models/zonos3/generator.cpp
+        src/community_models/zonos3/loader.cpp
+        src/community_models/zonos3/npy.cpp
+        src/community_models/zonos3/prompt.cpp
+        src/community_models/zonos3/reference_encoder.cpp
+        src/community_models/zonos3/resample.cpp
+        src/community_models/zonos3/sampler.cpp
+        src/community_models/zonos3/session.cpp
+        src/community_models/zonos3/speaker_encoder.cpp
+        src/community_models/zonos3/ssl_teacher.cpp
+        src/community_models/zonos3/textnorm.cpp
+        src/community_models/zonos3/tokenizer.cpp
+    INCLUDES
+        engine/community_models/zonos3/loader.h
+    LOADERS
+        engine::models::zonos3::make_zonos3_loader
+)
+
 audiocpp_add_model(audio8_tts
     SOURCES
         src/community_models/audio8_tts/ar.cpp
@@ -3115,6 +3138,52 @@ target_link_libraries(engine_runtime PUBLIC ggml)
 find_package(Threads REQUIRED)
 target_link_libraries(engine_runtime PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 target_link_libraries(engine_runtime PRIVATE sentencepiece cjson_vendor yaml_vendor)
+
+option(AUDIOCPP_ZONOS3_TEXTNORM "Link Zyphra's zyphra-textnorm (Rust/cargo) for ZONOS3 text normalization" OFF)
+set(AUDIOCPP_ZONOS3_TEXTNORM_DIR "" CACHE PATH "zyphra-textnorm checkout (Cargo.toml root), e.g. ../ZONOS3/third_party/zyphra-textnorm")
+if (AUDIOCPP_ZONOS3_TEXTNORM AND zonos3 IN_LIST AUDIOCPP_LINKED_MODELS)
+    if (NOT EXISTS "${AUDIOCPP_ZONOS3_TEXTNORM_DIR}/Cargo.toml")
+        message(FATAL_ERROR "AUDIOCPP_ZONOS3_TEXTNORM needs AUDIOCPP_ZONOS3_TEXTNORM_DIR pointing at a zyphra-textnorm checkout (https://github.com/Zyphra/zyphra-textnorm, tag v0.1.0)")
+    endif()
+    find_program(AUDIOCPP_CARGO cargo HINTS $ENV{CARGO_HOME}/bin $ENV{HOME}/.cargo/bin /opt/homebrew/opt/rustup/bin REQUIRED)
+    # The hinted directory may not be on PATH, where cargo looks for rustc.
+    find_program(AUDIOCPP_RUSTC rustc HINTS $ENV{CARGO_HOME}/bin $ENV{HOME}/.cargo/bin /opt/homebrew/opt/rustup/bin REQUIRED)
+    # One cargo profile for every CMake config: the grammars are slow unoptimized and debug info is not needed.
+    set(AUDIOCPP_ZONOS3_TEXTNORM_TARGET_DIR ${CMAKE_BINARY_DIR}/zyphra_textnorm)
+    if (WIN32)
+        set(AUDIOCPP_ZONOS3_TEXTNORM_LIB ${AUDIOCPP_ZONOS3_TEXTNORM_TARGET_DIR}/release/zyphra_textnorm.lib)
+    else()
+        set(AUDIOCPP_ZONOS3_TEXTNORM_LIB ${AUDIOCPP_ZONOS3_TEXTNORM_TARGET_DIR}/release/libzyphra_textnorm.a)
+    endif()
+    file(GLOB_RECURSE AUDIOCPP_ZONOS3_TEXTNORM_SOURCES CONFIGURE_DEPENDS
+        ${AUDIOCPP_ZONOS3_TEXTNORM_DIR}/src/*.rs ${AUDIOCPP_ZONOS3_TEXTNORM_DIR}/data/*)
+    add_custom_command(
+        OUTPUT ${AUDIOCPP_ZONOS3_TEXTNORM_LIB}
+        COMMAND ${CMAKE_COMMAND} -E env RUSTC=${AUDIOCPP_RUSTC}
+            ${AUDIOCPP_CARGO} rustc --release --locked --lib -p zyphra-textnorm --features capi --crate-type staticlib
+            --manifest-path ${AUDIOCPP_ZONOS3_TEXTNORM_DIR}/Cargo.toml --target-dir ${AUDIOCPP_ZONOS3_TEXTNORM_TARGET_DIR}
+        DEPENDS ${AUDIOCPP_ZONOS3_TEXTNORM_SOURCES} ${AUDIOCPP_ZONOS3_TEXTNORM_DIR}/Cargo.toml
+            ${AUDIOCPP_ZONOS3_TEXTNORM_DIR}/Cargo.lock
+        COMMENT "cargo build zyphra-textnorm"
+        USES_TERMINAL
+        VERBATIM)
+    add_custom_target(audiocpp_zyphra_textnorm_build DEPENDS ${AUDIOCPP_ZONOS3_TEXTNORM_LIB})
+    add_library(audiocpp_zyphra_textnorm STATIC IMPORTED GLOBAL)
+    set_target_properties(audiocpp_zyphra_textnorm PROPERTIES
+        IMPORTED_LOCATION ${AUDIOCPP_ZONOS3_TEXTNORM_LIB}
+        INTERFACE_INCLUDE_DIRECTORIES ${AUDIOCPP_ZONOS3_TEXTNORM_DIR}/include)
+    add_dependencies(audiocpp_zyphra_textnorm audiocpp_zyphra_textnorm_build)
+    if (WIN32)
+        # Rust std's system libraries on MSVC.
+        set_property(TARGET audiocpp_zyphra_textnorm APPEND PROPERTY INTERFACE_LINK_LIBRARIES ws2_32 userenv ntdll bcrypt)
+    else()
+        set_property(TARGET audiocpp_zyphra_textnorm APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${CMAKE_DL_LIBS} Threads::Threads)
+    endif()
+    target_compile_definitions(engine_model_zonos3 PRIVATE AUDIOCPP_ZONOS3_HAVE_TEXTNORM=1)
+    target_include_directories(engine_model_zonos3 PRIVATE "${AUDIOCPP_ZONOS3_TEXTNORM_DIR}/include")
+    add_dependencies(engine_model_zonos3 audiocpp_zyphra_textnorm_build)
+    target_link_libraries(engine_runtime PRIVATE audiocpp_zyphra_textnorm)
+endif()
 if(AUDIOCPP_STATIC_ESPEAK)
     include(tools/cmake/espeak_static.cmake)
 endif()
@@ -4433,6 +4502,18 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             endif()
         endif()
 
+        if (zonos3 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(zonos3_text_test tests/community_models/zonos3/text_test.cpp)
+            add_test(NAME zonos3_text_test COMMAND zonos3_text_test)
+            add_engine_unittest(zonos3_tokenizer_test tests/community_models/zonos3/tokenizer_test.cpp)
+            set(AUDIOCPP_ZONOS3_BACKBONE "" CACHE FILEPATH "backbone-ptq.gguf for ZONOS3 tokenizer vectors")
+            if(AUDIOCPP_ZONOS3_BACKBONE)
+                add_test(NAME zonos3_tokenizer_test COMMAND zonos3_tokenizer_test
+                    "${AUDIOCPP_ZONOS3_BACKBONE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/community_models/zonos3/tokenizer_vectors.json")
+            endif()
+        endif()
+
         add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
         target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME gguf_tensor_source_test COMMAND gguf_tensor_source_test)
@@ -4728,6 +4809,32 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             add_test(NAME fish_drama3_backbone_allocation_test COMMAND fish_drama3_backbone_allocation_test)
             add_engine_unittest(fish_drama3_codec_source_test tests/community_models/fish_drama3/codec_source_test.cpp)
             add_test(NAME fish_drama3_codec_source_test COMMAND fish_drama3_codec_source_test)
+        endif()
+
+        if(zonos3 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(zonos3_parity tests/community_models/zonos3/parity.cpp)
+            set(AUDIOCPP_ZONOS3_MODEL_DIR "" CACHE PATH "ZONOS3-Mini GGUF directory for the zonos3 parity tests")
+            set(AUDIOCPP_ZONOS3_PARITY_DIR "" CACHE PATH "ZONOS3 oracle directory (tests/community_models/zonos3/make_oracle.sh)")
+            if(AUDIOCPP_ZONOS3_MODEL_DIR AND AUDIOCPP_ZONOS3_PARITY_DIR)
+                add_test(NAME zonos3_parity_backbone COMMAND zonos3_parity backbone
+                    "${AUDIOCPP_ZONOS3_MODEL_DIR}/backbone-ptq.gguf" "${AUDIOCPP_ZONOS3_PARITY_DIR}")
+                add_test(NAME zonos3_parity_backbone_disk COMMAND zonos3_parity backbone
+                    "${AUDIOCPP_ZONOS3_MODEL_DIR}/backbone-ptq.gguf" "${AUDIOCPP_ZONOS3_PARITY_DIR}" --disk-experts)
+                add_test(NAME zonos3_parity_speaker COMMAND zonos3_parity speaker
+                    "${AUDIOCPP_ZONOS3_MODEL_DIR}/spk-encoder.gguf" "${AUDIOCPP_ZONOS3_PARITY_DIR}/voice.wav" "${AUDIOCPP_ZONOS3_PARITY_DIR}")
+                add_test(NAME zonos3_parity_decoder COMMAND zonos3_parity decoder
+                    "${AUDIOCPP_ZONOS3_MODEL_DIR}/zac-keep2.gguf" "${AUDIOCPP_ZONOS3_PARITY_DIR}")
+                set_tests_properties(zonos3_parity_backbone zonos3_parity_backbone_disk zonos3_parity_speaker
+                    zonos3_parity_decoder PROPERTIES
+                    PASS_REGULAR_EXPRESSION "PASS"
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+                add_test(NAME zonos3_parity_reference COMMAND zonos3_parity reference
+                    "${AUDIOCPP_ZONOS3_MODEL_DIR}" "${AUDIOCPP_ZONOS3_PARITY_DIR}/voice.wav" "${AUDIOCPP_ZONOS3_PARITY_DIR}")
+                set_tests_properties(zonos3_parity_reference PROPERTIES
+                    PASS_REGULAR_EXPRESSION "PASS"
+                    TIMEOUT 3600
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+            endif()
         endif()
 
         if(kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
