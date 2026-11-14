@@ -411,9 +411,13 @@ void ChatterboxSession::prepare(const runtime::SessionPreparationRequest & reque
     }
     const auto session_config = make_voice_clone_config(request.options, request.text->language);
     voice_clone_config_ = session_config;
-    if (!component_ || !component_language_.has_value() || *component_language_ != session_config.language) {
+    // The component depends on the language only through the T3 it loads,
+    // English or multilingual, so a switch between two languages that share
+    // it keeps the component and the voices already prepared.
+    const bool multilingual = chatterbox_language_uses_multilingual_t3(session_config.language);
+    if (!component_ || component_multilingual_ != multilingual) {
         component_.reset();
-        component_language_.reset();
+        component_multilingual_.reset();
         component_ = make_chatterbox_component_for_language(
             *assets_,
             this->options(),
@@ -423,7 +427,7 @@ void ChatterboxSession::prepare(const runtime::SessionPreparationRequest & reque
             multilingual_t3_version_,
             mem_saver_,
             session_config.language);
-        component_language_ = session_config.language;
+        component_multilingual_ = multilingual;
         cached_conditionals_.reset();
         conditionals_cache_.clear();
     }

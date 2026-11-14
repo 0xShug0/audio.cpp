@@ -153,7 +153,7 @@ settings for subsequent requests in that session.
 | `chatterbox.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; defaults to native. |
 | `chatterbox.t3_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | T3 weight storage; inherits weight_type. |
 | `chatterbox.multilingual_t3` | `v2`, `v3` | `v2` | Multilingual T3 checkpoint selection. |
-| `chatterbox.conditionals_cache_slots` | integer >= 0 | `1` | Cached speaker conditionals; zero disables reuse. |
+| `chatterbox.conditionals_cache_slots` | integer >= 0 | `1` | Cached speaker conditionals, one per voice and language; zero disables reuse. They survive language changes between multilingual languages (every language but English), so a voice heard in several of them needs a slot per language. |
 | `chatterbox.vc_reference_cache_slots` | integer >= 0 | `1` | Cached voice-conversion target references (`--task vc`), so converting into the same voice again skips preparing it; zero disables reuse. |
 | `chatterbox.mem_saver` | bool | `false` | Release staged runtime components. |
 | `chatterbox.encoder_condition_samples` | integer | `96000` | Tokenizer reference sample limit at 16 kHz; the voice encoder uses the full reference. |

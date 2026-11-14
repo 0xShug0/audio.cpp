@@ -65,7 +65,8 @@ private:
     bool mem_saver_ = false;
     std::unique_ptr<ChatterboxTTSComponent> component_;
     std::unique_ptr<ChatterboxVCComponent> vc_component_;
-    std::optional<std::string> component_language_;
+    // Whether component_ runs the multilingual T3 (every language but English).
+    std::optional<bool> component_multilingual_;
     std::optional<ChatterboxVoiceCloneConfig> voice_clone_config_;
     runtime::CacheSlots<
         ChatterboxConditionalsCacheKey,
